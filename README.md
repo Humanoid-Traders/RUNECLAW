@@ -80,7 +80,10 @@ The system operates in **simulation-first mode by default**. Every trade idea mu
 - Top N mover ranking with structured signal output
 
 ### AI Analysis Engine
-- Technical indicators: RSI-14, MACD (12/26/9), Bollinger Bands (20/2), ATR-14, ADX-14, VWAP, SMA-50 trend alignment
+- Technical indicators: RSI-14, MACD (12/26/9), Bollinger Bands (20/2), ATR-14, ADX-14, VWAP, SMA-50 trend alignment, On-Balance Volume (OBV), Anchored VWAP (20-bar and 50-bar)
+- Candlestick pattern detection: 14 patterns including doji, hammer, shooting star, engulfing, harami, tweezer top/bottom, morning/evening star, three white soldiers, three black crows
+- Fibonacci retracement levels: swing high/low detection over 50-bar lookback, standard levels (23.6%, 38.2%, 50%, 61.8%, 78.6%) with zone classification
+- 10-voter confluence scoring model (expanded from 6): RSI, MACD, Bollinger %B, Volume Spike, ADX, VWAP, OBV trend, candlestick pattern, Fibonacci zone, plus LLM confidence
 - LLM-powered directional thesis generation (GPT-4o or compatible)
 - Rule-based fallback when no LLM key is configured
 - Structured `TradeIdea` output with entry, SL, TP, confidence, reasoning

@@ -23,20 +23,22 @@ Simulation-first AI trading agent with 16 fail-closed risk checks, regime-aware 
 
 ## Project Summary (under 200 words)
 
-RUNECLAW is a modular AI trading assistant built for the Bitget ecosystem. It scans markets for volume anomalies and momentum shifts, generates explainable trade ideas using a 6-indicator confluence scoring model blended with LLM reasoning, and enforces 16 independent pre-trade risk checks in a fail-closed architecture -- if any single check cannot be evaluated, the trade is rejected.
+RUNECLAW is a modular AI trading assistant built for the Bitget ecosystem. It scans markets for volume anomalies and momentum shifts, generates explainable trade ideas using a 10-voter confluence scoring model (candlestick pattern detection, Fibonacci retracement zones, OBV trend, and 6 classic indicators) blended with LLM reasoning, and enforces 16 independent pre-trade risk checks in a fail-closed architecture -- if any single check cannot be evaluated, the trade is rejected.
 
 The agent operates as a 9-state finite state machine with complete audit logging of every state transition, risk decision, and trade outcome. Every trade requires human confirmation via Telegram before execution. Paper trading is the default mode; live trading requires two explicit environment flags.
 
 Key capabilities: ADX-14 regime detection (trend/range/chop) with adaptive strategy parameters, trailing stops activated at 1R profit, per-symbol and portfolio-level exposure limits, circuit breaker with cooldown enforcement, and a backtesting engine with intrabar SL/TP simulation and realistic commission/slippage modeling.
 
-Validated across 180 backtest runs (3 volatility regimes, 3 trend biases, 20 seeds), producing 855 trades with worst-case drawdown of 2.87% and zero crashed runs. 82 unit tests cover risk engine, portfolio, analyzer, backtest, and integration scenarios.
+Validated across 180 backtest runs (3 volatility regimes, 3 trend biases, 20 seeds), producing 855 trades with worst-case drawdown of 2.87% and zero crashed runs. 97 unit tests cover risk engine, portfolio, analyzer, backtest, and integration scenarios.
 
 ---
 
 ## Feature Bullets
 
 - **16-Check Fail-Closed Risk Gate** -- position size, daily loss, drawdown, max positions, R:R minimum, confidence threshold, correlation blocking, loss streak, entry price sanity, stop-loss required, stale data guard, cooldown timer, portfolio exposure, per-symbol exposure, volatility guard, circuit breaker
-- **6-Indicator Confluence Scoring** -- RSI-14, MACD (12/26/9), Bollinger Bands (20/2), Volume Spike, ADX-14, VWAP weighted and blended with LLM confidence (60/40 split)
+- **10-Voter Confluence Scoring** -- RSI-14, MACD (12/26/9), Bollinger Bands (20/2), Volume Spike, ADX-14, VWAP, OBV trend, candlestick pattern signal, Fibonacci zone, weighted and blended with LLM confidence (60/40 split)
+- **Candlestick Pattern Detection** -- 14 patterns: doji, hammer, shooting star, spinning top, marubozu, bullish/bearish engulfing, bullish/bearish harami, tweezer top/bottom, morning star, evening star, three white soldiers, three black crows
+- **Fibonacci Retracement Levels** -- swing high/low detection over 50-bar lookback, standard levels (23.6%, 38.2%, 50%, 61.8%, 78.6%) with zone classification
 - **Regime-Aware Analysis** -- ADX-14 classifies market as TREND_UP, TREND_DOWN, RANGE, or CHOP; strategy adapts SL/TP multipliers and applies confidence penalties accordingly
 - **Adaptive ATR Risk Management** -- stop-loss and take-profit levels scale with volatility regime (high vol: 3.0/4.5x ATR, normal: 2.5/3.5x, low: 2.0/3.0x)
 - **Trailing Stops** -- activated at 1R profit, trail at 1.5x ATR behind best price; responsible for 48.7% of all exits in backtesting with net-positive aggregate PnL
@@ -44,7 +46,7 @@ Validated across 180 backtest runs (3 volatility regimes, 3 trend biases, 20 see
 - **Human-in-the-Loop** -- every trade requires Telegram confirmation with inline approve/reject keyboard
 - **Simulation-First** -- paper trading by default ($10K virtual balance), live trading requires dual safety flag opt-in
 - **Full Audit Trail** -- structured JSON logging of every decision, rejection, and execution with timestamps
-- **82 Unit Tests** -- risk engine, portfolio, analyzer indicators, backtest replay, models, integration, edge cases
+- **97 Unit Tests** -- risk engine, portfolio, analyzer indicators (including candlestick patterns, Fibonacci, OBV, anchored VWAP), backtest replay, models, integration, edge cases
 
 ---
 
@@ -54,7 +56,7 @@ Validated across 180 backtest runs (3 volatility regimes, 3 trend biases, 20 see
 |---|---|
 | Architecture | 9-state FSM governing full trade lifecycle from scan to cooldown, with HALTED state for circuit-breaker events |
 | Market Scanner | Volume anomaly detection with 2x rolling average spike threshold, stale data eviction, thread-safe with RLock |
-| Analysis Engine | 6-indicator confluence model + LLM reasoning, SMA-50 trend alignment (+0.10/-0.15), volume confirmation (+/-0.05) |
+| Analysis Engine | 10-voter confluence model (RSI, MACD, BB, Volume Spike, ADX, VWAP, OBV trend, candlestick pattern, Fibonacci zone) + LLM reasoning, SMA-50 trend alignment (+0.10/-0.15), volume confirmation (+/-0.05) |
 | Regime Detection | ADX-14 with directional movement index; TREND_UP/DOWN skip opposite-direction signals, RANGE/CHOP apply confidence penalty |
 | Risk Engine | 16 fail-closed checks, all must pass; thread-safe with RLock; stats tracking for monitoring |
 | Trailing Stops | Track best_price per position, activate at 1R profit, trail at 1.5x ATR; 100% win rate in backtesting |
@@ -85,7 +87,7 @@ Validated across 180 backtest runs (3 volatility regimes, 3 trend biases, 20 see
 |-------|----------|--------|
 | 16 risk checks | `bot/risk/risk_engine.py` lines 1-23 enumerate all 16 | Verified |
 | Fail-closed design | Any check failure or exception returns REJECTED | Verified |
-| 82 tests passing | `pytest tests/test_core.py -v` -- 83/83 green | Verified |
+| 97 tests passing | `pytest tests/test_core.py -v` -- 97/97 green | Verified |
 | 9-state FSM | `bot/utils/models.py` AgentState enum, `bot/core/engine.py` transitions | Verified |
 | Trailing stops work | Backtest: 416/855 exits via trailing stop, net-positive aggregate PnL | Verified |
 | Regime detection | `bot/core/analyzer.py` _detect_regime + _score_confluence | Verified |
@@ -100,7 +102,7 @@ Validated across 180 backtest runs (3 volatility regimes, 3 trend biases, 20 see
 
 ## Final QA Checklist
 
-- [x] All 83 tests pass (`pytest tests/test_core.py -v`)
+- [x] All 97 tests pass (`pytest tests/test_core.py -v`)
 - [x] No critical or high-severity issues in codebase audit (all C1-C3, H1-H4 fixed)
 - [x] All 16 risk checks verified correct with unit tests
 - [x] Backtest runs without crashes across 180 configurations
@@ -108,8 +110,8 @@ Validated across 180 backtest runs (3 volatility regimes, 3 trend biases, 20 see
 - [x] Config loads from environment variables with safe defaults
 - [x] Simulation mode is ON by default
 - [x] Live trading requires two explicit flags
-- [x] README accurately reflects current architecture (16 checks, 6 indicators including Volume Spike)
-- [x] Website matches codebase claims (16 checks, 82 tests, backtest stats)
+- [x] README accurately reflects current architecture (16 checks, 10 voters including OBV, candlestick patterns, Fibonacci retracement)
+- [x] Website matches codebase claims (16 checks, 97 tests, backtest stats)
 - [x] GitHub repo is public and up to date
 - [x] No deprecated datetime calls remaining
 - [x] Thread safety verified on all shared state

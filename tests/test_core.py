@@ -21,7 +21,7 @@ from bot.utils.models import (
 )
 from bot.risk.portfolio import PortfolioTracker
 from bot.risk.risk_engine import RiskEngine
-from bot.core.analyzer import Analyzer, Regime, _compute_adx, _ema
+from bot.core.analyzer import Analyzer, Regime, _compute_adx, _ema, _detect_candlestick_patterns, _compute_fibonacci, _compute_obv
 from bot.core.metrics import MetricsEngine
 from bot.backtest.models import BacktestBar, BacktestConfig
 from bot.backtest.data_loader import DataLoader
@@ -1033,3 +1033,133 @@ class TestMetricsEngine:
         sharpe = me._compute_sharpe()
         assert isinstance(sharpe, float)
         assert sharpe > 0  # upward equity curve
+
+
+class TestAdvancedAnalysis:
+    """Tests for candlestick patterns, Fibonacci, OBV, and enhanced confluence."""
+
+    def test_obv_rising(self):
+        """OBV should rise when price rises on volume."""
+        closes = np.array([100, 101, 102, 103, 104], dtype=float)
+        volumes = np.array([1000, 1200, 1100, 1300, 1400], dtype=float)
+        obv = _compute_obv(closes, volumes)
+        assert len(obv) == 5
+        assert obv[-1] > obv[0]  # rising prices -> rising OBV
+
+    def test_obv_falling(self):
+        """OBV should fall when price drops on volume."""
+        closes = np.array([104, 103, 102, 101, 100], dtype=float)
+        volumes = np.array([1000, 1200, 1100, 1300, 1400], dtype=float)
+        obv = _compute_obv(closes, volumes)
+        assert obv[-1] < obv[0]
+
+    def test_fibonacci_levels(self):
+        """Fibonacci levels should be correctly computed from swing high/low."""
+        highs = np.array([100, 105, 110, 108, 106], dtype=float)
+        lows = np.array([95, 98, 102, 100, 99], dtype=float)
+        closes = np.array([98, 103, 107, 104, 102], dtype=float)
+        fib = _compute_fibonacci(highs, lows, closes)
+        assert fib["fib_swing_high"] == 110.0
+        assert fib["fib_swing_low"] == 95.0
+        assert fib["fib_500"] == pytest.approx(102.5, abs=0.01)
+        assert "fib_zone" in fib
+
+    def test_fibonacci_flat_market(self):
+        """Fibonacci with no range should return swing high/low only."""
+        highs = np.array([100, 100, 100], dtype=float)
+        lows = np.array([100, 100, 100], dtype=float)
+        closes = np.array([100, 100, 100], dtype=float)
+        fib = _compute_fibonacci(highs, lows, closes)
+        assert fib["fib_swing_high"] == 100.0
+        assert "fib_236" not in fib  # no range, no fib levels
+
+    def test_doji_detection(self):
+        """A candle with nearly equal open/close should be detected as doji."""
+        opens = np.array([100, 101, 102], dtype=float)
+        highs = np.array([103, 104, 106], dtype=float)
+        lows = np.array([97, 98, 98], dtype=float)
+        closes = np.array([101, 100, 102.1], dtype=float)  # last candle: open=102, close=102.1
+        patterns = _detect_candlestick_patterns(opens, highs, lows, closes)
+        assert "doji" in patterns
+        assert patterns["doji"] == "neutral"
+
+    def test_hammer_detection(self):
+        """Hammer: small body at top, long lower wick."""
+        opens = np.array([100, 101, 105], dtype=float)
+        highs = np.array([103, 104, 105.5], dtype=float)
+        lows = np.array([97, 98, 98], dtype=float)
+        closes = np.array([101, 100, 105.3], dtype=float)  # body=0.3, upper_wick=0.2, lower_wick=7
+        patterns = _detect_candlestick_patterns(opens, highs, lows, closes)
+        assert "hammer" in patterns
+        assert patterns["hammer"] == "bullish"
+
+    def test_bullish_engulfing(self):
+        """Bullish engulfing: prev bearish, current bullish wraps prev."""
+        opens = np.array([100, 105, 99], dtype=float)
+        highs = np.array([103, 106, 107], dtype=float)
+        lows = np.array([97, 98, 98], dtype=float)
+        closes = np.array([101, 100, 106], dtype=float)  # prev: 105->100 (bearish), curr: 99->106 (bullish engulf)
+        patterns = _detect_candlestick_patterns(opens, highs, lows, closes)
+        assert "bullish_engulfing" in patterns
+
+    def test_three_white_soldiers(self):
+        """Three White Soldiers: three consecutive bullish candles with higher closes."""
+        opens = np.array([100, 103, 106], dtype=float)
+        highs = np.array([104, 107, 110], dtype=float)
+        lows = np.array([99, 102, 105], dtype=float)
+        closes = np.array([103, 106, 109], dtype=float)
+        patterns = _detect_candlestick_patterns(opens, highs, lows, closes)
+        assert "three_white_soldiers" in patterns
+
+    def test_no_patterns_on_insufficient_data(self):
+        """With fewer than 3 bars, no patterns should be detected."""
+        opens = np.array([100, 101], dtype=float)
+        highs = np.array([103, 104], dtype=float)
+        lows = np.array([97, 98], dtype=float)
+        closes = np.array([101, 100], dtype=float)
+        patterns = _detect_candlestick_patterns(opens, highs, lows, closes)
+        assert patterns == {}
+
+    def test_indicators_include_fib_and_obv(self):
+        """_compute_indicators should now return Fibonacci and OBV data."""
+        n = 60
+        highs = np.linspace(100, 110, n) + np.random.default_rng(42).uniform(0, 2, n)
+        lows = np.linspace(95, 105, n) + np.random.default_rng(43).uniform(-2, 0, n)
+        closes = (highs + lows) / 2
+        volumes = np.random.default_rng(44).uniform(1000, 5000, n)
+        ind = Analyzer._compute_indicators(highs, lows, closes, volumes)
+        assert ind is not None
+        assert "fib_swing_high" in ind
+        assert "fib_500" in ind
+        assert "fib_zone" in ind
+        assert "obv" in ind
+        assert "obv_trend" in ind
+
+    def test_confluence_uses_obv(self):
+        """Confluence scoring should incorporate OBV trend vote."""
+        indicators = {
+            "rsi": 50, "macd_histogram": 0.01, "bb_pct_b": 0.5,
+            "adx": 15, "plus_di": 20, "minus_di": 18,
+            "vwap": 100, "obv_trend": "rising",
+            "candle_bullish_count": 1, "candle_bearish_count": 0,
+            "fib_zone": "382_500",
+        }
+        signal = MarketSignal(symbol="TEST/USDT", price=100, change_pct_24h=1.0, volume_usd_24h=1e6)
+        score = Analyzer._score_confluence(indicators, Regime.RANGE, signal)
+        assert 0 <= score <= 1
+
+    def test_rule_based_thesis_includes_patterns(self):
+        """Rule-based thesis reasoning should mention candle patterns."""
+        signal = MarketSignal(symbol="TEST/USDT", price=100, change_pct_24h=2.0,
+                              volume_usd_24h=1e6, volume_spike=True)
+        ind = {
+            "rsi": 35, "macd_histogram": 0.5, "bb_pct_b": 0.2,
+            "adx": 30, "plus_di": 25, "minus_di": 15,
+            "confluence": 0.7, "regime": "TREND_UP",
+            "obv_trend": "rising", "fib_zone": "500_618",
+            "candle_patterns": {"hammer": "bullish", "doji": "neutral"},
+        }
+        result = Analyzer._rule_based_thesis(signal, ind)
+        assert "hammer" in result["reasoning"]
+        assert result["direction"] == "LONG"
+        assert result["confidence"] > 0.5

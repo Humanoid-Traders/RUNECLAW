@@ -53,13 +53,15 @@ Output: a list of `MarketSignal` objects.
 The `Analyzer` receives the top 3 signals and for each:
 
 1. Fetches 100 hourly OHLCV candles from Bitget.
-2. Computes technical indicators: RSI-14, MACD (12/26/9), Bollinger Bands (20/2), ATR-14, ADX-14, and VWAP.
-3. Detects market regime via ADX (TREND_UP, TREND_DOWN, RANGE, CHOP).
-4. Scores confluence across 6 indicators (RSI, MACD, Bollinger %B, Volume Spike, ADX, VWAP).
-5. Sends the signal data and indicators to the LLM for a directional thesis.
-6. If no LLM key is configured, falls back to a rule-based confluence strategy.
-7. Structures the result as a `TradeIdea` with entry, stop-loss, take-profit, confidence, and reasoning.
-8. Filters out ideas with blended confidence below 0.60.
+2. Computes technical indicators: RSI-14, MACD (12/26/9), Bollinger Bands (20/2), ATR-14, ADX-14, VWAP, On-Balance Volume (OBV), and Anchored VWAP (20-bar and 50-bar variants).
+3. Detects 14 candlestick patterns: doji, hammer, shooting star, spinning top, marubozu, bullish/bearish engulfing, bullish/bearish harami, tweezer top/bottom, morning star, evening star, three white soldiers, and three black crows.
+4. Computes Fibonacci retracement levels from swing high/low over a 50-bar lookback, classifying price into standard zones (23.6%, 38.2%, 50%, 61.8%, 78.6%).
+5. Detects market regime via ADX (TREND_UP, TREND_DOWN, RANGE, CHOP).
+6. Scores confluence across 10 voters (RSI, MACD, Bollinger %B, Volume Spike, ADX, VWAP, OBV trend, candlestick pattern signal, Fibonacci zone, plus the original 6 expanded to 10).
+7. Sends the signal data and indicators to the LLM for a directional thesis.
+8. If no LLM key is configured, falls back to a rule-based confluence strategy.
+9. Structures the result as a `TradeIdea` with entry, stop-loss, take-profit, confidence, and reasoning.
+10. Filters out ideas with blended confidence below 0.60.
 
 Output: a `TradeIdea` object (or None if conviction is too low).
 

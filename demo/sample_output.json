@@ -6,8 +6,8 @@
   "stop_loss": 66580.00,
   "take_profit": 68710.00,
   "confidence": 0.72,
-  "reasoning": "[RULE_ENGINE|TREND_UP|C=0.78] Regime=TREND_UP, RSI=38.20, MACD_hist=125.4000, ADX=32.5, confluence=0.78, vol_spike=True",
-  "signals_used": ["rsi", "macd", "macd_signal", "macd_histogram", "bb_upper", "bb_lower", "bb_mid", "bb_width", "bb_pct_b", "atr", "adx", "plus_di", "minus_di", "vwap", "regime", "confluence", "sma50"],
+  "reasoning": "[RULE_ENGINE|TREND_UP|C=0.78] Regime=TREND_UP, RSI=38.20, MACD_hist=125.4000, ADX=32.5, confluence=0.78, vol_spike=True, OBV=rising, fib_zone=382_500, patterns=[hammer(bullish)]",
+  "signals_used": ["rsi", "macd", "macd_signal", "macd_histogram", "bb_upper", "bb_lower", "bb_mid", "bb_width", "bb_pct_b", "atr", "adx", "plus_di", "minus_di", "vwap", "vwap_20", "vwap_50", "obv", "obv_trend", "fib_swing_high", "fib_swing_low", "fib_236", "fib_382", "fib_500", "fib_618", "fib_786", "fib_zone", "candle_patterns", "candle_bullish_count", "candle_bearish_count", "regime", "confluence", "sma50"],
   "source": "RULE_ENGINE",
   "risk_reward_ratio": 1.50,
   "timestamp": "2025-07-15T14:30:00.000Z"
