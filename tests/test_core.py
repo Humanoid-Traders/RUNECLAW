@@ -1163,3 +1163,181 @@ class TestAdvancedAnalysis:
         assert "hammer" in result["reasoning"]
         assert result["direction"] == "LONG"
         assert result["confidence"] > 0.5
+
+
+# ===========================================================================
+#  ENGINE / FSM TESTS
+# ===========================================================================
+from bot.core.engine import RuneClawEngine
+from bot.utils.models import AgentState
+from unittest.mock import AsyncMock, patch, MagicMock
+
+
+class TestEngineFSM:
+    """Tests for engine state machine transitions, confirm/reject, TTL, cooldown."""
+
+    def _make_engine(self) -> RuneClawEngine:
+        """Create engine with mock scanner to avoid network calls."""
+        engine = RuneClawEngine()
+        engine.scanner.scan = AsyncMock(return_value=[])
+        engine.scanner.close = AsyncMock()
+        engine.scanner._get_exchange = AsyncMock()
+        return engine
+
+    def _make_pending_idea(self, trade_id: str = "TI-TEST001",
+                           asset: str = "BTC/USDT",
+                           age_seconds: float = 0) -> TradeIdea:
+        """Create a valid trade idea, optionally aged for TTL tests."""
+        ts = datetime.now(UTC) - timedelta(seconds=age_seconds)
+        return TradeIdea(
+            id=trade_id, asset=asset, direction=Direction.LONG,
+            entry_price=65000, stop_loss=58500, take_profit=72800,
+            confidence=0.75, reasoning="Test idea",
+            signals_used=["rsi", "macd"], source="test", timestamp=ts,
+        )
+
+    @staticmethod
+    def _run(coro):
+        """Helper to run async coroutines in tests (Python 3.13 compatible)."""
+        loop = asyncio.new_event_loop()
+        try:
+            return loop.run_until_complete(coro)
+        finally:
+            loop.close()
+
+    # -- Basic FSM transitions --
+
+    def test_initial_state_is_idle(self):
+        engine = self._make_engine()
+        assert engine.state == AgentState.IDLE
+
+    def test_tick_no_signals_returns_to_idle(self):
+        engine = self._make_engine()
+        self._run(engine._tick())
+        assert engine.state == AgentState.IDLE
+        # Should have transitioned IDLE -> SCANNING -> IDLE
+        states = [t.to_state for t in engine.state_history]
+        assert AgentState.SCANNING in states
+
+    def test_state_history_records_transitions(self):
+        engine = self._make_engine()
+        engine._transition(AgentState.SCANNING, "test scan")
+        engine._transition(AgentState.IDLE, "test done")
+        assert len(engine.state_history) == 2
+        assert engine.state_history[0].from_state == AgentState.IDLE
+        assert engine.state_history[0].to_state == AgentState.SCANNING
+        assert engine.state_history[1].to_state == AgentState.IDLE
+
+    def test_state_history_cap(self):
+        """State history should be capped to prevent unbounded growth."""
+        engine = self._make_engine()
+        for i in range(1100):
+            engine._transition(AgentState.SCANNING if i % 2 == 0 else AgentState.IDLE, f"iter-{i}")
+        assert len(engine.state_history) <= 1000
+
+    # -- Confirm / Reject --
+
+    def test_confirm_trade_success(self):
+        engine = self._make_engine()
+        idea = self._make_pending_idea()
+        engine._pending_ideas[idea.id] = idea
+        engine._pending_atr[idea.id] = 500.0  # ATR for volatility guard
+
+        result = self._run(engine.confirm_trade(idea.id))
+        assert "Executed paper" in result
+        assert idea.id not in engine._pending_ideas
+        assert engine.state == AgentState.IDLE
+
+    def test_confirm_trade_not_found(self):
+        engine = self._make_engine()
+        result = self._run(engine.confirm_trade("TI-GHOST"))
+        assert "not found" in result
+
+    def test_reject_trade_success(self):
+        engine = self._make_engine()
+        idea = self._make_pending_idea()
+        engine._pending_ideas[idea.id] = idea
+        engine._pending_atr[idea.id] = 500.0
+
+        result = engine.reject_trade(idea.id)
+        assert "rejected" in result
+        assert idea.id not in engine._pending_ideas
+        assert idea.id not in engine._pending_atr
+
+    def test_reject_trade_not_found(self):
+        engine = self._make_engine()
+        result = engine.reject_trade("TI-GHOST")
+        assert "not found" in result
+
+    # -- TTL expiry --
+
+    def test_ttl_expires_old_ideas(self):
+        """Ideas older than 300s should be expired during tick."""
+        engine = self._make_engine()
+        old_idea = self._make_pending_idea("TI-OLD", age_seconds=400)
+        fresh_idea = self._make_pending_idea("TI-FRESH", age_seconds=10)
+        engine._pending_ideas["TI-OLD"] = old_idea
+        engine._pending_ideas["TI-FRESH"] = fresh_idea
+        engine._pending_atr["TI-OLD"] = 500.0
+        engine._pending_atr["TI-FRESH"] = 500.0
+
+        self._run(engine._tick())
+        assert "TI-OLD" not in engine._pending_ideas
+        assert "TI-OLD" not in engine._pending_atr
+        assert "TI-FRESH" in engine._pending_ideas
+
+    # -- Cooldown --
+
+    def test_cooldown_blocks_scanning(self):
+        """Engine should stay in COOLING_DOWN when cooldown is active."""
+        engine = self._make_engine()
+        engine._cooldown_until = time.monotonic() + 9999  # far future
+
+        self._run(engine._tick())
+        assert engine.state == AgentState.COOLING_DOWN
+
+    def test_cooldown_expires(self):
+        """After cooldown expires, engine should resume scanning."""
+        engine = self._make_engine()
+        engine._cooldown_until = time.monotonic() - 1  # already expired
+
+        self._run(engine._tick())
+        assert engine._cooldown_until == 0.0
+        assert engine.state == AgentState.IDLE  # completed tick with no signals
+
+    # -- Circuit breaker --
+
+    def test_circuit_breaker_halts_engine(self):
+        """When circuit breaker is active, engine should transition to HALTED."""
+        engine = self._make_engine()
+        engine.risk._circuit_open = True  # set underlying flag directly
+
+        self._run(engine._tick())
+        assert engine.state == AgentState.HALTED
+
+    # -- Pending ideas --
+
+    def test_pending_ideas_property(self):
+        engine = self._make_engine()
+        idea1 = self._make_pending_idea("TI-A")
+        idea2 = self._make_pending_idea("TI-B")
+        engine._pending_ideas["TI-A"] = idea1
+        engine._pending_ideas["TI-B"] = idea2
+        assert len(engine.pending_ideas) == 2
+
+    # -- Confirm re-check rejection --
+
+    def test_confirm_recheck_rejects_when_portfolio_full(self):
+        """If portfolio is full at confirmation time, re-check should reject."""
+        engine = self._make_engine()
+        idea = self._make_pending_idea()
+        engine._pending_ideas[idea.id] = idea
+        engine._pending_atr[idea.id] = 500.0
+
+        # Fill up portfolio to max positions
+        for i in range(5):
+            filler = self._make_pending_idea(f"TI-FILL{i}", asset=f"FILL{i}/USDT")
+            engine.portfolio.open_position(filler, 200.0)
+
+        result = self._run(engine.confirm_trade(idea.id))
+        assert "REJECTED" in result

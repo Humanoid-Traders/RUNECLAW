@@ -258,13 +258,15 @@ skills:
         Signals: RSI_divergence, volume_spike, support_bounce, macro_dxy
 
   # ---------------------------------------------------------------------------
-  # set_alert -- Configure price or condition alerts
+  # set_alert -- Configure price or condition alerts (PLANNED -- not yet implemented)
   # ---------------------------------------------------------------------------
   - name: set_alert
+    status: planned
     description: >
-      Set a price-level or condition-based alert for a specific asset.
+      (PLANNED) Set a price-level or condition-based alert for a specific asset.
       The alert fires once when the condition is met and sends a
       notification through the active interface (Telegram or CLI).
+      NOTE: This skill is defined but not yet implemented in the codebase.
     parameters:
       - name: symbol
         type: string

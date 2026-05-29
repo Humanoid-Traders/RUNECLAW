@@ -163,7 +163,7 @@ is a discrete, auditable action.
 | `execute_paper_trade`| Execute a confirmed trade on the paper portfolio      |
 | `get_portfolio`      | Display paper portfolio summary and stats             |
 | `explain_trade`      | Retrieve full reasoning for a trade idea              |
-| `set_alert`          | Set a price or condition alert for an asset           |
+| `set_alert`          | *(planned)* Set a price or condition alert for an asset |
 
 ### Skill Usage Rules
 
@@ -229,7 +229,7 @@ hard limits enforced by the risk engine.
 | Max daily loss         | 5% equity   | Circuit breaker trips at this level   |
 | Max drawdown           | 10% equity  | Hard stop -- all trading paused       |
 | Max open positions     | 5           | Diversification enforced              |
-| Max correlation        | 0.85        | Prevents concentrated directional bets|
+| Max correlated group   | 2 per group | Prevents concentrated directional bets|
 
 ### Circuit Breaker
 
