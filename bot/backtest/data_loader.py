@@ -8,7 +8,7 @@ from __future__ import annotations
 import csv
 import math
 import random
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
@@ -35,7 +35,7 @@ class DataLoader:
                 try:
                     ts = datetime.fromisoformat(ts_raw)
                 except ValueError:
-                    ts = datetime.utcfromtimestamp(int(ts_raw) / 1000)
+                    ts = datetime.fromtimestamp(int(ts_raw) / 1000, tz=UTC)
 
                 bars.append(BacktestBar(
                     timestamp=ts,
@@ -54,7 +54,7 @@ class DataLoader:
         bars = []
         for candle in raw:
             bars.append(BacktestBar(
-                timestamp=datetime.utcfromtimestamp(candle[0] / 1000),
+                timestamp=datetime.fromtimestamp(candle[0] / 1000, tz=UTC),
                 open=float(candle[1]),
                 high=float(candle[2]),
                 low=float(candle[3]),

@@ -6,6 +6,7 @@ Includes inline keyboard for trade confirmation and rate limiting.
 
 from __future__ import annotations
 
+import threading
 import time
 from collections import defaultdict
 from typing import Optional
@@ -30,15 +31,17 @@ class RateLimiter:
     def __init__(self, max_per_minute: int = 20) -> None:
         self._limit = max_per_minute
         self._calls: dict[int, list[float]] = defaultdict(list)
+        self._lock = threading.Lock()
 
     def allow(self, user_id: int) -> bool:
-        now = time.time()
-        window = [t for t in self._calls[user_id] if now - t < 60]
-        self._calls[user_id] = window
-        if len(window) >= self._limit:
-            return False
-        self._calls[user_id].append(now)
-        return True
+        with self._lock:
+            now = time.time()
+            window = [t for t in self._calls[user_id] if now - t < 60]
+            self._calls[user_id] = window
+            if len(window) >= self._limit:
+                return False
+            self._calls[user_id].append(now)
+            return True
 
 
 class TelegramHandler:
@@ -127,7 +130,7 @@ class TelegramHandler:
     async def _cmd_status(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not self._check_rate(update):
             return
-        mode = self.engine.mode.value
+        mode = self.engine.state.value
         sim = "SIMULATION" if CONFIG.simulation_mode else "LIVE"
         cb = "TRIPPED" if self.engine.risk.circuit_breaker_active else "OK"
         state = self.engine.portfolio.snapshot()
@@ -175,8 +178,9 @@ class TelegramHandler:
         user_id = update.effective_user.id if update.effective_user else 0
         if not self._limiter.allow(user_id):
             import asyncio
-            asyncio.create_task(
-                update.message.reply_text("\u26a0\ufe0f Rate limit exceeded. Please wait.")
+            task = asyncio.create_task(
+                update.message.reply_text("\u26a0\ufe0f Rate limit exceeded.")
             )
+            task.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
             return False
         return True

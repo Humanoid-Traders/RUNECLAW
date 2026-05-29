@@ -29,7 +29,7 @@
 
 **RUNECLAW** is an elite AI trading command system built by **Humanoid Traders** for the Bitget GetClaw Hackathon. It merges multi-timeframe analysis, confluence scoring, regime detection, macro awareness, and risk-first logic into a battle-forged framework -- all controllable through a Telegram bot interface.
 
-The system operates in **simulation-first mode by default**. Every trade idea must pass seven independent risk checks and receive explicit human confirmation before execution. No exceptions.
+The system operates in **simulation-first mode by default**. Every trade idea must pass fifteen independent risk checks and receive explicit human confirmation before execution. No exceptions.
 
 **Key philosophy:** The bot suggests. The human decides. The risk engine enforces.
 
@@ -86,7 +86,7 @@ The system operates in **simulation-first mode by default**. Every trade idea mu
 - Structured `TradeIdea` output with entry, SL, TP, confidence, reasoning
 
 ### Risk Engine (Fail-Closed)
-- **7 independent pre-trade checks** -- ALL must pass
+- **15 independent pre-trade checks** -- ALL must pass
 - Circuit breaker halts trading on daily loss or drawdown breach
 - Position sizing capped at configurable % of equity
 - Max open positions limit
@@ -172,7 +172,7 @@ runeclaw/
 |   |   |-- market_scanner.py   # Bitget market scanner, volume spike detection
 |   |   |-- analyzer.py         # AI + technical analysis, LLM thesis generation
 |   |-- risk/
-|   |   |-- risk_engine.py      # 7-check risk gate, circuit breaker
+|   |   |-- risk_engine.py      # 15-check risk gate, circuit breaker
 |   |   |-- portfolio.py        # Paper trading ledger, PnL tracking
 |   |-- skills/
 |   |   |-- skill_registry.py   # Modular skill system, built-in skills
@@ -201,7 +201,7 @@ runeclaw/
 RUNECLAW is designed with a **fail-closed** philosophy:
 
 - **Simulation by default.** Live trading requires two explicit environment flags.
-- **Every trade passes 7 checks.** One failure = rejection. No overrides.
+- **Every trade passes 15 checks.** One failure = rejection. No overrides.
 - **Circuit breaker.** Auto-halts on daily loss (5%) or max drawdown (10%).
 - **Human-in-the-loop.** No trade executes without explicit confirmation.
 - **Re-check on confirm.** Risk is re-evaluated at confirmation time because market conditions change.

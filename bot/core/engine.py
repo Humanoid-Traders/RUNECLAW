@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from datetime import datetime, UTC
 from typing import Callable, Optional
 
 from bot.config import CONFIG
@@ -122,6 +123,23 @@ class RuneClawEngine:
             return
         elif self._cooldown_until and time.monotonic() >= self._cooldown_until:
             self._cooldown_until = 0.0
+
+        # TTL: expire stale pending ideas
+        now = datetime.now(UTC)
+        expired_ids = [
+            idea_id
+            for idea_id, idea in self._pending_ideas.items()
+            if (now - idea.timestamp).total_seconds() > 300
+        ]
+        for idea_id in expired_ids:
+            expired_idea = self._pending_ideas.pop(idea_id)
+            audit(
+                trade_log,
+                f"Trade idea {idea_id} expired (TTL)",
+                action="ttl_expire",
+                result="EXPIRED",
+                data={"asset": expired_idea.asset, "age_seconds": (now - expired_idea.timestamp).total_seconds()},
+            )
 
         self._transition(AgentState.SCANNING, "beginning scan cycle")
         signals = await self.scanner.scan()

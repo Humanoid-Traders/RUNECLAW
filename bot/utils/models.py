@@ -5,7 +5,7 @@ Immutable by default to prevent accidental mutation during the pipeline.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Optional
 from pydantic import BaseModel, Field
@@ -52,7 +52,7 @@ class MarketSignal(BaseModel):
     volume_usd_24h: float
     volume_spike: bool = False
     momentum_score: float = Field(default=0.0, ge=-1.0, le=1.0)
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 class StateTransition(BaseModel):
@@ -60,14 +60,14 @@ class StateTransition(BaseModel):
     from_state: AgentState
     to_state: AgentState
     reason: str = ""
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 # -- AI Analyzer Output --
 
 class TradeIdea(BaseModel):
     """A fully-formed trade thesis produced by the AI analyzer."""
-    id: str = Field(default_factory=lambda: f"TI-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}")
+    id: str = Field(default_factory=lambda: f"TI-{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}")
     asset: str
     direction: Direction
     entry_price: float
@@ -77,7 +77,7 @@ class TradeIdea(BaseModel):
     reasoning: str
     signals_used: list[str] = Field(default_factory=list)
     source: str = "unknown"
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
     @property
     def risk_reward_ratio(self) -> float:
@@ -99,7 +99,7 @@ class RiskCheck(BaseModel):
     checks_passed: list[str] = Field(default_factory=list)
     checks_failed: list[str] = Field(default_factory=list)
     reason: str = ""
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 # -- Execution Record --
@@ -117,7 +117,7 @@ class TradeExecution(BaseModel):
     pnl: float = 0.0
     exit_price: Optional[float] = None
     is_paper: bool = True
-    opened_at: datetime = Field(default_factory=datetime.utcnow)
+    opened_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     closed_at: Optional[datetime] = None
 
 
@@ -134,7 +134,7 @@ class PortfolioState(BaseModel):
     daily_pnl: float = 0.0
     max_drawdown_pct: float = 0.0
     portfolio_exposure_pct: float = 0.0
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 class MetricsSnapshot(BaseModel):
@@ -161,4 +161,4 @@ class MetricsSnapshot(BaseModel):
     risk_checks_total: int = 0
     risk_checks_rejected: int = 0
     circuit_breaker_trips: int = 0
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))

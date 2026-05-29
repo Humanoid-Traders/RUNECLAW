@@ -54,6 +54,7 @@ class BacktestEngine:
         # Tracking
         self._trades: list[BacktestTrade] = []
         self._equity_curve: list[EquityPoint] = []
+        self._rr_values: list[float] = []  # realized R:R for each closed trade
         self._signals_generated = 0
         self._ideas_generated = 0
         self._ideas_rejected_risk = 0
@@ -76,8 +77,8 @@ class BacktestEngine:
                   "balance": self.config.initial_balance,
               })
 
-        lookback_size = 100  # bars needed for indicator calculation
-        scan_interval = 4    # check for signals every N bars (4h on 1h data)
+        lookback_size = self.config.lookback_size
+        scan_interval = self.config.scan_interval
 
         for i in range(lookback_size, len(bars)):
             current_bar = bars[i]
@@ -144,8 +145,20 @@ class BacktestEngine:
 
         self._ideas_generated += 1
 
-        # 4. Risk gate (same as live)
-        risk_check = self.risk.evaluate(idea)
+        # 4. Compute ATR from the window for the volatility guard
+        atr_value = None
+        if len(window) >= 15:
+            true_ranges = []
+            for j in range(1, min(15, len(window))):
+                h = window[-j].high
+                l = window[-j].low
+                pc = window[-j - 1].close
+                tr = max(h - l, abs(h - pc), abs(l - pc))
+                true_ranges.append(tr)
+            atr_value = sum(true_ranges) / len(true_ranges)
+
+        # 4b. Risk gate (same as live)
+        risk_check = self.risk.evaluate(idea, atr=atr_value)
         if risk_check.verdict == RiskVerdict.REJECTED:
             self._ideas_rejected_risk += 1
             audit(trade_log, f"[BT] Trade REJECTED: {risk_check.reason}",
@@ -164,6 +177,8 @@ class BacktestEngine:
             adjusted_entry = idea.entry_price - slippage
 
         # Store backtest metadata
+        # STRATEGY: trailing stop after 1R profit -- track best_price and trailing state
+        initial_risk = abs(idea.entry_price - idea.stop_loss)
         self._open_bt_positions[idea.id] = {
             "entry_time": bar.timestamp,
             "adjusted_entry": adjusted_entry,
@@ -171,6 +186,10 @@ class BacktestEngine:
             "slippage_entry": slippage * trade.quantity,
             "idea": idea,
             "risk_verdict": risk_check.verdict.value,
+            "best_price": adjusted_entry,  # best favorable price since entry
+            "trailing_active": False,       # activated once profit >= 1R
+            "initial_risk": initial_risk,   # 1R distance for trailing activation
+            "atr_value": atr_value,         # ATR for trailing stop distance
         }
 
         audit(trade_log, f"[BT] Opened {idea.direction.value} {idea.asset}",
@@ -188,21 +207,63 @@ class BacktestEngine:
             if tid not in self._open_bt_positions:
                 continue
 
+            bt_meta = self._open_bt_positions[tid]
             direction = pos.direction
             sl = pos.stop_loss
             tp = pos.take_profit
 
+            # STRATEGY: trailing stop after 1R profit
+            # Update best_price and check if trailing stop should activate
+            entry = bt_meta["adjusted_entry"]
+            initial_risk = bt_meta.get("initial_risk", 0)
+            atr_val = bt_meta.get("atr_value") or initial_risk
+
+            if direction == Direction.LONG:
+                # Track the highest price seen since entry
+                if bar.high > bt_meta["best_price"]:
+                    bt_meta["best_price"] = bar.high
+
+                # Activate trailing once unrealized profit >= 1R
+                if not bt_meta["trailing_active"] and initial_risk > 0:
+                    if bt_meta["best_price"] - entry >= initial_risk:
+                        bt_meta["trailing_active"] = True
+
+                # If trailing is active, compute trailing stop (1.5x ATR below best)
+                if bt_meta["trailing_active"] and atr_val > 0:
+                    trailing_sl = bt_meta["best_price"] - 1.5 * atr_val
+                    # Only tighten, never widen -- use the higher of original SL and trailing SL
+                    if trailing_sl > sl:
+                        sl = trailing_sl
+            else:
+                # SHORT: track the lowest price seen since entry
+                if bar.low < bt_meta["best_price"]:
+                    bt_meta["best_price"] = bar.low
+
+                # Activate trailing once unrealized profit >= 1R
+                if not bt_meta["trailing_active"] and initial_risk > 0:
+                    if entry - bt_meta["best_price"] >= initial_risk:
+                        bt_meta["trailing_active"] = True
+
+                # If trailing is active, compute trailing stop (1.5x ATR above best)
+                if bt_meta["trailing_active"] and atr_val > 0:
+                    trailing_sl = bt_meta["best_price"] + 1.5 * atr_val
+                    # Only tighten, never widen -- use the lower of original SL and trailing SL
+                    if trailing_sl < sl:
+                        sl = trailing_sl
+
             # Check SL: use bar low for LONG, bar high for SHORT
             if direction == Direction.LONG:
                 if bar.low <= sl:
-                    self._close_position(tid, sl, bar, "SL")
+                    reason = "TRAILING_SL" if bt_meta["trailing_active"] else "SL"
+                    self._close_position(tid, sl, bar, reason)
                     continue
                 if bar.high >= tp:
                     self._close_position(tid, tp, bar, "TP")
                     continue
             else:
                 if bar.high >= sl:
-                    self._close_position(tid, sl, bar, "SL")
+                    reason = "TRAILING_SL" if bt_meta["trailing_active"] else "SL"
+                    self._close_position(tid, sl, bar, reason)
                     continue
                 if bar.low <= tp:
                     self._close_position(tid, tp, bar, "TP")
@@ -268,6 +329,12 @@ class BacktestEngine:
             signals_used=idea.signals_used,
         )
         self._trades.append(bt_trade)
+
+        # Record realized R:R using actual entry/SL risk distance
+        risk_dist = abs(bt_meta["adjusted_entry"] - idea.stop_loss)
+        if risk_dist > 0:
+            reward_dist = abs(adjusted_exit - bt_meta["adjusted_entry"])
+            self._rr_values.append(reward_dist / risk_dist)
 
         audit(trade_log, f"[BT] Closed {idea.asset} reason={reason} PnL=${net_pnl:.2f}",
               action="backtest_close", result=reason,
@@ -363,13 +430,8 @@ class BacktestEngine:
         total_comm = sum(t.commission_usd for t in trades)
         total_slip = sum(t.slippage_usd for t in trades)
 
-        # Average R:R
-        rr_values = []
-        for t in trades:
-            risk = abs(t.entry_price - (t.entry_price * 0.97 if t.direction == "LONG" else t.entry_price * 1.03))
-            if risk > 0:
-                rr_values.append(abs(t.pnl_usd) / (t.size_usd * 0.02) if t.size_usd > 0 else 0)
-        avg_rr = sum(rr_values) / len(rr_values) if rr_values else 0
+        # Average R:R -- use realized values computed at trade close time
+        avg_rr = sum(self._rr_values) / len(self._rr_values) if self._rr_values else 0
 
         # Date range
         start_date = bars[0].timestamp.strftime("%Y-%m-%d") if bars else ""

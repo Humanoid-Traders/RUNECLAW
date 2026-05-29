@@ -5,7 +5,7 @@ Extends the core models with backtest-specific structures.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Optional
 from pydantic import BaseModel, Field
 
@@ -23,6 +23,8 @@ class BacktestConfig(BaseModel):
     max_open_positions: int = 5
     confidence_threshold: float = 0.5
     use_llm: bool = False                  # default: rule-based for reproducibility
+    lookback_size: int = 100               # bars needed for indicator calculation
+    scan_interval: int = 4                 # check for signals every N bars
 
 
 class BacktestBar(BaseModel):
@@ -119,4 +121,4 @@ class BacktestResult(BaseModel):
     # Metadata
     duration_seconds: float = 0.0
     bars_processed: int = 0
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))

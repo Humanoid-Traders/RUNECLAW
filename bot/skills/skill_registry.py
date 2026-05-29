@@ -62,10 +62,10 @@ class AnalyzeAssetSkill(BaseSkill):
     async def execute(self, engine: RuneClawEngine, **kwargs: Any) -> str:
         symbol = kwargs.get("symbol", "BTC/USDT")
         from bot.utils.models import MarketSignal
-        from datetime import datetime
+        from datetime import UTC, datetime
         # Create a minimal signal for the analyzer
         sig = MarketSignal(symbol=symbol, price=0, change_pct_24h=0,
-                           volume_usd_24h=0, timestamp=datetime.utcnow())
+                           volume_usd_24h=0, timestamp=datetime.now(UTC))
         try:
             exchange = await engine.scanner._get_exchange()
             ticker = await exchange.fetch_ticker(symbol)
@@ -73,7 +73,7 @@ class AnalyzeAssetSkill(BaseSkill):
                 symbol=symbol, price=float(ticker.get("last", 0)),
                 change_pct_24h=float(ticker.get("percentage", 0) or 0),
                 volume_usd_24h=float(ticker.get("quoteVolume", 0) or 0),
-                timestamp=datetime.utcnow(),
+                timestamp=datetime.now(UTC),
             )
         except Exception:
             return f"Could not fetch data for {symbol}"
@@ -114,7 +114,7 @@ class CheckRiskSkill(BaseSkill):
                 f"Circuit Breaker: {cb}\n"
                 f"Loss Streak: {streak}{streak_warn}\n"
                 f"Open Positions: {state.open_positions} | Groups: {group_str}\n"
-                f"Risk Checks: 10 independent | Fail-closed")
+                f"Risk Checks: 15 independent | Fail-closed")
 
 
 class ExecutePaperTradeSkill(BaseSkill):

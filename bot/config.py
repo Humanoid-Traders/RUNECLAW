@@ -37,14 +37,17 @@ class RiskLimits:
     max_open_positions: int = int(_env_float("MAX_OPEN_POSITIONS", 5))
     max_correlation: float = _env_float("MAX_CORRELATION", 0.85)
     # NEW fields for institutional-grade risk
-    min_risk_reward: float = _env_float("MIN_RISK_REWARD", 1.5)
-    min_confidence: float = _env_float("MIN_CONFIDENCE", 0.5)
+    min_risk_reward: float = _env_float("MIN_RISK_REWARD", 1.2)
+    # SIGNAL QUALITY: 0.60 is the sweet spot -- enough trades to be meaningful,
+    # but still filters weak setups (backtest cliff between 0.60-0.65)
+    min_confidence: float = _env_float("MIN_CONFIDENCE", 0.60)
     max_consecutive_losses: int = int(_env_float("MAX_CONSECUTIVE_LOSSES", 5))
     cooldown_after_loss_seconds: int = int(_env_float("COOLDOWN_AFTER_LOSS_SEC", 300))
     max_portfolio_exposure_pct: float = _env_float("MAX_PORTFOLIO_EXPOSURE_PCT", 80.0)
     max_symbol_exposure_pct: float = _env_float("MAX_SYMBOL_EXPOSURE_PCT", 20.0)
     max_correlation_per_group: int = int(_env_float("MAX_CORRELATION_PER_GROUP", 2))
-    volatility_guard_atr_mult: float = _env_float("VOLATILITY_GUARD_ATR_MULT", 3.0)
+    # Crypto-appropriate threshold: BTC hourly ATR is typically 2-5% of price
+    volatility_guard_atr_mult: float = _env_float("VOLATILITY_GUARD_ATR_MULT", 6.0)
     stale_data_max_age_seconds: int = int(_env_float("STALE_DATA_MAX_AGE_SEC", 300))
     require_stop_loss: bool = _env_bool("REQUIRE_STOP_LOSS", True)
 
@@ -76,6 +79,21 @@ class LLMConfig:
 
 
 @dataclass(frozen=True)
+class AnalyzerConfig:
+    """Tunable parameters for the AI analyzer / confluence engine."""
+    llm_weight: float = 0.6
+    confluence_weight: float = 0.4
+    sma_period: int = 50
+    trend_alignment_bonus: float = 0.10
+    trend_misalignment_penalty: float = 0.15
+    sl_atr_mult_trending: float = 2.5
+    tp_atr_mult_trending: float = 3.5   # was 5.0 -- TPs now reachable, >1.4 R:R with 2.5x SL
+    sl_atr_mult_default: float = 2.5
+    tp_atr_mult_default: float = 3.0   # was 4.5 -- TPs now reachable, >1.2 R:R with 2.5x SL
+    min_candles: int = 30
+
+
+@dataclass(frozen=True)
 class AppConfig:
     """Top-level application configuration."""
 
@@ -95,6 +113,7 @@ class AppConfig:
     exchange: ExchangeConfig = field(default_factory=ExchangeConfig)
     telegram: TelegramConfig = field(default_factory=TelegramConfig)
     llm: LLMConfig = field(default_factory=LLMConfig)
+    analyzer: AnalyzerConfig = field(default_factory=AnalyzerConfig)
 
     def is_live(self) -> bool:
         """Live trading requires BOTH flags to be set explicitly."""

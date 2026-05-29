@@ -24,8 +24,9 @@ Checks:
 
 from __future__ import annotations
 
+import threading
 import time
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Optional
 
 from bot.config import CONFIG
@@ -68,6 +69,7 @@ class RiskEngine:
         self._circuit_breaker_trips = 0
         self._total_checks = 0
         self._total_rejections = 0
+        self._lock = threading.RLock()
 
     @property
     def circuit_breaker_active(self) -> bool:
@@ -88,6 +90,10 @@ class RiskEngine:
 
     def record_trade_result(self, pnl: float) -> None:
         """Track consecutive losses for streak-based circuit breaker."""
+        with self._lock:
+            self._record_trade_result_locked(pnl)
+
+    def _record_trade_result_locked(self, pnl: float) -> None:
         if pnl <= 0:
             self._consecutive_losses += 1
             self._last_loss_time = time.time()
@@ -103,6 +109,10 @@ class RiskEngine:
         Run all 15 pre-trade checks. Returns RiskCheck with APPROVED or REJECTED.
         Pass atr= for volatility guard check.
         """
+        with self._lock:
+            return self._evaluate_locked(idea, atr)
+
+    def _evaluate_locked(self, idea: TradeIdea, atr: Optional[float] = None) -> RiskCheck:
         self._total_checks += 1
         passed: list[str] = []
         failed: list[str] = []
@@ -116,7 +126,7 @@ class RiskEngine:
                 verdict=RiskVerdict.REJECTED,
                 reason=f"Portfolio state unavailable: {exc}",
                 checks_failed=[f"PORTFOLIO_STATE: {exc}"],
-                timestamp=datetime.utcnow(),
+                timestamp=datetime.now(UTC),
             )
 
         position_usd = state.equity_usd * (CONFIG.risk.max_position_pct / 100.0)
@@ -202,7 +212,7 @@ class RiskEngine:
             passed.append("STOP_LOSS: not required (config)")
 
         # 12. Stale data guard
-        data_age = (datetime.utcnow() - idea.timestamp).total_seconds()
+        data_age = (datetime.now(UTC) - idea.timestamp).total_seconds()
         if data_age > CONFIG.risk.stale_data_max_age_seconds:
             failed.append(f"STALE_DATA: idea is {data_age:.0f}s old > {CONFIG.risk.stale_data_max_age_seconds}s max")
         else:
@@ -259,7 +269,7 @@ class RiskEngine:
             checks_passed=passed,
             checks_failed=failed,
             reason=reason,
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(UTC),
         )
 
         audit(risk_log, f"Risk {verdict.value} for {idea.asset} [{len(passed)}P/{len(failed)}F]",

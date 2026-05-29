@@ -5,7 +5,7 @@ Computes trading performance metrics from portfolio history.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Optional
 
 import numpy as np
@@ -26,7 +26,11 @@ class MetricsEngine:
     def record_equity(self, equity: float, ts: Optional[datetime] = None) -> None:
         """Record an equity data point."""
         self._equity_curve.append(equity)
-        self._timestamps.append(ts or datetime.utcnow())
+        self._timestamps.append(ts or datetime.now(UTC))
+        MAX_EQUITY_POINTS = 10000
+        if len(self._equity_curve) > MAX_EQUITY_POINTS:
+            self._equity_curve = self._equity_curve[-MAX_EQUITY_POINTS:]
+            self._timestamps = self._timestamps[-MAX_EQUITY_POINTS:]
 
     def record_risk_check(self, rejected: bool) -> None:
         self._risk_checks_total += 1
@@ -123,7 +127,7 @@ class MetricsEngine:
             risk_checks_total=self._risk_checks_total,
             risk_checks_rejected=self._risk_checks_rejected,
             circuit_breaker_trips=self._circuit_breaker_trips,
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(UTC),
         )
 
     def _compute_sharpe(self, risk_free_rate: float = 0.0) -> float:
@@ -133,8 +137,9 @@ class MetricsEngine:
         returns = np.diff(self._equity_curve) / np.array(self._equity_curve[:-1])
         if np.std(returns) == 0:
             return 0.0
-        excess = returns - risk_free_rate / 252
-        return float(np.mean(excess) / np.std(excess) * np.sqrt(252))
+        # Annualized for hourly data (~2190 trading hours/year)
+        excess = returns - risk_free_rate / 2190
+        return float(np.mean(excess) / np.std(excess) * np.sqrt(2190))
 
     def _compute_sortino(self, risk_free_rate: float = 0.0) -> float:
         """Annualized Sortino from equity curve."""
@@ -144,8 +149,9 @@ class MetricsEngine:
         downside = returns[returns < 0]
         if len(downside) == 0 or np.std(downside) == 0:
             return 0.0
-        excess = np.mean(returns) - risk_free_rate / 252
-        return float(excess / np.std(downside) * np.sqrt(252))
+        # Annualized for hourly data (~2190 trading hours/year)
+        excess = np.mean(returns) - risk_free_rate / 2190
+        return float(excess / np.std(downside) * np.sqrt(2190))
 
     def _compute_max_drawdown(self) -> float:
         """Max drawdown percentage from equity curve."""

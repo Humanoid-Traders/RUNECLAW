@@ -13,8 +13,9 @@ Upgraded with:
 
 from __future__ import annotations
 
+import re
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Optional
 
@@ -51,7 +52,7 @@ class Analyzer:
         5. Structure the result as a TradeIdea.
         Returns None if conviction is too low (<0.5).
         """
-        if len(candles) < 30:
+        if len(candles) < CONFIG.analyzer.min_candles:
             audit(trade_log, "Not enough candle data", action="analyze",
                   result="SKIP", data={"symbol": signal.symbol})
             return None
@@ -68,19 +69,88 @@ class Analyzer:
         indicators["regime"] = regime.value
         indicators["confluence"] = confluence
 
+        # SIGNAL QUALITY: multi-timeframe SMA50 trend alignment
+        sma50 = float(np.mean(closes[-CONFIG.analyzer.sma_period:])) if len(closes) >= CONFIG.analyzer.sma_period else float(np.mean(closes))
+        indicators["sma50"] = round(sma50, 6)
+
         thesis = await self._llm_thesis(signal, indicators)
 
         if thesis is None:
             return None
 
         direction = Direction.LONG if thesis["direction"] == "LONG" else Direction.SHORT
+
+        # SIGNAL QUALITY: ADX regime-aligned trading filter
+        # Counter-trend trades are dangerous -- skip entirely.
+        # RANGE/CHOP: allow with confidence penalty instead of auto-skip.
+        regime_confidence_penalty = 0.0
+        regime_sl_override = None
+        regime_tp_override = None
+
+        if regime == Regime.TREND_UP and direction == Direction.SHORT:
+            audit(trade_log, "Regime filter: TREND_UP but SHORT signal -- skipping",
+                  action="analyze", result="SKIP",
+                  data={"symbol": signal.symbol, "regime": regime.value})
+            return None
+        if regime == Regime.TREND_DOWN and direction == Direction.LONG:
+            audit(trade_log, "Regime filter: TREND_DOWN but LONG signal -- skipping",
+                  action="analyze", result="SKIP",
+                  data={"symbol": signal.symbol, "regime": regime.value})
+            return None
+        if regime == Regime.RANGE:
+            # RANGE: needs high raw confluence (0.70+) to survive after penalty
+            regime_confidence_penalty = 0.10
+            regime_sl_override = 1.5
+            regime_tp_override = 2.5
+            audit(trade_log, "Regime: RANGE -- applying penalty",
+                  action="analyze", result="PENALTY",
+                  data={"symbol": signal.symbol, "regime": regime.value,
+                        "penalty": regime_confidence_penalty})
+        elif regime == Regime.CHOP:
+            # CHOP: needs very high raw confluence (0.75+) to survive after penalty
+            regime_confidence_penalty = 0.15
+            regime_sl_override = 1.5
+            regime_tp_override = 2.0
+            audit(trade_log, "Regime: CHOP -- applying penalty",
+                  action="analyze", result="PENALTY",
+                  data={"symbol": signal.symbol, "regime": regime.value,
+                        "penalty": regime_confidence_penalty})
+
         confidence = max(0.0, min(1.0, thesis.get("confidence", 0.0)))
 
         # Blend LLM/rule-based confidence with confluence score
-        blended_confidence = confidence * 0.6 + confluence * 0.4
+        blended_confidence = confidence * CONFIG.analyzer.llm_weight + confluence * CONFIG.analyzer.confluence_weight
+
+        # SIGNAL QUALITY: multi-timeframe confirmation via SMA50
+        # Acts as a proxy for higher-timeframe trend alignment on 1H data
+        if signal.price > sma50 and direction == Direction.LONG:
+            blended_confidence += CONFIG.analyzer.trend_alignment_bonus   # aligned with uptrend
+        elif signal.price < sma50 and direction == Direction.SHORT:
+            blended_confidence += CONFIG.analyzer.trend_alignment_bonus   # aligned with downtrend
+        elif signal.price > sma50 and direction == Direction.SHORT:
+            blended_confidence -= CONFIG.analyzer.trend_misalignment_penalty   # counter-trend SHORT
+        elif signal.price < sma50 and direction == Direction.LONG:
+            blended_confidence -= CONFIG.analyzer.trend_misalignment_penalty   # counter-trend LONG
+
+        # STRATEGY: volume confirmation for direction alignment
+        # If volume spike aligns with trade direction, boost confidence;
+        # if it conflicts, penalize -- volume should confirm the move.
+        if signal.volume_spike:
+            price_moving_up = signal.change_pct_24h > 0
+            if (price_moving_up and direction == Direction.LONG) or \
+               (not price_moving_up and direction == Direction.SHORT):
+                blended_confidence += 0.05  # volume confirms direction
+            else:
+                blended_confidence -= 0.05  # volume contradicts direction
+
         blended_confidence = round(max(0.0, min(1.0, blended_confidence)), 2)
 
-        if blended_confidence < 0.5:
+        # Apply regime penalty (RANGE: -0.10, CHOP: -0.15, else: 0)
+        blended_confidence = round(max(0.0, blended_confidence - regime_confidence_penalty), 2)
+
+        # SIGNAL QUALITY: threshold at 0.60 (matches config.min_confidence)
+        # RANGE/CHOP trades need high raw confluence to survive after penalty
+        if blended_confidence < CONFIG.risk.min_confidence:
             audit(trade_log, "Low blended confidence -- skipping",
                   action="analyze", result="SKIP",
                   data={"symbol": signal.symbol, "raw_conf": confidence,
@@ -90,15 +160,27 @@ class Analyzer:
         entry = signal.price
         atr = indicators.get("atr", entry * 0.02)
 
-        # Regime-adaptive SL/TP multipliers
-        if regime == Regime.TREND_UP and direction == Direction.LONG:
-            sl_mult, tp_mult = 1.5, 4.0  # tighter stop, wider target in trend
+        # STRATEGY: adaptive ATR multipliers based on volatility regime
+        # Compute normalized volatility: ATR as a percentage of price
+        vol_ratio = atr / entry if entry > 0 else 0.02
+
+        # REGIME-SPECIFIC SL/TP: tighter stops in RANGE/CHOP regimes
+        # Note: high/low volatility overrides take priority over regime overrides
+        if vol_ratio > 0.03:
+            # High volatility: widen stops to avoid noise-induced exits
+            sl_mult, tp_mult = 3.0, 4.5  # R:R = 1.5 (was 6.0 TP -- never hit)
+        elif vol_ratio < 0.01:
+            # Low volatility: tighten stops to lock in smaller moves
+            sl_mult, tp_mult = 2.0, 3.0  # R:R = 1.5 (was 4.0 TP -- never hit)
+        elif regime_sl_override is not None and regime_tp_override is not None:
+            # RANGE/CHOP regime: use tighter SL/TP set by regime filter
+            sl_mult, tp_mult = regime_sl_override, regime_tp_override
+        elif regime == Regime.TREND_UP and direction == Direction.LONG:
+            sl_mult, tp_mult = CONFIG.analyzer.sl_atr_mult_trending, CONFIG.analyzer.tp_atr_mult_trending
         elif regime == Regime.TREND_DOWN and direction == Direction.SHORT:
-            sl_mult, tp_mult = 1.5, 4.0
-        elif regime == Regime.RANGE:
-            sl_mult, tp_mult = 1.5, 2.5  # mean-reversion: tighter both sides
+            sl_mult, tp_mult = CONFIG.analyzer.sl_atr_mult_trending, CONFIG.analyzer.tp_atr_mult_trending
         else:
-            sl_mult, tp_mult = 2.0, 3.0  # default
+            sl_mult, tp_mult = CONFIG.analyzer.sl_atr_mult_default, CONFIG.analyzer.tp_atr_mult_default
 
         stop_loss = entry - sl_mult * atr if direction == Direction.LONG else entry + sl_mult * atr
         take_profit = entry + tp_mult * atr if direction == Direction.LONG else entry - tp_mult * atr
@@ -116,7 +198,7 @@ class Analyzer:
             confidence=blended_confidence,
             reasoning=f"[{source}|{regime.value}|C={confluence:.2f}] {thesis.get('reasoning', '')}",
             signals_used=list(indicators.keys()),
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(UTC),
         )
 
         audit(trade_log, f"Trade idea: {idea.direction.value} {idea.asset}",
@@ -382,12 +464,11 @@ class Analyzer:
                 result["direction"] = "SHORT" if "SHORT" in rest.upper() else "LONG"
             elif upper.startswith("CONFIDENCE"):
                 rest = line_clean.split(":", 1)[-1] if ":" in line_clean else line_clean.split("-", 1)[-1]
-                # Extract any float from the string
-                import re
-                nums = re.findall(r"[\d.]+", rest)
-                if nums:
+                match = re.search(r'(?:CONFIDENCE[:\s]*)?(\d+\.\d+|\d+)', rest, re.IGNORECASE)
+                if match:
                     try:
-                        result["confidence"] = float(nums[0])
+                        parsed = float(match.group(1))
+                        result["confidence"] = max(0.0, min(1.0, parsed))
                     except ValueError:
                         pass
             elif upper.startswith("REASONING"):

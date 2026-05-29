@@ -10,7 +10,8 @@ Upgraded with:
 
 from __future__ import annotations
 
-from datetime import datetime, date
+import threading
+from datetime import UTC, date, datetime
 from typing import Optional, Callable
 
 from bot.config import CONFIG
@@ -35,11 +36,21 @@ class PortfolioTracker:
         self._history: list[TradeExecution] = []
         self._daily_pnl: dict[str, float] = {}  # date-string -> pnl
         self._on_trade_close = on_trade_close  # callback for risk engine streak tracking
+        self._lock = threading.RLock()
+        # STRATEGY: trailing stop after 1R profit
+        # Tracks best favorable price and trailing state per position
+        # Keys: trade_id -> {"best_price": float, "trailing_active": bool,
+        #                     "initial_risk": float, "atr": float}
+        self._trailing_state: dict[str, dict] = {}
 
     # -- Public API --
 
     def open_position(self, idea: TradeIdea, size_usd: float) -> TradeExecution:
         """Open a new paper position from an approved TradeIdea."""
+        with self._lock:
+            return self._open_position_locked(idea, size_usd)
+
+    def _open_position_locked(self, idea: TradeIdea, size_usd: float) -> TradeExecution:
         # Guard: prevent division by zero or negative entry
         if idea.entry_price <= 0:
             audit(trade_log, f"Invalid entry price: {idea.entry_price}",
@@ -67,11 +78,20 @@ class PortfolioTracker:
             take_profit=idea.take_profit,
             status=TradeStatus.EXECUTED,
             is_paper=True,
-            opened_at=datetime.utcnow(),
+            opened_at=datetime.now(UTC),
         )
 
         self.balance -= size_usd
         self._positions[idea.id] = trade
+
+        # STRATEGY: trailing stop after 1R profit -- initialize tracking
+        initial_risk = abs(idea.entry_price - idea.stop_loss)
+        self._trailing_state[idea.id] = {
+            "best_price": idea.entry_price,
+            "trailing_active": False,
+            "initial_risk": initial_risk,
+            "atr": initial_risk / 2.5 if initial_risk > 0 else idea.entry_price * 0.02,
+        }
 
         audit(trade_log, f"Opened {trade.direction.value} {trade.asset}",
               action="open_position", result="EXECUTED",
@@ -81,9 +101,16 @@ class PortfolioTracker:
 
     def close_position(self, trade_id: str, exit_price: float) -> Optional[TradeExecution]:
         """Close an existing position at the given price."""
+        with self._lock:
+            return self._close_position_locked(trade_id, exit_price)
+
+    def _close_position_locked(self, trade_id: str, exit_price: float) -> Optional[TradeExecution]:
         trade = self._positions.pop(trade_id, None)
         if trade is None:
             return None
+
+        # Clean up trailing state
+        self._trailing_state.pop(trade_id, None)
 
         # Guard: exit price must be positive
         if exit_price <= 0:
@@ -102,7 +129,7 @@ class PortfolioTracker:
             "status": TradeStatus.EXECUTED,
             "exit_price": exit_price,
             "pnl": round(pnl, 2),
-            "closed_at": datetime.utcnow(),
+            "closed_at": datetime.now(UTC),
         })
 
         self.balance += size_usd + pnl
@@ -114,8 +141,9 @@ class PortfolioTracker:
         if self._on_trade_close:
             try:
                 self._on_trade_close(pnl)
-            except Exception:
-                pass  # don't let callback errors break portfolio
+            except Exception as exc:
+                audit(trade_log, f"Trade close callback error: {exc}",
+                      action="trade_close_callback", result="ERROR")
 
         audit(trade_log, f"Closed {trade.asset} PnL=${pnl:.2f}",
               action="close_position", result="CLOSED",
@@ -124,13 +152,46 @@ class PortfolioTracker:
         return trade
 
     def check_stops(self, prices: dict[str, float]) -> list[TradeExecution]:
-        """Check all open positions against current prices for SL/TP hits."""
+        """Check all open positions against current prices for SL/TP hits.
+        Includes trailing stop logic for live/paper trading."""
         closed: list[TradeExecution] = []
         for tid, pos in list(self._positions.items()):
             price = prices.get(pos.asset)
             if price is None or price <= 0:
                 continue
-            hit_sl = (price <= pos.stop_loss) if pos.direction == Direction.LONG else (price >= pos.stop_loss)
+
+            sl = pos.stop_loss
+
+            # STRATEGY: trailing stop after 1R profit
+            # Update best_price, activate trailing when profit >= 1R,
+            # then trail at 1.5x ATR behind the best price
+            ts = self._trailing_state.get(tid)
+            if ts is not None:
+                atr = ts.get("atr", 0)
+                initial_risk = ts.get("initial_risk", 0)
+
+                if pos.direction == Direction.LONG:
+                    if price > ts["best_price"]:
+                        ts["best_price"] = price
+                    if not ts["trailing_active"] and initial_risk > 0:
+                        if ts["best_price"] - pos.entry_price >= initial_risk:
+                            ts["trailing_active"] = True
+                    if ts["trailing_active"] and atr > 0:
+                        trailing_sl = ts["best_price"] - 1.5 * atr
+                        if trailing_sl > sl:
+                            sl = trailing_sl
+                else:
+                    if price < ts["best_price"]:
+                        ts["best_price"] = price
+                    if not ts["trailing_active"] and initial_risk > 0:
+                        if pos.entry_price - ts["best_price"] >= initial_risk:
+                            ts["trailing_active"] = True
+                    if ts["trailing_active"] and atr > 0:
+                        trailing_sl = ts["best_price"] + 1.5 * atr
+                        if trailing_sl < sl:
+                            sl = trailing_sl
+
+            hit_sl = (price <= sl) if pos.direction == Direction.LONG else (price >= sl)
             hit_tp = (price >= pos.take_profit) if pos.direction == Direction.LONG else (price <= pos.take_profit)
             if hit_sl or hit_tp:
                 result = self.close_position(tid, price)
@@ -140,6 +201,10 @@ class PortfolioTracker:
 
     def snapshot(self) -> PortfolioState:
         """Current portfolio state."""
+        with self._lock:
+            return self._snapshot_locked()
+
+    def _snapshot_locked(self) -> PortfolioState:
         open_value = sum(
             p.entry_price * p.quantity for p in self._positions.values()
         )
