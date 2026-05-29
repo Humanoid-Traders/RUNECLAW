@@ -505,3 +505,130 @@ class BacktestEngine:
         periods_per_year = (365.25 * 24 * 3600) / seconds_per_obs if seconds_per_obs > 0 else 2190
         excess = np.mean(returns) - risk_free_rate / periods_per_year
         return float(excess / np.std(downside) * np.sqrt(periods_per_year))
+
+
+# ── Walk-Forward Backtest ──────────────────────────────────────────
+
+from pydantic import BaseModel as PydanticBaseModel, Field as PydanticField
+
+
+class WalkForwardResult(PydanticBaseModel):
+    """Results of a walk-forward backtest with train/test splits."""
+    folds: list[dict] = PydanticField(default_factory=list)
+    aggregate_train_return: float = 0.0
+    aggregate_test_return: float = 0.0
+    train_test_gap: float = 0.0  # positive = overfitting indicator
+    consistency_score: float = 0.0  # % of folds where test is profitable
+    confidence_calibration: list[dict] = PydanticField(default_factory=list)
+
+
+async def walk_forward_backtest(
+    bars: list[BacktestBar],
+    config: BacktestConfig,
+    n_folds: int = 3,
+    train_ratio: float = 0.7,
+) -> WalkForwardResult:
+    """
+    Walk-forward backtest: split data into N folds, each with a train and test period.
+    Trains on the first portion and validates on the unseen remainder.
+    This detects overfitting by comparing train vs test performance.
+    """
+    total_bars = len(bars)
+    fold_size = total_bars // n_folds
+    if fold_size < 200:
+        # Need at least 200 bars per fold (100 lookback + 100 tradeable)
+        n_folds = max(1, total_bars // 200)
+        fold_size = total_bars // n_folds if n_folds > 0 else total_bars
+
+    folds = []
+    confidence_buckets: dict[str, dict] = {}  # bucket -> {total, wins}
+
+    for fold_idx in range(n_folds):
+        start = fold_idx * fold_size
+        end = min(start + fold_size, total_bars)
+        fold_bars = bars[start:end]
+
+        split_point = int(len(fold_bars) * train_ratio)
+        train_bars = fold_bars[:split_point]
+        test_bars = fold_bars[split_point:]
+
+        # Run train period
+        train_engine = BacktestEngine(config)
+        train_result = await train_engine.run(train_bars)
+
+        # Run test period
+        test_engine = BacktestEngine(config)
+        test_result = await test_engine.run(test_bars)
+
+        # Collect confidence calibration data from test trades
+        for trade in test_result.trades:
+            bucket = _confidence_bucket(trade.confidence)
+            if bucket not in confidence_buckets:
+                confidence_buckets[bucket] = {"total": 0, "wins": 0, "sum_conf": 0.0}
+            confidence_buckets[bucket]["total"] += 1
+            if trade.net_pnl_usd > 0:
+                confidence_buckets[bucket]["wins"] += 1
+            confidence_buckets[bucket]["sum_conf"] += trade.confidence
+
+        folds.append({
+            "fold": fold_idx + 1,
+            "train_bars": len(train_bars),
+            "test_bars": len(test_bars),
+            "train_return_pct": train_result.total_return_pct,
+            "test_return_pct": test_result.total_return_pct,
+            "train_win_rate": train_result.win_rate,
+            "test_win_rate": test_result.win_rate,
+            "train_trades": train_result.total_trades,
+            "test_trades": test_result.total_trades,
+            "train_sharpe": train_result.sharpe_ratio,
+            "test_sharpe": test_result.sharpe_ratio,
+            "train_max_dd": train_result.max_drawdown_pct,
+            "test_max_dd": test_result.max_drawdown_pct,
+        })
+
+    # Aggregate metrics
+    train_returns = [f["train_return_pct"] for f in folds]
+    test_returns = [f["test_return_pct"] for f in folds]
+    avg_train = sum(train_returns) / len(train_returns) if train_returns else 0
+    avg_test = sum(test_returns) / len(test_returns) if test_returns else 0
+    profitable_tests = sum(1 for r in test_returns if r > 0)
+    consistency = profitable_tests / len(test_returns) if test_returns else 0
+
+    # Confidence calibration table
+    calibration = []
+    for bucket in sorted(confidence_buckets.keys()):
+        data = confidence_buckets[bucket]
+        actual_wr = data["wins"] / data["total"] if data["total"] > 0 else 0
+        avg_conf = data["sum_conf"] / data["total"] if data["total"] > 0 else 0
+        calibration.append({
+            "bucket": bucket,
+            "avg_confidence": round(avg_conf, 3),
+            "actual_win_rate": round(actual_wr, 3),
+            "trades": data["total"],
+            "gap": round(avg_conf - actual_wr, 3),  # positive = overconfident
+        })
+
+    return WalkForwardResult(
+        folds=folds,
+        aggregate_train_return=round(avg_train, 2),
+        aggregate_test_return=round(avg_test, 2),
+        train_test_gap=round(avg_train - avg_test, 2),
+        consistency_score=round(consistency, 2),
+        confidence_calibration=calibration,
+    )
+
+
+def _confidence_bucket(confidence: float) -> str:
+    """Bin confidence into 10% buckets for calibration analysis."""
+    if confidence < 0.5:
+        return "0.00-0.49"
+    elif confidence < 0.6:
+        return "0.50-0.59"
+    elif confidence < 0.7:
+        return "0.60-0.69"
+    elif confidence < 0.8:
+        return "0.70-0.79"
+    elif confidence < 0.9:
+        return "0.80-0.89"
+    else:
+        return "0.90-1.00"

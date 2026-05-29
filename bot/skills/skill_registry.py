@@ -257,11 +257,59 @@ class HaltSkill(BaseSkill):
         )
 
 
+class WalkForwardSkill(BaseSkill):
+    name = "walk_forward"
+    description = "Run walk-forward backtest with train/test splits to detect overfitting"
+
+    async def execute(self, engine: RuneClawEngine, **kwargs: Any) -> str:
+        from bot.backtest.data_loader import DataLoader
+        from bot.backtest.engine import walk_forward_backtest
+        from bot.backtest.models import BacktestConfig
+
+        bars_count = int(kwargs.get("bars", 1440))
+        seed = int(kwargs.get("seed", 42))
+        folds = int(kwargs.get("folds", 3))
+
+        config = BacktestConfig(symbol="BTC/USDT", timeframe="1h")
+        bars = DataLoader.generate_synthetic(bars=bars_count, seed=seed)
+
+        result = await walk_forward_backtest(bars, config, n_folds=folds)
+
+        lines = ["Walk-Forward Backtest Results", "=" * 40]
+        for f in result.folds:
+            lines.append(
+                f"Fold {f['fold']}: Train {f['train_return_pct']:+.2f}% "
+                f"({f['train_trades']} trades) | "
+                f"Test {f['test_return_pct']:+.2f}% "
+                f"({f['test_trades']} trades)"
+            )
+        lines.append("─" * 40)
+        lines.append(f"Avg Train Return: {result.aggregate_train_return:+.2f}%")
+        lines.append(f"Avg Test Return:  {result.aggregate_test_return:+.2f}%")
+        lines.append(f"Train-Test Gap:   {result.train_test_gap:+.2f}% "
+                      f"({'overfitting risk' if result.train_test_gap > 2 else 'acceptable'})")
+        lines.append(f"Consistency:      {result.consistency_score:.0%} folds profitable")
+
+        if result.confidence_calibration:
+            lines.append("")
+            lines.append("Confidence Calibration:")
+            lines.append(f"{'Bucket':<12} {'Avg Conf':>8} {'Win Rate':>9} {'Trades':>7} {'Gap':>6}")
+            for c in result.confidence_calibration:
+                lines.append(
+                    f"{c['bucket']:<12} {c['avg_confidence']:>8.1%} "
+                    f"{c['actual_win_rate']:>9.1%} {c['trades']:>7} "
+                    f"{c['gap']:>+6.1%}"
+                )
+
+        return "\n".join(lines)
+
+
 def build_default_registry() -> SkillRegistry:
     """Create a registry with all built-in skills pre-loaded."""
     registry = SkillRegistry()
     for skill_cls in (ScanMarketSkill, AnalyzeAssetSkill, CheckRiskSkill,
                       ExecutePaperTradeSkill, GetPortfolioSkill, ExplainTradeSkill,
-                      RunBacktestSkill, RejectedTradesSkill, HaltSkill):
+                      RunBacktestSkill, RejectedTradesSkill, HaltSkill,
+                      WalkForwardSkill):
         registry.register(skill_cls())
     return registry

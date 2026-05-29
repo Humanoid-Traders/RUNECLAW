@@ -161,7 +161,10 @@ python -m bot.main --mode scan
 | `/portfolio` | View paper portfolio summary |
 | `/trade` | View and confirm/reject pending trades |
 | `/risk` | Risk metrics and circuit breaker status |
+| `/rejected` | Recent risk-rejected trades with failure reasons |
+| `/backtest` | Run backtest with synthetic data |
 | `/status` | Bot mode, equity, open positions |
+| `/halt` | Emergency kill-switch (trip breaker, cancel all) |
 | `/help` | List all available commands |
 
 Trade confirmation uses Telegram inline keyboards -- tap **Confirm** or **Reject** directly in the chat.

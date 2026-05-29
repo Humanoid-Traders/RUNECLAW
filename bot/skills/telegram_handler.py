@@ -63,6 +63,7 @@ class TelegramHandler:
         app.add_handler(CommandHandler("rejected", self._cmd_rejected))
         app.add_handler(CommandHandler("halt", self._cmd_halt))
         app.add_handler(CommandHandler("backtest", self._cmd_backtest))
+        app.add_handler(CommandHandler("walkforward", self._cmd_walkforward))
         app.add_handler(CommandHandler("help", self._cmd_help))
         app.add_handler(CallbackQueryHandler(self._handle_callback))
         return app
@@ -206,6 +207,21 @@ class TelegramHandler:
         await update.message.reply_text(f"\U0001f4ca *Backtest Results*\n```\n{result}\n```",
                                         parse_mode="Markdown")
 
+    async def _cmd_walkforward(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        if not await self._check_rate(update):
+            return
+        if not self._check_auth(update):
+            await update.message.reply_text("\u26d4 Unauthorized. Contact the bot owner.")
+            return
+        args = ctx.args or []
+        bars = args[0] if args else "1440"
+        folds = args[1] if len(args) > 1 else "3"
+        await update.message.reply_text("\u23f3 Running walk-forward analysis... this may take a moment.")
+        result = await self.registry.get("walk_forward").execute(  # type: ignore
+            self.engine, bars=bars, folds=folds)
+        await update.message.reply_text(f"\U0001f4c8 *Walk-Forward Results*\n```\n{result}\n```",
+                                        parse_mode="Markdown")
+
     async def _cmd_help(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text(
             "\U0001f43e *RUNECLAW Commands*\n\n"
@@ -216,6 +232,7 @@ class TelegramHandler:
             "/risk - Risk metrics & circuit breaker\n"
             "/rejected - Recent risk-rejected trades\n"
             "/backtest - Run backtest (bars seed)\n"
+            "/walkforward - Walk-forward analysis (bars folds)\n"
             "/status - Bot status\n"
             "/halt - Emergency kill-switch\n"
             "/help - This message",

@@ -1461,8 +1461,75 @@ class TestNewSkills:
         assert len(engine.risk._rejection_history) <= 50
 
     def test_default_registry_has_new_skills(self):
-        """Default registry should include rejected_trades and halt."""
+        """Default registry should include rejected_trades, halt, and walk_forward."""
         registry = build_default_registry()
         assert registry.get("rejected_trades") is not None
         assert registry.get("halt") is not None
         assert registry.get("run_backtest") is not None
+        assert registry.get("walk_forward") is not None
+
+
+# ===========================================================================
+#  WALK-FORWARD BACKTEST TESTS
+# ===========================================================================
+from bot.backtest.engine import walk_forward_backtest, _confidence_bucket
+
+
+class TestWalkForward:
+    """Tests for walk-forward backtest and confidence calibration."""
+
+    @staticmethod
+    def _run(coro):
+        loop = asyncio.new_event_loop()
+        try:
+            return loop.run_until_complete(coro)
+        finally:
+            loop.close()
+
+    def test_walk_forward_runs(self):
+        """Walk-forward should complete and return fold results."""
+        from bot.backtest.data_loader import DataLoader
+        from bot.backtest.models import BacktestConfig
+
+        bars = DataLoader.generate_synthetic(bars=600, seed=99)
+        config = BacktestConfig(symbol="BTC/USDT", timeframe="1h")
+        result = self._run(walk_forward_backtest(bars, config, n_folds=2))
+
+        assert len(result.folds) == 2
+        for fold in result.folds:
+            assert "train_return_pct" in fold
+            assert "test_return_pct" in fold
+            assert fold["train_bars"] > 0
+            assert fold["test_bars"] > 0
+
+    def test_walk_forward_consistency(self):
+        """Consistency score should be between 0 and 1."""
+        from bot.backtest.data_loader import DataLoader
+        from bot.backtest.models import BacktestConfig
+
+        bars = DataLoader.generate_synthetic(bars=600, seed=42)
+        config = BacktestConfig(symbol="BTC/USDT", timeframe="1h")
+        result = self._run(walk_forward_backtest(bars, config, n_folds=2))
+
+        assert 0 <= result.consistency_score <= 1.0
+
+    def test_confidence_bucket(self):
+        """Confidence buckets should bin correctly."""
+        assert _confidence_bucket(0.35) == "0.00-0.49"
+        assert _confidence_bucket(0.55) == "0.50-0.59"
+        assert _confidence_bucket(0.65) == "0.60-0.69"
+        assert _confidence_bucket(0.75) == "0.70-0.79"
+        assert _confidence_bucket(0.85) == "0.80-0.89"
+        assert _confidence_bucket(0.95) == "0.90-1.00"
+
+    def test_walk_forward_small_data_adjusts_folds(self):
+        """With too few bars, walk-forward should reduce fold count gracefully."""
+        from bot.backtest.data_loader import DataLoader
+        from bot.backtest.models import BacktestConfig
+
+        bars = DataLoader.generate_synthetic(bars=300, seed=7)
+        config = BacktestConfig(symbol="BTC/USDT", timeframe="1h")
+        # Request 5 folds but only 300 bars — should auto-adjust
+        result = self._run(walk_forward_backtest(bars, config, n_folds=5))
+        assert len(result.folds) <= 5
+        assert len(result.folds) >= 1
