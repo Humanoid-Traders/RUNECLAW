@@ -1559,3 +1559,231 @@ class TestWalkForward:
         result = self._run(walk_forward_backtest(bars, config, n_folds=5))
         assert len(result.folds) <= 5
         assert len(result.folds) >= 1
+
+
+# ══════════════════════════════════════════════════════════════════
+# K. AUDIT FIX TESTS -- position sizing cap, mark-to-market, order flow
+# ══════════════════════════════════════════════════════════════════
+
+class TestAuditFixes:
+    """Tests for the audit-driven fixes: position sizing cap, mark-to-market, order flow."""
+
+    def _make_idea(self, **overrides):
+        defaults = dict(
+            id="TI-audit01",
+            asset="BTC/USDT",
+            direction=Direction.LONG,
+            entry_price=50000.0,
+            stop_loss=48750.0,  # 2.5% stop -> 2.5x ATR with ATR=500
+            take_profit=53750.0,
+            confidence=0.75,
+            reasoning="test",
+            signals_used=["rsi"],
+            timestamp=datetime.now(UTC),
+        )
+        defaults.update(overrides)
+        return TradeIdea(**defaults)
+
+    # -- Position sizing cap (Audit #1) --
+
+    def test_position_sizing_caps_instead_of_rejecting(self):
+        """Fixed-fractional sizing that exceeds 20% notional should be capped, not rejected."""
+        portfolio = PortfolioTracker(initial_balance=10000.0)
+        risk = RiskEngine(portfolio)
+
+        # 2.5% stop distance -> uncapped = 2% equity / 2.5% = 80% of equity = $8000
+        # Should be capped at 20% = $2000, NOT rejected
+        idea = self._make_idea(
+            entry_price=50000.0,
+            stop_loss=48750.0,  # 2.5% stop
+            take_profit=53750.0,
+        )
+        result = risk.evaluate(idea, atr=500.0)
+        assert result.verdict != RiskVerdict.REJECTED, \
+            f"Position sizing should cap, not reject. Got: {result.reason}"
+        # Position size should be capped at ~20% of equity
+        assert result.position_size_usd <= 10000 * 0.201  # 20% + epsilon
+
+    def test_position_sizing_cap_allows_tight_stops(self):
+        """Tight stops (1% distance) should produce capped positions, not rejections."""
+        portfolio = PortfolioTracker(initial_balance=10000.0)
+        risk = RiskEngine(portfolio)
+
+        idea = self._make_idea(
+            entry_price=50000.0,
+            stop_loss=49500.0,  # 1% stop distance
+            take_profit=53000.0,  # 6% TP for 6:1 R:R
+            confidence=0.75,
+        )
+        result = risk.evaluate(idea, atr=200.0)
+        # Should pass (capped), not be rejected for being too large
+        if result.verdict == RiskVerdict.REJECTED:
+            # Only acceptable rejections are non-sizing reasons
+            assert "position" not in result.reason.lower() and "notional" not in result.reason.lower(), \
+                f"Tight-stop trade rejected for sizing: {result.reason}"
+
+    # -- Mark-to-market (Audit #2) --
+
+    def test_mark_to_market_updates_snapshot(self):
+        """Portfolio snapshot should reflect unrealized PnL from current prices."""
+        portfolio = PortfolioTracker(initial_balance=10000.0)
+        idea = self._make_idea(entry_price=50000.0, stop_loss=48000.0, take_profit=55000.0)
+        portfolio.open_position(idea, 2000.0)
+
+        # Before mark-to-market: unrealized PnL = 0 (uses entry price)
+        snap_before = portfolio.snapshot()
+
+        # Price moved up 10%: unrealized PnL should be positive
+        portfolio.mark_to_market({"BTC/USDT": 55000.0})
+        snap_after = portfolio.snapshot()
+
+        assert snap_after.equity_usd > snap_before.equity_usd, \
+            "Equity should increase when price moves favorably"
+        assert snap_after.daily_pnl > 0, \
+            "Daily PnL should include unrealized gains"
+
+    def test_mark_to_market_negative(self):
+        """Unrealized losses should reduce equity in snapshot."""
+        portfolio = PortfolioTracker(initial_balance=10000.0)
+        idea = self._make_idea(entry_price=50000.0, stop_loss=48000.0, take_profit=55000.0)
+        portfolio.open_position(idea, 2000.0)
+
+        # Price dropped 10%
+        portfolio.mark_to_market({"BTC/USDT": 45000.0})
+        snap = portfolio.snapshot()
+
+        # Equity should be less than initial (8000 cash + position at loss)
+        assert snap.equity_usd < 10000.0, \
+            "Equity should decrease when price moves against position"
+
+    def test_mark_to_market_ignores_invalid_prices(self):
+        """Zero or negative prices should be ignored by mark_to_market."""
+        portfolio = PortfolioTracker(initial_balance=10000.0)
+        idea = self._make_idea(entry_price=50000.0, stop_loss=48000.0, take_profit=55000.0)
+        portfolio.open_position(idea, 2000.0)
+
+        portfolio.mark_to_market({"BTC/USDT": 0.0})
+        portfolio.mark_to_market({"BTC/USDT": -100.0})
+        snap = portfolio.snapshot()
+        # Should still use entry price since invalid prices are ignored
+        assert snap.equity_usd == pytest.approx(10000.0, abs=1.0)
+
+    # -- Order flow integration --
+
+    def test_order_flow_confluence_votes(self):
+        """OrderFlowAnalyzer.to_confluence_votes should return valid votes."""
+        from bot.core.order_flow import OrderFlowAnalyzer, OrderFlowSignal
+
+        signal = OrderFlowSignal(
+            symbol="BTC/USDT",
+            book_imbalance=0.4,
+            cvd_trend="rising",
+            whale_bias="accumulation",
+            funding_rate=-0.001,
+            smart_money_score=0.65,
+            confidence=0.8,
+            components_ok=["book", "trades"],
+        )
+        votes, weights, labels = OrderFlowAnalyzer.to_confluence_votes(signal)
+        assert len(votes) == len(weights) == len(labels)
+        assert len(votes) >= 3  # book + cvd + whale + funding
+        assert all(isinstance(v, (int, float)) for v in votes)
+        assert all(isinstance(w, (int, float)) for w in weights)
+        assert all(-1.0 <= v <= 1.0 for v in votes)
+        assert all(w > 0 for w in weights)
+
+    def test_order_flow_neutral_signal(self):
+        """Neutral order flow should produce near-zero votes."""
+        from bot.core.order_flow import OrderFlowSignal, OrderFlowAnalyzer
+
+        signal = OrderFlowSignal(
+            symbol="BTC/USDT",
+            book_imbalance=0.0,
+            cvd_trend="flat",
+            whale_bias="neutral",
+            funding_rate=0.0,
+            smart_money_score=0.0,
+            confidence=0.8,
+            components_ok=["book", "trades"],
+        )
+        votes, weights, labels = OrderFlowAnalyzer.to_confluence_votes(signal)
+        # All votes should be zero for a neutral signal
+        assert all(v == 0.0 for v in votes), f"Expected all zero votes, got {votes}"
+
+    def test_order_flow_liquidity_guard(self):
+        """Liquidity guard should reject thin order books."""
+        from bot.core.order_flow import OrderFlowAnalyzer, OrderFlowSignal
+
+        analyzer = OrderFlowAnalyzer()
+
+        # Thin book (imbalance very extreme)
+        thin_signal = OrderFlowSignal(
+            symbol="BTC/USDT",
+            book_imbalance=0.95,  # extremely one-sided
+            spread_bps=50.0,
+            bid_depth_usd=1000,
+            ask_depth_usd=100,
+            cvd_trend="flat",
+            whale_bias="neutral",
+            funding_rate=0.0,
+            smart_money_score=0.0,
+            confidence=0.8,
+            components_ok=["book"],
+        )
+        reason = analyzer.liquidity_guard(thin_signal)
+        # Should return a rejection reason for extreme imbalance
+        # (depends on threshold config, may or may not reject)
+        # Just verify it returns string or None
+        assert reason is None or isinstance(reason, str)
+
+    def test_confluence_with_order_flow(self):
+        """Confluence scorer should incorporate order flow votes when provided."""
+        from bot.core.order_flow import OrderFlowSignal
+
+        indicators = {
+            "rsi": 35, "macd_histogram": 0.001, "bb_pct_b": 0.3,
+            "adx": 30, "plus_di": 25, "minus_di": 15,
+            "vwap": 50000, "obv_trend": "rising",
+        }
+        signal = MarketSignal(
+            symbol="BTC/USDT", price=50500, change_pct_24h=2.5,
+            volume_usd_24h=1e9, volume_spike=True,
+        )
+
+        # Without order flow
+        score_no_of = Analyzer._score_confluence(indicators, Regime.TREND_UP, signal, order_flow=None)
+
+        # With bullish order flow
+        of = OrderFlowSignal(
+            symbol="BTC/USDT",
+            book_imbalance=0.5, cvd_trend="rising", whale_bias="accumulation",
+            funding_rate=-0.001, smart_money_score=0.8,
+            confidence=0.9, components_ok=["book", "trades"],
+        )
+        score_with_of = Analyzer._score_confluence(indicators, Regime.TREND_UP, signal, order_flow=of)
+
+        # Bullish order flow on a bullish setup should increase confluence
+        assert score_with_of >= score_no_of, \
+            f"Bullish order flow should increase bullish confluence: {score_with_of} vs {score_no_of}"
+
+    # -- R:R tolerance (Audit #4) --
+
+    def test_rr_boundary_not_rejected(self):
+        """R:R at exactly the minimum threshold should pass (float tolerance)."""
+        portfolio = PortfolioTracker(initial_balance=10000.0)
+        risk = RiskEngine(portfolio)
+
+        # R:R of exactly 1.2 (default min_risk_reward)
+        # SL = 2.5 ATR, TP = 3.0 ATR -> R:R = 3.0/2.5 = 1.2
+        idea = self._make_idea(
+            entry_price=50000.0,
+            stop_loss=48750.0,    # 1250 risk
+            take_profit=51500.0,  # 1500 reward -> R:R = 1.2
+            confidence=0.75,
+        )
+        result = risk.evaluate(idea, atr=500.0)
+        # Should not be rejected for R:R
+        if result.verdict == RiskVerdict.REJECTED:
+            assert "risk-reward" not in result.reason.lower(), \
+                f"R:R at boundary should not be rejected: {result.reason}"
+

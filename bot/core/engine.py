@@ -15,6 +15,7 @@ from typing import Callable, Optional
 from bot.config import CONFIG
 from bot.core.analyzer import Analyzer
 from bot.core.market_scanner import MarketScanner
+from bot.core.order_flow import OrderFlowAnalyzer
 from bot.risk.portfolio import PortfolioTracker
 from bot.risk.risk_engine import RiskEngine
 from bot.utils.logger import audit, system_log, trade_log
@@ -38,6 +39,7 @@ class RuneClawEngine:
         self.portfolio = PortfolioTracker()
         self.scanner = MarketScanner()
         self.analyzer = Analyzer()
+        self.order_flow = OrderFlowAnalyzer()
         self.risk = RiskEngine(self.portfolio)
         # C1 fix: wire trade-close callback so portfolio closes feed risk streak tracking
         self.portfolio._on_trade_close = self.risk.record_trade_result
@@ -178,7 +180,15 @@ class RuneClawEngine:
             )
             return None
 
-        idea = await self.analyzer.analyze(signal, ohlcv)
+        # Order flow analysis (fail-closed: returns neutral on any error)
+        of_signal = None
+        try:
+            of_signal = await self.order_flow.analyze(exchange, signal.symbol)
+        except Exception as exc:
+            audit(system_log, f"Order flow analysis failed: {exc}",
+                  action="order_flow", result="ERROR")
+
+        idea = await self.analyzer.analyze(signal, ohlcv, order_flow=of_signal)
         if idea is None:
             return None
 
@@ -197,6 +207,16 @@ class RuneClawEngine:
         # Risk gate — pass ATR so all 16 checks run
         self._transition(AgentState.RISK_CHECK, f"evaluating {signal.symbol}")
         risk_check = self.risk.evaluate(idea, atr=atr_value)
+
+        # Check #17: liquidity guard from order flow (fail-open if no data)
+        if of_signal is not None:
+            liq_reason = self.order_flow.liquidity_guard(of_signal)
+            if liq_reason:
+                audit(trade_log, f"Trade REJECTED by liquidity guard: {liq_reason}",
+                      action="liquidity_guard", result="REJECTED")
+                self._transition(AgentState.ANALYZING, "liquidity rejected, continuing")
+                return None
+
         if risk_check.verdict == RiskVerdict.REJECTED:
             audit(
                 trade_log,
@@ -285,6 +305,8 @@ class RuneClawEngine:
             exchange = await self.scanner._get_exchange()
             tickers = await exchange.fetch_tickers()
             prices = {s: float(t.get("last", 0)) for s, t in tickers.items()}
+            # Mark-to-market: feed current prices so snapshot() reflects unrealized PnL
+            self.portfolio.mark_to_market(prices)
             closed = self.portfolio.check_stops(prices)
             for c in closed:
                 audit(

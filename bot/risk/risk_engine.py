@@ -154,11 +154,15 @@ class RiskEngine:
         # Fixed-fractional risk sizing: size by stop distance, not flat notional.
         # risk_budget = equity * max_position_pct (the max we're willing to lose)
         # position_usd = risk_budget / (stop_distance / entry_price)
-        # This ensures each trade risks the same dollar amount regardless of stop width.
+        # Then CAP at 20% notional so no single position dominates the portfolio.
+        # The cap means tight-stop trades risk less than the full budget — this is
+        # the correct tradeoff for a risk-first system.
         stop_distance_pct = abs(idea.entry_price - idea.stop_loss) / idea.entry_price if idea.entry_price > 0 else 0
         if stop_distance_pct > 0:
             risk_budget = state.equity_usd * (CONFIG.risk.max_position_pct / 100.0)
-            position_usd = risk_budget / stop_distance_pct  # check #2 enforces 20% cap
+            uncapped = risk_budget / stop_distance_pct
+            max_notional = state.equity_usd * (CONFIG.risk.max_symbol_exposure_pct / 100.0)
+            position_usd = min(uncapped, max_notional)  # cap, don't reject
         # else: fall back to flat notional (computed above)
 
         # 1. Circuit breaker
@@ -167,15 +171,13 @@ class RiskEngine:
         else:
             passed.append("CIRCUIT_BREAKER: OK")
 
-        # 2. Position size — verify the notional exposure stays within limits
+        # 2. Position size — safety-net validation that cap was applied
         if state.equity_usd <= 0:
             failed.append("EQUITY: zero or negative equity")
         else:
-            # H4 fix: check notional position size as % of equity (not risk amount,
-            # which is tautologically bounded by the sizing formula above).
             notional_pct = (position_usd / state.equity_usd * 100)
-            max_notional_pct = 20.0  # hard cap: no single position > 20% of equity
-            if notional_pct <= max_notional_pct:
+            max_notional_pct = CONFIG.risk.max_symbol_exposure_pct  # 20% default
+            if notional_pct <= max_notional_pct + 0.01:  # tiny epsilon for float math
                 passed.append(f"POSITION_SIZE: notional {notional_pct:.1f}% <= {max_notional_pct}%")
             else:
                 failed.append(f"POSITION_SIZE: notional {notional_pct:.1f}% > {max_notional_pct}%")
@@ -201,9 +203,9 @@ class RiskEngine:
         else:
             passed.append(f"OPEN_POSITIONS: {state.open_positions} OK")
 
-        # 6. Risk-reward ratio
+        # 6. Risk-reward ratio (0.01 tolerance for float rounding at boundary)
         rr = idea.risk_reward_ratio
-        if rr < CONFIG.risk.min_risk_reward:
+        if rr < CONFIG.risk.min_risk_reward - 0.01:
             failed.append(f"RISK_REWARD: {rr} < {CONFIG.risk.min_risk_reward} minimum")
         else:
             passed.append(f"RISK_REWARD: {rr} OK")

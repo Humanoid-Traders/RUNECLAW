@@ -5,7 +5,7 @@ Upgraded with:
   - Proper MACD signal line (full history EMA, not truncated)
   - True ATR (high-low, high-close, low-close) instead of close-only proxy
   - ADX-14 for trend strength / regime detection
-  - VWAP approximation + anchored VWAP (20/50-bar) for institutional bias
+  - VWAP approximation + rolling VWAP (20/50-bar) for institutional bias
   - On-Balance Volume (OBV) with trend detection
   - Fibonacci retracement levels (swing high/low, 23.6%/38.2%/50%/61.8%/78.6%)
   - Candlestick pattern recognition (doji, hammer, engulfing, harami, morning/evening star, etc.)
@@ -45,7 +45,7 @@ class Analyzer:
     def __init__(self) -> None:
         self._llm = AsyncOpenAI(api_key=CONFIG.llm.api_key) if CONFIG.llm.api_key else None
 
-    async def analyze(self, signal: MarketSignal, candles: list[list[float]]) -> Optional[TradeIdea]:
+    async def analyze(self, signal: MarketSignal, candles: list[list[float]], order_flow=None) -> Optional[TradeIdea]:
         """
         Full analysis pipeline:
         1. Compute technical indicators from OHLCV candles.
@@ -83,7 +83,7 @@ class Analyzer:
             indicators["candle_bearish_count"] = len(bearish_patterns)
 
         regime = self._detect_regime(indicators)
-        confluence = self._score_confluence(indicators, regime, signal)
+        confluence = self._score_confluence(indicators, regime, signal, order_flow=order_flow)
 
         indicators["regime"] = regime.value
         indicators["confluence"] = confluence
@@ -92,7 +92,7 @@ class Analyzer:
         sma50 = float(np.mean(closes[-CONFIG.analyzer.sma_period:])) if len(closes) >= CONFIG.analyzer.sma_period else float(np.mean(closes))
         indicators["sma50"] = round(sma50, 6)
 
-        thesis = await self._llm_thesis(signal, indicators)
+        thesis = await self._llm_thesis(signal, indicators, order_flow=order_flow)
 
         if thesis is None:
             return None
@@ -317,7 +317,7 @@ class Analyzer:
             vwap = cum_tp_vol[-1] / cum_vol[-1] if cum_vol[-1] > 0 else closes[-1]
             results["vwap"] = round(float(vwap), 6)
 
-            # Anchored VWAP variants (20-bar and 50-bar lookbacks)
+            # Rolling VWAP variants (20-bar and 50-bar lookbacks)
             for anchor_len, label in [(20, "vwap_20"), (50, "vwap_50")]:
                 if len(volumes) >= anchor_len:
                     seg_tp = typical_price[-anchor_len:]
@@ -378,7 +378,7 @@ class Analyzer:
     # -- Confluence Scoring --
 
     @staticmethod
-    def _score_confluence(indicators: dict, regime: Regime, signal: MarketSignal) -> float:
+    def _score_confluence(indicators: dict, regime: Regime, signal: MarketSignal, order_flow=None) -> float:
         """
         Score agreement across indicators on a 0-1 scale.
 
@@ -491,6 +491,13 @@ class Analyzer:
             votes.append(0.0)
             weights.append(0.3)
 
+        # Order flow votes (if available)
+        if order_flow is not None:
+            from bot.core.order_flow import OrderFlowAnalyzer
+            of_votes, of_weights, _ = OrderFlowAnalyzer.to_confluence_votes(order_flow)
+            votes += of_votes
+            weights += of_weights
+
         # Weighted confluence
         total_weight = sum(weights)
         if total_weight == 0:
@@ -503,7 +510,7 @@ class Analyzer:
 
     # -- LLM Reasoning --
 
-    async def _llm_thesis(self, signal: MarketSignal, indicators: dict) -> Optional[dict]:
+    async def _llm_thesis(self, signal: MarketSignal, indicators: dict, order_flow=None) -> Optional[dict]:
         """Ask the LLM for a directional call with reasoning."""
         if self._llm is None:
             result = self._rule_based_thesis(signal, indicators)
@@ -526,7 +533,21 @@ class Analyzer:
             f"Fib_zone={indicators.get('fib_zone', 'N/A')}, "
             f"Fib_618={indicators.get('fib_618', 'N/A')}, "
             f"Fib_382={indicators.get('fib_382', 'N/A')}\n"
-            f"Candle_patterns={indicators.get('candle_patterns', {})}\n\n"
+            f"Candle_patterns={indicators.get('candle_patterns', {})}\n"
+        )
+
+        # Append order flow context if available
+        if order_flow is not None:
+            funding_str = f"{order_flow.funding_rate:.6f}" if order_flow.funding_rate is not None else "N/A"
+            prompt += (
+                f"Order_flow: book_imbalance={order_flow.book_imbalance:.2f}, "
+                f"cvd_trend={order_flow.cvd_trend}, "
+                f"whale_bias={order_flow.whale_bias}, "
+                f"funding_rate={funding_str}, "
+                f"smart_money_score={order_flow.smart_money_score:.2f}\n"
+            )
+
+        prompt += (
             "Respond in EXACTLY this format (no markdown):\n"
             "DIRECTION: LONG or SHORT\n"
             "CONFIDENCE: 0.0-1.0\n"

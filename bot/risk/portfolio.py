@@ -43,6 +43,8 @@ class PortfolioTracker:
         # Keys: trade_id -> {"best_price": float, "trailing_active": bool,
         #                     "initial_risk": float, "atr": float}
         self._trailing_state: dict[str, dict] = {}
+        # Mark-to-market: latest prices for unrealized PnL
+        self._last_prices: dict[str, float] = {}  # asset -> price
 
     # -- Public API --
 
@@ -182,10 +184,26 @@ class PortfolioTracker:
         with self._lock:
             return self._snapshot_locked()
 
+    def mark_to_market(self, prices: dict[str, float]) -> None:
+        """Update last-known prices for unrealized PnL computation.
+        Call this before snapshot() whenever fresh prices are available."""
+        with self._lock:
+            for asset, price in prices.items():
+                if price > 0:
+                    self._last_prices[asset] = price
+
     def _snapshot_locked(self) -> PortfolioState:
-        open_value = sum(
-            p.entry_price * p.quantity for p in self._positions.values()
-        )
+        # Mark-to-market: use last known prices if available, else entry price
+        open_value = 0.0
+        unrealized_pnl = 0.0
+        for p in self._positions.values():
+            current_price = self._last_prices.get(p.asset, p.entry_price)
+            open_value += current_price * p.quantity
+            if p.direction == Direction.LONG:
+                unrealized_pnl += (current_price - p.entry_price) * p.quantity
+            else:
+                unrealized_pnl += (p.entry_price - current_price) * p.quantity
+
         equity = self.balance + open_value
         self._update_peak()
 
@@ -193,7 +211,9 @@ class PortfolioTracker:
         total = len(self._history)
         # M5 fix: use UTC date, not local timezone
         today_key = datetime.now(UTC).date().isoformat()
-        daily_pnl = self._daily_pnl.get(today_key, 0.0)
+        realized_daily = self._daily_pnl.get(today_key, 0.0)
+        # Include unrealized PnL in daily figure for risk checks
+        daily_pnl = realized_daily + unrealized_pnl
         drawdown = ((self._peak_equity - equity) / self._peak_equity * 100) if self._peak_equity > 0 else 0
 
         return PortfolioState(
@@ -228,7 +248,10 @@ class PortfolioTracker:
                 del self._daily_pnl[old_key]
 
     def _update_peak(self) -> None:
-        open_val = sum(p.entry_price * p.quantity for p in self._positions.values())
+        open_val = sum(
+            self._last_prices.get(p.asset, p.entry_price) * p.quantity
+            for p in self._positions.values()
+        )
         equity = self.balance + open_val
         if equity > self._peak_equity:
             self._peak_equity = equity
