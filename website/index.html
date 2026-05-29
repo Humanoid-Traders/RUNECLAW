@@ -10,9 +10,16 @@
 <meta property="og:description" content="Institutional-grade AI trading assistant with 16 fail-closed risk checks, 9-state FSM, and human-in-the-loop confirmation. Simulation-first.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://lgl3crf9.mule.page/">
+<meta property="og:image" content="https://lgl3crf9.mule.page/og_image_1200x630.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="RUNECLAW — AI Trading Command Core">
 <meta name="twitter:description" content="AI trading assistant with 16 fail-closed risk checks. Built for Bitget GetClaw Hackathon by Humanoid Traders.">
+<meta name="twitter:image" content="https://lgl3crf9.mule.page/og_image_1200x630.jpg">
+<link rel="icon" type="image/png" sizes="256x256" href="app_icon_256.png">
+<link rel="icon" type="image/png" sizes="512x512" href="app_icon_512.png">
+<link rel="apple-touch-icon" href="app_icon_512.png">
 <link rel="canonical" href="https://lgl3crf9.mule.page/">
 <meta name="google-site-verification" content="IcG28X1xg9HFbxYubMHnk2cIr6YAKRo9V5AUEd-Ws7U" />
 <meta name="google-site-verification" content="bp37kdQKB4qmgSO6gt66OaUKuNP9enunEyZ_LCWnjys" />
@@ -756,6 +763,19 @@ section {
   transition: all 0.5s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
+.feature-card .fc-thumb {
+  position: absolute;
+  bottom: -10px; right: -10px;
+  width: 120px; height: 80px;
+  object-fit: cover;
+  border-radius: 6px;
+  opacity: 0.08;
+  pointer-events: none;
+  transition: opacity 0.5s;
+}
+
+.feature-card:hover .fc-thumb { opacity: 0.15; }
+
 .feature-card::before {
   content: '';
   position: absolute;
@@ -1117,6 +1137,31 @@ section {
 .tech-dot.pydantic { background: #e92063; }
 .tech-dot.llm { background: #10a37f; }
 .tech-dot.next { background: #fff; }
+
+/* ═══════════════════════════════════════════
+   CERTIFICATION BADGES
+   ═══════════════════════════════════════════ */
+
+.badge-row {
+  display: flex;
+  justify-content: center;
+  gap: 32px;
+  margin-top: 48px;
+  flex-wrap: wrap;
+}
+
+.badge-row img {
+  height: 56px;
+  width: auto;
+  opacity: 0.7;
+  transition: opacity 0.4s, transform 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+  filter: drop-shadow(0 0 12px rgba(42, 106, 220, 0.15));
+}
+
+.badge-row img:hover {
+  opacity: 1;
+  transform: scale(1.05);
+}
 
 /* ═══════════════════════════════════════════
    FOOTER
@@ -1757,7 +1802,7 @@ footer {
   background:
     radial-gradient(ellipse 50% 35% at 50% 46%, rgba(4,6,12,0.92) 0%, rgba(4,6,12,0.6) 100%),
     linear-gradient(180deg, rgba(4,6,12,0.5) 0%, rgba(4,6,12,0.35) 25%, rgba(4,6,12,0.55) 65%, var(--void) 100%),
-    url('hero-main.jpg') center 20% / cover no-repeat;
+    url('hero_banner_1920x1080.jpg') center 20% / cover no-repeat;
 }
 
 /* Lightning bolt decorations */
@@ -2174,10 +2219,10 @@ footer {
 <!-- ═══ CINEMATIC IMAGE BREAK ═══ -->
 <div class="img-section">
   <div class="img-parallax">
-    <img src="hero-features.jpg" alt="RUNECLAW Unleash the Power" loading="lazy" style="filter: brightness(0.35) contrast(1.2) saturate(1.2);">
+    <img src="infographic_system_architecture.png" alt="RUNECLAW System Architecture" loading="lazy" style="filter: brightness(0.55) contrast(1.15) saturate(1.1);">
     <div class="img-overlay">
-      <h3>Precision Intelligence<br>Battle-Tested Framework</h3>
-      <p>Pattern Recognition &middot; Confluence Scoring &middot; Risk-First Execution</p>
+      <h3>System Architecture<br>Battle-Tested Framework</h3>
+      <p>Inputs &rarr; Agent Core &rarr; Risk &amp; Execution &rarr; Evidence</p>
     </div>
   </div>
 </div>
@@ -2231,36 +2276,42 @@ footer {
   </div>
   <div class="features-grid">
     <div class="feature-card reveal reveal-delay-1">
+      <img class="fc-thumb" src="dashboard_card.png" alt="">
       <span class="feature-icon">&#128225;</span>
       <div class="feature-name">Multi-Timeframe Scan</div>
       <div class="feature-desc">Pattern detection, structure analysis, VWAP levels, volume anomalies, and regime alignment across all timeframes.</div>
       <div class="feature-tag">Real-time scanning</div>
     </div>
     <div class="feature-card reveal reveal-delay-2">
+      <img class="fc-thumb" src="mcp_card.png" alt="">
       <span class="feature-icon">&#129504;</span>
       <div class="feature-name">Confluence Score Model</div>
       <div class="feature-desc">AI-powered confluence scoring with LLM thesis generation. RSI, MACD, Bollinger Bands, OBV, ADX-14, VWAP, and SMA-50 trend alignment fused into a single confidence metric.</div>
       <div class="feature-tag">Explainable AI</div>
     </div>
     <div class="feature-card reveal reveal-delay-3">
+      <img class="fc-thumb" src="risk_engine_card.png" alt="">
       <span class="feature-icon">&#128737;</span>
       <div class="feature-name">Fail-Closed Risk Engine</div>
       <div class="feature-desc">16 pre-trade checks: position size, daily loss, drawdown, positions, R:R, confidence, correlation, loss streak, entry price, stop-loss required, stale data, cooldown, portfolio exposure, per-symbol exposure, volatility guard, circuit breaker.</div>
       <div class="feature-tag">Zero tolerance</div>
     </div>
     <div class="feature-card reveal reveal-delay-1">
+      <img class="fc-thumb" src="paper_card.png" alt="">
       <span class="feature-icon">&#128176;</span>
       <div class="feature-name">Paper Trading First</div>
       <div class="feature-desc">$10,000 virtual balance by default. Full position lifecycle with PnL tracking, win rate, and drawdown calculation. Prove it before you risk it.</div>
       <div class="feature-tag">Simulation mode</div>
     </div>
     <div class="feature-card reveal reveal-delay-2">
+      <img class="fc-thumb" src="audit_card.png" alt="">
       <span class="feature-icon">&#128172;</span>
       <div class="feature-name">Telegram Command Center</div>
       <div class="feature-desc">Full bot interface: /scan, /analyze, /trade, /portfolio, /risk, /status. Inline keyboards for trade confirmation. Rate-limited per user.</div>
       <div class="feature-tag">Chat-native</div>
     </div>
     <div class="feature-card reveal reveal-delay-3">
+      <img class="fc-thumb" src="backtest_card.png" alt="">
       <span class="feature-icon">&#128202;</span>
       <div class="feature-name">Regime Detection</div>
       <div class="feature-desc">Identifies market regime (trend, range, chop) with volatility states and correlation signals. Adapts strategy to current conditions.</div>
@@ -2275,17 +2326,17 @@ footer {
 <!-- ═══ SCAN ELITE SHOWCASE ═══ -->
 <div class="img-duo">
   <div class="img-card reveal">
-    <img src="scan-elite.jpg" alt="RUNECLAW Scan Elite" loading="lazy">
+    <img src="infographic_risk_engine_flow.png" alt="RUNECLAW Fail-Closed Risk Engine" loading="lazy">
     <div class="img-cap">
-      <span>Pattern + Structure Analysis</span>
-      <h4>Scan Elite Framework</h4>
+      <span>Missing, Stale, or Unsafe = NO TRADE</span>
+      <h4>Fail-Closed Risk Engine</h4>
     </div>
   </div>
   <div class="img-card reveal reveal-delay-2">
-    <img src="scan-elite-2.jpg" alt="RUNECLAW Formula" loading="lazy" style="object-position: center bottom;">
+    <img src="infographic_agentic_loop.png" alt="RUNECLAW Agentic Trading Loop" loading="lazy">
     <div class="img-cap">
-      <span>Adapt &middot; Execute &middot; Evolve</span>
-      <h4>The Runeclaw Formula</h4>
+      <span>Perception &rarr; Decision &rarr; Risk &rarr; Audit</span>
+      <h4>Agentic Trading Loop</h4>
     </div>
   </div>
 </div>
@@ -2609,10 +2660,10 @@ aligned.
 <!-- ═══ CINEMATIC IMAGE — README ═══ -->
 <div class="img-section">
   <div class="img-parallax">
-    <img src="hero-readme.jpg" alt="RUNECLAW Command Core Documentation" loading="lazy" style="filter: brightness(0.15) contrast(1.4) saturate(1.5);">
+    <img src="website_header_2400x800.jpg" alt="RUNECLAW Command Core Documentation" loading="lazy" style="filter: brightness(0.3) contrast(1.3) saturate(1.3);">
     <div class="img-overlay">
-      <h3>Documentation</h3>
-      <p>Architecture &middot; Setup &middot; Configuration</p>
+      <h3>Command Core</h3>
+      <p>Paper-First Agentic Trading Stack</p>
     </div>
   </div>
 </div>
@@ -2630,6 +2681,10 @@ aligned.
     <div class="tech-badge"><span class="tech-dot pydantic"></span>Pydantic</div>
     <div class="tech-badge"><span class="tech-dot llm"></span>LLM / OpenAI</div>
     <div class="tech-badge"><span class="tech-dot next"></span>Next.js</div>
+  </div>
+  <div class="badge-row reveal reveal-delay-2">
+    <img src="badge_audit_ready.svg" alt="Audit Ready" title="Audit Ready">
+    <img src="badge_bitget_aligned.svg" alt="Bitget Hub Aligned" title="Bitget Hub Aligned">
   </div>
 </section>
 
