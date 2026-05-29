@@ -22,6 +22,7 @@ from bot.risk.risk_engine import RiskEngine
 from bot.risk.portfolio import PortfolioTracker
 from bot.utils.logger import audit, system_log, trade_log
 from bot.utils.models import Direction, MarketSignal, RiskVerdict
+from bot.utils.trailing import make_trailing_state, update_trailing_stop
 
 
 class BacktestEngine:
@@ -182,13 +183,14 @@ class BacktestEngine:
         slipped_idea = idea.model_copy(update={"entry_price": round(adjusted_entry, 6)})
         trade = self.portfolio.open_position(slipped_idea, size_usd)
 
-        # Store backtest metadata
-        # STRATEGY: trailing stop after 1R profit -- track best_price and trailing state
+        # STRATEGY: trailing stop after 1R profit -- use shared utility
         initial_risk = abs(idea.entry_price - idea.stop_loss)
         # M2 fix: read sl_mult from config instead of hardcoding
         from bot.config import CONFIG as _CFG
         sl_mult = _CFG.analyzer.sl_atr_mult_default
         canonical_atr = initial_risk / sl_mult if initial_risk > 0 else (atr_value or idea.entry_price * 0.02)
+        trailing = make_trailing_state(adjusted_entry, idea.direction.value, initial_risk, canonical_atr)
+        trailing["entry_price"] = adjusted_entry
         self._open_bt_positions[idea.id] = {
             "entry_time": bar.timestamp,
             "adjusted_entry": adjusted_entry,
@@ -196,10 +198,7 @@ class BacktestEngine:
             "slippage_entry": slippage * trade.quantity,
             "idea": idea,
             "risk_verdict": risk_check.verdict.value,
-            "best_price": adjusted_entry,  # best favorable price since entry
-            "trailing_active": False,       # activated once profit >= 1R
-            "initial_risk": initial_risk,   # 1R distance for trailing activation
-            "atr_value": canonical_atr,     # canonical ATR for trailing stop distance
+            **trailing,
         }
 
         audit(trade_log, f"[BT] Opened {idea.direction.value} {idea.asset}",
@@ -222,49 +221,15 @@ class BacktestEngine:
             sl = pos.stop_loss
             tp = pos.take_profit
 
-            # STRATEGY: trailing stop after 1R profit
-            # Update best_price and check if trailing stop should activate
-            entry = bt_meta["adjusted_entry"]
-            initial_risk = bt_meta.get("initial_risk", 0)
-            atr_val = bt_meta.get("atr_value", 0)  # canonical ATR, set at entry
-
-            if direction == Direction.LONG:
-                # Track the highest price seen since entry
-                if bar.high > bt_meta["best_price"]:
-                    bt_meta["best_price"] = bar.high
-
-                # Activate trailing once unrealized profit >= 1R
-                if not bt_meta["trailing_active"] and initial_risk > 0:
-                    if bt_meta["best_price"] - entry >= initial_risk:
-                        bt_meta["trailing_active"] = True
-
-                # If trailing is active, compute trailing stop (1.5x ATR below best)
-                if bt_meta["trailing_active"] and atr_val > 0:
-                    trailing_sl = bt_meta["best_price"] - 1.5 * atr_val
-                    # Only tighten, never widen -- use the higher of original SL and trailing SL
-                    if trailing_sl > sl:
-                        sl = trailing_sl
-            else:
-                # SHORT: track the lowest price seen since entry
-                if bar.low < bt_meta["best_price"]:
-                    bt_meta["best_price"] = bar.low
-
-                # Activate trailing once unrealized profit >= 1R
-                if not bt_meta["trailing_active"] and initial_risk > 0:
-                    if entry - bt_meta["best_price"] >= initial_risk:
-                        bt_meta["trailing_active"] = True
-
-                # If trailing is active, compute trailing stop (1.5x ATR above best)
-                if bt_meta["trailing_active"] and atr_val > 0:
-                    trailing_sl = bt_meta["best_price"] + 1.5 * atr_val
-                    # Only tighten, never widen -- use the lower of original SL and trailing SL
-                    if trailing_sl < sl:
-                        sl = trailing_sl
+            # STRATEGY: trailing stop via shared utility
+            # For LONG, feed bar.high to track best; for SHORT, feed bar.low
+            check_price = bar.high if direction == Direction.LONG else bar.low
+            sl, trailing_active = update_trailing_stop(bt_meta, check_price, sl, direction.value)
 
             # Check SL: use bar low for LONG, bar high for SHORT
             if direction == Direction.LONG:
                 if bar.low <= sl:
-                    reason = "TRAILING_SL" if bt_meta["trailing_active"] else "SL"
+                    reason = "TRAILING_SL" if trailing_active else "SL"
                     self._close_position(tid, sl, bar, reason)
                     continue
                 if bar.high >= tp:
@@ -272,7 +237,7 @@ class BacktestEngine:
                     continue
             else:
                 if bar.high >= sl:
-                    reason = "TRAILING_SL" if bt_meta["trailing_active"] else "SL"
+                    reason = "TRAILING_SL" if trailing_active else "SL"
                     self._close_position(tid, sl, bar, reason)
                     continue
                 if bar.low <= tp:

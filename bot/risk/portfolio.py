@@ -19,6 +19,7 @@ from bot.utils.logger import audit, trade_log
 from bot.utils.models import (
     Direction, PortfolioState, TradeExecution, TradeIdea, TradeStatus,
 )
+from bot.utils.trailing import make_trailing_state, update_trailing_stop
 
 
 class PortfolioTracker:
@@ -89,12 +90,9 @@ class PortfolioTracker:
         # M2 fix: read sl_mult from config instead of hardcoding
         sl_mult = CONFIG.analyzer.sl_atr_mult_default
         canonical_atr = initial_risk / sl_mult if initial_risk > 0 else idea.entry_price * 0.02
-        self._trailing_state[idea.id] = {
-            "best_price": idea.entry_price,
-            "trailing_active": False,
-            "initial_risk": initial_risk,
-            "atr": canonical_atr,
-        }
+        ts = make_trailing_state(idea.entry_price, idea.direction.value, initial_risk, canonical_atr)
+        ts["entry_price"] = idea.entry_price  # needed for activation check
+        self._trailing_state[idea.id] = ts
 
         audit(trade_log, f"Opened {trade.direction.value} {trade.asset}",
               action="open_position", result="EXECUTED",
@@ -165,34 +163,11 @@ class PortfolioTracker:
 
             sl = pos.stop_loss
 
-            # STRATEGY: trailing stop after 1R profit
-            # Update best_price, activate trailing when profit >= 1R,
-            # then trail at 1.5x ATR behind the best price
+            # STRATEGY: trailing stop via shared utility
             ts = self._trailing_state.get(tid)
             if ts is not None:
-                atr = ts.get("atr", 0)
-                initial_risk = ts.get("initial_risk", 0)
-
-                if pos.direction == Direction.LONG:
-                    if price > ts["best_price"]:
-                        ts["best_price"] = price
-                    if not ts["trailing_active"] and initial_risk > 0:
-                        if ts["best_price"] - pos.entry_price >= initial_risk:
-                            ts["trailing_active"] = True
-                    if ts["trailing_active"] and atr > 0:
-                        trailing_sl = ts["best_price"] - 1.5 * atr
-                        if trailing_sl > sl:
-                            sl = trailing_sl
-                else:
-                    if price < ts["best_price"]:
-                        ts["best_price"] = price
-                    if not ts["trailing_active"] and initial_risk > 0:
-                        if pos.entry_price - ts["best_price"] >= initial_risk:
-                            ts["trailing_active"] = True
-                    if ts["trailing_active"] and atr > 0:
-                        trailing_sl = ts["best_price"] + 1.5 * atr
-                        if trailing_sl < sl:
-                            sl = trailing_sl
+                ts["entry_price"] = pos.entry_price  # ensure entry_price is set
+                sl, _ = update_trailing_stop(ts, price, sl, pos.direction.value)
 
             hit_sl = (price <= sl) if pos.direction == Direction.LONG else (price >= sl)
             hit_tp = (price >= pos.take_profit) if pos.direction == Direction.LONG else (price <= pos.take_profit)
