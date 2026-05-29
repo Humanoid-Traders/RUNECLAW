@@ -1341,3 +1341,128 @@ class TestEngineFSM:
 
         result = self._run(engine.confirm_trade(idea.id))
         assert "REJECTED" in result
+
+
+# ===========================================================================
+#  SKILL TESTS (rejected_trades, halt, rejection_history)
+# ===========================================================================
+from bot.skills.skill_registry import (
+    RejectedTradesSkill, HaltSkill, build_default_registry,
+)
+
+
+class TestNewSkills:
+    """Tests for /rejected, /halt skills and rejection history tracking."""
+
+    def _make_engine(self) -> RuneClawEngine:
+        engine = RuneClawEngine()
+        engine.scanner.scan = AsyncMock(return_value=[])
+        engine.scanner.close = AsyncMock()
+        engine.scanner._get_exchange = AsyncMock()
+        return engine
+
+    @staticmethod
+    def _run(coro):
+        loop = asyncio.new_event_loop()
+        try:
+            return loop.run_until_complete(coro)
+        finally:
+            loop.close()
+
+    def test_rejection_history_populated(self):
+        """Risk engine should record rejection details."""
+        engine = self._make_engine()
+        # Create an idea that will be rejected (portfolio full)
+        for i in range(5):
+            filler = TradeIdea(
+                id=f"TI-FILL{i}", asset=f"FILL{i}/USDT", direction=Direction.LONG,
+                entry_price=65000, stop_loss=58500, take_profit=72800,
+                confidence=0.75, reasoning="filler", source="test",
+            )
+            engine.portfolio.open_position(filler, 200.0)
+
+        idea = TradeIdea(
+            id="TI-REJECT", asset="TEST/USDT", direction=Direction.LONG,
+            entry_price=65000, stop_loss=58500, take_profit=72800,
+            confidence=0.75, reasoning="test", source="test",
+        )
+        result = engine.risk.evaluate(idea, atr=500.0)
+        assert result.verdict == RiskVerdict.REJECTED
+        assert len(engine.risk.rejection_history) >= 1
+        last = engine.risk.rejection_history[-1]
+        assert last["trade_id"] == "TI-REJECT"
+        assert last["asset"] == "TEST/USDT"
+        assert len(last["checks_failed"]) > 0
+
+    def test_rejected_trades_skill(self):
+        """RejectedTradesSkill should format rejection history."""
+        engine = self._make_engine()
+        # Manually populate rejection history
+        engine.risk._rejection_history = [{
+            "trade_id": "TI-X1", "asset": "BTC/USDT", "direction": "LONG",
+            "confidence": 0.72, "checks_failed": ["MAX_POSITIONS: 5 of 5"],
+            "reason": "MAX_POSITIONS: 5 of 5", "timestamp": "2026-01-01T00:00:00",
+        }]
+        skill = RejectedTradesSkill()
+        result = self._run(skill.execute(engine))
+        assert "TI-X1" in result
+        assert "BTC/USDT" in result
+        assert "MAX_POSITIONS" in result
+
+    def test_rejected_trades_skill_empty(self):
+        """RejectedTradesSkill should handle no rejections gracefully."""
+        engine = self._make_engine()
+        skill = RejectedTradesSkill()
+        result = self._run(skill.execute(engine))
+        assert "No rejected" in result
+
+    def test_halt_skill(self):
+        """HaltSkill should trip circuit breaker and clear pending ideas."""
+        engine = self._make_engine()
+        idea = TradeIdea(
+            id="TI-HALT", asset="ETH/USDT", direction=Direction.LONG,
+            entry_price=3000, stop_loss=2700, take_profit=3400,
+            confidence=0.8, reasoning="test", source="test",
+        )
+        engine._pending_ideas["TI-HALT"] = idea
+        engine._pending_atr["TI-HALT"] = 50.0
+
+        skill = HaltSkill()
+        result = self._run(skill.execute(engine))
+        assert "HALTED" in result
+        assert engine.risk.circuit_breaker_active is True
+        assert len(engine._pending_ideas) == 0
+        assert len(engine._pending_atr) == 0
+        assert engine.state == AgentState.HALTED
+
+    def test_rejection_history_cap(self):
+        """Rejection history should be capped to prevent unbounded growth."""
+        engine = self._make_engine()
+        for i in range(60):
+            engine.risk._rejection_history.append({
+                "trade_id": f"TI-{i}", "asset": "X/USDT", "direction": "LONG",
+                "confidence": 0.5, "checks_failed": ["test"],
+                "reason": "test", "timestamp": "2026-01-01",
+            })
+        # Trigger capping by evaluating an idea that gets rejected
+        for j in range(5):
+            filler = TradeIdea(
+                id=f"TI-CAP{j}", asset=f"CAP{j}/USDT", direction=Direction.LONG,
+                entry_price=65000, stop_loss=58500, take_profit=72800,
+                confidence=0.75, reasoning="filler", source="test",
+            )
+            engine.portfolio.open_position(filler, 200.0)
+        idea = TradeIdea(
+            id="TI-OVERFLOW", asset="Z/USDT", direction=Direction.LONG,
+            entry_price=65000, stop_loss=58500, take_profit=72800,
+            confidence=0.75, reasoning="test", source="test",
+        )
+        engine.risk.evaluate(idea, atr=500.0)
+        assert len(engine.risk._rejection_history) <= 50
+
+    def test_default_registry_has_new_skills(self):
+        """Default registry should include rejected_trades and halt."""
+        registry = build_default_registry()
+        assert registry.get("rejected_trades") is not None
+        assert registry.get("halt") is not None
+        assert registry.get("run_backtest") is not None

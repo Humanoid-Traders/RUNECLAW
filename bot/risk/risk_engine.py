@@ -83,6 +83,7 @@ class RiskEngine:
         self._circuit_breaker_trips = 0
         self._total_checks = 0
         self._total_rejections = 0
+        self._rejection_history: list[dict] = []  # recent rejections for /rejected command
         self._lock = threading.RLock()
 
     @property
@@ -92,6 +93,11 @@ class RiskEngine:
     @property
     def consecutive_losses(self) -> int:
         return self._consecutive_losses
+
+    @property
+    def rejection_history(self) -> list[dict]:
+        """Recent risk rejections for audit/display."""
+        return list(self._rejection_history)
 
     @property
     def stats(self) -> dict:
@@ -299,6 +305,18 @@ class RiskEngine:
 
         if verdict == RiskVerdict.REJECTED:
             self._total_rejections += 1
+            self._rejection_history.append({
+                "trade_id": idea.id,
+                "asset": idea.asset,
+                "direction": idea.direction.value,
+                "confidence": idea.confidence,
+                "checks_failed": failed,
+                "reason": reason,
+                "timestamp": datetime.now(UTC).isoformat(),
+            })
+            # Cap rejection history to prevent unbounded growth
+            if len(self._rejection_history) > 50:
+                self._rejection_history = self._rejection_history[-25:]
 
         check = RiskCheck(
             trade_id=idea.id,

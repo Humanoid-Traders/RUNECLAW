@@ -258,6 +258,102 @@ skills:
         Signals: RSI_divergence, volume_spike, support_bounce, macro_dxy
 
   # ---------------------------------------------------------------------------
+  # rejected_trades -- Show recent risk-rejected trade ideas
+  # ---------------------------------------------------------------------------
+  - name: rejected_trades
+    description: >
+      Show recent trade ideas that were rejected by the risk engine, with the
+      specific checks that failed and failure reasons. Useful for understanding
+      why trades were blocked and tuning risk parameters.
+    parameters:
+      - name: count
+        type: integer
+        required: false
+        default: 5
+        description: Number of recent rejections to show (max 50).
+    output:
+      type: string
+      fields:
+        - trade_id: ID of the rejected trade
+        - asset: Trading pair
+        - direction: LONG or SHORT
+        - confidence: Confidence score at time of rejection
+        - checks_failed: List of failed risk checks
+    example:
+      input:
+        command: rejected_trades
+        args: {}
+      output: |
+        Recent Rejections (2 of 8 total):
+        [TI-20260529143022] LONG BTC/USDT (conf: 72%)
+          Failed: MAX_POSITIONS: 5 of 5
+        [TI-20260529142011] SHORT ETH/USDT (conf: 65%)
+          Failed: DAILY_LOSS: 4.8% used of 5% max
+
+  # ---------------------------------------------------------------------------
+  # halt -- Emergency kill-switch
+  # ---------------------------------------------------------------------------
+  - name: halt
+    description: >
+      Emergency kill-switch. Trips the circuit breaker, cancels all pending
+      trade ideas, and transitions the engine to HALTED state. All trading
+      is paused until the engine is restarted. Use only in emergencies.
+    parameters: []
+    output:
+      type: string
+      fields:
+        - status: Always HALTED
+        - circuit_breaker: Always TRIPPED
+        - cancelled_count: Number of pending ideas cancelled
+    example:
+      input:
+        command: halt
+        args: {}
+      output: |
+        HALTED -- Emergency stop activated.
+        Circuit breaker: TRIPPED
+        Pending ideas cancelled: 2
+        All trading paused. Restart engine to resume.
+
+  # ---------------------------------------------------------------------------
+  # run_backtest -- Run backtest with synthetic data
+  # ---------------------------------------------------------------------------
+  - name: run_backtest
+    description: >
+      Run a backtest using synthetic GBM+GARCH price data through the full
+      analysis pipeline. Returns performance metrics including win rate,
+      Sharpe ratio, max drawdown, and trade counts.
+    parameters:
+      - name: bars
+        type: integer
+        required: false
+        default: 720
+        description: Number of hourly bars to simulate.
+      - name: seed
+        type: integer
+        required: false
+        default: 42
+        description: Random seed for reproducible results.
+    output:
+      type: string
+      fields:
+        - final_equity: End equity in USD
+        - total_return_pct: Total return percentage
+        - win_rate: Percentage of winning trades
+        - sharpe_ratio: Annualized Sharpe ratio
+        - max_drawdown_pct: Maximum drawdown percentage
+    example:
+      input:
+        command: run_backtest
+        args:
+          bars: 720
+          seed: 42
+      output: |
+        Backtest Complete (2026-01-01 → 2026-01-31)
+        Trades: 12 | Win Rate: 58% | Profit Factor: 1.35
+        Max Drawdown: 4.2% | Sharpe: 0.18
+
+  # ---------------------------------------------------------------------------
   # set_alert -- Configure price or condition alerts (PLANNED -- not yet implemented)
   # ---------------------------------------------------------------------------
   - name: set_alert

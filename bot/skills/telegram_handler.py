@@ -1,6 +1,6 @@
 """
 RUNECLAW Telegram Handler -- human interface for the trading bot.
-Commands: /scan, /analyze, /portfolio, /trade, /risk, /status, /help
+Commands: /scan, /analyze, /portfolio, /trade, /risk, /status, /rejected, /halt, /backtest, /help
 Includes inline keyboard for trade confirmation and rate limiting.
 """
 
@@ -60,6 +60,9 @@ class TelegramHandler:
         app.add_handler(CommandHandler("trade", self._cmd_trade))
         app.add_handler(CommandHandler("risk", self._cmd_risk))
         app.add_handler(CommandHandler("status", self._cmd_status))
+        app.add_handler(CommandHandler("rejected", self._cmd_rejected))
+        app.add_handler(CommandHandler("halt", self._cmd_halt))
+        app.add_handler(CommandHandler("backtest", self._cmd_backtest))
         app.add_handler(CommandHandler("help", self._cmd_help))
         app.add_handler(CallbackQueryHandler(self._handle_callback))
         return app
@@ -168,6 +171,41 @@ class TelegramHandler:
             f"Open Positions: {state.open_positions}",
             parse_mode="Markdown")
 
+    async def _cmd_rejected(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        if not await self._check_rate(update):
+            return
+        if not self._check_auth(update):
+            await update.message.reply_text("\u26d4 Unauthorized. Contact the bot owner.")
+            return
+        result = await self.registry.get("rejected_trades").execute(self.engine)  # type: ignore
+        await update.message.reply_text(f"\U0001f6ab *Recent Rejections*\n```\n{result}\n```",
+                                        parse_mode="Markdown")
+
+    async def _cmd_halt(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        if not await self._check_rate(update):
+            return
+        if not self._check_auth(update):
+            await update.message.reply_text("\u26d4 Unauthorized. Contact the bot owner.")
+            return
+        result = await self.registry.get("halt").execute(self.engine)  # type: ignore
+        await update.message.reply_text(f"\U0001f6a8 *EMERGENCY HALT*\n```\n{result}\n```",
+                                        parse_mode="Markdown")
+
+    async def _cmd_backtest(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        if not await self._check_rate(update):
+            return
+        if not self._check_auth(update):
+            await update.message.reply_text("\u26d4 Unauthorized. Contact the bot owner.")
+            return
+        args = ctx.args or []
+        bars = args[0] if args else "720"
+        seed = args[1] if len(args) > 1 else "42"
+        await update.message.reply_text("\u23f3 Running backtest... this may take a moment.")
+        result = await self.registry.get("run_backtest").execute(  # type: ignore
+            self.engine, bars=bars, seed=seed)
+        await update.message.reply_text(f"\U0001f4ca *Backtest Results*\n```\n{result}\n```",
+                                        parse_mode="Markdown")
+
     async def _cmd_help(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text(
             "\U0001f43e *RUNECLAW Commands*\n\n"
@@ -176,7 +214,10 @@ class TelegramHandler:
             "/portfolio - View paper portfolio\n"
             "/trade - View & confirm pending trades\n"
             "/risk - Risk metrics & circuit breaker\n"
+            "/rejected - Recent risk-rejected trades\n"
+            "/backtest - Run backtest (bars seed)\n"
             "/status - Bot status\n"
+            "/halt - Emergency kill-switch\n"
             "/help - This message",
             parse_mode="Markdown")
 

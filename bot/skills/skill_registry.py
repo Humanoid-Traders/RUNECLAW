@@ -201,11 +201,67 @@ class RunBacktestSkill(BaseSkill):
         )
 
 
+class RejectedTradesSkill(BaseSkill):
+    name = "rejected_trades"
+    description = "Show recent risk-rejected trade ideas with failure reasons"
+
+    async def execute(self, engine: RuneClawEngine, **kwargs: Any) -> str:
+        history = engine.risk.rejection_history
+        if not history:
+            return "No rejected trades recorded yet."
+        # Show the most recent N (default 5)
+        count = int(kwargs.get("count", 5))
+        recent = history[-count:]
+        lines = []
+        for r in reversed(recent):
+            fails = ", ".join(r["checks_failed"][:3])
+            if len(r["checks_failed"]) > 3:
+                fails += f" (+{len(r['checks_failed']) - 3} more)"
+            lines.append(
+                f"[{r['trade_id']}] {r['direction']} {r['asset']} "
+                f"(conf: {r['confidence']:.0%})\n"
+                f"  Failed: {fails}"
+            )
+        header = f"Recent Rejections ({len(recent)} of {len(history)} total):"
+        return header + "\n\n" + "\n\n".join(lines)
+
+
+class HaltSkill(BaseSkill):
+    name = "halt"
+    description = "Emergency kill-switch: trip circuit breaker and cancel all pending ideas"
+
+    async def execute(self, engine: RuneClawEngine, **kwargs: Any) -> str:
+        from bot.utils.models import AgentState
+
+        # Trip the circuit breaker
+        engine.risk._circuit_open = True
+        engine.risk._circuit_breaker_trips += 1
+
+        # Cancel all pending ideas
+        cancelled = list(engine._pending_ideas.keys())
+        engine._pending_ideas.clear()
+        engine._pending_atr.clear()
+
+        # Transition to HALTED
+        engine._transition(AgentState.HALTED, "manual halt via /halt command")
+
+        audit(system_log, f"MANUAL HALT: circuit breaker tripped, {len(cancelled)} ideas cancelled",
+              action="halt", result="HALTED",
+              data={"cancelled_ids": cancelled})
+
+        return (
+            f"HALTED -- Emergency stop activated.\n"
+            f"Circuit breaker: TRIPPED\n"
+            f"Pending ideas cancelled: {len(cancelled)}\n"
+            f"All trading paused. Restart engine to resume."
+        )
+
+
 def build_default_registry() -> SkillRegistry:
     """Create a registry with all built-in skills pre-loaded."""
     registry = SkillRegistry()
     for skill_cls in (ScanMarketSkill, AnalyzeAssetSkill, CheckRiskSkill,
                       ExecutePaperTradeSkill, GetPortfolioSkill, ExplainTradeSkill,
-                      RunBacktestSkill):
+                      RunBacktestSkill, RejectedTradesSkill, HaltSkill):
         registry.register(skill_cls())
     return registry

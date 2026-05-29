@@ -163,6 +163,9 @@ is a discrete, auditable action.
 | `execute_paper_trade`| Execute a confirmed trade on the paper portfolio      |
 | `get_portfolio`      | Display paper portfolio summary and stats             |
 | `explain_trade`      | Retrieve full reasoning for a trade idea              |
+| `rejected_trades`    | Show recent risk-rejected trade ideas with reasons    |
+| `run_backtest`       | Run backtest with synthetic data                      |
+| `halt`               | Emergency kill-switch: trip breaker, cancel all ideas  |
 | `set_alert`          | *(planned)* Set a price or condition alert for an asset |
 
 ### Skill Usage Rules
