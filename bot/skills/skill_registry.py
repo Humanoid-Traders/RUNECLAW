@@ -114,7 +114,7 @@ class CheckRiskSkill(BaseSkill):
                 f"Circuit Breaker: {cb}\n"
                 f"Loss Streak: {streak}{streak_warn}\n"
                 f"Open Positions: {state.open_positions} | Groups: {group_str}\n"
-                f"Risk Checks: 15 independent | Fail-closed")
+                f"Risk Checks: 16 independent | Fail-closed")
 
 
 class ExecutePaperTradeSkill(BaseSkill):

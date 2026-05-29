@@ -17,7 +17,7 @@ Humanoid Traders
 
 ## Submission Text
 
-RUNECLAW is a simulation-first AI trading agent built for the Bitget ecosystem. It autonomously scans markets for volume anomalies and momentum shifts, generates explainable trade ideas using LLM reasoning blended with a 6-indicator confluence scoring model, and enforces 15 independent pre-trade risk checks in a fail-closed architecture -- if any single check cannot be evaluated, the trade is rejected.
+RUNECLAW is a simulation-first AI trading agent built for the Bitget ecosystem. It autonomously scans markets for volume anomalies and momentum shifts, generates explainable trade ideas using LLM reasoning blended with a 6-indicator confluence scoring model, and enforces 16 independent pre-trade risk checks in a fail-closed architecture -- if any single check cannot be evaluated, the trade is rejected.
 
 Every trade requires human confirmation via Telegram before execution. The agent operates as a formal 9-state finite state machine (IDLE -> SCANNING -> ANALYZING -> RISK_CHECK -> CONFIRMING -> EXECUTING -> MONITORING -> COOLING_DOWN -> HALTED), with complete audit logging of every state transition, risk decision, and trade outcome.
 
@@ -45,7 +45,7 @@ RUNECLAW ships paper-trading by default with dual safety flags. No real money is
 | Market Scanner | Autonomous detection of volume anomalies and momentum shifts across Bitget-listed pairs, filtered by liquidity and spread thresholds. |
 | Analysis Engine | 6-indicator confluence scoring model (RSI, MACD, Bollinger Bands, OBV, ATR, ADX) combined with LLM-generated reasoning for explainable trade ideas. |
 | Regime Detection | ADX-14 based market regime classification (trending, ranging, choppy) to adapt strategy parameters and filter low-conviction setups. |
-| Risk Engine | 15 independent pre-trade risk checks executed in fail-closed mode. Covers position sizing, portfolio exposure, correlation blocking, drawdown limits, volatility guard, and cooldown enforcement. |
+| Risk Engine | 16 independent pre-trade risk checks executed in fail-closed mode. Covers position sizing, portfolio exposure, correlation blocking, drawdown limits, volatility guard, and cooldown enforcement. |
 | Circuit Breaker | Automated system halt triggered by consecutive losses, max daily drawdown, or abnormal market conditions. Requires manual reset. |
 | Human-in-the-Loop | Telegram-based trade confirmation flow. No order is submitted without explicit operator approval. |
 | Audit Logging | Complete structured logs of every state transition, risk gate evaluation, trade decision, and execution outcome. |

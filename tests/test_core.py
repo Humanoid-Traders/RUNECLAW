@@ -571,6 +571,31 @@ class TestRiskEngineNewChecks:
         stats = risk.stats
         assert stats["total_checks"] == 1
 
+    def test_symbol_exposure_rejects_concentrated_single_asset(self):
+        """Per-symbol exposure limit should reject when one asset exceeds max_symbol_exposure_pct."""
+        port = _make_portfolio(10000)
+        risk = _make_risk(port)
+        # Open a large BTC position (25% of equity = $2500)
+        idea1 = self._make_idea(entry_price=50000, idea_id="TI-sym1")
+        port.open_position(idea1, 2500)
+        # Second BTC position should push symbol exposure above 20% max
+        idea2 = self._make_idea(entry_price=50000, idea_id="TI-sym2")
+        result = risk.evaluate(idea2)
+        assert any("SYMBOL_EXPOSURE" in f for f in result.checks_failed)
+
+    def test_symbol_exposure_passes_different_assets(self):
+        """Different assets should not trigger per-symbol exposure limit."""
+        port = _make_portfolio(10000)
+        risk = _make_risk(port)
+        # Open a small BTC position
+        idea1 = self._make_idea(entry_price=50000, idea_id="TI-sym3")
+        port.open_position(idea1, 500)
+        # ETH should be fine -- different asset
+        idea2 = self._make_idea(asset="ETH/USDT", entry_price=3000,
+                                stop_loss=2900, take_profit=3300, idea_id="TI-sym4")
+        result = risk.evaluate(idea2)
+        assert not any("SYMBOL_EXPOSURE" in f for f in result.checks_failed)
+
 
 # ══════════════════════════════════════════════════════════════════
 # AGENT STATE & NEW MODEL TESTS

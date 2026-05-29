@@ -12,13 +12,13 @@ Introducing RUNECLAW -- an AI trading agent built for the Bitget ecosystem.
 
 Track 1 (Trading Agent) | Track 2 (Trading Infra)
 
-Key differentiator: simulation-first architecture with 15 independent risk checks in a fail-closed design. No trade executes without passing every gate.
+Key differentiator: simulation-first architecture with 16 independent risk checks in a fail-closed design. No trade executes without passing every gate.
 
 Thread below.
 
 ### Tweet 2 -- Risk Engine
 
-RUNECLAW enforces 15 pre-trade risk checks. Every single one must pass, or the trade is rejected. There is no override.
+RUNECLAW enforces 16 pre-trade risk checks. Every single one must pass, or the trade is rejected. There is no override.
 
 Circuit breaker. Correlation blocking. Portfolio exposure caps. Drawdown limits. Volatility guard. Cooldown timers.
 
@@ -64,7 +64,7 @@ RUNECLAW scans Bitget markets for volume anomalies and momentum shifts, generate
 **How it works:**
 The system operates as a 9-state finite state machine. Each trade passes through a defined lifecycle: market scan, analysis, risk evaluation, human confirmation, execution, monitoring, and cooldown. Every state transition is logged. Every risk check is evaluated independently in a fail-closed design -- if any check cannot return a definitive result, the trade is blocked.
 
-The risk engine runs 15 independent checks covering position sizing, portfolio exposure, asset correlation, drawdown limits, volatility conditions, and cooldown periods. A circuit breaker halts the system entirely if predefined loss thresholds are hit.
+The risk engine runs 16 independent checks covering position sizing, portfolio exposure, asset correlation, drawdown limits, volatility conditions, and cooldown periods. A circuit breaker halts the system entirely if predefined loss thresholds are hit.
 
 **What makes it different:**
 - Regime-aware analysis using ADX-14 to classify market conditions as trending, ranging, or choppy

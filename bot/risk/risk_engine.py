@@ -1,7 +1,7 @@
 """
 RUNECLAW Risk Engine -- FAIL-CLOSED institutional-grade trade gatekeeper.
 
-15 independent pre-trade checks. ANY failure = REJECTED. No overrides.
+16 independent pre-trade checks. ANY failure = REJECTED. No overrides.
 Design: if a check cannot be evaluated, the trade is REJECTED (fail-closed).
 
 Checks:
@@ -19,7 +19,8 @@ Checks:
   12. Stale data guard
   13. Cooldown after loss
   14. Portfolio exposure limit
-  15. Volatility guard
+  15. Per-symbol exposure limit
+  16. Volatility guard
 """
 
 from __future__ import annotations
@@ -58,7 +59,7 @@ class RiskEngine:
     """
     Pre-trade and post-trade risk checks.
     Design principle: if ANY check cannot be evaluated, the trade is REJECTED.
-    15 independent checks -- all must pass.
+    16 independent checks -- all must pass.
     """
 
     def __init__(self, portfolio: "PortfolioTracker") -> None:  # noqa: F821
@@ -106,7 +107,7 @@ class RiskEngine:
 
     def evaluate(self, idea: TradeIdea, atr: Optional[float] = None) -> RiskCheck:
         """
-        Run all 15 pre-trade checks. Returns RiskCheck with APPROVED or REJECTED.
+        Run all 16 pre-trade checks. Returns RiskCheck with APPROVED or REJECTED.
         Pass atr= for volatility guard check.
         """
         with self._lock:
@@ -240,7 +241,23 @@ class RiskEngine:
         else:
             passed.append(f"PORTFOLIO_EXPOSURE: {new_exposure:.1f}% OK")
 
-        # 15. Volatility guard (if ATR provided)
+        # 15. Per-symbol exposure limit
+        symbol_value = sum(
+            p.entry_price * p.quantity
+            for p in self._portfolio.open_positions
+            if p.asset == idea.asset
+        )
+        new_symbol_value = symbol_value + position_usd
+        symbol_exposure_pct = (new_symbol_value / state.equity_usd * 100) if state.equity_usd > 0 else 0
+        if symbol_exposure_pct > CONFIG.risk.max_symbol_exposure_pct:
+            failed.append(
+                f"SYMBOL_EXPOSURE: {idea.asset} at {symbol_exposure_pct:.1f}% > "
+                f"{CONFIG.risk.max_symbol_exposure_pct}% max"
+            )
+        else:
+            passed.append(f"SYMBOL_EXPOSURE: {idea.asset} {symbol_exposure_pct:.1f}% OK")
+
+        # 16. Volatility guard (if ATR provided)
         if atr is not None and idea.entry_price > 0:
             atr_pct = (atr / idea.entry_price) * 100
             if atr_pct > CONFIG.risk.volatility_guard_atr_mult:

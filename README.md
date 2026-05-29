@@ -80,18 +80,23 @@ The system operates in **simulation-first mode by default**. Every trade idea mu
 - Top N mover ranking with structured signal output
 
 ### AI Analysis Engine
-- Technical indicators: RSI-14, MACD (12/26/9), Bollinger Bands (20/2), ATR
+- Technical indicators: RSI-14, MACD (12/26/9), Bollinger Bands (20/2), ATR, OBV, ADX-14, SMA-50 trend alignment
 - LLM-powered directional thesis generation (GPT-4o or compatible)
 - Rule-based fallback when no LLM key is configured
 - Structured `TradeIdea` output with entry, SL, TP, confidence, reasoning
 
 ### Risk Engine (Fail-Closed)
-- **15 independent pre-trade checks** -- ALL must pass
+- **16 independent pre-trade checks** -- ALL must pass
 - Circuit breaker halts trading on daily loss or drawdown breach
 - Position sizing capped at configurable % of equity
 - Max open positions limit
-- Risk/reward ratio minimum (1.5x)
-- Confidence threshold gate (>50%)
+- Risk/reward ratio minimum (1.2x)
+- Confidence threshold gate (≥60%)
+- Per-symbol exposure limit (20% max per asset)
+- Correlation group concentration guard
+- Consecutive loss streak detection + cooldown
+- Stale data guard (rejects ideas >5min old)
+- Volatility guard (ATR-based)
 - Re-check on confirmation (market may have moved)
 
 ### Paper Trading
@@ -201,7 +206,7 @@ runeclaw/
 RUNECLAW is designed with a **fail-closed** philosophy:
 
 - **Simulation by default.** Live trading requires two explicit environment flags.
-- **Every trade passes 15 checks.** One failure = rejection. No overrides.
+- **Every trade passes 16 checks.** One failure = rejection. No overrides.
 - **Circuit breaker.** Auto-halts on daily loss (5%) or max drawdown (10%).
 - **Human-in-the-loop.** No trade executes without explicit confirmation.
 - **Re-check on confirm.** Risk is re-evaluated at confirmation time because market conditions change.
