@@ -304,12 +304,55 @@ class WalkForwardSkill(BaseSkill):
         return "\n".join(lines)
 
 
+class TradeJournalSkill(BaseSkill):
+    name = "trade_journal"
+    description = "Show trade journal: history of executed trades with reasoning and outcome"
+
+    async def execute(self, engine: RuneClawEngine, **kwargs: Any) -> str:
+        history = engine.portfolio._history
+        if not history:
+            return "No closed trades yet. The journal fills as trades are executed and closed."
+
+        count = int(kwargs.get("count", 10))
+        recent = history[-count:]
+
+        lines = [f"Trade Journal ({len(recent)} of {len(history)} trades)", "=" * 50]
+        total_pnl = 0.0
+        wins = 0
+        for trade in reversed(recent):
+            outcome = "WIN" if trade.pnl > 0 else "LOSS"
+            if trade.pnl > 0:
+                wins += 1
+            total_pnl += trade.pnl
+
+            duration = ""
+            if trade.closed_at and trade.opened_at:
+                dur_hours = (trade.closed_at - trade.opened_at).total_seconds() / 3600
+                duration = f" | Duration: {dur_hours:.1f}h"
+
+            exit_info = f"${trade.exit_price:,.2f}" if trade.exit_price else "open"
+
+            lines.append(
+                f"\n[{trade.trade_id}] {trade.direction.value} {trade.asset}"
+                f"\n  Entry: ${trade.entry_price:,.2f} -> Exit: {exit_info}"
+                f"\n  SL: ${trade.stop_loss:,.2f} | TP: ${trade.take_profit:,.2f}"
+                f"\n  PnL: ${trade.pnl:+,.2f} ({outcome}){duration}"
+                f"\n  Size: ${trade.entry_price * trade.quantity:,.2f}"
+            )
+
+        lines.append("\n" + "─" * 50)
+        wr = wins / len(recent) if recent else 0
+        lines.append(f"Session: {wins}W / {len(recent) - wins}L | "
+                      f"Win Rate: {wr:.0%} | Net PnL: ${total_pnl:+,.2f}")
+        return "\n".join(lines)
+
+
 def build_default_registry() -> SkillRegistry:
     """Create a registry with all built-in skills pre-loaded."""
     registry = SkillRegistry()
     for skill_cls in (ScanMarketSkill, AnalyzeAssetSkill, CheckRiskSkill,
                       ExecutePaperTradeSkill, GetPortfolioSkill, ExplainTradeSkill,
                       RunBacktestSkill, RejectedTradesSkill, HaltSkill,
-                      WalkForwardSkill):
+                      WalkForwardSkill, TradeJournalSkill):
         registry.register(skill_cls())
     return registry

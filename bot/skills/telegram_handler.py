@@ -64,6 +64,7 @@ class TelegramHandler:
         app.add_handler(CommandHandler("halt", self._cmd_halt))
         app.add_handler(CommandHandler("backtest", self._cmd_backtest))
         app.add_handler(CommandHandler("walkforward", self._cmd_walkforward))
+        app.add_handler(CommandHandler("journal", self._cmd_journal))
         app.add_handler(CommandHandler("help", self._cmd_help))
         app.add_handler(CallbackQueryHandler(self._handle_callback))
         return app
@@ -222,6 +223,16 @@ class TelegramHandler:
         await update.message.reply_text(f"\U0001f4c8 *Walk-Forward Results*\n```\n{result}\n```",
                                         parse_mode="Markdown")
 
+    async def _cmd_journal(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        if not await self._check_rate(update):
+            return
+        if not self._check_auth(update):
+            await update.message.reply_text("\u26d4 Unauthorized. Contact the bot owner.")
+            return
+        result = await self.registry.get("trade_journal").execute(self.engine)  # type: ignore
+        await update.message.reply_text(f"\U0001f4d3 *Trade Journal*\n```\n{result}\n```",
+                                        parse_mode="Markdown")
+
     async def _cmd_help(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text(
             "\U0001f43e *RUNECLAW Commands*\n\n"
@@ -233,6 +244,7 @@ class TelegramHandler:
             "/rejected - Recent risk-rejected trades\n"
             "/backtest - Run backtest (bars seed)\n"
             "/walkforward - Walk-forward analysis (bars folds)\n"
+            "/journal - Trade journal with history and PnL\n"
             "/status - Bot status\n"
             "/halt - Emergency kill-switch\n"
             "/help - This message",

@@ -1347,7 +1347,7 @@ class TestEngineFSM:
 #  SKILL TESTS (rejected_trades, halt, rejection_history)
 # ===========================================================================
 from bot.skills.skill_registry import (
-    RejectedTradesSkill, HaltSkill, build_default_registry,
+    RejectedTradesSkill, HaltSkill, TradeJournalSkill, build_default_registry,
 )
 
 
@@ -1467,6 +1467,32 @@ class TestNewSkills:
         assert registry.get("halt") is not None
         assert registry.get("run_backtest") is not None
         assert registry.get("walk_forward") is not None
+        assert registry.get("trade_journal") is not None
+
+    def test_trade_journal_empty(self):
+        """Trade journal should handle no closed trades."""
+        engine = self._make_engine()
+        skill = TradeJournalSkill()
+        result = self._run(skill.execute(engine))
+        assert "No closed trades" in result
+
+    def test_trade_journal_with_trades(self):
+        """Trade journal should show closed trade details."""
+        engine = self._make_engine()
+        idea = TradeIdea(
+            id="TI-JOURNAL", asset="BTC/USDT", direction=Direction.LONG,
+            entry_price=65000, stop_loss=58500, take_profit=72800,
+            confidence=0.75, reasoning="test journal", source="test",
+        )
+        engine.portfolio.open_position(idea, 200.0)
+        engine.portfolio.close_position("TI-JOURNAL", 67000)
+
+        skill = TradeJournalSkill()
+        result = self._run(skill.execute(engine))
+        assert "TI-JOURNAL" in result
+        assert "BTC/USDT" in result
+        assert "WIN" in result
+        assert "Trade Journal" in result
 
 
 # ===========================================================================
