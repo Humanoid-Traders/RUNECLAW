@@ -34,8 +34,8 @@ def _make_idea(
     asset: str = "BTC/USDT",
     direction: Direction = Direction.LONG,
     entry: float = 65000.0,
-    sl: float = 63700.0,
-    tp: float = 66950.0,
+    sl: float = 58500.0,     # 10% below entry — keeps position_usd within 20% notional
+    tp: float = 72800.0,     # 1.2x RR: entry + 1.2 * (entry - sl) = 65000 + 7800
     confidence: float = 0.72,
     idea_id: str = "TI-test001",
 ) -> TradeIdea:
@@ -202,7 +202,7 @@ class TestPortfolio:
 
     def test_open_position(self):
         port = _make_portfolio(10000)
-        idea = _make_idea(entry=50000)
+        idea = _make_idea(entry=50000, sl=48000, tp=55000)
         trade = port.open_position(idea, 200)
         assert trade.trade_id == "TI-test001"
         assert trade.quantity == pytest.approx(0.004, abs=1e-6)
@@ -211,7 +211,7 @@ class TestPortfolio:
 
     def test_close_position_long_profit(self):
         port = _make_portfolio(10000)
-        idea = _make_idea(entry=50000)
+        idea = _make_idea(entry=50000, sl=48000, tp=55000)
         port.open_position(idea, 200)
         closed = port.close_position("TI-test001", 55000)
         assert closed is not None
@@ -222,7 +222,7 @@ class TestPortfolio:
 
     def test_close_position_long_loss(self):
         port = _make_portfolio(10000)
-        idea = _make_idea(entry=50000)
+        idea = _make_idea(entry=50000, sl=48000, tp=55000)
         port.open_position(idea, 200)
         closed = port.close_position("TI-test001", 45000)
         assert closed is not None
@@ -252,7 +252,7 @@ class TestPortfolio:
 
     def test_caps_size_at_balance(self):
         port = _make_portfolio(100)
-        idea = _make_idea(entry=50000)
+        idea = _make_idea(entry=50000, sl=48000, tp=55000)
         trade = port.open_position(idea, 500)  # asking for 500 but only have 100
         assert trade.quantity == pytest.approx(100 / 50000, abs=1e-8)
         assert port.balance == pytest.approx(0, abs=0.01)
@@ -284,7 +284,7 @@ class TestPortfolio:
 
     def test_drawdown_tracking(self):
         port = _make_portfolio(10000)
-        idea = _make_idea(entry=50000)
+        idea = _make_idea(entry=50000, sl=48000, tp=55000)
         port.open_position(idea, 200)
         port.close_position("TI-test001", 40000)  # -$40 loss
         snap = port.snapshot()
@@ -479,8 +479,9 @@ class TestModels:
         assert idea.risk_reward_ratio == 3.0
 
     def test_trade_idea_rr_zero_risk(self):
-        idea = _make_idea(entry=100, sl=100, tp=110)
-        assert idea.risk_reward_ratio == 0.0
+        from pydantic import ValidationError
+        with pytest.raises(ValidationError):
+            _make_idea(entry=100, sl=100, tp=110)
 
     def test_market_signal_momentum_bounds(self):
         sig = MarketSignal(
@@ -524,12 +525,9 @@ class TestRiskEngineNewChecks:
         assert any("STOP_LOSS" in f for f in check.checks_failed)
 
     def test_stop_loss_rejects_sl_equals_entry(self):
-        port = _make_portfolio()
-        risk = _make_risk(port)
-        idea = self._make_idea(stop_loss=50000)
-        check = risk.evaluate(idea)
-        assert check.verdict == RiskVerdict.REJECTED
-        assert any("STOP_LOSS" in f for f in check.checks_failed)
+        from pydantic import ValidationError
+        with pytest.raises(ValidationError):
+            self._make_idea(stop_loss=50000)
 
     def test_stale_data_rejects_old_idea(self):
         port = _make_portfolio()
@@ -603,9 +601,9 @@ class TestRiskEngineNewChecks:
         # Open a small BTC position
         idea1 = self._make_idea(entry_price=50000, idea_id="TI-sym3")
         port.open_position(idea1, 500)
-        # ETH should be fine -- different asset
+        # ETH should be fine -- different asset; use 10% SL so position fits within 20% notional
         idea2 = self._make_idea(asset="ETH/USDT", entry_price=3000,
-                                stop_loss=2900, take_profit=3300, idea_id="TI-sym4")
+                                stop_loss=2700, take_profit=3600, idea_id="TI-sym4")
         result = risk.evaluate(idea2)
         assert not any("SYMBOL_EXPOSURE" in f for f in result.checks_failed)
 
@@ -671,7 +669,7 @@ class TestIntegration:
 
         # Generate a trade idea manually
         idea = _make_idea(
-            asset="BTC/USDT", entry=50000, sl=48000, tp=55000,
+            asset="BTC/USDT", entry=50000, sl=45000, tp=65000,
             confidence=0.75, idea_id="TI-integ001",
         )
 
@@ -810,8 +808,8 @@ class TestEdgeCases:
     def test_double_open_same_idea(self):
         """Opening position with same idea ID twice -- second overwrites in dict, both succeed independently."""
         port = _make_portfolio(10000)
-        idea1 = _make_idea(entry=50000, idea_id="TI-double")
-        idea2 = _make_idea(entry=51000, idea_id="TI-double2")
+        idea1 = _make_idea(entry=50000, sl=48000, tp=55000, idea_id="TI-double")
+        idea2 = _make_idea(entry=51000, sl=49000, tp=56000, idea_id="TI-double2")
         trade1 = port.open_position(idea1, 200)
         trade2 = port.open_position(idea2, 200)
         assert trade1.trade_id == "TI-double"
@@ -873,7 +871,7 @@ class TestNegativeInputs:
     def test_portfolio_negative_exit_price(self):
         """Close position with exit_price=0 should be rejected (return None)."""
         port = _make_portfolio(10000)
-        idea = _make_idea(entry=50000, idea_id="TI-negex")
+        idea = _make_idea(entry=50000, sl=48000, tp=55000, idea_id="TI-negex")
         port.open_position(idea, 200)
         result = port.close_position("TI-negex", 0)
         assert result is None
@@ -988,7 +986,9 @@ class TestMetricsEngine:
     def test_metrics_compute_all_wins(self):
         """All winning trades should give 100% win rate and positive Sharpe."""
         me = MetricsEngine()
-        trades = [self._make_closed_trade(pnl=50.0, trade_id=f"T-w{i}") for i in range(5)]
+        # Vary PnL amounts so std != 0, enabling a non-zero Sharpe computation
+        pnl_amounts = [30.0, 50.0, 70.0, 40.0, 60.0]
+        trades = [self._make_closed_trade(pnl=p, trade_id=f"T-w{i}") for i, p in enumerate(pnl_amounts)]
         # Build an ascending equity curve
         equity = 10000.0
         for t in trades:

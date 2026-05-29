@@ -8,7 +8,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from enum import Enum
 from typing import Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class Direction(str, Enum):
@@ -84,6 +84,31 @@ class TradeIdea(BaseModel):
         risk = abs(self.entry_price - self.stop_loss)
         reward = abs(self.take_profit - self.entry_price)
         return round(reward / risk, 2) if risk > 0 else 0.0
+
+    @model_validator(mode="after")
+    def _validate_directional_sanity(self) -> "TradeIdea":
+        """Ensure SL/TP are on the correct side of entry for the given direction."""
+        if self.entry_price <= 0:
+            return self  # entry price validation is handled elsewhere
+        if self.direction == Direction.LONG:
+            if self.stop_loss >= self.entry_price:
+                raise ValueError(
+                    f"LONG stop_loss ({self.stop_loss}) must be below entry ({self.entry_price})"
+                )
+            if self.take_profit <= self.entry_price:
+                raise ValueError(
+                    f"LONG take_profit ({self.take_profit}) must be above entry ({self.entry_price})"
+                )
+        elif self.direction == Direction.SHORT:
+            if self.stop_loss <= self.entry_price:
+                raise ValueError(
+                    f"SHORT stop_loss ({self.stop_loss}) must be above entry ({self.entry_price})"
+                )
+            if self.take_profit >= self.entry_price:
+                raise ValueError(
+                    f"SHORT take_profit ({self.take_profit}) must be below entry ({self.entry_price})"
+                )
+        return self
 
 
 # -- Risk Engine Output --

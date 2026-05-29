@@ -29,7 +29,7 @@ The agent operates as a 9-state finite state machine with complete audit logging
 
 Key capabilities: ADX-14 regime detection (trend/range/chop) with adaptive strategy parameters, trailing stops activated at 1R profit, per-symbol and portfolio-level exposure limits, circuit breaker with cooldown enforcement, and a backtesting engine with intrabar SL/TP simulation and realistic commission/slippage modeling.
 
-Validated across 180 backtest runs (3 volatility regimes, 3 trend biases, 20 seeds), producing 855 trades with worst-case drawdown of 2.87% and zero crashed runs. 97 unit tests cover risk engine, portfolio, analyzer, backtest, and integration scenarios.
+Validated across 180 backtest runs (synthetic data — 3 volatility regimes, 3 trend biases, 20 seeds), producing 855 trades with worst-case drawdown of 2.87% and zero crashed runs. 97 unit tests cover risk engine, portfolio, analyzer, backtest, and integration scenarios.
 
 ---
 
@@ -41,7 +41,7 @@ Validated across 180 backtest runs (3 volatility regimes, 3 trend biases, 20 see
 - **Fibonacci Retracement Levels** -- swing high/low detection over 50-bar lookback, standard levels (23.6%, 38.2%, 50%, 61.8%, 78.6%) with zone classification
 - **Regime-Aware Analysis** -- ADX-14 classifies market as TREND_UP, TREND_DOWN, RANGE, or CHOP; strategy adapts SL/TP multipliers and applies confidence penalties accordingly
 - **Adaptive ATR Risk Management** -- stop-loss and take-profit levels scale with volatility regime (high vol: 3.0/4.5x ATR, normal: 2.5/3.5x, low: 2.0/3.0x)
-- **Trailing Stops** -- activated at 1R profit, trail at 1.5x ATR behind best price; responsible for 48.7% of all exits in backtesting with net-positive aggregate PnL
+- **Trailing Stops** -- activated at 1R profit, trail at 1.5x ATR behind best price; responsible for 48.7% of all exits in backtesting (synthetic data) with net-positive aggregate PnL
 - **9-State FSM** -- IDLE, SCANNING, ANALYZING, RISK_CHECK, CONFIRMING, EXECUTING, MONITORING, COOLING_DOWN, HALTED with validated transitions
 - **Human-in-the-Loop** -- every trade requires Telegram confirmation with inline approve/reject keyboard
 - **Simulation-First** -- paper trading by default ($10K virtual balance), live trading requires dual safety flag opt-in
@@ -89,12 +89,12 @@ Validated across 180 backtest runs (3 volatility regimes, 3 trend biases, 20 see
 | Fail-closed design | Any check failure or exception returns REJECTED | Verified |
 | 97 tests passing | `pytest tests/test_core.py -v` -- 97/97 green | Verified |
 | 9-state FSM | `bot/utils/models.py` AgentState enum, `bot/core/engine.py` transitions | Verified |
-| Trailing stops work | Backtest: 416/855 exits via trailing stop, net-positive aggregate PnL | Verified |
+| Trailing stops work | Backtest (synthetic data): 416/855 exits via trailing stop, net-positive aggregate PnL | Verified |
 | Regime detection | `bot/core/analyzer.py` _detect_regime + _score_confluence | Verified |
 | Thread safety | RLock on portfolio, risk engine, scanner; no await inside locks, safe for asyncio model | Verified |
 | Simulation-first | `config.py` simulation_mode=True, live_trading_enabled=False by default | Verified |
 | Human confirmation | Telegram inline keyboard required before execution | Verified |
-| Backtest validation | 180 runs, 0 crashes, worst DD 2.87%, worst PnL -2.01% | Verified |
+| Backtest validation | 180 runs (synthetic data), 0 crashes, worst DD 2.87%, worst PnL -2.01% | Verified |
 | Audit logging | `bot/utils/logger.py` structured JSON with timestamps | Verified |
 | No deprecated APIs | All datetime.utcnow() migrated to datetime.now(UTC) | Verified |
 

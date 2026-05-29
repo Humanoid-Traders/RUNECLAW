@@ -89,9 +89,15 @@ class MetricsEngine:
             else:
                 break
 
-        # Sharpe ratio (annualized from equity curve)
-        sharpe = self._compute_sharpe()
-        sortino = self._compute_sortino()
+        # Sharpe / Sortino: prefer per-trade returns when trades exist,
+        # because the equity-snapshot series is mostly zeros between trade
+        # closes and produces badly distorted ratios.
+        if closed:
+            sharpe = self._compute_sharpe_from_trades(closed)
+            sortino = self._compute_sortino_from_trades(closed)
+        else:
+            sharpe = self._compute_sharpe()
+            sortino = self._compute_sortino()
 
         # Drawdown
         max_dd = self._compute_max_drawdown()
@@ -132,11 +138,16 @@ class MetricsEngine:
 
     def _compute_sharpe(self, risk_free_rate: float = 0.0) -> float:
         """Annualized Sharpe from equity curve.
-        Computes annualization factor from actual timestamp cadence."""
+        Computes annualization factor from actual timestamp cadence.
+        Zero returns (flat periods between trades) are excluded so that
+        sparse equity snapshots do not inflate volatility artificially."""
         if len(self._equity_curve) < 2:
             return 0.0
         returns = np.diff(self._equity_curve) / np.array(self._equity_curve[:-1])
-        if np.std(returns) == 0:
+        # Filter out flat periods — only keep observations where price moved.
+        nonzero_mask = returns != 0.0
+        active_returns = returns[nonzero_mask]
+        if len(active_returns) < 2 or np.std(active_returns) == 0:
             return 0.0
         # Compute actual periods per year from timestamps
         if len(self._timestamps) >= 2:
@@ -148,16 +159,22 @@ class MetricsEngine:
                 periods_per_year = 2190  # fallback
         else:
             periods_per_year = 2190
-        excess = returns - risk_free_rate / periods_per_year
+        excess = active_returns - risk_free_rate / periods_per_year
         return float(np.mean(excess) / np.std(excess) * np.sqrt(periods_per_year))
 
     def _compute_sortino(self, risk_free_rate: float = 0.0) -> float:
         """Annualized Sortino from equity curve.
-        Uses actual timestamp cadence for annualization."""
+        Uses actual timestamp cadence for annualization.
+        Zero returns (flat periods between trades) are excluded before
+        computing downside deviation."""
         if len(self._equity_curve) < 2:
             return 0.0
         returns = np.diff(self._equity_curve) / np.array(self._equity_curve[:-1])
-        downside = returns[returns < 0]
+        # Filter out flat periods before computing downside deviation.
+        active_returns = returns[returns != 0.0]
+        if len(active_returns) < 2:
+            return 0.0
+        downside = active_returns[active_returns < 0]
         if len(downside) == 0 or np.std(downside) == 0:
             return 0.0
         # Compute actual periods per year from timestamps
@@ -170,8 +187,85 @@ class MetricsEngine:
                 periods_per_year = 2190
         else:
             periods_per_year = 2190
-        excess = np.mean(returns) - risk_free_rate / periods_per_year
+        excess = np.mean(active_returns) - risk_free_rate / periods_per_year
         return float(excess / np.std(downside) * np.sqrt(periods_per_year))
+
+    def _compute_sharpe_from_trades(self, closed: list[TradeExecution]) -> float:
+        """Annualized Sharpe computed from per-trade PnL returns.
+
+        Each trade's return is ``pnl / entry_cost`` where ``entry_cost`` is
+        approximated as ``quantity * entry_price``.  The annualization factor
+        is derived from the observed trade frequency (trades per year) over
+        the actual elapsed trading period, so that a bot with 10 trades/day
+        gets the same annualized Sharpe as one with 1 trade/week — no
+        hard-coded ``periods_per_year`` constant is needed.
+
+        Falls back to 0.0 when there are fewer than 2 trades or zero
+        return-volatility.
+        """
+        if len(closed) < 2:
+            return 0.0
+
+        pct_returns: list[float] = []
+        for t in closed:
+            cost = abs(getattr(t, "quantity", 0.0) * getattr(t, "entry_price", 0.0))
+            if cost > 0:
+                pct_returns.append(t.pnl / cost)
+            else:
+                # Fallback: use raw pnl (dimensionless weight in the series)
+                pct_returns.append(t.pnl)
+
+        arr = np.array(pct_returns, dtype=float)
+        if np.std(arr) == 0:
+            return 0.0
+
+        trades_per_year = self._trades_per_year(closed)
+        sharpe = float(np.mean(arr) / np.std(arr) * np.sqrt(trades_per_year))
+        return sharpe
+
+    def _compute_sortino_from_trades(self, closed: list[TradeExecution]) -> float:
+        """Annualized Sortino computed from per-trade PnL returns.
+
+        Uses the same per-trade percentage return series as
+        ``_compute_sharpe_from_trades``.  Downside deviation is computed only
+        from losing trades (return < 0).  Returns 0.0 when there are no
+        losing trades or fewer than 2 trades total.
+        """
+        if len(closed) < 2:
+            return 0.0
+
+        pct_returns: list[float] = []
+        for t in closed:
+            cost = abs(getattr(t, "quantity", 0.0) * getattr(t, "entry_price", 0.0))
+            if cost > 0:
+                pct_returns.append(t.pnl / cost)
+            else:
+                pct_returns.append(t.pnl)
+
+        arr = np.array(pct_returns, dtype=float)
+        downside = arr[arr < 0]
+        if len(downside) == 0 or np.std(downside) == 0:
+            return 0.0
+
+        trades_per_year = self._trades_per_year(closed)
+        sortino = float(np.mean(arr) / np.std(downside) * np.sqrt(trades_per_year))
+        return sortino
+
+    def _trades_per_year(self, closed: list[TradeExecution]) -> float:
+        """Estimate annualized trade frequency from actual close timestamps.
+
+        Uses the span between the first and last closed trade.  Falls back to
+        252 (typical daily bar count) when timestamps are missing or the span
+        is zero.
+        """
+        timestamps = [t.closed_at for t in closed if t.closed_at is not None]
+        if len(timestamps) < 2:
+            return 252.0
+        span_seconds = (max(timestamps) - min(timestamps)).total_seconds()
+        if span_seconds <= 0:
+            return 252.0
+        trades_per_second = (len(timestamps) - 1) / span_seconds
+        return trades_per_second * 365.25 * 24 * 3600
 
     def _compute_max_drawdown(self) -> float:
         """Max drawdown percentage from equity curve."""

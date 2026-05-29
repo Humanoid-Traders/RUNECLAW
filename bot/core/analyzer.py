@@ -540,6 +540,10 @@ class Analyzer:
                 max_tokens=CONFIG.llm.max_tokens,
             )
             result = self._parse_llm_response(resp.choices[0].message.content or "")
+            if not result.pop("_parsed", False):
+                audit(trade_log, "LLM response could not be parsed, using defaults",
+                      action="analyze", result="LLM_PARSE_FAIL",
+                      data={"raw_text": (resp.choices[0].message.content or "")[:200]})
             result["source"] = "LLM"
             return result
         except Exception as exc:
@@ -551,8 +555,12 @@ class Analyzer:
 
     @staticmethod
     def _parse_llm_response(text: str) -> dict:
-        """Parse LLM response with robust extraction."""
-        result: dict = {"direction": "LONG", "confidence": 0.0, "reasoning": ""}
+        """Parse LLM response with robust extraction.
+        Returns a dict with direction, confidence, reasoning, and _parsed flag.
+        _parsed=False means we fell back to defaults (LLM output was malformed).
+        """
+        result: dict = {"direction": "LONG", "confidence": 0.0, "reasoning": "", "_parsed": False}
+        parsed_fields = 0
         for line in text.strip().splitlines():
             line_clean = line.strip()
             upper = line_clean.upper()
@@ -560,6 +568,7 @@ class Analyzer:
                 # Handle "DIRECTION: LONG", "DIRECTION:LONG", "DIRECTION - LONG"
                 rest = line_clean.split(":", 1)[-1] if ":" in line_clean else line_clean.split("-", 1)[-1]
                 result["direction"] = "SHORT" if "SHORT" in rest.upper() else "LONG"
+                parsed_fields += 1
             elif upper.startswith("CONFIDENCE"):
                 rest = line_clean.split(":", 1)[-1] if ":" in line_clean else line_clean.split("-", 1)[-1]
                 match = re.search(r'(?:CONFIDENCE[:\s]*)?(\d+\.\d+|\d+)', rest, re.IGNORECASE)
@@ -567,11 +576,14 @@ class Analyzer:
                     try:
                         parsed = float(match.group(1))
                         result["confidence"] = max(0.0, min(1.0, parsed))
+                        parsed_fields += 1
                     except ValueError:
                         pass
             elif upper.startswith("REASONING"):
                 rest = line_clean.split(":", 1)[-1] if ":" in line_clean else line_clean
                 result["reasoning"] = rest.strip()
+                parsed_fields += 1
+        result["_parsed"] = parsed_fields >= 2  # at least direction + confidence
         return result
 
     @staticmethod

@@ -152,7 +152,7 @@ class RiskEngine:
         stop_distance_pct = abs(idea.entry_price - idea.stop_loss) / idea.entry_price if idea.entry_price > 0 else 0
         if stop_distance_pct > 0:
             risk_budget = state.equity_usd * (CONFIG.risk.max_position_pct / 100.0)
-            position_usd = min(risk_budget / stop_distance_pct, state.equity_usd * 0.20)  # cap at 20% notional
+            position_usd = risk_budget / stop_distance_pct  # check #2 enforces 20% cap
         # else: fall back to flat notional (computed above)
 
         # 1. Circuit breaker

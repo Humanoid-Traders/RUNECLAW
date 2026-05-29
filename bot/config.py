@@ -35,6 +35,9 @@ class RiskLimits:
     max_daily_loss_pct: float = _env_float("MAX_DAILY_LOSS_PCT", 5.0)
     max_drawdown_pct: float = _env_float("MAX_DRAWDOWN_PCT", 10.0)
     max_open_positions: int = int(_env_float("MAX_OPEN_POSITIONS", 5))
+    # Note: max_correlation coefficient is reserved for a future pairwise correlation
+    # matrix check. Currently, concentration is enforced by max_correlation_per_group
+    # (a group-count limit), not by this coefficient value.
     max_correlation: float = _env_float("MAX_CORRELATION", 0.85)
     # NEW fields for institutional-grade risk
     min_risk_reward: float = _env_float("MIN_RISK_REWARD", 1.2)

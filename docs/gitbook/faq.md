@@ -40,15 +40,15 @@ Message [@BotFather](https://t.me/BotFather) on Telegram, use the `/newbot` comm
 
 **How does the AI generate trade ideas?**
 
-The analyzer computes technical indicators (RSI-14, MACD, Bollinger Bands, ATR) from hourly candles and sends them to an LLM along with market context. The LLM returns a directional call (LONG/SHORT), confidence score, and reasoning. This is structured into a `TradeIdea` with computed entry, stop-loss, and take-profit levels.
+The analyzer computes technical indicators (RSI-14, MACD, Bollinger Bands, ATR, ADX-14, VWAP, OBV, Fibonacci retracement levels, candlestick patterns, SMA-50) from hourly candles and sends them to an LLM along with market context. The LLM returns a directional call (LONG/SHORT), confidence score, and reasoning. This is structured into a `TradeIdea` with computed entry, stop-loss, and take-profit levels.
 
 **What is the minimum confidence for a trade?**
 
-0.50 (50%). Ideas below this threshold are discarded at the analyzer level and double-checked at the risk engine level.
+0.60 (60%). Ideas below this threshold are discarded at the analyzer level and double-checked at the risk engine level.
 
 **What is the minimum risk/reward ratio?**
 
-1.5x. The risk engine rejects any trade where the potential reward is less than 1.5 times the potential risk.
+1.2x. The risk engine rejects any trade where the potential reward is less than 1.2 times the potential risk.
 
 **Can I override a risk rejection?**
 
@@ -76,8 +76,8 @@ The circuit breaker requires manual reset. This is intentional to ensure a human
 | Max daily loss | 5% of balance |
 | Max drawdown | 10% from peak |
 | Max open positions | 5 |
-| Min risk/reward | 1.5x |
-| Min confidence | 50% |
+| Min risk/reward | 1.2x |
+| Min confidence | 60% |
 
 ---
 
@@ -105,6 +105,12 @@ No. Paper trades execute at exact signal prices with no fees. This is a known si
 - MACD (12, 26, 9) with signal line
 - Bollinger Bands (20-period, 2 standard deviations)
 - ATR (Average True Range proxy from close prices)
+- ADX-14 (Average Directional Index for regime detection)
+- VWAP and anchored VWAP
+- OBV (On-Balance Volume trend)
+- Fibonacci retracement levels (23.6%, 38.2%, 50%, 61.8%, 78.6% over 50-bar swing)
+- Candlestick patterns (14 patterns including doji, hammer, engulfing, morning/evening star)
+- SMA-50 (trend alignment filter)
 
 **How is volume spike detection implemented?**
 
