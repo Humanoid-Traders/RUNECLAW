@@ -1,0 +1,19 @@
+{
+  "trade_id": "TI-a1b2c3d4",
+  "verdict": "APPROVED",
+  "position_size_usd": 200.00,
+  "position_pct": 2.0,
+  "daily_loss_pct": 0.0,
+  "drawdown_pct": 0.0,
+  "checks_passed": [
+    "POSITION_SIZE: 2.0% <= 2.0%",
+    "DAILY_LOSS: 0.0% OK",
+    "DRAWDOWN: 0.0% OK",
+    "OPEN_POSITIONS: 1 OK",
+    "RISK_REWARD: 1.5 OK",
+    "CONFIDENCE: 0.72 OK"
+  ],
+  "checks_failed": [],
+  "reason": "All checks passed",
+  "timestamp": "2025-07-15T14:30:01.000Z"
+}

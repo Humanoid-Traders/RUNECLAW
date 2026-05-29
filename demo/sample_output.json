@@ -1,0 +1,13 @@
+{
+  "id": "TI-a1b2c3d4",
+  "asset": "BTC/USDT",
+  "direction": "LONG",
+  "entry_price": 67432.50,
+  "stop_loss": 66580.00,
+  "take_profit": 68710.00,
+  "confidence": 0.72,
+  "reasoning": "RSI at 38 indicates oversold conditions. MACD line crossing above signal line suggests bullish momentum shift. Volume spike detected at 2.3x rolling average, confirming institutional interest. Bollinger Band squeeze suggests imminent breakout. Entering long with 2-ATR stop and 3-ATR target.",
+  "signals_used": ["rsi", "macd", "macd_signal", "bb_upper", "bb_lower", "bb_mid", "atr"],
+  "risk_reward_ratio": 1.50,
+  "timestamp": "2025-07-15T14:30:00.000Z"
+}

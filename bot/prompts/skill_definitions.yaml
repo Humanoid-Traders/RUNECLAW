@@ -1,0 +1,312 @@
+# RUNECLAW Skill Definitions
+# Each skill is a discrete, auditable capability the agent can invoke.
+# Schema follows a strict contract: name, description, parameters, output, example.
+
+skills:
+
+  # ---------------------------------------------------------------------------
+  # scan_market -- Discover trading opportunities across the exchange
+  # ---------------------------------------------------------------------------
+  - name: scan_market
+    description: >
+      Scan the exchange for top movers, volume anomalies, and momentum signals
+      across all tracked trading pairs. Returns a ranked list of assets showing
+      unusual activity that may warrant deeper analysis.
+    parameters:
+      - name: top_n
+        type: integer
+        required: false
+        default: 10
+        description: Number of top movers to return in the scan results.
+      - name: min_volume_usd
+        type: float
+        required: false
+        default: 100000.0
+        description: >
+          Minimum 24h volume in USD to include a pair in the scan.
+          Filters out illiquid assets.
+      - name: min_change_pct
+        type: float
+        required: false
+        default: 2.0
+        description: >
+          Minimum absolute percentage change (24h) to flag as a mover.
+    output:
+      type: MarketSignal[]
+      fields:
+        - symbol: Trading pair (e.g. BTC/USDT)
+        - price: Current price in USD
+        - change_pct_24h: 24-hour percentage change
+        - volume_usd_24h: 24-hour volume in USD
+        - volume_spike: Whether volume exceeds 2x rolling average
+        - momentum_score: Normalized momentum from -1.0 to 1.0
+        - timestamp: UTC timestamp of the scan
+    example:
+      input:
+        command: scan_market
+        args: {}
+      output: |
+        Top movers:
+        ETH/USDT: $3,812.40 (+4.2%) SPIKE
+        SOL/USDT: $178.33 (+3.1%)
+        MATIC/USDT: $1.42 (-2.8%) SPIKE
+
+  # ---------------------------------------------------------------------------
+  # analyze_asset -- Deep-dive analysis on a single asset
+  # ---------------------------------------------------------------------------
+  - name: analyze_asset
+    description: >
+      Run full technical and AI-powered analysis on a specific trading pair.
+      Fetches current market data, computes technical indicators (RSI, MACD,
+      Bollinger Bands, volume profile), and generates a structured trade idea
+      if conditions are actionable. The trade idea is automatically passed
+      through the risk engine before being returned.
+    parameters:
+      - name: symbol
+        type: string
+        required: true
+        description: >
+          Trading pair to analyze in CCXT format (e.g. "BTC/USDT", "ETH/USDT").
+      - name: timeframe
+        type: string
+        required: false
+        default: "4h"
+        description: >
+          Candlestick timeframe for technical analysis.
+          Supported: 1m, 5m, 15m, 1h, 4h, 1d.
+    output:
+      type: TradeIdea | null
+      fields:
+        - id: Unique trade idea identifier (e.g. TI-20260529143022)
+        - asset: The analyzed trading pair
+        - direction: LONG or SHORT
+        - entry_price: Suggested entry price
+        - stop_loss: Stop-loss price
+        - take_profit: Take-profit price
+        - confidence: Confidence score from 0.0 to 1.0
+        - reasoning: Plain-English explanation of the thesis
+        - signals_used: List of technical signals that contributed
+        - risk_reward_ratio: Computed R:R ratio
+      null_case: >
+        Returns null with an explanation if no actionable setup is found.
+        This is normal and expected -- most scans do not produce trades.
+    example:
+      input:
+        command: analyze_asset
+        args:
+          symbol: BTC/USDT
+          timeframe: 4h
+      output: |
+        Trade Idea [TI-20260529143022]
+        LONG BTC/USDT
+        Entry: $67,432.10
+        SL: $66,180.00 | TP: $69,500.00
+        Confidence: 72%
+        R:R = 1.65
+        Reasoning: 4H RSI bounced from 38 with bullish divergence...
+
+  # ---------------------------------------------------------------------------
+  # check_risk -- Evaluate portfolio risk state
+  # ---------------------------------------------------------------------------
+  - name: check_risk
+    description: >
+      Evaluate current portfolio risk metrics and circuit breaker status.
+      Can also validate a specific trade idea against all risk limits before
+      execution. Returns a structured risk report with pass/fail for each
+      constraint.
+    parameters:
+      - name: trade_idea
+        type: TradeIdea
+        required: false
+        description: >
+          Optional trade idea to validate against risk limits. If omitted,
+          returns the current portfolio-level risk status only.
+    output:
+      type: RiskCheck
+      fields:
+        - trade_id: ID of the evaluated trade (if applicable)
+        - verdict: APPROVED or REJECTED
+        - position_size_usd: Calculated position size in USD
+        - position_pct: Position size as percentage of equity
+        - daily_loss_pct: Current daily loss as percentage of equity
+        - drawdown_pct: Current drawdown percentage
+        - checks_passed: List of risk checks that passed
+        - checks_failed: List of risk checks that failed
+        - reason: Human-readable summary of the verdict
+    example:
+      input:
+        command: check_risk
+        args: {}
+      output: |
+        Equity: $10,240.00
+        Daily PnL: -$120.00
+        Drawdown: 2.4%
+        Circuit Breaker: OK
+
+  # ---------------------------------------------------------------------------
+  # execute_paper_trade -- Execute a confirmed trade on paper portfolio
+  # ---------------------------------------------------------------------------
+  - name: execute_paper_trade
+    description: >
+      Execute a previously proposed trade idea on the paper portfolio.
+      Requires explicit human confirmation -- the 'confirmed' parameter must
+      be true, and the trade must exist in the pending ideas list. This skill
+      will refuse to execute if the trade has not been confirmed or if risk
+      checks have not passed.
+    parameters:
+      - name: trade_id
+        type: string
+        required: true
+        description: >
+          The unique identifier of the pending trade idea to execute
+          (e.g. "TI-20260529143022").
+      - name: confirmed
+        type: boolean
+        required: true
+        description: >
+          Must be true to proceed. The system will reject execution if this
+          is false or missing. This is the human-in-the-loop gate.
+    output:
+      type: TradeExecution
+      fields:
+        - trade_id: The executed trade's identifier
+        - asset: Trading pair
+        - direction: LONG or SHORT
+        - entry_price: Actual entry price
+        - quantity: Position quantity
+        - stop_loss: Stop-loss price
+        - take_profit: Take-profit price
+        - status: EXECUTED or REJECTED
+        - is_paper: Always true in simulation mode
+    example:
+      input:
+        command: execute_paper_trade
+        args:
+          trade_id: TI-20260529143022
+          confirmed: true
+      output: |
+        EXECUTED [TI-20260529143022]
+        LONG BTC/USDT | Qty: 0.0027 | Entry: $67,432.10
+        SL: $66,180.00 | TP: $69,500.00
+        Mode: PAPER
+
+  # ---------------------------------------------------------------------------
+  # get_portfolio -- Display portfolio summary
+  # ---------------------------------------------------------------------------
+  - name: get_portfolio
+    description: >
+      Retrieve a point-in-time snapshot of the paper trading portfolio.
+      Shows balance, equity, open positions, win rate, total PnL, and
+      daily performance metrics.
+    parameters: []
+    output:
+      type: PortfolioState
+      fields:
+        - balance_usd: Available cash balance
+        - equity_usd: Total equity including open positions
+        - open_positions: Number of currently open positions
+        - total_trades: Lifetime trade count
+        - win_rate: Percentage of winning trades
+        - total_pnl: Cumulative profit/loss in USD
+        - daily_pnl: Today's profit/loss in USD
+        - max_drawdown_pct: Maximum drawdown reached
+    example:
+      input:
+        command: get_portfolio
+        args: {}
+      output: |
+        Balance: $9,820.00
+        Equity: $10,240.00
+        Open: 2 | Total: 14
+        Win Rate: 57%
+        Total PnL: $240.00
+
+  # ---------------------------------------------------------------------------
+  # explain_trade -- Retrieve full reasoning for a trade
+  # ---------------------------------------------------------------------------
+  - name: explain_trade
+    description: >
+      Retrieve the complete reasoning, signals, and risk assessment for a
+      specific trade idea. Works for both pending and historical trades.
+      Useful for post-trade review and learning.
+    parameters:
+      - name: trade_id
+        type: string
+        required: true
+        description: >
+          The unique identifier of the trade idea to explain
+          (e.g. "TI-20260529143022").
+    output:
+      type: TradeExplanation
+      fields:
+        - trade_id: The trade's identifier
+        - direction: LONG or SHORT
+        - asset: Trading pair
+        - confidence: Confidence score
+        - reasoning: Full plain-English reasoning
+        - signals_used: List of contributing technical signals
+        - risk_check: Summary of the risk evaluation
+    example:
+      input:
+        command: explain_trade
+        args:
+          trade_id: TI-20260529143022
+      output: |
+        [TI-20260529143022] LONG BTC/USDT
+        Confidence: 72%
+        Reasoning: 4H RSI bounced from 38 with bullish divergence...
+        Signals: RSI_divergence, volume_spike, support_bounce, macro_dxy
+
+  # ---------------------------------------------------------------------------
+  # set_alert -- Configure price or condition alerts
+  # ---------------------------------------------------------------------------
+  - name: set_alert
+    description: >
+      Set a price-level or condition-based alert for a specific asset.
+      The alert fires once when the condition is met and sends a
+      notification through the active interface (Telegram or CLI).
+    parameters:
+      - name: symbol
+        type: string
+        required: true
+        description: >
+          Trading pair to monitor (e.g. "BTC/USDT").
+      - name: condition
+        type: string
+        required: true
+        description: >
+          Alert condition. Supported operators: "above", "below",
+          "crosses_above", "crosses_below", "volume_spike".
+      - name: value
+        type: float
+        required: false
+        description: >
+          Price threshold for price-based alerts. Required for above/below
+          conditions, ignored for volume_spike.
+      - name: message
+        type: string
+        required: false
+        default: ""
+        description: >
+          Optional custom message to include when the alert fires.
+    output:
+      type: AlertConfirmation
+      fields:
+        - alert_id: Unique identifier for the alert
+        - symbol: Monitored pair
+        - condition: The alert condition
+        - value: Threshold value (if applicable)
+        - status: ACTIVE
+    example:
+      input:
+        command: set_alert
+        args:
+          symbol: BTC/USDT
+          condition: above
+          value: 70000.0
+          message: "BTC breakout watch"
+      output: |
+        ALERT SET [AL-001]
+        BTC/USDT above $70,000.00
+        Note: BTC breakout watch
+        Status: ACTIVE
