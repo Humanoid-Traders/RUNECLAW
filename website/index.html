@@ -2183,7 +2183,7 @@ footer {
     <div class="pipe-stage risk-gate">
       <span class="pipe-icon">&#128737;</span>
       <div class="pipe-name">Risk Gate</div>
-      <div class="pipe-desc">15 fail-closed checks, circuit breaker</div>
+      <div class="pipe-desc">16 fail-closed checks, circuit breaker</div>
     </div>
     <div class="pipe-stage">
       <span class="pipe-icon">&#9995;</span>
@@ -2219,13 +2219,13 @@ footer {
     <div class="feature-card reveal reveal-delay-2">
       <span class="feature-icon">&#129504;</span>
       <div class="feature-name">Confluence Score Model</div>
-      <div class="feature-desc">AI-powered confluence scoring with LLM thesis generation. RSI, MACD, Bollinger Bands, and macro context fused into a single confidence metric.</div>
+      <div class="feature-desc">AI-powered confluence scoring with LLM thesis generation. RSI, MACD, Bollinger Bands, OBV, ADX-14, VWAP, and SMA-50 trend alignment fused into a single confidence metric.</div>
       <div class="feature-tag">Explainable AI</div>
     </div>
     <div class="feature-card reveal reveal-delay-3">
       <span class="feature-icon">&#128737;</span>
       <div class="feature-name">Fail-Closed Risk Engine</div>
-      <div class="feature-desc">16 pre-trade checks: position size, daily loss, drawdown, positions, R:R, confidence, correlation, loss streak, entry price, stop-loss required, stale data, cooldown, portfolio exposure, volatility guard, circuit breaker.</div>
+      <div class="feature-desc">16 pre-trade checks: position size, daily loss, drawdown, positions, R:R, confidence, correlation, loss streak, entry price, stop-loss required, stale data, cooldown, portfolio exposure, per-symbol exposure, volatility guard, circuit breaker.</div>
       <div class="feature-tag">Zero tolerance</div>
     </div>
     <div class="feature-card reveal reveal-delay-1">
@@ -2443,7 +2443,7 @@ aligned.
 <section id="risk-deep">
   <div class="reveal" style="text-align:center;">
     <div class="section-label" style="justify-content:center;">Risk Architecture</div>
-    <h2 class="section-title">15-Check Risk Gate</h2>
+    <h2 class="section-title">16-Check Risk Gate</h2>
     <p class="section-desc" style="margin:0 auto;font-style:italic;">Fail-Closed &mdash; if any check cannot be evaluated, the trade is rejected.</p>
   </div>
   <div class="risk-deep-grid reveal reveal-delay-1" id="riskDeepGrid"></div>
@@ -2499,31 +2499,46 @@ aligned.
   <div class="reveal" style="text-align:center;">
     <div class="section-label" style="justify-content:center;">Performance</div>
     <h2 class="section-title">Backtest Validated</h2>
+    <p class="section-desc" style="margin:0 auto;">180-run stress test across 3 volatility regimes, 3 trend biases, 20 seeds. 855 trades analyzed.</p>
   </div>
   <div class="perf-grid">
     <div class="perf-card reveal reveal-delay-1">
       <div class="perf-label">Win Rate</div>
-      <div class="perf-value">68%</div>
+      <div class="perf-value">50.5%</div>
     </div>
     <div class="perf-card reveal reveal-delay-2">
-      <div class="perf-label">Profit Factor</div>
-      <div class="perf-value">2.14</div>
+      <div class="perf-label">Trailing Stop WR</div>
+      <div class="perf-value">100%</div>
     </div>
     <div class="perf-card reveal reveal-delay-3">
-      <div class="perf-label">Sharpe</div>
-      <div class="perf-value">1.87</div>
+      <div class="perf-label">Mean Trades/Run</div>
+      <div class="perf-value">17.1</div>
     </div>
     <div class="perf-card reveal reveal-delay-1">
-      <div class="perf-label">Sortino</div>
-      <div class="perf-value">2.31</div>
+      <div class="perf-label">Zero-Trade Runs</div>
+      <div class="perf-value positive">0%</div>
     </div>
     <div class="perf-card reveal reveal-delay-2">
       <div class="perf-label">Max Drawdown</div>
-      <div class="perf-value negative">-4.2%</div>
+      <div class="perf-value negative">-2.87%</div>
     </div>
     <div class="perf-card reveal reveal-delay-3">
-      <div class="perf-label">Total PnL</div>
-      <div class="perf-value positive">+$1,247</div>
+      <div class="perf-label">Worst-Case PnL</div>
+      <div class="perf-value negative">-2.01%</div>
+    </div>
+  </div>
+  <div class="perf-grid" style="margin-top:16px;">
+    <div class="perf-card reveal reveal-delay-1">
+      <div class="perf-label">Trailing Stop PnL</div>
+      <div class="perf-value positive">+$6,814</div>
+    </div>
+    <div class="perf-card reveal reveal-delay-2">
+      <div class="perf-label">Take-Profit PnL</div>
+      <div class="perf-value positive">+$535</div>
+    </div>
+    <div class="perf-card reveal reveal-delay-3">
+      <div class="perf-label">Total Runs</div>
+      <div class="perf-value">180</div>
     </div>
   </div>
 </section>
@@ -2537,17 +2552,17 @@ aligned.
   <div class="evidence-grid-new">
     <div class="evidence-card-new reveal reveal-delay-1">
       <span class="evidence-icon-new">&#129514;</span>
-      <div class="evidence-label-new">58 Unit Tests Passing</div>
+      <div class="evidence-label-new">82 Unit Tests Passing</div>
       <span class="evidence-badge-new ebadge-green">VERIFIED</span>
     </div>
     <div class="evidence-card-new reveal reveal-delay-2">
       <span class="evidence-icon-new">&#128737;</span>
-      <div class="evidence-label-new">15 Risk Checks Active</div>
+      <div class="evidence-label-new">16 Risk Checks Active</div>
       <span class="evidence-badge-new ebadge-green">LIVE</span>
     </div>
     <div class="evidence-card-new reveal reveal-delay-3">
       <span class="evidence-icon-new">&#128200;</span>
-      <div class="evidence-label-new">Backtest: 720 bars, 68% WR, 2.14 PF</div>
+      <div class="evidence-label-new">Backtest: 180 runs, 3 regimes, 855 trades</div>
       <span class="evidence-badge-new ebadge-blue">VALIDATED</span>
     </div>
     <div class="evidence-card-new reveal reveal-delay-1">
@@ -2609,7 +2624,7 @@ aligned.
       <li><span class="check">&#10003;</span><span><strong>Human confirmation required</strong> for every trade before execution</span></li>
       <li><span class="check">&#10003;</span><span><strong>Simulation-first</strong> &mdash; Paper trading is the default mode, no real money at risk</span></li>
       <li><span class="check">&#10003;</span><span><strong>Full audit trail</strong> &mdash; JSON structured logging for every decision and state change</span></li>
-      <li><span class="check">&#10003;</span><span><strong>Backtested: 720 bars</strong> &mdash; Realistic commission + slippage modeling</span></li>
+      <li><span class="check">&#10003;</span><span><strong>Backtested: 180 runs, 3 regimes</strong> &mdash; 855 trades with commission + slippage, worst DD 2.87%</span></li>
       <li><span class="check">&#10003;</span><span><strong>Agent state machine</strong> with 9 formal states and validated transitions</span></li>
       <li><span class="check">&#10003;</span><span><strong>Modular skill system</strong> &mdash; 7 registered skills with dependency injection</span></li>
       <li><span class="check">&#10003;</span><span><strong>Confluence scoring</strong> &mdash; 6 weighted technical indicators blended with LLM analysis</span></li>
@@ -2625,7 +2640,7 @@ aligned.
   <div class="footer-ht">Humanoid Traders</div>
   <div class="footer-tagline">Forged in Volatility. Governed by Discipline.</div>
   <div class="footer-links">
-    <a href="https://github.com/Humanoid-Traders/RUNECLAW-AI-TRADER" target="_blank">GitHub</a>
+    <a href="https://github.com/Humanoid-Traders/RUNECLAW" target="_blank">GitHub</a>
     <a href="https://humanoid-traders-1.gitbook.io/humanoid-traders-ai" target="_blank">Documentation</a>
     <a href="https://t.me/+VRNgsmkR5pszZTdk" target="_blank">Telegram</a>
   </div>
@@ -2747,9 +2762,9 @@ window.addEventListener('scroll', () => {
   const riskChecks = [
     'Position Size','Daily Loss','Drawdown','Max Positions','Risk-Reward',
     'Confidence','Correlation','Loss Streak','Entry Price','Stop-Loss Req',
-    'Stale Data','Cooldown','Portfolio Exp','Volatility Guard','Circuit Breaker'
+    'Stale Data','Cooldown','Portfolio Exp','Symbol Exposure','Volatility Guard','Circuit Breaker'
   ];
-  const failIndex = 13; // Volatility Guard fails
+  const failIndex = 14; // Volatility Guard fails
   const grid = document.getElementById('riskDeepGrid');
   if (grid) {
     riskChecks.forEach(function(name, i) {
