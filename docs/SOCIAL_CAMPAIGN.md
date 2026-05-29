@@ -77,7 +77,7 @@ Website: https://lgl3crf9.mule.page/
 Docs: https://humanoid-traders-1.gitbook.io/humanoid-traders-ai
 Telegram: https://t.me/+VRNgsmkR5pszZTdk
 
-Built by Humanoid Traders. 82 tests. 16 risk checks. Read the code.
+Built by Humanoid Traders. 83 tests. 16 risk checks. Read the code.
 
 ---
 
@@ -88,7 +88,7 @@ Built by Humanoid Traders. 82 tests. 16 risk checks. Read the code.
 We are submitting RUNECLAW, a simulation-first AI trading agent built for the Bitget ecosystem.
 
 **What it does:**
-RUNECLAW scans markets for volume anomalies and momentum shifts, generates explainable trade ideas using a 6-indicator confluence model (RSI, MACD, BB, OBV, ADX, VWAP) blended with LLM reasoning, and enforces 16 independent pre-trade risk checks before proposing any trade to the operator.
+RUNECLAW scans markets for volume anomalies and momentum shifts, generates explainable trade ideas using a 6-indicator confluence model (RSI, MACD, BB, Volume Spike, ADX, VWAP) blended with LLM reasoning, and enforces 16 independent pre-trade risk checks before proposing any trade to the operator.
 
 **Architecture:**
 - 9-state finite state machine (IDLE through HALTED)

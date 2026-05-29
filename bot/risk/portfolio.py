@@ -86,10 +86,8 @@ class PortfolioTracker:
 
         # STRATEGY: trailing stop after 1R profit -- initialize tracking
         initial_risk = abs(idea.entry_price - idea.stop_loss)
-        # Canonical ATR: use initial_risk / sl_mult (default 2.5) to recover the ATR
-        # that was used to set the stop. This ensures trailing distance (1.5 * ATR)
-        # is consistent with the stop-loss distance.
-        sl_mult = 2.5  # matches CONFIG.analyzer.sl_atr_mult_default
+        # M2 fix: read sl_mult from config instead of hardcoding
+        sl_mult = CONFIG.analyzer.sl_atr_mult_default
         canonical_atr = initial_risk / sl_mult if initial_risk > 0 else idea.entry_price * 0.02
         self._trailing_state[idea.id] = {
             "best_price": idea.entry_price,
@@ -218,7 +216,8 @@ class PortfolioTracker:
 
         wins = [t for t in self._history if t.pnl > 0]
         total = len(self._history)
-        today_key = date.today().isoformat()
+        # M5 fix: use UTC date, not local timezone
+        today_key = datetime.now(UTC).date().isoformat()
         daily_pnl = self._daily_pnl.get(today_key, 0.0)
         drawdown = ((self._peak_equity - equity) / self._peak_equity * 100) if self._peak_equity > 0 else 0
 
@@ -244,8 +243,14 @@ class PortfolioTracker:
     # -- Internal --
 
     def _record_daily_pnl(self, pnl: float) -> None:
-        key = date.today().isoformat()
+        # M5 fix: use UTC date, not local timezone
+        key = datetime.now(UTC).date().isoformat()
         self._daily_pnl[key] = self._daily_pnl.get(key, 0.0) + pnl
+        # L6 fix: prune entries older than 30 days to prevent unbounded growth
+        if len(self._daily_pnl) > 30:
+            sorted_keys = sorted(self._daily_pnl.keys())
+            for old_key in sorted_keys[:-30]:
+                del self._daily_pnl[old_key]
 
     def _update_peak(self) -> None:
         open_val = sum(p.entry_price * p.quantity for p in self._positions.values())

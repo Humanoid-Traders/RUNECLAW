@@ -18,7 +18,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Humanoid-Traders/RUNECLAW-AI-TRADER">GitHub</a> &middot;
+  <a href="https://github.com/Humanoid-Traders/RUNECLAW">GitHub</a> &middot;
   <a href="https://humanoid-traders-1.gitbook.io/humanoid-traders-ai">Documentation</a> &middot;
   <a href="https://t.me/+VRNgsmkR5pszZTdk">Telegram</a>
 </p>
@@ -29,7 +29,7 @@
 
 **RUNECLAW** is an elite AI trading command system built by **Humanoid Traders** for the Bitget GetClaw Hackathon. It merges multi-timeframe analysis, confluence scoring, regime detection, macro awareness, and risk-first logic into a battle-forged framework -- all controllable through a Telegram bot interface.
 
-The system operates in **simulation-first mode by default**. Every trade idea must pass fifteen independent risk checks and receive explicit human confirmation before execution. No exceptions.
+The system operates in **simulation-first mode by default**. Every trade idea must pass sixteen independent risk checks and receive explicit human confirmation before execution. No exceptions.
 
 **Key philosophy:** The bot suggests. The human decides. The risk engine enforces.
 
@@ -80,7 +80,7 @@ The system operates in **simulation-first mode by default**. Every trade idea mu
 - Top N mover ranking with structured signal output
 
 ### AI Analysis Engine
-- Technical indicators: RSI-14, MACD (12/26/9), Bollinger Bands (20/2), ATR, OBV, ADX-14, SMA-50 trend alignment
+- Technical indicators: RSI-14, MACD (12/26/9), Bollinger Bands (20/2), ATR-14, ADX-14, VWAP, SMA-50 trend alignment
 - LLM-powered directional thesis generation (GPT-4o or compatible)
 - Rule-based fallback when no LLM key is configured
 - Structured `TradeIdea` output with entry, SL, TP, confidence, reasoning
@@ -123,7 +123,7 @@ The system operates in **simulation-first mode by default**. Every trade idea mu
 
 ```bash
 # 1. Clone the repo
-git clone https://github.com/Humanoid-Traders/RUNECLAW-AI-TRADER.git
+git clone https://github.com/Humanoid-Traders/RUNECLAW.git
 cd runeclaw
 
 # 2. Create virtual environment

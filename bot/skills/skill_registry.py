@@ -81,6 +81,8 @@ class AnalyzeAssetSkill(BaseSkill):
         idea = await engine._analyze_signal(sig)
         if idea is None:
             return f"No actionable trade idea for {symbol}."
+        # C2 fix: store the idea in pending so it can be confirmed via trade_id
+        engine._pending_ideas[idea.id] = idea
         return (f"Trade Idea [{idea.id}]\n"
                 f"{idea.direction.value} {idea.asset}\n"
                 f"Entry: ${idea.entry_price:,.2f}\n"
@@ -122,7 +124,8 @@ class ExecutePaperTradeSkill(BaseSkill):
     description = "Confirm and execute a pending paper trade"
 
     async def execute(self, engine: RuneClawEngine, **kwargs: Any) -> str:
-        trade_id = kwargs.get("trade_id", "")
+        # C2 fix: accept both 'trade_id' and 'symbol' (CLI sends positional as symbol)
+        trade_id = kwargs.get("trade_id") or kwargs.get("symbol", "")
         if not trade_id:
             return "Provide a trade_id to confirm."
         return await engine.confirm_trade(trade_id)

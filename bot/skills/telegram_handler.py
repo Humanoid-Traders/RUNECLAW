@@ -69,6 +69,9 @@ class TelegramHandler:
     async def _cmd_scan(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._check_rate(update):
             return
+        if not self._check_auth(update):
+            await update.message.reply_text("\u26d4 Unauthorized. Contact the bot owner.")
+            return
         result = await self.registry.get("scan_market").execute(self.engine)  # type: ignore
         await update.message.reply_text(f"\U0001f50d *Market Scan*\n```\n{result}\n```",
                                         parse_mode="Markdown")
@@ -76,18 +79,29 @@ class TelegramHandler:
     async def _cmd_analyze(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._check_rate(update):
             return
+        if not self._check_auth(update):
+            await update.message.reply_text("\u26d4 Unauthorized. Contact the bot owner.")
+            return
         args = ctx.args
         symbol = f"{args[0].upper()}/USDT" if args else "BTC/USDT"
+
+        # C2 fix: snapshot pending IDs before analysis so we can identify the new one
+        ids_before = set(idea.id for idea in self.engine.pending_ideas)
+
         result = await self.registry.get("analyze_asset").execute(  # type: ignore
             self.engine, symbol=symbol)
 
-        # Add confirm/reject buttons if a trade idea was generated
-        pending = self.engine.pending_ideas
-        if pending:
-            idea = pending[-1]
+        # C2 fix: find the newly added idea (if any) rather than using pending[-1]
+        new_idea = None
+        for idea in self.engine.pending_ideas:
+            if idea.id not in ids_before:
+                new_idea = idea
+                break
+
+        if new_idea is not None:
             keyboard = InlineKeyboardMarkup([[
-                InlineKeyboardButton("\u2705 Confirm", callback_data=f"confirm:{idea.id}"),
-                InlineKeyboardButton("\u274c Reject", callback_data=f"reject:{idea.id}"),
+                InlineKeyboardButton("\u2705 Confirm", callback_data=f"confirm:{new_idea.id}"),
+                InlineKeyboardButton("\u274c Reject", callback_data=f"reject:{new_idea.id}"),
             ]])
             await update.message.reply_text(
                 f"\U0001f9e0 *Analysis*\n```\n{result}\n```",
@@ -99,12 +113,18 @@ class TelegramHandler:
     async def _cmd_portfolio(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._check_rate(update):
             return
+        if not self._check_auth(update):
+            await update.message.reply_text("\u26d4 Unauthorized. Contact the bot owner.")
+            return
         result = await self.registry.get("get_portfolio").execute(self.engine)  # type: ignore
         await update.message.reply_text(f"\U0001f4bc *Portfolio*\n```\n{result}\n```",
                                         parse_mode="Markdown")
 
     async def _cmd_trade(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._check_rate(update):
+            return
+        if not self._check_auth(update):
+            await update.message.reply_text("\u26d4 Unauthorized. Contact the bot owner.")
             return
         pending = self.engine.pending_ideas
         if not pending:
@@ -123,12 +143,18 @@ class TelegramHandler:
     async def _cmd_risk(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._check_rate(update):
             return
+        if not self._check_auth(update):
+            await update.message.reply_text("\u26d4 Unauthorized. Contact the bot owner.")
+            return
         result = await self.registry.get("check_risk").execute(self.engine)  # type: ignore
         await update.message.reply_text(f"\U0001f6e1 *Risk Status*\n```\n{result}\n```",
                                         parse_mode="Markdown")
 
     async def _cmd_status(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._check_rate(update):
+            return
+        if not self._check_auth(update):
+            await update.message.reply_text("\u26d4 Unauthorized. Contact the bot owner.")
             return
         mode = self.engine.state.value
         sim = "SIMULATION" if CONFIG.simulation_mode else "LIVE"
@@ -159,6 +185,12 @@ class TelegramHandler:
     async def _handle_callback(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         query = update.callback_query
         await query.answer()
+
+        # H3: auth check on callbacks too
+        if not self._check_auth(update):
+            await query.edit_message_text("\u26d4 Unauthorized.")
+            return
+
         data = query.data or ""
 
         if data.startswith("confirm:"):
@@ -173,6 +205,17 @@ class TelegramHandler:
         audit(system_log, f"Callback: {data}", action="telegram_callback")
 
     # -- Helpers --
+
+    def _check_auth(self, update: Update) -> bool:
+        """H3: Verify the message comes from an authorized chat.
+        If TELEGRAM_CHAT_ID is not set, allow all (open mode for development)."""
+        allowed = CONFIG.telegram.chat_id
+        if not allowed:
+            return True  # no restriction configured
+        chat_id = str(update.effective_chat.id) if update.effective_chat else ""
+        # Support comma-separated list of allowed chat IDs
+        allowed_ids = {cid.strip() for cid in allowed.split(",") if cid.strip()}
+        return chat_id in allowed_ids
 
     async def _check_rate(self, update: Update) -> bool:
         user_id = update.effective_user.id if update.effective_user else 0

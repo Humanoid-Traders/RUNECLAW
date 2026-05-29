@@ -161,17 +161,18 @@ class RiskEngine:
         else:
             passed.append("CIRCUIT_BREAKER: OK")
 
-        # 2. Position size — verify the risk amount (max loss if stopped) stays within limit
+        # 2. Position size — verify the notional exposure stays within limits
         if state.equity_usd <= 0:
             failed.append("EQUITY: zero or negative equity")
         else:
-            # With fixed-fractional sizing, check that actual risk (not notional) is bounded
-            risk_amount = position_usd * stop_distance_pct if stop_distance_pct > 0 else position_usd
-            risk_pct = (risk_amount / state.equity_usd * 100)
-            if risk_pct <= CONFIG.risk.max_position_pct:
-                passed.append(f"POSITION_SIZE: risk {risk_pct:.1f}% <= {CONFIG.risk.max_position_pct}%")
+            # H4 fix: check notional position size as % of equity (not risk amount,
+            # which is tautologically bounded by the sizing formula above).
+            notional_pct = (position_usd / state.equity_usd * 100)
+            max_notional_pct = 20.0  # hard cap: no single position > 20% of equity
+            if notional_pct <= max_notional_pct:
+                passed.append(f"POSITION_SIZE: notional {notional_pct:.1f}% <= {max_notional_pct}%")
             else:
-                failed.append(f"POSITION_SIZE: risk {risk_pct:.1f}% > {CONFIG.risk.max_position_pct}%")
+                failed.append(f"POSITION_SIZE: notional {notional_pct:.1f}% > {max_notional_pct}%")
 
         # 3. Daily loss (realized + unrealized) — measured against equity, not free cash
         daily_loss_pct = abs(state.daily_pnl / state.equity_usd * 100) if state.equity_usd > 0 else 0
@@ -214,9 +215,9 @@ class RiskEngine:
         else:
             passed.append("CORRELATION: no concentrated exposure")
 
-        # 9. Consecutive loss streak warning (hard stop via circuit breaker at max)
+        # 9. Consecutive loss streak (H4 fix: 3+ streak = soft reject, hard stop via circuit breaker at max)
         if self._consecutive_losses >= 3:
-            passed.append(f"LOSS_STREAK: {self._consecutive_losses} (warning)")
+            failed.append(f"LOSS_STREAK: {self._consecutive_losses} consecutive losses (>= 3)")
         else:
             passed.append(f"LOSS_STREAK: {self._consecutive_losses} OK")
 

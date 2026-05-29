@@ -18,14 +18,14 @@ This means the system may miss opportunities. That is an acceptable trade-off. M
 
 Risk is enforced at multiple layers:
 
-1. **Analyzer level** -- Ideas with confidence below 0.50 are never generated.
+1. **Analyzer level** -- Ideas with blended confidence below 0.60 are never generated.
 2. **Risk engine level** -- 16 independent checks must all pass.
 3. **Confirmation level** -- Risk is re-evaluated when the human confirms (the market may have moved).
 4. **Configuration level** -- `SIMULATION_MODE=true` and `LIVE_TRADING_ENABLED=false` are both set by default. Live trading requires both flags to be flipped.
 
-## The Seven Risk Checks
+## The Sixteen Risk Checks
 
-Every `TradeIdea` must pass all seven checks before it enters the pending queue.
+Every `TradeIdea` must pass all sixteen checks before it enters the pending queue.
 
 ### 1. Circuit Breaker
 
@@ -35,13 +35,13 @@ If the circuit breaker has been tripped by a prior event (daily loss or drawdown
 
 ### 2. Position Size
 
-**Check:** Does the proposed position size exceed `MAX_POSITION_PCT` of equity?
+**Check:** Does the proposed notional position size exceed 20% of equity?
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `MAX_POSITION_PCT` | 2.0% | Maximum single position as % of equity |
+| Notional cap | 20% | Maximum single position as % of equity |
 
-A $10,000 portfolio with a 2% limit means no single position can exceed $200.
+A $10,000 portfolio means no single position can exceed $2,000 notional.
 
 ### 3. Daily Loss
 
@@ -75,19 +75,89 @@ This prevents overexposure and concentration risk.
 
 ### 6. Risk/Reward Ratio
 
-**Check:** Is the trade's risk/reward ratio at least 1.5?
+**Check:** Is the trade's risk/reward ratio at least 1.2?
 
 ```
 Risk/Reward = |Take Profit - Entry| / |Entry - Stop Loss|
 ```
 
-Trades with a risk/reward below 1.5 are rejected regardless of confidence.
+Trades with a risk/reward below 1.2 are rejected regardless of confidence.
 
 ### 7. Confidence Threshold
 
-**Check:** Is the AI's confidence score at least 0.50?
+**Check:** Is the AI's confidence score at least 0.60?
 
 Low-confidence ideas are filtered at the analyzer level (never generated), but this check acts as a second gate in case of edge cases.
+
+### 8. Correlation / Concentration
+
+**Check:** Does opening this position exceed the max-per-group limit in the same correlation group (e.g., MEME, ALT_L1, DeFi)?
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `MAX_CORRELATION_PER_GROUP` | 2 | Maximum positions in one correlation group |
+
+### 9. Consecutive Loss Streak
+
+**Check:** Are there 3 or more consecutive losses?
+
+Rejects trades when the system is on a losing streak. At 5 consecutive losses, the circuit breaker trips.
+
+### 10. Entry Price Sanity
+
+**Check:** Is the entry price positive and non-zero?
+
+Guards against data errors producing invalid trade parameters.
+
+### 11. Stop-Loss Required
+
+**Check:** Is a valid stop-loss set, and does it differ from the entry price?
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `REQUIRE_STOP_LOSS` | true | Whether stop-loss is mandatory |
+
+### 12. Stale Data Guard
+
+**Check:** Is the trade idea less than 5 minutes old?
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `STALE_DATA_MAX_AGE_SEC` | 300 | Maximum age of trade idea in seconds |
+
+### 13. Cooldown After Loss
+
+**Check:** Has the cooldown period elapsed since the last losing trade?
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `COOLDOWN_AFTER_LOSS_SEC` | 300 | Seconds to wait after a loss |
+
+### 14. Portfolio Exposure Limit
+
+**Check:** Would total open exposure (existing + new) exceed the portfolio exposure cap?
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `MAX_PORTFOLIO_EXPOSURE_PCT` | 80% | Maximum total portfolio exposure |
+
+### 15. Per-Symbol Exposure Limit
+
+**Check:** Would this asset's total exposure exceed the per-symbol cap?
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `MAX_SYMBOL_EXPOSURE_PCT` | 20% | Maximum exposure to a single asset |
+
+### 16. Volatility Guard
+
+**Check:** Is the ATR (as % of price) below the volatility threshold?
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `VOLATILITY_GUARD_ATR_MULT` | 6.0% | Maximum ATR-to-price ratio |
+
+Rejects trades during extreme volatility conditions where stops are unreliable.
 
 ## Circuit Breaker
 
@@ -119,21 +189,22 @@ If the re-check fails, the confirmation is rejected with an explanation.
 
 ## Position Sizing
 
-Position size is calculated as:
+Position size uses fixed-fractional risk sizing based on stop distance:
 
 ```
-position_usd = equity * (MAX_POSITION_PCT / 100)
+risk_budget = equity * (MAX_POSITION_PCT / 100)
+position_usd = risk_budget / stop_distance_pct
+position_usd = min(position_usd, equity * 0.20)  # capped at 20% notional
 ```
 
-With default settings ($10,000 equity, 2% max):
-- Maximum position: $200
-- Quantity: $200 / entry_price
+With default settings ($10,000 equity, 2% risk budget, 2% stop distance):
+- Risk budget: $200 (max dollar loss if stopped out)
+- Position size: $200 / 0.02 = $10,000 (but capped at 20% = $2,000)
+- This ensures each trade risks the same dollar amount regardless of stop width.
 
-This is intentionally conservative for a hackathon demo. In production, position sizing would incorporate volatility-adjusted sizing (e.g., ATR-based).
+## Correlation Check
 
-## Correlation Check (Planned)
-
-The `MAX_CORRELATION` parameter (default: 0.85) is defined in the configuration but not yet enforced. In a future version, this would prevent opening highly correlated positions (e.g., BTC and ETH moving in lockstep).
+The `MAX_CORRELATION_PER_GROUP` parameter (default: 2) prevents concentrated bets in the same correlation group. Assets are mapped to groups (BTC, ETH, ALT_L1, MEME, DEFI, L2, AI, CEX). If you already have 2 positions in the MEME group, a third MEME position is rejected.
 
 ## Why Simulation-First
 

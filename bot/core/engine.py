@@ -39,11 +39,14 @@ class RuneClawEngine:
         self.scanner = MarketScanner()
         self.analyzer = Analyzer()
         self.risk = RiskEngine(self.portfolio)
+        # C1 fix: wire trade-close callback so portfolio closes feed risk streak tracking
+        self.portfolio._on_trade_close = self.risk.record_trade_result
         self.state: AgentState = AgentState.IDLE
         self._state_history: list[StateTransition] = []
         self._running = False
         self._confirm_callback: Optional[Callable] = None
         self._pending_ideas: dict[str, TradeIdea] = {}
+        self._pending_atr: dict[str, Optional[float]] = {}  # H1: store ATR for re-check
         self._cooldown_until: float = 0.0
 
     # -- State management --
@@ -57,6 +60,9 @@ class RuneClawEngine:
             reason=reason,
         )
         self._state_history.append(transition)
+        # L7: cap state history to prevent unbounded growth
+        if len(self._state_history) > 1000:
+            self._state_history = self._state_history[-500:]
         self.state = new_state
         audit(
             system_log,
@@ -133,6 +139,7 @@ class RuneClawEngine:
         ]
         for idea_id in expired_ids:
             expired_idea = self._pending_ideas.pop(idea_id)
+            self._pending_atr.pop(idea_id, None)  # clean up stored ATR
             audit(
                 trade_log,
                 f"Trade idea {idea_id} expired (TTL)",
@@ -207,6 +214,8 @@ class RuneClawEngine:
             action="confirmation_gate",
             result="PENDING",
         )
+        # H1: store ATR alongside idea for re-check in confirm_trade
+        self._pending_atr[idea.id] = atr_value
         return idea
 
     async def confirm_trade(self, trade_id: str) -> str:
@@ -217,18 +226,26 @@ class RuneClawEngine:
         if idea is None:
             return f"Trade {trade_id} not found or expired."
 
+        # H1 fix: re-check with stored ATR so volatility guard runs
+        stored_atr = self._pending_atr.pop(trade_id, None)
+
         # Re-check risk (portfolio state may have changed -- new positions, daily PnL, drawdown.
         # Note: this does NOT re-fetch market price or update the idea's entry/SL/TP.
         # Stale-data check #12 guards against time drift, but not price drift.)
         self._transition(AgentState.RISK_CHECK, f"re-checking risk for {trade_id}")
-        recheck = self.risk.evaluate(idea)
+        recheck = self.risk.evaluate(idea, atr=stored_atr)
         if recheck.verdict == RiskVerdict.REJECTED:
             self._transition(AgentState.IDLE, f"re-check rejected {trade_id}")
             return f"Trade REJECTED on re-check: {recheck.reason}"
 
-        if CONFIG.is_live():
-            self._transition(AgentState.IDLE, "live trading disabled")
-            return "LIVE TRADING IS DISABLED. Set LIVE_TRADING_ENABLED=true to proceed."
+        # H2 fix: guard is_live() — only proceed to live execution when is_live() is True
+        if not CONFIG.is_live():
+            # Not live mode — execute as paper trade
+            pass  # fall through to paper trade below
+        else:
+            # Live mode enabled — block until live execution is implemented
+            self._transition(AgentState.IDLE, "live execution not implemented")
+            return "LIVE EXECUTION NOT YET IMPLEMENTED. Use simulation mode."
 
         # Paper trade execution
         self._transition(AgentState.EXECUTING, f"executing paper trade {trade_id}")
@@ -248,6 +265,7 @@ class RuneClawEngine:
     def reject_trade(self, trade_id: str) -> str:
         """Human explicitly rejects a pending idea."""
         idea = self._pending_ideas.pop(trade_id, None)
+        self._pending_atr.pop(trade_id, None)  # clean up stored ATR
         if idea:
             audit(
                 trade_log,

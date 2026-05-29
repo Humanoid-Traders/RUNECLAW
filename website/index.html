@@ -320,12 +320,55 @@ section {
   min-height: 100vh;
   display: flex;
   flex-direction: column;
-  justify-content: center;
+  justify-content: flex-end;
   align-items: center;
   text-align: center;
-  padding-top: 64px;
+  padding: 64px 40px 60px;
   position: relative;
   overflow: hidden;
+}
+
+/* Hero showcase image — full bleed background */
+.hero-bg-img {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+}
+
+.hero-bg-img img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center 30%;
+  filter: brightness(0.72) contrast(1.08) saturate(1.12);
+}
+
+/* Gradient overlays for text readability */
+.hero-bg-img::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse 55% 35% at 50% 30%, transparent 0%, rgba(4,6,12,0.3) 100%),
+    linear-gradient(180deg, rgba(4,6,12,0.05) 0%, rgba(4,6,12,0.0) 20%, rgba(4,6,12,0.15) 50%, rgba(4,6,12,0.7) 75%, rgba(4,6,12,0.97) 92%, var(--void) 100%);
+}
+
+/* Side edge fade */
+.hero-bg-img::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  background:
+    linear-gradient(90deg, rgba(4,6,12,0.25) 0%, transparent 10%, transparent 90%, rgba(4,6,12,0.25) 100%);
+}
+
+/* Content z-index above image */
+.hero-content {
+  position: relative;
+  z-index: 2;
+  max-width: 800px;
+  margin: 0 auto;
 }
 
 .hero-orb {
@@ -361,7 +404,7 @@ section {
   background: rgba(42, 106, 220, 0.08);
   border: 1px solid rgba(42, 106, 220, 0.2);
   border-radius: 20px;
-  margin-bottom: 32px;
+  margin-bottom: 24px;
   opacity: 0;
   animation: fadeUp 0.8s 0.2s forwards;
 }
@@ -453,23 +496,25 @@ section {
 
 .hero-motto {
   font-family: var(--font-body);
-  font-size: clamp(16px, 2vw, 20px);
+  font-size: clamp(18px, 2.5vw, 24px);
   font-weight: 300;
   font-style: italic;
-  color: var(--silver);
+  color: var(--ice);
   margin-bottom: 12px;
   opacity: 0;
-  animation: fadeUp 0.8s 0.85s forwards;
+  animation: fadeUp 0.8s 0.4s forwards;
+  text-shadow: 0 2px 16px rgba(0,0,0,0.8);
 }
 
 .hero-sub {
   font-family: var(--font-mono);
   font-size: 12px;
-  color: var(--ash);
+  color: var(--silver);
   letter-spacing: 0.05em;
-  margin-bottom: 44px;
+  margin-bottom: 32px;
   opacity: 0;
-  animation: fadeUp 0.8s 1.0s forwards;
+  animation: fadeUp 0.8s 0.55s forwards;
+  text-shadow: 0 1px 8px rgba(0,0,0,0.8);
 }
 
 .hero-sub span {
@@ -483,7 +528,7 @@ section {
   flex-wrap: wrap;
   justify-content: center;
   opacity: 0;
-  animation: fadeUp 0.8s 1.15s forwards;
+  animation: fadeUp 0.8s 0.7s forwards;
 }
 
 .btn {
@@ -547,7 +592,7 @@ section {
   align-items: center;
   gap: 8px;
   opacity: 0;
-  animation: fadeUp 0.8s 1.6s forwards;
+  animation: fadeUp 0.8s 1.0s forwards;
 }
 
 .scroll-hint span {
@@ -1798,12 +1843,7 @@ footer {
    HERO — full-bleed image background
    ═══════════════════════════════════════════ */
 
-#hero {
-  background:
-    radial-gradient(ellipse 50% 35% at 50% 46%, rgba(4,6,12,0.92) 0%, rgba(4,6,12,0.6) 100%),
-    linear-gradient(180deg, rgba(4,6,12,0.5) 0%, rgba(4,6,12,0.35) 25%, rgba(4,6,12,0.55) 65%, var(--void) 100%),
-    url('hero_banner_1920x1080.jpg') center 20% / cover no-repeat;
-}
+/* Hero background handled by .hero-bg-img element */
 
 /* Lightning bolt decorations */
 .lightning {
@@ -1878,8 +1918,8 @@ footer {
   inset: 0;
   z-index: 1;
   background:
-    linear-gradient(180deg, var(--void) 0%, rgba(4,6,12,0.7) 15%, rgba(4,6,12,0.6) 85%, var(--void) 100%),
-    linear-gradient(90deg, var(--void) 0%, transparent 25%, transparent 75%, var(--void) 100%);
+    linear-gradient(180deg, var(--void) 0%, rgba(4,6,12,0.75) 15%, rgba(4,6,12,0.65) 85%, var(--void) 100%),
+    linear-gradient(90deg, var(--void) 0%, transparent 20%, transparent 80%, var(--void) 100%);
 }
 
 .img-parallax .img-overlay {
@@ -1937,11 +1977,11 @@ footer {
 
 .img-card img {
   width: 100%;
-  height: 520px;
+  height: 480px;
   object-fit: cover;
-  object-position: center top;
+  object-position: center 20%;
   display: block;
-  filter: brightness(0.85) contrast(1.05);
+  filter: brightness(0.8) contrast(1.08);
   transition: filter 0.4s, transform 0.6s;
 }
 
@@ -1954,25 +1994,27 @@ footer {
   content: '';
   position: absolute;
   inset: 0;
-  background: linear-gradient(180deg, rgba(4,6,12,0.15) 0%, rgba(4,6,12,0.3) 50%, rgba(4,6,12,0.85) 100%);
+  background: linear-gradient(180deg, rgba(4,6,12,0.1) 0%, rgba(4,6,12,0.2) 40%, rgba(4,6,12,0.9) 100%);
   pointer-events: none;
 }
 
 .img-card .img-cap {
   position: absolute;
-  bottom: 16px;
-  left: 20px;
-  right: 20px;
+  bottom: 0;
+  left: 0;
+  right: 0;
   z-index: 2;
+  padding: 24px 24px 20px;
+  background: linear-gradient(180deg, transparent 0%, rgba(4,6,12,0.7) 100%);
 }
 
 .img-cap h4 {
   font-family: var(--font-display);
-  font-size: 16px;
+  font-size: 18px;
   font-weight: 700;
   color: #fff;
   letter-spacing: 0.06em;
-  text-shadow: 0 2px 8px rgba(0,0,0,0.6);
+  text-shadow: 0 2px 12px rgba(0,0,0,0.8);
 }
 
 .img-cap span {
@@ -1981,6 +2023,7 @@ footer {
   color: var(--blue-bright);
   letter-spacing: 0.12em;
   text-transform: uppercase;
+  text-shadow: 0 1px 4px rgba(0,0,0,0.6);
 }
 
 /* Scan line effect over images */
@@ -2116,40 +2159,27 @@ footer {
 
 <!-- ═══ HERO ═══ -->
 <section id="hero">
-  <div class="hero-orb hero-orb-1"></div>
-  <div class="hero-orb hero-orb-2"></div>
-  <div class="hero-orb hero-orb-3"></div>
-
-  <!-- Lightning bolts -->
-  <svg class="lightning lightning-1" width="80" height="200" viewBox="0 0 80 200">
-    <path d="M40 0 L25 70 L45 65 L15 140 L40 130 L5 200" stroke="#4a9aff" stroke-width="2" fill="none" filter="url(#glow)"/>
-    <defs><filter id="glow"><feGaussianBlur stdDeviation="4" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs>
-  </svg>
-  <svg class="lightning lightning-2" width="60" height="160" viewBox="0 0 60 160">
-    <path d="M30 0 L15 50 L35 48 L10 100 L30 95 L0 160" stroke="#60b0ff" stroke-width="1.5" fill="none" filter="url(#glow2)"/>
-    <defs><filter id="glow2"><feGaussianBlur stdDeviation="3" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs>
-  </svg>
-
-  <!-- Rune decorations -->
-  <span class="rune-deco" style="top:15%;left:5%;transform:rotate(-15deg);">&#5765;</span>
-  <span class="rune-deco" style="top:60%;right:3%;transform:rotate(10deg);">&#5768;</span>
-
-  <div class="hero-badge">
-    <span class="dot"></span>
-    <span>Bitget &middot; GetClaw Hackathon 2025</span>
+  <div class="hero-bg-img">
+    <img src="hero_showcase.jpg" alt="RUNECLAW AI Trading Command Core" loading="eager">
   </div>
 
-  <div class="hero-shield">R</div>
-  <div class="hero-ht">Humanoid Traders</div>
-  <h1 class="hero-title">RUNECLAW</h1>
-  <p class="hero-subtitle">Command Core</p>
-  <p class="hero-motto">Forged in Volatility. Governed by Discipline.</p>
-  <p class="hero-sub">Simulation-First <span>&#9670;</span> Fail-Closed Risk Engine <span>&#9670;</span> Full Audit Trail</p>
+  <div class="hero-orb hero-orb-1"></div>
+  <div class="hero-orb hero-orb-2"></div>
 
-  <div class="hero-actions">
-    <a href="https://github.com/Humanoid-Traders/RUNECLAW-AI-TRADER" target="_blank" class="btn btn-primary">View on GitHub</a>
-    <a href="https://humanoid-traders-1.gitbook.io/humanoid-traders-ai" target="_blank" class="btn btn-ghost">Read Docs</a>
-    <a href="https://t.me/+VRNgsmkR5pszZTdk" target="_blank" class="btn btn-telegram">&#9993; Join Telegram</a>
+  <div class="hero-content">
+    <div class="hero-badge">
+      <span class="dot"></span>
+      <span>Bitget &middot; GetClaw Hackathon 2025</span>
+    </div>
+
+    <p class="hero-motto">Forged in Volatility. Governed by Discipline.</p>
+    <p class="hero-sub">Simulation-First <span>&#9670;</span> Fail-Closed Risk Engine <span>&#9670;</span> Full Audit Trail</p>
+
+    <div class="hero-actions">
+      <a href="https://github.com/Humanoid-Traders/RUNECLAW" target="_blank" class="btn btn-primary">View on GitHub</a>
+      <a href="https://humanoid-traders-1.gitbook.io/humanoid-traders-ai" target="_blank" class="btn btn-ghost">Read Docs</a>
+      <a href="https://t.me/+VRNgsmkR5pszZTdk" target="_blank" class="btn btn-telegram">&#9993; Join Telegram</a>
+    </div>
   </div>
 
   <div class="scroll-hint">

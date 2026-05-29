@@ -6,14 +6,24 @@
   "daily_loss_pct": 0.0,
   "drawdown_pct": 0.0,
   "checks_passed": [
-    "POSITION_SIZE: 2.0% <= 2.0%",
+    "CIRCUIT_BREAKER: OK",
+    "POSITION_SIZE: notional 2.0% <= 20.0%",
     "DAILY_LOSS: 0.0% OK",
     "DRAWDOWN: 0.0% OK",
-    "OPEN_POSITIONS: 1 OK",
+    "OPEN_POSITIONS: 0 OK",
     "RISK_REWARD: 1.5 OK",
-    "CONFIDENCE: 0.72 OK"
+    "CONFIDENCE: 0.72 OK",
+    "CORRELATION: no concentrated exposure",
+    "LOSS_STREAK: 0 OK",
+    "ENTRY_PRICE: valid",
+    "STOP_LOSS: present and valid",
+    "STALE_DATA: 2s old OK",
+    "COOLDOWN: no recent losses",
+    "PORTFOLIO_EXPOSURE: 2.0% OK",
+    "SYMBOL_EXPOSURE: BTC/USDT 2.0% OK",
+    "VOLATILITY: ATR 1.50% OK"
   ],
   "checks_failed": [],
-  "reason": "All checks passed",
+  "reason": "All 16 checks passed",
   "timestamp": "2025-07-15T14:30:01.000Z"
 }

@@ -10,10 +10,11 @@ import os
 import logging
 
 # Suppress noisy log output to stderr so our table is readable.
-# Only suppress bot loggers, not the global root — importing this module
-# as a library won't silence the entire application's audit trail.
-logging.getLogger("bot").setLevel(logging.CRITICAL)
-logging.getLogger("runeclaw").setLevel(logging.CRITICAL)
+# L3 fix: suppress the specific named loggers that exist (with propagate=False),
+# not parent loggers that don't propagate to children.
+logging.getLogger("runeclaw.trade").setLevel(logging.CRITICAL)
+logging.getLogger("runeclaw.risk").setLevel(logging.CRITICAL)
+logging.getLogger("runeclaw.system").setLevel(logging.CRITICAL)
 
 # Add project root to sys.path
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))

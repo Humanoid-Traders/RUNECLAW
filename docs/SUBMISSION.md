@@ -36,7 +36,7 @@ Validated across 180 backtest runs (3 volatility regimes, 3 trend biases, 20 see
 ## Feature Bullets
 
 - **16-Check Fail-Closed Risk Gate** -- position size, daily loss, drawdown, max positions, R:R minimum, confidence threshold, correlation blocking, loss streak, entry price sanity, stop-loss required, stale data guard, cooldown timer, portfolio exposure, per-symbol exposure, volatility guard, circuit breaker
-- **6-Indicator Confluence Scoring** -- RSI-14, MACD (12/26/9), Bollinger Bands (20/2), OBV, ADX-14, VWAP weighted and blended with LLM confidence (60/40 split)
+- **6-Indicator Confluence Scoring** -- RSI-14, MACD (12/26/9), Bollinger Bands (20/2), Volume Spike, ADX-14, VWAP weighted and blended with LLM confidence (60/40 split)
 - **Regime-Aware Analysis** -- ADX-14 classifies market as TREND_UP, TREND_DOWN, RANGE, or CHOP; strategy adapts SL/TP multipliers and applies confidence penalties accordingly
 - **Adaptive ATR Risk Management** -- stop-loss and take-profit levels scale with volatility regime (high vol: 3.0/4.5x ATR, normal: 2.5/3.5x, low: 2.0/3.0x)
 - **Trailing Stops** -- activated at 1R profit, trail at 1.5x ATR behind best price; responsible for 48.7% of all exits in backtesting with net-positive aggregate PnL
@@ -85,7 +85,7 @@ Validated across 180 backtest runs (3 volatility regimes, 3 trend biases, 20 see
 |-------|----------|--------|
 | 16 risk checks | `bot/risk/risk_engine.py` lines 1-23 enumerate all 16 | Verified |
 | Fail-closed design | Any check failure or exception returns REJECTED | Verified |
-| 82 tests passing | `pytest tests/test_core.py -v` -- 82/82 green | Verified |
+| 82 tests passing | `pytest tests/test_core.py -v` -- 83/83 green | Verified |
 | 9-state FSM | `bot/utils/models.py` AgentState enum, `bot/core/engine.py` transitions | Verified |
 | Trailing stops work | Backtest: 416/855 exits via trailing stop, net-positive aggregate PnL | Verified |
 | Regime detection | `bot/core/analyzer.py` _detect_regime + _score_confluence | Verified |
@@ -100,15 +100,15 @@ Validated across 180 backtest runs (3 volatility regimes, 3 trend biases, 20 see
 
 ## Final QA Checklist
 
-- [x] All 82 tests pass (`pytest tests/test_core.py -v`)
-- [x] No critical or high-severity issues in codebase audit
+- [x] All 83 tests pass (`pytest tests/test_core.py -v`)
+- [x] No critical or high-severity issues in codebase audit (all C1-C3, H1-H4 fixed)
 - [x] All 16 risk checks verified correct with unit tests
 - [x] Backtest runs without crashes across 180 configurations
 - [x] No hardcoded API keys or secrets in codebase
 - [x] Config loads from environment variables with safe defaults
 - [x] Simulation mode is ON by default
 - [x] Live trading requires two explicit flags
-- [x] README accurately reflects current architecture (16 checks, 6 indicators)
+- [x] README accurately reflects current architecture (16 checks, 6 indicators including Volume Spike)
 - [x] Website matches codebase claims (16 checks, 82 tests, backtest stats)
 - [x] GitHub repo is public and up to date
 - [x] No deprecated datetime calls remaining

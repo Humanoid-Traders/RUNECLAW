@@ -49,6 +49,8 @@ class BacktestEngine:
         self.config = config
         self.portfolio = PortfolioTracker(initial_balance=config.initial_balance)
         self.risk = RiskEngine(self.portfolio)
+        # C1 fix: wire trade-close callback so portfolio closes feed risk streak tracking
+        self.portfolio._on_trade_close = self.risk.record_trade_result
         self.analyzer = Analyzer()
 
         # Tracking
@@ -183,10 +185,9 @@ class BacktestEngine:
         # Store backtest metadata
         # STRATEGY: trailing stop after 1R profit -- track best_price and trailing state
         initial_risk = abs(idea.entry_price - idea.stop_loss)
-        # Canonical ATR: recover the ATR used to set the stop (initial_risk / sl_mult).
-        # This is used for trailing distance (1.5 * canonical_atr) and is consistent
-        # across backtest, live, and portfolio paths.
-        sl_mult = 2.5  # matches CONFIG.analyzer.sl_atr_mult_default
+        # M2 fix: read sl_mult from config instead of hardcoding
+        from bot.config import CONFIG as _CFG
+        sl_mult = _CFG.analyzer.sl_atr_mult_default
         canonical_atr = initial_risk / sl_mult if initial_risk > 0 else (atr_value or idea.entry_price * 0.02)
         self._open_bt_positions[idea.id] = {
             "entry_time": bar.timestamp,
@@ -307,7 +308,13 @@ class BacktestEngine:
         commission_exit = exit_value * (self.config.commission_pct / 100)
         total_commission = bt_meta["commission_entry"] + commission_exit
         total_slippage = bt_meta["slippage_entry"] + slippage_exit * closed.quantity
-        net_pnl = closed.pnl - total_commission - total_slippage
+        # C3 fix: slippage is already baked into adjusted entry/exit prices
+        # (portfolio PnL uses slipped prices), so don't subtract it again.
+        # Only subtract commission which is NOT reflected in portfolio PnL.
+        net_pnl = closed.pnl - total_commission
+
+        # C3 fix: deduct commission from portfolio balance so equity curve is accurate
+        self.portfolio.balance -= total_commission
 
         # Duration
         entry_time = bt_meta["entry_time"]
@@ -420,10 +427,15 @@ class BacktestEngine:
 
         # Risk metrics from equity curve
         max_dd_pct = max((p.drawdown_pct for p in self._equity_curve), default=0)
-        peak_equity = max((p.equity for p in self._equity_curve), default=self.config.initial_balance)
-        max_dd_usd = max(
-            (peak_equity - p.equity for p in self._equity_curve), default=0
-        )
+        # M1 fix: compute max_dd_usd using running peak (consistent with pct calculation)
+        running_peak = self.config.initial_balance
+        max_dd_usd = 0.0
+        for p in self._equity_curve:
+            if p.equity > running_peak:
+                running_peak = p.equity
+            dd_usd = running_peak - p.equity
+            if dd_usd > max_dd_usd:
+                max_dd_usd = dd_usd
 
         # Profit factor
         profit_factor = (gross_profit / gross_loss) if gross_loss > 0 else (999.99 if gross_profit > 0 else 0)

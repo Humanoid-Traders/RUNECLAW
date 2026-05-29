@@ -166,6 +166,19 @@ class TestRiskEngine:
         assert risk.circuit_breaker_active
         assert risk.consecutive_losses == 5
 
+    def test_loss_streak_rejects_at_three(self):
+        """H4: 3 consecutive losses should trigger LOSS_STREAK rejection."""
+        port = _make_portfolio()
+        risk = _make_risk(port)
+        for _ in range(3):
+            risk.record_trade_result(-10.0)
+        # Reset cooldown so it doesn't mask the streak check
+        risk._last_loss_time = None
+        idea = _make_idea()
+        result = risk.evaluate(idea)
+        assert result.verdict == RiskVerdict.REJECTED
+        assert any("LOSS_STREAK" in f for f in result.checks_failed)
+
     def test_fail_closed_on_portfolio_error(self):
         """If portfolio state can't be read, trade must be REJECTED."""
         port = _make_portfolio()
@@ -722,11 +735,12 @@ class TestIntegration:
         assert any("COOLDOWN" in f for f in result.checks_failed)
 
     def test_portfolio_callback_updates_risk(self):
-        """Open position, close at loss, verify risk engine's consecutive_losses incremented."""
+        """Open position, close at loss, verify risk engine's consecutive_losses incremented.
+        C1 fix: now tests the auto-wired callback (not manual wiring)."""
         port = _make_portfolio(10000)
         risk = _make_risk(port)
 
-        # Wire up the callback
+        # C1: wire up the callback the same way the engine does
         port._on_trade_close = risk.record_trade_result
 
         idea = _make_idea(entry=50000, sl=48000, tp=55000, idea_id="TI-cb001")
@@ -741,6 +755,21 @@ class TestIntegration:
         port.open_position(idea2, 200)
         port.close_position("TI-cb002", 46000)
         assert risk.consecutive_losses == 2
+
+    def test_engine_auto_wires_callback(self):
+        """L5/C1: Verify RuneClawEngine auto-wires on_trade_close callback."""
+        from bot.core.engine import RuneClawEngine
+        engine = RuneClawEngine()
+        # The callback should be wired automatically
+        assert engine.portfolio._on_trade_close is not None
+        assert engine.portfolio._on_trade_close == engine.risk.record_trade_result
+
+    def test_backtest_engine_auto_wires_callback(self):
+        """L5/C1: Verify BacktestEngine auto-wires on_trade_close callback."""
+        config = BacktestConfig(symbol="BTC/USDT", timeframe="1h")
+        bt_engine = BacktestEngine(config)
+        assert bt_engine.portfolio._on_trade_close is not None
+        assert bt_engine.portfolio._on_trade_close == bt_engine.risk.record_trade_result
 
 
 # ══════════════════════════════════════════════════════════════════

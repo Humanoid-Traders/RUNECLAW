@@ -24,7 +24,7 @@ This document describes the internal architecture of RUNECLAW, how data flows th
            |                  |                   |
   +--------v-------+  +------v-------+  +--------v-------+
   | Market Scanner  |  |  AI Analyzer |  |  Risk Engine   |
-  | (Bitget/ccxt)   |  | (LLM + TA)  |  | (7 Checks)    |
+  | (Bitget/ccxt)   |  | (LLM + TA)  |  | (16 Checks)   |
   +----------------+  +--------------+  +--------+-------+
                                                   |
                                          +--------v-------+
@@ -53,25 +53,36 @@ Output: a list of `MarketSignal` objects.
 The `Analyzer` receives the top 3 signals and for each:
 
 1. Fetches 100 hourly OHLCV candles from Bitget.
-2. Computes technical indicators: RSI-14, MACD (12/26/9), Bollinger Bands (20/2), and ATR.
-3. Sends the signal data and indicators to the LLM for a directional thesis.
-4. If no LLM key is configured, falls back to a rule-based RSI strategy.
-5. Structures the result as a `TradeIdea` with entry, stop-loss, take-profit, confidence, and reasoning.
-6. Filters out ideas with confidence below 0.50.
+2. Computes technical indicators: RSI-14, MACD (12/26/9), Bollinger Bands (20/2), ATR-14, ADX-14, and VWAP.
+3. Detects market regime via ADX (TREND_UP, TREND_DOWN, RANGE, CHOP).
+4. Scores confluence across 6 indicators (RSI, MACD, Bollinger %B, Volume Spike, ADX, VWAP).
+5. Sends the signal data and indicators to the LLM for a directional thesis.
+6. If no LLM key is configured, falls back to a rule-based confluence strategy.
+7. Structures the result as a `TradeIdea` with entry, stop-loss, take-profit, confidence, and reasoning.
+8. Filters out ideas with blended confidence below 0.60.
 
 Output: a `TradeIdea` object (or None if conviction is too low).
 
 ### Stage 3: RISK GATE
 
-Every `TradeIdea` is passed to the `RiskEngine` for pre-trade checks:
+Every `TradeIdea` is passed to the `RiskEngine` for 16 independent pre-trade checks:
 
 1. Circuit breaker status
-2. Position size vs. max position %
+2. Position size vs. max notional %
 3. Daily loss vs. daily loss limit
 4. Portfolio drawdown vs. max drawdown
 5. Open positions count vs. max positions
-6. Risk/reward ratio (minimum 1.5)
-7. Confidence threshold (minimum 0.50)
+6. Risk/reward ratio (minimum 1.2)
+7. Confidence threshold (minimum 0.60)
+8. Correlation / concentration per group
+9. Consecutive loss streak (>= 3 rejects)
+10. Entry price sanity
+11. Stop-loss required
+12. Stale data guard
+13. Cooldown after loss
+14. Portfolio exposure limit
+15. Per-symbol exposure limit
+16. Volatility guard (ATR-based)
 
 If ANY check fails, the trade is **REJECTED**. There are no overrides.
 
