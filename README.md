@@ -238,9 +238,9 @@ RUNECLAW is designed with a **fail-closed** philosophy:
 
 | Role | Name |
 |------|------|
-| Lead Developer | *Your Name* |
-| AI / Strategy | *Team Member* |
-| Risk / Backend | *Team Member* |
+| Lead Developer | *P.Baur* |
+| AI / Strategy | *Claude + MuleRun + RUNECLAW* |
+| Risk / Backend | *OPEN POSITION* |
 
 ---
 
