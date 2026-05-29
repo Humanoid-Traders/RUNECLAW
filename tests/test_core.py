@@ -833,15 +833,13 @@ class TestNegativeInputs:
     """Tests for invalid or extreme inputs."""
 
     def test_analyzer_insufficient_candles(self):
-        """Calling analyzer indicators with < 30 candles should still compute without crashing."""
+        """Calling analyzer indicators with < 30 candles should return None (fail-closed)."""
         closes = np.linspace(100, 110, 15)
         highs = closes + 1
         lows = closes - 1
-        # _compute_indicators should handle short arrays gracefully
+        # _compute_indicators should fail closed with insufficient data
         ind = Analyzer._compute_indicators(highs, lows, closes)
-        assert "rsi" in ind
-        assert "macd" in ind
-        assert "atr" in ind
+        assert ind is None
 
     def test_portfolio_negative_exit_price(self):
         """Close position with exit_price=0 should be rejected (return None)."""

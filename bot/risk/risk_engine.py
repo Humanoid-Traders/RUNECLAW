@@ -35,23 +35,36 @@ from bot.utils.logger import audit, risk_log
 from bot.utils.models import RiskCheck, RiskVerdict, TradeIdea
 
 
-# Known correlation groups for crypto assets
+# Known correlation groups for crypto assets.
+# Assets NOT in this map are treated as their own group (group=symbol),
+# so correlation limits only bind for mapped pairs.
 _CORRELATION_GROUPS: dict[str, str] = {
-    "BTC/USDT": "BTC",
-    "WBTC/USDT": "BTC",
-    "ETH/USDT": "ETH",
-    "STETH/USDT": "ETH",
-    "WETH/USDT": "ETH",
-    "SOL/USDT": "ALT_L1",
-    "AVAX/USDT": "ALT_L1",
-    "NEAR/USDT": "ALT_L1",
-    "SUI/USDT": "ALT_L1",
-    "APT/USDT": "ALT_L1",
-    "DOGE/USDT": "MEME",
-    "SHIB/USDT": "MEME",
-    "PEPE/USDT": "MEME",
-    "FLOKI/USDT": "MEME",
-    "WIF/USDT": "MEME",
+    # Bitcoin ecosystem
+    "BTC/USDT": "BTC", "WBTC/USDT": "BTC",
+    # Ethereum ecosystem
+    "ETH/USDT": "ETH", "STETH/USDT": "ETH", "WETH/USDT": "ETH",
+    # Alt L1s — tend to move together in risk-off
+    "SOL/USDT": "ALT_L1", "AVAX/USDT": "ALT_L1", "NEAR/USDT": "ALT_L1",
+    "SUI/USDT": "ALT_L1", "APT/USDT": "ALT_L1", "DOT/USDT": "ALT_L1",
+    "ADA/USDT": "ALT_L1", "ATOM/USDT": "ALT_L1", "TON/USDT": "ALT_L1",
+    "HBAR/USDT": "ALT_L1", "TRX/USDT": "ALT_L1", "FTM/USDT": "ALT_L1",
+    "SEI/USDT": "ALT_L1", "INJ/USDT": "ALT_L1",
+    # Meme coins
+    "DOGE/USDT": "MEME", "SHIB/USDT": "MEME", "PEPE/USDT": "MEME",
+    "FLOKI/USDT": "MEME", "WIF/USDT": "MEME", "BONK/USDT": "MEME",
+    "BRETT/USDT": "MEME", "MEME/USDT": "MEME",
+    # DeFi blue chips
+    "UNI/USDT": "DEFI", "AAVE/USDT": "DEFI", "LINK/USDT": "DEFI",
+    "MKR/USDT": "DEFI", "SNX/USDT": "DEFI", "CRV/USDT": "DEFI",
+    "LDO/USDT": "DEFI", "COMP/USDT": "DEFI",
+    # L2s
+    "ARB/USDT": "L2", "OP/USDT": "L2", "MATIC/USDT": "L2",
+    "STRK/USDT": "L2", "ZK/USDT": "L2",
+    # AI narrative
+    "FET/USDT": "AI", "RENDER/USDT": "AI", "TAO/USDT": "AI",
+    "RNDR/USDT": "AI", "AGIX/USDT": "AI",
+    # Exchange tokens
+    "BNB/USDT": "CEX", "CRO/USDT": "CEX", "OKB/USDT": "CEX",
 }
 
 

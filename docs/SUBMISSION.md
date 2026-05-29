@@ -63,6 +63,7 @@ Validated across 180 backtest runs (3 volatility regimes, 3 trend biases, 20 see
 | Backtesting | Intrabar SL/TP/trailing stop checking, configurable commission (0.1%) and slippage (0.05%), synthetic data with GBM + GARCH |
 | Telegram Bot | Rate-limited (20/min), inline keyboards, fire-and-forget async tasks with error callbacks |
 | Data Validation | Pydantic strict schemas at every boundary -- API responses, config, trade parameters, internal state |
+| Concurrency | RLock guards on portfolio, risk engine, scanner; no await points inside locked regions so single-threaded asyncio model is safe |
 | Metrics Engine | Sharpe/Sortino (annualized sqrt(2190) for hourly), Calmar, profit factor, equity curve (capped 10K points) |
 
 ---
@@ -88,7 +89,7 @@ Validated across 180 backtest runs (3 volatility regimes, 3 trend biases, 20 see
 | 9-state FSM | `bot/utils/models.py` AgentState enum, `bot/core/engine.py` transitions | Verified |
 | Trailing stops work | Backtest: 416/855 exits via trailing stop, net-positive aggregate PnL | Verified |
 | Regime detection | `bot/core/analyzer.py` _detect_regime + _score_confluence | Verified |
-| Thread safety | RLock on portfolio, risk engine, scanner, rate limiter | Verified |
+| Thread safety | RLock on portfolio, risk engine, scanner; no await inside locks, safe for asyncio model | Verified |
 | Simulation-first | `config.py` simulation_mode=True, live_trading_enabled=False by default | Verified |
 | Human confirmation | Telegram inline keyboard required before execution | Verified |
 | Backtest validation | 180 runs, 0 crashes, worst DD 2.87%, worst PnL -2.01% | Verified |

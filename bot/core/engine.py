@@ -217,7 +217,9 @@ class RuneClawEngine:
         if idea is None:
             return f"Trade {trade_id} not found or expired."
 
-        # Re-check risk (market may have moved)
+        # Re-check risk (portfolio state may have changed -- new positions, daily PnL, drawdown.
+        # Note: this does NOT re-fetch market price or update the idea's entry/SL/TP.
+        # Stale-data check #12 guards against time drift, but not price drift.)
         self._transition(AgentState.RISK_CHECK, f"re-checking risk for {trade_id}")
         recheck = self.risk.evaluate(idea)
         if recheck.verdict == RiskVerdict.REJECTED:

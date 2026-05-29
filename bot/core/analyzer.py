@@ -63,6 +63,10 @@ class Analyzer:
         volumes = np.array([c[5] for c in candles], dtype=float) if len(candles[0]) > 5 else None
 
         indicators = self._compute_indicators(highs, lows, closes, volumes)
+        if indicators is None:
+            audit(trade_log, "Indicator computation failed (insufficient data)", action="analyze",
+                  result="SKIP", data={"symbol": signal.symbol, "candles": len(candles)})
+            return None
         regime = self._detect_regime(indicators)
         confluence = self._score_confluence(indicators, regime, signal)
 
@@ -212,11 +216,16 @@ class Analyzer:
     def _compute_indicators(
         highs: np.ndarray, lows: np.ndarray, closes: np.ndarray,
         volumes: Optional[np.ndarray] = None,
-    ) -> dict:
+    ) -> Optional[dict]:
         """
         Calculate RSI-14, MACD (12/26/9), Bollinger Bands (20/2),
         True ATR-14, ADX-14, and VWAP approximation.
+
+        Returns None if insufficient data (< 30 bars) — fail-closed design.
         """
+        if len(closes) < 30:
+            return None
+
         results: dict = {}
 
         # ── RSI-14 (Wilder's smoothing) ──

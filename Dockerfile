@@ -15,6 +15,8 @@ RUN pip install --no-cache-dir -r bot/requirements.txt
 
 # Copy application code
 COPY bot/ /app/bot/
+COPY tests/ /app/tests/
+COPY backtest_audit.py /app/backtest_audit.py
 
 # Create logs directory
 RUN mkdir -p /app/logs

@@ -67,14 +67,14 @@ class TelegramHandler:
     # -- Command handlers --
 
     async def _cmd_scan(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-        if not self._check_rate(update):
+        if not await self._check_rate(update):
             return
         result = await self.registry.get("scan_market").execute(self.engine)  # type: ignore
         await update.message.reply_text(f"\U0001f50d *Market Scan*\n```\n{result}\n```",
                                         parse_mode="Markdown")
 
     async def _cmd_analyze(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-        if not self._check_rate(update):
+        if not await self._check_rate(update):
             return
         args = ctx.args
         symbol = f"{args[0].upper()}/USDT" if args else "BTC/USDT"
@@ -97,14 +97,14 @@ class TelegramHandler:
                                             parse_mode="Markdown")
 
     async def _cmd_portfolio(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-        if not self._check_rate(update):
+        if not await self._check_rate(update):
             return
         result = await self.registry.get("get_portfolio").execute(self.engine)  # type: ignore
         await update.message.reply_text(f"\U0001f4bc *Portfolio*\n```\n{result}\n```",
                                         parse_mode="Markdown")
 
     async def _cmd_trade(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-        if not self._check_rate(update):
+        if not await self._check_rate(update):
             return
         pending = self.engine.pending_ideas
         if not pending:
@@ -121,14 +121,14 @@ class TelegramHandler:
                 parse_mode="Markdown", reply_markup=keyboard)
 
     async def _cmd_risk(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-        if not self._check_rate(update):
+        if not await self._check_rate(update):
             return
         result = await self.registry.get("check_risk").execute(self.engine)  # type: ignore
         await update.message.reply_text(f"\U0001f6e1 *Risk Status*\n```\n{result}\n```",
                                         parse_mode="Markdown")
 
     async def _cmd_status(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-        if not self._check_rate(update):
+        if not await self._check_rate(update):
             return
         mode = self.engine.state.value
         sim = "SIMULATION" if CONFIG.simulation_mode else "LIVE"
@@ -174,13 +174,12 @@ class TelegramHandler:
 
     # -- Helpers --
 
-    def _check_rate(self, update: Update) -> bool:
+    async def _check_rate(self, update: Update) -> bool:
         user_id = update.effective_user.id if update.effective_user else 0
         if not self._limiter.allow(user_id):
-            import asyncio
-            task = asyncio.create_task(
-                update.message.reply_text("\u26a0\ufe0f Rate limit exceeded.")
-            )
-            task.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
+            try:
+                await update.message.reply_text("\u26a0\ufe0f Rate limit exceeded.")
+            except Exception:
+                pass  # best-effort rate limit reply
             return False
         return True
