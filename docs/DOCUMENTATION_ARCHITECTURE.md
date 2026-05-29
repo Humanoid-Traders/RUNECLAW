@@ -105,7 +105,7 @@ python -m bot.main --mode cli
 Tree view with one-line descriptions for every file.
 
 ### 8. Safety & Risk
-Bullet list of the seven safety guarantees. Include the disclaimer about hackathon use.
+Bullet list of the 16 safety guarantees. Include the disclaimer about hackathon use.
 
 ### 9. Tech Stack Table
 Python 3.11+, Bitget via ccxt, OpenAI GPT-4o, NumPy, Pydantic v2, python-telegram-bot 20.x, Structured JSON logging, python-dotenv.
@@ -604,7 +604,7 @@ RUNECLAW
     - Exposure-weighted position sizing
 
 **Key Diagrams:**
-- Risk check flowchart (7 checks in sequence, any fail → REJECTED)
+- Risk check flowchart (16 checks in sequence, any fail → REJECTED)
 - Circuit breaker state machine (OK → TRIPPED → manual RESET → OK)
 - Timeline: idea generated → time passes → human confirms → re-check → execute or reject
 
@@ -775,7 +775,7 @@ RUNECLAW
    ```
 4. **Key Design Decisions**
    - Confirmation gate is bypassed in backtest mode (no human in the loop for historical replay)
-   - Risk engine runs identically — same 7 checks, same circuit breaker
+   - Risk engine runs identically — same 16 checks, same circuit breaker
    - Slippage and commission modeling should be configurable
    - Walk-forward validation preferred over simple backtest
 5. **Expected Output** — `BacktestResult` model (from Implementation Blueprint):
@@ -1099,7 +1099,7 @@ RUNECLAW
 6. **How to Evaluate**
    - Clone and run in CLI mode (zero config, <2 minutes)
    - Review architecture in `docs/architecture.md`
-   - Inspect risk engine: `bot/risk/risk_engine.py` (116 lines, all 7 checks visible)
+   - Inspect risk engine: `bot/risk/risk_engine.py` (116 lines, all 16 checks visible)
    - Check audit logs: `logs/*.jsonl`
    - Read the agent prompt: `bot/prompts/system_prompt.md`
 7. **Links**

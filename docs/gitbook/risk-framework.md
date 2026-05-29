@@ -19,7 +19,7 @@ This means the system may miss opportunities. That is an acceptable trade-off. M
 Risk is enforced at multiple layers:
 
 1. **Analyzer level** -- Ideas with confidence below 0.50 are never generated.
-2. **Risk engine level** -- Seven independent checks must all pass.
+2. **Risk engine level** -- 16 independent checks must all pass.
 3. **Confirmation level** -- Risk is re-evaluated when the human confirms (the market may have moved).
 4. **Configuration level** -- `SIMULATION_MODE=true` and `LIVE_TRADING_ENABLED=false` are both set by default. Live trading requires both flags to be flipped.
 
@@ -109,7 +109,7 @@ The circuit breaker is a safety mechanism that halts all trading when risk limit
 
 ## Re-Check on Confirmation
 
-When a human taps "Confirm" on a pending trade idea, the risk engine runs all seven checks again against the current portfolio state. This catches scenarios where:
+When a human taps "Confirm" on a pending trade idea, the risk engine runs all 16 checks again against the current portfolio state. This catches scenarios where:
 
 - Another trade was confirmed between idea generation and confirmation.
 - Market movement changed the risk profile.

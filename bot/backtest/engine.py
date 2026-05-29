@@ -167,18 +167,27 @@ class BacktestEngine:
 
         # 5. Execute (no human confirmation in backtest)
         size_usd = risk_check.position_size_usd
-        trade = self.portfolio.open_position(idea, size_usd)
 
-        # Apply entry slippage
+        # Apply entry slippage BEFORE opening portfolio position so the
+        # portfolio's internal equity/drawdown curve reflects slipped entries.
         slippage = idea.entry_price * (self.config.slippage_pct / 100)
         if idea.direction == Direction.LONG:
             adjusted_entry = idea.entry_price + slippage
         else:
             adjusted_entry = idea.entry_price - slippage
 
+        # Create a slippage-adjusted copy of the idea for portfolio
+        slipped_idea = idea.model_copy(update={"entry_price": round(adjusted_entry, 6)})
+        trade = self.portfolio.open_position(slipped_idea, size_usd)
+
         # Store backtest metadata
         # STRATEGY: trailing stop after 1R profit -- track best_price and trailing state
         initial_risk = abs(idea.entry_price - idea.stop_loss)
+        # Canonical ATR: recover the ATR used to set the stop (initial_risk / sl_mult).
+        # This is used for trailing distance (1.5 * canonical_atr) and is consistent
+        # across backtest, live, and portfolio paths.
+        sl_mult = 2.5  # matches CONFIG.analyzer.sl_atr_mult_default
+        canonical_atr = initial_risk / sl_mult if initial_risk > 0 else (atr_value or idea.entry_price * 0.02)
         self._open_bt_positions[idea.id] = {
             "entry_time": bar.timestamp,
             "adjusted_entry": adjusted_entry,
@@ -189,7 +198,7 @@ class BacktestEngine:
             "best_price": adjusted_entry,  # best favorable price since entry
             "trailing_active": False,       # activated once profit >= 1R
             "initial_risk": initial_risk,   # 1R distance for trailing activation
-            "atr_value": atr_value,         # ATR for trailing stop distance
+            "atr_value": canonical_atr,     # canonical ATR for trailing stop distance
         }
 
         audit(trade_log, f"[BT] Opened {idea.direction.value} {idea.asset}",
@@ -216,7 +225,7 @@ class BacktestEngine:
             # Update best_price and check if trailing stop should activate
             entry = bt_meta["adjusted_entry"]
             initial_risk = bt_meta.get("initial_risk", 0)
-            atr_val = bt_meta.get("atr_value") or initial_risk
+            atr_val = bt_meta.get("atr_value", 0)  # canonical ATR, set at entry
 
             if direction == Direction.LONG:
                 # Track the highest price seen since entry
@@ -417,7 +426,7 @@ class BacktestEngine:
         )
 
         # Profit factor
-        profit_factor = (gross_profit / gross_loss) if gross_loss > 0 else float("inf") if gross_profit > 0 else 0
+        profit_factor = (gross_profit / gross_loss) if gross_loss > 0 else (999.99 if gross_profit > 0 else 0)
 
         # Sharpe, Sortino, Calmar from equity curve returns
         sharpe = self._compute_sharpe()
@@ -479,20 +488,29 @@ class BacktestEngine:
         )
 
     def _compute_sharpe(self, risk_free_rate: float = 0.04) -> float:
-        """Annualized Sharpe ratio from equity curve."""
+        """Annualized Sharpe ratio from equity curve.
+        Computes annualization factor from actual observation frequency,
+        not a hardcoded 2190."""
         if len(self._equity_curve) < 2:
             return 0.0
         equities = [p.equity for p in self._equity_curve]
         returns = np.diff(equities) / equities[:-1]
         if len(returns) == 0 or np.std(returns) == 0:
             return 0.0
-        # Assuming 4-bar intervals on 1h data → 6 observations per day → ~2190 per year
-        periods_per_year = 2190
+        # Compute actual periods per year from timestamps
+        ts = [p.timestamp for p in self._equity_curve]
+        total_seconds = (ts[-1] - ts[0]).total_seconds()
+        if total_seconds <= 0:
+            return 0.0
+        observations = len(returns)
+        seconds_per_obs = total_seconds / observations
+        periods_per_year = (365.25 * 24 * 3600) / seconds_per_obs if seconds_per_obs > 0 else 2190
         excess = np.mean(returns) - risk_free_rate / periods_per_year
         return float(excess / np.std(returns) * np.sqrt(periods_per_year))
 
     def _compute_sortino(self, risk_free_rate: float = 0.04) -> float:
-        """Annualized Sortino ratio (downside deviation only)."""
+        """Annualized Sortino ratio (downside deviation only).
+        Uses actual observation frequency for annualization."""
         if len(self._equity_curve) < 2:
             return 0.0
         equities = [p.equity for p in self._equity_curve]
@@ -500,6 +518,13 @@ class BacktestEngine:
         downside = returns[returns < 0]
         if len(downside) == 0 or np.std(downside) == 0:
             return 0.0
-        periods_per_year = 2190
+        # Compute actual periods per year from timestamps
+        ts = [p.timestamp for p in self._equity_curve]
+        total_seconds = (ts[-1] - ts[0]).total_seconds()
+        if total_seconds <= 0:
+            return 0.0
+        observations = len(returns)
+        seconds_per_obs = total_seconds / observations
+        periods_per_year = (365.25 * 24 * 3600) / seconds_per_obs if seconds_per_obs > 0 else 2190
         excess = np.mean(returns) - risk_free_rate / periods_per_year
         return float(excess / np.std(downside) * np.sqrt(periods_per_year))

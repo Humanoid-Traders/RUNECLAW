@@ -86,11 +86,16 @@ class PortfolioTracker:
 
         # STRATEGY: trailing stop after 1R profit -- initialize tracking
         initial_risk = abs(idea.entry_price - idea.stop_loss)
+        # Canonical ATR: use initial_risk / sl_mult (default 2.5) to recover the ATR
+        # that was used to set the stop. This ensures trailing distance (1.5 * ATR)
+        # is consistent with the stop-loss distance.
+        sl_mult = 2.5  # matches CONFIG.analyzer.sl_atr_mult_default
+        canonical_atr = initial_risk / sl_mult if initial_risk > 0 else idea.entry_price * 0.02
         self._trailing_state[idea.id] = {
             "best_price": idea.entry_price,
             "trailing_active": False,
             "initial_risk": initial_risk,
-            "atr": initial_risk / 2.5 if initial_risk > 0 else idea.entry_price * 0.02,
+            "atr": canonical_atr,
         }
 
         audit(trade_log, f"Opened {trade.direction.value} {trade.asset}",

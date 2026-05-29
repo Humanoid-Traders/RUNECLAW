@@ -39,7 +39,7 @@ Validated across 180 backtest runs (3 volatility regimes, 3 trend biases, 20 see
 - **6-Indicator Confluence Scoring** -- RSI-14, MACD (12/26/9), Bollinger Bands (20/2), OBV, ADX-14, VWAP weighted and blended with LLM confidence (60/40 split)
 - **Regime-Aware Analysis** -- ADX-14 classifies market as TREND_UP, TREND_DOWN, RANGE, or CHOP; strategy adapts SL/TP multipliers and applies confidence penalties accordingly
 - **Adaptive ATR Risk Management** -- stop-loss and take-profit levels scale with volatility regime (high vol: 3.0/4.5x ATR, normal: 2.5/3.5x, low: 2.0/3.0x)
-- **Trailing Stops** -- activated at 1R profit, trail at 1.5x ATR behind best price; responsible for 48.7% of all exits in backtesting
+- **Trailing Stops** -- activated at 1R profit, trail at 1.5x ATR behind best price; responsible for 48.7% of all exits in backtesting with net-positive aggregate PnL
 - **9-State FSM** -- IDLE, SCANNING, ANALYZING, RISK_CHECK, CONFIRMING, EXECUTING, MONITORING, COOLING_DOWN, HALTED with validated transitions
 - **Human-in-the-Loop** -- every trade requires Telegram confirmation with inline approve/reject keyboard
 - **Simulation-First** -- paper trading by default ($10K virtual balance), live trading requires dual safety flag opt-in
@@ -86,7 +86,7 @@ Validated across 180 backtest runs (3 volatility regimes, 3 trend biases, 20 see
 | Fail-closed design | Any check failure or exception returns REJECTED | Verified |
 | 82 tests passing | `pytest tests/test_core.py -v` -- 82/82 green | Verified |
 | 9-state FSM | `bot/utils/models.py` AgentState enum, `bot/core/engine.py` transitions | Verified |
-| Trailing stops work | Backtest: 416/855 exits via trailing stop, 100% WR, +$6,814 | Verified |
+| Trailing stops work | Backtest: 416/855 exits via trailing stop, net-positive aggregate PnL | Verified |
 | Regime detection | `bot/core/analyzer.py` _detect_regime + _score_confluence | Verified |
 | Thread safety | RLock on portfolio, risk engine, scanner, rate limiter | Verified |
 | Simulation-first | `config.py` simulation_mode=True, live_trading_enabled=False by default | Verified |

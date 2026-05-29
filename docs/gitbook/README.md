@@ -15,7 +15,7 @@ The system operates in **paper trading mode by default** and is designed for the
 ## Core Principles
 
 1. **Simulation-first.** Live trading is disabled unless explicitly enabled with two environment flags.
-2. **Fail-closed risk.** Every trade must pass all seven pre-trade checks. One failure means rejection.
+2. **Fail-closed risk.** Every trade must pass all 16 pre-trade checks. One failure means rejection.
 3. **Human-in-the-loop.** No trade executes without explicit confirmation via Telegram inline keyboard.
 4. **Full auditability.** Every decision is logged as structured JSON for post-mortem review.
 

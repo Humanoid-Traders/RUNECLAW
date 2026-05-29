@@ -177,7 +177,7 @@ runeclaw/
 |   |   |-- market_scanner.py   # Bitget market scanner, volume spike detection
 |   |   |-- analyzer.py         # AI + technical analysis, LLM thesis generation
 |   |-- risk/
-|   |   |-- risk_engine.py      # 15-check risk gate, circuit breaker
+|   |   |-- risk_engine.py      # 16-check risk gate, circuit breaker
 |   |   |-- portfolio.py        # Paper trading ledger, PnL tracking
 |   |-- skills/
 |   |   |-- skill_registry.py   # Modular skill system, built-in skills

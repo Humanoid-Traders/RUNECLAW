@@ -46,7 +46,9 @@ class RiskLimits:
     max_portfolio_exposure_pct: float = _env_float("MAX_PORTFOLIO_EXPOSURE_PCT", 80.0)
     max_symbol_exposure_pct: float = _env_float("MAX_SYMBOL_EXPOSURE_PCT", 20.0)
     max_correlation_per_group: int = int(_env_float("MAX_CORRELATION_PER_GROUP", 2))
-    # Crypto-appropriate threshold: BTC hourly ATR is typically 2-5% of price
+    # Volatility guard: reject trades when ATR exceeds this % of price.
+    # BTC hourly ATR is typically 1-4%; 6% allows for elevated-vol periods
+    # while blocking extreme conditions. Docs/tests must reference 6%.
     volatility_guard_atr_mult: float = _env_float("VOLATILITY_GUARD_ATR_MULT", 6.0)
     stale_data_max_age_seconds: int = int(_env_float("STALE_DATA_MAX_AGE_SEC", 300))
     require_stop_loss: bool = _env_bool("REQUIRE_STOP_LOSS", True)

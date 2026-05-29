@@ -131,27 +131,47 @@ class MetricsEngine:
         )
 
     def _compute_sharpe(self, risk_free_rate: float = 0.0) -> float:
-        """Annualized Sharpe from equity curve."""
+        """Annualized Sharpe from equity curve.
+        Computes annualization factor from actual timestamp cadence."""
         if len(self._equity_curve) < 2:
             return 0.0
         returns = np.diff(self._equity_curve) / np.array(self._equity_curve[:-1])
         if np.std(returns) == 0:
             return 0.0
-        # Annualized for hourly data (~2190 trading hours/year)
-        excess = returns - risk_free_rate / 2190
-        return float(np.mean(excess) / np.std(excess) * np.sqrt(2190))
+        # Compute actual periods per year from timestamps
+        if len(self._timestamps) >= 2:
+            total_seconds = (self._timestamps[-1] - self._timestamps[0]).total_seconds()
+            if total_seconds > 0:
+                seconds_per_obs = total_seconds / len(returns)
+                periods_per_year = (365.25 * 24 * 3600) / seconds_per_obs
+            else:
+                periods_per_year = 2190  # fallback
+        else:
+            periods_per_year = 2190
+        excess = returns - risk_free_rate / periods_per_year
+        return float(np.mean(excess) / np.std(excess) * np.sqrt(periods_per_year))
 
     def _compute_sortino(self, risk_free_rate: float = 0.0) -> float:
-        """Annualized Sortino from equity curve."""
+        """Annualized Sortino from equity curve.
+        Uses actual timestamp cadence for annualization."""
         if len(self._equity_curve) < 2:
             return 0.0
         returns = np.diff(self._equity_curve) / np.array(self._equity_curve[:-1])
         downside = returns[returns < 0]
         if len(downside) == 0 or np.std(downside) == 0:
             return 0.0
-        # Annualized for hourly data (~2190 trading hours/year)
-        excess = np.mean(returns) - risk_free_rate / 2190
-        return float(excess / np.std(downside) * np.sqrt(2190))
+        # Compute actual periods per year from timestamps
+        if len(self._timestamps) >= 2:
+            total_seconds = (self._timestamps[-1] - self._timestamps[0]).total_seconds()
+            if total_seconds > 0:
+                seconds_per_obs = total_seconds / len(returns)
+                periods_per_year = (365.25 * 24 * 3600) / seconds_per_obs
+            else:
+                periods_per_year = 2190
+        else:
+            periods_per_year = 2190
+        excess = np.mean(returns) - risk_free_rate / periods_per_year
+        return float(excess / np.std(downside) * np.sqrt(periods_per_year))
 
     def _compute_max_drawdown(self) -> float:
         """Max drawdown percentage from equity curve."""

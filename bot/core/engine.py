@@ -175,9 +175,21 @@ class RuneClawEngine:
         if idea is None:
             return None
 
-        # Risk gate
+        # Compute ATR from candles for the volatility guard (check #16)
+        atr_value = None
+        if len(ohlcv) >= 15:
+            true_ranges = []
+            for j in range(1, min(15, len(ohlcv))):
+                h = float(ohlcv[-j][2])
+                l = float(ohlcv[-j][3])
+                pc = float(ohlcv[-j - 1][4])
+                tr = max(h - l, abs(h - pc), abs(l - pc))
+                true_ranges.append(tr)
+            atr_value = sum(true_ranges) / len(true_ranges)
+
+        # Risk gate — pass ATR so all 16 checks run
         self._transition(AgentState.RISK_CHECK, f"evaluating {signal.symbol}")
-        risk_check = self.risk.evaluate(idea)
+        risk_check = self.risk.evaluate(idea, atr=atr_value)
         if risk_check.verdict == RiskVerdict.REJECTED:
             audit(
                 trade_log,

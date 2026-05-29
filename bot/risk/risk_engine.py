@@ -132,24 +132,36 @@ class RiskEngine:
 
         position_usd = state.equity_usd * (CONFIG.risk.max_position_pct / 100.0)
 
+        # Fixed-fractional risk sizing: size by stop distance, not flat notional.
+        # risk_budget = equity * max_position_pct (the max we're willing to lose)
+        # position_usd = risk_budget / (stop_distance / entry_price)
+        # This ensures each trade risks the same dollar amount regardless of stop width.
+        stop_distance_pct = abs(idea.entry_price - idea.stop_loss) / idea.entry_price if idea.entry_price > 0 else 0
+        if stop_distance_pct > 0:
+            risk_budget = state.equity_usd * (CONFIG.risk.max_position_pct / 100.0)
+            position_usd = min(risk_budget / stop_distance_pct, state.equity_usd * 0.20)  # cap at 20% notional
+        # else: fall back to flat notional (computed above)
+
         # 1. Circuit breaker
         if self._circuit_open:
             failed.append("CIRCUIT_BREAKER: system halted due to prior losses")
         else:
             passed.append("CIRCUIT_BREAKER: OK")
 
-        # 2. Position size
+        # 2. Position size — verify the risk amount (max loss if stopped) stays within limit
         if state.equity_usd <= 0:
             failed.append("EQUITY: zero or negative equity")
         else:
-            pos_pct = (position_usd / state.equity_usd * 100)
-            if pos_pct <= CONFIG.risk.max_position_pct:
-                passed.append(f"POSITION_SIZE: {pos_pct:.1f}% <= {CONFIG.risk.max_position_pct}%")
+            # With fixed-fractional sizing, check that actual risk (not notional) is bounded
+            risk_amount = position_usd * stop_distance_pct if stop_distance_pct > 0 else position_usd
+            risk_pct = (risk_amount / state.equity_usd * 100)
+            if risk_pct <= CONFIG.risk.max_position_pct:
+                passed.append(f"POSITION_SIZE: risk {risk_pct:.1f}% <= {CONFIG.risk.max_position_pct}%")
             else:
-                failed.append(f"POSITION_SIZE: {pos_pct:.1f}% > {CONFIG.risk.max_position_pct}%")
+                failed.append(f"POSITION_SIZE: risk {risk_pct:.1f}% > {CONFIG.risk.max_position_pct}%")
 
-        # 3. Daily loss (realized + unrealized)
-        daily_loss_pct = abs(state.daily_pnl / state.balance_usd * 100) if state.balance_usd > 0 else 0
+        # 3. Daily loss (realized + unrealized) — measured against equity, not free cash
+        daily_loss_pct = abs(state.daily_pnl / state.equity_usd * 100) if state.equity_usd > 0 else 0
         if state.daily_pnl < 0 and daily_loss_pct >= CONFIG.risk.max_daily_loss_pct:
             failed.append(f"DAILY_LOSS: {daily_loss_pct:.1f}% >= {CONFIG.risk.max_daily_loss_pct}%")
             self._trip_circuit_breaker("daily loss limit breached")

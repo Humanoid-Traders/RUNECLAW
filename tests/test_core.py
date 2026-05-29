@@ -550,7 +550,7 @@ class TestRiskEngineNewChecks:
         port = _make_portfolio()
         risk = _make_risk(port)
         idea = self._make_idea()
-        # ATR of 5000 on a 50000 entry = 10%, above 3% default guard
+        # ATR of 5000 on a 50000 entry = 10%, above 6% volatility guard threshold
         check = risk.evaluate(idea, atr=5000)
         assert check.verdict == RiskVerdict.REJECTED
         assert any("VOLATILITY" in f for f in check.checks_failed)
@@ -559,7 +559,7 @@ class TestRiskEngineNewChecks:
         port = _make_portfolio()
         risk = _make_risk(port)
         idea = self._make_idea()
-        # ATR of 500 on 50000 = 1%, below 3% guard
+        # ATR of 500 on 50000 = 1%, below 6% volatility guard threshold
         check = risk.evaluate(idea, atr=500)
         assert not any("VOLATILITY" in f for f in check.checks_failed)
 

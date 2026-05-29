@@ -38,7 +38,7 @@ One failure = rejected. No exceptions.
 - 50.5% win rate
 - Worst drawdown: 2.87%
 - Zero crashed runs
-- Trailing stops: 100% win rate, +$6,814
+- Trailing stops: 48.7% of all exits, net-positive aggregate PnL
 
 No inflated claims. These are the actual numbers from synthetic data backtesting.
 
@@ -95,7 +95,7 @@ RUNECLAW scans markets for volume anomalies and momentum shifts, generates expla
 - 16 fail-closed risk checks -- any failure blocks the trade
 - ADX-14 regime detection adapts strategy to trend/range/chop conditions
 - Adaptive ATR-based stop-loss and take-profit scaling
-- Trailing stops activated at 1R profit (48.7% of all backtest exits)
+- Trailing stops accounted for 48.7% of all exits with net-positive aggregate PnL
 - Thread-safe across all shared state with RLock
 
 **Backtest validation:**

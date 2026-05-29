@@ -681,7 +681,7 @@ runeclaw/
 | Market data fetch | **Real** | Hits Bitget public API (no auth required) |
 | Technical indicators | **Real** | Computed from real OHLCV data |
 | LLM thesis generation | **Real** (when API key set) | Falls back to rule-based if no key |
-| Risk engine checks | **Real** | All 7 checks execute against actual portfolio state |
+| Risk engine checks | **Real** | All 16 checks execute against actual portfolio state |
 | Paper trading | **Real** (simulated fills) | Fills at current market price, tracks PnL accurately |
 | Portfolio tracking | **Real** | Full position lifecycle, PnL, drawdown |
 | Audit logging | **Real** | Every decision written to structured JSON |

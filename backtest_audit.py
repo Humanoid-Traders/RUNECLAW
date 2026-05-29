@@ -9,8 +9,11 @@ import sys
 import os
 import logging
 
-# Suppress noisy log output to stderr so our table is readable
-logging.disable(logging.CRITICAL)
+# Suppress noisy log output to stderr so our table is readable.
+# Only suppress bot loggers, not the global root — importing this module
+# as a library won't silence the entire application's audit trail.
+logging.getLogger("bot").setLevel(logging.CRITICAL)
+logging.getLogger("runeclaw").setLevel(logging.CRITICAL)
 
 # Add project root to sys.path
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
