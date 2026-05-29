@@ -46,7 +46,7 @@ Validated across 180 backtest runs (synthetic data — 3 volatility regimes, 3 t
 - **Human-in-the-Loop** -- every trade requires Telegram confirmation with inline approve/reject keyboard
 - **Simulation-First** -- paper trading by default ($10K virtual balance), live trading requires dual safety flag opt-in
 - **Full Audit Trail** -- structured JSON logging of every decision, rejection, and execution with timestamps
-- **97 Unit Tests** -- risk engine, portfolio, analyzer indicators (including candlestick patterns, Fibonacci, OBV, anchored VWAP), backtest replay, models, integration, edge cases
+- **97 Unit Tests** -- risk engine, portfolio, analyzer indicators (including candlestick patterns, Fibonacci, OBV, rolling VWAP), backtest replay, models, integration, edge cases, audit fix validation (133 tests with audit additions)
 
 ---
 
@@ -59,14 +59,14 @@ Validated across 180 backtest runs (synthetic data — 3 volatility regimes, 3 t
 | Analysis Engine | 10-voter confluence model (RSI, MACD, BB, Volume Spike, ADX, VWAP, OBV trend, candlestick pattern, Fibonacci zone) + LLM reasoning, SMA-50 trend alignment (+0.10/-0.15), volume confirmation (+/-0.05) |
 | Regime Detection | ADX-14 with directional movement index; TREND_UP/DOWN skip opposite-direction signals, RANGE/CHOP apply confidence penalty |
 | Risk Engine | 16 fail-closed checks, all must pass; thread-safe with RLock; stats tracking for monitoring |
-| Trailing Stops | Track best_price per position, activate at 1R profit, trail at 1.5x ATR; 100% win rate in backtesting |
+| Trailing Stops | Track best_price per position, activate at 1R profit, trail at 1.5x ATR; trailing exits lock in ≥1 ATR profit by construction (structural, not a predictive edge) |
 | Circuit Breaker | Trips on 5% daily loss, 10% drawdown, or 5 consecutive losses; requires manual reset |
 | Portfolio Tracker | Thread-safe position lifecycle with drawdown tracking, daily PnL, equity snapshots |
 | Backtesting | Intrabar SL/TP/trailing stop checking, configurable commission (0.1%) and slippage (0.05%), synthetic data with GBM + GARCH |
 | Telegram Bot | Rate-limited (20/min), inline keyboards, fire-and-forget async tasks with error callbacks |
 | Data Validation | Pydantic strict schemas at every boundary -- API responses, config, trade parameters, internal state |
 | Concurrency | RLock guards on portfolio, risk engine, scanner; no await points inside locked regions so single-threaded asyncio model is safe |
-| Metrics Engine | Sharpe/Sortino (annualized sqrt(2190) for hourly), Calmar, profit factor, equity curve (capped 10K points) |
+| Metrics Engine | Sharpe/Sortino (per-trade returns, annualized sqrt(N) where N = trades/year), Calmar, profit factor, equity curve (capped 10K points) |
 
 ---
 
@@ -87,9 +87,9 @@ Validated across 180 backtest runs (synthetic data — 3 volatility regimes, 3 t
 |-------|----------|--------|
 | 16 risk checks | `bot/risk/risk_engine.py` lines 1-23 enumerate all 16 | Verified |
 | Fail-closed design | Any check failure or exception returns REJECTED | Verified |
-| 97 tests passing | `pytest tests/test_core.py -v` -- 97/97 green | Verified |
+| 97+ tests passing | `pytest tests/test_core.py -v` -- 133/133 green (97 original + 36 audit/feature additions) | Verified |
 | 9-state FSM | `bot/utils/models.py` AgentState enum, `bot/core/engine.py` transitions | Verified |
-| Trailing stops work | Backtest (synthetic data): 416/855 exits via trailing stop, net-positive aggregate PnL | Verified |
+| Trailing stops work | Backtest (synthetic data): 416/855 exits via trailing stop, net-positive aggregate PnL. Note: trailing exits are structurally profitable (activate at +1R, trail 1.5 ATR) — this is by construction, not evidence of predictive edge | Verified |
 | Regime detection | `bot/core/analyzer.py` _detect_regime + _score_confluence | Verified |
 | Thread safety | RLock on portfolio, risk engine, scanner; no await inside locks, safe for asyncio model | Verified |
 | Simulation-first | `config.py` simulation_mode=True, live_trading_enabled=False by default | Verified |
@@ -102,7 +102,7 @@ Validated across 180 backtest runs (synthetic data — 3 volatility regimes, 3 t
 
 ## Final QA Checklist
 
-- [x] All 97 tests pass (`pytest tests/test_core.py -v`)
+- [x] All 133 tests pass (`pytest tests/test_core.py -v`)
 - [x] No critical or high-severity issues in codebase audit (all C1-C3, H1-H4 fixed)
 - [x] All 16 risk checks verified correct with unit tests
 - [x] Backtest runs without crashes across 180 configurations
@@ -110,8 +110,8 @@ Validated across 180 backtest runs (synthetic data — 3 volatility regimes, 3 t
 - [x] Config loads from environment variables with safe defaults
 - [x] Simulation mode is ON by default
 - [x] Live trading requires two explicit flags
-- [x] README accurately reflects current architecture (16 checks, 10 voters including OBV, candlestick patterns, Fibonacci retracement)
-- [x] Website matches codebase claims (16 checks, 97 tests, backtest stats)
+- [x] README accurately reflects current architecture (16 checks + liquidity guard, 10+ voters including OBV, candlestick patterns, Fibonacci retracement, order flow when available)
+- [x] Website matches codebase claims (16 checks, 133 tests, backtest stats)
 - [x] GitHub repo is public and up to date
 - [x] No deprecated datetime calls remaining
 - [x] Thread safety verified on all shared state

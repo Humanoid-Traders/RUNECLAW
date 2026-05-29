@@ -23,7 +23,7 @@
 **Spoken:**
 > "Most trading bots are built to trade. RUNECLAW is built to decide *whether* to trade."
 >
-> "It scans real markets, generates AI-backed trade theses, runs seven independent risk checks — and then asks a human for permission. If any single check fails, the trade dies. No override. No exception."
+> "It scans real markets, generates AI-backed trade theses, runs sixteen independent risk checks — and then asks a human for permission. If any single check fails, the trade dies. No override. No exception."
 
 **Action:** None. Let the words land.
 
@@ -38,7 +38,7 @@ TYPICAL BOT              RUNECLAW
 ─────────────            ─────────────
 Signal → Execute         Signal → Analyze → Risk Gate → Human Confirm → Execute
 No explanation           Full reasoning chain
-No risk limit            7 fail-closed checks
+No risk limit            16 fail-closed checks
 No audit trail           Structured JSON logging
 Black box                Every decision traceable
 ```
@@ -148,12 +148,12 @@ Circuit Breaker: OK
 ```
 
 **Spoken:**
-> "Before any trade can execute, it passes through seven independent risk checks."
+> "Before any trade can execute, it passes through sixteen independent risk checks."
 
 *Count on fingers or point at list — make it concrete:*
 
 > "One: circuit breaker — is the system halted?
-> Two: position size — is this trade more than two percent of equity?
+> Two: position size — does this trade risk more than two percent of equity at the stop-loss?
 > Three: daily loss — have we lost more than five percent today?
 > Four: drawdown — are we down more than ten percent from peak?
 > Five: max positions — do we already have five open?
@@ -198,11 +198,11 @@ Total PnL: $0.00
 ```
 
 **Spoken:**
-> "Paper trade is live. Two hundred dollars allocated — exactly two percent of equity. The position is now monitored every scan cycle. If price hits the stop-loss at sixty-six-five-eighty or the take-profit at sixty-eight-seven-ten, it auto-closes and records the PnL."
+> "Paper trade is live. Two thousand dollars allocated — capped at twenty percent notional, risking two percent of equity at the stop. The position is now monitored every scan cycle. If price hits the stop-loss or the take-profit, it auto-closes and records the PnL."
 >
 > "The portfolio tracker handles balance, equity, drawdown, win rate — all in-memory for the hackathon, architecturally ready for database persistence."
 
-**Proof point:** Position size matches the 2% risk limit. SL/TP monitoring is automatic.
+**Proof point:** Position size reflects the 2% risk budget capped at 20% notional. SL/TP monitoring is automatic.
 
 ---
 
@@ -280,12 +280,12 @@ Prepare these before the demo. If anything fails live, show these as evidence.
 | Artifact | File | Purpose |
 |----------|------|---------|
 | Trade idea JSON | `demo/sample_output.json` | Shows structured AI output with reasoning |
-| Risk check JSON | `demo/sample_risk_check.json` | Shows all 7 checks passed with values |
+| Risk check JSON | `demo/sample_risk_check.json` | Shows all 16 checks passed with values |
 | Portfolio state | `demo/sample_portfolio.json` | Shows positions, PnL, trade history |
 | Trade audit log | `logs/trade.jsonl` | Shows decision chain for a single trade |
 | Risk audit log | `logs/risk.jsonl` | Shows circuit breaker logic |
 | System prompt | `bot/prompts/system_prompt.md` | Shows agent identity and 5 laws |
-| Risk engine source | `bot/risk/risk_engine.py` | 116 lines — all 7 checks visible |
+| Risk engine source | `bot/risk/risk_engine.py` | 116 lines — all 16 checks visible |
 | Config defaults | `bot/config.py` | Shows SIMULATION_MODE=True default |
 
 ---
@@ -308,16 +308,16 @@ If Bitget API is unreachable:
 
 If Python environment fails entirely:
 - Open `demo/sample_output.json` → show the trade idea structure
-- Open `demo/sample_risk_check.json` → show the 7 checks
+- Open `demo/sample_risk_check.json` → show the 16 checks
 - Open `demo/sample_portfolio.json` → show portfolio with positions and history
 - Walk through the JSON fields as if the system produced them live
-- Show `bot/risk/risk_engine.py` source — 116 lines, all 7 checks visible on one screen
+- Show `bot/risk/risk_engine.py` source — 116 lines, all 16 checks visible on one screen
 
 ## Tier 3: Code Walkthrough
 
 If nothing runs:
 - Open `bot/core/engine.py` → show the pipeline: scan → analyze → risk → confirm → execute
-- Open `bot/risk/risk_engine.py` → show the 7 checks
+- Open `bot/risk/risk_engine.py` → show the 16 checks
 - Open `bot/utils/logger.py` → show the audit function
 - Open `bot/config.py` → show SIMULATION_MODE=True, LIVE_TRADING_ENABLED=False
 - This proves the architecture is real and the code is production-quality
@@ -373,12 +373,12 @@ Run through this 30 minutes before the demo:
 # COMMON DEMO MISTAKES TO AVOID
 
 ### 1. Starting with features instead of the problem
-Wrong: "RUNECLAW has seven risk checks and Telegram integration."
+Wrong: "RUNECLAW has sixteen risk checks and Telegram integration."
 Right: "Trading bots have a trust problem. Here's how we solve it."
 Judges don't care about features until they understand the problem.
 
 ### 2. Rushing through the risk engine
-The risk engine is the core differentiator. Enumerate all seven checks. Use your fingers. Make each one distinct and countable. This is the moment judges lean forward.
+The risk engine is the core differentiator. Enumerate all sixteen checks. Use your fingers. Make each one distinct and countable. This is the moment judges lean forward.
 
 ### 3. Skipping the audit trail
 Showing `trade.jsonl` is the single most convincing proof that the system is real and production-grade. Dashboards can be faked. Structured JSON logs cannot. Spend at least 15 seconds here.
@@ -411,7 +411,7 @@ These words signal toy. Say "system," "platform," or "runtime." The code is real
 | Boot | 0:30 | 0:45 | 15s | Start CLI, show prompt |
 | Perception | 0:45 | 1:00 | 15s | scan_market |
 | Decision | 1:00 | 1:25 | 25s | analyze_asset BTC |
-| Risk Gate | 1:25 | 1:50 | 25s | check_risk + 7 checks + execute |
+| Risk Gate | 1:25 | 1:50 | 25s | check_risk + 16 checks + execute |
 | Execution | 1:50 | 2:10 | 20s | get_portfolio + monitoring |
 | Audit | 2:10 | 2:30 | 20s | Show trade.jsonl |
 | Differentiators | 2:30 | 2:45 | 15s | Three-point summary |
@@ -432,7 +432,7 @@ A: The architecture supports it. Live trading requires setting `SIMULATION_MODE=
 A: The risk engine is independent of the LLM. Even if the LLM says "100% confident, go all in," the risk engine enforces position size (2%), R:R ratio (1.5 minimum), and all other checks. The LLM cannot override the gate.
 
 **Q: How is this different from a GPT wrapper?**
-A: A GPT wrapper sends market data to an LLM and executes whatever it says. RUNECLAW puts the LLM output through a seven-check risk gate and requires human confirmation. The LLM is one input to the decision, not the decision itself.
+A: A GPT wrapper sends market data to an LLM and executes whatever it says. RUNECLAW puts the LLM output through a sixteen-check risk gate and requires human confirmation. The LLM is one input to the decision, not the decision itself.
 
 **Q: Why paper trading?**
 A: Simulation-first is a design principle. In a regulatory environment where autonomous trading raises compliance questions, defaulting to paper trading is the responsible choice. It also means we can demo live without risk.

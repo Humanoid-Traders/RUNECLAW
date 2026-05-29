@@ -505,7 +505,7 @@ class TestModels:
 # ══════════════════════════════════════════════════════════════════
 
 class TestRiskEngineNewChecks:
-    """Tests for the 5 new institutional-grade risk checks."""
+    """Tests for the extended risk checks (checks 6-16)."""
 
     def _make_idea(self, **overrides):
         defaults = dict(
@@ -1786,4 +1786,62 @@ class TestAuditFixes:
         if result.verdict == RiskVerdict.REJECTED:
             assert "risk-reward" not in result.reason.lower(), \
                 f"R:R at boundary should not be rejected: {result.reason}"
+
+    # -- CVD-price divergence --
+
+    def test_cvd_price_divergence_bearish(self):
+        """Bearish divergence: price higher high, CVD lower high."""
+        from bot.core.order_flow import OrderFlowAnalyzer
+
+        # Price rising, CVD falling (distribution)
+        cvd_deltas = [100, 150, 120, 80, 50, 30]
+        prices = [100, 105, 102, 108, 110, 112]
+        result = OrderFlowAnalyzer._detect_cvd_divergence(cvd_deltas, prices)
+        assert result == "bearish_div", f"Expected bearish_div, got {result}"
+
+    def test_cvd_price_divergence_bullish(self):
+        """Bullish divergence: price lower low, CVD higher low."""
+        from bot.core.order_flow import OrderFlowAnalyzer
+
+        # Price falling, CVD rising (accumulation)
+        cvd_deltas = [-100, -80, -50, -30, -10, 20]
+        prices = [100, 95, 98, 92, 90, 88]
+        result = OrderFlowAnalyzer._detect_cvd_divergence(cvd_deltas, prices)
+        assert result == "bullish_div", f"Expected bullish_div, got {result}"
+
+    def test_cvd_price_divergence_none(self):
+        """No divergence when price and CVD move together."""
+        from bot.core.order_flow import OrderFlowAnalyzer
+
+        # Both rising — no divergence
+        cvd_deltas = [10, 20, 30, 40, 50, 60]
+        prices = [100, 102, 104, 106, 108, 110]
+        result = OrderFlowAnalyzer._detect_cvd_divergence(cvd_deltas, prices)
+        assert result == "none", f"Expected none, got {result}"
+
+    def test_cvd_divergence_insufficient_data(self):
+        """Divergence detection should return none with insufficient data."""
+        from bot.core.order_flow import OrderFlowAnalyzer
+
+        result = OrderFlowAnalyzer._detect_cvd_divergence([10, 20], [100, 102])
+        assert result == "none"
+
+    def test_cvd_divergence_in_confluence_votes(self):
+        """CVD divergence should produce a vote in to_confluence_votes."""
+        from bot.core.order_flow import OrderFlowAnalyzer, OrderFlowSignal
+
+        sig = OrderFlowSignal(
+            symbol="BTC/USDT",
+            book_imbalance=0.0,
+            cvd_trend="flat",
+            cvd_price_divergence="bearish_div",
+            whale_bias="neutral",
+            smart_money_score=0.0,
+            confidence=0.8,
+            components_ok=["book", "trades"],
+        )
+        votes, weights, labels = OrderFlowAnalyzer.to_confluence_votes(sig)
+        assert "of_cvd_divergence" in labels, f"Expected divergence label, got {labels}"
+        div_idx = labels.index("of_cvd_divergence")
+        assert votes[div_idx] == -1.0, "Bearish divergence should vote -1.0"
 

@@ -77,7 +77,7 @@ Website: https://lgl3crf9.mule.page/
 Docs: https://humanoid-traders-1.gitbook.io/humanoid-traders-ai
 Telegram: https://t.me/+VRNgsmkR5pszZTdk
 
-Built by Humanoid Traders. 97 tests. 16 risk checks. Read the code.
+Built by Humanoid Traders. 133 tests. 16 risk checks. Read the code.
 
 ---
 
@@ -99,7 +99,7 @@ RUNECLAW scans markets for volume anomalies and momentum shifts, generates expla
 - Thread-safe across all shared state with RLock
 
 **Backtest validation:**
-180 runs across 3 volatility regimes, 3 trend biases, 20 seeds. 855 total trades. Worst drawdown 2.87%. Zero crashed runs. Trailing stops delivered 100% win rate and +$6,814 aggregate profit.
+180 runs across 3 volatility regimes, 3 trend biases, 20 seeds. 855 total trades. Worst drawdown 2.87%. Zero crashed runs. Trailing stops lock in profit by construction (activate at +1R, trail 1.5 ATR) and accounted for 48.7% of exits with net-positive aggregate PnL.
 
 **Safety design:**
 - Paper trading by default, live requires dual flag opt-in
@@ -109,7 +109,7 @@ RUNECLAW scans markets for volume anomalies and momentum shifts, generates expla
 - Per-symbol and portfolio-level exposure limits
 
 **Test coverage:**
-97 unit tests covering risk engine (all 16 checks), portfolio lifecycle, analyzer indicators (including candlestick pattern detection, Fibonacci retracement, OBV, anchored VWAP), backtest replay, integration scenarios, edge cases, and negative inputs.
+97 unit tests covering risk engine (all 16 checks), portfolio lifecycle, analyzer indicators (including candlestick pattern detection, Fibonacci retracement, OBV, rolling VWAP), backtest replay, integration scenarios, edge cases, and negative inputs. Extended to 133 tests with audit-fix validation.
 
 **Links:**
 - GitHub: https://github.com/Humanoid-Traders/RUNECLAW

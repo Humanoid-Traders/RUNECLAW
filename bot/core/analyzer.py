@@ -453,14 +453,15 @@ class Analyzer:
             weights.append(0.5)
 
         # OBV trend vote (weight 0.6 — volume confirms price trend)
+        # Guard: only vote when obv_trend is present to keep votes/weights aligned
         obv_trend = indicators.get("obv_trend")
-        if obv_trend == "rising":
-            votes.append(1.0)
-        elif obv_trend == "falling":
-            votes.append(-1.0)
-        else:
-            votes.append(0.0)
         if obv_trend is not None:
+            if obv_trend == "rising":
+                votes.append(1.0)
+            elif obv_trend == "falling":
+                votes.append(-1.0)
+            else:
+                votes.append(0.0)
             weights.append(0.6)
 
         # Candlestick pattern vote (weight 0.8 — price action signal)
@@ -542,6 +543,7 @@ class Analyzer:
             prompt += (
                 f"Order_flow: book_imbalance={order_flow.book_imbalance:.2f}, "
                 f"cvd_trend={order_flow.cvd_trend}, "
+                f"cvd_price_divergence={order_flow.cvd_price_divergence}, "
                 f"whale_bias={order_flow.whale_bias}, "
                 f"funding_rate={funding_str}, "
                 f"smart_money_score={order_flow.smart_money_score:.2f}\n"

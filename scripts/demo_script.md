@@ -48,7 +48,7 @@ Pause. Let it land.
 
 6. **Send `/risk`** -- Show risk dashboard.
 
-> "Seven independent risk checks. Circuit breaker auto-halts on loss limits. No overrides."
+> "Sixteen independent risk checks. Circuit breaker auto-halts on loss limits. No overrides."
 
 ---
 
@@ -56,7 +56,7 @@ Pause. Let it land.
 
 > "Three things make RUNECLAW different:"
 
-1. **"Fail-closed risk engine."** Every trade passes seven checks. One failure kills the trade. The circuit breaker cannot be bypassed.
+1. **"Fail-closed risk engine."** Every trade passes sixteen checks. One failure kills the trade. The circuit breaker cannot be bypassed.
 
 2. **"Human-in-the-loop."** AI suggests, human decides. Re-check on confirmation catches market drift.
 

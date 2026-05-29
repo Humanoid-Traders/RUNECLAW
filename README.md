@@ -29,7 +29,7 @@
 
 **RUNECLAW** is an elite AI trading command system built by **Humanoid Traders** for the Bitget GetClaw Hackathon. It merges multi-timeframe analysis, confluence scoring, regime detection, macro awareness, and risk-first logic into a battle-forged framework -- all controllable through a Telegram bot interface.
 
-The system operates in **simulation-first mode by default**. Every trade idea must pass sixteen independent risk checks and receive explicit human confirmation before execution. No exceptions.
+The system operates in **simulation-first mode by default**. Every trade idea must pass sixteen independent risk checks and receive explicit human confirmation before execution. An additional liquidity guard runs on live order-flow data when available. No exceptions.
 
 **Key philosophy:** The bot suggests. The human decides. The risk engine enforces.
 
@@ -80,7 +80,7 @@ The system operates in **simulation-first mode by default**. Every trade idea mu
 - Top N mover ranking with structured signal output
 
 ### AI Analysis Engine
-- Technical indicators: RSI-14, MACD (12/26/9), Bollinger Bands (20/2), ATR-14, ADX-14, VWAP, SMA-50 trend alignment, On-Balance Volume (OBV), Anchored VWAP (20-bar and 50-bar)
+- Technical indicators: RSI-14, MACD (12/26/9), Bollinger Bands (20/2), ATR-14, ADX-14, VWAP, SMA-50 trend alignment, On-Balance Volume (OBV), Rolling VWAP (20-bar and 50-bar)
 - Candlestick pattern detection: 14 patterns including doji, hammer, shooting star, engulfing, harami, tweezer top/bottom, morning/evening star, three white soldiers, three black crows
 - Fibonacci retracement levels: swing high/low detection over 50-bar lookback, standard levels (23.6%, 38.2%, 50%, 61.8%, 78.6%) with zone classification
 - 10-voter confluence scoring model (expanded from 6): RSI, MACD, Bollinger %B, Volume Spike, ADX, VWAP, OBV trend, candlestick pattern, Fibonacci zone, plus LLM confidence
@@ -89,9 +89,9 @@ The system operates in **simulation-first mode by default**. Every trade idea mu
 - Structured `TradeIdea` output with entry, SL, TP, confidence, reasoning
 
 ### Risk Engine (Fail-Closed)
-- **16 independent pre-trade checks** -- ALL must pass
+- **16 independent pre-trade checks** -- ALL must pass (plus a 17th liquidity guard on live order-flow data, fail-open)
 - Circuit breaker halts trading on daily loss or drawdown breach
-- Position sizing capped at configurable % of equity
+- Fixed-fractional position sizing: risk budget (2% of equity) divided by stop distance, capped at 20% notional
 - Max open positions limit
 - Risk/reward ratio minimum (1.2x)
 - Confidence threshold gate (≥60%)
@@ -182,9 +182,10 @@ runeclaw/
 |   |   |-- engine.py           # Central orchestrator (SCAN->ANALYZE->TRADE->MONITOR)
 |   |   |-- market_scanner.py   # Bitget market scanner, volume spike detection
 |   |   |-- analyzer.py         # AI + technical analysis, LLM thesis generation
+|   |   |-- order_flow.py       # Exchange microstructure: CVD, book imbalance, whale detection
 |   |-- risk/
 |   |   |-- risk_engine.py      # 16-check risk gate, circuit breaker
-|   |   |-- portfolio.py        # Paper trading ledger, PnL tracking
+|   |   |-- portfolio.py        # Paper trading ledger, PnL tracking, mark-to-market
 |   |-- skills/
 |   |   |-- skill_registry.py   # Modular skill system, built-in skills
 |   |   |-- telegram_handler.py # Telegram bot commands, inline keyboards

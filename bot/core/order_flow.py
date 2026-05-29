@@ -1,12 +1,13 @@
 """
-RUNECLAW Order-Flow / Smart-Money Engine
-=========================================
-A perception module that reads market microstructure to approximate
-"smart money" / whale activity from data RUNECLAW can already reach
-through ccxt:
+RUNECLAW Order-Flow / Microstructure Engine
+=============================================
+A perception module that reads exchange microstructure to detect
+directional pressure, large prints, and CVD-price divergences from
+data RUNECLAW can already reach through ccxt:
 
   - Order-book imbalance + spread + top-of-book depth
   - Cumulative Volume Delta (CVD) from the aggressor side of trades
+  - CVD-price divergence (absorption/distribution detection)
   - Whale-print detection (adaptive percentile threshold)
   - Funding rate + open-interest change (perp/swap markets only)
 
@@ -19,15 +20,17 @@ Design rules (consistent with the rest of RUNECLAW):
   - Read-only: no state outside this module is mutated.
   - Thread-safe rolling state (RLock), bounded to cap memory.
 
-SCOPE NOTE (read before believing the label "smart money")
------------------------------------------------------------
-This reads *exchange* order flow. It does NOT see on-chain wallet flows
-or labelled "smart money" wallets -- that needs Nansen / Arkham /
-Glassnode-class paid data. Funding/OI require a swap symbol and a
-swap-enabled ccxt instance; on a spot symbol those fields are None.
-These are short-horizon, noisy inputs -- extra evidence, not an edge by
-themselves -- and they cannot be validated by the current synthetic
-backtester, which has no L2/tick data.
+SCOPE NOTE (read before interpreting these signals)
+-----------------------------------------------------
+This reads *exchange* order flow — microstructure data, not "smart money."
+It does NOT see on-chain wallet flows or labelled fund/MM wallets — that
+needs Nansen / Arkham / Glassnode-class paid data. A $25K spot print is
+not a whale in BTC; it's as likely retail FOMO or a liquidation as
+informed flow. Book imbalance is trivially spoofable. Funding/OI require
+a swap symbol and a swap-enabled ccxt instance; on a spot symbol those
+fields are None. These are short-horizon, noisy inputs — extra evidence,
+not an edge by themselves — and they cannot be validated by the current
+synthetic backtester, which has no L2/tick data.
 """
 
 from __future__ import annotations
@@ -100,6 +103,7 @@ class OrderFlowSignal(BaseModel):
     cvd_window_usd: float = 0.0          # signed delta over the fetched window
     cvd_cumulative_usd: float = 0.0      # rolling cumulative across calls
     cvd_trend: str = "flat"              # "rising" | "falling" | "flat"
+    cvd_price_divergence: str = "none"   # "bullish_div" | "bearish_div" | "none"
     buy_volume_usd: float = 0.0
     sell_volume_usd: float = 0.0
     aggressor_ratio: float = 0.5         # buy / (buy + sell), 0.5 = balanced
@@ -135,6 +139,7 @@ class OrderFlowAnalyzer:
         self.config = config or OrderFlowConfig()
         self._lock = threading.RLock()
         self._cvd_history: dict[str, deque] = {}   # symbol -> deque[float] per-call deltas
+        self._price_history: dict[str, deque] = {}  # symbol -> deque[float] mid prices (for divergence)
         self._oi_history: dict[str, float] = {}     # symbol -> last open_interest_usd
 
     # -- Public API --
@@ -248,6 +253,18 @@ class OrderFlowAnalyzer:
             sig.cvd_cumulative_usd = round(float(sum(hist)), 2)
             sig.cvd_trend = self._cvd_trend(list(hist))
 
+            # CVD-price divergence: price making new high while CVD doesn't
+            # (bearish divergence = distribution/absorption) or vice versa
+            price_hist = self._price_history.setdefault(
+                symbol, deque(maxlen=self.config.cvd_history_len))
+            # Use VWAP of this trade window as the price observation
+            vwap_window = (buy_usd + sell_usd)  # total volume as proxy
+            last_price = float(trades[-1].get("price") or 0) if trades else 0.0
+            if last_price > 0:
+                price_hist.append(last_price)
+            sig.cvd_price_divergence = self._detect_cvd_divergence(
+                list(hist), list(price_hist))
+
     @staticmethod
     def _cvd_trend(deltas: list[float]) -> str:
         if len(deltas) >= 4:
@@ -262,6 +279,43 @@ class OrderFlowAnalyzer:
                 return "falling"
             return "flat"
         # Not enough history -> use the single window's sign
+
+    @staticmethod
+    def _detect_cvd_divergence(cvd_deltas: list[float], prices: list[float]) -> str:
+        """Detect CVD-price divergence: the most legitimate microstructure signal.
+        - Bearish divergence: price making higher highs while CVD makes lower highs
+          (sellers absorbing buy pressure without price dropping — distribution)
+        - Bullish divergence: price making lower lows while CVD makes higher lows
+          (buyers accumulating without price rising — accumulation)
+        Requires at least 4 observations of each."""
+        if len(cvd_deltas) < 4 or len(prices) < 4:
+            return "none"
+
+        half = len(prices) // 2
+        price_first = prices[:half]
+        price_second = prices[half:]
+        cvd_first = cvd_deltas[:half]
+        cvd_second = cvd_deltas[half:]
+
+        price_high_1 = max(price_first)
+        price_high_2 = max(price_second)
+        cvd_high_1 = max(cvd_first)
+        cvd_high_2 = max(cvd_second)
+
+        price_low_1 = min(price_first)
+        price_low_2 = min(price_second)
+        cvd_low_1 = min(cvd_first)
+        cvd_low_2 = min(cvd_second)
+
+        # Bearish: price higher high, CVD lower high (absorption)
+        if price_high_2 > price_high_1 and cvd_high_2 < cvd_high_1:
+            return "bearish_div"
+
+        # Bullish: price lower low, CVD higher low (accumulation)
+        if price_low_2 < price_low_1 and cvd_low_2 > cvd_low_1:
+            return "bullish_div"
+
+        return "none"
         last = deltas[-1] if deltas else 0.0
         if last > 0:
             return "rising"
@@ -401,6 +455,16 @@ class OrderFlowAnalyzer:
             votes.append(-float(np.clip(sig.funding_rate / 0.0005, -1, 1)))
             weights.append(0.5 * conf)
             labels.append("of_funding")
+
+        # CVD-price divergence: strongest microstructure signal
+        if sig.cvd_price_divergence != "none":
+            if sig.cvd_price_divergence == "bullish_div":
+                votes.append(1.0)
+            elif sig.cvd_price_divergence == "bearish_div":
+                votes.append(-1.0)
+            weights.append(0.8 * conf)  # high weight — divergence is meaningful
+            labels.append("of_cvd_divergence")
+
         return votes, weights, labels
 
     def liquidity_guard(self, sig: OrderFlowSignal) -> Optional[str]:
@@ -439,6 +503,9 @@ class OrderFlowAnalyzer:
             if len(self._cvd_history) > self.config.max_tracked_symbols:
                 for k in list(self._cvd_history)[:-self.config.max_tracked_symbols]:
                     del self._cvd_history[k]
+            if len(self._price_history) > self.config.max_tracked_symbols:
+                for k in list(self._price_history)[:-self.config.max_tracked_symbols]:
+                    del self._price_history[k]
             if len(self._oi_history) > self.config.max_tracked_symbols:
                 for k in list(self._oi_history)[:-self.config.max_tracked_symbols]:
                     del self._oi_history[k]

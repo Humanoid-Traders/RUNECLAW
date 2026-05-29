@@ -45,11 +45,13 @@ A $10,000 portfolio means no single position can exceed $2,000 notional.
 
 ### 3. Daily Loss
 
-**Check:** Has today's cumulative loss exceeded `MAX_DAILY_LOSS_PCT`?
+**Check:** Has today's cumulative loss (realized + unrealized) exceeded `MAX_DAILY_LOSS_PCT`?
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `MAX_DAILY_LOSS_PCT` | 5.0% | Maximum daily loss as % of balance |
+| `MAX_DAILY_LOSS_PCT` | 5.0% | Maximum daily loss as % of equity |
+
+Daily PnL includes both closed-trade losses and mark-to-market unrealized losses on open positions. This means a temporary adverse price spike against open positions can trip the breaker. This is intentional — the system errs on the side of caution.
 
 If breached, the circuit breaker is automatically tripped.
 
@@ -155,7 +157,7 @@ Guards against data errors producing invalid trade parameters.
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `VOLATILITY_GUARD_ATR_MULT` | 6.0% | Maximum ATR-to-price ratio |
+| `VOLATILITY_GUARD_ATR_PCT` | 6.0% | Maximum ATR-to-price ratio |
 
 Rejects trades during extreme volatility conditions where stops are unreliable.
 
@@ -187,20 +189,25 @@ When a human taps "Confirm" on a pending trade idea, the risk engine runs all 16
 
 If the re-check fails, the confirmation is rejected with an explanation.
 
+**Limitation:** The re-check uses the original entry price and stored ATR, not live market prices. It catches portfolio-state drift (new positions, drawdown changes, daily PnL updates) but not price drift on the asset itself. The stale data guard (check #12) partially mitigates this by rejecting ideas older than 5 minutes.
+
 ## Position Sizing
 
 Position size uses fixed-fractional risk sizing based on stop distance:
 
 ```
-risk_budget = equity * (MAX_POSITION_PCT / 100)
+risk_budget = equity * (MAX_POSITION_PCT / 100)   # e.g. 2% = max dollar loss
 position_usd = risk_budget / stop_distance_pct
-position_usd = min(position_usd, equity * 0.20)  # capped at 20% notional
+position_usd = min(position_usd, equity * 0.20)   # capped at 20% notional
 ```
 
-With default settings ($10,000 equity, 2% risk budget, 2% stop distance):
+With default settings ($10,000 equity, 2% risk budget, 2.5% stop distance via 2.5x ATR):
 - Risk budget: $200 (max dollar loss if stopped out)
-- Position size: $200 / 0.02 = $10,000 (but capped at 20% = $2,000)
-- This ensures each trade risks the same dollar amount regardless of stop width.
+- Uncapped position: $200 / 0.025 = $8,000
+- Capped position: min($8,000, $2,000) = **$2,000** (20% of equity)
+- Actual dollar risk at 2.5% stop: $2,000 × 0.025 = $50 (well below the $200 budget)
+
+**Important:** `MAX_POSITION_PCT` (2%) is a *risk budget* (max loss per trade), not a position size cap. The actual position size is determined by stop distance and capped at `MAX_SYMBOL_EXPOSURE_PCT` (20%). With tight stops, the risk budget implies positions larger than 20%, so the notional cap binds and the trade risks less than the full 2% budget.
 
 ## Correlation Check
 

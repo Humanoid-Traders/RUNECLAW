@@ -1,13 +1,16 @@
 """
-RUNECLAW Risk Engine -- FAIL-CLOSED institutional-grade trade gatekeeper.
+RUNECLAW Risk Engine -- FAIL-CLOSED pre-trade gatekeeper.
 
 16 independent pre-trade checks. ANY failure = REJECTED. No overrides.
 Design: if a check cannot be evaluated, the trade is REJECTED (fail-closed).
 
+Note: Check #17 (liquidity guard) lives in engine.py via OrderFlowAnalyzer,
+not in this module.  It is fail-open (no data = pass) by design.
+
 Checks:
   1.  Circuit breaker status
-  2.  Position size limit
-  3.  Daily loss limit (realized + unrealized)
+  2.  Position size limit (fixed-fractional, capped at 20% notional)
+  3.  Daily loss limit (realized + unrealized PnL)
   4.  Max drawdown limit
   5.  Max open positions
   6.  Risk-reward ratio minimum
@@ -20,7 +23,7 @@ Checks:
   13. Cooldown after loss
   14. Portfolio exposure limit
   15. Per-symbol exposure limit
-  16. Volatility guard
+  16. Volatility guard (ATR as % of price)
 """
 
 from __future__ import annotations
@@ -294,8 +297,8 @@ class RiskEngine:
         # 16. Volatility guard (if ATR provided)
         if atr is not None and idea.entry_price > 0:
             atr_pct = (atr / idea.entry_price) * 100
-            if atr_pct > CONFIG.risk.volatility_guard_atr_mult:
-                failed.append(f"VOLATILITY: ATR {atr_pct:.2f}% > {CONFIG.risk.volatility_guard_atr_mult}% guard")
+            if atr_pct > CONFIG.risk.volatility_guard_atr_pct:
+                failed.append(f"VOLATILITY: ATR {atr_pct:.2f}% > {CONFIG.risk.volatility_guard_atr_pct}% guard")
             else:
                 passed.append(f"VOLATILITY: ATR {atr_pct:.2f}% OK")
         else:

@@ -39,7 +39,7 @@ class RiskLimits:
     # matrix check. Currently, concentration is enforced by max_correlation_per_group
     # (a group-count limit), not by this coefficient value.
     max_correlation: float = _env_float("MAX_CORRELATION", 0.85)
-    # NEW fields for institutional-grade risk
+    # Extended risk checks (checks 6-16)
     min_risk_reward: float = _env_float("MIN_RISK_REWARD", 1.2)
     # SIGNAL QUALITY: 0.60 is the sweet spot -- enough trades to be meaningful,
     # but still filters weak setups (backtest cliff between 0.60-0.65)
@@ -52,7 +52,7 @@ class RiskLimits:
     # Volatility guard: reject trades when ATR exceeds this % of price.
     # BTC hourly ATR is typically 1-4%; 6% allows for elevated-vol periods
     # while blocking extreme conditions. Docs/tests must reference 6%.
-    volatility_guard_atr_mult: float = _env_float("VOLATILITY_GUARD_ATR_MULT", 6.0)
+    volatility_guard_atr_pct: float = _env_float("VOLATILITY_GUARD_ATR_PCT", 6.0)
     stale_data_max_age_seconds: int = int(_env_float("STALE_DATA_MAX_AGE_SEC", 300))
     require_stop_loss: bool = _env_bool("REQUIRE_STOP_LOSS", True)
 
