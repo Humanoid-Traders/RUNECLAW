@@ -20,7 +20,8 @@
 <p align="center">
   <a href="https://github.com/Humanoid-Traders/RUNECLAW">GitHub</a> &middot;
   <a href="https://humanoid-traders-1.gitbook.io/humanoid-traders-ai">Documentation</a> &middot;
-  <a href="https://t.me/+VRNgsmkR5pszZTdk">Telegram</a>
+  <a href="https://t.me/+VRNgsmkR5pszZTdk">Telegram</a> &middot;
+  <a href="https://x.com/BaurPatric70363">X / Twitter</a>
 </p>
 
 ---

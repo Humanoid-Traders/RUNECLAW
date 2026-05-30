@@ -76,8 +76,9 @@ GitHub: https://github.com/Humanoid-Traders/RUNECLAW
 Website: https://lgl3crf9.mule.page/
 Docs: https://humanoid-traders-1.gitbook.io/humanoid-traders-ai
 Telegram: https://t.me/+VRNgsmkR5pszZTdk
+X: https://x.com/BaurPatric70363
 
-Built by Humanoid Traders. 133 tests. 16 risk checks. Read the code.
+Built by Humanoid Traders. 180 tests. 18 risk checks. Read the code.
 
 ---
 
@@ -109,13 +110,14 @@ RUNECLAW scans markets for volume anomalies and momentum shifts, generates expla
 - Per-symbol and portfolio-level exposure limits
 
 **Test coverage:**
-97 unit tests covering risk engine (all 16 checks), portfolio lifecycle, analyzer indicators (including candlestick pattern detection, Fibonacci retracement, OBV, rolling VWAP), backtest replay, integration scenarios, edge cases, and negative inputs. Extended to 133 tests with audit-fix validation.
+180 unit tests covering risk engine (all 18 checks), portfolio lifecycle, analyzer indicators (including candlestick pattern detection, Fibonacci retracement, OBV, rolling VWAP), backtest replay, macro calendar states, integration scenarios, edge cases, and negative inputs.
 
 **Links:**
 - GitHub: https://github.com/Humanoid-Traders/RUNECLAW
 - Website: https://lgl3crf9.mule.page/
 - Docs: https://humanoid-traders-1.gitbook.io/humanoid-traders-ai
 - Telegram: https://t.me/+VRNgsmkR5pszZTdk
+- X: https://x.com/BaurPatric70363
 
 We welcome code review, architectural feedback, and stress testing suggestions.
 

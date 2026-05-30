@@ -78,6 +78,7 @@ Validated across 180 backtest runs (synthetic data — 3 volatility regimes, 3 t
 | Website | https://lgl3crf9.mule.page/ |
 | GitBook | https://humanoid-traders-1.gitbook.io/humanoid-traders-ai |
 | Telegram | https://t.me/+VRNgsmkR5pszZTdk |
+| X / Twitter | https://x.com/BaurPatric70363 |
 
 ---
 
