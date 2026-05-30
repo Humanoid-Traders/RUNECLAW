@@ -24,7 +24,7 @@ This document describes the internal architecture of RUNECLAW, how data flows th
            |                  |                   |
   +--------v-------+  +------v-------+  +--------v-------+
   | Market Scanner  |  |  AI Analyzer |  |  Risk Engine   |
-  | (Bitget/ccxt)   |  | (LLM + TA)  |  | (16 Checks)   |
+  | (Bitget/ccxt)   |  | (LLM + TA)  |  | (18 Checks)   |
   +----------------+  +--------------+  +--------+-------+
                                                   |
                                          +--------v-------+
@@ -67,7 +67,7 @@ Output: a `TradeIdea` object (or None if conviction is too low).
 
 ### Stage 3: RISK GATE
 
-Every `TradeIdea` is passed to the `RiskEngine` for 16 independent pre-trade checks:
+Every `TradeIdea` is passed to the `RiskEngine` for 18 independent pre-trade checks:
 
 1. Circuit breaker status
 2. Position size vs. max notional %
@@ -85,6 +85,8 @@ Every `TradeIdea` is passed to the `RiskEngine` for 16 independent pre-trade che
 14. Portfolio exposure limit
 15. Per-symbol exposure limit
 16. Volatility guard (ATR-based)
+17. Liquidity guard (order book depth, fail-open)
+18. Macro event gate (FOMC, CPI, NFP lockdown)
 
 If ANY check fails, the trade is **REJECTED**. There are no overrides.
 
