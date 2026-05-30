@@ -1,16 +1,42 @@
-# RUNECLAW
+# Introduction
 
 **AI Trading Command Core | Forged in Volatility. Governed by Discipline.**
 
-*by Humanoid Traders | for Bitget GetClaw*
+*by Humanoid Traders | built for Bitget GetClaw / Agent Hub*
 
-Welcome to the RUNECLAW documentation. This guide covers everything from initial setup to the internal architecture of the system.
+Welcome to the official RUNECLAW documentation.
+
+RUNECLAW is a risk-first AI trading assistant designed for the **Bitget GetClaw Hackathon**. It scans Bitget markets for opportunities, generates trade theses using LLM analysis and technical indicators, applies macro and volatility context, enforces strict risk controls, and requires human confirmation before any trade can proceed.
+
+The system runs in **paper trading mode by default** and is built around safety, transparency, explainability, and disciplined execution.
+
+> **RUNECLAW is not another hype bot. It is a survival-first AI trading agent.**
+
+---
 
 ## Overview
 
-RUNECLAW is an AI-powered trading assistant that scans the Bitget exchange for opportunities, generates trade theses using LLM analysis and technical indicators, enforces risk limits through a fail-closed gate, and requires human confirmation before every trade.
+RUNECLAW supports the full trading decision loop:
 
-The system operates in **paper trading mode by default** and is designed for the Bitget GetClaw Hackathon.
+```text
+Market Data
+   ↓
+Technical Indicators
+   ↓
+LLM Trade Thesis
+   ↓
+Macro / Volatility / Risk Context
+   ↓
+Fail-Closed Risk Gate
+   ↓
+Human Confirmation
+   ↓
+Paper Trade / Future Bitget Execution
+   ↓
+Structured Audit Log
+```
+
+---
 
 ## Core Principles
 
@@ -18,6 +44,8 @@ The system operates in **paper trading mode by default** and is designed for the
 2. **Fail-closed risk.** Every trade must pass all 18 pre-trade checks. One failure means rejection.
 3. **Human-in-the-loop.** No trade executes without explicit confirmation via Telegram inline keyboard.
 4. **Full auditability.** Every decision is logged as structured JSON for post-mortem review.
+
+---
 
 ## Documentation Sections
 
@@ -28,6 +56,8 @@ The system operates in **paper trading mode by default** and is designed for the
 - [Paper Trading](paper-trading.md) -- The paper trading ledger
 - [API Reference](api-reference.md) -- Data models and programmatic interface
 - [FAQ](faq.md) -- Common questions
+
+---
 
 ## Quick Links
 
