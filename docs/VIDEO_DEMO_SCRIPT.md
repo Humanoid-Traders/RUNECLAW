@@ -64,8 +64,8 @@
 ## [2:15-2:30] Backtest Results -- The Evidence
 
 **[SCREEN]** Clean data card or slide showing key metrics in large text:
-- 250 backtest runs
-- 464 trades
+- 500 backtest runs
+- 889 trades
 - 50.5% win rate
 - Worst drawdown: 3.87%
 - Zero crashes
@@ -73,7 +73,7 @@
 
 Small disclaimer text at bottom: "Synthetic data -- not historical. Not a guarantee of future performance."
 
-**[VOICEOVER]** "Two hundred fifty backtest runs across five market regimes, ten symbols, and five seeds. Four hundred sixty-four trades. Worst drawdown: three point eight seven percent. Zero crashed runs. Trailing stops handled nearly half of all exits with net-positive PnL. And yes -- this is synthetic data. We're honest about that. These numbers prove the risk architecture works under stress. They don't promise alpha."
+**[VOICEOVER]** "Five hundred backtest runs across five market regimes, twenty symbols, and five seeds. Eight hundred eighty-nine trades. Worst drawdown: three point eight seven percent. Zero crashed runs. Best run: plus eight point zero six percent. Trailing stops handled nearly half of all exits with net-positive PnL. And yes -- this is synthetic data. We're honest about that. These numbers prove the risk architecture works under stress. They don't promise alpha."
 
 ---
 

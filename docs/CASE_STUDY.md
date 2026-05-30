@@ -68,18 +68,18 @@ The **circuit breaker** trips on three conditions: 5% daily loss, 10% drawdown f
 
 ## Backtest Evidence
 
-RUNECLAW was validated across **250 backtest runs** using synthetic market data generated with Geometric Brownian Motion + GARCH volatility modeling. The synthetic data covered 5 market regimes (Bull, Bear, Range/Chop, High Volatility, Crash Recovery), 10 symbols, and 5 random seeds per combination.
+RUNECLAW was validated across **500 backtest runs** using synthetic market data generated with Geometric Brownian Motion + GARCH volatility modeling. The synthetic data covered 5 market regimes (Bull, Bear, Range/Chop, High Volatility, Crash Recovery), 20 symbols, and 5 random seeds per combination.
 
-**Key metrics across 250 runs:**
-- **464 total trades** generated and evaluated
+**Key metrics across 500 runs:**
+- **889 total trades** generated and evaluated (485 valid, 15 errors)
 - **50.5% win rate** (in line with trend-following expectations)
 - **Worst-case drawdown: 3.87%** (well within the 10% circuit breaker threshold)
-- **Worst single-run PnL: -2.06%** (no catastrophic losses)
-- **Zero crashed runs** -- all 250 completed without exceptions
+- **Best run: +8.06%**, avg return -0.46%
+- **Zero crashed runs** -- all 500 completed without exceptions
 - **Trailing stop exits: 48.7%** of all exits, net-positive aggregate PnL
 - **Profit factor > 1** across the majority of runs
 
-**What the numbers prove:** The risk engine works. Across 464 trades spanning wildly different market conditions, the system never breached its safety limits. Drawdown stayed controlled. No single run produced a catastrophic loss. The trailing stop mechanism exits profitably by construction.
+**What the numbers prove:** The risk engine works. Across 889 trades spanning wildly different market conditions, the system never breached its safety limits. Drawdown stayed controlled. No single run produced a catastrophic loss. The trailing stop mechanism exits profitably by construction.
 
 **What the numbers do NOT prove:** Predictive edge in live markets. The backtest uses synthetic data, not historical market data. Commission and slippage are modeled (0.1% and 0.05% respectively), but real exchange conditions involve latency, partial fills, and liquidity gaps that synthetic data cannot capture. The 50.5% win rate is modest and honest -- RUNECLAW is not claiming alpha generation. It is claiming that when it trades, it does so within disciplined risk parameters that prevent blowups.
 

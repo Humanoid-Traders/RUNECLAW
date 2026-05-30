@@ -18,9 +18,9 @@ The screenshot above shows three cards from the RUNECLAW website, populated with
 
 ## Backtest Stress Test (180 Runs)
 
-![250-run backtest stress test](live-validation-backtest.png)
+![500-run backtest stress test](live-validation-backtest.png)
 
-The 250-run stress test covers 5 market regimes (Bull, Bear, Range/Chop, High Volatility, Crash Recovery), 10 symbols, and 5 random seeds. 464 total trades were analyzed across all runs.
+The 500-run stress test covers 5 market regimes (Bull, Bear, Range/Chop, High Volatility, Crash Recovery), 20 symbols, and 5 random seeds. 889 total trades were analyzed across all runs.
 
 ---
 
@@ -167,7 +167,7 @@ The funnel shows RUNECLAW's selectivity: out of 335 signals, only 5 passed all f
 | Worst-Case PnL | -2.06% |
 | Trailing Stop PnL | +$6,814 |
 | Take-Profit PnL | +$535 |
-| Total Runs | 250 |
+| Total Runs | 500 |
 
 ---
 
