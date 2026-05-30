@@ -290,13 +290,20 @@ class Analyzer:
         if smart_money_score and abs(smart_money_score.composite_score) > 0.1:
             sm_tag = f" SM:{smart_money_score.composite_score:+.2f}"
 
+        # Adaptive rounding: more decimal places for low-priced assets
+        price_decimals = 6
+        if entry < 1.0:
+            price_decimals = 8
+        elif entry < 100.0:
+            price_decimals = 6
+
         idea = TradeIdea(
             id=f"TI-{uuid.uuid4().hex[:8]}",
             asset=signal.symbol,
             direction=direction,
-            entry_price=round(entry, 6),
-            stop_loss=round(stop_loss, 6),
-            take_profit=round(take_profit, 6),
+            entry_price=round(entry, price_decimals),
+            stop_loss=round(stop_loss, price_decimals),
+            take_profit=round(take_profit, price_decimals),
             confidence=blended_confidence,
             reasoning=(
                 f"[{source}|{regime.value}|{mode_tag}|C={confluence:.2f}"
