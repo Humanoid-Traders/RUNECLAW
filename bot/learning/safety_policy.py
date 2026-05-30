@@ -116,12 +116,14 @@ def classify_proposal(proposal: ImprovementProposal) -> str:
             proposal.human_approval_required = False
             return proposal.classification
 
-    # Rule 4: Test-only
+    # Rule 4: Test-only (must not also contain code-modifying language)
     test_indicators = {"test_", "assert", "pytest", "unittest", "test case", "test plan"}
+    code_indicators_test = {"def ", "class ", "import ", "return ", "raise ", "modify ", "change ", "update "}
     if any(ind in text for ind in test_indicators):
-        proposal.classification = ChangeClassification.SAFE_AUTO_TEST.value
-        proposal.human_approval_required = False
-        return proposal.classification
+        if not any(ci in text for ci in code_indicators_test):
+            proposal.classification = ChangeClassification.SAFE_AUTO_TEST.value
+            proposal.human_approval_required = False
+            return proposal.classification
 
     # Rule 5: Default — human review
     proposal.classification = ChangeClassification.HUMAN_REVIEW_REQUIRED.value

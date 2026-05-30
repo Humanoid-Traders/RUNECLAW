@@ -52,8 +52,8 @@ def build_2026_calendar() -> list[MacroEvent]:
 
     # -- FOMC Rate Decisions (announcement day, 2:00 PM ET) --
     fomc_dates = [
-        (1, 29, "January"),
-        (3, 19, "March"),
+        (1, 28, "January"),
+        (3, 18, "March"),
         (5, 7, "May"),
         (6, 17, "June"),
         (7, 29, "July"),
@@ -99,8 +99,8 @@ def build_2026_calendar() -> list[MacroEvent]:
     # -- NFP (first Friday, 8:30 AM ET) --
     nfp_dates = [
         (1, 9, "January"), (2, 6, "February"), (3, 6, "March"),
-        (4, 3, "April"), (5, 8, "May"), (6, 5, "June"),
-        (7, 2, "July"), (8, 7, "August"), (9, 4, "September"),
+        (4, 3, "April"), (5, 1, "May"), (6, 5, "June"),
+        (7, 3, "July"), (8, 7, "August"), (9, 4, "September"),
         (10, 2, "October"), (11, 6, "November"), (12, 4, "December"),
     ]
     for month, day, name in nfp_dates:

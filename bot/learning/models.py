@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 # ── Enums ──────────────────────────────────────────────────────────────
@@ -187,6 +187,14 @@ class PatternRecord(BaseModel):
     avg_pnl: float = 0.0
     # Rule: patterns are observations, not trade commands
     may_override_risk: bool = False  # ALWAYS False
+
+    @field_validator("may_override_risk")
+    @classmethod
+    def must_be_false(cls, v):
+        """Safety invariant: patterns may NEVER override the risk engine."""
+        if v is not False:
+            raise ValueError("may_override_risk must ALWAYS be False")
+        return False
 
 
 class MacroEventMemory(BaseModel):

@@ -24,6 +24,7 @@ Checks:
   14. Portfolio exposure limit
   15. Per-symbol exposure limit
   16. Volatility guard (ATR as % of price)
+  17. Liquidity guard (fail-open, runs in engine.py via OrderFlowAnalyzer)
   18. Macro event risk state (EVENT_LOCKDOWN/BLACKOUT = reject)
 """
 
@@ -339,9 +340,10 @@ class RiskEngine:
             failed.append(f"COOLDOWN: evaluation error ({exc})")
 
         try:
-            # 14. Portfolio exposure limit
+            # 14. Portfolio exposure limit (mark-to-market)
             open_value = sum(
-                p.entry_price * p.quantity for p in self._portfolio.open_positions
+                self._portfolio._last_prices.get(p.asset, p.entry_price) * p.quantity
+                for p in self._portfolio.open_positions
             )
             exposure_pct = (open_value / state.equity_usd * 100) if state.equity_usd > 0 else 0
             new_exposure = exposure_pct + (position_usd / state.equity_usd * 100 if state.equity_usd > 0 else 0)
@@ -353,9 +355,9 @@ class RiskEngine:
             failed.append(f"PORTFOLIO_EXPOSURE: evaluation error ({exc})")
 
         try:
-            # 15. Per-symbol exposure limit
+            # 15. Per-symbol exposure limit (mark-to-market)
             symbol_value = sum(
-                p.entry_price * p.quantity
+                self._portfolio._last_prices.get(p.asset, p.entry_price) * p.quantity
                 for p in self._portfolio.open_positions
                 if p.asset == idea.asset
             )
@@ -511,9 +513,10 @@ class RiskEngine:
             with open(tmp, "w") as f:
                 json.dump(data, f)
             os.replace(tmp, self._state_file)  # atomic on POSIX
-        except Exception:
-            # Best-effort: log but don't crash the risk engine
-            pass
+        except Exception as exc:
+            # Log save failure -- circuit breaker state is safety-critical
+            audit(risk_log, f"Failed to persist risk state: {exc}",
+                  action="save_state", result="ERROR")
 
     def _trip_circuit_breaker(self, reason: str) -> None:
         if not self._circuit_open:
@@ -531,9 +534,10 @@ class RiskEngine:
 
     def reset_circuit_breaker(self) -> None:
         """Manual reset -- requires human intervention."""
-        self._circuit_open = False
-        self._consecutive_losses = 0
-        self._last_loss_time = None
-        audit(risk_log, "Circuit breaker manually reset",
-              action="circuit_breaker", result="RESET")
-        self._save_state()
+        with self._lock:
+            self._circuit_open = False
+            self._consecutive_losses = 0
+            self._last_loss_time = None
+            audit(risk_log, "Circuit breaker manually reset",
+                  action="circuit_breaker", result="RESET")
+            self._save_state()

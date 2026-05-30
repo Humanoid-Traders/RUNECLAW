@@ -100,7 +100,7 @@ class AnalyzerConfig:
     sl_atr_mult_trending: float = 2.5
     tp_atr_mult_trending: float = 3.5   # was 5.0 -- TPs now reachable, >1.4 R:R with 2.5x SL
     sl_atr_mult_default: float = 2.5
-    tp_atr_mult_default: float = 3.0   # was 4.5 -- TPs now reachable, >1.2 R:R with 2.5x SL
+    tp_atr_mult_default: float = 3.05   # was 3.0 -- avoids floating-point boundary at min R:R 1.2
     min_candles: int = 30
 
 

@@ -101,6 +101,7 @@ class LearningStore:
     def _write_json(self, key: str, data: dict | list) -> None:
         """Atomic overwrite of a JSON file (for scorecard, prompts, backlog)."""
         path = self._files[key]
+        tmp = None
         try:
             fd, tmp = tempfile.mkstemp(dir=self._dir, suffix=".tmp")
             with os.fdopen(fd, "w", encoding="utf-8") as f:
@@ -108,7 +109,7 @@ class LearningStore:
             os.replace(tmp, path)
         except Exception as e:
             logger.error("Failed to write %s: %s", path, e)
-            if os.path.exists(tmp):
+            if tmp and os.path.exists(tmp):
                 os.unlink(tmp)
 
     def _read_json(self, key: str) -> dict | list:

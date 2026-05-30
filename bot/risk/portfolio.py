@@ -76,6 +76,9 @@ class PortfolioTracker:
 
         # Guard: don't exceed balance
         if size_usd > self.balance:
+            audit(trade_log, f"Position size clamped: ${size_usd:.2f} -> ${self.balance:.2f} (available balance)",
+                  action="open_position", result="CLAMPED",
+                  data={"requested": round(size_usd, 2), "clamped_to": round(self.balance, 2)})
             size_usd = self.balance  # cap at available balance
 
         if size_usd <= 0:
@@ -148,7 +151,7 @@ class PortfolioTracker:
         exit_notional = exit_price * trade.quantity
 
         # Exchange commission: 0.1% taker fee each side (entry + exit)
-        commission_pct = CONFIG.risk.commission_pct if hasattr(CONFIG.risk, "commission_pct") else 0.1
+        commission_pct = CONFIG.risk.commission_pct
         commission = (size_usd + exit_notional) * (commission_pct / 100.0)
         net_pnl = pnl - commission
 
@@ -185,25 +188,28 @@ class PortfolioTracker:
         """Check all open positions against current prices for SL/TP hits.
         Includes trailing stop logic for live/paper trading."""
         closed: list[TradeExecution] = []
-        for tid, pos in list(self._positions.items()):
-            price = prices.get(pos.asset)
-            if price is None or price <= 0:
-                continue
+        with self._lock:
+            for tid, pos in list(self._positions.items()):
+                price = prices.get(pos.asset)
+                if price is None or price <= 0:
+                    continue
 
-            sl = pos.stop_loss
+                sl = pos.stop_loss
 
-            # STRATEGY: trailing stop via shared utility
-            ts = self._trailing_state.get(tid)
-            if ts is not None:
-                ts["entry_price"] = pos.entry_price  # ensure entry_price is set
-                sl, _ = update_trailing_stop(ts, price, sl, pos.direction.value)
+                # STRATEGY: trailing stop via shared utility
+                ts = self._trailing_state.get(tid)
+                if ts is not None:
+                    ts["entry_price"] = pos.entry_price  # ensure entry_price is set
+                    sl, _ = update_trailing_stop(ts, price, sl, pos.direction.value)
 
-            hit_sl = (price <= sl) if pos.direction == Direction.LONG else (price >= sl)
-            hit_tp = (price >= pos.take_profit) if pos.direction == Direction.LONG else (price <= pos.take_profit)
-            if hit_sl or hit_tp:
-                result = self.close_position(tid, price)
-                if result:
-                    closed.append(result)
+                hit_sl = (price <= sl) if pos.direction == Direction.LONG else (price >= sl)
+                hit_tp = (price >= pos.take_profit) if pos.direction == Direction.LONG else (price <= pos.take_profit)
+                if hit_sl or hit_tp:
+                    result = self._close_position_locked(tid, price)
+                    if result:
+                        closed.append(result)
+            if closed:
+                self._auto_save()
         return closed
 
     def snapshot(self) -> PortfolioState:

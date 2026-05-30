@@ -96,12 +96,12 @@ class ModelComparer:
         base_correct = sum(
             1 for c in completed
             if (c.base_strategy_direction == "LONG" and c.final_paper_result > 0)
-            or (c.base_strategy_direction == "SHORT" and c.final_paper_result > 0)
+            or (c.base_strategy_direction == "SHORT" and c.final_paper_result < 0)
         )
         llm_correct = sum(
             1 for c in completed
             if (c.llm_direction == "LONG" and c.final_paper_result > 0)
-            or (c.llm_direction == "SHORT" and c.final_paper_result > 0)
+            or (c.llm_direction == "SHORT" and c.final_paper_result < 0)
         )
         agreement_rate = sum(1 for c in completed if c.models_agree) / len(completed)
         avg_cost = sum(c.token_cost for c in completed) / len(completed)

@@ -308,7 +308,7 @@ class Analyzer:
         # ── Bollinger Bands (20, 2) ──
         if len(closes) >= 20:
             sma20 = np.mean(closes[-20:])
-            std20 = np.std(closes[-20:])
+            std20 = np.std(closes[-20:], ddof=1)
             results["bb_upper"] = round(sma20 + 2 * std20, 6)
             results["bb_lower"] = round(sma20 - 2 * std20, 6)
             results["bb_mid"] = round(sma20, 6)
@@ -562,11 +562,11 @@ class Analyzer:
         cache_key = SemanticLLMCache.build_cache_key(signal.symbol, indicators)
         cached = self._llm_cache.get(cache_key)
         if cached is not None:
-            self._opt_stats.cache_hits += 1
+            # Stats tracked by cache internally -- no double-count
             cached_copy = dict(cached)
             cached_copy["source"] = cached_copy.get("source", "LLM") + "_CACHED"
             return cached_copy
-        self._opt_stats.cache_misses += 1
+        # Stats tracked by cache internally -- no double-count
 
         # ── Optimization 2: Adaptive Frequency ──
         if not AdaptiveFrequency.should_use_llm(signal, indicators):
