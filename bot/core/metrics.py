@@ -102,9 +102,13 @@ class MetricsEngine:
         # Drawdown
         max_dd = self._compute_max_drawdown()
 
-        # Calmar
+        # Calmar: return % / drawdown % (both must be in same units)
         total_pnl = sum(t.pnl for t in closed)
-        calmar = (total_pnl / abs(max_dd)) if max_dd != 0 else 0.0
+        if self._equity_curve and self._equity_curve[0] > 0:
+            total_return_pct = (total_pnl / self._equity_curve[0]) * 100
+        else:
+            total_return_pct = 0.0
+        calmar = (total_return_pct / max_dd) if max_dd > 0 else 0.0
 
         equity_high = max(self._equity_curve) if self._equity_curve else 0.0
 
@@ -127,7 +131,7 @@ class MetricsEngine:
             max_drawdown_pct=round(max_dd, 2),
             current_streak=streak,
             total_pnl=round(total_pnl, 2),
-            total_commission=0.0,  # tracked externally in backtest
+            total_commission=sum(getattr(t, "commission", 0.0) or 0.0 for t in closed),
             net_pnl=round(total_pnl, 2),
             equity_high=round(equity_high, 2),
             risk_checks_total=self._risk_checks_total,

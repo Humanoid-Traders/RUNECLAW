@@ -198,8 +198,7 @@ class BacktestEngine:
         # STRATEGY: trailing stop after 1R profit -- use shared utility
         initial_risk = abs(idea.entry_price - idea.stop_loss)
         # M2 fix: read sl_mult from config instead of hardcoding
-        from bot.config import CONFIG as _CFG
-        sl_mult = _CFG.analyzer.sl_atr_mult_default
+        sl_mult = CONFIG.analyzer.sl_atr_mult_default
         canonical_atr = initial_risk / sl_mult if initial_risk > 0 else (atr_value or idea.entry_price * 0.02)
         trailing = make_trailing_state(adjusted_entry, idea.direction.value, initial_risk, canonical_atr)
         trailing["entry_price"] = adjusted_entry
@@ -324,9 +323,13 @@ class BacktestEngine:
         self._trades.append(bt_trade)
 
         # Record realized R:R using actual entry/SL risk distance
+        # Signed: positive when trade moved in the right direction
         risk_dist = abs(bt_meta["adjusted_entry"] - idea.stop_loss)
         if risk_dist > 0:
-            reward_dist = abs(adjusted_exit - bt_meta["adjusted_entry"])
+            if idea.direction == Direction.LONG:
+                reward_dist = adjusted_exit - bt_meta["adjusted_entry"]
+            else:
+                reward_dist = bt_meta["adjusted_entry"] - adjusted_exit
             self._rr_values.append(reward_dist / risk_dist)
 
         audit(trade_log, f"[BT] Closed {idea.asset} reason={reason} PnL=${net_pnl:.2f}",
@@ -593,8 +596,11 @@ async def walk_forward_backtest(
         fold_bars = bars[start:end]
 
         split_point = int(len(fold_bars) * train_ratio)
+        # Embargo gap: skip a small buffer between train and test to prevent
+        # lookahead contamination from lagged indicators / lookback windows.
+        embargo = min(50, len(fold_bars) // 10)
         train_bars = fold_bars[:split_point]
-        test_bars = fold_bars[split_point:]
+        test_bars = fold_bars[split_point + embargo:]
 
         # Run train period
         train_engine = BacktestEngine(config)

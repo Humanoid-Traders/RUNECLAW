@@ -266,6 +266,17 @@ class LearningOrchestrator:
         neg_rate = fb_summary.get("negative_rate", 0.5)
         dimensions["safety_improvement"] = max(0, 10 * (1 - neg_rate))
 
+        # Drawdown reduction: lower avg max drawdown across strategies = better
+        avg_dd = (
+            sum(s.max_drawdown for s in scorecards) / len(scorecards)
+            if scorecards else 500.0
+        )
+        dimensions["drawdown_reduction"] = max(0, min(10, 10 * (1 - avg_dd / 500)))
+
+        # Explanation quality: proxy via positive feedback rate
+        pos_rate = fb_summary.get("positive_rate", 0.5) or 0.5
+        dimensions["explanation_quality"] = 10 * pos_rate
+
         # Audit completeness: based on data volume
         total_records = sum(stats.values())
         dimensions["audit_completeness"] = min(10, total_records / 10)

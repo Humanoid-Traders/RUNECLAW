@@ -49,7 +49,7 @@ class StrategyEvaluator:
                 learning_tier=LearningTier.C.value,
             )
 
-        wins = [t for t in trades if t.pnl_result and t.pnl_result > 0]
+        wins = [t for t in trades if t.pnl_result is not None and t.pnl_result > 0]
         losses = [t for t in trades if t.pnl_result is not None and t.pnl_result <= 0]
 
         total = len(trades)

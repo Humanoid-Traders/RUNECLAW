@@ -29,7 +29,7 @@ The agent operates as a 9-state finite state machine with complete audit logging
 
 Key capabilities: ADX-14 regime detection (trend/range/chop) with adaptive strategy parameters, trailing stops activated at 1R profit, per-symbol and portfolio-level exposure limits, circuit breaker with cooldown enforcement, and a backtesting engine with intrabar SL/TP simulation and realistic commission/slippage modeling.
 
-Validated across 180 backtest runs (synthetic data — 3 volatility regimes, 3 trend biases, 20 seeds), producing 855 trades with worst-case drawdown of 2.87% and zero crashed runs. 97 unit tests cover risk engine, portfolio, analyzer, backtest, and integration scenarios.
+Validated across 180 backtest runs (synthetic data — 3 volatility regimes, 3 trend biases, 20 seeds), producing 855 trades with worst-case drawdown of 2.87% and zero crashed runs. 315+ unit tests cover risk engine, portfolio, analyzer, backtest, learning system, token optimizer, FSM, and integration scenarios.
 
 ---
 
@@ -46,7 +46,10 @@ Validated across 180 backtest runs (synthetic data — 3 volatility regimes, 3 t
 - **Human-in-the-Loop** -- every trade requires Telegram confirmation with inline approve/reject keyboard
 - **Simulation-First** -- paper trading by default ($10K virtual balance), live trading requires dual safety flag opt-in
 - **Full Audit Trail** -- structured JSON logging of every decision, rejection, and execution with timestamps
-- **97 Unit Tests** -- risk engine, portfolio, analyzer indicators (including candlestick patterns, Fibonacci, OBV, rolling VWAP), backtest replay, models, integration, edge cases, audit fix validation (133 tests with audit additions)
+- **315+ Unit Tests** -- risk engine, portfolio, analyzer, backtest, learning system (8 modules), token optimizer (4 layers), FSM, integration, edge cases, audit fix validation
+- **AI Learning System** -- 8 integrated modules: experience memory, reflection engine, strategy evaluator (S/A/B/C/D tiers), pattern learner, macro learner (FOMC/CPI/NFP/PCE tracking), model comparer, prompt optimizer, feedback collector; all governed by immutable safety policy with blocked-action lists
+- **LLM Token Optimizer** -- 4-layer cost reduction: semantic cache (TTL-bucketed), tiered pipeline (rules/mini/full), smart batching (5 symbols/call), adaptive frequency (skip LLM in quiet markets); up to 70% token savings
+- **Macro Event Calendar** -- hardcoded 2026 FOMC/CPI/NFP/PCE schedule with 5-state risk machine (NORMAL, PRE_EVENT_CAUTION, EVENT_LOCKDOWN, POST_EVENT_VOLATILITY, BLACKOUT)
 
 ---
 
@@ -65,8 +68,11 @@ Validated across 180 backtest runs (synthetic data — 3 volatility regimes, 3 t
 | Backtesting | Intrabar SL/TP/trailing stop checking, configurable commission (0.1%) and slippage (0.05%), synthetic data with GBM + GARCH |
 | Telegram Bot | Rate-limited (20/min), inline keyboards, fire-and-forget async tasks with error callbacks |
 | Data Validation | Pydantic strict schemas at every boundary -- API responses, config, trade parameters, internal state |
+| AI Learning | 10-step workflow (Observe→Decide→Log→Simulate→Review→Score→Learn→Validate→Approve→Version); safety policy with blocked-action lists; may_override_risk enforced False via Pydantic validator |
+| Token Optimizer | Semantic cache (regime+RSI+MACD keyed), tiered pipeline (3 tiers), smart batching (up to 5 symbols), adaptive frequency (ADX/volume gating) |
+| Macro Calendar | 2026 FOMC/CPI/NFP/PCE schedule, 5-state risk machine with fail-closed BLACKOUT default |
 | Concurrency | RLock guards on shared mutable state (portfolio, risk engine, scanner); single-threaded asyncio means contention is minimal, but locks protect against any future threading |
-| Metrics Engine | Sharpe/Sortino (per-trade returns, annualized sqrt(N) where N = trades/year), Calmar, profit factor, equity curve (capped 10K points) |
+| Metrics Engine | Sharpe/Sortino (per-trade returns, annualized from actual trade frequency), Calmar (return % / drawdown %), profit factor, equity curve (capped 10K points) |
 
 ---
 
@@ -88,7 +94,7 @@ Validated across 180 backtest runs (synthetic data — 3 volatility regimes, 3 t
 |-------|----------|--------|
 | 18 risk checks | `bot/risk/risk_engine.py` lines 1-28 enumerate all 18 (16 in-engine + #17 liquidity + #18 macro) | Verified |
 | Fail-closed design | Any check failure or exception returns REJECTED | Verified |
-| 97+ tests passing | `pytest tests/test_core.py -v` -- 133/133 green (97 original + 36 audit/feature additions) | Verified |
+| 97+ tests passing | `pytest tests/ -v` -- 315+ green (97 original + audit/learning/optimizer additions) | Verified |
 | 9-state FSM | `bot/utils/models.py` AgentState enum, `bot/core/engine.py` transitions | Verified |
 | Trailing stops work | Backtest (synthetic data): 416/855 exits via trailing stop, net-positive aggregate PnL. Note: trailing exits are structurally profitable (activate at +1R, trail 1.5 ATR) — this is by construction, not evidence of predictive edge | Verified |
 | Regime detection | `bot/core/analyzer.py` _detect_regime + _score_confluence | Verified |
@@ -103,7 +109,7 @@ Validated across 180 backtest runs (synthetic data — 3 volatility regimes, 3 t
 
 ## Final QA Checklist
 
-- [x] All 133 tests pass (`pytest tests/test_core.py -v`)
+- [x] All 315+ tests pass (`pytest tests/ -v`)
 - [x] No critical or high-severity issues in codebase audit (all C1-C3, H1-H4 fixed)
 - [x] All 18 risk checks verified correct with unit tests
 - [x] Backtest runs without crashes across 180 configurations
@@ -112,7 +118,7 @@ Validated across 180 backtest runs (synthetic data — 3 volatility regimes, 3 t
 - [x] Simulation mode is ON by default
 - [x] Live trading requires two explicit flags
 - [x] README accurately reflects current architecture (18 checks: 17 fail-closed + 1 fail-open liquidity guard, 10+ voters including OBV, candlestick patterns, Fibonacci retracement, order flow when available)
-- [x] Website matches codebase claims (18 checks, 133 tests, backtest stats)
+- [x] Website matches codebase claims (18 checks, 315+ tests, backtest stats)
 - [x] GitHub repo is public and up to date
 - [x] No deprecated datetime calls remaining
 - [x] Thread safety verified on all shared state

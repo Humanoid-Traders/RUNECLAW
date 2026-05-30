@@ -5,10 +5,6 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install OS-level dependencies (none required for now, but layer is cached)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    && rm -rf /var/lib/apt/lists/*
-
 # Install Python dependencies first (layer caching)
 COPY bot/requirements.txt /app/bot/requirements.txt
 RUN pip install --no-cache-dir -r bot/requirements.txt
@@ -16,7 +12,9 @@ RUN pip install --no-cache-dir -r bot/requirements.txt
 # Copy application code
 COPY bot/ /app/bot/
 COPY tests/ /app/tests/
-COPY backtest_audit.py /app/backtest_audit.py
+
+# Copy optional scripts (may not exist in all builds)
+COPY backtest_audit.p[y] /app/
 
 # Create logs directory
 RUN mkdir -p /app/logs

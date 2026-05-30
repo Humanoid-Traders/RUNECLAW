@@ -44,6 +44,26 @@ The system operates in **simulation-first mode by default**. Every trade idea mu
 
 **Key philosophy:** The bot suggests. The human decides. The risk engine enforces.
 
+### AI Learning System (NEW)
+RUNECLAW includes a full **self-improving AI learning system** with 8 integrated modules:
+- **Experience Memory** -- every trade decision logged with full market context
+- **Reflection Engine** -- post-trade analysis generates lessons and improvement proposals
+- **Strategy Evaluator** -- risk-adjusted scoring with S/A/B/C/D tier rankings
+- **Pattern Learner** -- detects recurring market patterns across regimes
+- **Macro Learner** -- tracks crypto reactions to FOMC/CPI/NFP/PCE events
+- **Model Comparer** -- side-by-side rule-based vs LLM accuracy tracking
+- **Prompt Optimizer** -- version-tracks prompts with performance scoring
+- **Feedback Collector** -- integrates human feedback into learning loop
+
+All proposals pass through a **safety policy** with blocked-action lists, risk-increase keyword detection, and change classification. Patterns may NEVER override the risk engine (enforced via Pydantic validator).
+
+### LLM Token Optimizer (NEW)
+A 4-layer optimization pipeline reduces LLM API costs by up to 70%:
+- **Semantic Cache** -- TTL-bucketed response cache keyed on market regime, RSI zone, MACD direction
+- **Tiered Pipeline** -- Tier 1 (free rules) for clear signals, Tier 2 (mini model) for moderate, Tier 3 (full model) for high-potential
+- **Smart Batching** -- combines up to 5 symbols per LLM call
+- **Adaptive Frequency** -- skips LLM entirely in quiet/low-ADX markets
+
 ---
 
 ## Architecture
@@ -176,6 +196,10 @@ python -m bot.main --mode scan
 | `/backtest` | Run backtest with synthetic data |
 | `/status` | Bot mode, equity, open positions |
 | `/halt` | Emergency kill-switch (trip breaker, cancel all) |
+| `/learn` | AI learning system dashboard |
+| `/patterns` | View detected market patterns |
+| `/proposals` | View pending improvement proposals |
+| `/optimize` | LLM token optimization stats |
 | `/help` | List all available commands |
 
 Trade confirmation uses Telegram inline keyboards -- tap **Confirm** or **Reject** directly in the chat.
@@ -187,32 +211,66 @@ Trade confirmation uses Telegram inline keyboards -- tap **Confirm** or **Reject
 ```
 runeclaw/
 |-- bot/
-|   |-- main.py                 # Entry point (telegram / cli / scan)
+|   |-- main.py                 # Entry point (telegram / cli / scan / backtest)
 |   |-- config.py               # All settings from env, fail-closed defaults
 |   |-- core/
-|   |   |-- engine.py           # Central orchestrator (SCAN->ANALYZE->TRADE->MONITOR)
+|   |   |-- engine.py           # Central orchestrator (9-state FSM)
 |   |   |-- market_scanner.py   # Bitget market scanner, volume spike detection
-|   |   |-- analyzer.py         # AI + technical analysis, LLM thesis generation
-|   |   |-- order_flow.py       # Exchange microstructure: CVD, book imbalance, whale detection
+|   |   |-- analyzer.py         # AI + technical analysis, 10+ voter confluence
+|   |   |-- order_flow.py       # Exchange microstructure: CVD, book imbalance, whales
+|   |   |-- metrics.py          # Sharpe/Sortino/Calmar from per-trade returns
+|   |   |-- llm_cache.py        # Semantic LLM response cache with TTL
+|   |   |-- token_optimizer.py  # Tiered pipeline, smart batching, adaptive frequency
 |   |-- risk/
 |   |   |-- risk_engine.py      # 18-check risk gate, circuit breaker
 |   |   |-- portfolio.py        # Paper trading ledger, PnL tracking, mark-to-market
+|   |-- learning/
+|   |   |-- orchestrator.py     # 10-step learning workflow coordinator
+|   |   |-- experience.py       # Decision memory and trade history
+|   |   |-- reflection.py       # Post-trade reflection and lesson extraction
+|   |   |-- strategy_eval.py    # Risk-adjusted strategy scoring (S/A/B/C/D tiers)
+|   |   |-- patterns.py         # Recurring pattern detection
+|   |   |-- macro_learner.py    # Macro event reaction tracking
+|   |   |-- model_compare.py    # Rule-based vs LLM accuracy comparison
+|   |   |-- prompt_opt.py       # Prompt version tracking and optimization
+|   |   |-- feedback.py         # Human feedback collection
+|   |   |-- safety_policy.py    # Immutable safety rules, blocked actions
+|   |   |-- store.py            # JSON-based learning data persistence
+|   |   |-- models.py           # Pydantic models for all learning records
+|   |-- macro/
+|   |   |-- calendar.py         # 2026 FOMC/CPI/NFP/PCE event calendar
+|   |   |-- models.py           # Macro event and risk state models
 |   |-- skills/
 |   |   |-- skill_registry.py   # Modular skill system, built-in skills
 |   |   |-- telegram_handler.py # Telegram bot commands, inline keyboards
+|   |-- backtest/
+|   |   |-- engine.py           # Backtest engine with intrabar SL/TP + walk-forward
+|   |   |-- data_loader.py      # Synthetic data (GBM + GARCH), CSV, Bitget fetch
+|   |   |-- models.py           # Backtest data models
 |   |-- utils/
 |   |   |-- models.py           # Pydantic schemas (TradeIdea, RiskCheck, etc.)
+|   |   |-- trailing.py         # Shared trailing-stop logic
 |   |   |-- logger.py           # Structured JSON audit logging
+|   |-- prompts/
+|   |   |-- system_prompt.md    # Agent persona and capabilities
+|   |   |-- skill_definitions.yaml
 |   |-- requirements.txt
+|-- tests/
+|   |-- test_core.py            # 315+ pytest tests
+|   |-- test_token_optimizer.py # 36 token optimizer tests
 |-- docs/
 |   |-- gitbook/                # Full GitBook documentation
+|   |-- SUBMISSION.md           # Hackathon submission document
 |-- demo/
 |   |-- sample_output.json      # Example trade idea
 |   |-- sample_risk_check.json  # Example risk check
 |   |-- sample_portfolio.json   # Example portfolio state
-|-- scripts/
-|   |-- demo_script.md          # 3-minute hackathon demo script
+|-- website/
+|   |-- index.html              # Landing page
+|   |-- dashboard-pro.html      # 3-tab command center dashboard
 |-- .env.example
+|-- pyproject.toml
+|-- Dockerfile
 |-- LICENSE
 |-- README.md
 ```
@@ -346,4 +404,4 @@ MIT License. See [LICENSE](./LICENSE) for details.
 ---
 
 <p align="center"><b>RUNECLAW</b> -- Where Viking grit meets algorithmic precision.</p>
-<p align="center"><i>Forged for Bitget GetClaw Hackathon 2025 (Genesis S1)</i></p>
+<p align="center"><i>Forged for Bitget GetClaw Hackathon 2025 (Genesis S1) | System Prompt v2026</i></p>

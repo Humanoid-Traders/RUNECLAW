@@ -112,22 +112,22 @@ class DataLoader:
             trend: hourly drift (μ)
             seed: random seed for reproducibility (None = random)
         """
+        rng = np.random.default_rng(seed)
         if seed is not None:
-            np.random.seed(seed)
             random.seed(seed)
 
         result: list[BacktestBar] = []
         price = start_price
         vol = volatility
         base_volume = 50_000_000  # $50M base daily volume
-        start_time = datetime(2025, 1, 1, 0, 0, 0)
+        start_time = datetime(2025, 1, 1, 0, 0, 0, tzinfo=UTC)
 
         # Track volatility state for clustering
         vol_state = volatility
 
         for i in range(bars):
             # --- Volatility clustering (simplified GARCH) ---
-            vol_shock = np.random.normal(0, 0.3)
+            vol_shock = rng.normal(0, 0.3)
             vol_state = 0.9 * vol_state + 0.1 * volatility * (1 + abs(vol_shock))
             current_vol = max(vol_state, volatility * 0.3)
 
@@ -135,9 +135,9 @@ class DataLoader:
             # Mix of normal and t-distribution for fat tails
             if random.random() < 0.05:
                 # 5% chance of a tail event (2-4x normal move)
-                ret = np.random.standard_t(df=4) * current_vol * 2
+                ret = rng.standard_t(df=4) * current_vol * 2
             else:
-                ret = np.random.normal(trend, current_vol)
+                ret = rng.normal(trend, current_vol)
 
             # Mean reversion overlay: pull back toward start_price band
             mean_rev_strength = 0.001
@@ -152,8 +152,8 @@ class DataLoader:
 
             # Intrabar high/low
             intra_vol = abs(ret) + current_vol * 0.5
-            high_ext = abs(np.random.normal(0, intra_vol * 0.5))
-            low_ext = abs(np.random.normal(0, intra_vol * 0.5))
+            high_ext = abs(rng.normal(0, intra_vol * 0.5))
+            low_ext = abs(rng.normal(0, intra_vol * 0.5))
             high_price = max(open_price, close_price) * (1 + high_ext)
             low_price = min(open_price, close_price) * (1 - low_ext)
 
@@ -165,7 +165,7 @@ class DataLoader:
 
             # Volume spikes correlate with price moves
             move_factor = 1.0 + abs(ret) / current_vol * 2
-            vol_noise = max(0.3, np.random.lognormal(0, 0.4))
+            vol_noise = max(0.3, rng.lognormal(0, 0.4))
             bar_volume = (base_volume / 24) * intraday_factor * move_factor * vol_noise
 
             result.append(BacktestBar(

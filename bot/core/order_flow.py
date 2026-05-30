@@ -253,12 +253,8 @@ class OrderFlowAnalyzer:
             sig.cvd_cumulative_usd = round(float(sum(hist)), 2)
             sig.cvd_trend = self._cvd_trend(list(hist))
 
-            # CVD-price divergence: price making new high while CVD doesn't
-            # (bearish divergence = distribution/absorption) or vice versa
             price_hist = self._price_history.setdefault(
                 symbol, deque(maxlen=self.config.cvd_history_len))
-            # Use VWAP of this trade window as the price observation
-            vwap_window = (buy_usd + sell_usd)  # total volume as proxy
             last_price = float(trades[-1].get("price") or 0) if trades else 0.0
             if last_price > 0:
                 price_hist.append(last_price)
@@ -407,8 +403,8 @@ class OrderFlowAnalyzer:
 
         if "book" in ok:
             contribs.append((float(np.clip(sig.book_imbalance, -1, 1)), c.w_book))
-            contribs.append(((sig.aggressor_ratio - 0.5) * 2.0, c.w_aggressor))
         if "trades" in ok:
+            contribs.append(((sig.aggressor_ratio - 0.5) * 2.0, c.w_aggressor))
             trend_val = {"rising": 1.0, "falling": -1.0, "flat": 0.0}.get(sig.cvd_trend, 0.0)
             contribs.append((trend_val, c.w_cvd_trend))
             whale_val = {"accumulation": 1.0, "distribution": -1.0, "neutral": 0.0}.get(sig.whale_bias, 0.0)
