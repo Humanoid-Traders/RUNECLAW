@@ -199,7 +199,7 @@ RUNECLAW is a **layered agent system** with strict separation between perception
 |-----------|-------|
 | **Purpose** | Independent validation layer that can veto any trade proposal |
 | **Design** | **Fail-closed.** If any check errors, trade is rejected. |
-| **Checks** | Position size (2% max), daily loss (5% max), drawdown (10% max), max positions (5), R:R ratio (>1.5), confidence threshold (>0.6), circuit breaker |
+| **Checks** | Position size (2% risk budget), daily loss (5% max), drawdown (10% max), max positions (5), R:R ratio (≥1.2), confidence threshold (≥0.60), circuit breaker, correlation, stale data, volatility, macro events — 18 total |
 | **Circuit breaker** | Auto-halts all trading when loss thresholds are breached |
 | **Current** | `RiskEngine` class in `bot/risk/risk_engine.py` |
 | **Critical property** | Risk engine is never bypassed. There is no override. |

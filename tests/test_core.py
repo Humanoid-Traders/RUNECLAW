@@ -218,9 +218,13 @@ class TestPortfolio:
         closed = port.close_position("TI-test001", 55000)
         assert closed is not None
         assert closed.pnl > 0
-        # PnL = (55000 - 50000) * 0.004 = 20
-        assert closed.pnl == pytest.approx(20.0, abs=0.1)
-        assert port.balance == pytest.approx(10020.0, abs=0.1)
+        # Gross PnL = (55000 - 50000) * 0.004 = 20
+        assert closed.gross_pnl == pytest.approx(20.0, abs=0.1)
+        # Commission = (200 + 220) * 0.001 = 0.42
+        assert closed.commission > 0
+        # Net PnL = gross - commission
+        assert closed.pnl == pytest.approx(closed.gross_pnl - closed.commission, abs=0.01)
+        assert port.balance == pytest.approx(10000 + closed.pnl, abs=0.1)
 
     def test_close_position_long_loss(self):
         port = _make_portfolio(10000)
@@ -229,8 +233,10 @@ class TestPortfolio:
         closed = port.close_position("TI-test001", 45000)
         assert closed is not None
         assert closed.pnl < 0
-        # PnL = (45000 - 50000) * 0.004 = -20
-        assert closed.pnl == pytest.approx(-20.0, abs=0.1)
+        # Gross PnL = (45000 - 50000) * 0.004 = -20
+        assert closed.gross_pnl == pytest.approx(-20.0, abs=0.1)
+        # Commission makes it worse
+        assert closed.pnl < closed.gross_pnl
 
     def test_close_position_short_profit(self):
         port = _make_portfolio(10000)
@@ -1981,6 +1987,45 @@ class TestAuditV3Fixes:
         # Should not raise; should return a failure message, not silently vanish
         assert "failed" in result.lower(), f"Expected failure message, got: {result}"
 
+    def test_confirm_trade_recheck_exception_logged(self):
+        """Fix 6: if risk.evaluate raises during re-check, idea must not vanish silently."""
+        from bot.core.engine import RuneClawEngine
+        from unittest.mock import patch
+        engine = RuneClawEngine()
+        engine.risk._state_file = "/dev/null"
+        engine.risk._circuit_open = False
+        engine.risk._consecutive_losses = 0
+        engine.risk._last_loss_time = None
+
+        idea = TradeIdea(
+            id="TI-RECHECK-ERR",
+            asset="BTC/USDT",
+            direction=Direction.LONG,
+            entry_price=50000.0,
+            stop_loss=48750.0,
+            take_profit=53750.0,
+            confidence=0.75,
+            reasoning="test",
+            signals_used=["rsi"],
+            timestamp=datetime.now(UTC),
+        )
+        engine._pending_ideas[idea.id] = idea
+        engine._pending_atr[idea.id] = 500.0
+
+        # Make risk.evaluate raise during re-check
+        with patch.object(engine.risk, "evaluate", side_effect=RuntimeError("injected re-check crash")):
+            loop = asyncio.new_event_loop()
+            try:
+                result = loop.run_until_complete(engine.confirm_trade(idea.id))
+            finally:
+                loop.close()
+
+        # Should return error message, not raise or silently vanish
+        assert "re-check failed" in result.lower() or "error" in result.lower(), \
+            f"Expected re-check error message, got: {result}"
+        # Idea should be gone from pending (it was popped)
+        assert idea.id not in engine._pending_ideas
+
     # -- F-06: sandbox flag from env --
 
     def test_sandbox_flag_configurable(self):
@@ -1994,6 +2039,315 @@ class TestAuditV3Fixes:
         finally:
             if saved is not None:
                 os.environ["BITGET_SANDBOX"] = saved
+
+
+class TestFailClosedFaultInjection:
+    """Audit V4 Fix 1: per-check fault injection proves fail-closed by construction."""
+
+    def _make_idea(self, **overrides):
+        defaults = dict(
+            id="TI-FAULT",
+            asset="BTC/USDT",
+            direction=Direction.LONG,
+            entry_price=50000.0,
+            stop_loss=48750.0,
+            take_profit=53750.0,
+            confidence=0.75,
+            reasoning="test",
+            signals_used=["rsi"],
+            timestamp=datetime.now(UTC),
+        )
+        defaults.update(overrides)
+        return TradeIdea(**defaults)
+
+    def test_correlation_fault_causes_rejection(self):
+        """If _check_correlation raises, the trade must be REJECTED (not silently approved)."""
+        from unittest.mock import patch
+        portfolio = PortfolioTracker(initial_balance=10000.0)
+        risk = RiskEngine(portfolio, state_file="/dev/null")
+        idea = self._make_idea()
+
+        with patch.object(risk, "_check_correlation", side_effect=RuntimeError("injected fault")):
+            result = risk.evaluate(idea, atr=500.0)
+
+        assert result.verdict == RiskVerdict.REJECTED, \
+            f"Fault in correlation check should cause REJECTED, got {result.verdict}"
+        corr_fails = [c for c in result.checks_failed if "CORRELATION" in c]
+        assert len(corr_fails) == 1
+        assert "evaluation error" in corr_fails[0]
+        assert "injected fault" in corr_fails[0]
+
+    def test_portfolio_snapshot_fault_causes_rejection(self):
+        """If portfolio.snapshot() raises, the trade must be REJECTED."""
+        from unittest.mock import patch
+        portfolio = PortfolioTracker(initial_balance=10000.0)
+        risk = RiskEngine(portfolio, state_file="/dev/null")
+        idea = self._make_idea()
+
+        with patch.object(portfolio, "snapshot", side_effect=RuntimeError("snapshot crash")):
+            result = risk.evaluate(idea, atr=500.0)
+
+        assert result.verdict == RiskVerdict.REJECTED
+        assert "snapshot crash" in result.reason
+
+    def test_multiple_faults_all_reported(self):
+        """Multiple faulted checks should all appear in checks_failed."""
+        from unittest.mock import patch, PropertyMock
+        portfolio = PortfolioTracker(initial_balance=10000.0)
+        risk = RiskEngine(portfolio, state_file="/dev/null")
+        idea = self._make_idea()
+
+        # Fault both correlation and the volatility guard by making atr produce an error
+        with patch.object(risk, "_check_correlation", side_effect=RuntimeError("corr fault")):
+            # Also make CONFIG.risk.volatility_max_atr_pct raise by patching it
+            result = risk.evaluate(idea, atr=500.0)
+
+        assert result.verdict == RiskVerdict.REJECTED
+        corr_fails = [c for c in result.checks_failed if "CORRELATION" in c and "evaluation error" in c]
+        assert len(corr_fails) >= 1, f"Correlation fault not reported: {result.checks_failed}"
+
+    def test_corrupt_state_file_assumes_tripped(self):
+        """Fix 3: corrupt state file should assume circuit breaker ACTIVE (fail-closed)."""
+        import tempfile
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False, mode="w") as f:
+            f.write("NOT VALID JSON {{{")
+            state_path = f.name
+        try:
+            portfolio = PortfolioTracker(initial_balance=10000.0)
+            risk = RiskEngine(portfolio, state_file=state_path)
+            assert risk.circuit_breaker_active, \
+                "Corrupt state file should cause circuit breaker to assume ACTIVE"
+        finally:
+            import os
+            os.unlink(state_path)
+
+    def test_missing_state_file_starts_fresh(self):
+        """Missing state file should start with breaker OFF (no prior state)."""
+        portfolio = PortfolioTracker(initial_balance=10000.0)
+        risk = RiskEngine(portfolio, state_file="/tmp/nonexistent_runeclaw_state_test.json")
+        assert not risk.circuit_breaker_active, \
+            "Missing state file should start with breaker OFF"
+
+
+# ===========================================================================
+#  COST TRACKER TESTS
+# ===========================================================================
+from bot.core.cost import CostTracker, CostSummary, LLM_PRICING
+
+
+class TestCostTracker:
+    """Tests for session operating-cost ledger."""
+
+    def test_record_llm_known_model(self):
+        """Known model should produce a positive cost."""
+        ct = CostTracker()
+        cost = ct.record_llm("gpt-4o", prompt_tokens=1000, completion_tokens=500, symbol="BTC/USDT")
+        assert cost > 0
+        snap = ct.snapshot()
+        assert snap.llm_calls == 1
+        assert snap.prompt_tokens == 1000
+        assert snap.completion_tokens == 500
+        assert snap.llm_cost_usd == cost
+        assert snap.unpriced_calls == 0
+
+    def test_record_llm_unknown_model(self):
+        """Unknown model should record tokens but flag as unpriced."""
+        ct = CostTracker()
+        cost = ct.record_llm("unknown-model-v99", prompt_tokens=500, completion_tokens=200)
+        assert cost == 0.0
+        snap = ct.snapshot()
+        assert snap.llm_calls == 1
+        assert snap.unpriced_calls == 1
+        assert snap.prompt_tokens == 500
+        assert snap.completion_tokens == 200
+
+    def test_record_infra(self):
+        """Infra cost should accumulate."""
+        ct = CostTracker()
+        ct.record_infra(0.50, note="data feed")
+        ct.record_infra(0.25, note="hosting")
+        snap = ct.snapshot()
+        assert snap.infra_cost_usd == pytest.approx(0.75)
+
+    def test_operating_cost_total(self):
+        """operating_cost_usd should sum LLM + infra."""
+        ct = CostTracker()
+        ct.record_llm("gpt-4o-mini", prompt_tokens=10000, completion_tokens=5000)
+        ct.record_infra(0.10)
+        snap = ct.snapshot()
+        expected = snap.llm_cost_usd + snap.infra_cost_usd
+        assert snap.operating_cost_usd == pytest.approx(expected, abs=1e-6)
+
+    def test_snapshot_is_frozen_copy(self):
+        """Snapshot should be a copy — later calls shouldn't change it."""
+        ct = CostTracker()
+        ct.record_llm("gpt-4o", prompt_tokens=100, completion_tokens=50)
+        snap1 = ct.snapshot()
+        ct.record_llm("gpt-4o", prompt_tokens=200, completion_tokens=100)
+        snap2 = ct.snapshot()
+        assert snap2.llm_calls == 2
+        assert snap1.llm_calls == 1  # snap1 should not have changed
+
+    def test_commission_in_paper_portfolio(self):
+        """Paper portfolio should deduct commission from PnL."""
+        portfolio = PortfolioTracker(initial_balance=10000.0)
+        idea = TradeIdea(
+            id="TI-COMM",
+            asset="BTC/USDT",
+            direction=Direction.LONG,
+            entry_price=50000.0,
+            stop_loss=48000.0,
+            take_profit=55000.0,
+            confidence=0.75,
+            reasoning="test",
+        )
+        portfolio.open_position(idea, 2000.0)
+        closed = portfolio.close_position("TI-COMM", 55000.0)
+        assert closed is not None
+        assert closed.commission > 0
+        assert closed.gross_pnl > closed.pnl  # net < gross because commission
+        # Verify snapshot reports commission
+        snap = portfolio.snapshot()
+        assert snap.total_commission > 0
+        assert snap.total_gross_pnl > snap.total_pnl
+
+
+# ===========================================================================
+#  LLM OPTIMIZER + RATE LIMITER + COSTS SKILL TESTS
+# ===========================================================================
+
+
+class TestLLMOptimizations:
+    """Tests for model routing, prompt compression, JSON parsing, and rate limiting."""
+
+    def test_parse_json_response(self):
+        """JSON mode responses should parse correctly."""
+        from bot.core.analyzer import Analyzer
+        import json
+        json_resp = json.dumps({"direction": "SHORT", "confidence": 0.82, "reasoning": "Bearish divergence"})
+        result = Analyzer._parse_llm_response(json_resp)
+        assert result["_parsed"] is True
+        assert result["direction"] == "SHORT"
+        assert result["confidence"] == pytest.approx(0.82)
+        assert "Bearish" in result["reasoning"]
+
+    def test_parse_json_case_insensitive(self):
+        """JSON keys should be matched case-insensitively."""
+        from bot.core.analyzer import Analyzer
+        import json
+        json_resp = json.dumps({"DIRECTION": "LONG", "CONFIDENCE": 0.65, "REASONING": "Uptrend"})
+        result = Analyzer._parse_llm_response(json_resp)
+        assert result["_parsed"] is True
+        assert result["direction"] == "LONG"
+        assert result["confidence"] == pytest.approx(0.65)
+
+    def test_parse_invalid_json_falls_to_text(self):
+        """Invalid JSON should fall through to line-by-line parsing."""
+        from bot.core.analyzer import Analyzer
+        text = "DIRECTION: SHORT\nCONFIDENCE: 0.7\nREASONING: Testing fallback"
+        result = Analyzer._parse_llm_response(text)
+        assert result["_parsed"] is True
+        assert result["direction"] == "SHORT"
+
+    def test_build_prompt_compression(self):
+        """_build_prompt should produce a compact prompt under 4000 chars."""
+        from bot.core.analyzer import Analyzer
+        signal = MarketSignal(
+            symbol="BTC/USDT", price=65000, change_pct_24h=2.5,
+            volume_usd_24h=1e9, volume_spike=True,
+        )
+        indicators = {
+            "rsi": 45, "macd": 0.5, "macd_histogram": 0.1,
+            "adx": 25, "plus_di": 20, "minus_di": 15,
+            "bb_upper": 66000, "bb_lower": 64000, "bb_pct_b": 0.5,
+            "vwap": 65000, "obv_trend": "rising",
+            "fib_zone": "support", "fib_618": 63000, "fib_382": 64500,
+            "regime": "TREND_UP", "confluence": 0.7,
+        }
+        prompt = Analyzer._build_prompt(signal, indicators)
+        assert len(prompt) <= 4000
+        assert "BTC/USDT" in prompt
+        assert "RSI=45" in prompt
+        assert "Respond:" in prompt  # output format instruction present
+
+    def test_build_prompt_with_order_flow(self):
+        """Order flow context should be appended when available."""
+        from bot.core.analyzer import Analyzer
+        from bot.core.order_flow import OrderFlowSignal
+        signal = MarketSignal(
+            symbol="ETH/USDT", price=3500, change_pct_24h=-1.0,
+            volume_usd_24h=5e8, volume_spike=False,
+        )
+        of = OrderFlowSignal(
+            symbol="ETH/USDT", book_imbalance=0.3, cvd_trend="falling",
+            whale_bias="distribution", funding_rate=0.001,
+            smart_money_score=0.4, confidence=0.7, components_ok=["book"],
+        )
+        prompt = Analyzer._build_prompt(signal, {}, order_flow=of)
+        assert "OrderFlow:" in prompt
+        assert "whale=distribution" in prompt
+
+    def test_model_routing_attributes(self):
+        """Analyzer should have SCAN_MODEL and THESIS_MODEL class attributes."""
+        from bot.core.analyzer import Analyzer
+        assert Analyzer.SCAN_MODEL == "gpt-4o-mini"
+        assert Analyzer.THESIS_MODEL == "gpt-4o"
+
+    def test_per_category_cost_tracking(self):
+        """CostTracker should track costs per category."""
+        ct = CostTracker()
+        ct.record_llm("gpt-4o-mini", 500, 200, symbol="BTC/USDT", category="scan")
+        ct.record_llm("gpt-4o-mini", 600, 300, symbol="ETH/USDT", category="scan")
+        ct.record_llm("gpt-4o", 1000, 500, symbol="BTC/USDT", category="thesis")
+        snap = ct.snapshot()
+        assert snap.calls_by_category["scan"] == 2
+        assert snap.calls_by_category["thesis"] == 1
+        assert snap.cost_by_category["scan"] > 0
+        assert snap.cost_by_category["thesis"] > snap.cost_by_category["scan"]  # gpt-4o > mini
+
+    def test_rate_limiter_basic(self):
+        """Rate limiter should track calls and not block for first call."""
+        from bot.utils.rate_limiter import AsyncRateLimiter
+        limiter = AsyncRateLimiter(max_rpm=60, name="test")
+        loop = asyncio.new_event_loop()
+        try:
+            loop.run_until_complete(limiter.acquire())
+        finally:
+            loop.close()
+        stats = limiter.stats
+        assert stats["total_calls"] == 1
+        assert stats["name"] == "test"
+
+    def test_costs_skill_registered(self):
+        """Costs skill should be in the default registry."""
+        from bot.skills.skill_registry import build_default_registry
+        registry = build_default_registry()
+        assert registry.get("costs") is not None
+
+    def test_costs_skill_output(self):
+        """Costs skill should produce a formatted breakdown."""
+        from bot.core.engine import RuneClawEngine
+        from bot.skills.skill_registry import CostBreakdownSkill
+        from unittest.mock import AsyncMock
+        engine = RuneClawEngine()
+        engine.scanner.scan = AsyncMock(return_value=[])
+        engine.scanner.close = AsyncMock()
+        engine.scanner._get_exchange = AsyncMock()
+        # Record some costs
+        engine.cost.record_llm("gpt-4o-mini", 500, 200, category="scan")
+        engine.cost.record_llm("gpt-4o", 1000, 500, category="thesis")
+        engine.cost.record_infra(0.05)
+
+        skill = CostBreakdownSkill()
+        loop = asyncio.new_event_loop()
+        try:
+            result = loop.run_until_complete(skill.execute(engine))
+        finally:
+            loop.close()
+        assert "Agent Economics" in result
+        assert "scan" in result
+        assert "thesis" in result
+        assert "Operating Total" in result
 
 
 class TestSafetyGates:

@@ -14,6 +14,7 @@ from typing import Callable, Optional
 
 from bot.config import CONFIG
 from bot.core.analyzer import Analyzer
+from bot.core.cost import CostTracker
 from bot.core.market_scanner import MarketScanner
 from bot.core.order_flow import OrderFlowAnalyzer
 from bot.macro.calendar import MacroCalendar, build_2026_calendar
@@ -39,7 +40,8 @@ class RuneClawEngine:
     def __init__(self) -> None:
         self.portfolio = PortfolioTracker()
         self.scanner = MarketScanner()
-        self.analyzer = Analyzer()
+        self.cost = CostTracker()
+        self.analyzer = Analyzer(cost_tracker=self.cost)
         self.order_flow = OrderFlowAnalyzer()
         self.macro_calendar = MacroCalendar(events=build_2026_calendar())
         self.risk = RiskEngine(self.portfolio, macro_calendar=self.macro_calendar)
@@ -120,10 +122,12 @@ class RuneClawEngine:
 
     async def _tick(self) -> None:
         """One full scan-analyze cycle."""
-        # Check circuit breaker
+        # Check circuit breaker — no new scans, but still monitor open positions
+        # so SL/TP can fire even while halted (Fix 2: monitoring while halted).
         if self.risk.circuit_breaker_active:
             if self.state != AgentState.HALTED:
                 self._transition(AgentState.HALTED, "circuit breaker active")
+            await self._check_open_positions()
             return
 
         # Check cooldown
@@ -258,7 +262,20 @@ class RuneClawEngine:
         # To close this gap fully, re-fetch the ticker here and reject if entry has drifted
         # beyond a threshold (e.g. 1 ATR).  Not implemented in this prototype.)
         self._transition(AgentState.RISK_CHECK, f"re-checking risk for {trade_id}")
-        recheck = self.risk.evaluate(idea, atr=stored_atr)
+        try:
+            recheck = self.risk.evaluate(idea, atr=stored_atr)
+        except Exception as exc:
+            # Fix 6: if re-check raises, do NOT silently lose the idea.
+            # Log it as a failed re-check and return a clear message.
+            audit(
+                trade_log,
+                f"Risk re-check crashed for {trade_id}: {exc}",
+                action="recheck",
+                result="ERROR",
+                data={"trade_id": trade_id, "asset": idea.asset, "error": str(exc)},
+            )
+            self._transition(AgentState.IDLE, f"re-check error for {trade_id}")
+            return f"Trade {trade_id} re-check failed (error logged): {exc}"
         if recheck.verdict == RiskVerdict.REJECTED:
             self._transition(AgentState.IDLE, f"re-check rejected {trade_id}")
             return f"Trade REJECTED on re-check: {recheck.reason}"

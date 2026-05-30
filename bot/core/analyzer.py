@@ -41,12 +41,31 @@ class Regime(str, Enum):
 
 
 class Analyzer:
-    """Produces TradeIdea objects from raw market signals."""
+    """Produces TradeIdea objects from raw market signals.
 
-    def __init__(self) -> None:
+    LLM optimization:
+      - Model routing: gpt-4o-mini for scans/quick analysis, gpt-4o for thesis generation
+      - Prompt compression: strips redundant whitespace, enforces hard cap
+      - Structured JSON output mode where possible (fewer tokens, reliable parsing)
+      - Per-category cost tracking via CostTracker
+      - Async rate limiting to stay within provider RPM limits
+    """
+
+    # Model routing: cheap model for quick analysis, full model for thesis
+    SCAN_MODEL = "gpt-4o-mini"     # ~17x cheaper input, ~17x cheaper output
+    THESIS_MODEL = "gpt-4o"        # full reasoning for trade ideas
+
+    def __init__(self, cost_tracker: Optional["CostTracker"] = None) -> None:  # noqa: F821
         self._llm = AsyncOpenAI(api_key=CONFIG.llm.api_key) if CONFIG.llm.api_key else None
         self._llm_calls_today: int = 0
         self._llm_day: str = ""  # YYYY-MM-DD, reset counter on new day
+        self._cost = cost_tracker
+        # Async rate limiter: prevent 429s without blocking the event loop
+        from bot.utils.rate_limiter import AsyncRateLimiter
+        self._rate_limiter = AsyncRateLimiter(
+            max_rpm=int(CONFIG.llm.daily_call_limit / 24 * 60) or 40,
+            name="llm",
+        )
 
     async def analyze(self, signal: MarketSignal, candles: list[list[float]], order_flow=None) -> Optional[TradeIdea]:
         """
@@ -533,60 +552,62 @@ class Analyzer:
             result["source"] = "RULE_ENGINE_BUDGET"
             return result
 
-        prompt = (
-            f"You are a crypto trading analyst. Analyze {signal.symbol}.\n"
-            f"Price: ${signal.price}, 24h change: {signal.change_pct_24h}%\n"
-            f"Volume spike: {signal.volume_spike}\n"
-            f"Regime: {indicators.get('regime', 'UNKNOWN')}\n"
-            f"Confluence: {indicators.get('confluence', 0):.2f}\n"
-            f"Indicators: RSI={indicators.get('rsi')}, MACD={indicators.get('macd')}, "
-            f"MACD_hist={indicators.get('macd_histogram')}, "
-            f"ADX={indicators.get('adx')}, +DI={indicators.get('plus_di')}, -DI={indicators.get('minus_di')}, "
-            f"BB_upper={indicators.get('bb_upper')}, BB_lower={indicators.get('bb_lower')}, "
-            f"BB_%B={indicators.get('bb_pct_b')}, "
-            f"VWAP={indicators.get('vwap', 'N/A')}, "
-            f"OBV_trend={indicators.get('obv_trend', 'N/A')}, "
-            f"Fib_zone={indicators.get('fib_zone', 'N/A')}, "
-            f"Fib_618={indicators.get('fib_618', 'N/A')}, "
-            f"Fib_382={indicators.get('fib_382', 'N/A')}\n"
-            f"Candle_patterns={indicators.get('candle_patterns', {})}\n"
-        )
+        # Dollar budget guard: fall back to rules when daily spend exceeded
+        if self._cost is not None:
+            snap = self._cost.snapshot()
+            if snap.llm_cost_usd >= CONFIG.llm.daily_budget_usd:
+                audit(trade_log, f"LLM daily dollar budget exhausted (${snap.llm_cost_usd:.4f} >= ${CONFIG.llm.daily_budget_usd}), using rules",
+                      action="analyze", result="LLM_BUDGET_USD")
+                result = self._rule_based_thesis(signal, indicators)
+                result["source"] = "RULE_ENGINE_BUDGET"
+                return result
 
-        # Append order flow context if available
-        if order_flow is not None:
-            funding_str = f"{order_flow.funding_rate:.6f}" if order_flow.funding_rate is not None else "N/A"
-            prompt += (
-                f"Order_flow: book_imbalance={order_flow.book_imbalance:.2f}, "
-                f"cvd_trend={order_flow.cvd_trend}, "
-                f"cvd_price_divergence={order_flow.cvd_price_divergence}, "
-                f"whale_bias={order_flow.whale_bias}, "
-                f"funding_rate={funding_str}, "
-                f"smart_money_score={order_flow.smart_money_score:.2f}\n"
-            )
+        prompt = self._build_prompt(signal, indicators, order_flow)
 
-        prompt += (
-            "Respond in EXACTLY this format (no markdown):\n"
-            "DIRECTION: LONG or SHORT\n"
-            "CONFIDENCE: 0.0-1.0\n"
-            "REASONING: one paragraph\n"
-        )
+        # Model routing: thesis-quality analysis uses the full model,
+        # quick scans use the cheaper mini model.
+        # Confluence > 0.6 or explicit thesis request → full model
+        confluence = indicators.get("confluence", 0)
+        use_full_model = confluence >= 0.6
+        model = self.THESIS_MODEL if use_full_model else self.SCAN_MODEL
+        category = "thesis" if use_full_model else "analyze"
+        max_tokens = CONFIG.llm.max_tokens if use_full_model else 280
+
         try:
+            # Rate-limit before calling to prevent 429s
+            await self._rate_limiter.acquire()
+
             resp = await asyncio.wait_for(
                 self._llm.chat.completions.create(
-                    model=CONFIG.llm.model,
-                    messages=[{"role": "user", "content": prompt}],
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": "You are RUNECLAW, a risk-first crypto analyst. Return concise analysis."},
+                        {"role": "user", "content": prompt},
+                    ],
                     temperature=CONFIG.llm.temperature,
-                    max_tokens=CONFIG.llm.max_tokens,
+                    max_tokens=max_tokens,
+                    response_format={"type": "json_object"} if not use_full_model else None,
                 ),
                 timeout=CONFIG.llm.timeout_seconds,
             )
             self._llm_calls_today += 1
+            # Record actual token usage for cost accounting
+            usage = getattr(resp, "usage", None)
+            if usage is not None and self._cost is not None:
+                self._cost.record_llm(
+                    model=model,
+                    prompt_tokens=getattr(usage, "prompt_tokens", 0) or 0,
+                    completion_tokens=getattr(usage, "completion_tokens", 0) or 0,
+                    symbol=signal.symbol,
+                    category=category,
+                )
             result = self._parse_llm_response(resp.choices[0].message.content or "")
             if not result.pop("_parsed", False):
                 audit(trade_log, "LLM response could not be parsed, using defaults",
                       action="analyze", result="LLM_PARSE_FAIL",
                       data={"raw_text": (resp.choices[0].message.content or "")[:200]})
             result["source"] = "LLM"
+            result["model_used"] = model
             return result
         except Exception as exc:
             audit(trade_log, f"LLM error, falling back to rules: {exc}",
@@ -596,18 +617,77 @@ class Analyzer:
             return result
 
     @staticmethod
+    def _build_prompt(signal: MarketSignal, indicators: dict, order_flow=None) -> str:
+        """Build a compressed prompt for LLM analysis.
+
+        Token optimization:
+          - Single-line KV format instead of verbose prose
+          - Strip redundant whitespace
+          - Hard cap at 4000 chars (~1000 tokens) to prevent prompt bloat
+          - Order flow appended only when available
+        """
+        parts = [
+            f"Analyze {signal.symbol}.",
+            f"Price=${signal.price} 24h={signal.change_pct_24h}% vol_spike={signal.volume_spike}",
+            f"Regime={indicators.get('regime', 'UNKNOWN')} Confluence={indicators.get('confluence', 0):.2f}",
+            f"RSI={indicators.get('rsi')} MACD={indicators.get('macd')} MACD_hist={indicators.get('macd_histogram')}",
+            f"ADX={indicators.get('adx')} +DI={indicators.get('plus_di')} -DI={indicators.get('minus_di')}",
+            f"BB_upper={indicators.get('bb_upper')} BB_lower={indicators.get('bb_lower')} BB_%B={indicators.get('bb_pct_b')}",
+            f"VWAP={indicators.get('vwap', 'N/A')} OBV={indicators.get('obv_trend', 'N/A')}",
+            f"Fib: zone={indicators.get('fib_zone', 'N/A')} 618={indicators.get('fib_618', 'N/A')} 382={indicators.get('fib_382', 'N/A')}",
+        ]
+
+        candle_patterns = indicators.get("candle_patterns", {})
+        if candle_patterns:
+            parts.append(f"Candles={candle_patterns}")
+
+        if order_flow is not None:
+            funding = f"{order_flow.funding_rate:.6f}" if order_flow.funding_rate is not None else "N/A"
+            parts.append(
+                f"OrderFlow: imbalance={order_flow.book_imbalance:.2f} cvd={order_flow.cvd_trend} "
+                f"div={order_flow.cvd_price_divergence} whale={order_flow.whale_bias} "
+                f"funding={funding} smart={order_flow.smart_money_score:.2f}"
+            )
+
+        parts.append(
+            "Respond: DIRECTION: LONG or SHORT | CONFIDENCE: 0.0-1.0 | REASONING: one paragraph"
+        )
+
+        prompt = "\n".join(parts)
+        # Hard cap to prevent unbounded token usage
+        return prompt[:4000]
+
+    @staticmethod
     def _parse_llm_response(text: str) -> dict:
         """Parse LLM response with robust extraction.
+        Handles both plain-text (DIRECTION: X) and JSON mode responses.
         Returns a dict with direction, confidence, reasoning, and _parsed flag.
         _parsed=False means we fell back to defaults (LLM output was malformed).
         """
+        import json as _json
         result: dict = {"direction": "LONG", "confidence": 0.0, "reasoning": "", "_parsed": False}
+
+        # Try JSON mode first (structured output from gpt-4o-mini)
+        stripped = text.strip()
+        if stripped.startswith("{"):
+            try:
+                data = _json.loads(stripped)
+                d = str(data.get("direction", data.get("DIRECTION", "LONG"))).upper()
+                result["direction"] = "SHORT" if "SHORT" in d else "LONG"
+                conf = data.get("confidence", data.get("CONFIDENCE", 0.0))
+                result["confidence"] = max(0.0, min(1.0, float(conf)))
+                result["reasoning"] = str(data.get("reasoning", data.get("REASONING", "")))
+                result["_parsed"] = True
+                return result
+            except (ValueError, TypeError, _json.JSONDecodeError):
+                pass  # fall through to line-by-line parsing
+
+        # Line-by-line parsing for plain-text responses
         parsed_fields = 0
-        for line in text.strip().splitlines():
+        for line in stripped.splitlines():
             line_clean = line.strip()
             upper = line_clean.upper()
             if upper.startswith("DIRECTION"):
-                # Handle "DIRECTION: LONG", "DIRECTION:LONG", "DIRECTION - LONG"
                 rest = line_clean.split(":", 1)[-1] if ":" in line_clean else line_clean.split("-", 1)[-1]
                 result["direction"] = "SHORT" if "SHORT" in rest.upper() else "LONG"
                 parsed_fields += 1

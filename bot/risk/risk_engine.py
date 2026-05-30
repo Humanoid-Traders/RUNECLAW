@@ -85,6 +85,14 @@ class RiskEngine:
     Pre-trade and post-trade risk checks.
     Design principle: if ANY check cannot be evaluated, the trade is REJECTED.
     18 independent checks -- all must pass (16 in-engine + #17 liquidity in engine.py + #18 macro).
+
+    Threading model: RUNECLAW runs on a single-threaded asyncio event loop.
+    The RLock exists as a defensive measure but does NOT guarantee correctness
+    under true multi-threaded use.  Known lock-ordering issue: evaluate() holds
+    _lock → calls portfolio.snapshot() (portfolio._lock), while
+    portfolio.close_position() holds portfolio._lock → calls record_trade_result()
+    (_lock).  This is safe only because both paths execute on the same thread.
+    If RUNECLAW is ever made multi-threaded, the lock ordering must be resolved first.
     """
 
     def __init__(self, portfolio: "PortfolioTracker", state_file: Optional[str] = None,
@@ -184,148 +192,201 @@ class RiskEngine:
             uncapped_position_usd = risk_budget / stop_distance_pct
             position_usd = uncapped_position_usd  # uncapped -- check #2 will cap if needed
 
-        # 1. Circuit breaker
-        if self._circuit_open:
-            failed.append("CIRCUIT_BREAKER: system halted due to prior losses")
-        else:
-            passed.append("CIRCUIT_BREAKER: OK")
+        # ── Individual checks — each wrapped so a raised exception → REJECTED ──
+        # This is the fail-closed contract: if ANY check cannot be evaluated,
+        # the trade is REJECTED.  No silent pass-through on errors.
 
-        # 2. Position size — enforces notional cap (the check has real authority)
-        if state.equity_usd <= 0:
-            failed.append("EQUITY: zero or negative equity")
-        else:
-            notional_pct = (position_usd / state.equity_usd * 100)
-            max_notional_pct = CONFIG.risk.max_symbol_exposure_pct  # 20% default
-            if notional_pct <= max_notional_pct + 0.01:  # tiny epsilon for float math
-                passed.append(f"POSITION_SIZE: notional {notional_pct:.1f}% <= {max_notional_pct}%")
+        try:
+            # 1. Circuit breaker
+            if self._circuit_open:
+                failed.append("CIRCUIT_BREAKER: system halted due to prior losses")
             else:
-                # Cap position to max notional and log the clamping
-                max_notional = state.equity_usd * (max_notional_pct / 100.0)
-                passed.append(f"POSITION_SIZE: clamped {notional_pct:.1f}% -> {max_notional_pct}% (${position_usd:.0f} -> ${max_notional:.0f})")
-                position_usd = max_notional
+                passed.append("CIRCUIT_BREAKER: OK")
+        except Exception as exc:
+            failed.append(f"CIRCUIT_BREAKER: evaluation error ({exc})")
 
-        # 3. Daily loss (realized + unrealized) — measured against equity, not free cash
-        daily_loss_pct = abs(state.daily_pnl / state.equity_usd * 100) if state.equity_usd > 0 else 0
-        if state.daily_pnl < 0 and daily_loss_pct >= CONFIG.risk.max_daily_loss_pct:
-            failed.append(f"DAILY_LOSS: {daily_loss_pct:.1f}% >= {CONFIG.risk.max_daily_loss_pct}%")
-            self._trip_circuit_breaker("daily loss limit breached")
-        else:
-            passed.append(f"DAILY_LOSS: {daily_loss_pct:.1f}% OK")
-
-        # 4. Drawdown
-        if state.max_drawdown_pct >= CONFIG.risk.max_drawdown_pct:
-            failed.append(f"DRAWDOWN: {state.max_drawdown_pct:.1f}% >= {CONFIG.risk.max_drawdown_pct}%")
-            self._trip_circuit_breaker("max drawdown breached")
-        else:
-            passed.append(f"DRAWDOWN: {state.max_drawdown_pct:.1f}% OK")
-
-        # 5. Open positions limit
-        if state.open_positions >= CONFIG.risk.max_open_positions:
-            failed.append(f"MAX_POSITIONS: {state.open_positions} >= {CONFIG.risk.max_open_positions}")
-        else:
-            passed.append(f"OPEN_POSITIONS: {state.open_positions} OK")
-
-        # 6. Risk-reward ratio (0.01 tolerance for float rounding at boundary)
-        rr = idea.risk_reward_ratio
-        if rr < CONFIG.risk.min_risk_reward - 0.01:
-            failed.append(f"RISK_REWARD: {rr} < {CONFIG.risk.min_risk_reward} minimum")
-        else:
-            passed.append(f"RISK_REWARD: {rr} OK")
-
-        # 7. Confidence threshold
-        if idea.confidence < CONFIG.risk.min_confidence:
-            failed.append(f"CONFIDENCE: {idea.confidence} < {CONFIG.risk.min_confidence} minimum")
-        else:
-            passed.append(f"CONFIDENCE: {idea.confidence} OK")
-
-        # 8. Correlation / concentration check
-        corr_result = self._check_correlation(idea)
-        if corr_result:
-            failed.append(corr_result)
-        else:
-            passed.append("CORRELATION: no concentrated exposure")
-
-        # 9. Consecutive loss streak (H4 fix: 3+ streak = soft reject, hard stop via circuit breaker at max)
-        if self._consecutive_losses >= 3:
-            failed.append(f"LOSS_STREAK: {self._consecutive_losses} consecutive losses (>= 3)")
-        else:
-            passed.append(f"LOSS_STREAK: {self._consecutive_losses} OK")
-
-        # 10. Entry price sanity
-        if idea.entry_price <= 0:
-            failed.append(f"ENTRY_PRICE: invalid ({idea.entry_price})")
-        else:
-            passed.append("ENTRY_PRICE: valid")
-
-        # 11. Stop-loss required
-        if CONFIG.risk.require_stop_loss:
-            if idea.stop_loss <= 0:
-                failed.append("STOP_LOSS: required but missing or invalid")
-            elif idea.stop_loss == idea.entry_price:
-                failed.append("STOP_LOSS: cannot equal entry price")
+        try:
+            # 2. Position size — enforces notional cap (the check has real authority)
+            if state.equity_usd <= 0:
+                failed.append("EQUITY: zero or negative equity")
             else:
-                passed.append("STOP_LOSS: present and valid")
-        else:
-            passed.append("STOP_LOSS: not required (config)")
+                notional_pct = (position_usd / state.equity_usd * 100)
+                max_notional_pct = CONFIG.risk.max_symbol_exposure_pct  # 20% default
+                if notional_pct <= max_notional_pct + 0.01:  # tiny epsilon for float math
+                    passed.append(f"POSITION_SIZE: notional {notional_pct:.1f}% <= {max_notional_pct}%")
+                else:
+                    # Cap position to max notional and log the clamping
+                    max_notional = state.equity_usd * (max_notional_pct / 100.0)
+                    passed.append(f"POSITION_SIZE: clamped {notional_pct:.1f}% -> {max_notional_pct}% (${position_usd:.0f} -> ${max_notional:.0f})")
+                    position_usd = max_notional
+        except Exception as exc:
+            failed.append(f"POSITION_SIZE: evaluation error ({exc})")
 
-        # 12. Stale data guard
-        data_age = (datetime.now(UTC) - idea.timestamp).total_seconds()
-        if data_age > CONFIG.risk.stale_data_max_age_seconds:
-            failed.append(f"STALE_DATA: idea is {data_age:.0f}s old > {CONFIG.risk.stale_data_max_age_seconds}s max")
-        else:
-            passed.append(f"STALE_DATA: {data_age:.0f}s old OK")
-
-        # 13. Cooldown after loss
-        if self._last_loss_time is not None:
-            elapsed = time.time() - self._last_loss_time
-            if elapsed < CONFIG.risk.cooldown_after_loss_seconds:
-                remaining = CONFIG.risk.cooldown_after_loss_seconds - elapsed
-                failed.append(f"COOLDOWN: {remaining:.0f}s remaining after last loss")
+        try:
+            # 3. Daily loss (realized + unrealized) — measured against equity, not free cash
+            daily_loss_pct = abs(state.daily_pnl / state.equity_usd * 100) if state.equity_usd > 0 else 0
+            if state.daily_pnl < 0 and daily_loss_pct >= CONFIG.risk.max_daily_loss_pct:
+                failed.append(f"DAILY_LOSS: {daily_loss_pct:.1f}% >= {CONFIG.risk.max_daily_loss_pct}%")
+                self._trip_circuit_breaker("daily loss limit breached")
             else:
-                passed.append("COOLDOWN: cooldown period elapsed")
-        else:
-            passed.append("COOLDOWN: no recent losses")
+                passed.append(f"DAILY_LOSS: {daily_loss_pct:.1f}% OK")
+        except Exception as exc:
+            failed.append(f"DAILY_LOSS: evaluation error ({exc})")
+            daily_loss_pct = 0  # safe default for downstream
 
-        # 14. Portfolio exposure limit
-        open_value = sum(
-            p.entry_price * p.quantity for p in self._portfolio.open_positions
-        )
-        exposure_pct = (open_value / state.equity_usd * 100) if state.equity_usd > 0 else 0
-        new_exposure = exposure_pct + (position_usd / state.equity_usd * 100 if state.equity_usd > 0 else 0)
-        if new_exposure > CONFIG.risk.max_portfolio_exposure_pct:
-            failed.append(f"PORTFOLIO_EXPOSURE: {new_exposure:.1f}% > {CONFIG.risk.max_portfolio_exposure_pct}%")
-        else:
-            passed.append(f"PORTFOLIO_EXPOSURE: {new_exposure:.1f}% OK")
+        try:
+            # 4. Drawdown
+            if state.max_drawdown_pct >= CONFIG.risk.max_drawdown_pct:
+                failed.append(f"DRAWDOWN: {state.max_drawdown_pct:.1f}% >= {CONFIG.risk.max_drawdown_pct}%")
+                self._trip_circuit_breaker("max drawdown breached")
+            else:
+                passed.append(f"DRAWDOWN: {state.max_drawdown_pct:.1f}% OK")
+        except Exception as exc:
+            failed.append(f"DRAWDOWN: evaluation error ({exc})")
 
-        # 15. Per-symbol exposure limit
-        symbol_value = sum(
-            p.entry_price * p.quantity
-            for p in self._portfolio.open_positions
-            if p.asset == idea.asset
-        )
-        new_symbol_value = symbol_value + position_usd
-        symbol_exposure_pct = (new_symbol_value / state.equity_usd * 100) if state.equity_usd > 0 else 0
-        if symbol_exposure_pct > CONFIG.risk.max_symbol_exposure_pct:
-            failed.append(
-                f"SYMBOL_EXPOSURE: {idea.asset} at {symbol_exposure_pct:.1f}% > "
-                f"{CONFIG.risk.max_symbol_exposure_pct}% max"
+        try:
+            # 5. Open positions limit
+            if state.open_positions >= CONFIG.risk.max_open_positions:
+                failed.append(f"MAX_POSITIONS: {state.open_positions} >= {CONFIG.risk.max_open_positions}")
+            else:
+                passed.append(f"OPEN_POSITIONS: {state.open_positions} OK")
+        except Exception as exc:
+            failed.append(f"MAX_POSITIONS: evaluation error ({exc})")
+
+        try:
+            # 6. Risk-reward ratio (0.01 tolerance for float rounding at boundary)
+            rr = idea.risk_reward_ratio
+            if rr < CONFIG.risk.min_risk_reward - 0.01:
+                failed.append(f"RISK_REWARD: {rr} < {CONFIG.risk.min_risk_reward} minimum")
+            else:
+                passed.append(f"RISK_REWARD: {rr} OK")
+        except Exception as exc:
+            failed.append(f"RISK_REWARD: evaluation error ({exc})")
+
+        try:
+            # 7. Confidence threshold
+            if idea.confidence < CONFIG.risk.min_confidence:
+                failed.append(f"CONFIDENCE: {idea.confidence} < {CONFIG.risk.min_confidence} minimum")
+            else:
+                passed.append(f"CONFIDENCE: {idea.confidence} OK")
+        except Exception as exc:
+            failed.append(f"CONFIDENCE: evaluation error ({exc})")
+
+        try:
+            # 8. Correlation / concentration check
+            corr_result = self._check_correlation(idea)
+            if corr_result:
+                failed.append(corr_result)
+            else:
+                passed.append("CORRELATION: no concentrated exposure")
+        except Exception as exc:
+            failed.append(f"CORRELATION: evaluation error ({exc})")
+
+        try:
+            # 9. Consecutive loss streak (H4 fix: 3+ streak = soft reject, hard stop via circuit breaker at max)
+            if self._consecutive_losses >= 3:
+                failed.append(f"LOSS_STREAK: {self._consecutive_losses} consecutive losses (>= 3)")
+            else:
+                passed.append(f"LOSS_STREAK: {self._consecutive_losses} OK")
+        except Exception as exc:
+            failed.append(f"LOSS_STREAK: evaluation error ({exc})")
+
+        try:
+            # 10. Entry price sanity
+            if idea.entry_price <= 0:
+                failed.append(f"ENTRY_PRICE: invalid ({idea.entry_price})")
+            else:
+                passed.append("ENTRY_PRICE: valid")
+        except Exception as exc:
+            failed.append(f"ENTRY_PRICE: evaluation error ({exc})")
+
+        try:
+            # 11. Stop-loss required
+            if CONFIG.risk.require_stop_loss:
+                if idea.stop_loss <= 0:
+                    failed.append("STOP_LOSS: required but missing or invalid")
+                elif idea.stop_loss == idea.entry_price:
+                    failed.append("STOP_LOSS: cannot equal entry price")
+                else:
+                    passed.append("STOP_LOSS: present and valid")
+            else:
+                passed.append("STOP_LOSS: not required (config)")
+        except Exception as exc:
+            failed.append(f"STOP_LOSS: evaluation error ({exc})")
+
+        try:
+            # 12. Stale data guard
+            data_age = (datetime.now(UTC) - idea.timestamp).total_seconds()
+            if data_age > CONFIG.risk.stale_data_max_age_seconds:
+                failed.append(f"STALE_DATA: idea is {data_age:.0f}s old > {CONFIG.risk.stale_data_max_age_seconds}s max")
+            else:
+                passed.append(f"STALE_DATA: {data_age:.0f}s old OK")
+        except Exception as exc:
+            failed.append(f"STALE_DATA: evaluation error ({exc})")
+
+        try:
+            # 13. Cooldown after loss
+            if self._last_loss_time is not None:
+                elapsed = time.time() - self._last_loss_time
+                if elapsed < CONFIG.risk.cooldown_after_loss_seconds:
+                    remaining = CONFIG.risk.cooldown_after_loss_seconds - elapsed
+                    failed.append(f"COOLDOWN: {remaining:.0f}s remaining after last loss")
+                else:
+                    passed.append("COOLDOWN: cooldown period elapsed")
+            else:
+                passed.append("COOLDOWN: no recent losses")
+        except Exception as exc:
+            failed.append(f"COOLDOWN: evaluation error ({exc})")
+
+        try:
+            # 14. Portfolio exposure limit
+            open_value = sum(
+                p.entry_price * p.quantity for p in self._portfolio.open_positions
             )
-        else:
-            passed.append(f"SYMBOL_EXPOSURE: {idea.asset} {symbol_exposure_pct:.1f}% OK")
-
-        # 16. Volatility guard (if ATR provided)
-        if atr is not None and idea.entry_price > 0:
-            atr_pct = (atr / idea.entry_price) * 100
-            if atr_pct > CONFIG.risk.volatility_guard_atr_pct:
-                failed.append(f"VOLATILITY: ATR {atr_pct:.2f}% > {CONFIG.risk.volatility_guard_atr_pct}% guard")
+            exposure_pct = (open_value / state.equity_usd * 100) if state.equity_usd > 0 else 0
+            new_exposure = exposure_pct + (position_usd / state.equity_usd * 100 if state.equity_usd > 0 else 0)
+            if new_exposure > CONFIG.risk.max_portfolio_exposure_pct:
+                failed.append(f"PORTFOLIO_EXPOSURE: {new_exposure:.1f}% > {CONFIG.risk.max_portfolio_exposure_pct}%")
             else:
-                passed.append(f"VOLATILITY: ATR {atr_pct:.2f}% OK")
-        else:
-            passed.append("VOLATILITY: no ATR data (skipped)")
+                passed.append(f"PORTFOLIO_EXPOSURE: {new_exposure:.1f}% OK")
+        except Exception as exc:
+            failed.append(f"PORTFOLIO_EXPOSURE: evaluation error ({exc})")
 
-        # 18. Macro event risk state
-        if self._macro_calendar is not None:
-            try:
+        try:
+            # 15. Per-symbol exposure limit
+            symbol_value = sum(
+                p.entry_price * p.quantity
+                for p in self._portfolio.open_positions
+                if p.asset == idea.asset
+            )
+            new_symbol_value = symbol_value + position_usd
+            symbol_exposure_pct = (new_symbol_value / state.equity_usd * 100) if state.equity_usd > 0 else 0
+            if symbol_exposure_pct > CONFIG.risk.max_symbol_exposure_pct:
+                failed.append(
+                    f"SYMBOL_EXPOSURE: {idea.asset} at {symbol_exposure_pct:.1f}% > "
+                    f"{CONFIG.risk.max_symbol_exposure_pct}% max"
+                )
+            else:
+                passed.append(f"SYMBOL_EXPOSURE: {idea.asset} {symbol_exposure_pct:.1f}% OK")
+        except Exception as exc:
+            failed.append(f"SYMBOL_EXPOSURE: evaluation error ({exc})")
+
+        try:
+            # 16. Volatility guard (if ATR provided)
+            if atr is not None and idea.entry_price > 0:
+                atr_pct = (atr / idea.entry_price) * 100
+                if atr_pct > CONFIG.risk.volatility_guard_atr_pct:
+                    failed.append(f"VOLATILITY: ATR {atr_pct:.2f}% > {CONFIG.risk.volatility_guard_atr_pct}% guard")
+                else:
+                    passed.append(f"VOLATILITY: ATR {atr_pct:.2f}% OK")
+            else:
+                passed.append("VOLATILITY: no ATR data (skipped)")
+        except Exception as exc:
+            failed.append(f"VOLATILITY: evaluation error ({exc})")
+
+        try:
+            # 18. Macro event risk state
+            if self._macro_calendar is not None:
                 from bot.macro.models import MacroRiskState
                 macro_snap = self._macro_calendar.evaluate()
                 if macro_snap.state == MacroRiskState.EVENT_LOCKDOWN:
@@ -335,10 +396,10 @@ class RiskEngine:
                     failed.append("MACRO_EVENT: BLACKOUT - calendar evaluation failed (fail-closed)")
                 else:
                     passed.append(f"MACRO_EVENT: {macro_snap.state.value}")
-            except Exception:
-                failed.append("MACRO_EVENT: evaluation error (fail-closed)")
-        else:
-            passed.append("MACRO_EVENT: no calendar configured (skipped)")
+            else:
+                passed.append("MACRO_EVENT: no calendar configured (skipped)")
+        except Exception as exc:
+            failed.append(f"MACRO_EVENT: evaluation error ({exc})")
 
         # -- Verdict --
         verdict = RiskVerdict.APPROVED if len(failed) == 0 else RiskVerdict.REJECTED
@@ -400,12 +461,21 @@ class RiskEngine:
     # -- Persistence (F-01) --
 
     def _load_state(self) -> None:
-        """Restore safety state from disk. Fail-safe: if file is missing/corrupt, start fresh."""
+        """Restore safety state from disk.
+        Fix 3 (fail-closed persistence):
+          - Missing file → fresh start (no prior state to honor).
+          - Empty file → fresh start (equivalent to missing).
+          - Corrupt file (non-empty but invalid JSON) → assume breaker TRIPPED (fail-closed).
+        """
         try:
             if not os.path.exists(self._state_file):
                 return
             with open(self._state_file) as f:
-                data = json.load(f)
+                raw = f.read()
+            if not raw.strip():
+                # Empty file = no prior state (same as missing)
+                return
+            data = json.loads(raw)
             self._circuit_open = data.get("circuit_open", False)
             self._consecutive_losses = data.get("consecutive_losses", 0)
             self._last_loss_time = data.get("last_loss_time")
@@ -413,10 +483,18 @@ class RiskEngine:
             if self._circuit_open:
                 audit(risk_log, "Circuit breaker state restored from disk: ACTIVE",
                       action="state_restore", result="LOADED")
+        except (json.JSONDecodeError, ValueError, KeyError):
+            # Corrupt file (non-empty but invalid) → fail-closed: assume breaker was tripped
+            self._circuit_open = True
+            self._circuit_breaker_trips += 1
+            audit(risk_log, "Corrupt state file — assuming circuit breaker ACTIVE (fail-closed)",
+                  action="state_restore", result="CORRUPT_FAIL_CLOSED")
         except Exception:
-            # Fail-safe: corrupt file -> start fresh (conservative: no breaker = safe for new trades,
-            # but daily loss check in portfolio will still catch actual losses)
-            pass
+            # Other I/O errors (permissions, etc.) → also fail-closed
+            self._circuit_open = True
+            self._circuit_breaker_trips += 1
+            audit(risk_log, "State file unreadable — assuming circuit breaker ACTIVE (fail-closed)",
+                  action="state_restore", result="IO_FAIL_CLOSED")
 
     def _save_state(self) -> None:
         """Persist safety-critical state to disk. Called on every state change."""

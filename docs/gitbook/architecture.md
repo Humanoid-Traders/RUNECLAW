@@ -121,7 +121,7 @@ All data flowing through the system uses strict Pydantic v2 models:
 | `TradeExecution` | Execution record -- position details, PnL |
 | `PortfolioState` | Portfolio snapshot -- balance, equity, drawdown |
 
-Models are immutable by default to prevent accidental mutation during the pipeline.
+Models are mutable Pydantic BaseModel instances. Mutation is discouraged outside the owning module but not enforced by `frozen=True`.
 
 ## Logging Architecture
 

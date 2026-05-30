@@ -114,6 +114,11 @@ class BacktestResult(BaseModel):
     total_ideas_rejected_risk: int
     total_ideas_rejected_confidence: int
 
+    # Projected operating costs (when use_llm=False, estimated from signal count)
+    projected_llm_cost_usd: float = 0.0
+    est_cost_per_analysis: float = 0.0
+    net_pnl_after_projected_cost: float = 0.0
+
     # Data
     trades: list[BacktestTrade] = Field(default_factory=list)
     equity_curve: list[EquityPoint] = Field(default_factory=list)

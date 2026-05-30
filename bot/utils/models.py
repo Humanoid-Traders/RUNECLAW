@@ -1,6 +1,8 @@
 """
 RUNECLAW Data Models -- strict Pydantic schemas for every domain object.
-Immutable by default to prevent accidental mutation during the pipeline.
+Mutable Pydantic BaseModel instances (not frozen). Mutation is possible but
+discouraged outside the owning module. If immutability is needed for a model,
+add `model_config = ConfigDict(frozen=True)` explicitly.
 """
 
 from __future__ import annotations
@@ -130,7 +132,7 @@ class RiskCheck(BaseModel):
 # -- Execution Record --
 
 class TradeExecution(BaseModel):
-    """Immutable record of a trade (paper or live)."""
+    """Record of a trade (paper or live)."""
     trade_id: str
     asset: str
     direction: Direction
@@ -139,7 +141,9 @@ class TradeExecution(BaseModel):
     stop_loss: float
     take_profit: float
     status: TradeStatus = TradeStatus.PENDING
-    pnl: float = 0.0
+    pnl: float = 0.0          # net PnL (after commission)
+    gross_pnl: float = 0.0    # PnL before commission
+    commission: float = 0.0   # exchange commission (entry + exit)
     exit_price: Optional[float] = None
     is_paper: bool = True
     opened_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
@@ -156,9 +160,15 @@ class PortfolioState(BaseModel):
     total_trades: int
     win_rate: float = 0.0
     total_pnl: float = 0.0
+    total_gross_pnl: float = 0.0
+    total_commission: float = 0.0
     daily_pnl: float = 0.0
     max_drawdown_pct: float = 0.0
     portfolio_exposure_pct: float = 0.0
+    # Operating costs (LLM + infra) — separate from trade PnL
+    operating_cost_usd: float = 0.0
+    cost_per_trade: float = 0.0       # operating cost / total trades
+    net_of_cost_equity: float = 0.0   # equity - operating cost
     timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 

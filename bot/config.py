@@ -55,6 +55,8 @@ class RiskLimits:
     volatility_guard_atr_pct: float = _env_float("VOLATILITY_GUARD_ATR_PCT", 6.0)
     stale_data_max_age_seconds: int = int(_env_float("STALE_DATA_MAX_AGE_SEC", 300))
     require_stop_loss: bool = _env_bool("REQUIRE_STOP_LOSS", True)
+    # Exchange commission per side (taker fee).  0.1% = Bitget taker default.
+    commission_pct: float = _env_float("COMMISSION_PCT", 0.1)
 
 
 @dataclass(frozen=True)
@@ -83,6 +85,8 @@ class LLMConfig:
     max_tokens: int = 1024
     timeout_seconds: float = _env_float("LLM_TIMEOUT_SEC", 15.0)
     daily_call_limit: int = int(_env_float("LLM_DAILY_LIMIT", 500))
+    daily_budget_usd: float = _env_float("LLM_DAILY_BUDGET_USD", 1.0)  # fail to rules if exceeded
+    est_cost_per_analysis: float = _env_float("LLM_EST_COST_PER_ANALYSIS", 0.003)  # for backtest projection
 
 
 @dataclass(frozen=True)

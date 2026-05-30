@@ -470,6 +470,12 @@ class BacktestEngine:
             total_ideas_generated=self._ideas_generated,
             total_ideas_rejected_risk=self._ideas_rejected_risk,
             total_ideas_rejected_confidence=self._ideas_rejected_confidence,
+            # Projected LLM cost (when use_llm=False, estimate from signal count)
+            projected_llm_cost_usd=round(self._signals_generated * CONFIG.llm.est_cost_per_analysis, 4),
+            est_cost_per_analysis=CONFIG.llm.est_cost_per_analysis,
+            net_pnl_after_projected_cost=round(
+                sum(t.net_pnl_usd for t in trades) - (self._signals_generated * CONFIG.llm.est_cost_per_analysis), 2
+            ),
             trades=trades,
             equity_curve=self._equity_curve,
             duration_seconds=round(duration, 2),

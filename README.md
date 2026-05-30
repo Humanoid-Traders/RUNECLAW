@@ -245,7 +245,7 @@ RUNECLAW is designed with a **fail-closed** philosophy:
 | Exchange | Bitget via [ccxt](https://github.com/ccxt/ccxt) |
 | AI / LLM | OpenAI GPT-4o (configurable) |
 | Technical Analysis | NumPy + custom indicators |
-| Data Models | Pydantic v2 (strict, immutable) |
+| Data Models | Pydantic v2 (strict validation) |
 | Bot Interface | python-telegram-bot 20.x |
 | Logging | Structured JSON (JSONL) |
 | Config | python-dotenv + dataclass defaults |

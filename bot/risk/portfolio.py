@@ -145,29 +145,39 @@ class PortfolioTracker:
             pnl = (trade.entry_price - exit_price) * trade.quantity
 
         size_usd = trade.entry_price * trade.quantity
+        exit_notional = exit_price * trade.quantity
+
+        # Exchange commission: 0.1% taker fee each side (entry + exit)
+        commission_pct = CONFIG.risk.commission_pct if hasattr(CONFIG.risk, "commission_pct") else 0.1
+        commission = (size_usd + exit_notional) * (commission_pct / 100.0)
+        net_pnl = pnl - commission
+
         trade = trade.model_copy(update={
             "status": TradeStatus.EXECUTED,
             "exit_price": exit_price,
-            "pnl": round(pnl, 2),
+            "pnl": round(net_pnl, 2),
+            "gross_pnl": round(pnl, 2),
+            "commission": round(commission, 2),
             "closed_at": datetime.now(UTC),
         })
 
-        self.balance += size_usd + pnl
+        self.balance += size_usd + net_pnl
         self._history.append(trade)
-        self._record_daily_pnl(pnl)
+        self._record_daily_pnl(net_pnl)
         self._update_peak()
 
         # Notify risk engine of trade result for streak tracking
         if self._on_trade_close:
             try:
-                self._on_trade_close(pnl)
+                self._on_trade_close(net_pnl)
             except Exception as exc:
                 audit(trade_log, f"Trade close callback error: {exc}",
                       action="trade_close_callback", result="ERROR")
 
-        audit(trade_log, f"Closed {trade.asset} PnL=${pnl:.2f}",
+        audit(trade_log, f"Closed {trade.asset} PnL=${net_pnl:.2f} (gross=${pnl:.2f}, comm=${commission:.2f})",
               action="close_position", result="CLOSED",
-              data={"trade_id": trade_id, "pnl": round(pnl, 2),
+              data={"trade_id": trade_id, "pnl": round(net_pnl, 2),
+                    "gross_pnl": round(pnl, 2), "commission": round(commission, 2),
                     "exit": exit_price, "balance": round(self.balance, 2)})
         return trade
 
@@ -233,6 +243,9 @@ class PortfolioTracker:
         daily_pnl = realized_daily + unrealized_pnl
         drawdown = ((self._peak_equity - equity) / self._peak_equity * 100) if self._peak_equity > 0 else 0
 
+        total_gross = round(sum(t.gross_pnl for t in self._history), 2)
+        total_commission = round(sum(t.commission for t in self._history), 2)
+
         return PortfolioState(
             balance_usd=round(self.balance, 2),
             equity_usd=round(equity, 2),
@@ -240,6 +253,8 @@ class PortfolioTracker:
             total_trades=total,
             win_rate=round(len(wins) / total, 2) if total > 0 else 0.0,
             total_pnl=round(sum(t.pnl for t in self._history), 2),
+            total_gross_pnl=total_gross,
+            total_commission=total_commission,
             daily_pnl=round(daily_pnl, 2),
             max_drawdown_pct=round(max(drawdown, 0), 2),
         )

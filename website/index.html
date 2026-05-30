@@ -2369,15 +2369,15 @@ footer {
       <img class="fc-thumb" src="audit_card.png" alt="">
       <span class="feature-icon">&#128172;</span>
       <div class="feature-name">Telegram Command Center</div>
-      <div class="feature-desc">Full bot interface: /scan, /analyze, /trade, /portfolio, /risk, /rejected, /backtest, /halt, /status. Inline keyboards for trade confirmation. Rate-limited per user.</div>
+      <div class="feature-desc">Full bot interface: /scan, /analyze, /trade, /portfolio, /risk, /rejected, /backtest, /costs, /halt, /status. Inline keyboards for trade confirmation. Rate-limited per user.</div>
       <div class="feature-tag">Chat-native</div>
     </div>
     <div class="feature-card reveal reveal-delay-3">
       <img class="fc-thumb" src="backtest_card.png" alt="">
-      <span class="feature-icon">&#128202;</span>
-      <div class="feature-name">Regime Detection</div>
-      <div class="feature-desc">Identifies market regime (trend, range, chop) with volatility states and correlation signals. Adapts strategy to current conditions.</div>
-      <div class="feature-tag">Adaptive</div>
+      <span class="feature-icon">&#128176;</span>
+      <div class="feature-name">Agent Economics</div>
+      <div class="feature-desc">Full cost transparency: model routing (gpt-4o-mini for scans, gpt-4o for thesis), per-category LLM cost tracking, PnL waterfall with commission + token + infra breakdown. /costs shows real ROI impact.</div>
+      <div class="feature-tag">Cost-transparent AI</div>
     </div>
   </div>
 </section>
@@ -2466,6 +2466,33 @@ Regime: TREND_DOWN but signal was LONG
 &#10003; Fail-closed risk design working as intended
 </pre>
         <span class="label" style="color:var(--red-warn);">REJECTED &middot; regime mismatch</span>
+      </div>
+      <div class="tg-msg user">/costs</div>
+      <div class="tg-msg bot">
+        <div class="cmd">&#128176; RUNECLAW AGENT ECONOMICS</div>
+<pre>
+Total LLM Cost:  $0.0142  (12 calls)
+Total Tokens:    8,420 in / 3,180 out
+Avg per call:    $0.001183
+
+Cost by Category:
+  scan             $0.0008  (6 calls)
+  analyze          $0.0014  (3 calls)
+  thesis           $0.0120  (3 calls)
+
+Operating Total: $0.0142
+
+&#9472;&#9472; PnL Waterfall &#9472;&#9472;
+  Gross PnL:      $67.40
+  &#8722; Commission:   $4.28
+  = Net PnL:      $63.12
+  &#8722; LLM cost:     $0.0142
+  = After costs:  $63.11
+
+Cost/trade:      $0.0024
+ROI drag:        0.001%
+</pre>
+        <span class="label">Model routing: gpt-4o-mini for scans, gpt-4o for thesis</span>
       </div>
     </div>
   </div>
@@ -2778,7 +2805,7 @@ Regime: TREND_DOWN but signal was LONG
   <div class="evidence-grid-new">
     <div class="evidence-card-new reveal reveal-delay-1">
       <span class="evidence-icon-new">&#129514;</span>
-      <div class="evidence-label-new">180 Unit Tests Passing</div>
+      <div class="evidence-label-new">175 Unit Tests Passing</div>
       <span class="evidence-badge-new ebadge-green">VERIFIED</span>
     </div>
     <div class="evidence-card-new reveal reveal-delay-2">
@@ -2815,6 +2842,11 @@ Regime: TREND_DOWN but signal was LONG
       <span class="evidence-icon-new">&#9876;</span>
       <div class="evidence-label-new">Live Analysis: 3 assets, regime-filtered</div>
       <span class="evidence-badge-new ebadge-blue">TESTED</span>
+    </div>
+    <div class="evidence-card-new reveal reveal-delay-3">
+      <span class="evidence-icon-new">&#128176;</span>
+      <div class="evidence-label-new">Agent Economics: Full Cost Waterfall</div>
+      <span class="evidence-badge-new ebadge-green">TRANSPARENT</span>
     </div>
   </div>
 </section>

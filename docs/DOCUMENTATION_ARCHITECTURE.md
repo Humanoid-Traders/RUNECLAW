@@ -525,7 +525,7 @@ RUNECLAW
 
 **Common Mistakes:**
 - Not explaining the fallback mechanism — judges need to know it works without an API key
-- Not documenting the 0.5 confidence threshold and its effect
+- Not documenting the 0.60 confidence threshold and its effect
 - Presenting ATR as "true range" when implementation is close-to-close (acknowledge the proxy)
 
 ---

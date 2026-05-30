@@ -1,6 +1,6 @@
 """
 RUNECLAW Telegram Handler -- human interface for the trading bot.
-Commands: /scan, /analyze, /portfolio, /trade, /risk, /macro, /status, /rejected, /halt, /reset, /backtest, /run, /help
+Commands: /scan, /analyze, /portfolio, /trade, /risk, /macro, /status, /rejected, /halt, /reset, /backtest, /run, /costs, /help
 Includes inline keyboard for trade confirmation and rate limiting.
 """
 
@@ -67,6 +67,7 @@ class TelegramHandler:
         app.add_handler(CommandHandler("backtest", self._cmd_backtest))
         app.add_handler(CommandHandler("walkforward", self._cmd_walkforward))
         app.add_handler(CommandHandler("journal", self._cmd_journal))
+        app.add_handler(CommandHandler("costs", self._cmd_costs))
         app.add_handler(CommandHandler("run", self._cmd_run))
         app.add_handler(CommandHandler("help", self._cmd_help))
         app.add_handler(CallbackQueryHandler(self._handle_callback))
@@ -265,6 +266,17 @@ class TelegramHandler:
         await update.message.reply_text(f"\U0001f4d3 *Trade Journal*\n```\n{result}\n```",
                                         parse_mode="Markdown")
 
+    async def _cmd_costs(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """Show full agent economics breakdown."""
+        if not await self._check_rate(update):
+            return
+        if not self._check_auth(update):
+            await update.message.reply_text("\u26d4 Unauthorized. Contact the bot owner.")
+            return
+        result = await self.registry.get("costs").execute(self.engine)  # type: ignore
+        await update.message.reply_text(f"\U0001f4b0 *Agent Economics*\n```\n{result}\n```",
+                                        parse_mode="Markdown")
+
     async def _cmd_run(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """Execute a predefined trading strategy by natural language name."""
         if not await self._check_rate(update):
@@ -297,6 +309,7 @@ class TelegramHandler:
             "/backtest - Run backtest (bars seed)\n"
             "/walkforward - Walk-forward analysis (bars folds)\n"
             "/journal - Trade journal with history and PnL\n"
+            "/costs - Agent economics & LLM cost breakdown\n"
             "/status - Bot status\n"
             "/halt - Emergency kill-switch\n"
             "/reset - Reset circuit breaker (admin)\n"

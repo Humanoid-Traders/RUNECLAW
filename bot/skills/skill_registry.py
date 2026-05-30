@@ -133,15 +133,32 @@ class ExecutePaperTradeSkill(BaseSkill):
 
 class GetPortfolioSkill(BaseSkill):
     name = "get_portfolio"
-    description = "Show paper portfolio summary"
+    description = "Show paper portfolio summary with cost waterfall"
 
     async def execute(self, engine: RuneClawEngine, **kwargs: Any) -> str:
         state = engine.portfolio.snapshot()
-        return (f"Balance: ${state.balance_usd:,.2f}\n"
-                f"Equity: ${state.equity_usd:,.2f}\n"
-                f"Open: {state.open_positions} | Total: {state.total_trades}\n"
-                f"Win Rate: {state.win_rate:.0%}\n"
-                f"Total PnL: ${state.total_pnl:,.2f}")
+        cost = engine.cost.snapshot()
+        net_of_cost = round(state.equity_usd - cost.operating_cost_usd, 2)
+        cost_per_trade = round(cost.operating_cost_usd / state.total_trades, 4) if state.total_trades > 0 else 0.0
+
+        lines = [
+            f"Balance: ${state.balance_usd:,.2f}",
+            f"Equity: ${state.equity_usd:,.2f}",
+            f"Open: {state.open_positions} | Total: {state.total_trades}",
+            f"Win Rate: {state.win_rate:.0%}",
+            "",
+            "── PnL Waterfall ──",
+            f"  Gross PnL:      ${state.total_gross_pnl:,.2f}",
+            f"  − Commission:   ${state.total_commission:,.2f}",
+            f"  = Net PnL:      ${state.total_pnl:,.2f}",
+            f"  − LLM cost:     ${cost.llm_cost_usd:,.4f}  ({cost.llm_calls} calls, {cost.prompt_tokens + cost.completion_tokens} tokens)",
+            f"  − Infra cost:   ${cost.infra_cost_usd:,.4f}",
+            f"  = After costs:  ${net_of_cost:,.2f}",
+        ]
+        if cost.unpriced_calls > 0:
+            lines.append(f"  ⚠ {cost.unpriced_calls} LLM calls with UNKNOWN cost (model not in price table)")
+        lines.append(f"  Cost/trade:     ${cost_per_trade:,.4f}")
+        return "\n".join(lines)
 
 
 class ExplainTradeSkill(BaseSkill):
@@ -381,6 +398,62 @@ class TradeJournalSkill(BaseSkill):
         return "\n".join(lines)
 
 
+class CostBreakdownSkill(BaseSkill):
+    name = "costs"
+    description = "Show full agent economics: LLM cost breakdown by category, rate limiter stats, projected ROI impact"
+
+    async def execute(self, engine: RuneClawEngine, **kwargs: Any) -> str:
+        cost = engine.cost.snapshot()
+        state = engine.portfolio.snapshot()
+        rate_stats = engine.analyzer._rate_limiter.stats
+
+        lines = [
+            "RUNECLAW Agent Economics",
+            "=" * 36,
+            "",
+            f"Total LLM Cost:  ${cost.llm_cost_usd:,.4f}  ({cost.llm_calls} calls)",
+            f"Total Tokens:    {cost.prompt_tokens:,} in / {cost.completion_tokens:,} out",
+            f"Avg per call:    ${cost.avg_cost_per_call:,.6f}",
+            "",
+            "Cost by Category:",
+        ]
+
+        for cat in ("scan", "analyze", "thesis", "risk_decision", "other"):
+            cat_cost = cost.cost_by_category.get(cat, 0.0)
+            cat_calls = cost.calls_by_category.get(cat, 0)
+            if cat_calls > 0:
+                lines.append(f"  {cat:16s} ${cat_cost:,.4f}  ({cat_calls} calls)")
+
+        if cost.unpriced_calls > 0:
+            lines.append(f"\n  WARNING: {cost.unpriced_calls} calls with UNKNOWN cost (model not in price table)")
+
+        lines.append("")
+        lines.append(f"Infra Cost:      ${cost.infra_cost_usd:,.4f}")
+        lines.append(f"Operating Total: ${cost.operating_cost_usd:,.4f}")
+        lines.append("")
+
+        # ROI impact
+        if state.total_trades > 0:
+            cost_per_trade = cost.operating_cost_usd / state.total_trades
+            lines.append(f"Cost/trade:      ${cost_per_trade:,.4f}")
+        if state.equity_usd > 0 and cost.operating_cost_usd > 0:
+            roi_drag = (cost.operating_cost_usd / state.equity_usd) * 100
+            lines.append(f"ROI drag:        {roi_drag:.3f}% of equity")
+
+        # Net waterfall
+        net_equity = state.equity_usd - cost.operating_cost_usd
+        lines.append("")
+        lines.append(f"Equity:          ${state.equity_usd:,.2f}")
+        lines.append(f"- Operating:     ${cost.operating_cost_usd:,.4f}")
+        lines.append(f"= Net Equity:    ${net_equity:,.2f}")
+
+        # Rate limiter
+        lines.append("")
+        lines.append(f"Rate Limiter:    {rate_stats['total_calls']} calls, {rate_stats['total_waits']} throttled ({rate_stats['total_wait_seconds']}s)")
+
+        return "\n".join(lines)
+
+
 class RunStrategySkill(BaseSkill):
     name = "run_strategy"
     description = "Execute a predefined trading strategy by name (natural language)"
@@ -552,6 +625,6 @@ def build_default_registry() -> SkillRegistry:
                       ExecutePaperTradeSkill, GetPortfolioSkill, ExplainTradeSkill,
                       RunBacktestSkill, RejectedTradesSkill, HaltSkill,
                       WalkForwardSkill, MacroCalendarSkill, TradeJournalSkill,
-                      RunStrategySkill):
+                      CostBreakdownSkill, RunStrategySkill):
         registry.register(skill_cls())
     return registry
