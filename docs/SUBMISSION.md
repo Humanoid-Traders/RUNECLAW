@@ -118,4 +118,6 @@ Validated across 180 backtest runs (synthetic data — 3 volatility regimes, 3 t
 - [x] Thread safety verified on all shared state
 - [x] Memory management: equity curve capped, volume history bounded, TTL on pending ideas
 - [x] All Pydantic models use strict validation
-- [x] Footer links point to correct GitHub repo URL
+- [x] Footer disclaimer clearly states "educational prototype, not for real funds"
+- [x] README includes Security section (API key handling, LLM costs, .env practices)
+- [x] Limitations and Maturity section documents known gaps honestly

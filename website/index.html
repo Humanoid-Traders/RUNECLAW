@@ -2756,14 +2756,14 @@ aligned.
     <div class="judge-subtitle">Judge Evaluation Mode</div>
     <ul class="judge-list">
       <li><span class="check">&#10003;</span><span><strong>Track 1: Trading Agent</strong> &mdash; Fully autonomous AI trading pipeline on Bitget</span></li>
-      <li><span class="check">&#10003;</span><span><strong>16 independent risk checks, fail-closed</strong> &mdash; Any single failure blocks the trade</span></li>
+      <li><span class="check">&#10003;</span><span><strong>18 independent risk checks, fail-closed</strong> &mdash; Any single failure blocks the trade</span></li>
       <li><span class="check">&#10003;</span><span><strong>Human confirmation required</strong> for every trade before execution</span></li>
       <li><span class="check">&#10003;</span><span><strong>Simulation-first</strong> &mdash; Paper trading is the default mode, no real money at risk</span></li>
       <li><span class="check">&#10003;</span><span><strong>Full audit trail</strong> &mdash; JSON structured logging for every decision and state change</span></li>
       <li><span class="check">&#10003;</span><span><strong>Backtested: 180 runs, 3 regimes</strong> &mdash; 855 trades with commission + slippage, worst DD 2.87%</span></li>
       <li><span class="check">&#10003;</span><span><strong>Agent state machine</strong> with 9 formal states and validated transitions</span></li>
       <li><span class="check">&#10003;</span><span><strong>Modular skill system</strong> &mdash; 7 registered skills with dependency injection</span></li>
-      <li><span class="check">&#10003;</span><span><strong>Confluence scoring</strong> &mdash; 6 weighted technical indicators blended with LLM analysis</span></li>
+      <li><span class="check">&#10003;</span><span><strong>Confluence scoring</strong> &mdash; 10-voter model: RSI, MACD, BB, Volume, ADX, VWAP, OBV, candlestick, Fibonacci, blended with LLM analysis</span></li>
       <li><span class="check">&#10003;</span><span><strong>Regime detection</strong> &mdash; ADX-14 with directional movement index for trend classification</span></li>
     </ul>
     <button class="judge-close" onclick="toggleJudge(false)">Close</button>
@@ -2782,6 +2782,9 @@ aligned.
     <a href="https://x.com/BaurPatric70363" target="_blank">X / Twitter</a>
   </div>
   <div class="footer-copy">&copy; 2025 Humanoid Traders &middot; RUNECLAW &middot; Bitget GetClaw Hackathon</div>
+  <div style="margin-top:16px;padding:12px 20px;background:rgba(224,64,64,0.06);border:1px solid rgba(224,64,64,0.15);border-radius:6px;max-width:720px;margin-left:auto;margin-right:auto;font-size:11px;color:var(--silver);line-height:1.6;font-family:var(--font-mono);">
+    <strong style="color:var(--red-warn);">DISCLAIMER:</strong> RUNECLAW is an educational hackathon prototype. It is NOT production-ready and should NOT be used with real funds. Backtest results use synthetic data and do not predict future performance. This is not financial advice. Use at your own risk.
+  </div>
 </footer>
 <script>
 // ═══ PARTICLE SYSTEM — electric dust ═══

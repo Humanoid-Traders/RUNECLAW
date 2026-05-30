@@ -26,6 +26,14 @@
 
 ---
 
+> **DISCLAIMER:** RUNECLAW is an educational prototype built for the Bitget GetClaw Hackathon 2025.
+> It is **not production-ready** and should **never** be used with real funds without extensive
+> additional safeguards, independent security audits, stress testing, and regulatory review.
+> Backtest results use synthetic data and do not predict future performance. Past performance
+> is not indicative of future results. This project is not financial advice.
+
+---
+
 ## What is RUNECLAW?
 
 **RUNECLAW** is an AI trading command system built by **Humanoid Traders** for the Bitget GetClaw Hackathon. It merges multi-timeframe analysis, confluence scoring, regime detection, order-flow microstructure, and risk-first logic into a disciplined framework -- all controllable through a Telegram bot interface.
@@ -239,6 +247,30 @@ RUNECLAW is designed with a **fail-closed** philosophy:
 | Bot Interface | python-telegram-bot 20.x |
 | Logging | Structured JSON (JSONL) |
 | Config | python-dotenv + dataclass defaults |
+
+---
+
+## Security
+
+- **Never commit `.env` files.** The `.env` file contains API keys and secrets. It is listed in `.gitignore`.
+- **Rotate API keys regularly.** If you suspect a key has been exposed, revoke it immediately on the Bitget and OpenAI dashboards.
+- **Use read-only API keys** for market data operations. Only enable trade permissions if you explicitly intend to go live (not recommended for this prototype).
+- **Telegram bot token** grants full control of the bot. Keep it secret. Restrict `TELEGRAM_CHAT_ID` to your own chat ID.
+- **LLM API costs:** Each `/analyze` call consumes OpenAI API tokens. At GPT-4o pricing, a single analysis costs approximately $0.01-0.03. Frequent scanning can accumulate costs. Set `LLM_API_KEY=` (blank) to use the free rule-based fallback instead.
+- **No secrets in code.** All credentials load from environment variables with safe defaults. The codebase has been audited to confirm zero hardcoded secrets.
+
+---
+
+## Limitations and Maturity
+
+This is a **hackathon prototype** (maturity: early-stage). Known limitations:
+
+- **Solo developer project** -- limited peer review beyond automated audits
+- **No live trading validation** -- all testing uses paper trading and synthetic data
+- **API latency and slippage** -- real exchange conditions differ from simulation
+- **No formal security audit** -- code review has been self-conducted and AI-assisted
+- **LLM dependency** -- AI analysis quality depends on model availability and cost
+- **No guaranteed uptime** -- no monitoring, alerting, or failover infrastructure
 
 ---
 
