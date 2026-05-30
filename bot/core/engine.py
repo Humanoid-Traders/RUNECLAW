@@ -16,6 +16,7 @@ from bot.config import CONFIG
 from bot.core.analyzer import Analyzer
 from bot.core.market_scanner import MarketScanner
 from bot.core.order_flow import OrderFlowAnalyzer
+from bot.macro.calendar import MacroCalendar, build_2026_calendar
 from bot.risk.portfolio import PortfolioTracker
 from bot.risk.risk_engine import RiskEngine
 from bot.utils.logger import audit, system_log, trade_log
@@ -40,7 +41,8 @@ class RuneClawEngine:
         self.scanner = MarketScanner()
         self.analyzer = Analyzer()
         self.order_flow = OrderFlowAnalyzer()
-        self.risk = RiskEngine(self.portfolio)
+        self.macro_calendar = MacroCalendar(events=build_2026_calendar())
+        self.risk = RiskEngine(self.portfolio, macro_calendar=self.macro_calendar)
         # C1 fix: wire trade-close callback so portfolio closes feed risk streak tracking
         self.portfolio._on_trade_close = self.risk.record_trade_result
         self.state: AgentState = AgentState.IDLE

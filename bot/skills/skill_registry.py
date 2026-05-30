@@ -116,7 +116,7 @@ class CheckRiskSkill(BaseSkill):
                 f"Circuit Breaker: {cb}\n"
                 f"Loss Streak: {streak}{streak_warn}\n"
                 f"Open Positions: {state.open_positions} | Groups: {group_str}\n"
-                f"Risk Checks: 16 independent | Fail-closed")
+                f"Risk Checks: 18 independent | Fail-closed")
 
 
 class ExecutePaperTradeSkill(BaseSkill):
@@ -304,6 +304,40 @@ class WalkForwardSkill(BaseSkill):
         return "\n".join(lines)
 
 
+class MacroCalendarSkill(BaseSkill):
+    name = "macro_calendar"
+    description = "Show macro event calendar: current risk state and upcoming events"
+
+    async def execute(self, engine: RuneClawEngine, **kwargs: Any) -> str:
+        cal = engine.macro_calendar
+        snap = cal.evaluate()
+        upcoming = cal.upcoming(limit=5)
+
+        # Current state
+        state_line = f"Macro Risk State: {snap.state.value}"
+        if snap.active_event:
+            state_line += f" ({snap.active_event.label})"
+        if snap.time_until_next:
+            hours = snap.time_until_next.total_seconds() / 3600
+            if hours < 1:
+                time_str = f"{snap.time_until_next.total_seconds() / 60:.0f}min"
+            elif hours < 24:
+                time_str = f"{hours:.1f}h"
+            else:
+                time_str = f"{hours / 24:.1f}d"
+            state_line += f"\nNext event in: {time_str}"
+
+        # Upcoming events
+        if upcoming:
+            lines = [state_line, "", "Upcoming Events:"]
+            for ev in upcoming:
+                times = cal.format_event_times(ev)
+                lines.append(f"  {ev.label}")
+                lines.append(f"    {times['utc']} | {times['et']}")
+            return "\n".join(lines)
+        return state_line + "\n\nNo upcoming events."
+
+
 class TradeJournalSkill(BaseSkill):
     name = "trade_journal"
     description = "Show trade journal: history of executed trades with reasoning and outcome"
@@ -353,6 +387,6 @@ def build_default_registry() -> SkillRegistry:
     for skill_cls in (ScanMarketSkill, AnalyzeAssetSkill, CheckRiskSkill,
                       ExecutePaperTradeSkill, GetPortfolioSkill, ExplainTradeSkill,
                       RunBacktestSkill, RejectedTradesSkill, HaltSkill,
-                      WalkForwardSkill, TradeJournalSkill):
+                      WalkForwardSkill, MacroCalendarSkill, TradeJournalSkill):
         registry.register(skill_cls())
     return registry

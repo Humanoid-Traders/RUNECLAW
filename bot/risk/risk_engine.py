@@ -1,7 +1,7 @@
 """
 RUNECLAW Risk Engine -- FAIL-CLOSED pre-trade gatekeeper.
 
-16 independent pre-trade checks. ANY failure = REJECTED. No overrides.
+18 independent pre-trade checks. ANY failure = REJECTED. No overrides.
 Design: if a check cannot be evaluated, the trade is REJECTED (fail-closed).
 
 Note: Check #17 (liquidity guard) lives in engine.py via OrderFlowAnalyzer,
@@ -24,6 +24,7 @@ Checks:
   14. Portfolio exposure limit
   15. Per-symbol exposure limit
   16. Volatility guard (ATR as % of price)
+  18. Macro event risk state (EVENT_LOCKDOWN/BLACKOUT = reject)
 """
 
 from __future__ import annotations
@@ -83,10 +84,11 @@ class RiskEngine:
     """
     Pre-trade and post-trade risk checks.
     Design principle: if ANY check cannot be evaluated, the trade is REJECTED.
-    16 independent checks -- all must pass.
+    18 independent checks -- all must pass (16 in-engine + #17 liquidity in engine.py + #18 macro).
     """
 
-    def __init__(self, portfolio: "PortfolioTracker", state_file: Optional[str] = None) -> None:  # noqa: F821
+    def __init__(self, portfolio: "PortfolioTracker", state_file: Optional[str] = None,
+                 macro_calendar: Optional["MacroCalendar"] = None) -> None:  # noqa: F821
         self._portfolio = portfolio
         self._circuit_open = False
         self._consecutive_losses = 0
@@ -97,6 +99,7 @@ class RiskEngine:
         self._rejection_history: list[dict] = []  # recent rejections for /rejected command
         self._lock = threading.RLock()
         self._state_file = state_file or _STATE_FILE
+        self._macro_calendar = macro_calendar
         # F-01: reload persisted safety state so restarts don't clear the breaker
         self._load_state()
 
@@ -318,6 +321,23 @@ class RiskEngine:
                 passed.append(f"VOLATILITY: ATR {atr_pct:.2f}% OK")
         else:
             passed.append("VOLATILITY: no ATR data (skipped)")
+
+        # 18. Macro event risk state
+        if self._macro_calendar is not None:
+            try:
+                from bot.macro.models import MacroRiskState
+                macro_snap = self._macro_calendar.evaluate()
+                if macro_snap.state == MacroRiskState.EVENT_LOCKDOWN:
+                    ev_label = macro_snap.active_event.label if macro_snap.active_event else "unknown"
+                    failed.append(f"MACRO_EVENT: {macro_snap.state.value} - {ev_label}")
+                elif macro_snap.state == MacroRiskState.BLACKOUT:
+                    failed.append("MACRO_EVENT: BLACKOUT - calendar evaluation failed (fail-closed)")
+                else:
+                    passed.append(f"MACRO_EVENT: {macro_snap.state.value}")
+            except Exception:
+                failed.append("MACRO_EVENT: evaluation error (fail-closed)")
+        else:
+            passed.append("MACRO_EVENT: no calendar configured (skipped)")
 
         # -- Verdict --
         verdict = RiskVerdict.APPROVED if len(failed) == 0 else RiskVerdict.REJECTED

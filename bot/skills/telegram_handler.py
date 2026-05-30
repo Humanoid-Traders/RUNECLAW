@@ -1,6 +1,6 @@
 """
 RUNECLAW Telegram Handler -- human interface for the trading bot.
-Commands: /scan, /analyze, /portfolio, /trade, /risk, /status, /rejected, /halt, /backtest, /help
+Commands: /scan, /analyze, /portfolio, /trade, /risk, /macro, /status, /rejected, /halt, /reset, /backtest, /help
 Includes inline keyboard for trade confirmation and rate limiting.
 """
 
@@ -63,6 +63,7 @@ class TelegramHandler:
         app.add_handler(CommandHandler("rejected", self._cmd_rejected))
         app.add_handler(CommandHandler("halt", self._cmd_halt))
         app.add_handler(CommandHandler("reset", self._cmd_reset))
+        app.add_handler(CommandHandler("macro", self._cmd_macro))
         app.add_handler(CommandHandler("backtest", self._cmd_backtest))
         app.add_handler(CommandHandler("walkforward", self._cmd_walkforward))
         app.add_handler(CommandHandler("journal", self._cmd_journal))
@@ -212,6 +213,17 @@ class TelegramHandler:
             await update.message.reply_text(
                 "\u2139\ufe0f Circuit breaker was not active. No action taken.")
 
+    async def _cmd_macro(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """Show macro calendar risk state and upcoming events."""
+        if not await self._check_rate(update):
+            return
+        if not self._check_auth(update):
+            await update.message.reply_text("\u26d4 Unauthorized. Contact the bot owner.")
+            return
+        result = await self.registry.get("macro_calendar").execute(self.engine)  # type: ignore
+        await update.message.reply_text(f"\U0001f4c5 *Macro Calendar*\n```\n{result}\n```",
+                                        parse_mode="Markdown")
+
     async def _cmd_backtest(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._check_rate(update):
             return
@@ -260,12 +272,14 @@ class TelegramHandler:
             "/portfolio - View paper portfolio\n"
             "/trade - View & confirm pending trades\n"
             "/risk - Risk metrics & circuit breaker\n"
+            "/macro - Macro calendar & risk state\n"
             "/rejected - Recent risk-rejected trades\n"
             "/backtest - Run backtest (bars seed)\n"
             "/walkforward - Walk-forward analysis (bars folds)\n"
             "/journal - Trade journal with history and PnL\n"
             "/status - Bot status\n"
             "/halt - Emergency kill-switch\n"
+            "/reset - Reset circuit breaker (admin)\n"
             "/help - This message",
             parse_mode="Markdown")
 
