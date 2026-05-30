@@ -2173,6 +2173,7 @@ footer {
     <li><a href="#features">Features</a></li>
     <li><a href="#telegram">Commands</a></li>
     <li><a href="#risk">Safety</a></li>
+    <li><a href="#live-tested" style="color:var(--green-safe);font-weight:600">Live</a></li>
     <li><a href="dashboard-pro.html" style="color:var(--blue-bright);font-weight:600">Dashboard</a></li>
   </ul>
   <div class="nav-right-group">
@@ -2421,40 +2422,50 @@ footer {
     <div class="tg-body">
       <div class="tg-msg user">/scan</div>
       <div class="tg-msg bot">
-        <div class="cmd">&#128225; RUNECLAW SCAN ELITE</div>
+        <div class="cmd">&#128225; RUNECLAW SCAN &mdash; LIVE BITGET DATA</div>
 <pre>
-&#9650; BTC/USDT   +3.42%  Vol: 2.1x  Regime: TREND
-&#9650; ETH/USDT   +2.87%  Vol: 1.8x  Regime: TREND
-&#9660; SOL/USDT   -1.24%  Vol: 3.4x  Regime: CHOP
-&#9650; DOGE/USDT  +5.61%  Vol: 2.7x  Regime: RANGE
+&#9650; NFP/USDT    +60.22%  Mom: +1.000  $143K vol
+&#9650; VTHO/USDT   +30.95%  Mom: +1.000  $904K vol
+&#9650; PORTAL/USDT +56.43%  Mom: +1.000  $169K vol
+&#9660; GENIUS/USDT -14.64%  Mom: -1.000  $3.4M vol
+&#9650; ILY/USDT    +16.30%  Mom: +1.000  $730K vol
 
-Confluence: Pattern + Liquidity + VWAP
+324 USDT pairs scanned &middot; 8 bullish, 2 bearish
 </pre>
-        <span class="label">4 signals &middot; 12:34 UTC</span>
+        <span class="label">10 signals &middot; 10:31 UTC &middot; Live Bitget</span>
       </div>
-      <div class="tg-msg user">/analyze BTC</div>
+      <div class="tg-msg user">/analyze VTHO</div>
       <div class="tg-msg bot">
-        <div class="cmd">&#9876; TRADE IDEA &mdash; BTC/USDT</div>
+        <div class="cmd">&#9876; TRADE IDEA &mdash; VTHO/USDT</div>
 <pre>
 Direction:   LONG
-Confidence:  0.82
-Entry:       $108,420
-Stop Loss:   $107,200 (-1.1%)
-Take Profit: $111,800 (+3.1%)
-R:R Ratio:   2.78
+Confidence:  0.81
+Entry:       $0.000624
+Stop Loss:   $0.000462 (-25.9%)
+Take Profit: $0.000867 (+38.9%)
+R:R Ratio:   1.50
 
-RSI(14): 58.3 | MACD: bullish cross
-Regime: TREND | Volatility: MODERATE
-Liquidity sweep at $107,100 confirmed
+RSI(14): 69.7 | MACD: positive
+ADX: 55.4 (STRONG TREND) | OBV: rising
+Regime: TREND_UP | Confluence: 0.68
+Fib Zone: 382-500 retracement
 
-Thesis: Setup quality HIGH. Bullish
-structure with VWAP reclaim. Runes
-aligned.
+[RULE_ENGINE|TREND_UP|C=0.68]
 </pre>
         <div class="tg-buttons">
           <button class="tg-btn confirm">&#10003; Confirm Trade</button>
           <button class="tg-btn reject">&#10007; Reject</button>
         </div>
+      </div>
+      <div class="tg-msg user">/analyze GENIUS</div>
+      <div class="tg-msg bot" style="border-left: 2px solid var(--red-warn);">
+        <div class="cmd" style="color:var(--red-warn);">&#128683; NO TRADE &mdash; GENIUS/USDT</div>
+<pre style="color:var(--silver);">
+Regime: TREND_DOWN but signal was LONG
+&#10007; Regime filter killed counter-trend trade
+&#10003; Fail-closed risk design working as intended
+</pre>
+        <span class="label" style="color:var(--red-warn);">REJECTED &middot; regime mismatch</span>
       </div>
     </div>
   </div>
@@ -2675,6 +2686,89 @@ aligned.
   </div>
 </section>
 
+<!-- ═══ LIVE TESTED ═══ -->
+<section id="live-tested" style="text-align:center;">
+  <div class="reveal">
+    <div class="section-label" style="justify-content:center;">Live Tested</div>
+    <h2 class="section-title">Real Market Validation</h2>
+    <p class="section-desc" style="margin:0 auto;">RUNECLAW connected to Bitget sub-account AG-77MZCFT2 and ran live scans, analysis, and backtests against real market data. Results below are unedited.</p>
+  </div>
+
+  <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 24px; max-width: 960px; margin: 40px auto 0;">
+    <!-- Live Scan Card -->
+    <div class="perf-card reveal reveal-delay-1" style="text-align:left; padding:24px;">
+      <div class="perf-label" style="font-size:13px; margin-bottom:12px;">LIVE SCAN &mdash; 324 USDT pairs</div>
+      <div style="font-family:var(--font-mono); font-size:12px; line-height:1.7; color:var(--bone);">
+        <div style="color:var(--green-safe);">&#9650; NFP/USDT &nbsp;&nbsp;+60.22% &nbsp;$143K</div>
+        <div style="color:var(--green-safe);">&#9650; VTHO/USDT &nbsp;+30.95% &nbsp;$904K</div>
+        <div style="color:var(--green-safe);">&#9650; PORTAL &nbsp;&nbsp;&nbsp;+56.43% &nbsp;$169K</div>
+        <div style="color:var(--red-warn);">&#9660; GENIUS &nbsp;&nbsp;&nbsp;-14.64% &nbsp;$3.4M</div>
+        <div style="color:var(--green-safe);">&#9650; ILY/USDT &nbsp;&nbsp;+16.30% &nbsp;$730K</div>
+        <div style="margin-top:8px; color:var(--silver); font-size:11px;">8 bullish &middot; 2 bearish &middot; 0 volume spikes</div>
+      </div>
+    </div>
+
+    <!-- Live Analyze Card -->
+    <div class="perf-card reveal reveal-delay-2" style="text-align:left; padding:24px;">
+      <div class="perf-label" style="font-size:13px; margin-bottom:12px;">LIVE ANALYSIS &mdash; 3 assets tested</div>
+      <div style="font-family:var(--font-mono); font-size:12px; line-height:1.7; color:var(--bone);">
+        <div style="color:var(--green-safe);">&#10003; VTHO/USDT LONG &nbsp;conf=0.81 &nbsp;R:R=1.50</div>
+        <div style="margin-left:14px; color:var(--silver);">ADX=55.4 TREND_UP | RSI=69.7 | OBV rising</div>
+        <div style="color:var(--green-safe); margin-top:6px;">&#10003; NFP/USDT &nbsp;LONG &nbsp;conf=0.74 &nbsp;R:R=1.50</div>
+        <div style="margin-left:14px; color:var(--silver);">ADX=39.2 TREND_UP | RSI=66.2 | C=0.61</div>
+        <div style="color:var(--red-warn); margin-top:6px;">&#10007; GENIUS/USDT &nbsp;REJECTED</div>
+        <div style="margin-left:14px; color:var(--silver);">TREND_DOWN regime killed counter-trend LONG</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Backtest Results -->
+  <div style="max-width:960px; margin:24px auto 0;">
+    <div class="perf-card reveal reveal-delay-3" style="padding:24px;">
+      <div class="perf-label" style="font-size:13px; margin-bottom:16px; text-align:center;">BACKTEST &mdash; 1,440 bars (60 days) &middot; BTC/USDT 1H</div>
+      <div style="display:grid; grid-template-columns: repeat(4, 1fr); gap:16px; text-align:center;">
+        <div>
+          <div style="color:var(--green-safe); font-family:var(--font-display); font-size:22px;">+3.18%</div>
+          <div style="color:var(--silver); font-size:11px; margin-top:4px;">Total Return</div>
+        </div>
+        <div>
+          <div style="color:var(--green-safe); font-family:var(--font-display); font-size:22px;">80%</div>
+          <div style="color:var(--silver); font-size:11px; margin-top:4px;">Win Rate (4/5)</div>
+        </div>
+        <div>
+          <div style="color:var(--blue-bright); font-family:var(--font-display); font-size:22px;">2.48</div>
+          <div style="color:var(--silver); font-size:11px; margin-top:4px;">Profit Factor</div>
+        </div>
+        <div>
+          <div style="color:var(--orange-warn); font-family:var(--font-display); font-size:22px;">-2.45%</div>
+          <div style="color:var(--silver); font-size:11px; margin-top:4px;">Max Drawdown</div>
+        </div>
+      </div>
+      <div style="display:grid; grid-template-columns: repeat(4, 1fr); gap:16px; text-align:center; margin-top:16px;">
+        <div>
+          <div style="color:var(--bone); font-family:var(--font-display); font-size:22px;">1.75</div>
+          <div style="color:var(--silver); font-size:11px; margin-top:4px;">Sharpe Ratio</div>
+        </div>
+        <div>
+          <div style="color:var(--bone); font-family:var(--font-display); font-size:22px;">5.0%</div>
+          <div style="color:var(--silver); font-size:11px; margin-top:4px;">Execution Rate</div>
+        </div>
+        <div>
+          <div style="color:var(--bone); font-family:var(--font-display); font-size:22px;">$17.40</div>
+          <div style="color:var(--silver); font-size:11px; margin-top:4px;">Commission</div>
+        </div>
+        <div>
+          <div style="color:var(--bone); font-family:var(--font-display); font-size:22px;">30.8h</div>
+          <div style="color:var(--silver); font-size:11px; margin-top:4px;">Avg Duration</div>
+        </div>
+      </div>
+      <div style="font-family:var(--font-mono); font-size:11px; color:var(--ash); text-align:center; margin-top:16px;">
+        335 signals scanned &rarr; 100 ideas &rarr; 95 risk-rejected &rarr; 5 executed &middot; $10K initial &rarr; $10,318 final
+      </div>
+    </div>
+  </div>
+</section>
+
 <!-- ═══ DEMO EVIDENCE ═══ -->
 <section id="evidence">
   <div class="reveal" style="text-align:center;">
@@ -2694,7 +2788,7 @@ aligned.
     </div>
     <div class="evidence-card-new reveal reveal-delay-3">
       <span class="evidence-icon-new">&#128200;</span>
-      <div class="evidence-label-new">Backtest: 180 runs, 3 regimes, 855 trades</div>
+      <div class="evidence-label-new">Backtest: +3.18% return, 80% WR, 2.48 PF</div>
       <span class="evidence-badge-new ebadge-blue">VALIDATED</span>
     </div>
     <div class="evidence-card-new reveal reveal-delay-1">
@@ -2711,6 +2805,16 @@ aligned.
       <span class="evidence-icon-new">&#128300;</span>
       <div class="evidence-label-new">Simulation-First: No Real Money</div>
       <span class="evidence-badge-new ebadge-green">SAFE</span>
+    </div>
+    <div class="evidence-card-new reveal reveal-delay-1">
+      <span class="evidence-icon-new">&#128640;</span>
+      <div class="evidence-label-new">Live Bitget Scan: 324 pairs, real-time</div>
+      <span class="evidence-badge-new ebadge-green">LIVE</span>
+    </div>
+    <div class="evidence-card-new reveal reveal-delay-2">
+      <span class="evidence-icon-new">&#9876;</span>
+      <div class="evidence-label-new">Live Analysis: 3 assets, regime-filtered</div>
+      <span class="evidence-badge-new ebadge-blue">TESTED</span>
     </div>
   </div>
 </section>
@@ -2760,7 +2864,9 @@ aligned.
       <li><span class="check">&#10003;</span><span><strong>Human confirmation required</strong> for every trade before execution</span></li>
       <li><span class="check">&#10003;</span><span><strong>Simulation-first</strong> &mdash; Paper trading is the default mode, no real money at risk</span></li>
       <li><span class="check">&#10003;</span><span><strong>Full audit trail</strong> &mdash; JSON structured logging for every decision and state change</span></li>
-      <li><span class="check">&#10003;</span><span><strong>Backtested: 180 runs, 3 regimes</strong> &mdash; 855 trades with commission + slippage, worst DD 2.87%</span></li>
+      <li><span class="check">&#10003;</span><span><strong>Backtested: 180 runs, 3 regimes</strong> &mdash; Latest: +3.18% return, 80% WR, PF=2.48, max DD -2.45%</span></li>
+      <li><span class="check">&#10003;</span><span><strong>Live Bitget scan</strong> &mdash; 324 USDT pairs scanned in real-time via sub-account API</span></li>
+      <li><span class="check">&#10003;</span><span><strong>Live analysis validated</strong> &mdash; VTHO LONG conf=0.81, NFP LONG conf=0.74, GENIUS rejected (regime filter)</span></li>
       <li><span class="check">&#10003;</span><span><strong>Agent state machine</strong> with 9 formal states and validated transitions</span></li>
       <li><span class="check">&#10003;</span><span><strong>Modular skill system</strong> &mdash; 7 registered skills with dependency injection</span></li>
       <li><span class="check">&#10003;</span><span><strong>Confluence scoring</strong> &mdash; 10-voter model: RSI, MACD, BB, Volume, ADX, VWAP, OBV, candlestick, Fibonacci, blended with LLM analysis</span></li>

@@ -13,5 +13,6 @@
 * [Security & Permissions](security-permissions.md)
 * [Paper Trading](paper-trading.md)
 * [Demo Scenarios](demo-scenarios.md)
+* [Live Market Validation](live-validation.md)
 * [API Reference](api-reference.md)
 * [FAQ](faq.md)
