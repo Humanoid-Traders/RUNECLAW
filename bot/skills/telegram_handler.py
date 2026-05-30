@@ -1,6 +1,6 @@
 """
 RUNECLAW Telegram Handler -- human interface for the trading bot.
-Commands: /scan, /analyze, /portfolio, /trade, /risk, /macro, /status, /rejected, /halt, /reset, /backtest, /help
+Commands: /scan, /analyze, /portfolio, /trade, /risk, /macro, /status, /rejected, /halt, /reset, /backtest, /run, /help
 Includes inline keyboard for trade confirmation and rate limiting.
 """
 
@@ -67,6 +67,7 @@ class TelegramHandler:
         app.add_handler(CommandHandler("backtest", self._cmd_backtest))
         app.add_handler(CommandHandler("walkforward", self._cmd_walkforward))
         app.add_handler(CommandHandler("journal", self._cmd_journal))
+        app.add_handler(CommandHandler("run", self._cmd_run))
         app.add_handler(CommandHandler("help", self._cmd_help))
         app.add_handler(CallbackQueryHandler(self._handle_callback))
         return app
@@ -264,11 +265,30 @@ class TelegramHandler:
         await update.message.reply_text(f"\U0001f4d3 *Trade Journal*\n```\n{result}\n```",
                                         parse_mode="Markdown")
 
+    async def _cmd_run(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """Execute a predefined trading strategy by natural language name."""
+        if not await self._check_rate(update):
+            return
+        if not self._check_auth(update):
+            await update.message.reply_text("\u26d4 Unauthorized. Contact the bot owner.")
+            return
+        strategy = " ".join(ctx.args) if ctx.args else ""
+        if strategy:
+            await update.message.reply_text(
+                f"\u23f3 Running strategy *{strategy}*... this may take a moment.",
+                parse_mode="Markdown")
+        result = await self.registry.get("run_strategy").execute(  # type: ignore
+            self.engine, strategy=strategy)
+        await update.message.reply_text(
+            f"\U0001f3af *Strategy Runner*\n```\n{result}\n```",
+            parse_mode="Markdown")
+
     async def _cmd_help(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text(
             "\U0001f43e *RUNECLAW Commands*\n\n"
             "/scan - Scan market for top movers\n"
             "/analyze BTC - AI analysis of an asset\n"
+            "/run - Run a strategy preset (dip, momentum, scalp, full scan)\n"
             "/portfolio - View paper portfolio\n"
             "/trade - View & confirm pending trades\n"
             "/risk - Risk metrics & circuit breaker\n"

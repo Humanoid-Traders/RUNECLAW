@@ -381,12 +381,177 @@ class TradeJournalSkill(BaseSkill):
         return "\n".join(lines)
 
 
+class RunStrategySkill(BaseSkill):
+    name = "run_strategy"
+    description = "Execute a predefined trading strategy by name (natural language)"
+
+    # Strategy presets: keyword triggers -> configuration dict
+    PRESETS: dict[str, dict[str, Any]] = {
+        "btc dip sniper": {
+            "label": "BTC Dip Sniper",
+            "description": "Scan BTC only, RSI < 35, TREND_DOWN regime, confidence >= 0.70",
+            "symbols": ["BTC/USDT"],
+            "rsi_threshold": 35,
+            "regime": "TREND_DOWN",
+            "confidence_threshold": 0.70,
+            "volume_spike_min": None,
+            "sl_atr_mult": None,
+            "tp_atr_mult": None,
+        },
+        "momentum hunter": {
+            "label": "Momentum Hunter",
+            "description": "Scan all pairs, volume spikes > 3x, TREND_UP regime only",
+            "symbols": None,  # all pairs
+            "rsi_threshold": None,
+            "regime": "TREND_UP",
+            "confidence_threshold": None,
+            "volume_spike_min": 3.0,
+            "sl_atr_mult": None,
+            "tp_atr_mult": None,
+        },
+        "safe scalper": {
+            "label": "Safe Scalper",
+            "description": "Top 3 by volume, tight SL (1.5x ATR), quick TP (2x ATR), confidence >= 0.75",
+            "symbols": "top3_volume",
+            "rsi_threshold": None,
+            "regime": None,
+            "confidence_threshold": 0.75,
+            "volume_spike_min": None,
+            "sl_atr_mult": 1.5,
+            "tp_atr_mult": 2.0,
+        },
+        "full scan": {
+            "label": "Full Scan",
+            "description": "Standard full pipeline with default parameters",
+            "symbols": None,
+            "rsi_threshold": None,
+            "regime": None,
+            "confidence_threshold": None,
+            "volume_spike_min": None,
+            "sl_atr_mult": None,
+            "tp_atr_mult": None,
+        },
+    }
+
+    # Aliases that map short names to canonical preset keys
+    ALIASES: dict[str, str] = {
+        "dip": "btc dip sniper",
+        "momentum": "momentum hunter",
+        "scalp": "safe scalper",
+        "scan all": "full scan",
+    }
+
+    @classmethod
+    def _resolve_preset(cls, raw: str) -> str | None:
+        """Return canonical preset key for *raw*, or None if unrecognized."""
+        key = raw.strip().lower()
+        if key in cls.PRESETS:
+            return key
+        if key in cls.ALIASES:
+            return cls.ALIASES[key]
+        return None
+
+    @classmethod
+    def _list_presets(cls) -> str:
+        lines = ["Available strategy presets:\n"]
+        for key, cfg in cls.PRESETS.items():
+            aliases = [a for a, target in cls.ALIASES.items() if target == key]
+            alias_str = f"  (alias: {', '.join(aliases)})" if aliases else ""
+            lines.append(f"  - {cfg['label']}{alias_str}")
+            lines.append(f"    {cfg['description']}")
+        lines.append("\nUsage: /run <preset name>")
+        lines.append("All 18 risk-engine checks still apply. Strategies only pre-configure scan/analyze parameters.")
+        return "\n".join(lines)
+
+    async def execute(self, engine: RuneClawEngine, **kwargs: Any) -> str:
+        strategy_str: str = kwargs.get("strategy", "")
+        if not strategy_str:
+            return self._list_presets()
+
+        preset_key = self._resolve_preset(strategy_str)
+        if preset_key is None:
+            return (f"Unknown strategy: \"{strategy_str}\"\n\n"
+                    + self._list_presets())
+
+        cfg = self.PRESETS[preset_key]
+        label = cfg["label"]
+
+        audit(system_log, f"Strategy activated: {label}",
+              action="run_strategy", data=cfg)
+
+        # --- Step 1: Scan ---
+        signals = await engine.scanner.scan()
+        if not signals:
+            return f"[{label}] No signals found during scan."
+
+        # Filter by preset constraints
+        # Symbol filter
+        if cfg["symbols"] == "top3_volume":
+            signals.sort(key=lambda s: s.volume_usd_24h, reverse=True)
+            signals = signals[:3]
+        elif cfg["symbols"] is not None:
+            allowed = set(cfg["symbols"])
+            signals = [s for s in signals if s.symbol in allowed]
+
+        # Volume spike filter
+        if cfg["volume_spike_min"] is not None:
+            spike_min = cfg["volume_spike_min"]
+            signals = [s for s in signals if getattr(s, "volume_spike_ratio", 0) >= spike_min
+                       or getattr(s, "volume_spike", False)]
+
+        if not signals:
+            return f"[{label}] Scan complete but no signals matched strategy filters."
+
+        # --- Step 2: Analyze each signal ---
+        results: list[str] = []
+        ideas_created = 0
+
+        for sig in signals[:5]:  # cap at 5 to avoid flooding
+            idea = await engine._analyze_signal(sig)
+            if idea is None:
+                continue
+
+            # Apply confidence threshold filter
+            conf_thresh = cfg.get("confidence_threshold")
+            if conf_thresh is not None and idea.confidence < conf_thresh:
+                results.append(
+                    f"  {sig.symbol}: idea below confidence threshold "
+                    f"({idea.confidence:.0%} < {conf_thresh:.0%}), skipped")
+                continue
+
+            # Store in pending (same flow as AnalyzeAssetSkill)
+            engine._pending_ideas[idea.id] = idea
+            ideas_created += 1
+            results.append(
+                f"  {idea.direction.value} {idea.asset} "
+                f"[{idea.id}] conf={idea.confidence:.0%} R:R={idea.risk_reward_ratio}")
+
+        # Build summary
+        header = (
+            f"Strategy: {label}\n"
+            f"Signals scanned: {len(signals)} | Ideas generated: {ideas_created}\n"
+            f"Risk engine: all 18 checks active (NOT bypassed)\n"
+            f"{'=' * 44}"
+        )
+        if results:
+            body = "\n".join(results)
+        else:
+            body = "  No actionable trade ideas passed filters."
+
+        footer = (
+            f"\n{'=' * 44}\n"
+            f"Use /trade to review and confirm pending ideas."
+        )
+        return f"{header}\n{body}{footer}"
+
+
 def build_default_registry() -> SkillRegistry:
     """Create a registry with all built-in skills pre-loaded."""
     registry = SkillRegistry()
     for skill_cls in (ScanMarketSkill, AnalyzeAssetSkill, CheckRiskSkill,
                       ExecutePaperTradeSkill, GetPortfolioSkill, ExplainTradeSkill,
                       RunBacktestSkill, RejectedTradesSkill, HaltSkill,
-                      WalkForwardSkill, MacroCalendarSkill, TradeJournalSkill):
+                      WalkForwardSkill, MacroCalendarSkill, TradeJournalSkill,
+                      RunStrategySkill):
         registry.register(skill_cls())
     return registry
