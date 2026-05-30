@@ -1,5 +1,5 @@
 """
-RUNECLAW Deep Backtest -- Top 10 Crypto Symbols
+RUNECLAW Deep Backtest -- Top 20 Crypto Symbols
 Runs comprehensive backtests across multiple market conditions.
 """
 import asyncio
@@ -17,8 +17,9 @@ from bot.backtest.models import BacktestConfig, BacktestBar
 from bot.backtest.data_loader import DataLoader
 
 
-# Top 10 symbols with realistic starting prices and volatility profiles
+# Top 20 symbols with realistic starting prices and volatility profiles
 SYMBOLS = [
+    # ── Original 10 ──
     {"symbol": "BTC/USDT",  "price": 108000.0, "vol": 0.012, "name": "Bitcoin"},
     {"symbol": "ETH/USDT",  "price": 2550.0,   "vol": 0.018, "name": "Ethereum"},
     {"symbol": "SOL/USDT",  "price": 180.0,     "vol": 0.025, "name": "Solana"},
@@ -29,6 +30,17 @@ SYMBOLS = [
     {"symbol": "AVAX/USDT", "price": 24.0,      "vol": 0.028, "name": "Avalanche"},
     {"symbol": "LINK/USDT", "price": 16.5,      "vol": 0.022, "name": "Chainlink"},
     {"symbol": "SUI/USDT",  "price": 3.80,      "vol": 0.030, "name": "Sui"},
+    # ── New 10 (diverse sectors, price ranges, volatility) ──
+    {"symbol": "DOT/USDT",  "price": 7.00,      "vol": 0.025, "name": "Polkadot"},
+    {"symbol": "TON/USDT",  "price": 3.50,      "vol": 0.022, "name": "Toncoin"},
+    {"symbol": "NEAR/USDT", "price": 5.00,      "vol": 0.028, "name": "NEAR"},
+    {"symbol": "APT/USDT",  "price": 8.00,      "vol": 0.028, "name": "Aptos"},
+    {"symbol": "UNI/USDT",  "price": 7.00,      "vol": 0.025, "name": "Uniswap"},
+    {"symbol": "LTC/USDT",  "price": 90.0,      "vol": 0.015, "name": "Litecoin"},
+    {"symbol": "PEPE/USDT", "price": 0.000013,  "vol": 0.040, "name": "Pepe"},
+    {"symbol": "TRX/USDT",  "price": 0.27,      "vol": 0.015, "name": "TRON"},
+    {"symbol": "ATOM/USDT", "price": 8.00,      "vol": 0.022, "name": "Cosmos"},
+    {"symbol": "FIL/USDT",  "price": 3.00,      "vol": 0.030, "name": "Filecoin"},
 ]
 
 # Market regimes to test
