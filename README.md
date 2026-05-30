@@ -8,6 +8,7 @@
 
 <h3 align="center">AI Trading Command Core | Forged in Volatility. Governed by Discipline.</h3>
 <h4 align="center">by Humanoid Traders | for Bitget GetClaw</h4>
+<h5 align="center">🏆 Proudly built for Bitget GetClaw Hackathon – aiming for Best Strategy & Risk Award 🏆</h5>
 
 <p align="center">
   <img src="https://img.shields.io/badge/python-3.11+-blue?logo=python&logoColor=white" alt="Python 3.11+">
@@ -99,7 +100,7 @@ The system operates in **simulation-first mode by default**. Every trade idea mu
 - Structured `TradeIdea` output with entry, SL, TP, confidence, reasoning
 
 ### Risk Engine (Fail-Closed)
-- **16 independent pre-trade checks** -- ALL must pass (plus a 17th liquidity guard on live order-flow data, fail-open)
+- **18 independent pre-trade checks** -- ALL must pass (including liquidity guard on live order-flow data)
 - Circuit breaker halts trading on daily loss or drawdown breach
 - Fixed-fractional position sizing: risk budget (2% of equity) divided by stop distance, capped at 20% notional
 - Max open positions limit
@@ -223,7 +224,7 @@ runeclaw/
 RUNECLAW is designed with a **fail-closed** philosophy:
 
 - **Simulation by default.** Live trading requires two explicit environment flags.
-- **Every trade passes 16 checks.** One failure = rejection. No overrides.
+- **Every trade passes 18 checks.** One failure = rejection. No overrides.
 - **Circuit breaker.** Auto-halts on daily loss (5%) or max drawdown (10%).
 - **Human-in-the-loop.** No trade executes without explicit confirmation.
 - **Re-check on confirm.** Risk is re-evaluated at confirmation time because market conditions change.
@@ -285,6 +286,59 @@ This is a **hackathon prototype** (maturity: early-stage). Known limitations:
 
 ---
 
+## RUNECLAW vs Typical Trading Bots
+
+| Capability | RUNECLAW | Typical Hackathon Bot |
+|------------|:--------:|:---------------------:|
+| Pre-trade risk checks | **18 independent checks** | 0-3 basic checks |
+| Fail-closed design | **Yes** -- any failure = rejection | Fail-open (errors skip checks) |
+| Circuit breaker | **Auto-halt** on daily loss / drawdown | None or manual only |
+| Human confirmation | **Required** via Telegram keyboard | Auto-execute or no gate |
+| Regime detection | **ADX-14 regime filter** blocks counter-trend | Not considered |
+| Confluence scoring | **10-voter model** (RSI, MACD, BB, Vol, ADX, VWAP, OBV, candles, Fib, LLM) | 1-2 indicators |
+| Audit trail | **Full JSONL** -- every decision logged | Minimal or none |
+| Simulation-first | **Default mode** -- live requires 2 explicit flags | Often live by default |
+| Position sizing | **Fixed-fractional** with exposure caps | Fixed lot or % of balance |
+| Re-check on confirm | **Yes** -- market may have moved | No re-validation |
+| Backtest engine | **Built-in** with commission + slippage modeling | External or none |
+| Live market validation | **324 pairs scanned**, 3 assets analyzed on real Bitget data | Mock data only |
+
+> RUNECLAW doesn't just generate trades -- it governs them. Safety and transparency are first-class features, not afterthoughts.
+
+---
+
+## Fork & Win With Us
+
+RUNECLAW is open for collaboration. If you're building for GetClaw and want a battle-tested risk engine, scanner, or analysis pipeline -- fork it, extend it, and submit your own entry.
+
+**How to contribute:**
+
+1. **Fork** this repo
+2. **Build** your strategy module, UI, or integration on top
+3. **Submit** to GetClaw with credit to RUNECLAW as your risk/analysis layer
+4. **Open a PR** back with improvements -- we'll merge strong contributions
+
+**Ideas for extension:**
+- Add new exchange connectors (OKX, Bybit, Binance)
+- Build a web dashboard with real-time charts
+- Create new analysis strategies or indicator combinations
+- Add multi-language Telegram support
+- Integrate on-chain data or sentiment feeds
+
+We believe the best hackathon projects are built on strong foundations. RUNECLAW provides the risk engine and market intelligence -- you bring the alpha.
+
+```bash
+# Get started in 60 seconds
+git clone https://github.com/Humanoid-Traders/RUNECLAW.git
+cd RUNECLAW && cp .env.example .env
+pip install -r bot/requirements.txt
+python -m bot.main --mode scan
+```
+
+> **Want to co-submit?** Open an issue titled "Co-submission: [Your Project Name]" and we'll coordinate.
+
+---
+
 ## License
 
 MIT License. See [LICENSE](./LICENSE) for details.
@@ -292,3 +346,4 @@ MIT License. See [LICENSE](./LICENSE) for details.
 ---
 
 <p align="center"><b>RUNECLAW</b> -- Where Viking grit meets algorithmic precision.</p>
+<p align="center"><i>Forged for Bitget GetClaw Hackathon 2025 (Genesis S1)</i></p>
