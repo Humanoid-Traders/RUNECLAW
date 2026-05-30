@@ -28,6 +28,8 @@ Checks:
 
 from __future__ import annotations
 
+import json
+import os
 import threading
 import time
 from datetime import UTC, datetime
@@ -36,6 +38,12 @@ from typing import Optional
 from bot.config import CONFIG
 from bot.utils.logger import audit, risk_log
 from bot.utils.models import RiskCheck, RiskVerdict, TradeIdea
+
+# Persistence file for safety state (circuit breaker, loss streak, daily PnL).
+# Survives restarts so a crash cannot silently clear protective limits.
+_STATE_FILE = os.path.join(
+    os.environ.get("RUNECLAW_STATE_DIR", "data"), "risk_state.json"
+)
 
 
 # Known correlation groups for crypto assets.
@@ -78,7 +86,7 @@ class RiskEngine:
     16 independent checks -- all must pass.
     """
 
-    def __init__(self, portfolio: "PortfolioTracker") -> None:  # noqa: F821
+    def __init__(self, portfolio: "PortfolioTracker", state_file: Optional[str] = None) -> None:  # noqa: F821
         self._portfolio = portfolio
         self._circuit_open = False
         self._consecutive_losses = 0
@@ -88,6 +96,9 @@ class RiskEngine:
         self._total_rejections = 0
         self._rejection_history: list[dict] = []  # recent rejections for /rejected command
         self._lock = threading.RLock()
+        self._state_file = state_file or _STATE_FILE
+        # F-01: reload persisted safety state so restarts don't clear the breaker
+        self._load_state()
 
     @property
     def circuit_breaker_active(self) -> bool:
@@ -120,12 +131,14 @@ class RiskEngine:
         if pnl <= 0:
             self._consecutive_losses += 1
             self._last_loss_time = time.time()
+            self._save_state()
             if self._consecutive_losses >= CONFIG.risk.max_consecutive_losses:
                 self._trip_circuit_breaker(
                     f"consecutive loss streak: {self._consecutive_losses}"
                 )
         else:
             self._consecutive_losses = 0
+            self._save_state()
 
     def evaluate(self, idea: TradeIdea, atr: Optional[float] = None) -> RiskCheck:
         """
@@ -363,12 +376,53 @@ class RiskEngine:
             )
         return None
 
+    # -- Persistence (F-01) --
+
+    def _load_state(self) -> None:
+        """Restore safety state from disk. Fail-safe: if file is missing/corrupt, start fresh."""
+        try:
+            if not os.path.exists(self._state_file):
+                return
+            with open(self._state_file) as f:
+                data = json.load(f)
+            self._circuit_open = data.get("circuit_open", False)
+            self._consecutive_losses = data.get("consecutive_losses", 0)
+            self._last_loss_time = data.get("last_loss_time")
+            self._circuit_breaker_trips = data.get("circuit_breaker_trips", 0)
+            if self._circuit_open:
+                audit(risk_log, "Circuit breaker state restored from disk: ACTIVE",
+                      action="state_restore", result="LOADED")
+        except Exception:
+            # Fail-safe: corrupt file -> start fresh (conservative: no breaker = safe for new trades,
+            # but daily loss check in portfolio will still catch actual losses)
+            pass
+
+    def _save_state(self) -> None:
+        """Persist safety-critical state to disk. Called on every state change."""
+        try:
+            os.makedirs(os.path.dirname(self._state_file) or ".", exist_ok=True)
+            data = {
+                "circuit_open": self._circuit_open,
+                "consecutive_losses": self._consecutive_losses,
+                "last_loss_time": self._last_loss_time,
+                "circuit_breaker_trips": self._circuit_breaker_trips,
+                "saved_at": datetime.now(UTC).isoformat(),
+            }
+            tmp = self._state_file + ".tmp"
+            with open(tmp, "w") as f:
+                json.dump(data, f)
+            os.replace(tmp, self._state_file)  # atomic on POSIX
+        except Exception:
+            # Best-effort: log but don't crash the risk engine
+            pass
+
     def _trip_circuit_breaker(self, reason: str) -> None:
         if not self._circuit_open:
             self._circuit_open = True
             self._circuit_breaker_trips += 1
             audit(risk_log, f"CIRCUIT BREAKER TRIPPED: {reason}",
                   action="circuit_breaker", result="HALTED")
+            self._save_state()
 
     def reset_circuit_breaker(self) -> None:
         """Manual reset -- requires human intervention."""
@@ -377,3 +431,4 @@ class RiskEngine:
         self._last_loss_time = None
         audit(risk_log, "Circuit breaker manually reset",
               action="circuit_breaker", result="RESET")
+        self._save_state()

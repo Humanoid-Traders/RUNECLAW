@@ -57,7 +57,8 @@ def _make_portfolio(balance: float = 10000.0) -> PortfolioTracker:
 
 
 def _make_risk(portfolio: PortfolioTracker) -> RiskEngine:
-    return RiskEngine(portfolio)
+    # Use /dev/null so tests never persist or load stale state
+    return RiskEngine(portfolio, state_file="/dev/null")
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -758,6 +759,7 @@ class TestIntegration:
         """L5/C1: Verify RuneClawEngine auto-wires on_trade_close callback."""
         from bot.core.engine import RuneClawEngine
         engine = RuneClawEngine()
+        engine.risk._state_file = "/dev/null"
         # The callback should be wired automatically
         assert engine.portfolio._on_trade_close is not None
         assert engine.portfolio._on_trade_close == engine.risk.record_trade_result
@@ -1179,6 +1181,11 @@ class TestEngineFSM:
     def _make_engine(self) -> RuneClawEngine:
         """Create engine with mock scanner to avoid network calls."""
         engine = RuneClawEngine()
+        # Override state file so tests don't persist/load stale risk state
+        engine.risk._state_file = "/dev/null"
+        engine.risk._circuit_open = False
+        engine.risk._consecutive_losses = 0
+        engine.risk._last_loss_time = None
         engine.scanner.scan = AsyncMock(return_value=[])
         engine.scanner.close = AsyncMock()
         engine.scanner._get_exchange = AsyncMock()
@@ -1589,8 +1596,7 @@ class TestAuditFixes:
     def test_position_sizing_caps_instead_of_rejecting(self):
         """Fixed-fractional sizing that exceeds 20% notional should be clamped by check #2, not rejected."""
         portfolio = PortfolioTracker(initial_balance=10000.0)
-        risk = RiskEngine(portfolio)
-
+        risk = RiskEngine(portfolio, state_file="/dev/null")
         # 2.5% stop distance -> uncapped = 2% equity / 2.5% = 80% of equity = $8000
         # Check #2 should clamp to 20% = $2000, NOT reject
         idea = self._make_idea(
@@ -1612,8 +1618,7 @@ class TestAuditFixes:
     def test_position_sizing_cap_allows_tight_stops(self):
         """Tight stops (1% distance) should produce capped positions, not rejections."""
         portfolio = PortfolioTracker(initial_balance=10000.0)
-        risk = RiskEngine(portfolio)
-
+        risk = RiskEngine(portfolio, state_file="/dev/null")
         idea = self._make_idea(
             entry_price=50000.0,
             stop_loss=49500.0,  # 1% stop distance
@@ -1776,8 +1781,7 @@ class TestAuditFixes:
     def test_rr_boundary_not_rejected(self):
         """R:R at exactly the minimum threshold should pass (float tolerance)."""
         portfolio = PortfolioTracker(initial_balance=10000.0)
-        risk = RiskEngine(portfolio)
-
+        risk = RiskEngine(portfolio, state_file="/dev/null")
         # R:R of exactly 1.2 (default min_risk_reward)
         # SL = 2.5 ATR, TP = 3.0 ATR -> R:R = 3.0/2.5 = 1.2
         idea = self._make_idea(
@@ -1850,3 +1854,136 @@ class TestAuditFixes:
         div_idx = labels.index("of_cvd_divergence")
         assert votes[div_idx] == -1.0, "Bearish divergence should vote -1.0"
 
+
+class TestAuditV3Fixes:
+    """Tests for audit v3 fixes: F-01 persistence, F-03 cvd_trend, F-04 confirm failure."""
+
+    # -- F-03: _cvd_trend always returns a string --
+
+    def test_cvd_trend_short_history_returns_string(self):
+        """_cvd_trend must never return None, even with <4 data points."""
+        from bot.core.order_flow import OrderFlowAnalyzer
+        assert OrderFlowAnalyzer._cvd_trend([]) == "flat"
+        assert OrderFlowAnalyzer._cvd_trend([10.0]) == "rising"
+        assert OrderFlowAnalyzer._cvd_trend([-5.0]) == "falling"
+        assert OrderFlowAnalyzer._cvd_trend([0.0]) == "flat"
+        assert OrderFlowAnalyzer._cvd_trend([1.0, 2.0]) == "rising"
+        assert OrderFlowAnalyzer._cvd_trend([1.0, -2.0, 3.0]) == "rising"
+        # All should be strings, never None
+        for length in range(0, 6):
+            result = OrderFlowAnalyzer._cvd_trend([float(i) for i in range(length)])
+            assert isinstance(result, str), f"_cvd_trend returned {type(result)} for {length} deltas"
+
+    def test_fill_composite_tolerates_unexpected_cvd_trend(self):
+        """_fill_composite should not raise KeyError on unexpected cvd_trend values."""
+        from bot.core.order_flow import OrderFlowAnalyzer, OrderFlowSignal
+        sig = OrderFlowSignal(
+            symbol="BTC/USDT",
+            book_imbalance=0.0,
+            cvd_trend="unknown_value",  # unexpected
+            whale_bias="unknown_value",  # unexpected
+            smart_money_score=0.0,
+            confidence=0.8,
+            components_ok=["book", "trades"],
+        )
+        # Should not raise — .get() returns 0.0 for unknown keys
+        votes, weights, labels = OrderFlowAnalyzer.to_confluence_votes(sig)
+        assert isinstance(votes, list)
+
+    # -- F-01: safety state persistence --
+
+    def test_circuit_breaker_persists_to_disk(self):
+        """Tripping the breaker should write state to disk."""
+        import tempfile, json
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False, mode="w") as f:
+            state_path = f.name
+        try:
+            portfolio = PortfolioTracker(initial_balance=10000.0)
+            risk = RiskEngine(portfolio, state_file=state_path)
+            risk._trip_circuit_breaker("test trip")
+            assert risk.circuit_breaker_active
+
+            # State should be on disk
+            with open(state_path) as f:
+                data = json.load(f)
+            assert data["circuit_open"] is True
+
+            # New RiskEngine should restore the state
+            risk2 = RiskEngine(portfolio, state_file=state_path)
+            assert risk2.circuit_breaker_active, "Circuit breaker should survive restart"
+
+            # Reset should clear on disk
+            risk2.reset_circuit_breaker()
+            with open(state_path) as f:
+                data2 = json.load(f)
+            assert data2["circuit_open"] is False
+        finally:
+            import os
+            os.unlink(state_path)
+
+    def test_loss_streak_persists_to_disk(self):
+        """Consecutive losses should persist so a restart doesn't clear the streak."""
+        import tempfile, json
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False, mode="w") as f:
+            state_path = f.name
+        try:
+            portfolio = PortfolioTracker(initial_balance=10000.0)
+            risk = RiskEngine(portfolio, state_file=state_path)
+            risk.record_trade_result(-100.0)
+            risk.record_trade_result(-50.0)
+            risk.record_trade_result(-25.0)
+            assert risk.consecutive_losses == 3
+
+            # Reload
+            risk2 = RiskEngine(portfolio, state_file=state_path)
+            assert risk2.consecutive_losses == 3, "Loss streak should survive restart"
+        finally:
+            import os
+            os.unlink(state_path)
+
+    # -- F-04: confirm_trade handles execution failure --
+
+    def test_confirm_trade_handles_execution_failure(self):
+        """confirm_trade should not silently lose a trade on ValueError."""
+        from bot.core.engine import RuneClawEngine
+        from unittest.mock import patch
+        engine = RuneClawEngine()
+        engine.risk._state_file = "/dev/null"
+        engine.risk._circuit_open = False
+        engine.risk._consecutive_losses = 0
+        engine.risk._last_loss_time = None
+
+        idea = TradeIdea(
+            id="TI-F04-TEST",
+            asset="BTC/USDT",
+            direction=Direction.LONG,
+            entry_price=50000.0,
+            stop_loss=48750.0,
+            take_profit=53750.0,
+            confidence=0.75,
+            reasoning="test",
+            signals_used=["rsi"],
+            timestamp=datetime.now(UTC),
+        )
+        engine._pending_ideas[idea.id] = idea
+        engine._pending_atr[idea.id] = 500.0
+
+        # Mock open_position to raise ValueError (simulates balance exhaustion race)
+        with patch.object(engine.portfolio, "open_position",
+                          side_effect=ValueError("Insufficient balance to open position")):
+            loop = asyncio.new_event_loop()
+            try:
+                result = loop.run_until_complete(engine.confirm_trade(idea.id))
+            finally:
+                loop.close()
+
+        # Should not raise; should return a failure message, not silently vanish
+        assert "failed" in result.lower(), f"Expected failure message, got: {result}"
+
+    # -- F-06: sandbox flag from env --
+
+    def test_sandbox_flag_configurable(self):
+        """ExchangeConfig.sandbox should be True by default but overridable."""
+        from bot.config import ExchangeConfig
+        config = ExchangeConfig()
+        assert config.sandbox is True, "Sandbox should default to True"

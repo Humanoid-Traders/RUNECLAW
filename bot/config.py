@@ -63,7 +63,7 @@ class ExchangeConfig:
     api_key: str = _env("BITGET_API_KEY")
     api_secret: str = _env("BITGET_API_SECRET")
     passphrase: str = _env("BITGET_PASSPHRASE")
-    sandbox: bool = True  # Always sandbox unless explicitly overridden
+    sandbox: bool = _env_bool("BITGET_SANDBOX", True)  # Sandbox by default; override via env
 
 
 @dataclass(frozen=True)

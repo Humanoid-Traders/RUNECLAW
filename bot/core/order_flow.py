@@ -267,6 +267,7 @@ class OrderFlowAnalyzer:
 
     @staticmethod
     def _cvd_trend(deltas: list[float]) -> str:
+        """Classify CVD trend. Always returns a string — never None."""
         if len(deltas) >= 4:
             half = len(deltas) // 2
             recent = float(np.mean(deltas[half:]))
@@ -278,7 +279,14 @@ class OrderFlowAnalyzer:
             if diff < -0.1 * scale:
                 return "falling"
             return "flat"
-        # Not enough history -> use the single window's sign
+        # Not enough history for split-window — use sign of the last delta
+        if deltas:
+            last = deltas[-1]
+            if last > 0:
+                return "rising"
+            if last < 0:
+                return "falling"
+        return "flat"
 
     @staticmethod
     def _detect_cvd_divergence(cvd_deltas: list[float], prices: list[float]) -> str:
@@ -316,12 +324,6 @@ class OrderFlowAnalyzer:
             return "bullish_div"
 
         return "none"
-        last = deltas[-1] if deltas else 0.0
-        if last > 0:
-            return "rising"
-        if last < 0:
-            return "falling"
-        return "flat"
 
     def _fill_whale_metrics(self, sig: OrderFlowSignal, trades: list) -> None:
         if not trades:
@@ -407,9 +409,9 @@ class OrderFlowAnalyzer:
             contribs.append((float(np.clip(sig.book_imbalance, -1, 1)), c.w_book))
             contribs.append(((sig.aggressor_ratio - 0.5) * 2.0, c.w_aggressor))
         if "trades" in ok:
-            trend_val = {"rising": 1.0, "falling": -1.0, "flat": 0.0}[sig.cvd_trend]
+            trend_val = {"rising": 1.0, "falling": -1.0, "flat": 0.0}.get(sig.cvd_trend, 0.0)
             contribs.append((trend_val, c.w_cvd_trend))
-            whale_val = {"accumulation": 1.0, "distribution": -1.0, "neutral": 0.0}[sig.whale_bias]
+            whale_val = {"accumulation": 1.0, "distribution": -1.0, "neutral": 0.0}.get(sig.whale_bias, 0.0)
             contribs.append((whale_val, c.w_whale))
         if sig.funding_rate is not None:
             # Contrarian: very positive funding = crowded longs = bearish lean
@@ -445,10 +447,10 @@ class OrderFlowAnalyzer:
             weights.append(0.6 * conf)
             labels.append("of_book_imbalance")
         if "trades" in sig.components_ok:
-            votes.append({"rising": 1.0, "falling": -1.0, "flat": 0.0}[sig.cvd_trend])
+            votes.append({"rising": 1.0, "falling": -1.0, "flat": 0.0}.get(sig.cvd_trend, 0.0))
             weights.append(0.7 * conf)
             labels.append("of_cvd_trend")
-            votes.append({"accumulation": 1.0, "distribution": -1.0, "neutral": 0.0}[sig.whale_bias])
+            votes.append({"accumulation": 1.0, "distribution": -1.0, "neutral": 0.0}.get(sig.whale_bias, 0.0))
             weights.append(0.9 * conf)
             labels.append("of_whale_bias")
         if sig.funding_rate is not None:

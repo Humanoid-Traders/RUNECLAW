@@ -19,7 +19,7 @@ from telegram.ext import (
     ContextTypes,
 )
 
-from bot.config import CONFIG
+from bot.config import CONFIG, _env_bool
 from bot.core.engine import RuneClawEngine
 from bot.skills.skill_registry import SkillRegistry, build_default_registry
 from bot.utils.logger import audit, system_log
@@ -278,10 +278,18 @@ class TelegramHandler:
 
     def _check_auth(self, update: Update) -> bool:
         """H3: Verify the message comes from an authorized chat.
-        If TELEGRAM_CHAT_ID is not set, allow all (open mode for development)."""
+        Fail-closed: if TELEGRAM_CHAT_ID is not configured AND
+        TELEGRAM_ALLOW_OPEN is not explicitly set, reject all.
+        This prevents accidental open-access in production."""
         allowed = CONFIG.telegram.chat_id
         if not allowed:
-            return True  # no restriction configured
+            # F-02 fix: fail-closed unless explicitly opted in to open mode
+            if _env_bool("TELEGRAM_ALLOW_OPEN", False):
+                return True  # explicit open-mode opt-in for development
+            audit(system_log,
+                  "Telegram command rejected: no TELEGRAM_CHAT_ID configured and TELEGRAM_ALLOW_OPEN is not set",
+                  action="auth_check", result="REJECTED")
+            return False
         chat_id = str(update.effective_chat.id) if update.effective_chat else ""
         # Support comma-separated list of allowed chat IDs
         allowed_ids = {cid.strip() for cid in allowed.split(",") if cid.strip()}

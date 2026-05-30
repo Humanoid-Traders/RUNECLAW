@@ -31,7 +31,7 @@ The system operates in **paper trading mode by default** and is designed for the
 
 ## Quick Links
 
-- **GitHub:** [RUNECLAW-AI-TRADER](https://github.com/Humanoid-Traders/RUNECLAW-AI-TRADER)
+- **GitHub:** [RUNECLAW](https://github.com/Humanoid-Traders/RUNECLAW)
 - **Telegram:** [Join Community](https://t.me/+VRNgsmkR5pszZTdk)
 - **Hackathon:** Bitget GetClaw 2025
 - **License:** MIT

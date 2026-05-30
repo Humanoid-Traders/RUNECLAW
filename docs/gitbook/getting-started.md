@@ -13,8 +13,8 @@ This guide walks you through setting up RUNECLAW from scratch.
 
 ```bash
 # Clone the repository
-git clone https://github.com/Humanoid-Traders/RUNECLAW-AI-TRADER.git
-cd RUNECLAW-AI-TRADER
+git clone https://github.com/Humanoid-Traders/RUNECLAW.git
+cd RUNECLAW
 
 # Create and activate a virtual environment
 python -m venv .venv

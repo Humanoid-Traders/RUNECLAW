@@ -96,6 +96,12 @@ class BacktestEngine:
 
             # --- Record equity curve ---
             if i % scan_interval == 0 or i == len(bars) - 1:
+                # F-05 fix: mark open positions to market before snapshot
+                # so equity curve reflects unrealized PnL and drawdown is accurate
+                self.portfolio.mark_to_market({
+                    p.asset: current_bar.close
+                    for p in self.portfolio._positions.values()
+                })
                 snap = self.portfolio.snapshot()
                 peak = self.portfolio._peak_equity
                 dd = ((peak - snap.equity_usd) / peak * 100) if peak > 0 else 0

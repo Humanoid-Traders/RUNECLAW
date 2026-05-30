@@ -270,7 +270,20 @@ class RuneClawEngine:
         # Paper trade execution
         self._transition(AgentState.EXECUTING, f"executing paper trade {trade_id}")
         size_usd = recheck.position_size_usd
-        trade = self.portfolio.open_position(idea, size_usd)
+        try:
+            trade = self.portfolio.open_position(idea, size_usd)
+        except (ValueError, Exception) as exc:
+            # F-04 fix: never silently lose a confirmed trade.
+            # Log the failure as an audited rejection and return a clear message.
+            audit(
+                trade_log,
+                f"Confirmed trade failed to execute: {exc}",
+                action="execute",
+                result="FAILED",
+                data={"trade_id": trade_id, "size_usd": size_usd, "error": str(exc)},
+            )
+            self._transition(AgentState.IDLE, f"execution failed for {trade_id}")
+            return f"Trade {trade_id} confirmed but execution failed: {exc}"
 
         audit(
             trade_log,

@@ -56,3 +56,4 @@ docker-compose.override.yml
 # -- Project-specific --
 *.db
 *.sqlite3
+data/

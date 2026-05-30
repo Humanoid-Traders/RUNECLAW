@@ -73,8 +73,8 @@ Numbered list with one sentence per stage:
 
 ```bash
 # Clone
-git clone https://github.com/Humanoid-Traders/RUNECLAW-AI-TRADER.git
-cd RUNECLAW-AI-TRADER
+git clone https://github.com/Humanoid-Traders/RUNECLAW.git
+cd RUNECLAW
 
 # Setup
 python -m venv .venv && source .venv/bin/activate
@@ -323,8 +323,8 @@ RUNECLAW
    - OpenAI API key (optional — rule-based fallback if absent)
 2. **Installation**
    ```bash
-   git clone https://github.com/Humanoid-Traders/RUNECLAW-AI-TRADER.git
-   cd RUNECLAW-AI-TRADER
+   git clone https://github.com/Humanoid-Traders/RUNECLAW.git
+   cd RUNECLAW
    python -m venv .venv
    source .venv/bin/activate   # Linux/macOS
    .venv\Scripts\activate      # Windows
@@ -1073,7 +1073,7 @@ RUNECLAW
 2. **What We Built**
    - Autonomous trading agent runtime with structured perception → decision → risk → execution → audit pipeline
    - Simulation-first design (paper trading default)
-   - Fail-closed risk engine (7 pre-trade checks, circuit breaker)
+   - Fail-closed risk engine (16 pre-trade checks, circuit breaker)
    - Human-in-the-loop confirmation (Telegram inline keyboards)
    - Explainable AI (every trade idea includes reasoning, indicators, confidence)
    - Full audit trail (structured JSONL logging)
@@ -1103,7 +1103,7 @@ RUNECLAW
    - Check audit logs: `logs/*.jsonl`
    - Read the agent prompt: `bot/prompts/system_prompt.md`
 7. **Links**
-   - GitHub: https://github.com/Humanoid-Traders/RUNECLAW-AI-TRADER
+   - GitHub: https://github.com/Humanoid-Traders/RUNECLAW
    - Documentation: https://humanoid-traders-1.gitbook.io/humanoid-traders-ai
    - Telegram: https://t.me/+VRNgsmkR5pszZTdk
 
