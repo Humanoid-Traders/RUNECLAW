@@ -15,7 +15,7 @@ The system operates in **paper trading mode by default** and is designed for the
 ## Core Principles
 
 1. **Simulation-first.** Live trading is disabled unless explicitly enabled with two environment flags.
-2. **Fail-closed risk.** Every trade must pass all 16 pre-trade checks. One failure means rejection.
+2. **Fail-closed risk.** Every trade must pass all 18 pre-trade checks. One failure means rejection.
 3. **Human-in-the-loop.** No trade executes without explicit confirmation via Telegram inline keyboard.
 4. **Full auditability.** Every decision is logged as structured JSON for post-mortem review.
 
@@ -32,6 +32,10 @@ The system operates in **paper trading mode by default** and is designed for the
 ## Quick Links
 
 - **GitHub:** [RUNECLAW](https://github.com/Humanoid-Traders/RUNECLAW)
+- **Website:** [lgl3crf9.mule.page](https://lgl3crf9.mule.page/)
 - **Telegram:** [Join Community](https://t.me/+VRNgsmkR5pszZTdk)
+- **X / Twitter:** [@BaurPatric70363](https://x.com/BaurPatric70363)
 - **Hackathon:** Bitget GetClaw 2025
 - **License:** MIT
+
+> **Disclaimer:** RUNECLAW is an educational hackathon prototype. It is not production-ready and should not be used with real funds without extensive additional safeguards, independent audits, and regulatory review. Backtest results use synthetic data and do not predict future performance. This is not financial advice.

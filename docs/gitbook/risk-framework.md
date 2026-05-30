@@ -19,13 +19,13 @@ This means the system may miss opportunities. That is an acceptable trade-off. M
 Risk is enforced at multiple layers:
 
 1. **Analyzer level** -- Ideas with blended confidence below 0.60 are never generated.
-2. **Risk engine level** -- 16 independent checks must all pass.
+2. **Risk engine level** -- 18 independent checks must all pass.
 3. **Confirmation level** -- Risk is re-evaluated when the human confirms (the market may have moved).
 4. **Configuration level** -- `SIMULATION_MODE=true` and `LIVE_TRADING_ENABLED=false` are both set by default. Live trading requires both flags to be flipped.
 
-## The Sixteen Risk Checks
+## The Eighteen Risk Checks
 
-Every `TradeIdea` must pass all sixteen checks before it enters the pending queue.
+Every `TradeIdea` must pass all eighteen checks before it enters the pending queue.
 
 ### 1. Circuit Breaker
 
@@ -161,6 +161,26 @@ Guards against data errors producing invalid trade parameters.
 
 Rejects trades during extreme volatility conditions where stops are unreliable.
 
+### 17. Liquidity Guard
+
+**Check:** Is there sufficient order book depth to fill the proposed position without excessive slippage?
+
+This check runs on live order-flow data when available (fail-open -- skipped if order book data is unavailable). It examines cumulative depth within a configurable price band and rejects trades where the order book cannot absorb the proposed position size.
+
+### 18. Macro Event Gate
+
+**Check:** Is a major macroeconomic event imminent or in progress?
+
+| State | Window | Effect |
+|-------|--------|--------|
+| `NORMAL` | >24h from any event | No restriction |
+| `PRE_EVENT_CAUTION` | Within 24h before event | Logged warning (informational) |
+| `EVENT_LOCKDOWN` | 30min before to 30min after | **Trade rejected** |
+| `POST_EVENT_VOLATILITY` | 30min to 4h after | Logged warning (informational) |
+| `BLACKOUT` | Calendar evaluation failed | **Trade rejected** (fail-closed) |
+
+Tracked events: FOMC decisions, CPI, Core PCE, NFP, PPI, GDP, ISM PMI, Retail Sales, Jobless Claims, Fed speeches. The macro calendar uses a fail-closed design -- if the calendar cannot be evaluated, the state defaults to `BLACKOUT` and all trades are blocked.
+
 ## Circuit Breaker
 
 The circuit breaker is a safety mechanism that halts all trading when risk limits are breached.
@@ -181,7 +201,7 @@ The circuit breaker is a safety mechanism that halts all trading when risk limit
 
 ## Re-Check on Confirmation
 
-When a human taps "Confirm" on a pending trade idea, the risk engine runs all 16 checks again against the current portfolio state. This catches scenarios where:
+When a human taps "Confirm" on a pending trade idea, the risk engine runs all 18 checks again against the current portfolio state. This catches scenarios where:
 
 - Another trade was confirmed between idea generation and confirmation.
 - Market movement changed the risk profile.

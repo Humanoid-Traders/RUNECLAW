@@ -42,7 +42,7 @@ Open `.env` in your editor and set the required values:
 | `BITGET_API_KEY` | For live data | Bitget API key |
 | `BITGET_API_SECRET` | For live data | Bitget API secret |
 | `BITGET_PASSPHRASE` | For live data | Bitget passphrase |
-| `LLM_API_KEY` | Optional | OpenAI-compatible API key |
+| `LLM_API_KEY` | Optional | OpenAI-compatible API key. ~$0.01-0.03 per analysis call. Leave blank for free rule-based fallback. |
 | `LLM_MODEL` | Optional | Model name (default: `gpt-4o`) |
 
 All other settings have safe defaults. See `.env.example` for the full list.

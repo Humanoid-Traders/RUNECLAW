@@ -11,6 +11,11 @@ RUNECLAW uses a modular skill system. Every capability is registered as a self-c
 | `/portfolio` | `get_portfolio` | Display paper portfolio summary |
 | `/trade` | -- | View pending trade ideas with confirm/reject buttons |
 | `/risk` | `check_risk` | Show risk metrics and circuit breaker status |
+| `/rejected` | -- | Show recently rejected trade ideas with failure reasons |
+| `/backtest` | -- | Run backtest with synthetic data |
+| `/macro` | `macro_calendar` | Show macro event calendar and current risk state |
+| `/halt` | -- | Emergency kill-switch (trip breaker, cancel all) |
+| `/reset` | -- | Reset circuit breaker (requires authorization) |
 | `/status` | -- | Bot mode, engine state, equity snapshot |
 | `/help` | -- | List all available commands |
 
@@ -141,5 +146,6 @@ Built-in skills are registered automatically via `build_default_registry()`:
 | `execute_paper_trade` | `ExecutePaperTradeSkill` |
 | `get_portfolio` | `GetPortfolioSkill` |
 | `explain_trade` | `ExplainTradeSkill` |
+| `macro_calendar` | `MacroCalendarSkill` |
 
 Custom skills can be added by subclassing `BaseSkill` and calling `registry.register(MySkill())`.
