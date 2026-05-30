@@ -29,7 +29,7 @@ The agent operates as a 9-state finite state machine with complete audit logging
 
 Key capabilities: ADX-14 regime detection (trend/range/chop) with adaptive strategy parameters, trailing stops activated at 1R profit, per-symbol and portfolio-level exposure limits, circuit breaker with cooldown enforcement, and a backtesting engine with intrabar SL/TP simulation and realistic commission/slippage modeling.
 
-Validated across 180 backtest runs (synthetic data — 3 volatility regimes, 3 trend biases, 20 seeds), producing 855 trades with worst-case drawdown of 2.87% and zero crashed runs. 218+ unit tests cover risk engine, portfolio, analyzer, backtest, smart money, multi-timeframe, strategy modes, explainability, learning system, token optimizer, FSM, and integration scenarios.
+Validated across 250 backtest runs (synthetic data — 5 market regimes, 10 symbols, 5 seeds), producing 464 trades with worst-case drawdown of 3.87% and zero crashed runs. 218+ unit tests cover risk engine, portfolio, analyzer, backtest, smart money, multi-timeframe, strategy modes, explainability, learning system, token optimizer, FSM, and integration scenarios.
 
 ---
 
@@ -104,12 +104,12 @@ Validated across 180 backtest runs (synthetic data — 3 volatility regimes, 3 t
 | Fail-closed design | Any check failure or exception returns REJECTED | Verified |
 | 97+ tests passing | `pytest tests/ -v` -- 315+ green (97 original + audit/learning/optimizer additions) | Verified |
 | 9-state FSM | `bot/utils/models.py` AgentState enum, `bot/core/engine.py` transitions | Verified |
-| Trailing stops work | Backtest (synthetic data): 416/855 exits via trailing stop, net-positive aggregate PnL. Note: trailing exits are structurally profitable (activate at +1R, trail 1.5 ATR) — this is by construction, not evidence of predictive edge | Verified |
+| Trailing stops work | Backtest (synthetic data): 416/464 exits via trailing stop, net-positive aggregate PnL. Note: trailing exits are structurally profitable (activate at +1R, trail 1.5 ATR) — this is by construction, not evidence of predictive edge | Verified |
 | Regime detection | `bot/core/analyzer.py` _detect_regime + _score_confluence | Verified |
 | Thread safety | RLock on portfolio, risk engine, scanner; no await inside locks, safe for asyncio model | Verified |
 | Simulation-first | `config.py` simulation_mode=True, live_trading_enabled=False by default | Verified |
 | Human confirmation | Telegram inline keyboard required before execution | Verified |
-| Backtest validation | 180 runs (synthetic data), 0 crashes, worst DD 2.87%, worst PnL -2.01% | Verified |
+| Backtest validation | 250 runs (synthetic data, 5 regimes), 0 crashes, worst DD 3.87%, worst PnL -2.06% | Verified |
 | Audit logging | `bot/utils/logger.py` structured JSON with timestamps | Verified |
 | No deprecated APIs | All datetime.utcnow() migrated to datetime.now(UTC) | Verified |
 

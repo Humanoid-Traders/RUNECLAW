@@ -32,11 +32,11 @@ One failure = rejected. No exceptions.
 
 ### Tweet 3 -- Backtest Results
 
-180-run stress test across 3 volatility regimes and 3 trend biases:
+250-run stress test across 5 market regimes, 10 symbols, 5 seeds:
 
-- 855 trades analyzed
+- 464 trades analyzed
 - 50.5% win rate
-- Worst drawdown: 2.87%
+- Worst drawdown: 3.87%
 - Zero crashed runs
 - Trailing stops: 48.7% of all exits, net-positive aggregate PnL
 
@@ -100,7 +100,7 @@ RUNECLAW scans markets for volume anomalies and momentum shifts, generates expla
 - Thread-safe across all shared state with RLock
 
 **Backtest validation:**
-180 runs across 3 volatility regimes, 3 trend biases, 20 seeds. 855 total trades. Worst drawdown 2.87%. Zero crashed runs. Trailing stops lock in profit by construction (activate at +1R, trail 1.5 ATR) and accounted for 48.7% of exits with net-positive aggregate PnL.
+250 runs across 5 market regimes, 10 symbols, 5 seeds. 464 total trades. Worst drawdown 3.87%. Zero crashed runs. Trailing stops lock in profit by construction (activate at +1R, trail 1.5 ATR).
 
 **Safety design:**
 - Paper trading by default, live requires dual flag opt-in
