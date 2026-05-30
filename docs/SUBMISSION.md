@@ -29,7 +29,7 @@ The agent operates as a 9-state finite state machine with complete audit logging
 
 Key capabilities: ADX-14 regime detection (trend/range/chop) with adaptive strategy parameters, trailing stops activated at 1R profit, per-symbol and portfolio-level exposure limits, circuit breaker with cooldown enforcement, and a backtesting engine with intrabar SL/TP simulation and realistic commission/slippage modeling.
 
-Validated across 180 backtest runs (synthetic data — 3 volatility regimes, 3 trend biases, 20 seeds), producing 855 trades with worst-case drawdown of 2.87% and zero crashed runs. 315+ unit tests cover risk engine, portfolio, analyzer, backtest, learning system, token optimizer, FSM, and integration scenarios.
+Validated across 180 backtest runs (synthetic data — 3 volatility regimes, 3 trend biases, 20 seeds), producing 855 trades with worst-case drawdown of 2.87% and zero crashed runs. 218+ unit tests cover risk engine, portfolio, analyzer, backtest, smart money, multi-timeframe, strategy modes, explainability, learning system, token optimizer, FSM, and integration scenarios.
 
 ---
 
@@ -46,9 +46,13 @@ Validated across 180 backtest runs (synthetic data — 3 volatility regimes, 3 t
 - **Human-in-the-Loop** -- every trade requires Telegram confirmation with inline approve/reject keyboard
 - **Simulation-First** -- paper trading by default ($10K virtual balance), live trading requires dual safety flag opt-in
 - **Full Audit Trail** -- structured JSON logging of every decision, rejection, and execution with timestamps
-- **315+ Unit Tests** -- risk engine, portfolio, analyzer, backtest, learning system (8 modules), token optimizer (4 layers), FSM, integration, edge cases, audit fix validation
+- **315+ Unit Tests** -- risk engine, portfolio, analyzer, backtest, learning system (8 modules), token optimizer (4 layers), smart money engine, multi-timeframe analysis, strategy modes, explainability engine, FSM, integration, edge cases, audit fix validation
 - **AI Learning System** -- 8 integrated modules: experience memory, reflection engine, strategy evaluator (S/A/B/C/D tiers), pattern learner, macro learner (FOMC/CPI/NFP/PCE tracking), model comparer, prompt optimizer, feedback collector; all governed by immutable safety policy with blocked-action lists
 - **LLM Token Optimizer** -- 4-layer cost reduction: semantic cache (TTL-bucketed), tiered pipeline (rules/mini/full), smart batching (5 symbols/call), adaptive frequency (skip LLM in quiet markets); up to 70% token savings
+- **Smart Money Engine** -- liquidation cascade detection (funding + OI + CVD divergence), funding rate squeeze (contrarian positioning), whale flow tracking (rolling buy/sell with stealth accumulation detection), composite scoring normalized [-1,1]
+- **Multi-Timeframe Analysis** -- HTF alignment (EMA20/50 across 1H/4H/1D), market structure (HH/HL/LH/LL), Break of Structure (BOS), Change of Character (CHoCH), swing detection
+- **Adaptive Strategy Modes** -- 5 modes (Trend Continuation, Breakout, Mean Reversion, Liquidity Sweep, Conservative) with per-mode SL/TP multipliers, confidence requirements, and confluence boosts
+- **Explainability Engine** -- structured reasoning chains, factor attribution with contribution percentages, compliance scoring (explainability + data sufficiency + risk documentation), MiCA-aligned audit trail
 - **Macro Event Calendar** -- hardcoded 2026 FOMC/CPI/NFP/PCE schedule with 5-state risk machine (NORMAL, PRE_EVENT_CAUTION, EVENT_LOCKDOWN, POST_EVENT_VOLATILITY, BLACKOUT)
 
 ---
@@ -59,8 +63,12 @@ Validated across 180 backtest runs (synthetic data — 3 volatility regimes, 3 t
 |---|---|
 | Architecture | 9-state FSM governing full trade lifecycle from scan to cooldown, with HALTED state for circuit-breaker events |
 | Market Scanner | Volume anomaly detection with 2x rolling average spike threshold, stale data eviction, thread-safe with RLock |
-| Analysis Engine | 10-voter confluence model (RSI, MACD, BB, Volume Spike, ADX, VWAP, OBV trend, candlestick pattern, Fibonacci zone) + LLM reasoning, SMA-50 trend alignment (+0.10/-0.15), volume confirmation (+/-0.05) |
+| Analysis Engine | 10-voter confluence model (RSI, MACD, BB, Volume Spike, ADX, VWAP, OBV trend, candlestick pattern, Fibonacci zone) + LLM reasoning + MTF alignment + smart money votes, SMA-50 trend alignment (+0.10/-0.15), volume confirmation (+/-0.05) |
 | Regime Detection | ADX-14 with directional movement index; TREND_UP/DOWN skip opposite-direction signals, RANGE/CHOP apply confidence penalty |
+| Smart Money | Liquidation cascade (funding + OI + CVD divergence), funding squeeze (contrarian), whale flow tracking, composite score (institutional 35% + contrarian 20% + whale 25% + cascade 20%) |
+| Multi-Timeframe | EMA20/50 alignment across 1H/4H/1D, swing detection, market structure (HH/HL/LH/LL), BOS/CHoCH detection |
+| Strategy Modes | 5 adaptive modes selected by regime + context: Trend Continuation, Breakout, Mean Reversion, Liquidity Sweep, Conservative |
+| Explainability | Reasoning chains, factor attribution, compliance scoring (MiCA-aligned), natural language narratives |
 | Risk Engine | 18 checks (17 fail-closed + 1 fail-open liquidity guard), all must pass; thread-safe with RLock; stats tracking for monitoring |
 | Trailing Stops | Track best_price per position, activate at 1R profit, trail at 1.5x ATR; trailing exits lock in ≥1 ATR profit by construction (structural, not a predictive edge) |
 | Circuit Breaker | Trips on 5% daily loss, 10% drawdown, or 5 consecutive losses; requires manual reset |

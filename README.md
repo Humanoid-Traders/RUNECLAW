@@ -119,6 +119,38 @@ A 4-layer optimization pipeline reduces LLM API costs by up to 70%:
 - Rule-based fallback when no LLM key is configured
 - Structured `TradeIdea` output with entry, SL, TP, confidence, reasoning
 
+### Smart Money Engine (NEW)
+- **Liquidation cascade detection** -- funding rate extremes + OI changes + CVD divergence signal crowded-trade liquidation risk
+- **Funding rate squeeze** -- contrarian positioning detector with rolling momentum tracking
+- **Whale flow tracking** -- rolling buy/sell history with stealth accumulation detection and consistency amplifier
+- **Composite scoring** -- weighted blend (institutional 35%, contrarian 20%, whale 25%, cascade 20%) normalized to [-1, 1]
+- Thread-safe rolling state with bounded memory
+
+### Multi-Timeframe Analysis (NEW)
+- **HTF trend alignment** across 1H/4H/1D using EMA20 vs EMA50
+- **Market structure detection** -- swing highs/lows, HH/HL (bullish), LH/LL (bearish)
+- **Break of Structure (BOS)** -- price beyond last swing point
+- **Change of Character (CHoCH)** -- structural reversal detection
+- Alignment scoring with conflicting timeframe penalty
+- Graceful fallback when HTF data unavailable
+
+### Adaptive Strategy Modes (NEW)
+- **5 strategy modes** selected based on regime + context:
+  - TREND_CONTINUATION: wide TP (R:R 2.0), HTF alignment required
+  - BREAKOUT: high confidence bar (0.65), requires BOS + volume
+  - MEAN_REVERSION: tight SL/TP, RSI/BB extremes, CVD divergence
+  - LIQUIDITY_SWEEP: highest confidence bar (0.68), cascade + whale confirmation
+  - CONSERVATIVE: default/uncertain, standard parameters
+- Per-mode SL/TP multipliers, minimum confidence, and confluence boosts
+- Mode selection is audited and explained
+
+### Explainability Engine (NEW)
+- **Structured reasoning chains** -- step-by-step logic from data collection to risk assessment
+- **Factor attribution** -- per-indicator contribution percentages with top bullish/bearish factors
+- **Compliance scoring** -- explainability, data sufficiency, risk documentation, audit trail
+- **Natural language narratives** -- one-line summary for Telegram, detailed multi-paragraph for audit
+- Regulatory-ready (MiCA-aligned) decision audit trail
+
 ### Risk Engine (Fail-Closed)
 - **18 independent pre-trade checks** -- 17 fail-closed checks plus a fail-open liquidity guard (no book data = pass)
 - Circuit breaker halts trading on daily loss or drawdown breach
@@ -218,6 +250,11 @@ runeclaw/
 |   |   |-- market_scanner.py   # Bitget market scanner, volume spike detection
 |   |   |-- analyzer.py         # AI + technical analysis, 10+ voter confluence
 |   |   |-- order_flow.py       # Exchange microstructure: CVD, book imbalance, whales
+|   |   |-- smart_money.py      # Liquidation cascade, funding squeeze, whale tracking
+|   |   |-- multi_timeframe.py  # HTF alignment, market structure, BOS/CHoCH
+|   |   |-- strategy_modes.py   # 5 adaptive strategy modes with per-mode configs
+|   |   |-- explainability.py   # Reasoning chains, factor attribution, compliance
+|   |   |-- ta_utils.py         # Shared TA utilities (EMA, ADX, Regime)
 |   |   |-- metrics.py          # Sharpe/Sortino/Calmar from per-trade returns
 |   |   |-- llm_cache.py        # Semantic LLM response cache with TTL
 |   |   |-- token_optimizer.py  # Tiered pipeline, smart batching, adaptive frequency
@@ -256,7 +293,7 @@ runeclaw/
 |   |   |-- skill_definitions.yaml
 |   |-- requirements.txt
 |-- tests/
-|   |-- test_core.py            # 315+ pytest tests
+|   |-- test_core.py            # 218+ pytest tests
 |   |-- test_token_optimizer.py # 36 token optimizer tests
 |-- docs/
 |   |-- gitbook/                # Full GitBook documentation
