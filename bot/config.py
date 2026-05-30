@@ -108,6 +108,7 @@ class AppConfig:
 
     # -- Paper trading --
     paper_balance_usd: float = _env_float("PAPER_BALANCE_USD", 10_000.0)
+    portfolio_state_file: str = _env("PORTFOLIO_STATE_FILE", "data/portfolio_state.json")
 
     # -- Scan settings --
     scan_interval_seconds: int = int(_env_float("SCAN_INTERVAL", 60))

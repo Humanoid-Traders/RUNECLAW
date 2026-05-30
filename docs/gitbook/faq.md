@@ -89,7 +89,7 @@ $10,000. Configurable via the `PAPER_BALANCE_USD` environment variable.
 
 **Is portfolio state persisted?**
 
-No. The current implementation uses in-memory storage. Portfolio state is lost when the bot restarts. A production version would use a database.
+Yes. Portfolio state is automatically saved to `data/portfolio_state.json` after every trade execution. On restart, the tracker loads the last saved state. If the file is missing or corrupted, it starts fresh with the default balance.
 
 **Does it simulate fees or slippage?**
 

@@ -4,7 +4,7 @@ RUNECLAW ships with a fully functional paper trading system. All trades execute 
 
 ## How It Works
 
-The `PortfolioTracker` maintains an in-memory ledger that tracks:
+The `PortfolioTracker` maintains a ledger that tracks:
 
 - **Cash balance** -- starts at $10,000 (configurable via `PAPER_BALANCE_USD`)
 - **Open positions** -- active trades with entry price, quantity, SL, and TP
@@ -16,7 +16,7 @@ The `PortfolioTracker` maintains an in-memory ledger that tracks:
 
 When a trade idea is confirmed:
 
-1. The risk engine re-checks all 16 gates.
+1. The risk engine re-checks all 18 gates.
 2. Position size is calculated: `equity * MAX_POSITION_PCT / 100`.
 3. Quantity is derived: `position_usd / entry_price`.
 4. The position is recorded with entry price, direction, SL, and TP.
@@ -75,11 +75,21 @@ The `/portfolio` command returns a `PortfolioState` object:
 | `MAX_POSITION_PCT` | 2.0 | Max position size as % of equity |
 | `MAX_OPEN_POSITIONS` | 5 | Maximum concurrent positions |
 
+## Persistence
+
+Portfolio state is automatically saved to `data/portfolio_state.json` after every trade execution (open and close). On startup, the tracker loads the last saved state if the file exists. This means portfolio balance, open positions, trade history, and drawdown tracking survive restarts.
+
+- **Atomic writes:** State is written to a temp file and renamed, preventing corruption from crashes mid-write.
+- **Graceful recovery:** If the state file is missing or corrupted, the tracker starts fresh with the default balance.
+- **Configurable path:** Set `PORTFOLIO_STATE_FILE` in `.env` to change the default location.
+- **Thread-safe:** All persistence operations run within the existing RLock.
+
+---
+
 ## Limitations
 
 The paper trading system is designed for demonstration purposes:
 
-- **In-memory only.** Portfolio state is lost on restart. A production version would persist to a database.
 - **No slippage model.** Trades execute at the exact signal price. Real markets have slippage.
 - **No fees.** Trading fees are not deducted. Bitget's fee structure would need to be integrated for accurate backtesting.
 - **No partial fills.** All orders are fully filled instantly.

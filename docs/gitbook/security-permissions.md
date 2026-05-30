@@ -85,10 +85,10 @@ Authorization applies to both slash commands and inline keyboard callbacks (conf
 
 | Data | Storage | Retention |
 |---|---|---|
-| Portfolio state | In-memory | Lost on restart (no database) |
+| Portfolio state | JSON file (`data/portfolio_state.json`) | Persistent, auto-saved |
 | Audit logs | `logs/*.jsonl` files | Persistent on disk |
-| Risk engine state | In-memory + file (`risk_state.json`) | Persisted for circuit breaker |
-| Trade history | In-memory | Lost on restart |
+| Risk engine state | JSON file (`data/risk_state.json`) | Persisted for circuit breaker |
+| Trade history | JSON file (within portfolio state) | Persistent |
 
 ### What is never sent externally
 
@@ -172,8 +172,7 @@ Before deploying RUNECLAW (even in paper mode):
 
 | Limitation | Impact | Mitigation |
 |---|---|---|
-| No encryption at rest | Audit logs are plaintext JSON | Deploy on encrypted volumes |
-| No database | Portfolio lost on restart | Planned: SQLite or Redis persistence |
+| No encryption at rest | Audit logs and portfolio state are plaintext JSON | Deploy on encrypted volumes |
 | Single-operator | No multi-user access control | `TELEGRAM_CHAT_ID` restricts to one operator |
 | No TLS pinning | Standard HTTPS to Bitget/Telegram/OpenAI | Relies on system certificate store |
 | No key vault | Credentials in `.env` file | Use secrets manager in production |

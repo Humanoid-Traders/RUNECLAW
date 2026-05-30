@@ -19,6 +19,7 @@
 
 <p align="center">
   <a href="https://github.com/Humanoid-Traders/RUNECLAW">GitHub</a> &middot;
+  <a href="https://lgl3crf9.mule.page/">Website</a> &middot;
   <a href="https://humanoid-traders-1.gitbook.io/humanoid-traders-ai">Documentation</a> &middot;
   <a href="https://t.me/+VRNgsmkR5pszZTdk">Telegram</a> &middot;
   <a href="https://x.com/BaurPatric70363">X / Twitter</a>
@@ -38,7 +39,7 @@
 
 **RUNECLAW** is an AI trading command system built by **Humanoid Traders** for the Bitget GetClaw Hackathon. It merges multi-timeframe analysis, confluence scoring, regime detection, order-flow microstructure, and risk-first logic into a disciplined framework -- all controllable through a Telegram bot interface.
 
-The system operates in **simulation-first mode by default**. Every trade idea must pass sixteen independent risk checks and receive explicit human confirmation before execution. An additional liquidity guard runs on live order-flow data when available. No exceptions.
+The system operates in **simulation-first mode by default**. Every trade idea must pass eighteen independent risk checks and receive explicit human confirmation before execution. An additional liquidity guard runs on live order-flow data when available. No exceptions.
 
 **Key philosophy:** The bot suggests. The human decides. The risk engine enforces.
 

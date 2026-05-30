@@ -10,9 +10,12 @@ Upgraded with:
 
 from __future__ import annotations
 
+import json
+import os
 import threading
 from datetime import UTC, date, datetime
-from typing import Optional, Callable
+from pathlib import Path
+from typing import Any, Optional, Callable
 
 from bot.config import CONFIG
 from bot.utils.logger import audit, trade_log
@@ -29,6 +32,7 @@ class PortfolioTracker:
         self,
         initial_balance: Optional[float] = None,
         on_trade_close: Optional[Callable[[float], None]] = None,
+        state_file: Optional[str] = None,
     ) -> None:
         self.balance = initial_balance or CONFIG.paper_balance_usd
         self._initial_balance = self.balance
@@ -45,13 +49,23 @@ class PortfolioTracker:
         self._trailing_state: dict[str, dict] = {}
         # Mark-to-market: latest prices for unrealized PnL
         self._last_prices: dict[str, float] = {}  # asset -> price
+        # Persistence: only auto-load if no explicit initial_balance was given
+        # (explicit balance = test/reset mode; default = production mode)
+        self._state_file: str = state_file or CONFIG.portfolio_state_file
+        self._persistence_active: bool = False  # enabled after successful load or explicit save
+        if initial_balance is None:
+            self._load_state_on_init()
+        if state_file is not None:
+            self._persistence_active = True
 
     # -- Public API --
 
     def open_position(self, idea: TradeIdea, size_usd: float) -> TradeExecution:
         """Open a new paper position from an approved TradeIdea."""
         with self._lock:
-            return self._open_position_locked(idea, size_usd)
+            result = self._open_position_locked(idea, size_usd)
+            self._auto_save()
+            return result
 
     def _open_position_locked(self, idea: TradeIdea, size_usd: float) -> TradeExecution:
         # Guard: prevent division by zero or negative entry
@@ -105,7 +119,10 @@ class PortfolioTracker:
     def close_position(self, trade_id: str, exit_price: float) -> Optional[TradeExecution]:
         """Close an existing position at the given price."""
         with self._lock:
-            return self._close_position_locked(trade_id, exit_price)
+            result = self._close_position_locked(trade_id, exit_price)
+            if result is not None:
+                self._auto_save()
+            return result
 
     def _close_position_locked(self, trade_id: str, exit_price: float) -> Optional[TradeExecution]:
         trade = self._positions.pop(trade_id, None)
@@ -255,3 +272,107 @@ class PortfolioTracker:
         equity = self.balance + open_val
         if equity > self._peak_equity:
             self._peak_equity = equity
+
+    # -- Persistence --
+
+    def save_state(self, path: Optional[str] = None) -> None:
+        """Serialize full portfolio state to a JSON file (thread-safe).
+        Also enables auto-save for subsequent trade executions."""
+        with self._lock:
+            self._save_state_locked(path)
+            self._persistence_active = True
+
+    def _save_state_locked(self, path: Optional[str] = None) -> None:
+        target = path or self._state_file
+        state: dict[str, Any] = {
+            "balance": self.balance,
+            "initial_balance": self._initial_balance,
+            "peak_equity": self._peak_equity,
+            "positions": {
+                tid: t.model_dump(mode="json") for tid, t in self._positions.items()
+            },
+            "history": [t.model_dump(mode="json") for t in self._history],
+            "daily_pnl": dict(self._daily_pnl),
+            "trailing_state": dict(self._trailing_state),
+            "last_prices": dict(self._last_prices),
+            "saved_at": datetime.now(UTC).isoformat(),
+        }
+        try:
+            target_path = Path(target)
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = str(target_path) + ".tmp"
+            with open(tmp, "w") as f:
+                json.dump(state, f, indent=2, default=str)
+            os.replace(tmp, str(target_path))
+        except Exception as exc:
+            audit(trade_log, f"Failed to save portfolio state: {exc}",
+                  action="save_state", result="ERROR")
+
+    def load_state(self, path: Optional[str] = None) -> bool:
+        """Deserialize portfolio state from a JSON file (thread-safe).
+        Returns True if state was loaded, False if starting fresh."""
+        with self._lock:
+            return self._load_state_locked(path)
+
+    def _load_state_locked(self, path: Optional[str] = None) -> bool:
+        target = path or self._state_file
+        target_path = Path(target)
+        if not target_path.exists():
+            return False
+        try:
+            with open(target_path, "r") as f:
+                data = json.load(f)
+            self.balance = float(data["balance"])
+            self._initial_balance = float(data.get("initial_balance", self.balance))
+            self._peak_equity = float(data.get("peak_equity", self.balance))
+            # Restore open positions
+            self._positions = {}
+            for tid, tdata in data.get("positions", {}).items():
+                self._positions[tid] = TradeExecution.model_validate(tdata)
+            # Restore trade history
+            self._history = [
+                TradeExecution.model_validate(t) for t in data.get("history", [])
+            ]
+            # Restore daily PnL
+            self._daily_pnl = {
+                k: float(v) for k, v in data.get("daily_pnl", {}).items()
+            }
+            # Restore trailing state
+            self._trailing_state = data.get("trailing_state", {})
+            # Restore last prices
+            self._last_prices = {
+                k: float(v) for k, v in data.get("last_prices", {}).items()
+            }
+            audit(trade_log, f"Loaded portfolio state from {target}",
+                  action="load_state", result="OK",
+                  data={"balance": self.balance,
+                        "open_positions": len(self._positions),
+                        "history_count": len(self._history)})
+            return True
+        except Exception as exc:
+            audit(trade_log,
+                  f"Corrupted state file {target}, starting fresh: {exc}",
+                  action="load_state", result="FRESH_START")
+            return False
+
+    def _auto_save(self) -> None:
+        """Save state after trade execution. Called within the lock.
+        Only active if state was loaded on init or persistence was explicitly enabled."""
+        if not self._persistence_active:
+            return
+        try:
+            self._save_state_locked()
+        except Exception as exc:
+            audit(trade_log, f"Auto-save failed: {exc}",
+                  action="auto_save", result="ERROR")
+
+    def _load_state_on_init(self) -> None:
+        """Attempt to load persisted state on construction."""
+        target_path = Path(self._state_file)
+        if target_path.exists():
+            loaded = self._load_state_locked()
+            if loaded:
+                self._persistence_active = True
+                audit(trade_log,
+                      "Portfolio state restored from disk",
+                      action="init", result="RESTORED")
