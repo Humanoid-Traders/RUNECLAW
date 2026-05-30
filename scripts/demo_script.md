@@ -40,7 +40,7 @@ Pause. Let it land.
 
 4. **Tap Confirm.** Show the execution message.
 
-> "The risk engine re-checks everything at confirmation time. If the market moved, it can still reject."
+> "The risk engine re-checks everything at confirmation time. Portfolio state, loss limits, and data staleness are re-validated. Price drift is bounded by the 5-minute TTL."
 
 5. **Send `/portfolio`** -- Show the updated portfolio.
 
@@ -48,7 +48,7 @@ Pause. Let it land.
 
 6. **Send `/risk`** -- Show risk dashboard.
 
-> "Sixteen independent risk checks. Circuit breaker auto-halts on loss limits. No overrides."
+> "Eighteen independent risk checks. Circuit breaker auto-halts on loss limits. No overrides."
 
 ---
 
@@ -56,7 +56,7 @@ Pause. Let it land.
 
 > "Three things make RUNECLAW different:"
 
-1. **"Fail-closed risk engine."** Every trade passes sixteen checks. One failure kills the trade. The circuit breaker cannot be bypassed.
+1. **"Fail-closed risk engine."** Every trade passes eighteen checks. One failure kills the trade. The circuit breaker cannot be bypassed.
 
 2. **"Human-in-the-loop."** AI suggests, human decides. Re-check on confirmation catches market drift.
 

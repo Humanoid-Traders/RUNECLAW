@@ -38,7 +38,7 @@ TYPICAL BOT              RUNECLAW
 ─────────────            ─────────────
 Signal → Execute         Signal → Analyze → Risk Gate → Human Confirm → Execute
 No explanation           Full reasoning chain
-No risk limit            16 fail-closed checks
+No risk limit            18 risk checks
 No audit trail           Structured JSON logging
 Black box                Every decision traceable
 ```
@@ -280,12 +280,12 @@ Prepare these before the demo. If anything fails live, show these as evidence.
 | Artifact | File | Purpose |
 |----------|------|---------|
 | Trade idea JSON | `demo/sample_output.json` | Shows structured AI output with reasoning |
-| Risk check JSON | `demo/sample_risk_check.json` | Shows all 16 checks passed with values |
+| Risk check JSON | `demo/sample_risk_check.json` | Shows all 18 checks passed with values |
 | Portfolio state | `demo/sample_portfolio.json` | Shows positions, PnL, trade history |
 | Trade audit log | `logs/trade.jsonl` | Shows decision chain for a single trade |
 | Risk audit log | `logs/risk.jsonl` | Shows circuit breaker logic |
 | System prompt | `bot/prompts/system_prompt.md` | Shows agent identity and 5 laws |
-| Risk engine source | `bot/risk/risk_engine.py` | 116 lines — all 16 checks visible |
+| Risk engine source | `bot/risk/risk_engine.py` | 116 lines — all 18 checks visible |
 | Config defaults | `bot/config.py` | Shows SIMULATION_MODE=True default |
 
 ---
@@ -308,16 +308,16 @@ If Bitget API is unreachable:
 
 If Python environment fails entirely:
 - Open `demo/sample_output.json` → show the trade idea structure
-- Open `demo/sample_risk_check.json` → show the 16 checks
+- Open `demo/sample_risk_check.json` → show the 18 checks
 - Open `demo/sample_portfolio.json` → show portfolio with positions and history
 - Walk through the JSON fields as if the system produced them live
-- Show `bot/risk/risk_engine.py` source — 116 lines, all 16 checks visible on one screen
+- Show `bot/risk/risk_engine.py` source — 116 lines, all 18 checks visible on one screen
 
 ## Tier 3: Code Walkthrough
 
 If nothing runs:
 - Open `bot/core/engine.py` → show the pipeline: scan → analyze → risk → confirm → execute
-- Open `bot/risk/risk_engine.py` → show the 16 checks
+- Open `bot/risk/risk_engine.py` → show the 18 checks
 - Open `bot/utils/logger.py` → show the audit function
 - Open `bot/config.py` → show SIMULATION_MODE=True, LIVE_TRADING_ENABLED=False
 - This proves the architecture is real and the code is production-quality
@@ -411,7 +411,7 @@ These words signal toy. Say "system," "platform," or "runtime." The code is real
 | Boot | 0:30 | 0:45 | 15s | Start CLI, show prompt |
 | Perception | 0:45 | 1:00 | 15s | scan_market |
 | Decision | 1:00 | 1:25 | 25s | analyze_asset BTC |
-| Risk Gate | 1:25 | 1:50 | 25s | check_risk + 16 checks + execute |
+| Risk Gate | 1:25 | 1:50 | 25s | check_risk + 18 checks + execute |
 | Execution | 1:50 | 2:10 | 20s | get_portfolio + monitoring |
 | Audit | 2:10 | 2:30 | 20s | Show trade.jsonl |
 | Differentiators | 2:30 | 2:45 | 15s | Three-point summary |

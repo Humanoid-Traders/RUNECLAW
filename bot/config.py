@@ -81,6 +81,8 @@ class LLMConfig:
     model: str = _env("LLM_MODEL", "gpt-4o")
     temperature: float = 0.3
     max_tokens: int = 1024
+    timeout_seconds: float = _env_float("LLM_TIMEOUT_SEC", 15.0)
+    daily_call_limit: int = int(_env_float("LLM_DAILY_LIMIT", 500))
 
 
 @dataclass(frozen=True)

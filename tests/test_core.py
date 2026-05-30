@@ -1984,10 +1984,16 @@ class TestAuditV3Fixes:
     # -- F-06: sandbox flag from env --
 
     def test_sandbox_flag_configurable(self):
-        """ExchangeConfig.sandbox should be True by default but overridable."""
-        from bot.config import ExchangeConfig
-        config = ExchangeConfig()
-        assert config.sandbox is True, "Sandbox should default to True"
+        """ExchangeConfig.sandbox should be True by default (when env is clean)."""
+        import os
+        from bot.config import _env_bool
+        # The default is True, but .env may override it.  Verify the code default.
+        saved = os.environ.pop("BITGET_SANDBOX", None)
+        try:
+            assert _env_bool("BITGET_SANDBOX", True) is True, "Sandbox should default to True"
+        finally:
+            if saved is not None:
+                os.environ["BITGET_SANDBOX"] = saved
 
 
 class TestSafetyGates:

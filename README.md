@@ -100,7 +100,7 @@ The system operates in **simulation-first mode by default**. Every trade idea mu
 - Structured `TradeIdea` output with entry, SL, TP, confidence, reasoning
 
 ### Risk Engine (Fail-Closed)
-- **18 independent pre-trade checks** -- ALL must pass (including liquidity guard on live order-flow data)
+- **18 independent pre-trade checks** -- 17 fail-closed checks plus a fail-open liquidity guard (no book data = pass)
 - Circuit breaker halts trading on daily loss or drawdown breach
 - Fixed-fractional position sizing: risk budget (2% of equity) divided by stop distance, capped at 20% notional
 - Max open positions limit
@@ -195,7 +195,7 @@ runeclaw/
 |   |   |-- analyzer.py         # AI + technical analysis, LLM thesis generation
 |   |   |-- order_flow.py       # Exchange microstructure: CVD, book imbalance, whale detection
 |   |-- risk/
-|   |   |-- risk_engine.py      # 16-check risk gate, circuit breaker
+|   |   |-- risk_engine.py      # 18-check risk gate, circuit breaker
 |   |   |-- portfolio.py        # Paper trading ledger, PnL tracking, mark-to-market
 |   |-- skills/
 |   |   |-- skill_registry.py   # Modular skill system, built-in skills
@@ -224,7 +224,7 @@ runeclaw/
 RUNECLAW is designed with a **fail-closed** philosophy:
 
 - **Simulation by default.** Live trading requires two explicit environment flags.
-- **Every trade passes 18 checks.** One failure = rejection. No overrides.
+- **Every trade passes 18 checks.** 17 fail-closed (one failure = rejection) plus a fail-open liquidity guard. No overrides.
 - **Circuit breaker.** Auto-halts on daily loss (5%) or max drawdown (10%).
 - **Human-in-the-loop.** No trade executes without explicit confirmation.
 - **Re-check on confirm.** Risk is re-evaluated at confirmation time because market conditions change.

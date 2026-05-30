@@ -145,7 +145,8 @@ class RiskEngine:
 
     def evaluate(self, idea: TradeIdea, atr: Optional[float] = None) -> RiskCheck:
         """
-        Run all 16 pre-trade checks. Returns RiskCheck with APPROVED or REJECTED.
+        Run all 18 pre-trade checks (16 in-engine + #17 liquidity + #18 macro).
+        Returns RiskCheck with APPROVED or REJECTED.
         Pass atr= for volatility guard check.
         """
         with self._lock:
@@ -443,6 +444,12 @@ class RiskEngine:
             audit(risk_log, f"CIRCUIT BREAKER TRIPPED: {reason}",
                   action="circuit_breaker", result="HALTED")
             self._save_state()
+
+    def emergency_halt(self, reason: str) -> None:
+        """Manual emergency halt — persists via _trip_circuit_breaker so it
+        survives restarts (audit finding B: /halt must persist)."""
+        with self._lock:
+            self._trip_circuit_breaker(reason)
 
     def reset_circuit_breaker(self) -> None:
         """Manual reset -- requires human intervention."""

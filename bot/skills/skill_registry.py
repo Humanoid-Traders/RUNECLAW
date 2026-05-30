@@ -180,6 +180,7 @@ class RunBacktestSkill(BaseSkill):
         return (
             f"Backtest Complete ({result.start_date} → {result.end_date})\n"
             f"Bars: {result.bars_processed} | Duration: {result.duration_seconds:.1f}s\n"
+            f"NOTE: Synthetic data — tests plumbing, not alpha.\n"
             f"─────────────────────────────────────\n"
             f"Final Equity:   ${result.final_equity:,.2f}\n"
             f"Total Return:   {result.total_return_pct:+.2f}%\n"
@@ -233,9 +234,8 @@ class HaltSkill(BaseSkill):
     async def execute(self, engine: RuneClawEngine, **kwargs: Any) -> str:
         from bot.utils.models import AgentState
 
-        # Trip the circuit breaker
-        engine.risk._circuit_open = True
-        engine.risk._circuit_breaker_trips += 1
+        # Trip the circuit breaker via the proper persisted path (audit fix B)
+        engine.risk.emergency_halt("manual halt via /halt command")
 
         # Cancel all pending ideas
         cancelled = list(engine._pending_ideas.keys())

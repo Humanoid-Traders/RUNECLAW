@@ -206,7 +206,7 @@ class RuneClawEngine:
                 true_ranges.append(tr)
             atr_value = sum(true_ranges) / len(true_ranges)
 
-        # Risk gate — pass ATR so all 16 checks run
+        # Risk gate — pass ATR so all 18 checks run
         self._transition(AgentState.RISK_CHECK, f"evaluating {signal.symbol}")
         risk_check = self.risk.evaluate(idea, atr=atr_value)
 
@@ -252,8 +252,11 @@ class RuneClawEngine:
         stored_atr = self._pending_atr.pop(trade_id, None)
 
         # Re-check risk (portfolio state may have changed -- new positions, daily PnL, drawdown.
-        # Note: this does NOT re-fetch market price or update the idea's entry/SL/TP.
-        # Stale-data check #12 guards against time drift, but not price drift.)
+        # HONEST LIMITATION: this does NOT re-fetch market price or update the idea's
+        # entry/SL/TP.  Stale-data check #12 guards against time drift (>300s = reject),
+        # but not price drift within that window.  Price drift is bounded to ≤5 min by TTL.
+        # To close this gap fully, re-fetch the ticker here and reject if entry has drifted
+        # beyond a threshold (e.g. 1 ATR).  Not implemented in this prototype.)
         self._transition(AgentState.RISK_CHECK, f"re-checking risk for {trade_id}")
         recheck = self.risk.evaluate(idea, atr=stored_atr)
         if recheck.verdict == RiskVerdict.REJECTED:

@@ -17,6 +17,7 @@ import numpy as np
 from bot.backtest.models import (
     BacktestBar, BacktestConfig, BacktestResult, BacktestTrade, EquityPoint,
 )
+from bot.config import CONFIG
 from bot.core.analyzer import Analyzer
 from bot.risk.risk_engine import RiskEngine
 from bot.risk.portfolio import PortfolioTracker
@@ -52,7 +53,12 @@ class BacktestEngine:
         self.risk = RiskEngine(self.portfolio)
         # C1 fix: wire trade-close callback so portfolio closes feed risk streak tracking
         self.portfolio._on_trade_close = self.risk.record_trade_result
+        # Fix F: respect use_llm flag for reproducibility.
+        # When use_llm=False (default), null out the LLM client so the analyzer
+        # always uses the deterministic rule-based path regardless of env config.
         self.analyzer = Analyzer()
+        if not config.use_llm:
+            self.analyzer._llm = None
 
         # Tracking
         self._trades: list[BacktestTrade] = []
@@ -468,6 +474,32 @@ class BacktestEngine:
             equity_curve=self._equity_curve,
             duration_seconds=round(duration, 2),
             bars_processed=len(bars),
+            # Fix L: snapshot effective risk + analyzer config for reproducibility
+            effective_config={
+                "risk": {
+                    "max_position_pct": CONFIG.risk.max_position_pct,
+                    "min_confidence": CONFIG.risk.min_confidence,
+                    "min_risk_reward": CONFIG.risk.min_risk_reward,
+                    "max_daily_loss_pct": CONFIG.risk.max_daily_loss_pct,
+                    "max_drawdown_pct": CONFIG.risk.max_drawdown_pct,
+                    "volatility_guard_atr_pct": CONFIG.risk.volatility_guard_atr_pct,
+                    "max_open_positions": CONFIG.risk.max_open_positions,
+                    "max_consecutive_losses": CONFIG.risk.max_consecutive_losses,
+                },
+                "analyzer": {
+                    "llm_weight": CONFIG.analyzer.llm_weight,
+                    "confluence_weight": CONFIG.analyzer.confluence_weight,
+                    "sl_atr_mult_default": CONFIG.analyzer.sl_atr_mult_default,
+                    "tp_atr_mult_default": CONFIG.analyzer.tp_atr_mult_default,
+                    "sl_atr_mult_trending": CONFIG.analyzer.sl_atr_mult_trending,
+                    "tp_atr_mult_trending": CONFIG.analyzer.tp_atr_mult_trending,
+                },
+                "backtest": {
+                    "use_llm": self.config.use_llm,
+                    "lookback_size": self.config.lookback_size,
+                    "scan_interval": self.config.scan_interval,
+                },
+            },
         )
 
     def _compute_sharpe(self, risk_free_rate: float = 0.04) -> float:

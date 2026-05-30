@@ -17,13 +17,13 @@ Humanoid Traders
 
 ## One-Line Tagline
 
-Simulation-first AI trading agent with 16 fail-closed risk checks, regime-aware analysis, and human confirmation on every trade.
+Simulation-first AI trading agent with 18 pre-trade risk checks (17 fail-closed + 1 fail-open liquidity guard), regime-aware analysis, and human confirmation on every trade.
 
 ---
 
 ## Project Summary (under 200 words)
 
-RUNECLAW is a modular AI trading assistant built for the Bitget ecosystem. It scans markets for volume anomalies and momentum shifts, generates explainable trade ideas using a 10-voter confluence scoring model (candlestick pattern detection, Fibonacci retracement zones, OBV trend, and 6 classic indicators) blended with LLM reasoning, and enforces 16 independent pre-trade risk checks in a fail-closed architecture -- if any single check cannot be evaluated, the trade is rejected.
+RUNECLAW is a modular AI trading assistant built for the Bitget ecosystem. It scans markets for volume anomalies and momentum shifts, generates explainable trade ideas using a 10-voter confluence scoring model (candlestick pattern detection, Fibonacci retracement zones, OBV trend, and 6 classic indicators) blended with LLM reasoning, and enforces 18 independent pre-trade risk checks (17 fail-closed + 1 fail-open liquidity guard) -- if any single check cannot be evaluated, the trade is rejected.
 
 The agent operates as a 9-state finite state machine with complete audit logging of every state transition, risk decision, and trade outcome. Every trade requires human confirmation via Telegram before execution. Paper trading is the default mode; live trading requires two explicit environment flags.
 
@@ -35,7 +35,7 @@ Validated across 180 backtest runs (synthetic data — 3 volatility regimes, 3 t
 
 ## Feature Bullets
 
-- **16-Check Fail-Closed Risk Gate** -- position size, daily loss, drawdown, max positions, R:R minimum, confidence threshold, correlation blocking, loss streak, entry price sanity, stop-loss required, stale data guard, cooldown timer, portfolio exposure, per-symbol exposure, volatility guard, circuit breaker
+- **18-Check Risk Gate (17 Fail-Closed + 1 Fail-Open Liquidity Guard)** -- position size, daily loss, drawdown, max positions, R:R minimum, confidence threshold, correlation blocking, loss streak, entry price sanity, stop-loss required, stale data guard, cooldown timer, portfolio exposure, per-symbol exposure, volatility guard, circuit breaker, liquidity guard (fail-open), macro event guard
 - **10-Voter Confluence Scoring** -- RSI-14, MACD (12/26/9), Bollinger Bands (20/2), Volume Spike, ADX-14, VWAP, OBV trend, candlestick pattern signal, Fibonacci zone, weighted and blended with LLM confidence (60/40 split)
 - **Candlestick Pattern Detection** -- 14 patterns: doji, hammer, shooting star, spinning top, marubozu, bullish/bearish engulfing, bullish/bearish harami, tweezer top/bottom, morning star, evening star, three white soldiers, three black crows
 - **Fibonacci Retracement Levels** -- swing high/low detection over 50-bar lookback, standard levels (23.6%, 38.2%, 50%, 61.8%, 78.6%) with zone classification
@@ -58,7 +58,7 @@ Validated across 180 backtest runs (synthetic data — 3 volatility regimes, 3 t
 | Market Scanner | Volume anomaly detection with 2x rolling average spike threshold, stale data eviction, thread-safe with RLock |
 | Analysis Engine | 10-voter confluence model (RSI, MACD, BB, Volume Spike, ADX, VWAP, OBV trend, candlestick pattern, Fibonacci zone) + LLM reasoning, SMA-50 trend alignment (+0.10/-0.15), volume confirmation (+/-0.05) |
 | Regime Detection | ADX-14 with directional movement index; TREND_UP/DOWN skip opposite-direction signals, RANGE/CHOP apply confidence penalty |
-| Risk Engine | 16 fail-closed checks, all must pass; thread-safe with RLock; stats tracking for monitoring |
+| Risk Engine | 18 checks (17 fail-closed + 1 fail-open liquidity guard), all must pass; thread-safe with RLock; stats tracking for monitoring |
 | Trailing Stops | Track best_price per position, activate at 1R profit, trail at 1.5x ATR; trailing exits lock in ≥1 ATR profit by construction (structural, not a predictive edge) |
 | Circuit Breaker | Trips on 5% daily loss, 10% drawdown, or 5 consecutive losses; requires manual reset |
 | Portfolio Tracker | Thread-safe position lifecycle with drawdown tracking, daily PnL, equity snapshots |
@@ -86,7 +86,7 @@ Validated across 180 backtest runs (synthetic data — 3 volatility regimes, 3 t
 
 | Claim | Evidence | Status |
 |-------|----------|--------|
-| 16 risk checks | `bot/risk/risk_engine.py` lines 1-23 enumerate all 16 | Verified |
+| 18 risk checks | `bot/risk/risk_engine.py` lines 1-28 enumerate all 18 (16 in-engine + #17 liquidity + #18 macro) | Verified |
 | Fail-closed design | Any check failure or exception returns REJECTED | Verified |
 | 97+ tests passing | `pytest tests/test_core.py -v` -- 133/133 green (97 original + 36 audit/feature additions) | Verified |
 | 9-state FSM | `bot/utils/models.py` AgentState enum, `bot/core/engine.py` transitions | Verified |
@@ -105,14 +105,14 @@ Validated across 180 backtest runs (synthetic data — 3 volatility regimes, 3 t
 
 - [x] All 133 tests pass (`pytest tests/test_core.py -v`)
 - [x] No critical or high-severity issues in codebase audit (all C1-C3, H1-H4 fixed)
-- [x] All 16 risk checks verified correct with unit tests
+- [x] All 18 risk checks verified correct with unit tests
 - [x] Backtest runs without crashes across 180 configurations
 - [x] No hardcoded API keys or secrets in codebase
 - [x] Config loads from environment variables with safe defaults
 - [x] Simulation mode is ON by default
 - [x] Live trading requires two explicit flags
-- [x] README accurately reflects current architecture (16 checks + liquidity guard, 10+ voters including OBV, candlestick patterns, Fibonacci retracement, order flow when available)
-- [x] Website matches codebase claims (16 checks, 133 tests, backtest stats)
+- [x] README accurately reflects current architecture (18 checks: 17 fail-closed + 1 fail-open liquidity guard, 10+ voters including OBV, candlestick patterns, Fibonacci retracement, order flow when available)
+- [x] Website matches codebase claims (18 checks, 133 tests, backtest stats)
 - [x] GitHub repo is public and up to date
 - [x] No deprecated datetime calls remaining
 - [x] Thread safety verified on all shared state

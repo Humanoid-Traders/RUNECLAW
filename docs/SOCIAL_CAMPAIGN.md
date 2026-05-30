@@ -6,7 +6,7 @@ Target: Community Impact Award
 
 ## One-Liner Pitch
 
-RUNECLAW is a simulation-first AI trading agent with 16 fail-closed risk checks, regime-aware analysis, and human confirmation on every trade.
+RUNECLAW is a simulation-first AI trading agent with 18 risk risk checks, regime-aware analysis, and human confirmation on every trade.
 
 ---
 
@@ -18,13 +18,13 @@ Introducing RUNECLAW -- an AI trading agent built for the Bitget ecosystem.
 
 Track 1 (Trading Agent) | Track 2 (Trading Infra)
 
-16 independent risk checks. Fail-closed architecture. Every trade requires human confirmation. Paper trading by default.
+18 independent risk checks. Fail-closed architecture. Every trade requires human confirmation. Paper trading by default.
 
 Thread below.
 
 ### Tweet 2 -- Risk Engine
 
-RUNECLAW enforces 16 pre-trade risk checks. Every single one must pass, or the trade is rejected. There is no override.
+RUNECLAW enforces 18 pre-trade risk checks. Every single one must pass, or the trade is rejected. There is no override.
 
 Position limits. Drawdown caps. Correlation blocking. Per-symbol exposure. Volatility guard. Cooldown timers. Circuit breaker.
 
@@ -48,7 +48,7 @@ Every decision RUNECLAW makes is logged and auditable.
 
 State transitions. Risk gate evaluations. Indicator scores. Confluence model weights. LLM reasoning. Execution outcomes.
 
-If the system rejects a trade, you can trace exactly which of the 16 checks failed and why. No black boxes.
+If the system rejects a trade, you can trace exactly which of the 18 checks failed and why. No black boxes.
 
 ### Tweet 5 -- Regime Detection
 
@@ -89,11 +89,11 @@ Built by Humanoid Traders. 180 tests. 18 risk checks. Read the code.
 We are submitting RUNECLAW, a simulation-first AI trading agent built for the Bitget ecosystem.
 
 **What it does:**
-RUNECLAW scans markets for volume anomalies and momentum shifts, generates explainable trade ideas using a 10-voter confluence model (RSI, MACD, BB, Volume Spike, ADX, VWAP, OBV trend, candlestick pattern detection, Fibonacci retracement zone) blended with LLM reasoning, and enforces 16 independent pre-trade risk checks before proposing any trade to the operator.
+RUNECLAW scans markets for volume anomalies and momentum shifts, generates explainable trade ideas using a 10-voter confluence model (RSI, MACD, BB, Volume Spike, ADX, VWAP, OBV trend, candlestick pattern detection, Fibonacci retracement zone) blended with LLM reasoning, and enforces 18 independent pre-trade risk checks before proposing any trade to the operator.
 
 **Architecture:**
 - 9-state finite state machine (IDLE through HALTED)
-- 16 fail-closed risk checks -- any failure blocks the trade
+- 18 risk risk checks -- any failure blocks the trade
 - ADX-14 regime detection adapts strategy to trend/range/chop conditions
 - Adaptive ATR-based stop-loss and take-profit scaling
 - Trailing stops accounted for 48.7% of all exits with net-positive aggregate PnL

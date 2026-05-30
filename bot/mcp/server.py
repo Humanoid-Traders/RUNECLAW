@@ -86,19 +86,12 @@ TOOL_CATALOGUE: tuple[MCPToolDef, ...] = (
         skill_name="get_portfolio",
         description="Show paper-portfolio summary: balance, equity, win rate, PnL.",
     ),
-    MCPToolDef(
-        mcp_name="runeclaw_execute",
-        skill_name="execute_paper_trade",
-        description="Confirm and execute a pending paper trade by its trade ID.",
-        params=(
-            MCPToolParam(
-                name="trade_id",
-                type="string",
-                description="The ID of the pending trade to execute.",
-                required=True,
-            ),
-        ),
-    ),
+    # SECURITY: runeclaw_execute intentionally excluded from MCP.
+    # Exposing trade execution over MCP would bypass the human-confirmation
+    # gate, violating the fail-closed design.  An agent on the Hub could
+    # call runeclaw_analyze → runeclaw_execute fully autonomously.
+    # Re-enable only behind MCP_ALLOW_EXECUTE=true AND with caller auth.
+    # See: Audit finding A (MCP execute bypass).
     MCPToolDef(
         mcp_name="runeclaw_explain",
         skill_name="explain_trade",

@@ -16,6 +16,7 @@ Upgraded with:
 
 from __future__ import annotations
 
+import asyncio
 import re
 import uuid
 from datetime import UTC, datetime
@@ -44,6 +45,8 @@ class Analyzer:
 
     def __init__(self) -> None:
         self._llm = AsyncOpenAI(api_key=CONFIG.llm.api_key) if CONFIG.llm.api_key else None
+        self._llm_calls_today: int = 0
+        self._llm_day: str = ""  # YYYY-MM-DD, reset counter on new day
 
     async def analyze(self, signal: MarketSignal, candles: list[list[float]], order_flow=None) -> Optional[TradeIdea]:
         """
@@ -518,6 +521,18 @@ class Analyzer:
             result["source"] = "RULE_ENGINE"
             return result
 
+        # Budget guard: fall back to rules when daily limit exceeded (fix J)
+        today = datetime.now(UTC).strftime("%Y-%m-%d")
+        if today != self._llm_day:
+            self._llm_day = today
+            self._llm_calls_today = 0
+        if self._llm_calls_today >= CONFIG.llm.daily_call_limit:
+            audit(trade_log, f"LLM daily budget exhausted ({self._llm_calls_today} calls), using rules",
+                  action="analyze", result="LLM_BUDGET")
+            result = self._rule_based_thesis(signal, indicators)
+            result["source"] = "RULE_ENGINE_BUDGET"
+            return result
+
         prompt = (
             f"You are a crypto trading analyst. Analyze {signal.symbol}.\n"
             f"Price: ${signal.price}, 24h change: {signal.change_pct_24h}%\n"
@@ -556,12 +571,16 @@ class Analyzer:
             "REASONING: one paragraph\n"
         )
         try:
-            resp = await self._llm.chat.completions.create(
-                model=CONFIG.llm.model,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=CONFIG.llm.temperature,
-                max_tokens=CONFIG.llm.max_tokens,
+            resp = await asyncio.wait_for(
+                self._llm.chat.completions.create(
+                    model=CONFIG.llm.model,
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=CONFIG.llm.temperature,
+                    max_tokens=CONFIG.llm.max_tokens,
+                ),
+                timeout=CONFIG.llm.timeout_seconds,
             )
+            self._llm_calls_today += 1
             result = self._parse_llm_response(resp.choices[0].message.content or "")
             if not result.pop("_parsed", False):
                 audit(trade_log, "LLM response could not be parsed, using defaults",

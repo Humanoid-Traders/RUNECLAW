@@ -122,3 +122,6 @@ class BacktestResult(BaseModel):
     duration_seconds: float = 0.0
     bars_processed: int = 0
     timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+    # Effective config snapshot for reproducibility (fix L)
+    effective_config: dict = Field(default_factory=dict)

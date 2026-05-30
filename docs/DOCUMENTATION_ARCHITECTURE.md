@@ -63,7 +63,7 @@ ASCII pipeline: `Market Scanner → AI Analyzer → Risk Gate → Human Confirm 
 Numbered list with one sentence per stage:
 1. **Perceive** — Scanner fetches all Bitget USDT pairs, ranks by 24h change, detects volume spikes (2x rolling avg)
 2. **Analyze** — Technical indicators (RSI-14, MACD 12/26/9, Bollinger 20/2, ATR) + LLM directional thesis
-3. **Risk Gate** — 16 fail-closed checks: circuit breaker, position size (20% notional cap, 2% risk budget), daily loss (5%), drawdown (10%), max positions (5), R:R (>1.2), confidence (>0.60), correlation, loss streak, entry sanity, stop-loss required, stale data, cooldown, portfolio exposure, symbol exposure, volatility guard
+3. **Risk Gate** — 18 risk checks: circuit breaker, position size (20% notional cap, 2% risk budget), daily loss (5%), drawdown (10%), max positions (5), R:R (>1.2), confidence (>0.60), correlation, loss streak, entry sanity, stop-loss required, stale data, cooldown, portfolio exposure, symbol exposure, volatility guard
 4. **Confirm** — Human reviews trade idea via Telegram, taps Confirm or Reject
 5. **Re-Check** — Risk is re-evaluated at confirmation time (market may have moved)
 6. **Execute** — Paper trade opens, SL/TP are set, portfolio updates
@@ -254,7 +254,7 @@ RUNECLAW
    - Table: Component → File → Responsibility → Inputs → Outputs
    - `MarketScanner` → `bot/core/market_scanner.py` → Fetch tickers, rank movers, detect volume spikes → Bitget API → `list[MarketSignal]`
    - `Analyzer` → `bot/core/analyzer.py` → Compute indicators, generate LLM thesis → `MarketSignal` + OHLCV → `TradeIdea`
-   - `RiskEngine` → `bot/risk/risk_engine.py` → 16 fail-closed checks, circuit breaker → `TradeIdea` + `PortfolioState` → `RiskCheck`
+   - `RiskEngine` → `bot/risk/risk_engine.py` → 18 risk checks, circuit breaker → `TradeIdea` + `PortfolioState` → `RiskCheck`
    - `PortfolioTracker` → `bot/risk/portfolio.py` → Paper ledger, PnL, drawdown → `TradeIdea` → `TradeExecution`
    - `RuneClawEngine` → `bot/core/engine.py` → Central orchestrator → All above → Pipeline execution
    - `SkillRegistry` → `bot/skills/skill_registry.py` → Modular capability system → Engine → Skill output
@@ -604,7 +604,7 @@ RUNECLAW
     - Exposure-weighted position sizing
 
 **Key Diagrams:**
-- Risk check flowchart (16 checks in sequence, any fail → REJECTED)
+- Risk check flowchart (18 checks in sequence, any fail → REJECTED)
 - Circuit breaker state machine (OK → TRIPPED → manual RESET → OK)
 - Timeline: idea generated → time passes → human confirms → re-check → execute or reject
 
@@ -775,7 +775,7 @@ RUNECLAW
    ```
 4. **Key Design Decisions**
    - Confirmation gate is bypassed in backtest mode (no human in the loop for historical replay)
-   - Risk engine runs identically — same 16 checks, same circuit breaker
+   - Risk engine runs identically — same 18 checks, same circuit breaker
    - Slippage and commission modeling should be configurable
    - Walk-forward validation preferred over simple backtest
 5. **Expected Output** — `BacktestResult` model (from Implementation Blueprint):
@@ -1073,7 +1073,7 @@ RUNECLAW
 2. **What We Built**
    - Autonomous trading agent runtime with structured perception → decision → risk → execution → audit pipeline
    - Simulation-first design (paper trading default)
-   - Fail-closed risk engine (16 pre-trade checks, circuit breaker)
+   - Fail-closed risk engine (18 pre-trade checks, circuit breaker)
    - Human-in-the-loop confirmation (Telegram inline keyboards)
    - Explainable AI (every trade idea includes reasoning, indicators, confidence)
    - Full audit trail (structured JSONL logging)
@@ -1099,7 +1099,7 @@ RUNECLAW
 6. **How to Evaluate**
    - Clone and run in CLI mode (zero config, <2 minutes)
    - Review architecture in `docs/architecture.md`
-   - Inspect risk engine: `bot/risk/risk_engine.py` (116 lines, all 16 checks visible)
+   - Inspect risk engine: `bot/risk/risk_engine.py` (116 lines, all 18 checks visible)
    - Check audit logs: `logs/*.jsonl`
    - Read the agent prompt: `bot/prompts/system_prompt.md`
 7. **Links**
