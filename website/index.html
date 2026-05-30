@@ -2385,7 +2385,7 @@ footer {
       <img class="fc-thumb" src="audit_card.png" alt="">
       <span class="feature-icon">&#128172;</span>
       <div class="feature-name">Telegram Command Center</div>
-      <div class="feature-desc">Full bot interface: /scan, /analyze, /trade, /portfolio, /risk, /rejected, /backtest, /costs, /halt, /status. Inline keyboards for trade confirmation. Rate-limited per user.</div>
+      <div class="feature-desc">Full bot interface: /scan, /analyze, /trade, /portfolio, /risk, /rejected, /backtest, /costs, /learn, /patterns, /proposals, /halt, /status. Inline keyboards for trade confirmation. Rate-limited per user.</div>
       <div class="feature-tag">Chat-native</div>
     </div>
     <div class="feature-card reveal reveal-delay-3">
@@ -2394,6 +2394,27 @@ footer {
       <div class="feature-name">Agent Economics</div>
       <div class="feature-desc">Full cost transparency: model routing (gpt-4o-mini for scans, gpt-4o for thesis), per-category LLM cost tracking, PnL waterfall with commission + token + infra breakdown. /costs shows real ROI impact.</div>
       <div class="feature-tag">Cost-transparent AI</div>
+    </div>
+    <div class="feature-card reveal reveal-delay-1">
+      <img class="fc-thumb" src="backtest_card.png" alt="">
+      <span class="feature-icon">&#129504;</span>
+      <div class="feature-name">AI Learning System</div>
+      <div class="feature-desc">8-module learning layer: experience memory, reflection engine, strategy evaluation, pattern detection, model comparison, prompt optimization, macro learning, and human feedback. All sandboxed, versioned, and reversible.</div>
+      <div class="feature-tag">Safe AI learning</div>
+    </div>
+    <div class="feature-card reveal reveal-delay-2">
+      <img class="fc-thumb" src="backtest_card.png" alt="">
+      <span class="feature-icon">&#128737;</span>
+      <div class="feature-name">Learning Safety Policy</div>
+      <div class="feature-desc">Hard-coded immutable safety rules. AI learning may never enable live trading, increase leverage, remove stops, bypass risk, or delete audit logs. Every proposal classified: SAFE_AUTO, HUMAN_REVIEW, or BLOCKED.</div>
+      <div class="feature-tag">Safety-first learning</div>
+    </div>
+    <div class="feature-card reveal reveal-delay-3">
+      <img class="fc-thumb" src="backtest_card.png" alt="">
+      <span class="feature-icon">&#128202;</span>
+      <div class="feature-name">Strategy Scorecard</div>
+      <div class="feature-desc">Risk-adjusted strategy ranking: S/A/B/C/D tiers based on safety score, Sharpe ratio, drawdown, false positive rate, and overfitting detection. Never promotes based on profit alone.</div>
+      <div class="feature-tag">Risk-aware scoring</div>
     </div>
   </div>
 </section>
@@ -2520,6 +2541,35 @@ Cost/trade:      $0.0024
 ROI drag:        0.001%
 </pre>
         <span class="label">Model routing: gpt-4o-mini for scans, gpt-4o for thesis</span>
+      </div>
+
+      <div class="tg-msg user">/learn</div>
+      <div class="tg-msg bot">
+        <span class="cmd">RUNECLAW AI LEARNING DASHBOARD</span>
+<pre>
+Learning Score: 7.2/10 [A]
+
+Data Stores:
+  decisions: 47 records
+  reflections: 31 records
+  scorecards: 3 strategies
+  macro_events: 12 records
+  patterns: 5 detected
+
+Strategy Rankings:
+  [A] momentum: safety=72 WR=68% (28 trades)
+  [B] dip_buy:  safety=58 WR=55% (15 trades)
+  [C] scalp:    safety=41 WR=80% (4 trades) OVERFIT!
+
+Pending proposals: 2
+Blocked proposals: 1 (leverage increase)
+
+Safety Policy: ACTIVE
+AI may NOT: enable live trading, increase
+  leverage, remove stops, bypass risk,
+  delete audit logs
+</pre>
+        <span class="label">8 modules &middot; all sandboxed &middot; fail-closed</span>
       </div>
     </div>
   </div>
@@ -2832,7 +2882,7 @@ ROI drag:        0.001%
   <div class="evidence-grid-new">
     <div class="evidence-card-new reveal reveal-delay-1">
       <span class="evidence-icon-new">&#129514;</span>
-      <div class="evidence-label-new">175 Unit Tests Passing</div>
+      <div class="evidence-label-new">279 Unit Tests Passing</div>
       <span class="evidence-badge-new ebadge-green">VERIFIED</span>
     </div>
     <div class="evidence-card-new reveal reveal-delay-2">
@@ -2874,6 +2924,16 @@ ROI drag:        0.001%
       <span class="evidence-icon-new">&#128176;</span>
       <div class="evidence-label-new">Agent Economics: Full Cost Waterfall</div>
       <span class="evidence-badge-new ebadge-green">TRANSPARENT</span>
+    </div>
+    <div class="evidence-card-new reveal reveal-delay-1">
+      <span class="evidence-icon-new">&#129504;</span>
+      <div class="evidence-label-new">AI Learning: 8 Modules, Safety-First</div>
+      <span class="evidence-badge-new ebadge-blue">SANDBOXED</span>
+    </div>
+    <div class="evidence-card-new reveal reveal-delay-2">
+      <span class="evidence-icon-new">&#128202;</span>
+      <div class="evidence-label-new">Macro Event Memory: FOMC/CPI/PCE/NFP</div>
+      <span class="evidence-badge-new ebadge-green">CONTEXT-ONLY</span>
     </div>
   </div>
 </section>
