@@ -380,12 +380,76 @@ body{
 
 <!-- 16-CHECK RISK ENGINE -->
 <div class="pnl full anim" style="animation-delay:.4s">
-  <div class="pnl-t"><span class="ico">&#9888;</span> 16-Check Risk Engine &mdash; Last Evaluation</div>
+  <div class="pnl-t"><span class="ico">&#9888;</span> 18-Check Risk Engine &mdash; Last Evaluation</div>
   <div style="font-size:.75rem;color:var(--steel-light);margin-bottom:12px;font-style:italic">Fail-closed: ANY single failure = trade REJECTED. No overrides.</div>
   <div class="risk-grid" id="risk-checks"></div>
   <div style="margin-top:14px;display:flex;align-items:center;gap:12px">
     <div style="padding:6px 18px;border-radius:4px;font-family:var(--font-h);font-size:.8rem;font-weight:700;letter-spacing:2px;border:1px solid var(--green);color:var(--green);background:rgba(0,230,118,.06)">&#10003; APPROVED</div>
-    <span style="font-size:.75rem;color:var(--text-dim)">16/16 checks passed &middot; Position: $1,420 (14.2% notional) &middot; R:R 1.8x</span>
+    <span style="font-size:.75rem;color:var(--text-dim)">18/18 checks passed &middot; Position: $1,420 (14.2% notional) &middot; R:R 1.8x</span>
+  </div>
+</div>
+
+<!-- FULL AUTO TOGGLE + MASTER KILL SWITCH -->
+<div class="pnl full anim" style="animation-delay:.45s">
+  <div class="pnl-t"><span class="ico">&#9889;</span> Automation Control &mdash; Full Auto Toggle + Master Kill Switch</div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:8px">
+
+    <!-- LEFT: Full Auto Toggle -->
+    <div style="border:1px solid var(--border);border-radius:8px;padding:20px;background:var(--bg-card);position:relative;overflow:hidden">
+      <div id="autoGlow" style="position:absolute;inset:0;border-radius:8px;pointer-events:none;transition:box-shadow .5s"></div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+        <div>
+          <div style="font-family:var(--font-h);font-size:.85rem;font-weight:700;letter-spacing:1.5px;color:var(--gold-light)">FULL AUTO MODE</div>
+          <div style="font-size:.7rem;color:var(--text-dim);margin-top:2px">Scan &rarr; Analyze &rarr; Risk &rarr; Execute (no human confirm)</div>
+        </div>
+        <label style="position:relative;display:inline-block;width:56px;height:28px;cursor:pointer">
+          <input type="checkbox" id="autoToggle" onchange="toggleAutoMode()" style="opacity:0;width:0;height:0">
+          <span id="autoSlider" style="position:absolute;inset:0;background:var(--steel-dark);border:1px solid var(--border);border-radius:28px;transition:all .4s">
+            <span id="autoKnob" style="position:absolute;top:3px;left:3px;width:20px;height:20px;background:var(--steel-light);border-radius:50%;transition:all .4s"></span>
+          </span>
+        </label>
+      </div>
+      <div id="autoStatus" style="font-size:.75rem;padding:10px 14px;border-radius:6px;border:1px solid var(--border);background:var(--bg);line-height:1.7;color:var(--text-dim)">
+        <div>Status: <span style="color:var(--steel-light)">OFF</span> &mdash; Human confirmation required for all trades</div>
+        <div>Scan interval: 60s &middot; Max positions: 5 &middot; Daily loss limit: 5%</div>
+      </div>
+      <div id="autoWarning" style="display:none;margin-top:10px;padding:8px 12px;border-radius:4px;border:1px solid var(--amber);background:rgba(255,193,7,.06);font-size:.7rem;color:var(--amber);line-height:1.6">
+        &#9888; <strong>WARNING:</strong> Auto mode bypasses human confirmation. All trades that pass 18 risk checks will execute automatically. Circuit breaker remains active as a safety net.
+      </div>
+    </div>
+
+    <!-- RIGHT: Master Kill Switch -->
+    <div style="border:1px solid var(--border);border-radius:8px;padding:20px;background:var(--bg-card);position:relative;overflow:hidden">
+      <div id="killGlow" style="position:absolute;inset:0;border-radius:8px;pointer-events:none;transition:box-shadow .5s"></div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+        <div>
+          <div style="font-family:var(--font-h);font-size:.85rem;font-weight:700;letter-spacing:1.5px;color:var(--red)">MASTER KILL SWITCH</div>
+          <div style="font-size:.7rem;color:var(--text-dim);margin-top:2px">Emergency halt: trip breaker, cancel all, freeze portfolio</div>
+        </div>
+        <button id="killBtn" onclick="triggerKillSwitch()" style="padding:8px 20px;background:transparent;border:2px solid var(--red-dim);color:var(--red);font-family:var(--font-h);font-size:.75rem;font-weight:700;letter-spacing:2px;border-radius:6px;cursor:pointer;transition:all .3s;text-transform:uppercase" onmouseover="this.style.background='rgba(255,61,61,.12)';this.style.boxShadow='0 0 20px rgba(255,61,61,.3)'" onmouseout="this.style.background='transparent';this.style.boxShadow='none'">
+          &#9724; HALT ALL
+        </button>
+      </div>
+      <div id="killStatus" style="font-size:.75rem;padding:10px 14px;border-radius:6px;border:1px solid var(--border);background:var(--bg);line-height:1.7;color:var(--text-dim)">
+        <div>Circuit breaker: <span style="color:var(--green)">READY</span> &middot; Not tripped</div>
+        <div>Open positions: 2 &middot; Pending confirms: 0</div>
+        <div>Last halt: <span style="color:var(--steel-light)">never</span></div>
+      </div>
+      <div id="killActive" style="display:none;margin-top:10px;padding:10px 14px;border-radius:4px;border:1px solid var(--red);background:rgba(255,61,61,.08);font-size:.75rem;line-height:1.7">
+        <div style="color:var(--red);font-weight:700">&#128721; SYSTEM HALTED</div>
+        <div style="color:var(--text-dim)">Circuit breaker: TRIPPED &middot; All positions flagged for close</div>
+        <div style="color:var(--text-dim)">Auto mode: DISABLED &middot; No new trades until manual reset</div>
+        <div style="margin-top:8px"><button onclick="resetKillSwitch()" style="padding:4px 14px;background:transparent;border:1px solid var(--amber);color:var(--amber);font-size:.7rem;border-radius:4px;cursor:pointer;font-family:var(--font-b)">Reset Circuit Breaker</button></div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Safety summary row -->
+  <div style="margin-top:14px;display:flex;gap:16px;font-size:.7rem;color:var(--text-dim);flex-wrap:wrap">
+    <span>&#128274; Two-key live unlock required (SIMULATION_MODE + LIVE_TRADING_ENABLED)</span>
+    <span>&#9888; Circuit breaker auto-trips at 5% daily loss or 10% drawdown</span>
+    <span>&#128221; Every state change logged to audit trail</span>
   </div>
 </div>
 
@@ -921,6 +985,82 @@ function drawOBV(){
 }
 
 // === JUDGE MODE ===
+
+// === FULL AUTO TOGGLE ===
+let autoMode=false;
+let killActive=false;
+
+function toggleAutoMode(){
+  if(killActive){document.getElementById('autoToggle').checked=false;return;}
+  autoMode=document.getElementById('autoToggle').checked;
+  const slider=document.getElementById('autoSlider');
+  const knob=document.getElementById('autoKnob');
+  const glow=document.getElementById('autoGlow');
+  const status=document.getElementById('autoStatus');
+  const warn=document.getElementById('autoWarning');
+  if(autoMode){
+    slider.style.background='rgba(0,230,118,.2)';slider.style.borderColor='var(--green)';
+    knob.style.left='31px';knob.style.background='var(--green)';
+    glow.style.boxShadow='inset 0 0 30px rgba(0,230,118,.06), 0 0 15px rgba(0,230,118,.08)';
+    status.innerHTML='<div>Status: <span style=\"color:var(--green);font-weight:700\">ACTIVE</span> &mdash; Trades execute automatically after 18 risk checks</div><div>Scan interval: 60s &middot; Max positions: 5 &middot; Circuit breaker: armed</div>';
+    warn.style.display='block';
+    addAuditLine('AUTO_MODE','ENABLED','Full auto mode activated -- human confirmation bypassed');
+  }else{
+    slider.style.background='var(--steel-dark)';slider.style.borderColor='var(--border)';
+    knob.style.left='3px';knob.style.background='var(--steel-light)';
+    glow.style.boxShadow='none';
+    status.innerHTML='<div>Status: <span style=\"color:var(--steel-light)\">OFF</span> &mdash; Human confirmation required for all trades</div><div>Scan interval: 60s &middot; Max positions: 5 &middot; Daily loss limit: 5%</div>';
+    warn.style.display='none';
+    addAuditLine('AUTO_MODE','DISABLED','Auto mode deactivated -- human confirmation restored');
+  }
+}
+
+function triggerKillSwitch(){
+  if(killActive)return;
+  killActive=true;
+  // Disable auto mode
+  autoMode=false;
+  document.getElementById('autoToggle').checked=false;
+  toggleAutoMode();
+  // Visual feedback
+  const glow=document.getElementById('killGlow');
+  const btn=document.getElementById('killBtn');
+  const status=document.getElementById('killStatus');
+  const active=document.getElementById('killActive');
+  glow.style.boxShadow='inset 0 0 40px rgba(255,61,61,.1), 0 0 20px rgba(255,61,61,.15)';
+  btn.style.background='rgba(255,61,61,.2)';btn.style.cursor='not-allowed';btn.textContent='HALTED';
+  status.style.display='none';
+  active.style.display='block';
+  // Update FSM state
+  const statePill=document.querySelector('.state-pill');
+  if(statePill){statePill.className='state-pill s-halted';statePill.innerHTML='<span class=\"dot\"></span> HALTED';}
+  addAuditLine('KILL_SWITCH','TRIPPED','Emergency halt: circuit breaker tripped, all positions flagged for close');
+  addAuditLine('CIRCUIT_BREAKER','ACTIVE','Manual reset required via engine.risk.reset_circuit_breaker()');
+}
+
+function resetKillSwitch(){
+  killActive=false;
+  const glow=document.getElementById('killGlow');
+  const btn=document.getElementById('killBtn');
+  const status=document.getElementById('killStatus');
+  const active=document.getElementById('killActive');
+  glow.style.boxShadow='none';
+  btn.style.background='transparent';btn.style.cursor='pointer';btn.textContent='⬛ HALT ALL';
+  status.style.display='block';
+  active.style.display='none';
+  const statePill=document.querySelector('.state-pill');
+  if(statePill){statePill.className='state-pill s-idle';statePill.innerHTML='<span class=\"dot\"></span> IDLE';}
+  addAuditLine('CIRCUIT_BREAKER','RESET','Circuit breaker manually reset -- trading resumed');
+}
+
+function addAuditLine(action,result,msg){
+  const log=document.getElementById('audit-log');
+  if(!log)return;
+  const ts=new Date().toISOString().replace('T',' ').slice(0,19);
+  const rc=result==='TRIPPED'||result==='ACTIVE'?'var(--red)':result==='ENABLED'?'var(--green)':'var(--amber)';
+  log.innerHTML=`<div class="log-line" style="animation:fadeIn .3s">[${ts}] <span style="color:var(--gold)">${action}</span> <span style="color:${rc}">${result}</span> ${msg}</div>`+log.innerHTML;
+}
+
 function toggleJudge(){
   const overlay=document.getElementById('judge-overlay');
   if(overlay){overlay.style.display=overlay.style.display==='none'?'flex':'none';return}
