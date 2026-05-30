@@ -744,6 +744,68 @@ class ProposalsSkill(BaseSkill):
         return "\n".join(lines)
 
 
+class OptimizationSkill(BaseSkill):
+    """Show LLM token optimization stats and savings."""
+    name = "optimize"
+    description = "Display LLM token optimization metrics: cache, tiers, batching, adaptive frequency"
+
+    async def execute(self, engine: RuneClawEngine, **kwargs: Any) -> str:
+        opt = engine.analyzer.optimization_stats
+        cost = engine.cost.snapshot()
+
+        lines = [
+            "RUNECLAW LLM TOKEN OPTIMIZER",
+            "=" * 42,
+        ]
+
+        # Cache stats
+        cache = opt.get("cache", {})
+        lines.append(f"\n--- Semantic Cache ---")
+        lines.append(f"  Size: {cache.get('size', 0)}/{cache.get('max_size', 0)} entries")
+        lines.append(f"  Hit Rate: {cache.get('hit_rate', 0):.1%} ({cache.get('hits', 0)} hits / {cache.get('misses', 0)} misses)")
+        lines.append(f"  Evictions: {cache.get('evictions', 0)} | Expirations: {cache.get('expirations', 0)}")
+        lines.append(f"  TTL: {cache.get('default_ttl', 0):.0f}s")
+
+        # Tier distribution
+        tiers = opt.get("tier_distribution", {})
+        total_tier = tiers.get("total", 0)
+        lines.append(f"\n--- Tiered Pipeline ---")
+        lines.append(f"  Tier 1 (Rules/FREE): {tiers.get('tier1_rules', 0)}")
+        lines.append(f"  Tier 2 (Mini/CHEAP): {tiers.get('tier2_mini', 0)}")
+        lines.append(f"  Tier 3 (Full/BEST):  {tiers.get('tier3_full', 0)}")
+        if total_tier > 0:
+            t1_pct = tiers.get('tier1_rules', 0) / total_tier * 100
+            lines.append(f"  Free tier ratio: {t1_pct:.0f}%")
+
+        # Adaptive frequency
+        adaptive = opt.get("adaptive_frequency", {})
+        lines.append(f"\n--- Adaptive Frequency ---")
+        lines.append(f"  LLM calls skipped: {adaptive.get('llm_skips', 0)}")
+        lines.append(f"  Skip criteria: ADX < 15 + no vol spike + |change| < 2%")
+
+        # Batching
+        batch = opt.get("batching", {})
+        if batch.get("batch_calls", 0) > 0:
+            lines.append(f"\n--- Smart Batching ---")
+            lines.append(f"  Batch calls: {batch.get('batch_calls', 0)}")
+            lines.append(f"  Symbols batched: {batch.get('symbols_batched', 0)}")
+
+        # Total savings
+        savings = opt.get("savings", {})
+        lines.append(f"\n--- Total Savings ---")
+        lines.append(f"  Tokens saved: ~{savings.get('total_estimated_tokens_saved', 0):,}")
+        lines.append(f"  Cost saved:   ~${savings.get('total_estimated_cost_saved_usd', 0):.4f}")
+        if cost.llm_cost_usd > 0:
+            actual_cost = cost.llm_cost_usd
+            saved = savings.get('total_estimated_cost_saved_usd', 0)
+            would_have = actual_cost + saved
+            reduction = (saved / would_have * 100) if would_have > 0 else 0
+            lines.append(f"  Without optimizer: ~${would_have:.4f}")
+            lines.append(f"  With optimizer:    ~${actual_cost:.4f} ({reduction:.0f}% reduction)")
+
+        return "\n".join(lines)
+
+
 def build_default_registry() -> SkillRegistry:
     """Create a registry with all built-in skills pre-loaded."""
     registry = SkillRegistry()
@@ -753,6 +815,6 @@ def build_default_registry() -> SkillRegistry:
                       WalkForwardSkill, MacroCalendarSkill, TradeJournalSkill,
                       CostBreakdownSkill, RunStrategySkill,
                       LearningDashboardSkill, FeedbackSkill, PatternsSkill,
-                      ProposalsSkill):
+                      ProposalsSkill, OptimizationSkill):
         registry.register(skill_cls())
     return registry

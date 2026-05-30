@@ -27,6 +27,12 @@ import numpy as np
 from openai import AsyncOpenAI
 
 from bot.config import CONFIG
+from bot.core.llm_cache import SemanticLLMCache
+from bot.core.token_optimizer import (
+    AdaptiveFrequency,
+    OptimizationStats,
+    TieredPipeline,
+)
 from bot.utils.logger import audit, trade_log
 from bot.utils.models import Direction, MarketSignal, TradeIdea
 
@@ -66,6 +72,9 @@ class Analyzer:
             max_rpm=int(CONFIG.llm.daily_call_limit / 24 * 60) or 40,
             name="llm",
         )
+        # Token optimization: semantic cache + stats
+        self._llm_cache = SemanticLLMCache(max_size=200, default_ttl=300.0)
+        self._opt_stats = OptimizationStats()
 
     async def analyze(self, signal: MarketSignal, candles: list[list[float]], order_flow=None) -> Optional[TradeIdea]:
         """
@@ -534,10 +543,48 @@ class Analyzer:
     # -- LLM Reasoning --
 
     async def _llm_thesis(self, signal: MarketSignal, indicators: dict, order_flow=None) -> Optional[dict]:
-        """Ask the LLM for a directional call with reasoning."""
+        """Ask the LLM for a directional call with reasoning.
+
+        Token optimization pipeline:
+          1. Semantic cache check -- return cached response if available
+          2. Adaptive frequency -- skip LLM for quiet markets
+          3. Tiered pipeline -- route to rules/mini/full based on signal quality
+          4. Budget guards -- fall back to rules if limits exceeded
+          5. LLM call with rate limiting
+          6. Cache the response for future use
+        """
         if self._llm is None:
             result = self._rule_based_thesis(signal, indicators)
             result["source"] = "RULE_ENGINE"
+            return result
+
+        # ── Optimization 1: Semantic Cache ──
+        cache_key = SemanticLLMCache.build_cache_key(signal.symbol, indicators)
+        cached = self._llm_cache.get(cache_key)
+        if cached is not None:
+            self._opt_stats.cache_hits += 1
+            cached_copy = dict(cached)
+            cached_copy["source"] = cached_copy.get("source", "LLM") + "_CACHED"
+            return cached_copy
+        self._opt_stats.cache_misses += 1
+
+        # ── Optimization 2: Adaptive Frequency ──
+        if not AdaptiveFrequency.should_use_llm(signal, indicators):
+            self._opt_stats.record_adaptive_skip()
+            result = self._rule_based_thesis(signal, indicators)
+            result["source"] = "RULE_ENGINE_ADAPTIVE"
+            return result
+
+        # ── Optimization 3: Tiered Pipeline ──
+        tier = TieredPipeline.classify_tier(indicators, signal)
+        self._opt_stats.record_tier(tier)
+
+        if tier == 1:
+            # Tier 1: Rule engine handles clear-cut signals (FREE)
+            result = self._rule_based_thesis(signal, indicators)
+            result["source"] = "RULE_ENGINE_TIER1"
+            # Cache the rule result too (saves re-computation)
+            self._llm_cache.put(cache_key, result, signal.symbol)
             return result
 
         # Budget guard: fall back to rules when daily limit exceeded (fix J)
@@ -564,14 +611,14 @@ class Analyzer:
 
         prompt = self._build_prompt(signal, indicators, order_flow)
 
-        # Model routing: thesis-quality analysis uses the full model,
-        # quick scans use the cheaper mini model.
-        # Confluence > 0.6 or explicit thesis request → full model
-        confluence = indicators.get("confluence", 0)
-        use_full_model = confluence >= 0.6
+        # Tier-based model routing:
+        #   Tier 2 → gpt-4o-mini (cheap)
+        #   Tier 3 → gpt-4o (full reasoning)
+        use_full_model = tier == 3
         model = self.THESIS_MODEL if use_full_model else self.SCAN_MODEL
         category = "thesis" if use_full_model else "analyze"
         max_tokens = CONFIG.llm.max_tokens if use_full_model else 280
+        tier_label = TieredPipeline.tier_label(tier)
 
         try:
             # Rate-limit before calling to prevent 429s
@@ -606,8 +653,12 @@ class Analyzer:
                 audit(trade_log, "LLM response could not be parsed, using defaults",
                       action="analyze", result="LLM_PARSE_FAIL",
                       data={"raw_text": (resp.choices[0].message.content or "")[:200]})
-            result["source"] = "LLM"
+            result["source"] = f"LLM_{tier_label}"
             result["model_used"] = model
+
+            # ── Cache the LLM response ──
+            self._llm_cache.put(cache_key, result, signal.symbol)
+
             return result
         except Exception as exc:
             audit(trade_log, f"LLM error, falling back to rules: {exc}",
@@ -615,6 +666,25 @@ class Analyzer:
             result = self._rule_based_thesis(signal, indicators)
             result["source"] = "RULE_ENGINE_FALLBACK"
             return result
+
+    @property
+    def optimization_stats(self) -> dict:
+        """Combined optimization stats: cache + tiers + adaptive + batching."""
+        cache_snap = self._llm_cache.snapshot()
+        opt_snap = self._opt_stats.snapshot()
+        opt_snap["cache"] = cache_snap
+        # Merge cost savings
+        total_saved = (
+            opt_snap["savings"]["estimated_cost_saved_usd"]
+            + cache_snap["estimated_cost_saved_usd"]
+        )
+        opt_snap["savings"]["total_estimated_cost_saved_usd"] = round(total_saved, 4)
+        total_tokens = (
+            opt_snap["savings"]["estimated_tokens_saved"]
+            + cache_snap["estimated_tokens_saved"]
+        )
+        opt_snap["savings"]["total_estimated_tokens_saved"] = total_tokens
+        return opt_snap
 
     @staticmethod
     def _build_prompt(signal: MarketSignal, indicators: dict, order_flow=None) -> str:

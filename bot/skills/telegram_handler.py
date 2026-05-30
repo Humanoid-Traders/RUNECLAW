@@ -1,6 +1,6 @@
 """
 RUNECLAW Telegram Handler -- human interface for the trading bot.
-Commands: /scan, /analyze, /portfolio, /trade, /risk, /macro, /status, /rejected, /halt, /reset, /backtest, /run, /costs, /learn, /patterns, /proposals, /help
+Commands: /scan, /analyze, /portfolio, /trade, /risk, /macro, /status, /rejected, /halt, /reset, /backtest, /run, /costs, /learn, /patterns, /proposals, /optimize, /help
 Includes inline keyboard for trade confirmation and rate limiting.
 """
 
@@ -71,6 +71,7 @@ class TelegramHandler:
         app.add_handler(CommandHandler("learn", self._cmd_learn))
         app.add_handler(CommandHandler("patterns", self._cmd_patterns))
         app.add_handler(CommandHandler("proposals", self._cmd_proposals))
+        app.add_handler(CommandHandler("optimize", self._cmd_optimize))
         app.add_handler(CommandHandler("run", self._cmd_run))
         app.add_handler(CommandHandler("help", self._cmd_help))
         app.add_handler(CallbackQueryHandler(self._handle_callback))
@@ -331,6 +332,17 @@ class TelegramHandler:
         await update.message.reply_text(f"\U0001f4cb *Proposals*\n```\n{result}\n```",
                                         parse_mode="Markdown")
 
+    async def _cmd_optimize(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """Show LLM token optimization stats."""
+        if not await self._check_rate(update):
+            return
+        if not self._check_auth(update):
+            await update.message.reply_text("\u26d4 Unauthorized. Contact the bot owner.")
+            return
+        result = await self.registry.get("optimize").execute(self.engine)  # type: ignore
+        await update.message.reply_text(f"\u26a1 *Token Optimizer*\n```\n{result}\n```",
+                                        parse_mode="Markdown")
+
     async def _cmd_help(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text(
             "\U0001f43e *RUNECLAW Commands*\n\n"
@@ -349,6 +361,7 @@ class TelegramHandler:
             "/learn - AI learning dashboard & scores\n"
             "/patterns - Detected market patterns\n"
             "/proposals - Improvement proposals\n"
+            "/optimize - LLM token optimizer stats\n"
             "/status - Bot status\n"
             "/halt - Emergency kill-switch\n"
             "/reset - Reset circuit breaker (admin)\n"
