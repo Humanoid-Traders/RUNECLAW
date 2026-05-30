@@ -618,6 +618,132 @@ class RunStrategySkill(BaseSkill):
         return f"{header}\n{body}{footer}"
 
 
+class LearningDashboardSkill(BaseSkill):
+    """Show the AI learning system dashboard."""
+    name = "learning"
+    description = "Display AI learning system status, scores, and proposals"
+
+    async def execute(self, engine: RuneClawEngine, **kwargs: Any) -> str:
+        dash = engine.learning.dashboard()
+        score = dash["learning_score"]
+        stats = dash["store_stats"]
+
+        lines = [
+            "RUNECLAW AI LEARNING DASHBOARD",
+            "=" * 40,
+            f"Learning Score: {score['composite_score']}/10 [{score['tier']}]",
+            "",
+            "Data Stores:",
+        ]
+        for key, val in stats.items():
+            lines.append(f"  {key}: {val} records")
+
+        lines.append(f"\nPending proposals: {dash['pending_proposals']}")
+        lines.append(f"Blocked proposals: {dash['blocked_proposals']}")
+
+        if dash.get("strategy_rankings"):
+            lines.append("\nStrategy Rankings:")
+            for s in dash["strategy_rankings"][:5]:
+                lines.append(
+                    f"  [{s['tier']}] {s['name']}: "
+                    f"safety={s['safety']:.0f} WR={s['win_rate']} "
+                    f"({s['trades']} trades)"
+                    + (" OVERFIT!" if s['overfitting'] else "")
+                )
+
+        fb = dash.get("feedback_summary", {})
+        if fb.get("total", 0) > 0:
+            lines.append(f"\nFeedback: {fb['total']} total, "
+                         f"{fb.get('positive_rate', 0):.0%} positive")
+            for area in fb.get("improvement_areas", []):
+                lines.append(f"  -> {area}")
+
+        lines.append("\nSafety Policy: ACTIVE")
+        lines.append("AI may NOT: enable live trading, increase leverage,")
+        lines.append("  remove stops, bypass risk, delete audit logs")
+
+        return "\n".join(lines)
+
+
+class FeedbackSkill(BaseSkill):
+    """Submit human feedback on a trade decision."""
+    name = "feedback"
+    description = "Submit feedback on a trade decision"
+
+    async def execute(self, engine: RuneClawEngine, **kwargs: Any) -> str:
+        decision_id = kwargs.get("decision_id", "")
+        feedback_type = kwargs.get("feedback_type", "")
+        text = kwargs.get("text", "")
+
+        if not decision_id or not feedback_type:
+            valid_types = [
+                "correct", "incorrect", "too_risky", "too_conservative",
+                "unclear_explanation", "missing_macro_context",
+                "good_rejection", "good_explanation",
+                "needs_more_evidence", "needs_doc_update",
+            ]
+            return (
+                "Usage: /feedback <decision_id> <type> [text]\n"
+                f"Valid types: {', '.join(valid_types)}"
+            )
+
+        fb = engine.learning.submit_feedback(
+            decision_audit_id=decision_id,
+            feedback_type=feedback_type,
+            feedback_text=text,
+        )
+        return f"Feedback recorded: {fb.audit_id}\nType: {feedback_type}\nFeedback improves recommendations only — cannot bypass risk gates."
+
+
+class PatternsSkill(BaseSkill):
+    """Show detected market patterns from learning history."""
+    name = "patterns"
+    description = "Display detected market patterns from AI learning"
+
+    async def execute(self, engine: RuneClawEngine, **kwargs: Any) -> str:
+        patterns = engine.learning.detect_patterns()
+        if not patterns:
+            return "No patterns detected yet. Need more decision history."
+
+        lines = ["DETECTED PATTERNS", "=" * 40]
+        for p in patterns[:10]:
+            exp = " [EXPERIMENTAL]" if p.is_experimental else ""
+            lines.append(
+                f"\n{p.pattern_type}{exp}\n"
+                f"  Confidence: {p.confidence:.0%} | Samples: {p.sample_size}\n"
+                f"  Win Rate: {p.historical_win_rate:.0%} | Avg PnL: ${p.avg_pnl:.2f}\n"
+                f"  {p.description}\n"
+                f"  May override risk: {p.may_override_risk}"  # always False
+            )
+
+        lines.append(f"\nPatterns are observations only — they do NOT create trade signals.")
+        return "\n".join(lines)
+
+
+class ProposalsSkill(BaseSkill):
+    """Show and manage improvement proposals."""
+    name = "proposals"
+    description = "View pending improvement proposals from AI learning"
+
+    async def execute(self, engine: RuneClawEngine, **kwargs: Any) -> str:
+        proposals = engine.learning.store.get_proposals()
+        if not proposals:
+            return "No improvement proposals yet."
+
+        lines = ["IMPROVEMENT PROPOSALS", "=" * 40]
+        for p in proposals[-10:]:
+            lines.append(
+                f"\n[{p.classification}] {p.audit_id}\n"
+                f"  Status: {p.status}\n"
+                f"  Problem: {p.problem[:80]}\n"
+                f"  Change: {p.proposed_change[:80]}\n"
+                f"  Human approval: {'YES' if p.human_approval_required else 'auto'}"
+            )
+
+        lines.append(f"\nTotal: {len(proposals)} proposals")
+        return "\n".join(lines)
+
+
 def build_default_registry() -> SkillRegistry:
     """Create a registry with all built-in skills pre-loaded."""
     registry = SkillRegistry()
@@ -625,6 +751,8 @@ def build_default_registry() -> SkillRegistry:
                       ExecutePaperTradeSkill, GetPortfolioSkill, ExplainTradeSkill,
                       RunBacktestSkill, RejectedTradesSkill, HaltSkill,
                       WalkForwardSkill, MacroCalendarSkill, TradeJournalSkill,
-                      CostBreakdownSkill, RunStrategySkill):
+                      CostBreakdownSkill, RunStrategySkill,
+                      LearningDashboardSkill, FeedbackSkill, PatternsSkill,
+                      ProposalsSkill):
         registry.register(skill_cls())
     return registry

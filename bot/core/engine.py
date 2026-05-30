@@ -17,6 +17,7 @@ from bot.core.analyzer import Analyzer
 from bot.core.cost import CostTracker
 from bot.core.market_scanner import MarketScanner
 from bot.core.order_flow import OrderFlowAnalyzer
+from bot.learning.orchestrator import LearningOrchestrator
 from bot.macro.calendar import MacroCalendar, build_2026_calendar
 from bot.risk.portfolio import PortfolioTracker
 from bot.risk.risk_engine import RiskEngine
@@ -45,6 +46,7 @@ class RuneClawEngine:
         self.order_flow = OrderFlowAnalyzer()
         self.macro_calendar = MacroCalendar(events=build_2026_calendar())
         self.risk = RiskEngine(self.portfolio, macro_calendar=self.macro_calendar)
+        self.learning = LearningOrchestrator()
         # C1 fix: wire trade-close callback so portfolio closes feed risk streak tracking
         self.portfolio._on_trade_close = self.risk.record_trade_result
         self.state: AgentState = AgentState.IDLE
@@ -230,6 +232,24 @@ class RuneClawEngine:
                 action="risk_gate",
                 result="REJECTED",
             )
+            # Learning: log rejected trade decision
+            decision = self.learning.log_decision(
+                symbol=signal.symbol,
+                direction=idea.direction.value,
+                confidence=idea.confidence,
+                confluence_score=idea.confidence,
+                entry_price=idea.entry_price,
+                stop_loss=idea.stop_loss,
+                take_profit=idea.take_profit,
+                risk_reward=idea.risk_reward_ratio,
+                position_size_usd=risk_check.position_size_usd,
+                risk_engine_result="REJECTED",
+                checks_passed=risk_check.checks_passed,
+                checks_failed=risk_check.checks_failed,
+                rejected_reason=risk_check.reason,
+                decision="TRADE_REJECTED_FAIL_CLOSED",
+            )
+            self.learning.review_rejection(decision)
             self._transition(AgentState.ANALYZING, "risk rejected, continuing analysis")
             return None
 
@@ -313,6 +333,23 @@ class RuneClawEngine:
             action="execute",
             result="EXECUTED",
             data={"asset": trade.asset, "size": size_usd},
+        )
+        # Learning: log accepted trade decision
+        self.learning.log_decision(
+            symbol=idea.asset,
+            direction=idea.direction.value,
+            confidence=idea.confidence,
+            confluence_score=idea.confidence,
+            entry_price=idea.entry_price,
+            stop_loss=idea.stop_loss,
+            take_profit=idea.take_profit,
+            risk_reward=idea.risk_reward_ratio,
+            position_size_usd=size_usd,
+            risk_engine_result="APPROVED",
+            checks_passed=recheck.checks_passed,
+            checks_failed=[],
+            decision="TRADE_ACCEPTED_PAPER",
+            paper_trade_id=trade.trade_id,
         )
         self._transition(AgentState.IDLE, "trade executed")
         return f"Executed paper {trade.direction.value} {trade.asset} (${size_usd:.2f})"
