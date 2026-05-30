@@ -33,6 +33,7 @@ class MarketScanner:
                 "password": CONFIG.exchange.passphrase,
                 "sandbox": CONFIG.exchange.sandbox,
                 "timeout": 30000,
+                "enableRateLimit": True,
             })
         return self._exchange
 

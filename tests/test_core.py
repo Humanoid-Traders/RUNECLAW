@@ -1587,12 +1587,12 @@ class TestAuditFixes:
     # -- Position sizing cap (Audit #1) --
 
     def test_position_sizing_caps_instead_of_rejecting(self):
-        """Fixed-fractional sizing that exceeds 20% notional should be capped, not rejected."""
+        """Fixed-fractional sizing that exceeds 20% notional should be clamped by check #2, not rejected."""
         portfolio = PortfolioTracker(initial_balance=10000.0)
         risk = RiskEngine(portfolio)
 
         # 2.5% stop distance -> uncapped = 2% equity / 2.5% = 80% of equity = $8000
-        # Should be capped at 20% = $2000, NOT rejected
+        # Check #2 should clamp to 20% = $2000, NOT reject
         idea = self._make_idea(
             entry_price=50000.0,
             stop_loss=48750.0,  # 2.5% stop
@@ -1600,9 +1600,14 @@ class TestAuditFixes:
         )
         result = risk.evaluate(idea, atr=500.0)
         assert result.verdict != RiskVerdict.REJECTED, \
-            f"Position sizing should cap, not reject. Got: {result.reason}"
-        # Position size should be capped at ~20% of equity
+            f"Position sizing should clamp, not reject. Got: {result.reason}"
+        # Position size should be clamped at ~20% of equity
         assert result.position_size_usd <= 10000 * 0.201  # 20% + epsilon
+        # Verify clamping was logged in passed checks
+        sizing_msgs = [c for c in result.checks_passed if "POSITION_SIZE" in c]
+        assert len(sizing_msgs) == 1
+        assert "clamped" in sizing_msgs[0].lower(), \
+            f"Expected 'clamped' in sizing check msg, got: {sizing_msgs[0]}"
 
     def test_position_sizing_cap_allows_tight_stops(self):
         """Tight stops (1% distance) should produce capped positions, not rejections."""

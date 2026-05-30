@@ -157,16 +157,15 @@ class RiskEngine:
         # Fixed-fractional risk sizing: size by stop distance, not flat notional.
         # risk_budget = equity * max_position_pct (the max we're willing to lose)
         # position_usd = risk_budget / (stop_distance / entry_price)
-        # Then CAP at 20% notional so no single position dominates the portfolio.
-        # The cap means tight-stop trades risk less than the full budget — this is
-        # the correct tradeoff for a risk-first system.
+        # The notional cap (20%) is enforced by check #2 below, NOT here.
+        # This separation gives the check real authority: if a tight stop would
+        # produce an oversized position, the check catches it and caps it.
         stop_distance_pct = abs(idea.entry_price - idea.stop_loss) / idea.entry_price if idea.entry_price > 0 else 0
+        uncapped_position_usd = position_usd  # fallback: flat notional
         if stop_distance_pct > 0:
             risk_budget = state.equity_usd * (CONFIG.risk.max_position_pct / 100.0)
-            uncapped = risk_budget / stop_distance_pct
-            max_notional = state.equity_usd * (CONFIG.risk.max_symbol_exposure_pct / 100.0)
-            position_usd = min(uncapped, max_notional)  # cap, don't reject
-        # else: fall back to flat notional (computed above)
+            uncapped_position_usd = risk_budget / stop_distance_pct
+            position_usd = uncapped_position_usd  # uncapped -- check #2 will cap if needed
 
         # 1. Circuit breaker
         if self._circuit_open:
@@ -174,7 +173,7 @@ class RiskEngine:
         else:
             passed.append("CIRCUIT_BREAKER: OK")
 
-        # 2. Position size — safety-net validation that cap was applied
+        # 2. Position size — enforces notional cap (the check has real authority)
         if state.equity_usd <= 0:
             failed.append("EQUITY: zero or negative equity")
         else:
@@ -183,7 +182,10 @@ class RiskEngine:
             if notional_pct <= max_notional_pct + 0.01:  # tiny epsilon for float math
                 passed.append(f"POSITION_SIZE: notional {notional_pct:.1f}% <= {max_notional_pct}%")
             else:
-                failed.append(f"POSITION_SIZE: notional {notional_pct:.1f}% > {max_notional_pct}%")
+                # Cap position to max notional and log the clamping
+                max_notional = state.equity_usd * (max_notional_pct / 100.0)
+                passed.append(f"POSITION_SIZE: clamped {notional_pct:.1f}% -> {max_notional_pct}% (${position_usd:.0f} -> ${max_notional:.0f})")
+                position_usd = max_notional
 
         # 3. Daily loss (realized + unrealized) — measured against equity, not free cash
         daily_loss_pct = abs(state.daily_pnl / state.equity_usd * 100) if state.equity_usd > 0 else 0

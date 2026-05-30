@@ -65,7 +65,7 @@ Validated across 180 backtest runs (synthetic data — 3 volatility regimes, 3 t
 | Backtesting | Intrabar SL/TP/trailing stop checking, configurable commission (0.1%) and slippage (0.05%), synthetic data with GBM + GARCH |
 | Telegram Bot | Rate-limited (20/min), inline keyboards, fire-and-forget async tasks with error callbacks |
 | Data Validation | Pydantic strict schemas at every boundary -- API responses, config, trade parameters, internal state |
-| Concurrency | RLock guards on portfolio, risk engine, scanner; no await points inside locked regions so single-threaded asyncio model is safe |
+| Concurrency | RLock guards on shared mutable state (portfolio, risk engine, scanner); single-threaded asyncio means contention is minimal, but locks protect against any future threading |
 | Metrics Engine | Sharpe/Sortino (per-trade returns, annualized sqrt(N) where N = trades/year), Calmar, profit factor, equity curve (capped 10K points) |
 
 ---
