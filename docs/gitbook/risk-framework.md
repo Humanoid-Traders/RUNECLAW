@@ -159,13 +159,15 @@ Guards against data errors producing invalid trade parameters.
 |-----------|---------|-------------|
 | `VOLATILITY_GUARD_ATR_PCT` | 6.0% | Maximum ATR-to-price ratio |
 
-Rejects trades during extreme volatility conditions where stops are unreliable.
+Rejects trades during extreme volatility conditions where stops are unreliable. **When ATR data is unavailable, the volatility guard fails closed and rejects the trade.** This ensures the system never enters a position without a valid volatility assessment.
+
+Of the 18 pre-trade checks, **17 are fail-closed** (including the volatility guard) and **1 is fail-open** (the liquidity guard only, which is skipped when order book data is unavailable).
 
 ### 17. Liquidity Guard
 
 **Check:** Is there sufficient order book depth to fill the proposed position without excessive slippage?
 
-This check runs on live order-flow data when available (fail-open -- skipped if order book data is unavailable). It examines cumulative depth within a configurable price band and rejects trades where the order book cannot absorb the proposed position size.
+This check runs on live order-flow data when available (fail-open -- skipped if order book data is unavailable). It examines cumulative depth within a configurable price band and rejects trades where the order book cannot absorb the proposed position size. The liquidity guard is the **only** fail-open check in the system.
 
 ### 18. Macro Event Gate
 
@@ -179,7 +181,7 @@ This check runs on live order-flow data when available (fail-open -- skipped if 
 | `POST_EVENT_VOLATILITY` | 30min to 4h after | Logged warning (informational) |
 | `BLACKOUT` | Calendar evaluation failed | **Trade rejected** (fail-closed) |
 
-Tracked events: FOMC decisions, CPI, Core PCE, NFP, PPI, GDP, ISM PMI, Retail Sales, Jobless Claims, Fed speeches. The macro calendar uses a fail-closed design -- if the calendar cannot be evaluated, the state defaults to `BLACKOUT` and all trades are blocked.
+Tracked events: FOMC decisions, CPI, Core PCE, NFP, PPI, GDP, ISM PMI, Retail Sales, Jobless Claims, Fed speeches. The macro calendar includes the full **2026 schedule** for FOMC, CPI, NFP, and PCE events, and uses a fail-closed design -- if the calendar cannot be evaluated, the state defaults to `BLACKOUT` and all trades are blocked.
 
 ## Circuit Breaker
 
@@ -198,6 +200,10 @@ The circuit breaker is a safety mechanism that halts all trading when risk limit
 - The circuit breaker can only be reset manually (requires code-level or authorized command).
 - This is intentional -- automatic reset would defeat the purpose.
 - The reset is logged as an audit event.
+
+## Backtest State Isolation
+
+The `BacktestEngine` creates **isolated temporary state files** for portfolio and circuit breaker state during backtest runs. This ensures that backtests never pollute the production circuit breaker or portfolio state. Each backtest operates in its own sandbox -- tripping the circuit breaker during a backtest replay has no effect on the live or paper trading state. Temporary files are cleaned up automatically when the backtest completes.
 
 ## Re-Check on Confirmation
 

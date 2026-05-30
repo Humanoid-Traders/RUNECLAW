@@ -51,6 +51,16 @@ All other settings have safe defaults. See `.env.example` for the full list.
 
 RUNECLAW supports three modes:
 
+### Docker Compose (recommended)
+
+The easiest way to run RUNECLAW is via Docker Compose. The compose file mounts a `./data` volume for persistent portfolio state and risk engine files:
+
+```bash
+docker compose up -d
+```
+
+The `./data` directory on the host is mounted into the container, so portfolio state, circuit breaker state, and audit logs persist across container restarts.
+
 ### CLI Mode (default)
 
 Interactive testing without Telegram. No bot token needed.

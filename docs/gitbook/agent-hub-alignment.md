@@ -51,7 +51,7 @@ RUNECLAW exposes 12 internal skills that map directly to MCP tools. See [MCP Int
 | Interface | Details |
 |---|---|
 | Skill registry | 12 registered skills, extensible via `BaseSkill` subclass |
-| Telegram bot | 14 slash commands with inline keyboard confirmation |
+| Telegram bot | 18 slash commands with inline keyboard confirmation |
 | CLI mode | Direct skill invocation via `python -m bot.main --mode cli` |
 | Scan mode | One-shot market scan: `python -m bot.main --mode scan` |
 
@@ -61,7 +61,7 @@ RUNECLAW exposes 12 internal skills that map directly to MCP tools. See [MCP Int
 |---|---|
 | Source code | [GitHub](https://github.com/Humanoid-Traders/RUNECLAW) -- MIT license |
 | Documentation | [GitBook](https://humanoid-traders-1.gitbook.io/humanoid-traders-ai) |
-| Test suite | 180 unit tests (`pytest tests/test_core.py -v`) |
+| Test suite | 315+ unit tests (`pytest tests/test_core.py -v`) |
 | Demo data | `demo/sample_output.json`, `demo/sample_risk_check.json`, `demo/sample_portfolio.json` |
 | Backtest engine | Synthetic data with GBM + GARCH, intrabar SL/TP/trailing stop simulation |
 

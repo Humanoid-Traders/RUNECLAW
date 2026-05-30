@@ -91,7 +91,7 @@ Portfolio state is automatically saved to `data/portfolio_state.json` after ever
 The paper trading system is designed for demonstration purposes:
 
 - **No slippage model.** Trades execute at the exact signal price. Real markets have slippage.
-- **No fees.** Trading fees are not deducted. Bitget's fee structure would need to be integrated for accurate backtesting.
+- **No fees in paper mode.** Trading fees are not deducted in paper trading. The **backtest engine** does model commission (0.1%) and slippage (0.05%), with commission computed once by the portfolio tracker to avoid double-counting.
 - **No partial fills.** All orders are fully filled instantly.
 
 These simplifications are appropriate for a hackathon demo but would need to be addressed for real-world use.

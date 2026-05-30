@@ -17,6 +17,10 @@ RUNECLAW uses a modular skill system. Every capability is registered as a self-c
 | `/halt` | -- | Emergency kill-switch (trip breaker, cancel all) |
 | `/reset` | -- | Reset circuit breaker (requires authorization) |
 | `/status` | -- | Bot mode, engine state, equity snapshot |
+| `/learn` | `ai_learning` | Show AI learning system status, recent reflections, and strategy tier grades |
+| `/patterns` | `pattern_learner` | Display detected recurring market patterns and their success rates |
+| `/proposals` | `strategy_proposals` | List strategy improvement proposals from the reflection engine |
+| `/optimize` | `token_optimizer` | Show LLM token usage stats, cache hit rates, and cost savings |
 | `/help` | -- | List all available commands |
 
 ## Command Details

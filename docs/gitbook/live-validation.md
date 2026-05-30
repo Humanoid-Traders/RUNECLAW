@@ -177,7 +177,7 @@ The funnel shows RUNECLAW's selectivity: out of 335 signals, only 5 passed all f
 |-----------|-------|
 | Sub-account | AG-77MZCFT2 (UID 3992071187) |
 | Account Mode | Unified Account |
-| API Mode | Public (market data) + Authenticated |
+| API Mode | Public endpoints only (no credentials passed for market data) |
 | Sandbox | false (real market data) |
 | Simulation Mode | true (paper trading only) |
 | Live Trading | false (disabled) |

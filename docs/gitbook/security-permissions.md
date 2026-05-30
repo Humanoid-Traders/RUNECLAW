@@ -39,6 +39,8 @@ The codebase has been audited to confirm zero hardcoded API keys, tokens, or pas
 
 ### Bitget API Permissions
 
+The market scanner uses **public endpoints only** and does not pass API credentials for scanning or analysis operations. Authenticated API keys are only required for order execution in live trading mode.
+
 RUNECLAW requires different API permission levels depending on mode:
 
 | Mode | Required Permissions | Recommendation |
@@ -77,7 +79,7 @@ Authorization applies to both slash commands and inline keyboard callbacks (conf
 
 | Destination | Data sent | Purpose |
 |---|---|---|
-| Bitget API | API key + signed requests | Fetch tickers, OHLCV candles, place orders |
+| Bitget API | Public market data requests (tickers, OHLCV candles) | Fetch market data for scanning and analysis. No credentials passed for public endpoints. |
 | Telegram API | Bot token + message content | Send scan results, trade ideas, confirmations |
 | OpenAI API (optional) | Technical indicators + market context | Generate directional thesis |
 

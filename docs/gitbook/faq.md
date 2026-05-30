@@ -93,7 +93,7 @@ Yes. Portfolio state is automatically saved to `data/portfolio_state.json` after
 
 **Does it simulate fees or slippage?**
 
-No. Paper trades execute at exact signal prices with no fees. This is a known simplification for the hackathon.
+Paper trades execute at exact signal prices with no fees in live paper mode. However, the **backtest engine** models both commission (0.1%) and slippage (0.05%). Commission is computed once by the portfolio tracker to avoid double-counting.
 
 ---
 

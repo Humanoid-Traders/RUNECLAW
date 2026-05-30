@@ -162,7 +162,8 @@ This page provides step-by-step demo scenarios for evaluating RUNECLAW. Each sce
 
 - Synthetic data generation (not cherry-picked historical data)
 - Intrabar SL/TP/trailing stop simulation
-- Commission (0.1%) and slippage (0.05%) modeling
+- Commission (0.1%) and slippage (0.05%) modeling -- commission computed once by the portfolio tracker, never double-counted
+- Backtest state isolation: each run uses temporary state files so backtests never pollute production circuit breaker or portfolio
 - Consistent metrics across seeds (worst DD < 3%, no crashed runs)
 - Trailing stops responsible for ~48% of exits with net-positive PnL
 
@@ -223,14 +224,16 @@ quit                 # Exit
 ## Test Suite Demo
 
 ```bash
-# Run all 180 tests
+# Run all 315+ tests
 pytest tests/test_core.py -v
 
 # Key test categories:
 # - Risk engine: all 18 checks, circuit breaker, edge cases
 # - Portfolio: position lifecycle, PnL, drawdown
 # - Analyzer: indicators, candlestick patterns, Fibonacci, OBV, VWAP
-# - Backtest: replay engine, trailing stops, commission/slippage
+# - Backtest: replay engine, trailing stops, commission/slippage, state isolation
 # - Macro: calendar states, boundary conditions, fail-closed
+# - AI Learning: experience memory, reflection, strategy tiers, pattern learner
+# - LLM Optimizer: semantic cache, tiered pipeline, batching
 # - Integration: full pipeline, rejection flows, concurrent access
 ```

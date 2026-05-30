@@ -145,3 +145,62 @@ All configuration is loaded from environment variables with safe defaults. The `
 - `LLMConfig` -- API key, model name, temperature
 
 See `.env.example` for the full list of configurable values.
+
+---
+
+## AI Learning System
+
+RUNECLAW includes an adaptive AI learning system with **8 modules** that enable the bot to improve over time:
+
+| Module | Purpose |
+|--------|---------|
+| **Experience Memory** | Stores trade outcomes (entry, exit, PnL, market conditions) for pattern mining |
+| **Reflection Engine** | Periodically reviews recent trades to identify systematic errors and biases |
+| **Strategy Evaluator** | Grades strategy variants on a **S/A/B/C/D tier** scale based on backtest and live performance |
+| **Pattern Learner** | Detects recurring market patterns (candlestick sequences, indicator confluences) that preceded profitable trades |
+| **Macro Learner** | Correlates macro event outcomes (e.g., CPI surprises) with post-event price behavior |
+| **Model Comparer** | Benchmarks multiple LLM models and prompt templates against each other on the same trade ideas |
+| **Prompt Optimizer** | Evolves LLM prompt templates by testing variations and selecting for higher-quality trade theses |
+| **Feedback Collector** | Gathers operator feedback on trade proposals to incorporate human judgment into the learning loop |
+
+### Safety Policy
+
+The learning system enforces a **blocked-actions policy** that prevents it from:
+
+- Modifying risk engine parameters or thresholds
+- Bypassing the 18-check risk gate
+- Executing trades without human confirmation
+- Altering circuit breaker state
+
+All learning outputs are advisory. They inform the operator and tune analysis parameters -- they never override safety mechanisms.
+
+---
+
+## LLM Token Optimizer
+
+To control LLM API costs, RUNECLAW implements a **4-layer token optimization system** that achieves up to **70% cost savings** compared to naive per-call invocation:
+
+| Layer | Mechanism | Savings |
+|-------|-----------|---------|
+| **Semantic Cache** | Caches LLM responses keyed by a semantic hash of the input (indicators + market context). Near-identical market conditions return cached results instead of making a new API call. | High |
+| **Tiered Pipeline** | Routes simple analyses to cheaper/smaller models and reserves expensive models for complex or high-confidence-required scenarios. | Medium |
+| **Smart Batching** | Batches multiple analysis requests into a single LLM call when multiple assets are queued for analysis in the same cycle. | Medium |
+| **Adaptive Frequency** | Dynamically adjusts analysis frequency based on market volatility -- scans more often during high-volatility periods and less often during quiet markets. | Variable |
+
+The optimizer is transparent to the rest of the system. The analyzer always receives a trade thesis regardless of whether it came from cache, a cheap model, or a premium model.
+
+---
+
+## Macro Event Calendar
+
+The macro calendar tracks **2026 FOMC, CPI, NFP, and PCE schedules** and feeds them into the risk engine's macro event gate (check #18). The calendar drives a **5-state risk machine**:
+
+| State | Meaning |
+|-------|---------|
+| `NORMAL` | No upcoming events within 24 hours. No restrictions. |
+| `PRE_EVENT_CAUTION` | An event is within 24 hours. Informational warning logged. |
+| `EVENT_LOCKDOWN` | 30 minutes before to 30 minutes after the event. **All trades rejected.** |
+| `POST_EVENT_VOLATILITY` | 30 minutes to 4 hours after the event. Warning logged. |
+| `BLACKOUT` | Calendar evaluation failed. **All trades rejected** (fail-closed). |
+
+The calendar is fail-closed by design: if event data cannot be loaded or parsed, the system enters `BLACKOUT` and blocks all trading until the issue is resolved.

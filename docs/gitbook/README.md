@@ -41,7 +41,7 @@ Structured Audit Log
 ## Core Principles
 
 1. **Simulation-first.** Live trading is disabled unless explicitly enabled with two environment flags.
-2. **Fail-closed risk.** Every trade must pass all 18 pre-trade checks. One failure means rejection.
+2. **Fail-closed risk.** Every trade must pass all 18 pre-trade checks (17 fail-closed + 1 fail-open for liquidity only). One failure means rejection.
 3. **Human-in-the-loop.** No trade executes without explicit confirmation via Telegram inline keyboard.
 4. **Full auditability.** Every decision is logged as structured JSON for post-mortem review.
 
