@@ -18,6 +18,7 @@ def make_trailing_state(
 ) -> dict:
     """Create initial trailing-stop state for a new position."""
     return {
+        "entry_price": entry_price,
         "best_price": entry_price,
         "trailing_active": False,
         "initial_risk": initial_risk,

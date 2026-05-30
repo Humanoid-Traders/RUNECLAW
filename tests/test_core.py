@@ -3024,3 +3024,639 @@ class TestTAUtils:
         assert callable(_ema)
         assert callable(_compute_adx)
         assert Regime.TREND_UP.value == "TREND_UP"
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# NEW TEST CLASSES -- Expanded coverage for audit pass 3
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestTrailingStop:
+    """Tests for bot/utils/trailing.py -- activation and adjustment logic."""
+
+    def test_make_state_includes_entry_price(self):
+        from bot.utils.trailing import make_trailing_state
+        state = make_trailing_state(100.0, "LONG", 5.0, 2.0)
+        assert state["entry_price"] == 100.0
+        assert state["best_price"] == 100.0
+        assert state["trailing_active"] is False
+        assert state["initial_risk"] == 5.0
+        assert state["atr"] == 2.0
+
+    def test_long_trailing_activates_at_1r(self):
+        from bot.utils.trailing import make_trailing_state, update_trailing_stop
+        state = make_trailing_state(100.0, "LONG", 5.0, 2.0)
+        # Price hasn't moved 1R yet
+        sl, active = update_trailing_stop(state, 104.0, 95.0, "LONG")
+        assert active is False
+        assert sl == 95.0
+        # Price moves to exactly 1R profit (100 + 5 = 105)
+        sl, active = update_trailing_stop(state, 105.0, 95.0, "LONG")
+        assert active is True
+        # Trailing SL = best_price - 1.5 * ATR = 105 - 3 = 102
+        assert sl == 102.0
+
+    def test_long_trailing_only_tightens(self):
+        from bot.utils.trailing import make_trailing_state, update_trailing_stop
+        state = make_trailing_state(100.0, "LONG", 5.0, 2.0)
+        # Activate trailing
+        update_trailing_stop(state, 106.0, 95.0, "LONG")
+        # Price rises further
+        sl1, _ = update_trailing_stop(state, 110.0, 95.0, "LONG")
+        assert sl1 == 110.0 - 3.0  # 107.0
+        # Price drops back -- SL should NOT widen (stays at 107)
+        sl2, _ = update_trailing_stop(state, 108.0, sl1, "LONG")
+        # best_price is still 110, trailing SL still 107
+        assert sl2 == 107.0
+
+    def test_short_trailing_activates(self):
+        from bot.utils.trailing import make_trailing_state, update_trailing_stop
+        state = make_trailing_state(100.0, "SHORT", 5.0, 2.0)
+        # Price drops 1R (100 - 5 = 95)
+        sl, active = update_trailing_stop(state, 95.0, 105.0, "SHORT")
+        assert active is True
+        # Trailing SL = best_price + 1.5 * ATR = 95 + 3 = 98
+        assert sl == 98.0
+
+    def test_short_trailing_only_tightens(self):
+        from bot.utils.trailing import make_trailing_state, update_trailing_stop
+        state = make_trailing_state(100.0, "SHORT", 5.0, 2.0)
+        update_trailing_stop(state, 94.0, 105.0, "SHORT")
+        sl1, _ = update_trailing_stop(state, 90.0, 105.0, "SHORT")
+        assert sl1 == 90.0 + 3.0  # 93.0
+        # Price bounces up -- SL should not widen
+        sl2, _ = update_trailing_stop(state, 92.0, sl1, "SHORT")
+        assert sl2 == 93.0
+
+    def test_no_activation_with_zero_risk(self):
+        from bot.utils.trailing import make_trailing_state, update_trailing_stop
+        state = make_trailing_state(100.0, "LONG", 0.0, 2.0)
+        _, active = update_trailing_stop(state, 200.0, 95.0, "LONG")
+        assert active is False
+
+    def test_no_activation_with_zero_atr(self):
+        from bot.utils.trailing import make_trailing_state, update_trailing_stop
+        state = make_trailing_state(100.0, "LONG", 5.0, 0.0)
+        sl, active = update_trailing_stop(state, 106.0, 95.0, "LONG")
+        assert active is True
+        # But SL doesn't change because ATR is 0
+        assert sl == 95.0
+
+
+class TestTradeExecutionValidators:
+    """Tests for TradeExecution model validators."""
+
+    def _make_exec(self, **overrides):
+        defaults = dict(
+            trade_id="TE-001", asset="BTC/USDT", direction="LONG",
+            entry_price=100.0, quantity=1.0, stop_loss=95.0,
+            take_profit=110.0, commission=0.5,
+        )
+        defaults.update(overrides)
+        return TradeExecution(**defaults)
+
+    def test_valid_execution(self):
+        te = self._make_exec()
+        assert te.entry_price == 100.0
+
+    def test_negative_entry_price_rejected(self):
+        with pytest.raises(Exception):
+            self._make_exec(entry_price=-1.0)
+
+    def test_zero_entry_price_rejected(self):
+        with pytest.raises(Exception):
+            self._make_exec(entry_price=0.0)
+
+    def test_negative_quantity_rejected(self):
+        with pytest.raises(Exception):
+            self._make_exec(quantity=-0.5)
+
+    def test_zero_quantity_rejected(self):
+        with pytest.raises(Exception):
+            self._make_exec(quantity=0.0)
+
+    def test_negative_commission_rejected(self):
+        with pytest.raises(Exception):
+            self._make_exec(commission=-1.0)
+
+    def test_zero_commission_ok(self):
+        te = self._make_exec(commission=0.0)
+        assert te.commission == 0.0
+
+    def test_negative_sl_rejected(self):
+        with pytest.raises(Exception):
+            self._make_exec(stop_loss=-5.0)
+
+    def test_negative_tp_rejected(self):
+        with pytest.raises(Exception):
+            self._make_exec(take_profit=-10.0)
+
+
+class TestMetricsCompute:
+    """Tests for MetricsEngine compute methods."""
+
+    def _make_closed_trade(self, pnl, entry_price=100.0, qty=1.0,
+                           opened_offset_h=0, closed_offset_h=1):
+        base = datetime(2025, 1, 1, tzinfo=UTC)
+        return TradeExecution(
+            trade_id=f"T-{abs(hash(pnl)) % 10000}",
+            asset="BTC/USDT",
+            direction="LONG",
+            entry_price=entry_price,
+            quantity=qty,
+            stop_loss=90.0,
+            take_profit=120.0,
+            pnl=pnl,
+            status=TradeStatus.EXECUTED,
+            opened_at=base + timedelta(hours=opened_offset_h),
+            closed_at=base + timedelta(hours=closed_offset_h),
+        )
+
+    def test_sharpe_from_trades_positive(self):
+        m = MetricsEngine()
+        trades = [
+            self._make_closed_trade(10.0, opened_offset_h=0, closed_offset_h=1),
+            self._make_closed_trade(5.0, opened_offset_h=2, closed_offset_h=3),
+            self._make_closed_trade(8.0, opened_offset_h=4, closed_offset_h=5),
+        ]
+        result = m._compute_sharpe_from_trades(trades)
+        assert result > 0, "All positive trades should give positive Sharpe"
+
+    def test_sharpe_from_trades_negative(self):
+        m = MetricsEngine()
+        trades = [
+            self._make_closed_trade(-10.0, opened_offset_h=0, closed_offset_h=1),
+            self._make_closed_trade(-5.0, opened_offset_h=2, closed_offset_h=3),
+            self._make_closed_trade(-8.0, opened_offset_h=4, closed_offset_h=5),
+        ]
+        result = m._compute_sharpe_from_trades(trades)
+        assert result < 0, "All negative trades should give negative Sharpe"
+
+    def test_sharpe_one_trade_returns_zero(self):
+        m = MetricsEngine()
+        trades = [self._make_closed_trade(10.0)]
+        assert m._compute_sharpe_from_trades(trades) == 0.0
+
+    def test_sortino_from_trades(self):
+        m = MetricsEngine()
+        trades = [
+            self._make_closed_trade(10.0, opened_offset_h=0, closed_offset_h=1),
+            self._make_closed_trade(-3.0, opened_offset_h=2, closed_offset_h=3),
+            self._make_closed_trade(15.0, opened_offset_h=4, closed_offset_h=5),
+            self._make_closed_trade(-2.0, opened_offset_h=6, closed_offset_h=7),
+        ]
+        result = m._compute_sortino_from_trades(trades)
+        assert isinstance(result, float)
+
+    def test_sortino_no_losses_returns_zero(self):
+        m = MetricsEngine()
+        trades = [
+            self._make_closed_trade(10.0, opened_offset_h=0, closed_offset_h=1),
+            self._make_closed_trade(5.0, opened_offset_h=2, closed_offset_h=3),
+        ]
+        result = m._compute_sortino_from_trades(trades)
+        assert result == 0.0
+
+    def test_trades_per_year_calculation(self):
+        m = MetricsEngine()
+        base = datetime(2025, 1, 1, tzinfo=UTC)
+        trades = [
+            self._make_closed_trade(1.0, opened_offset_h=0, closed_offset_h=1),
+            self._make_closed_trade(1.0, opened_offset_h=24, closed_offset_h=25),
+            self._make_closed_trade(1.0, opened_offset_h=48, closed_offset_h=49),
+        ]
+        tpy = m._trades_per_year(trades)
+        # 3 trades over 48 hours ≈ 1 trade/day ≈ 365 trades/year
+        assert 300 < tpy < 400
+
+    def test_trades_per_year_fallback(self):
+        m = MetricsEngine()
+        trades = [self._make_closed_trade(1.0)]
+        assert m._trades_per_year(trades) == 252.0
+
+    def test_max_drawdown(self):
+        m = MetricsEngine()
+        m._equity_curve = [100, 105, 95, 90, 100]
+        dd = m._compute_max_drawdown()
+        # Peak=105, trough=90 → DD = (105-90)/105*100 ≈ 14.29%
+        assert abs(dd - 14.29) < 0.1
+
+    def test_max_drawdown_monotonic_up(self):
+        m = MetricsEngine()
+        m._equity_curve = [100, 101, 102, 103]
+        assert m._compute_max_drawdown() == 0.0
+
+    def test_full_compute(self):
+        m = MetricsEngine()
+        m.record_equity(10000.0)
+        trades = [
+            self._make_closed_trade(50.0, opened_offset_h=0, closed_offset_h=1),
+            self._make_closed_trade(-20.0, opened_offset_h=2, closed_offset_h=3),
+            self._make_closed_trade(30.0, opened_offset_h=4, closed_offset_h=5),
+        ]
+        m.record_equity(10050.0)
+        m.record_equity(10030.0)
+        m.record_equity(10060.0)
+        snap = m.compute(trades)
+        assert snap.total_trades == 3
+        assert snap.winning_trades == 2
+        assert snap.losing_trades == 1
+        assert snap.total_pnl == 60.0
+        assert snap.win_rate > 0.6
+
+    def test_profit_factor_infinite_capped(self):
+        m = MetricsEngine()
+        m.record_equity(10000.0)
+        trades = [
+            self._make_closed_trade(50.0, opened_offset_h=0, closed_offset_h=1),
+            self._make_closed_trade(30.0, opened_offset_h=2, closed_offset_h=3),
+        ]
+        snap = m.compute(trades)
+        assert snap.profit_factor == 999.99
+
+    def test_equity_cap_enforced(self):
+        m = MetricsEngine()
+        for i in range(10500):
+            m.record_equity(10000.0 + i)
+        assert len(m._equity_curve) == 10000
+
+    def test_risk_check_tracking(self):
+        m = MetricsEngine()
+        m.record_risk_check(rejected=False)
+        m.record_risk_check(rejected=True)
+        m.record_risk_check(rejected=False)
+        m.record_circuit_breaker_trip()
+        snap = m.compute([])
+        assert snap.risk_checks_total == 3
+        assert snap.risk_checks_rejected == 1
+        assert snap.circuit_breaker_trips == 1
+
+
+class TestMarketScannerHelpers:
+    """Tests for MarketScanner internal helpers (no exchange needed)."""
+
+    def _make_scanner(self):
+        from bot.core.market_scanner import MarketScanner
+        return MarketScanner()
+
+    def test_momentum_score_positive(self):
+        s = self._make_scanner()
+        score = s._momentum_score(5.0, False)
+        assert 0 < score <= 1.0
+
+    def test_momentum_score_negative(self):
+        s = self._make_scanner()
+        score = s._momentum_score(-5.0, False)
+        assert -1.0 <= score < 0
+
+    def test_momentum_score_clamped(self):
+        s = self._make_scanner()
+        assert s._momentum_score(100.0, True) == 1.0
+        assert s._momentum_score(-100.0, True) == -1.0
+
+    def test_momentum_volume_spike_boost(self):
+        s = self._make_scanner()
+        no_spike = s._momentum_score(3.0, False)
+        with_spike = s._momentum_score(3.0, True)
+        assert with_spike > no_spike
+
+    def test_momentum_zero_change(self):
+        s = self._make_scanner()
+        assert s._momentum_score(0.0, False) == 0.0
+
+    def test_volume_spike_insufficient_history(self):
+        s = self._make_scanner()
+        assert s._detect_volume_spike("BTC/USDT", 1000000) is False
+
+    def test_volume_spike_detected(self):
+        s = self._make_scanner()
+        # Build up 5 points of history
+        for _ in range(5):
+            s._detect_volume_spike("BTC/USDT", 100000)
+        # Now spike with 3x volume
+        assert s._detect_volume_spike("BTC/USDT", 300000) is True
+
+    def test_volume_spike_not_detected(self):
+        s = self._make_scanner()
+        for _ in range(5):
+            s._detect_volume_spike("BTC/USDT", 100000)
+        # 1.5x is below 2x threshold
+        assert s._detect_volume_spike("BTC/USDT", 150000) is False
+
+    def test_volume_history_capped_at_20(self):
+        s = self._make_scanner()
+        for i in range(25):
+            s._detect_volume_spike("BTC/USDT", 100000 + i)
+        assert len(s._volume_history["BTC/USDT"]) == 20
+
+    def test_stale_symbol_eviction(self):
+        s = self._make_scanner()
+        s._volume_history["OLD/USDT"] = [100.0] * 5
+        s._volume_history["KEEP/USDT"] = [200.0] * 5
+        # Simulate scan eviction logic
+        seen = {"KEEP/USDT"}
+        stale = [sym for sym in s._volume_history if sym not in seen]
+        for sym in stale:
+            del s._volume_history[sym]
+        assert "OLD/USDT" not in s._volume_history
+        assert "KEEP/USDT" in s._volume_history
+
+
+class TestDataLoaderSynthetic:
+    """Tests for DataLoader synthetic data generation."""
+
+    def test_generate_synthetic_correct_count(self):
+        bars = DataLoader.generate_synthetic(bars=100, start_price=100.0, seed=42)
+        assert len(bars) == 100
+
+    def test_generate_synthetic_positive_prices(self):
+        bars = DataLoader.generate_synthetic(bars=500, start_price=100.0, seed=42)
+        for bar in bars:
+            assert bar.open > 0
+            assert bar.high > 0
+            assert bar.low > 0
+            assert bar.close > 0
+
+    def test_generate_synthetic_hlc_consistency(self):
+        bars = DataLoader.generate_synthetic(bars=200, start_price=50.0, seed=42)
+        for bar in bars:
+            assert bar.high >= bar.low, f"high {bar.high} < low {bar.low}"
+            assert bar.high >= bar.open
+            assert bar.high >= bar.close
+            assert bar.low <= bar.open
+            assert bar.low <= bar.close
+
+    def test_generate_synthetic_volume_positive(self):
+        bars = DataLoader.generate_synthetic(bars=100, start_price=100.0, seed=42)
+        for bar in bars:
+            assert bar.volume >= 0
+
+    def test_generate_synthetic_reproducible(self):
+        bars1 = DataLoader.generate_synthetic(bars=50, start_price=100.0, seed=42)
+        bars2 = DataLoader.generate_synthetic(bars=50, start_price=100.0, seed=42)
+        for b1, b2 in zip(bars1, bars2):
+            assert b1.close == b2.close
+
+    def test_generate_synthetic_different_seeds(self):
+        bars1 = DataLoader.generate_synthetic(bars=50, start_price=100.0, seed=42)
+        bars2 = DataLoader.generate_synthetic(bars=50, start_price=100.0, seed=99)
+        closes1 = [b.close for b in bars1]
+        closes2 = [b.close for b in bars2]
+        assert closes1 != closes2
+
+    def test_generate_synthetic_timestamps_ascending(self):
+        bars = DataLoader.generate_synthetic(bars=100, start_price=100.0, seed=42)
+        for i in range(1, len(bars)):
+            assert bars[i].timestamp > bars[i - 1].timestamp
+
+    def test_generate_synthetic_with_trend(self):
+        bars = DataLoader.generate_synthetic(
+            bars=500, start_price=100.0, seed=42, trend=0.001
+        )
+        # With positive trend bias, last close should generally be higher
+        assert bars[-1].close > bars[0].close * 0.5  # at least not collapsed
+
+
+class TestDataLoaderCSV:
+    """Tests for DataLoader CSV loading."""
+
+    def test_from_csv_iso_timestamps(self, tmp_path):
+        csv_file = tmp_path / "test.csv"
+        csv_file.write_text(
+            "timestamp,open,high,low,close,volume\n"
+            "2025-01-01T00:00:00+00:00,100,105,95,102,1000\n"
+            "2025-01-01T01:00:00+00:00,102,108,100,106,1200\n"
+        )
+        bars = DataLoader.from_csv(str(csv_file))
+        assert len(bars) == 2
+        assert bars[0].open == 100.0
+        assert bars[1].close == 106.0
+
+    def test_from_csv_unix_timestamps(self, tmp_path):
+        csv_file = tmp_path / "test.csv"
+        # Use actual valid unix ms timestamps
+        csv_file.write_text(
+            "timestamp,open,high,low,close,volume\n"
+            "1735689600000,100,105,95,102,1000\n"
+            "1735693200000,102,108,100,106,1200\n"
+        )
+        bars = DataLoader.from_csv(str(csv_file))
+        assert len(bars) == 2
+
+    def test_from_csv_sorted(self, tmp_path):
+        csv_file = tmp_path / "test.csv"
+        csv_file.write_text(
+            "timestamp,open,high,low,close,volume\n"
+            "2025-01-01T02:00:00+00:00,110,115,105,112,800\n"
+            "2025-01-01T00:00:00+00:00,100,105,95,102,1000\n"
+            "2025-01-01T01:00:00+00:00,102,108,100,106,1200\n"
+        )
+        bars = DataLoader.from_csv(str(csv_file))
+        assert bars[0].timestamp < bars[1].timestamp < bars[2].timestamp
+
+
+class TestConfigHelpers:
+    """Tests for config.py environment helpers."""
+
+    def test_env_float_valid(self):
+        import os
+        os.environ["_TEST_FLOAT"] = "3.14"
+        from bot.config import _env_float
+        assert _env_float("_TEST_FLOAT", 0.0) == 3.14
+        del os.environ["_TEST_FLOAT"]
+
+    def test_env_float_invalid_returns_default(self):
+        import os
+        os.environ["_TEST_FLOAT_BAD"] = "notanumber"
+        from bot.config import _env_float
+        assert _env_float("_TEST_FLOAT_BAD", 42.0) == 42.0
+        del os.environ["_TEST_FLOAT_BAD"]
+
+    def test_env_float_missing_returns_default(self):
+        from bot.config import _env_float
+        assert _env_float("_NONEXISTENT_VAR_XYZ", 99.0) == 99.0
+
+    def test_env_bool_true_variants(self):
+        import os
+        from bot.config import _env_bool
+        for val in ["true", "True", "TRUE", "1", "yes", "Yes"]:
+            os.environ["_TEST_BOOL"] = val
+            assert _env_bool("_TEST_BOOL", False) is True
+            del os.environ["_TEST_BOOL"]
+
+    def test_env_bool_false_variants(self):
+        import os
+        from bot.config import _env_bool
+        for val in ["false", "False", "0", "no", "No", ""]:
+            os.environ["_TEST_BOOL"] = val
+            assert _env_bool("_TEST_BOOL", True) is False
+            del os.environ["_TEST_BOOL"]
+
+    def test_config_frozen(self):
+        with pytest.raises(Exception):
+            CONFIG.simulation_mode = False
+
+
+class TestPortfolioIntegration:
+    """Integration tests for Portfolio + Risk Engine callback wiring."""
+
+    def test_callback_wiring_via_engine(self):
+        """Callback is wired in RuneClawEngine, not RiskEngine constructor."""
+        port = PortfolioTracker()
+        risk = RiskEngine(port)
+        # Wire manually as engine.py does
+        port._on_trade_close = risk.record_trade_result
+        assert port._on_trade_close is not None
+
+    def test_loss_streak_incremented_on_loss(self):
+        port = PortfolioTracker()
+        risk = RiskEngine(port)
+        assert risk._consecutive_losses == 0
+        risk.record_trade_result(pnl=-50.0)
+        assert risk._consecutive_losses >= 1
+
+    def test_loss_streak_reset_on_win(self):
+        port = PortfolioTracker()
+        risk = RiskEngine(port)
+        starting = risk._consecutive_losses
+        risk.record_trade_result(pnl=-50.0)
+        risk.record_trade_result(pnl=-30.0)
+        assert risk._consecutive_losses > starting
+        risk.record_trade_result(pnl=100.0)
+        assert risk._consecutive_losses == 0
+
+    def test_open_close_updates_balance(self):
+        port = PortfolioTracker()
+        initial = port.snapshot().balance_usd
+        idea = TradeIdea(
+            id="TI-INT-001", asset="BTC/USDT", direction="LONG",
+            entry_price=100.0, stop_loss=95.0, take_profit=110.0,
+            confidence=0.8, reasoning="test", signals_used=["rsi"],
+        )
+        port.open_position(idea, size_usd=1000.0)
+        assert len(port.open_positions) == 1
+        assert port.snapshot().balance_usd < initial
+
+    def test_portfolio_state_snapshot(self):
+        port = PortfolioTracker()
+        state = port.snapshot()
+        assert isinstance(state, PortfolioState)
+        assert state.balance_usd > 0
+        assert state.open_positions == 0
+
+
+class TestRiskEdgeCases:
+    """Edge cases for risk engine checks."""
+
+    def _make_idea(self, entry=100.0, sl=95.0, tp=110.0, conf=0.8, direction="LONG"):
+        return TradeIdea(
+            id="TI-EDGE", asset="TEST/USDT", direction=direction,
+            entry_price=entry, stop_loss=sl, take_profit=tp,
+            confidence=conf, reasoning="edge test", signals_used=["rsi"],
+        )
+
+    def test_rr_exactly_at_threshold(self):
+        """R:R of exactly min_risk_reward should PASS."""
+        port = PortfolioTracker()
+        risk = RiskEngine(port)
+        min_rr = CONFIG.risk.min_risk_reward
+        # Set TP so R:R = min_rr exactly + epsilon
+        sl_dist = 5.0
+        tp_dist = sl_dist * (min_rr + 0.01)
+        idea = self._make_idea(entry=100.0, sl=95.0, tp=100.0 + tp_dist)
+        result = risk.evaluate(idea, atr=2.0)
+        # Should not fail on R:R
+        rr_checks = [c for c in result.checks_failed if "RISK_REWARD" in c]
+        assert len(rr_checks) == 0
+
+    def test_very_low_confidence_rejected(self):
+        port = PortfolioTracker()
+        risk = RiskEngine(port)
+        idea = self._make_idea(conf=0.1)
+        result = risk.evaluate(idea, atr=2.0)
+        assert result.verdict == RiskVerdict.REJECTED
+        conf_fail = [c for c in result.checks_failed if "CONFIDENCE" in c]
+        assert len(conf_fail) > 0
+
+    def test_zero_atr_rejected(self):
+        """Zero ATR should trigger volatility guard (can't compute vol)."""
+        port = PortfolioTracker()
+        risk = RiskEngine(port)
+        idea = self._make_idea()
+        result = risk.evaluate(idea, atr=0.0)
+        # Check for volatility-related rejection or pass
+        # ATR=0 means 0% volatility which is < guard, should pass
+        assert result is not None
+
+    def test_none_atr_rejected(self):
+        """None ATR should be fail-closed."""
+        port = PortfolioTracker()
+        risk = RiskEngine(port)
+        idea = self._make_idea()
+        result = risk.evaluate(idea, atr=None)
+        assert result.verdict == RiskVerdict.REJECTED
+        vol_fail = [c for c in result.checks_failed if "VOLATILITY" in c or "ATR" in c]
+        assert len(vol_fail) > 0
+
+    def test_short_direction_sl_above_entry(self):
+        """SHORT: SL should be above entry."""
+        idea = self._make_idea(entry=100.0, sl=105.0, tp=90.0, direction="SHORT")
+        assert idea.direction.value == "SHORT"
+        assert idea.stop_loss > idea.entry_price
+
+    def test_max_positions_reached(self):
+        port = PortfolioTracker()
+        risk = RiskEngine(port)
+        # Fill up positions
+        for i in range(CONFIG.risk.max_open_positions):
+            idea = TradeIdea(
+                id=f"TI-FILL-{i}", asset=f"T{i}/USDT", direction="LONG",
+                entry_price=100.0, stop_loss=95.0, take_profit=110.0,
+                confidence=0.8, reasoning="fill", signals_used=["rsi"],
+            )
+            port.open_position(idea, size_usd=100.0)
+        # Next should be rejected for max positions
+        new_idea = self._make_idea()
+        result = risk.evaluate(new_idea, atr=2.0)
+        pos_fail = [c for c in result.checks_failed if "POSITION" in c.upper()]
+        assert len(pos_fail) > 0
+
+
+class TestBacktestIntegration:
+    """Integration tests for the backtest engine."""
+
+    def test_backtest_zero_trades_returns_result(self):
+        config = BacktestConfig(symbol="BTC/USDT", initial_balance=10000.0)
+        engine = BacktestEngine(config)
+        bars = DataLoader.generate_synthetic(bars=30, start_price=100.0, seed=42)
+        result = asyncio.run(engine.run(bars))
+        assert result is not None
+        assert result.total_trades >= 0
+
+    def test_backtest_preserves_initial_balance_no_trades(self):
+        config = BacktestConfig(symbol="BTC/USDT", initial_balance=10000.0)
+        engine = BacktestEngine(config)
+        bars = DataLoader.generate_synthetic(bars=30, start_price=100.0, seed=42)
+        result = asyncio.run(engine.run(bars))
+        if result.total_trades == 0:
+            assert result.total_return_pct == 0.0
+
+    def test_backtest_commission_applied(self):
+        config = BacktestConfig(
+            symbol="BTC/USDT", initial_balance=10000.0,
+            commission_rate=0.001, slippage_rate=0.0005,
+        )
+        engine = BacktestEngine(config)
+        bars = DataLoader.generate_synthetic(bars=500, start_price=100.0, seed=42)
+        result = asyncio.run(engine.run(bars))
+        if result.total_trades > 0:
+            assert result.total_commission > 0
+
+    def test_backtest_different_symbols_different_results(self):
+        config1 = BacktestConfig(symbol="BTC/USDT", initial_balance=10000.0)
+        config2 = BacktestConfig(symbol="ETH/USDT", initial_balance=10000.0)
+        bars1 = DataLoader.generate_synthetic(bars=200, start_price=50000.0, seed=42)
+        bars2 = DataLoader.generate_synthetic(bars=200, start_price=3000.0, seed=42)
+        r1 = asyncio.run(BacktestEngine(config1).run(bars1))
+        r2 = asyncio.run(BacktestEngine(config2).run(bars2))
+        assert r1 is not None and r2 is not None

@@ -149,6 +149,20 @@ class TradeExecution(BaseModel):
     opened_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     closed_at: Optional[datetime] = None
 
+    @model_validator(mode="after")
+    def _validate_execution_sanity(self):
+        if self.entry_price <= 0:
+            raise ValueError(f"entry_price must be > 0, got {self.entry_price}")
+        if self.quantity <= 0:
+            raise ValueError(f"quantity must be > 0, got {self.quantity}")
+        if self.commission < 0:
+            raise ValueError(f"commission must be >= 0, got {self.commission}")
+        if self.stop_loss <= 0:
+            raise ValueError(f"stop_loss must be > 0, got {self.stop_loss}")
+        if self.take_profit <= 0:
+            raise ValueError(f"take_profit must be > 0, got {self.take_profit}")
+        return self
+
 
 # -- Portfolio Snapshot --
 
