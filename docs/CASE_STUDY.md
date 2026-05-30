@@ -29,7 +29,7 @@ Every state transition is validated and logged. The FSM prevents impossible sequ
 
 **ADX-14 Regime Detection.** The market is classified into four regimes: TREND_UP, TREND_DOWN, RANGE, and CHOP. The regime directly affects strategy behavior -- trending regimes skip counter-trend signals, RANGE and CHOP apply confidence penalties, and ATR-based stop/take-profit multipliers adapt to volatility (high vol: 3.0/4.5x ATR, normal: 2.5/3.5x, low: 2.0/3.0x).
 
-**Macro Calendar Awareness.** A macro event calendar tracks 10 event types (FOMC, CPI, PPI, NFP, GDP, unemployment claims, PCE, ISM, retail sales, housing data) through a 5-state risk machine (NORMAL -> ELEVATED -> HIGH -> CRITICAL -> BLACKOUT). As high-impact events approach, the risk machine tightens position sizing, raises confidence thresholds, and can trigger full blackout periods where no new trades are permitted.
+**Macro Calendar Awareness.** A macro event calendar tracks 10 event types (FOMC, CPI, PPI, NFP, GDP, unemployment claims, PCE, ISM, retail sales, housing data) through a 5-state risk machine (NORMAL -> PRE_EVENT_CAUTION -> EVENT_LOCKDOWN -> POST_EVENT_VOLATILITY -> BLACKOUT). As high-impact events approach, the risk machine blocks new trades during the lockdown window and can trigger full blackout periods where no new trades are permitted.
 
 **MCP Tool Server.** RUNECLAW exposes 8 tools via Model Context Protocol for Agent Hub integration: market scan, asset analysis, portfolio status, risk dashboard, trade confirmation, backtest execution, rejected trade history, and emergency halt. This allows any MCP-compatible agent (including GetClaw ecosystem agents) to interact with RUNECLAW programmatically.
 
@@ -39,7 +39,7 @@ The risk engine is the core of RUNECLAW. It enforces **18 independent fail-close
 
 The 18 checks are:
 
-1. **Position size validation** -- fractional Kelly, capped at 20% notional
+1. **Position size validation** -- fixed-fractional (risk_budget / stop_distance), capped at 20% notional
 2. **Daily loss limit** -- 5% of starting equity
 3. **Max drawdown** -- 10% from peak equity
 4. **Max open positions** -- configurable cap
@@ -95,7 +95,7 @@ What RUNECLAW has that no other hackathon entry offers:
 
 **Human-in-the-loop by default.** Every trade requires explicit human confirmation via Telegram inline keyboard. There is no autonomous execution mode. The human sees the trade idea, the risk assessment, and the reasoning before deciding. This is not optional -- it is architecturally enforced.
 
-**Macro calendar integration.** A 10-event-type economic calendar (FOMC, CPI, NFP, GDP, etc.) feeds into a 5-state risk machine that dynamically adjusts risk parameters as high-impact events approach. During BLACKOUT periods, no new trades are permitted regardless of signal quality.
+**Macro calendar integration.** A 10-event-type economic calendar (FOMC, CPI, NFP, GDP, etc.) feeds into a 5-state risk machine (NORMAL, PRE_EVENT_CAUTION, EVENT_LOCKDOWN, POST_EVENT_VOLATILITY, BLACKOUT) that blocks new trades during lockdown and blackout windows. During BLACKOUT periods, no new trades are permitted regardless of signal quality.
 
 **Portfolio persistence.** Portfolio state is persisted to JSON on every state change. If the bot crashes and restarts, open positions, equity history, and risk state are restored. No orphaned positions, no lost state.
 

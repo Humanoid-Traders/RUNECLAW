@@ -52,7 +52,7 @@ class BacktestTrade(BaseModel):
     pnl_pct: float
     commission_usd: float
     slippage_usd: float
-    net_pnl_usd: float                     # pnl - commission - slippage
+    net_pnl_usd: float                     # pnl - commission (slippage is baked into entry/exit prices)
     exit_reason: str                        # "SL", "TP", "END_OF_DATA"
     confidence: float
     risk_verdict: str                       # "APPROVED" or "REJECTED"

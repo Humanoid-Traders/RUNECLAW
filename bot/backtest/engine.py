@@ -7,6 +7,8 @@ No human confirmation gate (automated replay). All decisions logged.
 
 from __future__ import annotations
 
+import os
+import tempfile
 import time
 import uuid
 from datetime import datetime
@@ -50,7 +52,12 @@ class BacktestEngine:
     def __init__(self, config: BacktestConfig) -> None:
         self.config = config
         self.portfolio = PortfolioTracker(initial_balance=config.initial_balance)
-        self.risk = RiskEngine(self.portfolio)
+        # N1 fix: isolate backtest risk state so backtests don't pollute the
+        # production circuit breaker / loss streak.  Each backtest gets its own
+        # throwaway state file that is cleaned up when the engine is garbage-collected.
+        self._bt_state_dir = tempfile.mkdtemp(prefix="runeclaw_bt_")
+        bt_state_file = os.path.join(self._bt_state_dir, "risk_state.json")
+        self.risk = RiskEngine(self.portfolio, state_file=bt_state_file)
         # C1 fix: wire trade-close callback so portfolio closes feed risk streak tracking
         self.portfolio._on_trade_close = self.risk.record_trade_result
         # Fix F: respect use_llm flag for reproducibility.
@@ -279,18 +286,12 @@ class BacktestEngine:
         if closed is None:
             return
 
-        # Commission on exit
-        exit_value = adjusted_exit * closed.quantity
-        commission_exit = exit_value * (self.config.commission_pct / 100)
-        total_commission = bt_meta["commission_entry"] + commission_exit
+        # N2 fix: portfolio._close_position_locked already deducts commission
+        # from PnL and balance. Use the portfolio's authoritative values to
+        # avoid double-counting.  Slippage is baked into adjusted entry/exit
+        # prices, so it's already reflected in portfolio PnL.
         total_slippage = bt_meta["slippage_entry"] + slippage_exit * closed.quantity
-        # C3 fix: slippage is already baked into adjusted entry/exit prices
-        # (portfolio PnL uses slipped prices), so don't subtract it again.
-        # Only subtract commission which is NOT reflected in portfolio PnL.
-        net_pnl = closed.pnl - total_commission
-
-        # C3 fix: deduct commission from portfolio balance so equity curve is accurate
-        self.portfolio.balance -= total_commission
+        net_pnl = closed.pnl  # already net of commission from portfolio
 
         # Duration
         entry_time = bt_meta["entry_time"]
@@ -311,7 +312,7 @@ class BacktestEngine:
             size_usd=round(size_usd, 2),
             pnl_usd=round(closed.pnl, 2),
             pnl_pct=round((closed.pnl / size_usd * 100) if size_usd > 0 else 0, 2),
-            commission_usd=round(total_commission, 2),
+            commission_usd=round(closed.commission, 2),
             slippage_usd=round(total_slippage, 2),
             net_pnl_usd=round(net_pnl, 2),
             exit_reason=reason,

@@ -28,9 +28,6 @@ class MarketScanner:
     async def _get_exchange(self) -> ccxt.Exchange:
         if self._exchange is None:
             self._exchange = ccxt.bitget({
-                "apiKey": CONFIG.exchange.api_key,
-                "secret": CONFIG.exchange.api_secret,
-                "password": CONFIG.exchange.passphrase,
                 "sandbox": CONFIG.exchange.sandbox,
                 "timeout": 30000,
                 "enableRateLimit": True,

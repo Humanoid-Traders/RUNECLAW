@@ -13,4 +13,5 @@ services:
       - .env
     volumes:
       - ./logs:/app/logs
+      - ./data:/app/data
     command: python -m bot.main --mode telegram
