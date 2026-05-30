@@ -293,7 +293,7 @@ runeclaw/
 |   |   |-- skill_definitions.yaml
 |   |-- requirements.txt
 |-- tests/
-|   |-- test_core.py            # 218+ pytest tests
+|   |-- test_core.py            # 289+ pytest tests
 |   |-- test_token_optimizer.py # 36 token optimizer tests
 |-- docs/
 |   |-- gitbook/                # Full GitBook documentation

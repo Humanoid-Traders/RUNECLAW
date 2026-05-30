@@ -224,7 +224,7 @@ quit                 # Exit
 ## Test Suite Demo
 
 ```bash
-# Run all 315+ tests
+# Run all 289+ tests
 pytest tests/test_core.py -v
 
 # Key test categories:
