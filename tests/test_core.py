@@ -2507,3 +2507,520 @@ class TestTelegramAuth:
             with patch("bot.skills.telegram_handler._env_bool", return_value=True):
                 result = handler._check_auth(self._make_update(99999))
                 assert result is True, "Open mode should accept all chats"
+
+
+# ══════════════════════════════════════════════════════════════════
+# SMART MONEY ENGINE TESTS
+# ══════════════════════════════════════════════════════════════════
+
+class TestSmartMoney:
+    """Validate smart money detection: cascade, squeeze, whale, composite."""
+
+    def _make_of_signal(self, **overrides):
+        from bot.core.order_flow import OrderFlowSignal
+        defaults = dict(
+            symbol="BTC/USDT",
+            book_imbalance=0.0,
+            bid_depth_usd=50000.0,
+            ask_depth_usd=50000.0,
+            spread_bps=1.0,
+            buy_volume_usd=100000.0,
+            sell_volume_usd=100000.0,
+            cvd_raw=0.0,
+            cvd_trend="flat",
+            cvd_price_divergence="none",
+            whale_buy_usd=10000.0,
+            whale_sell_usd=10000.0,
+            whale_bias="neutral",
+            aggressor_ratio=0.5,
+            funding_rate=None,
+            oi_change_pct=None,
+            smart_money_score=0.0,
+            confidence=0.5,
+        )
+        defaults.update(overrides)
+        return OrderFlowSignal(**defaults)
+
+    def test_cascade_detector_no_funding(self):
+        from bot.core.smart_money import LiquidationCascadeDetector
+        det = LiquidationCascadeDetector()
+        sig = self._make_of_signal(funding_rate=None)
+        risk, direction = det.evaluate(sig)
+        assert risk == 0.0
+        assert direction == "none"
+
+    def test_cascade_detector_mild_funding(self):
+        from bot.core.smart_money import LiquidationCascadeDetector
+        det = LiquidationCascadeDetector(funding_extreme=0.0005)
+        sig = self._make_of_signal(funding_rate=0.0001)
+        risk, direction = det.evaluate(sig)
+        assert risk == 0.0, "Mild funding should not trigger cascade"
+
+    def test_cascade_detector_extreme_funding(self):
+        from bot.core.smart_money import LiquidationCascadeDetector
+        det = LiquidationCascadeDetector(funding_extreme=0.0005)
+        sig = self._make_of_signal(funding_rate=0.001, oi_change_pct=12, cvd_trend="falling")
+        risk, direction = det.evaluate(sig)
+        assert risk > 0.3, f"Extreme funding should raise cascade risk, got {risk}"
+        assert direction == "long_squeeze", "Positive funding = crowd is long"
+
+    def test_cascade_detector_short_squeeze(self):
+        from bot.core.smart_money import LiquidationCascadeDetector
+        det = LiquidationCascadeDetector(funding_extreme=0.0005)
+        sig = self._make_of_signal(funding_rate=-0.001, cvd_trend="rising")
+        risk, direction = det.evaluate(sig)
+        assert risk > 0.3
+        assert direction == "short_squeeze"
+
+    def test_funding_squeeze_no_data(self):
+        from bot.core.smart_money import FundingSqueezeDetector
+        det = FundingSqueezeDetector()
+        sig = self._make_of_signal(funding_rate=None)
+        signal, stype = det.evaluate(sig)
+        assert signal == 0.0
+        assert stype == "none"
+
+    def test_funding_squeeze_extreme_positive(self):
+        from bot.core.smart_money import FundingSqueezeDetector
+        det = FundingSqueezeDetector(extreme=0.0005)
+        sig = self._make_of_signal(funding_rate=0.001)
+        signal, stype = det.evaluate(sig)
+        assert signal < 0, "Extreme positive funding → bearish contrarian signal"
+
+    def test_funding_squeeze_extreme_negative(self):
+        from bot.core.smart_money import FundingSqueezeDetector
+        det = FundingSqueezeDetector(extreme=0.0005)
+        sig = self._make_of_signal(funding_rate=-0.001)
+        signal, stype = det.evaluate(sig)
+        assert signal > 0, "Extreme negative funding → bullish contrarian signal"
+
+    def test_whale_tracker_insufficient_data(self):
+        from bot.core.smart_money import WhaleFlowTracker
+        tracker = WhaleFlowTracker()
+        sig = self._make_of_signal(whale_buy_usd=50000, whale_sell_usd=10000)
+        score = tracker.evaluate(sig)
+        assert score == 0.0, "Should return 0 with insufficient history"
+
+    def test_whale_tracker_accumulation(self):
+        from bot.core.smart_money import WhaleFlowTracker
+        tracker = WhaleFlowTracker()
+        for _ in range(5):
+            sig = self._make_of_signal(whale_buy_usd=80000, whale_sell_usd=20000)
+            score = tracker.evaluate(sig)
+        assert score > 0, f"Consistent whale buying should be positive, got {score}"
+
+    def test_whale_tracker_distribution(self):
+        from bot.core.smart_money import WhaleFlowTracker
+        tracker = WhaleFlowTracker()
+        for _ in range(5):
+            sig = self._make_of_signal(whale_buy_usd=10000, whale_sell_usd=90000)
+            score = tracker.evaluate(sig)
+        assert score < 0, f"Consistent whale selling should be negative, got {score}"
+
+    def test_whale_tracker_prune(self):
+        from bot.core.smart_money import WhaleFlowTracker
+        tracker = WhaleFlowTracker()
+        for i in range(10):
+            sig = self._make_of_signal(symbol=f"COIN{i}/USDT", whale_buy_usd=50000, whale_sell_usd=50000)
+            tracker.evaluate(sig)
+        tracker.prune(max_symbols=5)
+        assert len(tracker._whale_history) <= 5
+
+    def test_engine_composite(self):
+        from bot.core.smart_money import SmartMoneyEngine
+        engine = SmartMoneyEngine()
+        sig = self._make_of_signal(
+            funding_rate=0.001, oi_change_pct=8,
+            whale_buy_usd=70000, whale_sell_usd=30000,
+            confidence=0.8, smart_money_score=0.3,
+        )
+        # Feed enough history
+        for _ in range(4):
+            score = engine.analyze(sig)
+        assert score.confidence > 0, "Should resolve components"
+        assert score.components_resolved > 0
+        assert score.narrative != ""
+
+    def test_engine_confluence_votes(self):
+        from bot.core.smart_money import SmartMoneyEngine, SmartMoneyScore
+        score = SmartMoneyScore(
+            composite_score=0.5,
+            whale_accumulation=0.3,
+            cascade_risk=0.7,
+            cascade_direction="long_squeeze",
+            confidence=0.8,
+        )
+        votes, weights, labels = SmartMoneyEngine.to_confluence_votes(score)
+        assert len(votes) > 0, "Should produce votes"
+        assert "smart_money_composite" in labels
+        assert "liquidation_cascade" in labels
+
+
+# ══════════════════════════════════════════════════════════════════
+# MULTI-TIMEFRAME ANALYSIS TESTS
+# ══════════════════════════════════════════════════════════════════
+
+class TestMultiTimeframe:
+    """Validate MTF swing detection, structure analysis, and confluence."""
+
+    def _make_candles(self, n=60, trend="up", base=65000.0):
+        """Generate synthetic OHLCV candles."""
+        rng = np.random.default_rng(42)
+        candles = []
+        price = base
+        for i in range(n):
+            if trend == "up":
+                price *= 1 + rng.uniform(0, 0.02)
+            elif trend == "down":
+                price *= 1 - rng.uniform(0, 0.02)
+            else:
+                price *= 1 + rng.uniform(-0.01, 0.01)
+            o = price * (1 - rng.uniform(0, 0.005))
+            h = price * (1 + rng.uniform(0.001, 0.01))
+            l = price * (1 - rng.uniform(0.001, 0.01))
+            c = price
+            v = rng.uniform(100, 1000)
+            candles.append([float(i), o, h, l, c, v])
+        return candles
+
+    def test_no_data_returns_neutral(self):
+        from bot.core.multi_timeframe import MTFConfluence
+        mtf = MTFConfluence()
+        result = mtf.analyze()
+        assert result.alignment_score == 0.0
+        assert result.htf_trend == "neutral"
+        assert "No timeframe data" in result.narrative
+
+    def test_insufficient_data_ignored(self):
+        from bot.core.multi_timeframe import MTFConfluence
+        mtf = MTFConfluence()
+        short_candles = self._make_candles(n=10)
+        result = mtf.analyze(candles_1h=short_candles)
+        assert result.alignment_score == 0.0, "Too few candles should be ignored"
+
+    def test_single_timeframe_bullish(self):
+        from bot.core.multi_timeframe import MTFConfluence
+        mtf = MTFConfluence()
+        candles = self._make_candles(n=60, trend="up")
+        result = mtf.analyze(candles_1h=candles)
+        assert result.alignment_score > 0, f"Uptrend should be bullish, got {result.alignment_score}"
+        assert "1h" in result.per_tf
+
+    def test_single_timeframe_bearish(self):
+        from bot.core.multi_timeframe import MTFConfluence
+        mtf = MTFConfluence()
+        candles = self._make_candles(n=60, trend="down")
+        result = mtf.analyze(candles_1h=candles)
+        assert result.alignment_score < 0, f"Downtrend should be bearish, got {result.alignment_score}"
+
+    def test_multi_timeframe_aligned(self):
+        from bot.core.multi_timeframe import MTFConfluence
+        mtf = MTFConfluence()
+        candles_1h = self._make_candles(n=60, trend="up")
+        candles_4h = self._make_candles(n=60, trend="up")
+        candles_1d = self._make_candles(n=60, trend="up")
+        result = mtf.analyze(candles_1h, candles_4h, candles_1d)
+        assert result.alignment_score > 0
+        assert len(result.per_tf) == 3
+        assert result.confidence > 0
+
+    def test_conflicting_timeframes(self):
+        from bot.core.multi_timeframe import MTFConfluence
+        mtf = MTFConfluence()
+        candles_1h = self._make_candles(n=60, trend="up")
+        candles_1d = self._make_candles(n=60, trend="down")
+        result = mtf.analyze(candles_1h=candles_1h, candles_1d=candles_1d)
+        assert result.confidence < 1.0, "Conflicting TFs should lower confidence"
+
+    def test_confluence_votes_empty(self):
+        from bot.core.multi_timeframe import MTFConfluence, MTFResult
+        result = MTFResult(confidence=0.0)
+        votes, weights, labels = MTFConfluence.to_confluence_votes(result)
+        assert len(votes) == 0
+
+    def test_confluence_votes_with_alignment(self):
+        from bot.core.multi_timeframe import MTFConfluence, MTFResult
+        result = MTFResult(
+            alignment_score=0.7,
+            structure_bias=0.5,
+            bos_detected=True,
+            confidence=0.8,
+        )
+        votes, weights, labels = MTFConfluence.to_confluence_votes(result)
+        assert len(votes) >= 2, "Should have alignment + structure votes"
+        assert "mtf_alignment" in labels
+        assert "mtf_bos" in labels
+
+    def test_swing_detection(self):
+        from bot.core.multi_timeframe import _find_swings
+        # Create data with clear swing points
+        highs = np.array([10, 12, 15, 13, 11, 9, 11, 14, 16, 14, 12, 10, 12, 15, 17, 15, 13])
+        lows = np.array([8, 10, 13, 11, 9, 7, 9, 12, 14, 12, 10, 8, 10, 13, 15, 13, 11])
+        swings = _find_swings(highs, lows, lookback=2)
+        assert len(swings["swing_highs"]) > 0 or len(swings["swing_lows"]) > 0
+
+    def test_structure_analysis_bullish(self):
+        from bot.core.multi_timeframe import _analyze_structure
+        # HH and HL pattern
+        n = 30
+        highs = np.zeros(n)
+        lows = np.zeros(n)
+        for i in range(n):
+            highs[i] = 100 + i * 2 + np.sin(i * 0.5) * 5
+            lows[i] = 95 + i * 2 + np.sin(i * 0.5) * 5
+        result = _analyze_structure(highs, lows, lookback=2)
+        assert result["structure"] in ("bullish", "ranging")
+
+
+# ══════════════════════════════════════════════════════════════════
+# STRATEGY MODES TESTS
+# ══════════════════════════════════════════════════════════════════
+
+class TestStrategyModes:
+    """Validate strategy mode selection and configuration."""
+
+    def test_all_modes_have_configs(self):
+        from bot.core.strategy_modes import StrategyMode, MODE_CONFIGS
+        for mode in StrategyMode:
+            assert mode in MODE_CONFIGS, f"Missing config for {mode}"
+
+    def test_conservative_default(self):
+        from bot.core.strategy_modes import StrategySelector, StrategyMode
+        from bot.core.ta_utils import Regime
+        selector = StrategySelector()
+        selection = selector.select(
+            regime=Regime.UNKNOWN,
+            indicators={"adx": 10, "rsi": 50, "bb_pct_b": 0.5, "bb_width": 0.05},
+        )
+        assert selection.selected_mode == StrategyMode.CONSERVATIVE
+
+    def test_trend_continuation_mode(self):
+        from bot.core.strategy_modes import StrategySelector, StrategyMode
+        from bot.core.ta_utils import Regime
+        selector = StrategySelector()
+        selection = selector.select(
+            regime=Regime.TREND_UP,
+            indicators={"adx": 40, "rsi": 55, "bb_pct_b": 0.6, "bb_width": 0.05},
+        )
+        assert selection.selected_mode == StrategyMode.TREND_CONTINUATION
+
+    def test_mean_reversion_mode(self):
+        from bot.core.strategy_modes import StrategySelector, StrategyMode
+        from bot.core.ta_utils import Regime
+        selector = StrategySelector()
+        selection = selector.select(
+            regime=Regime.RANGE,
+            indicators={"adx": 15, "rsi": 20, "bb_pct_b": 0.02, "bb_width": 0.05},
+        )
+        assert selection.selected_mode == StrategyMode.MEAN_REVERSION
+
+    def test_breakout_mode_with_bos(self):
+        from bot.core.strategy_modes import StrategySelector, StrategyMode
+        from bot.core.ta_utils import Regime
+
+        class MockMTF:
+            alignment_score = 0.2
+            bos_detected = True
+
+        selector = StrategySelector()
+        selection = selector.select(
+            regime=Regime.RANGE,
+            indicators={"adx": 18, "rsi": 50, "bb_pct_b": 0.5, "bb_width": 0.02},
+            mtf_result=MockMTF(),
+        )
+        assert selection.selected_mode == StrategyMode.BREAKOUT
+
+    def test_liquidity_sweep_mode(self):
+        from bot.core.strategy_modes import StrategySelector, StrategyMode
+        from bot.core.ta_utils import Regime
+
+        class MockSM:
+            cascade_risk = 0.8
+            whale_accumulation = 0.4
+
+        selector = StrategySelector()
+        selection = selector.select(
+            regime=Regime.RANGE,
+            indicators={"adx": 15, "rsi": 50, "bb_pct_b": 0.5, "bb_width": 0.05},
+            smart_money=MockSM(),
+        )
+        assert selection.selected_mode == StrategyMode.LIQUIDITY_SWEEP
+
+    def test_mode_selection_returns_candidates(self):
+        from bot.core.strategy_modes import StrategySelector
+        from bot.core.ta_utils import Regime
+        selector = StrategySelector()
+        selection = selector.select(
+            regime=Regime.TREND_UP,
+            indicators={"adx": 30, "rsi": 55, "bb_pct_b": 0.5, "bb_width": 0.05},
+        )
+        assert len(selection.candidates) > 0
+        assert selection.reasoning != ""
+
+    def test_rr_ratios_valid(self):
+        from bot.core.strategy_modes import MODE_CONFIGS
+        for mode, config in MODE_CONFIGS.items():
+            rr = config.tp_mult / config.sl_mult
+            assert rr >= 1.0, f"{mode}: R:R {rr:.2f} is below 1.0"
+
+
+# ══════════════════════════════════════════════════════════════════
+# EXPLAINABILITY ENGINE TESTS
+# ══════════════════════════════════════════════════════════════════
+
+class TestExplainability:
+    """Validate explainability reports, compliance, and narratives."""
+
+    def test_basic_report(self):
+        from bot.core.explainability import ExplainabilityEngine
+        engine = ExplainabilityEngine()
+        report = engine.explain(
+            trade_id="TI-test",
+            symbol="BTC/USDT",
+            direction="LONG",
+            indicators={"rsi": 35, "macd": 0.1, "atr": 1300, "adx": 30, "bb_pct_b": 0.3},
+            regime="TREND_UP",
+            confluence=0.72,
+            confidence=0.68,
+        )
+        assert report.trade_id == "TI-test"
+        assert report.symbol == "BTC/USDT"
+        assert report.direction == "LONG"
+        assert report.confluence_score == 0.72
+        assert len(report.reasoning_chain) >= 3
+
+    def test_factor_attribution(self):
+        from bot.core.explainability import ExplainabilityEngine
+        engine = ExplainabilityEngine()
+        report = engine.explain(
+            votes=[0.8, -0.5, 0.3],
+            weights=[1.5, 1.0, 0.5],
+            labels=["rsi", "macd", "obv"],
+            indicators={"rsi": 25, "macd": -0.1, "atr": 1300, "adx": 30, "bb_pct_b": 0.2},
+        )
+        assert len(report.factors) == 3
+        # Contributions should sum to ~100%
+        total = sum(f.contribution_pct for f in report.factors)
+        assert abs(total - 100) < 0.5, f"Contributions should sum to 100%, got {total}"
+        assert "rsi" in report.top_bullish
+
+    def test_compliance_scoring(self):
+        from bot.core.explainability import ExplainabilityEngine
+        engine = ExplainabilityEngine()
+        report = engine.explain(
+            indicators={"rsi": 35, "macd": 0.1, "atr": 1300, "adx": 30, "bb_pct_b": 0.3},
+            regime="TREND_UP",
+            confluence=0.72,
+            confidence=0.68,
+            votes=[0.5],
+            weights=[1.0],
+            labels=["rsi"],
+        )
+        assert report.compliance.data_sufficiency == 1.0, "All key indicators present"
+        assert report.compliance.explainability > 0
+        assert report.compliance.overall > 0
+
+    def test_compliance_low_data(self):
+        from bot.core.explainability import ExplainabilityEngine
+        engine = ExplainabilityEngine()
+        report = engine.explain(
+            indicators={"rsi": 35},
+            regime="UNKNOWN",
+            confluence=0.5,
+            confidence=0.5,
+        )
+        assert report.compliance.data_sufficiency < 1.0
+
+    def test_risk_verdict_integration(self):
+        from bot.core.explainability import ExplainabilityEngine
+        from unittest.mock import MagicMock
+
+        mock_verdict = MagicMock()
+        mock_verdict.approved = False
+        mock_check = MagicMock()
+        mock_check.passed = False
+        mock_check.reason = "Position too large"
+        mock_verdict.checks = [mock_check]
+
+        engine = ExplainabilityEngine()
+        report = engine.explain(
+            risk_verdict=mock_verdict,
+            indicators={"rsi": 50, "macd": 0, "atr": 1300, "adx": 20, "bb_pct_b": 0.5},
+        )
+        assert not report.risk_approved
+        assert report.risk_checks_total == 1
+        assert "Position too large" in report.risk_rejection_reason
+
+    def test_narrative_with_mtf_and_sm(self):
+        from bot.core.explainability import ExplainabilityEngine
+        engine = ExplainabilityEngine()
+        report = engine.explain(
+            trade_id="TI-test2",
+            symbol="ETH/USDT",
+            direction="SHORT",
+            indicators={"rsi": 75, "macd": -0.1, "atr": 100, "adx": 35, "bb_pct_b": 0.9},
+            regime="TREND_DOWN",
+            confluence=0.35,
+            confidence=0.70,
+            mtf_narrative="All timeframes aligned bearish.",
+            smart_money_narrative="Whales are distributing (-0.40).",
+        )
+        assert "bearish" in report.detailed_narrative.lower()
+        assert "distributing" in report.detailed_narrative.lower()
+        assert report.summary != ""
+
+    def test_summary_format(self):
+        from bot.core.explainability import ExplainabilityEngine
+        engine = ExplainabilityEngine()
+        report = engine.explain(
+            symbol="BTC/USDT",
+            direction="LONG",
+            confidence=0.72,
+            strategy_mode="TREND_CONTINUATION",
+            indicators={},
+        )
+        assert "LONG" in report.summary
+        assert "BTC/USDT" in report.summary
+
+    def test_empty_votes_no_crash(self):
+        from bot.core.explainability import ExplainabilityEngine
+        engine = ExplainabilityEngine()
+        report = engine.explain()
+        assert len(report.factors) == 0
+        assert report.summary != ""
+
+
+# ══════════════════════════════════════════════════════════════════
+# TA UTILS TESTS
+# ══════════════════════════════════════════════════════════════════
+
+class TestTAUtils:
+    """Validate shared TA utility functions after extraction."""
+
+    def test_ema_basic(self):
+        from bot.core.ta_utils import _ema
+        data = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
+        result = _ema(data, 3)
+        assert len(result) == 5
+        assert result[0] == 1.0
+        assert result[-1] > result[0]
+
+    def test_compute_adx_short_data(self):
+        from bot.core.ta_utils import _compute_adx
+        highs = np.array([10.0, 11.0, 12.0])
+        lows = np.array([9.0, 10.0, 11.0])
+        closes = np.array([9.5, 10.5, 11.5])
+        result = _compute_adx(highs, lows, closes, 14)
+        assert result["adx"] == 0.0, "Not enough data"
+
+    def test_regime_enum_values(self):
+        from bot.core.ta_utils import Regime
+        assert Regime.TREND_UP.value == "TREND_UP"
+        assert Regime.RANGE.value == "RANGE"
+
+    def test_backward_compat_imports(self):
+        """Ensure analyzer still re-exports _ema, _compute_adx, Regime."""
+        from bot.core.analyzer import _ema, _compute_adx, Regime
+        assert callable(_ema)
+        assert callable(_compute_adx)
+        assert Regime.TREND_UP.value == "TREND_UP"

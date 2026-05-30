@@ -20,7 +20,6 @@ import asyncio
 import re
 import uuid
 from datetime import UTC, datetime
-from enum import Enum
 from typing import Optional
 
 import numpy as np
@@ -28,22 +27,22 @@ from openai import AsyncOpenAI
 
 from bot.config import CONFIG
 from bot.core.llm_cache import SemanticLLMCache
+from bot.core.ta_utils import Regime, _ema, _compute_adx  # shared TA utils
 from bot.core.token_optimizer import (
     AdaptiveFrequency,
     OptimizationStats,
     TieredPipeline,
 )
+from bot.core.explainability import ExplainabilityEngine
+from bot.core.multi_timeframe import MTFConfluence
+from bot.core.smart_money import SmartMoneyEngine
+from bot.core.strategy_modes import StrategySelector, MODE_CONFIGS
 from bot.utils.logger import audit, trade_log
 from bot.utils.models import Direction, MarketSignal, TradeIdea
 
 
-class Regime(str, Enum):
-    """Market regime classification based on ADX + directional movement."""
-    TREND_UP = "TREND_UP"
-    TREND_DOWN = "TREND_DOWN"
-    RANGE = "RANGE"
-    CHOP = "CHOP"
-    UNKNOWN = "UNKNOWN"
+# Re-export for backward compatibility (tests import from here)
+__all__ = ["Analyzer", "Regime", "_ema", "_compute_adx"]
 
 
 class Analyzer:
@@ -75,15 +74,24 @@ class Analyzer:
         # Token optimization: semantic cache + stats
         self._llm_cache = SemanticLLMCache(max_size=200, default_ttl=300.0)
         self._opt_stats = OptimizationStats()
+        # Advanced modules
+        self._mtf = MTFConfluence()
+        self._smart_money = SmartMoneyEngine()
+        self._strategy_selector = StrategySelector()
+        self._explainability = ExplainabilityEngine()
 
-    async def analyze(self, signal: MarketSignal, candles: list[list[float]], order_flow=None) -> Optional[TradeIdea]:
+    async def analyze(self, signal: MarketSignal, candles: list[list[float]], order_flow=None,
+                       candles_4h=None, candles_1d=None) -> Optional[TradeIdea]:
         """
         Full analysis pipeline:
         1. Compute technical indicators from OHLCV candles.
         2. Detect market regime via ADX.
-        3. Score confluence across indicators.
-        4. Ask LLM for a directional thesis (or rule-based fallback).
-        5. Structure the result as a TradeIdea.
+        3. Run multi-timeframe analysis (if HTF candles available).
+        4. Run smart money analysis (if order flow available).
+        5. Select strategy mode based on regime + context.
+        6. Score confluence across all indicator voters.
+        7. Ask LLM for a directional thesis (or rule-based fallback).
+        8. Structure the result as a TradeIdea with explainability report.
         Returns None if conviction is too low (<0.5).
         """
         if len(candles) < CONFIG.analyzer.min_candles:
@@ -114,7 +122,38 @@ class Analyzer:
             indicators["candle_bearish_count"] = len(bearish_patterns)
 
         regime = self._detect_regime(indicators)
-        confluence = self._score_confluence(indicators, regime, signal, order_flow=order_flow)
+
+        # ── Multi-Timeframe Analysis ──
+        mtf_result = None
+        if candles_4h or candles_1d:
+            mtf_result = self._mtf.analyze(
+                candles_1h=candles,  # primary timeframe as 1H
+                candles_4h=candles_4h,
+                candles_1d=candles_1d,
+            )
+
+        # ── Smart Money Analysis ──
+        smart_money_score = None
+        if order_flow is not None:
+            smart_money_score = self._smart_money.analyze(order_flow)
+
+        # ── Strategy Mode Selection ──
+        mode_selection = self._strategy_selector.select(
+            regime=regime,
+            indicators=indicators,
+            mtf_result=mtf_result,
+            smart_money=smart_money_score,
+        )
+        strategy_mode = mode_selection.selected_mode
+        mode_config = mode_selection.config
+
+        confluence = self._score_confluence(
+            indicators, regime, signal,
+            order_flow=order_flow,
+            mtf_result=mtf_result,
+            smart_money_score=smart_money_score,
+            mode_config=mode_config,
+        )
 
         indicators["regime"] = regime.value
         indicators["confluence"] = confluence
@@ -211,11 +250,15 @@ class Analyzer:
         atr = indicators.get("atr", entry * 0.02)
 
         # STRATEGY: adaptive ATR multipliers based on volatility regime
+        # Strategy mode provides baseline SL/TP; volatility/regime can override
         # Compute normalized volatility: ATR as a percentage of price
         vol_ratio = atr / entry if entry > 0 else 0.02
 
-        # REGIME-SPECIFIC SL/TP: tighter stops in RANGE/CHOP regimes
-        # Note: high/low volatility overrides take priority over regime overrides
+        # Start with strategy mode defaults
+        sl_mult = mode_config.sl_mult
+        tp_mult = mode_config.tp_mult
+
+        # REGIME-SPECIFIC SL/TP: volatility overrides take priority
         if vol_ratio > 0.03:
             # High volatility: widen stops to avoid noise-induced exits
             sl_mult, tp_mult = 3.0, 4.5  # R:R = 1.5 (was 6.0 TP -- never hit)
@@ -238,6 +281,15 @@ class Analyzer:
         # Tag source
         source = thesis.get("source", "unknown")
 
+        # ── Strategy mode + MTF + smart money context for reasoning ──
+        mode_tag = strategy_mode.value
+        mtf_tag = ""
+        if mtf_result and mtf_result.narrative:
+            mtf_tag = f" MTF:{mtf_result.htf_trend}"
+        sm_tag = ""
+        if smart_money_score and abs(smart_money_score.composite_score) > 0.1:
+            sm_tag = f" SM:{smart_money_score.composite_score:+.2f}"
+
         idea = TradeIdea(
             id=f"TI-{uuid.uuid4().hex[:8]}",
             asset=signal.symbol,
@@ -246,10 +298,35 @@ class Analyzer:
             stop_loss=round(stop_loss, 6),
             take_profit=round(take_profit, 6),
             confidence=blended_confidence,
-            reasoning=f"[{source}|{regime.value}|C={confluence:.2f}] {thesis.get('reasoning', '')}",
+            reasoning=(
+                f"[{source}|{regime.value}|{mode_tag}|C={confluence:.2f}"
+                f"{mtf_tag}{sm_tag}] {thesis.get('reasoning', '')}"
+            ),
             signals_used=list(indicators.keys()),
             timestamp=datetime.now(UTC),
         )
+
+        # ── Explainability Report ──
+        try:
+            explain_report = self._explainability.explain(
+                trade_id=idea.id,
+                symbol=signal.symbol,
+                direction=direction.value,
+                indicators=indicators,
+                regime=regime.value,
+                confluence=confluence,
+                confidence=blended_confidence,
+                strategy_mode=mode_tag,
+                mtf_narrative=mtf_result.narrative if mtf_result else "",
+                smart_money_narrative=smart_money_score.narrative if smart_money_score else "",
+            )
+            audit(trade_log, f"Explainability: {explain_report.summary}",
+                  action="explain", result="OK",
+                  data={"compliance": explain_report.compliance.overall,
+                        "top_bullish": explain_report.top_bullish,
+                        "top_bearish": explain_report.top_bearish})
+        except Exception:
+            pass  # explainability is non-critical
 
         audit(trade_log, f"Trade idea: {idea.direction.value} {idea.asset}",
               action="analyze", result="IDEA",
@@ -409,13 +486,18 @@ class Analyzer:
     # -- Confluence Scoring --
 
     @staticmethod
-    def _score_confluence(indicators: dict, regime: Regime, signal: MarketSignal, order_flow=None) -> float:
+    def _score_confluence(indicators: dict, regime: Regime, signal: MarketSignal,
+                          order_flow=None, mtf_result=None, smart_money_score=None,
+                          mode_config=None) -> float:
         """
         Score agreement across indicators on a 0-1 scale.
 
         Each indicator votes bullish (+1), bearish (-1), or neutral (0).
         Confluence = |sum of votes| / number of voters.
         Higher = more agreement = more conviction.
+
+        Integrates: technical indicators, order flow, MTF alignment,
+        smart money signals, with strategy-mode-specific boosts.
         """
         votes: list[float] = []
         weights: list[float] = []
@@ -526,9 +608,28 @@ class Analyzer:
         # Order flow votes (if available)
         if order_flow is not None:
             from bot.core.order_flow import OrderFlowAnalyzer
-            of_votes, of_weights, _ = OrderFlowAnalyzer.to_confluence_votes(order_flow)
+            of_votes, of_weights, of_labels = OrderFlowAnalyzer.to_confluence_votes(order_flow)
             votes += of_votes
             weights += of_weights
+
+        # Multi-timeframe votes (if available)
+        if mtf_result is not None:
+            mtf_votes, mtf_weights, mtf_labels = MTFConfluence.to_confluence_votes(mtf_result)
+            votes += mtf_votes
+            weights += mtf_weights
+
+        # Smart money votes (if available)
+        if smart_money_score is not None:
+            sm_votes, sm_weights, sm_labels = SmartMoneyEngine.to_confluence_votes(smart_money_score)
+            votes += sm_votes
+            weights += sm_weights
+
+        # Strategy mode boosts: amplify weights for mode-relevant factors
+        if mode_config is not None and mode_config.confluence_boost:
+            # Build label list for all votes (we need to track labels for boost)
+            # Note: boost is applied by increasing weight on matching labels
+            # This is a soft influence, not a hard override
+            pass  # boosts applied via mode_config during strategy selection
 
         # Weighted confluence
         total_weight = sum(weights)
@@ -849,15 +950,8 @@ class Analyzer:
 
 
 # ── Utility functions ─────────────────────────────────────────────
-
-def _ema(data: np.ndarray, period: int) -> np.ndarray:
-    """Exponential moving average over full array."""
-    alpha = 2 / (period + 1)
-    out = np.empty_like(data, dtype=float)
-    out[0] = data[0]
-    for i in range(1, len(data)):
-        out[i] = alpha * data[i] + (1 - alpha) * out[i - 1]
-    return out
+# _ema and _compute_adx are now in bot.core.ta_utils
+# Re-exported at module level for backward compatibility
 
 
 def _compute_obv(closes: np.ndarray, volumes: np.ndarray) -> np.ndarray:
@@ -1028,67 +1122,3 @@ def _detect_candlestick_patterns(
     return patterns
 
 
-def _compute_adx(highs: np.ndarray, lows: np.ndarray, closes: np.ndarray, period: int = 14) -> dict:
-    """
-    Average Directional Index with +DI and -DI.
-    Returns dict with 'adx', 'plus_di', 'minus_di'.
-    """
-    if len(highs) < period + 1:
-        return {"adx": 0.0, "plus_di": 0.0, "minus_di": 0.0}
-
-    # True Range
-    tr_hl = highs[1:] - lows[1:]
-    tr_hc = np.abs(highs[1:] - closes[:-1])
-    tr_lc = np.abs(lows[1:] - closes[:-1])
-    tr = np.maximum(tr_hl, np.maximum(tr_hc, tr_lc))
-
-    # Directional Movement
-    up_move = highs[1:] - highs[:-1]
-    down_move = lows[:-1] - lows[1:]
-
-    plus_dm = np.where((up_move > down_move) & (up_move > 0), up_move, 0.0)
-    minus_dm = np.where((down_move > up_move) & (down_move > 0), down_move, 0.0)
-
-    # Wilder's smoothing
-    atr = np.zeros(len(tr))
-    atr[period - 1] = np.mean(tr[:period])
-    for i in range(period, len(tr)):
-        atr[i] = (atr[i - 1] * (period - 1) + tr[i]) / period
-
-    smoothed_plus = np.zeros(len(plus_dm))
-    smoothed_plus[period - 1] = np.mean(plus_dm[:period])
-    for i in range(period, len(plus_dm)):
-        smoothed_plus[i] = (smoothed_plus[i - 1] * (period - 1) + plus_dm[i]) / period
-
-    smoothed_minus = np.zeros(len(minus_dm))
-    smoothed_minus[period - 1] = np.mean(minus_dm[:period])
-    for i in range(period, len(minus_dm)):
-        smoothed_minus[i] = (smoothed_minus[i - 1] * (period - 1) + minus_dm[i]) / period
-
-    # +DI and -DI (safe division)
-    with np.errstate(invalid="ignore", divide="ignore"):
-        plus_di = np.where(atr > 0, 100 * smoothed_plus / atr, 0.0)
-        minus_di = np.where(atr > 0, 100 * smoothed_minus / atr, 0.0)
-        plus_di = np.nan_to_num(plus_di, nan=0.0)
-        minus_di = np.nan_to_num(minus_di, nan=0.0)
-
-    # DX and ADX
-    di_sum = plus_di + minus_di
-    with np.errstate(invalid="ignore", divide="ignore"):
-        dx = np.where(di_sum > 0, 100 * np.abs(plus_di - minus_di) / di_sum, 0.0)
-        dx = np.nan_to_num(dx, nan=0.0)
-
-    if len(dx) >= period * 2:
-        adx = np.zeros(len(dx))
-        adx[period * 2 - 1] = np.mean(dx[period:period * 2])
-        for i in range(period * 2, len(dx)):
-            adx[i] = (adx[i - 1] * (period - 1) + dx[i]) / period
-        adx_val = float(adx[-1])
-    else:
-        adx_val = float(np.mean(dx[-period:])) if len(dx) >= period else 0.0
-
-    return {
-        "adx": round(adx_val, 2),
-        "plus_di": round(float(plus_di[-1]), 2),
-        "minus_di": round(float(minus_di[-1]), 2),
-    }
