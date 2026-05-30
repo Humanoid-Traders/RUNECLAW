@@ -269,7 +269,7 @@ RUNECLAW is a **layered agent system** with strict separation between perception
 │     └─ Output: TradeIdea with full reasoning                 │
 │                          │                                   │
 │  4. VALIDATE (RISK)      │                                   │
-│     ├─ Run all 7 risk checks                                 │
+│     ├─ Run all 16 risk checks                                │
 │     ├─ Check circuit breaker status                          │
 │     ├─ Verify portfolio constraints                          │
 │     ├─ ANY failure → REJECT (fail-closed)                    │

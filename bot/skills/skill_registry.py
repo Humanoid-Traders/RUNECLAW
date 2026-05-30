@@ -168,7 +168,7 @@ class RunBacktestSkill(BaseSkill):
         from bot.backtest.engine import BacktestEngine
         from bot.backtest.models import BacktestConfig
 
-        bars_count = int(kwargs.get("bars", 720))
+        bars_count = min(int(kwargs.get("bars", 720)), 5000)  # clamp to prevent OOM
         seed = int(kwargs.get("seed", 42))
 
         config = BacktestConfig(symbol="BTC/USDT", timeframe="1h")
@@ -266,7 +266,7 @@ class WalkForwardSkill(BaseSkill):
         from bot.backtest.engine import walk_forward_backtest
         from bot.backtest.models import BacktestConfig
 
-        bars_count = int(kwargs.get("bars", 1440))
+        bars_count = min(int(kwargs.get("bars", 1440)), 5000)  # clamp to prevent OOM
         seed = int(kwargs.get("seed", 42))
         folds = int(kwargs.get("folds", 3))
 

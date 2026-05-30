@@ -1,13 +1,13 @@
 {
   "trade_id": "TI-a1b2c3d4",
   "verdict": "APPROVED",
-  "position_size_usd": 200.00,
-  "position_pct": 2.0,
+  "position_size_usd": 2000.00,
+  "position_pct": 20.0,
   "daily_loss_pct": 0.0,
   "drawdown_pct": 0.0,
   "checks_passed": [
     "CIRCUIT_BREAKER: OK",
-    "POSITION_SIZE: notional 2.0% <= 20.0%",
+    "POSITION_SIZE: clamped 158.2% -> 20.0% ($15823 -> $2000)",
     "DAILY_LOSS: 0.0% OK",
     "DRAWDOWN: 0.0% OK",
     "OPEN_POSITIONS: 0 OK",
@@ -19,8 +19,8 @@
     "STOP_LOSS: present and valid",
     "STALE_DATA: 2s old OK",
     "COOLDOWN: no recent losses",
-    "PORTFOLIO_EXPOSURE: 2.0% OK",
-    "SYMBOL_EXPOSURE: BTC/USDT 2.0% OK",
+    "PORTFOLIO_EXPOSURE: 20.0% OK",
+    "SYMBOL_EXPOSURE: BTC/USDT 20.0% OK",
     "VOLATILITY: ATR 1.50% OK"
   ],
   "checks_failed": [],

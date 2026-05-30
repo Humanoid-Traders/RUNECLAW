@@ -91,18 +91,18 @@ Stop Loss : $66,180.00 (-1.86%)
 Take Profit: $69,500.00 (+3.06%)
 Risk:Reward: 1:1.65
 Confidence: 72%
-Position  : 1.8% of equity ($180.00)
+Position  : 20.0% notional ($2,000.00) — risk budget 2%, capped at 20% notional
 
 Reasoning:
 - 4H RSI bounced from 38 with bullish divergence against price
 - Volume spike 2.3x average on the 1H candle at support
-- BTC dominance rising, altcoin rotation fading
-- Macro: DXY pulling back from 104.2 resistance
+- OBV trend rising, confirming volume behind the move
+- Fibonacci 0.382 zone providing structural support
 
-Signals Used: RSI_divergence, volume_spike, support_bounce, macro_dxy
+Signals Used: RSI_divergence, volume_spike, support_bounce, obv_trend, fib_zone
 
 Risk Check: APPROVED
-- Position size within 2% limit
+- Risk budget 2% ($200 max loss); position clamped to 20% notional ($2,000)
 - Daily loss budget: 1.2% used of 5% max
 - No correlated positions open
 
@@ -228,7 +228,8 @@ hard limits enforced by the risk engine.
 
 | Parameter              | Default     | Description                           |
 |------------------------|-------------|---------------------------------------|
-| Max position size      | 2% equity   | No single trade exceeds this          |
+| Risk budget per trade  | 2% equity   | Max dollar loss if stopped out        |
+| Max notional per symbol| 20% equity  | Position size capped at this notional |
 | Max daily loss         | 5% equity   | Circuit breaker trips at this level   |
 | Max drawdown           | 10% equity  | Hard stop -- all trading paused       |
 | Max open positions     | 5           | Diversification enforced              |

@@ -21,6 +21,7 @@ from bot.utils.models import (
 )
 from bot.risk.portfolio import PortfolioTracker
 from bot.risk.risk_engine import RiskEngine
+from bot.config import CONFIG
 from bot.core.analyzer import Analyzer, Regime, _compute_adx, _ema, _detect_candlestick_patterns, _compute_fibonacci, _compute_obv
 from bot.core.metrics import MetricsEngine
 from bot.backtest.models import BacktestBar, BacktestConfig
@@ -1987,3 +1988,158 @@ class TestAuditV3Fixes:
         from bot.config import ExchangeConfig
         config = ExchangeConfig()
         assert config.sandbox is True, "Sandbox should default to True"
+
+
+class TestSafetyGates:
+    """R-2: Tests for is_live() double-flag gate — the single most safety-critical property."""
+
+    def test_is_live_false_by_default(self):
+        """Default config: simulation=True, live=False → is_live() must be False."""
+        from bot.config import AppConfig
+        config = AppConfig()
+        assert config.is_live() is False
+
+    def test_is_live_false_simulation_only(self):
+        """Even if live_trading_enabled=True, simulation_mode=True → is_live() = False."""
+        from bot.config import AppConfig
+        config = AppConfig.__new__(AppConfig)
+        object.__setattr__(config, "simulation_mode", True)
+        object.__setattr__(config, "live_trading_enabled", True)
+        assert config.is_live() is False
+
+    def test_is_live_false_live_disabled(self):
+        """simulation_mode=False but live_trading_enabled=False → is_live() = False."""
+        from bot.config import AppConfig
+        config = AppConfig.__new__(AppConfig)
+        object.__setattr__(config, "simulation_mode", False)
+        object.__setattr__(config, "live_trading_enabled", False)
+        assert config.is_live() is False
+
+    def test_is_live_true_only_when_both_set(self):
+        """Only simulation_mode=False AND live_trading_enabled=True → is_live() = True."""
+        from bot.config import AppConfig
+        config = AppConfig.__new__(AppConfig)
+        object.__setattr__(config, "simulation_mode", False)
+        object.__setattr__(config, "live_trading_enabled", True)
+        assert config.is_live() is True
+
+    def test_confirm_trade_blocks_live_mode(self):
+        """When is_live()=True, confirm_trade must return the not-implemented message."""
+        from bot.core.engine import RuneClawEngine
+        from unittest.mock import patch
+        engine = RuneClawEngine()
+        engine.risk._state_file = "/dev/null"
+        engine.risk._circuit_open = False
+        engine.risk._consecutive_losses = 0
+        engine.risk._last_loss_time = None
+
+        idea = TradeIdea(
+            id="TI-LIVE-TEST",
+            asset="BTC/USDT",
+            direction=Direction.LONG,
+            entry_price=50000.0,
+            stop_loss=48750.0,
+            take_profit=53750.0,
+            confidence=0.75,
+            reasoning="test",
+            signals_used=["rsi"],
+            timestamp=datetime.now(UTC),
+        )
+        engine._pending_ideas[idea.id] = idea
+        engine._pending_atr[idea.id] = 500.0
+
+        # Patch CONFIG where engine.py reads it (bot.core.engine.CONFIG)
+        with patch("bot.core.engine.CONFIG") as mock_cfg:
+            # Set up mock so is_live() returns True, other attrs pass through
+            mock_cfg.is_live.return_value = True
+            mock_cfg.risk = CONFIG.risk  # use real risk config for re-check
+            loop = asyncio.new_event_loop()
+            try:
+                result = loop.run_until_complete(engine.confirm_trade(idea.id))
+            finally:
+                loop.close()
+        assert "NOT YET IMPLEMENTED" in result
+        # No position should have been opened
+        assert len(engine.portfolio._positions) == 0
+
+
+class TestTelegramAuth:
+    """R-3: Tests for Telegram authorization fail-closed behavior."""
+
+    def _make_update(self, chat_id: int = 12345):
+        """Create a minimal fake Update for auth testing."""
+        from unittest.mock import MagicMock
+        update = MagicMock()
+        update.effective_chat.id = chat_id
+        update.effective_user.id = chat_id
+        return update
+
+    def test_auth_rejects_when_unconfigured(self):
+        """With no CHAT_ID and no ALLOW_OPEN, _check_auth must return False."""
+        from bot.skills.telegram_handler import TelegramHandler
+        from bot.core.engine import RuneClawEngine
+        from unittest.mock import patch, MagicMock
+
+        engine = RuneClawEngine()
+        engine.risk._state_file = "/dev/null"
+        handler = TelegramHandler(engine)
+
+        mock_tg = MagicMock()
+        mock_tg.chat_id = ""
+        with patch("bot.skills.telegram_handler.CONFIG") as mock_cfg:
+            mock_cfg.telegram = mock_tg
+            with patch("bot.skills.telegram_handler._env_bool", return_value=False):
+                result = handler._check_auth(self._make_update(99999))
+                assert result is False, "Should reject when no CHAT_ID and ALLOW_OPEN=false"
+
+    def test_auth_accepts_listed_chat(self):
+        """With CHAT_ID set, listed chats should be accepted."""
+        from bot.skills.telegram_handler import TelegramHandler
+        from bot.core.engine import RuneClawEngine
+        from unittest.mock import patch, MagicMock
+
+        engine = RuneClawEngine()
+        engine.risk._state_file = "/dev/null"
+        handler = TelegramHandler(engine)
+
+        mock_tg = MagicMock()
+        mock_tg.chat_id = "12345,67890"
+        with patch("bot.skills.telegram_handler.CONFIG") as mock_cfg:
+            mock_cfg.telegram = mock_tg
+            result = handler._check_auth(self._make_update(12345))
+            assert result is True, "Listed chat should be accepted"
+
+    def test_auth_rejects_unlisted_chat(self):
+        """With CHAT_ID set, unlisted chats should be rejected."""
+        from bot.skills.telegram_handler import TelegramHandler
+        from bot.core.engine import RuneClawEngine
+        from unittest.mock import patch, MagicMock
+
+        engine = RuneClawEngine()
+        engine.risk._state_file = "/dev/null"
+        handler = TelegramHandler(engine)
+
+        mock_tg = MagicMock()
+        mock_tg.chat_id = "12345,67890"
+        with patch("bot.skills.telegram_handler.CONFIG") as mock_cfg:
+            mock_cfg.telegram = mock_tg
+            result = handler._check_auth(self._make_update(99999))
+            assert result is False, "Unlisted chat should be rejected"
+
+    def test_auth_allows_open_mode(self):
+        """With TELEGRAM_ALLOW_OPEN=true and no CHAT_ID, all chats accepted."""
+        from bot.skills.telegram_handler import TelegramHandler
+        from bot.core.engine import RuneClawEngine
+        from unittest.mock import patch, MagicMock
+
+        engine = RuneClawEngine()
+        engine.risk._state_file = "/dev/null"
+        handler = TelegramHandler(engine)
+
+        mock_tg = MagicMock()
+        mock_tg.chat_id = ""
+        with patch("bot.skills.telegram_handler.CONFIG") as mock_cfg:
+            mock_cfg.telegram = mock_tg
+            with patch("bot.skills.telegram_handler._env_bool", return_value=True):
+                result = handler._check_auth(self._make_update(99999))
+                assert result is True, "Open mode should accept all chats"

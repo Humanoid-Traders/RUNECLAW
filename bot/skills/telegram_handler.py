@@ -62,6 +62,7 @@ class TelegramHandler:
         app.add_handler(CommandHandler("status", self._cmd_status))
         app.add_handler(CommandHandler("rejected", self._cmd_rejected))
         app.add_handler(CommandHandler("halt", self._cmd_halt))
+        app.add_handler(CommandHandler("reset", self._cmd_reset))
         app.add_handler(CommandHandler("backtest", self._cmd_backtest))
         app.add_handler(CommandHandler("walkforward", self._cmd_walkforward))
         app.add_handler(CommandHandler("journal", self._cmd_journal))
@@ -192,6 +193,24 @@ class TelegramHandler:
         result = await self.registry.get("halt").execute(self.engine)  # type: ignore
         await update.message.reply_text(f"\U0001f6a8 *EMERGENCY HALT*\n```\n{result}\n```",
                                         parse_mode="Markdown")
+
+    async def _cmd_reset(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """Reset circuit breaker. Admin-only, audited."""
+        if not await self._check_rate(update):
+            return
+        if not self._check_auth(update):
+            await update.message.reply_text("\u26d4 Unauthorized. Contact the bot owner.")
+            return
+        was_active = self.engine.risk.circuit_breaker_active
+        self.engine.risk.reset_circuit_breaker()
+        if was_active:
+            await update.message.reply_text(
+                "\u2705 Circuit breaker *RESET*. Trading resumed.\n"
+                "Loss streak and cooldown cleared. State persisted.",
+                parse_mode="Markdown")
+        else:
+            await update.message.reply_text(
+                "\u2139\ufe0f Circuit breaker was not active. No action taken.")
 
     async def _cmd_backtest(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._check_rate(update):

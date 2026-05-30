@@ -255,7 +255,7 @@ skills:
         [TI-20260529143022] LONG BTC/USDT
         Confidence: 72%
         Reasoning: 4H RSI bounced from 38 with bullish divergence...
-        Signals: RSI_divergence, volume_spike, support_bounce, macro_dxy
+        Signals: RSI_divergence, volume_spike, support_bounce, obv_trend
 
   # ---------------------------------------------------------------------------
   # rejected_trades -- Show recent risk-rejected trade ideas

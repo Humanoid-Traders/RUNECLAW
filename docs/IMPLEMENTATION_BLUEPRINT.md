@@ -190,7 +190,7 @@ class ThesisGenerator:
 | **Outputs** | `RiskVerdict` (pass/reject with reasons), updated `PortfolioState` |
 | **Public interfaces** | `RiskEngine.evaluate()`, `Portfolio.open_position()`, `Portfolio.close_position()` |
 | **Dependencies** | `packages/models` |
-| **Test strategy** | Unit test each of the 7 risk checks independently. Test circuit breaker trigger and reset. Test fail-closed behavior (inject error in one check, verify rejection). Fuzz test with random TradeIdea values. |
+| **Test strategy** | Unit test each of the 16 risk checks independently. Test circuit breaker trigger and reset. Test fail-closed behavior (inject error in one check, verify rejection). Fuzz test with random TradeIdea values. |
 
 ```python
 # Public interface
