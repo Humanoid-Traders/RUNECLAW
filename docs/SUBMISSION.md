@@ -100,6 +100,7 @@ Validated across 500 backtest runs (synthetic data — 5 market regimes, 20 symb
 
 | Resource | URL |
 |----------|-----|
+| **Live Bot** | **https://t.me/HTRUNECLAW_bot** |
 | GitHub | https://github.com/Humanoid-Traders/RUNECLAW |
 | Website | https://lgl3crf9.mule.page/ |
 | GitBook | https://humanoid-traders-1.gitbook.io/humanoid-traders-ai |

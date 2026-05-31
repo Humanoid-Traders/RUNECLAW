@@ -22,8 +22,13 @@
   <a href="https://github.com/Humanoid-Traders/RUNECLAW">GitHub</a> &middot;
   <a href="https://lgl3crf9.mule.page/">Website</a> &middot;
   <a href="https://humanoid-traders-1.gitbook.io/humanoid-traders-ai">Documentation</a> &middot;
+  <a href="https://t.me/HTRUNECLAW_bot">Live Bot</a> &middot;
   <a href="https://t.me/+VRNgsmkR5pszZTdk">Telegram</a> &middot;
   <a href="https://x.com/BaurPatric70363">X / Twitter</a>
+</p>
+
+<p align="center">
+  <b>Try it live right now &rarr; <a href="https://t.me/HTRUNECLAW_bot">@HTRUNECLAW_bot</a></b>
 </p>
 
 ---
