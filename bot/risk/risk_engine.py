@@ -116,6 +116,9 @@ class RiskEngine:
         self._lock = threading.RLock()
         self._state_file = state_file or _STATE_FILE
         self._macro_calendar = macro_calendar
+        # Regime-aware risk (Feature #3)
+        self._current_regime: str = "UNKNOWN"
+        self._current_vol_state: str = "NORMAL"
         # F-01: reload persisted safety state so restarts don't clear the breaker
         self._load_state()
 
@@ -414,6 +417,26 @@ class RiskEngine:
         except Exception as exc:
             failed.append(f"MACRO_EVENT: evaluation error ({exc})")
 
+        # 19. Multi-timeframe alignment (Feature #2) — graceful skip if no data
+        try:
+            mtf_result = self._check_mtf_alignment(idea)
+            if mtf_result is not None:
+                failed.append(mtf_result)
+            else:
+                passed.append("MTF_ALIGNMENT: aligned or skipped (no data)")
+        except Exception as exc:
+            failed.append(f"MTF_ALIGNMENT: evaluation error ({exc})")
+
+        # 20. Portfolio concentration / PCA (Feature #4) — graceful skip if no data
+        try:
+            conc_result = self._check_concentration()
+            if conc_result is not None:
+                failed.append(conc_result)
+            else:
+                passed.append("CONCENTRATION_PCA: OK or skipped (no data)")
+        except Exception as exc:
+            failed.append(f"CONCENTRATION_PCA: evaluation error ({exc})")
+
         # -- Verdict --
         verdict = RiskVerdict.APPROVED if len(failed) == 0 else RiskVerdict.REJECTED
         reason = "; ".join(failed) if failed else f"All {len(passed)} checks passed"
@@ -452,6 +475,298 @@ class RiskEngine:
               action="risk_check", result=verdict.value,
               data=check.model_dump(mode="json"))
         return check
+
+    # ── Feature #1: Adaptive Position Sizing (Kelly Criterion) ────────
+
+    @staticmethod
+    def kelly_position_size(
+        confidence: float, win_rate: float, avg_win: float, avg_loss: float
+    ) -> float:
+        """Return optimal position size as a fraction of equity using half-Kelly.
+
+        Parameters:
+            confidence: trade confidence [0,1] — used as a scaling factor
+            win_rate: historical win rate [0,1]
+            avg_win: average winning trade return (positive)
+            avg_loss: average losing trade return (positive magnitude)
+
+        Returns:
+            Position fraction [0, max_position_pct/100], capped at config limit.
+        """
+        # Edge cases: no edge → 0
+        if win_rate <= 0 or avg_win <= 0 or avg_loss <= 0:
+            return 0.0
+        if win_rate >= 1.0:
+            # Perfect win rate — still cap at config limit
+            cap = CONFIG.risk.max_position_pct / 100.0
+            return min(0.5 * confidence, cap)
+
+        # Kelly fraction: f* = (p * b - q) / b
+        # where p = win_rate, q = 1 - p, b = avg_win / avg_loss
+        b = avg_win / avg_loss
+        q = 1.0 - win_rate
+        kelly_f = (win_rate * b - q) / b
+
+        if kelly_f <= 0:
+            return 0.0  # Negative edge — don't bet
+
+        # Half-Kelly for safety, scaled by confidence
+        half_kelly = kelly_f * 0.5 * confidence
+        cap = CONFIG.risk.max_position_pct / 100.0
+        return min(max(half_kelly, 0.0), cap)
+
+    def get_recommended_size(self, idea: TradeIdea) -> float:
+        """Compute recommended position size in USD for a given TradeIdea.
+
+        Uses trade history to derive win_rate, avg_win, avg_loss.
+        Falls back to fixed-fractional sizing if insufficient history.
+        """
+        history = self._portfolio.trade_history
+        closed = [t for t in history if t.exit_price is not None]
+
+        try:
+            state = self._portfolio.snapshot()
+            equity = state.equity_usd
+        except Exception:
+            return 0.0
+
+        if equity <= 0:
+            return 0.0
+
+        # Need at least 10 trades for meaningful stats
+        if len(closed) < 10:
+            # Fallback: fixed-fractional
+            return equity * (CONFIG.risk.max_position_pct / 100.0)
+
+        wins = [t for t in closed if t.pnl > 0]
+        losses = [t for t in closed if t.pnl <= 0]
+        win_rate = len(wins) / len(closed) if closed else 0.0
+        avg_win = (sum(t.pnl for t in wins) / len(wins)) if wins else 0.0
+        avg_loss = (abs(sum(t.pnl for t in losses)) / len(losses)) if losses else 0.0
+
+        fraction = self.kelly_position_size(idea.confidence, win_rate, avg_win, avg_loss)
+        return round(equity * fraction, 2)
+
+    # ── Feature #2: Multi-Timeframe Confirmation ─────────────────────
+
+    @staticmethod
+    def check_timeframe_alignment(trends: dict[str, str]) -> tuple[bool, str]:
+        """Check if multi-timeframe trends are aligned (2-of-3 rule).
+
+        Parameters:
+            trends: dict mapping timeframe labels to trend direction strings
+                    e.g. {"1h": "UP", "4h": "UP", "1d": "DOWN"}
+
+        Returns:
+            (aligned, reason) — aligned is True if at least 2 of 3 timeframes agree.
+        """
+        if not trends or len(trends) < 2:
+            return True, "insufficient timeframes for alignment check"
+
+        values = [v.upper() for v in trends.values()]
+        total = len(values)
+
+        # Count occurrences of each direction
+        counts: dict[str, int] = {}
+        for v in values:
+            counts[v] = counts.get(v, 0) + 1
+
+        # Find the most common direction
+        dominant = max(counts, key=lambda k: counts[k])
+        dominant_count = counts[dominant]
+
+        # Require at least 2 aligned (or majority if more than 3 timeframes)
+        threshold = 2 if total <= 3 else (total // 2 + 1)
+        aligned = dominant_count >= threshold
+
+        if aligned:
+            tfs = [k for k, v in trends.items() if v.upper() == dominant]
+            return True, f"aligned {dominant} on {', '.join(tfs)} ({dominant_count}/{total})"
+        else:
+            return False, f"no alignment: {counts} across {total} timeframes"
+
+    def _check_mtf_alignment(self, idea: TradeIdea) -> Optional[str]:
+        """Internal check for multi-timeframe alignment in risk flow.
+
+        Reads MTF trends from the idea's signals_used if available.
+        Gracefully skips (returns None = pass) when no MTF data present.
+        """
+        # Look for MTF data attached to the idea via signals_used
+        mtf_trends: dict[str, str] = {}
+        for sig in idea.signals_used:
+            # Convention: "MTF:1h=UP", "MTF:4h=DOWN", etc.
+            if sig.upper().startswith("MTF:"):
+                parts = sig[4:].split("=", 1)
+                if len(parts) == 2:
+                    mtf_trends[parts[0].strip()] = parts[1].strip()
+
+        if len(mtf_trends) < 2:
+            return None  # No MTF data — graceful skip
+
+        aligned, reason = self.check_timeframe_alignment(mtf_trends)
+        if not aligned:
+            return f"MTF_ALIGNMENT: {reason}"
+        return None
+
+    # ── Feature #3: Regime-Aware Risk Parameters ─────────────────────
+
+    _REGIME_MULTIPLIERS: dict[str, dict[str, float]] = {
+        "CHOPPY": {"position_size_mult": 0.5, "cooldown_mult": 2.0, "stop_width_mult": 1.0},
+        "STRONG_TREND_UP": {"position_size_mult": 1.5, "cooldown_mult": 0.5, "stop_width_mult": 1.0},
+        "STRONG_TREND_DOWN": {"position_size_mult": 1.5, "cooldown_mult": 0.5, "stop_width_mult": 1.0},
+        "HIGH_VOLATILITY": {"position_size_mult": 0.3, "cooldown_mult": 1.0, "stop_width_mult": 1.5},
+        "RANGING": {"position_size_mult": 0.7, "cooldown_mult": 1.5, "stop_width_mult": 1.0},
+    }
+
+    _DEFAULT_MULTIPLIERS: dict[str, float] = {
+        "position_size_mult": 1.0, "cooldown_mult": 1.0, "stop_width_mult": 1.0,
+    }
+
+    def get_regime_adjusted_params(self, regime: str, volatility_state: str) -> dict:
+        """Return adjusted risk parameter multipliers based on market regime.
+
+        Parameters:
+            regime: market regime string (e.g. "CHOPPY", "STRONG_TREND_UP")
+            volatility_state: volatility descriptor (e.g. "HIGH", "NORMAL", "LOW")
+
+        Returns:
+            dict with keys: position_size_mult, cooldown_mult, stop_width_mult
+        """
+        # Update instance state
+        self._current_regime = regime
+        self._current_vol_state = volatility_state
+
+        base = dict(self._REGIME_MULTIPLIERS.get(regime.upper(), self._DEFAULT_MULTIPLIERS))
+
+        # Overlay volatility adjustments
+        vol = volatility_state.upper()
+        if vol == "HIGH" and regime.upper() != "HIGH_VOLATILITY":
+            # Reduce position size further in high-vol environments
+            base["position_size_mult"] = base.get("position_size_mult", 1.0) * 0.7
+            base["stop_width_mult"] = base.get("stop_width_mult", 1.0) * 1.3
+        elif vol == "LOW":
+            # Tighter stops in low-vol
+            base["stop_width_mult"] = base.get("stop_width_mult", 1.0) * 0.8
+
+        return base
+
+    # ── Feature #4: Correlation-Weighted Portfolio Risk (PCA) ────────
+
+    @staticmethod
+    def check_portfolio_concentration(
+        returns_matrix: list[list[float]],
+    ) -> tuple[bool, str]:
+        """Check portfolio concentration using PCA on correlation matrix.
+
+        Parameters:
+            returns_matrix: list of return series (rows=assets, cols=time periods).
+                            Each inner list is one asset's returns over time.
+
+        Returns:
+            (ok, reason) — ok is False if PC1 explains > 70% of variance.
+        """
+        n_assets = len(returns_matrix)
+        if n_assets < 2:
+            return True, "single asset — concentration check not applicable"
+
+        n_periods = min(len(r) for r in returns_matrix) if returns_matrix else 0
+        if n_periods < 3:
+            return True, "insufficient return history for concentration check"
+
+        # Trim all series to same length
+        trimmed = [r[:n_periods] for r in returns_matrix]
+
+        # Compute means
+        means = [sum(r) / n_periods for r in trimmed]
+
+        # Compute std devs
+        stddevs = []
+        for i, r in enumerate(trimmed):
+            var = sum((x - means[i]) ** 2 for x in r) / n_periods
+            stddevs.append(var ** 0.5)
+
+        # Build correlation matrix (n x n)
+        corr = [[0.0] * n_assets for _ in range(n_assets)]
+        for i in range(n_assets):
+            for j in range(n_assets):
+                if i == j:
+                    corr[i][j] = 1.0
+                    continue
+                if stddevs[i] < 1e-12 or stddevs[j] < 1e-12:
+                    corr[i][j] = 0.0
+                    continue
+                cov = sum(
+                    (trimmed[i][k] - means[i]) * (trimmed[j][k] - means[j])
+                    for k in range(n_periods)
+                ) / n_periods
+                corr[i][j] = cov / (stddevs[i] * stddevs[j])
+
+        # Power iteration to find largest eigenvalue of correlation matrix
+        # Initialize vector
+        vec = [1.0 / (n_assets ** 0.5)] * n_assets
+        for _ in range(100):  # iterations
+            # Matrix-vector multiply
+            new_vec = [0.0] * n_assets
+            for i in range(n_assets):
+                for j in range(n_assets):
+                    new_vec[i] += corr[i][j] * vec[j]
+            # Compute norm
+            norm = sum(x * x for x in new_vec) ** 0.5
+            if norm < 1e-12:
+                break
+            vec = [x / norm for x in new_vec]
+
+        # Eigenvalue = Rayleigh quotient: v^T A v / v^T v
+        av = [0.0] * n_assets
+        for i in range(n_assets):
+            for j in range(n_assets):
+                av[i] += corr[i][j] * vec[j]
+        eigenvalue = sum(vec[i] * av[i] for i in range(n_assets))
+
+        # Total variance = trace of correlation matrix = n_assets
+        total_variance = float(n_assets)
+        pc1_explained = eigenvalue / total_variance if total_variance > 0 else 0.0
+
+        if pc1_explained > 0.70:
+            return False, (
+                f"PC1 explains {pc1_explained:.1%} of variance (> 70% threshold) — "
+                f"portfolio too concentrated"
+            )
+        return True, f"PC1 explains {pc1_explained:.1%} — diversification OK"
+
+    def _check_concentration(self) -> Optional[str]:
+        """Internal check for portfolio concentration in risk flow.
+
+        Builds a returns matrix from trade history. Gracefully skips when
+        insufficient data is available.
+        """
+        positions = self._portfolio.open_positions
+        if len(positions) < 2:
+            return None  # Not enough positions to check
+
+        history = self._portfolio.trade_history
+        if len(history) < 5:
+            return None  # Not enough history
+
+        # Group closed trades by asset to build return series
+        asset_returns: dict[str, list[float]] = {}
+        for t in history:
+            if t.exit_price is not None and t.entry_price > 0:
+                ret = (t.exit_price - t.entry_price) / t.entry_price
+                if t.direction.value == "SHORT":
+                    ret = -ret
+                asset_returns.setdefault(t.asset, []).append(ret)
+
+        # Need at least 2 assets with 3+ returns each
+        valid = {a: rets for a, rets in asset_returns.items() if len(rets) >= 3}
+        if len(valid) < 2:
+            return None  # Graceful skip
+
+        returns_matrix = list(valid.values())
+        ok, reason = self.check_portfolio_concentration(returns_matrix)
+        if not ok:
+            return f"CONCENTRATION_PCA: {reason}"
+        return None
 
     def _check_correlation(self, idea: TradeIdea) -> Optional[str]:
         """Prevent concentrated bets in the same correlation group."""

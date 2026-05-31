@@ -106,6 +106,7 @@ class FactorScores:
     volume_confirm:   float = 0.0   # volume surge vs 20-bar average
     volatility_fit:   float = 0.0   # reward for normal vol, penalty for extreme
     hurst_factor:     float = 0.0   # Hurst exponent: trending vs mean-reverting
+    vol_forecast:     float = 0.0   # GARCH(1,1) volatility forecast factor
 
 
 @dataclass
@@ -131,6 +132,12 @@ class QuantReport:
     price_zscore:     float = 0.0   # standard deviations from 20-bar mean
     volume_ratio:     float = 1.0   # current volume / 20-bar avg volume
     momentum_ratio:   float = 0.0   # fast EMA / slow EMA - 1
+
+    # Rolling Hurst & GARCH outputs
+    hurst_trend:      str  = "STABLE"          # TRENDING_UP / TRENDING_DOWN / STABLE
+    garch_forecast:   dict = field(default_factory=lambda: {
+        "current_vol": 0.0, "forecast_vol": 0.0, "vol_expanding": False, "vol_ratio": 1.0
+    })
 
     # Factor breakdown
     factors: FactorScores = field(default_factory=FactorScores)
@@ -160,6 +167,8 @@ class QuantReport:
             "price_zscore":       round(self.price_zscore, 3),
             "volume_ratio":       round(self.volume_ratio, 2),
             "momentum_ratio":     round(self.momentum_ratio, 4),
+            "hurst_trend":        self.hurst_trend,
+            "garch_forecast":     self.garch_forecast,
             "factors": {
                 "trend":         round(self.factors.trend_factor, 3),
                 "momentum":      round(self.factors.momentum_factor, 3),
@@ -167,6 +176,7 @@ class QuantReport:
                 "volume_confirm":round(self.factors.volume_confirm, 3),
                 "vol_fit":       round(self.factors.volatility_fit, 3),
                 "hurst":         round(self.factors.hurst_factor, 3),
+                "vol_forecast":  round(self.factors.vol_forecast, 3),
             },
             "quant_score":        round(self.quant_score, 3),
             "edge_strength":      self.edge_strength.value,
@@ -379,6 +389,114 @@ def _score_hurst(hurst: float) -> float:
     return min(1.0, distance_from_random / 0.2)  # full score at 0.3 or 0.7
 
 
+# ── Rolling Hurst & GARCH helpers ────────────────────────────────────────────
+
+def _rolling_hurst(prices: list[float], window: int = 100) -> list[float]:
+    """
+    Compute Hurst exponent on rolling windows of size `window`.
+    Returns a list of Hurst values, one per valid window position.
+    """
+    results: list[float] = []
+    if len(prices) < window:
+        # Not enough data: compute a single Hurst on whatever we have
+        results.append(_hurst_exponent(prices, min(len(prices), HURST_WINDOW)))
+        return results
+    for i in range(window, len(prices) + 1):
+        segment = prices[i - window : i]
+        results.append(_hurst_exponent(segment, window))
+    return results
+
+
+def _hurst_trend(rolling_hurst: list[float]) -> str:
+    """
+    Detect Hurst regime-shift signals based on 0.5 crossings.
+    - "TRENDING_UP": Hurst crossing above 0.5 from below
+    - "TRENDING_DOWN": Hurst crossing below 0.5 from above
+    - "STABLE": no recent crossing
+    Looks at the last 5 values (or fewer if the list is short).
+    """
+    if len(rolling_hurst) < 2:
+        return "STABLE"
+    lookback = min(5, len(rolling_hurst))
+    recent = rolling_hurst[-lookback:]
+    # Scan for crossings in the recent window (newest first)
+    for i in range(len(recent) - 1, 0, -1):
+        prev_val = recent[i - 1]
+        curr_val = recent[i]
+        if prev_val < 0.5 and curr_val >= 0.5:
+            return "TRENDING_UP"
+        if prev_val >= 0.5 and curr_val < 0.5:
+            return "TRENDING_DOWN"
+    return "STABLE"
+
+
+def _garch_forecast(
+    returns: list[float],
+    omega: float = 0.00001,
+    alpha: float = 0.1,
+    beta: float = 0.85,
+) -> dict:
+    """
+    Simple GARCH(1,1) variance forecast with fixed parameters.
+    sigma2(t+1) = omega + alpha * r(t)^2 + beta * sigma2(t)
+    Returns dict with: current_vol, forecast_vol, vol_expanding, vol_ratio.
+    """
+    if len(returns) < 2:
+        return {
+            "current_vol": 0.0,
+            "forecast_vol": 0.0,
+            "vol_expanding": False,
+            "vol_ratio": 1.0,
+        }
+    # Initialize variance with sample variance
+    sigma2 = statistics.variance(returns) if len(returns) > 1 else omega
+    if sigma2 == 0:
+        sigma2 = omega
+
+    # Run GARCH filter through all returns
+    for r in returns:
+        sigma2 = omega + alpha * (r * r) + beta * sigma2
+
+    current_vol = math.sqrt(sigma2)
+    # One-step-ahead forecast
+    last_r = returns[-1]
+    forecast_sigma2 = omega + alpha * (last_r * last_r) + beta * sigma2
+    forecast_vol = math.sqrt(forecast_sigma2)
+
+    vol_ratio = forecast_vol / current_vol if current_vol > 0 else 1.0
+
+    return {
+        "current_vol": round(current_vol, 6),
+        "forecast_vol": round(forecast_vol, 6),
+        "vol_expanding": forecast_vol > current_vol,
+        "vol_ratio": round(vol_ratio, 4),
+    }
+
+
+def _vol_regime_forecast(ohlcv: list[list[float]]) -> dict:
+    """Run GARCH(1,1) on close-to-close returns from OHLCV data."""
+    if len(ohlcv) < 3:
+        return _garch_forecast([])
+    closes = [bar[4] for bar in ohlcv]
+    returns = [
+        (closes[i] - closes[i - 1]) / closes[i - 1]
+        for i in range(1, len(closes))
+        if closes[i - 1] != 0
+    ]
+    return _garch_forecast(returns)
+
+
+def _score_vol_forecast(garch: dict) -> float:
+    """
+    Score the GARCH forecast factor (0-1).
+    Expanding vol with high ratio = high score (opportunity for vol-based edges).
+    Contracting vol = moderate score. Flat = low score.
+    """
+    ratio = garch.get("vol_ratio", 1.0)
+    # Distance from 1.0 indicates change; cap at 1.0
+    return min(1.0, abs(ratio - 1.0) / 0.3)
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # 5.  REGIME CLASSIFIER
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -412,7 +530,8 @@ FACTOR_WEIGHTS = {
     "mean_reversion": 0.15,
     "volume_confirm": 0.20,
     "vol_fit":        0.10,
-    "hurst":          0.10,
+    "hurst":          0.05,
+    "vol_forecast":   0.05,
 }
 
 
@@ -424,6 +543,7 @@ def _composite_score(factors: FactorScores) -> float:
         + factors.volume_confirm   * FACTOR_WEIGHTS["volume_confirm"]
         + factors.volatility_fit   * FACTOR_WEIGHTS["vol_fit"]
         + factors.hurst_factor     * FACTOR_WEIGHTS["hurst"]
+        + factors.vol_forecast     * FACTOR_WEIGHTS["vol_forecast"]
     )
 
 
@@ -476,6 +596,13 @@ def run_quant_analysis(
     report.volume_ratio = _volume_ratio(volumes, VOLUME_AVG_WINDOW)
     report.momentum_ratio = _momentum_ratio(closes, MOMENTUM_FAST, MOMENTUM_SLOW)
 
+    # ── Rolling Hurst & trend detection ──────────────────────────────────────
+    r_hurst = _rolling_hurst(closes, window=100)
+    h_trend = _hurst_trend(r_hurst)
+
+    # ── GARCH(1,1) volatility forecast ───────────────────────────────────────
+    garch = _vol_regime_forecast(ohlcv)
+
     # ── Regime & volatility classification ───────────────────────────────────
     report.volatility_state = _score_volatility_fit(report.atr_pct)
     report.regime = _classify_regime(
@@ -490,8 +617,11 @@ def run_quant_analysis(
         volume_confirm  = _score_volume(report.volume_ratio),
         volatility_fit  = _vol_fit_score(report.volatility_state),
         hurst_factor    = _score_hurst(report.hurst_exponent),
+        vol_forecast    = _score_vol_forecast(garch),
     )
     report.factors = f
+    report.hurst_trend = h_trend
+    report.garch_forecast = garch
 
     # ── Composite score ───────────────────────────────────────────────────────
     report.quant_score   = round(_composite_score(f), 4)
@@ -535,6 +665,9 @@ def run_quant_analysis(
         f"ADX:          {report.adx:.1f}  {'(trending)' if report.adx > 25 else '(weak/ranging)'}\n"
         f"Hurst (H):    {report.hurst_exponent:.3f}  "
         f"{'→ trending memory' if report.hurst_exponent > 0.55 else '→ mean-reverting' if report.hurst_exponent < 0.45 else '→ near random walk'}\n"
+        f"Hurst Trend:  {h_trend}\n"
+        f"GARCH Vol:    curr={garch['current_vol']:.4f}  fcast={garch['forecast_vol']:.4f}  "
+        f"{'EXPANDING' if garch['vol_expanding'] else 'CONTRACTING'}\n"
         f"Price Z-Score:{report.price_zscore:+.2f}  {'(extended)' if abs(report.price_zscore) > 2 else ''}\n"
         f"Vol Ratio:    {report.volume_ratio:.2f}x  {'🔥 SPIKE' if report.volume_ratio >= 2.0 else ''}\n"
         f"Momentum:     {report.momentum_ratio:+.3f}\n"
@@ -546,12 +679,110 @@ def run_quant_analysis(
         f"  Volume Confirm: {f.volume_confirm:.2f}  (weight {FACTOR_WEIGHTS['volume_confirm']:.0%})\n"
         f"  Vol Fit:        {f.volatility_fit:.2f}  (weight {FACTOR_WEIGHTS['vol_fit']:.0%})\n"
         f"  Hurst Edge:     {f.hurst_factor:.2f}  (weight {FACTOR_WEIGHTS['hurst']:.0%})\n"
+        f"  Vol Forecast:   {f.vol_forecast:.2f}  (weight {FACTOR_WEIGHTS['vol_forecast']:.0%})\n"
         f"{'─' * 42}\n"
         f"Composite Score: {report.quant_score:.3f} → {report.edge_strength.value}\n"
         f"{gate_line}"
     )
 
     return report
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 7b. LIVE DATA PIPELINE & TELEGRAM FORMATTER
+# ═══════════════════════════════════════════════════════════════════════════════
+
+async def analyze_live(symbol: str, exchange=None) -> dict:
+    """
+    Live data pipeline: fetch OHLCV and run quant analysis.
+    - If exchange is provided, fetches 1h OHLCV (500 bars) via exchange.fetch_ohlcv
+    - If exchange is None, falls back to synthetic data for demo mode
+    Returns the full quant analysis result as a dict.
+    """
+    ohlcv: list[list[float]] = []
+
+    if exchange is not None:
+        try:
+            raw = await exchange.fetch_ohlcv(symbol, '1h', limit=500)
+            ohlcv = [[float(c) for c in bar] for bar in raw]
+        except Exception:
+            ohlcv = []
+
+    if not ohlcv:
+        ohlcv = _generate_synthetic_ohlcv(500)
+
+    report = run_quant_analysis(symbol, '1h', ohlcv)
+    return report.to_dict()
+
+
+def format_quant_for_telegram(result: dict) -> str:
+    """
+    Format quant analysis result as a Telegram HTML message with War Room styling.
+    Uses horizontal bars, dots for confidence, regime indicators.
+    """
+    symbol = result.get("symbol", "???")
+    regime = result.get("regime", "UNKNOWN")
+    score = result.get("quant_score", 0.0)
+    edge = result.get("edge_strength", "NONE")
+    vol_state = result.get("volatility_state", "NORMAL")
+    passes = result.get("passes_quant_gate", False)
+    factors = result.get("factors", {})
+    hurst_t = result.get("hurst_trend", "STABLE")
+    garch = result.get("garch_forecast", {})
+
+    # Confidence dots: 1 dot per 0.2 of score (max 5)
+    filled = int(score / 0.2)
+    filled = min(filled, 5)
+    dots = "\u25cf " * filled + "\u25cb " * (5 - filled)
+
+    # Regime indicator
+    regime_map = {
+        "STRONG_TREND_UP": "\u2191\u2191 STRONG UP",
+        "WEAK_TREND_UP": "\u2191 WEAK UP",
+        "RANGING": "\u2194 RANGING",
+        "WEAK_TREND_DOWN": "\u2193 WEAK DOWN",
+        "STRONG_TREND_DOWN": "\u2193\u2193 STRONG DOWN",
+        "HIGH_VOLATILITY": "\u26a1 HIGH VOL",
+        "CHOPPY": "\u223c CHOPPY",
+    }
+    regime_label = regime_map.get(regime, regime)
+
+    # Gate
+    gate_icon = "\u2705" if passes else "\u274c"
+    gate_text = "PASS" if passes else "FAIL"
+
+    # GARCH line
+    garch_vol = garch.get("vol_expanding", False)
+    garch_dir = "EXPANDING" if garch_vol else "CONTRACTING"
+
+    # Factor bars: short horizontal bar scaled 0-1
+    def _bar(val: float) -> str:
+        filled_b = int(val * 8)
+        return "\u2588" * filled_b + "\u2591" * (8 - filled_b)
+
+    lines = [
+        f"<b>\u2501\u2501 RUNECLAW QUANT \u2501\u2501</b>",
+        f"<b>{symbol}</b>",
+        "",
+        f"<b>Regime:</b> {regime_label}",
+        f"<b>Hurst Trend:</b> {hurst_t}",
+        f"<b>Vol State:</b> {vol_state}",
+        f"<b>GARCH:</b> {garch_dir}",
+        "",
+        f"\u2501\u2501 Factors \u2501\u2501",
+        f"Trend:     {_bar(factors.get('trend', 0))} {factors.get('trend', 0):.2f}",
+        f"Momentum:  {_bar(factors.get('momentum', 0))} {factors.get('momentum', 0):.2f}",
+        f"MeanRev:   {_bar(factors.get('mean_reversion', 0))} {factors.get('mean_reversion', 0):.2f}",
+        f"Volume:    {_bar(factors.get('volume_confirm', 0))} {factors.get('volume_confirm', 0):.2f}",
+        f"VolFit:    {_bar(factors.get('vol_fit', 0))} {factors.get('vol_fit', 0):.2f}",
+        f"Hurst:     {_bar(factors.get('hurst', 0))} {factors.get('hurst', 0):.2f}",
+        f"VolFcast:  {_bar(factors.get('vol_forecast', 0))} {factors.get('vol_forecast', 0):.2f}",
+        "",
+        f"<b>Score:</b> {score:.3f} {dots.strip()}",
+        f"<b>Edge:</b> {edge}",
+        f"<b>Gate:</b> {gate_icon} {gate_text}",
+    ]
+    return "\n".join(lines)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

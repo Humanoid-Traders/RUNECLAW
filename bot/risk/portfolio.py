@@ -14,6 +14,7 @@ import json
 import logging
 import os
 import threading
+from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any, Optional, Callable
@@ -26,6 +27,14 @@ from bot.utils.models import (
 from bot.utils.trailing import make_trailing_state, update_trailing_stop
 
 
+@dataclass
+class TrailingStopConfig:
+    """Configuration for the enhanced trailing stop engine."""
+    activation_pct: float = 50.0         # activate after price reaches 50% of TP distance
+    trail_distance_atr_mult: float = 2.0  # trail at ATR * this multiplier
+    min_profit_lock_pct: float = 0.3      # minimum profit to lock in (% of entry)
+
+
 class PortfolioTracker:
     """In-memory paper trading portfolio with PnL tracking."""
 
@@ -34,8 +43,10 @@ class PortfolioTracker:
         initial_balance: Optional[float] = None,
         on_trade_close: Optional[Callable[[float], None]] = None,
         state_file: Optional[str] = None,
+        trailing_config: Optional[TrailingStopConfig] = None,
     ) -> None:
         self.balance = initial_balance or CONFIG.paper_balance_usd
+        self.trailing_config = trailing_config or TrailingStopConfig()
         self._initial_balance = self.balance
         self._peak_equity = self.balance
         self._positions: dict[str, TradeExecution] = {}
@@ -229,6 +240,104 @@ class PortfolioTracker:
             # Without this, peak only updates on trade close / snapshot,
             # so intra-bar equity highs are missed and drawdown is overstated.
             self._update_peak()
+            # Enhanced trailing stop: update after each M2M tick
+            self._update_trailing_stops_locked()
+
+    def update_trailing_stops(self, atr_values: Optional[dict[str, float]] = None) -> None:
+        """Public API: update trailing stops for all open positions.
+
+        Args:
+            atr_values: Optional mapping of asset -> current ATR value.
+                        If provided, overrides the stored ATR for each position.
+        """
+        with self._lock:
+            self._update_trailing_stops_locked(atr_values)
+
+    def _update_trailing_stops_locked(self, atr_values: Optional[dict[str, float]] = None) -> None:
+        """Internal: enhanced trailing stop logic using TrailingStopConfig.
+
+        For each open position:
+        1. Check if price has reached the activation threshold (activation_pct of TP distance)
+        2. If activated, compute trailing stop = current - (ATR * trail_mult) for LONG
+        3. Only tighten stops, never widen
+        """
+        cfg = self.trailing_config
+        for tid, pos in self._positions.items():
+            price = self._last_prices.get(pos.asset)
+            if price is None or price <= 0:
+                continue
+
+            ts = self._trailing_state.get(tid)
+            if ts is None:
+                continue
+
+            # Update ATR if fresh values provided
+            if atr_values and pos.asset in atr_values:
+                ts["atr"] = atr_values[pos.asset]
+
+            atr = ts.get("atr", 0)
+            entry = ts.get("entry_price", pos.entry_price)
+
+            # Compute activation distance: activation_pct % of distance to TP
+            tp_distance = abs(pos.take_profit - entry)
+            activation_distance = tp_distance * (cfg.activation_pct / 100.0)
+
+            if pos.direction == Direction.LONG:
+                # Update best price
+                if price > ts.get("best_price", entry):
+                    ts["best_price"] = price
+
+                # Activation check: has price moved activation_pct of TP distance?
+                if not ts.get("trailing_active", False) and activation_distance > 0:
+                    if price - entry >= activation_distance:
+                        ts["trailing_active"] = True
+
+                # Compute trailing stop
+                if ts.get("trailing_active", False) and atr > 0:
+                    trailing_sl = ts["best_price"] - (atr * cfg.trail_distance_atr_mult)
+                    # Ensure minimum profit lock
+                    min_profit_sl = entry * (1 + cfg.min_profit_lock_pct / 100.0)
+                    trailing_sl = max(trailing_sl, min_profit_sl)
+                    # Only tighten (move up for LONG)
+                    if trailing_sl > pos.stop_loss:
+                        pos.stop_loss = round(trailing_sl, 8)
+            else:
+                # SHORT
+                if price < ts.get("best_price", entry):
+                    ts["best_price"] = price
+
+                if not ts.get("trailing_active", False) and activation_distance > 0:
+                    if entry - price >= activation_distance:
+                        ts["trailing_active"] = True
+
+                if ts.get("trailing_active", False) and atr > 0:
+                    trailing_sl = ts["best_price"] + (atr * cfg.trail_distance_atr_mult)
+                    # Min profit lock for SHORT: entry * (1 - min_profit_lock_pct/100)
+                    min_profit_sl = entry * (1 - cfg.min_profit_lock_pct / 100.0)
+                    trailing_sl = min(trailing_sl, min_profit_sl)
+                    # Only tighten (move down for SHORT)
+                    if trailing_sl < pos.stop_loss:
+                        pos.stop_loss = round(trailing_sl, 8)
+
+    def get_trailing_status(self) -> dict:
+        """Return current trailing stop info for all open positions."""
+        with self._lock:
+            status = {}
+            for tid, pos in self._positions.items():
+                ts = self._trailing_state.get(tid, {})
+                price = self._last_prices.get(pos.asset, pos.entry_price)
+                status[tid] = {
+                    "asset": pos.asset,
+                    "direction": pos.direction.value,
+                    "entry_price": pos.entry_price,
+                    "current_price": price,
+                    "current_sl": pos.stop_loss,
+                    "take_profit": pos.take_profit,
+                    "trailing_active": ts.get("trailing_active", False),
+                    "best_price": ts.get("best_price", pos.entry_price),
+                    "atr": ts.get("atr", 0),
+                }
+            return status
 
     def get_position_value(self, asset: str | None = None) -> float:
         """Public API for mark-to-market position value.

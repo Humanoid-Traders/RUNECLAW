@@ -353,3 +353,142 @@ class SmartMoneyEngine:
             parts.append("No significant smart money signals detected")
 
         return ". ".join(parts) + "."
+
+    # ------------------------------------------------------------------
+    # On-Chain Flow Signal methods (intelligence layer upgrade, task 13)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def analyze_exchange_flow(net_flow_btc: float, avg_daily_flow: float) -> dict:
+        """Analyse net exchange flow for accumulation/distribution signals.
+
+        Parameters
+        ----------
+        net_flow_btc : float
+            Net BTC flow to exchanges.  Negative = outflow (accumulation).
+        avg_daily_flow : float
+            Average daily absolute net flow for normalisation.
+
+        Returns
+        -------
+        dict  with keys flow_signal, magnitude, interpretation.
+        """
+        if avg_daily_flow <= 0:
+            return {
+                "flow_signal": "NEUTRAL",
+                "magnitude": 0.0,
+                "interpretation": "Insufficient flow data",
+            }
+
+        ratio = net_flow_btc / avg_daily_flow
+        magnitude = min(1.0, abs(ratio) / 3.0)
+
+        if net_flow_btc < -avg_daily_flow * 1.5:
+            signal = "BULLISH"
+            interpretation = "Large exchange outflow — accumulation detected"
+        elif net_flow_btc > avg_daily_flow * 1.5:
+            signal = "BEARISH"
+            interpretation = "Large exchange inflow — distribution detected"
+        else:
+            signal = "NEUTRAL"
+            interpretation = "Exchange flow within normal range"
+
+        return {
+            "flow_signal": signal,
+            "magnitude": round(magnitude, 4),
+            "interpretation": interpretation,
+        }
+
+    @staticmethod
+    def analyze_whale_activity(large_tx_count: int, avg_large_tx: int) -> dict:
+        """Detect elevated whale transaction activity.
+
+        Parameters
+        ----------
+        large_tx_count : int
+            Number of large transactions in the current period.
+        avg_large_tx : int
+            Historical average large transactions per period.
+
+        Returns
+        -------
+        dict  with keys signal, activity_ratio, interpretation.
+        """
+        if avg_large_tx <= 0:
+            return {
+                "signal": "NEUTRAL",
+                "activity_ratio": 0.0,
+                "interpretation": "No baseline whale data",
+            }
+
+        ratio = large_tx_count / avg_large_tx
+
+        if ratio > 1.5:
+            signal = "ACTIVE"
+            interpretation = "Elevated whale activity — large transactions above average"
+        elif ratio > 1.0:
+            signal = "SLIGHTLY_ACTIVE"
+            interpretation = "Whale activity slightly above average"
+        else:
+            signal = "QUIET"
+            interpretation = "Whale activity at or below average"
+
+        return {
+            "signal": signal,
+            "activity_ratio": round(ratio, 4),
+            "interpretation": interpretation,
+        }
+
+    @staticmethod
+    def composite_flow_signal(
+        exchange_flow: dict,
+        whale: dict,
+        oi_change_pct: float = 0,
+    ) -> dict:
+        """Combine exchange flow, whale activity and OI change into a single signal.
+
+        Returns
+        -------
+        dict  with keys bias, confidence, factors.
+        """
+        bias_map = {"BULLISH": 1.0, "BEARISH": -1.0, "NEUTRAL": 0.0}
+
+        # Exchange flow component
+        flow_score = bias_map.get(exchange_flow.get("flow_signal", "NEUTRAL"), 0.0)
+        flow_mag = exchange_flow.get("magnitude", 0.0)
+
+        # Whale activity component — active whales amplify directional bias
+        whale_signal = whale.get("signal", "QUIET")
+        whale_ratio = whale.get("activity_ratio", 1.0)
+        whale_amp = min(1.5, whale_ratio) if whale_signal in ("ACTIVE", "SLIGHTLY_ACTIVE") else 1.0
+
+        # OI change: rising OI = conviction, falling OI = unwinding
+        oi_factor = 0.0
+        if abs(oi_change_pct) > 2:
+            oi_factor = max(-1.0, min(1.0, oi_change_pct / 20.0))
+
+        # Composite score
+        composite = flow_score * flow_mag * whale_amp + 0.2 * oi_factor
+        composite = max(-1.0, min(1.0, composite))
+
+        if composite > 0.15:
+            bias = "BULLISH"
+        elif composite < -0.15:
+            bias = "BEARISH"
+        else:
+            bias = "NEUTRAL"
+
+        # Confidence based on data quality
+        confidence = min(1.0, flow_mag * 0.5 + (0.3 if whale_signal != "QUIET" else 0.0) + (0.2 if abs(oi_change_pct) > 2 else 0.0))
+
+        factors = []
+        factors.append(f"Exchange flow: {exchange_flow.get('flow_signal', 'N/A')}")
+        factors.append(f"Whale activity: {whale_signal} (ratio={whale.get('activity_ratio', 0):.2f})")
+        if abs(oi_change_pct) > 0:
+            factors.append(f"OI change: {oi_change_pct:+.1f}%")
+
+        return {
+            "bias": bias,
+            "confidence": round(confidence, 4),
+            "factors": factors,
+        }

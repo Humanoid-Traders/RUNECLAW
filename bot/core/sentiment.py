@@ -448,3 +448,162 @@ class SentimentEngine:
 
         vote = float(np.clip(vote, -1.0, 1.0))
         return vote, contrarian
+
+
+# ---------------------------------------------------------------------------
+# SentimentAnalyzer — lightweight static/class-method interface
+# ---------------------------------------------------------------------------
+
+class SentimentAnalyzer:
+    """Static-method sentiment helpers for funding rate, long/short ratio,
+    and composite sentiment scoring.  Designed for the intelligence-layer
+    upgrade (task 12).
+    """
+
+    @staticmethod
+    def analyze_funding_rate(funding_rate: float) -> dict:
+        """Contrarian analysis of perpetual funding rate.
+
+        Parameters
+        ----------
+        funding_rate : float
+            Funding rate as a percentage (e.g. 0.05 means 0.05 %).
+
+        Returns
+        -------
+        dict  with keys bias, signal_strength, interpretation.
+        """
+        if funding_rate > 0.03:
+            bias = "BEARISH"
+            interpretation = "Crowded longs — contrarian bearish"
+        elif funding_rate < -0.03:
+            bias = "BULLISH"
+            interpretation = "Crowded shorts — contrarian bullish"
+        else:
+            bias = "NEUTRAL"
+            interpretation = "Funding rate within normal range"
+
+        signal_strength = min(1.0, abs(funding_rate) / 0.1)
+        return {
+            "bias": bias,
+            "signal_strength": round(signal_strength, 4),
+            "interpretation": interpretation,
+        }
+
+    @staticmethod
+    def analyze_long_short_ratio(ratio: float) -> dict:
+        """Contrarian analysis of the aggregate long/short ratio.
+
+        Parameters
+        ----------
+        ratio : float
+            Long/short ratio (e.g. 2.5 = 2.5x more longs than shorts).
+
+        Returns
+        -------
+        dict  with keys bias, signal_strength, interpretation.
+        """
+        if ratio > 2.0:
+            bias = "BEARISH"
+            strength = min(1.0, (ratio - 2.0) / 3.0)
+            interpretation = "Too many longs — contrarian bearish"
+        elif ratio < 0.5:
+            bias = "BULLISH"
+            strength = min(1.0, (0.5 - ratio) / 0.5)
+            interpretation = "Too many shorts — contrarian bullish"
+        else:
+            bias = "NEUTRAL"
+            strength = 0.0
+            interpretation = "Long/short ratio balanced"
+
+        return {
+            "bias": bias,
+            "signal_strength": round(strength, 4),
+            "interpretation": interpretation,
+        }
+
+    @staticmethod
+    def composite_sentiment(
+        funding_rate: float,
+        long_short_ratio: float = 1.0,
+        fear_greed: int = 50,
+    ) -> dict:
+        """Weighted composite of all sentiment signals.
+
+        Returns
+        -------
+        dict  with keys overall_bias, score (-1 to 1), signals, contrarian_alert.
+        """
+        funding = SentimentAnalyzer.analyze_funding_rate(funding_rate)
+        ls = SentimentAnalyzer.analyze_long_short_ratio(long_short_ratio)
+
+        # Map biases to numeric scores
+        bias_map = {"BULLISH": 1.0, "NEUTRAL": 0.0, "BEARISH": -1.0}
+
+        funding_score = bias_map[funding["bias"]] * funding["signal_strength"]
+        ls_score = bias_map[ls["bias"]] * ls["signal_strength"]
+
+        # Fear & Greed: map 0-100 to -1..+1, then apply contrarian at extremes
+        fg_raw = (fear_greed - 50) / 50.0
+        fg_contrarian = False
+        if fear_greed >= 80:
+            fg_score = -abs(fg_raw)  # extreme greed -> bearish
+            fg_contrarian = True
+        elif fear_greed <= 20:
+            fg_score = abs(fg_raw)  # extreme fear -> bullish
+            fg_contrarian = True
+        else:
+            fg_score = fg_raw * 0.3  # normal regime, muted
+
+        # Weighted average: funding 40%, L/S 35%, fear/greed 25%
+        composite = 0.40 * funding_score + 0.35 * ls_score + 0.25 * fg_score
+        composite = max(-1.0, min(1.0, composite))
+
+        # Overall bias label
+        if composite > 0.15:
+            overall = "BULLISH"
+        elif composite < -0.15:
+            overall = "BEARISH"
+        else:
+            overall = "NEUTRAL"
+
+        # Contrarian alert: extreme one-sided positioning
+        contrarian_alert = (
+            funding["signal_strength"] > 0.5
+            or ls["signal_strength"] > 0.5
+            or fg_contrarian
+        )
+
+        signals = [
+            f"Funding: {funding['bias']} ({funding['signal_strength']:.2f})",
+            f"L/S Ratio: {ls['bias']} ({ls['signal_strength']:.2f})",
+            f"Fear/Greed: {fear_greed}",
+        ]
+
+        return {
+            "overall_bias": overall,
+            "score": round(composite, 4),
+            "signals": signals,
+            "contrarian_alert": contrarian_alert,
+        }
+
+    @staticmethod
+    def format_for_telegram(result: dict) -> str:
+        """Format a composite sentiment result as Telegram-compatible HTML."""
+        bias = result.get("overall_bias", "NEUTRAL")
+        score = result.get("score", 0.0)
+        signals = result.get("signals", [])
+        alert = result.get("contrarian_alert", False)
+
+        bias_icon = {"BULLISH": "^", "BEARISH": "v", "NEUTRAL": "-"}.get(bias, "-")
+        lines = [
+            f"<b>SENTIMENT WAR ROOM</b>",
+            f"<b>Bias:</b> {bias} [{bias_icon}]  Score: {score:+.2f}",
+            "",
+        ]
+        for sig in signals:
+            lines.append(f"  {sig}")
+        if alert:
+            lines.append("")
+            lines.append("<b>CONTRARIAN ALERT:</b> Extreme positioning detected")
+        return "\n".join(lines)

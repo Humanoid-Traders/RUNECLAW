@@ -56,6 +56,8 @@ class RuneClawEngine:
         self._pending_ideas: dict[str, TradeIdea] = {}
         self._pending_atr: dict[str, Optional[float]] = {}  # H1: store ATR for re-check
         self._cooldown_until: float = 0.0
+        self._last_rebalance_check: float = 0.0  # monotonic timestamp
+        self._rebalance_interval: float = 4 * 3600  # 4 hours minimum between checks
 
     # -- State management --
 
@@ -408,3 +410,107 @@ class RuneClawEngine:
     @property
     def pending_ideas(self) -> list[TradeIdea]:
         return list(self._pending_ideas.values())
+
+    # -- Portfolio Heat / Auto-Rebalance --
+
+    def check_portfolio_heat(self) -> dict:
+        """Compute portfolio exposure and determine if rebalancing is needed.
+
+        Returns dict with:
+          - total_exposure_pct: sum of position values / equity
+          - max_single_exposure_pct: largest single position / equity
+          - needs_rebalance: True if total > 60% or single > 30%
+          - rebalance_actions: list of suggested reduction actions
+        """
+        snap = self.portfolio.snapshot()
+        equity = snap.equity_usd
+        if equity <= 0:
+            return {
+                "total_exposure_pct": 0.0,
+                "max_single_exposure_pct": 0.0,
+                "needs_rebalance": False,
+                "rebalance_actions": [],
+            }
+
+        positions = self.portfolio.open_positions
+        if not positions:
+            return {
+                "total_exposure_pct": 0.0,
+                "max_single_exposure_pct": 0.0,
+                "needs_rebalance": False,
+                "rebalance_actions": [],
+            }
+
+        # Compute per-position exposure
+        exposures: dict[str, float] = {}
+        total_exposure = 0.0
+        for pos in positions:
+            pos_value = self.portfolio.get_position_value(pos.asset)
+            exposure_pct = (pos_value / equity) * 100
+            exposures[pos.asset] = exposure_pct
+            total_exposure += exposure_pct
+
+        max_single = max(exposures.values()) if exposures else 0.0
+
+        # Determine rebalance need
+        needs_rebalance = total_exposure > 60.0 or max_single > 30.0
+
+        # Generate suggested actions
+        actions: list[str] = []
+        if needs_rebalance:
+            for asset, exp_pct in sorted(exposures.items(), key=lambda x: -x[1]):
+                if exp_pct > 30.0:
+                    # Suggest reducing to 25%
+                    reduce_pct = round((1 - 25.0 / exp_pct) * 100)
+                    actions.append(f"Reduce {asset} by {reduce_pct}% (currently {exp_pct:.1f}% of equity)")
+                elif total_exposure > 60.0 and exp_pct > 15.0:
+                    # Suggest reducing larger positions proportionally
+                    target = exp_pct * (55.0 / total_exposure)
+                    reduce_pct = round((1 - target / exp_pct) * 100)
+                    if reduce_pct > 5:
+                        actions.append(f"Reduce {asset} by {reduce_pct}% (currently {exp_pct:.1f}% of equity)")
+
+        return {
+            "total_exposure_pct": round(total_exposure, 2),
+            "max_single_exposure_pct": round(max_single, 2),
+            "needs_rebalance": needs_rebalance,
+            "rebalance_actions": actions,
+        }
+
+    def get_rebalance_signals(self) -> list[dict]:
+        """Return rebalance signals for the War Room display.
+
+        Respects a minimum 4-hour interval between checks to avoid
+        excessive computation. Returns empty list if checked too recently.
+        """
+        now = time.monotonic()
+        if self._last_rebalance_check and (now - self._last_rebalance_check) < self._rebalance_interval:
+            return []
+
+        self._last_rebalance_check = now
+        heat = self.check_portfolio_heat()
+
+        if not heat["needs_rebalance"]:
+            return []
+
+        signals = []
+        for action in heat["rebalance_actions"]:
+            signals.append({
+                "type": "REBALANCE",
+                "action": action,
+                "total_exposure_pct": heat["total_exposure_pct"],
+                "max_single_exposure_pct": heat["max_single_exposure_pct"],
+                "timestamp": datetime.now(UTC).isoformat(),
+            })
+
+        if signals:
+            audit(
+                system_log,
+                f"Rebalance needed: total={heat['total_exposure_pct']:.1f}%, "
+                f"max_single={heat['max_single_exposure_pct']:.1f}%",
+                action="rebalance_check",
+                result="REBALANCE_NEEDED",
+                data=heat,
+            )
+
+        return signals

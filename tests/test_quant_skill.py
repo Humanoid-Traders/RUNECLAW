@@ -280,7 +280,7 @@ class TestFactorWeights(unittest.TestCase):
         self.assertAlmostEqual(total, 1.0)
 
     def test_all_keys_present(self):
-        expected = {"trend", "momentum", "mean_reversion", "volume_confirm", "vol_fit", "hurst"}
+        expected = {"trend", "momentum", "mean_reversion", "volume_confirm", "vol_fit", "hurst", "vol_forecast"}
         self.assertEqual(set(FACTOR_WEIGHTS.keys()), expected)
 
     def test_all_weights_positive(self):
@@ -303,6 +303,7 @@ class TestCompositeScore(unittest.TestCase):
             volume_confirm=1.0,
             volatility_fit=1.0,
             hurst_factor=1.0,
+            vol_forecast=1.0,
         )
         self.assertAlmostEqual(_composite_score(f), 1.0)
 
@@ -525,6 +526,7 @@ class TestToDict(unittest.TestCase):
             "regime", "volatility_state",
             "adx", "atr_pct", "hurst_exponent", "price_zscore",
             "volume_ratio", "momentum_ratio",
+            "hurst_trend", "garch_forecast",
             "factors",
             "quant_score", "edge_strength",
             "passes_quant_gate", "rejection_reason", "explanation",
@@ -532,7 +534,7 @@ class TestToDict(unittest.TestCase):
         self.assertEqual(set(self.d.keys()), expected_keys)
 
     def test_factors_sub_keys(self):
-        expected = {"trend", "momentum", "mean_reversion", "volume_confirm", "vol_fit", "hurst"}
+        expected = {"trend", "momentum", "mean_reversion", "volume_confirm", "vol_fit", "hurst", "vol_forecast"}
         self.assertEqual(set(self.d["factors"].keys()), expected)
 
     def test_regime_is_string(self):

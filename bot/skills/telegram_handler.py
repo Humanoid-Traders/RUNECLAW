@@ -27,6 +27,7 @@ from telegram.ext import (
 
 from bot.config import CONFIG, _env_bool
 from bot.core.engine import RuneClawEngine
+from bot.core.signal_tracker import SignalTracker
 from bot.skills.skill_registry import SkillRegistry, build_default_registry
 from bot.utils.logger import audit, system_log
 from bot.utils.user_store import UserStore
@@ -93,6 +94,7 @@ class TelegramHandler:
         self.registry = registry or build_default_registry()
         self._limiter = RateLimiter(CONFIG.telegram.rate_limit_per_minute)
         self._last_pane: dict[int, str] = {}
+        self.signal_tracker = SignalTracker()
         self.users = UserStore()
         # Seed admin from .env TELEGRAM_CHAT_ID
         self.users.seed_admin(CONFIG.telegram.chat_id)
@@ -121,6 +123,8 @@ class TelegramHandler:
             ("emergency_stop", self._cmd_emergency_stop),
             ("daily_report", self._cmd_daily_report),
             ("strategy", self._cmd_strategy),
+            # Signal stats
+            ("signals", self._cmd_signals),
             # Admin commands
             ("approve", self._cmd_approve), ("revoke", self._cmd_revoke),
             ("users", self._cmd_users),
@@ -435,6 +439,7 @@ class TelegramHandler:
             "  /performance   PnL summary\n"
             "  /strategy      Strategy mode\n"
             "  /daily_report  Daily report\n"
+            "  /signals       Signal history\n"
             "\n"
             " MARKET\n"
             "  /scan          Market scanner\n"
@@ -1094,6 +1099,15 @@ class TelegramHandler:
              InlineKeyboardButton("\U0001f9d8 Manual", callback_data="mode_manual")],
         ])
         await self._send(update, rendered["text"], reply_markup=kb)
+
+    # ── Signal stats command ─────────────────────────────────────
+
+    async def _cmd_signals(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """Show per-pair signal stats using SignalTracker."""
+        if not await self._guard(update, "scan"):
+            return
+        text = self.signal_tracker.format_for_telegram()
+        await self._send(update, text)
 
     # ── Callback handler ──────────────────────────────────────
 
