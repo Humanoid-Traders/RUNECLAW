@@ -1,0 +1,894 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>MuleRun War Room</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+/* === RESET & BASE === */
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  background: #080A0F;
+  color: #E8ECF1;
+  min-height: 100vh;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  padding-bottom: 80px;
+}
+main#dashboard {
+  max-width: 480px;
+  margin: 0 auto;
+  padding: 0 12px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* === HEADER === */
+.header {
+  max-width: 480px;
+  margin: 0 auto;
+  padding: 16px 16px 8px;
+  text-align: center;
+}
+.header-title {
+  font-size: 18px;
+  font-weight: 800;
+  letter-spacing: 2.5px;
+  color: #E8ECF1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+.header-subtitle {
+  font-size: 11px;
+  font-weight: 500;
+  color: #8892A0;
+  letter-spacing: 1px;
+  margin-top: 4px;
+}
+.live-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  font-weight: 700;
+  color: #00C853;
+  letter-spacing: 1.5px;
+  margin-top: 6px;
+}
+.live-dot {
+  width: 7px; height: 7px;
+  background: #00C853;
+  border-radius: 50%;
+  animation: pulse-dot 1.5s ease-in-out infinite;
+  box-shadow: 0 0 6px #00C85380;
+}
+
+/* === STATUS BAR === */
+.status-bar {
+  max-width: 480px;
+  margin: 0 auto;
+  padding: 0 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+.status-pill {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 100px;
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+}
+.status-pill.active {
+  background: #00C85320;
+  color: #00C853;
+  border: 1px solid #00C85340;
+}
+.status-item {
+  font-size: 10px;
+  color: #8892A0;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+.status-item strong {
+  color: #E8ECF1;
+  font-weight: 600;
+}
+
+/* === CARDS COMMON === */
+.card {
+  background: #0F1218;
+  border: 1px solid #1A1F2B;
+  border-radius: 12px;
+  padding: 16px;
+  opacity: 0;
+  transform: translateY(20px);
+  animation: card-slide-up 0.5s ease-out forwards;
+}
+.card:nth-child(1) { animation-delay: 0.05s; }
+.card:nth-child(2) { animation-delay: 0.1s; }
+.card:nth-child(3) { animation-delay: 0.15s; }
+.card:nth-child(4) { animation-delay: 0.2s; }
+.card:nth-child(5) { animation-delay: 0.25s; }
+.card:nth-child(6) { animation-delay: 0.3s; }
+.card-title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 1.2px;
+  color: #8892A0;
+  margin-bottom: 12px;
+}
+
+/* === PNL CARD === */
+.pnl-value {
+  font-size: 36px;
+  font-weight: 800;
+  line-height: 1;
+  margin-bottom: 12px;
+}
+.pnl-value.positive { color: #00C853; }
+.pnl-value.negative { color: #E63946; }
+.pnl-chart-wrap { margin: 0 -8px; }
+.pnl-chart-wrap svg { width: 100%; display: block; }
+.pnl-periods {
+  display: flex;
+  gap: 12px;
+  margin-top: 10px;
+  font-size: 12px;
+  color: #8892A0;
+}
+.pnl-periods span { font-weight: 600; color: #00C853; }
+
+/* === POSITIONS CARD === */
+.position-row {
+  padding: 10px 0;
+  border-bottom: 1px solid #1A1F2B;
+}
+.position-row:last-child { border-bottom: none; }
+.pos-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+.pos-pair {
+  font-size: 13px;
+  font-weight: 700;
+  color: #E8ECF1;
+}
+.pos-dir {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 4px;
+  letter-spacing: 0.5px;
+}
+.pos-dir.long { background: #00C85318; color: #00C853; }
+.pos-dir.short { background: #E6394618; color: #E63946; }
+.pos-details {
+  display: flex;
+  gap: 12px;
+  font-size: 11px;
+  color: #8892A0;
+  margin-bottom: 6px;
+}
+.pos-details strong { color: #E8ECF1; font-weight: 600; }
+.pos-pnl {
+  font-size: 13px;
+  font-weight: 700;
+}
+.pos-pnl.positive { color: #00C853; }
+.pos-pnl.negative { color: #E63946; }
+.pos-progress-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+.pos-progress-bar {
+  flex: 1;
+  height: 4px;
+  background: #1A1F2B;
+  border-radius: 2px;
+  overflow: hidden;
+}
+.pos-progress-fill {
+  height: 100%;
+  border-radius: 2px;
+  background: #00C853;
+  transition: width 0.8s ease;
+}
+.pos-close-btn {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 4px 12px;
+  border-radius: 100px;
+  border: 1px solid #E63946;
+  color: #E63946;
+  background: transparent;
+  cursor: pointer;
+  min-height: 28px;
+  transition: all 0.15s;
+  -webkit-tap-highlight-color: transparent;
+}
+.pos-close-btn:active {
+  background: #E6394620;
+}
+.pos-close-btn.closing {
+  color: #8892A0;
+  border-color: #8892A0;
+  pointer-events: none;
+}
+
+/* === RISK METER === */
+.risk-gauge-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-bottom: 12px;
+}
+.risk-gauge-wrap svg { overflow: visible; }
+.risk-stats {
+  display: flex;
+  justify-content: space-around;
+  gap: 8px;
+}
+.risk-stat {
+  text-align: center;
+  font-size: 11px;
+  color: #8892A0;
+}
+.risk-stat-value {
+  font-size: 14px;
+  font-weight: 700;
+  color: #E8ECF1;
+  display: block;
+  margin-top: 2px;
+}
+.risk-limit {
+  text-align: center;
+  font-size: 12px;
+  color: #8892A0;
+  margin-bottom: 12px;
+}
+.risk-limit strong { color: #E8ECF1; font-weight: 600; }
+
+/* === SIGNAL CARD === */
+.card.signal-card {
+  border-left: 3px solid #E63946;
+  padding-left: 14px;
+}
+.signal-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.signal-pair {
+  font-size: 15px;
+  font-weight: 700;
+}
+.signal-dir-badge {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 10px;
+  border-radius: 4px;
+  background: #00C85318;
+  color: #00C853;
+}
+.signal-arrow {
+  font-size: 14px;
+  color: #00C853;
+}
+.confidence-wrap {
+  margin-bottom: 10px;
+}
+.confidence-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: #8892A0;
+  margin-bottom: 4px;
+}
+.confidence-label strong {
+  color: #E8ECF1;
+  font-weight: 700;
+}
+.confidence-bar {
+  height: 6px;
+  background: #1A1F2B;
+  border-radius: 3px;
+  overflow: hidden;
+}
+.confidence-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #FFB020, #00C853);
+  border-radius: 3px;
+  transition: width 0.8s ease;
+}
+.signal-levels {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+.signal-level {
+  font-size: 11px;
+  color: #8892A0;
+  background: #1A1F2B;
+  padding: 4px 10px;
+  border-radius: 6px;
+}
+.signal-level strong { color: #E8ECF1; font-weight: 600; }
+.signal-reason {
+  font-size: 12px;
+  font-style: italic;
+  color: #8892A0;
+  margin-bottom: 12px;
+  line-height: 1.4;
+}
+.signal-actions {
+  display: flex;
+  gap: 8px;
+}
+.btn-approve, .btn-reject {
+  flex: 1;
+  padding: 10px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  border: none;
+  min-height: 44px;
+  transition: all 0.15s;
+  -webkit-tap-highlight-color: transparent;
+  letter-spacing: 0.5px;
+}
+.btn-approve {
+  background: #00C853;
+  color: #080A0F;
+}
+.btn-approve:active { background: #00A844; }
+.btn-reject {
+  background: transparent;
+  border: 1.5px solid #E63946;
+  color: #E63946;
+}
+.btn-reject:active { background: #E6394620; }
+
+/* === STRATEGY CARD === */
+.strategy-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.strategy-btn {
+  padding: 14px 10px;
+  border-radius: 10px;
+  border: 1.5px solid #1A1F2B;
+  background: #0A0D12;
+  color: #8892A0;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: center;
+  min-height: 52px;
+  transition: all 0.15s;
+  -webkit-tap-highlight-color: transparent;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+.strategy-btn.active {
+  border-color: #FFD166;
+  color: #FFD166;
+  background: #FFD16610;
+  box-shadow: 0 0 12px #FFD16615;
+}
+.strategy-btn:active {
+  transform: scale(0.97);
+}
+
+/* === PERFORMANCE CARD === */
+.perf-top {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+.perf-ring-wrap {
+  position: relative;
+  width: 80px;
+  height: 80px;
+  flex-shrink: 0;
+}
+.perf-ring-wrap svg { transform: rotate(-90deg); }
+.perf-ring-label {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  font-weight: 800;
+  color: #E8ECF1;
+  line-height: 1;
+}
+.perf-ring-sublabel {
+  font-size: 9px;
+  font-weight: 600;
+  color: #8892A0;
+  letter-spacing: 1px;
+  margin-top: 2px;
+}
+.perf-ring-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #8892A0;
+}
+.perf-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+.perf-cell {
+  text-align: center;
+  padding: 8px 4px;
+  background: #0A0D12;
+  border-radius: 8px;
+  border: 1px solid #1A1F2B;
+}
+.perf-cell-label {
+  font-size: 10px;
+  color: #8892A0;
+  font-weight: 500;
+  letter-spacing: 0.3px;
+}
+.perf-cell-value {
+  font-size: 14px;
+  font-weight: 700;
+  color: #E8ECF1;
+  margin-top: 2px;
+}
+.perf-cell-value.positive { color: #00C853; }
+
+/* === FOOTER / EMERGENCY === */
+.emergency-footer {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  padding: 10px 12px;
+  padding-bottom: max(10px, env(safe-area-inset-bottom));
+  background: #080A0F;
+  border-top: 1px solid #1A1F2B;
+  z-index: 100;
+  display: flex;
+  justify-content: center;
+}
+.emergency-btn {
+  max-width: 480px;
+  width: 100%;
+  padding: 14px;
+  border: none;
+  border-radius: 10px;
+  background: #E63946;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 800;
+  letter-spacing: 1.5px;
+  cursor: pointer;
+  min-height: 48px;
+  transition: all 0.15s;
+  -webkit-tap-highlight-color: transparent;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+.emergency-btn:active { background: #C62828; }
+
+/* === CONFIRM OVERLAY === */
+.confirm-overlay {
+  position: fixed;
+  inset: 0;
+  background: #080A0Fdd;
+  z-index: 200;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+.confirm-overlay.show { display: flex; }
+.confirm-box {
+  background: #0F1218;
+  border: 1px solid #E63946;
+  border-radius: 16px;
+  padding: 28px 24px;
+  text-align: center;
+  max-width: 340px;
+  width: 100%;
+}
+.confirm-box h3 {
+  color: #E63946;
+  font-size: 16px;
+  font-weight: 800;
+  margin-bottom: 8px;
+  letter-spacing: 1px;
+}
+.confirm-box p {
+  color: #8892A0;
+  font-size: 13px;
+  margin-bottom: 20px;
+  line-height: 1.5;
+}
+.confirm-actions {
+  display: flex;
+  gap: 10px;
+}
+.confirm-yes, .confirm-no {
+  flex: 1;
+  padding: 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  min-height: 44px;
+  -webkit-tap-highlight-color: transparent;
+  border: none;
+}
+.confirm-yes {
+  background: #E63946;
+  color: #fff;
+}
+.confirm-no {
+  background: transparent;
+  border: 1.5px solid #1A1F2B;
+  color: #8892A0;
+}
+
+/* === ANIMATIONS === */
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(0.8); }
+}
+@keyframes card-slide-up {
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes ring-fill {
+  from { stroke-dashoffset: 226; }
+}
+@keyframes needle-swing {
+  from { transform: rotate(-90deg); }
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 0; }
+/* Selection */
+::selection { background: #E6394640; }
+</style>
+</head>
+<body>
+<div class="header">
+  <div class="header-title">&#9876;&#65039; MULERUN WAR ROOM</div>
+  <div class="header-subtitle">Powered by RUNECLAW Signal Engine</div>
+  <div class="live-badge"><span class="live-dot"></span> LIVE</div>
+</div>
+<div class="status-bar">
+  <span class="status-pill active">ACTIVE</span>
+  <span class="status-item">Mode: <strong>Balanced</strong></span>
+  <span class="status-item">Ex: <strong>Bitget</strong></span>
+  <span class="status-item" id="clock">&#128339; --:--:--</span>
+</div>
+<main id="dashboard">
+  <!-- PNL CARD -->
+  <div class="card" id="pnl-card">
+    <div class="card-title">DAILY P&amp;L</div>
+    <div class="pnl-value positive" id="pnl-value">+1.8%</div>
+    <div class="pnl-chart-wrap" id="pnl-chart"></div>
+    <div class="pnl-periods">7D: <span>+6.4%</span>&nbsp;&nbsp;|&nbsp;&nbsp;30D: <span>+12.1%</span></div>
+  </div>
+
+  <!-- POSITIONS CARD -->
+  <div class="card" id="positions-card">
+    <div class="card-title">OPEN POSITIONS (2)</div>
+    <div class="position-row">
+      <div class="pos-header">
+        <span class="pos-pair">BTCUSDT</span>
+        <span class="pos-dir long">LONG</span>
+      </div>
+      <div class="pos-details">
+        <span>Entry: <strong>67,900</strong></span>
+        <span>Current: <strong>68,240</strong></span>
+        <span class="pos-pnl positive">+0.5%</span>
+      </div>
+      <div class="pos-progress-wrap">
+        <div class="pos-progress-bar"><div class="pos-progress-fill" style="width:49%"></div></div>
+        <button class="pos-close-btn" onclick="closePosition(this)">Close</button>
+      </div>
+    </div>
+    <div class="position-row">
+      <div class="pos-header">
+        <span class="pos-pair">ETHUSDT</span>
+        <span class="pos-dir short">SHORT</span>
+      </div>
+      <div class="pos-details">
+        <span>Entry: <strong>3,820</strong></span>
+        <span>Current: <strong>3,790</strong></span>
+        <span class="pos-pnl positive">+0.7%</span>
+      </div>
+      <div class="pos-progress-wrap">
+        <div class="pos-progress-bar"><div class="pos-progress-fill" style="width:60%"></div></div>
+        <button class="pos-close-btn" onclick="closePosition(this)">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- RISK METER CARD -->
+  <div class="card" id="risk-card">
+    <div class="card-title">RISK STATUS</div>
+    <div class="risk-gauge-wrap" id="risk-gauge"></div>
+    <div class="risk-limit"><strong>1.2%</strong> / 3.0% Daily Limit</div>
+    <div class="risk-stats">
+      <div class="risk-stat">Drawdown<span class="risk-stat-value">0.8%</span></div>
+      <div class="risk-stat">Open<span class="risk-stat-value">2/3</span></div>
+      <div class="risk-stat">Leverage<span class="risk-stat-value">5x</span></div>
+    </div>
+  </div>
+
+  <!-- SIGNAL CARD -->
+  <div class="card signal-card">
+    <div class="card-title">LATEST SIGNAL</div>
+    <div class="signal-header">
+      <span class="signal-pair">BTCUSDT</span>
+      <span class="signal-dir-badge">LONG</span>
+      <span class="signal-arrow">&#8593;</span>
+    </div>
+    <div class="confidence-wrap">
+      <div class="confidence-label"><span>Confidence</span><strong>78%</strong></div>
+      <div class="confidence-bar"><div class="confidence-fill" style="width:78%"></div></div>
+    </div>
+    <div class="signal-levels">
+      <span class="signal-level">Entry: <strong>67,850-68,050</strong></span>
+      <span class="signal-level">SL: <strong>67,300</strong></span>
+      <span class="signal-level">TP: <strong>68,600</strong></span>
+    </div>
+    <div class="signal-reason">"Trend reclaim + volume support"</div>
+    <div class="signal-actions">
+      <button class="btn-approve" onclick="approveSignal(this)">Approve</button>
+      <button class="btn-reject" onclick="rejectSignal(this)">Reject</button>
+    </div>
+  </div>
+
+  <!-- STRATEGY CARD -->
+  <div class="card" id="strategy-card">
+    <div class="card-title">STRATEGY MODE</div>
+    <div class="strategy-grid">
+      <button class="strategy-btn" data-mode="defensive" onclick="setMode(this)">&#128737; Defensive</button>
+      <button class="strategy-btn active" data-mode="balanced" onclick="setMode(this)">&#9876;&#65039; Balanced</button>
+      <button class="strategy-btn" data-mode="aggressive" onclick="setMode(this)">&#128293; Aggressive</button>
+      <button class="strategy-btn" data-mode="manual" onclick="setMode(this)">&#129496; Manual</button>
+    </div>
+  </div>
+
+  <!-- PERFORMANCE CARD -->
+  <div class="card" id="perf-card">
+    <div class="card-title">PERFORMANCE</div>
+    <div class="perf-top">
+      <div class="perf-ring-wrap" id="win-ring"></div>
+      <div>
+        <div class="perf-ring-title">Win Rate</div>
+      </div>
+    </div>
+    <div class="perf-grid">
+      <div class="perf-cell"><div class="perf-cell-label">Today</div><div class="perf-cell-value positive">+1.8%</div></div>
+      <div class="perf-cell"><div class="perf-cell-label">7D</div><div class="perf-cell-value positive">+6.4%</div></div>
+      <div class="perf-cell"><div class="perf-cell-label">Trades</div><div class="perf-cell-value">5</div></div>
+      <div class="perf-cell"><div class="perf-cell-label">Wins</div><div class="perf-cell-value">3</div></div>
+      <div class="perf-cell"><div class="perf-cell-label">Best</div><div class="perf-cell-value" style="font-size:11px">BTCUSDT</div></div>
+      <div class="perf-cell"><div class="perf-cell-label">Worst</div><div class="perf-cell-value" style="font-size:11px;color:#E63946">XRPUSDT</div></div>
+    </div>
+  </div>
+</main>
+<div class="emergency-footer">
+  <button class="emergency-btn" onclick="showEmergencyConfirm()">&#9940; EMERGENCY STOP</button>
+</div>
+
+<div class="confirm-overlay" id="confirm-overlay">
+  <div class="confirm-box">
+    <h3>&#9888;&#65039; EMERGENCY STOP</h3>
+    <p>This will close all positions and halt the engine. Are you sure?</p>
+    <div class="confirm-actions">
+      <button class="confirm-yes" onclick="confirmEmergency()">STOP ALL</button>
+      <button class="confirm-no" onclick="hideEmergencyConfirm()">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// === DEMO DATA ===
+const DEMO = {
+  pnl: { daily: 1.8, weekly: 6.4, monthly: 12.1 },
+  pnlCurve: [0,0.2,0.15,0.4,0.35,0.5,0.7,0.65,0.8,1.0,0.95,1.1,1.3,1.2,1.4,1.35,1.5,1.6,1.55,1.7,1.85,1.75,1.8,1.8],
+  positions: [
+    { pair:'BTCUSDT', dir:'LONG', entry:67900, current:68240, pnl:0.5, tpPct:49 },
+    { pair:'ETHUSDT', dir:'SHORT', entry:3820, current:3790, pnl:0.7, tpPct:60 }
+  ],
+  risk: { current:1.2, limit:3.0, drawdown:0.8, openSlots:'2/3', leverage:'5x', pct:40 },
+  signal: { pair:'BTCUSDT', dir:'LONG', confidence:78, entry:'67,850-68,050', sl:'67,300', tp:'68,600', reason:'Trend reclaim + volume support' },
+  winRate: 61,
+  perf: { today:1.8, w7d:6.4, trades:5, wins:3, best:'BTCUSDT', worst:'XRPUSDT' }
+};
+
+// === TELEGRAM INIT ===
+try {
+  if (window.Telegram && Telegram.WebApp) {
+    Telegram.WebApp.ready();
+    Telegram.WebApp.expand();
+    if (Telegram.WebApp.setHeaderColor) Telegram.WebApp.setHeaderColor('#080A0F');
+    if (Telegram.WebApp.setBackgroundColor) Telegram.WebApp.setBackgroundColor('#080A0F');
+  }
+} catch(e) {}
+
+// === CLOCK ===
+function updateClock() {
+  const now = new Date();
+  const t = [now.getHours(), now.getMinutes(), now.getSeconds()].map(v => String(v).padStart(2,'0')).join(':');
+  document.getElementById('clock').textContent = '\u{1F553} ' + t;
+}
+setInterval(updateClock, 1000);
+updateClock();
+
+// === PNL LINE CHART ===
+(function renderPnlChart() {
+  const data = DEMO.pnlCurve;
+  const w = 320, h = 120, pad = 2;
+  const maxV = Math.max(...data), minV = Math.min(...data);
+  const range = maxV - minV || 1;
+  const pts = data.map((v, i) => [
+    pad + (i / (data.length - 1)) * (w - pad * 2),
+    h - pad - ((v - minV) / range) * (h - pad * 2)
+  ]);
+  // smooth bezier
+  function bezier(points) {
+    let d = 'M' + points[0][0] + ',' + points[0][1];
+    for (let i = 1; i < points.length; i++) {
+      const prev = points[i - 1], cur = points[i];
+      const cpx1 = prev[0] + (cur[0] - prev[0]) * 0.4;
+      const cpx2 = prev[0] + (cur[0] - prev[0]) * 0.6;
+      d += ' C' + cpx1 + ',' + prev[1] + ' ' + cpx2 + ',' + cur[1] + ' ' + cur[0] + ',' + cur[1];
+    }
+    return d;
+  }
+  const linePath = bezier(pts);
+  const fillPath = linePath + ' L' + pts[pts.length-1][0] + ',' + h + ' L' + pts[0][0] + ',' + h + ' Z';
+  // grid lines
+  let grid = '';
+  for (let i = 1; i <= 3; i++) {
+    const y = (h / 4) * i;
+    grid += '<line x1="0" y1="'+y+'" x2="'+w+'" y2="'+y+'" stroke="#1A1F2B" stroke-width="0.5"/>';
+  }
+  const svg = '<svg viewBox="0 0 '+w+' '+h+'" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">'
+    + '<defs><linearGradient id="pnlGrad" x1="0" y1="0" x2="0" y2="1">'
+    + '<stop offset="0%" stop-color="#00C853" stop-opacity="0.25"/>'
+    + '<stop offset="100%" stop-color="#00C853" stop-opacity="0"/>'
+    + '</linearGradient></defs>'
+    + grid
+    + '<path d="'+fillPath+'" fill="url(#pnlGrad)"/>'
+    + '<path d="'+linePath+'" fill="none" stroke="#00C853" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>'
+    + '</svg>';
+  document.getElementById('pnl-chart').innerHTML = svg;
+})();
+
+// === RISK GAUGE ===
+(function renderRiskGauge() {
+  const pct = DEMO.risk.pct; // 0-100
+  const cx = 100, cy = 95, r = 80;
+  const startAngle = Math.PI; // left
+  // arc segment helper
+  function arc(from, to, color) {
+    const a1 = Math.PI + from * Math.PI;
+    const a2 = Math.PI + to * Math.PI;
+    const x1 = cx + r * Math.cos(a1), y1 = cy + r * Math.sin(a1);
+    const x2 = cx + r * Math.cos(a2), y2 = cy + r * Math.sin(a2);
+    const large = (to - from) > 0.5 ? 1 : 0;
+    return '<path d="M'+x1+','+y1+' A'+r+','+r+' 0 '+large+' 1 '+x2+','+y2+'" fill="none" stroke="'+color+'" stroke-width="10" stroke-linecap="round"/>';
+  }
+  // needle angle
+  const needleAngle = 180 + (pct / 100) * 180;
+  const nx = cx + (r - 15) * Math.cos(needleAngle * Math.PI / 180);
+  const ny = cy + (r - 15) * Math.sin(needleAngle * Math.PI / 180);
+
+  const svg = '<svg width="200" height="115" viewBox="0 0 200 115" xmlns="http://www.w3.org/2000/svg">'
+    + arc(0, 0.4, '#00C853')
+    + arc(0.4, 0.7, '#FFB020')
+    + arc(0.7, 1.0, '#E63946')
+    + '<line x1="'+cx+'" y1="'+cy+'" x2="'+nx+'" y2="'+ny+'" stroke="#E8ECF1" stroke-width="2.5" stroke-linecap="round" style="transform-origin:'+cx+'px '+cy+'px;animation:needle-swing 1s ease-out forwards"/>'
+    + '<circle cx="'+cx+'" cy="'+cy+'" r="5" fill="#E8ECF1"/>'
+    + '<text x="'+cx+'" y="'+(cy - 18)+'" text-anchor="middle" fill="#E8ECF1" font-size="22" font-weight="800" font-family="Inter,sans-serif">1.2%</text>'
+    + '<text x="'+cx+'" y="'+(cy - 2)+'" text-anchor="middle" fill="#00C853" font-size="10" font-weight="700" font-family="Inter,sans-serif" letter-spacing="1">HEALTHY</text>'
+    + '</svg>';
+  document.getElementById('risk-gauge').innerHTML = svg;
+})();
+
+// === WIN RATE RING ===
+(function renderWinRing() {
+  const pct = DEMO.winRate;
+  const r = 33, circ = 2 * Math.PI * r;
+  const offset = circ - (pct / 100) * circ;
+  const svg = '<svg width="80" height="80" viewBox="0 0 80 80">'
+    + '<circle cx="40" cy="40" r="'+r+'" fill="none" stroke="#1A1F2B" stroke-width="6"/>'
+    + '<circle cx="40" cy="40" r="'+r+'" fill="none" stroke="#00C853" stroke-width="6" stroke-linecap="round"'
+    + ' stroke-dasharray="'+circ+'" stroke-dashoffset="'+offset+'"'
+    + ' style="animation:ring-fill 1.2s ease-out forwards"/>'
+    + '</svg>';
+  const wrap = document.getElementById('win-ring');
+  wrap.innerHTML = svg + '<div class="perf-ring-label">'+pct+'%<span class="perf-ring-sublabel">WIN</span></div>';
+})();
+
+// === INTERACTIONS ===
+function closePosition(btn) {
+  btn.textContent = 'Closing...';
+  btn.classList.add('closing');
+  setTimeout(() => { btn.textContent = 'Closed'; }, 1200);
+}
+
+function approveSignal(btn) {
+  btn.textContent = 'Approved';
+  btn.style.background = '#00A844';
+  btn.style.pointerEvents = 'none';
+  btn.nextElementSibling && (btn.nextElementSibling.style.display = 'none');
+}
+
+function rejectSignal(btn) {
+  btn.textContent = 'Rejected';
+  btn.style.background = '#E6394630';
+  btn.style.color = '#E63946';
+  btn.style.pointerEvents = 'none';
+  btn.previousElementSibling && (btn.previousElementSibling.style.display = 'none');
+}
+
+function setMode(btn) {
+  document.querySelectorAll('.strategy-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+}
+
+function showEmergencyConfirm() {
+  document.getElementById('confirm-overlay').classList.add('show');
+}
+function hideEmergencyConfirm() {
+  document.getElementById('confirm-overlay').classList.remove('show');
+}
+function confirmEmergency() {
+  hideEmergencyConfirm();
+  const btn = document.querySelector('.emergency-btn');
+  btn.textContent = 'STOPPING...';
+  btn.style.background = '#8892A0';
+  btn.style.pointerEvents = 'none';
+  setTimeout(() => {
+    btn.textContent = '⛔ ALL STOPPED';
+    btn.style.background = '#1A1F2B';
+  }, 1500);
+}
+</script>
+</body>
+</html>
