@@ -11,7 +11,7 @@
 <h5 align="center">🏆 Proudly built for Bitget AI Base Camp · Hackathon S1 – aiming for Best Strategy & Risk Award 🏆</h5>
 
 <p align="center">
-  <a href="https://humanoid-traders.gitbook.io/runeclaw"><img src="https://img.shields.io/badge/Full_Documentation-%E2%86%92_GitBook-blue?style=for-the-badge&logo=gitbook&logoColor=white" alt="Full Documentation → GitBook"></a>
+  <a href="https://humanoid-traders-1.gitbook.io/humanoid-traders-ai"><img src="https://img.shields.io/badge/Full_Documentation-%E2%86%92_GitBook-blue?style=for-the-badge&logo=gitbook&logoColor=white" alt="Full Documentation → GitBook"></a>
 </p>
 
 <p align="center">
