@@ -64,7 +64,7 @@ Black swan detector: catches anomalies BEFORE the breaker trips
 Red team: 28 adversarial attacks, 100% blocked
 AI learning: 8 modules, all sandboxed — AI can suggest, never override risk
 
-531 tests. Zero tolerance.
+626 tests. Zero tolerance.
 
 
 6/8 — THE NUMBERS
@@ -104,7 +104,7 @@ Docs: humanoid-traders-1.gitbook.io/humanoid-traders-ai
 
 AGPL-3.0 licensed. Fork it. Audit it. Break it.
 
-70+ commits. 531 tests. 18 risk checks. 1 philosophy:
+70+ commits. 626 tests. 18 risk checks. 1 philosophy:
 
 The safest trade is no trade.
 

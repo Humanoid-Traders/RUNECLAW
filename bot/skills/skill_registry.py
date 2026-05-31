@@ -1016,6 +1016,8 @@ class OptimizationSkill(BaseSkill):
 # ══════════════════════════════════════════════════════════════
 
 def build_default_registry() -> SkillRegistry:
+    from bot.skills.quant_skill import QuantAnalyzeSkill
+
     registry = SkillRegistry()
     for cls in (ScanMarketSkill, AnalyzeAssetSkill, CheckRiskSkill,
                 ExecutePaperTradeSkill, GetPortfolioSkill, ExplainTradeSkill,
@@ -1023,6 +1025,6 @@ def build_default_registry() -> SkillRegistry:
                 WalkForwardSkill, MacroCalendarSkill, TradeJournalSkill,
                 CostBreakdownSkill, RunStrategySkill,
                 LearningDashboardSkill, FeedbackSkill, PatternsSkill,
-                ProposalsSkill, OptimizationSkill):
+                ProposalsSkill, OptimizationSkill, QuantAnalyzeSkill):
         registry.register(cls())
     return registry

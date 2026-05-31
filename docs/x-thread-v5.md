@@ -135,7 +135,7 @@ github.com/Humanoid-Traders/RUNECLAW
 xbf5gmte.mule.page
 humanoid-traders-1.gitbook.io/humanoid-traders-ai
 
-75+ commits. 531 tests. 18 risk checks.
+75+ commits. 626 tests. 18 risk checks.
 8 AI learning modules. 5-agent swarm. 28 red team attacks blocked.
 
 AGPL-3.0. Fork it. Audit it. Break it.

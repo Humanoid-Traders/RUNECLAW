@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>RUNECLAW Quant — Live Factor Simulator</title>
+<style>
+:root{--bg:#0a0a0f;--card:#12121a;--accent:#00d4aa;--text:#e0e0e0;--dim:#888;--border:#1e1e2e;--red:#ff4466;--yellow:#f0c040;--green:#00d4aa}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:var(--bg);color:var(--text);font-family:'Segoe UI',system-ui,sans-serif;font-size:14px;min-height:100vh}
+.header{background:linear-gradient(90deg,#12121a,#1a1a2e);border-bottom:1px solid var(--border);padding:12px 24px;display:flex;align-items:center;gap:16px}
+.logo{color:var(--accent);font-weight:800;font-size:13px;letter-spacing:3px;text-transform:uppercase}
+.logo span{color:var(--dim);font-weight:400;letter-spacing:1px}
+.header h1{font-size:16px;font-weight:500;color:var(--text);margin-left:auto}
+.grid{display:grid;grid-template-columns:200px 1fr 280px;gap:12px;padding:12px;height:calc(100vh - 96px)}
+.panel{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:16px;overflow-y:auto}
+.panel h2{font-size:12px;text-transform:uppercase;letter-spacing:2px;color:var(--accent);margin-bottom:12px}
+.preset{width:100%;background:#1a1a28;border:1px solid var(--border);color:var(--text);padding:8px 10px;border-radius:6px;cursor:pointer;text-align:left;font-size:12px;margin-bottom:6px;transition:all .2s}
+.preset:hover,.preset.active{border-color:var(--accent);background:#1a1a30}
+.slider-group{margin-bottom:14px}
+.slider-group label{display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px;color:var(--dim)}
+.slider-group label b{color:var(--accent);font-variant-numeric:tabular-nums}
+input[type=range]{width:100%;height:4px;-webkit-appearance:none;background:#1e1e2e;border-radius:2px;outline:none}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;background:var(--accent);border-radius:50%;cursor:pointer}
+.result-card{background:#1a1a28;border-radius:8px;padding:12px;margin-bottom:10px;border-left:3px solid var(--border);transition:border-color .3s}
+.big-score{font-size:42px;font-weight:700;text-align:center;transition:color .3s;font-variant-numeric:tabular-nums}
+.tag{display:inline-block;padding:3px 10px;border-radius:4px;font-size:11px;font-weight:700;letter-spacing:1px}
+.tag.green{background:#00d4aa22;color:var(--green)}.tag.yellow{background:#f0c04022;color:var(--yellow)}.tag.red{background:#ff446622;color:var(--red)}
+.bar-row{display:flex;align-items:center;gap:8px;margin-bottom:6px;font-size:11px}
+.bar-label{width:70px;text-align:right;color:var(--dim);flex-shrink:0}
+.bar-track{flex:1;height:10px;background:#1e1e2e;border-radius:5px;overflow:hidden}
+.bar-fill{height:100%;background:var(--accent);border-radius:5px;transition:width .4s ease}
+.bar-val{width:32px;font-variant-numeric:tabular-nums;color:var(--accent);font-size:11px}
+.gate-pass{color:var(--green);font-weight:700}.gate-fail{color:var(--red);font-weight:700}
+.audit{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:12px;grid-column:1/-1}
+.audit pre{background:#0a0a0f;padding:10px;border-radius:6px;font-size:11px;color:var(--dim);max-height:140px;overflow-y:auto;white-space:pre-wrap;font-family:'Cascadia Code',monospace}
+@media(max-width:900px){.grid{grid-template-columns:1fr;height:auto}.audit{grid-column:1}}
+</style>
+</head>
+<body>
+<div class="header">
+ <div class="logo">HUMANOID TRADERS <span>/</span> RUNECLAW</div>
+ <h1>Quant Skill &mdash; Live Factor Simulator</h1>
+</div>
+<div class="grid">
+ <div class="panel" id="presets">
+  <h2>Scenario Presets</h2>
+ </div>
+ <div class="panel" id="sliders">
+  <h2>Raw Indicator Inputs</h2>
+ </div>
+ <div class="panel" id="results">
+  <h2>Results</h2>
+  <div class="result-card" id="rc-score"><div class="big-score" id="score">0.00</div><div style="text-align:center;margin-top:4px"><span class="tag" id="edge">—</span></div></div>
+  <div class="result-card" id="rc-regime"><span style="color:var(--dim);font-size:11px">REGIME</span><br><b id="regime">—</b></div>
+  <div class="result-card" id="rc-vol"><span style="color:var(--dim);font-size:11px">VOLATILITY</span><br><b id="volstate">—</b></div>
+  <div class="result-card" id="rc-gate"><span style="color:var(--dim);font-size:11px">GATE DECISION</span><br><span id="gate">—</span></div>
+  <h2 style="margin-top:8px">Factor Breakdown</h2>
+  <div id="bars"></div>
+ </div>
+ <div class="audit"><h2>Audit Log — QuantReport</h2><pre id="audit">{}</pre></div>
+</div>
+<script>
+const P=[
+ {n:'Strong Uptrend',v:{adx:42,atr:1.5,hurst:.72,mom:3.5,z:1.2,vol:1.8}},
+ {n:'Ranging Market',v:{adx:18,atr:1.2,hurst:.48,mom:.3,z:.2,vol:.9}},
+ {n:'Choppy / No Edge',v:{adx:15,atr:2.0,hurst:.42,mom:-.1,z:0,vol:.8}},
+ {n:'Extreme Volatility',v:{adx:30,atr:5.5,hurst:.55,mom:1.0,z:-2.5,vol:3.2}},
+ {n:'Mean Reversion',v:{adx:12,atr:1.0,hurst:.35,mom:-1.5,z:-2.2,vol:1.1}}
+];
+const S=[
+ {id:'adx',label:'ADX',min:0,max:100,step:1,def:32,fmt:v=>v.toFixed(0)},
+ {id:'atr',label:'ATR %',min:0,max:8,step:.1,def:1.8,fmt:v=>v.toFixed(1)+'%'},
+ {id:'hurst',label:'Hurst H',min:0,max:1,step:.01,def:.58,fmt:v=>v.toFixed(2)},
+ {id:'mom',label:'Momentum',min:-5,max:5,step:.1,def:2.2,fmt:v=>(v>=0?'+':'')+v.toFixed(1)+'%'},
+ {id:'z',label:'Price Z-score',min:-3,max:3,step:.1,def:.8,fmt:v=>(v>=0?'+':'')+v.toFixed(1)},
+ {id:'vol',label:'Volume Ratio',min:0,max:5,step:.1,def:1.6,fmt:v=>v.toFixed(1)+'x'}
+];
+const W={trend:.25,momentum:.20,mean_reversion:.15,volume:.20,vol_fit:.10,hurst:.10};
+const inputs={};
+
+// Build presets
+const pp=document.getElementById('presets');
+P.forEach((p,i)=>{const b=document.createElement('button');b.className='preset';b.textContent=p.n;b.onclick=()=>{Object.entries(p.v).forEach(([k,v])=>{inputs[k].value=v;inputs[k].dispatchEvent(new Event('input'))});document.querySelectorAll('.preset').forEach(x=>x.classList.remove('active'));b.classList.add('active')};pp.appendChild(b)});
+
+// Build sliders
+const sp=document.getElementById('sliders');
+S.forEach(s=>{const g=document.createElement('div');g.className='slider-group';const l=document.createElement('label');l.innerHTML=`${s.label} <b id="v_${s.id}">${s.fmt(s.def)}</b>`;const r=document.createElement('input');r.type='range';r.min=s.min;r.max=s.max;r.step=s.step;r.value=s.def;r.id='s_'+s.id;inputs[s.id]=r;r.addEventListener('input',()=>{document.getElementById('v_'+s.id).textContent=s.fmt(+r.value);document.querySelectorAll('.preset').forEach(x=>x.classList.remove('active'));compute()});g.appendChild(l);g.appendChild(r);sp.appendChild(g)});
+
+// Build bars
+const barEl=document.getElementById('bars');
+const factors=['trend','momentum','mean_rev','volume','vol_fit','hurst'];
+const barLabels=['Trend','Momentum','MeanRev','Volume','VolFit','Hurst'];
+const barEls={};
+factors.forEach((f,i)=>{const row=document.createElement('div');row.className='bar-row';row.innerHTML=`<span class="bar-label">${barLabels[i]}</span><div class="bar-track"><div class="bar-fill" id="bf_${f}"></div></div><span class="bar-val" id="bv_${f}">0</span>`;barEl.appendChild(row);barEls[f]={fill:null,val:null}});
+factors.forEach(f=>{barEls[f].fill=document.getElementById('bf_'+f);barEls[f].val=document.getElementById('bv_'+f)});
+
+function gv(id){return +inputs[id].value}
+
+function compute(){
+ const adx=gv('adx'),atr=gv('atr'),hurst=gv('hurst'),mom=gv('mom')/100,z=gv('z'),vol=gv('vol');
+ // Factor scores
+ const fTrend=adx<25?0:adx>=40?1:(adx-25)/15;
+ const fMom=Math.min(1,Math.abs(mom)/.03);
+ const fMR=Math.min(1,Math.abs(z)/2);
+ const fVol=vol<1?.1:vol>=3?1:.1+.9*(vol-1)/2;
+ let volState,fVF;
+ if(atr<1){volState='LOW';fVF=.5}else if(atr<=2.5){volState='NORMAL';fVF=1}else if(atr<=4){volState='ELEVATED';fVF=.6}else{volState='EXTREME';fVF=.2}
+ const fH=Math.min(1,Math.abs(hurst-.5)/.2);
+ const scores={trend:fTrend,momentum:fMom,mean_rev:fMR,volume:fVol,vol_fit:fVF,hurst:fH};
+ const wKeys={trend:'trend',momentum:'momentum',mean_rev:'mean_reversion',volume:'volume',vol_fit:'vol_fit',hurst:'hurst'};
+ let composite=0;
+ factors.forEach(f=>{composite+=scores[f]*W[wKeys[f]]});
+ composite=Math.min(1,Math.max(0,composite));
+
+ // Regime
+ let regime;
+ if(atr>=4)regime='HIGH_VOLATILITY';
+ else if(adx<20&&hurst<.5)regime='CHOPPY';
+ else if(adx<25)regime='RANGING';
+ else if(adx>=35)regime=mom>=0?'STRONG_TREND_UP':'STRONG_TREND_DOWN';
+ else regime=mom>=0?'WEAK_TREND_UP':'WEAK_TREND_DOWN';
+
+ // Gate
+ let gate='PASS',reason='';
+ if(volState==='EXTREME'){gate='REJECTED';reason='Extreme volatility'}
+ else if(regime==='CHOPPY'){gate='REJECTED';reason='Choppy regime — no edge'}
+ else if(composite<.40){gate='REJECTED';reason='Score below 0.40 threshold'}
+
+ // Edge label
+ let edge,edgeCls;
+ if(composite>=.65){edge='STRONG';edgeCls='green'}
+ else if(composite>=.45){edge='MODERATE';edgeCls='green'}
+ else if(composite>=.25){edge='WEAK';edgeCls='yellow'}
+ else{edge='NONE';edgeCls='red'}
+
+ // Render score
+ const scoreEl=document.getElementById('score');
+ scoreEl.textContent=composite.toFixed(2);
+ scoreEl.style.color=composite>=.45?'var(--green)':composite>=.25?'var(--yellow)':'var(--red)';
+ const edgeEl=document.getElementById('edge');
+ edgeEl.textContent=edge;edgeEl.className='tag '+edgeCls;
+ document.getElementById('rc-score').style.borderColor=composite>=.45?'var(--green)':composite>=.25?'var(--yellow)':'var(--red)';
+
+ document.getElementById('regime').textContent=regime.replace(/_/g,' ');
+ document.getElementById('volstate').textContent=volState;
+ document.getElementById('volstate').style.color=volState==='EXTREME'?'var(--red)':volState==='ELEVATED'?'var(--yellow)':'var(--green)';
+ const gateEl=document.getElementById('gate');
+ gateEl.innerHTML=gate==='PASS'?'<span class="gate-pass">&#10003; PASS</span>':`<span class="gate-fail">&#10007; REJECTED</span><br><span style="font-size:11px;color:var(--dim)">${reason}</span>`;
+ document.getElementById('rc-gate').style.borderColor=gate==='PASS'?'var(--green)':'var(--red)';
+
+ // Bars
+ factors.forEach(f=>{const v=scores[f];barEls[f].fill.style.width=(v*100)+'%';barEls[f].val.textContent=v.toFixed(2)});
+
+ // Audit
+ document.getElementById('audit').textContent=JSON.stringify({
+  timestamp:new Date().toISOString(),composite_score:+composite.toFixed(4),edge_strength:edge,regime,volatility_state:volState,
+  gate:{decision:gate,reason:reason||null},
+  factors:Object.fromEntries(factors.map(f=>[f,{score:+scores[f].toFixed(4),weight:W[wKeys[f]],contribution:+(scores[f]*W[wKeys[f]]).toFixed(4)}])),
+  inputs:{adx:gv('adx'),atr_pct:gv('atr'),hurst,momentum_pct:gv('mom'),z_score:gv('z'),volume_ratio:gv('vol')}
+ },null,2);
+}
+compute();
+</script>
+</body>
+</html>
