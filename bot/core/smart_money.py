@@ -85,11 +85,12 @@ class LiquidationCascadeDetector:
         intensity = min(1.0, abs_fr / (self._funding_extreme * 3))
 
         # OI change amplifies: rising OI = more leverage = more risk
+        # W-P2 FIX: Check >10 before >5 so the higher amplifier isn't shadowed.
         oi_amp = 1.0
-        if sig.oi_change_pct is not None and sig.oi_change_pct > 5:
-            oi_amp = 1.3
-        elif sig.oi_change_pct is not None and sig.oi_change_pct > 10:
+        if sig.oi_change_pct is not None and sig.oi_change_pct > 10:
             oi_amp = 1.6
+        elif sig.oi_change_pct is not None and sig.oi_change_pct > 5:
+            oi_amp = 1.3
 
         # CVD divergence: if CVD diverges from crowd direction → cascade imminent
         div_amp = 1.0
@@ -163,9 +164,15 @@ class WhaleFlowTracker:
 
     def evaluate(self, sig: OrderFlowSignal) -> float:
         """Returns whale_accumulation_score [-1, 1]."""
+        # LB-7 FIX: Reject empty symbol to prevent cross-symbol history corruption.
+        # All symbols sharing key "" would corrupt each other's whale tracking.
+        symbol = sig.symbol
+        if not symbol:
+            return 0.0
+
         with self._lock:
             hist = self._whale_history.setdefault(
-                sig.symbol, deque(maxlen=self._history_len))
+                symbol, deque(maxlen=self._history_len))
             hist.append((sig.whale_buy_usd, sig.whale_sell_usd))
 
         if len(hist) < 3:

@@ -455,11 +455,15 @@ class RiskEngine:
 
     def _check_correlation(self, idea: TradeIdea) -> Optional[str]:
         """Prevent concentrated bets in the same correlation group."""
-        new_group = _CORRELATION_GROUPS.get(idea.asset, idea.asset)
+        # W-P2-2 FIX: Normalize asset to /USDT format for consistent lookup.
+        # _CORRELATION_GROUPS keys use "BTC/USDT" format.
+        asset_key = idea.asset if "/" in idea.asset else f"{idea.asset}/USDT"
+        new_group = _CORRELATION_GROUPS.get(asset_key, idea.asset)
         open_groups: list[str] = []
 
         for pos in self._portfolio.open_positions:
-            group = _CORRELATION_GROUPS.get(pos.asset, pos.asset)
+            pos_key = pos.asset if "/" in pos.asset else f"{pos.asset}/USDT"
+            group = _CORRELATION_GROUPS.get(pos_key, pos.asset)
             open_groups.append(group)
 
         group_count = open_groups.count(new_group)

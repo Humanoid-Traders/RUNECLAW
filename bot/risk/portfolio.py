@@ -225,6 +225,10 @@ class PortfolioTracker:
             for asset, price in prices.items():
                 if price > 0:
                     self._last_prices[asset] = price
+            # LB-4 FIX: Update peak equity on every mark-to-market tick.
+            # Without this, peak only updates on trade close / snapshot,
+            # so intra-bar equity highs are missed and drawdown is overstated.
+            self._update_peak()
 
     def get_position_value(self, asset: str | None = None) -> float:
         """Public API for mark-to-market position value.

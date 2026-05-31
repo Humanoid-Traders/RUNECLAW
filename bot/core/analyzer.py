@@ -645,6 +645,12 @@ class Analyzer:
             # This is a soft influence, not a hard override
             pass  # boosts applied via mode_config during strategy selection
 
+        # LB-2 FIX: assert votes/weights are aligned before computation.
+        # zip() silently truncates to the shorter list, hiding mismatches.
+        assert len(votes) == len(weights), (
+            f"Confluence votes/weights desync: {len(votes)} votes vs {len(weights)} weights"
+        )
+
         # Weighted confluence
         total_weight = sum(weights)
         if total_weight == 0:
@@ -949,7 +955,10 @@ class Analyzer:
         elif direction == "SHORT" and bear_patterns > bull_patterns:
             candle_bonus = min(0.10, bear_patterns * 0.05)
 
-        confidence = min(1.0, conf_base * 0.5 + 0.35 + regime_bonus + spike_bonus + adx_bonus + obv_bonus + fib_bonus + candle_bonus)
+        # LB-5 FIX: The 0.35 floor was too high — neutral confluence (conf_base=0)
+        # produced 0.35+ confidence that could pass the 0.5 threshold after blending.
+        # Use 0.20 base so weak signals stay below the filter threshold.
+        confidence = min(1.0, conf_base * 0.5 + 0.20 + regime_bonus + spike_bonus + adx_bonus + obv_bonus + fib_bonus + candle_bonus)
 
         # Build pattern summary
         pattern_str = ", ".join(f"{k}({v})" for k, v in candle_patterns.items()) if candle_patterns else "none"

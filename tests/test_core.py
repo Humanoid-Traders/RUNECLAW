@@ -2923,14 +2923,16 @@ class TestExplainability:
 
     def test_risk_verdict_integration(self):
         from bot.core.explainability import ExplainabilityEngine
-        from unittest.mock import MagicMock
+        from bot.utils.models import RiskCheck, RiskVerdict
 
-        mock_verdict = MagicMock()
-        mock_verdict.approved = False
-        mock_check = MagicMock()
-        mock_check.passed = False
-        mock_check.reason = "Position too large"
-        mock_verdict.checks = [mock_check]
+        # ACM-4 FIX: Use actual RiskCheck model instead of mock with wrong fields
+        mock_verdict = RiskCheck(
+            trade_id="test",
+            verdict=RiskVerdict.REJECTED,
+            checks_passed=["POSITION_SIZE: OK"],
+            checks_failed=["Position too large"],
+            reason="Position too large",
+        )
 
         engine = ExplainabilityEngine()
         report = engine.explain(
@@ -2938,7 +2940,7 @@ class TestExplainability:
             indicators={"rsi": 50, "macd": 0, "atr": 1300, "adx": 20, "bb_pct_b": 0.5},
         )
         assert not report.risk_approved
-        assert report.risk_checks_total == 1
+        assert report.risk_checks_total == 2
         assert "Position too large" in report.risk_rejection_reason
 
     def test_narrative_with_mtf_and_sm(self):

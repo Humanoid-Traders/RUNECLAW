@@ -46,7 +46,7 @@ Validated across 500 backtest runs (synthetic data — 5 market regimes, 20 symb
 - **Human-in-the-Loop** -- every trade requires Telegram confirmation with inline approve/reject keyboard
 - **Simulation-First** -- paper trading by default ($10K virtual balance), live trading requires dual safety flag opt-in
 - **Full Audit Trail** -- structured JSON logging of every decision, rejection, and execution with timestamps
-- **507+ Unit Tests** -- risk engine, portfolio, analyzer, backtest, learning system (8 modules), token optimizer (4 layers), smart money engine, multi-timeframe analysis, strategy modes, explainability engine, FSM, integration, edge cases, audit fix validation, Qwen integration, Solana ecosystem, red team, black swan, sentiment, swarm, security suite (507 total)
+- **531+ Unit Tests** -- risk engine, portfolio, analyzer, backtest, learning system (8 modules), token optimizer (4 layers), smart money engine, multi-timeframe analysis, strategy modes, explainability engine, FSM, integration, edge cases, audit fix validation, Qwen integration, Solana ecosystem, red team, black swan, sentiment, swarm, security suite (531 total)
 - **AI Learning System** -- 8 integrated modules: experience memory, reflection engine, strategy evaluator (S/A/B/C/D tiers), pattern learner, macro learner (FOMC/CPI/NFP/PCE tracking), model comparer, prompt optimizer, feedback collector; all governed by immutable safety policy with blocked-action lists
 - **LLM Token Optimizer** -- 4-layer cost reduction: semantic cache (TTL-bucketed), tiered pipeline (rules/mini/full), smart batching (5 symbols/call), adaptive frequency (skip LLM in quiet markets); up to 70% token savings
 - **Smart Money Engine** -- liquidation cascade detection (funding + OI + CVD divergence), funding rate squeeze (contrarian positioning), whale flow tracking (rolling buy/sell with stealth accumulation detection), composite scoring normalized [-1,1]
@@ -115,7 +115,7 @@ Validated across 500 backtest runs (synthetic data — 5 market regimes, 20 symb
 |-------|----------|--------|
 | 18 risk checks | `bot/risk/risk_engine.py` lines 1-28 enumerate all 18 (16 in-engine + #17 liquidity + #18 macro) | Verified |
 | Fail-closed design | Any check failure or exception returns REJECTED | Verified |
-| 97+ tests passing | `pytest tests/ -v` -- 507 green (97 original + audit/learning/optimizer/qwen/solana/red-team/black-swan/sentiment/swarm/security additions) | Verified |
+| 97+ tests passing | `pytest tests/ -v` -- 531 green (97 original + audit/learning/optimizer/qwen/solana/red-team/black-swan/sentiment/swarm/security additions) | Verified |
 | 9-state FSM | `bot/utils/models.py` AgentState enum, `bot/core/engine.py` transitions | Verified |
 | Trailing stops work | Backtest (synthetic data): 416/889 exits via trailing stop, net-positive aggregate PnL. Note: trailing exits are structurally profitable (activate at +1R, trail 1.5 ATR) — this is by construction, not evidence of predictive edge | Verified |
 | Regime detection | `bot/core/analyzer.py` _detect_regime + _score_confluence | Verified |

@@ -302,8 +302,11 @@ class BacktestEngine:
         # from PnL and balance. Use the portfolio's authoritative values to
         # avoid double-counting.  Slippage is baked into adjusted entry/exit
         # prices, so it's already reflected in portfolio PnL.
+        # LB-6 FIX: closed.pnl is net. Compute gross separately so the
+        # BacktestResult waterfall doesn't double-count commission.
         total_slippage = bt_meta["slippage_entry"] + slippage_exit * closed.quantity
         net_pnl = closed.pnl  # already net of commission from portfolio
+        gross_pnl = closed.pnl + closed.commission  # add back for gross field
 
         # Duration
         entry_time = bt_meta["entry_time"]
@@ -322,8 +325,8 @@ class BacktestEngine:
             exit_time=bar.timestamp,
             quantity=closed.quantity,
             size_usd=round(size_usd, 2),
-            pnl_usd=round(closed.pnl, 2),
-            pnl_pct=round((closed.pnl / size_usd * 100) if size_usd > 0 else 0, 2),
+            pnl_usd=round(gross_pnl, 2),  # LB-6: gross PnL (before commission)
+            pnl_pct=round((gross_pnl / size_usd * 100) if size_usd > 0 else 0, 2),
             commission_usd=round(closed.commission, 2),
             slippage_usd=round(total_slippage, 2),
             net_pnl_usd=round(net_pnl, 2),
@@ -609,11 +612,11 @@ async def walk_forward_backtest(
         fold_bars = bars[start:end]
 
         split_point = int(len(fold_bars) * train_ratio)
-        # Embargo gap: skip a small buffer between train and test to prevent
-        # lookahead contamination from lagged indicators / lookback windows.
+        # LB-3 FIX: Embargo gap must exclude bars from BOTH train and test
+        # to prevent lookahead contamination. Previously only test was shifted.
         embargo = min(50, len(fold_bars) // 10)
-        train_bars = fold_bars[:split_point]
-        test_bars = fold_bars[split_point + embargo:]
+        train_bars = fold_bars[:split_point - embargo]  # stop before embargo zone
+        test_bars = fold_bars[split_point + embargo:]    # start after embargo zone
 
         # Run train period
         train_engine = BacktestEngine(config)

@@ -69,26 +69,36 @@ def _compute_adx(highs: np.ndarray, lows: np.ndarray, closes: np.ndarray, period
         smoothed_minus[i] = (smoothed_minus[i - 1] * (period - 1) + minus_dm[i]) / period
 
     # +DI and -DI (safe division)
+    # LB-1 FIX: Only compute DI from index period-1 onward where smoothed
+    # values are valid. Early indices (0 to period-2) are zero from
+    # initialization and would bias DX/ADX downward on short windows.
     with np.errstate(invalid="ignore", divide="ignore"):
         plus_di = np.where(atr > 0, 100 * smoothed_plus / atr, 0.0)
         minus_di = np.where(atr > 0, 100 * smoothed_minus / atr, 0.0)
+        # Zero out invalid early indices to prevent them from polluting DX
+        plus_di[:period - 1] = 0.0
+        minus_di[:period - 1] = 0.0
         plus_di = np.nan_to_num(plus_di, nan=0.0)
         minus_di = np.nan_to_num(minus_di, nan=0.0)
 
-    # DX and ADX
+    # DX and ADX — only from period-1 onward
     di_sum = plus_di + minus_di
     with np.errstate(invalid="ignore", divide="ignore"):
         dx = np.where(di_sum > 0, 100 * np.abs(plus_di - minus_di) / di_sum, 0.0)
         dx = np.nan_to_num(dx, nan=0.0)
+        # Zero out pre-smoothing indices
+        dx[:period - 1] = 0.0
 
-    if len(dx) >= period * 2:
-        adx = np.zeros(len(dx))
-        adx[period * 2 - 1] = np.mean(dx[period:period * 2])
-        for i in range(period * 2, len(dx)):
-            adx[i] = (adx[i - 1] * (period - 1) + dx[i]) / period
+    # ADX: Wilder smoothing of DX, starting from valid DX values only
+    valid_dx = dx[period - 1:]  # only valid DX values
+    if len(valid_dx) >= period:
+        adx = np.zeros(len(valid_dx))
+        adx[period - 1] = np.mean(valid_dx[:period])
+        for i in range(period, len(valid_dx)):
+            adx[i] = (adx[i - 1] * (period - 1) + valid_dx[i]) / period
         adx_val = float(adx[-1])
     else:
-        adx_val = float(np.mean(dx[-period:])) if len(dx) >= period else 0.0
+        adx_val = float(np.mean(valid_dx)) if len(valid_dx) > 0 else 0.0
 
     return {
         "adx": round(adx_val, 2),

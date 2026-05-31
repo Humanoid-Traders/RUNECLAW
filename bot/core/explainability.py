@@ -155,21 +155,18 @@ class ExplainabilityEngine:
         report.top_bearish = [f.factor for f in bearish[:3]]
 
         # 3. Risk
+        # ACM-4 FIX: RiskCheck has verdict/checks_passed/checks_failed,
+        # not approved/checks. Previous getattr defaults always returned False/[].
         if risk_verdict is not None:
-            report.risk_approved = getattr(risk_verdict, "approved", False)
-            checks = getattr(risk_verdict, "checks", [])
-            report.risk_checks_total = len(checks)
-            report.risk_checks_passed = sum(
-                1 for c in checks if getattr(c, "passed", False)
-            )
-            if not report.risk_approved:
-                failed = [
-                    c for c in checks if not getattr(c, "passed", False)
-                ]
-                if failed:
-                    report.risk_rejection_reason = getattr(
-                        failed[0], "reason", "Unknown"
-                    )
+            from bot.utils.models import RiskVerdict
+            verdict = getattr(risk_verdict, "verdict", None)
+            report.risk_approved = (verdict == RiskVerdict.APPROVED) if verdict else False
+            checks_passed = getattr(risk_verdict, "checks_passed", [])
+            checks_failed = getattr(risk_verdict, "checks_failed", [])
+            report.risk_checks_total = len(checks_passed) + len(checks_failed)
+            report.risk_checks_passed = len(checks_passed)
+            if not report.risk_approved and checks_failed:
+                report.risk_rejection_reason = checks_failed[0] if checks_failed else "Unknown"
 
         # 4. Compliance scoring
         report.compliance = self._score_compliance(report, indicators)
@@ -274,15 +271,19 @@ class ExplainabilityEngine:
         ))
 
         # Step 7: Risk assessment
+        # ACM-4 FIX: Use correct RiskCheck field names (verdict/checks_passed/checks_failed)
         if risk_verdict is not None:
-            approved = getattr(risk_verdict, "approved", False)
-            checks = getattr(risk_verdict, "checks", [])
-            failed = [c for c in checks if not getattr(c, "passed", False)]
+            from bot.utils.models import RiskVerdict
+            verdict = getattr(risk_verdict, "verdict", None)
+            is_approved = (verdict == RiskVerdict.APPROVED) if verdict else False
+            checks_passed = getattr(risk_verdict, "checks_passed", [])
+            checks_failed = getattr(risk_verdict, "checks_failed", [])
+            total_checks = len(checks_passed) + len(checks_failed)
             chain.append(ReasoningStep(
                 stage="risk_assessment",
-                input_summary=f"{len(checks)} risk checks evaluated",
-                output_summary=f"{'APPROVED' if approved else 'REJECTED'}"
-                               f"{': ' + getattr(failed[0], 'reason', '') if failed else ''}",
+                input_summary=f"{total_checks} risk checks evaluated",
+                output_summary=f"{'APPROVED' if is_approved else 'REJECTED'}"
+                               f"{': ' + checks_failed[0] if checks_failed else ''}",
                 impact="filter",
             ))
 
