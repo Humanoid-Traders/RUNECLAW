@@ -17,9 +17,11 @@ from pathlib import Path
 from bot.config import CONFIG
 from bot.core.analyzer import Analyzer
 from bot.core.cost import CostTracker
+from bot.core.exchange_flow import ExchangeFlowProvider
 from bot.core.macro_events import MacroEventProvider
 from bot.core.market_scanner import MarketScanner
 from bot.core.order_flow import OrderFlowAnalyzer
+from bot.core.ws_feed import BitgetWSFeed
 from bot.compliance.compliance_engine import ComplianceEngine, Permission, default_demo_profile
 from bot.learning.orchestrator import LearningOrchestrator
 from bot.macro.calendar import MacroCalendar, build_2026_calendar
@@ -49,9 +51,14 @@ class RuneClawEngine:
         self.cost = CostTracker()
         self.analyzer = Analyzer(cost_tracker=self.cost)
         self.order_flow = OrderFlowAnalyzer()
+        # Exchange flow provider: real-time funding rates + OI from Bitget
+        self.exchange_flow = ExchangeFlowProvider(
+            exchange_factory=self.scanner._get_exchange,
+        )
         self.macro_calendar = MacroCalendar(events=build_2026_calendar())
         self.macro_provider = MacroEventProvider(
             seed_path=Path("config/macro_calendar.seed.json"),
+            funding_provider=self.exchange_flow.funding_rate_provider,
         )
         self.risk = RiskEngine(
             self.portfolio,
@@ -62,6 +69,8 @@ class RuneClawEngine:
         self.compliance_profile = default_demo_profile()
         self.audit_chain = AuditChain("logs/audit_chain.jsonl")
         self.learning = LearningOrchestrator()
+        # WebSocket feed for real-time price monitoring (supplements REST polling)
+        self.ws_feed = BitgetWSFeed()
         # C1 fix: wire trade-close callback so portfolio closes feed risk streak tracking
         self.portfolio._on_trade_close = self.risk.record_trade_result
         self.state: AgentState = AgentState.IDLE
@@ -118,6 +127,8 @@ class RuneClawEngine:
             action="start",
             data={"simulation": CONFIG.simulation_mode},
         )
+        # Start WebSocket feed for real-time price monitoring
+        await self.ws_feed.start()
 
         while self._running:
             try:
@@ -133,6 +144,7 @@ class RuneClawEngine:
 
     async def stop(self) -> None:
         self._running = False
+        await self.ws_feed.stop()
         await self.scanner.close()
         self._transition(AgentState.IDLE, "engine stopped")
         audit(system_log, "Engine stopped", action="stop")
@@ -431,9 +443,24 @@ class RuneClawEngine:
         if not positions:
             return
         try:
-            exchange = await self.scanner._get_exchange()
-            tickers = await exchange.fetch_tickers()
-            prices = {s: float(t.get("last", 0)) for s, t in tickers.items()}
+            # Prefer WebSocket prices (sub-second) over REST (polling)
+            if self.ws_feed.is_connected():
+                ws_prices = self.ws_feed.get_prices()
+                if ws_prices:
+                    prices = ws_prices
+                else:
+                    # WS connected but no prices yet — fallback to REST
+                    exchange = await self.scanner._get_exchange()
+                    tickers = await exchange.fetch_tickers()
+                    prices = {s: float(t.get("last", 0)) for s, t in tickers.items()}
+            else:
+                exchange = await self.scanner._get_exchange()
+                tickers = await exchange.fetch_tickers()
+                prices = {s: float(t.get("last", 0)) for s, t in tickers.items()}
+
+            # Subscribe open position symbols to WS feed for future ticks
+            pos_symbols = [p.asset for p in positions]
+            self.ws_feed.subscribe(pos_symbols)
             # Mark-to-market: feed current prices so snapshot() reflects unrealized PnL
             self.portfolio.mark_to_market(prices)
             closed = self.portfolio.check_stops(prices)
