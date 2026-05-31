@@ -12,7 +12,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/python-3.11+-blue?logo=python&logoColor=white" alt="Python 3.11+">
-  <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT License">
+  <img src="https://img.shields.io/badge/license-AGPL--3.0-green" alt="AGPL-3.0 License">
   <img src="https://img.shields.io/badge/mode-paper%20trading-orange" alt="Paper Trading">
   <img src="https://img.shields.io/badge/exchange-Bitget-blue" alt="Bitget">
   <img src="https://img.shields.io/badge/hackathon-AI%20Base%20Camp%20S1-purple" alt="AI Base Camp Hackathon S1">
@@ -446,7 +446,9 @@ python -m bot.main --mode scan
 
 ## License
 
-MIT License. See [LICENSE](./LICENSE) for details.
+**AGPL-3.0** -- GNU Affero General Public License v3.0. See [LICENSE](./LICENSE) and [NOTICE](./NOTICE) for details.
+
+You are free to view, study, fork, and modify this code. If you distribute it or run a modified version as a network service (SaaS, API, web app), you must release your source code under the same license. Commercial licensing inquiries: contact Humanoid Traders via the [Telegram community](https://t.me/+VRNgsmkR5pszZTdk).
 
 ---
 

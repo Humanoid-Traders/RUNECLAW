@@ -66,6 +66,6 @@ Structured Audit Log
 - **Telegram:** [Join Community](https://t.me/+VRNgsmkR5pszZTdk)
 - **X / Twitter:** [@BaurPatric70363](https://x.com/BaurPatric70363)
 - **Hackathon:** Bitget AI Base Camp · Hackathon S1
-- **License:** MIT
+- **License:** AGPL-3.0
 
 > **Disclaimer:** RUNECLAW is an educational hackathon prototype. It is not production-ready and should not be used with real funds without extensive additional safeguards, independent audits, and regulatory review. Backtest results use synthetic data and do not predict future performance. This is not financial advice.

@@ -1,0 +1,69 @@
+RUNECLAW -- AI Trading Command Core
+Copyright (C) 2026 Humanoid Traders
+
+================================================================================
+PROVENANCE & AUTHORSHIP NOTICE
+================================================================================
+
+This software was created by Humanoid Traders for the Bitget AI Base Camp ·
+Hackathon S1. All original work is authored by the Humanoid Traders team.
+
+Project:      RUNECLAW -- AI Trading Command Core
+Team:         Humanoid Traders
+Repository:   https://github.com/Humanoid-Traders/RUNECLAW
+First Commit: 2026-05-29 (commit 6e091e57da70c8e7f056560e1a64875ac1b34199)
+Commits:      68+ as of 2026-05-31
+
+This notice, along with the complete git history of the repository, serves as
+timestamped proof of authorship. The git log contains cryptographic hashes of
+every change, establishing an immutable chain of provenance.
+
+================================================================================
+LICENSE
+================================================================================
+
+This program is free software: you can redistribute it and/or modify it under
+the terms of the GNU Affero General Public License as published by the Free
+Software Foundation, either version 3 of the License, or (at your option) any
+later version.
+
+This program is distributed in the hope that it will be useful, but WITHOUT
+ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more
+details.
+
+You should have received a copy of the GNU Affero General Public License along
+with this program. If not, see <https://www.gnu.org/licenses/>.
+
+================================================================================
+WHAT THIS MEANS
+================================================================================
+
+You are free to:
+  - View, study, and learn from the source code
+  - Fork and modify the code for personal or internal use
+  - Distribute modified versions
+
+Under these conditions:
+  - You MUST keep this notice and the AGPL-3.0 license intact
+  - You MUST disclose your source code if you distribute or run a modified
+    version as a network service (SaaS, API, web app, etc.)
+  - You MUST state your changes
+  - You MUST license derivative works under AGPL-3.0
+
+Commercial licensing inquiries: contact Humanoid Traders via the project
+repository or Telegram community (https://t.me/+VRNgsmkR5pszZTdk).
+
+================================================================================
+THIRD-PARTY COMPONENTS
+================================================================================
+
+This project uses the following open-source libraries (see bot/requirements.txt):
+  - ccxt (MIT) -- cryptocurrency exchange trading library
+  - openai (Apache-2.0) -- OpenAI Python client
+  - pydantic (MIT) -- data validation using Python type annotations
+  - numpy (BSD-3-Clause) -- numerical computing
+  - python-telegram-bot (LGPL-3.0) -- Telegram Bot API wrapper
+  - python-dotenv (BSD-3-Clause) -- .env file loading
+
+All third-party licenses are compatible with AGPL-3.0 distribution.

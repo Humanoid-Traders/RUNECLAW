@@ -97,7 +97,7 @@ Then links appear below:
 - Website: lgl3crf9.mule.page
 - Telegram: t.me/+VRNgsmkR5pszZTdk
 
-**[VOICEOVER]** "RUNECLAW. AI proposes. Humans decide. The risk engine enforces. Links in the description. MIT licensed. Fully open source. Built for Bitget AI Base Camp."
+**[VOICEOVER]** "RUNECLAW. AI proposes. Humans decide. The risk engine enforces. Links in the description. AGPL-3.0 licensed. Fully open source. Built for Bitget AI Base Camp."
 
 ---
 
