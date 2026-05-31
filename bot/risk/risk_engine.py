@@ -348,10 +348,7 @@ class RiskEngine:
 
         try:
             # 14. Portfolio exposure limit (mark-to-market)
-            open_value = sum(
-                self._portfolio._last_prices.get(p.asset, p.entry_price) * p.quantity
-                for p in self._portfolio.open_positions
-            )
+            open_value = self._portfolio.get_position_value()
             exposure_pct = (open_value / state.equity_usd * 100) if state.equity_usd > 0 else 0
             new_exposure = exposure_pct + (position_usd / state.equity_usd * 100 if state.equity_usd > 0 else 0)
             if new_exposure > CONFIG.risk.max_portfolio_exposure_pct:
@@ -363,11 +360,7 @@ class RiskEngine:
 
         try:
             # 15. Per-symbol exposure limit (mark-to-market)
-            symbol_value = sum(
-                self._portfolio._last_prices.get(p.asset, p.entry_price) * p.quantity
-                for p in self._portfolio.open_positions
-                if p.asset == idea.asset
-            )
+            symbol_value = self._portfolio.get_position_value(asset=idea.asset)
             new_symbol_value = symbol_value + position_usd
             symbol_exposure_pct = (new_symbol_value / state.equity_usd * 100) if state.equity_usd > 0 else 0
             if symbol_exposure_pct > CONFIG.risk.max_symbol_exposure_pct:

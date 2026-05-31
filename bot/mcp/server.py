@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import traceback
 from dataclasses import asdict, dataclass, field
 from typing import Any
@@ -26,6 +27,10 @@ from typing import Any
 from bot.core.engine import RuneClawEngine
 from bot.skills.skill_registry import SkillRegistry, build_default_registry
 from bot.utils.logger import audit, system_log
+
+# C5 FIX: bearer token authentication for MCP tool calls.
+# Set MCP_AUTH_TOKEN in .env to require callers to authenticate.
+_MCP_AUTH_TOKEN: str = os.environ.get("MCP_AUTH_TOKEN", "")
 
 
 # ---------------------------------------------------------------------------
@@ -204,6 +209,7 @@ class RuneClawMCPServer:
         self,
         name: str,
         arguments: dict[str, Any] | None = None,
+        auth_token: str | None = None,
     ) -> dict[str, Any]:
         """
         Dispatch an MCP tool call to the corresponding skill.
@@ -214,6 +220,8 @@ class RuneClawMCPServer:
             The MCP tool name, e.g. ``"runeclaw_scan"``.
         arguments:
             Key-value arguments matching the tool's ``inputSchema``.
+        auth_token:
+            Bearer token for authentication (required when MCP_AUTH_TOKEN is set).
 
         Returns
         -------
@@ -221,6 +229,21 @@ class RuneClawMCPServer:
             ``{"status": "success"|"error", "tool": "<name>", "result": "..."}``
         """
         arguments = arguments or {}
+
+        # --- C5 FIX: authenticate caller -----------------------------------
+        if _MCP_AUTH_TOKEN:
+            import hmac
+            if not auth_token or not hmac.compare_digest(auth_token, _MCP_AUTH_TOKEN):
+                audit(
+                    system_log,
+                    f"MCP auth rejected for tool '{name}'",
+                    action="mcp_auth_fail",
+                )
+                return MCPResponse(
+                    status="error",
+                    tool=name,
+                    result="Authentication required. Provide a valid auth_token.",
+                ).to_dict()
 
         # --- lookup --------------------------------------------------------
         tdef = self._tool_index.get(name)
@@ -276,6 +299,9 @@ class RuneClawMCPServer:
 
         except Exception as exc:  # noqa: BLE001
             tb = traceback.format_exc()
+            # C3 FIX: redact secrets from traceback before logging
+            from bot.utils.logger import _redact_string
+            tb = _redact_string(tb)
             audit(
                 system_log,
                 f"MCP tool '{name}' failed: {exc}",

@@ -833,15 +833,43 @@ class LearningDashboardSkill(BaseSkill):
         t = tier_icons.get(score["tier"], _NEU)
 
         lines = [
-            f"\U0001f9e0 <b>AI LEARNING</b>\n",
+            f"\U0001f9e0 <b>AI LEARNING SYSTEM</b>\n",
             f"  {t} Score: <code>{score['composite_score']}/10</code>  [{score['tier']}]\n",
-            f"\U0001f4be <b>Data Stores</b>",
-            "<pre>",
         ]
-        for key, val in stats.items():
-            lines.append(_row(key, str(val)))
+
+        # Per-module health status
+        lines.append("\U0001f4e6 <b>Module Health</b>")
+        lines.append("<pre>")
+        module_names = [
+            ("decisions", "Experience Memory"),
+            ("reflections", "Reflection Engine"),
+            ("strategies", "Strategy Evaluator"),
+            ("patterns", "Pattern Learner"),
+            ("macro_events", "Macro Learner"),
+            ("model_comparisons", "Model Comparer"),
+            ("prompt_versions", "Prompt Optimizer"),
+            ("feedback", "Feedback Collector"),
+        ]
+        for key, label in module_names:
+            count = stats.get(key, 0)
+            if count > 0:
+                icon = "\u2705"
+            else:
+                icon = "\u26aa"
+            lines.append(f"  {icon} {label:<20s} {count:>4} records")
+        lines.append("</pre>\n")
+
+        # Data stores
+        lines.append(f"\U0001f4be <b>Data Summary</b>")
+        lines.append("<pre>")
+        total = sum(stats.values())
+        lines.append(_row("Total records", str(total)))
+        lines.append(_row("Strategies scored", str(score.get('strategies_evaluated', 0))))
+        lines.append(_row("Feedback entries", str(score.get('feedback_total', 0))))
+        lines.append("</pre>\n")
+
+        # Proposals
         lines.extend([
-            "</pre>\n",
             f"\U0001f4cb <b>Proposals</b>",
             "<pre>",
             _row("Pending", str(dash['pending_proposals'])),
@@ -850,7 +878,7 @@ class LearningDashboardSkill(BaseSkill):
         ])
 
         if dash.get("strategy_rankings"):
-            lines.append(f"\n\U0001f3af <b>Strategies</b>")
+            lines.append(f"\n\U0001f3af <b>Strategy Rankings</b>")
             for s in dash["strategy_rankings"][:5]:
                 of = f" {_WARN}" if s["overfitting"] else ""
                 lines.append(
@@ -858,7 +886,20 @@ class LearningDashboardSkill(BaseSkill):
                     f"WR={s['win_rate']}  ({s['trades']}t){of}"
                 )
 
-        lines.append(f"\n\U0001f512 <i>Safety policy active \u2014 AI cannot bypass risk</i>")
+        # Prompt versions
+        pv = dash.get("prompt_versions", {})
+        if pv and pv.get("versions"):
+            lines.append(f"\n\U0001f4dd <b>Prompt Versions</b>")
+            lines.append(f"  Active: v{pv.get('current_version', '?')}  "
+                         f"({pv.get('total_versions', 0)} versions tracked)")
+
+        # Model accuracy
+        ma = dash.get("model_accuracy", {})
+        if ma and ma.get("agreement_rate") is not None:
+            rate = ma["agreement_rate"]
+            lines.append(f"\n\U0001f916 <b>Model Agreement</b>: {rate:.0%}")
+
+        lines.append(f"\n\U0001f512 <i>Safety sandbox active \u2014 AI learns aggressively, never overrides risk</i>")
         return "\n".join(lines)
 
 

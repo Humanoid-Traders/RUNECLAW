@@ -618,10 +618,12 @@ async def walk_forward_backtest(
         # Run train period
         train_engine = BacktestEngine(config)
         train_result = await train_engine.run(train_bars)
+        train_engine.cleanup()  # W6 FIX: prevent temp directory leak
 
         # Run test period
         test_engine = BacktestEngine(config)
         test_result = await test_engine.run(test_bars)
+        test_engine.cleanup()  # W6 FIX: prevent temp directory leak
 
         # Collect confidence calibration data from test trades
         for trade in test_result.trades:

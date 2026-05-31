@@ -121,7 +121,8 @@ class SemanticLLMCache:
         macd_dir = "pos" if macd_hist >= 0 else "neg"
 
         raw_key = f"{symbol}|{regime}|{conf_bucket}|{rsi_zone}|{macd_dir}|{adx_bucket}"
-        return hashlib.sha256(raw_key.encode()).hexdigest()[:16]
+        # W5 FIX: use full 64-char SHA-256 hex to avoid collision risk
+        return hashlib.sha256(raw_key.encode()).hexdigest()
 
     def get(self, key: str) -> Optional[dict]:
         """Look up a cached response. Returns None on miss or expiry."""

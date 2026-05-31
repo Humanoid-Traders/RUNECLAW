@@ -79,7 +79,8 @@ class MarketScanner:
         signals.sort(key=lambda s: abs(s.momentum_score), reverse=True)
 
         # If Solana ecosystem mode, boost Solana tokens to top of results
-        if CONFIG.exchange.asset_universe == "solana":
+        from bot.config import RUNTIME
+        if RUNTIME.asset_universe == "solana":
             solana_set = set(SOLANA_ECOSYSTEM_SYMBOLS)
             solana_signals = [s for s in signals if s.symbol in solana_set]
             other_signals = [s for s in signals if s.symbol not in solana_set]

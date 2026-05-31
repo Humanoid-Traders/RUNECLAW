@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import threading
 from dataclasses import dataclass, field, replace
+from datetime import datetime, timezone
 from typing import Optional
 
 from bot.utils.logger import audit, system_log
@@ -81,6 +82,23 @@ class CostTracker:
     def __init__(self) -> None:
         self._lock = threading.RLock()
         self._s = CostSummary()
+        self._lifetime = CostSummary()  # W1 FIX: separate lifetime vs daily
+        self._current_day: str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+    def _maybe_reset_daily(self) -> None:
+        """W1 FIX: Reset daily counters at UTC day boundary."""
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        if today != self._current_day:
+            # Accumulate into lifetime before resetting daily
+            self._lifetime.llm_cost_usd += self._s.llm_cost_usd
+            self._lifetime.infra_cost_usd += self._s.infra_cost_usd
+            self._lifetime.llm_calls += self._s.llm_calls
+            self._lifetime.prompt_tokens += self._s.prompt_tokens
+            self._lifetime.completion_tokens += self._s.completion_tokens
+            self._lifetime.unpriced_calls += self._s.unpriced_calls
+            # Reset daily
+            self._s = CostSummary()
+            self._current_day = today
 
     def record_llm(
         self,
@@ -108,6 +126,7 @@ class CostTracker:
         cat = category if category in COST_CATEGORIES else "other"
 
         with self._lock:
+            self._maybe_reset_daily()
             self._s.llm_cost_usd += cost
             self._s.llm_calls += 1
             self._s.prompt_tokens += prompt_tokens
@@ -140,10 +159,25 @@ class CostTracker:
             self._s.infra_cost_usd += cost_usd
 
     def snapshot(self) -> CostSummary:
-        """Return a frozen copy of current cost state."""
+        """Return a frozen copy of current daily cost state."""
         with self._lock:
+            self._maybe_reset_daily()
             # Deep-copy the mutable dicts
             s = replace(self._s)
             s.cost_by_category = dict(self._s.cost_by_category)
             s.calls_by_category = dict(self._s.calls_by_category)
             return s
+
+    def snapshot_lifetime(self) -> CostSummary:
+        """Return lifetime costs (all days combined)."""
+        with self._lock:
+            self._maybe_reset_daily()
+            lt = replace(self._lifetime)
+            # Add current day's costs
+            lt.llm_cost_usd += self._s.llm_cost_usd
+            lt.infra_cost_usd += self._s.infra_cost_usd
+            lt.llm_calls += self._s.llm_calls
+            lt.prompt_tokens += self._s.prompt_tokens
+            lt.completion_tokens += self._s.completion_tokens
+            lt.unpriced_calls += self._s.unpriced_calls
+            return lt

@@ -11,6 +11,7 @@ Upgraded with:
 from __future__ import annotations
 
 import json
+import logging
 import os
 import threading
 from datetime import UTC, date, datetime
@@ -225,6 +226,22 @@ class PortfolioTracker:
                 if price > 0:
                     self._last_prices[asset] = price
 
+    def get_position_value(self, asset: str | None = None) -> float:
+        """Public API for mark-to-market position value.
+
+        If *asset* is given, return value for that asset only.
+        Otherwise return total open position value.
+        Used by risk engine for exposure checks (replaces private _last_prices access).
+        """
+        with self._lock:
+            total = 0.0
+            for p in self._positions.values():
+                if asset is not None and p.asset != asset:
+                    continue
+                price = self._last_prices.get(p.asset, p.entry_price)
+                total += price * p.quantity
+            return total
+
     def _snapshot_locked(self) -> PortfolioState:
         # Mark-to-market: use last known prices if available, else entry price
         open_value = 0.0
@@ -372,8 +389,10 @@ class PortfolioTracker:
             return True
         except Exception as exc:
             audit(trade_log,
-                  f"Corrupted state file {target}, starting fresh: {exc}",
-                  action="load_state", result="FRESH_START")
+                  f"CRITICAL: Corrupted state file {target}, starting fresh: {exc}",
+                  action="load_state", result="CORRUPTED",
+                  level=logging.CRITICAL,
+                  data={"file": str(target), "error": str(exc)})
             return False
 
     def _auto_save(self) -> None:

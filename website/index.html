@@ -2606,49 +2606,49 @@ AI may NOT: enable live trading, increase
 <section id="learning" style="padding: 80px 40px;">
   <div class="reveal" style="text-align:center; margin-bottom:48px;">
     <div class="section-label" style="justify-content:center;">&#9472;&#9472;&#9472; Safe AI Learning</div>
-    <h2 class="section-title">Learn from Every Decision</h2>
-    <p class="pipeline-desc" style="max-width:700px; margin:0 auto;">8 learning modules, all sandboxed, logged, explainable, and reversible. Safety beats performance. If uncertain, fail closed.</p>
+    <h2 class="section-title">Self-Improving Agent, 100% Sandboxed</h2>
+    <p class="pipeline-desc" style="max-width:700px; margin:0 auto;">8 learning modules that turn RUNECLAW from a static trader into a true self-improving agent. It learns aggressively inside the sandbox &mdash; never outside it. The only live, public AI agent that is both self-improving and 100% risk-first.</p>
   </div>
   <div style="max-width:1100px; margin:0 auto; display:grid; grid-template-columns:repeat(4,1fr); gap:16px;">
     <div class="reveal reveal-delay-1" style="background:rgba(20,22,35,0.8); border:1px solid rgba(212,168,67,0.15); border-radius:10px; padding:24px 18px; text-align:center;">
       <div style="font-size:28px; margin-bottom:8px;">&#128218;</div>
       <div style="color:#d4a843; font-size:13px; font-weight:600; text-transform:uppercase; letter-spacing:1.5px; margin-bottom:6px;">Experience Memory</div>
-      <div style="color:#8a8a9a; font-size:12px; line-height:1.5;">Every decision, rejection, and result logged with audit_id + timestamp. Append-only JSONL.</div>
+      <div style="color:#8a8a9a; font-size:12px; line-height:1.5;">Every trade decision logged with full market context &mdash; price, indicators, regime, volume, LLM thesis, risk scores, outcome. A permanent, queryable memory bank.</div>
     </div>
     <div class="reveal reveal-delay-2" style="background:rgba(20,22,35,0.8); border:1px solid rgba(212,168,67,0.15); border-radius:10px; padding:24px 18px; text-align:center;">
       <div style="font-size:28px; margin-bottom:8px;">&#128161;</div>
       <div style="color:#d4a843; font-size:13px; font-weight:600; text-transform:uppercase; letter-spacing:1.5px; margin-bottom:6px;">Reflection Engine</div>
-      <div style="color:#8a8a9a; font-size:12px; line-height:1.5;">Post-trade reflections: was the signal valid? Was sizing correct? Lessons learned. May recommend, never auto-apply.</div>
+      <div style="color:#8a8a9a; font-size:12px; line-height:1.5;">Post-trade analysis: &ldquo;Why did this win/lose? What would tighter stops have changed?&rdquo; Generates lessons + proposals. May recommend, never auto-apply.</div>
     </div>
     <div class="reveal reveal-delay-3" style="background:rgba(20,22,35,0.8); border:1px solid rgba(212,168,67,0.15); border-radius:10px; padding:24px 18px; text-align:center;">
       <div style="font-size:28px; margin-bottom:8px;">&#128200;</div>
       <div style="color:#d4a843; font-size:13px; font-weight:600; text-transform:uppercase; letter-spacing:1.5px; margin-bottom:6px;">Strategy Scorecard</div>
-      <div style="color:#8a8a9a; font-size:12px; line-height:1.5;">S/A/B/C/D tiers by safety score, Sharpe, drawdown, false positives. Penalizes high leverage and overfit.</div>
+      <div style="color:#8a8a9a; font-size:12px; line-height:1.5;">S/A/B/C/D tiers. S-tier prioritized, D-tier retired. Scored by safety, Sharpe, drawdown, false positives. Never promoted on profit alone.</div>
     </div>
     <div class="reveal reveal-delay-4" style="background:rgba(20,22,35,0.8); border:1px solid rgba(212,168,67,0.15); border-radius:10px; padding:24px 18px; text-align:center;">
       <div style="font-size:28px; margin-bottom:8px;">&#128269;</div>
       <div style="color:#d4a843; font-size:13px; font-weight:600; text-transform:uppercase; letter-spacing:1.5px; margin-bottom:6px;">Pattern Detection</div>
-      <div style="color:#8a8a9a; font-size:12px; line-height:1.5;">Regime, macro, and volatility patterns detected from history. Observations only &mdash; never override risk engine.</div>
+      <div style="color:#8a8a9a; font-size:12px; line-height:1.5;">Growing library of high-probability setups across regimes. &ldquo;Bull Flag + OBV divergence after NFP: 78% win rate.&rdquo; Observations only &mdash; never override risk.</div>
     </div>
     <div class="reveal reveal-delay-1" style="background:rgba(20,22,35,0.8); border:1px solid rgba(212,168,67,0.15); border-radius:10px; padding:24px 18px; text-align:center;">
       <div style="font-size:28px; margin-bottom:8px;">&#9878;</div>
       <div style="color:#d4a843; font-size:13px; font-weight:600; text-transform:uppercase; letter-spacing:1.5px; margin-bottom:6px;">Model Comparison</div>
-      <div style="color:#8a8a9a; font-size:12px; line-height:1.5;">Rule-based vs LLM accuracy tracking. If models disagree strongly: NO_TRADE_UNCERTAIN. Safety &gt; profit.</div>
+      <div style="color:#8a8a9a; font-size:12px; line-height:1.5;">Side-by-side accuracy: rules vs LLM per regime. Learns which model excels where. Strong disagreement = NO_TRADE_UNCERTAIN.</div>
     </div>
     <div class="reveal reveal-delay-2" style="background:rgba(20,22,35,0.8); border:1px solid rgba(212,168,67,0.15); border-radius:10px; padding:24px 18px; text-align:center;">
       <div style="font-size:28px; margin-bottom:8px;">&#128221;</div>
       <div style="color:#d4a843; font-size:13px; font-weight:600; text-transform:uppercase; letter-spacing:1.5px; margin-bottom:6px;">Prompt Optimizer</div>
-      <div style="color:#8a8a9a; font-size:12px; line-height:1.5;">Versioned prompts with safety validation. Cannot weaken fail-closed wording. Cannot create profit guarantees.</div>
+      <div style="color:#8a8a9a; font-size:12px; line-height:1.5;">Version-tracked prompts scored by real performance. Auto-evolves: &ldquo;v3 improved calibration by 11% &mdash; promote.&rdquo; Cannot weaken safety wording.</div>
     </div>
     <div class="reveal reveal-delay-3" style="background:rgba(20,22,35,0.8); border:1px solid rgba(212,168,67,0.15); border-radius:10px; padding:24px 18px; text-align:center;">
       <div style="font-size:28px; margin-bottom:8px;">&#127758;</div>
       <div style="color:#d4a843; font-size:13px; font-weight:600; text-transform:uppercase; letter-spacing:1.5px; margin-bottom:6px;">Macro Learner</div>
-      <div style="color:#8a8a9a; font-size:12px; line-height:1.5;">FOMC/CPI/PCE/NFP reaction memory. Tracks 5min to 24h crypto reactions. Context only &mdash; never creates trade signals.</div>
+      <div style="color:#8a8a9a; font-size:12px; line-height:1.5;">Tracks crypto reactions to FOMC/CPI/NFP/PCE. &ldquo;Last 3 NFP prints: +4.2% avg SOL in 2h.&rdquo; Context only &mdash; never creates signals.</div>
     </div>
     <div class="reveal reveal-delay-4" style="background:rgba(20,22,35,0.8); border:1px solid rgba(212,168,67,0.15); border-radius:10px; padding:24px 18px; text-align:center;">
       <div style="font-size:28px; margin-bottom:8px;">&#128101;</div>
       <div style="color:#d4a843; font-size:13px; font-weight:600; text-transform:uppercase; letter-spacing:1.5px; margin-bottom:6px;">Human Feedback</div>
-      <div style="color:#8a8a9a; font-size:12px; line-height:1.5;">12 feedback types from correct to too_risky. Updates reflections, scores, and docs backlog. Cannot bypass risk gates.</div>
+      <div style="color:#8a8a9a; font-size:12px; line-height:1.5;">12 feedback types. Closes the human-in-the-loop: learns your trading style and risk tolerance over time. Cannot bypass risk gates.</div>
     </div>
   </div>
   <div class="reveal" style="max-width:800px; margin:40px auto 0; text-align:center;">
@@ -2948,7 +2948,7 @@ AI may NOT: enable live trading, increase
   <div class="evidence-grid-new">
     <div class="evidence-card-new reveal reveal-delay-1">
       <span class="evidence-icon-new">&#129514;</span>
-      <div class="evidence-label-new">338 Unit Tests Passing</div>
+      <div class="evidence-label-new">507 Unit Tests Passing</div>
       <span class="evidence-badge-new ebadge-green">VERIFIED</span>
     </div>
     <div class="evidence-card-new reveal reveal-delay-2">

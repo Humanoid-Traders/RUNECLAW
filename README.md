@@ -13,7 +13,8 @@
 <p align="center">
   <img src="https://img.shields.io/badge/python-3.11+-blue?logo=python&logoColor=white" alt="Python 3.11+">
   <img src="https://img.shields.io/badge/license-AGPL--3.0-green" alt="AGPL-3.0 License">
-  <img src="https://img.shields.io/badge/tests-338%20passing-brightgreen" alt="338 Tests Passing">
+  <img src="https://img.shields.io/badge/tests-507%20passing-brightgreen" alt="507 Tests Passing">
+  <img src="https://img.shields.io/badge/security%20tests-29%20passing-blueviolet" alt="29 Security Tests">
   <img src="https://img.shields.io/badge/red%20team-28%20attacks%20%7C%20100%25%20pass-critical" alt="Red Team 100% Pass">
   <img src="https://img.shields.io/badge/risk%20checks-18%20fail--closed-red" alt="18 Risk Checks">
   <img src="https://img.shields.io/badge/mode-paper%20trading-orange" alt="Paper Trading">
@@ -411,6 +412,23 @@ RUNECLAW is designed with a **fail-closed** philosophy:
 - **LLM API costs:** Each `/analyze` call consumes OpenAI API tokens. At GPT-4o pricing, a single analysis costs approximately $0.01-0.03. Frequent scanning can accumulate costs. Set `LLM_API_KEY=` (blank) to use the free rule-based fallback instead.
 - **No secrets in code.** All credentials load from environment variables with safe defaults. The codebase has been audited to confirm zero hardcoded secrets.
 
+### Security Hardening (Audit v3.0)
+
+| Fix | Category | Description |
+|-----|----------|-------------|
+| C1 | Critical | Replaced `object.__setattr__` on frozen CONFIG with thread-safe `RuntimeState` wrapper |
+| C3 | Critical | Added log redaction layer -- API keys, secrets, tokens stripped from all log output and tracebacks |
+| C5 | Critical | MCP server requires bearer token authentication when `MCP_AUTH_TOKEN` is set |
+| W1 | Warning | CostTracker now resets daily at UTC boundary; separate `snapshot_lifetime()` for cumulative stats |
+| W5 | Warning | Cache keys use full 64-char SHA-256 hex (was truncated to 16) |
+| W6 | Warning | Walk-forward backtest cleans up temp directories after each fold |
+| Input | Hardening | `/approve` validates numeric Telegram IDs; `/analyze` rejects non-alphanumeric symbols |
+| Encapsulation | Hardening | Risk engine uses `portfolio.get_position_value()` public API instead of private `_last_prices` |
+| AGPL | Compliance | `/start` and `/help` include source repository link and financial disclaimer |
+| Corruption | Hardening | Portfolio logs CRITICAL alert on corrupted state files instead of silent fallback |
+
+**29 dedicated security tests** in `tests/test_security.py` covering: log redaction, MCP auth, runtime state, cache keys, cost reset, portfolio corruption, input validation, and injection prevention.
+
 ---
 
 ## Limitations and Maturity
@@ -420,7 +438,7 @@ This is a **hackathon prototype** (maturity: early-stage). Known limitations:
 - **Solo developer project** -- limited peer review beyond automated audits
 - **No live trading validation** -- all testing uses paper trading and synthetic data
 - **API latency and slippage** -- real exchange conditions differ from simulation
-- **No formal security audit** -- code review has been self-conducted and AI-assisted
+- **Security audit conducted** -- AI-assisted deep audit (v3.0) with all 5 critical issues fixed, 29 security tests added
 - **LLM dependency** -- AI analysis quality depends on model availability and cost
 - **No guaranteed uptime** -- no monitoring, alerting, or failover infrastructure
 

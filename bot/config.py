@@ -158,3 +158,35 @@ class AppConfig:
 
 # Singleton used across the application
 CONFIG = AppConfig()
+
+
+# ---------------------------------------------------------------------------
+# RuntimeState — mutable runtime state that MUST NOT live on frozen CONFIG
+# ---------------------------------------------------------------------------
+
+class RuntimeState:
+    """Mutable runtime state, separate from the frozen CONFIG singleton.
+
+    C1 FIX: Previously, ``/mode`` used ``object.__setattr__`` to mutate a
+    frozen dataclass field.  That bypasses dataclass invariants and can
+    cause subtle bugs.  All mutable runtime values now live here.
+    """
+
+    def __init__(self) -> None:
+        self._lock = __import__("threading").Lock()
+        self._asset_universe: str = CONFIG.exchange.asset_universe
+
+    @property
+    def asset_universe(self) -> str:
+        with self._lock:
+            return self._asset_universe
+
+    @asset_universe.setter
+    def asset_universe(self, value: str) -> None:
+        if value not in ("all", "solana"):
+            raise ValueError(f"Invalid asset universe: {value!r}")
+        with self._lock:
+            self._asset_universe = value
+
+
+RUNTIME = RuntimeState()

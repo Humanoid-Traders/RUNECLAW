@@ -178,3 +178,48 @@ Before deploying RUNECLAW (even in paper mode):
 | Single-operator | No multi-user access control | `TELEGRAM_CHAT_ID` restricts to one operator |
 | No TLS pinning | Standard HTTPS to Bitget/Telegram/OpenAI | Relies on system certificate store |
 | No key vault | Credentials in `.env` file | Use secrets manager in production |
+
+---
+
+## Security Hardening Log (Audit v3.0)
+
+All findings from the RUNECLAW Deep Audit v3.0 have been addressed:
+
+### Critical Fixes
+
+| ID | Issue | Fix |
+|----|-------|-----|
+| C1 | Frozen dataclass mutation via `object.__setattr__` | Created thread-safe `RuntimeState` class; `/mode` command and scanner read from `RUNTIME` instead of mutating frozen CONFIG |
+| C3 | No log redaction — API keys could appear in logs/tracebacks | Added `_redact_dict()` and `_redact_string()` in logger.py; regex scrubs sensitive keys and inline secrets before write |
+| C5 | MCP server exposed tools without authentication | Added `MCP_AUTH_TOKEN` env var; `call_tool()` requires bearer token when set; uses `hmac.compare_digest` for timing-safe comparison |
+
+### Warning Fixes
+
+| ID | Issue | Fix |
+|----|-------|-----|
+| W1 | CostTracker never reset daily — `llm_cost_usd` accumulated forever | Added UTC day boundary detection; daily auto-reset with separate `snapshot_lifetime()` for cumulative stats |
+| W5 | Cache key truncated to 16-char SHA-256 — collision risk | Changed to full 64-char SHA-256 hex digest |
+| W6 | Walk-forward backtest leaked temp directories | Added explicit `cleanup()` calls after each fold's train and test engines |
+
+### Hardening
+
+| Area | Change |
+|------|--------|
+| Input validation | `/approve` rejects non-numeric Telegram IDs; `/analyze` rejects non-alphanumeric symbols via regex whitelist |
+| Encapsulation | Risk engine uses `portfolio.get_position_value()` public API instead of accessing private `_last_prices` |
+| AGPL §13 compliance | `/start` and `/help` responses include source repository link |
+| Financial disclaimer | `/start` and `/help` include "Not financial advice" notice |
+| Portfolio corruption | `load_state()` logs at CRITICAL level on corrupted state files instead of silent fallback |
+| Traceback redaction | MCP server redacts tracebacks before logging via `_redact_string()` |
+
+### Security Test Suite
+
+**29 dedicated tests** in `tests/test_security.py`:
+- Log redaction (dict scrubbing, inline secrets, nested values, depth limits)
+- MCP auth (token required, wrong token rejected, no-auth-when-unset)
+- RuntimeState (valid/invalid modes, thread safety with 4 concurrent threads)
+- Cache key collision prevention (full SHA-256 length verification)
+- CostTracker daily reset and lifetime accumulation
+- Portfolio corruption handling and public API
+- Backtest temp directory cleanup
+- Input validation regex (symbol injection, Telegram ID format)

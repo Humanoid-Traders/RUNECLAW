@@ -7,6 +7,7 @@ commands, auto-registration on /start, role-based permissions.
 from __future__ import annotations
 
 import html
+import re
 import threading
 import time
 from collections import defaultdict
@@ -348,7 +349,9 @@ class TelegramHandler:
             f"\u2022 Human approval on every trade\n"
             f"\u2022 18 fail-closed risk checks\n"
             f"\u2022 Full audit trail\n\n"
-            f"<i>{now}  \u2022  /dashboard or /help</i>"
+            f"<i>{now}  \u2022  /dashboard or /help</i>\n\n"
+            f"<i>\u26a0\ufe0f Not financial advice. Use at your own risk.\n"
+            f"\U0001f4dc AGPL-3.0 \u2022 Source: github.com/Humanoid-Traders/RUNECLAW</i>"
         )
         await self._send(update, msg, reply_markup=_KB_DASH)
 
@@ -415,7 +418,11 @@ class TelegramHandler:
                 "  /users        List all users\n"
             )
 
-        sections += "</pre>"
+        sections += "</pre>\n\n"
+        sections += (
+            "<i>\u26a0\ufe0f Not financial advice. Use at your own risk.\n"
+            "\U0001f4dc AGPL-3.0 \u2022 Source: github.com/Humanoid-Traders/RUNECLAW</i>"
+        )
         await self._send(update, header + sections)
 
     # ── Admin commands ────────────────────────────────────────
@@ -435,6 +442,13 @@ class TelegramHandler:
             return
 
         target_id = args[0].strip()
+
+        # Input validation: Telegram IDs are numeric only
+        if not target_id.isdigit():
+            await self._send(update,
+                "\U0001f534 Invalid Telegram ID. Must be numeric.")
+            return
+
         role = args[1].strip().lower() if len(args) > 1 else "trader"
 
         if role not in ("trader", "viewer", "admin"):
@@ -551,7 +565,8 @@ class TelegramHandler:
         valid_modes = {"all", "solana"}
 
         if len(args) < 2 or args[1].lower() not in valid_modes:
-            current = CONFIG.exchange.asset_universe
+            from bot.config import RUNTIME
+            current = RUNTIME.asset_universe
             icon = "\u2600\ufe0f" if current == "solana" else "\U0001f30d"
             lines = [
                 f"\U0001f504 <b>ASSET UNIVERSE</b>\n",
@@ -568,8 +583,9 @@ class TelegramHandler:
             return
 
         new_mode = args[1].lower()
-        # Config is frozen dataclass — mutate the underlying attribute
-        object.__setattr__(CONFIG.exchange, "asset_universe", new_mode)
+        # C1 FIX: use mutable RuntimeState instead of mutating frozen CONFIG
+        from bot.config import RUNTIME
+        RUNTIME.asset_universe = new_mode
 
         if new_mode == "solana":
             from bot.config import SOLANA_ECOSYSTEM_SYMBOLS
@@ -625,7 +641,12 @@ class TelegramHandler:
             return
         args = ctx.args
         if args:
-            raw = args[0].upper()
+            raw = args[0].upper().strip()
+            # Input validation: only allow alphanumeric + slash (e.g. BTC, BTC/USDT)
+            if not re.match(r"^[A-Z0-9]{1,20}(/[A-Z0-9]{1,10})?$", raw):
+                await self._send(update,
+                    "\U0001f534 Invalid symbol. Use format: <code>BTC</code> or <code>BTC/USDT</code>")
+                return
             symbol = raw if "/" in raw else f"{raw}/USDT"
         else:
             symbol = "BTC/USDT"
