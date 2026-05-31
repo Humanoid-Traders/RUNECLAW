@@ -13,14 +13,18 @@
 <p align="center">
   <img src="https://img.shields.io/badge/python-3.11+-blue?logo=python&logoColor=white" alt="Python 3.11+">
   <img src="https://img.shields.io/badge/license-AGPL--3.0-green" alt="AGPL-3.0 License">
+  <img src="https://img.shields.io/badge/tests-338%20passing-brightgreen" alt="338 Tests Passing">
+  <img src="https://img.shields.io/badge/red%20team-28%20attacks%20%7C%20100%25%20pass-critical" alt="Red Team 100% Pass">
+  <img src="https://img.shields.io/badge/risk%20checks-18%20fail--closed-red" alt="18 Risk Checks">
   <img src="https://img.shields.io/badge/mode-paper%20trading-orange" alt="Paper Trading">
   <img src="https://img.shields.io/badge/exchange-Bitget-blue" alt="Bitget">
+  <img src="https://img.shields.io/badge/bot-LIVE%20%40HTRUNECLAW__bot-26a5e4?logo=telegram" alt="Live Telegram Bot">
   <img src="https://img.shields.io/badge/hackathon-AI%20Base%20Camp%20S1-purple" alt="AI Base Camp Hackathon S1">
 </p>
 
 <p align="center">
   <a href="https://github.com/Humanoid-Traders/RUNECLAW">GitHub</a> &middot;
-  <a href="https://lgl3crf9.mule.page/">Website</a> &middot;
+  <a href="https://xbf5gmte.mule.page/">Website</a> &middot;
   <a href="https://humanoid-traders-1.gitbook.io/humanoid-traders-ai">Documentation</a> &middot;
   <a href="https://t.me/HTRUNECLAW_bot">Live Bot</a> &middot;
   <a href="https://t.me/+VRNgsmkR5pszZTdk">Telegram</a> &middot;

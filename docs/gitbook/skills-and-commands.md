@@ -1,155 +1,59 @@
 # Skills & Commands
 
-RUNECLAW uses a modular skill system. Every capability is registered as a self-contained skill that can be invoked by the Telegram bot or the CLI.
+RUNECLAW uses a modular skill system. Every capability is registered as a self-contained skill that can be invoked through the Telegram bot interface.
+
+**Try it live:** [@HTRUNECLAW_bot](https://t.me/HTRUNECLAW_bot)
 
 ## Telegram Commands
 
-| Command | Skill | Description |
-|---------|-------|-------------|
-| `/scan` | `scan_market` | Scan the Bitget exchange for top movers and volume spikes |
-| `/analyze <SYMBOL>` | `analyze_asset` | Run AI + technical analysis on a specific asset |
-| `/portfolio` | `get_portfolio` | Display paper portfolio summary |
-| `/trade` | -- | View pending trade ideas with confirm/reject buttons |
-| `/risk` | `check_risk` | Show risk metrics and circuit breaker status |
-| `/rejected` | -- | Show recently rejected trade ideas with failure reasons |
-| `/backtest` | -- | Run backtest with synthetic data |
-| `/macro` | `macro_calendar` | Show macro event calendar and current risk state |
-| `/halt` | -- | Emergency kill-switch (trip breaker, cancel all) |
-| `/reset` | -- | Reset circuit breaker (requires authorization) |
-| `/status` | -- | Bot mode, engine state, equity snapshot |
-| `/learn` | `ai_learning` | Show AI learning system status, recent reflections, and strategy tier grades |
-| `/patterns` | `pattern_learner` | Display detected recurring market patterns and their success rates |
-| `/proposals` | `strategy_proposals` | List strategy improvement proposals from the reflection engine |
-| `/optimize` | `token_optimizer` | Show LLM token usage stats, cache hit rates, and cost savings |
-| `/help` | -- | List all available commands |
+| Command | Description | Access |
+|---------|-------------|--------|
+| `/start` | Register with the bot, request access | Everyone |
+| `/help` | List all commands and your role | Everyone |
+| `/scan` | Scan Bitget for top movers and volume spikes | Trader+ |
+| `/analyze <SYMBOL>` | AI + technical analysis on a specific asset | Trader+ |
+| `/portfolio` | Paper portfolio summary with PnL waterfall | Trader+ |
+| `/trade` | View pending trade ideas with confirm/reject | Trader+ |
+| `/risk` | Risk metrics, circuit breaker, exposure gauges | Viewer+ |
+| `/rejected` | Recently rejected trades with failure reasons | Viewer+ |
+| `/costs` | Agent economics -- LLM costs, PnL waterfall, ROI drag | Trader+ |
+| `/backtest` | Run backtest with synthetic data | Trader+ |
+| `/macro` | Macro event calendar and current risk state | Viewer+ |
+| `/learn` | AI learning dashboard, strategy tiers, reflections | Viewer+ |
+| `/patterns` | Detected recurring market patterns | Viewer+ |
+| `/proposals` | Strategy improvement proposals from AI | Viewer+ |
+| `/optimize` | LLM token optimizer stats, cache hit rates | Viewer+ |
+| `/halt` | Emergency kill-switch (trip breaker) | Trader+ |
+| `/reset` | Reset circuit breaker after halt | Admin |
+| `/status` | Bot mode, engine state, equity snapshot | Viewer+ |
+| `/approve <ID>` | Approve a pending user | Admin |
+| `/revoke <ID>` | Revoke user access | Admin |
+| `/users` | List all registered users and roles | Admin |
 
-## Command Details
+## Role-Based Access
 
-### /scan
+| Role | Access Level |
+|------|-------------|
+| **Admin** | All commands, user management |
+| **Trader** | Trading commands, analysis, portfolio |
+| **Viewer** | Read-only access to risk, learning, status |
+| **Pending** | `/start` and `/help` only, awaiting approval |
 
-Fetches all USDT-pair tickers from Bitget, filters by volume, scores by momentum, and returns the top 5 movers.
+New users are auto-registered as **pending** when they send `/start`. Admins receive a notification and can approve with `/approve <user_id>`.
 
-**Example output:**
-```
-Top movers:
-BTC/USDT: $67,432.50 (+3.2%) SPIKE
-ETH/USDT: $3,891.20 (+2.8%)
-SOL/USDT: $178.45 (+5.1%) SPIKE
-DOGE/USDT: $0.1823 (-1.4%)
-AVAX/USDT: $42.67 (+1.9%)
-```
+## AI Chat
 
-### /analyze BTC
+Users can send free-text messages (not commands) and the bot responds as an AI trading assistant. The AI is scoped to crypto/trading context and powered by Groq LLM.
 
-Runs the full analysis pipeline on a single asset:
+## Dashboard Navigation
 
-1. Fetches current ticker data
-2. Retrieves 100 hourly candles
-3. Computes RSI, MACD, Bollinger Bands, ATR
-4. Generates a directional thesis via LLM (or rule-based fallback)
-5. Creates a `TradeIdea` with entry, SL, TP, and confidence
+The `/status` command opens an interactive dashboard with inline keyboard pane navigation:
 
-If the idea passes risk checks, it appears with inline **Confirm** / **Reject** buttons.
+- **Status** -- Mode, state, equity, circuit breaker
+- **Portfolio** -- Holdings, PnL, open positions
+- **Risk** -- Exposure gauges, drawdown, streak
+- **Costs** -- LLM spend, token usage, ROI impact
+- **Learning** -- AI modules, strategy tiers
+- **Market** -- Recent scan results
 
-**Example output:**
-```
-Trade Idea [TI-a1b2c3d4]
-LONG BTC/USDT
-Entry: $67,432.50
-SL: $66,580.00 | TP: $68,710.00
-Confidence: 72%
-R:R = 1.50
-Reasoning: RSI at 38 suggests oversold, MACD crossing bullish, volume spike detected.
-```
-
-### /portfolio
-
-Displays the current paper portfolio state.
-
-**Example output:**
-```
-Balance: $9,800.00
-Equity: $10,150.00
-Open: 2 | Total: 5
-Win Rate: 60%
-Total PnL: $150.00
-```
-
-### /trade
-
-Lists all pending trade ideas awaiting human confirmation. Each idea is displayed with:
-
-- Direction (LONG/SHORT) and asset
-- Confidence percentage
-- Risk/reward ratio
-- Inline keyboard: Confirm / Reject
-
-### /risk
-
-Shows the current risk status.
-
-**Example output:**
-```
-Equity: $10,150.00
-Daily PnL: $75.00
-Drawdown: 1.2%
-Circuit Breaker: OK
-```
-
-### /status
-
-Quick dashboard showing:
-
-- Mode: SIMULATION or LIVE
-- Engine state: SCAN, ANALYZE, TRADE, or MONITOR
-- Circuit breaker: OK or TRIPPED
-- Current equity
-- Number of open positions
-
-## Inline Keyboard (Trade Confirmation)
-
-When a trade idea is generated, the bot sends a message with two buttons:
-
-- **Confirm** -- Triggers `engine.confirm_trade(trade_id)`. Risk is re-checked. If still approved, the paper trade executes.
-- **Reject** -- Triggers `engine.reject_trade(trade_id)`. The idea is discarded and logged.
-
-## CLI Skills
-
-In CLI mode (`python -m bot.main --mode cli`), you can invoke skills directly:
-
-```
-runeclaw> scan_market
-runeclaw> analyze_asset BTC
-runeclaw> get_portfolio
-runeclaw> check_risk
-runeclaw> execute_paper_trade trade_id=TI-a1b2c3d4
-runeclaw> explain_trade trade_id=TI-a1b2c3d4
-```
-
-## Skill Registry
-
-All skills extend the `BaseSkill` abstract class:
-
-```python
-class BaseSkill(ABC):
-    name: str = "unnamed"
-    description: str = ""
-
-    @abstractmethod
-    async def execute(self, engine: RuneClawEngine, **kwargs) -> str:
-        ...
-```
-
-Built-in skills are registered automatically via `build_default_registry()`:
-
-| Skill Name | Class |
-|------------|-------|
-| `scan_market` | `ScanMarketSkill` |
-| `analyze_asset` | `AnalyzeAssetSkill` |
-| `check_risk` | `CheckRiskSkill` |
-| `execute_paper_trade` | `ExecutePaperTradeSkill` |
-| `get_portfolio` | `GetPortfolioSkill` |
-| `explain_trade` | `ExplainTradeSkill` |
-| `macro_calendar` | `MacroCalendarSkill` |
-
-Custom skills can be added by subclassing `BaseSkill` and calling `registry.register(MySkill())`.
+Navigation uses `edit_message_text` (edit-in-place) so the chat stays clean.
