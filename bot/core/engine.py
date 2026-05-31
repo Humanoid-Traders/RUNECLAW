@@ -12,15 +12,20 @@ import time
 from datetime import datetime, UTC
 from typing import Callable, Optional
 
+from pathlib import Path
+
 from bot.config import CONFIG
 from bot.core.analyzer import Analyzer
 from bot.core.cost import CostTracker
+from bot.core.macro_events import MacroEventProvider
 from bot.core.market_scanner import MarketScanner
 from bot.core.order_flow import OrderFlowAnalyzer
+from bot.compliance.compliance_engine import ComplianceEngine, Permission, default_demo_profile
 from bot.learning.orchestrator import LearningOrchestrator
 from bot.macro.calendar import MacroCalendar, build_2026_calendar
 from bot.risk.portfolio import PortfolioTracker
 from bot.risk.risk_engine import RiskEngine
+from bot.utils.audit_chain import AuditChain, DecisionRecord
 from bot.utils.logger import audit, system_log, trade_log
 from bot.utils.models import (
     AgentState,
@@ -45,7 +50,17 @@ class RuneClawEngine:
         self.analyzer = Analyzer(cost_tracker=self.cost)
         self.order_flow = OrderFlowAnalyzer()
         self.macro_calendar = MacroCalendar(events=build_2026_calendar())
-        self.risk = RiskEngine(self.portfolio, macro_calendar=self.macro_calendar)
+        self.macro_provider = MacroEventProvider(
+            seed_path=Path("config/macro_calendar.seed.json"),
+        )
+        self.risk = RiskEngine(
+            self.portfolio,
+            macro_calendar=self.macro_calendar,
+            macro_provider=self.macro_provider,
+        )
+        self.compliance = ComplianceEngine()
+        self.compliance_profile = default_demo_profile()
+        self.audit_chain = AuditChain("logs/audit_chain.jsonl")
         self.learning = LearningOrchestrator()
         # C1 fix: wire trade-close callback so portfolio closes feed risk streak tracking
         self.portfolio._on_trade_close = self.risk.record_trade_result
@@ -300,7 +315,36 @@ class RuneClawEngine:
             return f"Trade {trade_id} re-check failed (error logged): {exc}"
         if recheck.verdict == RiskVerdict.REJECTED:
             self._transition(AgentState.IDLE, f"re-check rejected {trade_id}")
+            # Seal rejection to audit chain
+            self.audit_chain.seal_decision(DecisionRecord(
+                decision_id=trade_id, symbol=idea.asset,
+                idea={"direction": idea.direction.value, "confidence": idea.confidence},
+                risk={"verdict": "REJECTED", "reason": recheck.reason},
+                outcome="REJECTED_ON_RECHECK", is_paper=not CONFIG.is_live(),
+            ))
             return f"Trade REJECTED on re-check: {recheck.reason}"
+
+        # Compliance gate: authorize before execution
+        action = Permission.LIVE_TRADE if CONFIG.is_live() else Permission.PAPER_TRADE
+        macro_ctx = self.macro_provider.get_context(symbol=idea.asset)
+        macro_ok = macro_ctx.risk_state != "BLOCK_NEW_ENTRIES"
+        compliance_decision = self.compliance.authorize(
+            action=action,
+            profile=self.compliance_profile,
+            live_mode=CONFIG.is_live(),
+            risk_passed=(recheck.verdict == RiskVerdict.APPROVED),
+            macro_ok=macro_ok,
+            notional_usd=recheck.position_size_usd,
+            trade_id=trade_id,
+        )
+        if not compliance_decision.granted:
+            self.audit_chain.append("AUTH_DENIED", {
+                "trade_id": trade_id, "asset": idea.asset,
+                "reasons": compliance_decision.reasons,
+                "locks_failed": compliance_decision.locks_failed,
+            }, actor=self.compliance_profile.subject_id)
+            self._transition(AgentState.IDLE, f"compliance denied {trade_id}")
+            return f"Execution denied: {compliance_decision.reasons[-1] if compliance_decision.reasons else 'compliance check failed'}"
 
         # H2 fix: guard is_live() — only proceed to live execution when is_live() is True
         if not CONFIG.is_live():
@@ -336,6 +380,17 @@ class RuneClawEngine:
             result="EXECUTED",
             data={"asset": trade.asset, "size": size_usd},
         )
+        # Seal decision to tamper-evident audit chain
+        self.audit_chain.seal_decision(DecisionRecord(
+            decision_id=trade_id, symbol=idea.asset,
+            idea={"direction": idea.direction.value, "confidence": idea.confidence,
+                  "entry": idea.entry_price, "sl": idea.stop_loss, "tp": idea.take_profit},
+            risk={"verdict": "APPROVED", "passed": len(recheck.checks_passed),
+                  "failed": len(recheck.checks_failed), "size_usd": size_usd},
+            macro={"risk_state": macro_ctx.risk_state, "multiplier": macro_ctx.size_multiplier},
+            compliance={"granted": True, "locks_passed": compliance_decision.locks_passed},
+            outcome="EXECUTED_PAPER", is_paper=True,
+        ))
         # Learning: log accepted trade decision
         self.learning.log_decision(
             symbol=idea.asset,

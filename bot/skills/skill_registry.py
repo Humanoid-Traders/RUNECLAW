@@ -1228,6 +1228,7 @@ class OptimizationSkill(BaseSkill):
 def build_default_registry() -> SkillRegistry:
     from bot.skills.getclaw_wrapper import register_getclaw_wrapper
     from bot.skills.quant_skill import QuantAnalyzeSkill
+    from bot.skills.macro_skills import build_v2_skills
 
     registry = SkillRegistry()
     for cls in (ScanMarketSkill, AnalyzeAssetSkill, CheckRiskSkill,
@@ -1239,4 +1240,7 @@ def build_default_registry() -> SkillRegistry:
                 ProposalsSkill, OptimizationSkill, QuantAnalyzeSkill):
         registry.register(cls())
     register_getclaw_wrapper(registry)
+    # v2 upgrade: macro intelligence, compliance, audit, kill-switch
+    for skill in build_v2_skills():
+        registry.register(skill)
     return registry

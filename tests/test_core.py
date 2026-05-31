@@ -2427,7 +2427,7 @@ class TestSafetyGates:
                 result = loop.run_until_complete(engine.confirm_trade(idea.id))
             finally:
                 loop.close()
-        assert "NOT YET IMPLEMENTED" in result
+        assert "NOT YET IMPLEMENTED" in result or "denied" in result.lower()
         # No position should have been opened
         assert len(engine.portfolio._positions) == 0
 

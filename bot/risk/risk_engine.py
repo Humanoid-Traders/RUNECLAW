@@ -35,7 +35,7 @@ import os
 import threading
 import time
 from datetime import UTC, datetime
-from typing import Optional
+from typing import Any, Optional
 
 from bot.config import CONFIG
 from bot.utils.logger import audit, risk_log
@@ -104,7 +104,8 @@ class RiskEngine:
     """
 
     def __init__(self, portfolio: "PortfolioTracker", state_file: Optional[str] = None,
-                 macro_calendar: Optional["MacroCalendar"] = None) -> None:  # noqa: F821
+                 macro_calendar: Optional["MacroCalendar"] = None,
+                 macro_provider: Optional[Any] = None) -> None:  # noqa: F821
         self._portfolio = portfolio
         self._circuit_open = False
         self._consecutive_losses = 0
@@ -116,9 +117,12 @@ class RiskEngine:
         self._lock = threading.RLock()
         self._state_file = state_file or _STATE_FILE
         self._macro_calendar = macro_calendar
+        self._macro_provider = macro_provider  # v2: enhanced macro-event provider
         # Regime-aware risk (Feature #3)
         self._current_regime: str = "UNKNOWN"
         self._current_vol_state: str = "NORMAL"
+        # v2: macro size multiplier from last evaluation
+        self._last_macro_size_multiplier: float = 1.0
         # F-01: reload persisted safety state so restarts don't clear the breaker
         self._load_state()
 
@@ -401,8 +405,25 @@ class RiskEngine:
             failed.append(f"VOLATILITY: evaluation error ({exc})")
 
         try:
-            # 18. Macro event risk state
-            if self._macro_calendar is not None:
+            # 18. Macro event risk state (v2: enhanced macro provider with size throttling)
+            macro_checked = False
+            if self._macro_provider is not None:
+                try:
+                    ctx = self._macro_provider.get_context(symbol=idea.asset)
+                    self._last_macro_size_multiplier = ctx.size_multiplier
+                    if ctx.risk_state == "BLOCK_NEW_ENTRIES":
+                        failed.append(f"MACRO_EVENT: BLOCK — {ctx.explanation}")
+                    elif ctx.risk_state == "REDUCE":
+                        passed.append(f"MACRO_EVENT: REDUCE (size×{ctx.size_multiplier}) — {ctx.explanation}")
+                        position_usd = position_usd * ctx.size_multiplier
+                    else:
+                        passed.append(f"MACRO_EVENT: CLEAR")
+                    macro_checked = True
+                except Exception as exc:
+                    failed.append(f"MACRO_EVENT: v2 provider error ({exc}) — fail-closed")
+                    macro_checked = True
+
+            if not macro_checked and self._macro_calendar is not None:
                 from bot.macro.models import MacroRiskState
                 macro_snap = self._macro_calendar.evaluate()
                 if macro_snap.state == MacroRiskState.EVENT_LOCKDOWN:
@@ -412,7 +433,7 @@ class RiskEngine:
                     failed.append("MACRO_EVENT: BLACKOUT - calendar evaluation failed (fail-closed)")
                 else:
                     passed.append(f"MACRO_EVENT: {macro_snap.state.value}")
-            else:
+            elif not macro_checked:
                 passed.append("MACRO_EVENT: no calendar configured (skipped)")
         except Exception as exc:
             failed.append(f"MACRO_EVENT: evaluation error ({exc})")

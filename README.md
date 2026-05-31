@@ -17,12 +17,12 @@
 <p align="center">
   <img src="https://img.shields.io/badge/python-3.11+-blue?logo=python&logoColor=white" alt="Python 3.11+">
   <img src="https://img.shields.io/badge/license-AGPL--3.0-blue" alt="License AGPL-3.0">
-  <img src="https://img.shields.io/badge/tests-626%20passing-brightgreen" alt="626 Tests Passing">
+  <img src="https://img.shields.io/badge/tests-814%20passing-brightgreen" alt="814 Tests Passing">
   <img src="https://img.shields.io/badge/security%20scan-passed-brightgreen" alt="Security Scan Passed">
   <img src="https://img.shields.io/badge/red%20team-100%25-brightgreen" alt="Red Team 100%">
   <img src="https://img.shields.io/badge/security%20tests-29%20passing-blueviolet" alt="29 Security Tests">
   <img src="https://img.shields.io/badge/red%20team-28%20attacks%20%7C%20100%25%20pass-critical" alt="Red Team 100% Pass">
-  <img src="https://img.shields.io/badge/risk%20checks-18%20fail--closed-red" alt="18 Risk Checks">
+  <img src="https://img.shields.io/badge/risk%20checks-20%20fail--closed-red" alt="20 Risk Checks">
   <img src="https://img.shields.io/badge/mode-paper%20trading-orange" alt="Paper Trading">
   <img src="https://img.shields.io/badge/exchange-Bitget-blue" alt="Bitget">
   <img src="https://img.shields.io/badge/bot-LIVE%20%40HTRUNECLAW__bot-26a5e4?logo=telegram" alt="Live Telegram Bot">

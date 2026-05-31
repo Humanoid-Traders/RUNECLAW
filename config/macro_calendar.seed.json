@@ -1,0 +1,147 @@
+{
+  "version": "2026-Q1Q2",
+  "generated_utc": "2026-05-31T00:00:00Z",
+  "max_stale_hours": 168,
+  "events": [
+    {
+      "type": "FOMC_DECISION",
+      "label": "FOMC Rate Decision — January 2026",
+      "scheduled_utc": "2026-01-29T18:00:00Z",
+      "severity": "CRITICAL",
+      "date_confidence": "confirmed"
+    },
+    {
+      "type": "FOMC_DECISION",
+      "label": "FOMC Rate Decision — March 2026",
+      "scheduled_utc": "2026-03-19T18:00:00Z",
+      "severity": "CRITICAL",
+      "date_confidence": "confirmed"
+    },
+    {
+      "type": "FOMC_DECISION",
+      "label": "FOMC Rate Decision — May 2026",
+      "scheduled_utc": "2026-05-07T18:00:00Z",
+      "severity": "CRITICAL",
+      "date_confidence": "confirmed"
+    },
+    {
+      "type": "FOMC_DECISION",
+      "label": "FOMC Rate Decision — June 2026",
+      "scheduled_utc": "2026-06-18T18:00:00Z",
+      "severity": "CRITICAL",
+      "date_confidence": "confirmed"
+    },
+    {
+      "type": "FOMC_DECISION",
+      "label": "FOMC Rate Decision — July 2026",
+      "scheduled_utc": "2026-07-29T18:00:00Z",
+      "severity": "CRITICAL",
+      "date_confidence": "confirmed"
+    },
+    {
+      "type": "FOMC_DECISION",
+      "label": "FOMC Rate Decision — September 2026",
+      "scheduled_utc": "2026-09-17T18:00:00Z",
+      "severity": "CRITICAL",
+      "date_confidence": "confirmed"
+    },
+    {
+      "type": "FOMC_DECISION",
+      "label": "FOMC Rate Decision — October 2026",
+      "scheduled_utc": "2026-10-28T18:00:00Z",
+      "severity": "CRITICAL",
+      "date_confidence": "confirmed"
+    },
+    {
+      "type": "FOMC_DECISION",
+      "label": "FOMC Rate Decision — December 2026",
+      "scheduled_utc": "2026-12-16T18:00:00Z",
+      "severity": "CRITICAL",
+      "date_confidence": "confirmed"
+    },
+    {
+      "type": "CPI_RELEASE",
+      "label": "CPI Report — January 2026",
+      "scheduled_utc": "2026-01-14T12:30:00Z",
+      "severity": "HIGH",
+      "date_confidence": "estimated"
+    },
+    {
+      "type": "CPI_RELEASE",
+      "label": "CPI Report — February 2026",
+      "scheduled_utc": "2026-02-12T12:30:00Z",
+      "severity": "HIGH",
+      "date_confidence": "estimated"
+    },
+    {
+      "type": "CPI_RELEASE",
+      "label": "CPI Report — March 2026",
+      "scheduled_utc": "2026-03-12T12:30:00Z",
+      "severity": "HIGH",
+      "date_confidence": "estimated"
+    },
+    {
+      "type": "CPI_RELEASE",
+      "label": "CPI Report — April 2026",
+      "scheduled_utc": "2026-04-10T12:30:00Z",
+      "severity": "HIGH",
+      "date_confidence": "estimated"
+    },
+    {
+      "type": "CPI_RELEASE",
+      "label": "CPI Report — May 2026",
+      "scheduled_utc": "2026-05-13T12:30:00Z",
+      "severity": "HIGH",
+      "date_confidence": "estimated"
+    },
+    {
+      "type": "CPI_RELEASE",
+      "label": "CPI Report — June 2026",
+      "scheduled_utc": "2026-06-10T12:30:00Z",
+      "severity": "HIGH",
+      "date_confidence": "estimated"
+    },
+    {
+      "type": "NFP_RELEASE",
+      "label": "Non-Farm Payrolls — January 2026",
+      "scheduled_utc": "2026-01-10T12:30:00Z",
+      "severity": "HIGH",
+      "date_confidence": "confirmed"
+    },
+    {
+      "type": "NFP_RELEASE",
+      "label": "Non-Farm Payrolls — February 2026",
+      "scheduled_utc": "2026-02-07T12:30:00Z",
+      "severity": "HIGH",
+      "date_confidence": "confirmed"
+    },
+    {
+      "type": "NFP_RELEASE",
+      "label": "Non-Farm Payrolls — March 2026",
+      "scheduled_utc": "2026-03-07T12:30:00Z",
+      "severity": "HIGH",
+      "date_confidence": "confirmed"
+    },
+    {
+      "type": "NFP_RELEASE",
+      "label": "Non-Farm Payrolls — April 2026",
+      "scheduled_utc": "2026-04-04T12:30:00Z",
+      "severity": "HIGH",
+      "date_confidence": "confirmed"
+    },
+    {
+      "type": "NFP_RELEASE",
+      "label": "Non-Farm Payrolls — May 2026",
+      "scheduled_utc": "2026-05-02T12:30:00Z",
+      "severity": "HIGH",
+      "date_confidence": "confirmed"
+    },
+    {
+      "type": "NFP_RELEASE",
+      "label": "Non-Farm Payrolls — June 2026",
+      "scheduled_utc": "2026-06-06T12:30:00Z",
+      "severity": "HIGH",
+      "date_confidence": "confirmed"
+    }
+  ]
+}
