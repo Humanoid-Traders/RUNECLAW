@@ -255,6 +255,8 @@ class BacktestEngine:
             # For LONG, feed bar.high to track best; for SHORT, feed bar.low
             check_price = bar.high if direction == Direction.LONG else bar.low
             sl, trailing_active = update_trailing_stop(bt_meta, check_price, sl, direction.value)
+            # Persist the tightened stop-loss so it carries to the next bar
+            pos.stop_loss = sl
 
             # Check SL: use bar low for LONG, bar high for SHORT
             if direction == Direction.LONG:
@@ -614,7 +616,7 @@ async def walk_forward_backtest(
         split_point = int(len(fold_bars) * train_ratio)
         # LB-3 FIX: Embargo gap must exclude bars from BOTH train and test
         # to prevent lookahead contamination. Previously only test was shifted.
-        embargo = min(50, len(fold_bars) // 10)
+        embargo = min(50, max(10, len(fold_bars) // 10))
         train_bars = fold_bars[:split_point - embargo]  # stop before embargo zone
         test_bars = fold_bars[split_point + embargo:]    # start after embargo zone
 

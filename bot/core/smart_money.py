@@ -148,6 +148,15 @@ class FundingSqueezeDetector:
         squeeze_type = "short_squeeze" if signal > 0.2 else "long_squeeze" if signal < -0.2 else "none"
         return round(signal, 4), squeeze_type
 
+    def prune(self, max_symbols: int = 300) -> None:
+        """Prevent unbounded memory growth for long-running bots."""
+        with self._lock:
+            if len(self._history) > max_symbols:
+                # Drop oldest symbols (first inserted)
+                excess = len(self._history) - max_symbols
+                for k in list(self._history)[:excess]:
+                    del self._history[k]
+
 
 class WhaleFlowTracker:
     """Track whale accumulation/distribution across multiple observations.

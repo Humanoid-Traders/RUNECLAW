@@ -155,9 +155,10 @@ class TradeOutcomeFeedback:
         mean_x = sum(xs) / n
         mean_y = sum(ys) / n
 
-        # Variance check
-        var_x = sum((x - mean_x) ** 2 for x in xs) / n
-        var_y = sum((y - mean_y) ** 2 for y in ys) / n
+        # Variance check (sample variance, n-1, for small samples)
+        denom = n - 1 if n > 1 else n
+        var_x = sum((x - mean_x) ** 2 for x in xs) / denom
+        var_y = sum((y - mean_y) ** 2 for y in ys) / denom
         if var_x == 0 or var_y == 0:
             return 0.0
 
