@@ -459,12 +459,20 @@ RUNECLAW is open for collaboration. If you're building for the Bitget AI Base Ca
 3. **Submit** to the hackathon with credit to RUNECLAW as your risk/analysis layer
 4. **Open a PR** back with improvements -- we'll merge strong contributions
 
-**Ideas for extension:**
-- Add new exchange connectors (OKX, Bybit, Binance)
-- Build a web dashboard with real-time charts
-- Create new analysis strategies or indicator combinations
-- Add multi-language Telegram support
-- Integrate on-chain data or sentiment feeds
+### Extension Roadmap
+
+| Extension | Description | Difficulty |
+|-----------|-------------|------------|
+| **Multi-Exchange Connectors** | Add OKX, Bybit, Binance adapters -- same risk engine, more markets | Medium |
+| **Web Dashboard** | Real-time charts, portfolio tracker, risk heatmap in browser | Medium |
+| **New Analysis Strategies** | Custom indicator combinations, ML-based pattern detection, orderbook imbalance | Easy-Hard |
+| **Multi-Language Telegram** | i18n support for bot messages (EN/ZH/ES/RU/AR) | Easy |
+| **On-Chain Data Feeds** | Integrate whale wallet tracking, DEX flows, funding rates from on-chain sources | Medium |
+| **Sentiment Feeds** | Twitter/X sentiment, Fear & Greed index, news NLP scoring | Medium |
+| **Portfolio Optimization** | Kelly criterion sizing, correlation-aware allocation, Markowitz frontier | Hard |
+| **Alerting System** | Push notifications for regime changes, anomaly detection, circuit breaker events | Easy |
+| **Backtesting UI** | Visual backtest results with equity curves, trade markers, drawdown charts | Medium |
+| **Multi-Agent Orchestration** | Expand swarm protocol -- specialist agents for different market regimes | Hard |
 
 We believe the best hackathon projects are built on strong foundations. RUNECLAW provides the risk engine and market intelligence -- you bring the alpha.
 

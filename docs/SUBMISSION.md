@@ -150,3 +150,20 @@ Validated across 500 backtest runs (synthetic data — 5 market regimes, 20 symb
 - [x] Footer disclaimer clearly states "educational prototype, not for real funds"
 - [x] README includes Security section (API key handling, LLM costs, .env practices)
 - [x] Limitations and Maturity section documents known gaps honestly
+
+---
+
+## Extension Roadmap
+
+RUNECLAW is built to be forked and extended. The risk engine and market intelligence layer are production-grade foundations for new strategies, exchanges, and interfaces.
+
+| Extension | Description |
+|-----------|-------------|
+| Multi-Exchange Connectors | Add OKX, Bybit, Binance adapters -- same risk engine, more markets |
+| Web Dashboard | Real-time charts, portfolio tracker, risk heatmap in browser |
+| New Analysis Strategies | Custom indicator combinations, ML pattern detection, orderbook imbalance |
+| Multi-Language Telegram | i18n support for bot messages (EN/ZH/ES/RU/AR) |
+| On-Chain Data Feeds | Whale wallet tracking, DEX flows, on-chain funding rates |
+| Sentiment Feeds | Twitter/X sentiment, Fear & Greed index, news NLP scoring |
+| Portfolio Optimization | Kelly criterion sizing, correlation-aware allocation |
+| Multi-Agent Orchestration | Expand swarm protocol -- specialist agents per market regime |
