@@ -175,6 +175,7 @@ class RuntimeState:
     def __init__(self) -> None:
         self._lock = __import__("threading").Lock()
         self._asset_universe: str = CONFIG.exchange.asset_universe
+        self._strategy_mode: str = "balanced"
 
     @property
     def asset_universe(self) -> str:
@@ -187,6 +188,19 @@ class RuntimeState:
             raise ValueError(f"Invalid asset universe: {value!r}")
         with self._lock:
             self._asset_universe = value
+
+    @property
+    def strategy_mode(self) -> str:
+        with self._lock:
+            return self._strategy_mode
+
+    @strategy_mode.setter
+    def strategy_mode(self, value: str) -> None:
+        valid = ("defensive", "balanced", "aggressive", "manual")
+        if value not in valid:
+            raise ValueError(f"Invalid strategy mode: {value!r}")
+        with self._lock:
+            self._strategy_mode = value
 
 
 RUNTIME = RuntimeState()

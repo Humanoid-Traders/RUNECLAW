@@ -136,12 +136,19 @@ class TelegramHandler:
 
     async def _send(self, update: Update, text: str,
                     reply_markup=None, edit: bool = False) -> None:
-        target = update.callback_query.message if edit else update.message
-        method = update.callback_query.edit_message_text if edit else update.message.reply_text
+        # Determine the right send method based on context
+        if edit and update.callback_query:
+            method = update.callback_query.edit_message_text
+        elif update.callback_query and update.callback_query.message:
+            # Callback context but not editing — reply to the callback message
+            method = update.callback_query.message.reply_text
+        elif update.message:
+            method = update.message.reply_text
+        else:
+            return  # No valid target
         try:
             await method(text, parse_mode="HTML", reply_markup=reply_markup)
         except Exception:
-            import re
             plain = re.sub(r"<[^>]+>", "", text)
             try:
                 await method(plain, parse_mode=None, reply_markup=reply_markup)
@@ -311,24 +318,24 @@ class TelegramHandler:
 
         if not user or not user.get("authorized", False):
             await self._send(update,
-                f"\U0001f512 <b>Access restricted</b>\n\n"
-                f"Your account is not linked yet.\n"
+                "\U0001f512 <b>Access restricted</b>\n\n"
+                "Your account is not linked yet.\n"
                 f"Your Telegram ID: <code>{tg_id}</code>\n\n"
-                f"Use /start to register, then wait for admin approval.")
+                "Use /start to register, then wait for admin approval.")
             return False
 
         # Role-based permission check
         if command and not self.users.has_permission(tg_id, command):
             role = user.get("role", "pending")
             await self._send(update,
-                f"\U0001f512 <b>Insufficient permissions</b>\n\n"
+                "\U0001f512 <b>Insufficient permissions</b>\n\n"
                 f"Your role (<code>{role}</code>) cannot use <code>/{command}</code>.\n"
-                f"Contact an admin for access.")
+                "Contact an admin for access.")
             return False
 
         uid = update.effective_user.id if update.effective_user else 0
         if not self._limiter.allow(uid):
-            await update.message.reply_text("\u26a0\ufe0f Rate limit. Wait a moment.")
+            await self._send(update, "\u26a0\ufe0f Rate limit. Wait a moment.")
             return False
         return True
 
@@ -763,9 +770,9 @@ class TelegramHandler:
             return
         state = self.engine.portfolio.snapshot()
         data = {
-            "daily_loss_limit": CONFIG.max_daily_drawdown_pct if hasattr(CONFIG, 'max_daily_drawdown_pct') else 3.0,
+            "daily_loss_limit": CONFIG.risk.max_daily_loss_pct,
             "current_drawdown": round(state.max_drawdown_pct, 2) if state.max_drawdown_pct else 0.0,
-            "max_open_trades": CONFIG.max_open_positions if hasattr(CONFIG, 'max_open_positions') else 3,
+            "max_open_trades": CONFIG.risk.max_open_positions,
             "open_trades": state.open_positions,
             "leverage_cap": 5,
         }
@@ -987,21 +994,20 @@ class TelegramHandler:
         if not await self._guard(update, "portfolio"):
             return
         state = self.engine.portfolio.snapshot()
-        journal = self.engine.journal
-        trades = journal.trades if hasattr(journal, 'trades') else []
+        trades = self.engine.portfolio.trade_history
         today_trades = len(trades)
-        wins = sum(1 for t in trades if getattr(t, 'pnl_pct', 0) > 0)
+        wins = sum(1 for t in trades if t.pnl > 0)
         win_rate = (wins / today_trades * 100) if today_trades > 0 else 0
         # Find best/worst pairs
         best_pair = "N/A"
         worst_pair = "N/A"
         if trades:
-            sorted_t = sorted(trades, key=lambda t: getattr(t, 'pnl_pct', 0))
-            worst_pair = getattr(sorted_t[0], 'asset', 'N/A').replace("/USDT", "")
-            best_pair = getattr(sorted_t[-1], 'asset', 'N/A').replace("/USDT", "")
+            sorted_t = sorted(trades, key=lambda t: t.pnl)
+            worst_pair = sorted_t[0].asset.replace("/USDT", "")
+            best_pair = sorted_t[-1].asset.replace("/USDT", "")
 
         data = {
-            "today_pnl": round(state.max_drawdown_pct * -1, 2) if state.max_drawdown_pct else 0.0,
+            "today_pnl": round(-state.max_drawdown_pct, 2) if state.max_drawdown_pct else 0.0,
             "week_pnl": 0.0,
             "win_rate": win_rate,
             "trades_today": today_trades,
@@ -1015,7 +1021,7 @@ class TelegramHandler:
         """Pause trading — activates circuit breaker."""
         if not await self._guard(update, "halt"):
             return
-        self.engine.risk._circuit_breaker = True
+        self.engine.risk._circuit_open = True
         rendered = wr_pause()
         await self._send(update, rendered["text"])
         audit(system_log, "Bot paused via /pause", action="pause", result="OK")
@@ -1044,22 +1050,21 @@ class TelegramHandler:
         """Daily trading report."""
         if not await self._guard(update, "journal"):
             return
-        journal = self.engine.journal
-        trades = journal.trades if hasattr(journal, 'trades') else []
+        trades = self.engine.portfolio.trade_history
         today_trades = len(trades)
-        wins = sum(1 for t in trades if getattr(t, 'pnl_pct', 0) > 0)
+        wins = sum(1 for t in trades if t.pnl > 0)
         losses = today_trades - wins
-        net_pnl = sum(getattr(t, 'pnl_pct', 0) for t in trades)
+        net_pnl = sum(t.pnl for t in trades)
         best_trade = "N/A"
         best_pnl = 0.0
         worst_trade = "N/A"
         worst_pnl = 0.0
         if trades:
-            sorted_t = sorted(trades, key=lambda t: getattr(t, 'pnl_pct', 0))
-            worst_trade = getattr(sorted_t[0], 'asset', 'N/A').replace("/USDT", "")
-            worst_pnl = round(getattr(sorted_t[0], 'pnl_pct', 0), 2)
-            best_trade = getattr(sorted_t[-1], 'asset', 'N/A').replace("/USDT", "")
-            best_pnl = round(getattr(sorted_t[-1], 'pnl_pct', 0), 2)
+            sorted_t = sorted(trades, key=lambda t: t.pnl)
+            worst_trade = sorted_t[0].asset.replace("/USDT", "")
+            worst_pnl = round(sorted_t[0].pnl, 2)
+            best_trade = sorted_t[-1].asset.replace("/USDT", "")
+            best_pnl = round(sorted_t[-1].pnl, 2)
 
         state = self.engine.portfolio.snapshot()
         dd = state.max_drawdown_pct if state.max_drawdown_pct else 0
@@ -1080,7 +1085,7 @@ class TelegramHandler:
         if not await self._guard(update, "run"):
             return
         from bot.config import RUNTIME
-        current = getattr(RUNTIME, 'strategy_mode', 'balanced')
+        current = RUNTIME.strategy_mode
         rendered = wr_strategy_mode(current)
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("\U0001f6e1 Defensive", callback_data="mode_defensive"),
@@ -1146,8 +1151,7 @@ class TelegramHandler:
         # ── Risk panel callbacks ─────────────────────────────
 
         if data == "risk_safe_mode":
-            # Reduce risk tolerance
-            self.engine.risk._circuit_breaker = False
+            # Safe mode: keep bot running but acknowledge reduced exposure
             await self._send(update,
                 "\U0001f6e1 <b>Safe Mode activated</b>\n\n"
                 "Exposure reduced. Only high-confidence signals will pass.",
@@ -1156,7 +1160,7 @@ class TelegramHandler:
             return
 
         if data == "risk_pause":
-            self.engine.risk._circuit_breaker = True
+            self.engine.risk._circuit_open = True
             rendered = wr_pause()
             await self._send(update, rendered["text"], edit=True)
             audit(system_log, "Bot paused via risk panel", action="pause", result="OK")
@@ -1172,7 +1176,7 @@ class TelegramHandler:
             return
 
         if data == "emergency_confirm":
-            self.engine.risk._circuit_breaker = True
+            self.engine.risk._circuit_open = True
             # Clear pending ideas
             self.engine.pending_ideas.clear()
             await self._send(update,
@@ -1196,8 +1200,7 @@ class TelegramHandler:
         if data.startswith("mode_"):
             mode = data.removeprefix("mode_")
             from bot.config import RUNTIME
-            if hasattr(RUNTIME, 'strategy_mode'):
-                RUNTIME.strategy_mode = mode
+            RUNTIME.strategy_mode = mode
             rendered = wr_strategy_mode(mode)
             kb = InlineKeyboardMarkup([
                 [InlineKeyboardButton("\U0001f6e1 Defensive", callback_data="mode_defensive"),
