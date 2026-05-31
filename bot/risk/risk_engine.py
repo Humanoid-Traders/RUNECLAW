@@ -66,6 +66,13 @@ _CORRELATION_GROUPS: dict[str, str] = {
     "DOGE/USDT": "MEME", "SHIB/USDT": "MEME", "PEPE/USDT": "MEME",
     "FLOKI/USDT": "MEME", "WIF/USDT": "MEME", "BONK/USDT": "MEME",
     "BRETT/USDT": "MEME", "MEME/USDT": "MEME",
+    # Solana ecosystem (non-meme) — correlated via SOL beta
+    "JUP/USDT": "SOLANA_ECO", "JTO/USDT": "SOLANA_ECO",
+    "PYTH/USDT": "SOLANA_ECO", "RAY/USDT": "SOLANA_ECO",
+    "ORCA/USDT": "SOLANA_ECO", "JITO/USDT": "SOLANA_ECO",
+    "TENSOR/USDT": "SOLANA_ECO", "DRIFT/USDT": "SOLANA_ECO",
+    "HNT/USDT": "SOLANA_ECO", "MOBILE/USDT": "SOLANA_ECO",
+    "W/USDT": "SOLANA_ECO",
     # DeFi blue chips
     "UNI/USDT": "DEFI", "AAVE/USDT": "DEFI", "LINK/USDT": "DEFI",
     "MKR/USDT": "DEFI", "SNX/USDT": "DEFI", "CRV/USDT": "DEFI",
@@ -375,17 +382,23 @@ class RiskEngine:
 
         try:
             # 16. Volatility guard (fail-closed: ATR required and must be > 0)
+            # Meme coins get a tighter threshold (4% vs 6% default)
+            symbol = getattr(idea, "asset", "") or ""
+            meme_group = _CORRELATION_GROUPS.get(f"{symbol}/USDT" if "/" not in symbol else symbol)
+            is_meme = meme_group == "MEME"
+            vol_threshold = min(CONFIG.risk.volatility_guard_atr_pct, 4.0) if is_meme else CONFIG.risk.volatility_guard_atr_pct
+
             if atr is None:
                 failed.append("VOLATILITY: ATR data unavailable (fail-closed)")
             elif atr <= 0:
-                # ATR of 0 means bad/missing data — treat as fail-closed
                 failed.append(f"VOLATILITY: ATR={atr} is zero or negative — bad data (fail-closed)")
             elif idea.entry_price > 0:
                 atr_pct = (atr / idea.entry_price) * 100
-                if atr_pct > CONFIG.risk.volatility_guard_atr_pct:
-                    failed.append(f"VOLATILITY: ATR {atr_pct:.2f}% > {CONFIG.risk.volatility_guard_atr_pct}% guard")
+                tag = " (meme-coin limit)" if is_meme else ""
+                if atr_pct > vol_threshold:
+                    failed.append(f"VOLATILITY: ATR {atr_pct:.2f}% > {vol_threshold}% guard{tag}")
                 else:
-                    passed.append(f"VOLATILITY: ATR {atr_pct:.2f}% OK")
+                    passed.append(f"VOLATILITY: ATR {atr_pct:.2f}% OK{tag}")
             else:
                 failed.append("VOLATILITY: invalid entry price")
         except Exception as exc:

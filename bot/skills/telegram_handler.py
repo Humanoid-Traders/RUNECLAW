@@ -84,6 +84,7 @@ class TelegramHandler:
             ("run", self._cmd_run), ("learn", self._cmd_learn),
             ("patterns", self._cmd_patterns), ("proposals", self._cmd_proposals),
             ("optimize", self._cmd_optimize), ("help", self._cmd_help),
+            ("mode", self._cmd_mode),
             # Admin commands
             ("approve", self._cmd_approve), ("revoke", self._cmd_revoke),
             ("users", self._cmd_users),
@@ -538,6 +539,55 @@ class TelegramHandler:
             lines.append(f"\n<i>Showing last 15 of {len(all_users)}</i>")
 
         await self._send(update, "\n".join(lines))
+
+    # ── Mode switching ────────────────────────────────────────
+
+    async def _cmd_mode(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """Switch asset universe: /mode solana | /mode all"""
+        if not await self._guard(update, "mode"):
+            return
+
+        args = (update.message.text or "").split()
+        valid_modes = {"all", "solana"}
+
+        if len(args) < 2 or args[1].lower() not in valid_modes:
+            current = CONFIG.exchange.asset_universe
+            icon = "\u2600\ufe0f" if current == "solana" else "\U0001f30d"
+            lines = [
+                f"\U0001f504 <b>ASSET UNIVERSE</b>\n",
+                f"Current: {icon} <b>{current.upper()}</b>\n",
+                "Usage:",
+                "  <code>/mode solana</code> \u2014 15 Solana ecosystem tokens",
+                "  <code>/mode all</code> \u2014 all Bitget USDT pairs",
+            ]
+            if current == "solana":
+                from bot.config import SOLANA_ECOSYSTEM_SYMBOLS
+                tokens = ", ".join(s.replace("/USDT", "") for s in SOLANA_ECOSYSTEM_SYMBOLS)
+                lines.append(f"\nTokens: <i>{tokens}</i>")
+            await self._send(update, "\n".join(lines))
+            return
+
+        new_mode = args[1].lower()
+        # Config is frozen dataclass — mutate the underlying attribute
+        object.__setattr__(CONFIG.exchange, "asset_universe", new_mode)
+
+        if new_mode == "solana":
+            from bot.config import SOLANA_ECOSYSTEM_SYMBOLS
+            tokens = ", ".join(s.replace("/USDT", "") for s in SOLANA_ECOSYSTEM_SYMBOLS)
+            await self._send(update, (
+                "\u2600\ufe0f <b>SOLANA MODE ACTIVE</b>\n\n"
+                f"Scanner now prioritizes {len(SOLANA_ECOSYSTEM_SYMBOLS)} Solana ecosystem tokens:\n"
+                f"<i>{tokens}</i>\n\n"
+                "All 18 risk checks still apply. Meme tokens (BONK, WIF) "
+                "use tighter volatility and correlation limits.\n\n"
+                "Use <code>/mode all</code> to switch back."
+            ))
+        else:
+            await self._send(update, (
+                "\U0001f30d <b>ALL MARKETS MODE</b>\n\n"
+                "Scanner now covers all Bitget USDT pairs.\n"
+                "Use <code>/mode solana</code> to focus on Solana ecosystem."
+            ))
 
     # ── Admin notification helper ─────────────────────────────
 

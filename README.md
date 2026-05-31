@@ -81,7 +81,14 @@ RUNECLAW supports any OpenAI-compatible LLM provider via `LLM_BASE_URL`:
 - **Local (vLLM/Ollama)** -- self-hosted for zero API cost
 
 ### Solana Ecosystem Mode (NEW)
-Set `ASSET_UNIVERSE=solana` to prioritize 15 Solana ecosystem tokens (SOL, JUP, JTO, BONK, WIF, PYTH, RAY, ORCA, RENDER, HNT, MOBILE, W, JITO, TENSOR, DRIFT) in scan results. All tokens trade on Bitget with full USDT pair support.
+Set `ASSET_UNIVERSE=solana` in `.env` or use `/mode solana` in the Telegram bot to prioritize 15 Solana ecosystem tokens. All tokens trade on Bitget with full USDT pair support.
+
+**Tokens:** SOL, JUP, JTO, BONK, WIF, PYTH, RAY, ORCA, RENDER, HNT, MOBILE, W, JITO, TENSOR, DRIFT
+
+**Solana-specific risk tweaks:**
+- **Meme-coin volatility guard**: BONK and WIF use a tighter 4% ATR threshold (vs 6% default) to prevent entries during extreme volatility spikes
+- **Ecosystem correlation group**: Non-meme Solana tokens (JUP, JTO, PYTH, RAY, etc.) are grouped as `SOLANA_ECO` -- the risk engine limits concentrated bets across correlated assets
+- **Live mode switching**: `/mode solana` and `/mode all` switch scanner focus without restart
 
 ### Red Team Stress Tester (NEW)
 An adversarial engine that attacks the risk engine with 28 scenarios across 10 categories:
@@ -274,6 +281,8 @@ python -m bot.main --mode scan
 | `/patterns` | View detected market patterns |
 | `/proposals` | View pending improvement proposals |
 | `/optimize` | LLM token optimization stats |
+| `/mode solana` | Switch to Solana ecosystem mode (15 tokens) |
+| `/mode all` | Switch back to all Bitget markets |
 | `/help` | List all available commands |
 
 Trade confirmation uses Telegram inline keyboards -- tap **Confirm** or **Reject** directly in the chat.

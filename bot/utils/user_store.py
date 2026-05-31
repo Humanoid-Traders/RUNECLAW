@@ -22,7 +22,7 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         "start", "help", "dashboard", "scan", "analyze", "portfolio",
         "trade", "risk", "status", "rejected", "halt", "reset", "macro",
         "backtest", "walkforward", "journal", "costs", "run", "learn",
-        "patterns", "proposals", "optimize",
+        "patterns", "proposals", "optimize", "mode",
     },
     "viewer": {
         "start", "help", "dashboard", "scan", "status", "risk",
