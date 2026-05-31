@@ -823,13 +823,70 @@ class RunStrategySkill(BaseSkill):
 
 class LearningDashboardSkill(BaseSkill):
     name = "learning"
-    description = "AI learning dashboard"
+    description = "AI learning dashboard (/learn)"
+
+    # The 8 core learning modules: (store_key, display_name, description)
+    _MODULES: list[tuple[str, str, str]] = [
+        ("patterns",          "PatternMemory",            "Candle pattern recognition"),
+        ("regime",            "RegimeAdaptation",         "Market regime learning"),
+        ("indicator_weights", "IndicatorWeightEvolution",  "Indicator weight optimization"),
+        ("feedback",          "FeedbackLoop",             "Trade outcome learning"),
+        ("volatility",        "VolatilityProfiler",       "Volatility regime modeling"),
+        ("correlations",      "CorrelationTracker",       "Cross-asset correlation"),
+        ("drawdown",          "DrawdownRecovery",         "Recovery pattern learning"),
+        ("timing",            "TimingOptimizer",          "Entry/exit timing"),
+    ]
+
+    @staticmethod
+    def _health_score(obs: int) -> float:
+        """Map observation count to 0-100 health %.
+
+        Tiers: 0->0%, 10->25%, 50->50%, 200->75%, 500+->100%.
+        """
+        tiers = [(0, 0.0), (10, 25.0), (50, 50.0), (200, 75.0), (500, 100.0)]
+        if obs >= tiers[-1][0]:
+            return 100.0
+        for i in range(len(tiers) - 1):
+            lo_obs, lo_pct = tiers[i]
+            hi_obs, hi_pct = tiers[i + 1]
+            if obs < hi_obs:
+                ratio = (obs - lo_obs) / (hi_obs - lo_obs)
+                return lo_pct + ratio * (hi_pct - lo_pct)
+        return 100.0
+
+    @staticmethod
+    def _module_status(health: float) -> tuple[str, str]:
+        """Return (coloured dot, label) for a health percentage."""
+        if health >= 50:
+            return _OK, "ACTIVE"
+        if health > 0:
+            return _WARN, "DEGRADED"
+        return _BAD, "OFFLINE"
+
+    @staticmethod
+    def _fmt_ts(ts: str | float | None) -> str:
+        """Short human-readable timestamp."""
+        if ts is None:
+            return "never"
+        try:
+            if isinstance(ts, (int, float)):
+                dt = datetime.fromtimestamp(ts, tz=UTC)
+            else:
+                dt = datetime.fromisoformat(str(ts))
+            return dt.strftime("%d %b %H:%M")
+        except Exception:
+            return "n/a"
 
     async def execute(self, engine: RuneClawEngine, **kwargs: Any) -> str:
         dash = engine.learning.dashboard()
         score = dash["learning_score"]
-        stats = dash["store_stats"]
-        tier_icons = {"S": "\U0001f451", "A": "\U0001f31f", "B": "\u2b50", "C": _NEU, "D": _BAD}
+        stats = dash.get("store_stats", {})
+        module_details = dash.get("module_details", {})
+
+        tier_icons = {
+            "S": "\U0001f451", "A": "\U0001f31f",
+            "B": "\u2b50", "C": _NEU, "D": _BAD,
+        }
         t = tier_icons.get(score["tier"], _NEU)
 
         lines = [
@@ -837,29 +894,45 @@ class LearningDashboardSkill(BaseSkill):
             f"  {t} Score: <code>{score['composite_score']}/10</code>  [{score['tier']}]\n",
         ]
 
-        # Per-module health status
+        # ── Real-time module health ──────────────────────────
         lines.append("\U0001f4e6 <b>Module Health</b>")
         lines.append("<pre>")
-        module_names = [
-            ("decisions", "Experience Memory"),
-            ("reflections", "Reflection Engine"),
-            ("strategies", "Strategy Evaluator"),
-            ("patterns", "Pattern Learner"),
-            ("macro_events", "Macro Learner"),
-            ("model_comparisons", "Model Comparer"),
-            ("prompt_versions", "Prompt Optimizer"),
-            ("feedback", "Feedback Collector"),
-        ]
-        for key, label in module_names:
-            count = stats.get(key, 0)
-            if count > 0:
-                icon = "\u2705"
-            else:
-                icon = "\u26aa"
-            lines.append(f"  {icon} {label:<20s} {count:>4} records")
+
+        health_scores: list[float] = []
+
+        for key, mod_name, _desc in self._MODULES:
+            detail = module_details.get(key, {})
+            obs = detail.get("observations", stats.get(key, 0))
+            last_upd = detail.get("last_update")
+            health = self._health_score(obs)
+            health_scores.append(health)
+            dot, status_label = self._module_status(health)
+            bar = _bar(health, 100.0, 8)
+
+            lines.append(
+                f"  {dot} {mod_name:<25s} {status_label:<8s}"
+            )
+            lines.append(
+                f"     [{bar}] {health:5.1f}%  "
+                f"{obs:>5} obs  upd {self._fmt_ts(last_upd)}"
+            )
+
         lines.append("</pre>\n")
 
-        # Data stores
+        # ── Composite Learning Score ─────────────────────────
+        composite = (
+            sum(health_scores) / len(health_scores) if health_scores else 0.0
+        )
+        comp_dot, comp_label = self._module_status(composite)
+        comp_bar = _bar(composite, 100.0, 12)
+        lines.append("\U0001f4ca <b>Learning Score</b>")
+        lines.append("<pre>")
+        lines.append(
+            f"  {comp_dot} [{comp_bar}] {composite:5.1f}%  {comp_label}"
+        )
+        lines.append("</pre>\n")
+
+        # ── Data summary ─────────────────────────────────────
         lines.append(f"\U0001f4be <b>Data Summary</b>")
         lines.append("<pre>")
         total = sum(stats.values())
@@ -868,7 +941,7 @@ class LearningDashboardSkill(BaseSkill):
         lines.append(_row("Feedback entries", str(score.get('feedback_total', 0))))
         lines.append("</pre>\n")
 
-        # Proposals
+        # ── Proposals ────────────────────────────────────────
         lines.extend([
             f"\U0001f4cb <b>Proposals</b>",
             "<pre>",
@@ -877,6 +950,7 @@ class LearningDashboardSkill(BaseSkill):
             "</pre>",
         ])
 
+        # ── Strategy rankings ────────────────────────────────
         if dash.get("strategy_rankings"):
             lines.append(f"\n\U0001f3af <b>Strategy Rankings</b>")
             for s in dash["strategy_rankings"][:5]:
@@ -886,20 +960,23 @@ class LearningDashboardSkill(BaseSkill):
                     f"WR={s['win_rate']}  ({s['trades']}t){of}"
                 )
 
-        # Prompt versions
+        # ── Prompt versions ──────────────────────────────────
         pv = dash.get("prompt_versions", {})
         if pv and pv.get("versions"):
             lines.append(f"\n\U0001f4dd <b>Prompt Versions</b>")
             lines.append(f"  Active: v{pv.get('current_version', '?')}  "
                          f"({pv.get('total_versions', 0)} versions tracked)")
 
-        # Model accuracy
+        # ── Model accuracy ───────────────────────────────────
         ma = dash.get("model_accuracy", {})
         if ma and ma.get("agreement_rate") is not None:
             rate = ma["agreement_rate"]
             lines.append(f"\n\U0001f916 <b>Model Agreement</b>: {rate:.0%}")
 
-        lines.append(f"\n\U0001f512 <i>Safety sandbox active \u2014 AI learns aggressively, never overrides risk</i>")
+        lines.append(
+            f"\n\U0001f512 <i>Safety sandbox active"
+            f" \u2014 AI learns aggressively, never overrides risk</i>"
+        )
         return "\n".join(lines)
 
 
@@ -1016,6 +1093,7 @@ class OptimizationSkill(BaseSkill):
 # ══════════════════════════════════════════════════════════════
 
 def build_default_registry() -> SkillRegistry:
+    from bot.skills.getclaw_wrapper import register_getclaw_wrapper
     from bot.skills.quant_skill import QuantAnalyzeSkill
 
     registry = SkillRegistry()
@@ -1027,4 +1105,5 @@ def build_default_registry() -> SkillRegistry:
                 LearningDashboardSkill, FeedbackSkill, PatternsSkill,
                 ProposalsSkill, OptimizationSkill, QuantAnalyzeSkill):
         registry.register(cls())
+    register_getclaw_wrapper(registry)
     return registry
