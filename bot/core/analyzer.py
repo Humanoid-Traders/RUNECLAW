@@ -56,9 +56,10 @@ class Analyzer:
       - Async rate limiting to stay within provider RPM limits
     """
 
-    # Model routing: cheap model for quick analysis, full model for thesis
-    SCAN_MODEL = "gpt-4o-mini"     # ~17x cheaper input, ~17x cheaper output
-    THESIS_MODEL = "gpt-4o"        # full reasoning for trade ideas
+    # Model routing: use configured model, or fall back to defaults
+    # When using non-OpenAI providers (Groq, Qwen, etc.), both tiers use the same model
+    SCAN_MODEL = "gpt-4o-mini"     # overridden by CONFIG.llm.model if set
+    THESIS_MODEL = "gpt-4o"        # overridden by CONFIG.llm.model if set
 
     def __init__(self, cost_tracker: Optional["CostTracker"] = None) -> None:  # noqa: F821
         # Build LLM client — supports any OpenAI-compatible provider (Qwen, OpenRouter, etc.)
@@ -69,6 +70,12 @@ class Analyzer:
             self._llm = AsyncOpenAI(**llm_kwargs)
         else:
             self._llm = None
+
+        # When a custom base_url is set (Groq, Qwen, etc.), use the configured model
+        # for both tiers instead of OpenAI-specific model names
+        if CONFIG.llm.base_url and CONFIG.llm.model:
+            self.SCAN_MODEL = CONFIG.llm.model
+            self.THESIS_MODEL = CONFIG.llm.model
         self._llm_calls_today: int = 0
         self._llm_day: str = ""  # YYYY-MM-DD, reset counter on new day
         self._cost = cost_tracker
@@ -745,16 +752,26 @@ class Analyzer:
             # Rate-limit before calling to prevent 429s
             await self._rate_limiter.acquire()
 
+            # System prompt must mention "json" when using json_object response_format
+            # (required by Groq and some other providers)
+            use_json_format = not use_full_model
+            sys_content = (
+                "You are RUNECLAW, a risk-first crypto analyst. "
+                "Return concise analysis in json format with keys: direction, confidence, reasoning."
+                if use_json_format else
+                "You are RUNECLAW, a risk-first crypto analyst. Return concise analysis."
+            )
+
             resp = await asyncio.wait_for(
                 self._llm.chat.completions.create(
                     model=model,
                     messages=[
-                        {"role": "system", "content": "You are RUNECLAW, a risk-first crypto analyst. Return concise analysis."},
+                        {"role": "system", "content": sys_content},
                         {"role": "user", "content": prompt},
                     ],
                     temperature=CONFIG.llm.temperature,
                     max_tokens=max_tokens,
-                    response_format={"type": "json_object"} if not use_full_model else None,
+                    response_format={"type": "json_object"} if use_json_format else None,
                 ),
                 timeout=CONFIG.llm.timeout_seconds,
             )
@@ -841,7 +858,7 @@ class Analyzer:
             )
 
         parts.append(
-            "Respond: DIRECTION: LONG or SHORT | CONFIDENCE: 0.0-1.0 | REASONING: one paragraph"
+            'Respond in json: {"direction": "LONG or SHORT", "confidence": 0.0-1.0, "reasoning": "one paragraph"}'
         )
 
         prompt = "\n".join(parts)

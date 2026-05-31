@@ -2277,7 +2277,7 @@ class TestLLMOptimizations:
         assert len(prompt) <= 4000
         assert "BTC/USDT" in prompt
         assert "RSI=45" in prompt
-        assert "Respond:" in prompt  # output format instruction present
+        assert "Respond in json:" in prompt  # output format instruction present
 
     def test_build_prompt_with_order_flow(self):
         """Order flow context should be appended when available."""
