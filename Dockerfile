@@ -16,8 +16,8 @@ COPY tests/ /app/tests/
 # Copy optional scripts (may not exist in all builds)
 COPY backtest_audit.p[y] /app/
 
-# Create logs directory
-RUN mkdir -p /app/logs
+# Create logs and data directories
+RUN mkdir -p /app/logs /app/data
 
 # Non-root user for security
 RUN useradd --create-home appuser && chown -R appuser:appuser /app

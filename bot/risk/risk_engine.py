@@ -374,9 +374,12 @@ class RiskEngine:
             failed.append(f"SYMBOL_EXPOSURE: evaluation error ({exc})")
 
         try:
-            # 16. Volatility guard (fail-closed: ATR required)
+            # 16. Volatility guard (fail-closed: ATR required and must be > 0)
             if atr is None:
                 failed.append("VOLATILITY: ATR data unavailable (fail-closed)")
+            elif atr <= 0:
+                # ATR of 0 means bad/missing data — treat as fail-closed
+                failed.append(f"VOLATILITY: ATR={atr} is zero or negative — bad data (fail-closed)")
             elif idea.entry_price > 0:
                 atr_pct = (atr / idea.entry_price) * 100
                 if atr_pct > CONFIG.risk.volatility_guard_atr_pct:

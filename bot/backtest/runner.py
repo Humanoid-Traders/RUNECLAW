@@ -205,6 +205,7 @@ async def _run_backtest(args: argparse.Namespace) -> None:
     print(f"  Running backtest...")
     engine = BacktestEngine(config)
     result = await engine.run(bars)
+    engine.cleanup()  # remove temp state dir
 
     # Display results
     print(_format_result_summary(result))

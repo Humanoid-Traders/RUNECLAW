@@ -1,0 +1,53 @@
+{
+  "name": "RUNECLAW",
+  "version": "1.0.0",
+  "description": "Simulation-first AI trading agent with 18 fail-closed risk checks, explainable trade theses, and full audit logging. Built for the Bitget ecosystem.",
+  "author": "Humanoid Traders",
+  "license": "AGPL-3.0",
+  "repository": "https://github.com/Humanoid-Traders/RUNECLAW-AI-TRADER",
+  "documentation": "https://humanoid-traders-1.gitbook.io/humanoid-traders-ai",
+  "mode": "simulation",
+  "capabilities": [
+    "market_scan",
+    "ai_analysis",
+    "risk_management",
+    "paper_trading",
+    "backtesting",
+    "audit_logging",
+    "macro_awareness",
+    "solana_ecosystem",
+    "red_team_stress_test",
+    "black_swan_detection",
+    "sentiment_fusion",
+    "multi_agent_swarm"
+  ],
+  "mcp_tools": [
+    "runeclaw_scan",
+    "runeclaw_analyze",
+    "runeclaw_risk",
+    "runeclaw_portfolio",
+    "runeclaw_explain",
+    "runeclaw_macro",
+    "runeclaw_backtest"
+  ],
+  "exchange": "bitget",
+  "default_mode": "paper_trading",
+  "live_trading": false,
+  "requires_confirmation": true,
+  "asset_universes": ["all_usdt", "solana_ecosystem"],
+  "supported_interfaces": ["telegram", "cli", "mcp"],
+  "safety": {
+    "fail_closed_risk_engine": true,
+    "human_in_the_loop": true,
+    "circuit_breaker": true,
+    "dual_flag_live_gate": true,
+    "audit_trail": "structured_jsonl",
+    "red_team_validated": true,
+    "black_swan_detector": true
+  },
+  "hackathon": {
+    "name": "Bitget AI Base Camp S1",
+    "tracks": ["Track 1 - Trading Agent", "Track 2 - Trading Infra"],
+    "submission_url": "https://github.com/Humanoid-Traders/RUNECLAW-AI-TRADER"
+  }
+}

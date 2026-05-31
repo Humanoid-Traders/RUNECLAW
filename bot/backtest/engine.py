@@ -79,6 +79,18 @@ class BacktestEngine:
         # Open position tracking with backtest metadata
         self._open_bt_positions: dict[str, dict] = {}
 
+    def cleanup(self) -> None:
+        """Explicitly remove the temp state directory. Call after backtest completes."""
+        import shutil
+        try:
+            shutil.rmtree(self._bt_state_dir, ignore_errors=True)
+        except Exception:
+            pass
+
+    def __del__(self) -> None:
+        """Best-effort cleanup on GC. Prefer calling cleanup() explicitly."""
+        self.cleanup()
+
     async def run(self, bars: list[BacktestBar]) -> BacktestResult:
         """
         Execute a full backtest over the provided bar series.

@@ -74,6 +74,29 @@ RUNECLAW supports any OpenAI-compatible LLM provider via `LLM_BASE_URL`:
 ### Solana Ecosystem Mode (NEW)
 Set `ASSET_UNIVERSE=solana` to prioritize 15 Solana ecosystem tokens (SOL, JUP, JTO, BONK, WIF, PYTH, RAY, ORCA, RENDER, HNT, MOBILE, W, JITO, TENSOR, DRIFT) in scan results. All tokens trade on Bitget with full USDT pair support.
 
+### Red Team Stress Tester (NEW)
+An adversarial engine that attacks the risk engine with 28 scenarios across 10 categories:
+flash crashes, liquidity drains, correlated selloffs, stale data injection, confidence manipulation,
+R:R gaming, circuit breaker evasion, zero/negative values, direction inversion, and max position flooding.
+Verifies 100% pass rate -- every adversarial scenario correctly caught or approved. Includes ATR=0 bad-data test.
+
+### Black Swan Detector (NEW)
+Statistical anomaly detection that pre-empts the circuit breaker. Monitors 5 anomaly types:
+correlation breakdown, volume collapse, price acceleration (flash crash), volatility explosion (ATR spike),
+and bid-ask spread widening. Triggers pre-emptive halts BEFORE the circuit breaker's 5% daily loss threshold fires.
+
+### Sentiment Fusion Engine (NEW)
+Real-time sentiment as the 11th confluence voter. Combines:
+- **Fear & Greed Index** (0-100) from price momentum (40%), volume trend (30%), volatility (30%)
+- **Contrarian logic**: extreme fear -> bullish vote [+0.3, +0.6], extreme greed -> bearish vote [-0.6, -0.3]
+- **Funding-rate contrarian**: extreme positive funding adds bearish offset, extreme negative adds bullish
+
+### Multi-Agent Swarm Protocol (NEW)
+Composable agent collaboration via MCP-compatible architecture. Five specialized agents:
+Scanner (perceives market), Analyst (generates theses), Risk (gates every trade), Executor (manages positions),
+Sentinel (monitors for black swans). Communication via SwarmBus pub/sub, with Sentinel broadcasting HALT
+to all agents when severity >= 0.8. Ready for production deployment as separate Agent Hub agents.
+
 ---
 
 ## Architecture
@@ -263,6 +286,10 @@ runeclaw/
 |   |   |-- smart_money.py      # Liquidation cascade, funding squeeze, whale tracking
 |   |   |-- multi_timeframe.py  # HTF alignment, market structure, BOS/CHoCH
 |   |   |-- strategy_modes.py   # 5 adaptive strategy modes with per-mode configs
+|   |   |-- red_team.py         # 27-scenario adversarial stress tester
+|   |   |-- black_swan.py       # Statistical anomaly detection (5 anomaly types)
+|   |   |-- sentiment.py        # Sentiment fusion engine (11th confluence voter)
+|   |   |-- swarm.py            # Multi-agent swarm protocol (MCP-compatible)
 |   |   |-- explainability.py   # Reasoning chains, factor attribution, compliance
 |   |   |-- ta_utils.py         # Shared TA utilities (EMA, ADX, Regime)
 |   |   |-- metrics.py          # Sharpe/Sortino/Calmar from per-trade returns
@@ -303,7 +330,7 @@ runeclaw/
 |   |   |-- skill_definitions.yaml
 |   |-- requirements.txt
 |-- tests/
-|   |-- test_core.py            # 289+ pytest tests
+|   |-- test_core.py            # 339 pytest tests
 |   |-- test_token_optimizer.py # 36 token optimizer tests
 |-- docs/
 |   |-- gitbook/                # Full GitBook documentation

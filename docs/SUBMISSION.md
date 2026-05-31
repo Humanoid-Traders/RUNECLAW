@@ -29,7 +29,7 @@ The agent operates as a 9-state finite state machine with complete audit logging
 
 Key capabilities: ADX-14 regime detection (trend/range/chop) with adaptive strategy parameters, trailing stops activated at 1R profit, per-symbol and portfolio-level exposure limits, circuit breaker with cooldown enforcement, and a backtesting engine with intrabar SL/TP simulation and realistic commission/slippage modeling.
 
-Validated across 500 backtest runs (synthetic data — 5 market regimes, 20 symbols, 5 seeds), producing 889 trades (485 valid, 15 errors) with worst-case drawdown of 3.87%, best run +8.06%, avg return -0.46%, and zero crashed runs. 289+ unit tests cover risk engine, portfolio, analyzer, backtest, smart money, multi-timeframe, strategy modes, explainability, learning system, token optimizer, FSM, and integration scenarios.
+Validated across 500 backtest runs (synthetic data — 5 market regimes, 20 symbols, 5 seeds), producing 889 trades (485 valid, 15 errors) with worst-case drawdown of 3.87%, best run +8.06%, avg return -0.46%, and zero crashed runs. 339 unit tests cover risk engine, portfolio, analyzer, backtest, smart money, multi-timeframe, strategy modes, explainability, learning system, token optimizer, FSM, integration scenarios, red team adversarial stress testing, black swan anomaly detection, sentiment fusion, and multi-agent swarm protocol.
 
 ---
 
@@ -46,7 +46,7 @@ Validated across 500 backtest runs (synthetic data — 5 market regimes, 20 symb
 - **Human-in-the-Loop** -- every trade requires Telegram confirmation with inline approve/reject keyboard
 - **Simulation-First** -- paper trading by default ($10K virtual balance), live trading requires dual safety flag opt-in
 - **Full Audit Trail** -- structured JSON logging of every decision, rejection, and execution with timestamps
-- **289+ Unit Tests** -- risk engine, portfolio, analyzer, backtest, learning system (8 modules), token optimizer (4 layers), smart money engine, multi-timeframe analysis, strategy modes, explainability engine, FSM, integration, edge cases, audit fix validation, Qwen integration, Solana ecosystem (301 total)
+- **289+ Unit Tests** -- risk engine, portfolio, analyzer, backtest, learning system (8 modules), token optimizer (4 layers), smart money engine, multi-timeframe analysis, strategy modes, explainability engine, FSM, integration, edge cases, audit fix validation, Qwen integration, Solana ecosystem, red team, black swan, sentiment, swarm (339 total)
 - **AI Learning System** -- 8 integrated modules: experience memory, reflection engine, strategy evaluator (S/A/B/C/D tiers), pattern learner, macro learner (FOMC/CPI/NFP/PCE tracking), model comparer, prompt optimizer, feedback collector; all governed by immutable safety policy with blocked-action lists
 - **LLM Token Optimizer** -- 4-layer cost reduction: semantic cache (TTL-bucketed), tiered pipeline (rules/mini/full), smart batching (5 symbols/call), adaptive frequency (skip LLM in quiet markets); up to 70% token savings
 - **Smart Money Engine** -- liquidation cascade detection (funding + OI + CVD divergence), funding rate squeeze (contrarian positioning), whale flow tracking (rolling buy/sell with stealth accumulation detection), composite scoring normalized [-1,1]
@@ -56,6 +56,10 @@ Validated across 500 backtest runs (synthetic data — 5 market regimes, 20 symb
 - **Macro Event Calendar** -- hardcoded 2026 FOMC/CPI/NFP/PCE schedule with 5-state risk machine (NORMAL, PRE_EVENT_CAUTION, EVENT_LOCKDOWN, POST_EVENT_VOLATILITY, BLACKOUT)
 - **Multi-Provider LLM (Qwen-Ready)** -- any OpenAI-compatible provider via LLM_BASE_URL: Alibaba Qwen (DashScope), OpenRouter, Together AI, Fireworks, local vLLM/Ollama; drop-in Qwen integration for Hackathon S1 partner alignment
 - **Solana Ecosystem Mode** -- ASSET_UNIVERSE=solana prioritizes 15 Solana tokens (SOL, JUP, JTO, BONK, WIF, PYTH, RAY, ORCA, RENDER, HNT, MOBILE, W, JITO, TENSOR, DRIFT) in scanner output; all tradeable on Bitget with full risk engine coverage
+- **Red Team Stress Tester** -- 28 adversarial scenarios across 10 attack categories (flash crash, liquidity drain, correlated selloff, stale data, confidence manipulation, R:R gaming, circuit breaker evasion, zero/negative values, direction inversion, position flood); 100% pass rate verified
+- **Black Swan Detector** -- statistical anomaly detection pre-empting circuit breaker; 5 anomaly types (correlation breakdown, volume collapse, price acceleration, volatility explosion, spread widening); triggers halt before 5% daily loss threshold
+- **Sentiment Fusion Engine** -- 11th confluence voter; fear/greed index from momentum (40%), volume (30%), volatility (30%); contrarian logic at crowd extremes; funding-rate contrarian signals
+- **Multi-Agent Swarm Protocol** -- 5 specialized agents (Scanner, Analyst, Risk, Executor, Sentinel) communicating via SwarmBus pub/sub; MCP-compatible architecture; Sentinel broadcasts HALT on severity >= 0.8
 
 ---
 
@@ -84,6 +88,10 @@ Validated across 500 backtest runs (synthetic data — 5 market regimes, 20 symb
 | Concurrency | RLock guards on shared mutable state (portfolio, risk engine, scanner); single-threaded asyncio means contention is minimal, but locks protect against any future threading |
 | LLM Providers | Multi-provider via LLM_BASE_URL: OpenAI (default), Alibaba Qwen (DashScope), OpenRouter, Together AI, Fireworks, local vLLM/Ollama. Drop-in swap, zero code changes |
 | Solana Ecosystem | 15 Solana tokens tracked (SOL, JUP, JTO, BONK, WIF, PYTH, RAY, ORCA, RENDER, HNT, MOBILE, W, JITO, TENSOR, DRIFT); ASSET_UNIVERSE=solana prioritizes in scanner |
+| Red Team Engine | 28 adversarial scenarios across 10 attack categories; attacks the real risk engine; 100% pass rate verified |
+| Black Swan Detector | 5 statistical anomaly checks (correlation breakdown, volume collapse, price acceleration, ATR explosion, spread widening); pre-empts circuit breaker |
+| Sentiment Engine | 11th confluence voter; fear/greed (0-100) from momentum/volume/volatility; contrarian logic at extremes; funding-rate signals |
+| Multi-Agent Swarm | 5-agent swarm (Scanner/Analyst/Risk/Executor/Sentinel) with SwarmBus pub/sub; MCP-compatible; Sentinel HALT broadcasts |
 | Metrics Engine | Sharpe/Sortino (per-trade returns, annualized from actual trade frequency), Calmar (return % / drawdown %), profit factor, equity curve (capped 10K points) |
 
 ---
@@ -106,7 +114,7 @@ Validated across 500 backtest runs (synthetic data — 5 market regimes, 20 symb
 |-------|----------|--------|
 | 18 risk checks | `bot/risk/risk_engine.py` lines 1-28 enumerate all 18 (16 in-engine + #17 liquidity + #18 macro) | Verified |
 | Fail-closed design | Any check failure or exception returns REJECTED | Verified |
-| 97+ tests passing | `pytest tests/ -v` -- 301+ green (97 original + audit/learning/optimizer/qwen/solana additions) | Verified |
+| 97+ tests passing | `pytest tests/ -v` -- 339 green (97 original + audit/learning/optimizer/qwen/solana/red-team/black-swan/sentiment/swarm additions) | Verified |
 | 9-state FSM | `bot/utils/models.py` AgentState enum, `bot/core/engine.py` transitions | Verified |
 | Trailing stops work | Backtest (synthetic data): 416/889 exits via trailing stop, net-positive aggregate PnL. Note: trailing exits are structurally profitable (activate at +1R, trail 1.5 ATR) — this is by construction, not evidence of predictive edge | Verified |
 | Regime detection | `bot/core/analyzer.py` _detect_regime + _score_confluence | Verified |
@@ -121,7 +129,7 @@ Validated across 500 backtest runs (synthetic data — 5 market regimes, 20 symb
 
 ## Final QA Checklist
 
-- [x] All 301+ tests pass (`pytest tests/ -v`)
+- [x] All 339 tests pass (`pytest tests/ -v`)
 - [x] No critical or high-severity issues in codebase audit (all C1-C3, H1-H4 fixed)
 - [x] All 18 risk checks verified correct with unit tests
 - [x] Backtest runs without crashes across 180 configurations

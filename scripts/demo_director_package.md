@@ -23,7 +23,7 @@
 **Spoken:**
 > "Most trading bots are built to trade. RUNECLAW is built to decide *whether* to trade."
 >
-> "It scans real markets, generates AI-backed trade theses, runs sixteen independent risk checks — and then asks a human for permission. If any single check fails, the trade dies. No override. No exception."
+> "It scans real markets, generates AI-backed trade theses, runs eighteen independent risk checks — and then asks a human for permission. If any single check fails, the trade dies. No override. No exception."
 
 **Action:** None. Let the words land.
 
@@ -148,7 +148,7 @@ Circuit Breaker: OK
 ```
 
 **Spoken:**
-> "Before any trade can execute, it passes through sixteen independent risk checks."
+> "Before any trade can execute, it passes through eighteen independent risk checks."
 
 *Count on fingers or point at list — make it concrete:*
 
@@ -373,12 +373,12 @@ Run through this 30 minutes before the demo:
 # COMMON DEMO MISTAKES TO AVOID
 
 ### 1. Starting with features instead of the problem
-Wrong: "RUNECLAW has sixteen risk checks and Telegram integration."
+Wrong: "RUNECLAW has eighteen risk checks and Telegram integration."
 Right: "Trading bots have a trust problem. Here's how we solve it."
 Judges don't care about features until they understand the problem.
 
 ### 2. Rushing through the risk engine
-The risk engine is the core differentiator. Enumerate all sixteen checks. Use your fingers. Make each one distinct and countable. This is the moment judges lean forward.
+The risk engine is the core differentiator. Enumerate all eighteen checks. Use your fingers. Make each one distinct and countable. This is the moment judges lean forward.
 
 ### 3. Skipping the audit trail
 Showing `trade.jsonl` is the single most convincing proof that the system is real and production-grade. Dashboards can be faked. Structured JSON logs cannot. Spend at least 15 seconds here.
@@ -432,7 +432,7 @@ A: The architecture supports it. Live trading requires setting `SIMULATION_MODE=
 A: The risk engine is independent of the LLM. Even if the LLM says "100% confident, go all in," the risk engine enforces position size (2%), R:R ratio (1.5 minimum), and all other checks. The LLM cannot override the gate.
 
 **Q: How is this different from a GPT wrapper?**
-A: A GPT wrapper sends market data to an LLM and executes whatever it says. RUNECLAW puts the LLM output through a sixteen-check risk gate and requires human confirmation. The LLM is one input to the decision, not the decision itself.
+A: A GPT wrapper sends market data to an LLM and executes whatever it says. RUNECLAW puts the LLM output through a eighteen-check risk gate and requires human confirmation. The LLM is one input to the decision, not the decision itself.
 
 **Q: Why paper trading?**
 A: Simulation-first is a design principle. In a regulatory environment where autonomous trading raises compliance questions, defaulting to paper trading is the responsible choice. It also means we can demo live without risk.

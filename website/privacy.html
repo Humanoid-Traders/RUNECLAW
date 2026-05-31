@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Privacy Policy — RUNECLAW Bot</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=JetBrains+Mono:wght@400;500&family=Rajdhani:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+:root {
+  --void: #04060c;
+  --abyss: #080c18;
+  --obsidian: #0c1020;
+  --forge: #121830;
+  --steel: #1e2844;
+  --ash: #4a5678;
+  --silver: #8090b0;
+  --bone: #c0ccdf;
+  --ice: #d8e4f4;
+  --blue: #2a6adc;
+  --blue-bright: #4a9aff;
+  --font-display: 'Cinzel', serif;
+  --font-body: 'Rajdhani', sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+}
+html { scroll-behavior: smooth; background: var(--void); }
+body {
+  font-family: var(--font-body);
+  color: var(--bone);
+  background: var(--void);
+  line-height: 1.7;
+  font-size: 17px;
+  -webkit-font-smoothing: antialiased;
+}
+.container {
+  max-width: 780px;
+  margin: 0 auto;
+  padding: 60px 24px 80px;
+}
+h1 {
+  font-family: var(--font-display);
+  font-size: 2rem;
+  color: var(--ice);
+  margin-bottom: 8px;
+  letter-spacing: 2px;
+}
+.subtitle {
+  color: var(--silver);
+  font-size: 0.95rem;
+  margin-bottom: 48px;
+  font-family: var(--font-mono);
+}
+h2 {
+  font-family: var(--font-display);
+  font-size: 1.25rem;
+  color: var(--blue-bright);
+  margin: 36px 0 12px;
+  letter-spacing: 1px;
+}
+p, li {
+  color: var(--bone);
+  margin-bottom: 12px;
+}
+ul {
+  padding-left: 24px;
+  margin-bottom: 16px;
+}
+li { margin-bottom: 6px; }
+a { color: var(--blue-bright); text-decoration: none; }
+a:hover { text-decoration: underline; }
+.highlight {
+  background: var(--forge);
+  border-left: 3px solid var(--blue);
+  padding: 16px 20px;
+  border-radius: 4px;
+  margin: 20px 0;
+  font-family: var(--font-mono);
+  font-size: 0.9rem;
+  color: var(--ice);
+}
+.back-link {
+  display: inline-block;
+  margin-bottom: 32px;
+  color: var(--silver);
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+}
+.divider {
+  border: none;
+  border-top: 1px solid var(--steel);
+  margin: 40px 0;
+}
+footer {
+  text-align: center;
+  color: var(--ash);
+  font-size: 0.85rem;
+  margin-top: 60px;
+  padding-top: 24px;
+  border-top: 1px solid var(--steel);
+}
+</style>
+</head>
+<body>
+<div class="container">
+
+<a href="https://lgl3crf9.mule.page/" class="back-link">&larr; Back to RUNECLAW</a>
+
+<h1>Privacy Policy</h1>
+<p class="subtitle">RUNECLAW Telegram Bot &mdash; by Humanoid Traders<br>Last updated: May 31, 2026</p>
+
+<div class="highlight">
+RUNECLAW is an educational prototype built for the Bitget AI Base Camp Hackathon S1.
+It operates in simulation mode by default. No real funds are traded unless the operator explicitly enables live trading.
+</div>
+
+<h2>1. What Data We Collect</h2>
+<p>When you interact with the RUNECLAW Telegram bot, we may process the following data:</p>
+<ul>
+  <li><strong>Telegram User ID and Chat ID</strong> &mdash; used solely for authentication and message routing. We do not collect your name, phone number, or profile photo.</li>
+  <li><strong>Bot commands and messages</strong> &mdash; the text of commands you send to the bot (e.g., /scan, /analyze BTC/USDT) is processed in real time to generate responses. Command text is not stored permanently.</li>
+  <li><strong>Trade decisions</strong> &mdash; when you confirm or reject a trade idea, that decision is logged locally on the bot server for audit purposes.</li>
+</ul>
+
+<h2>2. What Data We Do NOT Collect</h2>
+<ul>
+  <li>We do not collect your real name, email address, or phone number.</li>
+  <li>We do not access your Telegram contacts, groups, or other chats.</li>
+  <li>We do not share any data with third parties for advertising or marketing.</li>
+  <li>We do not use cookies or web tracking of any kind.</li>
+  <li>We do not store exchange API credentials on any external server &mdash; all keys remain in the operator's local environment variables.</li>
+</ul>
+
+<h2>3. How Data Is Used</h2>
+<p>All data processing serves a single purpose: operating the trading bot for the authenticated user. Specifically:</p>
+<ul>
+  <li><strong>Authentication</strong> &mdash; your Telegram Chat ID is compared against the operator-configured <code>TELEGRAM_CHAT_ID</code> to restrict access.</li>
+  <li><strong>Audit logging</strong> &mdash; trade decisions, risk check results, and state transitions are logged to local JSONL files on the server for transparency and debugging.</li>
+  <li><strong>LLM analysis</strong> &mdash; market data (not personal data) may be sent to an AI model provider (OpenAI, Qwen, or another configured provider) for trade analysis. No Telegram user data is included in LLM requests.</li>
+</ul>
+
+<h2>4. Data Storage and Retention</h2>
+<ul>
+  <li>All logs are stored locally on the bot operator's server or container.</li>
+  <li>No data is transmitted to Humanoid Traders or any central server.</li>
+  <li>Log files can be deleted by the operator at any time.</li>
+  <li>Paper trading portfolio state is stored locally and can be reset with a single command.</li>
+</ul>
+
+<h2>5. Third-Party Services</h2>
+<p>RUNECLAW interacts with the following external services:</p>
+<ul>
+  <li><strong>Telegram Bot API</strong> &mdash; for receiving commands and sending responses. Subject to <a href="https://telegram.org/privacy" target="_blank" rel="noopener">Telegram's Privacy Policy</a>.</li>
+  <li><strong>Bitget API</strong> &mdash; for fetching public market data (prices, tickers, order books). No personal data is sent. Subject to <a href="https://www.bitget.com/privacy" target="_blank" rel="noopener">Bitget's Privacy Policy</a>.</li>
+  <li><strong>LLM Provider</strong> (OpenAI, Qwen/DashScope, or other configured provider) &mdash; market data only is sent for analysis. No personal information is included. Subject to the respective provider's privacy policy.</li>
+</ul>
+
+<h2>6. Security</h2>
+<ul>
+  <li>Access is restricted to the configured Telegram Chat ID. Unauthorized users are rejected.</li>
+  <li>Rate limiting (20 requests/minute) protects against abuse.</li>
+  <li>Exchange API keys (if configured) are loaded from environment variables only and never logged, displayed, or transmitted.</li>
+  <li>The bot runs as a non-root user in Docker containers.</li>
+  <li>All safety-critical state (circuit breaker, loss streak) is persisted with atomic writes.</li>
+</ul>
+
+<h2>7. Your Rights</h2>
+<p>As a user of the RUNECLAW bot, you can:</p>
+<ul>
+  <li>Stop using the bot at any time by simply not sending commands.</li>
+  <li>Request the operator to delete all logs containing your Chat ID.</li>
+  <li>Block the bot on Telegram to prevent any further interaction.</li>
+</ul>
+
+<h2>8. Children's Privacy</h2>
+<p>RUNECLAW is not intended for use by anyone under the age of 18. We do not knowingly collect data from minors.</p>
+
+<h2>9. Open Source</h2>
+<p>RUNECLAW is open source under the AGPL-3.0 license. You can inspect exactly what data the bot processes by reviewing the source code at <a href="https://github.com/Humanoid-Traders/RUNECLAW-AI-TRADER" target="_blank" rel="noopener">github.com/Humanoid-Traders/RUNECLAW-AI-TRADER</a>.</p>
+
+<h2>10. Changes to This Policy</h2>
+<p>This privacy policy may be updated as the project evolves. The "Last updated" date at the top of this page reflects the most recent revision. Continued use of the bot after changes constitutes acceptance.</p>
+
+<h2>11. Contact</h2>
+<p>For privacy questions or data deletion requests, contact us via:</p>
+<ul>
+  <li>Telegram: <a href="https://t.me/+VRNgsmkR5pszZTdk" target="_blank" rel="noopener">Humanoid Traders Group</a></li>
+  <li>GitHub: <a href="https://github.com/Humanoid-Traders/RUNECLAW-AI-TRADER/issues" target="_blank" rel="noopener">Open an issue</a></li>
+  <li>X / Twitter: <a href="https://x.com/BaurPatric70363" target="_blank" rel="noopener">@BaurPatric70363</a></li>
+</ul>
+
+<hr class="divider">
+
+<footer>
+  RUNECLAW &mdash; AI Trading Command Core<br>
+  Built by Humanoid Traders for Bitget AI Base Camp &middot; Hackathon S1<br>
+  This is an educational prototype. Not financial advice. Not for real funds without independent review.
+</footer>
+
+</div>
+</body>
+</html>

@@ -21,7 +21,9 @@
     "COOLDOWN: no recent losses",
     "PORTFOLIO_EXPOSURE: 20.0% OK",
     "SYMBOL_EXPOSURE: BTC/USDT 20.0% OK",
-    "VOLATILITY: ATR 1.50% OK"
+    "VOLATILITY: ATR 1.50% OK",
+    "LIQUIDITY: book depth $2,340,000 OK (fail-open: book data available)",
+    "MACRO_EVENT: NORMAL"
   ],
   "checks_failed": [],
   "reason": "All 18 checks passed",

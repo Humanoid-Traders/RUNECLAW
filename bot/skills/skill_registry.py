@@ -1,59 +1,124 @@
 """
-RUNECLAW Skill System -- modular, registerable capabilities.
-Each skill is a self-contained unit that the engine or Telegram bot can invoke.
+RUNECLAW Skill System v5 — polished dashboard cards.
+Compact, mobile-friendly Telegram layouts with visual gauges,
+sectioned cards, and consistent status vocabulary.
 """
 
 from __future__ import annotations
 
+import html as _html
 from abc import ABC, abstractmethod
+from datetime import UTC, datetime
 from typing import Any
 
+from bot.config import CONFIG
 from bot.core.engine import RuneClawEngine
 from bot.utils.logger import audit, system_log
 
 
-class BaseSkill(ABC):
-    """Interface every skill must implement."""
+# ── Visual vocabulary ─────────────────────────────────────────
+_OK = "\U0001f7e2"
+_WARN = "\U0001f7e1"
+_BAD = "\U0001f534"
+_NEU = "\u26aa"
 
+def _status(v: float) -> str:
+    return _OK if v > 0 else _BAD if v < 0 else _NEU
+
+def _spark(v: float) -> str:
+    if v > 2: return "\u25b2"
+    if v > 0: return "\u25b3"
+    if v < -2: return "\u25bc"
+    if v < 0: return "\u25bd"
+    return "\u25c7"
+
+def _bar(val: float, mx: float = 1.0, w: int = 10) -> str:
+    r = min(max(val / mx, 0), 1.0) if mx > 0 else 0
+    f = int(r * w)
+    return "\u2588" * f + "\u2591" * (w - f)
+
+def _gauge(label: str, val: float, mx: float, unit: str = "%", w: int = 10) -> str:
+    """Labeled progress gauge: Drawdown  [████░░░░░░] 3.2% / 10%"""
+    bar = _bar(val, mx, w)
+    if unit == "%":
+        return f"  {label:<10} [{bar}] {val:.1f}% / {mx:.0f}%"
+    return f"  {label:<10} [{bar}] {val:.0f} / {mx:.0f}"
+
+def _stars(v: float) -> str:
+    if v >= 2.0: return "\u2605\u2605\u2605"
+    if v >= 1.5: return "\u2605\u2605\u2606"
+    return "\u2605\u2606\u2606"
+
+def _esc(s: str) -> str:
+    return _html.escape(str(s))
+
+def _money(v: float, sign: bool = False) -> str:
+    if sign:
+        return f"${v:+,.2f}"
+    return f"${v:,.2f}"
+
+def _row(label: str, value: str, w: int = 28) -> str:
+    """Right-aligned row inside <pre>: '  Label     $1,234.56'"""
+    gap = w - len(label) - len(value) - 4
+    if gap < 1: gap = 1
+    return f"  {label}{' ' * gap}{value}"
+
+
+class BaseSkill(ABC):
     name: str = "unnamed"
     description: str = ""
-
     @abstractmethod
-    async def execute(self, engine: RuneClawEngine, **kwargs: Any) -> str:
-        """Run the skill and return a human-readable result string."""
+    async def execute(self, engine: RuneClawEngine, **kwargs: Any) -> str: ...
 
 
 class SkillRegistry:
-    """Central registry for discovering and invoking skills."""
-
     def __init__(self) -> None:
         self._skills: dict[str, BaseSkill] = {}
-
     def register(self, skill: BaseSkill) -> None:
         self._skills[skill.name] = skill
         audit(system_log, f"Skill registered: {skill.name}", action="register")
-
     def get(self, name: str) -> BaseSkill | None:
         return self._skills.get(name)
-
     def list_skills(self) -> list[str]:
         return [f"{s.name} -- {s.description}" for s in self._skills.values()]
 
 
-# -- Built-in skills --
+# ══════════════════════════════════════════════════════════════
+# SCAN
+# ══════════════════════════════════════════════════════════════
 
 class ScanMarketSkill(BaseSkill):
     name = "scan_market"
-    description = "Scan exchange for top movers and volume anomalies"
+    description = "Scan exchange for top movers"
 
     async def execute(self, engine: RuneClawEngine, **kwargs: Any) -> str:
         signals = await engine.scanner.scan()
         if not signals:
-            return "No significant signals detected."
-        lines = [f"{s.symbol}: ${s.price:,.2f} ({s.change_pct_24h:+.1f}%) "
-                 f"{'SPIKE' if s.volume_spike else ''}" for s in signals[:5]]
-        return "Top movers:\n" + "\n".join(lines)
+            return f"{_NEU} <b>SCANNER</b>\n\n<i>No signals detected.</i>"
 
+        top = signals[:8]
+        lines = [f"\U0001f50d <b>MARKET SCANNER</b>  \u2022  {len(signals)} pairs\n"]
+
+        for s in top:
+            arrow = _spark(s.change_pct_24h)
+            vol_m = s.volume_usd_24h / 1_000_000 if s.volume_usd_24h else 0
+            chg = f"{s.change_pct_24h:+.1f}%"
+            spike = " \U0001f4a5" if s.volume_spike else ""
+            lines.append(
+                f"  {arrow} <b>{_esc(s.symbol)}</b>  "
+                f"<code>${s.price:,.2f}</code>  "
+                f"<code>{chg:>7}</code>  "
+                f"<code>${vol_m:,.0f}M</code>{spike}"
+            )
+
+        if any(s.volume_spike for s in top):
+            lines.append(f"\n<i>\U0001f4a5 = volume spike detected</i>")
+        return "\n".join(lines)
+
+
+# ══════════════════════════════════════════════════════════════
+# ANALYZE
+# ══════════════════════════════════════════════════════════════
 
 class AnalyzeAssetSkill(BaseSkill):
     name = "analyze_asset"
@@ -62,8 +127,7 @@ class AnalyzeAssetSkill(BaseSkill):
     async def execute(self, engine: RuneClawEngine, **kwargs: Any) -> str:
         symbol = kwargs.get("symbol", "BTC/USDT")
         from bot.utils.models import MarketSignal
-        from datetime import UTC, datetime
-        # Create a minimal signal for the analyzer
+
         sig = MarketSignal(symbol=symbol, price=0, change_pct_24h=0,
                            volume_usd_24h=0, timestamp=datetime.now(UTC))
         try:
@@ -76,745 +140,848 @@ class AnalyzeAssetSkill(BaseSkill):
                 timestamp=datetime.now(UTC),
             )
         except Exception:
-            return f"Could not fetch data for {symbol}"
+            return f"{_BAD} <b>ANALYSIS</b>\n\n<i>Could not fetch data for</i> <code>{_esc(symbol)}</code>"
 
         idea = await engine._analyze_signal(sig)
         if idea is None:
-            return f"No actionable trade idea for {symbol}."
-        # C2 fix: store the idea in pending so it can be confirmed via trade_id
-        engine._pending_ideas[idea.id] = idea
-        return (f"Trade Idea [{idea.id}]\n"
-                f"{idea.direction.value} {idea.asset}\n"
-                f"Entry: ${idea.entry_price:,.2f}\n"
-                f"SL: ${idea.stop_loss:,.2f} | TP: ${idea.take_profit:,.2f}\n"
-                f"Confidence: {idea.confidence:.0%}\n"
-                f"R:R = {idea.risk_reward_ratio}\n"
-                f"Reasoning: {idea.reasoning}")
+            vol_m = sig.volume_usd_24h / 1_000_000 if sig.volume_usd_24h else 0
+            arrow = _spark(sig.change_pct_24h)
+            return (
+                f"{_NEU} <b>{_esc(symbol)}</b>  {arrow}\n\n"
+                f"  Price     <code>${sig.price:,.2f}</code>\n"
+                f"  24h       <code>{sig.change_pct_24h:+.1f}%</code>\n"
+                f"  Volume    <code>${vol_m:,.0f}M</code>\n\n"
+                f"<i>No actionable signal \u2014 regime filter or low confluence</i>"
+            )
 
+        engine._pending_ideas[idea.id] = idea
+
+        d = idea.direction.value
+        d_icon = _OK if d == "LONG" else _BAD
+        rr = idea.risk_reward_ratio
+        conf = idea.confidence
+        sl_d = abs(idea.entry_price - idea.stop_loss)
+        tp_d = abs(idea.take_profit - idea.entry_price)
+
+        # Visual level diagram
+        if d == "LONG":
+            tp_label = f"\U0001f3af TP      ${idea.take_profit:>10,.2f}   +${tp_d:,.2f}"
+            en_label = f"\u25b6\ufe0f ENTRY   ${idea.entry_price:>10,.2f}"
+            sl_label = f"\U0001f6d1 SL      ${idea.stop_loss:>10,.2f}   -${sl_d:,.2f}"
+        else:
+            sl_label = f"\U0001f6d1 SL      ${idea.stop_loss:>10,.2f}   -${sl_d:,.2f}"
+            en_label = f"\u25b6\ufe0f ENTRY   ${idea.entry_price:>10,.2f}"
+            tp_label = f"\U0001f3af TP      ${idea.take_profit:>10,.2f}   +${tp_d:,.2f}"
+
+        conf_bar = _bar(conf, 1.0, 10)
+
+        return (
+            f"{d_icon} <b>{d}  {_esc(idea.asset)}</b>\n\n"
+            f"<pre>"
+            f"  {tp_label}\n"
+            f"  {'─' * 36}\n"
+            f"  {en_label}\n"
+            f"  {'─' * 36}\n"
+            f"  {sl_label}"
+            f"</pre>\n\n"
+            f"  Confidence [{conf_bar}] <code>{conf:.0%}</code>\n"
+            f"  Risk:Reward {_stars(rr)} <code>{rr}x</code>\n\n"
+            f"<i>{_esc(idea.reasoning[:250])}</i>\n\n"
+            f"<code>{idea.id}</code>"
+        )
+
+
+# ══════════════════════════════════════════════════════════════
+# STATUS / RISK
+# ══════════════════════════════════════════════════════════════
 
 class CheckRiskSkill(BaseSkill):
     name = "check_risk"
-    description = "Show current risk metrics and circuit breaker status"
+    description = "Risk dashboard"
 
     async def execute(self, engine: RuneClawEngine, **kwargs: Any) -> str:
+        mode = kwargs.get("mode", "risk")
         state = engine.portfolio.snapshot()
-        cb = "ACTIVE -- all trades blocked" if engine.risk.circuit_breaker_active else "OK"
+        cb = engine.risk.circuit_breaker_active
         streak = engine.risk.consecutive_losses
-        streak_warn = f" (WARNING: {streak} consecutive)" if streak >= 3 else ""
+        cost = engine.cost.snapshot()
+        total_exp = sum(p.entry_price * p.quantity for p in engine.portfolio.open_positions)
+        exp_pct = (total_exp / state.equity_usd * 100) if state.equity_usd > 0 else 0
 
-        # Open position groups
         from bot.risk.risk_engine import _CORRELATION_GROUPS
         groups: dict[str, int] = {}
         for pos in engine.portfolio.open_positions:
             g = _CORRELATION_GROUPS.get(pos.asset, pos.asset)
             groups[g] = groups.get(g, 0) + 1
-        group_str = ", ".join(f"{g}={c}" for g, c in groups.items()) if groups else "none"
 
-        return (f"Equity: ${state.equity_usd:,.2f}\n"
-                f"Daily PnL: ${state.daily_pnl:,.2f}\n"
-                f"Drawdown: {state.max_drawdown_pct:.1f}%\n"
-                f"Circuit Breaker: {cb}\n"
-                f"Loss Streak: {streak}{streak_warn}\n"
-                f"Open Positions: {state.open_positions} | Groups: {group_str}\n"
-                f"Risk Checks: 18 independent | Fail-closed")
+        if mode == "status":
+            return self._status(engine, state, cb, streak, cost, exp_pct)
+        return self._risk(state, cb, streak, total_exp, exp_pct, groups)
 
+    def _status(self, engine, state, cb, streak, cost, exp_pct):
+        mode = "PAPER" if CONFIG.simulation_mode else "\u26a0\ufe0f LIVE"
+        cb_s = f"{_BAD} TRIPPED" if cb else f"{_OK} CLEAR"
+        macro = engine.macro_calendar.evaluate()
+        macro_icons = {
+            "NORMAL": _OK, "PRE_EVENT_CAUTION": _WARN,
+            "EVENT_LOCKDOWN": _BAD, "POST_EVENT_VOLATILITY": "\U0001f7e0",
+            "BLACKOUT": "\u26ab",
+        }
+        m_icon = macro_icons.get(macro.state.value, _NEU)
+        m_label = macro.state.value.replace("_", " ").title()
+        net = state.equity_usd - cost.operating_cost_usd
+        pnl_icon = _status(state.daily_pnl)
+
+        return (
+            f"\U0001f43e <b>RUNECLAW STATUS</b>\n\n"
+            # ── Quick glance header ──
+            f"  {cb_s}  \u2022  {mode}  \u2022  {m_icon} {m_label}\n\n"
+            # ── Capital card ──
+            f"\U0001f4b0 <b>Capital</b>\n"
+            f"<pre>"
+            f"{_row('Equity', _money(state.equity_usd))}\n"
+            f"{_row('Net', _money(net))}\n"
+            f"{_row('Daily PnL', _money(state.daily_pnl, sign=True))}\n"
+            f"{_row('Drawdown', f'{state.max_drawdown_pct:.1f}%')}"
+            f"</pre>\n\n"
+            # ── Positions card ──
+            f"\U0001f4ca <b>Positions</b>\n"
+            f"<pre>"
+            f"{_row('Open', f'{state.open_positions} / {CONFIG.risk.max_open_positions}')}\n"
+            f"{_row('Total', str(state.total_trades))}\n"
+            f"{_row('Win Rate', f'{state.win_rate:.0%}')}\n"
+            f"{_row('Exposure', f'{exp_pct:.0f}%')}"
+            f"</pre>\n\n"
+            # ── Risk gate ──
+            f"\U0001f6e1 <b>Risk Gate</b>\n"
+            f"<pre>"
+            f"{_row('Breaker', 'TRIPPED' if cb else 'CLEAR')}\n"
+            f"{_row('Streak', f'{streak} / {CONFIG.risk.max_consecutive_losses}')}\n"
+            f"{_row('Checks', '18 fail-closed')}"
+            f"</pre>\n\n"
+            # ── Costs ──
+            f"\u26a1 <b>Costs</b>\n"
+            f"<pre>"
+            f"{_row('LLM', f'${cost.llm_cost_usd:,.4f}')}\n"
+            f"{_row('Infra', f'${cost.infra_cost_usd:,.4f}')}"
+            f"</pre>"
+        )
+
+    def _risk(self, state, cb, streak, total_exp, exp_pct, groups):
+        cb_icon = _BAD if cb else _OK
+        cb_label = "TRIPPED" if cb else "CLEAR"
+        grp = ", ".join(f"{g}={c}" for g, c in groups.items()) if groups else "none"
+
+        return (
+            f"\U0001f6e1 <b>RISK DASHBOARD</b>\n\n"
+            f"  {cb_icon} Circuit Breaker: <b>{cb_label}</b>\n\n"
+            # ── Visual gauges ──
+            f"{_gauge('Drawdown', state.max_drawdown_pct, CONFIG.risk.max_drawdown_pct)}\n"
+            f"{_gauge('Exposure', exp_pct, CONFIG.risk.max_portfolio_exposure_pct)}\n"
+            f"{_gauge('Streak', streak, CONFIG.risk.max_consecutive_losses, unit='#')}\n\n"
+            # ── Capital breakdown ──
+            f"\U0001f4b0 <b>Capital</b>\n"
+            f"<pre>"
+            f"{_row('Equity', _money(state.equity_usd))}\n"
+            f"{_row('Daily PnL', _money(state.daily_pnl, sign=True))}\n"
+            f"{_row('Exposure', _money(total_exp))}\n"
+            f"{_row('Positions', f'{state.open_positions} / {CONFIG.risk.max_open_positions}')}\n"
+            f"{_row('Groups', grp)}"
+            f"</pre>\n\n"
+            # ── Configured limits ──
+            f"\U0001f512 <b>Limits</b>\n"
+            f"<pre>"
+            f"{_row('Min Conf', f'{CONFIG.risk.min_confidence:.0%}')}\n"
+            f"{_row('Min R:R', f'{CONFIG.risk.min_risk_reward}x')}\n"
+            f"{_row('Max DD', f'{CONFIG.risk.max_drawdown_pct}%')}\n"
+            f"{_row('Max Daily', f'{CONFIG.risk.max_daily_loss_pct}%')}\n"
+            f"{_row('Vol Guard', f'{CONFIG.risk.volatility_guard_atr_pct}% ATR')}\n"
+            f"{_row('Checks', '18 fail-closed')}"
+            f"</pre>"
+        )
+
+
+# ══════════════════════════════════════════════════════════════
+# PORTFOLIO
+# ══════════════════════════════════════════════════════════════
+
+class GetPortfolioSkill(BaseSkill):
+    name = "get_portfolio"
+    description = "Portfolio with PnL waterfall"
+
+    async def execute(self, engine: RuneClawEngine, **kwargs: Any) -> str:
+        state = engine.portfolio.snapshot()
+        cost = engine.cost.snapshot()
+        net = state.equity_usd - cost.operating_cost_usd
+        cpt = cost.operating_cost_usd / state.total_trades if state.total_trades > 0 else 0
+        pnl_icon = _status(state.total_pnl)
+
+        lines = [
+            f"\U0001f4b0 <b>PORTFOLIO</b>  {pnl_icon}\n",
+            # ── Balance card ──
+            f"\U0001f4b3 <b>Balance</b>",
+            "<pre>",
+            _row("Cash", _money(state.balance_usd)),
+            _row("Equity", _money(state.equity_usd)),
+            _row("Win Rate", f"{state.win_rate:.0%}"),
+            "</pre>\n",
+            # ── PnL waterfall ──
+            f"\U0001f4c8 <b>PnL Waterfall</b>",
+            "<pre>",
+            _row("Gross", _money(state.total_gross_pnl, sign=True)),
+            _row("Commission", _money(state.total_commission)),
+            _row("Net Trading", _money(state.total_pnl, sign=True)),
+            _row("LLM Cost", f"${cost.llm_cost_usd:,.4f}"),
+            _row("Infra Cost", f"${cost.infra_cost_usd:,.4f}"),
+            f"  {'─' * 26}",
+            _row("NET EQUITY", _money(net, sign=True)),
+            _row("Cost/Trade", f"${cpt:,.4f}"),
+            "</pre>",
+        ]
+
+        open_pos = engine.portfolio.open_positions
+        if open_pos:
+            lines.append(f"\n\U0001f4ca <b>Open Positions</b>  ({len(open_pos)})")
+            for pos in open_pos:
+                d_icon = _OK if pos.direction.value == "LONG" else _BAD
+                d_tag = "L" if pos.direction.value == "LONG" else "S"
+                size = pos.entry_price * pos.quantity
+                lines.append(
+                    f"  {d_icon} <b>{_esc(pos.asset)}</b>  {d_tag}  "
+                    f"<code>${pos.entry_price:,.2f}</code>  "
+                    f"<code>${size:,.0f}</code>"
+                )
+        else:
+            lines.append(f"\n<i>{state.total_trades} trades \u2022 no open positions</i>")
+
+        return "\n".join(lines)
+
+
+# ══════════════════════════════════════════════════════════════
+# EXECUTE / EXPLAIN
+# ══════════════════════════════════════════════════════════════
 
 class ExecutePaperTradeSkill(BaseSkill):
     name = "execute_paper_trade"
     description = "Confirm and execute a pending paper trade"
-
     async def execute(self, engine: RuneClawEngine, **kwargs: Any) -> str:
-        # C2 fix: accept both 'trade_id' and 'symbol' (CLI sends positional as symbol)
         trade_id = kwargs.get("trade_id") or kwargs.get("symbol", "")
         if not trade_id:
             return "Provide a trade_id to confirm."
         return await engine.confirm_trade(trade_id)
 
-
-class GetPortfolioSkill(BaseSkill):
-    name = "get_portfolio"
-    description = "Show paper portfolio summary with cost waterfall"
-
-    async def execute(self, engine: RuneClawEngine, **kwargs: Any) -> str:
-        state = engine.portfolio.snapshot()
-        cost = engine.cost.snapshot()
-        net_of_cost = round(state.equity_usd - cost.operating_cost_usd, 2)
-        cost_per_trade = round(cost.operating_cost_usd / state.total_trades, 4) if state.total_trades > 0 else 0.0
-
-        lines = [
-            f"Balance: ${state.balance_usd:,.2f}",
-            f"Equity: ${state.equity_usd:,.2f}",
-            f"Open: {state.open_positions} | Total: {state.total_trades}",
-            f"Win Rate: {state.win_rate:.0%}",
-            "",
-            "── PnL Waterfall ──",
-            f"  Gross PnL:      ${state.total_gross_pnl:,.2f}",
-            f"  − Commission:   ${state.total_commission:,.2f}",
-            f"  = Net PnL:      ${state.total_pnl:,.2f}",
-            f"  − LLM cost:     ${cost.llm_cost_usd:,.4f}  ({cost.llm_calls} calls, {cost.prompt_tokens + cost.completion_tokens} tokens)",
-            f"  − Infra cost:   ${cost.infra_cost_usd:,.4f}",
-            f"  = After costs:  ${net_of_cost:,.2f}",
-        ]
-        if cost.unpriced_calls > 0:
-            lines.append(f"  ⚠ {cost.unpriced_calls} LLM calls with UNKNOWN cost (model not in price table)")
-        lines.append(f"  Cost/trade:     ${cost_per_trade:,.4f}")
-        return "\n".join(lines)
-
-
 class ExplainTradeSkill(BaseSkill):
     name = "explain_trade"
-    description = "Explain a pending or historical trade idea"
-
+    description = "Explain a trade idea"
     async def execute(self, engine: RuneClawEngine, **kwargs: Any) -> str:
         trade_id = kwargs.get("trade_id", "")
         for idea in engine.pending_ideas:
             if idea.id == trade_id:
-                return (f"[{idea.id}] {idea.direction.value} {idea.asset}\n"
-                        f"Confidence: {idea.confidence:.0%}\n"
-                        f"Reasoning: {idea.reasoning}\n"
-                        f"Signals: {', '.join(idea.signals_used)}")
-        return f"Trade {trade_id} not found in pending ideas."
+                return (
+                    f"\U0001f4d6 <b>EXPLANATION</b>\n\n"
+                    f"<code>{idea.id}</code>  {idea.direction.value} {_esc(idea.asset)}\n"
+                    f"Confidence: <code>{idea.confidence:.0%}</code>\n"
+                    f"Signals: <code>{', '.join(idea.signals_used)}</code>\n\n"
+                    f"<i>{_esc(idea.reasoning)}</i>"
+                )
+        return f"Trade <code>{_esc(trade_id)}</code> not found."
 
+
+# ══════════════════════════════════════════════════════════════
+# BACKTEST
+# ══════════════════════════════════════════════════════════════
 
 class RunBacktestSkill(BaseSkill):
     name = "run_backtest"
-    description = "Run a backtest with synthetic data (bars=N, seed=N)"
+    description = "Run backtest with synthetic data"
 
     async def execute(self, engine: RuneClawEngine, **kwargs: Any) -> str:
         from bot.backtest.data_loader import DataLoader
         from bot.backtest.engine import BacktestEngine
         from bot.backtest.models import BacktestConfig
 
-        bars_count = min(int(kwargs.get("bars", 720)), 5000)  # clamp to prevent OOM
+        bars_count = min(int(kwargs.get("bars", 720)), 5000)
         seed = int(kwargs.get("seed", 42))
-
         config = BacktestConfig(symbol="BTC/USDT", timeframe="1h")
         bars = DataLoader.generate_synthetic(bars=bars_count, seed=seed)
+        bt = BacktestEngine(config)
+        r = await bt.run(bars)
+        bt.cleanup()
 
-        bt_engine = BacktestEngine(config)
-        result = await bt_engine.run(bars)
+        ret_icon = _status(r.total_return_pct)
 
         return (
-            f"Backtest Complete ({result.start_date} → {result.end_date})\n"
-            f"Bars: {result.bars_processed} | Duration: {result.duration_seconds:.1f}s\n"
-            f"NOTE: Synthetic data — tests plumbing, not alpha.\n"
-            f"─────────────────────────────────────\n"
-            f"Final Equity:   ${result.final_equity:,.2f}\n"
-            f"Total Return:   {result.total_return_pct:+.2f}%\n"
-            f"Net PnL:        ${result.net_pnl:,.2f}\n"
-            f"Commission:     ${result.total_commission:,.2f}\n"
-            f"Slippage:       ${result.total_slippage:,.2f}\n"
-            f"─────────────────────────────────────\n"
-            f"Trades: {result.total_trades} | "
-            f"Win Rate: {result.win_rate:.0%} | "
-            f"Profit Factor: {result.profit_factor:.2f}\n"
-            f"Max Drawdown:   {result.max_drawdown_pct:.2f}%\n"
-            f"Sharpe:         {result.sharpe_ratio:.2f} | "
-            f"Sortino: {result.sortino_ratio:.2f}\n"
-            f"─────────────────────────────────────\n"
-            f"Signals: {result.total_signals_generated} → "
-            f"Ideas: {result.total_ideas_generated} → "
-            f"Rejected: {result.total_ideas_rejected_risk} (risk) "
-            f"{result.total_ideas_rejected_confidence} (conf)"
+            f"\U0001f4ca <b>BACKTEST</b>  {ret_icon}\n"
+            f"<i>Synthetic data \u2014 tests plumbing, not alpha</i>\n\n"
+            # ── Performance ──
+            f"\U0001f4b0 <b>Performance</b>\n"
+            f"<pre>"
+            f"{_row('Return', f'{r.total_return_pct:+.2f}%')}\n"
+            f"{_row('Equity', _money(r.final_equity))}\n"
+            f"{_row('Net PnL', _money(r.net_pnl, sign=True))}\n"
+            f"{_row('Commission', _money(r.total_commission))}\n"
+            f"{_row('Slippage', _money(r.total_slippage))}"
+            f"</pre>\n\n"
+            # ── Quality ──
+            f"\U0001f3af <b>Quality</b>\n"
+            f"<pre>"
+            f"{_row('Trades', str(r.total_trades))}\n"
+            f"{_row('Win Rate', f'{r.win_rate:.0%}')}\n"
+            f"{_row('Profit F.', f'{r.profit_factor:.2f}')}\n"
+            f"{_row('Max DD', f'{r.max_drawdown_pct:.2f}%')}\n"
+            f"{_row('Sharpe', f'{r.sharpe_ratio:.2f}')}\n"
+            f"{_row('Sortino', f'{r.sortino_ratio:.2f}')}"
+            f"</pre>\n\n"
+            # ── Pipeline ──
+            f"\U0001f504 <b>Pipeline</b>\n"
+            f"<pre>"
+            f"{_row('Signals', str(r.total_signals_generated))}\n"
+            f"{_row('Ideas', str(r.total_ideas_generated))}\n"
+            f"{_row('Risk Reject', str(r.total_ideas_rejected_risk))}\n"
+            f"{_row('Conf Reject', str(r.total_ideas_rejected_confidence))}"
+            f"</pre>\n\n"
+            f"<i>{r.bars_processed} bars \u2022 {r.duration_seconds:.1f}s \u2022 "
+            f"{r.start_date} \u2192 {r.end_date}</i>"
         )
 
 
+# ══════════════════════════════════════════════════════════════
+# REJECTED
+# ══════════════════════════════════════════════════════════════
+
 class RejectedTradesSkill(BaseSkill):
     name = "rejected_trades"
-    description = "Show recent risk-rejected trade ideas with failure reasons"
+    description = "Recent risk-rejected trades"
 
     async def execute(self, engine: RuneClawEngine, **kwargs: Any) -> str:
         history = engine.risk.rejection_history
         if not history:
-            return "No rejected trades recorded yet."
-        # Show the most recent N (default 5)
+            return (f"{_NEU} <b>REJECTED TRADES</b>\n\n"
+                    "<i>No rejections yet. The risk gate is working.</i>")
+
         count = int(kwargs.get("count", 5))
         recent = history[-count:]
-        lines = []
-        for r in reversed(recent):
-            fails = ", ".join(r["checks_failed"][:3])
-            if len(r["checks_failed"]) > 3:
-                fails += f" (+{len(r['checks_failed']) - 3} more)"
-            lines.append(
-                f"[{r['trade_id']}] {r['direction']} {r['asset']} "
-                f"(conf: {r['confidence']:.0%})\n"
-                f"  Failed: {fails}"
-            )
-        header = f"Recent Rejections ({len(recent)} of {len(history)} total):"
-        return header + "\n\n" + "\n\n".join(lines)
 
+        lines = [f"{_WARN} <b>REJECTED TRADES</b>  ({len(recent)}/{len(history)})\n"]
+        for r in reversed(recent):
+            d_icon = _OK if r["direction"] == "LONG" else _BAD
+            fails = r["checks_failed"]
+            fail_str = _esc(fails[0]) if fails else "unknown"
+            extra = f" +{len(fails) - 1}" if len(fails) > 1 else ""
+            lines.append(
+                f"  {d_icon} <b>{_esc(r['asset'])}</b>  {r['direction']}  "
+                f"<code>{r['confidence']:.0%}</code>\n"
+                f"     \u2718 <code>{fail_str}</code>{extra}"
+            )
+        return "\n".join(lines)
+
+
+# ══════════════════════════════════════════════════════════════
+# HALT
+# ══════════════════════════════════════════════════════════════
 
 class HaltSkill(BaseSkill):
     name = "halt"
-    description = "Emergency kill-switch: trip circuit breaker and cancel all pending ideas"
+    description = "Emergency kill-switch"
 
     async def execute(self, engine: RuneClawEngine, **kwargs: Any) -> str:
         from bot.utils.models import AgentState
-
-        # Trip the circuit breaker via the proper persisted path (audit fix B)
         engine.risk.emergency_halt("manual halt via /halt command")
-
-        # Cancel all pending ideas
         cancelled = list(engine._pending_ideas.keys())
         engine._pending_ideas.clear()
         engine._pending_atr.clear()
-
-        # Transition to HALTED
         engine._transition(AgentState.HALTED, "manual halt via /halt command")
-
-        audit(system_log, f"MANUAL HALT: circuit breaker tripped, {len(cancelled)} ideas cancelled",
-              action="halt", result="HALTED",
-              data={"cancelled_ids": cancelled})
-
+        audit(system_log, f"MANUAL HALT: {len(cancelled)} ideas cancelled",
+              action="halt", result="HALTED", data={"cancelled_ids": cancelled})
         return (
-            f"HALTED -- Emergency stop activated.\n"
-            f"Circuit breaker: TRIPPED\n"
-            f"Pending ideas cancelled: {len(cancelled)}\n"
-            f"All trading paused. Restart engine to resume."
+            f"\U0001f6a8 <b>EMERGENCY HALT</b>\n\n"
+            f"  {_BAD} Circuit Breaker: <b>TRIPPED</b>\n"
+            f"  Ideas Cancelled: <code>{len(cancelled)}</code>\n"
+            f"  Engine: <code>HALTED</code>\n\n"
+            f"<i>All trading paused. /reset to resume.</i>"
         )
 
 
+# ══════════════════════════════════════════════════════════════
+# WALK FORWARD
+# ══════════════════════════════════════════════════════════════
+
 class WalkForwardSkill(BaseSkill):
     name = "walk_forward"
-    description = "Run walk-forward backtest with train/test splits to detect overfitting"
+    description = "Walk-forward backtest"
 
     async def execute(self, engine: RuneClawEngine, **kwargs: Any) -> str:
         from bot.backtest.data_loader import DataLoader
         from bot.backtest.engine import walk_forward_backtest
         from bot.backtest.models import BacktestConfig
 
-        bars_count = min(int(kwargs.get("bars", 1440)), 5000)  # clamp to prevent OOM
+        bars_count = min(int(kwargs.get("bars", 1440)), 5000)
         seed = int(kwargs.get("seed", 42))
         folds = int(kwargs.get("folds", 3))
-
         config = BacktestConfig(symbol="BTC/USDT", timeframe="1h")
         bars = DataLoader.generate_synthetic(bars=bars_count, seed=seed)
-
         result = await walk_forward_backtest(bars, config, n_folds=folds)
 
-        lines = ["Walk-Forward Backtest Results", "=" * 40]
+        lines = [
+            f"\U0001f4c8 <b>WALK-FORWARD</b>\n",
+            "<pre>",
+            f"  {'FOLD':>4}  {'TRAIN':>8}  {'TEST':>8}  {'TRADES':>7}",
+            f"  {'─'*4}  {'─'*8}  {'─'*8}  {'─'*7}",
+        ]
         for f in result.folds:
             lines.append(
-                f"Fold {f['fold']}: Train {f['train_return_pct']:+.2f}% "
-                f"({f['train_trades']} trades) | "
-                f"Test {f['test_return_pct']:+.2f}% "
-                f"({f['test_trades']} trades)"
+                f"  {f['fold']:>4}  {f['train_return_pct']:>+7.2f}%"
+                f"  {f['test_return_pct']:>+7.2f}%"
+                f"  {f['train_trades'] + f['test_trades']:>7}"
             )
-        lines.append("─" * 40)
-        lines.append(f"Avg Train Return: {result.aggregate_train_return:+.2f}%")
-        lines.append(f"Avg Test Return:  {result.aggregate_test_return:+.2f}%")
-        lines.append(f"Train-Test Gap:   {result.train_test_gap:+.2f}% "
-                      f"({'overfitting risk' if result.train_test_gap > 2 else 'acceptable'})")
-        lines.append(f"Consistency:      {result.consistency_score:.0%} folds profitable")
-
-        if result.confidence_calibration:
-            lines.append("")
-            lines.append("Confidence Calibration:")
-            lines.append(f"{'Bucket':<12} {'Avg Conf':>8} {'Win Rate':>9} {'Trades':>7} {'Gap':>6}")
-            for c in result.confidence_calibration:
-                lines.append(
-                    f"{c['bucket']:<12} {c['avg_confidence']:>8.1%} "
-                    f"{c['actual_win_rate']:>9.1%} {c['trades']:>7} "
-                    f"{c['gap']:>+6.1%}"
-                )
-
+        gap = result.train_test_gap
+        lines.append("")
+        lines.append(f"  Avg Train  {result.aggregate_train_return:>+7.2f}%")
+        lines.append(f"  Avg Test   {result.aggregate_test_return:>+7.2f}%")
+        lines.append(f"  Gap        {gap:>+7.2f}%")
+        lines.append(f"  Consist.   {result.consistency_score:>6.0%}")
+        lines.append("</pre>")
+        if gap > 2:
+            lines.append(f"\n{_WARN} <i>Overfitting risk detected</i>")
         return "\n".join(lines)
 
 
+# ══════════════════════════════════════════════════════════════
+# MACRO
+# ══════════════════════════════════════════════════════════════
+
 class MacroCalendarSkill(BaseSkill):
     name = "macro_calendar"
-    description = "Show macro event calendar: current risk state and upcoming events"
+    description = "Macro event calendar"
 
     async def execute(self, engine: RuneClawEngine, **kwargs: Any) -> str:
         cal = engine.macro_calendar
         snap = cal.evaluate()
         upcoming = cal.upcoming(limit=5)
 
-        # Current state
-        state_line = f"Macro Risk State: {snap.state.value}"
+        state_icons = {
+            "NORMAL": _OK, "PRE_EVENT_CAUTION": _WARN,
+            "EVENT_LOCKDOWN": _BAD, "POST_EVENT_VOLATILITY": "\U0001f7e0",
+            "BLACKOUT": "\u26ab",
+        }
+        icon = state_icons.get(snap.state.value, _NEU)
+
+        lines = [
+            f"\U0001f4c5 <b>MACRO CALENDAR</b>\n",
+            f"  {icon} <b>{snap.state.value.replace('_', ' ').title()}</b>",
+        ]
+
         if snap.active_event:
-            state_line += f" ({snap.active_event.label})"
+            lines.append(f"  Active: <code>{_esc(snap.active_event.label)}</code>")
         if snap.time_until_next:
             hours = snap.time_until_next.total_seconds() / 3600
             if hours < 1:
-                time_str = f"{snap.time_until_next.total_seconds() / 60:.0f}min"
+                t = f"{snap.time_until_next.total_seconds() / 60:.0f}min"
             elif hours < 24:
-                time_str = f"{hours:.1f}h"
+                t = f"{hours:.1f}h"
             else:
-                time_str = f"{hours / 24:.1f}d"
-            state_line += f"\nNext event in: {time_str}"
+                t = f"{hours / 24:.1f}d"
+            lines.append(f"  Next event in: <code>{t}</code>")
 
-        # Upcoming events
         if upcoming:
-            lines = [state_line, "", "Upcoming Events:"]
+            lines.append(f"\n\U0001f4cb <b>Upcoming</b>")
             for ev in upcoming:
                 times = cal.format_event_times(ev)
-                lines.append(f"  {ev.label}")
-                lines.append(f"    {times['utc']} | {times['et']}")
-            return "\n".join(lines)
-        return state_line + "\n\nNo upcoming events."
+                lines.append(f"  \u2022 <b>{_esc(ev.label)}</b>")
+                lines.append(f"    <code>{times['utc']}</code>")
+                lines.append(f"    <code>{times['et']}</code>")
+        return "\n".join(lines)
 
+
+# ══════════════════════════════════════════════════════════════
+# JOURNAL
+# ══════════════════════════════════════════════════════════════
 
 class TradeJournalSkill(BaseSkill):
     name = "trade_journal"
-    description = "Show trade journal: history of executed trades with reasoning and outcome"
+    description = "Trade history"
 
     async def execute(self, engine: RuneClawEngine, **kwargs: Any) -> str:
         history = engine.portfolio._history
         if not history:
-            return "No closed trades yet. The journal fills as trades are executed and closed."
+            return f"{_NEU} <b>TRADE JOURNAL</b>\n\n<i>No closed trades yet.</i>"
 
         count = int(kwargs.get("count", 10))
         recent = history[-count:]
 
-        lines = [f"Trade Journal ({len(recent)} of {len(history)} trades)", "=" * 50]
+        lines = [f"\U0001f4d3 <b>TRADE JOURNAL</b>  ({len(recent)}/{len(history)})\n"]
+
         total_pnl = 0.0
         wins = 0
         for trade in reversed(recent):
-            outcome = "WIN" if trade.pnl > 0 else "LOSS"
-            if trade.pnl > 0:
-                wins += 1
+            is_win = trade.pnl > 0
+            if is_win: wins += 1
             total_pnl += trade.pnl
-
-            duration = ""
+            icon = _OK if is_win else _BAD
+            tag = "WIN" if is_win else "LOSS"
+            dur = ""
             if trade.closed_at and trade.opened_at:
-                dur_hours = (trade.closed_at - trade.opened_at).total_seconds() / 3600
-                duration = f" | Duration: {dur_hours:.1f}h"
-
-            exit_info = f"${trade.exit_price:,.2f}" if trade.exit_price else "open"
+                h = (trade.closed_at - trade.opened_at).total_seconds() / 3600
+                dur = f" \u2022 {h:.1f}h"
+            exit_p = f"${trade.exit_price:,.2f}" if trade.exit_price else "open"
+            size = trade.entry_price * trade.quantity
 
             lines.append(
-                f"\n[{trade.trade_id}] {trade.direction.value} {trade.asset}"
-                f"\n  Entry: ${trade.entry_price:,.2f} -> Exit: {exit_info}"
-                f"\n  SL: ${trade.stop_loss:,.2f} | TP: ${trade.take_profit:,.2f}"
-                f"\n  PnL: ${trade.pnl:+,.2f} ({outcome}){duration}"
-                f"\n  Size: ${trade.entry_price * trade.quantity:,.2f}"
+                f"  {icon} <b>{_esc(trade.asset)}</b>  {trade.direction.value}\n"
+                f"     <code>${trade.pnl:+,.2f}</code> {tag}{dur}\n"
+                f"     ${trade.entry_price:,.2f} \u2192 {exit_p}  size ${size:,.0f}"
             )
 
-        lines.append("\n" + "─" * 50)
         wr = wins / len(recent) if recent else 0
-        lines.append(f"Session: {wins}W / {len(recent) - wins}L | "
-                      f"Win Rate: {wr:.0%} | Net PnL: ${total_pnl:+,.2f}")
+        lines.append(
+            f"\n<b>{wins}W / {len(recent)-wins}L</b>  "
+            f"WR <code>{wr:.0%}</code>  "
+            f"Net <code>${total_pnl:+,.2f}</code>"
+        )
         return "\n".join(lines)
 
 
+# ══════════════════════════════════════════════════════════════
+# COSTS
+# ══════════════════════════════════════════════════════════════
+
 class CostBreakdownSkill(BaseSkill):
     name = "costs"
-    description = "Show full agent economics: LLM cost breakdown by category, rate limiter stats, projected ROI impact"
+    description = "Agent economics"
 
     async def execute(self, engine: RuneClawEngine, **kwargs: Any) -> str:
         cost = engine.cost.snapshot()
         state = engine.portfolio.snapshot()
         rate_stats = engine.analyzer._rate_limiter.stats
+        net = state.equity_usd - cost.operating_cost_usd
 
         lines = [
-            "RUNECLAW Agent Economics",
-            "=" * 36,
-            "",
-            f"Total LLM Cost:  ${cost.llm_cost_usd:,.4f}  ({cost.llm_calls} calls)",
-            f"Total Tokens:    {cost.prompt_tokens:,} in / {cost.completion_tokens:,} out",
-            f"Avg per call:    ${cost.avg_cost_per_call:,.6f}",
-            "",
-            "Cost by Category:",
+            f"\U0001f4b0 <b>AGENT ECONOMICS</b>\n",
+            f"\u26a1 <b>LLM Usage</b>",
+            "<pre>",
+            _row("Total", f"${cost.llm_cost_usd:,.4f} ({cost.llm_calls} calls)"),
+            _row("Tokens In", f"{cost.prompt_tokens:,}"),
+            _row("Tokens Out", f"{cost.completion_tokens:,}"),
+            _row("Avg/Call", f"${cost.avg_cost_per_call:,.6f}"),
+            "</pre>",
         ]
 
+        cats_found = False
         for cat in ("scan", "analyze", "thesis", "risk_decision", "other"):
-            cat_cost = cost.cost_by_category.get(cat, 0.0)
-            cat_calls = cost.calls_by_category.get(cat, 0)
-            if cat_calls > 0:
-                lines.append(f"  {cat:16s} ${cat_cost:,.4f}  ({cat_calls} calls)")
+            c = cost.cost_by_category.get(cat, 0.0)
+            n = cost.calls_by_category.get(cat, 0)
+            if n > 0:
+                if not cats_found:
+                    lines.extend([f"\n\U0001f4ca <b>Breakdown</b>", "<pre>"])
+                    cats_found = True
+                lines.append(_row(cat.title(), f"${c:,.4f} ({n})"))
+        if cats_found:
+            lines.append("</pre>")
 
-        if cost.unpriced_calls > 0:
-            lines.append(f"\n  WARNING: {cost.unpriced_calls} calls with UNKNOWN cost (model not in price table)")
-
-        lines.append("")
-        lines.append(f"Infra Cost:      ${cost.infra_cost_usd:,.4f}")
-        lines.append(f"Operating Total: ${cost.operating_cost_usd:,.4f}")
-        lines.append("")
-
-        # ROI impact
+        lines.extend([
+            f"\n\U0001f4b3 <b>Operating Total</b>",
+            "<pre>",
+            _row("LLM", f"${cost.llm_cost_usd:,.4f}"),
+            _row("Infra", f"${cost.infra_cost_usd:,.4f}"),
+            _row("Total", f"${cost.operating_cost_usd:,.4f}"),
+        ])
         if state.total_trades > 0:
-            cost_per_trade = cost.operating_cost_usd / state.total_trades
-            lines.append(f"Cost/trade:      ${cost_per_trade:,.4f}")
-        if state.equity_usd > 0 and cost.operating_cost_usd > 0:
-            roi_drag = (cost.operating_cost_usd / state.equity_usd) * 100
-            lines.append(f"ROI drag:        {roi_drag:.3f}% of equity")
+            cpt = cost.operating_cost_usd / state.total_trades
+            lines.append(_row("Per Trade", f"${cpt:,.4f}"))
 
-        # Net waterfall
-        net_equity = state.equity_usd - cost.operating_cost_usd
-        lines.append("")
-        lines.append(f"Equity:          ${state.equity_usd:,.2f}")
-        lines.append(f"- Operating:     ${cost.operating_cost_usd:,.4f}")
-        lines.append(f"= Net Equity:    ${net_equity:,.2f}")
-
-        # Rate limiter
-        lines.append("")
-        lines.append(f"Rate Limiter:    {rate_stats['total_calls']} calls, {rate_stats['total_waits']} throttled ({rate_stats['total_wait_seconds']}s)")
-
+        lines.extend([
+            "</pre>",
+            f"\n\U0001f4c8 <b>Net</b>",
+            "<pre>",
+            _row("Equity", _money(state.equity_usd)),
+            _row("- Costs", f"${cost.operating_cost_usd:,.4f}"),
+            _row("= Net", _money(net)),
+            "</pre>",
+            f"\n<i>Rate limiter: {rate_stats['total_calls']} calls, "
+            f"{rate_stats['total_waits']} throttled</i>",
+        ])
         return "\n".join(lines)
 
+
+# ══════════════════════════════════════════════════════════════
+# STRATEGY
+# ══════════════════════════════════════════════════════════════
 
 class RunStrategySkill(BaseSkill):
     name = "run_strategy"
-    description = "Execute a predefined trading strategy by name (natural language)"
+    description = "Execute a strategy preset"
 
-    # Strategy presets: keyword triggers -> configuration dict
     PRESETS: dict[str, dict[str, Any]] = {
         "btc dip sniper": {
-            "label": "BTC Dip Sniper",
-            "description": "Scan BTC only, RSI < 35, TREND_DOWN regime, confidence >= 0.70",
-            "symbols": ["BTC/USDT"],
-            "rsi_threshold": 35,
-            "regime": "TREND_DOWN",
-            "confidence_threshold": 0.70,
-            "volume_spike_min": None,
-            "sl_atr_mult": None,
-            "tp_atr_mult": None,
+            "label": "BTC Dip Sniper", "icon": "\U0001f3af",
+            "desc": "BTC only \u2022 RSI &lt; 35 \u2022 TREND_DOWN \u2022 conf \u2265 70%",
+            "symbols": ["BTC/USDT"], "rsi_threshold": 35,
+            "regime": "TREND_DOWN", "confidence_threshold": 0.70,
+            "volume_spike_min": None, "sl_atr_mult": None, "tp_atr_mult": None,
         },
         "momentum hunter": {
-            "label": "Momentum Hunter",
-            "description": "Scan all pairs, volume spikes > 3x, TREND_UP regime only",
-            "symbols": None,  # all pairs
-            "rsi_threshold": None,
-            "regime": "TREND_UP",
-            "confidence_threshold": None,
-            "volume_spike_min": 3.0,
-            "sl_atr_mult": None,
-            "tp_atr_mult": None,
+            "label": "Momentum Hunter", "icon": "\U0001f680",
+            "desc": "All pairs \u2022 vol spike &gt; 3x \u2022 TREND_UP",
+            "symbols": None, "rsi_threshold": None, "regime": "TREND_UP",
+            "confidence_threshold": None, "volume_spike_min": 3.0,
+            "sl_atr_mult": None, "tp_atr_mult": None,
         },
         "safe scalper": {
-            "label": "Safe Scalper",
-            "description": "Top 3 by volume, tight SL (1.5x ATR), quick TP (2x ATR), confidence >= 0.75",
-            "symbols": "top3_volume",
-            "rsi_threshold": None,
-            "regime": None,
-            "confidence_threshold": 0.75,
-            "volume_spike_min": None,
-            "sl_atr_mult": 1.5,
-            "tp_atr_mult": 2.0,
+            "label": "Safe Scalper", "icon": "\u26a1",
+            "desc": "Top 3 vol \u2022 tight SL 1.5 ATR \u2022 conf \u2265 75%",
+            "symbols": "top3_volume", "rsi_threshold": None, "regime": None,
+            "confidence_threshold": 0.75, "volume_spike_min": None,
+            "sl_atr_mult": 1.5, "tp_atr_mult": 2.0,
         },
         "full scan": {
-            "label": "Full Scan",
-            "description": "Standard full pipeline with default parameters",
-            "symbols": None,
-            "rsi_threshold": None,
-            "regime": None,
-            "confidence_threshold": None,
-            "volume_spike_min": None,
-            "sl_atr_mult": None,
-            "tp_atr_mult": None,
+            "label": "Full Scan", "icon": "\U0001f50d",
+            "desc": "All defaults \u2022 standard pipeline",
+            "symbols": None, "rsi_threshold": None, "regime": None,
+            "confidence_threshold": None, "volume_spike_min": None,
+            "sl_atr_mult": None, "tp_atr_mult": None,
         },
     }
-
-    # Aliases that map short names to canonical preset keys
     ALIASES: dict[str, str] = {
-        "dip": "btc dip sniper",
-        "momentum": "momentum hunter",
-        "scalp": "safe scalper",
-        "scan all": "full scan",
+        "dip": "btc dip sniper", "momentum": "momentum hunter",
+        "scalp": "safe scalper", "scan all": "full scan",
     }
 
     @classmethod
-    def _resolve_preset(cls, raw: str) -> str | None:
-        """Return canonical preset key for *raw*, or None if unrecognized."""
+    def _resolve(cls, raw: str) -> str | None:
         key = raw.strip().lower()
-        if key in cls.PRESETS:
-            return key
-        if key in cls.ALIASES:
-            return cls.ALIASES[key]
-        return None
+        return key if key in cls.PRESETS else cls.ALIASES.get(key)
 
     @classmethod
-    def _list_presets(cls) -> str:
-        lines = ["Available strategy presets:\n"]
+    def _list(cls) -> str:
+        lines = ["\U0001f3af <b>STRATEGY PRESETS</b>\n"]
         for key, cfg in cls.PRESETS.items():
-            aliases = [a for a, target in cls.ALIASES.items() if target == key]
-            alias_str = f"  (alias: {', '.join(aliases)})" if aliases else ""
-            lines.append(f"  - {cfg['label']}{alias_str}")
-            lines.append(f"    {cfg['description']}")
-        lines.append("\nUsage: /run <preset name>")
-        lines.append("All 18 risk-engine checks still apply. Strategies only pre-configure scan/analyze parameters.")
+            aliases = [a for a, t in cls.ALIASES.items() if t == key]
+            a = f"  <i>/{aliases[0]}</i>" if aliases else ""
+            lines.append(f"  {cfg['icon']} <b>{cfg['label']}</b>{a}")
+            lines.append(f"     <i>{cfg['desc']}</i>")
+        lines.append(f"\n<i>Usage: /run &lt;name&gt; \u2022 18 checks active</i>")
         return "\n".join(lines)
 
     async def execute(self, engine: RuneClawEngine, **kwargs: Any) -> str:
-        strategy_str: str = kwargs.get("strategy", "")
-        if not strategy_str:
-            return self._list_presets()
+        strat = kwargs.get("strategy", "")
+        if not strat:
+            return self._list()
+        key = self._resolve(strat)
+        if not key:
+            return f"Unknown: <code>{_esc(strat)}</code>\n\n" + self._list()
 
-        preset_key = self._resolve_preset(strategy_str)
-        if preset_key is None:
-            return (f"Unknown strategy: \"{strategy_str}\"\n\n"
-                    + self._list_presets())
+        cfg = self.PRESETS[key]
+        audit(system_log, f"Strategy: {cfg['label']}", action="run_strategy", data=cfg)
 
-        cfg = self.PRESETS[preset_key]
-        label = cfg["label"]
-
-        audit(system_log, f"Strategy activated: {label}",
-              action="run_strategy", data=cfg)
-
-        # --- Step 1: Scan ---
         signals = await engine.scanner.scan()
         if not signals:
-            return f"[{label}] No signals found during scan."
+            return f"{cfg['icon']} <b>{cfg['label']}</b>\n\n<i>No signals</i>"
 
-        # Filter by preset constraints
-        # Symbol filter
         if cfg["symbols"] == "top3_volume":
             signals.sort(key=lambda s: s.volume_usd_24h, reverse=True)
             signals = signals[:3]
         elif cfg["symbols"] is not None:
-            allowed = set(cfg["symbols"])
-            signals = [s for s in signals if s.symbol in allowed]
+            signals = [s for s in signals if s.symbol in set(cfg["symbols"])]
 
-        # Volume spike filter
         if cfg["volume_spike_min"] is not None:
-            spike_min = cfg["volume_spike_min"]
-            signals = [s for s in signals if getattr(s, "volume_spike_ratio", 0) >= spike_min
+            signals = [s for s in signals if getattr(s, "volume_spike_ratio", 0) >= cfg["volume_spike_min"]
                        or getattr(s, "volume_spike", False)]
 
         if not signals:
-            return f"[{label}] Scan complete but no signals matched strategy filters."
+            return f"{cfg['icon']} <b>{cfg['label']}</b>\n\n<i>No signals matched filters</i>"
 
-        # --- Step 2: Analyze each signal ---
-        results: list[str] = []
-        ideas_created = 0
-
-        for sig in signals[:5]:  # cap at 5 to avoid flooding
+        results = []
+        ideas = 0
+        for sig in signals[:5]:
             idea = await engine._analyze_signal(sig)
-            if idea is None:
+            if not idea:
                 continue
-
-            # Apply confidence threshold filter
-            conf_thresh = cfg.get("confidence_threshold")
-            if conf_thresh is not None and idea.confidence < conf_thresh:
-                results.append(
-                    f"  {sig.symbol}: idea below confidence threshold "
-                    f"({idea.confidence:.0%} < {conf_thresh:.0%}), skipped")
+            ct = cfg.get("confidence_threshold")
+            if ct and idea.confidence < ct:
                 continue
-
-            # Store in pending (same flow as AnalyzeAssetSkill)
             engine._pending_ideas[idea.id] = idea
-            ideas_created += 1
+            ideas += 1
+            d_icon = _OK if idea.direction.value == "LONG" else _BAD
             results.append(
-                f"  {idea.direction.value} {idea.asset} "
-                f"[{idea.id}] conf={idea.confidence:.0%} R:R={idea.risk_reward_ratio}")
+                f"  {d_icon} <b>{_esc(idea.asset)}</b>  "
+                f"<code>{idea.confidence:.0%}</code>  R:R <code>{idea.risk_reward_ratio}</code>"
+            )
 
-        # Build summary
-        header = (
-            f"Strategy: {label}\n"
-            f"Signals scanned: {len(signals)} | Ideas generated: {ideas_created}\n"
-            f"Risk engine: all 18 checks active (NOT bypassed)\n"
-            f"{'=' * 44}"
-        )
-        if results:
-            body = "\n".join(results)
-        else:
-            body = "  No actionable trade ideas passed filters."
+        lines = [
+            f"{cfg['icon']} <b>{cfg['label']}</b>",
+            f"  Scanned <code>{len(signals)}</code> \u2022 Ideas <code>{ideas}</code>\n",
+        ]
+        lines.extend(results or ["  <i>No actionable ideas passed filters</i>"])
+        if ideas > 0:
+            lines.append(f"\n<i>/trade to review and confirm</i>")
+        return "\n".join(lines)
 
-        footer = (
-            f"\n{'=' * 44}\n"
-            f"Use /trade to review and confirm pending ideas."
-        )
-        return f"{header}\n{body}{footer}"
 
+# ══════════════════════════════════════════════════════════════
+# LEARNING
+# ══════════════════════════════════════════════════════════════
 
 class LearningDashboardSkill(BaseSkill):
-    """Show the AI learning system dashboard."""
     name = "learning"
-    description = "Display AI learning system status, scores, and proposals"
+    description = "AI learning dashboard"
 
     async def execute(self, engine: RuneClawEngine, **kwargs: Any) -> str:
         dash = engine.learning.dashboard()
         score = dash["learning_score"]
         stats = dash["store_stats"]
+        tier_icons = {"S": "\U0001f451", "A": "\U0001f31f", "B": "\u2b50", "C": _NEU, "D": _BAD}
+        t = tier_icons.get(score["tier"], _NEU)
 
         lines = [
-            "RUNECLAW AI LEARNING DASHBOARD",
-            "=" * 40,
-            f"Learning Score: {score['composite_score']}/10 [{score['tier']}]",
-            "",
-            "Data Stores:",
+            f"\U0001f9e0 <b>AI LEARNING</b>\n",
+            f"  {t} Score: <code>{score['composite_score']}/10</code>  [{score['tier']}]\n",
+            f"\U0001f4be <b>Data Stores</b>",
+            "<pre>",
         ]
         for key, val in stats.items():
-            lines.append(f"  {key}: {val} records")
-
-        lines.append(f"\nPending proposals: {dash['pending_proposals']}")
-        lines.append(f"Blocked proposals: {dash['blocked_proposals']}")
+            lines.append(_row(key, str(val)))
+        lines.extend([
+            "</pre>\n",
+            f"\U0001f4cb <b>Proposals</b>",
+            "<pre>",
+            _row("Pending", str(dash['pending_proposals'])),
+            _row("Blocked", str(dash['blocked_proposals'])),
+            "</pre>",
+        ])
 
         if dash.get("strategy_rankings"):
-            lines.append("\nStrategy Rankings:")
+            lines.append(f"\n\U0001f3af <b>Strategies</b>")
             for s in dash["strategy_rankings"][:5]:
+                of = f" {_WARN}" if s["overfitting"] else ""
                 lines.append(
-                    f"  [{s['tier']}] {s['name']}: "
-                    f"safety={s['safety']:.0f} WR={s['win_rate']} "
-                    f"({s['trades']} trades)"
-                    + (" OVERFIT!" if s['overfitting'] else "")
+                    f"  [{s['tier']}] <b>{s['name']}</b>  "
+                    f"WR={s['win_rate']}  ({s['trades']}t){of}"
                 )
 
-        fb = dash.get("feedback_summary", {})
-        if fb.get("total", 0) > 0:
-            lines.append(f"\nFeedback: {fb['total']} total, "
-                         f"{fb.get('positive_rate', 0):.0%} positive")
-            for area in fb.get("improvement_areas", []):
-                lines.append(f"  -> {area}")
-
-        lines.append("\nSafety Policy: ACTIVE")
-        lines.append("AI may NOT: enable live trading, increase leverage,")
-        lines.append("  remove stops, bypass risk, delete audit logs")
-
+        lines.append(f"\n\U0001f512 <i>Safety policy active \u2014 AI cannot bypass risk</i>")
         return "\n".join(lines)
 
 
+# ══════════════════════════════════════════════════════════════
+# FEEDBACK / PATTERNS / PROPOSALS / OPTIMIZER
+# ══════════════════════════════════════════════════════════════
+
 class FeedbackSkill(BaseSkill):
-    """Submit human feedback on a trade decision."""
     name = "feedback"
-    description = "Submit feedback on a trade decision"
-
+    description = "Submit feedback"
     async def execute(self, engine: RuneClawEngine, **kwargs: Any) -> str:
-        decision_id = kwargs.get("decision_id", "")
-        feedback_type = kwargs.get("feedback_type", "")
+        did = kwargs.get("decision_id", "")
+        ft = kwargs.get("feedback_type", "")
         text = kwargs.get("text", "")
-
-        if not decision_id or not feedback_type:
-            valid_types = [
-                "correct", "incorrect", "too_risky", "too_conservative",
-                "unclear_explanation", "missing_macro_context",
-                "good_rejection", "good_explanation",
-                "needs_more_evidence", "needs_doc_update",
-            ]
+        if not did or not ft:
             return (
-                "Usage: /feedback <decision_id> <type> [text]\n"
-                f"Valid types: {', '.join(valid_types)}"
+                f"\U0001f4ac <b>FEEDBACK</b>\n\n"
+                f"<code>/feedback &lt;id&gt; &lt;type&gt; [text]</code>\n\n"
+                f"Types: <code>correct</code>, <code>incorrect</code>, "
+                f"<code>too_risky</code>, <code>too_conservative</code>, "
+                f"<code>good_rejection</code>, <code>good_explanation</code>"
             )
-
-        fb = engine.learning.submit_feedback(
-            decision_audit_id=decision_id,
-            feedback_type=feedback_type,
-            feedback_text=text,
-        )
-        return f"Feedback recorded: {fb.audit_id}\nType: {feedback_type}\nFeedback improves recommendations only — cannot bypass risk gates."
+        fb = engine.learning.submit_feedback(decision_audit_id=did, feedback_type=ft, feedback_text=text)
+        return (f"{_OK} Feedback recorded: <code>{fb.audit_id}</code>\n"
+                f"Type: <code>{_esc(ft)}</code>")
 
 
 class PatternsSkill(BaseSkill):
-    """Show detected market patterns from learning history."""
     name = "patterns"
-    description = "Display detected market patterns from AI learning"
-
+    description = "Detected patterns"
     async def execute(self, engine: RuneClawEngine, **kwargs: Any) -> str:
         patterns = engine.learning.detect_patterns()
         if not patterns:
-            return "No patterns detected yet. Need more decision history."
-
-        lines = ["DETECTED PATTERNS", "=" * 40]
-        for p in patterns[:10]:
-            exp = " [EXPERIMENTAL]" if p.is_experimental else ""
+            return f"{_NEU} <b>PATTERNS</b>\n\n<i>No patterns yet. Need more history.</i>"
+        lines = [f"\U0001f50d <b>PATTERNS</b>\n"]
+        for p in patterns[:8]:
+            exp = f" {_WARN}" if p.is_experimental else ""
             lines.append(
-                f"\n{p.pattern_type}{exp}\n"
-                f"  Confidence: {p.confidence:.0%} | Samples: {p.sample_size}\n"
-                f"  Win Rate: {p.historical_win_rate:.0%} | Avg PnL: ${p.avg_pnl:.2f}\n"
-                f"  {p.description}\n"
-                f"  May override risk: {p.may_override_risk}"  # always False
+                f"  \u2022 <b>{p.pattern_type}</b>{exp}\n"
+                f"    Conf <code>{p.confidence:.0%}</code>  "
+                f"WR <code>{p.historical_win_rate:.0%}</code>  "
+                f"Avg <code>${p.avg_pnl:.2f}</code>  ({p.sample_size})"
             )
-
-        lines.append(f"\nPatterns are observations only — they do NOT create trade signals.")
+        lines.append(f"\n<i>Patterns are observations, not signals</i>")
         return "\n".join(lines)
 
 
 class ProposalsSkill(BaseSkill):
-    """Show and manage improvement proposals."""
     name = "proposals"
-    description = "View pending improvement proposals from AI learning"
-
+    description = "Improvement proposals"
     async def execute(self, engine: RuneClawEngine, **kwargs: Any) -> str:
         proposals = engine.learning.store.get_proposals()
         if not proposals:
-            return "No improvement proposals yet."
-
-        lines = ["IMPROVEMENT PROPOSALS", "=" * 40]
-        for p in proposals[-10:]:
+            return f"{_NEU} <b>PROPOSALS</b>\n\n<i>No proposals yet.</i>"
+        lines = [f"\U0001f4cb <b>PROPOSALS</b>  ({len(proposals)})\n"]
+        for p in proposals[-6:]:
+            icons = {"approved": _OK, "pending": _WARN, "rejected": _BAD, "blocked": "\u26ab"}
+            s = icons.get(p.status, _NEU)
             lines.append(
-                f"\n[{p.classification}] {p.audit_id}\n"
-                f"  Status: {p.status}\n"
-                f"  Problem: {p.problem[:80]}\n"
-                f"  Change: {p.proposed_change[:80]}\n"
-                f"  Human approval: {'YES' if p.human_approval_required else 'auto'}"
+                f"  {s} <b>[{_esc(p.classification)}]</b> {p.status}\n"
+                f"     {_esc(p.problem[:70])}\n"
+                f"     \u2192 {_esc(p.proposed_change[:70])}"
             )
-
-        lines.append(f"\nTotal: {len(proposals)} proposals")
         return "\n".join(lines)
 
 
 class OptimizationSkill(BaseSkill):
-    """Show LLM token optimization stats and savings."""
     name = "optimize"
-    description = "Display LLM token optimization metrics: cache, tiers, batching, adaptive frequency"
-
+    description = "Token optimizer stats"
     async def execute(self, engine: RuneClawEngine, **kwargs: Any) -> str:
         opt = engine.analyzer.optimization_stats
         cost = engine.cost.snapshot()
+        cache = opt.get("cache", {})
+        tiers = opt.get("tier_distribution", {})
+        adaptive = opt.get("adaptive_frequency", {})
+        savings = opt.get("savings", {})
+        total = tiers.get("total", 0)
 
         lines = [
-            "RUNECLAW LLM TOKEN OPTIMIZER",
-            "=" * 42,
+            f"\u26a1 <b>TOKEN OPTIMIZER</b>\n",
+            f"\U0001f4be <b>Cache</b>",
+            "<pre>",
+            _row("Size", f"{cache.get('size', 0)}/{cache.get('max_size', 0)}"),
+            _row("Hit Rate", f"{cache.get('hit_rate', 0):.0%}"),
+            _row("Evictions", str(cache.get('evictions', 0))),
+            "</pre>",
+            f"\n\U0001f4ca <b>Tier Distribution</b>",
+            "<pre>",
+            _row("T1 Rules", f"{tiers.get('tier1_rules', 0)} (free)"),
+            _row("T2 Mini", f"{tiers.get('tier2_mini', 0)} (cheap)"),
+            _row("T3 Full", f"{tiers.get('tier3_full', 0)} (best)"),
         ]
+        if total > 0:
+            lines.append(_row("Free %", f"{tiers.get('tier1_rules', 0) / total * 100:.0f}%"))
 
-        # Cache stats
-        cache = opt.get("cache", {})
-        lines.append(f"\n--- Semantic Cache ---")
-        lines.append(f"  Size: {cache.get('size', 0)}/{cache.get('max_size', 0)} entries")
-        lines.append(f"  Hit Rate: {cache.get('hit_rate', 0):.1%} ({cache.get('hits', 0)} hits / {cache.get('misses', 0)} misses)")
-        lines.append(f"  Evictions: {cache.get('evictions', 0)} | Expirations: {cache.get('expirations', 0)}")
-        lines.append(f"  TTL: {cache.get('default_ttl', 0):.0f}s")
-
-        # Tier distribution
-        tiers = opt.get("tier_distribution", {})
-        total_tier = tiers.get("total", 0)
-        lines.append(f"\n--- Tiered Pipeline ---")
-        lines.append(f"  Tier 1 (Rules/FREE): {tiers.get('tier1_rules', 0)}")
-        lines.append(f"  Tier 2 (Mini/CHEAP): {tiers.get('tier2_mini', 0)}")
-        lines.append(f"  Tier 3 (Full/BEST):  {tiers.get('tier3_full', 0)}")
-        if total_tier > 0:
-            t1_pct = tiers.get('tier1_rules', 0) / total_tier * 100
-            lines.append(f"  Free tier ratio: {t1_pct:.0f}%")
-
-        # Adaptive frequency
-        adaptive = opt.get("adaptive_frequency", {})
-        lines.append(f"\n--- Adaptive Frequency ---")
-        lines.append(f"  LLM calls skipped: {adaptive.get('llm_skips', 0)}")
-        lines.append(f"  Skip criteria: ADX < 15 + no vol spike + |change| < 2%")
-
-        # Batching
-        batch = opt.get("batching", {})
-        if batch.get("batch_calls", 0) > 0:
-            lines.append(f"\n--- Smart Batching ---")
-            lines.append(f"  Batch calls: {batch.get('batch_calls', 0)}")
-            lines.append(f"  Symbols batched: {batch.get('symbols_batched', 0)}")
-
-        # Total savings
-        savings = opt.get("savings", {})
-        lines.append(f"\n--- Total Savings ---")
-        lines.append(f"  Tokens saved: ~{savings.get('total_estimated_tokens_saved', 0):,}")
-        lines.append(f"  Cost saved:   ~${savings.get('total_estimated_cost_saved_usd', 0):.4f}")
+        saved = savings.get("total_estimated_cost_saved_usd", 0)
+        lines.extend([
+            "</pre>",
+            f"\n\U0001f4b0 <b>Savings</b>",
+            "<pre>",
+            _row("Tokens", f"~{savings.get('total_estimated_tokens_saved', 0):,}"),
+            _row("Cost", f"~${saved:,.4f}"),
+        ])
         if cost.llm_cost_usd > 0:
-            actual_cost = cost.llm_cost_usd
-            saved = savings.get('total_estimated_cost_saved_usd', 0)
-            would_have = actual_cost + saved
-            reduction = (saved / would_have * 100) if would_have > 0 else 0
-            lines.append(f"  Without optimizer: ~${would_have:.4f}")
-            lines.append(f"  With optimizer:    ~${actual_cost:.4f} ({reduction:.0f}% reduction)")
-
+            would_have = cost.llm_cost_usd + saved
+            pct = (saved / would_have * 100) if would_have > 0 else 0
+            lines.append(_row("Reduction", f"{pct:.0f}%"))
+        lines.append("</pre>")
         return "\n".join(lines)
 
 
+# ══════════════════════════════════════════════════════════════
+# REGISTRY
+# ══════════════════════════════════════════════════════════════
+
 def build_default_registry() -> SkillRegistry:
-    """Create a registry with all built-in skills pre-loaded."""
     registry = SkillRegistry()
-    for skill_cls in (ScanMarketSkill, AnalyzeAssetSkill, CheckRiskSkill,
-                      ExecutePaperTradeSkill, GetPortfolioSkill, ExplainTradeSkill,
-                      RunBacktestSkill, RejectedTradesSkill, HaltSkill,
-                      WalkForwardSkill, MacroCalendarSkill, TradeJournalSkill,
-                      CostBreakdownSkill, RunStrategySkill,
-                      LearningDashboardSkill, FeedbackSkill, PatternsSkill,
-                      ProposalsSkill, OptimizationSkill):
-        registry.register(skill_cls())
+    for cls in (ScanMarketSkill, AnalyzeAssetSkill, CheckRiskSkill,
+                ExecutePaperTradeSkill, GetPortfolioSkill, ExplainTradeSkill,
+                RunBacktestSkill, RejectedTradesSkill, HaltSkill,
+                WalkForwardSkill, MacroCalendarSkill, TradeJournalSkill,
+                CostBreakdownSkill, RunStrategySkill,
+                LearningDashboardSkill, FeedbackSkill, PatternsSkill,
+                ProposalsSkill, OptimizationSkill):
+        registry.register(cls())
     return registry
