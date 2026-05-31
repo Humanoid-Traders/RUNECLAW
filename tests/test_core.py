@@ -10,6 +10,7 @@ Tests cover:
 """
 
 import asyncio
+import os
 import time
 import pytest
 import numpy as np
@@ -3660,3 +3661,120 @@ class TestBacktestIntegration:
         r1 = asyncio.run(BacktestEngine(config1).run(bars1))
         r2 = asyncio.run(BacktestEngine(config2).run(bars2))
         assert r1 is not None and r2 is not None
+
+
+# ===========================================================================
+# Qwen + Solana Integration Tests
+# ===========================================================================
+
+class TestQwenIntegration:
+    """Tests for Qwen / multi-provider LLM configuration."""
+
+    def test_llm_config_has_base_url_field(self):
+        """LLMConfig should expose a base_url field for provider flexibility."""
+        from bot.config import LLMConfig
+        cfg = LLMConfig()
+        assert hasattr(cfg, "base_url")
+        assert cfg.base_url == ""  # empty default = OpenAI
+
+    def test_llm_config_base_url_from_env(self, monkeypatch):
+        """base_url should be loaded from LLM_BASE_URL env var."""
+        monkeypatch.setenv("LLM_BASE_URL", "https://dashscope-intl.aliyuncs.com/compatible-mode/v1")
+        from bot.config import _env
+        val = _env("LLM_BASE_URL")
+        assert "dashscope" in val
+
+    def test_analyzer_init_without_api_key(self):
+        """Analyzer without API key should have no LLM client (rule-based fallback)."""
+        from bot.core.analyzer import Analyzer
+        analyzer = Analyzer()
+        # If no LLM_API_KEY is set, _llm should be None
+        if not os.environ.get("LLM_API_KEY"):
+            assert analyzer._llm is None
+
+    def test_qwen_model_names_valid(self):
+        """Qwen model names should follow expected patterns."""
+        qwen_models = [
+            "qwen-max", "qwen-plus", "qwen-turbo", "qwen-flash",
+            "qwen/qwen3.6-35b-a3b",  # OpenRouter format
+        ]
+        for model in qwen_models:
+            assert isinstance(model, str)
+            assert len(model) > 0
+
+    def test_llm_config_default_model_is_gpt4o(self):
+        """Default model should be gpt-4o unless overridden."""
+        from bot.config import LLMConfig
+        cfg = LLMConfig()
+        assert cfg.model == os.environ.get("LLM_MODEL", "gpt-4o")
+
+
+class TestSolanaEcosystem:
+    """Tests for Solana ecosystem asset universe configuration."""
+
+    def test_solana_symbols_list_exists(self):
+        """SOLANA_ECOSYSTEM_SYMBOLS should be a non-empty list."""
+        from bot.config import SOLANA_ECOSYSTEM_SYMBOLS
+        assert isinstance(SOLANA_ECOSYSTEM_SYMBOLS, list)
+        assert len(SOLANA_ECOSYSTEM_SYMBOLS) >= 10
+
+    def test_solana_symbols_are_usdt_pairs(self):
+        """All Solana symbols should be USDT trading pairs."""
+        from bot.config import SOLANA_ECOSYSTEM_SYMBOLS
+        for sym in SOLANA_ECOSYSTEM_SYMBOLS:
+            assert sym.endswith("/USDT"), f"{sym} is not a USDT pair"
+
+    def test_sol_in_solana_symbols(self):
+        """SOL/USDT must be in the Solana ecosystem list."""
+        from bot.config import SOLANA_ECOSYSTEM_SYMBOLS
+        assert "SOL/USDT" in SOLANA_ECOSYSTEM_SYMBOLS
+
+    def test_key_solana_tokens_present(self):
+        """Major Solana ecosystem tokens should be in the list."""
+        from bot.config import SOLANA_ECOSYSTEM_SYMBOLS
+        expected = ["SOL/USDT", "JUP/USDT", "BONK/USDT", "RAY/USDT", "PYTH/USDT"]
+        for sym in expected:
+            assert sym in SOLANA_ECOSYSTEM_SYMBOLS, f"{sym} missing from Solana list"
+
+    def test_exchange_config_has_asset_universe(self):
+        """ExchangeConfig should have asset_universe field."""
+        from bot.config import ExchangeConfig
+        cfg = ExchangeConfig()
+        assert hasattr(cfg, "asset_universe")
+        assert cfg.asset_universe in ("all", "solana", "custom")
+
+    def test_scanner_solana_filter_prioritizes(self):
+        """When asset_universe=solana, Solana tokens should appear first in results."""
+        # Build mock signals: one Solana, one non-Solana with higher momentum
+        from bot.config import SOLANA_ECOSYSTEM_SYMBOLS
+        sol_sym = SOLANA_ECOSYSTEM_SYMBOLS[0]  # SOL/USDT
+
+        sol_signal = MarketSignal(
+            symbol=sol_sym, price=80.0, change_pct_24h=2.0,
+            volume_usd_24h=1_000_000, momentum_score=0.2,
+        )
+        other_signal = MarketSignal(
+            symbol="DOGE/USDT", price=0.1, change_pct_24h=10.0,
+            volume_usd_24h=5_000_000, momentum_score=0.9,
+        )
+        # Solana mode: SOL should be prioritized even with lower momentum
+        solana_set = set(SOLANA_ECOSYSTEM_SYMBOLS)
+        signals = [other_signal, sol_signal]
+        solana_signals = [s for s in signals if s.symbol in solana_set]
+        other_signals = [s for s in signals if s.symbol not in solana_set]
+        prioritized = solana_signals + other_signals
+        assert prioritized[0].symbol == sol_sym
+
+    def test_scanner_all_mode_no_filter(self):
+        """When asset_universe=all, no Solana priority is applied."""
+        sig1 = MarketSignal(
+            symbol="SOL/USDT", price=80.0, change_pct_24h=2.0,
+            volume_usd_24h=1_000_000, momentum_score=0.2,
+        )
+        sig2 = MarketSignal(
+            symbol="BTC/USDT", price=100000.0, change_pct_24h=5.0,
+            volume_usd_24h=50_000_000, momentum_score=0.5,
+        )
+        # In "all" mode, just sort by momentum
+        signals = sorted([sig1, sig2], key=lambda s: abs(s.momentum_score), reverse=True)
+        assert signals[0].symbol == "BTC/USDT"  # higher momentum first

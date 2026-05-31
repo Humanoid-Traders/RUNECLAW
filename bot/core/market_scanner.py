@@ -12,7 +12,7 @@ from typing import Optional
 
 import ccxt.async_support as ccxt
 
-from bot.config import CONFIG
+from bot.config import CONFIG, SOLANA_ECOSYSTEM_SYMBOLS
 from bot.utils.logger import audit, system_log
 from bot.utils.models import MarketSignal
 
@@ -77,7 +77,16 @@ class MarketScanner:
 
         # Sort by absolute momentum descending
         signals.sort(key=lambda s: abs(s.momentum_score), reverse=True)
-        top = signals[: CONFIG.top_movers_count]
+
+        # If Solana ecosystem mode, boost Solana tokens to top of results
+        if CONFIG.exchange.asset_universe == "solana":
+            solana_set = set(SOLANA_ECOSYSTEM_SYMBOLS)
+            solana_signals = [s for s in signals if s.symbol in solana_set]
+            other_signals = [s for s in signals if s.symbol not in solana_set]
+            # Solana ecosystem first, then fill remaining slots with other assets
+            top = (solana_signals + other_signals)[: CONFIG.top_movers_count]
+        else:
+            top = signals[: CONFIG.top_movers_count]
 
         # Evict stale symbols not seen in this scan to cap memory
         with self._lock:

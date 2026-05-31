@@ -4,6 +4,7 @@
 * [Getting Started](getting-started.md)
 * [Architecture](architecture.md)
 * [Agent Hub Alignment](agent-hub-alignment.md)
+* [Partner Integrations](partner-integrations.md)
 * [MCP Integration](mcp-integration.md)
 * [Skills & Commands](skills-and-commands.md)
 * [Telegram Confirmation Flow](telegram-confirmation.md)

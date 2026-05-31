@@ -64,6 +64,16 @@ A 4-layer optimization pipeline reduces LLM API costs by up to 70%:
 - **Smart Batching** -- combines up to 5 symbols per LLM call
 - **Adaptive Frequency** -- skips LLM entirely in quiet/low-ADX markets
 
+### Multi-Provider LLM Support (NEW)
+RUNECLAW supports any OpenAI-compatible LLM provider via `LLM_BASE_URL`:
+- **Alibaba Qwen** -- `qwen-max`, `qwen-plus`, `qwen-turbo` via DashScope (Hackathon S1 partner)
+- **OpenRouter** -- `qwen/qwen3.6-35b-a3b` at $0.15/M tokens (cheapest frontier model)
+- **Together AI / Fireworks** -- open-source Qwen models with fast inference
+- **Local (vLLM/Ollama)** -- self-hosted for zero API cost
+
+### Solana Ecosystem Mode (NEW)
+Set `ASSET_UNIVERSE=solana` to prioritize 15 Solana ecosystem tokens (SOL, JUP, JTO, BONK, WIF, PYTH, RAY, ORCA, RENDER, HNT, MOBILE, W, JITO, TENSOR, DRIFT) in scan results. All tokens trade on Bitget with full USDT pair support.
+
 ---
 
 ## Architecture

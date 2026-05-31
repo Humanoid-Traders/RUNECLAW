@@ -46,7 +46,7 @@ Validated across 500 backtest runs (synthetic data — 5 market regimes, 20 symb
 - **Human-in-the-Loop** -- every trade requires Telegram confirmation with inline approve/reject keyboard
 - **Simulation-First** -- paper trading by default ($10K virtual balance), live trading requires dual safety flag opt-in
 - **Full Audit Trail** -- structured JSON logging of every decision, rejection, and execution with timestamps
-- **289+ Unit Tests** -- risk engine, portfolio, analyzer, backtest, learning system (8 modules), token optimizer (4 layers), smart money engine, multi-timeframe analysis, strategy modes, explainability engine, FSM, integration, edge cases, audit fix validation
+- **289+ Unit Tests** -- risk engine, portfolio, analyzer, backtest, learning system (8 modules), token optimizer (4 layers), smart money engine, multi-timeframe analysis, strategy modes, explainability engine, FSM, integration, edge cases, audit fix validation, Qwen integration, Solana ecosystem (301 total)
 - **AI Learning System** -- 8 integrated modules: experience memory, reflection engine, strategy evaluator (S/A/B/C/D tiers), pattern learner, macro learner (FOMC/CPI/NFP/PCE tracking), model comparer, prompt optimizer, feedback collector; all governed by immutable safety policy with blocked-action lists
 - **LLM Token Optimizer** -- 4-layer cost reduction: semantic cache (TTL-bucketed), tiered pipeline (rules/mini/full), smart batching (5 symbols/call), adaptive frequency (skip LLM in quiet markets); up to 70% token savings
 - **Smart Money Engine** -- liquidation cascade detection (funding + OI + CVD divergence), funding rate squeeze (contrarian positioning), whale flow tracking (rolling buy/sell with stealth accumulation detection), composite scoring normalized [-1,1]
@@ -54,6 +54,8 @@ Validated across 500 backtest runs (synthetic data — 5 market regimes, 20 symb
 - **Adaptive Strategy Modes** -- 5 modes (Trend Continuation, Breakout, Mean Reversion, Liquidity Sweep, Conservative) with per-mode SL/TP multipliers, confidence requirements, and confluence boosts
 - **Explainability Engine** -- structured reasoning chains, factor attribution with contribution percentages, compliance scoring (explainability + data sufficiency + risk documentation), MiCA-aligned audit trail
 - **Macro Event Calendar** -- hardcoded 2026 FOMC/CPI/NFP/PCE schedule with 5-state risk machine (NORMAL, PRE_EVENT_CAUTION, EVENT_LOCKDOWN, POST_EVENT_VOLATILITY, BLACKOUT)
+- **Multi-Provider LLM (Qwen-Ready)** -- any OpenAI-compatible provider via LLM_BASE_URL: Alibaba Qwen (DashScope), OpenRouter, Together AI, Fireworks, local vLLM/Ollama; drop-in Qwen integration for Hackathon S1 partner alignment
+- **Solana Ecosystem Mode** -- ASSET_UNIVERSE=solana prioritizes 15 Solana tokens (SOL, JUP, JTO, BONK, WIF, PYTH, RAY, ORCA, RENDER, HNT, MOBILE, W, JITO, TENSOR, DRIFT) in scanner output; all tradeable on Bitget with full risk engine coverage
 
 ---
 
@@ -80,6 +82,8 @@ Validated across 500 backtest runs (synthetic data — 5 market regimes, 20 symb
 | Token Optimizer | Semantic cache (regime+RSI+MACD keyed), tiered pipeline (3 tiers), smart batching (up to 5 symbols), adaptive frequency (ADX/volume gating) |
 | Macro Calendar | 2026 FOMC/CPI/NFP/PCE schedule, 5-state risk machine with fail-closed BLACKOUT default |
 | Concurrency | RLock guards on shared mutable state (portfolio, risk engine, scanner); single-threaded asyncio means contention is minimal, but locks protect against any future threading |
+| LLM Providers | Multi-provider via LLM_BASE_URL: OpenAI (default), Alibaba Qwen (DashScope), OpenRouter, Together AI, Fireworks, local vLLM/Ollama. Drop-in swap, zero code changes |
+| Solana Ecosystem | 15 Solana tokens tracked (SOL, JUP, JTO, BONK, WIF, PYTH, RAY, ORCA, RENDER, HNT, MOBILE, W, JITO, TENSOR, DRIFT); ASSET_UNIVERSE=solana prioritizes in scanner |
 | Metrics Engine | Sharpe/Sortino (per-trade returns, annualized from actual trade frequency), Calmar (return % / drawdown %), profit factor, equity curve (capped 10K points) |
 
 ---
@@ -102,7 +106,7 @@ Validated across 500 backtest runs (synthetic data — 5 market regimes, 20 symb
 |-------|----------|--------|
 | 18 risk checks | `bot/risk/risk_engine.py` lines 1-28 enumerate all 18 (16 in-engine + #17 liquidity + #18 macro) | Verified |
 | Fail-closed design | Any check failure or exception returns REJECTED | Verified |
-| 97+ tests passing | `pytest tests/ -v` -- 289+ green (97 original + audit/learning/optimizer additions) | Verified |
+| 97+ tests passing | `pytest tests/ -v` -- 301+ green (97 original + audit/learning/optimizer/qwen/solana additions) | Verified |
 | 9-state FSM | `bot/utils/models.py` AgentState enum, `bot/core/engine.py` transitions | Verified |
 | Trailing stops work | Backtest (synthetic data): 416/889 exits via trailing stop, net-positive aggregate PnL. Note: trailing exits are structurally profitable (activate at +1R, trail 1.5 ATR) — this is by construction, not evidence of predictive edge | Verified |
 | Regime detection | `bot/core/analyzer.py` _detect_regime + _score_confluence | Verified |
@@ -117,7 +121,7 @@ Validated across 500 backtest runs (synthetic data — 5 market regimes, 20 symb
 
 ## Final QA Checklist
 
-- [x] All 289+ tests pass (`pytest tests/ -v`)
+- [x] All 301+ tests pass (`pytest tests/ -v`)
 - [x] No critical or high-severity issues in codebase audit (all C1-C3, H1-H4 fixed)
 - [x] All 18 risk checks verified correct with unit tests
 - [x] Backtest runs without crashes across 180 configurations

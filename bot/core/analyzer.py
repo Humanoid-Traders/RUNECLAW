@@ -61,7 +61,14 @@ class Analyzer:
     THESIS_MODEL = "gpt-4o"        # full reasoning for trade ideas
 
     def __init__(self, cost_tracker: Optional["CostTracker"] = None) -> None:  # noqa: F821
-        self._llm = AsyncOpenAI(api_key=CONFIG.llm.api_key) if CONFIG.llm.api_key else None
+        # Build LLM client — supports any OpenAI-compatible provider (Qwen, OpenRouter, etc.)
+        if CONFIG.llm.api_key:
+            llm_kwargs: dict = {"api_key": CONFIG.llm.api_key}
+            if CONFIG.llm.base_url:
+                llm_kwargs["base_url"] = CONFIG.llm.base_url
+            self._llm = AsyncOpenAI(**llm_kwargs)
+        else:
+            self._llm = None
         self._llm_calls_today: int = 0
         self._llm_day: str = ""  # YYYY-MM-DD, reset counter on new day
         self._cost = cost_tracker

@@ -66,6 +66,18 @@ class ExchangeConfig:
     api_secret: str = _env("BITGET_API_SECRET")
     passphrase: str = _env("BITGET_PASSPHRASE")
     sandbox: bool = _env_bool("BITGET_SANDBOX", True)  # Sandbox by default; override via env
+    # Asset universe filter: "all" scans everything, "solana" adds Solana ecosystem priority
+    asset_universe: str = _env("ASSET_UNIVERSE", "all")  # all | solana | custom
+
+
+# Solana ecosystem tokens tracked on Bitget (centralized pairs).
+# Updated 2026-05. Used when ASSET_UNIVERSE=solana to prioritize
+# these symbols and add ecosystem-level correlation awareness.
+SOLANA_ECOSYSTEM_SYMBOLS: list[str] = [
+    "SOL/USDT", "JUP/USDT", "JTO/USDT", "BONK/USDT", "WIF/USDT",
+    "PYTH/USDT", "RAY/USDT", "ORCA/USDT", "RENDER/USDT", "HNT/USDT",
+    "MOBILE/USDT", "W/USDT", "JITO/USDT", "TENSOR/USDT", "DRIFT/USDT",
+]
 
 
 @dataclass(frozen=True)
@@ -78,8 +90,20 @@ class TelegramConfig:
 
 @dataclass(frozen=True)
 class LLMConfig:
-    """LLM provider settings for trade analysis."""
+    """LLM provider settings for trade analysis.
+
+    Supports any OpenAI-compatible provider via LLM_BASE_URL:
+      - OpenAI (default):   leave LLM_BASE_URL unset
+      - Alibaba Qwen:       LLM_BASE_URL=https://dashscope-intl.aliyuncs.com/compatible-mode/v1
+                             LLM_MODEL=qwen-max  (or qwen-plus, qwen-turbo)
+      - OpenRouter:          LLM_BASE_URL=https://openrouter.ai/api/v1
+                             LLM_MODEL=qwen/qwen3.6-35b-a3b
+      - Together AI:         LLM_BASE_URL=https://api.together.xyz/v1
+      - Fireworks:           LLM_BASE_URL=https://api.fireworks.ai/inference/v1
+      - Any local (vLLM/Ollama): LLM_BASE_URL=http://localhost:8000/v1
+    """
     api_key: str = _env("LLM_API_KEY")
+    base_url: str = _env("LLM_BASE_URL")  # empty = OpenAI default
     model: str = _env("LLM_MODEL", "gpt-4o")
     temperature: float = 0.3
     max_tokens: int = 1024
