@@ -2,11 +2,11 @@
 
 **AI Trading Command Core | Forged in Volatility. Governed by Discipline.**
 
-*by Humanoid Traders | built for Bitget GetClaw / Agent Hub*
+*by Humanoid Traders | built for Bitget AI Base Camp / Agent Hub*
 
 Welcome to the official RUNECLAW documentation.
 
-RUNECLAW is a risk-first AI trading assistant designed for the **Bitget GetClaw Hackathon**. It scans Bitget markets for opportunities, generates trade theses using LLM analysis and technical indicators, applies macro and volatility context, enforces strict risk controls, and requires human confirmation before any trade can proceed.
+RUNECLAW is a risk-first AI trading assistant designed for the **Bitget AI Base Camp · Hackathon S1**. It scans Bitget markets for opportunities, generates trade theses using LLM analysis and technical indicators, applies macro and volatility context, enforces strict risk controls, and requires human confirmation before any trade can proceed.
 
 The system runs in **paper trading mode by default** and is built around safety, transparency, explainability, and disciplined execution.
 
@@ -65,7 +65,7 @@ Structured Audit Log
 - **Website:** [lgl3crf9.mule.page](https://lgl3crf9.mule.page/)
 - **Telegram:** [Join Community](https://t.me/+VRNgsmkR5pszZTdk)
 - **X / Twitter:** [@BaurPatric70363](https://x.com/BaurPatric70363)
-- **Hackathon:** Bitget GetClaw 2025
+- **Hackathon:** Bitget AI Base Camp · Hackathon S1
 - **License:** MIT
 
 > **Disclaimer:** RUNECLAW is an educational hackathon prototype. It is not production-ready and should not be used with real funds without extensive additional safeguards, independent audits, and regulatory review. Backtest results use synthetic data and do not predict future performance. This is not financial advice.

@@ -27,7 +27,7 @@ def _banner() -> str:
         "\n"
         "  ╔══════════════════════════════════════╗\n"
         "  ║   RUNECLAW  --  AI Trading Core      ║\n"
-        "  ║   Bitget / GetClaw Hackathon 2025    ║\n"
+        "  ║   Bitget AI Base Camp · S1           ║\n"
         "  ╚══════════════════════════════════════╝\n"
         f"  Mode: {'SIMULATION' if CONFIG.simulation_mode else 'LIVE'}\n"
         f"  Live Trading: {'ENABLED' if CONFIG.live_trading_enabled else 'DISABLED'}\n"

@@ -7,7 +7,7 @@
   "total_pnl": 87.50,
   "daily_pnl": 37.50,
   "max_drawdown_pct": 1.20,
-  "timestamp": "2025-07-15T16:45:00.000Z",
+  "timestamp": "2026-05-15T16:45:00.000Z",
   "positions": [
     {
       "trade_id": "TI-a1b2c3d4",
@@ -19,7 +19,7 @@
       "take_profit": 68710.00,
       "status": "EXECUTED",
       "is_paper": true,
-      "opened_at": "2025-07-15T14:30:02.000Z"
+      "opened_at": "2026-05-15T14:30:02.000Z"
     },
     {
       "trade_id": "TI-e5f6g7h8",
@@ -31,7 +31,7 @@
       "take_profit": 187.68,
       "status": "EXECUTED",
       "is_paper": true,
-      "opened_at": "2025-07-15T15:10:05.000Z"
+      "opened_at": "2026-05-15T15:10:05.000Z"
     }
   ],
   "recent_history": [
@@ -42,7 +42,7 @@
       "entry_price": 3891.20,
       "exit_price": 3945.80,
       "pnl": 28.50,
-      "closed_at": "2025-07-15T13:20:00.000Z"
+      "closed_at": "2026-05-15T13:20:00.000Z"
     },
     {
       "trade_id": "TI-b3c4d5e6",
@@ -51,7 +51,7 @@
       "entry_price": 42.67,
       "exit_price": 43.10,
       "pnl": -20.15,
-      "closed_at": "2025-07-15T12:05:00.000Z"
+      "closed_at": "2026-05-15T12:05:00.000Z"
     },
     {
       "trade_id": "TI-f7g8h9i0",
@@ -60,7 +60,7 @@
       "entry_price": 0.1823,
       "exit_price": 0.1890,
       "pnl": 73.50,
-      "closed_at": "2025-07-15T10:45:00.000Z"
+      "closed_at": "2026-05-15T10:45:00.000Z"
     }
   ]
 }

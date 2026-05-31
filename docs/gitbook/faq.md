@@ -4,7 +4,7 @@
 
 **What is RUNECLAW?**
 
-RUNECLAW is an AI-powered trading command core built for the Bitget GetClaw Hackathon. It scans markets, generates trade ideas using AI analysis, enforces strict risk limits, and executes paper trades -- all through a Telegram bot interface.
+RUNECLAW is an AI-powered trading command core built for the Bitget AI Base Camp · Hackathon S1. It scans markets, generates trade ideas using AI analysis, enforces strict risk limits, and executes paper trades -- all through a Telegram bot interface.
 
 **Does RUNECLAW trade with real money?**
 

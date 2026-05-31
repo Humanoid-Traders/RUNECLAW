@@ -1,6 +1,6 @@
 # RUNECLAW Video Demo Script
 
-## Bitget GetClaw / Agent Hub Genesis S1
+## Bitget AI Base Camp · Hackathon S1
 
 **Duration:** 2:50-3:00
 **Tone:** Confident, direct, hackathon energy. Professional but not corporate.
@@ -97,7 +97,7 @@ Then links appear below:
 - Website: lgl3crf9.mule.page
 - Telegram: t.me/+VRNgsmkR5pszZTdk
 
-**[VOICEOVER]** "RUNECLAW. AI proposes. Humans decide. The risk engine enforces. Links in the description. MIT licensed. Fully open source. Built for GetClaw."
+**[VOICEOVER]** "RUNECLAW. AI proposes. Humans decide. The risk engine enforces. Links in the description. MIT licensed. Fully open source. Built for Bitget AI Base Camp."
 
 ---
 

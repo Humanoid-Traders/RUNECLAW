@@ -196,7 +196,7 @@ audit(
 
 ```json
 {
-  "ts": "2025-01-15T14:30:00.000Z",
+  "ts": "2026-05-15T14:30:00.000Z",
   "level": "INFO",
   "channel": "runeclaw.trade",
   "message": "Trade idea generated",

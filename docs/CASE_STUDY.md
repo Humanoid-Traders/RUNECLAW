@@ -1,6 +1,6 @@
 # RUNECLAW: Case Study
 
-## Bitget GetClaw / Agent Hub Genesis S1 Hackathon Submission
+## Bitget AI Base Camp · Hackathon S1 Submission
 
 **Team:** Humanoid Traders
 **Track:** Trading Agent + Trading Infra

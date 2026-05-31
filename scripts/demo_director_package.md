@@ -218,7 +218,7 @@ cat logs/trade.jsonl | python3 -m json.tool | head -30
 **Expected output:** Structured JSON entries showing the full decision chain:
 ```json
 {
-  "ts": "2025-07-15T14:30:00.000Z",
+  "ts": "2026-05-15T14:30:00.000Z",
   "level": "INFO",
   "channel": "runeclaw.trade",
   "message": "Trade idea: LONG BTC/USDT",

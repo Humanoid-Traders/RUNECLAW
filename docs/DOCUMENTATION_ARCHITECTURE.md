@@ -30,7 +30,7 @@ An autonomous, simulation-first crypto trading agent that perceives markets,
 generates explainable trade theses, enforces fail-closed risk controls,
 and logs every decision for full auditability.
 
-Built for the Bitget GetClaw Hackathon by Humanoid Traders.
+Built for the Bitget AI Base Camp · Hackathon S1 by Humanoid Traders.
 ```
 
 ## Section Outline
@@ -38,7 +38,7 @@ Built for the Bitget GetClaw Hackathon by Humanoid Traders.
 ### 1. Hero Block
 - ASCII art / logo
 - One-line tagline: `AI Trading Command Core | Forged in Volatility. Governed by Discipline.`
-- Badges: Python 3.11+, MIT, Paper Trading, Bitget, GetClaw 2025
+- Badges: Python 3.11+, MIT, Paper Trading, Bitget, AI Base Camp S1
 - Quick links: GitHub, GitBook, Telegram
 
 ### 2. Why This Matters (Judge-Focused)
@@ -225,7 +225,7 @@ RUNECLAW
 3. **How It Works** — High-level pipeline (Perceive → Score → Hypothesize → Validate → Confirm → Execute → Monitor → Audit)
 4. **What Makes This AI-Native** — Comparison table: Traditional Dashboard vs RUNECLAW agent
 5. **Target Users** — Table: Quantitative retail traders, developer-traders, risk-conscious algo traders, hackathon judges
-6. **Bitget Alignment** — How RUNECLAW maps to the GetClaw hackathon criteria and Bitget Agent Hub
+6. **Bitget Alignment** — How RUNECLAW maps to the hackathon criteria and Bitget Agent Hub
 7. **Current Status** — What works now (paper trading, CLI, Telegram) vs roadmap (backtesting, live adapter, multi-exchange)
 
 **Key Diagrams:**
@@ -705,7 +705,7 @@ RUNECLAW
 2. **Log Entry Schema**
    ```json
    {
-     "ts": "2025-06-15T14:30:00.000Z",
+     "ts": "2026-06-15T14:30:00.000Z",
      "level": "INFO",
      "channel": "runeclaw.trade",
      "message": "Trade idea: LONG BTC/USDT",
@@ -1069,7 +1069,7 @@ RUNECLAW
    - Name: RUNECLAW — AI Trading Command Core
    - Team: Humanoid Traders
    - Track: AI Trading Agent / Autonomous Trading
-   - Hackathon: Bitget GetClaw AI Builder Base Camp 2025
+   - Hackathon: Bitget AI Base Camp · Hackathon S1
 2. **What We Built**
    - Autonomous trading agent runtime with structured perception → decision → risk → execution → audit pipeline
    - Simulation-first design (paper trading default)

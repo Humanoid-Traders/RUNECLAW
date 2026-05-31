@@ -168,11 +168,11 @@ If a user exceeds the limit, subsequent commands are rejected with a warning unt
 Every step in the confirmation flow is logged as structured JSON:
 
 ```json
-{"timestamp": "2025-05-29T14:23:01Z", "action": "trade_idea_generated", "asset": "BTC/USDT", "direction": "LONG", "confidence": 0.72}
-{"timestamp": "2025-05-29T14:23:01Z", "action": "risk_check", "result": "APPROVED", "checks_passed": 18}
-{"timestamp": "2025-05-29T14:23:15Z", "action": "telegram_callback", "data": "confirm:TI-a1b2c3d4"}
-{"timestamp": "2025-05-29T14:23:15Z", "action": "risk_recheck", "result": "APPROVED", "checks_passed": 18}
-{"timestamp": "2025-05-29T14:23:15Z", "action": "trade_executed", "asset": "BTC/USDT", "mode": "PAPER", "entry": 108420.0}
+{"timestamp": "2026-05-29T14:23:01Z", "action": "trade_idea_generated", "asset": "BTC/USDT", "direction": "LONG", "confidence": 0.72}
+{"timestamp": "2026-05-29T14:23:01Z", "action": "risk_check", "result": "APPROVED", "checks_passed": 18}
+{"timestamp": "2026-05-29T14:23:15Z", "action": "telegram_callback", "data": "confirm:TI-a1b2c3d4"}
+{"timestamp": "2026-05-29T14:23:15Z", "action": "risk_recheck", "result": "APPROVED", "checks_passed": 18}
+{"timestamp": "2026-05-29T14:23:15Z", "action": "trade_executed", "asset": "BTC/USDT", "mode": "PAPER", "entry": 108420.0}
 ```
 
 Logs are written to `logs/trade.jsonl`, `logs/risk.jsonl`, and `logs/system.jsonl`. Every decision, confirmation, and rejection is traceable.

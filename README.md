@@ -7,15 +7,15 @@
 ```
 
 <h3 align="center">AI Trading Command Core | Forged in Volatility. Governed by Discipline.</h3>
-<h4 align="center">by Humanoid Traders | for Bitget GetClaw</h4>
-<h5 align="center">🏆 Proudly built for Bitget GetClaw Hackathon – aiming for Best Strategy & Risk Award 🏆</h5>
+<h4 align="center">by Humanoid Traders | for Bitget AI Base Camp</h4>
+<h5 align="center">🏆 Proudly built for Bitget AI Base Camp · Hackathon S1 – aiming for Best Strategy & Risk Award 🏆</h5>
 
 <p align="center">
   <img src="https://img.shields.io/badge/python-3.11+-blue?logo=python&logoColor=white" alt="Python 3.11+">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT License">
   <img src="https://img.shields.io/badge/mode-paper%20trading-orange" alt="Paper Trading">
   <img src="https://img.shields.io/badge/exchange-Bitget-blue" alt="Bitget">
-  <img src="https://img.shields.io/badge/hackathon-GetClaw%202025-purple" alt="GetClaw Hackathon">
+  <img src="https://img.shields.io/badge/hackathon-AI%20Base%20Camp%20S1-purple" alt="AI Base Camp Hackathon S1">
 </p>
 
 <p align="center">
@@ -28,7 +28,7 @@
 
 ---
 
-> **DISCLAIMER:** RUNECLAW is an educational prototype built for the Bitget GetClaw Hackathon 2025.
+> **DISCLAIMER:** RUNECLAW is an educational prototype built for the Bitget AI Base Camp · Hackathon S1.
 > It is **not production-ready** and should **never** be used with real funds without extensive
 > additional safeguards, independent security audits, stress testing, and regulatory review.
 > Backtest results use synthetic data and do not predict future performance. Past performance
@@ -38,7 +38,7 @@
 
 ## What is RUNECLAW?
 
-**RUNECLAW** is an AI trading command system built by **Humanoid Traders** for the Bitget GetClaw Hackathon. It merges multi-timeframe analysis, confluence scoring, regime detection, order-flow microstructure, and risk-first logic into a disciplined framework -- all controllable through a Telegram bot interface.
+**RUNECLAW** is an AI trading command system built by **Humanoid Traders** for the Bitget AI Base Camp · Hackathon S1. It merges multi-timeframe analysis, confluence scoring, regime detection, order-flow microstructure, and risk-first logic into a disciplined framework -- all controllable through a Telegram bot interface.
 
 The system operates in **simulation-first mode by default**. Every trade idea must pass eighteen independent risk checks and receive explicit human confirmation before execution. An additional liquidity guard runs on live order-flow data when available. No exceptions.
 
@@ -404,13 +404,13 @@ This is a **hackathon prototype** (maturity: early-stage). Known limitations:
 
 ## Fork & Win With Us
 
-RUNECLAW is open for collaboration. If you're building for GetClaw and want a battle-tested risk engine, scanner, or analysis pipeline -- fork it, extend it, and submit your own entry.
+RUNECLAW is open for collaboration. If you're building for the Bitget AI Base Camp and want a battle-tested risk engine, scanner, or analysis pipeline -- fork it, extend it, and submit your own entry.
 
 **How to contribute:**
 
 1. **Fork** this repo
 2. **Build** your strategy module, UI, or integration on top
-3. **Submit** to GetClaw with credit to RUNECLAW as your risk/analysis layer
+3. **Submit** to the hackathon with credit to RUNECLAW as your risk/analysis layer
 4. **Open a PR** back with improvements -- we'll merge strong contributions
 
 **Ideas for extension:**
@@ -441,4 +441,4 @@ MIT License. See [LICENSE](./LICENSE) for details.
 ---
 
 <p align="center"><b>RUNECLAW</b> -- Where Viking grit meets algorithmic precision.</p>
-<p align="center"><i>Forged for Bitget GetClaw Hackathon 2025 (Genesis S1) | System Prompt v2026</i></p>
+<p align="center"><i>Forged for Bitget AI Base Camp · Hackathon S1 | System Prompt v2026</i></p>
