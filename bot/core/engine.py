@@ -85,6 +85,10 @@ class RuneClawEngine:
 
     # -- State management --
 
+    async def get_exchange(self):
+        """Public accessor for the exchange instance (for skills that need OHLCV)."""
+        return await self.scanner._get_exchange()
+
     def _transition(self, new_state: AgentState, reason: str = "") -> None:
         """Transition the FSM to a new state. Every transition is audit-logged."""
         old_state = self.state

@@ -68,9 +68,33 @@ class MacroBriefSkill(BaseSkill):
         source = provider or calendar
         lines: list[str] = [_html_bold("Macro Brief")]
 
-        # -- risk state --
-        risk_state = _safe_getattr(source, "risk_state", "UNKNOWN")
-        lines.append(f"Risk state: <code>{risk_state}</code>")
+        # -- risk state (use get_context on v2 provider) --
+        ctx_fn = _safe_getattr(source, "get_context")
+        if ctx_fn and callable(ctx_fn):
+            try:
+                ctx = ctx_fn()
+                risk_state = getattr(ctx, "risk_state", "UNKNOWN")
+                severity = getattr(ctx, "severity", "")
+                multiplier = getattr(ctx, "size_multiplier", 1.0)
+                explanation = getattr(ctx, "explanation", "")
+                is_stale = getattr(ctx, "is_stale", False)
+                is_blind = getattr(ctx, "is_blind", False)
+                lines.append(f"Risk state: <code>{risk_state}</code>")
+                if severity:
+                    lines.append(f"Severity: <code>{severity}</code>")
+                lines.append(f"Size multiplier: <code>{multiplier}</code>")
+                if is_stale:
+                    lines.append("⚠️ Calendar data is <b>stale</b>")
+                if is_blind:
+                    lines.append("⚠️ Operating <b>blind</b> — no calendar loaded")
+                if explanation:
+                    lines.append(f"<i>{explanation}</i>")
+            except Exception:
+                risk_state = _safe_getattr(source, "risk_state", "UNKNOWN")
+                lines.append(f"Risk state: <code>{risk_state}</code>")
+        else:
+            risk_state = _safe_getattr(source, "risk_state", "UNKNOWN")
+            lines.append(f"Risk state: <code>{risk_state}</code>")
 
         # -- current window --
         window = _safe_getattr(source, "current_window")
@@ -125,9 +149,40 @@ class CheckEventRiskSkill(BaseSkill):
 
         source = provider or calendar
 
-        # Try dedicated risk-check method first.
+        # Try v2 macro provider get_context() first, then check_risk() fallback
+        ctx_fn = _safe_getattr(source, "get_context")
         check_fn = _safe_getattr(source, "check_risk")
-        if check_fn and callable(check_fn):
+
+        if ctx_fn and callable(ctx_fn):
+            try:
+                result = ctx_fn(symbol=symbol)
+            except Exception as exc:
+                return f"Error checking risk for {symbol}: {exc}"
+
+            risk_state = getattr(result, "risk_state", "UNKNOWN")
+            severity = getattr(result, "severity", "N/A")
+            window = getattr(result, "window", "none")
+            multiplier = getattr(result, "size_multiplier", 1.0)
+            explanation = getattr(result, "explanation", "")
+            is_stale = getattr(result, "is_stale", False)
+            is_blind = getattr(result, "is_blind", False)
+
+            lines = [
+                f"{_html_bold('Event Risk')} — {symbol}",
+                f"Risk State:      <code>{risk_state}</code>",
+                f"Severity:        <code>{severity}</code>",
+                f"Window:          <code>{window}</code>",
+                f"Size multiplier: <code>{multiplier}</code>",
+            ]
+            if is_stale:
+                lines.append("⚠️ Data is <b>stale</b> — fail-closed active")
+            if is_blind:
+                lines.append("⚠️ Operating <b>blind</b> — no calendar loaded")
+            if explanation:
+                lines.append(f"\n<i>{explanation}</i>")
+            return "\n".join(lines)
+
+        elif check_fn and callable(check_fn):
             try:
                 result = check_fn(symbol)
             except Exception as exc:

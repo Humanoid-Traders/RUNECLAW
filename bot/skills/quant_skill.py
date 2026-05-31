@@ -709,7 +709,8 @@ async def analyze_live(symbol: str, exchange=None) -> dict:
             ohlcv = []
 
     if not ohlcv:
-        ohlcv = _generate_synthetic_ohlcv(500)
+        sym_seed = hash(symbol) % (2**31)
+        ohlcv = _generate_synthetic_ohlcv(500, seed=sym_seed)
 
     report = run_quant_analysis(symbol, '1h', ohlcv)
     return report.to_dict()
@@ -812,17 +813,25 @@ class QuantAnalyzeSkill(BaseSkill):
         ohlcv: list[list[float]] = []
 
         try:
-            if hasattr(engine, "exchange") and engine.exchange is not None:
+            # Use engine's public exchange accessor
+            if hasattr(engine, "get_exchange"):
+                exchange = await engine.get_exchange()
+                if exchange is not None:
+                    raw = await exchange.fetch_ohlcv(symbol, timeframe, limit=150)
+                    ohlcv = [[float(c) for c in bar] for bar in raw]
+            elif hasattr(engine, "exchange") and engine.exchange is not None:
                 raw = await engine.exchange.fetch_ohlcv(symbol, timeframe, limit=150)
                 ohlcv = [[float(c) for c in bar] for bar in raw]
         except Exception as exc:
             # Graceful fallback: generate synthetic data for demo/test
             audit(system_log, f"[QUANT] Exchange fetch failed ({exc}), using synthetic data",
                   action="quant_data_fallback")
-            ohlcv = _generate_synthetic_ohlcv(150)
+            sym_seed = hash(symbol) % (2**31)
+            ohlcv = _generate_synthetic_ohlcv(150, seed=sym_seed)
 
         if not ohlcv:
-            ohlcv = _generate_synthetic_ohlcv(150)
+            sym_seed = hash(symbol) % (2**31)
+            ohlcv = _generate_synthetic_ohlcv(150, seed=sym_seed)
 
         # ── Run analysis ──────────────────────────────────────────────────────
         report = run_quant_analysis(symbol, timeframe, ohlcv)
