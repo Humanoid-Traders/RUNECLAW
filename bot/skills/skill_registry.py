@@ -17,32 +17,100 @@ from bot.utils.logger import audit, system_log
 
 
 # ── Visual vocabulary ─────────────────────────────────────────
-_OK = "\U0001f7e2"
-_WARN = "\U0001f7e1"
-_BAD = "\U0001f534"
-_NEU = "\u26aa"
+_OK = "\U0001f7e2"        # green circle
+_WARN = "\U0001f7e1"      # yellow circle
+_BAD = "\U0001f534"       # red circle
+_NEU = "\u26aa"           # white circle
+
+_BLOCKS = "\u2581\u2582\u2583\u2584\u2585\u2586\u2587\u2588"  # ▁▂▃▄▅▆▇█
 
 def _status(v: float) -> str:
     return _OK if v > 0 else _BAD if v < 0 else _NEU
 
 def _spark(v: float) -> str:
-    if v > 2: return "\u25b2"
-    if v > 0: return "\u25b3"
-    if v < -2: return "\u25bc"
-    if v < 0: return "\u25bd"
-    return "\u25c7"
+    if v > 2: return "\u25b2"   # ▲
+    if v > 0: return "\u25b3"   # △
+    if v < -2: return "\u25bc"  # ▼
+    if v < 0: return "\u25bd"   # ▽
+    return "\u25c7"             # ◇
 
 def _bar(val: float, mx: float = 1.0, w: int = 10) -> str:
+    """Gradient progress bar using ━ filled and ╌ empty."""
     r = min(max(val / mx, 0), 1.0) if mx > 0 else 0
     f = int(r * w)
-    return "\u2588" * f + "\u2591" * (w - f)
+    return "\u2501" * f + "\u254c" * (w - f)  # ━ filled, ╌ empty
 
-def _gauge(label: str, val: float, mx: float, unit: str = "%", w: int = 10) -> str:
-    """Labeled progress gauge: Drawdown  [████░░░░░░] 3.2% / 10%"""
+def _gauge(label: str, val: float, mx: float, unit: str = "%", w: int = 12) -> str:
+    """Visual gauge with gradient bar and inline value."""
     bar = _bar(val, mx, w)
+    # Pick endpoint emoji based on fill level
+    r = val / mx if mx > 0 else 0
+    tip = "\U0001f7e2" if r < 0.5 else "\U0001f7e1" if r < 0.8 else "\U0001f534"
     if unit == "%":
-        return f"  {label:<10} [{bar}] {val:.1f}% / {mx:.0f}%"
-    return f"  {label:<10} [{bar}] {val:.0f} / {mx:.0f}"
+        return f"  {tip} {label:<10} \u2502{bar}\u2502 {val:.1f}%\u2009/\u2009{mx:.0f}%"
+    return f"  {tip} {label:<10} \u2502{bar}\u2502 {val:.0f}\u2009/\u2009{mx:.0f}"
+
+def _hbar(label: str, val: float, mx: float, w: int = 8) -> str:
+    """Compact horizontal bar with label."""
+    r = min(max(val / mx, 0), 1.0) if mx > 0 else 0
+    f = int(r * w)
+    filled = "\u2588" * f          # █
+    empty = "\u2591" * (w - f)     # ░
+    return f"  {label}  {filled}{empty}  {val:.0f}"
+
+def _divider(char: str = "\u2500", w: int = 28) -> str:
+    """Visual section separator: ────────────────────────────"""
+    return f"  {char * w}"
+
+def _header(emoji: str, title: str, w: int = 24) -> str:
+    """Decorated card header with title bar."""
+    return f"{emoji} <b>{title}</b> {'━' * w}"
+
+def _kv(key: str, val: str, w: int = 28) -> str:
+    """Key-value with dot-leader alignment for <pre> blocks."""
+    dots = w - len(key) - len(val) - 4
+    if dots < 2:
+        dots = 2
+    return f"  {key} {'·' * dots} {val}"
+
+def _pill(text: str) -> str:
+    """Inline code badge."""
+    return f"<code>\u2009{text}\u2009</code>"
+
+def _sparkline(values: list[float], w: int = 12) -> str:
+    """Mini sparkline from block characters ▁▂▃▄▅▆▇█."""
+    if not values:
+        return "\u2500" * w
+    # Sample or pad to width
+    if len(values) > w:
+        step = len(values) / w
+        sampled = [values[int(i * step)] for i in range(w)]
+    else:
+        sampled = values
+    mn, mx = min(sampled), max(sampled)
+    rng = mx - mn if mx > mn else 1.0
+    out = []
+    for v in sampled:
+        idx = int((v - mn) / rng * 7)
+        idx = max(0, min(7, idx))
+        out.append(_BLOCKS[idx])
+    return "".join(out)
+
+def _mini_chart(vals: list[float], w: int = 16) -> str:
+    """Mini chart using block characters, wrapped in <code>."""
+    return f"<code>{_sparkline(vals, w)}</code>"
+
+def _traffic_light(passed: int, total: int) -> str:
+    """Visual check display as dots: 🟢🟢🟢🟡🔴"""
+    failed = total - passed
+    return _OK * passed + _BAD * failed
+
+def _progress_ring(pct: float) -> str:
+    """Circular progress indicator using Unicode."""
+    rings = ["\u25cb", "\u25d4", "\u25d1", "\u25d5", "\u25cf"]  # ○◔◑◕●
+    idx = int(min(max(pct, 0), 100) / 25)
+    idx = min(idx, 4)
+    return rings[idx]
 
 def _stars(v: float) -> str:
     if v >= 2.0: return "\u2605\u2605\u2605"
@@ -62,6 +130,12 @@ def _row(label: str, value: str, w: int = 28) -> str:
     gap = w - len(label) - len(value) - 4
     if gap < 1: gap = 1
     return f"  {label}{' ' * gap}{value}"
+
+def _pnl_arrow(v: float) -> str:
+    """Directional PnL indicator."""
+    if v > 0: return "\U0001f7e2\u25b2"
+    if v < 0: return "\U0001f534\u25bc"
+    return "\u26aa\u25c7"
 
 
 class BaseSkill(ABC):
@@ -97,19 +171,26 @@ class ScanMarketSkill(BaseSkill):
             return f"{_NEU} <b>SCANNER</b>\n\n<i>No signals detected.</i>"
 
         top = signals[:8]
-        lines = [f"\U0001f50d <b>MARKET SCANNER</b>  \u2022  {len(signals)} pairs\n"]
-
+        lines = [
+            _header("\U0001f50e", "MARKET SCANNER"),
+            f"   <i>{len(signals)} pairs detected</i>\n",
+        ]
+        lines.append("<pre>")
         for s in top:
             arrow = _spark(s.change_pct_24h)
             vol_m = s.volume_usd_24h / 1_000_000 if s.volume_usd_24h else 0
             chg = f"{s.change_pct_24h:+.1f}%"
             spike = " \U0001f4a5" if s.volume_spike else ""
+            # Build volume intensity mini-bar (1-4 blocks)
+            vol_lvl = min(int(vol_m / 10) + 1, 4)
+            vol_bar = "\u2588" * vol_lvl + "\u2591" * (4 - vol_lvl)
             lines.append(
-                f"  {arrow} <b>{_esc(s.symbol)}</b>  "
-                f"<code>${s.price:,.2f}</code>  "
-                f"<code>{chg:>7}</code>  "
-                f"<code>${vol_m:,.0f}M</code>{spike}"
+                f" {arrow} {_esc(s.symbol):<10s}"
+                f"  ${s.price:<12,.2f}"
+                f"  {chg:>7}"
+                f"  {vol_bar} ${vol_m:,.0f}M{spike}"
             )
+        lines.append("</pre>")
 
         if any(s.volume_spike for s in top):
             lines.append(f"\n<i>\U0001f4a5 = volume spike detected</i>")
@@ -148,46 +229,57 @@ class AnalyzeAssetSkill(BaseSkill):
             arrow = _spark(sig.change_pct_24h)
             return (
                 f"{_NEU} <b>{_esc(symbol)}</b>  {arrow}\n\n"
-                f"  Price     <code>${sig.price:,.2f}</code>\n"
-                f"  24h       <code>{sig.change_pct_24h:+.1f}%</code>\n"
-                f"  Volume    <code>${vol_m:,.0f}M</code>\n\n"
-                f"<i>No actionable signal \u2014 regime filter or low confluence</i>"
+                f"<pre>"
+                f"{_kv('Price', f'${sig.price:,.2f}')}\n"
+                f"{_kv('24h', f'{sig.change_pct_24h:+.1f}%')}\n"
+                f"{_kv('Volume', f'${vol_m:,.0f}M')}"
+                f"</pre>\n\n"
+                f"<i>\u25c7 No actionable signal \u2014 regime filter or low confluence</i>"
             )
 
         engine._pending_ideas[idea.id] = idea
 
         d = idea.direction.value
         d_icon = _OK if d == "LONG" else _BAD
+        d_arrow = "\u25b2" if d == "LONG" else "\u25bc"
         rr = idea.risk_reward_ratio
         conf = idea.confidence
         sl_d = abs(idea.entry_price - idea.stop_loss)
         tp_d = abs(idea.take_profit - idea.entry_price)
 
-        # Visual level diagram
+        # Price ladder with box drawing
         if d == "LONG":
-            tp_label = f"\U0001f3af TP      ${idea.take_profit:>10,.2f}   +${tp_d:,.2f}"
-            en_label = f"\u25b6\ufe0f ENTRY   ${idea.entry_price:>10,.2f}"
-            sl_label = f"\U0001f6d1 SL      ${idea.stop_loss:>10,.2f}   -${sl_d:,.2f}"
+            ladder = (
+                f"  \U0001f3af TP    \u2502 ${idea.take_profit:>10,.2f}  (+${tp_d:,.2f})\n"
+                f"  \u2500\u2500\u2500\u2500\u2500\u2500\u253c{'─' * 28}\n"
+                f"  {d_arrow}  IN   \u2502 ${idea.entry_price:>10,.2f}\n"
+                f"  \u2500\u2500\u2500\u2500\u2500\u2500\u253c{'─' * 28}\n"
+                f"  \U0001f6d1 SL    \u2502 ${idea.stop_loss:>10,.2f}  (-${sl_d:,.2f})"
+            )
         else:
-            sl_label = f"\U0001f6d1 SL      ${idea.stop_loss:>10,.2f}   -${sl_d:,.2f}"
-            en_label = f"\u25b6\ufe0f ENTRY   ${idea.entry_price:>10,.2f}"
-            tp_label = f"\U0001f3af TP      ${idea.take_profit:>10,.2f}   +${tp_d:,.2f}"
+            ladder = (
+                f"  \U0001f6d1 SL    \u2502 ${idea.stop_loss:>10,.2f}  (-${sl_d:,.2f})\n"
+                f"  \u2500\u2500\u2500\u2500\u2500\u2500\u253c{'─' * 28}\n"
+                f"  {d_arrow}  IN   \u2502 ${idea.entry_price:>10,.2f}\n"
+                f"  \u2500\u2500\u2500\u2500\u2500\u2500\u253c{'─' * 28}\n"
+                f"  \U0001f3af TP    \u2502 ${idea.take_profit:>10,.2f}  (+${tp_d:,.2f})"
+            )
 
-        conf_bar = _bar(conf, 1.0, 10)
+        # Confidence bar using gradient blocks
+        conf_w = 12
+        conf_fill = int(conf * conf_w)
+        conf_bar = _BLOCKS[7] * conf_fill + _BLOCKS[0] * (conf_w - conf_fill)
+        conf_ring = _progress_ring(conf * 100)
 
         return (
-            f"{d_icon} <b>{d}  {_esc(idea.asset)}</b>\n\n"
+            f"{_header(d_icon, f'{d}  {_esc(idea.asset)}')}\n\n"
             f"<pre>"
-            f"  {tp_label}\n"
-            f"  {'─' * 36}\n"
-            f"  {en_label}\n"
-            f"  {'─' * 36}\n"
-            f"  {sl_label}"
+            f"{ladder}"
             f"</pre>\n\n"
-            f"  Confidence [{conf_bar}] <code>{conf:.0%}</code>\n"
-            f"  Risk:Reward {_stars(rr)} <code>{rr}x</code>\n\n"
-            f"<i>{_esc(idea.reasoning[:250])}</i>\n\n"
-            f"<code>{idea.id}</code>"
+            f"  {conf_ring} Confidence \u2502{conf_bar}\u2502 {_pill(f'{conf:.0%}')}\n"
+            f"  \u2606 Risk:Reward {_stars(rr)} {_pill(f'{rr}x')}\n\n"
+            f"<blockquote>{_esc(idea.reasoning[:250])}</blockquote>\n\n"
+            f"\U0001f4ce {_pill(idea.id)}"
         )
 
 
@@ -232,38 +324,44 @@ class CheckRiskSkill(BaseSkill):
         net = state.equity_usd - cost.operating_cost_usd
         pnl_icon = _status(state.daily_pnl)
 
+        # Health score: combine drawdown headroom + win rate + streak safety
+        dd_health = max(0, 100 - (state.max_drawdown_pct / CONFIG.risk.max_drawdown_pct * 100)) if CONFIG.risk.max_drawdown_pct > 0 else 100
+        streak_health = max(0, 100 - (streak / CONFIG.risk.max_consecutive_losses * 100)) if CONFIG.risk.max_consecutive_losses > 0 else 100
+        overall = (dd_health + streak_health) / 2
+        health_ring = _progress_ring(overall)
+
         return (
-            f"\U0001f43e <b>RUNECLAW STATUS</b>\n\n"
-            # ── Quick glance header ──
-            f"  {cb_s}  \u2022  {mode}  \u2022  {m_icon} {m_label}\n\n"
+            f"\U0001f43e <b>RUNECLAW STATUS</b> {'━' * 18}\n\n"
+            f"  {cb_s}  \u2502  {mode}  \u2502  {m_icon} {m_label}\n"
+            f"  {health_ring} System Health {_pill(f'{overall:.0f}%')}\n\n"
             # ── Capital card ──
             f"\U0001f4b0 <b>Capital</b>\n"
             f"<pre>"
-            f"{_row('Equity', _money(state.equity_usd))}\n"
-            f"{_row('Net', _money(net))}\n"
-            f"{_row('Daily PnL', _money(state.daily_pnl, sign=True))}\n"
-            f"{_row('Drawdown', f'{state.max_drawdown_pct:.1f}%')}"
+            f"{_kv('Equity', _money(state.equity_usd))}\n"
+            f"{_kv('Net', _money(net))}\n"
+            f"{_kv('Daily PnL', _money(state.daily_pnl, sign=True))}\n"
+            f"{_kv('Drawdown', f'{state.max_drawdown_pct:.1f}%')}"
             f"</pre>\n\n"
             # ── Positions card ──
             f"\U0001f4ca <b>Positions</b>\n"
             f"<pre>"
-            f"{_row('Open', f'{state.open_positions} / {CONFIG.risk.max_open_positions}')}\n"
-            f"{_row('Total', str(state.total_trades))}\n"
-            f"{_row('Win Rate', f'{state.win_rate:.0%}')}\n"
-            f"{_row('Exposure', f'{exp_pct:.0f}%')}"
+            f"{_kv('Open', f'{state.open_positions} / {CONFIG.risk.max_open_positions}')}\n"
+            f"{_kv('Total', str(state.total_trades))}\n"
+            f"{_kv('Win Rate', f'{state.win_rate:.0%}')}\n"
+            f"{_kv('Exposure', f'{exp_pct:.0f}%')}"
             f"</pre>\n\n"
             # ── Risk gate ──
             f"\U0001f6e1 <b>Risk Gate</b>\n"
             f"<pre>"
-            f"{_row('Breaker', 'TRIPPED' if cb else 'CLEAR')}\n"
-            f"{_row('Streak', f'{streak} / {CONFIG.risk.max_consecutive_losses}')}\n"
-            f"{_row('Checks', '18 fail-closed')}"
+            f"{_kv('Breaker', 'TRIPPED' if cb else 'CLEAR')}\n"
+            f"{_kv('Streak', f'{streak} / {CONFIG.risk.max_consecutive_losses}')}\n"
+            f"{_kv('Checks', _traffic_light(18 if not cb else 14, 18))}"
             f"</pre>\n\n"
             # ── Costs ──
             f"\u26a1 <b>Costs</b>\n"
             f"<pre>"
-            f"{_row('LLM', f'${cost.llm_cost_usd:,.4f}')}\n"
-            f"{_row('Infra', f'${cost.infra_cost_usd:,.4f}')}"
+            f"{_kv('LLM', f'${cost.llm_cost_usd:,.4f}')}\n"
+            f"{_kv('Infra', f'${cost.infra_cost_usd:,.4f}')}"
             f"</pre>"
         )
 
@@ -272,9 +370,17 @@ class CheckRiskSkill(BaseSkill):
         cb_label = "TRIPPED" if cb else "CLEAR"
         grp = ", ".join(f"{g}={c}" for g, c in groups.items()) if groups else "none"
 
+        # Compute an overall risk health score
+        dd_r = state.max_drawdown_pct / CONFIG.risk.max_drawdown_pct if CONFIG.risk.max_drawdown_pct > 0 else 0
+        exp_r = exp_pct / CONFIG.risk.max_portfolio_exposure_pct if CONFIG.risk.max_portfolio_exposure_pct > 0 else 0
+        str_r = streak / CONFIG.risk.max_consecutive_losses if CONFIG.risk.max_consecutive_losses > 0 else 0
+        risk_score = max(0, 100 - int((dd_r + exp_r + str_r) / 3 * 100))
+        health_bar = _bar(risk_score, 100, 14)
+
         return (
-            f"\U0001f6e1 <b>RISK DASHBOARD</b>\n\n"
-            f"  {cb_icon} Circuit Breaker: <b>{cb_label}</b>\n\n"
+            f"{_header('\U0001f6e1', 'RISK DASHBOARD')}\n\n"
+            f"  {cb_icon} Circuit Breaker: <b>{cb_label}</b>\n"
+            f"  \u25cf Health Score \u2502{health_bar}\u2502 {_pill(f'{risk_score}%')}\n\n"
             # ── Visual gauges ──
             f"{_gauge('Drawdown', state.max_drawdown_pct, CONFIG.risk.max_drawdown_pct)}\n"
             f"{_gauge('Exposure', exp_pct, CONFIG.risk.max_portfolio_exposure_pct)}\n"
@@ -282,21 +388,21 @@ class CheckRiskSkill(BaseSkill):
             # ── Capital breakdown ──
             f"\U0001f4b0 <b>Capital</b>\n"
             f"<pre>"
-            f"{_row('Equity', _money(state.equity_usd))}\n"
-            f"{_row('Daily PnL', _money(state.daily_pnl, sign=True))}\n"
-            f"{_row('Exposure', _money(total_exp))}\n"
-            f"{_row('Positions', f'{state.open_positions} / {CONFIG.risk.max_open_positions}')}\n"
-            f"{_row('Groups', grp)}"
+            f"{_kv('Equity', _money(state.equity_usd))}\n"
+            f"{_kv('Daily PnL', _money(state.daily_pnl, sign=True))}\n"
+            f"{_kv('Exposure', _money(total_exp))}\n"
+            f"{_kv('Positions', f'{state.open_positions} / {CONFIG.risk.max_open_positions}')}\n"
+            f"{_kv('Groups', grp)}"
             f"</pre>\n\n"
             # ── Configured limits ──
             f"\U0001f512 <b>Limits</b>\n"
             f"<pre>"
-            f"{_row('Min Conf', f'{CONFIG.risk.min_confidence:.0%}')}\n"
-            f"{_row('Min R:R', f'{CONFIG.risk.min_risk_reward}x')}\n"
-            f"{_row('Max DD', f'{CONFIG.risk.max_drawdown_pct}%')}\n"
-            f"{_row('Max Daily', f'{CONFIG.risk.max_daily_loss_pct}%')}\n"
-            f"{_row('Vol Guard', f'{CONFIG.risk.volatility_guard_atr_pct}% ATR')}\n"
-            f"{_row('Checks', '18 fail-closed')}"
+            f"{_kv('Min Conf', f'{CONFIG.risk.min_confidence:.0%}')}\n"
+            f"{_kv('Min R:R', f'{CONFIG.risk.min_risk_reward}x')}\n"
+            f"{_kv('Max DD', f'{CONFIG.risk.max_drawdown_pct}%')}\n"
+            f"{_kv('Max Daily', f'{CONFIG.risk.max_daily_loss_pct}%')}\n"
+            f"{_kv('Vol Guard', f'{CONFIG.risk.volatility_guard_atr_pct}% ATR')}\n"
+            f"{_kv('Checks', _traffic_light(18 if not cb else 14, 18))}"
             f"</pre>"
         )
 
@@ -314,28 +420,29 @@ class GetPortfolioSkill(BaseSkill):
         cost = engine.cost.snapshot()
         net = state.equity_usd - cost.operating_cost_usd
         cpt = cost.operating_cost_usd / state.total_trades if state.total_trades > 0 else 0
-        pnl_icon = _status(state.total_pnl)
+        pnl_icon = _pnl_arrow(state.total_pnl)
 
         lines = [
-            f"\U0001f4b0 <b>PORTFOLIO</b>  {pnl_icon}\n",
+            _header("\U0001f4b0", "PORTFOLIO"),
+            f"   {pnl_icon} {_pill(_money(state.total_pnl, sign=True))}\n",
             # ── Balance card ──
             f"\U0001f4b3 <b>Balance</b>",
             "<pre>",
-            _row("Cash", _money(state.balance_usd)),
-            _row("Equity", _money(state.equity_usd)),
-            _row("Win Rate", f"{state.win_rate:.0%}"),
+            _kv("Cash", _money(state.balance_usd)),
+            _kv("Equity", _money(state.equity_usd)),
+            _kv("Win Rate", f"{state.win_rate:.0%}"),
             "</pre>\n",
             # ── PnL waterfall ──
             f"\U0001f4c8 <b>PnL Waterfall</b>",
             "<pre>",
-            _row("Gross", _money(state.total_gross_pnl, sign=True)),
-            _row("Commission", _money(state.total_commission)),
-            _row("Net Trading", _money(state.total_pnl, sign=True)),
-            _row("LLM Cost", f"${cost.llm_cost_usd:,.4f}"),
-            _row("Infra Cost", f"${cost.infra_cost_usd:,.4f}"),
-            f"  {'─' * 26}",
-            _row("NET EQUITY", _money(net, sign=True)),
-            _row("Cost/Trade", f"${cpt:,.4f}"),
+            f"  \u25b8 Gross    {_money(state.total_gross_pnl, sign=True):>14}",
+            f"  \u25b8 Commiss  {_money(state.total_commission):>14}",
+            f"  \u25b8 Trading  {_money(state.total_pnl, sign=True):>14}",
+            f"  \u25b8 LLM      {'${:,.4f}'.format(cost.llm_cost_usd):>14}",
+            f"  \u25b8 Infra    {'${:,.4f}'.format(cost.infra_cost_usd):>14}",
+            f"  {'━' * 30}",
+            f"  \u25b6 NET      {_money(net, sign=True):>14}",
+            f"  \u25b8 Per Trd  {'${:,.4f}'.format(cpt):>14}",
             "</pre>",
         ]
 
@@ -344,15 +451,15 @@ class GetPortfolioSkill(BaseSkill):
             lines.append(f"\n\U0001f4ca <b>Open Positions</b>  ({len(open_pos)})")
             for pos in open_pos:
                 d_icon = _OK if pos.direction.value == "LONG" else _BAD
-                d_tag = "L" if pos.direction.value == "LONG" else "S"
+                d_arrow = "\u25b2" if pos.direction.value == "LONG" else "\u25bc"
                 size = pos.entry_price * pos.quantity
                 lines.append(
-                    f"  {d_icon} <b>{_esc(pos.asset)}</b>  {d_tag}  "
-                    f"<code>${pos.entry_price:,.2f}</code>  "
-                    f"<code>${size:,.0f}</code>"
+                    f"  {d_icon}{d_arrow} <b>{_esc(pos.asset)}</b>  "
+                    f"{_pill(f'${pos.entry_price:,.2f}')}  "
+                    f"size {_pill(f'${size:,.0f}')}"
                 )
         else:
-            lines.append(f"\n<i>{state.total_trades} trades \u2022 no open positions</i>")
+            lines.append(f"\n<i>\u25c7 {state.total_trades} trades \u2022 no open positions</i>")
 
         return "\n".join(lines)
 
@@ -377,14 +484,18 @@ class ExplainTradeSkill(BaseSkill):
         trade_id = kwargs.get("trade_id", "")
         for idea in engine.pending_ideas:
             if idea.id == trade_id:
+                d_icon = _OK if idea.direction.value == "LONG" else _BAD
                 return (
-                    f"\U0001f4d6 <b>EXPLANATION</b>\n\n"
-                    f"<code>{idea.id}</code>  {idea.direction.value} {_esc(idea.asset)}\n"
-                    f"Confidence: <code>{idea.confidence:.0%}</code>\n"
-                    f"Signals: <code>{', '.join(idea.signals_used)}</code>\n\n"
-                    f"<i>{_esc(idea.reasoning)}</i>"
+                    f"{_header('\U0001f4d6', 'EXPLANATION')}\n\n"
+                    f"  {d_icon} {_pill(idea.id)}\n"
+                    f"  {idea.direction.value} {_esc(idea.asset)}\n\n"
+                    f"<pre>"
+                    f"{_kv('Confidence', f'{idea.confidence:.0%}')}\n"
+                    f"{_kv('Signals', ', '.join(idea.signals_used))}"
+                    f"</pre>\n\n"
+                    f"<blockquote>{_esc(idea.reasoning)}</blockquote>"
                 )
-        return f"Trade <code>{_esc(trade_id)}</code> not found."
+        return f"\u2718 Trade {_pill(_esc(trade_id))} not found."
 
 
 # ══════════════════════════════════════════════════════════════
@@ -410,37 +521,42 @@ class RunBacktestSkill(BaseSkill):
 
         ret_icon = _status(r.total_return_pct)
 
+        # Performance factor bars
+        wr_bar = _bar(r.win_rate, 1.0, 8)
+        pf_bar = _bar(min(r.profit_factor, 3.0), 3.0, 8)
+        dd_bar = _bar(r.max_drawdown_pct, 20.0, 8)
+        sharpe_bar = _bar(min(max(r.sharpe_ratio, 0), 3.0), 3.0, 8)
+
         return (
-            f"\U0001f4ca <b>BACKTEST</b>  {ret_icon}\n"
-            f"<i>Synthetic data \u2014 tests plumbing, not alpha</i>\n\n"
-            # ── Performance ──
-            f"\U0001f4b0 <b>Performance</b>\n"
+            f"{_header('\U0001f4ca', 'BACKTEST')}\n"
+            f"<i>\u25c7 Synthetic data \u2014 tests plumbing, not alpha</i>\n\n"
+            # ── Scorecard ──
+            f"\U0001f3c6 <b>Scorecard</b>\n"
             f"<pre>"
-            f"{_row('Return', f'{r.total_return_pct:+.2f}%')}\n"
-            f"{_row('Equity', _money(r.final_equity))}\n"
-            f"{_row('Net PnL', _money(r.net_pnl, sign=True))}\n"
-            f"{_row('Commission', _money(r.total_commission))}\n"
-            f"{_row('Slippage', _money(r.total_slippage))}"
+            f"  Return     {ret_icon} {r.total_return_pct:>+8.2f}%\n"
+            f"  Equity         {_money(r.final_equity):>12}\n"
+            f"  Net PnL        {_money(r.net_pnl, sign=True):>12}\n"
+            f"  Commission     {_money(r.total_commission):>12}\n"
+            f"  Slippage       {_money(r.total_slippage):>12}"
             f"</pre>\n\n"
-            # ── Quality ──
-            f"\U0001f3af <b>Quality</b>\n"
+            # ── Factor bars ──
+            f"\U0001f4ca <b>Quality Factors</b>\n"
             f"<pre>"
-            f"{_row('Trades', str(r.total_trades))}\n"
-            f"{_row('Win Rate', f'{r.win_rate:.0%}')}\n"
-            f"{_row('Profit F.', f'{r.profit_factor:.2f}')}\n"
-            f"{_row('Max DD', f'{r.max_drawdown_pct:.2f}%')}\n"
-            f"{_row('Sharpe', f'{r.sharpe_ratio:.2f}')}\n"
-            f"{_row('Sortino', f'{r.sortino_ratio:.2f}')}"
+            f"  Win Rate  \u2502{wr_bar}\u2502 {r.win_rate:.0%}   ({r.total_trades}t)\n"
+            f"  Profit F  \u2502{pf_bar}\u2502 {r.profit_factor:.2f}\n"
+            f"  Max DD    \u2502{dd_bar}\u2502 {r.max_drawdown_pct:.2f}%\n"
+            f"  Sharpe    \u2502{sharpe_bar}\u2502 {r.sharpe_ratio:.2f}\n"
+            f"  Sortino                {r.sortino_ratio:>6.2f}"
             f"</pre>\n\n"
             # ── Pipeline ──
             f"\U0001f504 <b>Pipeline</b>\n"
             f"<pre>"
-            f"{_row('Signals', str(r.total_signals_generated))}\n"
-            f"{_row('Ideas', str(r.total_ideas_generated))}\n"
-            f"{_row('Risk Reject', str(r.total_ideas_rejected_risk))}\n"
-            f"{_row('Conf Reject', str(r.total_ideas_rejected_confidence))}"
+            f"{_kv('Signals', str(r.total_signals_generated))}\n"
+            f"{_kv('Ideas', str(r.total_ideas_generated))}\n"
+            f"{_kv('Risk Reject', str(r.total_ideas_rejected_risk))}\n"
+            f"{_kv('Conf Reject', str(r.total_ideas_rejected_confidence))}"
             f"</pre>\n\n"
-            f"<i>{r.bars_processed} bars \u2022 {r.duration_seconds:.1f}s \u2022 "
+            f"<i>\u23f1 {r.bars_processed} bars \u2022 {r.duration_seconds:.1f}s \u2022 "
             f"{r.start_date} \u2192 {r.end_date}</i>"
         )
 
@@ -457,20 +573,23 @@ class RejectedTradesSkill(BaseSkill):
         history = engine.risk.rejection_history
         if not history:
             return (f"{_NEU} <b>REJECTED TRADES</b>\n\n"
-                    "<i>No rejections yet. The risk gate is working.</i>")
+                    "<i>\u2714 No rejections yet. The risk gate is working.</i>")
 
         count = int(kwargs.get("count", 5))
         recent = history[-count:]
 
-        lines = [f"{_WARN} <b>REJECTED TRADES</b>  ({len(recent)}/{len(history)})\n"]
+        lines = [_header(_WARN, f"REJECTED TRADES  ({len(recent)}/{len(history)})")]
+        lines.append("")
         for r in reversed(recent):
             d_icon = _OK if r["direction"] == "LONG" else _BAD
+            d_arrow = "\u25b2" if r["direction"] == "LONG" else "\u25bc"
             fails = r["checks_failed"]
             fail_str = _esc(fails[0]) if fails else "unknown"
             extra = f" +{len(fails) - 1}" if len(fails) > 1 else ""
+            conf_val = r["confidence"]
             lines.append(
-                f"  {d_icon} <b>{_esc(r['asset'])}</b>  {r['direction']}  "
-                f"<code>{r['confidence']:.0%}</code>\n"
+                f"  {d_icon}{d_arrow} <b>{_esc(r['asset'])}</b>  {r['direction']}  "
+                f"{_pill(f'{conf_val:.0%}')}\n"
                 f"     \u2718 <code>{fail_str}</code>{extra}"
             )
         return "\n".join(lines)
@@ -494,11 +613,11 @@ class HaltSkill(BaseSkill):
         audit(system_log, f"MANUAL HALT: {len(cancelled)} ideas cancelled",
               action="halt", result="HALTED", data={"cancelled_ids": cancelled})
         return (
-            f"\U0001f6a8 <b>EMERGENCY HALT</b>\n\n"
+            f"\U0001f6a8 <b>EMERGENCY HALT</b> {'━' * 16}\n\n"
             f"  {_BAD} Circuit Breaker: <b>TRIPPED</b>\n"
-            f"  Ideas Cancelled: <code>{len(cancelled)}</code>\n"
-            f"  Engine: <code>HALTED</code>\n\n"
-            f"<i>All trading paused. /reset to resume.</i>"
+            f"  \u2718 Ideas Cancelled: {_pill(str(len(cancelled)))}\n"
+            f"  \u25cf Engine: {_pill('HALTED')}\n\n"
+            f"<i>\u26a0 All trading paused. /reset to resume.</i>"
         )
 
 
@@ -523,10 +642,11 @@ class WalkForwardSkill(BaseSkill):
         result = await walk_forward_backtest(bars, config, n_folds=folds)
 
         lines = [
-            f"\U0001f4c8 <b>WALK-FORWARD</b>\n",
+            _header("\U0001f4c8", "WALK-FORWARD"),
+            "",
             "<pre>",
             f"  {'FOLD':>4}  {'TRAIN':>8}  {'TEST':>8}  {'TRADES':>7}",
-            f"  {'─'*4}  {'─'*8}  {'─'*8}  {'─'*7}",
+            f"  {'━'*4}  {'━'*8}  {'━'*8}  {'━'*7}",
         ]
         for f in result.folds:
             lines.append(
@@ -535,14 +655,16 @@ class WalkForwardSkill(BaseSkill):
                 f"  {f['train_trades'] + f['test_trades']:>7}"
             )
         gap = result.train_test_gap
-        lines.append("")
+        gap_icon = _OK if abs(gap) <= 2 else _WARN if abs(gap) <= 5 else _BAD
+        lines.append(f"  {'━' * 33}")
         lines.append(f"  Avg Train  {result.aggregate_train_return:>+7.2f}%")
         lines.append(f"  Avg Test   {result.aggregate_test_return:>+7.2f}%")
-        lines.append(f"  Gap        {gap:>+7.2f}%")
-        lines.append(f"  Consist.   {result.consistency_score:>6.0%}")
+        lines.append(f"  Gap        {gap:>+7.2f}%  {gap_icon}")
+        cons_bar = _bar(result.consistency_score, 1.0, 8)
+        lines.append(f"  Consist.   \u2502{cons_bar}\u2502 {result.consistency_score:>5.0%}")
         lines.append("</pre>")
         if gap > 2:
-            lines.append(f"\n{_WARN} <i>Overfitting risk detected</i>")
+            lines.append(f"\n{_WARN} <i>\u26a0 Overfitting risk detected</i>")
         return "\n".join(lines)
 
 
@@ -567,7 +689,8 @@ class MacroCalendarSkill(BaseSkill):
         icon = state_icons.get(snap.state.value, _NEU)
 
         lines = [
-            f"\U0001f4c5 <b>MACRO CALENDAR</b>\n",
+            _header("\U0001f4c5", "MACRO CALENDAR"),
+            "",
             f"  {icon} <b>{snap.state.value.replace('_', ' ').title()}</b>",
         ]
 
@@ -604,12 +727,13 @@ class TradeJournalSkill(BaseSkill):
     async def execute(self, engine: RuneClawEngine, **kwargs: Any) -> str:
         history = engine.portfolio._history
         if not history:
-            return f"{_NEU} <b>TRADE JOURNAL</b>\n\n<i>No closed trades yet.</i>"
+            return f"{_NEU} <b>TRADE JOURNAL</b>\n\n<i>\u25c7 No closed trades yet.</i>"
 
         count = int(kwargs.get("count", 10))
         recent = history[-count:]
 
-        lines = [f"\U0001f4d3 <b>TRADE JOURNAL</b>  ({len(recent)}/{len(history)})\n"]
+        lines = [_header("\U0001f4d3", f"TRADE JOURNAL  ({len(recent)}/{len(history)})")]
+        lines.append("")
 
         total_pnl = 0.0
         wins = 0
@@ -618,6 +742,7 @@ class TradeJournalSkill(BaseSkill):
             if is_win: wins += 1
             total_pnl += trade.pnl
             icon = _OK if is_win else _BAD
+            arrow = "\u25b2" if is_win else "\u25bc"
             tag = "WIN" if is_win else "LOSS"
             dur = ""
             if trade.closed_at and trade.opened_at:
@@ -627,16 +752,17 @@ class TradeJournalSkill(BaseSkill):
             size = trade.entry_price * trade.quantity
 
             lines.append(
-                f"  {icon} <b>{_esc(trade.asset)}</b>  {trade.direction.value}\n"
-                f"     <code>${trade.pnl:+,.2f}</code> {tag}{dur}\n"
+                f"  {icon}{arrow} <b>{_esc(trade.asset)}</b>  {trade.direction.value}\n"
+                f"     {_pill(f'${trade.pnl:+,.2f}')} {tag}{dur}\n"
                 f"     ${trade.entry_price:,.2f} \u2192 {exit_p}  size ${size:,.0f}"
             )
 
         wr = wins / len(recent) if recent else 0
+        wr_bar = _bar(wr, 1.0, 8)
         lines.append(
             f"\n<b>{wins}W / {len(recent)-wins}L</b>  "
-            f"WR <code>{wr:.0%}</code>  "
-            f"Net <code>${total_pnl:+,.2f}</code>"
+            f"\u2502{wr_bar}\u2502 {_pill(f'{wr:.0%}')}  "
+            f"Net {_pill(f'${total_pnl:+,.2f}')}"
         )
         return "\n".join(lines)
 
@@ -656,13 +782,14 @@ class CostBreakdownSkill(BaseSkill):
         net = state.equity_usd - cost.operating_cost_usd
 
         lines = [
-            f"\U0001f4b0 <b>AGENT ECONOMICS</b>\n",
+            _header("\U0001f4b0", "AGENT ECONOMICS"),
+            "",
             f"\u26a1 <b>LLM Usage</b>",
             "<pre>",
-            _row("Total", f"${cost.llm_cost_usd:,.4f} ({cost.llm_calls} calls)"),
-            _row("Tokens In", f"{cost.prompt_tokens:,}"),
-            _row("Tokens Out", f"{cost.completion_tokens:,}"),
-            _row("Avg/Call", f"${cost.avg_cost_per_call:,.6f}"),
+            _kv("Total", f"${cost.llm_cost_usd:,.4f} ({cost.llm_calls} calls)"),
+            _kv("Tokens In", f"{cost.prompt_tokens:,}"),
+            _kv("Tokens Out", f"{cost.completion_tokens:,}"),
+            _kv("Avg/Call", f"${cost.avg_cost_per_call:,.6f}"),
             "</pre>",
         ]
 
@@ -674,30 +801,31 @@ class CostBreakdownSkill(BaseSkill):
                 if not cats_found:
                     lines.extend([f"\n\U0001f4ca <b>Breakdown</b>", "<pre>"])
                     cats_found = True
-                lines.append(_row(cat.title(), f"${c:,.4f} ({n})"))
+                lines.append(_kv(cat.title(), f"${c:,.4f} ({n})"))
         if cats_found:
             lines.append("</pre>")
 
         lines.extend([
             f"\n\U0001f4b3 <b>Operating Total</b>",
             "<pre>",
-            _row("LLM", f"${cost.llm_cost_usd:,.4f}"),
-            _row("Infra", f"${cost.infra_cost_usd:,.4f}"),
-            _row("Total", f"${cost.operating_cost_usd:,.4f}"),
+            _kv("LLM", f"${cost.llm_cost_usd:,.4f}"),
+            _kv("Infra", f"${cost.infra_cost_usd:,.4f}"),
+            _kv("Total", f"${cost.operating_cost_usd:,.4f}"),
         ])
         if state.total_trades > 0:
             cpt = cost.operating_cost_usd / state.total_trades
-            lines.append(_row("Per Trade", f"${cpt:,.4f}"))
+            lines.append(_kv("Per Trade", f"${cpt:,.4f}"))
 
         lines.extend([
             "</pre>",
             f"\n\U0001f4c8 <b>Net</b>",
             "<pre>",
-            _row("Equity", _money(state.equity_usd)),
-            _row("- Costs", f"${cost.operating_cost_usd:,.4f}"),
-            _row("= Net", _money(net)),
+            _kv("Equity", _money(state.equity_usd)),
+            _kv("- Costs", f"${cost.operating_cost_usd:,.4f}"),
+            f"  {'━' * 26}",
+            _kv("= Net", _money(net)),
             "</pre>",
-            f"\n<i>Rate limiter: {rate_stats['total_calls']} calls, "
+            f"\n<i>\u26a1 Rate limiter: {rate_stats['total_calls']} calls, "
             f"{rate_stats['total_waits']} throttled</i>",
         ])
         return "\n".join(lines)
@@ -753,13 +881,14 @@ class RunStrategySkill(BaseSkill):
 
     @classmethod
     def _list(cls) -> str:
-        lines = ["\U0001f3af <b>STRATEGY PRESETS</b>\n"]
+        lines = [_header("\U0001f3af", "STRATEGY PRESETS")]
+        lines.append("")
         for key, cfg in cls.PRESETS.items():
             aliases = [a for a, t in cls.ALIASES.items() if t == key]
             a = f"  <i>/{aliases[0]}</i>" if aliases else ""
             lines.append(f"  {cfg['icon']} <b>{cfg['label']}</b>{a}")
             lines.append(f"     <i>{cfg['desc']}</i>")
-        lines.append(f"\n<i>Usage: /run &lt;name&gt; \u2022 18 checks active</i>")
+        lines.append(f"\n<i>\u25b8 Usage: /run &lt;name&gt; \u2022 18 checks active</i>")
         return "\n".join(lines)
 
     async def execute(self, engine: RuneClawEngine, **kwargs: Any) -> str:
@@ -1010,17 +1139,19 @@ class PatternsSkill(BaseSkill):
     async def execute(self, engine: RuneClawEngine, **kwargs: Any) -> str:
         patterns = engine.learning.detect_patterns()
         if not patterns:
-            return f"{_NEU} <b>PATTERNS</b>\n\n<i>No patterns yet. Need more history.</i>"
-        lines = [f"\U0001f50d <b>PATTERNS</b>\n"]
+            return f"{_NEU} <b>PATTERNS</b>\n\n<i>\u25c7 No patterns yet. Need more history.</i>"
+        lines = [_header("\U0001f50d", "PATTERNS")]
+        lines.append("")
         for p in patterns[:8]:
             exp = f" {_WARN}" if p.is_experimental else ""
+            conf_ring = _progress_ring(p.confidence * 100)
             lines.append(
-                f"  \u2022 <b>{p.pattern_type}</b>{exp}\n"
-                f"    Conf <code>{p.confidence:.0%}</code>  "
-                f"WR <code>{p.historical_win_rate:.0%}</code>  "
-                f"Avg <code>${p.avg_pnl:.2f}</code>  ({p.sample_size})"
+                f"  {conf_ring} <b>{p.pattern_type}</b>{exp}\n"
+                f"    Conf {_pill(f'{p.confidence:.0%}')}  "
+                f"WR {_pill(f'{p.historical_win_rate:.0%}')}  "
+                f"Avg {_pill(f'${p.avg_pnl:.2f}')}  ({p.sample_size})"
             )
-        lines.append(f"\n<i>Patterns are observations, not signals</i>")
+        lines.append(f"\n<i>\u25c7 Patterns are observations, not signals</i>")
         return "\n".join(lines)
 
 
@@ -1030,8 +1161,9 @@ class ProposalsSkill(BaseSkill):
     async def execute(self, engine: RuneClawEngine, **kwargs: Any) -> str:
         proposals = engine.learning.store.get_proposals()
         if not proposals:
-            return f"{_NEU} <b>PROPOSALS</b>\n\n<i>No proposals yet.</i>"
-        lines = [f"\U0001f4cb <b>PROPOSALS</b>  ({len(proposals)})\n"]
+            return f"{_NEU} <b>PROPOSALS</b>\n\n<i>\u25c7 No proposals yet.</i>"
+        lines = [_header("\U0001f4cb", f"PROPOSALS  ({len(proposals)})")]
+        lines.append("")
         for p in proposals[-6:]:
             icons = {"approved": _OK, "pending": _WARN, "rejected": _BAD, "blocked": "\u26ab"}
             s = icons.get(p.status, _NEU)
@@ -1056,34 +1188,35 @@ class OptimizationSkill(BaseSkill):
         total = tiers.get("total", 0)
 
         lines = [
-            f"\u26a1 <b>TOKEN OPTIMIZER</b>\n",
+            _header("\u26a1", "TOKEN OPTIMIZER"),
+            "",
             f"\U0001f4be <b>Cache</b>",
             "<pre>",
-            _row("Size", f"{cache.get('size', 0)}/{cache.get('max_size', 0)}"),
-            _row("Hit Rate", f"{cache.get('hit_rate', 0):.0%}"),
-            _row("Evictions", str(cache.get('evictions', 0))),
+            _kv("Size", f"{cache.get('size', 0)}/{cache.get('max_size', 0)}"),
+            _kv("Hit Rate", f"{cache.get('hit_rate', 0):.0%}"),
+            _kv("Evictions", str(cache.get('evictions', 0))),
             "</pre>",
             f"\n\U0001f4ca <b>Tier Distribution</b>",
             "<pre>",
-            _row("T1 Rules", f"{tiers.get('tier1_rules', 0)} (free)"),
-            _row("T2 Mini", f"{tiers.get('tier2_mini', 0)} (cheap)"),
-            _row("T3 Full", f"{tiers.get('tier3_full', 0)} (best)"),
+            _kv("T1 Rules", f"{tiers.get('tier1_rules', 0)} (free)"),
+            _kv("T2 Mini", f"{tiers.get('tier2_mini', 0)} (cheap)"),
+            _kv("T3 Full", f"{tiers.get('tier3_full', 0)} (best)"),
         ]
         if total > 0:
-            lines.append(_row("Free %", f"{tiers.get('tier1_rules', 0) / total * 100:.0f}%"))
+            lines.append(_kv("Free %", f"{tiers.get('tier1_rules', 0) / total * 100:.0f}%"))
 
         saved = savings.get("total_estimated_cost_saved_usd", 0)
         lines.extend([
             "</pre>",
             f"\n\U0001f4b0 <b>Savings</b>",
             "<pre>",
-            _row("Tokens", f"~{savings.get('total_estimated_tokens_saved', 0):,}"),
-            _row("Cost", f"~${saved:,.4f}"),
+            _kv("Tokens", f"~{savings.get('total_estimated_tokens_saved', 0):,}"),
+            _kv("Cost", f"~${saved:,.4f}"),
         ])
         if cost.llm_cost_usd > 0:
             would_have = cost.llm_cost_usd + saved
             pct = (saved / would_have * 100) if would_have > 0 else 0
-            lines.append(_row("Reduction", f"{pct:.0f}%"))
+            lines.append(_kv("Reduction", f"{pct:.0f}%"))
         lines.append("</pre>")
         return "\n".join(lines)
 
