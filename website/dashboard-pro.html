@@ -288,6 +288,24 @@ body{
   .risk-grid{grid-template-columns:repeat(2,1fr)}
   .bt-summary{grid-template-columns:repeat(2,1fr)}
 }
+
+/* QUANT TAB */
+.q-preset{
+  padding:6px 14px;border-radius:4px;font-size:.7rem;font-weight:600;letter-spacing:1px;
+  border:1px solid var(--border);background:var(--bg-card);color:var(--text-dim);cursor:pointer;transition:all .2s;
+}
+.q-preset:hover,.q-preset.active{border-color:var(--gold);color:var(--gold);background:rgba(212,168,67,.06)}
+.q-slider{margin-bottom:10px}
+.q-slider label{display:flex;justify-content:space-between;font-size:.75rem;color:var(--steel-light);margin-bottom:3px}
+.q-slider label b{color:var(--gold);font-variant-numeric:tabular-nums}
+.q-slider input[type=range]{width:100%;height:4px;-webkit-appearance:none;background:var(--border);border-radius:2px;outline:none}
+.q-slider input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;background:var(--gold);border-radius:50%;cursor:pointer}
+.q-bar-row{display:flex;align-items:center;gap:8px;margin-bottom:8px;font-size:.75rem}
+.q-bar-label{width:90px;text-align:right;color:var(--steel-light);flex-shrink:0;font-size:.7rem}
+.q-bar-track{flex:1;height:12px;background:var(--bg-card);border-radius:6px;border:1px solid var(--border);overflow:hidden;position:relative}
+.q-bar-fill{height:100%;border-radius:6px;transition:width .4s ease,background .3s}
+.q-bar-weight{width:30px;font-size:.6rem;color:var(--text-dim);text-align:center}
+.q-bar-val{width:36px;font-variant-numeric:tabular-nums;color:var(--gold);font-size:.75rem;font-weight:600}
 </style>
 </head>
 <body>
@@ -307,7 +325,7 @@ body{
   <div class="tab active" data-tab="live" onclick="switchTab('live')">Live Trading</div>
   <div class="tab" data-tab="analytics" onclick="switchTab('analytics')">Analytics</div>
   <div class="tab" data-tab="ai" onclick="switchTab('ai')">AI Analysis</div>
-  <a href="quant-dashboard.html" class="tab" style="text-decoration:none;color:inherit">Quant Skill</a>
+  <div class="tab" data-tab="quant" onclick="switchTab('quant')">Quant Skill</div>
 </div>
 
 <!-- ==================== TAB 1: LIVE TRADING ==================== -->
@@ -664,6 +682,84 @@ body{
 
 </div>
 </div>
+
+<!-- ==================== TAB 4: QUANT SKILL ==================== -->
+<div id="tab-quant" class="tab-content">
+<div class="dash">
+
+<!-- QUANT HEADER -->
+<div class="grid-4 anim" style="animation-delay:.1s">
+  <div class="stat"><div class="stat-lbl">Quant Score</div><div class="stat-val" id="q-score-stat" style="color:var(--green)">0.537</div><div class="stat-sub" id="q-edge-stat">Edge: MODERATE</div></div>
+  <div class="stat"><div class="stat-lbl">Regime</div><div class="stat-val neu" id="q-regime-stat" style="font-size:1.1rem">WEAK TREND UP</div><div class="stat-sub" id="q-vol-stat">Volatility: NORMAL</div></div>
+  <div class="stat"><div class="stat-lbl">Gate Decision</div><div class="stat-val up" id="q-gate-stat">PASS</div><div class="stat-sub" id="q-gate-sub">Score meets threshold</div></div>
+  <div class="stat"><div class="stat-lbl">Hurst Exponent</div><div class="stat-val" id="q-hurst-stat" style="color:var(--gold)">0.580</div><div class="stat-sub">Trending memory</div></div>
+</div>
+
+<!-- FACTOR SIMULATOR -->
+<div class="grid-2 anim" style="animation-delay:.2s">
+  <!-- LEFT: Presets + Sliders -->
+  <div class="pnl">
+    <div class="pnl-t"><span class="ico">&#9881;</span> Live Factor Simulator</div>
+    <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:16px">
+      <button class="q-preset" onclick="qPreset('trend')">Strong Uptrend &#8599;</button>
+      <button class="q-preset" onclick="qPreset('range')">Ranging &#8596;</button>
+      <button class="q-preset" onclick="qPreset('chop')">Choppy ~</button>
+      <button class="q-preset" onclick="qPreset('extreme')">Extreme Vol &#9889;</button>
+      <button class="q-preset" onclick="qPreset('mr')">Mean Reversion &#8617;</button>
+    </div>
+    <div class="q-slider"><label>ADX (Trend Strength) <b id="q-adx-v">32</b></label><input type="range" id="q-adx" min="0" max="100" value="32" oninput="qUpdate()"></div>
+    <div class="q-slider"><label>ATR% (Volatility) <b id="q-atr-v">1.8%</b></label><input type="range" id="q-atr" min="0" max="80" value="18" oninput="qUpdate()"></div>
+    <div class="q-slider"><label>Hurst H (Memory) <b id="q-hurst-v">0.58</b></label><input type="range" id="q-hurst" min="0" max="100" value="58" oninput="qUpdate()"></div>
+    <div class="q-slider"><label>Momentum Ratio <b id="q-mom-v">+2.2%</b></label><input type="range" id="q-mom" min="-50" max="50" value="22" oninput="qUpdate()"></div>
+    <div class="q-slider"><label>Price Z-score <b id="q-z-v">+0.8</b></label><input type="range" id="q-z" min="-30" max="30" value="8" oninput="qUpdate()"></div>
+    <div class="q-slider"><label>Volume Ratio <b id="q-vol-v">1.6x</b></label><input type="range" id="q-vol" min="0" max="50" value="16" oninput="qUpdate()"></div>
+  </div>
+  <!-- RIGHT: Results -->
+  <div class="pnl">
+    <div class="pnl-t"><span class="ico">&#128202;</span> Factor Breakdown (Weighted)</div>
+    <div id="q-bars"></div>
+    <div style="margin-top:16px;padding:14px;border-radius:6px;border:1px solid var(--border);background:var(--bg-card);text-align:center">
+      <div style="font-size:.65rem;text-transform:uppercase;letter-spacing:2px;color:var(--steel-light);margin-bottom:4px">Composite Score</div>
+      <div id="q-big-score" style="font-family:var(--font-h);font-size:2.8rem;font-weight:700;color:var(--green);transition:color .3s;line-height:1">0.537</div>
+      <div id="q-big-edge" style="margin-top:4px"><span class="tag tag-gold" style="font-size:.7rem">MODERATE</span></div>
+    </div>
+    <div id="q-gate-box" style="margin-top:12px;padding:10px 14px;border-radius:6px;border:1px solid var(--green);background:rgba(0,230,118,.04);font-size:.8rem;font-weight:600;color:var(--green);text-align:center">
+      &#10003; QUANT GATE: PASS &mdash; proceed to risk engine
+    </div>
+  </div>
+</div>
+
+<!-- QUANT AUDIT LOG -->
+<div class="pnl full anim" style="animation-delay:.3s">
+  <div class="pnl-t"><span class="ico">&#128203;</span> Quant Report &mdash; Audit Log</div>
+  <div class="log-box" id="q-audit" style="max-height:200px;font-family:var(--font-mono)"></div>
+</div>
+
+<!-- QUANT ARCHITECTURE -->
+<div class="pnl full anim" style="animation-delay:.4s">
+  <div class="pnl-t"><span class="ico">&#9654;</span> Quant Pipeline Position</div>
+  <div class="pipe">
+    <div class="pipe-s"><div class="sn">Scanner</div><div class="sv">142</div></div>
+    <div class="pipe-c"></div>
+    <div class="pipe-s"><div class="sn">Analyzer</div><div class="sv">38</div></div>
+    <div class="pipe-c"></div>
+    <div class="pipe-s" style="border-color:var(--gold);background:rgba(212,168,67,.08);box-shadow:var(--glow-gold)"><div class="sn" style="color:var(--gold)">Quant Gate</div><div class="sv">22</div></div>
+    <div class="pipe-c"></div>
+    <div class="pipe-s"><div class="sn">Risk Engine</div><div class="sv">14</div></div>
+    <div class="pipe-c"></div>
+    <div class="pipe-s"><div class="sn">Confirm</div><div class="sv">8</div></div>
+    <div class="pipe-c"></div>
+    <div class="pipe-s"><div class="sn">Execute</div><div class="sv">6</div></div>
+  </div>
+  <div style="margin-top:12px;font-size:.75rem;color:var(--text-dim);line-height:1.7">
+    <strong style="color:var(--gold)">6 Factors:</strong> Trend (ADX) 25% &middot; Momentum 20% &middot; Volume Confirm 20% &middot; Mean Reversion 15% &middot; Volatility Fit 10% &middot; Hurst Edge 10%<br>
+    <strong style="color:var(--gold)">Gate Logic:</strong> Score &ge; 0.40 required. Auto-reject on CHOPPY regime or EXTREME volatility. Read-only &mdash; no trades, no state mutation.
+  </div>
+</div>
+
+</div>
+</div>
+
 <script>
 // === TAB SWITCHING ===
 function switchTab(name){
@@ -706,7 +802,7 @@ const checks=[
   ['&#10003;','Confidence','pass'],['&#10003;','Stop-Loss','pass'],['&#10003;','Loss Streak','pass'],
   ['&#10003;','Circuit Breaker','pass'],['&#10003;','Portfolio Exposure','pass'],['&#10003;','Stale Data','pass'],
   ['&#10003;','Symbol Exposure','pass'],['&#10003;','Correlation','pass'],['&#10003;','Cooldown','pass'],
-  ['&#10003;','Volatility Guard','pass'],
+  ['&#10003;','Volatility Guard','pass'],['&#10003;','Quant Gate','pass'],['&#10003;','Regime Filter','pass'],
 ];
 const riskEl=document.getElementById('risk-checks');
 checks.forEach(c=>riskEl.innerHTML+=`<div class="rchk ${c[2]}"><span class="ci">${c[0]}</span>${c[1]}</div>`);
@@ -1072,10 +1168,10 @@ function toggleJudge(){
     <div style="font-family:var(--font-h);font-size:2rem;color:var(--gold);letter-spacing:6px;margin-bottom:20px">RUNECLAW</div>
     <div style="font-size:1rem;color:var(--text);margin-bottom:24px">AI Trading Command Center</div>
     <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:24px">
-      <div class="stat"><div class="stat-lbl">Test Suite</div><div class="stat-val up">97/97</div></div>
-      <div class="stat"><div class="stat-lbl">Risk Checks</div><div class="stat-val">16</div></div>
+      <div class="stat"><div class="stat-lbl">Test Suite</div><div class="stat-val up">626</div></div>
+      <div class="stat"><div class="stat-lbl">Risk Checks</div><div class="stat-val">18</div></div>
       <div class="stat"><div class="stat-lbl">Confluence</div><div class="stat-val">10 Voters</div></div>
-      <div class="stat"><div class="stat-lbl">Candle Patterns</div><div class="stat-val">14</div></div>
+      <div class="stat"><div class="stat-lbl">Skills</div><div class="stat-val">21</div></div>
       <div class="stat"><div class="stat-lbl">Indicators</div><div class="stat-val">30+</div></div>
       <div class="stat"><div class="stat-lbl">Architecture</div><div class="stat-val">9-State FSM</div></div>
     </div>
@@ -1094,10 +1190,118 @@ document.querySelectorAll('.anim').forEach(el=>obs.observe(el));
 // === INIT ===
 window.addEventListener('load',()=>{
   drawPriceChart();drawEquityCurve();drawDrawdown();drawHeatmap();drawVoters();
-  drawCandleVis();drawFibChart();drawOBV();
+  drawCandleVis();drawFibChart();drawOBV();qUpdate();
   document.querySelectorAll('.anim').forEach(el=>el.classList.add('visible'));
 });
 window.addEventListener('resize',()=>{drawPriceChart()});
+
+// === QUANT SKILL TAB ===
+const QW={trend:.25,momentum:.20,mean_reversion:.15,volume:.20,vol_fit:.10,hurst:.10};
+function qVal(id){return parseFloat(document.getElementById(id).value)}
+function qPreset(p){
+  const presets={
+    trend:{adx:42,atr:15,hurst:72,mom:35,z:12,vol:18},
+    range:{adx:18,atr:12,hurst:48,mom:3,z:2,vol:9},
+    chop:{adx:15,atr:20,hurst:42,mom:-1,z:0,vol:8},
+    extreme:{adx:30,atr:55,hurst:55,mom:10,z:-25,vol:32},
+    mr:{adx:12,atr:10,hurst:35,mom:-15,z:-22,vol:11}
+  }[p];
+  if(!presets)return;
+  document.getElementById('q-adx').value=presets.adx;
+  document.getElementById('q-atr').value=presets.atr;
+  document.getElementById('q-hurst').value=presets.hurst;
+  document.getElementById('q-mom').value=presets.mom;
+  document.getElementById('q-z').value=presets.z;
+  document.getElementById('q-vol').value=presets.vol;
+  document.querySelectorAll('.q-preset').forEach(b=>b.classList.remove('active'));
+  event.target.classList.add('active');
+  qUpdate();
+}
+function qUpdate(){
+  const adx=qVal('q-adx'),atr=qVal('q-atr')/10,hurst=qVal('q-hurst')/100;
+  const mom=qVal('q-mom')/1000,z=qVal('q-z')/10,vol=qVal('q-vol')/10;
+  // Display values
+  document.getElementById('q-adx-v').textContent=adx;
+  document.getElementById('q-atr-v').textContent=atr.toFixed(1)+'%';
+  document.getElementById('q-hurst-v').textContent=hurst.toFixed(2);
+  document.getElementById('q-mom-v').textContent=(mom>=0?'+':'')+( mom*100).toFixed(1)+'%';
+  document.getElementById('q-z-v').textContent=(z>=0?'+':'')+z.toFixed(1);
+  document.getElementById('q-vol-v').textContent=vol.toFixed(1)+'x';
+  // Factor scores (0-1)
+  const fTrend=adx<25?0:adx>=40?1:(adx-25)/15;
+  const fMom=Math.min(1,Math.abs(mom)/0.03);
+  const fMR=Math.min(1,Math.abs(z)/2);
+  const fVol=vol<1?0.1:vol>=3?1:0.1+(vol-1)/2*0.9;
+  const volState=atr<1?'LOW':atr<2.5?'NORMAL':atr<4?'ELEVATED':'EXTREME';
+  const fVolFit={LOW:0.5,NORMAL:1,ELEVATED:0.6,EXTREME:0.2}[volState];
+  const fHurst=Math.min(1,Math.abs(hurst-0.5)/0.2);
+  // Composite
+  const score=fTrend*QW.trend+fMom*QW.momentum+fMR*QW.mean_reversion+fVol*QW.volume+fVolFit*QW.vol_fit+fHurst*QW.hurst;
+  // Regime
+  let regime='RANGING';
+  if(atr>=4)regime='HIGH_VOLATILITY';
+  else if(adx<20&&hurst<0.5)regime='CHOPPY';
+  else if(adx<25)regime='RANGING';
+  else if(adx>=35)regime=mom>=0?'STRONG_TREND_UP':'STRONG_TREND_DOWN';
+  else regime=mom>=0?'WEAK_TREND_UP':'WEAK_TREND_DOWN';
+  // Edge
+  const edge=score>=0.70?'STRONG':score>=0.45?'MODERATE':score>=0.25?'WEAK':'NONE';
+  // Gate
+  let gatePass=true,gateReason='Score '+score.toFixed(3)+' meets threshold';
+  if(volState==='EXTREME'){gatePass=false;gateReason='EXTREME_VOLATILITY: ATR% > 4.0';}
+  else if(regime==='CHOPPY'){gatePass=false;gateReason='CHOPPY: ADX < 20 & Hurst < 0.50';}
+  else if(score<0.40){gatePass=false;gateReason='LOW_SCORE: '+score.toFixed(3)+' < 0.40';}
+  // Update stats
+  const sc=document.getElementById('q-score-stat');
+  sc.textContent=score.toFixed(3);sc.style.color=score>=0.45?'var(--green)':score>=0.25?'var(--amber)':'var(--red)';
+  document.getElementById('q-edge-stat').textContent='Edge: '+edge;
+  document.getElementById('q-regime-stat').textContent=regime.replace(/_/g,' ');
+  document.getElementById('q-vol-stat').textContent='Volatility: '+volState;
+  document.getElementById('q-gate-stat').textContent=gatePass?'PASS':'REJECT';
+  document.getElementById('q-gate-stat').style.color=gatePass?'var(--green)':'var(--red)';
+  document.getElementById('q-gate-sub').textContent=gateReason;
+  document.getElementById('q-hurst-stat').textContent=hurst.toFixed(3);
+  // Big score
+  const bs=document.getElementById('q-big-score');
+  bs.textContent=score.toFixed(3);bs.style.color=score>=0.45?'var(--green)':score>=0.25?'var(--amber)':'var(--red)';
+  const edgeTag=document.getElementById('q-big-edge');
+  const ec=edge==='STRONG'?'tag-long':edge==='MODERATE'?'tag-gold':edge==='WEAK'?'tag-dim':'tag-short';
+  edgeTag.innerHTML='<span class="tag '+ec+'" style="font-size:.7rem">'+edge+'</span>';
+  // Gate box
+  const gb=document.getElementById('q-gate-box');
+  if(gatePass){
+    gb.style.borderColor='var(--green)';gb.style.background='rgba(0,230,118,.04)';gb.style.color='var(--green)';
+    gb.innerHTML='&#10003; QUANT GATE: PASS &mdash; proceed to risk engine';
+  }else{
+    gb.style.borderColor='var(--red)';gb.style.background='rgba(255,61,61,.04)';gb.style.color='var(--red)';
+    gb.innerHTML='&#10007; QUANT GATE: REJECTED &mdash; '+gateReason;
+  }
+  // Factor bars
+  const factors=[
+    {name:'Trend (ADX)',val:fTrend,w:'25%'},{name:'Momentum',val:fMom,w:'20%'},
+    {name:'Mean Revert',val:fMR,w:'15%'},{name:'Volume',val:fVol,w:'20%'},
+    {name:'Vol Fit',val:fVolFit,w:'10%'},{name:'Hurst Edge',val:fHurst,w:'10%'}
+  ];
+  const barsEl=document.getElementById('q-bars');
+  barsEl.innerHTML='';
+  factors.forEach(f=>{
+    const c=f.val>=0.7?'var(--green)':f.val>=0.4?'var(--gold)':'var(--red)';
+    barsEl.innerHTML+=`<div class="q-bar-row"><span class="q-bar-label">${f.name}</span><span class="q-bar-weight">${f.w}</span><div class="q-bar-track"><div class="q-bar-fill" style="width:${f.val*100}%;background:${c}"></div></div><span class="q-bar-val">${f.val.toFixed(2)}</span></div>`;
+  });
+  // Audit JSON
+  const audit=document.getElementById('q-audit');
+  audit.innerHTML='<pre style="color:var(--text-dim)">'+JSON.stringify({
+    symbol:'BTC/USDT',timeframe:'4h',regime,volatility_state:volState,
+    adx:adx,atr_pct:parseFloat(atr.toFixed(2)),hurst_exponent:parseFloat(hurst.toFixed(3)),
+    price_zscore:parseFloat(z.toFixed(2)),volume_ratio:parseFloat(vol.toFixed(2)),
+    momentum_ratio:parseFloat((mom*100).toFixed(3))+'%',
+    factors:{trend:parseFloat(fTrend.toFixed(3)),momentum:parseFloat(fMom.toFixed(3)),
+      mean_reversion:parseFloat(fMR.toFixed(3)),volume_confirm:parseFloat(fVol.toFixed(3)),
+      vol_fit:parseFloat(fVolFit.toFixed(3)),hurst:parseFloat(fHurst.toFixed(3))},
+    quant_score:parseFloat(score.toFixed(4)),edge_strength:edge,
+    passes_quant_gate:gatePass,rejection_reason:gatePass?'':gateReason
+  },null,2)+'</pre>';
+}
 </script>
 </body>
 </html>
