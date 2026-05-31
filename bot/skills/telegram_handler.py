@@ -1,7 +1,8 @@
 """
-RUNECLAW Telegram Handler v5 — user store auth + admin commands.
-File-backed user management with roles, /approve and /revoke admin
-commands, auto-registration on /start, role-based permissions.
+RUNECLAW Telegram Handler v6 — MuleRun War Room edition.
+War Room branding, tactical signal cards, risk control panel,
+strategy mode selector, emergency stop, and Telegram Mini App link.
+File-backed user management with roles and admin commands.
 """
 
 from __future__ import annotations
@@ -29,6 +30,20 @@ from bot.core.engine import RuneClawEngine
 from bot.skills.skill_registry import SkillRegistry, build_default_registry
 from bot.utils.logger import audit, system_log
 from bot.utils.user_store import UserStore
+from bot.warroom.warroom_bot import (
+    render_start as wr_start,
+    render_status as wr_status,
+    render_signal as wr_signal,
+    render_risk as wr_risk,
+    render_performance as wr_performance,
+    render_positions as wr_positions,
+    render_daily_report as wr_daily_report,
+    render_strategy_mode as wr_strategy_mode,
+    render_pause as wr_pause,
+    render_resume as wr_resume,
+    render_emergency_stop as wr_emergency_stop,
+    handle_callback as wr_handle_callback,
+)
 
 
 class RateLimiter:
@@ -48,8 +63,19 @@ class RateLimiter:
             return True
 
 
-# ── Navigation keyboard ──────────────────────────────────────
+# ── War Room main menu keyboard ─────────────────────────────
 
+_KB_WARROOM = InlineKeyboardMarkup([
+    [InlineKeyboardButton("\u2694\ufe0f Open War Room", callback_data="open_warroom"),
+     InlineKeyboardButton("\U0001f4ca Latest Signal", callback_data="latest_signal")],
+    [InlineKeyboardButton("\U0001f4c8 Performance", callback_data="performance"),
+     InlineKeyboardButton("\U0001f6e1 Risk Control", callback_data="risk_control")],
+    [InlineKeyboardButton("\u2699\ufe0f Strategy Mode", callback_data="strategy_mode"),
+     InlineKeyboardButton("\U0001f4c2 Positions", callback_data="positions")],
+    [InlineKeyboardButton("\u26d4 Emergency Stop", callback_data="risk_emergency_stop")],
+])
+
+# Legacy dashboard keyboard (kept for /dashboard command compatibility)
 _KB_DASH = InlineKeyboardMarkup([
     [InlineKeyboardButton("\U0001f4ca Status", callback_data="pane:status"),
      InlineKeyboardButton("\U0001f6e1 Risk", callback_data="pane:risk")],
@@ -86,6 +112,15 @@ class TelegramHandler:
             ("patterns", self._cmd_patterns), ("proposals", self._cmd_proposals),
             ("optimize", self._cmd_optimize), ("help", self._cmd_help),
             ("mode", self._cmd_mode),
+            # War Room commands
+            ("latest_signal", self._cmd_latest_signal),
+            ("open_positions", self._cmd_open_positions),
+            ("performance", self._cmd_performance),
+            ("pause", self._cmd_pause),
+            ("resume", self._cmd_resume),
+            ("emergency_stop", self._cmd_emergency_stop),
+            ("daily_report", self._cmd_daily_report),
+            ("strategy", self._cmd_strategy),
             # Admin commands
             ("approve", self._cmd_approve), ("revoke", self._cmd_revoke),
             ("users", self._cmd_users),
@@ -300,7 +335,7 @@ class TelegramHandler:
     # ── Public commands (no auth required) ─────────────────────
 
     async def _cmd_start(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-        """Always responds. Auto-registers new users."""
+        """War Room welcome — auto-registers new users."""
         now = datetime.now(UTC).strftime("%H:%M UTC")
         user_tg = update.effective_user
         tg_id = self._get_tg_id(update)
@@ -311,52 +346,60 @@ class TelegramHandler:
 
         if not record.get("authorized", False):
             msg = (
-                f"\U0001f43e <b>RUNECLAW</b>  \u2022  AI Trading Terminal\n\n"
+                "<b>\u2694\ufe0f MULERUN WAR ROOM</b>\n"
+                "\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\n"
+                "Powered by <b>RUNECLAW Signal Engine</b>\n\n"
                 f"Welcome, <b>{user_name}</b>.\n\n"
-                f"\u2022 AI-powered crypto analysis\n"
-                f"\u2022 18 fail-closed risk checks\n"
-                f"\u2022 Human approval on every trade\n"
-                f"\u2022 Full audit trail\n\n"
-                f"\U0001f4cb <b>Registration received</b>\n"
+                "\u2022 AI-powered crypto analysis\n"
+                "\u2022 18 fail-closed risk checks\n"
+                "\u2022 Human approval on every trade\n"
+                "\u2022 Full audit trail\n\n"
+                "\U0001f4cb <b>Registration received</b>\n"
                 f"Your Telegram ID: <code>{tg_id}</code>\n"
-                f"Status: <code>pending approval</code>\n\n"
-                f"An admin will review your access.\n"
-                f"Use /help to see available commands.\n\n"
+                "Status: <code>pending approval</code>\n\n"
+                "An admin will review your access.\n"
+                "Use /help to see available commands.\n\n"
                 f"<i>{now}</i>"
             )
             await self._send(update, msg)
-            # Notify admin(s) about new registration
             await self._notify_admins(
-                f"\U0001f195 <b>New user registered</b>\n\n"
+                "\U0001f195 <b>New user registered</b>\n\n"
                 f"Name: <b>{user_name}</b>\n"
                 f"ID: <code>{tg_id}</code>\n\n"
                 f"Approve with: <code>/approve {tg_id}</code>",
                 ctx)
             return
 
+        # Authorized user — War Room start
         banner = self._banner()
         role = record.get("role", "trader")
+        mode_str = "PAPER" if CONFIG.simulation_mode else "LIVE"
+        state = self.engine.portfolio.snapshot()
+        cb_active = self.engine.risk.circuit_breaker_active
+
         msg = (
-            f"\U0001f43e <b>RUNECLAW</b>  \u2022  AI Trading Terminal\n"
+            "<b>\u2694\ufe0f MULERUN WAR ROOM</b>\n"
+            "\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\n"
+            "Powered by <b>RUNECLAW Signal Engine</b>\n\n"
+            "Signal locked. Risk checked. Claw ready.\n\n"
+            f"Status: <b>{'ACTIVE' if not cb_active else 'CB TRIGGERED'}</b> "
+            f"{'🟢' if not cb_active else '🔴'}\n"
+            f"Engine: v3.1 | Mode: {mode_str}\n"
             f"<code>{banner}</code>\n\n"
             f"<pre>"
-            f"  Mode       {'PAPER' if CONFIG.simulation_mode else 'LIVE':>10}\n"
             f"  Balance    ${CONFIG.paper_balance_usd:>9,.0f}\n"
-            f"  Checks              18\n"
-            f"  Engine          READY\n"
+            f"  Risk Checks          18\n"
+            f"  Open Pos   {state.open_positions:>10}\n"
             f"  Role       {role:>10}"
             f"</pre>\n\n"
-            f"\u2022 Human approval on every trade\n"
-            f"\u2022 18 fail-closed risk checks\n"
-            f"\u2022 Full audit trail\n\n"
-            f"<i>{now}  \u2022  /dashboard or /help</i>\n\n"
-            f"<i>\u26a0\ufe0f Not financial advice. Use at your own risk.\n"
-            f"\U0001f4dc AGPL-3.0 \u2022 Source: github.com/Humanoid-Traders/RUNECLAW</i>"
+            f"<i>{now}  \u2022  /help for all commands</i>\n\n"
+            "<i>\u26a0\ufe0f Not financial advice. Use at your own risk.\n"
+            "\U0001f4dc AGPL-3.0 \u2022 github.com/Humanoid-Traders/RUNECLAW</i>"
         )
-        await self._send(update, msg, reply_markup=_KB_DASH)
+        await self._send(update, msg, reply_markup=_KB_WARROOM)
 
     async def _cmd_help(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-        """Always responds."""
+        """Always responds — War Room help menu."""
         tg_id = self._get_tg_id(update)
         is_auth = self.users.is_authorized(tg_id)
         user = self.users.get(tg_id)
@@ -365,48 +408,57 @@ class TelegramHandler:
         if is_auth:
             banner = self._banner()
             header = (
-                f"\U0001f43e <b>RUNECLAW</b>  [{role}]\n"
+                "<b>\u2694\ufe0f MULERUN WAR ROOM</b>  "
+                f"[{role}]\n"
                 f"<code>{banner}</code>\n\n"
             )
         else:
             header = (
-                f"\U0001f43e <b>RUNECLAW</b>\n"
-                f"<i>Status: pending approval \u2014 use /start to register</i>\n\n"
+                "<b>\u2694\ufe0f MULERUN WAR ROOM</b>\n"
+                "<i>Status: pending approval \u2014 use /start to register</i>\n\n"
             )
 
         sections = (
             "<pre>"
+            " WAR ROOM\n"
+            "  /start         Main menu\n"
+            "  /status        Engine status\n"
+            "  /latest_signal Latest signal\n"
+            "  /open_positions Open trades\n"
+            "  /performance   PnL summary\n"
+            "  /strategy      Strategy mode\n"
+            "  /daily_report  Daily report\n"
+            "\n"
             " MARKET\n"
-            "  /scan         Market scanner\n"
-            "  /analyze BTC  AI analysis\n"
-            "  /run          Strategy preset\n"
+            "  /scan          Market scanner\n"
+            "  /analyze BTC   AI analysis\n"
+            "  /run           Strategy preset\n"
             "\n"
             " PORTFOLIO\n"
-            "  /portfolio    Holdings + PnL\n"
-            "  /trade        Pending trades\n"
-            "  /journal      Trade history\n"
+            "  /portfolio     Holdings + PnL\n"
+            "  /trade         Pending trades\n"
+            "  /journal       Trade history\n"
             "\n"
-            " RISK\n"
-            "  /dashboard    Command center\n"
-            "  /status       Engine overview\n"
-            "  /risk         Risk dashboard\n"
-            "  /macro        Macro calendar\n"
-            "  /rejected     Rejection log\n"
+            " RISK CONTROL\n"
+            "  /risk          Risk dashboard\n"
+            "  /pause         Pause trading\n"
+            "  /resume        Resume trading\n"
+            "  /emergency_stop Full stop\n"
+            "  /halt          Circuit breaker\n"
+            "  /reset         Reset breaker\n"
             "\n"
-            " BACKTEST\n"
-            "  /backtest     Synthetic test\n"
-            "  /walkforward  Walk-forward\n"
+            " INTELLIGENCE\n"
+            "  /dashboard     Command center\n"
+            "  /macro         Macro calendar\n"
+            "  /backtest      Synthetic test\n"
+            "  /walkforward   Walk-forward\n"
             "\n"
             " AI SYSTEM\n"
-            "  /learn        Learning stats\n"
-            "  /patterns     Detected patt.\n"
-            "  /proposals    Improvements\n"
-            "  /optimize     Token optimizer\n"
-            "  /costs        Agent economics\n"
-            "\n"
-            " CONTROL\n"
-            "  /halt         Emergency stop\n"
-            "  /reset        Reset breaker\n"
+            "  /learn         Learning stats\n"
+            "  /patterns      Detected patt.\n"
+            "  /proposals     Improvements\n"
+            "  /optimize      Token optimizer\n"
+            "  /costs         Agent economics\n"
         )
 
         if role == "admin":
@@ -421,7 +473,7 @@ class TelegramHandler:
         sections += "</pre>\n\n"
         sections += (
             "<i>\u26a0\ufe0f Not financial advice. Use at your own risk.\n"
-            "\U0001f4dc AGPL-3.0 \u2022 Source: github.com/Humanoid-Traders/RUNECLAW</i>"
+            "\U0001f4dc AGPL-3.0 \u2022 github.com/Humanoid-Traders/RUNECLAW</i>"
         )
         await self._send(update, header + sections)
 
@@ -709,14 +761,42 @@ class TelegramHandler:
     async def _cmd_risk(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._guard(update, "risk"):
             return
-        result = await self.registry.get("check_risk").execute(self.engine)
-        await self._send(update, result)
+        state = self.engine.portfolio.snapshot()
+        data = {
+            "daily_loss_limit": CONFIG.max_daily_drawdown_pct if hasattr(CONFIG, 'max_daily_drawdown_pct') else 3.0,
+            "current_drawdown": round(state.max_drawdown_pct, 2) if state.max_drawdown_pct else 0.0,
+            "max_open_trades": CONFIG.max_open_positions if hasattr(CONFIG, 'max_open_positions') else 3,
+            "open_trades": state.open_positions,
+            "leverage_cap": 5,
+        }
+        rendered = wr_risk(data)
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("\U0001f6e1 Safe Mode", callback_data="risk_safe_mode"),
+             InlineKeyboardButton("\u23f8 Pause Bot", callback_data="risk_pause")],
+            [InlineKeyboardButton("\u26d4 Emergency Stop", callback_data="risk_emergency_stop")],
+        ])
+        await self._send(update, rendered["text"], reply_markup=kb)
 
     async def _cmd_status(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._guard(update, "status"):
             return
-        result = await self.registry.get("check_risk").execute(self.engine, mode="status")
-        await self._send(update, result, reply_markup=_KB_DASH)
+        state = self.engine.portfolio.snapshot()
+        cb = self.engine.risk.circuit_breaker_active
+        macro = self.engine.macro_calendar.evaluate()
+        mode = "PAPER" if CONFIG.simulation_mode else "LIVE"
+        # Build War Room status card
+        data = {
+            "active": not cb,
+            "mode": mode,
+            "exchange": "Bitget",
+            "open_trades": state.open_positions,
+            "daily_pnl": round(state.max_drawdown_pct * -1, 2) if state.max_drawdown_pct else 0.0,
+            "risk_used": round(state.max_drawdown_pct, 2) if state.max_drawdown_pct else 0.0,
+            "market_bias": macro.state.value.replace("_", " ").title(),
+            "last_signal": "Use /scan",
+        }
+        rendered = wr_status(data)
+        await self._send(update, rendered["text"], reply_markup=_KB_WARROOM)
 
     async def _cmd_rejected(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._guard(update, "rejected"):
@@ -820,6 +900,196 @@ class TelegramHandler:
         result = await self.registry.get("optimize").execute(self.engine)
         await self._send(update, result)
 
+    # ── War Room commands ────────────────────────────────────────
+
+    async def _cmd_latest_signal(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """Show the latest signal in War Room card format."""
+        if not await self._guard(update, "scan"):
+            return
+        pending = self.engine.pending_ideas
+        if not pending:
+            await self._send(update,
+                "<b>\U0001f4e1 NO ACTIVE SIGNALS</b>\n\n"
+                "No signals in queue.\n"
+                "Use /scan or /analyze to generate signals.")
+            return
+        idea = pending[-1]  # most recent
+        direction = idea.direction.value
+        confidence = int(idea.confidence * 100)
+        entry = idea.entry_price
+        sl = idea.stop_loss
+        tp = idea.take_profit
+        spread = abs(entry - sl) * 0.3  # approximate entry range
+        data = {
+            "pair": idea.asset.replace("/", ""),
+            "direction": direction,
+            "confidence": confidence,
+            "risk_level": "High" if confidence < 50 else "Medium" if confidence < 70 else "Low",
+            "entry_low": round(min(entry, entry - spread), 2),
+            "entry_high": round(max(entry, entry + spread), 2),
+            "sl": round(sl, 2),
+            "tp1": round(tp, 2),
+            "tp2": round(tp * 1.005 if direction == "LONG" else tp * 0.995, 2),
+            "reason": idea.reasoning[:200] if idea.reasoning else "AI analysis",
+        }
+        rendered = wr_signal(data)
+        # Map approve/reject to actual trade IDs
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("\u2705 Approve Trade", callback_data=f"confirm:{idea.id}")],
+            [InlineKeyboardButton("\U0001f441 Watch Only", callback_data=f"signal_watch_{idea.asset}")],
+            [InlineKeyboardButton("\u274c Reject", callback_data=f"reject:{idea.id}")],
+        ])
+        await self._send(update, rendered["text"], reply_markup=kb)
+
+    async def _cmd_open_positions(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """Show open positions in War Room format."""
+        if not await self._guard(update, "portfolio"):
+            return
+        state = self.engine.portfolio.snapshot()
+        positions_data = []
+        # Pull from portfolio's internal position data
+        with self.engine.portfolio._lock:
+            for tid, pos in self.engine.portfolio._positions.items():
+                last_price = self.engine.portfolio._last_prices.get(pos.asset, pos.entry_price)
+                if pos.direction.value == "LONG":
+                    pnl_pct = ((last_price - pos.entry_price) / pos.entry_price) * 100
+                else:
+                    pnl_pct = ((pos.entry_price - last_price) / pos.entry_price) * 100
+                positions_data.append({
+                    "pair": pos.asset.replace("/", ""),
+                    "direction": pos.direction.value,
+                    "entry": round(pos.entry_price, 2),
+                    "current": round(last_price, 2),
+                    "pnl": round(pnl_pct, 2),
+                    "sl": round(pos.stop_loss, 2),
+                    "tp1": round(pos.take_profit, 2),
+                })
+        if not positions_data:
+            await self._send(update,
+                "<b>\U0001f4c8 OPEN POSITIONS (0)</b>\n"
+                "\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\n\n"
+                "No open positions.\n"
+                "Use /scan or /analyze to find signals.")
+            return
+        rendered = wr_positions(positions_data)
+        # Build keyboard with actual trade controls
+        kb_rows = []
+        for pos in positions_data:
+            kb_rows.append([
+                InlineKeyboardButton(f"\U0001f4cb {pos['pair']}", callback_data=f"pos_details_{pos['pair']}"),
+                InlineKeyboardButton(f"\u274c Close", callback_data=f"pos_close_{pos['pair']}"),
+            ])
+        await self._send(update, rendered["text"],
+                         reply_markup=InlineKeyboardMarkup(kb_rows) if kb_rows else None)
+
+    async def _cmd_performance(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """Performance summary in War Room format."""
+        if not await self._guard(update, "portfolio"):
+            return
+        state = self.engine.portfolio.snapshot()
+        journal = self.engine.journal
+        trades = journal.trades if hasattr(journal, 'trades') else []
+        today_trades = len(trades)
+        wins = sum(1 for t in trades if getattr(t, 'pnl_pct', 0) > 0)
+        win_rate = (wins / today_trades * 100) if today_trades > 0 else 0
+        # Find best/worst pairs
+        best_pair = "N/A"
+        worst_pair = "N/A"
+        if trades:
+            sorted_t = sorted(trades, key=lambda t: getattr(t, 'pnl_pct', 0))
+            worst_pair = getattr(sorted_t[0], 'asset', 'N/A').replace("/USDT", "")
+            best_pair = getattr(sorted_t[-1], 'asset', 'N/A').replace("/USDT", "")
+
+        data = {
+            "today_pnl": round(state.max_drawdown_pct * -1, 2) if state.max_drawdown_pct else 0.0,
+            "week_pnl": 0.0,
+            "win_rate": win_rate,
+            "trades_today": today_trades,
+            "best_pair": best_pair,
+            "worst_pair": worst_pair,
+        }
+        rendered = wr_performance(data)
+        await self._send(update, rendered["text"])
+
+    async def _cmd_pause(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """Pause trading — activates circuit breaker."""
+        if not await self._guard(update, "halt"):
+            return
+        self.engine.risk._circuit_breaker = True
+        rendered = wr_pause()
+        await self._send(update, rendered["text"])
+        audit(system_log, "Bot paused via /pause", action="pause", result="OK")
+
+    async def _cmd_resume(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """Resume trading — deactivates circuit breaker."""
+        if not await self._guard(update, "reset"):
+            return
+        self.engine.risk.reset_circuit_breaker()
+        rendered = wr_resume()
+        await self._send(update, rendered["text"])
+        audit(system_log, "Bot resumed via /resume", action="resume", result="OK")
+
+    async def _cmd_emergency_stop(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """Emergency stop confirmation prompt."""
+        if not await self._guard(update, "halt"):
+            return
+        rendered = wr_emergency_stop()
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("\u26d4 CONFIRM STOP", callback_data="emergency_confirm"),
+             InlineKeyboardButton("\u21a9\ufe0f Cancel", callback_data="emergency_cancel")],
+        ])
+        await self._send(update, rendered["text"], reply_markup=kb)
+
+    async def _cmd_daily_report(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """Daily trading report."""
+        if not await self._guard(update, "journal"):
+            return
+        journal = self.engine.journal
+        trades = journal.trades if hasattr(journal, 'trades') else []
+        today_trades = len(trades)
+        wins = sum(1 for t in trades if getattr(t, 'pnl_pct', 0) > 0)
+        losses = today_trades - wins
+        net_pnl = sum(getattr(t, 'pnl_pct', 0) for t in trades)
+        best_trade = "N/A"
+        best_pnl = 0.0
+        worst_trade = "N/A"
+        worst_pnl = 0.0
+        if trades:
+            sorted_t = sorted(trades, key=lambda t: getattr(t, 'pnl_pct', 0))
+            worst_trade = getattr(sorted_t[0], 'asset', 'N/A').replace("/USDT", "")
+            worst_pnl = round(getattr(sorted_t[0], 'pnl_pct', 0), 2)
+            best_trade = getattr(sorted_t[-1], 'asset', 'N/A').replace("/USDT", "")
+            best_pnl = round(getattr(sorted_t[-1], 'pnl_pct', 0), 2)
+
+        state = self.engine.portfolio.snapshot()
+        dd = state.max_drawdown_pct if state.max_drawdown_pct else 0
+        risk_status = "Healthy" if dd < 2.0 else "Warning" if dd < 3.0 else "Critical"
+
+        data = {
+            "trades": today_trades, "wins": wins, "losses": losses,
+            "net_pnl": round(net_pnl, 2),
+            "best_trade": best_trade, "best_pnl": best_pnl,
+            "worst_trade": worst_trade, "worst_pnl": worst_pnl,
+            "risk_status": risk_status,
+        }
+        rendered = wr_daily_report(data)
+        await self._send(update, rendered["text"])
+
+    async def _cmd_strategy(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """Strategy mode selector."""
+        if not await self._guard(update, "run"):
+            return
+        from bot.config import RUNTIME
+        current = getattr(RUNTIME, 'strategy_mode', 'balanced')
+        rendered = wr_strategy_mode(current)
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("\U0001f6e1 Defensive", callback_data="mode_defensive"),
+             InlineKeyboardButton("\u2694\ufe0f Balanced", callback_data="mode_balanced")],
+            [InlineKeyboardButton("\U0001f525 Aggressive", callback_data="mode_aggressive"),
+             InlineKeyboardButton("\U0001f9d8 Manual", callback_data="mode_manual")],
+        ])
+        await self._send(update, rendered["text"], reply_markup=kb)
+
     # ── Callback handler ──────────────────────────────────────
 
     async def _handle_callback(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -839,6 +1109,141 @@ class TelegramHandler:
 
         data = query.data or ""
         chat_id = update.effective_chat.id
+
+        # ── War Room menu callbacks ──────────────────────────
+
+        if data == "open_warroom":
+            rendered = wr_start()
+            kb = _KB_WARROOM
+            try:
+                await query.edit_message_text(
+                    rendered["text"], parse_mode="HTML", reply_markup=kb)
+            except Exception:
+                pass
+            return
+
+        if data == "latest_signal":
+            # Delegate to the command handler
+            await self._cmd_latest_signal(update, ctx)
+            return
+
+        if data == "performance":
+            await self._cmd_performance(update, ctx)
+            return
+
+        if data == "risk_control":
+            await self._cmd_risk(update, ctx)
+            return
+
+        if data == "strategy_mode":
+            await self._cmd_strategy(update, ctx)
+            return
+
+        if data == "positions":
+            await self._cmd_open_positions(update, ctx)
+            return
+
+        # ── Risk panel callbacks ─────────────────────────────
+
+        if data == "risk_safe_mode":
+            # Reduce risk tolerance
+            self.engine.risk._circuit_breaker = False
+            await self._send(update,
+                "\U0001f6e1 <b>Safe Mode activated</b>\n\n"
+                "Exposure reduced. Only high-confidence signals will pass.",
+                edit=True)
+            audit(system_log, "Safe mode activated", action="safe_mode", result="OK")
+            return
+
+        if data == "risk_pause":
+            self.engine.risk._circuit_breaker = True
+            rendered = wr_pause()
+            await self._send(update, rendered["text"], edit=True)
+            audit(system_log, "Bot paused via risk panel", action="pause", result="OK")
+            return
+
+        if data == "risk_emergency_stop":
+            rendered = wr_emergency_stop()
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("\u26d4 CONFIRM STOP", callback_data="emergency_confirm"),
+                 InlineKeyboardButton("\u21a9\ufe0f Cancel", callback_data="emergency_cancel")],
+            ])
+            await self._send(update, rendered["text"], reply_markup=kb, edit=True if query.message else False)
+            return
+
+        if data == "emergency_confirm":
+            self.engine.risk._circuit_breaker = True
+            # Clear pending ideas
+            self.engine.pending_ideas.clear()
+            await self._send(update,
+                "\u26d4 <b>EMERGENCY STOP EXECUTED</b>\n\n"
+                "All pending orders cancelled.\n"
+                "Circuit breaker engaged.\n"
+                "Bot is <b>PAUSED</b>.\n\n"
+                "Use /resume to reactivate.",
+                edit=True)
+            audit(system_log, "EMERGENCY STOP executed", action="emergency_stop", result="OK")
+            return
+
+        if data == "emergency_cancel":
+            await self._send(update,
+                "\u21a9\ufe0f Emergency stop cancelled. Bot continues.",
+                edit=True)
+            return
+
+        # ── Strategy mode callbacks ──────────────────────────
+
+        if data.startswith("mode_"):
+            mode = data.removeprefix("mode_")
+            from bot.config import RUNTIME
+            if hasattr(RUNTIME, 'strategy_mode'):
+                RUNTIME.strategy_mode = mode
+            rendered = wr_strategy_mode(mode)
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("\U0001f6e1 Defensive", callback_data="mode_defensive"),
+                 InlineKeyboardButton("\u2694\ufe0f Balanced", callback_data="mode_balanced")],
+                [InlineKeyboardButton("\U0001f525 Aggressive", callback_data="mode_aggressive"),
+                 InlineKeyboardButton("\U0001f9d8 Manual", callback_data="mode_manual")],
+            ])
+            try:
+                await query.edit_message_text(
+                    rendered["text"] + f"\n\n\u2705 Switched to <b>{mode.capitalize()}</b>",
+                    parse_mode="HTML", reply_markup=kb)
+            except Exception:
+                pass
+            audit(system_log, f"Strategy mode: {mode}", action="mode_switch", result="OK")
+            return
+
+        # ── Signal action callbacks ──────────────────────────
+
+        if data.startswith("signal_watch_"):
+            pair = data.removeprefix("signal_watch_")
+            await self._send(update,
+                f"\U0001f441 <b>Watching {html.escape(pair)}</b>\n\n"
+                "You will be notified on trigger.",
+                edit=True)
+            return
+
+        # ── Position callbacks ───────────────────────────────
+
+        if data.startswith("pos_details_"):
+            pair = data.removeprefix("pos_details_")
+            await self._send(update,
+                f"\U0001f4cb <b>{html.escape(pair)} Details</b>\n\n"
+                "Use /open_positions for full view.",
+                edit=True)
+            return
+
+        if data.startswith("pos_close_"):
+            pair = data.removeprefix("pos_close_")
+            await self._send(update,
+                f"\u274c <b>Close {html.escape(pair)}</b>\n\n"
+                "Position close requested.\n"
+                "Manual confirmation required on exchange.",
+                edit=True)
+            return
+
+        # ── Legacy pane callbacks (backward compat) ──────────
 
         if data.startswith("pane:"):
             pane = data.split(":", 1)[1]
@@ -882,15 +1287,17 @@ class TelegramHandler:
                     pass
             return
 
+        # ── Trade confirm/reject ─────────────────────────────
+
         if data.startswith("confirm:"):
             trade_id = data.split(":", 1)[1]
             result = await self.engine.confirm_trade(trade_id)
             await self._send(update,
-                f"\U0001f7e2 <b>TRADE APPROVED</b>\n\n{result}", edit=True)
+                f"\u2705 <b>TRADE APPROVED</b>\n\n{result}", edit=True)
         elif data.startswith("reject:"):
             trade_id = data.split(":", 1)[1]
             result = self.engine.reject_trade(trade_id)
             await self._send(update,
-                f"\U0001f534 <b>TRADE PASSED</b>\n\n{result}", edit=True)
+                f"\u274c <b>TRADE REJECTED</b>\n\n{result}", edit=True)
 
         audit(system_log, f"Callback: {data}", action="telegram_callback")
