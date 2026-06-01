@@ -753,10 +753,9 @@ class TelegramHandler:
                 "To confirm, type:\n<code>/golive CONFIRM</code>")
             return
 
-        # Enable live mode in config
-        from bot.config import CONFIG
-        CONFIG.simulation_mode = False
-        CONFIG.live_trading_enabled = True
+        # Enable live mode via RuntimeState (CONFIG is frozen)
+        from bot.config import RUNTIME
+        RUNTIME.live_mode = True
         audit(system_log, "LIVE TRADING ENABLED via /golive",
               action="golive", result="ENABLED",
               data={"user": self._get_tg_id(update)})

@@ -164,8 +164,18 @@ class AppConfig:
     analyzer: AnalyzerConfig = field(default_factory=AnalyzerConfig)
 
     def is_live(self) -> bool:
-        """Live trading requires BOTH flags AND a Telegram chat allow-list."""
-        if not (self.live_trading_enabled and not self.simulation_mode):
+        """Live trading requires BOTH flags AND a Telegram chat allow-list.
+
+        Can be activated either via env vars (SIMULATION_MODE=false +
+        LIVE_TRADING_ENABLED=true) or at runtime via /golive CONFIRM
+        which sets RUNTIME.live_mode = True.
+        """
+        env_live = self.live_trading_enabled and not self.simulation_mode
+        try:
+            runtime_live = RUNTIME.live_mode
+        except NameError:
+            runtime_live = False
+        if not (env_live or runtime_live):
             return False
         # F-04 FIX: refuse to arm live mode without a configured chat ID
         try:
@@ -202,6 +212,17 @@ class RuntimeState:
         self._lock = __import__("threading").Lock()
         self._asset_universe: str = CONFIG.exchange.asset_universe
         self._strategy_mode: str = "balanced"
+        self._live_mode: bool = False  # toggled by /golive CONFIRM
+
+    @property
+    def live_mode(self) -> bool:
+        with self._lock:
+            return self._live_mode
+
+    @live_mode.setter
+    def live_mode(self, value: bool) -> None:
+        with self._lock:
+            self._live_mode = value
 
     @property
     def asset_universe(self) -> str:
