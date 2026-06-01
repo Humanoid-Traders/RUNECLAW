@@ -915,7 +915,7 @@ class RunStrategySkill(BaseSkill):
             a = f"  <i>/{aliases[0]}</i>" if aliases else ""
             lines.append(f"  {cfg['icon']} <b>{cfg['label']}</b>{a}")
             lines.append(f"     <i>{cfg['desc']}</i>")
-        lines.append(f"\n<i>\u25b8 Usage: /run &lt;name&gt; \u2022 18 checks active</i>")
+        lines.append(f"\n<i>\u25b8 Usage: /run &lt;name&gt; \u2022 21 checks active</i>")
         return "\n".join(lines)
 
     async def execute(self, engine: RuneClawEngine, **kwargs: Any) -> str:

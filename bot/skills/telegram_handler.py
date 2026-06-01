@@ -123,6 +123,9 @@ class TelegramHandler:
             ("run", self._cmd_run), ("learn", self._cmd_learn),
             ("patterns", self._cmd_patterns), ("proposals", self._cmd_proposals),
             ("optimize", self._cmd_optimize), ("help", self._cmd_help),
+            # Strategy preset shortcuts (aliases for /run <name>)
+            ("momentum", self._cmd_momentum), ("dip", self._cmd_dip),
+            ("scalp", self._cmd_scalp),
             ("mode", self._cmd_mode),
             # War Room commands
             ("latest_signal", self._cmd_latest_signal),
@@ -1201,6 +1204,33 @@ class TelegramHandler:
                 f"\u23f3 <i>Running {html.escape(strategy)}...</i>")
         result = await self.registry.get("run_strategy").execute(
             self.engine, strategy=strategy)
+        await self._send(update, result)
+
+    async def _cmd_momentum(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """Shortcut for /run momentum."""
+        if not await self._guard(update, "run"):
+            return
+        await self._send(update, "\u23f3 <i>Running Momentum Hunter...</i>")
+        result = await self.registry.get("run_strategy").execute(
+            self.engine, strategy="momentum")
+        await self._send(update, result)
+
+    async def _cmd_dip(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """Shortcut for /run dip."""
+        if not await self._guard(update, "run"):
+            return
+        await self._send(update, "\u23f3 <i>Running BTC Dip Sniper...</i>")
+        result = await self.registry.get("run_strategy").execute(
+            self.engine, strategy="dip")
+        await self._send(update, result)
+
+    async def _cmd_scalp(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """Shortcut for /run scalp."""
+        if not await self._guard(update, "run"):
+            return
+        await self._send(update, "\u23f3 <i>Running Safe Scalper...</i>")
+        result = await self.registry.get("run_strategy").execute(
+            self.engine, strategy="scalp")
         await self._send(update, result)
 
     async def _cmd_learn(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
