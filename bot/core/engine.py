@@ -367,6 +367,31 @@ class RuneClawEngine:
             ))
             return f"Trade REJECTED on re-check: {recheck.reason}"
 
+        # Adversarial self-critique gate (fail-open: errors = proceed with warning)
+        try:
+            from bot.core.critique import TradeCritique
+            critique = TradeCritique()
+            snapshot = self.portfolio.snapshot()
+            macro_ctx_for_critique = self.macro_provider.get_context(symbol=idea.asset)
+            critique_result = critique.evaluate(idea, recheck, snapshot, macro_ctx_for_critique)
+
+            if critique_result.verdict == "HALT":
+                self.audit_chain.append("CRITIQUE_HALT", {
+                    "trade_id": trade_id, "asset": idea.asset,
+                    "bear_case": critique_result.bear_case,
+                    "concerns": critique_result.concerns,
+                    "confidence_adjustment": critique_result.confidence_adjustment,
+                })
+                self._transition(AgentState.IDLE, f"critique halted {trade_id}")
+                return f"Trade HALTED by adversarial review: {critique_result.bear_case}\nConcerns: {'; '.join(critique_result.concerns)}"
+            elif critique_result.verdict == "WARN":
+                audit(trade_log, f"Critique WARNING for {trade_id}: {critique_result.bear_case}",
+                      action="critique", result="WARN",
+                      data={"concerns": critique_result.concerns})
+        except Exception as exc:
+            audit(trade_log, f"Critique gate error (fail-open): {exc}",
+                  action="critique", result="ERROR")
+
         # Compliance gate: authorize before execution
         action = Permission.LIVE_TRADE if CONFIG.is_live() else Permission.PAPER_TRADE
         macro_ctx = self.macro_provider.get_context(symbol=idea.asset)

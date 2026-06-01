@@ -1,7 +1,7 @@
 """
 RUNECLAW Risk Engine -- FAIL-CLOSED pre-trade gatekeeper.
 
-20 independent pre-trade checks. ANY failure = REJECTED. No overrides.
+21 independent pre-trade checks. ANY failure = REJECTED. No overrides.
 Design: if a check cannot be evaluated, the trade is REJECTED (fail-closed).
 
 Note: Check #17 (liquidity guard) lives in engine.py via OrderFlowAnalyzer,
@@ -28,6 +28,7 @@ Checks:
   18. Macro event risk state (EVENT_LOCKDOWN/BLACKOUT = reject)
   19. Multi-timeframe trend alignment (MTF_ALIGNMENT)
   20. Portfolio concentration via PCA on correlation matrix (CONCENTRATION_PCA)
+  21. Portfolio VaR — parametric Value at Risk (PORTFOLIO_VAR)
 """
 
 from __future__ import annotations
@@ -95,7 +96,7 @@ class RiskEngine:
     """
     Pre-trade and post-trade risk checks.
     Design principle: if ANY check cannot be evaluated, the trade is REJECTED.
-    20 independent checks -- all must pass (16 in-engine + #17 liquidity in engine.py + #18 macro + #19 MTF alignment + #20 concentration PCA).
+    21 independent checks -- all must pass (16 in-engine + #17 liquidity in engine.py + #18 macro + #19 MTF alignment + #20 concentration PCA + #21 portfolio VaR).
 
     Threading model: RUNECLAW runs on a single-threaded asyncio event loop.
     The RLock exists as a defensive measure but does NOT guarantee correctness
@@ -171,7 +172,7 @@ class RiskEngine:
 
     def evaluate(self, idea: TradeIdea, atr: Optional[float] = None) -> RiskCheck:
         """
-        Run all 20 pre-trade checks (16 in-engine + #17 liquidity + #18 macro + #19 MTF alignment + #20 concentration PCA).
+        Run all 21 pre-trade checks (16 in-engine + #17 liquidity + #18 macro + #19 MTF alignment + #20 concentration PCA + #21 portfolio VaR).
         Returns RiskCheck with APPROVED or REJECTED.
         Pass atr= for volatility guard check.
         """
@@ -460,6 +461,23 @@ class RiskEngine:
                 passed.append("CONCENTRATION_PCA: OK or skipped (no data)")
         except Exception as exc:
             failed.append(f"CONCENTRATION_PCA: evaluation error ({exc})")
+
+        # 21. Portfolio VaR (parametric Value at Risk)
+        try:
+            current_var, proposed_var = self._compute_portfolio_var(position_usd)
+            max_var = CONFIG.risk.max_portfolio_var_pct
+            if proposed_var < 0:
+                # Not enough data — skip (fewer than 5 closed trades)
+                passed.append("PORTFOLIO_VAR: skipped (insufficient trade history)")
+            elif proposed_var > max_var:
+                failed.append(
+                    f"PORTFOLIO_VAR: proposed {proposed_var:.2f}% > {max_var}% limit "
+                    f"(current {current_var:.2f}%)"
+                )
+            else:
+                passed.append(f"PORTFOLIO_VAR: {proposed_var:.2f}% <= {max_var}% limit")
+        except Exception as exc:
+            failed.append(f"PORTFOLIO_VAR: evaluation error ({exc})")
 
         # -- Verdict --
         verdict = RiskVerdict.APPROVED if len(failed) == 0 else RiskVerdict.REJECTED
@@ -791,6 +809,64 @@ class RiskEngine:
         if not ok:
             return f"CONCENTRATION_PCA: {reason}"
         return None
+
+    def _compute_portfolio_var(self, position_usd: float, confidence_level: float = 0.95) -> tuple[float, float]:
+        """Compute parametric VaR for portfolio including proposed position.
+
+        Returns (current_var_pct, proposed_var_pct) as percentage of equity.
+        Uses historical per-trade returns to estimate volatility.
+
+        Returns (-1, -1) when there is insufficient data to compute VaR
+        (fewer than 5 closed trades), signalling the caller to skip the check.
+        """
+        import math
+
+        history = self._portfolio.trade_history
+        closed = [t for t in history if t.exit_price is not None and t.entry_price > 0]
+
+        if len(closed) < 5:
+            return (-1.0, -1.0)
+
+        state = self._portfolio.snapshot()
+        equity = state.equity_usd
+        if equity <= 0:
+            return (0.0, 100.0)  # Zero equity with pending position = max risk
+
+        # Compute per-trade return percentages
+        returns = []
+        for t in closed:
+            notional = t.entry_price * t.quantity
+            if notional > 0:
+                returns.append(t.pnl / notional)
+
+        if len(returns) < 5:
+            return (-1.0, -1.0)
+
+        # Portfolio volatility from trade returns
+        mean_ret = sum(returns) / len(returns)
+        variance = sum((r - mean_ret) ** 2 for r in returns) / (len(returns) - 1)
+        vol = math.sqrt(variance)
+
+        # z-score for confidence level (95% = 1.645)
+        z_score = 1.645 if confidence_level == 0.95 else abs(
+            math.sqrt(2) * math.erfc(2 * confidence_level - 1)  # rough approx
+        )
+
+        # Holding period: 1 day (sqrt(1) = 1)
+        holding_period = 1.0
+
+        # Current portfolio exposure (sum of open position notionals)
+        current_exposure = 0.0
+        for pos in self._portfolio.open_positions:
+            current_exposure += pos.entry_price * pos.quantity
+
+        # VaR = z * vol * sqrt(T) * exposure / equity * 100
+        sqrt_t = math.sqrt(holding_period)
+        current_var_pct = (z_score * vol * sqrt_t * current_exposure / equity * 100) if equity > 0 else 0.0
+        proposed_exposure = current_exposure + position_usd
+        proposed_var_pct = (z_score * vol * sqrt_t * proposed_exposure / equity * 100) if equity > 0 else 0.0
+
+        return (round(current_var_pct, 4), round(proposed_var_pct, 4))
 
     def _check_correlation(self, idea: TradeIdea) -> Optional[str]:
         """Prevent concentrated bets in the same correlation group."""

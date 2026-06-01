@@ -233,6 +233,23 @@ class AuditChain:
 
         return (len(problems) == 0, problems)
 
+    # -- attestation ----------------------------------------------------------
+
+    def sign_latest_batch(self, batch_size: int = 10) -> "AttestationResult":
+        """Sign the latest batch of entries with Ed25519.
+
+        Returns AttestationResult with signature and Merkle root.
+        """
+        from bot.utils.attestation import AttestationEngine, AttestationResult
+
+        engine = AttestationEngine()
+        entries = self.get_entries(limit=batch_size)
+        if not entries:
+            return AttestationResult(valid=False, error="No entries to sign")
+
+        hashes = [e.entry_hash for e in entries]
+        return engine.sign_batch(hashes)
+
     # -- internals ------------------------------------------------------------
 
     def _tail_state(self) -> tuple[str, int]:

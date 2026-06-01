@@ -55,6 +55,8 @@ class RiskLimits:
     volatility_guard_atr_pct: float = _env_float("VOLATILITY_GUARD_ATR_PCT", 6.0)
     stale_data_max_age_seconds: int = int(_env_float("STALE_DATA_MAX_AGE_SEC", 300))
     require_stop_loss: bool = _env_bool("REQUIRE_STOP_LOSS", True)
+    # Portfolio VaR: reject trades that would push parametric VaR above this %.
+    max_portfolio_var_pct: float = _env_float("MAX_PORTFOLIO_VAR_PCT", 15.0)
     # Exchange commission per side (taker fee).  0.1% = Bitget taker default.
     commission_pct: float = _env_float("COMMISSION_PCT", 0.1)
 

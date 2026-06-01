@@ -11,7 +11,7 @@ version: "1.0"
 updated: "2026-06-01"
 
 # =============================================================================
-# PRE-TRADE CHECKS (20 total)
+# PRE-TRADE CHECKS (21 total)
 # =============================================================================
 # Design contract: ALL checks must pass. ANY failure = REJECTED. No overrides.
 # Fail behavior:
@@ -267,6 +267,22 @@ checks:
     trips_circuit_breaker: false
     notes: "Gracefully skipped when insufficient positions or trade history."
 
+  - id: 21
+    name: PORTFOLIO_VAR
+    description: >
+      Parametric Value at Risk check. Computes portfolio VaR from historical
+      per-trade returns using z-score 1.645 (95% confidence). Rejects when
+      proposed position would push portfolio VaR above max_portfolio_var_pct.
+    fail_behavior: skip
+    threshold:
+      confidence_level: 0.95
+      z_score: 1.645
+      max_var_pct: 15.0
+      min_trades_required: 5
+    env_var: MAX_PORTFOLIO_VAR_PCT
+    trips_circuit_breaker: false
+    notes: "Gracefully skipped when fewer than 5 closed trades (insufficient history)."
+
 # =============================================================================
 # CONFIGURABLE DEFAULTS (RiskLimits dataclass)
 # =============================================================================
@@ -352,6 +368,11 @@ defaults:
     value: 0.1
     env_var: COMMISSION_PCT
     description: "Exchange commission per side (taker fee), used in PnL calculations"
+
+  max_portfolio_var_pct:
+    value: 15.0
+    env_var: MAX_PORTFOLIO_VAR_PCT
+    description: "Max portfolio Value at Risk as % of equity (parametric, 95% confidence)"
 
 # =============================================================================
 # CORRELATION GROUPS

@@ -67,16 +67,16 @@ class TestRiskManifest:
         assert isinstance(data, dict)
         assert "checks" in data
 
-    def test_manifest_has_20_checks(self):
-        """2. manifest_has_20_checks - exactly 20 check entries."""
+    def test_manifest_has_21_checks(self):
+        """2. manifest_has_21_checks - exactly 21 check entries."""
         data = _load_manifest()
-        assert len(data["checks"]) == 20
+        assert len(data["checks"]) == 21
 
     def test_manifest_check_ids_sequential(self):
-        """3. manifest_check_ids_sequential - IDs 1-20 in order."""
+        """3. manifest_check_ids_sequential - IDs 1-21 in order."""
         data = _load_manifest()
         ids = [c["id"] for c in data["checks"]]
-        assert ids == list(range(1, 21))
+        assert ids == list(range(1, 22))
 
     def test_manifest_check_names_match_code(self):
         """4. manifest_check_names_match_code - names match risk_engine.py check names."""
@@ -105,6 +105,7 @@ class TestRiskManifest:
             "MACRO_EVENT",
             "MTF_ALIGNMENT",
             "CONCENTRATION_PCA",
+            "PORTFOLIO_VAR",
         ]
         assert manifest_names == expected_names
 
