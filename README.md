@@ -17,12 +17,12 @@
 <p align="center">
   <img src="https://img.shields.io/badge/python-3.11+-blue?logo=python&logoColor=white" alt="Python 3.11+">
   <img src="https://img.shields.io/badge/license-AGPL--3.0-blue" alt="License AGPL-3.0">
-  <img src="https://img.shields.io/badge/tests-773%20passing-brightgreen" alt="773 Tests Passing">
+  <img src="https://img.shields.io/badge/tests-551%20passing-brightgreen" alt="551 Tests Passing">
   <img src="https://img.shields.io/badge/security%20scan-passed-brightgreen" alt="Security Scan Passed">
   <img src="https://img.shields.io/badge/red%20team-100%25-brightgreen" alt="Red Team 100%">
   <img src="https://img.shields.io/badge/security%20tests-29%20passing-blueviolet" alt="29 Security Tests">
   <img src="https://img.shields.io/badge/red%20team-28%20attacks%20%7C%20100%25%20pass-critical" alt="Red Team 100% Pass">
-  <img src="https://img.shields.io/badge/risk%20checks-20%20fail--closed-red" alt="20 Risk Checks">
+  <img src="https://img.shields.io/badge/risk%20checks-21%20fail--closed-red" alt="21 Risk Checks">
   <img src="https://img.shields.io/badge/mode-paper%20trading-orange" alt="Paper Trading">
   <img src="https://img.shields.io/badge/exchange-Bitget-blue" alt="Bitget">
   <img src="https://img.shields.io/badge/bot-LIVE%20%40HTRUNECLAW__bot-26a5e4?logo=telegram" alt="Live Telegram Bot">
@@ -56,7 +56,9 @@
 
 **RUNECLAW** is an AI trading command system built by **Humanoid Traders** for the Bitget AI Base Camp · Hackathon S1. It merges multi-timeframe analysis, confluence scoring, regime detection, order-flow microstructure, and risk-first logic into a disciplined framework -- all controllable through a Telegram bot interface.
 
-The system operates in **simulation-first mode by default**. Every trade idea must pass twenty independent risk checks and receive explicit human confirmation before execution. An additional liquidity guard runs on live order-flow data when available. No exceptions.
+The system operates in **simulation-first mode by default**. Every trade idea must pass twenty-one independent risk checks, an adversarial self-critique gate, and receive explicit human confirmation before execution. An additional liquidity guard runs on live order-flow data when available. No exceptions.
+
+> **Shield risk engine available as MCP server -- any GetClaw agent can call it.** See `bot/mcp/server.py`.
 
 **Key philosophy:** The bot suggests. The human decides. The risk engine enforces.
 
@@ -123,6 +125,26 @@ An adversarial engine that attacks the risk engine with 28 scenarios across 10 c
 flash crashes, liquidity drains, correlated selloffs, stale data injection, confidence manipulation,
 R:R gaming, circuit breaker evasion, zero/negative values, direction inversion, and max position flooding.
 Verifies 100% pass rate -- every adversarial scenario correctly caught or approved. Includes ATR=0 bad-data test.
+
+### Adversarial Self-Critique Gate (NEW)
+Pre-trade bear-case analysis that runs on every confirmed trade before execution:
+- 7 heuristic checks: overconfidence (>90%), marginal R:R (<1.5x), directional crowding (3+ same-direction), same-asset double-down, portfolio heat (4+ open), macro headwind, tight stop (<1% from entry)
+- **HALT** verdict at 3+ concerns blocks execution with full explanation
+- **WARN** verdict logs concerns but allows trade to proceed
+- Fail-open design: critique errors never block trades (unlike fail-closed risk engine)
+
+### Portfolio Value at Risk (NEW)
+Parametric VaR as risk check #21:
+- 95% confidence interval using historical per-trade return volatility
+- Rejects trades pushing portfolio VaR above 15% of equity (configurable via `MAX_PORTFOLIO_VAR_PCT`)
+- Gracefully skips with fewer than 5 closed trades (insufficient history)
+
+### Cryptographic Attestation (NEW)
+Ed25519 digital signatures for audit chain non-repudiation:
+- Merkle root computed over batch of audit entry hashes
+- Signed with Ed25519 private key (generated on first run, stored at `data/attestation_key.bin`)
+- Verify any batch against the public key to prove entries were created by this bot instance
+- Graceful fallback: if `cryptography` package is missing, SHA-256 hash chain still operates
 
 ### Black Swan Detector (NEW)
 Statistical anomaly detection that pre-empts the circuit breaker. Monitors 5 anomaly types:
@@ -486,7 +508,7 @@ This is a **hackathon prototype** (maturity: early-stage). Known limitations:
 
 | Capability | RUNECLAW | Typical Hackathon Bot |
 |------------|:--------:|:---------------------:|
-| Pre-trade risk checks | **20 independent checks** | 0-3 basic checks |
+| Pre-trade risk checks | **21 independent checks** | 0-3 basic checks |
 | Fail-closed design | **Yes** -- any failure = rejection | Fail-open (errors skip checks) |
 | Circuit breaker | **Auto-halt** on daily loss / drawdown | None or manual only |
 | Human confirmation | **Required** via Telegram keyboard | Auto-execute or no gate |
