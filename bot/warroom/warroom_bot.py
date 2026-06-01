@@ -13,6 +13,12 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
+_CHART_UP = "\U0001f4c8"
+_WARN_ICON = "\u26a0\ufe0f"
+_TROPHY = "\U0001f3c6"
+_GREEN_CIRCLE = "\U0001f7e2"
+_RED_CIRCLE = "\U0001f534"
+
 __all__ = [
     "render_start",
     "render_status",
@@ -146,7 +152,7 @@ def render_status(data: Dict[str, Any]) -> Dict[str, Any]:
         f"\u25c9 {_dot_leader('Open Trades', str(data.get('open_trades', 0)))}\n"
         f"\u25c9 {_dot_leader('Daily PnL', f'{pnl_sign}{pnl}% {_pnl_color(pnl)}')}\n"
         f"\u25c9 {_dot_leader('Risk Used', f'{risk_bar} {risk}%')}\n"
-        f"\u25c9 {_dot_leader('Market Bias', data.get('market_bias', 'N/A') + ' \U0001f4c8')}\n"
+        f"\u25c9 {_dot_leader('Market Bias', data.get('market_bias', 'N/A') + ' ' + _CHART_UP)}\n"
         f"\u25c9 {_dot_leader('Last Signal', data.get('last_signal', 'N/A'))}\n\n"
         f"\u23f1 Updated: {_timestamp()}"
     )
@@ -177,7 +183,7 @@ def render_signal(data: Dict[str, Any]) -> Dict[str, Any]:
         f"{_dot_leader('Pair', pair)}\n"
         f"{_dot_leader('Direction', f'{direction} {dir_emoji}')}\n"
         f"{_dot_leader('Confidence', f'{_confidence_dots(confidence)} {confidence}%')}\n"
-        f"{_dot_leader('Risk', f'\u26a0\ufe0f {risk_level}')}\n\n"
+        f"{_dot_leader('Risk', _WARN_ICON + ' ' + risk_level)}\n\n"
         "<pre>"
         "\u250c\u2500 LEVELS \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510\n"
         f"\u2502 Entry  {entry_low} \u2013 {entry_high}\n"
@@ -252,7 +258,7 @@ def render_performance(data: Dict[str, Any]) -> Dict[str, Any]:
         f"{_dot_leader('7D PnL', f'{w_sign}{week}% {_pnl_color(week)}')}\n"
         f"{_dot_leader('Win Rate', f'{_win_rate_dots(wr)} {int(wr)}%')}\n"
         f"{_dot_leader('Trades Today', str(trades))}\n"
-        f"{_dot_leader('Best Pair', f'{best} \U0001f3c6')}\n"
+        f"{_dot_leader('Best Pair', best + ' ' + _TROPHY)}\n"
         f"{_dot_leader('Worst Pair', worst)}\n\n"
         "\u2581\u2582\u2583\u2585\u2587\u2588\u2587\u2585\u2586\u2587 PnL Trend"
     )
@@ -318,7 +324,7 @@ def render_daily_report(data: Dict[str, Any]) -> Dict[str, Any]:
     worst_p = data.get("worst_pnl", 0.0)
     worst_sign = "+" if worst_p >= 0 else ""
     risk_s = data.get("risk_status", "Healthy")
-    risk_emoji = "\U0001f7e2" if risk_s.lower() == "healthy" else "\U0001f534"
+    risk_emoji = _GREEN_CIRCLE if risk_s.lower() == "healthy" else _RED_CIRCLE
 
     wr = (wins / trades * 100) if trades > 0 else 0.0
 
@@ -326,10 +332,10 @@ def render_daily_report(data: Dict[str, Any]) -> Dict[str, Any]:
         "<b>\U0001f4d3 DAILY RUNECLAW REPORT</b>\n"
         "\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\n\n"
         f"{_dot_leader('Trades', str(trades))}\n"
-        f"{_dot_leader('Wins', f'{wins} \U0001f7e2')}\n"
-        f"{_dot_leader('Losses', f'{losses} \U0001f534')}\n"
+        f"{_dot_leader('Wins', str(wins) + ' ' + _GREEN_CIRCLE)}\n"
+        f"{_dot_leader('Losses', str(losses) + ' ' + _RED_CIRCLE)}\n"
         f"{_dot_leader('Net PnL', f'{net_sign}{net}%')}\n"
-        f"{_dot_leader('Best Trade', f'{best_t} {best_sign}{best_p}% \U0001f3c6')}\n"
+        f"{_dot_leader('Best Trade', f'{best_t} {best_sign}{best_p}%' + ' ' + _TROPHY)}\n"
         f"{_dot_leader('Worst Trade', f'{worst_t} {worst_sign}{worst_p}%')}\n"
         f"{_dot_leader('Risk Status', f'{risk_s} {risk_emoji}')}\n\n"
         f"{_dot_leader('Win Rate', f'{_win_rate_dots(wr)} {int(wr)}%')}"
