@@ -216,12 +216,16 @@ checks:
     name: LIQUIDITY
     description: >
       Liquidity guard via OrderFlowAnalyzer in engine.py.
+      Depth threshold scales with position size: max(position_size * 10, min_book_depth_usd).
+      Large-cap pairs (BTC/ETH/SOL) always enforce a $50K floor.
       This is the ONLY fail-open check: no data = pass.
     fail_behavior: open
-    threshold: null
-    env_var: null
+    threshold:
+      min_book_depth_usd: 5000.0
+      large_cap_floor_usd: 50000.0
+    env_var: MIN_BOOK_DEPTH_USD
     trips_circuit_breaker: false
-    notes: "Runs in engine.py, not in risk_engine.py."
+    notes: "Runs in engine.py, not in risk_engine.py. Threshold scales with position size."
 
   - id: 18
     name: MACRO_EVENT
@@ -373,6 +377,15 @@ defaults:
     value: 15.0
     env_var: MAX_PORTFOLIO_VAR_PCT
     description: "Max portfolio Value at Risk as % of equity (parametric, 95% confidence)"
+
+  min_book_depth_usd:
+    value: 5000.0
+    env_var: MIN_BOOK_DEPTH_USD
+    description: >
+      Minimum order-book depth (per side) in USD for the liquidity guard.
+      Scaled dynamically: effective threshold = max(position_size * 10, this value).
+      Large-cap pairs (BTC/ETH/SOL) always enforce a $50K floor regardless.
+      Lowered from $50K default so small-cap and micro-test trades can pass.
 
 # =============================================================================
 # CORRELATION GROUPS

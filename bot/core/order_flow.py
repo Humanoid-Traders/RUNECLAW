@@ -76,7 +76,12 @@ class OrderFlowConfig:
     cvd_history_len: int = _env_int("OF_CVD_HISTORY", 30)         # rolling per-call deltas kept per symbol
     # Liquidity guard thresholds (used by the risk engine, not for scoring)
     max_spread_bps: float = _env_float("OF_MAX_SPREAD_BPS", 25.0)
-    min_top_depth_usd: float = _env_float("OF_MIN_DEPTH_USD", 50_000.0)
+    min_top_depth_usd: float = _env_float("OF_MIN_DEPTH_USD", 5_000.0)  # absolute floor; scaled by position size
+    # Large-cap symbols that should always require $50K+ book depth
+    LARGE_CAP_SYMBOLS: frozenset = frozenset({
+        "BTC/USDT", "ETH/USDT", "SOL/USDT",
+        "BTC/USDT:USDT", "ETH/USDT:USDT", "SOL/USDT:USDT",
+    })
     # Composite weights
     w_book: float = 1.0
     w_aggressor: float = 1.0
@@ -466,9 +471,21 @@ class OrderFlowAnalyzer:
 
         return votes, weights, labels
 
-    def liquidity_guard(self, sig: OrderFlowSignal) -> Optional[str]:
+    def liquidity_guard(
+        self,
+        sig: OrderFlowSignal,
+        position_size_usd: float = 0.0,
+        symbol: str = "",
+    ) -> Optional[str]:
         """Return a rejection reason if the book is too thin / too wide to
         trade safely, else None. Wire this into RiskEngine as a 17th check.
+
+        The depth threshold scales with position size so micro-test trades
+        ($10) are not blocked by a $50K requirement.  Formula:
+            effective_threshold = max(position_size_usd * 10, min_book_depth_usd)
+        For large-cap pairs (BTC/ETH/SOL) a $50K floor is enforced because
+        those books should always carry that depth.
+
         Fail-OPEN by design: if the book never resolved we cannot judge
         liquidity, so we do not block on missing data here -- the analyzer's
         confidence already reflects that uncertainty elsewhere."""
@@ -477,10 +494,24 @@ class OrderFlowAnalyzer:
         if sig.spread_bps > self.config.max_spread_bps:
             return (f"LIQUIDITY: spread {sig.spread_bps:.1f}bps > "
                     f"{self.config.max_spread_bps}bps")
+
+        # Determine the effective depth threshold
+        min_depth = self.config.min_top_depth_usd
+        effective_symbol = symbol or sig.symbol
+        if effective_symbol in self.config.LARGE_CAP_SYMBOLS:
+            # Large-cap pairs must always meet a $50K floor
+            min_depth = max(min_depth, 50_000.0)
+
+        if position_size_usd > 0:
+            scaled = position_size_usd * 10.0
+            effective_threshold = max(scaled, min_depth)
+        else:
+            effective_threshold = min_depth
+
         top_depth = min(sig.bid_depth_usd, sig.ask_depth_usd)
-        if top_depth < self.config.min_top_depth_usd:
+        if top_depth < effective_threshold:
             return (f"LIQUIDITY: thin book, min side depth ${top_depth:,.0f} < "
-                    f"${self.config.min_top_depth_usd:,.0f}")
+                    f"${effective_threshold:,.0f} (position=${position_size_usd:,.0f})")
         return None
 
     # -- Internals --

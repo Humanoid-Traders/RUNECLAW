@@ -261,7 +261,12 @@ class RuneClawEngine:
 
         # Check #17: liquidity guard from order flow (fail-open if no data)
         if of_signal is not None:
-            liq_reason = self.order_flow.liquidity_guard(of_signal)
+            liq_size = recheck.position_size_usd if recheck else 0.0
+            liq_reason = self.order_flow.liquidity_guard(
+                of_signal,
+                position_size_usd=liq_size,
+                symbol=signal.symbol,
+            )
             if liq_reason:
                 audit(trade_log, f"Trade REJECTED by liquidity guard: {liq_reason}",
                       action="liquidity_guard", result="REJECTED")
