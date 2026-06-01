@@ -51,12 +51,29 @@ def run_telegram() -> None:
 
     async def _run_all() -> None:
         engine_task = asyncio.create_task(engine.run())
+
+        # Start live dashboard web server
+        dashboard_runner = None
+        try:
+            from aiohttp import web as _web
+            from bot.web.dashboard_server import create_app as _create_dash
+            dashboard_app = _create_dash(engine)
+            dashboard_runner = _web.AppRunner(dashboard_app)
+            await dashboard_runner.setup()
+            _site = _web.TCPSite(dashboard_runner, "0.0.0.0", 8080)
+            await _site.start()
+            print("  Live Dashboard: http://0.0.0.0:8080\n")
+        except Exception as exc:
+            print(f"  Dashboard server skipped: {exc}\n")
+
         try:
             await app.initialize()
             await app.start()
             await app.updater.start_polling()
             await engine_task
         finally:
+            if dashboard_runner:
+                await dashboard_runner.cleanup()
             await app.updater.stop()
             await app.stop()
             await app.shutdown()

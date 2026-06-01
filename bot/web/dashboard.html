@@ -1,0 +1,762 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RUNECLAW — Live War Room</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700&family=Rajdhani:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+:root {
+  --bg: #0a0c10;
+  --panel: #111520;
+  --border: #1e2535;
+  --gold: #d4a849;
+  --gold-dim: #a07830;
+  --green: #22c55e;
+  --red: #ef4444;
+  --amber: #f59e0b;
+  --text: #e2e8f0;
+  --text-dim: #64748b;
+  --steel: #94a3b8;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Rajdhani', sans-serif;
+  font-size: 14px;
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+/* Scanline overlay */
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(0,0,0,0.03) 2px,
+    rgba(0,0,0,0.03) 4px
+  );
+  z-index: 9999;
+}
+
+#app {
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: 16px;
+}
+
+/* Header */
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 20px;
+  border: 1px solid var(--border);
+  border-bottom: 2px solid var(--gold-dim);
+  background: linear-gradient(135deg, #111520 0%, #0d1018 100%);
+  margin-bottom: 16px;
+  border-radius: 4px;
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.header h1 {
+  font-family: 'Cinzel', serif;
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--gold);
+  letter-spacing: 3px;
+  text-shadow: 0 0 20px rgba(212,168,73,0.3);
+}
+
+.header-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  border-radius: 3px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+
+.badge-live {
+  background: rgba(34,197,94,0.15);
+  border: 1px solid rgba(34,197,94,0.3);
+  color: var(--green);
+}
+
+.badge-sim {
+  background: rgba(245,158,11,0.15);
+  border: 1px solid rgba(245,158,11,0.3);
+  color: var(--amber);
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  animation: pulse 2s infinite;
+}
+
+.dot-green { background: var(--green); box-shadow: 0 0 6px var(--green); }
+.dot-red { background: var(--red); box-shadow: 0 0 6px var(--red); }
+.dot-amber { background: var(--amber); box-shadow: 0 0 6px var(--amber); }
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+/* Grid Layout */
+.grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: auto auto auto;
+  gap: 16px;
+}
+
+@media (max-width: 900px) {
+  .grid { grid-template-columns: 1fr; }
+}
+
+/* Panel */
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  background: rgba(212,168,73,0.04);
+}
+
+.panel-title {
+  font-family: 'Cinzel', serif;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--gold);
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+}
+
+.panel-body { padding: 16px; }
+
+/* Stat cards */
+.stats-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 12px;
+}
+
+.stat-card {
+  text-align: center;
+  padding: 12px 8px;
+  background: rgba(0,0,0,0.3);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+}
+
+.stat-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--text-dim);
+  margin-bottom: 4px;
+}
+
+.stat-value {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.stat-value.gold { color: var(--gold); }
+.stat-value.green { color: var(--green); }
+.stat-value.red { color: var(--red); }
+
+/* Equity chart */
+.chart-wrap {
+  width: 100%;
+  height: 180px;
+  position: relative;
+}
+
+.chart-wrap canvas {
+  width: 100% !important;
+  height: 100% !important;
+}
+
+/* Tables */
+.tbl {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+}
+
+.tbl th {
+  text-align: left;
+  padding: 6px 8px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--text-dim);
+  border-bottom: 1px solid var(--border);
+  font-weight: 500;
+}
+
+.tbl td {
+  padding: 6px 8px;
+  border-bottom: 1px solid rgba(30,37,53,0.5);
+  white-space: nowrap;
+}
+
+.tbl tr:hover td {
+  background: rgba(212,168,73,0.04);
+}
+
+.dir-long { color: var(--green); font-weight: 600; }
+.dir-short { color: var(--red); font-weight: 600; }
+.pnl-pos { color: var(--green); }
+.pnl-neg { color: var(--red); }
+
+/* Risk pills */
+.risk-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.risk-pill {
+  padding: 3px 8px;
+  border-radius: 2px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+}
+
+.pill-ok { background: rgba(34,197,94,0.15); color: var(--green); border: 1px solid rgba(34,197,94,0.2); }
+.pill-fail { background: rgba(239,68,68,0.15); color: var(--red); border: 1px solid rgba(239,68,68,0.2); }
+
+/* Circuit breaker */
+.breaker {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border-radius: 3px;
+  margin-bottom: 12px;
+}
+
+.breaker-ok {
+  background: rgba(34,197,94,0.08);
+  border: 1px solid rgba(34,197,94,0.2);
+}
+
+.breaker-trip {
+  background: rgba(239,68,68,0.08);
+  border: 1px solid rgba(239,68,68,0.3);
+  animation: alertPulse 1.5s infinite;
+}
+
+@keyframes alertPulse {
+  0%, 100% { box-shadow: none; }
+  50% { box-shadow: 0 0 15px rgba(239,68,68,0.2); }
+}
+
+.breaker-dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.breaker-label {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+/* LLM tier table */
+.tier-row {
+  display: flex;
+  align-items: center;
+  padding: 6px 0;
+  border-bottom: 1px solid rgba(30,37,53,0.5);
+  font-size: 12px;
+}
+
+.tier-name {
+  width: 80px;
+  font-weight: 700;
+  color: var(--gold);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  font-size: 11px;
+}
+
+.tier-provider {
+  width: 80px;
+  color: var(--steel);
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.tier-model {
+  flex: 1;
+  color: var(--text-dim);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+}
+
+/* State badge */
+.state-badge {
+  display: inline-block;
+  padding: 4px 12px;
+  border-radius: 3px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.state-idle { background: rgba(148,163,184,0.15); color: var(--steel); border: 1px solid rgba(148,163,184,0.3); }
+.state-scanning { background: rgba(212,168,73,0.15); color: var(--gold); border: 1px solid rgba(212,168,73,0.3); }
+.state-analyzing { background: rgba(139,92,246,0.15); color: #a78bfa; border: 1px solid rgba(139,92,246,0.3); }
+.state-monitoring { background: rgba(34,197,94,0.15); color: var(--green); border: 1px solid rgba(34,197,94,0.3); }
+.state-halted { background: rgba(239,68,68,0.15); color: var(--red); border: 1px solid rgba(239,68,68,0.3); }
+.state-default { background: rgba(148,163,184,0.1); color: var(--steel); border: 1px solid var(--border); }
+
+/* Exposure bar */
+.exp-bar-wrap {
+  height: 8px;
+  background: rgba(0,0,0,0.4);
+  border-radius: 4px;
+  overflow: hidden;
+  margin-top: 4px;
+}
+
+.exp-bar {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.6s ease;
+}
+
+/* Empty state */
+.empty-msg {
+  text-align: center;
+  padding: 24px;
+  color: var(--text-dim);
+  font-style: italic;
+  font-size: 13px;
+}
+
+/* Scrollable panel body */
+.panel-scroll {
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.panel-scroll::-webkit-scrollbar { width: 4px; }
+.panel-scroll::-webkit-scrollbar-track { background: transparent; }
+.panel-scroll::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+</style>
+</head>
+<body>
+<div id="app">
+  <!-- Header -->
+  <div class="header">
+    <div class="header-left">
+      <h1>RUNECLAW</h1>
+      <span class="header-badge badge-sim" id="modeBadge">
+        <span class="status-dot dot-amber" id="statusDot"></span>
+        SIMULATION
+      </span>
+      <span class="header-badge" id="stateBadge" style="background:rgba(148,163,184,0.1);border:1px solid var(--border);color:var(--steel);">IDLE</span>
+    </div>
+    <div class="header-right">
+      <span id="connStatus">Connecting...</span>
+      <span id="clockEl"></span>
+    </div>
+  </div>
+
+  <!-- Dashboard Grid -->
+  <div class="grid">
+
+    <!-- Panel 1: Portfolio -->
+    <div class="panel">
+      <div class="panel-head">
+        <span class="panel-title">Portfolio</span>
+        <span id="pnlBadge" style="font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--text-dim);">--</span>
+      </div>
+      <div class="panel-body">
+        <div class="stats-row" id="portfolioStats">
+          <div class="stat-card"><div class="stat-label">Balance</div><div class="stat-value gold" id="sBalance">--</div></div>
+          <div class="stat-card"><div class="stat-label">Equity</div><div class="stat-value gold" id="sEquity">--</div></div>
+          <div class="stat-card"><div class="stat-label">Open</div><div class="stat-value" id="sOpen">0</div></div>
+          <div class="stat-card"><div class="stat-label">Trades</div><div class="stat-value" id="sTrades">0</div></div>
+          <div class="stat-card"><div class="stat-label">Win Rate</div><div class="stat-value" id="sWinRate">--</div></div>
+          <div class="stat-card"><div class="stat-label">Drawdown</div><div class="stat-value red" id="sDrawdown">--</div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Panel 2: Equity Chart -->
+    <div class="panel">
+      <div class="panel-head">
+        <span class="panel-title">Equity Curve</span>
+        <span style="font-size:10px;color:var(--text-dim);letter-spacing:1px;" id="chartPoints">0 pts</span>
+      </div>
+      <div class="panel-body">
+        <div class="chart-wrap"><canvas id="eqChart"></canvas></div>
+      </div>
+    </div>
+
+    <!-- Panel 3: Active Positions -->
+    <div class="panel">
+      <div class="panel-head">
+        <span class="panel-title">Active Positions</span>
+        <span style="font-size:11px;color:var(--text-dim);" id="posCount">0</span>
+      </div>
+      <div class="panel-body panel-scroll" id="posBody">
+        <div class="empty-msg">No open positions</div>
+      </div>
+    </div>
+
+    <!-- Panel 4: Signal History -->
+    <div class="panel">
+      <div class="panel-head">
+        <span class="panel-title">Recent Trades</span>
+      </div>
+      <div class="panel-body panel-scroll" id="sigBody">
+        <div class="empty-msg">No trade history</div>
+      </div>
+    </div>
+
+    <!-- Panel 5: Risk Dashboard -->
+    <div class="panel">
+      <div class="panel-head">
+        <span class="panel-title">Risk Control</span>
+      </div>
+      <div class="panel-body" id="riskBody">
+        <div class="breaker breaker-ok">
+          <div class="breaker-dot dot-green" style="background:var(--green);box-shadow:0 0 6px var(--green);"></div>
+          <div><div class="breaker-label" style="color:var(--green);">CIRCUIT BREAKER: OK</div></div>
+        </div>
+        <div class="stats-row">
+          <div class="stat-card"><div class="stat-label">Checks</div><div class="stat-value" id="rChecks">0</div></div>
+          <div class="stat-card"><div class="stat-label">Rejected</div><div class="stat-value red" id="rRejects">0</div></div>
+          <div class="stat-card"><div class="stat-label">Trips</div><div class="stat-value" id="rTrips">0</div></div>
+          <div class="stat-card"><div class="stat-label">Loss Streak</div><div class="stat-value" id="rLosses">0</div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Panel 6: Engine & LLM -->
+    <div class="panel">
+      <div class="panel-head">
+        <span class="panel-title">Engine & LLM</span>
+      </div>
+      <div class="panel-body">
+        <div style="margin-bottom:12px;">
+          <div class="stat-label" style="margin-bottom:6px;">LLM Tier Routing</div>
+          <div id="tierRows"></div>
+        </div>
+        <div class="stats-row">
+          <div class="stat-card"><div class="stat-label">LLM Calls</div><div class="stat-value" id="cCalls">0</div></div>
+          <div class="stat-card"><div class="stat-label">Cost</div><div class="stat-value gold" id="cCost">$0.00</div></div>
+          <div class="stat-card"><div class="stat-label">Tokens</div><div class="stat-value" id="cTokens">0</div></div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+<script>
+<script>
+const API = window.location.origin;
+const equityHistory = [];
+const MAX_POINTS = 300;
+let lastUpdate = 0;
+let connected = false;
+
+// ── Helpers ────────────────────────────────────────────────
+function $(id) { return document.getElementById(id); }
+function fmt(n, d=2) { return n != null ? Number(n).toFixed(d) : '--'; }
+function fmtUsd(n) { return n != null ? '$' + Number(n).toLocaleString('en', {minimumFractionDigits:2, maximumFractionDigits:2}) : '--'; }
+function pnlClass(n) { return n >= 0 ? 'pnl-pos' : 'pnl-neg'; }
+function pnlSign(n) { return n >= 0 ? '+' : ''; }
+
+function stateClass(s) {
+  const m = {idle:'state-idle', scanning:'state-scanning', analyzing:'state-analyzing',
+    risk_check:'state-analyzing', confirming:'state-analyzing', executing:'state-scanning',
+    monitoring:'state-monitoring', halted:'state-halted', cooling_down:'state-halted'};
+  return m[(s||'').toLowerCase()] || 'state-default';
+}
+
+// ── Clock ──────────────────────────────────────────────────
+function tickClock() {
+  const now = new Date();
+  $('clockEl').textContent = now.toISOString().slice(11,19) + ' UTC';
+  const age = (Date.now() - lastUpdate) / 1000;
+  if (lastUpdate && age > 10) {
+    $('connStatus').textContent = 'Disconnected';
+    $('connStatus').style.color = 'var(--red)';
+    $('statusDot').className = 'status-dot dot-red';
+  }
+}
+setInterval(tickClock, 1000);
+
+// ── Equity Chart ───────────────────────────────────────────
+function drawChart() {
+  const canvas = $('eqChart');
+  const ctx = canvas.getContext('2d');
+  const rect = canvas.parentElement.getBoundingClientRect();
+  canvas.width = rect.width * 2;
+  canvas.height = rect.height * 2;
+  ctx.scale(2, 2);
+  const W = rect.width, H = rect.height;
+
+  ctx.clearRect(0, 0, W, H);
+  if (equityHistory.length < 2) {
+    ctx.fillStyle = '#64748b';
+    ctx.font = '13px Rajdhani';
+    ctx.textAlign = 'center';
+    ctx.fillText('Waiting for data...', W/2, H/2);
+    return;
+  }
+
+  const vals = equityHistory.map(e => e.v);
+  const minV = Math.min(...vals) * 0.999;
+  const maxV = Math.max(...vals) * 1.001;
+  const range = maxV - minV || 1;
+  const pad = {t:10, b:20, l:0, r:0};
+  const cW = W - pad.l - pad.r;
+  const cH = H - pad.t - pad.b;
+
+  function x(i) { return pad.l + (i / (vals.length - 1)) * cW; }
+  function y(v) { return pad.t + cH - ((v - minV) / range) * cH; }
+
+  // Gradient fill
+  const grad = ctx.createLinearGradient(0, pad.t, 0, H - pad.b);
+  grad.addColorStop(0, 'rgba(212,168,73,0.25)');
+  grad.addColorStop(1, 'rgba(212,168,73,0.0)');
+  ctx.beginPath();
+  ctx.moveTo(x(0), H - pad.b);
+  for (let i = 0; i < vals.length; i++) ctx.lineTo(x(i), y(vals[i]));
+  ctx.lineTo(x(vals.length-1), H - pad.b);
+  ctx.closePath();
+  ctx.fillStyle = grad;
+  ctx.fill();
+
+  // Line
+  ctx.beginPath();
+  for (let i = 0; i < vals.length; i++) {
+    if (i === 0) ctx.moveTo(x(i), y(vals[i]));
+    else ctx.lineTo(x(i), y(vals[i]));
+  }
+  ctx.strokeStyle = '#d4a849';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+
+  // Latest value label
+  const lastV = vals[vals.length - 1];
+  ctx.fillStyle = '#d4a849';
+  ctx.font = '600 12px JetBrains Mono';
+  ctx.textAlign = 'right';
+  ctx.fillText(fmtUsd(lastV), W - 4, y(lastV) - 6);
+}
+
+// ── Update Functions ───────────────────────────────────────
+function updatePortfolio(p) {
+  if (!p) return;
+  $('sBalance').textContent = fmtUsd(p.balance_usd);
+  $('sEquity').textContent = fmtUsd(p.equity_usd);
+  $('sOpen').textContent = p.open_positions || 0;
+  $('sTrades').textContent = p.total_trades || 0;
+  const wr = p.win_rate != null ? (p.win_rate * 100).toFixed(1) + '%' : '--';
+  $('sWinRate').textContent = wr;
+  $('sWinRate').className = 'stat-value' + (p.win_rate >= 0.5 ? ' green' : '');
+  $('sDrawdown').textContent = fmt(p.max_drawdown_pct, 1) + '%';
+
+  const dp = p.daily_pnl || 0;
+  $('pnlBadge').textContent = 'Daily: ' + pnlSign(dp) + fmt(dp) + '%';
+  $('pnlBadge').style.color = dp >= 0 ? 'var(--green)' : 'var(--red)';
+
+  if (p.equity_usd != null) {
+    equityHistory.push({ t: Date.now(), v: p.equity_usd });
+    if (equityHistory.length > MAX_POINTS) equityHistory.shift();
+    $('chartPoints').textContent = equityHistory.length + ' pts';
+    drawChart();
+  }
+}
+
+function updatePositions(positions) {
+  const el = $('posBody');
+  if (!positions || !positions.length) {
+    el.innerHTML = '<div class="empty-msg">No open positions</div>';
+    $('posCount').textContent = '0';
+    return;
+  }
+  $('posCount').textContent = positions.length;
+  let html = '<table class="tbl"><thead><tr><th>Asset</th><th>Dir</th><th>Entry</th><th>Current</th><th>PnL</th><th>SL</th><th>Trail</th></tr></thead><tbody>';
+  for (const p of positions) {
+    const dir = (p.direction || '').toUpperCase();
+    const dirCls = dir === 'LONG' ? 'dir-long' : 'dir-short';
+    const pnl = p.unrealized_pnl || p.pnl || 0;
+    const cur = p.current_price || p.exit_price || '--';
+    const trail = p.trailing_active ? '<span style="color:var(--amber);">&#9679;</span>' : '--';
+    html += `<tr>
+      <td>${p.asset || p.symbol || '--'}</td>
+      <td class="${dirCls}">${dir}</td>
+      <td>${fmt(p.entry_price, 4)}</td>
+      <td>${typeof cur === 'number' ? fmt(cur, 4) : cur}</td>
+      <td class="${pnlClass(pnl)}">${pnlSign(pnl)}${fmt(pnl)}</td>
+      <td>${fmt(p.stop_loss || p.current_sl, 4)}</td>
+      <td>${trail}</td>
+    </tr>`;
+  }
+  html += '</tbody></table>';
+  el.innerHTML = html;
+}
+
+function updateTrades(trades) {
+  const el = $('sigBody');
+  if (!trades || !trades.length) {
+    el.innerHTML = '<div class="empty-msg">No trade history</div>';
+    return;
+  }
+  let html = '<table class="tbl"><thead><tr><th>Asset</th><th>Dir</th><th>Entry</th><th>Exit</th><th>PnL</th></tr></thead><tbody>';
+  const recent = trades.slice(-15).reverse();
+  for (const t of recent) {
+    const dir = (t.direction || '').toUpperCase();
+    const dirCls = dir === 'LONG' ? 'dir-long' : 'dir-short';
+    const pnl = t.pnl || t.realized_pnl || 0;
+    html += `<tr>
+      <td>${t.asset || t.symbol || '--'}</td>
+      <td class="${dirCls}">${dir}</td>
+      <td>${fmt(t.entry_price, 4)}</td>
+      <td>${fmt(t.exit_price, 4)}</td>
+      <td class="${pnlClass(pnl)}">${pnlSign(pnl)}${fmt(pnl)}</td>
+    </tr>`;
+  }
+  html += '</tbody></table>';
+  el.innerHTML = html;
+}
+
+function updateRisk(r) {
+  if (!r) return;
+  const cb = r.circuit_breaker_active;
+  const breakerHtml = cb
+    ? '<div class="breaker breaker-trip"><div class="breaker-dot" style="background:var(--red);box-shadow:0 0 8px var(--red);"></div><div><div class="breaker-label" style="color:var(--red);">CIRCUIT BREAKER: TRIPPED</div></div></div>'
+    : '<div class="breaker breaker-ok"><div class="breaker-dot" style="background:var(--green);box-shadow:0 0 6px var(--green);"></div><div><div class="breaker-label" style="color:var(--green);">CIRCUIT BREAKER: OK</div></div></div>';
+
+  $('riskBody').innerHTML = breakerHtml +
+    '<div class="stats-row">' +
+    '<div class="stat-card"><div class="stat-label">Checks</div><div class="stat-value">' + (r.total_checks||0) + '</div></div>' +
+    '<div class="stat-card"><div class="stat-label">Rejected</div><div class="stat-value red">' + (r.total_rejections||0) + '</div></div>' +
+    '<div class="stat-card"><div class="stat-label">Trips</div><div class="stat-value">' + (r.circuit_breaker_trips||0) + '</div></div>' +
+    '<div class="stat-card"><div class="stat-label">Loss Streak</div><div class="stat-value">' + (r.consecutive_losses||0) + '</div></div>' +
+    '</div>';
+}
+
+function updateEngine(eng, tiers, cost) {
+  // State badge
+  const s = (eng && eng.state) || 'IDLE';
+  $('stateBadge').textContent = s.toUpperCase();
+  $('stateBadge').className = 'header-badge ' + stateClass(s);
+
+  // Tiers
+  const el = $('tierRows');
+  if (tiers && Object.keys(tiers).length) {
+    let html = '';
+    for (const [name, t] of Object.entries(tiers)) {
+      html += '<div class="tier-row">' +
+        '<span class="tier-name">' + name + '</span>' +
+        '<span class="tier-provider">' + (t.provider||'--') + '</span>' +
+        '<span class="tier-model">' + (t.model||'--') + '</span>' +
+        '</div>';
+    }
+    el.innerHTML = html;
+  }
+
+  // Cost
+  if (cost) {
+    $('cCalls').textContent = cost.llm_calls || 0;
+    $('cCost').textContent = '$' + fmt(cost.llm_cost_usd || 0, 4);
+    const tokens = (cost.prompt_tokens||0) + (cost.completion_tokens||0);
+    $('cTokens').textContent = tokens > 1000 ? (tokens/1000).toFixed(1) + 'k' : tokens;
+  }
+}
+
+// ── Fetch Loop ─────────────────────────────────────────────
+async function fetchAll() {
+  try {
+    const [stateRes, posRes, sigRes] = await Promise.all([
+      fetch(API + '/api/state'),
+      fetch(API + '/api/positions'),
+      fetch(API + '/api/signals'),
+    ]);
+    const state = await stateRes.json();
+    const pos = await posRes.json();
+    const sig = await sigRes.json();
+
+    lastUpdate = Date.now();
+    connected = true;
+    $('connStatus').textContent = 'Connected';
+    $('connStatus').style.color = 'var(--green)';
+    $('statusDot').className = 'status-dot dot-green';
+
+    updatePortfolio(state.portfolio);
+    updatePositions(pos.positions);
+    updateTrades(sig.trades);
+    updateRisk(state.risk);
+    updateEngine(state.engine, state.llm_tiers, state.cost);
+  } catch (e) {
+    $('connStatus').textContent = 'Disconnected';
+    $('connStatus').style.color = 'var(--red)';
+    $('statusDot').className = 'status-dot dot-red';
+  }
+}
+
+// Poll every 3 seconds
+setInterval(fetchAll, 3000);
+fetchAll();
+tickClock();
+
+// Redraw chart on resize
+window.addEventListener('resize', drawChart);
+</script>
+</script>
+</body>
+</html>

@@ -35,6 +35,7 @@ class LLMProvider(str, Enum):
     TOGETHER      = "together"        # Together AI — many open models
     OLLAMA        = "ollama"          # Local Ollama — fully private, no cost
     OPENROUTER    = "openrouter"      # OpenRouter — routes to 100+ models
+    ALIBABA       = "alibaba"         # Alibaba Cloud / DashScope — Qwen models
     CUSTOM        = "custom"          # Any OpenAI-compatible base URL
 
 
@@ -147,6 +148,17 @@ PROVIDER_CATALOG: dict[LLMProvider, dict] = {
         "notes": "Single key for 100+ models. Great for quick switching.",
         "get_key_url": "https://openrouter.ai/keys",
     },
+    LLMProvider.ALIBABA: {
+        "base_url": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+        "default_model": "qwen-plus",
+        "recommended_models": ["qwen-max", "qwen-plus", "qwen-turbo", "qwen-long"],
+        "sdk": "openai",
+        "free_tier": False,
+        "speed": "fast",
+        "cost": "low",
+        "notes": "Alibaba Cloud DashScope — Qwen models. $30 free credits on signup.",
+        "get_key_url": "https://dashscope.console.aliyun.com/apiKey",
+    },
     LLMProvider.CUSTOM: {
         "base_url": "",
         "default_model": "",
@@ -241,6 +253,7 @@ def resolve_tier_config(
                     LLMProvider.GROQ: "GROQ_API_KEY",
                     LLMProvider.DEEPSEEK: "DEEPSEEK_API_KEY",
                     LLMProvider.OPENAI: "OPENAI_API_KEY",
+                    LLMProvider.ALIBABA: "ALIBABA_API_KEY",
                 }
                 fallback_env = key_env_map.get(tier_provider, "")
                 tier_key = os.getenv(fallback_env, "") if fallback_env else ""
@@ -268,6 +281,7 @@ def resolve_tier_config(
             LLMProvider.GROQ: "GROQ_API_KEY",
             LLMProvider.DEEPSEEK: "DEEPSEEK_API_KEY",
             LLMProvider.OPENAI: "OPENAI_API_KEY",
+            LLMProvider.ALIBABA: "ALIBABA_API_KEY",
         }
         fallback_env = key_env_map.get(default_provider, "")
         alt_key = os.getenv(fallback_env, "") if fallback_env else ""
@@ -382,7 +396,7 @@ def create_llm_client(config: LLMConfig):
         # All other providers use OpenAI-compatible SDK
         try:
             from openai import AsyncOpenAI
-            kwargs = {"api_key": config.api_key or "not-needed"}
+            kwargs = {"api_key": config.api_key or "not-needed", "max_retries": 3}
             if config.resolved_base_url() != "https://api.openai.com/v1":
                 kwargs["base_url"] = config.resolved_base_url()
             return AsyncOpenAI(**kwargs)
