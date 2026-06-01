@@ -1,15 +1,52 @@
 {
-  "timestamp": "2026-06-01T11:40:48.191080+00:00",
-  "symbol": "BTC/USDT",
-  "buy_order_id": "1445307328768262144",
-  "buy_price": 72704.85,
-  "buy_qty": 6.8e-05,
-  "buy_cost": 4.9439298,
-  "sell_order_id": "1445307355863465984",
-  "sell_price": 72690.57,
-  "sell_qty": 6.8e-05,
-  "sell_cost": 4.94295876,
-  "pnl_usd": -0.00097104,
-  "balance_before": 49.9262,
-  "balance_after": 49.9202
+  "test_date": "2026-06-01",
+  "exchange": "Bitget",
+  "account_type": "Unified Trading Account (UTA)",
+  "mode": "spot",
+  "safety_limits": {
+    "max_per_position_usd": 10,
+    "max_total_exposure_usd": 50,
+    "max_positions": 5
+  },
+  "trades": [
+    {
+      "test": "Round-trip #1 (original)",
+      "symbol": "BTC/USDT",
+      "buy_order_id": "1445307328768262144",
+      "buy_price": 72704.85,
+      "buy_qty": 6.8e-05,
+      "buy_cost_usd": 4.94,
+      "sell_order_id": "1445307355863465984",
+      "sell_price": 72690.57,
+      "timestamp": "2026-06-01T11:40:48Z"
+    },
+    {
+      "test": "Round-trip #2",
+      "symbol": "BTC/USDT",
+      "buy_order_id": "1445344332650397696",
+      "buy_filled": 6.9e-05,
+      "sell_order_id": "1445344342356017152",
+      "sell_filled": 6.9e-05,
+      "status": "closed",
+      "timestamp": "2026-06-01T14:07:42Z"
+    },
+    {
+      "test": "Round-trip #3",
+      "symbol": "ETH/USDT",
+      "buy_order_id": "1445344351558320128",
+      "buy_filled": 0.0025,
+      "sell_order_id": "1445344361284911104",
+      "sell_filled": 0.0025,
+      "status": "closed",
+      "timestamp": "2026-06-01T14:07:47Z"
+    }
+  ],
+  "summary": {
+    "total_round_trips": 3,
+    "symbols_traded": ["BTC/USDT", "ETH/USDT"],
+    "all_orders_filled": true,
+    "starting_balance_usd": 49.92,
+    "ending_balance_usd": 49.68,
+    "total_fees_usd": 0.24
+  }
 }
