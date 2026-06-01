@@ -829,9 +829,32 @@ class CostBreakdownSkill(BaseSkill):
             f"  {'━' * 26}",
             _kv("= Net", _money(net)),
             "</pre>",
+        ])
+
+        # ── Cache hit-rate section ──
+        try:
+            cache_snap = engine.analyzer._llm_cache.snapshot()
+            total_lookups = cache_snap["hits"] + cache_snap["misses"]
+            hit_pct = cache_snap["hit_rate"] * 100
+            lines.extend([
+                f"\n\U0001f9e0 <b>LLM Cache</b>",
+                "<pre>",
+                _kv("Hits", str(cache_snap["hits"])),
+                _kv("Misses", str(cache_snap["misses"])),
+                _kv("Hit Rate", f"{hit_pct:.1f}%"),
+                _kv("Evictions", str(cache_snap["evictions"])),
+                _kv("Expirations", str(cache_snap["expirations"])),
+                _kv("Est. Saved", f"${cache_snap['estimated_cost_saved_usd']:,.4f}"),
+                _kv("TTL", f"{cache_snap['default_ttl']:.0f}s"),
+                "</pre>",
+            ])
+        except Exception:
+            pass  # cache not available — skip section
+
+        lines.append(
             f"\n<i>\u26a1 Rate limiter: {rate_stats['total_calls']} calls, "
             f"{rate_stats['total_waits']} throttled</i>",
-        ])
+        )
         return "\n".join(lines)
 
 

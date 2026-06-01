@@ -141,6 +141,13 @@ class AnalyzerConfig:
 
 
 @dataclass(frozen=True)
+class CacheConfig:
+    """LLM semantic cache settings."""
+    ttl_seconds: float = _env_float("CACHE_TTL_SECONDS", 300.0)
+    max_size: int = int(_env_float("CACHE_MAX_SIZE", 200))
+
+
+@dataclass(frozen=True)
 class AppConfig:
     """Top-level application configuration."""
 
@@ -162,6 +169,7 @@ class AppConfig:
     telegram: TelegramConfig = field(default_factory=TelegramConfig)
     llm: LLMConfig = field(default_factory=LLMConfig)
     analyzer: AnalyzerConfig = field(default_factory=AnalyzerConfig)
+    cache: CacheConfig = field(default_factory=CacheConfig)
 
     def is_live(self) -> bool:
         """Live trading requires BOTH flags AND a Telegram chat allow-list.

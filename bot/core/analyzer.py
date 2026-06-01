@@ -102,7 +102,10 @@ class Analyzer:
             name="llm",
         )
         # Token optimization: semantic cache + stats
-        self._llm_cache = SemanticLLMCache(max_size=200, default_ttl=300.0)
+        self._llm_cache = SemanticLLMCache(
+            max_size=CONFIG.cache.max_size,
+            default_ttl=CONFIG.cache.ttl_seconds,
+        )
         self._opt_stats = OptimizationStats()
         # Advanced modules
         self._mtf = MTFConfluence()

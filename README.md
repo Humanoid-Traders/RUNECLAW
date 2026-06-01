@@ -468,6 +468,7 @@ This is a **hackathon prototype** (maturity: early-stage). Known limitations:
 - **Security audit conducted** -- AI-assisted deep audit (v3.0) with all 5 critical issues fixed, 29 security tests added
 - **LLM dependency** -- AI analysis quality depends on model availability and cost
 - **No guaranteed uptime** -- no monitoring, alerting, or failover infrastructure
+- **Scalability:** Single-instance today — swarm-ready via MCP protocol
 
 ---
 
