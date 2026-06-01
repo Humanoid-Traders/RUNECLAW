@@ -82,10 +82,14 @@ A 4-layer optimization pipeline reduces LLM API costs by up to 70%:
 
 ### Multi-Provider LLM Support (NEW)
 RUNECLAW supports any OpenAI-compatible LLM provider via `LLM_BASE_URL`:
+- **Google Gemini 2.5 Flash** -- default provider, zero-cost reasoning with free-tier API key
 - **Alibaba Qwen** -- `qwen-max`, `qwen-plus`, `qwen-turbo` via DashScope (Hackathon S1 partner)
+- **Groq** -- `llama-3.3-70b-versatile` with fastest inference (free tier)
 - **OpenRouter** -- `qwen/qwen3.6-35b-a3b` at $0.15/M tokens (cheapest frontier model)
 - **Together AI / Fireworks** -- open-source Qwen models with fast inference
 - **Local (vLLM/Ollama)** -- self-hosted for zero API cost
+
+> **Zero-cost setup:** Set `LLM_PROVIDER=gemini` and `LLM_MODEL=gemini-2.5-flash` with a free API key from [Google AI Studio](https://aistudio.google.com/apikey). No credit card required.
 
 ### Solana Ecosystem Mode (NEW)
 Set `ASSET_UNIVERSE=solana` in `.env` or use `/mode solana` in the Telegram bot to prioritize 15 Solana ecosystem tokens. All tokens trade on Bitget with full USDT pair support.
@@ -96,6 +100,23 @@ Set `ASSET_UNIVERSE=solana` in `.env` or use `/mode solana` in the Telegram bot 
 - **Meme-coin volatility guard**: BONK and WIF use a tighter 4% ATR threshold (vs 6% default) to prevent entries during extreme volatility spikes
 - **Ecosystem correlation group**: Non-meme Solana tokens (JUP, JTO, PYTH, RAY, etc.) are grouped as `SOLANA_ECO` -- the risk engine limits concentrated bets across correlated assets
 - **Live mode switching**: `/mode solana` and `/mode all` switch scanner focus without restart
+
+### Natural Language Interface (NEW)
+Talk to RUNECLAW in plain English instead of memorizing commands:
+- **Intent routing**: "how's Bitcoin?" dispatches to `/analyze BTC`, "what's moving?" triggers `/scan`
+- **Symbol extraction**: understands tickers (`$ETH`), names (`Solana`), and pairs (`BTC/USDT`)
+- **LLM fallback**: when rule-based patterns don't match, optional LLM classification routes to the right skill
+- **AI chat**: unmatched messages get a contextual response from the LLM (never invents trades)
+
+### Proactive Alert Monitor (NEW)
+Background coroutine that pushes unsolicited alerts without waiting for commands:
+- **Circuit breaker** trips and clears
+- **Volume spikes** on scanned assets
+- **Black-swan** anomaly detections
+- **Engine state changes** (halt, cooldown)
+- **New trade signals** pending confirmation
+
+Toggle with `/watch on|off` per chat. Read-only -- the monitor never creates trades or modifies risk.
 
 ### Red Team Stress Tester (NEW)
 An adversarial engine that attacks the risk engine with 28 scenarios across 10 categories:
