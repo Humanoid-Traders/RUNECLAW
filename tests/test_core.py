@@ -3668,7 +3668,8 @@ class TestQwenIntegration:
         from bot.config import LLMConfig
         cfg = LLMConfig()
         assert hasattr(cfg, "base_url")
-        assert cfg.base_url == ""  # empty default = OpenAI
+        # base_url may be empty (OpenAI default) or set via LLM_BASE_URL env var
+        assert isinstance(cfg.base_url, str)
 
     def test_llm_config_base_url_from_env(self, monkeypatch):
         """base_url should be loaded from LLM_BASE_URL env var."""
@@ -3676,6 +3677,28 @@ class TestQwenIntegration:
         from bot.config import _env
         val = _env("LLM_BASE_URL")
         assert "dashscope" in val
+
+    def test_analyzer_config_volatility_fields(self):
+        """AnalyzerConfig should expose volatility-adaptive SL/TP fields."""
+        from bot.config import AnalyzerConfig
+        cfg = AnalyzerConfig()
+        assert cfg.high_vol_threshold == 0.03
+        assert cfg.low_vol_threshold == 0.01
+        assert cfg.high_vol_sl_mult == 3.0
+        assert cfg.high_vol_tp_mult == 4.5
+        assert cfg.low_vol_sl_mult == 2.0
+        assert cfg.low_vol_tp_mult == 3.0
+
+    def test_analyzer_config_regime_fields(self):
+        """AnalyzerConfig should expose regime-specific override fields."""
+        from bot.config import AnalyzerConfig
+        cfg = AnalyzerConfig()
+        assert cfg.range_sl_mult == 1.5
+        assert cfg.range_tp_mult == 2.5
+        assert cfg.range_confidence_penalty == 0.10
+        assert cfg.chop_sl_mult == 1.5
+        assert cfg.chop_tp_mult == 2.0
+        assert cfg.chop_confidence_penalty == 0.15
 
     def test_analyzer_init_without_api_key(self):
         """Analyzer without API key should have no LLM client (rule-based fallback)."""

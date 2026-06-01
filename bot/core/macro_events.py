@@ -156,11 +156,20 @@ class MacroEventProvider:
         live_feed: Optional[Callable[[], list[dict]]] = None,
         funding_provider: Optional[Callable[[str], float]] = None,
         max_stale_hours: int = 72,
+        failsafe: Optional[bool] = None,
     ) -> None:
         self._seed_path = Path(seed_path) if seed_path is not None else None
         self._live_feed = live_feed
         self._funding_provider = funding_provider
         self._max_stale_hours = max_stale_hours
+
+        # MACRO_FAILSAFE: when False, blind/stale calendar does NOT block trades.
+        # Default True (fail-closed) unless explicitly disabled via env or param.
+        if failsafe is not None:
+            self._failsafe = failsafe
+        else:
+            import os
+            self._failsafe = os.getenv("MACRO_FAILSAFE", "true").lower() in ("true", "1", "yes")
 
         # Internal cache
         self._events: list[dict] = []
@@ -324,24 +333,30 @@ class MacroEventProvider:
 
         # ---- Fail-closed: blind (no calendar) ----
         if self._calendar_blind:
-            return MacroContext(
-                risk_state="BLOCK_NEW_ENTRIES",
-                size_multiplier=0.0,
-                explanation="No macro calendar available — blocking new entries (fail-closed).",
-                is_blind=True,
-            )
+            if self._failsafe:
+                return MacroContext(
+                    risk_state="BLOCK_NEW_ENTRIES",
+                    size_multiplier=0.0,
+                    explanation="No macro calendar available — blocking new entries (fail-closed).",
+                    is_blind=True,
+                )
+            else:
+                logger.info("Macro failsafe disabled — allowing trades despite no calendar")
 
         # ---- Fail-closed: stale calendar ----
         if self._calendar_stale:
-            return MacroContext(
-                risk_state="BLOCK_NEW_ENTRIES",
-                size_multiplier=0.0,
-                explanation=(
-                    f"Macro calendar is stale (generated {self._generated_utc.isoformat() if self._generated_utc else '?'}, "
-                    f"max age {self._max_stale_hours}h) — blocking new entries."
-                ),
-                is_stale=True,
-            )
+            if self._failsafe:
+                return MacroContext(
+                    risk_state="BLOCK_NEW_ENTRIES",
+                    size_multiplier=0.0,
+                    explanation=(
+                        f"Macro calendar is stale (generated {self._generated_utc.isoformat() if self._generated_utc else '?'}, "
+                        f"max age {self._max_stale_hours}h) — blocking new entries."
+                    ),
+                    is_stale=True,
+                )
+            else:
+                logger.info("Macro failsafe disabled — allowing trades despite stale calendar")
 
         # ---- Check funding-rate synthetic event ----
         funding_event = self._check_funding(symbol, now)

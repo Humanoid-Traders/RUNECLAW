@@ -272,18 +272,18 @@ class Analyzer:
             return None
         if regime == Regime.RANGE:
             # RANGE: needs high raw confluence (0.70+) to survive after penalty
-            regime_confidence_penalty = 0.10
-            regime_sl_override = 1.5
-            regime_tp_override = 2.5
+            regime_confidence_penalty = CONFIG.analyzer.range_confidence_penalty
+            regime_sl_override = CONFIG.analyzer.range_sl_mult
+            regime_tp_override = CONFIG.analyzer.range_tp_mult
             audit(trade_log, "Regime: RANGE -- applying penalty",
                   action="analyze", result="PENALTY",
                   data={"symbol": signal.symbol, "regime": regime.value,
                         "penalty": regime_confidence_penalty})
         elif regime == Regime.CHOP:
             # CHOP: needs very high raw confluence (0.75+) to survive after penalty
-            regime_confidence_penalty = 0.15
-            regime_sl_override = 1.5
-            regime_tp_override = 2.0
+            regime_confidence_penalty = CONFIG.analyzer.chop_confidence_penalty
+            regime_sl_override = CONFIG.analyzer.chop_sl_mult
+            regime_tp_override = CONFIG.analyzer.chop_tp_mult
             audit(trade_log, "Regime: CHOP -- applying penalty",
                   action="analyze", result="PENALTY",
                   data={"symbol": signal.symbol, "regime": regime.value,
@@ -343,12 +343,14 @@ class Analyzer:
         tp_mult = mode_config.tp_mult
 
         # REGIME-SPECIFIC SL/TP: volatility overrides take priority
-        if vol_ratio > 0.03:
+        if vol_ratio > CONFIG.analyzer.high_vol_threshold:
             # High volatility: widen stops to avoid noise-induced exits
-            sl_mult, tp_mult = 3.0, 4.5  # R:R = 1.5 (was 6.0 TP -- never hit)
-        elif vol_ratio < 0.01:
+            sl_mult = CONFIG.analyzer.high_vol_sl_mult
+            tp_mult = CONFIG.analyzer.high_vol_tp_mult
+        elif vol_ratio < CONFIG.analyzer.low_vol_threshold:
             # Low volatility: tighten stops to lock in smaller moves
-            sl_mult, tp_mult = 2.0, 3.0  # R:R = 1.5 (was 4.0 TP -- never hit)
+            sl_mult = CONFIG.analyzer.low_vol_sl_mult
+            tp_mult = CONFIG.analyzer.low_vol_tp_mult
         elif regime_sl_override is not None and regime_tp_override is not None:
             # RANGE/CHOP regime: use tighter SL/TP set by regime filter
             sl_mult, tp_mult = regime_sl_override, regime_tp_override

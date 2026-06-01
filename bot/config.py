@@ -124,6 +124,20 @@ class AnalyzerConfig:
     sl_atr_mult_default: float = 2.5
     tp_atr_mult_default: float = 3.05   # was 3.0 -- avoids floating-point boundary at min R:R 1.2
     min_candles: int = 30
+    # Volatility-adaptive SL/TP overrides (audit C8: externalized from analyzer.py)
+    high_vol_threshold: float = 0.03    # ATR/price above this = high volatility
+    low_vol_threshold: float = 0.01     # ATR/price below this = low volatility
+    high_vol_sl_mult: float = 3.0       # wider stops in high vol
+    high_vol_tp_mult: float = 4.5       # R:R = 1.5
+    low_vol_sl_mult: float = 2.0        # tighter stops in low vol
+    low_vol_tp_mult: float = 3.0        # R:R = 1.5
+    # Regime-specific overrides
+    range_sl_mult: float = 1.5
+    range_tp_mult: float = 2.5
+    range_confidence_penalty: float = 0.10
+    chop_sl_mult: float = 1.5
+    chop_tp_mult: float = 2.0
+    chop_confidence_penalty: float = 0.15
 
 
 @dataclass(frozen=True)
