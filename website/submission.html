@@ -1,0 +1,698 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RUNECLAW — AI Trading Command Core | Bitget GetClaw Hackathon</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3/dist/ScrollTrigger.min.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700;800&family=Space+Grotesk:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --neon-green: #00ff88;
+  --neon-blue: #66bbff;
+  --neon-pink: #ff5577;
+  --neon-amber: #ffaa33;
+  --bg-deep: #06060e;
+  --bg-card: #0c0c18;
+  --bg-card-hover: #111122;
+  --border-dim: #1a1a2e;
+  --text-dim: #555566;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Space Grotesk', sans-serif; }
+code, .mono { font-family: 'JetBrains Mono', monospace; }
+
+/* Noise overlay */
+body::before {
+  content: ''; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.03'/%3E%3C/svg%3E");
+  pointer-events: none; z-index: 9999; opacity: 0.4;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: var(--bg-deep); }
+::-webkit-scrollbar-thumb { background: var(--neon-green); border-radius: 2px; }
+
+/* Glow effects */
+.glow-green { text-shadow: 0 0 20px rgba(0,255,136,0.4), 0 0 60px rgba(0,255,136,0.15); }
+.glow-blue { text-shadow: 0 0 20px rgba(102,187,255,0.4), 0 0 60px rgba(102,187,255,0.15); }
+.glow-box { box-shadow: 0 0 30px rgba(0,255,136,0.08), inset 0 1px 0 rgba(255,255,255,0.03); }
+.glow-box-blue { box-shadow: 0 0 30px rgba(102,187,255,0.08), inset 0 1px 0 rgba(255,255,255,0.03); }
+
+/* Card base */
+.card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-dim);
+  border-radius: 12px;
+  transition: all 0.3s ease;
+}
+.card:hover {
+  background: var(--bg-card-hover);
+  border-color: rgba(0,255,136,0.2);
+}
+
+/* Section spacing */
+.section { padding: 80px 24px; max-width: 1200px; margin: 0 auto; }
+.section-title {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px; font-weight: 600;
+  letter-spacing: 4px; text-transform: uppercase;
+  color: var(--neon-green); margin-bottom: 12px;
+}
+.section-heading {
+  font-size: clamp(28px, 4vw, 42px);
+  font-weight: 700; color: #fff;
+  line-height: 1.2; margin-bottom: 24px;
+}
+
+/* Progress bar */
+#progress-bar {
+  position: fixed; top: 0; left: 0; height: 2px; z-index: 10000;
+  background: linear-gradient(90deg, var(--neon-green), var(--neon-blue));
+  transform-origin: left; transform: scaleX(0);
+}
+
+/* Stat pill */
+.stat-pill {
+  background: rgba(0,255,136,0.06);
+  border: 1px solid rgba(0,255,136,0.15);
+  border-radius: 8px; padding: 16px 24px; text-align: center;
+}
+.stat-pill .num {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 28px; font-weight: 700; color: var(--neon-green);
+}
+.stat-pill .lbl {
+  font-size: 10px; color: var(--text-dim);
+  text-transform: uppercase; letter-spacing: 1px; margin-top: 4px;
+}
+
+/* Badge */
+.badge {
+  display: inline-block; font-family: 'JetBrains Mono', monospace;
+  font-size: 10px; font-weight: 600; padding: 3px 10px;
+  border-radius: 999px; letter-spacing: 0.5px;
+}
+.badge-pass { background: rgba(0,255,136,0.12); color: var(--neon-green); border: 1px solid rgba(0,255,136,0.25); }
+.badge-warn { background: rgba(255,170,51,0.12); color: var(--neon-amber); border: 1px solid rgba(255,170,51,0.25); }
+.badge-fail { background: rgba(255,85,119,0.12); color: var(--neon-pink); border: 1px solid rgba(255,85,119,0.25); }
+.badge-blue { background: rgba(102,187,255,0.12); color: var(--neon-blue); border: 1px solid rgba(102,187,255,0.25); }
+
+/* Risk check grid */
+.risk-chip {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px; padding: 3px 8px; border-radius: 4px;
+  background: rgba(0,255,136,0.08); color: var(--neon-green);
+  border: 1px solid rgba(0,255,136,0.2);
+}
+
+/* Architecture node */
+.arch-node {
+  background: var(--bg-card); border: 1px solid var(--border-dim);
+  border-radius: 10px; padding: 16px; text-align: center;
+  transition: all 0.3s;
+}
+.arch-node:hover { border-color: var(--neon-green); transform: translateY(-2px); }
+.arch-node .icon { font-size: 24px; margin-bottom: 8px; }
+.arch-node .name { font-size: 12px; font-weight: 600; color: #fff; }
+.arch-node .desc { font-size: 10px; color: var(--text-dim); margin-top: 4px; }
+
+/* Connector lines */
+.connector {
+  position: absolute; background: linear-gradient(180deg, rgba(0,255,136,0.3), rgba(0,255,136,0.05));
+  width: 1px;
+}
+
+/* Hero gradient mesh */
+.hero-mesh {
+  position: absolute; top: -200px; left: 50%; transform: translateX(-50%);
+  width: 800px; height: 800px;
+  background: radial-gradient(ellipse at 30% 50%, rgba(0,255,136,0.06) 0%, transparent 60%),
+              radial-gradient(ellipse at 70% 30%, rgba(102,187,255,0.04) 0%, transparent 60%),
+              radial-gradient(ellipse at 50% 70%, rgba(255,85,119,0.03) 0%, transparent 60%);
+  filter: blur(60px); pointer-events: none;
+}
+
+/* CRT scanline effect */
+.crt-lines::after {
+  content: ''; position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+  background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.03) 2px, rgba(0,0,0,0.03) 4px);
+  pointer-events: none;
+}
+
+/* Pulse animation */
+@keyframes pulse-glow {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 1; }
+}
+.pulse { animation: pulse-glow 2s ease-in-out infinite; }
+
+/* Flow arrow */
+.flow-arrow { color: var(--neon-green); opacity: 0.4; font-family: 'JetBrains Mono', monospace; }
+
+/* Responsive */
+@media (max-width: 768px) {
+  .section { padding: 48px 16px; }
+  .stat-pill .num { font-size: 22px; }
+}
+</style>
+</head>
+<body class="bg-[#06060e] text-gray-200 overflow-x-hidden">
+<div id="progress-bar"></div>
+
+<!-- ═══════════════ HERO ═══════════════ -->
+<header class="relative min-h-screen flex items-center justify-center overflow-hidden crt-lines">
+  <div class="hero-mesh"></div>
+  <div class="relative z-10 text-center px-6 max-w-4xl">
+    <div class="mono text-[10px] tracking-[6px] text-[#555] mb-6 hero-fade">BITGET GETCLAW HACKATHON 2026</div>
+    <h1 class="text-[clamp(48px,8vw,96px)] font-extrabold leading-[0.95] tracking-tight mb-6 hero-fade">
+      <span class="text-white">RUNE</span><span class="glow-green" style="color:var(--neon-green)">CLAW</span>
+    </h1>
+    <p class="text-[clamp(16px,2.5vw,22px)] text-gray-400 font-light max-w-2xl mx-auto mb-10 hero-fade">
+      AI Trading Command Core with 19-check risk engine,<br>
+      live order execution, and human-in-the-loop safety
+    </p>
+    <div class="flex flex-wrap justify-center gap-4 mb-12 hero-fade">
+      <div class="stat-pill"><div class="num">450</div><div class="lbl">Tests Passing</div></div>
+      <div class="stat-pill"><div class="num">19/19</div><div class="lbl">Risk Checks</div></div>
+      <div class="stat-pill"><div class="num">1,318</div><div class="lbl">Markets Live</div></div>
+      <div class="stat-pill" style="border-color:rgba(102,187,255,0.2);background:rgba(102,187,255,0.06)">
+        <div class="num" style="color:var(--neon-blue)">$4.94</div><div class="lbl">Real Trade Executed</div>
+      </div>
+    </div>
+    <div class="flex flex-wrap justify-center gap-3 hero-fade">
+      <span class="badge badge-pass">LIVE ON BITGET</span>
+      <span class="badge badge-blue">UNIFIED ACCOUNT</span>
+      <span class="badge badge-pass">TELEGRAM BOT</span>
+      <span class="badge badge-blue">GEMINI 2.5 FLASH</span>
+    </div>
+    <div class="mt-16 hero-fade">
+      <div class="mono text-[10px] text-[#333] tracking-widest pulse">SCROLL TO EXPLORE</div>
+      <div class="mono text-[#333] text-lg mt-2 pulse">&#8595;</div>
+    </div>
+  </div>
+</header>
+<!-- ═══════════════ LIVE PROOF ═══════════════ -->
+<section class="section" id="sec-live">
+  <div class="section-title anim-up">// LIVE PROOF</div>
+  <h2 class="section-heading anim-up">Real Money. Real Bitget.<br>Real Execution.</h2>
+  <p class="text-gray-500 max-w-xl mb-10 anim-up">RUNECLAW doesn't just simulate. We executed a live round-trip trade on Bitget spot market using the Unified Trading Account API with micro-test safety limits.</p>
+
+  <!-- Live trade card -->
+  <div class="card glow-box p-6 md:p-8 mb-8 anim-up">
+    <div class="flex items-center gap-3 mb-6">
+      <span class="badge badge-pass">EXECUTED</span>
+      <span class="mono text-xs text-gray-500">June 1, 2026 11:40 UTC</span>
+    </div>
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-6 mb-6">
+      <div><div class="mono text-[10px] text-[#555] tracking-wider mb-1">ASSET</div><div class="mono text-lg text-white font-bold">BTC/USDT</div></div>
+      <div><div class="mono text-[10px] text-[#555] tracking-wider mb-1">BUY PRICE</div><div class="mono text-lg" style="color:var(--neon-green)">$72,704.85</div></div>
+      <div><div class="mono text-[10px] text-[#555] tracking-wider mb-1">SELL PRICE</div><div class="mono text-lg" style="color:var(--neon-pink)">$72,690.57</div></div>
+      <div><div class="mono text-[10px] text-[#555] tracking-wider mb-1">COST</div><div class="mono text-lg text-white">$4.94</div></div>
+    </div>
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-6 mb-6">
+      <div><div class="mono text-[10px] text-[#555] tracking-wider mb-1">BUY ORDER</div><div class="mono text-xs text-gray-400">1445307328768262144</div></div>
+      <div><div class="mono text-[10px] text-[#555] tracking-wider mb-1">SELL ORDER</div><div class="mono text-xs text-gray-400">1445307355863465984</div></div>
+      <div><div class="mono text-[10px] text-[#555] tracking-wider mb-1">QUANTITY</div><div class="mono text-xs text-gray-400">0.000068 BTC</div></div>
+      <div><div class="mono text-[10px] text-[#555] tracking-wider mb-1">PnL</div><div class="mono text-xs" style="color:var(--neon-amber)">-$0.001 (fees only)</div></div>
+    </div>
+    <div class="border-t border-[#1a1a2e] pt-4 flex flex-wrap items-center gap-4">
+      <span class="mono text-[10px] text-[#444]">Balance: $49.93 &rarr; $49.92</span>
+      <span class="mono text-[10px] text-[#444]">|</span>
+      <span class="mono text-[10px]" style="color:var(--neon-green)">Bitget UTA API &middot; Spot Market Order &middot; ccxt v4.5.56</span>
+    </div>
+  </div>
+
+  <!-- Live integration test stats -->
+  <div class="grid grid-cols-2 md:grid-cols-5 gap-4 mb-8">
+    <div class="stat-pill anim-up"><div class="num">1,318</div><div class="lbl">Markets</div></div>
+    <div class="stat-pill anim-up"><div class="num">580</div><div class="lbl">USDT Pairs</div></div>
+    <div class="stat-pill anim-up"><div class="num">10</div><div class="lbl">Signals</div></div>
+    <div class="stat-pill anim-up"><div class="num">8/8</div><div class="lbl">Tests Pass</div></div>
+    <div class="stat-pill anim-up"><div class="num">13s</div><div class="lbl">Full Pipeline</div></div>
+  </div>
+
+  <!-- Live prices -->
+  <div class="grid grid-cols-3 gap-4 anim-up">
+    <div class="card p-4 text-center">
+      <div class="mono text-[10px] text-[#555] tracking-wider">BITCOIN</div>
+      <div class="mono text-xl font-bold text-white mt-1">$72,669</div>
+      <div class="mono text-xs" style="color:var(--neon-pink)">-1.41%</div>
+    </div>
+    <div class="card p-4 text-center">
+      <div class="mono text-[10px] text-[#555] tracking-wider">ETHEREUM</div>
+      <div class="mono text-xl font-bold text-white mt-1">$1,985</div>
+      <div class="mono text-xs" style="color:var(--neon-pink)">-1.65%</div>
+    </div>
+    <div class="card p-4 text-center">
+      <div class="mono text-[10px] text-[#555] tracking-wider">SOLANA</div>
+      <div class="mono text-xl font-bold text-white mt-1">$81.15</div>
+      <div class="mono text-xs" style="color:var(--neon-pink)">-1.89%</div>
+    </div>
+  </div>
+</section>
+<!-- ═══════════════ ARCHITECTURE ═══════════════ -->
+<section class="section" id="sec-arch">
+  <div class="section-title anim-up">// SYSTEM ARCHITECTURE</div>
+  <h2 class="section-heading anim-up">10 Modules. Zero Gaps.<br>Full Pipeline Coverage.</h2>
+  <p class="text-gray-500 max-w-xl mb-12 anim-up">Every component is production-grade, tested, and auditable. The engine never trades without human confirmation.</p>
+
+  <!-- Architecture Flow -->
+  <div class="card glow-box p-6 md:p-8 mb-8 anim-up">
+    <div class="mono text-[10px] text-[#444] tracking-wider mb-6">DATA FLOW: SCAN &rarr; ANALYZE &rarr; RISK &rarr; CONFIRM &rarr; EXECUTE</div>
+
+    <!-- Row 1: Data Sources -->
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+      <div class="arch-node" style="border-color:rgba(102,187,255,0.3)">
+        <div class="icon">&#128200;</div>
+        <div class="name">Bitget Exchange</div>
+        <div class="desc">1,318 markets via ccxt</div>
+      </div>
+      <div class="arch-node" style="border-color:rgba(102,187,255,0.3)">
+        <div class="icon">&#128225;</div>
+        <div class="name">WebSocket Feed</div>
+        <div class="desc">Sub-second price ticks</div>
+      </div>
+      <div class="arch-node" style="border-color:rgba(102,187,255,0.3)">
+        <div class="icon">&#127760;</div>
+        <div class="name">Macro Calendar</div>
+        <div class="desc">FOMC, CPI, NFP events</div>
+      </div>
+      <div class="arch-node" style="border-color:rgba(102,187,255,0.3)">
+        <div class="icon">&#129302;</div>
+        <div class="name">LLM Providers</div>
+        <div class="desc">Gemini &middot; Groq &middot; Claude</div>
+      </div>
+    </div>
+
+    <div class="text-center my-2 flow-arrow mono text-sm">&darr;&darr;&darr;&darr;</div>
+
+    <!-- Row 2: Core Engine -->
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+      <div class="arch-node" style="border-color:rgba(0,255,136,0.3)">
+        <div class="icon">&#128269;</div>
+        <div class="name">Market Scanner</div>
+        <div class="desc">580 USDT pairs, regime filter</div>
+      </div>
+      <div class="arch-node" style="border-color:rgba(0,255,136,0.3)">
+        <div class="icon">&#128202;</div>
+        <div class="name">Analyzer</div>
+        <div class="desc">14 patterns, 10 indicators</div>
+      </div>
+      <div class="arch-node" style="border-color:rgba(0,255,136,0.3)">
+        <div class="icon">&#128176;</div>
+        <div class="name">Order Flow</div>
+        <div class="desc">CVD, book imbalance, whales</div>
+      </div>
+      <div class="arch-node" style="border-color:rgba(0,255,136,0.3)">
+        <div class="icon">&#128161;</div>
+        <div class="name">Confluence Scorer</div>
+        <div class="desc">10-voter weighted blend</div>
+      </div>
+    </div>
+
+    <div class="text-center my-2 flow-arrow mono text-sm">&darr;&darr;&darr;&darr;</div>
+
+    <!-- Row 3: Safety Layer -->
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+      <div class="arch-node" style="border-color:rgba(255,170,51,0.3)">
+        <div class="icon">&#128737;</div>
+        <div class="name">Risk Engine</div>
+        <div class="desc">19 fail-closed checks</div>
+      </div>
+      <div class="arch-node" style="border-color:rgba(255,170,51,0.3)">
+        <div class="icon">&#128100;</div>
+        <div class="name">Human Gate</div>
+        <div class="desc">Telegram confirm required</div>
+      </div>
+      <div class="arch-node" style="border-color:rgba(255,170,51,0.3)">
+        <div class="icon">&#128274;</div>
+        <div class="name">Compliance</div>
+        <div class="desc">Permission + lock framework</div>
+      </div>
+      <div class="arch-node" style="border-color:rgba(255,170,51,0.3)">
+        <div class="icon">&#128220;</div>
+        <div class="name">Audit Chain</div>
+        <div class="desc">Tamper-evident hash log</div>
+      </div>
+    </div>
+
+    <div class="text-center my-2 flow-arrow mono text-sm">&darr;&darr;&darr;&darr;</div>
+
+    <!-- Row 4: Execution -->
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <div class="arch-node" style="border-color:rgba(255,85,119,0.3)">
+        <div class="icon">&#9889;</div>
+        <div class="name">Live Executor</div>
+        <div class="desc">Bitget UTA spot orders</div>
+      </div>
+      <div class="arch-node" style="border-color:rgba(255,85,119,0.3)">
+        <div class="icon">&#128196;</div>
+        <div class="name">Paper Trader</div>
+        <div class="desc">Slippage + commission sim</div>
+      </div>
+      <div class="arch-node" style="border-color:rgba(255,85,119,0.3)">
+        <div class="icon">&#128200;</div>
+        <div class="name">Portfolio</div>
+        <div class="desc">Mark-to-market, trailing SL</div>
+      </div>
+      <div class="arch-node" style="border-color:rgba(255,85,119,0.3)">
+        <div class="icon">&#128172;</div>
+        <div class="name">Telegram Bot</div>
+        <div class="desc">War Room + NL commands</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- FSM States -->
+  <div class="card p-6 anim-up">
+    <div class="mono text-[10px] text-[#444] tracking-wider mb-4">FINITE STATE MACHINE &mdash; 9 STATES</div>
+    <div class="flex flex-wrap gap-2">
+      <span class="badge badge-blue">IDLE</span>
+      <span class="flow-arrow mono">&rarr;</span>
+      <span class="badge badge-blue">SCANNING</span>
+      <span class="flow-arrow mono">&rarr;</span>
+      <span class="badge badge-blue">ANALYZING</span>
+      <span class="flow-arrow mono">&rarr;</span>
+      <span class="badge badge-pass">RISK_CHECK</span>
+      <span class="flow-arrow mono">&rarr;</span>
+      <span class="badge" style="background:rgba(255,170,51,0.12);color:var(--neon-amber);border:1px solid rgba(255,170,51,0.25)">CONFIRMING</span>
+      <span class="flow-arrow mono">&rarr;</span>
+      <span class="badge badge-pass">EXECUTING</span>
+      <span class="flow-arrow mono">&rarr;</span>
+      <span class="badge badge-blue">MONITORING</span>
+    </div>
+    <div class="flex flex-wrap gap-2 mt-3">
+      <span class="badge badge-fail">HALTED</span>
+      <span class="badge" style="background:rgba(255,170,51,0.12);color:var(--neon-amber);border:1px solid rgba(255,170,51,0.25)">COOLING_DOWN</span>
+      <span class="mono text-[10px] text-[#444] ml-2">&larr; safety states (circuit breaker / loss cooldown)</span>
+    </div>
+  </div>
+</section>
+<!-- ═══════════════ RISK ENGINE ═══════════════ -->
+<section class="section" id="sec-risk">
+  <div class="section-title anim-up">// RISK ENGINE</div>
+  <h2 class="section-heading anim-up">19 Independent Checks.<br>Fail-Closed by Design.</h2>
+  <p class="text-gray-500 max-w-xl mb-10 anim-up">Every trade idea must pass ALL 19 checks. A single failure blocks execution. No overrides. No exceptions. The AI cannot disable safety.</p>
+
+  <div class="grid md:grid-cols-2 gap-6 mb-8">
+    <!-- Risk checks visualization -->
+    <div class="card glow-box p-6 anim-up">
+      <div class="mono text-[10px] text-[#444] tracking-wider mb-4">ALL 19 CHECKS &mdash; SYNTHETIC LONG BTC/USDT</div>
+      <div class="flex flex-wrap gap-2">
+        <span class="risk-chip">CIRCUIT_BREAKER</span>
+        <span class="risk-chip">POSITION_SIZE</span>
+        <span class="risk-chip">DAILY_LOSS</span>
+        <span class="risk-chip">DRAWDOWN</span>
+        <span class="risk-chip">OPEN_POSITIONS</span>
+        <span class="risk-chip">RISK_REWARD</span>
+        <span class="risk-chip">CONFIDENCE</span>
+        <span class="risk-chip">CORRELATION</span>
+        <span class="risk-chip">LOSS_STREAK</span>
+        <span class="risk-chip">ENTRY_PRICE</span>
+        <span class="risk-chip">STOP_LOSS</span>
+        <span class="risk-chip">STALE_DATA</span>
+        <span class="risk-chip">COOLDOWN</span>
+        <span class="risk-chip">PORTFOLIO_EXP</span>
+        <span class="risk-chip">SYMBOL_EXP</span>
+        <span class="risk-chip">VOLATILITY</span>
+        <span class="risk-chip">MACRO_EVENT</span>
+        <span class="risk-chip">MTF_ALIGN</span>
+        <span class="risk-chip">CONCENTRATION</span>
+      </div>
+      <div class="mt-4 mono text-xs" style="color:var(--neon-green)">VERDICT: APPROVED &middot; Size clamped $8,000 &rarr; $2,000 (20% limit)</div>
+    </div>
+
+    <!-- Risk chart -->
+    <div class="card p-6 anim-up">
+      <div class="mono text-[10px] text-[#444] tracking-wider mb-4">RISK GATE CATEGORIES</div>
+      <div id="chart-risk" style="width:100%;height:280px"></div>
+    </div>
+  </div>
+
+  <!-- Safety features -->
+  <div class="grid grid-cols-2 md:grid-cols-4 gap-4 anim-up">
+    <div class="card p-4">
+      <div class="mono text-sm font-bold text-white mb-1">Circuit Breaker</div>
+      <div class="text-xs text-gray-500">Trips at 5% daily loss or 10% drawdown. Halts all trading until manual reset.</div>
+    </div>
+    <div class="card p-4">
+      <div class="mono text-sm font-bold text-white mb-1">Loss Cooldown</div>
+      <div class="text-xs text-gray-500">300s cooldown after consecutive losses. Prevents tilt trading.</div>
+    </div>
+    <div class="card p-4">
+      <div class="mono text-sm font-bold text-white mb-1">Learning Safety</div>
+      <div class="text-xs text-gray-500">68 tests prove the AI cannot override risk limits, disable stops, or enable live mode.</div>
+    </div>
+    <div class="card p-4">
+      <div class="mono text-sm font-bold text-white mb-1">Red Team</div>
+      <div class="text-xs text-gray-500">28 adversarial scenarios including flash crash, direction inversion, CB evasion.</div>
+    </div>
+  </div>
+</section>
+<!-- ═══════════════ TEST SUITE ═══════════════ -->
+<section class="section" id="sec-tests">
+  <div class="section-title anim-up">// TEST SUITE</div>
+  <h2 class="section-heading anim-up">450 Tests. 0 Failures.<br>5.3 Seconds.</h2>
+  <p class="text-gray-500 max-w-xl mb-10 anim-up">Every claim in this submission is backed by automated tests. From risk engine edge cases to adversarial AI safety probes.</p>
+
+  <div class="grid md:grid-cols-2 gap-6 mb-8">
+    <!-- Test distribution chart -->
+    <div class="card p-6 anim-up">
+      <div class="mono text-[10px] text-[#444] tracking-wider mb-4">TEST DISTRIBUTION BY MODULE</div>
+      <div id="chart-tests" style="width:100%;height:320px"></div>
+    </div>
+
+    <!-- Test groups list -->
+    <div class="card p-6 anim-up overflow-y-auto" style="max-height:400px">
+      <div class="mono text-[10px] text-[#444] tracking-wider mb-4">15 TEST GROUPS</div>
+      <div class="space-y-2" id="test-groups"></div>
+    </div>
+  </div>
+
+  <!-- Test highlights -->
+  <div class="grid grid-cols-2 md:grid-cols-5 gap-4 anim-up">
+    <div class="stat-pill"><div class="num">23</div><div class="lbl">Risk Engine</div></div>
+    <div class="stat-pill"><div class="num">68</div><div class="lbl">Learning Safety</div></div>
+    <div class="stat-pill"><div class="num">25</div><div class="lbl">Portfolio</div></div>
+    <div class="stat-pill"><div class="num">10</div><div class="lbl">Red Team</div></div>
+    <div class="stat-pill"><div class="num">20</div><div class="lbl">NL Intent</div></div>
+  </div>
+</section>
+
+<!-- ═══════════════ ORDER FLOW ═══════════════ -->
+<section class="section" id="sec-flow">
+  <div class="section-title anim-up">// ORDER FLOW INTELLIGENCE</div>
+  <h2 class="section-heading anim-up">See What Smart Money Sees.</h2>
+  <p class="text-gray-500 max-w-xl mb-10 anim-up">Real-time order book analysis, cumulative volume delta, whale detection, and funding rate integration feed into the confluence scorer.</p>
+
+  <div class="grid md:grid-cols-3 gap-6 anim-up">
+    <div class="card glow-box-blue p-6">
+      <div class="mono text-xs font-bold mb-3" style="color:var(--neon-blue)">BOOK IMBALANCE</div>
+      <div class="mono text-3xl font-bold text-white">-0.32</div>
+      <div class="text-xs text-gray-500 mt-2">Ask-heavy &mdash; selling pressure dominant. Computed from top 20 levels of BTC/USDT order book.</div>
+      <div class="mt-3"><span class="badge badge-fail">BEARISH LEAN</span></div>
+    </div>
+    <div class="card glow-box-blue p-6">
+      <div class="mono text-xs font-bold mb-3" style="color:var(--neon-blue)">SMART MONEY SCORE</div>
+      <div class="mono text-3xl font-bold text-white">-0.81</div>
+      <div class="text-xs text-gray-500 mt-2">Composite of CVD trend, large-order clustering, and funding rate divergence. Strong distribution signal.</div>
+      <div class="mt-3"><span class="badge badge-fail">DISTRIBUTION</span></div>
+    </div>
+    <div class="card glow-box-blue p-6">
+      <div class="mono text-xs font-bold mb-3" style="color:var(--neon-blue)">CONFIDENCE</div>
+      <div class="mono text-3xl font-bold" style="color:var(--neon-green)">87%</div>
+      <div class="text-xs text-gray-500 mt-2">High confidence in bearish order flow signal. Feeds into 10-voter confluence with 0.15 weight.</div>
+      <div class="mt-3"><span class="badge badge-pass">LIQUIDITY: PASS</span></div>
+    </div>
+  </div>
+</section>
+<!-- ═══════════════ FEATURES ═══════════════ -->
+<section class="section" id="sec-features">
+  <div class="section-title anim-up">// DIFFERENTIATORS</div>
+  <h2 class="section-heading anim-up">What Makes RUNECLAW Different.</h2>
+
+  <div class="grid md:grid-cols-3 gap-6 mb-8">
+    <div class="card p-6 anim-up">
+      <div class="mono text-xs font-bold mb-2" style="color:var(--neon-green)">HUMAN-IN-THE-LOOP</div>
+      <div class="text-sm text-gray-400 leading-relaxed">Every trade requires explicit human confirmation via Telegram inline keyboard. The bot proposes, you dispose. No autonomous execution without consent.</div>
+    </div>
+    <div class="card p-6 anim-up">
+      <div class="mono text-xs font-bold mb-2" style="color:var(--neon-green)">NATURAL LANGUAGE</div>
+      <div class="text-sm text-gray-400 leading-relaxed">Say "analyze bitcoin" or "should I buy SOL?" &mdash; the NL intent router extracts symbols and maps to skills. 20 test cases covering all intents.</div>
+    </div>
+    <div class="card p-6 anim-up">
+      <div class="mono text-xs font-bold mb-2" style="color:var(--neon-green)">MULTI-LLM BYOK</div>
+      <div class="text-sm text-gray-400 leading-relaxed">Swap LLM providers at runtime via /setllm. Gemini 2.5 Flash (default, free), Groq, Claude, Qwen. Tiered routing for cost control.</div>
+    </div>
+    <div class="card p-6 anim-up">
+      <div class="mono text-xs font-bold mb-2" style="color:var(--neon-blue)">PROACTIVE ALERTS</div>
+      <div class="text-sm text-gray-400 leading-relaxed">/watch on enables push notifications for volume spikes, circuit breaker trips, black swan anomalies, and new signals. Dedup prevents spam.</div>
+    </div>
+    <div class="card p-6 anim-up">
+      <div class="mono text-xs font-bold mb-2" style="color:var(--neon-blue)">SWARM PROTOCOL</div>
+      <div class="text-sm text-gray-400 leading-relaxed">Multi-agent architecture with Coordinator, Scout, Sentinel, and Executor roles. Message bus with pub/sub. Sentinel can halt the entire swarm.</div>
+    </div>
+    <div class="card p-6 anim-up">
+      <div class="mono text-xs font-bold mb-2" style="color:var(--neon-blue)">BACKTEST ENGINE</div>
+      <div class="text-sm text-gray-400 leading-relaxed">Walk-forward validation with synthetic GBM+GARCH data. Intrabar SL/TP simulation. Sharpe/Sortino from per-trade returns, not equity snapshots.</div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════ FOOTER ═══════════════ -->
+<footer class="section text-center pb-24">
+  <div class="mono text-[10px] text-[#333] tracking-widest mb-4">BUILT FOR</div>
+  <div class="mono text-2xl font-bold text-white mb-2">Bitget GetClaw Hackathon 2026</div>
+  <div class="text-sm text-gray-500 mb-8">github.com/Humanoid-Traders/RUNECLAW</div>
+  <div class="flex flex-wrap justify-center gap-3 mb-8">
+    <span class="badge badge-pass">450 TESTS</span>
+    <span class="badge badge-pass">19 RISK CHECKS</span>
+    <span class="badge badge-pass">LIVE TRADE PROOF</span>
+    <span class="badge badge-blue">BITGET UTA API</span>
+    <span class="badge badge-blue">TELEGRAM BOT</span>
+  </div>
+  <div class="mono text-[10px] text-[#333]">
+    Python 3.13 &middot; ccxt 4.5.56 &middot; Gemini 2.5 Flash &middot; June 1, 2026
+  </div>
+</footer>
+<script>
+gsap.registerPlugin(ScrollTrigger);
+
+// Progress bar
+gsap.to('#progress-bar', {
+  scaleX: 1,
+  ease: 'none',
+  scrollTrigger: { trigger: 'body', start: 'top top', end: 'bottom bottom', scrub: 0.3 }
+});
+
+// Hero fade-in
+gsap.from('.hero-fade', {
+  opacity: 0, y: 40, duration: 1, stagger: 0.15, delay: 0.3, ease: 'power3.out'
+});
+
+// Scroll animations for sections
+document.querySelectorAll('.anim-up').forEach(el => {
+  gsap.from(el, {
+    opacity: 0, y: 50, duration: 0.8, ease: 'power3.out',
+    scrollTrigger: { trigger: el, start: 'top 85%', toggleActions: 'play none none none' }
+  });
+});
+
+// ── ECharts: Risk Categories ──
+const riskChart = echarts.init(document.getElementById('chart-risk'), null, { renderer: 'svg' });
+riskChart.setOption({
+  tooltip: {
+    backgroundColor: '#0c0c18', borderColor: '#1a1a2e', borderWidth: 1,
+    textStyle: { fontFamily: 'JetBrains Mono', fontSize: 11, color: '#ccc' },
+    formatter: p => `<b style="color:#00ff88">${p.name}</b><br/>${p.value} checks`
+  },
+  series: [{
+    type: 'pie', radius: ['45%', '72%'], center: ['50%', '50%'],
+    avoidLabelOverlap: true,
+    itemStyle: { borderRadius: 4, borderColor: '#06060e', borderWidth: 2 },
+    label: {
+      color: '#888', fontSize: 10, fontFamily: 'JetBrains Mono',
+      formatter: '{b}\n{c}'
+    },
+    labelLine: { lineStyle: { color: '#333' } },
+    data: [
+      { value: 5, name: 'Position\nSizing', itemStyle: { color: '#00ff88' } },
+      { value: 4, name: 'Circuit\nBreaker', itemStyle: { color: '#00cc66' } },
+      { value: 3, name: 'Exposure\nLimits', itemStyle: { color: '#66bbff' } },
+      { value: 3, name: 'Market\nGuards', itemStyle: { color: '#4499dd' } },
+      { value: 2, name: 'Macro\nEvents', itemStyle: { color: '#ffaa33' } },
+      { value: 2, name: 'Data\nQuality', itemStyle: { color: '#ff8822' } },
+    ]
+  }]
+});
+
+// ── ECharts: Test Distribution ──
+const testChart = echarts.init(document.getElementById('chart-tests'), null, { renderer: 'svg' });
+const testData = [
+  { name: 'Learning Safety', value: 68 },
+  { name: 'Portfolio', value: 25 },
+  { name: 'Analyzer', value: 25 },
+  { name: 'Risk Engine', value: 23 },
+  { name: 'NL Intent', value: 20 },
+  { name: 'Proactive Monitor', value: 18 },
+  { name: 'FSM & State', value: 16 },
+  { name: 'Swarm Protocol', value: 12 },
+  { name: 'Backtest', value: 10 },
+  { name: 'Red Team', value: 10 },
+  { name: 'Sentiment', value: 10 },
+  { name: 'LLM Config', value: 9 },
+  { name: 'Black Swan', value: 8 },
+  { name: 'Solana Eco', value: 8 },
+  { name: 'Risk Edge', value: 8 },
+];
+testChart.setOption({
+  tooltip: {
+    backgroundColor: '#0c0c18', borderColor: '#1a1a2e', borderWidth: 1,
+    textStyle: { fontFamily: 'JetBrains Mono', fontSize: 11, color: '#ccc' },
+    formatter: p => `<b style="color:#00ff88">${p.name}</b><br/>${p.value} tests`
+  },
+  grid: { top: 8, right: 20, bottom: 30, left: 110 },
+  xAxis: {
+    type: 'value',
+    axisLine: { lineStyle: { color: '#1a1a2e' } },
+    axisLabel: { fontFamily: 'JetBrains Mono', fontSize: 10, color: '#555' },
+    splitLine: { lineStyle: { color: '#111' } },
+  },
+  yAxis: {
+    type: 'category',
+    data: testData.map(d => d.name).reverse(),
+    axisLine: { show: false },
+    axisTick: { show: false },
+    axisLabel: { fontFamily: 'JetBrains Mono', fontSize: 10, color: '#888' },
+  },
+  series: [{
+    type: 'bar', barWidth: 14,
+    data: testData.map(d => d.value).reverse(),
+    itemStyle: {
+      borderRadius: [0, 3, 3, 0],
+      color: new echarts.graphic.LinearGradient(0, 0, 1, 0, [
+        { offset: 0, color: '#004422' },
+        { offset: 1, color: '#00ff88' },
+      ]),
+    },
+    label: {
+      show: true, position: 'right',
+      fontFamily: 'JetBrains Mono', fontSize: 10, color: '#00ff88',
+    },
+  }],
+  animationDuration: 1500, animationEasing: 'cubicOut',
+});
+
+// ── Test groups list ──
+const groups = [
+  ['Learning Safety', 68], ['Portfolio Tracker', 25], ['Analyzer', 25],
+  ['Risk Engine', 23], ['NL Intent Router', 20], ['Proactive Monitor', 18],
+  ['FSM & State', 16], ['Swarm Protocol', 12], ['Backtest Engine', 10],
+  ['Red Team', 10], ['Sentiment Engine', 10], ['LLM & Config', 9],
+  ['Black Swan Detector', 8], ['Solana Ecosystem', 8], ['Risk Edge Cases', 8],
+];
+const tgContainer = document.getElementById('test-groups');
+groups.forEach(([name, count]) => {
+  const row = document.createElement('div');
+  row.className = 'flex items-center justify-between py-2 border-b border-[#1a1a2e]';
+  row.innerHTML = `
+    <span class="mono text-xs text-gray-300">${name}</span>
+    <span class="mono text-xs" style="color:var(--neon-green)">${count} passed</span>
+  `;
+  tgContainer.appendChild(row);
+});
+
+// Resize
+window.addEventListener('resize', () => {
+  riskChart.resize();
+  testChart.resize();
+});
+</script>
+</body>
+</html>

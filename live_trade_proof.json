@@ -1,0 +1,15 @@
+{
+  "timestamp": "2026-06-01T11:40:48.191080+00:00",
+  "symbol": "BTC/USDT",
+  "buy_order_id": "1445307328768262144",
+  "buy_price": 72704.85,
+  "buy_qty": 6.8e-05,
+  "buy_cost": 4.9439298,
+  "sell_order_id": "1445307355863465984",
+  "sell_price": 72690.57,
+  "sell_qty": 6.8e-05,
+  "sell_cost": 4.94295876,
+  "pnl_usd": -0.00097104,
+  "balance_before": 49.9262,
+  "balance_after": 49.9202
+}
