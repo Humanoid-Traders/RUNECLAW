@@ -18,6 +18,7 @@ from pathlib import Path
 from bot.config import CONFIG
 from bot.core.analyzer import Analyzer
 from bot.core.cost import CostTracker
+from bot.core.system_health import SystemHealthMonitor
 from bot.core.exchange_flow import ExchangeFlowProvider
 from bot.core.macro_events import MacroEventProvider
 from bot.core.live_executor import LiveExecutor
@@ -75,6 +76,7 @@ class RuneClawEngine:
         self.ws_feed = BitgetWSFeed()
         # Live executor for real Bitget orders (micro-test mode)
         self.live_executor = LiveExecutor()
+        self.health = SystemHealthMonitor()
         # C1 fix: wire trade-close callback so portfolio closes feed risk streak tracking
         self.portfolio._on_trade_close = self.risk.record_trade_result
         self.state: AgentState = AgentState.IDLE

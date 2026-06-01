@@ -149,6 +149,7 @@ class TelegramHandler:
             # Live trading commands
             ("golive", self._cmd_golive), ("livebalance", self._cmd_livebalance),
             ("livepositions", self._cmd_livepositions), ("liveclose", self._cmd_liveclose),
+            ("health", self._cmd_health),
         ]:
             app.add_handler(CommandHandler(cmd, handler))
         app.add_handler(CallbackQueryHandler(self._handle_callback))
@@ -823,6 +824,13 @@ class TelegramHandler:
         await self._send(update, f"\U0001f510 {result}")
 
     # ── Proactive Alerts (Move 2) ──────────────────────────────
+
+    async def _cmd_health(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """Show system health status."""
+        if not await self._guard(update, "status"):
+            return
+        text = self.engine.health.format_telegram()
+        await self._send(update, text)
 
     async def _cmd_watch(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """/watch [on|off|status] — toggle proactive alerts for this chat."""

@@ -546,6 +546,86 @@ class Analyzer:
         fib = _compute_fibonacci(highs, lows, closes)
         results.update(fib)
 
+        # ── Volume Profile (POC + Value Area) ──
+        if volumes is not None and len(volumes) >= 10:
+            from bot.core.volume_profile import compute_volume_profile
+            vp = compute_volume_profile(closes, highs, lows, volumes)
+            if vp is not None:
+                results["poc_price"] = vp.poc_price
+                results["value_area_high"] = vp.value_area_high
+                results["value_area_low"] = vp.value_area_low
+                results["price_vs_poc"] = vp.price_vs_poc
+                results["poc_distance_pct"] = vp.poc_distance_pct
+
+        # ── Volume Oscillator (5/20 EMA ratio) ──
+        if volumes is not None and len(volumes) >= 20:
+            vol_ema5 = float(_ema(volumes, 5)[-1])
+            vol_ema20 = float(_ema(volumes, 20)[-1])
+            results["vol_oscillator"] = round(
+                (vol_ema5 - vol_ema20) / vol_ema20 * 100 if vol_ema20 > 0 else 0, 2
+            )
+            results["vol_momentum"] = "expanding" if results["vol_oscillator"] > 10 else (
+                "contracting" if results["vol_oscillator"] < -10 else "neutral"
+            )
+
+        # ── Taker Volume proxy (up-volume vs down-volume) ──
+        if volumes is not None and len(volumes) > 1:
+            price_changes = np.diff(closes)
+            up_vol = np.sum(volumes[1:][price_changes > 0])
+            down_vol = np.sum(volumes[1:][price_changes < 0])
+            total_vol = up_vol + down_vol
+            results["taker_buy_ratio"] = round(float(up_vol / total_vol) if total_vol > 0 else 0.5, 4)
+            results["taker_sell_ratio"] = round(float(down_vol / total_vol) if total_vol > 0 else 0.5, 4)
+            results["taker_imbalance"] = round(float((up_vol - down_vol) / total_vol) if total_vol > 0 else 0, 4)
+
+        # ── Keltner Channels (EMA-20 ± 2×ATR) ──
+        if len(closes) >= 20 and "atr" in results:
+            kc_mid = float(_ema(closes, 20)[-1])
+            kc_atr = results["atr"]
+            results["kc_upper"] = round(kc_mid + 2 * kc_atr, 6)
+            results["kc_lower"] = round(kc_mid - 2 * kc_atr, 6)
+            results["kc_mid"] = round(kc_mid, 6)
+            # Squeeze: Bollinger inside Keltner = low volatility compression
+            if "bb_upper" in results and "bb_lower" in results:
+                results["kc_squeeze"] = (results["bb_upper"] < results["kc_upper"] and
+                                          results["bb_lower"] > results["kc_lower"])
+
+        # ── EMA Ribbon (9/21) — trend filter ──
+        if len(closes) >= 21:
+            ema9 = float(_ema(closes, 9)[-1])
+            ema21 = float(_ema(closes, 21)[-1])
+            results["ema_9"] = round(ema9, 6)
+            results["ema_21"] = round(ema21, 6)
+            results["ema_ribbon_spread"] = round((ema9 - ema21) / ema21 * 100, 4) if ema21 > 0 else 0
+            results["ema_ribbon_trend"] = "bullish" if ema9 > ema21 else "bearish"
+
+        # ── VWAP Bands (±1σ, ±2σ) — intraday statistical extremes ──
+        if volumes is not None and len(volumes) >= 20 and "vwap" in results:
+            typical_price = (highs + lows + closes) / 3
+            cum_tp_vol = np.cumsum(typical_price * volumes)
+            cum_vol = np.cumsum(volumes)
+            vwap_series = cum_tp_vol / np.maximum(cum_vol, 1e-10)
+            # Rolling variance of price around VWAP
+            vwap_dev = np.sqrt(np.mean((typical_price[-20:] - vwap_series[-20:]) ** 2))
+            results["vwap_upper_1"] = round(float(results["vwap"] + vwap_dev), 6)
+            results["vwap_lower_1"] = round(float(results["vwap"] - vwap_dev), 6)
+            results["vwap_upper_2"] = round(float(results["vwap"] + 2 * vwap_dev), 6)
+            results["vwap_lower_2"] = round(float(results["vwap"] - 2 * vwap_dev), 6)
+
+        # ── Session Range (last 24 bars as session proxy) ──
+        session_len = min(24, len(closes))
+        results["session_high"] = round(float(np.max(highs[-session_len:])), 6)
+        results["session_low"] = round(float(np.min(lows[-session_len:])), 6)
+        results["session_range_pct"] = round(
+            (results["session_high"] - results["session_low"]) / results["session_low"] * 100
+            if results["session_low"] > 0 else 0, 4
+        )
+        results["session_position"] = round(
+            (closes[-1] - results["session_low"]) /
+            (results["session_high"] - results["session_low"])
+            if results["session_high"] > results["session_low"] else 0.5, 4
+        )
+
         # ── Candlestick Patterns ──
         # Need opens from candles — caller must pass them. Accept via highs[0] proxy
         # or use the static method directly in analyze(). Store placeholder here.
