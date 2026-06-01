@@ -101,6 +101,7 @@ class LiveExecutor:
                 "enableRateLimit": True,
                 "options": {
                     "defaultType": "spot",
+                    "uta": True,  # Support Bitget Unified Trading Account
                 },
             })
         return self._exchange
