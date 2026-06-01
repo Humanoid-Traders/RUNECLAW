@@ -916,6 +916,59 @@ class RunStrategySkill(BaseSkill):
             lines.append(f"  {cfg['icon']} <b>{cfg['label']}</b>{a}")
             lines.append(f"     <i>{cfg['desc']}</i>")
         lines.append(f"\n<i>\u25b8 Usage: /run &lt;name&gt; \u2022 21 checks active</i>")
+        lines.append(f"<i>\u25b8 Or: /run &lt;SYMBOL&gt; (e.g. /run BTC, /run SOL)</i>")
+        return "\n".join(lines)
+
+    @classmethod
+    async def _run_symbol_scan(cls, engine: "RuneClawEngine", raw_symbol: str) -> str:
+        """Targeted scan for a specific symbol (e.g. /run BTC -> BTC/USDT)."""
+        sym = raw_symbol.strip().upper()
+        # Normalize: add /USDT if not already a pair
+        if "/" not in sym:
+            sym = f"{sym}/USDT"
+
+        audit(system_log, f"Targeted scan: {sym}", action="run_strategy",
+              data={"symbol": sym, "type": "targeted"})
+
+        signals = await engine.scanner.scan()
+        if not signals:
+            return f"\U0001f50e <b>Targeted: {_esc(sym)}</b>\n\n<i>No market data available</i>"
+
+        # Filter to matching symbol
+        matched = [s for s in signals if s.symbol == sym]
+        if not matched:
+            # Try partial match (e.g. "BTC" matches "BTC/USDT")
+            base = sym.split("/")[0]
+            matched = [s for s in signals if s.symbol.startswith(base + "/")]
+
+        if not matched:
+            return (
+                f"\U0001f50e <b>Targeted: {_esc(sym)}</b>\n\n"
+                f"<i>No signals found for {_esc(sym)}.</i>\n"
+                f"<i>Try /scan for all pairs or /analyze {_esc(sym)} for deep analysis.</i>"
+            )
+
+        results = []
+        ideas = 0
+        for sig in matched[:3]:
+            idea = await engine._analyze_signal(sig)
+            if not idea:
+                continue
+            engine._pending_ideas[idea.id] = idea
+            ideas += 1
+            d_icon = _OK if idea.direction.value == "LONG" else _BAD
+            results.append(
+                f"  {d_icon} <b>{_esc(idea.asset)}</b>  "
+                f"<code>{idea.confidence:.0%}</code>  R:R <code>{idea.risk_reward_ratio}</code>"
+            )
+
+        lines = [
+            f"\U0001f50e <b>Targeted: {_esc(sym)}</b>",
+            f"  Matched <code>{len(matched)}</code> signal(s) \u2022 Ideas <code>{ideas}</code>\n",
+        ]
+        lines.extend(results or ["  <i>No actionable ideas passed analysis</i>"])
+        if ideas > 0:
+            lines.append(f"\n<i>/trade to review and confirm</i>")
         return "\n".join(lines)
 
     async def execute(self, engine: RuneClawEngine, **kwargs: Any) -> str:
@@ -924,7 +977,8 @@ class RunStrategySkill(BaseSkill):
             return self._list()
         key = self._resolve(strat)
         if not key:
-            return f"Unknown: <code>{_esc(strat)}</code>\n\n" + self._list()
+            # Fallback: treat input as a symbol for targeted scan
+            return await self._run_symbol_scan(engine, strat)
 
         cfg = self.PRESETS[key]
         audit(system_log, f"Strategy: {cfg['label']}", action="run_strategy", data=cfg)
