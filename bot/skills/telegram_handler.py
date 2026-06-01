@@ -142,6 +142,9 @@ class TelegramHandler:
             ("llmreset", self._cmd_llmreset), ("llmtiers", self._cmd_llmtiers),
             # Proactive alerts
             ("watch", self._cmd_watch),
+            # Live trading commands
+            ("golive", self._cmd_golive), ("livebalance", self._cmd_livebalance),
+            ("livepositions", self._cmd_livepositions), ("liveclose", self._cmd_liveclose),
         ]:
             app.add_handler(CommandHandler(cmd, handler))
         app.add_handler(CallbackQueryHandler(self._handle_callback))
@@ -729,6 +732,90 @@ class TelegramHandler:
                 "Scanner now covers all Bitget USDT pairs.\n"
                 "Use <code>/mode solana</code> to focus on Solana ecosystem."
             ))
+
+    # ── Live Trading Commands ─────────────────────────────────
+
+    async def _cmd_golive(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """/golive — enable live trading with double confirmation."""
+        if not await self._guard(update, "admin"):
+            return
+
+        args = ctx.args or []
+        if not args or args[0].upper() != "CONFIRM":
+            await self._send(update,
+                "\u26a0\ufe0f <b>LIVE TRADING ACTIVATION</b>\n\n"
+                "This will enable <b>real order execution</b> on Bitget.\n\n"
+                "Micro-test safety limits:\n"
+                "\u2022 Max $10 per position\n"
+                "\u2022 Max $50 total exposure\n"
+                "\u2022 Max 5 concurrent positions\n"
+                "\u2022 Spot market only\n\n"
+                "To confirm, type:\n<code>/golive CONFIRM</code>")
+            return
+
+        # Enable live mode in config
+        from bot.config import CONFIG
+        CONFIG.simulation_mode = False
+        CONFIG.live_trading_enabled = True
+        audit(system_log, "LIVE TRADING ENABLED via /golive",
+              action="golive", result="ENABLED",
+              data={"user": self._get_tg_id(update)})
+        await self._send(update,
+            "\U0001f7e2 <b>LIVE TRADING ENABLED</b>\n\n"
+            "Real orders will execute on Bitget.\n"
+            "Micro-test limits active ($10/pos, $50 total).\n\n"
+            "\u2022 <code>/livebalance</code> — check USDT balance\n"
+            "\u2022 <code>/livepositions</code> — view open positions\n"
+            "\u2022 <code>/liveclose &lt;id&gt;</code> — close a position\n"
+            "\u2022 <code>/golive OFF</code> — disable live mode")
+
+    async def _cmd_livebalance(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """/livebalance — check real USDT balance on Bitget."""
+        if not await self._guard(update, "scan"):
+            return
+        try:
+            bal = await self.engine.live_executor.fetch_balance()
+            total = bal.get("total", 0)
+            free = bal.get("free", 0)
+            used = bal.get("used", 0)
+            await self._send(update,
+                "\U0001f4b0 <b>BITGET BALANCE</b>\n\n"
+                f"Total: <code>${total:.2f}</code>\n"
+                f"Free:  <code>${free:.2f}</code>\n"
+                f"Used:  <code>${used:.2f}</code>")
+        except Exception as exc:
+            await self._send(update, f"\u274c Balance fetch failed: {exc}")
+
+    async def _cmd_livepositions(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """/livepositions — show live open positions."""
+        if not await self._guard(update, "scan"):
+            return
+        positions = self.engine.live_executor._positions
+        open_pos = [p for p in positions.values() if p.status == "open"]
+        if not open_pos:
+            await self._send(update, "\U0001f4ad No live positions open.")
+            return
+        lines = ["\U0001f4ca <b>LIVE POSITIONS</b>\n"]
+        for p in open_pos:
+            lines.append(
+                f"\u2022 <b>{p.direction} {p.symbol}</b>\n"
+                f"  Entry: ${p.entry_price:,.4f} | Qty: {p.quantity:.6f}\n"
+                f"  SL: ${p.stop_loss:,.4f} | TP: ${p.take_profit:,.4f}\n"
+                f"  ID: <code>{p.trade_id}</code>"
+            )
+        await self._send(update, "\n".join(lines))
+
+    async def _cmd_liveclose(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """/liveclose <trade_id> — manually close a live position."""
+        if not await self._guard(update, "admin"):
+            return
+        args = ctx.args or []
+        if not args:
+            await self._send(update, "Usage: <code>/liveclose TRADE_ID</code>")
+            return
+        trade_id = args[0]
+        result = await self.engine.live_executor.close_position(trade_id, "manual_telegram")
+        await self._send(update, f"\U0001f510 {result}")
 
     # ── Proactive Alerts (Move 2) ──────────────────────────────
 

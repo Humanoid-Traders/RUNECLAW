@@ -20,6 +20,7 @@ from bot.core.analyzer import Analyzer
 from bot.core.cost import CostTracker
 from bot.core.exchange_flow import ExchangeFlowProvider
 from bot.core.macro_events import MacroEventProvider
+from bot.core.live_executor import LiveExecutor
 from bot.core.market_scanner import MarketScanner
 from bot.core.order_flow import OrderFlowAnalyzer
 from bot.core.ws_feed import BitgetWSFeed
@@ -72,6 +73,8 @@ class RuneClawEngine:
         self.learning = LearningOrchestrator()
         # WebSocket feed for real-time price monitoring (supplements REST polling)
         self.ws_feed = BitgetWSFeed()
+        # Live executor for real Bitget orders (micro-test mode)
+        self.live_executor = LiveExecutor()
         # C1 fix: wire trade-close callback so portfolio closes feed risk streak tracking
         self.portfolio._on_trade_close = self.risk.record_trade_result
         self.state: AgentState = AgentState.IDLE
@@ -370,9 +373,47 @@ class RuneClawEngine:
             # Not live mode — execute as paper trade
             pass  # fall through to paper trade below
         else:
-            # Live mode enabled — block until live execution is implemented
-            self._transition(AgentState.IDLE, "live execution not implemented")
-            return "LIVE EXECUTION NOT YET IMPLEMENTED. Use simulation mode."
+            # Live mode — execute via LiveExecutor with micro-test safety limits
+            self._transition(AgentState.EXECUTING, f"executing LIVE trade {trade_id}")
+            size_usd = recheck.position_size_usd
+            result = await self.live_executor.execute(idea, size_usd)
+
+            # Also record as paper trade for portfolio tracking / metrics
+            try:
+                paper_trade = self.portfolio.open_position(idea, min(size_usd, 10.0))
+            except Exception:
+                paper_trade = None  # non-fatal: live order is the source of truth
+
+            # Seal decision to tamper-evident audit chain
+            self.audit_chain.seal_decision(DecisionRecord(
+                decision_id=trade_id, symbol=idea.asset,
+                idea={"direction": idea.direction.value, "confidence": idea.confidence,
+                      "entry": idea.entry_price, "sl": idea.stop_loss, "tp": idea.take_profit},
+                risk={"verdict": "APPROVED", "passed": len(recheck.checks_passed),
+                      "failed": len(recheck.checks_failed), "size_usd": size_usd},
+                macro={"risk_state": macro_ctx.risk_state, "multiplier": macro_ctx.size_multiplier},
+                compliance={"granted": True, "locks_passed": compliance_decision.locks_passed},
+                outcome="EXECUTED_LIVE", is_paper=False,
+            ))
+            # Learning: log accepted trade decision
+            self.learning.log_decision(
+                symbol=idea.asset,
+                direction=idea.direction.value,
+                confidence=idea.confidence,
+                confluence_score=idea.confidence,
+                entry_price=idea.entry_price,
+                stop_loss=idea.stop_loss,
+                take_profit=idea.take_profit,
+                risk_reward=idea.risk_reward_ratio,
+                position_size_usd=size_usd,
+                risk_engine_result="APPROVED",
+                checks_passed=recheck.checks_passed,
+                checks_failed=[],
+                decision="TRADE_ACCEPTED_LIVE",
+                paper_trade_id=trade_id,
+            )
+            self._transition(AgentState.IDLE, "live trade executed")
+            return result
 
         # Paper trade execution
         self._transition(AgentState.EXECUTING, f"executing paper trade {trade_id}")
@@ -495,6 +536,17 @@ class RuneClawEngine:
                 action="monitor",
                 result="ERROR",
             )
+
+        # Also check live positions if in live mode
+        if CONFIG.is_live():
+            try:
+                live_closed = await self.live_executor.check_positions()
+                for msg in live_closed:
+                    audit(trade_log, f"Live position auto-closed: {msg}",
+                          action="live_auto_close", result="CLOSED")
+            except Exception as exc:
+                audit(system_log, f"Live position monitor error: {exc}",
+                      action="live_monitor", result="ERROR")
 
     @property
     def pending_ideas(self) -> list[TradeIdea]:
