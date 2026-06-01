@@ -28,6 +28,7 @@ from telegram.ext import (
 from bot.config import CONFIG, _env_bool
 from bot.core.engine import RuneClawEngine
 from bot.core.signal_tracker import SignalTracker
+from bot.llm.provider import BYOK, LLMConfig, LLMProvider, LLMTier, PROVIDER_CATALOG, DEFAULT_TIER_ROUTING, create_llm_client, llm_complete, resolve_tier_config
 from bot.skills.skill_registry import SkillRegistry, build_default_registry
 from bot.utils.logger import audit, system_log
 from bot.utils.user_store import UserStore
@@ -128,6 +129,9 @@ class TelegramHandler:
             # Admin commands
             ("approve", self._cmd_approve), ("revoke", self._cmd_revoke),
             ("users", self._cmd_users),
+            # LLM BYOK commands
+            ("setllm", self._cmd_setllm), ("llmstatus", self._cmd_llmstatus),
+            ("llmreset", self._cmd_llmreset), ("llmtiers", self._cmd_llmtiers),
         ]:
             app.add_handler(CommandHandler(cmd, handler))
         app.add_handler(CallbackQueryHandler(self._handle_callback))
@@ -209,39 +213,44 @@ class TelegramHandler:
     )
 
     async def _llm_chat(self, question: str) -> str:
-        """Send a free-text question to the LLM and return the response."""
+        """Send a free-text question to the LLM and return the response.
+        Uses CHAT tier routing — may use a different provider than thesis/scan."""
         import asyncio
-        from openai import AsyncOpenAI
 
-        llm_kwargs: dict = {"api_key": CONFIG.llm.api_key}
-        if CONFIG.llm.base_url:
-            llm_kwargs["base_url"] = CONFIG.llm.base_url
+        # Resolve active LLM config (BYOK runtime > .env)
+        env_config = LLMConfig(
+            provider=LLMProvider(CONFIG.llm.provider) if CONFIG.llm.provider else LLMProvider.OPENAI,
+            api_key=CONFIG.llm.api_key,
+            model=CONFIG.llm.model,
+            base_url=CONFIG.llm.base_url,
+            timeout_seconds=CONFIG.llm.timeout_seconds,
+        )
+        active_cfg = BYOK.get_active_config(env_config)
 
-        client = AsyncOpenAI(**llm_kwargs)
+        # Route to CHAT tier (may use a different/faster provider)
+        chat_cfg = resolve_tier_config(LLMTier.CHAT, active_cfg)
+
+        if not chat_cfg.is_configured():
+            return "No LLM configured. Use /setllm to set a provider, or add LLM_API_KEY to .env."
+
         try:
-            resp = await asyncio.wait_for(
-                client.chat.completions.create(
-                    model=CONFIG.llm.model,
-                    messages=[
-                        {"role": "system", "content": self._CHAT_SYSTEM_PROMPT},
-                        {"role": "user", "content": question},
-                    ],
-                    temperature=0.5,
-                    max_tokens=512,
-                ),
-                timeout=CONFIG.llm.timeout_seconds,
-            )
-            answer = resp.choices[0].message.content.strip()
-            # Track cost
-            usage = resp.usage
-            if usage:
+            client = create_llm_client(chat_cfg)
+            if client is None:
+                return "LLM client could not be created. Check your API key."
+
+            answer = await llm_complete(
+                client, chat_cfg, self._CHAT_SYSTEM_PROMPT, question)
+
+            # Track cost (OpenAI-compat only — Anthropic doesn't return usage here)
+            # Approximate: ~500 prompt + 256 completion tokens
+            if chat_cfg.sdk_type() != "anthropic" and hasattr(self.engine, 'cost'):
                 self.engine.cost.record_llm(
-                    model=CONFIG.llm.model,
-                    prompt_tokens=usage.prompt_tokens or 0,
-                    completion_tokens=usage.completion_tokens or 0,
+                    model=chat_cfg.model,
+                    prompt_tokens=500,
+                    completion_tokens=256,
                     category="chat",
                 )
-            return answer
+            return answer.strip()
         except asyncio.TimeoutError:
             return "Response timed out. Try again or use a specific command like /scan or /analyze."
         except Exception as e:
@@ -471,6 +480,12 @@ class TelegramHandler:
             "  /proposals     Improvements\n"
             "  /optimize      Token optimizer\n"
             "  /costs         Agent economics\n"
+            "\n"
+            " LLM BYOK\n"
+            "  /setllm        Switch provider\n"
+            "  /llmstatus     Current LLM\n"
+            "  /llmtiers      Tier routing\n"
+            "  /llmreset      Reset to .env\n"
         )
 
         if role == "admin":
@@ -681,6 +696,104 @@ class TelegramHandler:
                         text=text, parse_mode="HTML")
                 except Exception:
                     pass
+
+    # ── LLM BYOK commands ────────────────────────────────────
+
+    async def _cmd_setllm(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """/setllm <provider> [api_key] [model] — switch LLM provider at runtime."""
+        if not await self._guard(update, "mode"):
+            return
+
+        args = ctx.args or []
+        if not args:
+            providers = ", ".join(p.value for p in LLMProvider if p != LLMProvider.CUSTOM)
+            await self._send(update,
+                "\U0001f916 <b>BYOK — Bring Your Own Key</b>\n\n"
+                "<pre>"
+                " /setllm &lt;provider&gt; &lt;api_key&gt;\n"
+                " /setllm groq gsk_your_key\n"
+                " /setllm ollama\n"
+                " /setllm anthropic sk-ant-key\n"
+                " /setllm openai sk-key gpt-4o-mini\n"
+                "</pre>\n\n"
+                f"<b>Providers:</b> <code>{providers}</code>\n\n"
+                "<i>Keys are stored in memory only — never saved to disk or logs.</i>")
+            return
+
+        provider_str = args[0].lower()
+        api_key = args[1] if len(args) > 1 else ""
+        model = args[2] if len(args) > 2 else ""
+
+        ok, msg = BYOK.set_provider(provider_str, api_key=api_key, model=model)
+        if ok:
+            # Refresh the analyzer's LLM client to use new provider
+            if hasattr(self.engine, 'analyzer') and hasattr(self.engine.analyzer, 'refresh_llm_client'):
+                self.engine.analyzer.refresh_llm_client()
+            audit(system_log, f"LLM provider switched to {provider_str}",
+                  action="setllm", result="OK",
+                  data={"provider": provider_str, "model": model or "default"})
+        await self._send(update, html.escape(msg))
+
+    async def _cmd_llmstatus(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """/llmstatus — show current LLM provider and key fingerprint."""
+        if not await self._guard(update, "status"):
+            return
+
+        env_config = LLMConfig(
+            provider=LLMProvider(CONFIG.llm.provider) if CONFIG.llm.provider else LLMProvider.OPENAI,
+            api_key=CONFIG.llm.api_key,
+            model=CONFIG.llm.model,
+            base_url=CONFIG.llm.base_url,
+        )
+        status = BYOK.status(env_config)
+        await self._send(update, f"<pre>{html.escape(status)}</pre>")
+
+    async def _cmd_llmreset(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """/llmreset — clear runtime LLM key, revert to .env settings."""
+        if not await self._guard(update, "mode"):
+            return
+
+        msg = BYOK.reset()
+        # Refresh analyzer client back to .env config
+        if hasattr(self.engine, 'analyzer') and hasattr(self.engine.analyzer, 'refresh_llm_client'):
+            self.engine.analyzer.refresh_llm_client()
+        audit(system_log, "LLM config reset to .env", action="llmreset", result="OK")
+        await self._send(update, html.escape(msg))
+
+    async def _cmd_llmtiers(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """/llmtiers — show multi-tier LLM routing configuration."""
+        if not await self._guard(update, "status"):
+            return
+
+        env_config = LLMConfig(
+            provider=LLMProvider(CONFIG.llm.provider) if CONFIG.llm.provider else LLMProvider.OPENAI,
+            api_key=CONFIG.llm.api_key,
+            model=CONFIG.llm.model,
+            base_url=CONFIG.llm.base_url,
+        )
+        active_cfg = BYOK.get_active_config(env_config)
+
+        lines = ["\U0001f3af <b>Multi-Tier LLM Routing</b>\n"]
+        for tier in LLMTier:
+            tier_cfg = resolve_tier_config(tier, active_cfg)
+            provider_name = tier_cfg.provider.value if isinstance(tier_cfg.provider, LLMProvider) else str(tier_cfg.provider)
+            default_route = DEFAULT_TIER_ROUTING.get(tier, {})
+            is_custom = tier_cfg != active_cfg
+            source = "tier-routed" if is_custom else "primary"
+            configured = "\u2705" if tier_cfg.is_configured() else "\u274c"
+            lines.append(
+                f"{configured} <b>{tier.value.upper()}</b>: "
+                f"<code>{provider_name}</code> / <code>{tier_cfg.model}</code>\n"
+                f"   Source: {source} | {default_route.get('reason', 'default')}"
+            )
+
+        lines.append(
+            "\n<i>Set per-tier routing via env:\n"
+            "  LLM_TIER_SCAN_PROVIDER=groq\n"
+            "  LLM_TIER_THESIS_PROVIDER=gemini\n"
+            "  GEMINI_API_KEY=AIza...</i>"
+        )
+        await self._send(update, "\n".join(lines))
 
     # ── Protected commands ────────────────────────────────────
 

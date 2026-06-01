@@ -92,19 +92,17 @@ class TelegramConfig:
 class LLMConfig:
     """LLM provider settings for trade analysis.
 
-    Supports any OpenAI-compatible provider via LLM_BASE_URL:
-      - OpenAI (default):   leave LLM_BASE_URL unset
-      - Alibaba Qwen:       LLM_BASE_URL=https://dashscope-intl.aliyuncs.com/compatible-mode/v1
-                             LLM_MODEL=qwen-max  (or qwen-plus, qwen-turbo)
-      - OpenRouter:          LLM_BASE_URL=https://openrouter.ai/api/v1
-                             LLM_MODEL=qwen/qwen3.6-35b-a3b
-      - Together AI:         LLM_BASE_URL=https://api.together.xyz/v1
-      - Fireworks:           LLM_BASE_URL=https://api.fireworks.ai/inference/v1
-      - Any local (vLLM/Ollama): LLM_BASE_URL=http://localhost:8000/v1
+    Multi-provider BYOK system supporting 10 providers:
+      - OpenAI (default), Anthropic Claude, Google Gemini, Groq,
+        Mistral, DeepSeek, Together AI, Ollama, OpenRouter, Custom.
+
+    Set LLM_PROVIDER to select. LLM_BASE_URL auto-resolves from catalog.
+    Runtime switching via Telegram /setllm (keys stay in memory only).
     """
+    provider: str = _env("LLM_PROVIDER", "openai")
     api_key: str = _env("LLM_API_KEY")
-    base_url: str = _env("LLM_BASE_URL")  # empty = OpenAI default
-    model: str = _env("LLM_MODEL", "gpt-4o")
+    base_url: str = _env("LLM_BASE_URL")  # auto-resolved from provider if empty
+    model: str = _env("LLM_MODEL", "")     # auto-resolved from provider if empty
     temperature: float = 0.3
     max_tokens: int = 1024
     timeout_seconds: float = _env_float("LLM_TIMEOUT_SEC", 15.0)

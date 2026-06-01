@@ -37,6 +37,7 @@ from bot.core.explainability import ExplainabilityEngine
 from bot.core.multi_timeframe import MTFConfluence
 from bot.core.smart_money import SmartMoneyEngine
 from bot.core.strategy_modes import StrategySelector, MODE_CONFIGS
+from bot.llm.provider import BYOK, LLMProvider, LLMTier, PROVIDER_CATALOG, create_llm_client, llm_complete, LLMConfig, resolve_tier_config
 from bot.utils.logger import audit, trade_log
 from bot.utils.models import Direction, MarketSignal, TradeIdea
 
@@ -49,7 +50,8 @@ class Analyzer:
     """Produces TradeIdea objects from raw market signals.
 
     LLM optimization:
-      - Model routing: gpt-4o-mini for scans/quick analysis, gpt-4o for thesis generation
+      - Multi-tier routing: different providers for scan vs thesis vs learning
+        e.g. Groq for speed-critical scans, Gemini 3.1 Pro for thesis reasoning
       - Prompt compression: strips redundant whitespace, enforces hard cap
       - Structured JSON output mode where possible (fewer tokens, reliable parsing)
       - Per-category cost tracking via CostTracker
@@ -62,20 +64,33 @@ class Analyzer:
     THESIS_MODEL = "gpt-4o"        # overridden by CONFIG.llm.model if set
 
     def __init__(self, cost_tracker: Optional["CostTracker"] = None) -> None:  # noqa: F821
-        # Build LLM client — supports any OpenAI-compatible provider (Qwen, OpenRouter, etc.)
-        if CONFIG.llm.api_key:
-            llm_kwargs: dict = {"api_key": CONFIG.llm.api_key}
-            if CONFIG.llm.base_url:
-                llm_kwargs["base_url"] = CONFIG.llm.base_url
-            self._llm = AsyncOpenAI(**llm_kwargs)
-        else:
-            self._llm = None
+        # Build LLM client — supports 10 providers via BYOK system
+        # Resolve provider config (runtime BYOK overrides .env)
+        self._llm_config = self._resolve_llm_config()
+        self._llm = self._build_llm_client()
 
-        # When a custom base_url is set (Groq, Qwen, etc.), use the configured model
+        # Multi-tier routing: resolve separate configs for scan vs thesis
+        self._scan_config = resolve_tier_config(LLMTier.SCAN, self._llm_config) if self._llm_config else None
+        self._thesis_config = resolve_tier_config(LLMTier.THESIS, self._llm_config) if self._llm_config else None
+        self._scan_client = self._build_client_for_config(self._scan_config)
+        self._thesis_client = self._build_client_for_config(self._thesis_config)
+
+        # When a non-OpenAI provider is used, use the configured model
         # for both tiers instead of OpenAI-specific model names
-        if CONFIG.llm.base_url and CONFIG.llm.model:
+        resolved_model = self._llm_config.model if self._llm_config else ""
+        if resolved_model and self._llm_config and self._llm_config.provider != "openai":
+            self.SCAN_MODEL = resolved_model
+            self.THESIS_MODEL = resolved_model
+        elif CONFIG.llm.base_url and CONFIG.llm.model:
             self.SCAN_MODEL = CONFIG.llm.model
             self.THESIS_MODEL = CONFIG.llm.model
+
+        # Override model names from tier configs if they have different providers
+        if self._scan_config and self._scan_config != self._llm_config:
+            self.SCAN_MODEL = self._scan_config.model
+        if self._thesis_config and self._thesis_config != self._llm_config:
+            self.THESIS_MODEL = self._thesis_config.model
+
         self._llm_calls_today: int = 0
         self._llm_day: str = ""  # YYYY-MM-DD, reset counter on new day
         self._cost = cost_tracker
@@ -93,6 +108,60 @@ class Analyzer:
         self._smart_money = SmartMoneyEngine()
         self._strategy_selector = StrategySelector()
         self._explainability = ExplainabilityEngine()
+
+    def _resolve_llm_config(self) -> Optional[LLMConfig]:
+        """Build LLMConfig from BYOK runtime or .env config."""
+        # Check BYOK runtime override first
+        env_config = LLMConfig(
+            provider=LLMProvider(CONFIG.llm.provider) if CONFIG.llm.provider else LLMProvider.OPENAI,
+            api_key=CONFIG.llm.api_key,
+            model=CONFIG.llm.model,
+            base_url=CONFIG.llm.base_url,
+            temperature=CONFIG.llm.temperature,
+            max_tokens=CONFIG.llm.max_tokens,
+            timeout_seconds=CONFIG.llm.timeout_seconds,
+        )
+        return BYOK.get_active_config(env_config)
+
+    def _build_llm_client(self):
+        """Create LLM client from resolved config."""
+        return self._build_client_for_config(self._resolve_llm_config())
+
+    @staticmethod
+    def _build_client_for_config(cfg):
+        """Create LLM client from a specific config."""
+        if cfg is None or not cfg.is_configured():
+            return None
+        try:
+            return create_llm_client(cfg)
+        except ImportError as e:
+            audit(trade_log, f"LLM SDK import error: {e}", action="llm_init", result="FAIL")
+            return None
+
+    def refresh_llm_client(self) -> None:
+        """Refresh LLM client after BYOK /setllm change."""
+        self._llm_config = self._resolve_llm_config()
+        self._llm = self._build_llm_client()
+        # Refresh tier-specific clients
+        self._scan_config = resolve_tier_config(LLMTier.SCAN, self._llm_config) if self._llm_config else None
+        self._thesis_config = resolve_tier_config(LLMTier.THESIS, self._llm_config) if self._llm_config else None
+        self._scan_client = self._build_client_for_config(self._scan_config)
+        self._thesis_client = self._build_client_for_config(self._thesis_config)
+        # Update model routing for non-OpenAI providers
+        if self._llm_config and self._llm_config.model:
+            provider = self._llm_config.provider
+            if isinstance(provider, LLMProvider):
+                provider_str = provider.value
+            else:
+                provider_str = str(provider)
+            if provider_str != "openai":
+                self.SCAN_MODEL = self._llm_config.model
+                self.THESIS_MODEL = self._llm_config.model
+        # Override from tier configs
+        if self._scan_config and self._scan_config != self._llm_config:
+            self.SCAN_MODEL = self._scan_config.model
+        if self._thesis_config and self._thesis_config != self._llm_config:
+            self.THESIS_MODEL = self._thesis_config.model
 
     async def analyze(self, signal: MarketSignal, candles: list[list[float]], order_flow=None,
                        candles_4h=None, candles_1d=None) -> Optional[TradeIdea]:
@@ -740,10 +809,22 @@ class Analyzer:
         prompt = self._build_prompt(signal, indicators, order_flow)
 
         # Tier-based model routing:
-        #   Tier 2 → gpt-4o-mini (cheap)
-        #   Tier 3 → gpt-4o (full reasoning)
+        #   Tier 2 → scan model (cheap/fast — e.g. Groq)
+        #   Tier 3 → thesis model (strong reasoning — e.g. Gemini 3.1 Pro)
         use_full_model = tier == 3
-        model = self.THESIS_MODEL if use_full_model else self.SCAN_MODEL
+        # Multi-tier routing: use tier-specific client/config if available
+        if use_full_model and self._thesis_client is not None:
+            active_client = self._thesis_client
+            active_cfg = self._thesis_config
+            model = self._thesis_config.model
+        elif not use_full_model and self._scan_client is not None:
+            active_client = self._scan_client
+            active_cfg = self._scan_config
+            model = self._scan_config.model
+        else:
+            active_client = self._llm
+            active_cfg = self._resolve_llm_config()
+            model = self.THESIS_MODEL if use_full_model else self.SCAN_MODEL
         category = "thesis" if use_full_model else "analyze"
         max_tokens = CONFIG.llm.max_tokens if use_full_model else 280
         tier_label = TieredPipeline.tier_label(tier)
@@ -752,9 +833,11 @@ class Analyzer:
             # Rate-limit before calling to prevent 429s
             await self._rate_limiter.acquire()
 
+            sdk_type = active_cfg.sdk_type() if active_cfg else "openai"
+
             # System prompt must mention "json" when using json_object response_format
             # (required by Groq and some other providers)
-            use_json_format = not use_full_model
+            use_json_format = not use_full_model and sdk_type != "anthropic"
             sys_content = (
                 "You are RUNECLAW, a risk-first crypto analyst. "
                 "Return concise analysis in json format with keys: direction, confidence, reasoning."
@@ -762,31 +845,40 @@ class Analyzer:
                 "You are RUNECLAW, a risk-first crypto analyst. Return concise analysis."
             )
 
-            resp = await asyncio.wait_for(
-                self._llm.chat.completions.create(
-                    model=model,
-                    messages=[
-                        {"role": "system", "content": sys_content},
-                        {"role": "user", "content": prompt},
-                    ],
-                    temperature=CONFIG.llm.temperature,
-                    max_tokens=max_tokens,
-                    response_format={"type": "json_object"} if use_json_format else None,
-                ),
-                timeout=CONFIG.llm.timeout_seconds,
-            )
-            self._llm_calls_today += 1
-            # Record actual token usage for cost accounting
-            usage = getattr(resp, "usage", None)
-            if usage is not None and self._cost is not None:
-                self._cost.record_llm(
-                    model=model,
-                    prompt_tokens=getattr(usage, "prompt_tokens", 0) or 0,
-                    completion_tokens=getattr(usage, "completion_tokens", 0) or 0,
-                    symbol=signal.symbol,
-                    category=category,
+            if sdk_type == "anthropic":
+                # Use unified llm_complete for Anthropic (different API format)
+                raw_text = await llm_complete(
+                    active_client, active_cfg, sys_content, prompt)
+                self._llm_calls_today += 1
+                # Anthropic doesn't return usage in the same format — skip cost tracking
+                result = self._parse_llm_response(raw_text or "")
+            else:
+                # OpenAI-compatible path (OpenAI, Groq, Gemini, DeepSeek, etc.)
+                resp = await asyncio.wait_for(
+                    active_client.chat.completions.create(
+                        model=model,
+                        messages=[
+                            {"role": "system", "content": sys_content},
+                            {"role": "user", "content": prompt},
+                        ],
+                        temperature=CONFIG.llm.temperature,
+                        max_tokens=max_tokens,
+                        response_format={"type": "json_object"} if use_json_format else None,
+                    ),
+                    timeout=CONFIG.llm.timeout_seconds,
                 )
-            result = self._parse_llm_response(resp.choices[0].message.content or "")
+                self._llm_calls_today += 1
+                # Record actual token usage for cost accounting
+                usage = getattr(resp, "usage", None)
+                if usage is not None and self._cost is not None:
+                    self._cost.record_llm(
+                        model=model,
+                        prompt_tokens=getattr(usage, "prompt_tokens", 0) or 0,
+                        completion_tokens=getattr(usage, "completion_tokens", 0) or 0,
+                        symbol=signal.symbol,
+                        category=category,
+                    )
+                result = self._parse_llm_response(resp.choices[0].message.content or "")
             if not result.pop("_parsed", False):
                 audit(trade_log, "LLM response could not be parsed, using defaults",
                       action="analyze", result="LLM_PARSE_FAIL",
@@ -877,6 +969,15 @@ class Analyzer:
 
         # Try JSON mode first (structured output from gpt-4o-mini)
         stripped = text.strip()
+        # Strip markdown code fences (common with Gemini models)
+        if stripped.startswith("```"):
+            # Remove opening fence (```json or ```)
+            first_newline = stripped.find("\n")
+            if first_newline > 0:
+                stripped = stripped[first_newline + 1:]
+            # Remove closing fence
+            if stripped.rstrip().endswith("```"):
+                stripped = stripped.rstrip()[:-3].rstrip()
         if stripped.startswith("{"):
             try:
                 data = _json.loads(stripped)
