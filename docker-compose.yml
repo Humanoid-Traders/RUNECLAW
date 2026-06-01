@@ -15,6 +15,12 @@ services:
       - ./logs:/app/logs
       - ./data:/app/data
     command: python -m bot.main --mode telegram
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; s=socket.socket(); s.settimeout(2); s.connect(('localhost', 8080)); s.close()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     depends_on:
       - redis
     deploy:
@@ -30,11 +36,18 @@ services:
     image: redis:7-alpine
     container_name: runeclaw-redis
     restart: unless-stopped
-    ports:
-      - "6379:6379"
+    # F-04 FIX: Do NOT expose Redis on host network. Bot connects via
+    # internal docker network name "redis". Password required.
+    # ports:
+    #   - "6379:6379"
     volumes:
       - redis-data:/data
-    command: redis-server --appendonly yes
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-changeme_redis_secret}
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-changeme_redis_secret}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
     deploy:
       resources:
         limits:

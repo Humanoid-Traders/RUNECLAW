@@ -3,11 +3,15 @@ RUNECLAW — Live Web Dashboard API Server
 =========================================
 Thin aiohttp layer exposing engine state as JSON endpoints.
 Runs alongside the Telegram bot on the same asyncio loop.
+
+F-02 FIX: Bearer token authentication on all /api/* endpoints.
+F-03 FIX: CORS restricted to configured origin (not wildcard).
 """
 
 from __future__ import annotations
 
 import json
+import os
 import pathlib
 from datetime import datetime, timezone
 from typing import Any
@@ -16,6 +20,13 @@ from aiohttp import web
 
 # Lazy imports — engine may not be available during module load
 _ENGINE = None
+
+# F-02 FIX: Dashboard token from environment. If empty, API endpoints
+# return 403 with a setup instruction (fail-closed).
+_DASHBOARD_TOKEN: str = os.environ.get("DASHBOARD_TOKEN", "")
+
+# F-03 FIX: Allowed CORS origin. Default to same-origin (empty = no CORS headers).
+_CORS_ORIGIN: str = os.environ.get("DASHBOARD_CORS_ORIGIN", "")
 
 
 def _ts() -> str:
@@ -148,17 +159,47 @@ async def handle_index(request: web.Request) -> web.Response:
     return web.Response(text="Dashboard HTML not found", status=404)
 
 
-# ── CORS Middleware ──────────────────────────────────────────
+# ── Auth Middleware (F-02 FIX) ────────────────────────────────
+
+@web.middleware
+async def auth_middleware(request: web.Request, handler):
+    """Require Bearer token on /api/* endpoints.
+
+    F-02 FIX: All API endpoints now require DASHBOARD_TOKEN to be set
+    and provided via Authorization header.  The index page (/) is
+    served without auth so the dashboard HTML can load.
+    """
+    if request.path.startswith("/api/"):
+        if not _DASHBOARD_TOKEN:
+            return web.json_response(
+                {"error": "DASHBOARD_TOKEN not configured. Set it in .env to enable the API."},
+                status=403,
+            )
+        auth_header = request.headers.get("Authorization", "")
+        token = auth_header.removeprefix("Bearer ").strip()
+        if not token or token != _DASHBOARD_TOKEN:
+            return web.json_response({"error": "unauthorized"}, status=401)
+    return await handler(request)
+
+
+# ── CORS Middleware (F-03 FIX) ────────────────────────────────
 
 @web.middleware
 async def cors_middleware(request: web.Request, handler):
+    """Restricted CORS — only the configured origin is allowed.
+
+    F-03 FIX: Replaced wildcard `*` with explicit origin from
+    DASHBOARD_CORS_ORIGIN env var.  If not set, no CORS headers
+    are emitted (same-origin only).
+    """
     if request.method == "OPTIONS":
         resp = web.Response()
     else:
         resp = await handler(request)
-    resp.headers["Access-Control-Allow-Origin"] = "*"
-    resp.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
-    resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
+    if _CORS_ORIGIN:
+        resp.headers["Access-Control-Allow-Origin"] = _CORS_ORIGIN
+        resp.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
+        resp.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
     return resp
 
 
@@ -171,7 +212,7 @@ def create_app(engine) -> web.Application:
         engine: RuneClawEngine instance (or any object with
                 portfolio, risk, cost, state attributes).
     """
-    app = web.Application(middlewares=[cors_middleware])
+    app = web.Application(middlewares=[cors_middleware, auth_middleware])
     app["engine"] = engine
     app.router.add_get("/", handle_index)
     app.router.add_get("/api/state", handle_state)

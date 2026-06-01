@@ -47,9 +47,17 @@ from bot.utils.models import RiskCheck, RiskVerdict, TradeIdea
 
 # Persistence file for safety state (circuit breaker, loss streak, daily PnL).
 # Survives restarts so a crash cannot silently clear protective limits.
-_STATE_FILE = os.path.join(
-    os.environ.get("RUNECLAW_STATE_DIR", "data"), "risk_state.json"
-)
+# F-15 FIX: validate state dir path to prevent traversal.
+_state_dir = os.environ.get("RUNECLAW_STATE_DIR", "data")
+if os.path.isabs(_state_dir) and not _state_dir.startswith(os.getcwd()):
+    import warnings
+    warnings.warn(
+        f"RUNECLAW_STATE_DIR={_state_dir!r} is an absolute path outside cwd. "
+        "Using default 'data' instead.",
+        stacklevel=1,
+    )
+    _state_dir = "data"
+_STATE_FILE = os.path.join(_state_dir, "risk_state.json")
 
 
 # Known correlation groups for crypto assets.

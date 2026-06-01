@@ -262,10 +262,16 @@ class IntentRouter:
             "- costs: spending, budget\n"
             "- help: how to use the bot\n"
             "- NONE: doesn't match any skill (general chat)\n\n"
-            f"User message: \"{text}\"\n\n"
+            f"User message: \"{text[:500]}\"\n\n"
             "Skill name:"
         )
-        raw = await llm_fn(prompt)
+        # F-08 FIX: Explicit timeout on LLM classification call
+        import asyncio
+        try:
+            raw = await asyncio.wait_for(llm_fn(prompt), timeout=10.0)
+        except asyncio.TimeoutError:
+            logger.debug("LLM intent classification timed out")
+            return IntentResult(raw_text=text)
         skill_name = raw.strip().lower().replace('"', '').replace("'", "")
 
         # Validate the response is a known skill

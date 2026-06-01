@@ -81,6 +81,7 @@ class RuneClawEngine:
         self.portfolio._on_trade_close = self.risk.record_trade_result
         self.state: AgentState = AgentState.IDLE
         self._state_history: list[StateTransition] = []
+        self._max_state_history = 1000  # F-13 FIX: cap state history
         self._running = False
         self._confirm_callback: Optional[Callable] = None
         self._pending_ideas: dict[str, TradeIdea] = {}
@@ -342,12 +343,35 @@ class RuneClawEngine:
         # H1 fix: re-check with stored ATR so volatility guard runs
         stored_atr = self._pending_atr.pop(trade_id, None)
 
+        # F-05 FIX: reject if market price has drifted significantly from
+        # the idea's entry price. Prevents executing at stale levels.
+        try:
+            exchange = await self.scanner._get_exchange()
+            ticker = await exchange.fetch_ticker(idea.asset)
+            current_price = float(ticker.get("last", 0))
+            if current_price > 0 and idea.entry_price > 0:
+                drift_pct = abs(current_price - idea.entry_price) / idea.entry_price * 100
+                max_drift = 2.0  # reject if price moved more than 2%
+                if drift_pct > max_drift:
+                    audit(trade_log,
+                          f"Price drift {drift_pct:.2f}% exceeds {max_drift}% threshold",
+                          action="price_drift", result="REJECTED",
+                          data={"trade_id": trade_id, "asset": idea.asset,
+                                "idea_entry": idea.entry_price,
+                                "current_price": current_price,
+                                "drift_pct": round(drift_pct, 2)})
+                    self._transition(AgentState.IDLE, f"price drift for {trade_id}")
+                    return (f"Trade REJECTED: price drifted {drift_pct:.1f}% since analysis "
+                            f"(${idea.entry_price:,.2f} → ${current_price:,.2f}). Re-analyze.")
+        except Exception as exc:
+            # Fail-open on price check: if exchange is unreachable, let
+            # the stale-data guard (#12) handle staleness via timestamp.
+            audit(trade_log, f"Price drift check failed (proceeding): {exc}",
+                  action="price_drift", result="SKIP")
+
         # Re-check risk (portfolio state may have changed -- new positions, daily PnL, drawdown.
-        # HONEST LIMITATION: this does NOT re-fetch market price or update the idea's
-        # entry/SL/TP.  Stale-data check #12 guards against time drift (>300s = reject),
-        # but not price drift within that window.  Price drift is bounded to ≤5 min by TTL.
-        # To close this gap fully, re-fetch the ticker here and reject if entry has drifted
-        # beyond a threshold (e.g. 1 ATR).  Not implemented in this prototype.)
+        # HONEST LIMITATION: price drift is now checked above (F-05 fix).
+        # Stale-data check #12 guards against time drift (>300s = reject).
         self._transition(AgentState.RISK_CHECK, f"re-checking risk for {trade_id}")
         try:
             recheck = self.risk.evaluate(idea, atr=stored_atr)

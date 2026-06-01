@@ -186,11 +186,26 @@ class Analyzer:
                   result="SKIP", data={"symbol": signal.symbol})
             return None
 
-        opens = np.array([c[1] for c in candles], dtype=float)
-        highs = np.array([c[2] for c in candles], dtype=float)
-        lows = np.array([c[3] for c in candles], dtype=float)
-        closes = np.array([c[4] for c in candles], dtype=float)
-        volumes = np.array([c[5] for c in candles], dtype=float) if len(candles[0]) > 5 else None
+        # Validate candle data integrity before processing
+        try:
+            for i, c in enumerate(candles):
+                if len(c) < 5:
+                    raise ValueError(f"Candle {i} has {len(c)} fields (need >=5)")
+            opens = np.array([c[1] for c in candles], dtype=float)
+            highs = np.array([c[2] for c in candles], dtype=float)
+            lows = np.array([c[3] for c in candles], dtype=float)
+            closes = np.array([c[4] for c in candles], dtype=float)
+            volumes = np.array([c[5] for c in candles], dtype=float) if len(candles[0]) > 5 else None
+            # Reject NaN/Inf in OHLCV data
+            for name, arr in [("opens", opens), ("highs", highs), ("lows", lows), ("closes", closes)]:
+                if not np.all(np.isfinite(arr)):
+                    raise ValueError(f"Non-finite values in {name}")
+                if np.any(arr <= 0):
+                    raise ValueError(f"Non-positive values in {name}")
+        except (ValueError, IndexError, TypeError) as exc:
+            audit(trade_log, f"Invalid candle data: {exc}", action="analyze",
+                  result="SKIP", data={"symbol": signal.symbol, "error": str(exc)})
+            return None
 
         indicators = self._compute_indicators(highs, lows, closes, volumes)
         if indicators is None:

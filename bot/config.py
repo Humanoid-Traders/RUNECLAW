@@ -223,7 +223,8 @@ class RuntimeState:
     """
 
     def __init__(self) -> None:
-        self._lock = __import__("threading").Lock()
+        import threading
+        self._lock = threading.Lock()
         self._asset_universe: str = CONFIG.exchange.asset_universe
         self._strategy_mode: str = "balanced"
         self._live_mode: bool = False  # toggled by /golive CONFIRM

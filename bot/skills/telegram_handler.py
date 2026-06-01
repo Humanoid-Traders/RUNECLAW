@@ -66,6 +66,12 @@ class RateLimiter:
             if len(window) >= self._limit:
                 return False
             self._calls[user_id].append(now)
+            # F-13 FIX: prune stale user entries to prevent unbounded dict growth
+            if len(self._calls) > 500:
+                stale = [uid for uid, ts in self._calls.items()
+                         if not ts or now - ts[-1] > 300]
+                for uid in stale:
+                    del self._calls[uid]
             return True
 
 

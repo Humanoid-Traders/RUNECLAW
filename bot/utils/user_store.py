@@ -1,6 +1,7 @@
 """
 RUNECLAW User Store — file-backed user management with roles.
 Persists to data/users.json. Thread-safe with file locking.
+F-14 FIX: Session timeout — sensitive commands require re-activity within 24h.
 """
 
 from __future__ import annotations
@@ -136,13 +137,32 @@ class UserStore:
         return user is not None and user.get("authorized", False)
 
     def has_permission(self, telegram_id: int | str, command: str) -> bool:
-        """Check if user has permission for a specific command."""
+        """Check if user has permission for a specific command.
+
+        F-14 FIX: Sensitive commands (trade, halt, reset, mode, golive)
+        require the user to have been active within the last 24 hours.
+        If the session is stale, only read-only commands are permitted.
+        """
         user = self.get(telegram_id)
         if not user:
             return command in ROLE_PERMISSIONS.get("pending", set())
         role = user.get("role", "pending")
         perms = ROLE_PERMISSIONS.get(role, set())
-        return "*" in perms or command in perms
+        if "*" not in perms and command not in perms:
+            return False
+        # F-14: session timeout for sensitive commands
+        _SENSITIVE_CMDS = {"trade", "halt", "reset", "mode", "golive", "approve", "revoke"}
+        if command in _SENSITIVE_CMDS:
+            last_seen = user.get("last_seen", "")
+            if last_seen:
+                try:
+                    from datetime import datetime as _dt
+                    last_dt = _dt.fromisoformat(last_seen)
+                    if (datetime.now(UTC) - last_dt).total_seconds() > 86400:
+                        return False  # stale session — require /start to refresh
+                except (ValueError, TypeError):
+                    pass
+        return True
 
     def list_users(self) -> list[dict]:
         """List all registered users."""

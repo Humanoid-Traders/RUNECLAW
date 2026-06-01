@@ -437,6 +437,7 @@ class PortfolioTracker:
     def _save_state_locked(self, path: Optional[str] = None) -> None:
         target = path or self._state_file
         state: dict[str, Any] = {
+            "schema_version": 1,  # F-09 FIX: version tag for future migrations
             "balance": self.balance,
             "initial_balance": self._initial_balance,
             "peak_equity": self._peak_equity,
@@ -452,6 +453,14 @@ class PortfolioTracker:
         try:
             target_path = Path(target)
             target_path.parent.mkdir(parents=True, exist_ok=True)
+            # F-09 FIX: keep one backup of the previous state
+            if target_path.exists():
+                backup = target_path.with_suffix(".json.bak")
+                try:
+                    import shutil
+                    shutil.copy2(str(target_path), str(backup))
+                except Exception:
+                    pass  # best-effort backup
             tmp = str(target_path) + ".tmp"
             with open(tmp, "w") as f:
                 json.dump(state, f, indent=2, default=str)
@@ -474,6 +483,9 @@ class PortfolioTracker:
         try:
             with open(target_path, "r") as f:
                 data = json.load(f)
+            # F-09 FIX: validate required schema fields before loading
+            if "balance" not in data:
+                raise ValueError("Missing 'balance' field in state file")
             self.balance = float(data["balance"])
             self._initial_balance = float(data.get("initial_balance", self.balance))
             self._peak_equity = float(data.get("peak_equity", self.balance))
@@ -502,6 +514,18 @@ class PortfolioTracker:
                         "history_count": len(self._history)})
             return True
         except Exception as exc:
+            # F-09 FIX: Attempt backup recovery before starting fresh
+            backup_path = target_path.with_suffix(".json.bak")
+            if backup_path.exists() and path != str(backup_path):
+                audit(trade_log,
+                      f"Primary state corrupted ({exc}), trying backup {backup_path}",
+                      action="load_state", result="TRYING_BACKUP",
+                      level=logging.WARNING)
+                recovered = self._load_state_locked(str(backup_path))
+                if recovered:
+                    audit(trade_log, "Recovered portfolio state from backup",
+                          action="load_state", result="RECOVERED")
+                    return True
             audit(trade_log,
                   f"CRITICAL: Corrupted state file {target}, starting fresh: {exc}",
                   action="load_state", result="CORRUPTED",

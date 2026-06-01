@@ -100,6 +100,8 @@ class AuditChain:
         self._path = Path(path)
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
+        self._entries_since_sign = 0
+        self._auto_sign_interval = 50  # F-12 FIX: auto-sign every N entries
 
     # -- public API -----------------------------------------------------------
 
@@ -127,6 +129,14 @@ class AuditChain:
             )
             with self._path.open("a", encoding="utf-8") as fh:
                 fh.write(json.dumps(entry.to_dict(), sort_keys=False) + "\n")
+            # F-12 FIX: auto-sign every N entries to anchor chain integrity
+            self._entries_since_sign += 1
+            if self._entries_since_sign >= self._auto_sign_interval:
+                try:
+                    self.sign_latest_batch(batch_size=self._auto_sign_interval)
+                    self._entries_since_sign = 0
+                except Exception:
+                    pass  # best-effort: signing is non-critical
             return entry
 
     def seal_decision(self, record: DecisionRecord) -> AuditEntry:

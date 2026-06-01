@@ -8,16 +8,20 @@ Safety invariants:
   - Fail-closed: any API error aborts the trade and logs the failure
   - The executor never modifies risk limits or bypasses any gate
   - SL/TP are placed as separate stop-market / take-profit-market orders
+  - F-07 FIX: Positions are persisted to disk and reconciled on restart
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import os
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
 from bot.compat import UTC
-from typing import Optional
+from typing import Any, Optional
 
 import ccxt.async_support as ccxt
 
@@ -33,6 +37,13 @@ logger = logging.getLogger(__name__)
 MICRO_MAX_POSITION_USD = 10.0     # Max $10 per trade
 MICRO_MAX_TOTAL_EXPOSURE = 50.0   # Max $50 total open exposure
 MICRO_MAX_OPEN_POSITIONS = 5      # Max 5 concurrent positions
+
+# F-07 FIX: Persistence file for live positions
+_POSITIONS_FILE = os.path.join(
+    os.environ.get("RUNECLAW_STATE_DIR", "data"), "live_positions.json"
+)
+# F-13 FIX: Maximum order history retained in memory
+_MAX_ORDER_HISTORY = 200
 
 
 @dataclass
@@ -82,6 +93,8 @@ class LiveExecutor:
         self._exchange: Optional[ccxt.Exchange] = None
         self._positions: dict[str, LivePosition] = {}
         self._order_history: list[LiveOrder] = []
+        # F-07 FIX: Load persisted positions on startup
+        self._load_positions()
 
     async def _get_exchange(self) -> ccxt.Exchange:
         """Get authenticated Bitget exchange instance."""
@@ -227,6 +240,11 @@ class LiveExecutor:
                 take_profit=idea.take_profit,
             )
             self._positions[idea.id] = position
+
+            # F-07 FIX: persist after opening
+            self._save_positions()
+            # F-13 FIX: prune order history
+            self._prune_order_history()
 
             audit(trade_log, f"Live order FILLED: {side} {idea.asset}",
                   action="live_execute", result="FILLED",
@@ -412,6 +430,9 @@ class LiveExecutor:
             pos.pnl_usd = pnl
             pos.closed_at = datetime.now(UTC)
 
+            # F-07 FIX: persist after closing
+            self._save_positions()
+
             # Cancel any outstanding SL/TP orders
             for oid in [pos.sl_order_id, pos.tp_order_id]:
                 if oid:
@@ -479,3 +500,71 @@ class LiveExecutor:
             f"Exposure: ${self.total_exposure_usd:.2f} | "
             f"Realized PnL: ${total_pnl:.4f}"
         )
+
+    # ── F-07 FIX: Position persistence ──────────────────────────────
+
+    def _save_positions(self) -> None:
+        """Persist open positions to disk so they survive restarts."""
+        try:
+            data: dict[str, Any] = {}
+            for tid, pos in self._positions.items():
+                if pos.status != "open":
+                    continue
+                data[tid] = {
+                    "trade_id": pos.trade_id,
+                    "symbol": pos.symbol,
+                    "direction": pos.direction,
+                    "entry_price": pos.entry_price,
+                    "quantity": pos.quantity,
+                    "cost_usd": pos.cost_usd,
+                    "stop_loss": pos.stop_loss,
+                    "take_profit": pos.take_profit,
+                    "sl_order_id": pos.sl_order_id,
+                    "tp_order_id": pos.tp_order_id,
+                    "opened_at": pos.opened_at.isoformat() if pos.opened_at else None,
+                    "status": pos.status,
+                }
+            path = Path(_POSITIONS_FILE)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = str(path) + ".tmp"
+            with open(tmp, "w") as f:
+                json.dump(data, f, indent=2, default=str)
+            os.replace(tmp, str(path))
+        except Exception as exc:
+            logger.debug("Failed to save live positions: %s", exc)
+
+    def _load_positions(self) -> None:
+        """Load persisted positions on startup."""
+        path = Path(_POSITIONS_FILE)
+        if not path.exists():
+            return
+        try:
+            with open(path, "r") as f:
+                data = json.load(f)
+            for tid, pdata in data.items():
+                opened_at = datetime.fromisoformat(pdata["opened_at"]) if pdata.get("opened_at") else datetime.now(UTC)
+                self._positions[tid] = LivePosition(
+                    trade_id=pdata["trade_id"],
+                    symbol=pdata["symbol"],
+                    direction=pdata["direction"],
+                    entry_price=float(pdata["entry_price"]),
+                    quantity=float(pdata["quantity"]),
+                    cost_usd=float(pdata["cost_usd"]),
+                    stop_loss=float(pdata["stop_loss"]),
+                    take_profit=float(pdata["take_profit"]),
+                    sl_order_id=pdata.get("sl_order_id"),
+                    tp_order_id=pdata.get("tp_order_id"),
+                    opened_at=opened_at,
+                    status=pdata.get("status", "open"),
+                )
+            if self._positions:
+                audit(trade_log, f"Loaded {len(self._positions)} live positions from disk",
+                      action="load_positions", result="OK")
+        except Exception as exc:
+            audit(trade_log, f"Failed to load live positions: {exc}",
+                  action="load_positions", result="ERROR")
+
+    def _prune_order_history(self) -> None:
+        """F-13 FIX: Cap order history to prevent unbounded growth."""
+        if len(self._order_history) > _MAX_ORDER_HISTORY:
+            self._order_history = self._order_history[-(_MAX_ORDER_HISTORY // 2):]

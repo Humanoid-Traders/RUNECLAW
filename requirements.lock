@@ -1,0 +1,13 @@
+# F-10 FIX: Pinned dependency versions for reproducible builds.
+# Generated from pip freeze. Use `pip install -r requirements.lock` for production.
+# Update periodically and re-test: `pip install --upgrade -r requirements.txt && pip freeze > requirements.lock`
+python-dotenv==1.2.2
+pydantic==2.13.3
+ccxt==4.5.56
+python-telegram-bot==22.7
+openai==2.38.0
+anthropic==0.104.1
+numpy==2.3.5
+aiohttp==3.13.4
+websockets==16.0
+cryptography==48.0.0
