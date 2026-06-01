@@ -5,7 +5,8 @@ Extends the core models with backtest-specific structures.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime
+from bot.compat import UTC
 from typing import Optional
 from pydantic import BaseModel, Field
 

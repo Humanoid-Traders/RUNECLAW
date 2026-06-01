@@ -39,7 +39,8 @@ import os
 import threading
 from collections import deque
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime
+from bot.compat import UTC
 from typing import Optional
 
 import numpy as np

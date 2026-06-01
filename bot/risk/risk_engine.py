@@ -1,7 +1,7 @@
 """
 RUNECLAW Risk Engine -- FAIL-CLOSED pre-trade gatekeeper.
 
-18 independent pre-trade checks. ANY failure = REJECTED. No overrides.
+20 independent pre-trade checks. ANY failure = REJECTED. No overrides.
 Design: if a check cannot be evaluated, the trade is REJECTED (fail-closed).
 
 Note: Check #17 (liquidity guard) lives in engine.py via OrderFlowAnalyzer,
@@ -26,6 +26,8 @@ Checks:
   16. Volatility guard (ATR as % of price)
   17. Liquidity guard (fail-open, runs in engine.py via OrderFlowAnalyzer)
   18. Macro event risk state (EVENT_LOCKDOWN/BLACKOUT = reject)
+  19. Multi-timeframe trend alignment (MTF_ALIGNMENT)
+  20. Portfolio concentration via PCA on correlation matrix (CONCENTRATION_PCA)
 """
 
 from __future__ import annotations
@@ -34,7 +36,8 @@ import json
 import os
 import threading
 import time
-from datetime import UTC, datetime
+from datetime import datetime
+from bot.compat import UTC
 from typing import Any, Optional
 
 from bot.config import CONFIG
@@ -92,7 +95,7 @@ class RiskEngine:
     """
     Pre-trade and post-trade risk checks.
     Design principle: if ANY check cannot be evaluated, the trade is REJECTED.
-    18 independent checks -- all must pass (16 in-engine + #17 liquidity in engine.py + #18 macro).
+    20 independent checks -- all must pass (16 in-engine + #17 liquidity in engine.py + #18 macro + #19 MTF alignment + #20 concentration PCA).
 
     Threading model: RUNECLAW runs on a single-threaded asyncio event loop.
     The RLock exists as a defensive measure but does NOT guarantee correctness
@@ -168,7 +171,7 @@ class RiskEngine:
 
     def evaluate(self, idea: TradeIdea, atr: Optional[float] = None) -> RiskCheck:
         """
-        Run all 18 pre-trade checks (16 in-engine + #17 liquidity + #18 macro).
+        Run all 20 pre-trade checks (16 in-engine + #17 liquidity + #18 macro + #19 MTF alignment + #20 concentration PCA).
         Returns RiskCheck with APPROVED or REJECTED.
         Pass atr= for volatility guard check.
         """

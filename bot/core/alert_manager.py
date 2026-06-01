@@ -10,7 +10,8 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime
+from bot.compat import UTC
 from typing import Optional
 
 

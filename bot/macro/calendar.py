@@ -13,7 +13,8 @@ All event times stored as UTC. Display helpers convert to ET / Amsterdam.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
+from bot.compat import UTC
 from typing import Callable, Optional
 from zoneinfo import ZoneInfo
 

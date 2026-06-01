@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import asyncio
 import time
-from datetime import datetime, UTC
+from datetime import datetime
+from bot.compat import UTC
 from typing import Callable, Optional
 
 from pathlib import Path

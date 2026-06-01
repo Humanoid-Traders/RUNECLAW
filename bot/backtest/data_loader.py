@@ -8,7 +8,8 @@ from __future__ import annotations
 import csv
 import math
 import random
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
+from bot.compat import UTC
 from pathlib import Path
 from typing import Optional
 

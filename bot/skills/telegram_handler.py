@@ -12,7 +12,8 @@ import re
 import threading
 import time
 from collections import defaultdict
-from datetime import UTC, datetime
+from datetime import datetime
+from bot.compat import UTC
 from typing import Optional
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update

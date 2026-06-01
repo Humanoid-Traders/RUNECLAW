@@ -14,7 +14,8 @@ Anomaly types tracked:
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime
+from bot.compat import UTC
 from enum import Enum
 from typing import Optional
 

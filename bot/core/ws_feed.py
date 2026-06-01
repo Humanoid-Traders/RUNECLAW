@@ -17,7 +17,8 @@ import asyncio
 import json
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, UTC
+from datetime import datetime
+from bot.compat import UTC
 from typing import Optional
 
 from bot.utils.logger import system_log, audit

@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import threading
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime
+from bot.compat import UTC
 from typing import Optional
 
 

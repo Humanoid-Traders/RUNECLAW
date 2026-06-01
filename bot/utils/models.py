@@ -7,7 +7,8 @@ add `model_config = ConfigDict(frozen=True)` explicitly.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime
+from bot.compat import UTC
 from enum import Enum
 from typing import Optional
 from pydantic import BaseModel, Field, model_validator

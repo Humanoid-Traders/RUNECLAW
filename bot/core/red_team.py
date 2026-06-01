@@ -8,7 +8,8 @@ a structured report of what was caught and what slipped through.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
+from bot.compat import UTC
 from typing import Optional
 
 from pydantic import BaseModel, Field, ValidationError

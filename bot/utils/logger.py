@@ -14,7 +14,8 @@ import logging
 import os
 import re
 import sys
-from datetime import UTC, datetime
+from datetime import datetime
+from bot.compat import UTC
 from pathlib import Path
 from typing import Any
 

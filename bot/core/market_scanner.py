@@ -7,7 +7,8 @@ and emits structured MarketSignal objects for downstream analysis.
 from __future__ import annotations
 
 import threading
-from datetime import UTC, datetime
+from datetime import datetime
+from bot.compat import UTC
 from typing import Optional
 
 import ccxt.async_support as ccxt

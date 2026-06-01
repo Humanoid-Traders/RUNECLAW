@@ -15,7 +15,8 @@ import logging
 import os
 import threading
 from dataclasses import dataclass, field
-from datetime import UTC, date, datetime
+from datetime import date, datetime
+from bot.compat import UTC
 from pathlib import Path
 from typing import Any, Optional, Callable
 

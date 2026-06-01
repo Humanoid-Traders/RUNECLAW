@@ -14,7 +14,8 @@ import hashlib
 import json
 import logging
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
+from bot.compat import UTC
 from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Optional

@@ -17,7 +17,8 @@ In production, this maps to MCP tool calls between Agent Hub agents.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime
+from bot.compat import UTC
 from enum import Enum
 from typing import Any, Callable, Optional
 from pydantic import BaseModel, Field

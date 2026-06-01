@@ -4,7 +4,8 @@ RUNECLAW Macro Calendar Models -- Pydantic schemas for macro events and risk sta
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
+from bot.compat import UTC
 from enum import Enum
 from typing import Optional
 
