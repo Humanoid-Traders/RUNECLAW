@@ -22,6 +22,9 @@ _OK = "\U0001f7e2"        # green circle
 _WARN = "\U0001f7e1"      # yellow circle
 _BAD = "\U0001f534"       # red circle
 _NEU = "\u26aa"           # white circle
+_SHIELD = "\U0001f6e1"    # shield (risk dashboard)
+_BOOK = "\U0001f4d6"      # book (explanation)
+_CHART = "\U0001f4ca"     # chart (backtest)
 
 _BLOCKS = "\u2581\u2582\u2583\u2584\u2585\u2586\u2587\u2588"  # ▁▂▃▄▅▆▇█
 
@@ -379,7 +382,7 @@ class CheckRiskSkill(BaseSkill):
         health_bar = _bar(risk_score, 100, 14)
 
         return (
-            f"{_header('\U0001f6e1', 'RISK DASHBOARD')}\n\n"
+            f"{_header(_SHIELD, 'RISK DASHBOARD')}\n\n"
             f"  {cb_icon} Circuit Breaker: <b>{cb_label}</b>\n"
             f"  \u25cf Health Score \u2502{health_bar}\u2502 {_pill(f'{risk_score}%')}\n\n"
             # ── Visual gauges ──
@@ -487,7 +490,7 @@ class ExplainTradeSkill(BaseSkill):
             if idea.id == trade_id:
                 d_icon = _OK if idea.direction.value == "LONG" else _BAD
                 return (
-                    f"{_header('\U0001f4d6', 'EXPLANATION')}\n\n"
+                    f"{_header(_BOOK, 'EXPLANATION')}\n\n"
                     f"  {d_icon} {_pill(idea.id)}\n"
                     f"  {idea.direction.value} {_esc(idea.asset)}\n\n"
                     f"<pre>"
@@ -529,7 +532,7 @@ class RunBacktestSkill(BaseSkill):
         sharpe_bar = _bar(min(max(r.sharpe_ratio, 0), 3.0), 3.0, 8)
 
         return (
-            f"{_header('\U0001f4ca', 'BACKTEST')}\n"
+            f"{_header(_CHART, 'BACKTEST')}\n"
             f"<i>\u25c7 Synthetic data \u2014 tests plumbing, not alpha</i>\n\n"
             # ── Scorecard ──
             f"\U0001f3c6 <b>Scorecard</b>\n"
@@ -1002,7 +1005,7 @@ class LearningDashboardSkill(BaseSkill):
             if isinstance(ts, (int, float)):
                 dt = datetime.fromtimestamp(ts, tz=UTC)
             else:
-                dt = datetime.fromisoformat(str(ts))
+                dt = datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
             return dt.strftime("%d %b %H:%M")
         except Exception:
             return "n/a"

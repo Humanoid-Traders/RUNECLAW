@@ -34,7 +34,7 @@ class DataLoader:
             for row in reader:
                 ts_raw = row.get("timestamp", row.get("date", ""))
                 try:
-                    ts = datetime.fromisoformat(ts_raw)
+                    ts = datetime.fromisoformat(ts_raw.replace("Z", "+00:00"))
                 except ValueError:
                     ts = datetime.fromtimestamp(int(ts_raw) / 1000, tz=UTC)
 

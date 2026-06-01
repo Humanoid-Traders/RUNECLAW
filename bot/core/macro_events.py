@@ -201,7 +201,7 @@ class MacroEventProvider:
                 events_raw = data.get("events", [])
 
                 if gen_str:
-                    self._generated_utc = datetime.fromisoformat(gen_str)
+                    self._generated_utc = datetime.fromisoformat(gen_str.replace("Z", "+00:00"))
                     if self._generated_utc.tzinfo is None:
                         self._generated_utc = self._generated_utc.replace(tzinfo=UTC)
                     age = datetime.now(UTC) - self._generated_utc
@@ -239,7 +239,7 @@ class MacroEventProvider:
             ev = dict(ev)  # shallow copy
             sched = ev.get("scheduled_utc")
             if isinstance(sched, str):
-                dt = datetime.fromisoformat(sched)
+                dt = datetime.fromisoformat(sched.replace("Z", "+00:00"))
                 if dt.tzinfo is None:
                     dt = dt.replace(tzinfo=UTC)
                 ev["scheduled_utc"] = dt
