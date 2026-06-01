@@ -93,7 +93,7 @@ All safety mechanisms apply equally in live mode:
 
 | Safeguard | Behavior |
 |-----------|----------|
-| 18-check risk gate | Every trade must pass all checks. No exceptions. |
+| 20-check risk gate | Every trade must pass all checks. No exceptions. |
 | Human confirmation | Every trade requires Telegram approval before execution. |
 | Circuit breaker | Auto-halts on daily loss or drawdown breach. |
 | Cooldown timer | Blocks trading after consecutive losses. |

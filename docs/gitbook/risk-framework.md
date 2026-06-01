@@ -19,13 +19,13 @@ This means the system may miss opportunities. That is an acceptable trade-off. M
 Risk is enforced at multiple layers:
 
 1. **Analyzer level** -- Ideas with blended confidence below 0.60 are never generated.
-2. **Risk engine level** -- 18 independent checks must all pass.
+2. **Risk engine level** -- 20 independent checks must all pass.
 3. **Confirmation level** -- Risk is re-evaluated when the human confirms (the market may have moved).
 4. **Configuration level** -- `SIMULATION_MODE=true` and `LIVE_TRADING_ENABLED=false` are both set by default. Live trading requires both flags to be flipped.
 
-## The Eighteen Risk Checks
+## The Twenty Risk Checks
 
-Every `TradeIdea` must pass all eighteen checks before it enters the pending queue.
+Every `TradeIdea` must pass all twenty checks before it enters the pending queue.
 
 ### 1. Circuit Breaker
 
@@ -161,7 +161,7 @@ Guards against data errors producing invalid trade parameters.
 
 Rejects trades during extreme volatility conditions where stops are unreliable. **When ATR data is unavailable, the volatility guard fails closed and rejects the trade.** This ensures the system never enters a position without a valid volatility assessment.
 
-Of the 18 pre-trade checks, **17 are fail-closed** (including the volatility guard) and **1 is fail-open** (the liquidity guard only, which is skipped when order book data is unavailable).
+Of the 20 pre-trade checks, **19 are fail-closed** (including the volatility guard) and **1 is fail-open** (the liquidity guard only, which is skipped when order book data is unavailable).
 
 ### 17. Liquidity Guard
 
@@ -207,7 +207,7 @@ The `BacktestEngine` creates **isolated temporary state files** for portfolio an
 
 ## Re-Check on Confirmation
 
-When a human taps "Confirm" on a pending trade idea, the risk engine runs all 18 checks again against the current portfolio state. This catches scenarios where:
+When a human taps "Confirm" on a pending trade idea, the risk engine runs all 20 checks again against the current portfolio state. This catches scenarios where:
 
 - Another trade was confirmed between idea generation and confirmation.
 - Market movement changed the risk profile.

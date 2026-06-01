@@ -48,7 +48,7 @@ This prevents:
       |                    |
       v                    v
   Risk RE-CHECK        Idea discarded
-  (18 checks again)    Audit log entry
+  (20 checks again)    Audit log entry
       |
       ├── RE-CHECK fails → REJECTED (market moved)
       |
@@ -79,7 +79,7 @@ Ideas with blended confidence below 60% are discarded before reaching the risk g
 
 ### 3. Risk gate evaluates the idea
 
-The risk engine runs 18 independent checks. Every check must pass:
+The risk engine runs 20 independent checks. Every check must pass:
 
 - Position size, daily loss, drawdown, max positions
 - Risk/reward ratio, confidence threshold
@@ -94,7 +94,7 @@ If **any single check fails**, the trade is rejected immediately. The operator s
 
 ### 4. Telegram inline keyboard
 
-If the idea passes all 18 checks, the bot sends a message with two inline buttons:
+If the idea passes all 20 checks, the bot sends a message with two inline buttons:
 
 - **Confirm** -- approve the trade for execution
 - **Reject** -- discard the trade idea
@@ -107,7 +107,7 @@ The operator can also view all pending ideas at any time with the `/trade` comma
 
 When the operator taps **Confirm**:
 
-1. The risk engine runs all 18 checks **again** against the current portfolio state
+1. The risk engine runs all 20 checks **again** against the current portfolio state
 2. This catches scenarios where:
    - Another trade was confirmed between idea generation and confirmation
    - Daily loss limit was reached by a closed position

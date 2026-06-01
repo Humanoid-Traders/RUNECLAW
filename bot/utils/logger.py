@@ -5,10 +5,14 @@ machine-readable so post-mortems are trivial.
 
 C3 FIX: All log output is run through a redaction layer that scrubs
 sensitive values (API keys, secrets, tokens, passphrases) before writing.
+
+F-08 FIX: Hash chain -- each JSON line includes prev_hash = sha256(previous line),
+making the audit trail tamper-evident and verifiable.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -69,7 +73,16 @@ def _redact_string(s: str) -> str:
 
 
 class _JSONFormatter(logging.Formatter):
-    """Emit each log record as a single JSON line with redaction."""
+    """Emit each log record as a single JSON line with redaction and hash chain.
+
+    F-08 FIX: Each entry includes ``prev_hash`` -- the SHA-256 of the previous
+    JSON line emitted by this formatter instance.  This creates a verifiable
+    chain: mutating or deleting any line breaks the chain from that point on.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._prev_hash: str = "GENESIS"
 
     def format(self, record: logging.LogRecord) -> str:
         entry: dict[str, Any] = {
@@ -77,6 +90,7 @@ class _JSONFormatter(logging.Formatter):
             "level": record.levelname,
             "channel": record.name,
             "message": _redact_string(record.getMessage()),
+            "prev_hash": self._prev_hash,
         }
         # Attach structured extras passed via `extra={}`
         for key in ("action", "reasoning", "result", "data"):
@@ -85,7 +99,9 @@ class _JSONFormatter(logging.Formatter):
                 entry[key] = _redact_dict(val) if isinstance(val, (dict, list)) else (
                     _redact_string(val) if isinstance(val, str) else val
                 )
-        return json.dumps(entry, default=str)
+        line = json.dumps(entry, default=str)
+        self._prev_hash = hashlib.sha256(line.encode()).hexdigest()
+        return line
 
 
 def _build_logger(name: str, filename: str) -> logging.Logger:

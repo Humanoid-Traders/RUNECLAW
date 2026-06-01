@@ -19,7 +19,7 @@
 
 **[SCREEN]** Architecture diagram from the README: the pipeline flow from Telegram Bot through Engine, Scanner, Analyzer, Risk Engine, Human Confirmation, to Portfolio Tracker. Highlight each component as it is mentioned.
 
-**[VOICEOVER]** "RUNECLAW is a 9-state finite state machine that governs every trade from scan to cooldown. The pipeline goes: market scan, AI analysis with a 10-voter confluence model, then an 18-check fail-closed risk gate. If the trade survives all of that, it goes to you -- the human -- for confirmation via Telegram. Only then does it execute, in paper trading mode, with a ten thousand dollar virtual balance. There is no autonomous execution. There is no override."
+**[VOICEOVER]** "RUNECLAW is a 9-state finite state machine that governs every trade from scan to cooldown. The pipeline goes: market scan, AI analysis with a 10-voter confluence model, then an 20-check fail-closed risk gate. If the trade survives all of that, it goes to you -- the human -- for confirmation via Telegram. Only then does it execute, in paper trading mode, with a ten thousand dollar virtual balance. There is no autonomous execution. There is no override."
 
 **[SCREEN]** Brief flash of the FSM state diagram: IDLE -> SCANNING -> ANALYZING -> RISK_CHECK -> CONFIRMING -> EXECUTING -> MONITORING -> COOLING_DOWN / HALTED.
 
@@ -39,7 +39,7 @@
 
 ## [1:15-1:45] Risk Gate Demo -- The Rejection
 
-**[SCREEN]** A trade idea card appears with a moderate confidence score (e.g., 58%). The risk engine output displays below it: a list of 18 checks, most showing green checkmarks, but one highlighted in red -- "CONFIDENCE_THRESHOLD: FAILED (58% < 60% minimum)". Final verdict: large red banner reading "REJECTED".
+**[SCREEN]** A trade idea card appears with a moderate confidence score (e.g., 58%). The risk engine output displays below it: a list of 20 checks, most showing green checkmarks, but one highlighted in red -- "CONFIDENCE_THRESHOLD: FAILED (58% < 60% minimum)". Final verdict: large red banner reading "REJECTED".
 
 **[VOICEOVER]** "This is where RUNECLAW is different. This trade idea scored fifty-eight percent confidence -- just below the sixty percent threshold. Watch what happens. Eighteen checks run. Seventeen pass. One fails. Result: rejected. Not 'proceed with caution.' Not 'override available.' Rejected. Period. In a fail-closed system, one failure out of eighteen is enough. The risk engine does not negotiate."
 

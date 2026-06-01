@@ -115,7 +115,7 @@ The MCP adapter is not yet implemented as production code. The skill registry is
 When the Bitget Agent Hub supports MCP tool registration, RUNECLAW will:
 
 1. Expose all 12 skills as MCP tools with JSON Schema input/output definitions
-2. Enforce the same 18-check risk gate on all tool invocations
+2. Enforce the same 20-check risk gate on all tool invocations
 3. Require human confirmation for any trade execution (even via MCP)
 4. Log all MCP calls through the existing structured audit system
 

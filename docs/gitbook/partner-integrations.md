@@ -115,7 +115,7 @@ When `ASSET_UNIVERSE=solana`, the `MarketScanner` prioritizes Solana ecosystem t
 1. **All USDT pairs** are still scanned from Bitget (full market coverage)
 2. **Solana tokens** are sorted to the top of results, regardless of momentum ranking
 3. **Remaining slots** are filled with highest-momentum non-Solana assets
-4. **Risk engine** applies identically -- all 18 checks, trailing stops, circuit breaker
+4. **Risk engine** applies identically -- all 20 checks, trailing stops, circuit breaker
 
 This ensures Solana ecosystem exposure while maintaining the full risk framework.
 

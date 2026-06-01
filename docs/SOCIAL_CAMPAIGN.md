@@ -18,7 +18,7 @@ Introducing RUNECLAW -- an AI trading agent built for the Bitget ecosystem.
 
 Track 1 (Trading Agent) | Track 2 (Trading Infra)
 
-18 independent risk checks. Fail-closed architecture. Every trade requires human confirmation. Paper trading by default.
+20 independent risk checks. Fail-closed architecture. Every trade requires human confirmation. Paper trading by default.
 
 Thread below.
 
@@ -48,7 +48,7 @@ Every decision RUNECLAW makes is logged and auditable.
 
 State transitions. Risk gate evaluations. Indicator scores. Confluence model weights. LLM reasoning. Execution outcomes.
 
-If the system rejects a trade, you can trace exactly which of the 18 checks failed and why. No black boxes.
+If the system rejects a trade, you can trace exactly which of the 20 checks failed and why. No black boxes.
 
 ### Tweet 5 -- Regime Detection
 
@@ -89,7 +89,7 @@ Built by Humanoid Traders. 180 tests. 18 risk checks. Read the code.
 We are submitting RUNECLAW, a simulation-first AI trading agent built for the Bitget ecosystem.
 
 **What it does:**
-RUNECLAW scans markets for volume anomalies and momentum shifts, generates explainable trade ideas using a 10-voter confluence model (RSI, MACD, BB, Volume Spike, ADX, VWAP, OBV trend, candlestick pattern detection, Fibonacci retracement zone) blended with LLM reasoning, and enforces 18 independent pre-trade risk checks before proposing any trade to the operator.
+RUNECLAW scans markets for volume anomalies and momentum shifts, generates explainable trade ideas using a 10-voter confluence model (RSI, MACD, BB, Volume Spike, ADX, VWAP, OBV trend, candlestick pattern detection, Fibonacci retracement zone) blended with LLM reasoning, and enforces 20 independent pre-trade risk checks before proposing any trade to the operator.
 
 **Architecture:**
 - 9-state finite state machine (IDLE through HALTED)
@@ -110,7 +110,7 @@ RUNECLAW scans markets for volume anomalies and momentum shifts, generates expla
 - Per-symbol and portfolio-level exposure limits
 
 **Test coverage:**
-180 unit tests covering risk engine (all 18 checks), portfolio lifecycle, analyzer indicators (including candlestick pattern detection, Fibonacci retracement, OBV, rolling VWAP), backtest replay, macro calendar states, integration scenarios, edge cases, and negative inputs.
+180 unit tests covering risk engine (all 20 checks), portfolio lifecycle, analyzer indicators (including candlestick pattern detection, Fibonacci retracement, OBV, rolling VWAP), backtest replay, macro calendar states, integration scenarios, edge cases, and negative inputs.
 
 **Links:**
 - GitHub: https://github.com/Humanoid-Traders/RUNECLAW

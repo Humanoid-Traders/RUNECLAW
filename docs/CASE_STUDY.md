@@ -13,7 +13,7 @@ RUNECLAW is an AI trading agent that treats risk management as the product, not 
 
 The system scans all Bitget USDT pairs for volume anomalies and momentum shifts, then generates trade ideas through a 10-voter confluence scoring model that blends six classical technical indicators (RSI-14, MACD, Bollinger Bands, ADX-14, VWAP, Volume Spike) with four structural signals (On-Balance Volume trend, candlestick pattern detection across 14 patterns, Fibonacci retracement zone classification, and LLM-powered directional reasoning). The technical score and LLM confidence are combined at a 60/40 weighting to produce a final conviction score.
 
-What makes RUNECLAW different is the non-negotiable pipeline: every trade idea passes through 18 independent fail-closed risk checks, then waits for human confirmation via Telegram inline keyboard, then re-checks risk at confirmation time because the market may have moved. Paper trading is the default mode with a $10K virtual balance. Live trading requires two explicit environment flags -- you cannot accidentally trade real money.
+What makes RUNECLAW different is the non-negotiable pipeline: every trade idea passes through 20 independent fail-closed risk checks, then waits for human confirmation via Telegram inline keyboard, then re-checks risk at confirmation time because the market may have moved. Paper trading is the default mode with a $10K virtual balance. Live trading requires two explicit environment flags -- you cannot accidentally trade real money.
 
 The philosophy is simple: AI proposes. Humans decide. The risk engine enforces.
 
@@ -35,9 +35,9 @@ Every state transition is validated and logged. The FSM prevents impossible sequ
 
 ## Risk Management Deep Dive
 
-The risk engine is the core of RUNECLAW. It enforces **18 independent fail-closed checks** -- every single one must pass for a trade to proceed. If any check fails, or if any check throws an exception during evaluation, the trade is rejected. There are no overrides, no admin bypasses, no "just this once" escape hatches.
+The risk engine is the core of RUNECLAW. It enforces **20 independent fail-closed checks** -- every single one must pass for a trade to proceed. If any check fails, or if any check throws an exception during evaluation, the trade is rejected. There are no overrides, no admin bypasses, no "just this once" escape hatches.
 
-The 18 checks are:
+The 20 checks are:
 
 1. **Position size validation** -- fixed-fractional (risk_budget / stop_distance), capped at 20% notional
 2. **Daily loss limit** -- 5% of starting equity
@@ -64,7 +64,7 @@ The **circuit breaker** trips on three conditions: 5% daily loss, 10% drawdown f
 
 **Trailing stops** activate at 1R profit (when unrealized gain equals the initial risk) and trail at 1.5x ATR behind the best price. In backtesting, trailing stops accounted for 48.7% of all exits with net-positive aggregate PnL. This is by construction -- trailing stops that activate at +1R and trail 1.5 ATR structurally lock in at least 1 ATR of profit. We claim structural soundness, not predictive edge.
 
-**Re-check on confirmation.** When a human taps "Confirm" on the Telegram keyboard, the risk engine runs all 18 checks again against current market conditions. Markets move. A trade that was safe 30 seconds ago may no longer be safe. This second pass catches drift.
+**Re-check on confirmation.** When a human taps "Confirm" on the Telegram keyboard, the risk engine runs all 20 checks again against current market conditions. Markets move. A trade that was safe 30 seconds ago may no longer be safe. This second pass catches drift.
 
 ## Backtest Evidence
 

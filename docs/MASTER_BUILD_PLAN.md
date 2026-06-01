@@ -269,7 +269,7 @@ RUNECLAW is a **layered agent system** with strict separation between perception
 │     └─ Output: TradeIdea with full reasoning                 │
 │                          │                                   │
 │  4. VALIDATE (RISK)      │                                   │
-│     ├─ Run all 18 risk checks                                │
+│     ├─ Run all 20 risk checks                                │
 │     ├─ Check circuit breaker status                          │
 │     ├─ Verify portfolio constraints                          │
 │     ├─ ANY failure → REJECT (fail-closed)                    │
@@ -681,7 +681,7 @@ runeclaw/
 | Market data fetch | **Real** | Hits Bitget public API (no auth required) |
 | Technical indicators | **Real** | Computed from real OHLCV data |
 | LLM thesis generation | **Real** (when API key set) | Falls back to rule-based if no key |
-| Risk engine checks | **Real** | All 18 checks execute against actual portfolio state |
+| Risk engine checks | **Real** | All 20 checks execute against actual portfolio state |
 | Paper trading | **Real** (simulated fills) | Fills at current market price, tracks PnL accurately |
 | Portfolio tracking | **Real** | Full position lifecycle, PnL, drawdown |
 | Audit logging | **Real** | Every decision written to structured JSON |

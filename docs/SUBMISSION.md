@@ -23,7 +23,7 @@ Simulation-first AI trading agent with 18 pre-trade risk checks (17 fail-closed 
 
 ## Project Summary (under 200 words)
 
-RUNECLAW is a modular AI trading assistant built for the Bitget ecosystem. It scans markets for volume anomalies and momentum shifts, generates explainable trade ideas using a 10-voter confluence scoring model (candlestick pattern detection, Fibonacci retracement zones, OBV trend, and 6 classic indicators) blended with LLM reasoning, and enforces 18 independent pre-trade risk checks (17 fail-closed + 1 fail-open liquidity guard) -- if any single check cannot be evaluated, the trade is rejected.
+RUNECLAW is a modular AI trading assistant built for the Bitget ecosystem. It scans markets for volume anomalies and momentum shifts, generates explainable trade ideas using a 10-voter confluence scoring model (candlestick pattern detection, Fibonacci retracement zones, OBV trend, and 6 classic indicators) blended with LLM reasoning, and enforces 20 independent pre-trade risk checks (17 fail-closed + 1 fail-open liquidity guard) -- if any single check cannot be evaluated, the trade is rejected.
 
 The agent operates as a 9-state finite state machine with complete audit logging of every state transition, risk decision, and trade outcome. Every trade requires human confirmation via Telegram before execution. Paper trading is the default mode; live trading requires two explicit environment flags.
 
@@ -75,7 +75,7 @@ Validated across 500 backtest runs (synthetic data — 5 market regimes, 20 symb
 | Multi-Timeframe | EMA20/50 alignment across 1H/4H/1D, swing detection, market structure (HH/HL/LH/LL), BOS/CHoCH detection |
 | Strategy Modes | 5 adaptive modes selected by regime + context: Trend Continuation, Breakout, Mean Reversion, Liquidity Sweep, Conservative |
 | Explainability | Reasoning chains, factor attribution, compliance scoring (MiCA-aligned), natural language narratives |
-| Risk Engine | 18 checks (17 fail-closed + 1 fail-open liquidity guard), all must pass; thread-safe with RLock; stats tracking for monitoring |
+| Risk Engine | 20 checks (17 fail-closed + 1 fail-open liquidity guard), all must pass; thread-safe with RLock; stats tracking for monitoring |
 | Trailing Stops | Track best_price per position, activate at 1R profit, trail at 1.5x ATR; trailing exits lock in ≥1 ATR profit by construction (structural, not a predictive edge) |
 | Circuit Breaker | Trips on 5% daily loss, 10% drawdown, or 5 consecutive losses; requires manual reset |
 | Portfolio Tracker | Thread-safe position lifecycle with drawdown tracking, daily PnL, equity snapshots |
@@ -113,7 +113,7 @@ Validated across 500 backtest runs (synthetic data — 5 market regimes, 20 symb
 
 | Claim | Evidence | Status |
 |-------|----------|--------|
-| 18 risk checks | `bot/risk/risk_engine.py` lines 1-28 enumerate all 18 (16 in-engine + #17 liquidity + #18 macro) | Verified |
+| 18 risk checks | `bot/risk/risk_engine.py` lines 1-28 enumerate all 20 (16 in-engine + #17 liquidity + #18 macro) | Verified |
 | Fail-closed design | Any check failure or exception returns REJECTED | Verified |
 | 97+ tests passing | `pytest tests/ -v` -- 626 green (97 original + audit/learning/optimizer/qwen/solana/red-team/black-swan/sentiment/swarm/security additions) | Verified |
 | 9-state FSM | `bot/utils/models.py` AgentState enum, `bot/core/engine.py` transitions | Verified |
@@ -140,8 +140,8 @@ Validated across 500 backtest runs (synthetic data — 5 market regimes, 20 symb
 - [x] Config loads from environment variables with safe defaults
 - [x] Simulation mode is ON by default
 - [x] Live trading requires two explicit flags
-- [x] README accurately reflects current architecture (18 checks: 17 fail-closed + 1 fail-open liquidity guard, 10+ voters including OBV, candlestick patterns, Fibonacci retracement, order flow when available)
-- [x] Website matches codebase claims (18 checks, 289+ tests, backtest stats)
+- [x] README accurately reflects current architecture (20 checks: 17 fail-closed + 1 fail-open liquidity guard, 10+ voters including OBV, candlestick patterns, Fibonacci retracement, order flow when available)
+- [x] Website matches codebase claims (20 checks, 289+ tests, backtest stats)
 - [x] GitHub repo is public and up to date
 - [x] No deprecated datetime calls remaining
 - [x] Thread safety verified on all shared state

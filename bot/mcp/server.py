@@ -184,6 +184,13 @@ class RuneClawMCPServer:
         engine: RuneClawEngine | None = None,
         registry: SkillRegistry | None = None,
     ) -> None:
+        # C5 HARDENED: fail-closed -- refuse to start without auth token
+        if not _MCP_AUTH_TOKEN:
+            raise RuntimeError(
+                "MCP_AUTH_TOKEN is not set. The MCP server refuses to start "
+                "without authentication. Set MCP_AUTH_TOKEN in your .env file."
+            )
+
         self._engine = engine or RuneClawEngine()
         self._registry = registry or build_default_registry()
         self._tool_index: dict[str, MCPToolDef] = {

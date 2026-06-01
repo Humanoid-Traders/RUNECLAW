@@ -67,7 +67,7 @@ Output: a `TradeIdea` object (or None if conviction is too low).
 
 ### Stage 3: RISK GATE
 
-Every `TradeIdea` is passed to the `RiskEngine` for 18 independent pre-trade checks:
+Every `TradeIdea` is passed to the `RiskEngine` for 20 independent pre-trade checks:
 
 1. Circuit breaker status
 2. Position size vs. max notional %
@@ -168,7 +168,7 @@ RUNECLAW includes an adaptive AI learning system with **8 modules** that enable 
 The learning system enforces a **blocked-actions policy** that prevents it from:
 
 - Modifying risk engine parameters or thresholds
-- Bypassing the 18-check risk gate
+- Bypassing the 20-check risk gate
 - Executing trades without human confirmation
 - Altering circuit breaker state
 

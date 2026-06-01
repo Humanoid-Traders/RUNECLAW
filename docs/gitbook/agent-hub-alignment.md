@@ -34,7 +34,7 @@ RUNECLAW exposes 12 internal skills that map directly to MCP tools. See [MCP Int
 | Market data | `runeclaw_scan` -- fetch tickers, volume spikes, momentum signals |
 | Trading execution | `runeclaw_execute` -- paper trade execution (live via ccxt when enabled) |
 | Portfolio management | `runeclaw_portfolio` -- balance, equity, positions, PnL, drawdown |
-| Risk management | `runeclaw_risk` -- 18-check status, circuit breaker, exposure limits |
+| Risk management | `runeclaw_risk` -- 20-check status, circuit breaker, exposure limits |
 | Analysis | `runeclaw_analyze` -- technical indicators + LLM thesis + trade idea |
 | Explainability | `runeclaw_explain` -- full decision chain for any trade idea |
 
@@ -81,7 +81,7 @@ RUNECLAW exposes 12 internal skills that map directly to MCP tools. See [MCP Int
 │  │                                                   │   │
 │  │  ┌──────────┐  ┌──────────┐  ┌───────────────┐  │   │
 │  │  │ Scanner  │  │ Analyzer │  │ Risk Engine   │  │   │
-│  │  │ (Bitget) │  │ (LLM+TA) │  │ (18 checks)  │  │   │
+│  │  │ (Bitget) │  │ (LLM+TA) │  │ (20 checks)  │  │   │
 │  │  └────┬─────┘  └────┬─────┘  └──────┬────────┘  │   │
 │  │       │              │               │           │   │
 │  │       v              v               v           │   │

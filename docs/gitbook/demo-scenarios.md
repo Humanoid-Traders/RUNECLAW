@@ -65,7 +65,7 @@ This page provides step-by-step demo scenarios for evaluating RUNECLAW. Each sce
 
 ### What judges should observe
 
-- Specific rejection reason identifying which of 18 checks failed
+- Specific rejection reason identifying which of 20 checks failed
 - No override mechanism -- rejection is final
 - `/rejected` command provides transparency into blocked trades
 - Risk metrics visible via `/risk`
@@ -228,7 +228,7 @@ quit                 # Exit
 pytest tests/test_core.py -v
 
 # Key test categories:
-# - Risk engine: all 18 checks, circuit breaker, edge cases
+# - Risk engine: all 20 checks, circuit breaker, edge cases
 # - Portfolio: position lifecycle, PnL, drawdown
 # - Analyzer: indicators, candlestick patterns, Fibonacci, OBV, VWAP
 # - Backtest: replay engine, trailing stops, commission/slippage, state isolation

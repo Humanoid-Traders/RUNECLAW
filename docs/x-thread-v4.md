@@ -24,7 +24,7 @@ Most AI trading bots optimize for one thing: more trades.
 
 RUNECLAW optimizes for survival.
 
-Every trade must pass 18 independent checks. If ANY check fails — or even errors out — the trade is rejected. No overrides. No force-execute.
+Every trade must pass 20 independent checks. If ANY check fails — or even errors out — the trade is rejected. No overrides. No force-execute.
 
 Miss a trade? Recoverable.
 Take a bad trade? Not recoverable.

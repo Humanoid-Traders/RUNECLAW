@@ -164,8 +164,22 @@ class AppConfig:
     analyzer: AnalyzerConfig = field(default_factory=AnalyzerConfig)
 
     def is_live(self) -> bool:
-        """Live trading requires BOTH flags to be set explicitly."""
-        return self.live_trading_enabled and not self.simulation_mode
+        """Live trading requires BOTH flags AND a Telegram chat allow-list."""
+        if not (self.live_trading_enabled and not self.simulation_mode):
+            return False
+        # F-04 FIX: refuse to arm live mode without a configured chat ID
+        try:
+            chat_id = self.telegram.chat_id
+        except AttributeError:
+            chat_id = ""
+        if not chat_id:
+            import logging
+            logging.getLogger(__name__).error(
+                "LIVE MODE BLOCKED: TELEGRAM_CHAT_ID is empty. "
+                "Set a chat allow-list before enabling live trading."
+            )
+            return False
+        return True
 
 
 # Singleton used across the application

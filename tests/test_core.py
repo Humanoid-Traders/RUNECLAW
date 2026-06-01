@@ -2385,12 +2385,22 @@ class TestSafetyGates:
         assert config.is_live() is False
 
     def test_is_live_true_only_when_both_set(self):
-        """Only simulation_mode=False AND live_trading_enabled=True → is_live() = True."""
-        from bot.config import AppConfig
+        """Only simulation_mode=False AND live_trading_enabled=True AND chat_id set → is_live() = True."""
+        from bot.config import AppConfig, TelegramConfig
         config = AppConfig.__new__(AppConfig)
         object.__setattr__(config, "simulation_mode", False)
         object.__setattr__(config, "live_trading_enabled", True)
+        object.__setattr__(config, "telegram", TelegramConfig(chat_id="123456"))
         assert config.is_live() is True
+
+    def test_is_live_blocked_without_chat_id(self):
+        """Live mode must refuse to arm without a Telegram chat allow-list."""
+        from bot.config import AppConfig, TelegramConfig
+        config = AppConfig.__new__(AppConfig)
+        object.__setattr__(config, "simulation_mode", False)
+        object.__setattr__(config, "live_trading_enabled", True)
+        object.__setattr__(config, "telegram", TelegramConfig(chat_id=""))
+        assert config.is_live() is False
 
     def test_confirm_trade_blocks_live_mode(self):
         """When is_live()=True, confirm_trade must return the not-implemented message."""
@@ -4154,3 +4164,50 @@ class TestSwarmProtocol:
                 recipient=SwarmRole.COORDINATOR,
             ))
         assert bus.message_count <= 1000
+
+
+class TestAuditFixes:
+    """Tests for audit findings F-03, F-04, F-08."""
+
+    def test_mcp_server_requires_auth_token(self, monkeypatch):
+        """F-03: MCP server must refuse to start without MCP_AUTH_TOKEN."""
+        monkeypatch.setenv("MCP_AUTH_TOKEN", "")
+        # Force reimport to pick up empty token
+        import bot.mcp.server as mcp_mod
+        monkeypatch.setattr(mcp_mod, "_MCP_AUTH_TOKEN", "")
+        with pytest.raises(RuntimeError, match="MCP_AUTH_TOKEN"):
+            mcp_mod.RuneClawMCPServer()
+
+    def test_audit_log_hash_chain(self):
+        """F-08: Audit log entries must include prev_hash for tamper evidence."""
+        import json
+        from bot.utils.logger import _JSONFormatter
+        import logging
+
+        fmt = _JSONFormatter()
+        record1 = logging.LogRecord(
+            name="test", level=logging.INFO, pathname="", lineno=0,
+            msg="first entry", args=(), exc_info=None,
+        )
+        record1.action = "test"
+        record1.reasoning = ""
+        record1.result = ""
+        record1.data = None
+        line1 = fmt.format(record1)
+        entry1 = json.loads(line1)
+        assert entry1["prev_hash"] == "GENESIS"
+
+        record2 = logging.LogRecord(
+            name="test", level=logging.INFO, pathname="", lineno=0,
+            msg="second entry", args=(), exc_info=None,
+        )
+        record2.action = "test"
+        record2.reasoning = ""
+        record2.result = ""
+        record2.data = None
+        line2 = fmt.format(record2)
+        entry2 = json.loads(line2)
+
+        import hashlib
+        expected_hash = hashlib.sha256(line1.encode()).hexdigest()
+        assert entry2["prev_hash"] == expected_hash
