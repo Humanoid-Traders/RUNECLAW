@@ -123,3 +123,59 @@ def compute_volume_profile(
         price_vs_poc=position,
         poc_distance_pct=round(poc_dist_pct, 4),
     )
+
+
+def poc_magnet_signal(
+    current_price: float,
+    poc_price: float,
+    atr: float,
+    magnet_threshold_atr: float = 1.5,
+) -> dict:
+    """Compute POC magnet reversion signal.
+
+    When price is within magnet_threshold_atr × ATR of POC, there's a
+    statistical tendency for price to revert toward POC (highest volume node).
+
+    Args:
+        current_price: current market price
+        poc_price: Point of Control from volume profile
+        atr: current ATR value
+        magnet_threshold_atr: distance in ATR multiples to consider "in range"
+
+    Returns:
+        dict with magnet analysis: active, direction, distance, strength
+    """
+    if atr <= 0 or poc_price <= 0 or current_price <= 0:
+        return {"active": False, "direction": "none", "distance_atr": 0, "strength": 0}
+
+    distance = current_price - poc_price
+    distance_atr = abs(distance) / atr
+
+    in_range = distance_atr <= magnet_threshold_atr
+
+    if not in_range:
+        return {
+            "active": False,
+            "direction": "none",
+            "distance_atr": round(distance_atr, 2),
+            "strength": 0,
+        }
+
+    # Direction: price above POC = expect pull down, below = expect pull up
+    if distance > 0:
+        direction = "pull_down"  # price above POC, expect reversion down
+    elif distance < 0:
+        direction = "pull_up"   # price below POC, expect reversion up
+    else:
+        direction = "at_poc"
+
+    # Strength: inverse of distance (closer = stronger magnet)
+    strength = round(max(0, 1.0 - (distance_atr / magnet_threshold_atr)), 4)
+
+    return {
+        "active": True,
+        "direction": direction,
+        "distance_atr": round(distance_atr, 2),
+        "strength": strength,
+        "poc_price": round(poc_price, 6),
+    }
