@@ -86,6 +86,8 @@ class RuneClawEngine:
         self._cooldown_until: float = 0.0
         self._last_rebalance_check: float = 0.0  # monotonic timestamp
         self._rebalance_interval: float = 4 * 3600  # 4 hours minimum between checks
+        # /whynot: store last RiskCheck per symbol when risk rejects a trade
+        self._last_rejections: dict[str, dict] = {}
 
     # -- State management --
 
@@ -265,6 +267,25 @@ class RuneClawEngine:
                 return None
 
         if risk_check.verdict == RiskVerdict.REJECTED:
+            # Store rejection for /whynot command
+            symbol_key = idea.asset.replace("/USDT", "").upper()
+            self._last_rejections[symbol_key] = {
+                "symbol": idea.asset,
+                "direction": idea.direction.value,
+                "confidence": idea.confidence,
+                "entry_price": idea.entry_price,
+                "stop_loss": idea.stop_loss,
+                "take_profit": idea.take_profit,
+                "checks_passed": risk_check.checks_passed,
+                "checks_failed": risk_check.checks_failed,
+                "reason": risk_check.reason,
+                "timestamp": datetime.now(UTC).isoformat(),
+            }
+            # Cap stored rejections
+            if len(self._last_rejections) > 100:
+                oldest_keys = list(self._last_rejections.keys())[:-50]
+                for k in oldest_keys:
+                    self._last_rejections.pop(k, None)
             audit(
                 trade_log,
                 f"Trade REJECTED by risk: {risk_check.reason}",

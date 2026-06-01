@@ -1,0 +1,523 @@
+# RUNECLAW Risk Manifest v1.0
+# Single source of truth for all risk parameters.
+# The risk engine loads from this file; docs render from it.
+# "The documentation cannot drift from the code because they read the same file."
+#
+# Source files:
+#   bot/risk/risk_engine.py  — check logic, correlation groups, regime multipliers
+#   bot/config.py            — RiskLimits dataclass, env var bindings, defaults
+
+version: "1.0"
+updated: "2026-06-01"
+
+# =============================================================================
+# PRE-TRADE CHECKS (20 total)
+# =============================================================================
+# Design contract: ALL checks must pass. ANY failure = REJECTED. No overrides.
+# Fail behavior:
+#   "closed" = if the check cannot be evaluated, the trade is REJECTED.
+#   "open"   = if the check cannot be evaluated, the trade is allowed through.
+#   "skip"   = check is gracefully skipped when data is unavailable (returns pass).
+
+checks:
+  - id: 1
+    name: CIRCUIT_BREAKER
+    description: >
+      Blocks all trades when circuit breaker is open.
+      Tripped by daily loss limit breach, max drawdown breach,
+      or consecutive loss streak reaching max_consecutive_losses.
+      Persisted to disk; survives restarts.
+    fail_behavior: closed
+    threshold: null
+    env_var: null
+    trips_circuit_breaker: false
+    notes: "Manual reset required via /reset command."
+
+  - id: 2
+    name: POSITION_SIZE
+    description: >
+      Enforces notional position cap as percentage of equity.
+      Uses fixed-fractional sizing by stop distance; this check
+      clamps the result if it exceeds max_symbol_exposure_pct.
+    fail_behavior: closed
+    threshold:
+      max_notional_pct: 20.0  # same as max_symbol_exposure_pct
+    env_var: MAX_SYMBOL_EXPOSURE_PCT
+    trips_circuit_breaker: false
+    notes: >
+      Oversized positions are clamped (not rejected) — the check
+      passes but logs the clamping. Rejection only on zero/negative equity.
+
+  - id: 3
+    name: DAILY_LOSS
+    description: >
+      Blocks trades when realized + unrealized daily PnL loss
+      exceeds max_daily_loss_pct of equity.
+    fail_behavior: closed
+    threshold:
+      max_daily_loss_pct: 5.0
+    env_var: MAX_DAILY_LOSS_PCT
+    trips_circuit_breaker: true
+    notes: "Trips circuit breaker on breach."
+
+  - id: 4
+    name: DRAWDOWN
+    description: >
+      Blocks trades when max drawdown percentage from equity
+      high-water mark exceeds max_drawdown_pct.
+    fail_behavior: closed
+    threshold:
+      max_drawdown_pct: 10.0
+    env_var: MAX_DRAWDOWN_PCT
+    trips_circuit_breaker: true
+    notes: "Trips circuit breaker on breach."
+
+  - id: 5
+    name: OPEN_POSITIONS
+    description: >
+      Limits the number of concurrently open positions.
+    fail_behavior: closed
+    threshold:
+      max_open_positions: 5
+    env_var: MAX_OPEN_POSITIONS
+    trips_circuit_breaker: false
+
+  - id: 6
+    name: RISK_REWARD
+    description: >
+      Requires minimum risk-reward ratio on the trade idea.
+      Uses 0.01 tolerance for float rounding at boundary.
+    fail_behavior: closed
+    threshold:
+      min_risk_reward: 1.2
+    env_var: MIN_RISK_REWARD
+    trips_circuit_breaker: false
+
+  - id: 7
+    name: CONFIDENCE
+    description: >
+      Requires minimum confidence score from the analyzer.
+      0.60 is the sweet spot — filters weak setups while keeping
+      enough trades to be meaningful.
+    fail_behavior: closed
+    threshold:
+      min_confidence: 0.60
+    env_var: MIN_CONFIDENCE
+    trips_circuit_breaker: false
+
+  - id: 8
+    name: CORRELATION
+    description: >
+      Prevents concentrated bets in the same correlation group.
+      Assets are mapped to groups (BTC, ETH, ALT_L1, MEME, etc.).
+      Unmapped assets are treated as their own group.
+    fail_behavior: closed
+    threshold:
+      max_correlation_per_group: 2
+    env_var: MAX_CORRELATION_PER_GROUP
+    trips_circuit_breaker: false
+    notes: "See correlation_groups section below for full mapping."
+
+  - id: 9
+    name: LOSS_STREAK
+    description: >
+      Soft reject at 3+ consecutive losses. Hard stop (circuit breaker)
+      at max_consecutive_losses (default 5).
+    fail_behavior: closed
+    threshold:
+      soft_reject_at: 3          # hardcoded in engine
+      circuit_breaker_at: 5      # max_consecutive_losses
+    env_var: MAX_CONSECUTIVE_LOSSES
+    trips_circuit_breaker: false
+    notes: "Soft reject is hardcoded at 3. Circuit breaker threshold is configurable."
+
+  - id: 10
+    name: ENTRY_PRICE
+    description: >
+      Validates that entry price is positive and non-zero.
+    fail_behavior: closed
+    threshold: null
+    env_var: null
+    trips_circuit_breaker: false
+
+  - id: 11
+    name: STOP_LOSS
+    description: >
+      Requires a valid stop-loss on every trade idea.
+      Stop-loss must be > 0 and cannot equal entry price.
+      Can be disabled via REQUIRE_STOP_LOSS=false.
+    fail_behavior: closed
+    threshold: null
+    env_var: REQUIRE_STOP_LOSS
+    trips_circuit_breaker: false
+    notes: "Default: required (true)."
+
+  - id: 12
+    name: STALE_DATA
+    description: >
+      Rejects trade ideas older than stale_data_max_age_seconds.
+      Measured as seconds between idea timestamp and current time.
+    fail_behavior: closed
+    threshold:
+      stale_data_max_age_seconds: 300
+    env_var: STALE_DATA_MAX_AGE_SEC
+    trips_circuit_breaker: false
+
+  - id: 13
+    name: COOLDOWN
+    description: >
+      Enforces a cooldown period after the last losing trade.
+      No new trades until cooldown_after_loss_seconds have elapsed.
+    fail_behavior: closed
+    threshold:
+      cooldown_after_loss_seconds: 300
+    env_var: COOLDOWN_AFTER_LOSS_SEC
+    trips_circuit_breaker: false
+
+  - id: 14
+    name: PORTFOLIO_EXPOSURE
+    description: >
+      Limits total portfolio exposure (all open positions + new position)
+      as a percentage of equity, measured mark-to-market.
+    fail_behavior: closed
+    threshold:
+      max_portfolio_exposure_pct: 80.0
+    env_var: MAX_PORTFOLIO_EXPOSURE_PCT
+    trips_circuit_breaker: false
+
+  - id: 15
+    name: SYMBOL_EXPOSURE
+    description: >
+      Limits per-symbol exposure (existing + new position value)
+      as a percentage of equity, measured mark-to-market.
+    fail_behavior: closed
+    threshold:
+      max_symbol_exposure_pct: 20.0
+    env_var: MAX_SYMBOL_EXPOSURE_PCT
+    trips_circuit_breaker: false
+
+  - id: 16
+    name: VOLATILITY
+    description: >
+      Rejects trades when ATR exceeds a percentage of entry price.
+      Fail-closed: ATR data must be present and > 0.
+      Meme coins get a tighter threshold (capped at 4.0%).
+    fail_behavior: closed
+    threshold:
+      volatility_guard_atr_pct: 6.0
+      meme_coin_cap_pct: 4.0       # hardcoded in engine
+    env_var: VOLATILITY_GUARD_ATR_PCT
+    trips_circuit_breaker: false
+    notes: >
+      BTC hourly ATR is typically 1-4%. 6% allows elevated-vol periods
+      while blocking extreme conditions.
+
+  - id: 17
+    name: LIQUIDITY
+    description: >
+      Liquidity guard via OrderFlowAnalyzer in engine.py.
+      This is the ONLY fail-open check: no data = pass.
+    fail_behavior: open
+    threshold: null
+    env_var: null
+    trips_circuit_breaker: false
+    notes: "Runs in engine.py, not in risk_engine.py."
+
+  - id: 18
+    name: MACRO_EVENT
+    description: >
+      Checks macro event risk state. Supports two providers:
+      v2 enhanced macro provider (size throttling with BLOCK/REDUCE/CLEAR states)
+      and v1 MacroCalendar (EVENT_LOCKDOWN/BLACKOUT states).
+      If no provider is configured, check is skipped (passes).
+    fail_behavior: closed
+    threshold: null
+    env_var: null
+    trips_circuit_breaker: false
+    notes: >
+      v2 provider: BLOCK_NEW_ENTRIES = reject, REDUCE = pass with size multiplier.
+      v1 calendar: EVENT_LOCKDOWN = reject, BLACKOUT = reject (fail-closed).
+
+  - id: 19
+    name: MTF_ALIGNMENT
+    description: >
+      Multi-timeframe trend alignment. Requires 2-of-3 (or majority)
+      timeframes to agree on direction. Reads MTF data from
+      idea.signals_used with convention "MTF:<tf>=<direction>".
+    fail_behavior: skip
+    threshold:
+      min_aligned: 2               # 2 of 3 timeframes
+      majority_rule: "n//2 + 1"    # for > 3 timeframes
+    env_var: null
+    trips_circuit_breaker: false
+    notes: "Gracefully skipped when fewer than 2 MTF signals are present."
+
+  - id: 20
+    name: CONCENTRATION_PCA
+    description: >
+      Portfolio concentration check using PCA on correlation matrix
+      of historical returns. Rejects when PC1 explains > 70% of variance.
+    fail_behavior: skip
+    threshold:
+      pc1_max_explained_variance: 0.70
+      min_assets_required: 2
+      min_return_periods: 3
+      min_trade_history: 5
+    env_var: null
+    trips_circuit_breaker: false
+    notes: "Gracefully skipped when insufficient positions or trade history."
+
+# =============================================================================
+# CONFIGURABLE DEFAULTS (RiskLimits dataclass)
+# =============================================================================
+# All values from bot/config.py RiskLimits with their env vars and defaults.
+
+defaults:
+  max_position_pct:
+    value: 2.0
+    env_var: MAX_POSITION_PCT
+    description: "Max percentage of equity risked per position (fixed-fractional sizing)"
+
+  max_daily_loss_pct:
+    value: 5.0
+    env_var: MAX_DAILY_LOSS_PCT
+    description: "Max daily loss as % of equity before circuit breaker trips"
+
+  max_drawdown_pct:
+    value: 10.0
+    env_var: MAX_DRAWDOWN_PCT
+    description: "Max drawdown from equity HWM before circuit breaker trips"
+
+  max_open_positions:
+    value: 5
+    env_var: MAX_OPEN_POSITIONS
+    description: "Maximum number of concurrent open positions"
+
+  max_correlation:
+    value: 0.85
+    env_var: MAX_CORRELATION
+    description: "Reserved for future pairwise correlation matrix check (not currently enforced)"
+
+  min_risk_reward:
+    value: 1.2
+    env_var: MIN_RISK_REWARD
+    description: "Minimum risk-reward ratio required for trade approval"
+
+  min_confidence:
+    value: 0.60
+    env_var: MIN_CONFIDENCE
+    description: "Minimum analyzer confidence score (sweet spot: filters weak setups)"
+
+  max_consecutive_losses:
+    value: 5
+    env_var: MAX_CONSECUTIVE_LOSSES
+    description: "Consecutive losses before circuit breaker trips (soft reject at 3)"
+
+  cooldown_after_loss_seconds:
+    value: 300
+    env_var: COOLDOWN_AFTER_LOSS_SEC
+    description: "Seconds to wait after a losing trade before allowing new entries"
+
+  max_portfolio_exposure_pct:
+    value: 80.0
+    env_var: MAX_PORTFOLIO_EXPOSURE_PCT
+    description: "Max total portfolio exposure as % of equity (mark-to-market)"
+
+  max_symbol_exposure_pct:
+    value: 20.0
+    env_var: MAX_SYMBOL_EXPOSURE_PCT
+    description: "Max per-symbol exposure as % of equity (also used as notional cap)"
+
+  max_correlation_per_group:
+    value: 2
+    env_var: MAX_CORRELATION_PER_GROUP
+    description: "Max positions allowed in the same correlation group"
+
+  volatility_guard_atr_pct:
+    value: 6.0
+    env_var: VOLATILITY_GUARD_ATR_PCT
+    description: "Max ATR as % of price; trades above this are rejected (meme coins capped at 4%)"
+
+  stale_data_max_age_seconds:
+    value: 300
+    env_var: STALE_DATA_MAX_AGE_SEC
+    description: "Max age of trade idea in seconds before it is considered stale"
+
+  require_stop_loss:
+    value: true
+    env_var: REQUIRE_STOP_LOSS
+    description: "Whether a valid stop-loss is required on every trade"
+
+  commission_pct:
+    value: 0.1
+    env_var: COMMISSION_PCT
+    description: "Exchange commission per side (taker fee), used in PnL calculations"
+
+# =============================================================================
+# CORRELATION GROUPS
+# =============================================================================
+# Assets in the same group are subject to max_correlation_per_group limit.
+# Assets NOT in this map are treated as their own group (group = symbol).
+
+correlation_groups:
+  BTC:
+    description: "Bitcoin ecosystem"
+    symbols:
+      - BTC/USDT
+      - WBTC/USDT
+
+  ETH:
+    description: "Ethereum ecosystem"
+    symbols:
+      - ETH/USDT
+      - STETH/USDT
+      - WETH/USDT
+
+  ALT_L1:
+    description: "Alternative L1s — tend to move together in risk-off"
+    symbols:
+      - SOL/USDT
+      - AVAX/USDT
+      - NEAR/USDT
+      - SUI/USDT
+      - APT/USDT
+      - DOT/USDT
+      - ADA/USDT
+      - ATOM/USDT
+      - TON/USDT
+      - HBAR/USDT
+      - TRX/USDT
+      - FTM/USDT
+      - SEI/USDT
+      - INJ/USDT
+
+  MEME:
+    description: "Meme coins"
+    symbols:
+      - DOGE/USDT
+      - SHIB/USDT
+      - PEPE/USDT
+      - FLOKI/USDT
+      - WIF/USDT
+      - BONK/USDT
+      - BRETT/USDT
+      - MEME/USDT
+
+  SOLANA_ECO:
+    description: "Solana ecosystem (non-meme) — correlated via SOL beta"
+    symbols:
+      - JUP/USDT
+      - JTO/USDT
+      - PYTH/USDT
+      - RAY/USDT
+      - ORCA/USDT
+      - JITO/USDT
+      - TENSOR/USDT
+      - DRIFT/USDT
+      - HNT/USDT
+      - MOBILE/USDT
+      - W/USDT
+
+  DEFI:
+    description: "DeFi blue chips"
+    symbols:
+      - UNI/USDT
+      - AAVE/USDT
+      - LINK/USDT
+      - MKR/USDT
+      - SNX/USDT
+      - CRV/USDT
+      - LDO/USDT
+      - COMP/USDT
+
+  L2:
+    description: "Layer 2 scaling solutions"
+    symbols:
+      - ARB/USDT
+      - OP/USDT
+      - MATIC/USDT
+      - STRK/USDT
+      - ZK/USDT
+
+  AI:
+    description: "AI narrative tokens"
+    symbols:
+      - FET/USDT
+      - RENDER/USDT
+      - TAO/USDT
+      - RNDR/USDT
+      - AGIX/USDT
+
+  CEX:
+    description: "Exchange tokens"
+    symbols:
+      - BNB/USDT
+      - CRO/USDT
+      - OKB/USDT
+
+# =============================================================================
+# REGIME-AWARE RISK MULTIPLIERS (Feature #3)
+# =============================================================================
+# Applied by get_regime_adjusted_params() to dynamically scale risk parameters.
+# Volatility overlay further adjusts position_size_mult and stop_width_mult.
+
+regime_multipliers:
+  CHOPPY:
+    position_size_mult: 0.5
+    cooldown_mult: 2.0
+    stop_width_mult: 1.0
+
+  STRONG_TREND_UP:
+    position_size_mult: 1.5
+    cooldown_mult: 0.5
+    stop_width_mult: 1.0
+
+  STRONG_TREND_DOWN:
+    position_size_mult: 1.5
+    cooldown_mult: 0.5
+    stop_width_mult: 1.0
+
+  HIGH_VOLATILITY:
+    position_size_mult: 0.3
+    cooldown_mult: 1.0
+    stop_width_mult: 1.5
+
+  RANGING:
+    position_size_mult: 0.7
+    cooldown_mult: 1.5
+    stop_width_mult: 1.0
+
+  _DEFAULT:
+    position_size_mult: 1.0
+    cooldown_mult: 1.0
+    stop_width_mult: 1.0
+
+volatility_overlays:
+  HIGH:
+    description: "Applied when volatility_state is HIGH (unless regime is already HIGH_VOLATILITY)"
+    position_size_mult_factor: 0.7
+    stop_width_mult_factor: 1.3
+
+  LOW:
+    description: "Applied when volatility_state is LOW"
+    stop_width_mult_factor: 0.8
+
+# =============================================================================
+# PERSISTENCE
+# =============================================================================
+# Safety state is persisted to disk so restarts cannot silently clear limits.
+
+state_persistence:
+  file: "data/risk_state.json"
+  env_var: RUNECLAW_STATE_DIR
+  default_dir: "data"
+  persisted_fields:
+    - circuit_open
+    - consecutive_losses
+    - last_loss_time
+    - circuit_breaker_trips
+    - saved_at
+  corruption_behavior: >
+    Missing file: fresh start. Empty file: fresh start.
+    Corrupt file (non-empty invalid JSON): circuit breaker TRIPPED (fail-closed).
+    I/O error: circuit breaker TRIPPED (fail-closed).

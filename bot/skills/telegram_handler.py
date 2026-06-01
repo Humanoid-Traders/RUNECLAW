@@ -117,6 +117,7 @@ class TelegramHandler:
             ("risk", self._cmd_risk), ("status", self._cmd_status),
             ("rejected", self._cmd_rejected), ("halt", self._cmd_halt),
             ("reset", self._cmd_reset), ("macro", self._cmd_macro),
+            ("whynot", self._cmd_whynot),
             ("backtest", self._cmd_backtest), ("walkforward", self._cmd_walkforward),
             ("journal", self._cmd_journal), ("costs", self._cmd_costs),
             ("run", self._cmd_run), ("learn", self._cmd_learn),
@@ -508,6 +509,8 @@ class TelegramHandler:
             "\n"
             " RISK CONTROL\n"
             "  /risk          Risk dashboard\n"
+            "  /rejected      Rejected trades\n"
+            "  /whynot [SYM]  Why was it rejected\n"
             "  /pause         Pause trading\n"
             "  /resume        Resume trading\n"
             "  /emergency_stop Full stop\n"
@@ -1116,6 +1119,16 @@ class TelegramHandler:
         if not await self._guard(update, "rejected"):
             return
         result = await self.registry.get("rejected_trades").execute(self.engine)
+        await self._send(update, result)
+
+    async def _cmd_whynot(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """/whynot [symbol] — explain why a trade was rejected by risk."""
+        if not await self._guard(update, "rejected"):
+            return
+        args = ctx.args or []
+        symbol = args[0].upper().strip() if args else ""
+        result = await self.registry.get("whynot").execute(
+            self.engine, symbol=symbol)
         await self._send(update, result)
 
     async def _cmd_halt(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:

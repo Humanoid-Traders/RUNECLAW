@@ -1249,6 +1249,100 @@ class OptimizationSkill(BaseSkill):
 
 
 # ══════════════════════════════════════════════════════════════
+# WHYNOT — explain why a trade was rejected
+# ══════════════════════════════════════════════════════════════
+
+class WhyNotSkill(BaseSkill):
+    name = "whynot"
+    description = "Explain why a trade was rejected by risk"
+
+    async def execute(self, engine: RuneClawEngine, **kwargs: Any) -> str:
+        symbol = kwargs.get("symbol", "").strip().upper()
+        rejections = engine._last_rejections
+
+        if not rejections:
+            return (f"{_NEU} <b>NO REJECTIONS</b>\n\n"
+                    "<i>No trades have been rejected yet. "
+                    "Use /scan or /analyze to generate ideas.</i>")
+
+        if symbol:
+            # Normalize: strip /USDT if provided
+            sym_key = symbol.replace("/USDT", "").replace("/", "")
+            rej = rejections.get(sym_key)
+            if not rej:
+                available = ", ".join(sorted(rejections.keys())[-10:])
+                return (f"{_BAD} No rejection found for <code>{_esc(sym_key)}</code>\n\n"
+                        f"Recent rejections: <code>{_esc(available)}</code>")
+        else:
+            # Most recent rejection (last inserted key)
+            sym_key = list(rejections.keys())[-1]
+            rej = rejections[sym_key]
+
+        # Build the formatted card
+        d_icon = _OK if rej["direction"] == "LONG" else _BAD
+        d_arrow = "\u25b2" if rej["direction"] == "LONG" else "\u25bc"
+        conf = rej["confidence"]
+        conf_ring = _progress_ring(conf * 100)
+
+        lines = [
+            _header("\u2718", f"REJECTED  {_esc(rej['symbol'])}"),
+            "",
+            f"  {d_icon}{d_arrow} <b>{rej['direction']}</b>  "
+            f"{conf_ring} {_pill(f'{conf:.0%}')}",
+            "",
+        ]
+
+        # Price info
+        lines.append("<pre>")
+        lines.append(_kv("Entry", f"${rej['entry_price']:,.2f}"))
+        lines.append(_kv("Stop", f"${rej['stop_loss']:,.2f}"))
+        lines.append(_kv("Target", f"${rej['take_profit']:,.2f}"))
+        lines.append("</pre>")
+
+        # Failed checks (detailed)
+        failed = rej.get("checks_failed", [])
+        if failed:
+            lines.append(f"\n{_BAD} <b>Failed Checks</b> ({len(failed)})")
+            lines.append("<pre>")
+            for check in failed:
+                # Each check is like "CONFIDENCE: 0.3 < 0.6 minimum"
+                parts = check.split(":", 1)
+                name = parts[0].strip()
+                reason = parts[1].strip() if len(parts) > 1 else "failed"
+                lines.append(f"  \u2718 {name}")
+                lines.append(f"    {reason}")
+            lines.append("</pre>")
+
+        # Passed checks (abbreviated)
+        passed = rej.get("checks_passed", [])
+        if passed:
+            lines.append(f"\n{_OK} <b>Passed Checks</b> ({len(passed)})")
+            # Show just the check names, compact
+            names = []
+            for check in passed:
+                parts = check.split(":", 1)
+                names.append(parts[0].strip())
+            # Wrap names in rows of ~4
+            chunks = [names[i:i+4] for i in range(0, len(names), 4)]
+            lines.append("<pre>")
+            for chunk in chunks:
+                lines.append(f"  \u2713 {', '.join(chunk)}")
+            lines.append("</pre>")
+
+        # Timestamp
+        ts = rej.get("timestamp", "")
+        if ts:
+            try:
+                dt = datetime.fromisoformat(ts)
+                ts_fmt = dt.strftime("%Y-%m-%d %H:%M:%S UTC")
+            except Exception:
+                ts_fmt = ts
+            lines.append(f"\n<i>\u23f0 {ts_fmt}</i>")
+
+        return "\n".join(lines)
+
+
+# ══════════════════════════════════════════════════════════════
 # REGISTRY
 # ══════════════════════════════════════════════════════════════
 
@@ -1264,7 +1358,8 @@ def build_default_registry() -> SkillRegistry:
                 WalkForwardSkill, MacroCalendarSkill, TradeJournalSkill,
                 CostBreakdownSkill, RunStrategySkill,
                 LearningDashboardSkill, FeedbackSkill, PatternsSkill,
-                ProposalsSkill, OptimizationSkill, QuantAnalyzeSkill):
+                ProposalsSkill, OptimizationSkill, QuantAnalyzeSkill,
+                WhyNotSkill):
         registry.register(cls())
     register_getclaw_wrapper(registry)
     # v2 upgrade: macro intelligence, compliance, audit, kill-switch
