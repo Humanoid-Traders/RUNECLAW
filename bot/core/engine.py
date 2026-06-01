@@ -142,6 +142,10 @@ class RuneClawEngine:
         )
         # Start WebSocket feed for real-time price monitoring
         await self.ws_feed.start()
+        # Subscribe to core symbols so the WS connection stays alive
+        # even when no positions are open.  Position-specific symbols
+        # are added dynamically in _check_open_positions().
+        self.ws_feed.subscribe(["BTC/USDT", "ETH/USDT", "SOL/USDT"])
 
         while self._running:
             try:
@@ -166,6 +170,9 @@ class RuneClawEngine:
 
     async def _tick(self) -> None:
         """One full scan-analyze cycle."""
+        # Sync WebSocket status to health monitor
+        self.health.set_ws_status(self.ws_feed.is_connected())
+
         # Check circuit breaker — no new scans, but still monitor open positions
         # so SL/TP can fire even while halted (Fix 2: monitoring while halted).
         if self.risk.circuit_breaker_active:
