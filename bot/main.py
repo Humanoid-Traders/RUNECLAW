@@ -70,8 +70,11 @@ def run_telegram() -> None:
             await app.initialize()
             await app.start()
             await app.updater.start_polling()
+            # Start proactive alert monitor (Move 2)
+            await handler.start_monitor(app.bot)
             await engine_task
         finally:
+            await handler.stop_monitor()
             if dashboard_runner:
                 await dashboard_runner.cleanup()
             await app.updater.stop()

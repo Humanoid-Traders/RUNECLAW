@@ -194,6 +194,8 @@ class RuneClawEngine:
 
         self._transition(AgentState.SCANNING, "beginning scan cycle")
         signals = await self.scanner.scan()
+        # Cache scan results for the proactive monitor (Move 2)
+        self._last_scan_signals = signals or []
         if not signals:
             self._transition(AgentState.IDLE, "no signals found")
             return

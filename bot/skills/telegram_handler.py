@@ -7,6 +7,7 @@ File-backed user management with roles and admin commands.
 
 from __future__ import annotations
 
+import asyncio
 import html
 import re
 import threading
@@ -33,6 +34,8 @@ from bot.llm.provider import BYOK, LLMConfig, LLMProvider, LLMTier, PROVIDER_CAT
 from bot.skills.skill_registry import SkillRegistry, build_default_registry
 from bot.utils.logger import audit, system_log
 from bot.utils.user_store import UserStore
+from bot.nlp.intent_router import IntentRouter
+from bot.core.proactive_monitor import ProactiveMonitor
 from bot.warroom.warroom_bot import (
     render_start as wr_start,
     render_status as wr_status,
@@ -100,6 +103,10 @@ class TelegramHandler:
         self.users = UserStore()
         # Seed admin from .env TELEGRAM_CHAT_ID
         self.users.seed_admin(CONFIG.telegram.chat_id)
+        # Natural-language intent router (Move 1)
+        self.intent_router = IntentRouter()
+        # Proactive alert monitor (Move 2)
+        self.monitor = ProactiveMonitor(engine)
 
     def build_app(self) -> Application:
         app = Application.builder().token(CONFIG.telegram.bot_token).build()
@@ -133,6 +140,8 @@ class TelegramHandler:
             # LLM BYOK commands
             ("setllm", self._cmd_setllm), ("llmstatus", self._cmd_llmstatus),
             ("llmreset", self._cmd_llmreset), ("llmtiers", self._cmd_llmtiers),
+            # Proactive alerts
+            ("watch", self._cmd_watch),
         ]:
             app.add_handler(CommandHandler(cmd, handler))
         app.add_handler(CallbackQueryHandler(self._handle_callback))
@@ -259,7 +268,12 @@ class TelegramHandler:
             return "Could not process your question right now. Try a command like /help or /scan."
 
     async def _handle_message(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-        """Handle free-text messages — AI chat for authorized users."""
+        """Handle free-text messages — intent routing + AI chat fallback.
+
+        Move 1: Natural-language intent router. Maps free text to skills
+        via rule-based patterns first, then optional LLM classification.
+        Falls back to general AI chat if no intent matches.
+        """
         if not update.message or not update.message.text:
             return
 
@@ -298,7 +312,35 @@ class TelegramHandler:
             await update.message.reply_text("\u26a0\ufe0f Rate limit. Wait a moment.")
             return
 
-        # Authorized user — send to LLM
+        # ── Intent routing (Move 1) ──────────────────────────────
+        # Try to map free text to a skill before falling back to chat
+        intent = self.intent_router.classify_rules(text)
+
+        if intent.matched and intent.confidence >= 0.8:
+            # High-confidence match — dispatch to skill
+            skill = self.registry.get(intent.skill)
+            if skill:
+                audit(system_log, f"NL intent routed: '{text[:50]}' -> {intent.skill}",
+                      action="intent_dispatch", result=intent.skill,
+                      data={"confidence": intent.confidence, "source": intent.source})
+                try:
+                    result = await skill.execute(self.engine, **intent.kwargs)
+                    await self._send(update, result)
+                except Exception as exc:
+                    await self._send(update,
+                        f"\u26a0\ufe0f Could not execute: {exc}\n\n"
+                        f"Try the direct command instead: /{intent.skill.replace('_', '')}")
+                return
+
+        if intent.matched and intent.confidence >= 0.5 and not intent.kwargs.get("symbol"):
+            # Partial match — skill needs a symbol we couldn't extract
+            await self._send(update,
+                f"\U0001f50d I think you want to <b>{intent.explanation.lower()}</b>, "
+                f"but I couldn't identify which asset.\n\n"
+                f"Try: <code>/analyze BTC</code> or say <i>\"analyze Bitcoin\"</i>")
+            return
+
+        # ── Fallback: AI chat ─────────────────────────────────────
         await self._send(update, "\U0001f9e0 <i>Thinking...</i>")
         answer = await self._llm_chat(text)
         await self._send(update,
@@ -481,6 +523,7 @@ class TelegramHandler:
             "  /proposals     Improvements\n"
             "  /optimize      Token optimizer\n"
             "  /costs         Agent economics\n"
+            "  /watch on|off  Proactive alerts\n"
             "\n"
             " LLM BYOK\n"
             "  /setllm        Switch provider\n"
@@ -500,6 +543,8 @@ class TelegramHandler:
 
         sections += "</pre>\n\n"
         sections += (
+            "\U0001f4ac <i>You can also type naturally:\n"
+            "\"how's BTC?\", \"what's moving?\", \"check my portfolio\"</i>\n\n"
             "<i>\u26a0\ufe0f Not financial advice. Use at your own risk.\n"
             "\U0001f4dc AGPL-3.0 \u2022 github.com/Humanoid-Traders/RUNECLAW</i>"
         )
@@ -684,6 +729,63 @@ class TelegramHandler:
                 "Scanner now covers all Bitget USDT pairs.\n"
                 "Use <code>/mode solana</code> to focus on Solana ecosystem."
             ))
+
+    # ── Proactive Alerts (Move 2) ──────────────────────────────
+
+    async def _cmd_watch(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """/watch [on|off|status] — toggle proactive alerts for this chat."""
+        if not await self._guard(update, "scan"):
+            return
+
+        tg_id = self._get_tg_id(update)
+        args = ctx.args or []
+        action = args[0].lower() if args else "status"
+
+        if action == "on":
+            self.monitor.enable_chat(tg_id)
+            await self._send(update,
+                "\U0001f514 <b>PROACTIVE ALERTS ON</b>\n\n"
+                "I'll push alerts for:\n"
+                "\u2022 Volume spikes on scanned assets\n"
+                "\u2022 Circuit breaker state changes\n"
+                "\u2022 Black-swan anomaly detections\n"
+                "\u2022 New trade signals pending confirmation\n"
+                "\u2022 Engine state changes (halt/cooldown)\n\n"
+                "Use <code>/watch off</code> to disable.")
+        elif action == "off":
+            self.monitor.disable_chat(tg_id)
+            await self._send(update,
+                "\U0001f515 <b>PROACTIVE ALERTS OFF</b>\n\n"
+                "You won't receive unsolicited alerts.\n"
+                "Use <code>/watch on</code> to re-enable.")
+        else:
+            enabled = self.monitor.is_enabled(tg_id)
+            status = "\U0001f7e2 ON" if enabled else "\U0001f534 OFF"
+            await self._send(update,
+                f"\U0001f514 <b>WATCH STATUS</b>: {status}\n\n"
+                f"Active watchers: {self.monitor.enabled_chat_count}\n\n"
+                f"Use <code>/watch on</code> or <code>/watch off</code> to toggle.")
+
+    async def start_monitor(self, bot) -> None:
+        """Start the proactive monitor background task.
+        Called from main.py after the Telegram app is initialized."""
+        async def _send_fn(chat_id: str, text: str) -> None:
+            try:
+                await bot.send_message(
+                    chat_id=int(chat_id), text=text, parse_mode="HTML")
+            except Exception:
+                pass
+        self._monitor_task = asyncio.create_task(self.monitor.run(_send_fn))
+
+    async def stop_monitor(self) -> None:
+        """Stop the proactive monitor."""
+        self.monitor.stop()
+        if hasattr(self, '_monitor_task'):
+            self._monitor_task.cancel()
+            try:
+                await self._monitor_task
+            except asyncio.CancelledError:
+                pass
 
     # ── Admin notification helper ─────────────────────────────
 
