@@ -10,7 +10,7 @@ import os
 from dataclasses import dataclass, field
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(override=True)
 
 
 def _env(key: str, default: str = "") -> str:
