@@ -61,8 +61,8 @@ class RiskLimits:
     commission_pct: float = _env_float("COMMISSION_PCT", 0.1)
     # Liquidity guard: minimum order-book depth (per side) in USD.
     # Scaled dynamically by position size; this is the absolute floor.
-    # Default $5K (not $50K) so small-cap / micro-test trades can pass.
-    min_book_depth_usd: float = _env_float("MIN_BOOK_DEPTH_USD", 5_000.0)
+    # Default $2K allows micro-test trades ($10-$50) to pass on smaller pairs.
+    min_book_depth_usd: float = _env_float("MIN_BOOK_DEPTH_USD", 2_000.0)
 
 
 @dataclass(frozen=True)

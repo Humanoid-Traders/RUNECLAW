@@ -129,6 +129,7 @@ def _build_logger(name: str, filename: str) -> logging.Logger:
 trade_log = _build_logger("runeclaw.trade", "trade.jsonl")
 risk_log = _build_logger("runeclaw.risk", "risk.jsonl")
 system_log = _build_logger("runeclaw.system", "system.jsonl")
+scan_log = _build_logger("runeclaw.scan", "scan.jsonl")
 
 
 def audit(

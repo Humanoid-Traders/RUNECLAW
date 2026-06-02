@@ -31,7 +31,7 @@ from bot.macro.calendar import MacroCalendar, build_2026_calendar
 from bot.risk.portfolio import PortfolioTracker
 from bot.risk.risk_engine import RiskEngine
 from bot.utils.audit_chain import AuditChain, DecisionRecord
-from bot.utils.logger import audit, system_log, trade_log
+from bot.utils.logger import audit, system_log, trade_log, scan_log
 from bot.utils.models import (
     AgentState,
     MarketSignal,
@@ -212,6 +212,28 @@ class RuneClawEngine:
         signals = await self.scanner.scan()
         # Cache scan results for the proactive monitor (Move 2)
         self._last_scan_signals = signals or []
+
+        # ── Structured scan logging ──
+        scan_summary = {
+            "cycle_ts": datetime.now(UTC).isoformat(),
+            "pairs_scanned": len(self._last_scan_signals),
+            "signals_found": len(signals) if signals else 0,
+            "top_signals": [
+                {
+                    "symbol": s.symbol,
+                    "price": s.price,
+                    "change_24h": round(s.change_pct_24h, 2),
+                    "volume_usd": round(s.volume_usd_24h, 0),
+                    "volume_spike": s.volume_spike,
+                    "momentum": round(s.momentum_score, 3),
+                }
+                for s in (signals or [])[:5]
+            ],
+        }
+        audit(scan_log, f"Scan cycle: {scan_summary['signals_found']} signals from market",
+              action="scan_cycle", result="OK" if signals else "NO_SIGNALS",
+              data=scan_summary)
+
         if not signals:
             self._transition(AgentState.IDLE, "no signals found")
             return
@@ -255,7 +277,25 @@ class RuneClawEngine:
 
         idea = await self.analyzer.analyze(signal, ohlcv, order_flow=of_signal)
         if idea is None:
+            audit(scan_log, f"Analysis produced no idea for {signal.symbol}",
+                  action="analyze_signal", result="NO_IDEA",
+                  data={"symbol": signal.symbol, "timeframe": timeframe})
             return None
+
+        # Log trade idea generation
+        audit(scan_log, f"Trade idea generated: {idea.direction.value} {idea.asset}",
+              action="trade_idea", result="GENERATED",
+              data={
+                  "id": idea.id,
+                  "asset": idea.asset,
+                  "direction": idea.direction.value,
+                  "confidence": round(idea.confidence, 3),
+                  "entry": idea.entry_price,
+                  "sl": idea.stop_loss,
+                  "tp": idea.take_profit,
+                  "rr": round(idea.risk_reward_ratio, 2),
+                  "timeframe": timeframe,
+              })
 
         # Compute ATR from candles for the volatility guard (check #16)
         atr_value = None
@@ -273,6 +313,19 @@ class RuneClawEngine:
         self._transition(AgentState.RISK_CHECK, f"evaluating {signal.symbol}")
         risk_check = self.risk.evaluate(idea, atr=atr_value)
 
+        # Log risk evaluation to scan log
+        audit(scan_log, f"Risk evaluation: {risk_check.verdict.value} for {idea.asset}",
+              action="risk_evaluation", result=risk_check.verdict.value,
+              data={
+                  "asset": idea.asset,
+                  "direction": idea.direction.value,
+                  "checks_passed": risk_check.checks_passed,
+                  "checks_failed": risk_check.checks_failed,
+                  "reason": risk_check.reason,
+                  "position_size_usd": round(risk_check.position_size_usd, 2),
+                  "atr_pct": round((atr_value / idea.entry_price) * 100, 2) if atr_value and idea.entry_price else None,
+              })
+
         # Check #17: liquidity guard from order flow (fail-open if no data)
         if of_signal is not None:
             liq_size = risk_check.position_size_usd if risk_check else 0.0
@@ -284,6 +337,15 @@ class RuneClawEngine:
             if liq_reason:
                 audit(trade_log, f"Trade REJECTED by liquidity guard: {liq_reason}",
                       action="liquidity_guard", result="REJECTED")
+                audit(scan_log, f"Liquidity guard rejected {idea.asset}: {liq_reason}",
+                      action="liquidity_guard", result="REJECTED",
+                      data={
+                          "asset": idea.asset,
+                          "bid_depth": round(of_signal.bid_depth_usd, 0) if of_signal.bid_depth_usd else 0,
+                          "ask_depth": round(of_signal.ask_depth_usd, 0) if of_signal.ask_depth_usd else 0,
+                          "spread_bps": round(of_signal.spread_bps, 1) if of_signal.spread_bps else 0,
+                          "position_size": round(liq_size, 2),
+                      })
                 self._transition(AgentState.ANALYZING, "liquidity rejected, continuing")
                 return None
 

@@ -39,7 +39,7 @@ from bot.core.multi_timeframe import MTFConfluence
 from bot.core.smart_money import SmartMoneyEngine
 from bot.core.strategy_modes import StrategySelector, MODE_CONFIGS
 from bot.llm.provider import BYOK, LLMProvider, LLMTier, PROVIDER_CATALOG, create_llm_client, llm_complete, LLMConfig, resolve_tier_config
-from bot.utils.logger import audit, trade_log
+from bot.utils.logger import audit, trade_log, scan_log
 from bot.utils.models import Direction, MarketSignal, TradeIdea
 
 
@@ -993,11 +993,117 @@ class Analyzer:
 
             return result
         except Exception as exc:
-            audit(trade_log, f"LLM error, falling back to rules: {exc}",
+            audit(trade_log, f"LLM error on primary provider, trying fallback: {exc}",
                   action="analyze", result="LLM_FAIL")
+            # ── Cascading fallback: try alternate providers before rules ──
+            fallback_result = await self._try_llm_fallback(prompt, signal, use_full_model)
+            if fallback_result is not None:
+                fallback_result["source"] = f"LLM_FALLBACK_{fallback_result.get('_fallback_provider', 'UNKNOWN')}"
+                fallback_result.pop("_fallback_provider", None)
+                self._llm_cache.put(cache_key, fallback_result, signal.symbol)
+                return fallback_result
             result = self._rule_based_thesis(signal, indicators)
             result["source"] = "RULE_ENGINE_FALLBACK"
             return result
+
+    async def _try_llm_fallback(
+        self,
+        prompt: str,
+        signal: MarketSignal,
+        use_full_model: bool,
+    ) -> Optional[dict]:
+        """Try alternate LLM providers when the primary fails (rate limit, error).
+
+        Cascading order:
+          1. Gemini (free tier, high quota)
+          2. Groq (free tier, fast)
+          3. Anthropic (paid, high quality)
+          4. DeepSeek (cheap, good quality)
+
+        Skips the provider that just failed (the current primary).
+        Returns parsed result dict or None if all fallbacks fail.
+        """
+        import os as _os
+
+        primary_provider = None
+        if self._llm_config:
+            primary_provider = (
+                self._llm_config.provider.value
+                if isinstance(self._llm_config.provider, LLMProvider)
+                else str(self._llm_config.provider)
+            )
+
+        # Build fallback chain — skip the primary that just failed
+        fallback_chain = [
+            (LLMProvider.GEMINI, "GEMINI_API_KEY", "gemini-2.5-flash"),
+            (LLMProvider.GROQ, "GROQ_API_KEY", "llama-3.3-70b-versatile"),
+            (LLMProvider.ANTHROPIC, "ANTHROPIC_API_KEY", "claude-sonnet-4-20250514"),
+            (LLMProvider.DEEPSEEK, "DEEPSEEK_API_KEY", "deepseek-chat"),
+        ]
+
+        for provider, key_env, default_model in fallback_chain:
+            if provider.value == primary_provider:
+                continue  # Skip the one that just failed
+
+            api_key = _os.getenv(key_env, "")
+            if not api_key:
+                continue  # No key configured for this provider
+
+            try:
+                catalog = PROVIDER_CATALOG.get(provider, {})
+                fb_config = LLMConfig(
+                    provider=provider,
+                    api_key=api_key,
+                    model=default_model,
+                    base_url=catalog.get("base_url", ""),
+                )
+                fb_client = create_llm_client(fb_config)
+                if fb_client is None:
+                    continue
+
+                sdk_type = fb_config.sdk_type()
+                sys_content = (
+                    "You are RUNECLAW, a risk-first crypto analyst. "
+                    "Return concise analysis in json format with keys: direction, confidence, reasoning."
+                )
+
+                if sdk_type == "anthropic":
+                    raw_text = await llm_complete(fb_client, fb_config, sys_content, prompt)
+                else:
+                    resp = await asyncio.wait_for(
+                        fb_client.chat.completions.create(
+                            model=default_model,
+                            messages=[
+                                {"role": "system", "content": sys_content},
+                                {"role": "user", "content": prompt},
+                            ],
+                            temperature=CONFIG.llm.temperature,
+                            max_tokens=CONFIG.llm.max_tokens if use_full_model else 280,
+                        ),
+                        timeout=CONFIG.llm.timeout_seconds + 5,  # extra grace for fallback
+                    )
+                    raw_text = resp.choices[0].message.content or ""
+
+                result = self._parse_llm_response(raw_text or "")
+                result["_fallback_provider"] = provider.value.upper()
+                result["model_used"] = default_model
+                audit(scan_log,
+                      f"LLM fallback succeeded via {provider.value}: {signal.symbol}",
+                      action="llm_fallback", result="OK",
+                      data={"provider": provider.value, "model": default_model})
+                return result
+
+            except Exception as fb_exc:
+                audit(trade_log,
+                      f"LLM fallback {provider.value} also failed: {fb_exc}",
+                      action="llm_fallback", result="FAIL",
+                      data={"provider": provider.value})
+                continue
+
+        # All fallbacks exhausted
+        audit(trade_log, "All LLM fallback providers exhausted, using rule engine",
+              action="llm_fallback", result="ALL_EXHAUSTED")
+        return None
 
     @property
     def optimization_stats(self) -> dict:

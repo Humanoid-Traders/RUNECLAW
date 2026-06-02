@@ -75,9 +75,9 @@ class OrderFlowConfig:
     funding_extreme: float = _env_float("OF_FUNDING_EXTREME", 0.0005)  # |rate| treated as crowded positioning
     cvd_history_len: int = _env_int("OF_CVD_HISTORY", 30)         # rolling per-call deltas kept per symbol
     # Liquidity guard thresholds (used by the risk engine, not for scoring)
-    max_spread_bps: float = _env_float("OF_MAX_SPREAD_BPS", 25.0)
-    min_top_depth_usd: float = _env_float("OF_MIN_DEPTH_USD", 5_000.0)  # absolute floor; scaled by position size
-    # Large-cap symbols that should always require $50K+ book depth
+    max_spread_bps: float = _env_float("OF_MAX_SPREAD_BPS", 50.0)
+    min_top_depth_usd: float = _env_float("OF_MIN_DEPTH_USD", 2_000.0)  # absolute floor; scaled by position size
+    # Large-cap symbols that should always require $10K+ book depth
     LARGE_CAP_SYMBOLS: frozenset = frozenset({
         "BTC/USDT", "ETH/USDT", "SOL/USDT",
         "BTC/USDT:USDT", "ETH/USDT:USDT", "SOL/USDT:USDT",
@@ -499,8 +499,8 @@ class OrderFlowAnalyzer:
         min_depth = self.config.min_top_depth_usd
         effective_symbol = symbol or sig.symbol
         if effective_symbol in self.config.LARGE_CAP_SYMBOLS:
-            # Large-cap pairs must always meet a $50K floor
-            min_depth = max(min_depth, 50_000.0)
+            # Large-cap pairs should carry more depth, but scale with position
+            min_depth = max(min_depth, 10_000.0)
 
         if position_size_usd > 0:
             scaled = position_size_usd * 10.0
