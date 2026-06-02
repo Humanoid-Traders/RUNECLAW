@@ -140,6 +140,8 @@ class TelegramHandler:
             # Strategy preset shortcuts (aliases for /run <name>)
             ("momentum", self._cmd_momentum), ("dip", self._cmd_dip),
             ("scalp", self._cmd_scalp),
+            ("intraday", self._cmd_intraday),
+            ("swing", self._cmd_swing),
             ("mode", self._cmd_mode),
             # War Room commands
             ("latest_signal", self._cmd_latest_signal),
@@ -681,6 +683,9 @@ class TelegramHandler:
             "\n"
             " MARKET\n"
             "  /scan          Market scanner\n"
+            "  /scalp         Scalp scan (5m)\n"
+            "  /intraday      Intraday scan (15m)\n"
+            "  /swing         Swing scan (4h)\n"
             "  /analyze BTC   AI analysis\n"
             "  /run           Strategy preset\n"
             "\n"
@@ -1413,12 +1418,30 @@ class TelegramHandler:
         await self._send(update, result)
 
     async def _cmd_scalp(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-        """Shortcut for /run scalp."""
-        if not await self._guard(update, "run"):
+        """Rich scalp scan: 5m candles, tight SL, top-3 by volume."""
+        if not await self._guard(update, "scan"):
             return
-        await self._send(update, "\u23f3 <i>Running Safe Scalper...</i>")
-        result = await self.registry.get("run_strategy").execute(
-            self.engine, strategy="scalp")
+        await self._send(update, "\u26a1 <i>Running Scalp Scan (5m)...</i>")
+        result = await self.registry.get("pro_scan").execute(
+            self.engine, mode="scalp")
+        await self._send(update, result)
+
+    async def _cmd_intraday(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """Rich intraday scan: 15m candles, top-5 movers."""
+        if not await self._guard(update, "scan"):
+            return
+        await self._send(update, "\U0001f4ca <i>Running Intraday Scan (15m)...</i>")
+        result = await self.registry.get("pro_scan").execute(
+            self.engine, mode="intraday")
+        await self._send(update, result)
+
+    async def _cmd_swing(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """Rich swing scan: 4h candles, wide SL/TP, trend-based."""
+        if not await self._guard(update, "scan"):
+            return
+        await self._send(update, "\U0001f30a <i>Running Swing Scan (4h)...</i>")
+        result = await self.registry.get("pro_scan").execute(
+            self.engine, mode="swing")
         await self._send(update, result)
 
     async def _cmd_learn(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:

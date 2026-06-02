@@ -226,11 +226,16 @@ class RuneClawEngine:
         await self._check_open_positions()
         self._transition(AgentState.IDLE, "tick cycle complete")
 
-    async def _analyze_signal(self, signal: MarketSignal) -> Optional[TradeIdea]:
-        """Run full analysis pipeline on a single signal."""
+    async def _analyze_signal(self, signal: MarketSignal, *, timeframe: str = "1h") -> Optional[TradeIdea]:
+        """Run full analysis pipeline on a single signal.
+
+        Args:
+            signal: Market signal to analyze.
+            timeframe: OHLCV timeframe to fetch (e.g. "5m", "15m", "1h", "4h").
+        """
         try:
             exchange = await self.scanner._get_exchange()
-            ohlcv = await exchange.fetch_ohlcv(signal.symbol, "1h", limit=100)
+            ohlcv = await exchange.fetch_ohlcv(signal.symbol, timeframe, limit=100)
         except Exception as exc:
             audit(
                 system_log,

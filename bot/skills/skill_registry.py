@@ -1306,6 +1306,239 @@ class OptimizationSkill(BaseSkill):
 # WHYNOT — explain why a trade was rejected
 # ══════════════════════════════════════════════════════════════
 
+class ProScanSkill(BaseSkill):
+    """Rich multi-section scan: account header, live tickers, regime narrative, verdict.
+
+    Modes:
+      - scalp:    5m candles, tight SL/TP, top-3 by volume
+      - intraday: 15m candles, medium SL/TP, top-5 movers
+      - swing:    4h candles, wide SL/TP, top-5 movers
+    """
+    name = "pro_scan"
+    description = "Rich scan with regime analysis"
+
+    MODE_CFG: dict[str, dict] = {
+        "scalp": {
+            "label": "SCALP SCAN",
+            "icon": "\u26a1",
+            "timeframe": "5m",
+            "top_n": 3,
+            "desc": "5m candles \u2022 tight SL \u2022 top 3 volume",
+            "sort": "volume",
+        },
+        "intraday": {
+            "label": "INTRADAY SCAN",
+            "icon": "\U0001f4ca",
+            "timeframe": "15m",
+            "top_n": 5,
+            "desc": "15m candles \u2022 top 5 movers",
+            "sort": "change",
+        },
+        "swing": {
+            "label": "SWING SCAN",
+            "icon": "\U0001f30a",
+            "timeframe": "4h",
+            "top_n": 5,
+            "desc": "4h candles \u2022 wide SL/TP \u2022 trend-based",
+            "sort": "change",
+        },
+    }
+
+    async def execute(self, engine: RuneClawEngine, **kwargs) -> str:
+        mode = kwargs.get("mode", "intraday")
+        cfg = self.MODE_CFG.get(mode, self.MODE_CFG["intraday"])
+
+        # ── Section 1: Account Status ──
+        state = engine.portfolio.snapshot()
+        cb = engine.risk.circuit_breaker_active
+        cb_s = f"{_BAD} TRIPPED" if cb else f"{_OK} CLEAR"
+        sim = "PAPER" if CONFIG.simulation_mode else "\u26a0\ufe0f LIVE"
+
+        header = (
+            f"{cfg['icon']} <b>{cfg['label']}</b> {'━' * 20}\n"
+            f"  {sim}  \u2502  Breaker: {cb_s}\n"
+            f"<pre>"
+            f"{_kv('Equity', _money(state.equity_usd))}\n"
+            f"{_kv('Open Pos', f'{state.open_positions} / {CONFIG.risk.max_open_positions}')}\n"
+            f"{_kv('Daily PnL', _money(state.daily_pnl, sign=True))}\n"
+            f"{_kv('Timeframe', cfg['timeframe'].upper())}"
+            f"</pre>\n"
+        )
+
+        # ── Section 2: Fetch live tickers ──
+        signals = await engine.scanner.scan()
+        if not signals:
+            return header + f"\n{_NEU} <i>No market signals detected.</i>"
+
+        # Sort by mode preference
+        if cfg["sort"] == "volume":
+            signals.sort(key=lambda s: s.volume_usd_24h, reverse=True)
+        else:
+            signals.sort(key=lambda s: abs(s.change_pct_24h), reverse=True)
+
+        top = signals[:cfg["top_n"]]
+
+        ticker_lines = ["\U0001f4e1 <b>Live Tickers</b>", "<pre>"]
+        ticker_lines.append(
+            f" {'PAIR':<10s}  {'PRICE':>12s}  {'24h':>7s}  {'VOL':>8s}"
+        )
+        ticker_lines.append(f" {'─'*10}  {'─'*12}  {'─'*7}  {'─'*8}")
+        for s in top:
+            arrow = _spark(s.change_pct_24h)
+            vol_m = s.volume_usd_24h / 1_000_000 if s.volume_usd_24h else 0
+            chg = f"{s.change_pct_24h:+.1f}%"
+            spike = "\U0001f4a5" if s.volume_spike else " "
+            ticker_lines.append(
+                f" {arrow} {_esc(s.symbol):<9s}"
+                f"  ${s.price:<11,.2f}"
+                f"  {chg:>6}"
+                f"  ${vol_m:,.0f}M {spike}"
+            )
+        ticker_lines.append("</pre>\n")
+
+        # ── Section 3: Regime Assessment + Analysis ──
+        regime_lines = ["\U0001f9e0 <b>Regime Assessment</b>\n"]
+        ideas_found: list = []
+
+        for sig in top:
+            try:
+                exchange = await engine.scanner._get_exchange()
+                ohlcv = await exchange.fetch_ohlcv(
+                    sig.symbol, cfg["timeframe"], limit=100
+                )
+            except Exception:
+                regime_lines.append(
+                    f"  {_BAD} <b>{_esc(sig.symbol)}</b> \u2014 data unavailable\n"
+                )
+                continue
+
+            if len(ohlcv) < 20:
+                regime_lines.append(
+                    f"  {_WARN} <b>{_esc(sig.symbol)}</b> \u2014 insufficient bars\n"
+                )
+                continue
+
+            # Compute quick indicators for regime narrative
+            closes = [float(c[4]) for c in ohlcv]
+            highs = [float(c[2]) for c in ohlcv]
+            lows = [float(c[3]) for c in ohlcv]
+            volumes = [float(c[5]) for c in ohlcv]
+
+            # RSI-14
+            deltas = [closes[i] - closes[i-1] for i in range(1, len(closes))]
+            gains = [max(d, 0) for d in deltas[-14:]]
+            losses = [abs(min(d, 0)) for d in deltas[-14:]]
+            avg_gain = sum(gains) / 14 if gains else 0
+            avg_loss = sum(losses) / 14 if losses else 0.001
+            rsi = 100 - (100 / (1 + avg_gain / avg_loss))
+
+            # VWAP approx (typical price * volume / cumulative volume)
+            recent = ohlcv[-20:]
+            tp_vol = sum(
+                ((float(c[2]) + float(c[3]) + float(c[4])) / 3) * float(c[5])
+                for c in recent
+            )
+            cum_vol = sum(float(c[5]) for c in recent)
+            vwap = tp_vol / cum_vol if cum_vol > 0 else closes[-1]
+
+            # Support / Resistance from recent swing H/L
+            recent_20h = highs[-20:]
+            recent_20l = lows[-20:]
+            resistance = max(recent_20h)
+            support = min(recent_20l)
+
+            # EMA20 for trend direction
+            ema20 = closes[-1]
+            if len(closes) >= 20:
+                k = 2 / 21
+                ema20 = closes[-20]
+                for p in closes[-19:]:
+                    ema20 = p * k + ema20 * (1 - k)
+
+            # ADX proxy: average directional movement
+            price = closes[-1]
+            trend_dir = "Bullish" if price > ema20 else "Bearish"
+            trend_icon = _OK if price > ema20 else _BAD
+
+            # Build narrative
+            rsi_label = "overbought" if rsi > 70 else "oversold" if rsi < 30 else "neutral"
+            vwap_pos = "above" if price > vwap else "below"
+
+            regime_lines.append(
+                f"  {trend_icon} <b>{_esc(sig.symbol)}</b>  {trend_dir}\n"
+                f"<pre>"
+                f"  RSI({rsi:.0f}) {rsi_label}  \u2502  VWAP ${vwap:,.2f} ({vwap_pos})\n"
+                f"  Support ${support:,.2f}  \u2502  Resist ${resistance:,.2f}\n"
+                f"  EMA20 ${ema20:,.2f}  \u2502  Price ${price:,.2f}"
+                f"</pre>"
+            )
+
+            # Narrative sentence
+            if rsi < 30 and price < ema20:
+                narrative = f"  <i>Oversold bounce potential. Price below EMA20, watching for reversal at ${support:,.2f}</i>"
+            elif rsi > 70 and price > ema20:
+                narrative = f"  <i>Extended move. Overbought conditions near resistance ${resistance:,.2f}</i>"
+            elif price > vwap and price > ema20:
+                narrative = f"  <i>Bullish bias. Trading above VWAP and EMA20, momentum intact</i>"
+            elif price < vwap and price < ema20:
+                narrative = f"  <i>Bearish pressure. Below VWAP and EMA20, watching ${support:,.2f} support</i>"
+            else:
+                narrative = f"  <i>Consolidating between ${support:,.2f} - ${resistance:,.2f}</i>"
+            regime_lines.append(narrative + "\n")
+
+            # Run full analysis pipeline with mode-specific timeframe
+            idea = await engine._analyze_signal(sig, timeframe=cfg["timeframe"])
+            if idea:
+                engine._pending_ideas[idea.id] = idea
+                ideas_found.append(idea)
+
+        # ── Section 4: Scan Verdict ──
+        verdict_lines = ["\U0001f3af <b>Scan Verdict</b>\n"]
+        if not ideas_found:
+            verdict_lines.append(
+                f"  {_NEU} No actionable setups on {cfg['timeframe'].upper()} timeframe.\n"
+                f"  <i>All signals filtered by confidence/risk gate.</i>"
+            )
+        else:
+            for idea in ideas_found:
+                d_icon = _OK if idea.direction.value == "LONG" else _BAD
+                d_arrow = "\u25b2" if idea.direction.value == "LONG" else "\u25bc"
+                sl_d = abs(idea.entry_price - idea.stop_loss)
+                tp_d = abs(idea.take_profit - idea.entry_price)
+                conf_fill = int(idea.confidence * 10)
+                conf_bar = _BLOCKS[7] * conf_fill + _BLOCKS[0] * (10 - conf_fill)
+
+                verdict_lines.append(
+                    f"  {d_icon}{d_arrow} <b>{idea.direction.value} {_esc(idea.asset)}</b>  "
+                    f"\u2502{conf_bar}\u2502 {_pill(f'{idea.confidence:.0%}')}\n"
+                    f"<pre>"
+                    f"  Entry  ${idea.entry_price:>10,.2f}\n"
+                    f"  SL     ${idea.stop_loss:>10,.2f}  (-${sl_d:,.2f})\n"
+                    f"  TP     ${idea.take_profit:>10,.2f}  (+${tp_d:,.2f})\n"
+                    f"  R:R    {idea.risk_reward_ratio:>10}x"
+                    f"</pre>"
+                )
+                if idea.reasoning:
+                    short_reason = idea.reasoning[:150]
+                    verdict_lines.append(
+                        f"  <blockquote>{_esc(short_reason)}</blockquote>"
+                    )
+                verdict_lines.append(f"  {_pill(idea.id)}\n")
+
+            verdict_lines.append(
+                f"<i>\u25b8 /trade to review \u2022 /whynot for rejections</i>"
+            )
+
+        # ── Assemble final output ──
+        parts = [
+            header,
+            "\n".join(ticker_lines),
+            "\n".join(regime_lines),
+            "\n".join(verdict_lines),
+        ]
+        return "\n".join(parts)
+
+
 class WhyNotSkill(BaseSkill):
     name = "whynot"
     description = "Explain why a trade was rejected by risk"
@@ -1413,7 +1646,7 @@ def build_default_registry() -> SkillRegistry:
                 CostBreakdownSkill, RunStrategySkill,
                 LearningDashboardSkill, FeedbackSkill, PatternsSkill,
                 ProposalsSkill, OptimizationSkill, QuantAnalyzeSkill,
-                WhyNotSkill):
+                WhyNotSkill, ProScanSkill):
         registry.register(cls())
     register_getclaw_wrapper(registry)
     # v2 upgrade: macro intelligence, compliance, audit, kill-switch
