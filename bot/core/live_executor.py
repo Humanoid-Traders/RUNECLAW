@@ -472,18 +472,33 @@ class LiveExecutor:
     # ── Account info ─────────────────────────────────────────────
 
     async def fetch_balance(self) -> dict:
-        """Fetch USDT balance from Bitget."""
+        """Fetch USDT balance and all spot holdings from Bitget."""
         try:
             exchange = await self._get_exchange()
             balance = await exchange.fetch_balance()
             usdt = balance.get("USDT", {})
+
+            # Collect all non-zero spot holdings
+            holdings = []
+            for asset, info in balance.items():
+                if asset in ("info", "free", "used", "total", "timestamp", "datetime"):
+                    continue
+                total_val = float(info.get("total", 0) if isinstance(info, dict) else 0)
+                if total_val > 0 and asset != "USDT":
+                    holdings.append({
+                        "asset": asset,
+                        "total": total_val,
+                        "free": float(info.get("free", 0) if isinstance(info, dict) else 0),
+                    })
+
             return {
                 "free": float(usdt.get("free", 0)),
                 "used": float(usdt.get("used", 0)),
                 "total": float(usdt.get("total", 0)),
+                "holdings": holdings,
             }
         except Exception as exc:
-            return {"error": str(exc), "free": 0, "used": 0, "total": 0}
+            return {"error": str(exc), "free": 0, "used": 0, "total": 0, "holdings": []}
 
     @property
     def open_positions(self) -> list[LivePosition]:

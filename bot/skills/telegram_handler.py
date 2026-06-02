@@ -970,7 +970,7 @@ class TelegramHandler:
             "\u2022 <code>/golive OFF</code> — disable live mode")
 
     async def _cmd_livebalance(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-        """/livebalance — check real USDT balance on Bitget."""
+        """/livebalance — check real USDT balance + spot holdings on Bitget."""
         if not await self._guard(update, "scan"):
             return
         try:
@@ -978,11 +978,52 @@ class TelegramHandler:
             total = bal.get("total", 0)
             free = bal.get("free", 0)
             used = bal.get("used", 0)
-            await self._send(update,
-                "\U0001f4b0 <b>BITGET BALANCE</b>\n\n"
-                f"Total: <code>${total:.2f}</code>\n"
-                f"Free:  <code>${free:.2f}</code>\n"
-                f"Used:  <code>${used:.2f}</code>")
+            holdings = bal.get("holdings", [])
+
+            lines = [
+                "\U0001f4b0 <b>BITGET BALANCE</b>\n",
+                f"  USDT Total: <code>${total:.2f}</code>",
+                f"  USDT Free:  <code>${free:.2f}</code>",
+                f"  USDT Used:  <code>${used:.2f}</code>",
+            ]
+
+            if holdings:
+                lines.append("\n\U0001f4e6 <b>SPOT HOLDINGS</b>\n")
+                # Try to fetch prices for USD value
+                exchange = await self.engine.live_executor._get_exchange()
+                total_usd = total  # start with USDT
+                for h in sorted(holdings, key=lambda x: x["asset"]):
+                    asset = h["asset"]
+                    qty = h["total"]
+                    symbol = f"{asset}/USDT"
+                    usd_val = 0.0
+                    price = 0.0
+                    try:
+                        ticker = await exchange.fetch_ticker(symbol)
+                        price = float(ticker.get("last", 0))
+                        usd_val = qty * price
+                        total_usd += usd_val
+                    except Exception:
+                        pass  # unlisted pair or no ticker
+
+                    if usd_val >= 0.01:
+                        lines.append(
+                            f"  <b>{asset}</b>  "
+                            f"<code>{qty:.8g}</code>  "
+                            f"~<code>${usd_val:.2f}</code>"
+                        )
+                    else:
+                        lines.append(
+                            f"  <b>{asset}</b>  "
+                            f"<code>{qty:.8g}</code>  "
+                            f"<i>dust</i>"
+                        )
+
+                lines.append(f"\n  \U0001f4b5 <b>Total Value: ~${total_usd:.2f}</b>")
+            else:
+                lines.append("\n<i>No spot holdings (USDT only)</i>")
+
+            await self._send(update, "\n".join(lines))
         except Exception as exc:
             await self._send(update, f"\u274c Balance fetch failed: {exc}")
 
