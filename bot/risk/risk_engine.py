@@ -242,10 +242,7 @@ class RiskEngine:
                 if notional_pct <= max_notional_pct + 0.01:  # tiny epsilon for float math
                     passed.append(f"POSITION_SIZE: notional {notional_pct:.1f}% <= {max_notional_pct}%")
                 else:
-                    # Cap position to max notional and log the clamping
-                    max_notional = state.equity_usd * (max_notional_pct / 100.0)
-                    passed.append(f"POSITION_SIZE: clamped {notional_pct:.1f}% -> {max_notional_pct}% (${position_usd:.0f} -> ${max_notional:.0f})")
-                    position_usd = max_notional
+                    failed.append(f"POSITION_SIZE: notional {notional_pct:.1f}% exceeds {max_notional_pct}% cap")
         except Exception as exc:
             failed.append(f"POSITION_SIZE: evaluation error ({exc})")
 
@@ -950,6 +947,8 @@ class RiskEngine:
             tmp = self._state_file + ".tmp"
             with open(tmp, "w") as f:
                 json.dump(data, f)
+                f.flush()
+                os.fsync(f.fileno())
             os.replace(tmp, self._state_file)  # atomic on POSIX
         except Exception as exc:
             # Log save failure -- circuit breaker state is safety-critical

@@ -58,8 +58,8 @@ def _make_idea(
     asset: str = "BTC/USDT",
     direction: Direction = Direction.LONG,
     entry: float = 50000.0,
-    sl: float = 49000.0,
-    tp: float = 52000.0,
+    sl: float = 44000.0,       # 12% stop — keeps position under 20% notional cap
+    tp: float = 57200.0,       # R:R = 7200/6000 = 1.2 — at minimum threshold
     confidence: float = 0.75,
     reasoning: str = "red-team scenario",
     source: str = "red_team",
@@ -252,19 +252,17 @@ class RedTeamEngine:
 
     def _liquidity_drain_scenarios(self) -> list[dict]:
         price = 50000.0
-        # NOTE: The risk engine correctly CLAMPS oversized positions to the 20%
-        # notional cap rather than rejecting them.  This is by design -- the risk
-        # engine protects capital while still allowing the trade.  These scenarios
-        # verify the clamping works (expected: APPROVED with clamped size).
+        # The risk engine now REJECTS oversized positions that exceed the 20%
+        # notional cap (fail-closed). These scenarios verify the rejection.
         return [
             {
                 "name": "liquidity_drain_50pct_equity",
                 "category": "liquidity_drain",
                 "description": (
                     "Position sized at 50% of equity via a very tight stop. "
-                    "Risk engine should CLAMP to 20% notional cap and approve."
+                    "Risk engine should REJECT — exceeds 20% notional cap."
                 ),
-                "expected_verdict": "APPROVED",
+                "expected_verdict": "REJECTED",
                 "atr": "auto",
                 "build_idea": lambda: _make_idea(
                     entry=price, sl=price * 0.999, tp=price * 1.01,
@@ -276,9 +274,9 @@ class RedTeamEngine:
                 "category": "liquidity_drain",
                 "description": (
                     "Position sized at 100% of equity via ultra-tight stop. "
-                    "Risk engine should CLAMP to 20% notional cap and approve."
+                    "Risk engine should REJECT — exceeds 20% notional cap."
                 ),
-                "expected_verdict": "APPROVED",
+                "expected_verdict": "REJECTED",
                 "atr": "auto",
                 "build_idea": lambda: _make_idea(
                     entry=price, sl=price * 0.9999, tp=price * 1.005,
@@ -304,7 +302,7 @@ class RedTeamEngine:
                     a = assets[j]
                     if not any(p.asset == a for p in self._portfolio.open_positions):
                         idea = _make_idea(
-                            asset=a, entry=100.0, sl=95.0, tp=115.0,
+                            asset=a, entry=100.0, sl=88.0, tp=114.4,
                             confidence=0.80, idea_id=f"corr-setup-{j}",
                         )
                         self._portfolio.open_position(idea, size_usd=100.0)
@@ -322,7 +320,7 @@ class RedTeamEngine:
                 "pre_setup": _pre_setup,
                 "build_idea": lambda a=asset: _make_idea(
                     asset=a,
-                    entry=100.0, sl=95.0, tp=115.0,
+                    entry=100.0, sl=88.0, tp=114.4,
                     confidence=0.80,
                 ),
             }
@@ -409,12 +407,12 @@ class RedTeamEngine:
         #   rr < min_risk_reward - 0.01  →  rr < 1.19
         # So R:R 1.19 passes (1.19 < 1.19 is False). Use 1.18 to trigger rejection.
         # R:R = reward / risk = (TP - entry) / (entry - SL) for LONG
-        # For entry=50000, SL=49000 (risk=1000):
-        #   R:R 1.18 -> TP = 50000 + 1180 = 51180  (below epsilon, rejected)
-        #   R:R 1.20 -> TP = 50000 + 1200 = 51200  (at threshold, approved)
-        #   R:R 1.21 -> TP = 50000 + 1210 = 51210  (above threshold, approved)
-        entry, sl = 50000.0, 49000.0
-        risk = entry - sl  # 1000
+        # For entry=50000, SL=44000 (risk=6000, 12% stop → position under 20% cap):
+        #   R:R 1.18 -> TP = 50000 + 7080 = 57080  (below epsilon, rejected)
+        #   R:R 1.20 -> TP = 50000 + 7200 = 57200  (at threshold, approved)
+        #   R:R 1.21 -> TP = 50000 + 7260 = 57260  (above threshold, approved)
+        entry, sl = 50000.0, 44000.0
+        risk = entry - sl  # 6000
         return [
             {
                 "name": "rr_below_threshold_1.18",
@@ -570,6 +568,7 @@ class RedTeamEngine:
         # max_open_positions = 5; open 5 valid ones then try a 6th.
         # Each scenario's pre_setup opens all prior positions so the portfolio
         # state is correct when the risk engine evaluates position count.
+        # Stop distances are 12% to keep position sizes under the 20% notional cap.
         assets = [
             ("BTC/USDT", 50000.0),
             ("ETH/USDT", 3000.0),
@@ -581,8 +580,8 @@ class RedTeamEngine:
         scenarios = []
         for i, (asset, price) in enumerate(assets):
             is_overflow = i >= 5
-            sl = price * 0.95
-            tp = price * 1.10
+            sl = round(price * 0.88, 8)    # 12% stop
+            tp = round(price * 1.144, 8)   # R:R = 14.4% / 12% = 1.2
 
             def _pre_setup(idx=i, assets_list=assets) -> None:
                 """Ensure all positions before this index are open."""
@@ -597,7 +596,9 @@ class RedTeamEngine:
                     a, p = assets_list[j]
                     if not any(pos.asset == a for pos in self._portfolio.open_positions):
                         idea = _make_idea(
-                            asset=a, entry=p, sl=p * 0.95, tp=p * 1.10,
+                            asset=a, entry=p,
+                            sl=round(p * 0.88, 8),
+                            tp=round(p * 1.144, 8),
                             confidence=0.80, idea_id=f"flood-setup-{j}",
                         )
                         self._portfolio.open_position(idea, size_usd=100.0)
@@ -613,7 +614,8 @@ class RedTeamEngine:
                 "atr": "auto",
                 "pre_setup": _pre_setup,
                 "build_idea": lambda a=asset, p=price, s=sl, t=tp: _make_idea(
-                    asset=a, entry=p, sl=s, tp=t, confidence=0.80,
+                    asset=a, entry=p, sl=s, tp=t,
+                    confidence=0.80,
                 ),
             }
             scenarios.append(scenario)

@@ -3,14 +3,14 @@
 **Track:** Best Strategy & Risk Award
 **Team:** Humanoid Traders
 **Live Bot:** [@HTRUNECLAW_bot](https://t.me/HTRUNECLAW_bot)
-**Dashboard:** [Live Dashboard](https://xbf5gmte.mule.page/)
+**Dashboard:** [Live Dashboard](https://q55j75v7.mule.page/hub.html)
 **Repo:** [GitHub](https://github.com/Humanoid-Traders/RUNECLAW)
 
 ---
 
 ## What RUNECLAW Does (30 seconds)
 
-RUNECLAW is an AI trading agent that fuses 11-voter confluence scoring with a 21-check fail-closed risk engine, human-in-the-loop Telegram confirmation, live Bitget execution via ccxt, and an Ed25519-signed tamper-evident audit chain -- every decision is logged, gated, and cryptographically attested before a single dollar moves.
+RUNECLAW is an AI trading agent that fuses 11-voter confluence scoring with a 21-check fail-closed risk engine, human-in-the-loop Telegram confirmation, Bitget API integration via ccxt (paper-first, live requires dual opt-in), and an Ed25519-signed tamper-evident audit chain -- every decision is logged, gated, and cryptographically attested before a single dollar moves.
 
 ## Why We Win Best Strategy & Risk
 
@@ -23,7 +23,7 @@ RUNECLAW is an AI trading agent that fuses 11-voter confluence scoring with a 21
 - **40+ analysis modules** spanning technical indicators, candlestick detection, Fibonacci retracement, order flow, sentiment fusion, macro calendar, and explainability engine
 
 ### Risk
-- **21 independent fail-closed risk checks** -- position size, daily loss, drawdown, max positions, R:R minimum, confidence gate, correlation blocking, loss streak, entry sanity, stop-loss required, stale data guard, cooldown, portfolio exposure, per-symbol exposure, volatility guard, circuit breaker, liquidity guard, macro event gate, MTF alignment, concentration PCA, portfolio VaR
+- **18 core fail-closed risk checks + 3 experimental (MTF alignment, concentration PCA, portfolio VaR)** -- position size, daily loss, drawdown, max positions, R:R minimum, confidence gate, correlation blocking, loss streak, entry sanity, stop-loss required, stale data guard, cooldown, portfolio exposure, per-symbol exposure, volatility guard, circuit breaker, liquidity guard, macro event gate, MTF alignment, concentration PCA, portfolio VaR
 - **Adversarial self-critique gate** -- 7-heuristic bear-case analysis pre-trade; HALT at 3+ concerns blocks execution with full explanation
 - **Ed25519 cryptographic attestation** -- Merkle root over audit entry batches, signed with Ed25519; verify any batch against public key for non-repudiation
 - **Portfolio VaR check (#21)** -- 95% parametric VaR rejects trades pushing portfolio risk above 15% of equity
@@ -31,9 +31,9 @@ RUNECLAW is an AI trading agent that fuses 11-voter confluence scoring with a 21
 - **Circuit breaker + black swan detector** -- auto-halt on 5% daily loss / 10% drawdown / 5 consecutive losses; black swan detector pre-empts with 5 statistical anomaly types (correlation breakdown, volume collapse, flash crash, ATR explosion, spread widening)
 
 ### Live Proof
-- **Real BTC/USDT execution on Bitget** -- live bot [@HTRUNECLAW_bot](https://t.me/HTRUNECLAW_bot) scanning 324 pairs, analyzing, and gating trades in production
+- **Live bot [@HTRUNECLAW_bot](https://t.me/HTRUNECLAW_bot) scanning 324 real Bitget pairs and gating trades in paper mode — live execution is opt-in with micro-test safety caps ($10/position, $50 total)**
 - **Micro-test safety limits** -- simulation-first ($10K paper), live requires dual-flag opt-in; configurable $10/position, $50 total exposure caps
-- **551 automated tests, 100% red team pass rate** -- 28 adversarial scenarios across 10 attack categories, 29 dedicated security tests, zero crashes across 500 backtest runs
+- **Automated test suite with adversarial red-team scenarios across 10 attack categories** -- 28 adversarial scenarios across 10 attack categories, 29 dedicated security tests, zero crashes across 500 backtest runs
 
 ### Composability (MCP)
 - **Shield risk engine available as MCP server** -- bearer-token authenticated, any external agent calls `check_risk()` over MCP protocol (`bot/mcp/server.py`)

@@ -2428,12 +2428,13 @@ class TestSafetyGates:
             asset="BTC/USDT",
             direction=Direction.LONG,
             entry_price=50000.0,
-            stop_loss=48750.0,
-            take_profit=53750.0,
+            stop_loss=44000.0,       # 12% stop → position under 20% notional cap
+            take_profit=57200.0,     # R:R = 7200/6000 = 1.2
             confidence=0.75,
             reasoning="test",
             signals_used=["rsi"],
             timestamp=datetime.now(UTC),
+            position_size_usd=200.0,  # small size to pass position-size check
         )
         engine._pending_ideas[idea.id] = idea
         engine._pending_atr[idea.id] = 500.0

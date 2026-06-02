@@ -464,7 +464,7 @@ class RuneClawEngine:
 
             # Also record as paper trade for portfolio tracking / metrics
             try:
-                paper_trade = self.portfolio.open_position(idea, min(size_usd, 10.0))
+                paper_trade = self.portfolio.open_position(idea, size_usd)
             except Exception:
                 paper_trade = None  # non-fatal: live order is the source of truth
 

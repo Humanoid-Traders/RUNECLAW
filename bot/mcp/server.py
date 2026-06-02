@@ -237,20 +237,21 @@ class RuneClawMCPServer:
         """
         arguments = arguments or {}
 
-        # --- C5 FIX: authenticate caller -----------------------------------
-        if _MCP_AUTH_TOKEN:
-            import hmac
-            if not auth_token or not hmac.compare_digest(auth_token, _MCP_AUTH_TOKEN):
-                audit(
-                    system_log,
-                    f"MCP auth rejected for tool '{name}'",
-                    action="mcp_auth_fail",
-                )
-                return MCPResponse(
-                    status="error",
-                    tool=name,
-                    result="Authentication required. Provide a valid auth_token.",
-                ).to_dict()
+        # --- C5 FIX: authenticate caller (always enforced) -----------------
+        # Constructor already refuses to start without MCP_AUTH_TOKEN.
+        # This check is unconditional — no fail-open path exists.
+        import hmac
+        if not auth_token or not hmac.compare_digest(auth_token, _MCP_AUTH_TOKEN):
+            audit(
+                system_log,
+                f"MCP auth rejected for tool '{name}'",
+                action="mcp_auth_fail",
+            )
+            return MCPResponse(
+                status="error",
+                tool=name,
+                result="Authentication required. Provide a valid auth_token.",
+            ).to_dict()
 
         # --- lookup --------------------------------------------------------
         tdef = self._tool_index.get(name)

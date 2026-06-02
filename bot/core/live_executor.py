@@ -177,6 +177,13 @@ class LiveExecutor:
                   data={"asset": idea.asset, "size_usd": size_usd})
             return f"BLOCKED: {preflight_err}"
 
+        # AUDIT FIX: Re-assert live mode at execution time (not just at call time)
+        # This prevents a race where /golive is revoked between confirmation and execution
+        if not CONFIG.is_live():
+            audit(trade_log, f"LIVE EXECUTION BLOCKED: is_live() returned False at execution time for {idea.asset}",
+                  action="live_execute", result="BLOCKED_NOT_LIVE")
+            return f"Live execution blocked: live mode was deactivated before order placement."
+
         audit(trade_log, f"Live execution starting: {idea.direction.value} {idea.asset}",
               action="live_execute", result="STARTING",
               data={
