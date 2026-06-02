@@ -11,7 +11,7 @@ We built an AI trading agent that says NO to 95% of trades.
 
 Not because it can't trade. Because the risk engine won't let it.
 
-Meet RUNECLAW — 18 fail-closed risk checks, live on Telegram right now.
+Meet RUNECLAW — 21 fail-closed risk checks, live on Telegram right now.
 
 Try it: t.me/HTRUNECLAW_bot
 
@@ -24,7 +24,7 @@ Most AI trading bots optimize for one thing: more trades.
 
 RUNECLAW optimizes for survival.
 
-Every trade must pass 20 independent checks. If ANY check fails — or even errors out — the trade is rejected. No overrides. No force-execute.
+Every trade must pass 21 independent checks. If ANY check fails — or even errors out — the trade is rejected. No overrides. No force-execute.
 
 Miss a trade? Recoverable.
 Take a bad trade? Not recoverable.
@@ -64,7 +64,7 @@ Black swan detector: catches anomalies BEFORE the breaker trips
 Red team: 28 adversarial attacks, 100% blocked
 AI learning: 8 modules, all sandboxed — AI can suggest, never override risk
 
-626 tests. Zero tolerance.
+361 tests. Zero tolerance.
 
 
 6/8 — THE NUMBERS
@@ -104,7 +104,7 @@ Docs: humanoid-traders-1.gitbook.io/humanoid-traders-ai
 
 AGPL-3.0 licensed. Fork it. Audit it. Break it.
 
-70+ commits. 626 tests. 18 risk checks. 1 philosophy:
+70+ commits. 361 tests. 21 risk checks. 1 philosophy:
 
 The safest trade is no trade.
 

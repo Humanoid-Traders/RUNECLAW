@@ -17,7 +17,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/python-3.11+-blue?logo=python&logoColor=white" alt="Python 3.11+">
   <img src="https://img.shields.io/badge/license-AGPL--3.0-blue" alt="License AGPL-3.0">
-  <img src="https://img.shields.io/badge/tests-551%20passing-brightgreen" alt="551 Tests Passing">
+  <img src="https://img.shields.io/badge/tests-361%20passing-brightgreen" alt="361 Tests Passing">
   <img src="https://img.shields.io/badge/security%20scan-passed-brightgreen" alt="Security Scan Passed">
   <img src="https://img.shields.io/badge/red%20team-100%25-brightgreen" alt="Red Team 100%">
   <img src="https://img.shields.io/badge/security%20tests-29%20passing-blueviolet" alt="29 Security Tests">
@@ -251,7 +251,7 @@ to all agents when severity >= 0.8. Ready for production deployment as separate 
 - Designed to support MiCA-style decision auditability
 
 ### Risk Engine (Fail-Closed)
-- **20 independent pre-trade checks** -- all fail-closed (one failure = rejection), including liquidity guard, macro event gate, multi-timeframe alignment, and concentration PCA
+- **21 independent pre-trade checks** -- all fail-closed (one failure = rejection), including liquidity guard, macro event gate, multi-timeframe alignment, and concentration PCA
 - Circuit breaker halts trading on daily loss or drawdown breach
 - Fixed-fractional position sizing: risk budget (2% of equity) divided by stop distance, capped at 20% notional
 - Max open positions limit
@@ -364,7 +364,7 @@ runeclaw/
 |   |   |-- llm_cache.py        # Semantic LLM response cache with TTL
 |   |   |-- token_optimizer.py  # Tiered pipeline, smart batching, adaptive frequency
 |   |-- risk/
-|   |   |-- risk_engine.py      # 20-check risk gate, circuit breaker
+|   |   |-- risk_engine.py      # 21-check risk gate, circuit breaker
 |   |   |-- portfolio.py        # Paper trading ledger, PnL tracking, mark-to-market
 |   |-- learning/
 |   |   |-- orchestrator.py     # 10-step learning workflow coordinator
@@ -398,7 +398,7 @@ runeclaw/
 |   |   |-- skill_definitions.yaml
 |   |-- requirements.txt
 |-- tests/
-|   |-- test_core.py            # 339 pytest tests
+|   |-- test_core.py            # 361 pytest tests
 |   |-- test_token_optimizer.py # 36 token optimizer tests
 |-- docs/
 |   |-- gitbook/                # Full GitBook documentation
@@ -424,7 +424,7 @@ runeclaw/
 RUNECLAW is designed with a **fail-closed** philosophy:
 
 - **Simulation by default.** Live trading requires two explicit environment flags.
-- **Every trade passes 20 checks.** All fail-closed (one failure = rejection). No overrides.
+- **Every trade passes 21 checks.** All fail-closed (one failure = rejection). No overrides.
 - **Circuit breaker.** Auto-halts on daily loss (5%) or max drawdown (10%).
 - **Human-in-the-loop.** No trade executes without explicit confirmation.
 - **Re-check on confirm.** Risk is re-evaluated at confirmation time because market conditions change.

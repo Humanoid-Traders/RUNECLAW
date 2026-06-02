@@ -104,7 +104,7 @@ class RiskEngine:
     """
     Pre-trade and post-trade risk checks.
     Design principle: if ANY check cannot be evaluated, the trade is REJECTED.
-    21 independent checks -- all must pass (16 in-engine + #17 liquidity in engine.py + #18 macro + #19 MTF alignment + #20 concentration PCA + #21 portfolio VaR).
+    21 independent checks -- all must pass (20 in-engine + #17 liquidity in engine.py via OrderFlowAnalyzer).
 
     Threading model: RUNECLAW runs on a single-threaded asyncio event loop.
     The RLock exists as a defensive measure but does NOT guarantee correctness

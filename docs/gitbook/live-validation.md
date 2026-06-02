@@ -16,7 +16,7 @@ The screenshot above shows three cards from the RUNECLAW website, populated with
 
 ---
 
-## Backtest Stress Test (180 Runs)
+## Backtest Stress Test (500 Runs)
 
 ![500-run backtest stress test](live-validation-backtest.png)
 
@@ -155,7 +155,7 @@ The funnel shows RUNECLAW's selectivity: out of 335 signals, only 5 passed all f
 
 ---
 
-## 180-Run Stress Test Summary
+## 500-Run Stress Test Summary
 
 | Metric | Value |
 |--------|-------|

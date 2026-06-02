@@ -3,11 +3,11 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta name="description" content="RUNECLAW — AI-powered crypto trading command core with 18-check risk engine, 9-state FSM, and Telegram integration. Built for Bitget AI Base Camp · Hackathon S1.">
+<meta name="description" content="RUNECLAW — AI-powered crypto trading command core with 21-check risk engine, 9-state FSM, and Telegram integration. Built for Bitget AI Base Camp · Hackathon S1.">
 <meta name="keywords" content="RUNECLAW, AI trading, crypto trading bot, Bitget, risk engine, paper trading, Telegram bot, hackathon">
 <meta name="author" content="Humanoid Traders">
 <meta property="og:title" content="RUNECLAW — AI Trading Command Core">
-<meta property="og:description" content="Institutional-grade AI trading assistant with 18 fail-closed risk checks, 9-state FSM, and human-in-the-loop confirmation. Simulation-first.">
+<meta property="og:description" content="Institutional-grade AI trading assistant with 21 fail-closed risk checks, 9-state FSM, and human-in-the-loop confirmation. Simulation-first.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://lgl3crf9.mule.page/">
 <meta property="og:image" content="https://lgl3crf9.mule.page/og_image_1200x630.jpg">
@@ -15,7 +15,7 @@
 <meta property="og:image:height" content="630">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="RUNECLAW — AI Trading Command Core">
-<meta name="twitter:description" content="AI trading assistant with 18 fail-closed risk checks. Built for Bitget AI Base Camp · Hackathon S1 by Humanoid Traders.">
+<meta name="twitter:description" content="AI trading assistant with 21 fail-closed risk checks. Built for Bitget AI Base Camp · Hackathon S1 by Humanoid Traders.">
 <meta name="twitter:image" content="https://lgl3crf9.mule.page/og_image_1200x630.jpg">
 <link rel="icon" type="image/png" sizes="256x256" href="app_icon_256.png">
 <link rel="icon" type="image/png" sizes="512x512" href="app_icon_512.png">
@@ -2242,7 +2242,7 @@ footer {
     <h2 class="section-title">AI Trading Command Core</h2>
     <div class="blue-divider"></div>
     <p class="section-desc">
-      RUNECLAW is an <span class="highlight">AI-powered trading command system</span> that scans markets, generates trade ideas with confluence scoring, and enforces disciplined execution through an 18-check fail-closed risk engine.
+      RUNECLAW is an <span class="highlight">AI-powered trading command system</span> that scans markets, generates trade ideas with confluence scoring, and enforces disciplined execution through a 21-check fail-closed risk engine.
     </p>
     <br>
     <p class="section-desc">
@@ -2308,7 +2308,7 @@ footer {
     <div class="pipe-stage risk-gate">
       <span class="pipe-icon">&#128737;</span>
       <div class="pipe-name">Risk Gate</div>
-      <div class="pipe-desc">18 fail-closed checks, circuit breaker</div>
+      <div class="pipe-desc">21 fail-closed checks, circuit breaker</div>
     </div>
     <div class="pipe-stage">
       <span class="pipe-icon">&#9995;</span>
@@ -2352,7 +2352,7 @@ footer {
     <div class="feature-card reveal reveal-delay-3">
       <img class="fc-thumb" src="risk_engine_card.png" alt="">
       <span class="feature-icon">&#128737;</span>
-      <div class="feature-name">18-Check Risk Gate</div>
+      <div class="feature-name">21-Check Risk Gate</div>
       <div class="feature-desc">Fail-closed pre-trade validation: position size, daily loss, drawdown, R:R ratio, confidence, correlation, loss streak, stop-loss, stale data, cooldown, volatility guard, circuit breaker, liquidity guard, macro events.</div>
       <div class="feature-tag">Zero tolerance</div>
     </div>
@@ -2530,10 +2530,10 @@ Cost/trade: $0.0024 | ROI drag: 0.001%
     </div>
   </div>
 
-  <!-- 18-check risk gate interactive -->
+  <!-- 21-check risk gate interactive -->
   <div style="margin-top:56px;">
     <div class="reveal" style="text-align:center;">
-      <h3 style="font-family:var(--font-display);font-size:22px;color:var(--ice);letter-spacing:0.06em;margin-bottom:8px;">18-Check Risk Gate</h3>
+      <h3 style="font-family:var(--font-display);font-size:22px;color:var(--ice);letter-spacing:0.06em;margin-bottom:8px;">21-Check Risk Gate</h3>
       <p class="section-desc" style="margin:0 auto;font-style:italic;font-size:14px;">Fail-Closed &mdash; if any check cannot be evaluated, the trade is rejected.</p>
     </div>
     <div class="risk-deep-grid reveal reveal-delay-1" id="riskDeepGrid"></div>
@@ -2839,7 +2839,7 @@ Cost/trade: $0.0024 | ROI drag: 0.001%
     <div class="judge-subtitle">Judge Evaluation Mode</div>
     <ul class="judge-list">
       <li><span class="check">&#10003;</span><span><strong>Track 1: Trading Agent</strong> &mdash; Fully autonomous AI trading pipeline on Bitget</span></li>
-      <li><span class="check">&#10003;</span><span><strong>18 independent risk checks, fail-closed</strong> &mdash; Any single failure blocks the trade</span></li>
+      <li><span class="check">&#10003;</span><span><strong>21 independent risk checks, fail-closed</strong> &mdash; Any single failure blocks the trade</span></li>
       <li><span class="check">&#10003;</span><span><strong>Human confirmation required</strong> for every trade before execution</span></li>
       <li><span class="check">&#10003;</span><span><strong>Simulation-first</strong> &mdash; Paper trading is the default mode, no real money at risk</span></li>
       <li><span class="check">&#10003;</span><span><strong>Full audit trail</strong> &mdash; JSON structured logging for every decision and state change</span></li>
@@ -2990,13 +2990,13 @@ window.addEventListener('scroll', () => {
   });
 }, { passive: true });
 
-// ═══ RISK ENGINE DEEP DIVE — render 18 checks ═══
+// ═══ RISK ENGINE DEEP DIVE — render 21 checks ═══
 (function() {
   const riskChecks = [
     'Position Size','Daily Loss','Drawdown','Max Positions','Risk-Reward',
     'Confidence','Correlation','Loss Streak','Entry Price','Stop-Loss Req',
     'Stale Data','Cooldown','Portfolio Exp','Symbol Exposure','Volatility Guard','Circuit Breaker',
-    'Liquidity Guard','Macro Event'
+    'Liquidity Guard','Macro Event','MTF Alignment','Concentration PCA','Portfolio VaR'
   ];
   const failIndex = 14; // Volatility Guard fails
   const grid = document.getElementById('riskDeepGrid');

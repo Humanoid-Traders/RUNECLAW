@@ -600,7 +600,7 @@ class TelegramHandler:
                 "Powered by <b>RUNECLAW Signal Engine</b>\n\n"
                 f"Welcome, <b>{user_name}</b>.\n\n"
                 "\u2022 AI-powered crypto analysis\n"
-                "\u2022 18 fail-closed risk checks\n"
+                "\u2022 21 fail-closed risk checks\n"
                 "\u2022 Human approval on every trade\n"
                 "\u2022 Full audit trail\n\n"
                 "\U0001f4cb <b>Registration received</b>\n"
@@ -907,7 +907,7 @@ class TelegramHandler:
                 "\u2600\ufe0f <b>SOLANA MODE ACTIVE</b>\n\n"
                 f"Scanner now prioritizes {len(SOLANA_ECOSYSTEM_SYMBOLS)} Solana ecosystem tokens:\n"
                 f"<i>{tokens}</i>\n\n"
-                "All 18 risk checks still apply. Meme tokens (BONK, WIF) "
+                "All 21 risk checks still apply. Meme tokens (BONK, WIF) "
                 "use tighter volatility and correlation limits.\n\n"
                 "Use <code>/mode all</code> to switch back."
             ))
@@ -1557,7 +1557,7 @@ class TelegramHandler:
         """Pause trading — activates circuit breaker."""
         if not await self._guard(update, "halt"):
             return
-        self.engine.risk._circuit_open = True
+        self.engine.risk.emergency_halt("pause_telegram")
         rendered = wr_pause()
         await self._send(update, rendered["text"])
         audit(system_log, "Bot paused via /pause", action="pause", result="OK")
@@ -1705,7 +1705,7 @@ class TelegramHandler:
             return
 
         if data == "risk_pause":
-            self.engine.risk._circuit_open = True
+            self.engine.risk.emergency_halt("pause_risk_panel")
             rendered = wr_pause()
             await self._send(update, rendered["text"], edit=True)
             audit(system_log, "Bot paused via risk panel", action="pause", result="OK")
@@ -1721,9 +1721,9 @@ class TelegramHandler:
             return
 
         if data == "emergency_confirm":
-            self.engine.risk._circuit_open = True
-            # Clear pending ideas
-            self.engine.pending_ideas.clear()
+            self.engine.risk.emergency_halt("emergency_stop_telegram")
+            # Clear pending ideas (must access the underlying dict, not the property copy)
+            self.engine._pending_ideas.clear()
             await self._send(update,
                 "\u26d4 <b>EMERGENCY STOP EXECUTED</b>\n\n"
                 "All pending orders cancelled.\n"

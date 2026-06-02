@@ -91,6 +91,7 @@ class RuneClawEngine:
         self._rebalance_interval: float = 4 * 3600  # 4 hours minimum between checks
         # /whynot: store last RiskCheck per symbol when risk rejects a trade
         self._last_rejections: dict[str, dict] = {}
+        self._last_scan_signals: list = []
 
     # -- State management --
 
@@ -606,12 +607,12 @@ class RuneClawEngine:
                 # Enter cooldown after a loss
                 if c.pnl <= 0:
                     self._cooldown_until = (
-                        time.monotonic() + CONFIG.cooldown_after_loss_seconds
+                        time.monotonic() + CONFIG.risk.cooldown_after_loss_seconds
                     )
                     self._transition(
                         AgentState.COOLING_DOWN,
                         f"loss on {c.asset} (PnL=${c.pnl}), "
-                        f"cooling down {CONFIG.cooldown_after_loss_seconds}s",
+                        f"cooling down {CONFIG.risk.cooldown_after_loss_seconds}s",
                     )
         except Exception as exc:
             audit(

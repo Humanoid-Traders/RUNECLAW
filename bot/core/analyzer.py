@@ -979,11 +979,12 @@ class Analyzer:
                         symbol=signal.symbol,
                         category=category,
                     )
-                result = self._parse_llm_response(resp.choices[0].message.content or "")
+                raw_text = resp.choices[0].message.content or ""
+                result = self._parse_llm_response(raw_text)
             if not result.pop("_parsed", False):
                 audit(trade_log, "LLM response could not be parsed, using defaults",
                       action="analyze", result="LLM_PARSE_FAIL",
-                      data={"raw_text": (resp.choices[0].message.content or "")[:200]})
+                      data={"raw_text": raw_text[:200]})
             result["source"] = f"LLM_{tier_label}"
             result["model_used"] = model
 

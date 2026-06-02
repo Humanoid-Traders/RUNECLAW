@@ -23,7 +23,7 @@ RUNECLAW is an AI trading agent that fuses 11-voter confluence scoring with a 21
 - **40+ analysis modules** spanning technical indicators, candlestick detection, Fibonacci retracement, order flow, sentiment fusion, macro calendar, and explainability engine
 
 ### Risk
-- **18 core fail-closed risk checks + 3 experimental (MTF alignment, concentration PCA, portfolio VaR)** -- position size, daily loss, drawdown, max positions, R:R minimum, confidence gate, correlation blocking, loss streak, entry sanity, stop-loss required, stale data guard, cooldown, portfolio exposure, per-symbol exposure, volatility guard, circuit breaker, liquidity guard, macro event gate, MTF alignment, concentration PCA, portfolio VaR
+- **21 fail-closed risk checks** -- position size, daily loss, drawdown, max positions, R:R minimum, confidence gate, correlation blocking, loss streak, entry sanity, stop-loss required, stale data guard, cooldown, portfolio exposure, per-symbol exposure, volatility guard, circuit breaker, liquidity guard, macro event gate, MTF alignment, concentration PCA, portfolio VaR
 - **Adversarial self-critique gate** -- 7-heuristic bear-case analysis pre-trade; HALT at 3+ concerns blocks execution with full explanation
 - **Ed25519 cryptographic attestation** -- Merkle root over audit entry batches, signed with Ed25519; verify any batch against public key for non-repudiation
 - **Portfolio VaR check (#21)** -- 95% parametric VaR rejects trades pushing portfolio risk above 15% of equity
