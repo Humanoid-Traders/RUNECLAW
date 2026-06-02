@@ -309,7 +309,11 @@ class TelegramHandler:
     async def _llm_chat(self, question: str, user_id: str = "",
                         user_name: str = "") -> str:
         """Send a free-text question to the LLM with multi-turn context.
-        Uses CHAT tier routing — may use a different provider than thesis/scan."""
+
+        Uses CHAT tier routing with automatic fallback chain:
+        Groq → Gemini → Anthropic → primary .env provider.
+        If all fail, returns a helpful error with the actual reason.
+        """
         import asyncio
 
         # Resolve active LLM config (BYOK runtime > .env)
@@ -322,48 +326,104 @@ class TelegramHandler:
         )
         active_cfg = BYOK.get_active_config(env_config)
 
-        # Route to CHAT tier (may use a different/faster provider)
-        chat_cfg = resolve_tier_config(LLMTier.CHAT, active_cfg)
+        # Build personalized system prompt
+        system_prompt = self._build_chat_system_prompt(
+            user_id, user_name=user_name)
 
-        if not chat_cfg.is_configured():
+        # Get conversation history for multi-turn context
+        history = []
+        if user_id:
+            history = self.conversations.get_recent_as_llm_messages(
+                user_id, limit=8)
+
+        # Build fallback chain: chat tier → fallback providers → primary
+        import os
+        configs_to_try = []
+
+        # 1. Primary chat tier config
+        chat_cfg = resolve_tier_config(LLMTier.CHAT, active_cfg)
+        if chat_cfg.is_configured():
+            configs_to_try.append(("chat_tier", chat_cfg))
+
+        # 2. Fallback providers from env (Gemini, Anthropic, Alibaba)
+        _FALLBACK_PROVIDERS = [
+            (LLMProvider.GEMINI, "GEMINI_API_KEY", "gemini-2.0-flash"),
+            (LLMProvider.ANTHROPIC, "ANTHROPIC_API_KEY", "claude-haiku-4-5"),
+            (LLMProvider.ALIBABA, "ALIBABA_API_KEY", "qwen-turbo"),
+        ]
+        for provider, key_env, model in _FALLBACK_PROVIDERS:
+            api_key = os.getenv(key_env, "")
+            if api_key and not any(
+                c.provider == provider for _, c in configs_to_try
+            ):
+                catalog = PROVIDER_CATALOG.get(provider, {})
+                configs_to_try.append(("fallback", LLMConfig(
+                    provider=provider,
+                    api_key=api_key,
+                    model=model,
+                    base_url=catalog.get("base_url", ""),
+                    timeout_seconds=20.0,
+                )))
+
+        # 3. Primary config as last resort
+        if active_cfg.is_configured() and not any(
+            c.provider == active_cfg.provider for _, c in configs_to_try
+        ):
+            configs_to_try.append(("primary", active_cfg))
+
+        if not configs_to_try:
             return "No LLM configured. Use /setllm to set a provider, or add LLM_API_KEY to .env."
 
-        try:
-            client = create_llm_client(chat_cfg)
-            if client is None:
-                return "LLM client could not be created. Check your API key."
+        # Try each config in order
+        last_error = ""
+        for source, cfg in configs_to_try:
+            try:
+                client = create_llm_client(cfg)
+                if client is None:
+                    continue
 
-            # Build personalized system prompt
-            system_prompt = self._build_chat_system_prompt(
-                user_id, user_name=user_name)
+                answer = await llm_complete(
+                    client, cfg, system_prompt, question,
+                    history=history)
 
-            # Get conversation history for multi-turn context
-            history = []
-            if user_id:
-                history = self.conversations.get_recent_as_llm_messages(
-                    user_id, limit=8)
+                # Track cost
+                if cfg.sdk_type() != "anthropic" and hasattr(self.engine, 'cost'):
+                    history_tokens = sum(len(m.get("content", "")) // 4
+                                         for m in history)
+                    self.engine.cost.record_llm(
+                        model=cfg.model,
+                        prompt_tokens=500 + history_tokens,
+                        completion_tokens=256,
+                        category="chat",
+                    )
 
-            answer = await llm_complete(
-                client, chat_cfg, system_prompt, question,
-                history=history)
+                if source != "chat_tier":
+                    audit(system_log,
+                          f"Chat used fallback: {cfg.provider.value}/{cfg.model}",
+                          action="chat_fallback", result="OK")
 
-            # Track cost (OpenAI-compat only)
-            if chat_cfg.sdk_type() != "anthropic" and hasattr(self.engine, 'cost'):
-                # Approximate tokens: base + history + question + response
-                history_tokens = sum(len(m.get("content", "")) // 4
-                                     for m in history)
-                self.engine.cost.record_llm(
-                    model=chat_cfg.model,
-                    prompt_tokens=500 + history_tokens,
-                    completion_tokens=256,
-                    category="chat",
-                )
-            return answer.strip()
-        except asyncio.TimeoutError:
-            return "Response timed out. Try again or use a specific command like /scan or /analyze."
-        except Exception as e:
-            audit(system_log, f"Chat LLM error: {e}", action="chat_error", result="ERROR")
-            return "Could not process your question right now. Try a command like /help or /scan."
+                return answer.strip()
+
+            except asyncio.TimeoutError:
+                last_error = f"timeout ({cfg.provider.value})"
+                audit(system_log, f"Chat timeout on {cfg.provider.value}",
+                      action="chat_timeout", result="FALLBACK")
+                continue
+            except Exception as e:
+                error_str = str(e)
+                last_error = f"{cfg.provider.value}: {error_str[:100]}"
+                audit(system_log, f"Chat LLM error ({cfg.provider.value}): {e}",
+                      action="chat_error", result="FALLBACK")
+                continue
+
+        # All providers failed
+        audit(system_log, f"All chat LLM providers failed. Last: {last_error}",
+              action="chat_error", result="ALL_FAILED")
+        return (
+            "All my LLM providers are down right now. "
+            f"Last error: {last_error[:80]}. "
+            "Try again in a minute, or use a command like /scan or /analyze."
+        )
 
     async def _handle_message(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle free-text messages — intent routing + AI chat fallback.
