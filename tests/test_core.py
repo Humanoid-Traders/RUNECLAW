@@ -4530,3 +4530,102 @@ class TestConversationStore:
         msgs = store.get_recent("u1")  # no limit arg — uses context_window
         assert len(msgs) == 3
         assert msgs[0].content == "msg 7"
+
+    def test_mood_detection(self):
+        """UserContext detects mood signals from messages."""
+        from bot.nlp.conversation_store import ConversationStore
+        store = ConversationStore()
+        store.append("u1", "user", "this is awesome, love the bot!")
+        ctx = store.get_context("u1")
+        assert ctx.recent_mood == "excited"
+
+        store.append("u1", "user", "ugh, wtf is going on")
+        ctx = store.get_context("u1")
+        assert ctx.recent_mood == "frustrated"
+
+    def test_mood_in_context_prompt(self):
+        """Mood signals appear in the context prompt."""
+        from bot.nlp.conversation_store import ConversationStore
+        store = ConversationStore()
+        store.append("u1", "user", "I'm worried about this crash")
+        prompt = store.build_context_prompt("u1")
+        assert "cautious" in prompt.lower() or "worried" in prompt.lower()
+
+
+class TestIntentRouterV2:
+    """Tests for improved intent router — social detection + tighter patterns."""
+
+    def test_greeting_detected_as_social(self):
+        """Greetings should be social, not routed to skills."""
+        from bot.nlp.intent_router import IntentRouter
+        router = IntentRouter()
+        for text in ["hey", "hello", "good morning", "hi there", "yo", "gm"]:
+            result = router.classify_rules(text)
+            assert result.is_social, f"'{text}' should be social, got skill={result.skill}"
+            assert not result.matched
+
+    def test_thanks_detected_as_social(self):
+        """Thanks/farewell should be social."""
+        from bot.nlp.intent_router import IntentRouter
+        router = IntentRouter()
+        for text in ["thanks", "thank you", "bye", "cheers", "appreciate it"]:
+            result = router.classify_rules(text)
+            assert result.is_social, f"'{text}' should be social"
+
+    def test_casual_chat_not_routed(self):
+        """Casual phrases shouldn't trigger skill dispatch."""
+        from bot.nlp.intent_router import IntentRouter
+        router = IntentRouter()
+        for text in ["ok", "cool", "nice", "got it", "sounds good", "lol"]:
+            result = router.classify_rules(text)
+            assert result.is_social or not result.matched, \
+                f"'{text}' should not route to skill, got {result.skill}"
+
+    def test_common_words_not_false_positive(self):
+        """Words like 'stop', 'help', 'running' in casual context shouldn't trigger."""
+        from bot.nlp.intent_router import IntentRouter
+        router = IntentRouter()
+        # "stop" alone used to trigger halt — now requires "stop the bot"
+        result = router.classify_rules("I can't stop thinking about crypto")
+        assert result.skill != "halt", "Casual 'stop' should not trigger halt"
+
+        # "help" alone used to trigger help — now needs "show help" etc.
+        result = router.classify_rules("this helped me a lot")
+        assert result.skill != "help", "Casual 'help' should not trigger help"
+
+        # "running" used to trigger status
+        result = router.classify_rules("I was running late today")
+        assert result.skill != "status", "Casual 'running' should not trigger status"
+
+    def test_explicit_trading_intents_still_work(self):
+        """Explicit trading commands should still route correctly."""
+        from bot.nlp.intent_router import IntentRouter
+        router = IntentRouter()
+
+        result = router.classify_rules("scan the market")
+        assert result.skill == "scan_market"
+
+        result = router.classify_rules("analyze BTC")
+        assert result.skill == "analyze_asset"
+        assert result.kwargs.get("symbol") == "BTC/USDT"
+
+        result = router.classify_rules("show my portfolio")
+        assert result.skill == "get_portfolio"
+
+        result = router.classify_rules("halt the bot")
+        assert result.skill == "halt"
+
+    def test_how_is_btc_routes_to_analyze(self):
+        """'how's BTC doing' should analyze, not go to chat."""
+        from bot.nlp.intent_router import IntentRouter
+        router = IntentRouter()
+        result = router.classify_rules("how's BTC doing")
+        assert result.skill == "analyze_asset"
+        assert result.kwargs.get("symbol") == "BTC/USDT"
+
+    def test_whats_moving_routes_to_scan(self):
+        """'what's moving' should scan market."""
+        from bot.nlp.intent_router import IntentRouter
+        router = IntentRouter()
+        result = router.classify_rules("what's moving today")
+        assert result.skill == "scan_market"

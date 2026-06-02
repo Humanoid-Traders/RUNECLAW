@@ -51,6 +51,8 @@ class UserContext:
     first_seen: float = 0.0
     last_active: float = 0.0
     summary: str = ""  # Compressed summary of older conversations
+    mood_hints: list[str] = field(default_factory=list)  # Recent mood signals
+    user_name: str = ""  # Display name
 
     def update_from_message(self, text: str) -> None:
         """Extract context signals from a user message."""
@@ -70,6 +72,42 @@ class UserContext:
                 # Keep only last 10 preferred assets
                 if len(self.preferred_assets) > 10:
                     self.preferred_assets = self.preferred_assets[-10:]
+
+        # Detect mood signals from message
+        lower = text.lower()
+        mood = self._detect_mood(lower)
+        if mood:
+            self.mood_hints.append(mood)
+            if len(self.mood_hints) > 5:
+                self.mood_hints = self.mood_hints[-5:]
+
+    @staticmethod
+    def _detect_mood(text: str) -> str:
+        """Detect emotional signals in user text."""
+        # Frustration / confusion
+        if any(w in text for w in ["wtf", "broken", "doesn't work", "not working",
+                                    "confused", "don't understand", "why won't",
+                                    "frustrated", "annoying", "ugh"]):
+            return "frustrated"
+        # Excitement / positive
+        if any(w in text for w in ["awesome", "great", "love it", "amazing",
+                                    "perfect", "nice", "let's go", "moon",
+                                    "pumping", "lfg", "bullish af"]):
+            return "excited"
+        # Caution / worry
+        if any(w in text for w in ["worried", "scared", "nervous", "dump",
+                                    "crash", "careful", "risky", "fear"]):
+            return "cautious"
+        # Casual / social
+        if any(w in text for w in ["lol", "haha", "lmao", "bro", "dude",
+                                    "mate", "chill"]):
+            return "casual"
+        return ""
+
+    @property
+    def recent_mood(self) -> str:
+        """Most recent mood signal, or empty."""
+        return self.mood_hints[-1] if self.mood_hints else ""
 
 
 class ConversationStore:
@@ -182,7 +220,8 @@ class ConversationStore:
             return len(self._conversations.get(user_id, []))
 
     def build_context_prompt(self, user_id: str, portfolio_summary: str = "",
-                              engine_state: str = "") -> str:
+                              engine_state: str = "",
+                              user_name: str = "") -> str:
         """Build a context block to inject into the system prompt.
 
         Returns a string with user-specific context that makes the
@@ -192,8 +231,15 @@ class ConversationStore:
         if not ctx:
             return ""
 
+        # Store user name if provided
+        if user_name and not ctx.user_name:
+            ctx.user_name = user_name
+
         parts = []
 
+        display_name = ctx.user_name or user_name
+        if display_name:
+            parts.append(f"User's name: {display_name}")
         if ctx.last_discussed_asset:
             parts.append(
                 f"Last discussed asset: {ctx.last_discussed_asset}")
@@ -204,6 +250,15 @@ class ConversationStore:
             parts.append(
                 f"This user has sent {ctx.interaction_count} messages "
                 f"(returning user).")
+        if ctx.recent_mood:
+            mood_map = {
+                "frustrated": "User seems frustrated — be patient and helpful",
+                "excited": "User is in a good/excited mood — match their energy",
+                "cautious": "User seems worried or cautious — be reassuring and measured",
+                "casual": "User is being casual/informal — match their relaxed tone",
+            }
+            parts.append(mood_map.get(ctx.recent_mood,
+                                       f"User mood: {ctx.recent_mood}"))
         if portfolio_summary:
             parts.append(f"Current portfolio: {portfolio_summary}")
         if engine_state:

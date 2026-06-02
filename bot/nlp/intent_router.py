@@ -2,8 +2,9 @@
 RUNECLAW Natural-Language Intent Router.
 
 Maps free-text user messages to registered skills via:
-  1. Rule-based keyword matching (no LLM key needed)
-  2. Optional LLM intent classification (when configured)
+  1. Greeting / social detection (fast-exit to chat)
+  2. Rule-based keyword matching (no LLM key needed)
+  3. Optional LLM intent classification (when configured)
 
 The router ONLY resolves to existing skills — it never invents actions
 and never touches the risk gate. Every resolved intent is audited.
@@ -36,10 +37,79 @@ class IntentResult:
     source: str = "rules"           # "rules" or "llm"
     raw_text: str = ""              # Original user message
     explanation: str = ""           # Why this intent was chosen
+    is_social: bool = False         # True if message is greeting/thanks/social
 
     @property
     def matched(self) -> bool:
         return bool(self.skill)
+
+
+# ── Social / greeting detection ──────────────────────────────────────
+
+_GREETING_PATTERNS = re.compile(
+    r"^(hey|hi|hello|yo|sup|what'?s up|howdy|gm|good (morning|afternoon|evening|night)|"
+    r"hola|greetings|aloha|heya|hiya|wassup|wazzup)\b",
+    re.IGNORECASE,
+)
+
+_THANKS_PATTERNS = re.compile(
+    r"\b(thanks?( you)?|thx|ty|cheers|appreciate|gracias|much appreciated|"
+    r"thank u|thankyou|tysm|tyvm)\b",
+    re.IGNORECASE,
+)
+
+_FAREWELL_PATTERNS = re.compile(
+    r"^(bye|goodbye|see ya|later|gn|good night|cya|peace|ttyl|"
+    r"take care|until next time|catch you later)\b",
+    re.IGNORECASE,
+)
+
+_AFFIRMATIVE_PATTERNS = re.compile(
+    r"^(ok|okay|sure|yep|yup|yes|yeah|alright|got it|cool|nice|"
+    r"sounds good|perfect|right|i see|understood|makes sense|"
+    r"no worries|np|nw|all good)\s*[.!]?\s*$",
+    re.IGNORECASE,
+)
+
+_SOCIAL_CHAT = re.compile(
+    r"^(how are you|how'?s it going|what'?s new|how'?s your day|"
+    r"you there|are you alive|are you real|who are you|what are you|"
+    r"tell me about yourself|what can you do|lol|haha|lmao|rofl|"
+    r"bruh|bro|dude|mate|fam)\b",
+    re.IGNORECASE,
+)
+
+
+def _is_social_message(text: str) -> bool:
+    """Detect greetings, thanks, farewells, and casual social chat."""
+    stripped = text.strip().rstrip("!?.")
+    if len(stripped) < 2:
+        return True  # Single char or emoji
+    if _GREETING_PATTERNS.search(stripped):
+        return True
+    if _THANKS_PATTERNS.search(stripped):
+        return True
+    if _FAREWELL_PATTERNS.search(stripped):
+        return True
+    if _AFFIRMATIVE_PATTERNS.search(stripped):
+        return True
+    if _SOCIAL_CHAT.search(stripped):
+        return True
+    # Very short messages are usually social (under 4 words, no crypto terms)
+    words = stripped.split()
+    if len(words) <= 3 and not _extract_symbol(stripped):
+        # Check if any word looks like a crypto/trading term
+        trading_words = {
+            "scan", "analyze", "portfolio", "risk", "backtest", "macro",
+            "halt", "journal", "cost", "dashboard", "trade", "signal",
+        }
+        if not any(w.lower() in trading_words for w in words):
+            # Only classify as social if it doesn't contain intent keywords
+            for pattern, _, _, _ in _INTENT_RULES:
+                if pattern.search(stripped):
+                    return False
+            return True
+    return False
 
 
 # ── Symbol extraction ─────────────────────────────────────────────────
@@ -105,63 +175,72 @@ def _rule(pattern: str, skill: str, needs_symbol: bool = False, explanation: str
 
 
 # --- Scan / market overview ---
-_rule(r"\b(scan|what.?s moving|anything moving|top movers?|market|overview|movers)\b",
+# More specific patterns — avoid matching "what's up" or "how's it going"
+_rule(r"\b(scan (the )?market|what.?s moving|anything moving|top movers?|market (scan|overview)|show me movers)\b",
       "scan_market", explanation="Market scan request")
-_rule(r"\b(volume spike|big moves?|alert|unusual)\b",
+_rule(r"\b(volume spike|big moves?|unusual (volume|activity))\b",
       "scan_market", explanation="Volume/movement alert request")
 
 # --- Analyze specific asset ---
-_rule(r"\b(analy[sz]e|look at|check out|how.?s|what about|thoughts on|price of|entry)\b",
+# Require stronger signal — "check" alone shouldn't match
+_rule(r"\b(analy[sz]e|look at|check out|how.?s .{0,10}(doing|looking|going))\b",
       "analyze_asset", needs_symbol=True, explanation="Asset analysis request")
-_rule(r"\b(should i (buy|sell|long|short)|setup|signal|trade idea)\b",
+_rule(r"\b(should i (buy|sell|long|short)|trade setup|give me a signal|trade idea for)\b",
       "analyze_asset", needs_symbol=True, explanation="Trade signal request")
-_rule(r"\b(support|resistance|levels?|targets?|fibonacci|fib)\b",
+_rule(r"\b(support.{0,5}resistance|price (levels?|targets?)|fibonacci levels?|fib (levels?|zones?))\b",
       "analyze_asset", needs_symbol=True, explanation="Technical level request")
+_rule(r"\b(what.?s the (price|entry) (of|for))\b",
+      "analyze_asset", needs_symbol=True, explanation="Price inquiry")
 
 # --- Portfolio ---
-_rule(r"\b(portfolio|my (positions?|book|trades?|holdings?)|pnl|profit|loss|balance|equity)\b",
+_rule(r"\b(my (positions?|portfolio|book|trades?|holdings?|balance|equity)|show (my )?portfolio|check (my )?pnl|how.?s my (portfolio|pnl))\b",
       "get_portfolio", explanation="Portfolio status request")
-_rule(r"\b(open positions?|what.?s open|current trades?)\b",
+_rule(r"\b(open positions?|what.?s open|current (positions?|trades?))\b",
       "get_portfolio", explanation="Open positions request")
 
 # --- Risk ---
-_rule(r"\b(risk|exposure|drawdown|circuit.?breaker|health|safety)\b",
+# "risk" alone is too aggressive — require compound phrases
+_rule(r"\b(risk (status|dashboard|check|engine|report)|show risk|check (the )?exposure|drawdown (status|report)|circuit.?breaker (status)?)\b",
       "check_risk", explanation="Risk status request")
+_rule(r"\b(how.?s (the )?risk|risk level|am i safe)\b",
+      "check_risk", explanation="Risk inquiry")
 
 # --- Status / dashboard ---
-_rule(r"\b(status|dashboard|state|how.?s the bot|engine|running)\b",
+_rule(r"\b(bot (status|state)|engine (status|state)|show (me )?dashboard|system status|is .{0,5}bot (running|alive|on))\b",
       "status", explanation="System status request")
 
 # --- Journal ---
-_rule(r"\b(journal|trade history|recent trades?|past trades?|log)\b",
+_rule(r"\b(trade (journal|history|log)|recent trades?|past trades?|show (my )?trades)\b",
       "trade_journal", explanation="Trade journal request")
 
 # --- Macro ---
-_rule(r"\b(macro|fomc|cpi|fed|inflation|nfp|economic|calendar|rate)\b",
+_rule(r"\b(macro (calendar|events?)|fomc|cpi (data|release)|fed (meeting|decision)|nfp (data|release)|economic (calendar|data))\b",
       "macro_calendar", explanation="Macro event request")
 
 # --- Backtest ---
-_rule(r"\b(backtest|replay|simulate|historical|test strategy)\b",
+_rule(r"\b(run (a )?backtest|backtest (it|this|btc|eth|sol|\w+/usdt)|replay|test (the )?strategy)\b",
       "run_backtest", explanation="Backtest request")
 
 # --- Costs ---
-_rule(r"\b(cost|spending|budget|llm cost|api cost)\b",
+_rule(r"\b(show costs?|llm (cost|spending|budget)|api (cost|spending)|how much .{0,10}(cost|spend))\b",
       "costs", explanation="Cost breakdown request")
 
 # --- Halt/emergency ---
-_rule(r"\b(halt|stop|emergency|kill|pause)\b",
+# Only match explicit halt/stop commands, not casual "stop"
+_rule(r"\b(halt (the )?bot|stop (the )?(bot|trading|engine)|emergency (stop|halt)|kill (the )?bot|pause (the )?(bot|trading))\b",
       "halt", explanation="Emergency halt request")
 
 # --- Patterns ---
-_rule(r"\b(pattern|recurring|learned|strategy score)\b",
+_rule(r"\b(detected patterns?|recurring patterns?|learned patterns?|pattern (analysis|recognition)|strategy scores?)\b",
       "patterns", explanation="Pattern recognition request")
 
 # --- Help ---
-_rule(r"\b(help|commands?|what can you do|features?|how to)\b",
+# Only match explicit help requests, not "how to" in general questions
+_rule(r"\b(show (me )?help|list (of )?commands?|what commands?|how (do i|to) use (this|the bot|runeclaw))\b",
       "help", explanation="Help request")
 
 # --- Learning ---
-_rule(r"\b(learn|improve|self.?improve|adaptation)\b",
+_rule(r"\b(learning (dashboard|stats|status)|self.?improv|what did you learn|adaptation (stats|status))\b",
       "learning", explanation="Learning dashboard request")
 
 
@@ -170,7 +249,8 @@ _rule(r"\b(learn|improve|self.?improve|adaptation)\b",
 class IntentRouter:
     """Routes free-text messages to skills.
 
-    Uses rule-based matching first (fast, no API call).
+    Uses social detection first (greetings, thanks → chat),
+    then rule-based matching (fast, no API call).
     Falls back to LLM classification when rules don't match
     and an LLM is available.
     """
@@ -179,7 +259,19 @@ class IntentRouter:
         self._rules = _INTENT_RULES
 
     def classify_rules(self, text: str) -> IntentResult:
-        """Pure rule-based classification. No LLM call."""
+        """Pure rule-based classification. No LLM call.
+
+        Returns IntentResult with is_social=True for greetings/social chat,
+        matched skill for trading intents, or empty for LLM fallback.
+        """
+        # Fast exit: social messages should go to chat, not skills
+        if _is_social_message(text):
+            return IntentResult(
+                raw_text=text,
+                is_social=True,
+                explanation="Social/greeting message — route to conversational chat",
+            )
+
         symbol = _extract_symbol(text)
 
         for pattern, skill, needs_symbol, explanation in self._rules:
@@ -220,6 +312,11 @@ class IntentRouter:
         """
         # Try rules first (instant, free)
         result = self.classify_rules(text)
+
+        # Social messages always go to chat
+        if result.is_social:
+            return result
+
         if result.matched and result.confidence >= 0.8:
             audit(system_log,
                   f"Intent matched by rules: {result.skill}",

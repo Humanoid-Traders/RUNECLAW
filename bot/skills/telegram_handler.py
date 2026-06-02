@@ -234,19 +234,40 @@ class TelegramHandler:
     # ── Free-text AI chat ─────────────────────────────────────
 
     _CHAT_SYSTEM_PROMPT = (
-        "You are RUNECLAW, an AI crypto trading assistant by Humanoid Traders. "
-        "You answer questions about crypto markets, trading strategies, technical analysis, "
-        "risk management, and how the RUNECLAW bot works. "
-        "Keep answers concise (under 200 words). Use plain text, no markdown. "
-        "If asked about non-crypto topics, briefly answer but steer back to trading. "
-        "Never give financial advice — always note that you provide analysis, not recommendations. "
-        "Available commands: /scan, /analyze, /dashboard, /portfolio, /risk, /status, "
-        "/backtest, /journal, /macro, /help. Suggest relevant commands when appropriate. "
-        "You have memory of the current conversation. Refer to earlier messages naturally. "
-        "If the user mentioned an asset before, you can reference it without them repeating it."
+        "You are RUNECLAW, a sharp crypto trading assistant built by Humanoid Traders. "
+        "You talk like a knowledgeable trading buddy — direct, opinionated on markets, "
+        "and natural. Not a corporate chatbot.\n\n"
+        "Personality:\n"
+        "- Confident but honest. If you don't know, say so plainly.\n"
+        "- Use short, punchy sentences. Avoid walls of text.\n"
+        "- Match the user's energy — if they're casual, be casual. If they ask "
+        "a serious technical question, go deep.\n"
+        "- Use trader slang naturally when it fits (\"looking heavy\", \"bid is thin\", "
+        "\"reclaim that level\") but don't force it.\n"
+        "- Refer to the user by name when it feels natural (not every message).\n"
+        "- When a user mentions an asset you discussed before, acknowledge it "
+        "(\"back to BTC — \", \"still watching SOL?\").\n"
+        "- If the user says thanks, goodbye, or just chats — respond warmly and briefly. "
+        "Don't force a trading topic.\n\n"
+        "Rules:\n"
+        "- Keep answers under 150 words unless they ask for detail.\n"
+        "- Use plain text. No markdown, no bullet lists unless the user asks for structure.\n"
+        "- Never give financial advice. Frame as analysis: \"the chart suggests\" not \"you should buy\".\n"
+        "- When relevant, mention a specific command they could use (/scan, /analyze BTC, etc.) "
+        "but weave it in naturally, don't list commands robotically.\n"
+        "- You remember the conversation. Don't repeat yourself. Build on what was discussed.\n"
     )
 
-    def _build_chat_system_prompt(self, user_id: str) -> str:
+    # Varied thinking indicators instead of same one every time
+    _THINKING_PHRASES = [
+        "\U0001f9e0 <i>Thinking...</i>",
+        "\U0001f4ad <i>Let me check...</i>",
+        "\u23f3 <i>One sec...</i>",
+        "\U0001f50d <i>Looking into it...</i>",
+        "\U0001f9e0 <i>On it...</i>",
+    ]
+
+    def _build_chat_system_prompt(self, user_id: str, user_name: str = "") -> str:
         """Build a personalized system prompt with user context."""
         base = self._CHAT_SYSTEM_PROMPT
 
@@ -265,14 +286,28 @@ class TelegramHandler:
         except Exception:
             pass
 
+        # Add time awareness
+        import datetime as _dt
+        hour = _dt.datetime.now(UTC).hour
+        if 5 <= hour < 12:
+            time_note = "It's morning UTC."
+        elif 12 <= hour < 17:
+            time_note = "It's afternoon UTC."
+        elif 17 <= hour < 22:
+            time_note = "It's evening UTC."
+        else:
+            time_note = "It's late night UTC."
+
         context_block = self.conversations.build_context_prompt(
             user_id,
             portfolio_summary=portfolio_summary,
             engine_state=engine_state,
+            user_name=user_name,
         )
-        return base + context_block
+        return base + f"\n{time_note}" + context_block
 
-    async def _llm_chat(self, question: str, user_id: str = "") -> str:
+    async def _llm_chat(self, question: str, user_id: str = "",
+                        user_name: str = "") -> str:
         """Send a free-text question to the LLM with multi-turn context.
         Uses CHAT tier routing — may use a different provider than thesis/scan."""
         import asyncio
@@ -299,7 +334,8 @@ class TelegramHandler:
                 return "LLM client could not be created. Check your API key."
 
             # Build personalized system prompt
-            system_prompt = self._build_chat_system_prompt(user_id)
+            system_prompt = self._build_chat_system_prompt(
+                user_id, user_name=user_name)
 
             # Get conversation history for multi-turn context
             history = []
@@ -378,6 +414,11 @@ class TelegramHandler:
         # Try to map free text to a skill before falling back to chat
         intent = self.intent_router.classify_rules(text)
 
+        # Get user's display name for personalization
+        user_name = ""
+        if update.effective_user and update.effective_user.first_name:
+            user_name = update.effective_user.first_name
+
         if intent.matched and intent.confidence >= 0.8:
             # High-confidence match — dispatch to skill
             skill = self.registry.get(intent.skill)
@@ -414,14 +455,22 @@ class TelegramHandler:
         self.conversations.append(tg_id, "user", text,
                                    metadata={"intent": intent.skill or "chat"})
 
-        await self._send(update, "\U0001f9e0 <i>Thinking...</i>")
-        answer = await self._llm_chat(text, user_id=tg_id)
+        # Pick a varied thinking indicator
+        import random
+        thinking = random.choice(self._THINKING_PHRASES)
+        await self._send(update, thinking)
+
+        answer = await self._llm_chat(text, user_id=tg_id, user_name=user_name)
 
         # Store assistant response in conversation memory
         self.conversations.append(tg_id, "assistant", answer)
 
-        await self._send(update,
-            f"\U0001f43e <b>RUNECLAW</b>\n\n{html.escape(answer)}")
+        # Don't wrap in rigid header for short/social responses
+        if len(answer) < 100 or (intent.is_social if hasattr(intent, 'is_social') else False):
+            await self._send(update, html.escape(answer))
+        else:
+            await self._send(update,
+                f"\U0001f43e <b>RUNECLAW</b>\n\n{html.escape(answer)}")
 
     # ── Auth helpers ──────────────────────────────────────────
 
