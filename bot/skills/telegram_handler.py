@@ -1222,9 +1222,10 @@ class TelegramHandler:
                 break
 
         if new_idea is not None:
+            uid = update.effective_user.id if update.effective_user else ""
             kb = InlineKeyboardMarkup([[
-                InlineKeyboardButton("\u2705 APPROVE", callback_data=f"confirm:{new_idea.id}"),
-                InlineKeyboardButton("\u274c PASS", callback_data=f"reject:{new_idea.id}"),
+                InlineKeyboardButton("\u2705 APPROVE", callback_data=f"confirm:{new_idea.id}:{uid}"),
+                InlineKeyboardButton("\u274c PASS", callback_data=f"reject:{new_idea.id}:{uid}"),
             ]])
             await self._send(update, result, reply_markup=kb)
         else:
@@ -1247,9 +1248,10 @@ class TelegramHandler:
             return
         for idea in pending:
             d = "\U0001f7e2" if idea.direction.value == "LONG" else "\U0001f534"
+            uid = update.effective_user.id if update.effective_user else ""
             kb = InlineKeyboardMarkup([[
-                InlineKeyboardButton("\u2705 APPROVE", callback_data=f"confirm:{idea.id}"),
-                InlineKeyboardButton("\u274c PASS", callback_data=f"reject:{idea.id}"),
+                InlineKeyboardButton("\u2705 APPROVE", callback_data=f"confirm:{idea.id}:{uid}"),
+                InlineKeyboardButton("\u274c PASS", callback_data=f"reject:{idea.id}:{uid}"),
             ]])
             msg = (
                 f"{d} <b>{idea.direction.value}  {html.escape(idea.asset)}</b>\n\n"
@@ -1477,10 +1479,11 @@ class TelegramHandler:
         }
         rendered = wr_signal(data)
         # Map approve/reject to actual trade IDs
+        uid = update.effective_user.id if update.effective_user else ""
         kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("\u2705 Approve Trade", callback_data=f"confirm:{idea.id}")],
+            [InlineKeyboardButton("\u2705 Approve Trade", callback_data=f"confirm:{idea.id}:{uid}")],
             [InlineKeyboardButton("\U0001f441 Watch Only", callback_data=f"signal_watch_{idea.asset}")],
-            [InlineKeyboardButton("\u274c Reject", callback_data=f"reject:{idea.id}")],
+            [InlineKeyboardButton("\u274c Reject", callback_data=f"reject:{idea.id}:{uid}")],
         ])
         await self._send(update, rendered["text"], reply_markup=kb)
 
@@ -1838,12 +1841,38 @@ class TelegramHandler:
         # ── Trade confirm/reject ─────────────────────────────
 
         if data.startswith("confirm:"):
-            trade_id = data.split(":", 1)[1]
+            parts = data.split(":")
+            trade_id = parts[1]
+            # M3 FIX: validate callback belongs to requesting user
+            expected_uid = parts[2] if len(parts) > 2 else None
+            caller_uid = str(update.effective_user.id) if update.effective_user else None
+            if expected_uid and caller_uid != expected_uid:
+                await self._send(update,
+                    "\U0001f512 <b>Access denied</b>\n\n"
+                    "Only the user who requested this trade can approve it.",
+                    edit=True)
+                audit(system_log,
+                      f"Callback IDOR blocked: caller={caller_uid} expected={expected_uid}",
+                      action="callback_idor_block", result="DENIED")
+                return
             result = await self.engine.confirm_trade(trade_id)
             await self._send(update,
                 f"\u2705 <b>TRADE APPROVED</b>\n\n{result}", edit=True)
         elif data.startswith("reject:"):
-            trade_id = data.split(":", 1)[1]
+            parts = data.split(":")
+            trade_id = parts[1]
+            # M3 FIX: validate callback belongs to requesting user
+            expected_uid = parts[2] if len(parts) > 2 else None
+            caller_uid = str(update.effective_user.id) if update.effective_user else None
+            if expected_uid and caller_uid != expected_uid:
+                await self._send(update,
+                    "\U0001f512 <b>Access denied</b>\n\n"
+                    "Only the user who requested this trade can reject it.",
+                    edit=True)
+                audit(system_log,
+                      f"Callback IDOR blocked: caller={caller_uid} expected={expected_uid}",
+                      action="callback_idor_block", result="DENIED")
+                return
             result = self.engine.reject_trade(trade_id)
             await self._send(update,
                 f"\u274c <b>TRADE REJECTED</b>\n\n{result}", edit=True)

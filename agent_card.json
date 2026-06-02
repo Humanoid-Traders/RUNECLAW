@@ -1,10 +1,10 @@
 {
   "name": "RUNECLAW",
-  "version": "1.0.0",
-  "description": "Simulation-first AI trading agent with 18 fail-closed risk checks, explainable trade theses, and full audit logging. Built for the Bitget ecosystem.",
+  "version": "0.1.0",
+  "description": "Simulation-first AI trading agent with 21 fail-closed risk checks, explainable trade theses, and full audit logging. Built for the Bitget ecosystem.",
   "author": "Humanoid Traders",
   "license": "AGPL-3.0",
-  "repository": "https://github.com/Humanoid-Traders/RUNECLAW-AI-TRADER",
+  "repository": "https://github.com/Humanoid-Traders/RUNECLAW",
   "documentation": "https://humanoid-traders-1.gitbook.io/humanoid-traders-ai",
   "mode": "simulation",
   "capabilities": [
@@ -48,6 +48,6 @@
   "hackathon": {
     "name": "Bitget AI Base Camp S1",
     "tracks": ["Track 1 - Trading Agent", "Track 2 - Trading Infra"],
-    "submission_url": "https://github.com/Humanoid-Traders/RUNECLAW-AI-TRADER"
+    "submission_url": "https://github.com/Humanoid-Traders/RUNECLAW"
   }
 }

@@ -214,7 +214,7 @@ to all agents when severity >= 0.8. Ready for production deployment as separate 
 - Candlestick pattern detection: 14 patterns including doji, hammer, shooting star, engulfing, harami, tweezer top/bottom, morning/evening star, three white soldiers, three black crows
 - Fibonacci retracement levels: swing high/low detection over 50-bar lookback, standard levels (23.6%, 38.2%, 50%, 61.8%, 78.6%) with zone classification
 - 10-voter confluence scoring model (expanded from 6): RSI, MACD, Bollinger %B, Volume Spike, ADX, VWAP, OBV trend, candlestick pattern, Fibonacci zone, plus LLM confidence
-- LLM-powered directional thesis generation (GPT-4o or compatible)
+- LLM-powered directional thesis generation (Gemini 2.5 Flash default, GPT-4o / Anthropic / Groq compatible)
 - Rule-based fallback when no LLM key is configured
 - Structured `TradeIdea` output with entry, SL, TP, confidence, reasoning
 
@@ -443,7 +443,7 @@ RUNECLAW is designed with a **fail-closed** philosophy:
 |-------|-----------|
 | Language | Python 3.11+ |
 | Exchange | Bitget via [ccxt](https://github.com/ccxt/ccxt) |
-| AI / LLM | OpenAI GPT-4o (configurable) |
+| AI / LLM | Gemini 2.5 Flash default (GPT-4o, Anthropic, Groq configurable) |
 | Technical Analysis | NumPy + custom indicators |
 | Data Models | Pydantic v2 (strict validation) |
 | Bot Interface | python-telegram-bot 20.x |
@@ -458,7 +458,7 @@ RUNECLAW is designed with a **fail-closed** philosophy:
 - **Rotate API keys regularly.** If you suspect a key has been exposed, revoke it immediately on the Bitget and OpenAI dashboards.
 - **Use read-only API keys** for market data operations. Only enable trade permissions if you explicitly intend to go live (not recommended for this prototype).
 - **Telegram bot token** grants full control of the bot. Keep it secret. Restrict `TELEGRAM_CHAT_ID` to your own chat ID.
-- **LLM API costs:** Each `/analyze` call consumes OpenAI API tokens. At GPT-4o pricing, a single analysis costs approximately $0.01-0.03. Frequent scanning can accumulate costs. Set `LLM_API_KEY=` (blank) to use the free rule-based fallback instead.
+- **LLM API costs:** Each `/analyze` call consumes LLM tokens. Default is Gemini 2.5 Flash (free tier available). GPT-4o costs approximately $0.01-0.03 per analysis. Set `LLM_API_KEY=` (blank) to use the free rule-based fallback instead.
 - **No secrets in code.** All credentials load from environment variables with safe defaults. The codebase has been audited to confirm zero hardcoded secrets.
 
 ### Security Hardening (Audit v3.0)
