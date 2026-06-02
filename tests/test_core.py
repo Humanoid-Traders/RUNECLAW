@@ -4393,3 +4393,140 @@ class TestPerformanceTracker:
         finally:
             loop.run_until_complete(tracker.stop())
             loop.close()
+
+
+# ═══════════════════════════════════════════════════════════════
+#  CONVERSATION STORE TESTS (Move 3 — multi-turn memory)
+# ═══════════════════════════════════════════════════════════════
+
+class TestConversationStore:
+    """Tests for per-user conversation memory."""
+
+    def test_append_and_retrieve(self):
+        """Messages are stored and retrievable."""
+        from bot.nlp.conversation_store import ConversationStore
+        store = ConversationStore(max_messages_per_user=20, max_users=10)
+        store.append("user1", "user", "How's BTC?")
+        store.append("user1", "assistant", "BTC is at $67,000.")
+        msgs = store.get_recent("user1")
+        assert len(msgs) == 2
+        assert msgs[0].role == "user"
+        assert msgs[0].content == "How's BTC?"
+        assert msgs[1].role == "assistant"
+
+    def test_empty_content_ignored(self):
+        """Empty or whitespace-only messages are not stored."""
+        from bot.nlp.conversation_store import ConversationStore
+        store = ConversationStore()
+        store.append("user1", "user", "")
+        store.append("user1", "user", "   ")
+        assert store.message_count("user1") == 0
+
+    def test_max_messages_pruning(self):
+        """Older messages are pruned when limit is exceeded."""
+        from bot.nlp.conversation_store import ConversationStore
+        store = ConversationStore(max_messages_per_user=5)
+        for i in range(10):
+            store.append("user1", "user", f"msg {i}")
+        msgs = store.get_recent("user1", limit=100)
+        assert len(msgs) == 5
+        assert msgs[0].content == "msg 5"  # oldest remaining
+        assert msgs[4].content == "msg 9"  # newest
+
+    def test_lru_eviction(self):
+        """Oldest users are evicted when max_users is exceeded."""
+        from bot.nlp.conversation_store import ConversationStore
+        store = ConversationStore(max_users=3)
+        store.append("u1", "user", "hello")
+        store.append("u2", "user", "hello")
+        store.append("u3", "user", "hello")
+        store.append("u4", "user", "hello")  # should evict u1
+        assert store.user_count() == 3
+        assert store.message_count("u1") == 0  # evicted
+        assert store.message_count("u4") == 1
+
+    def test_llm_message_format(self):
+        """get_recent_as_llm_messages returns correct format."""
+        from bot.nlp.conversation_store import ConversationStore
+        store = ConversationStore()
+        store.append("u1", "user", "What about ETH?")
+        store.append("u1", "assistant", "ETH is looking bullish.")
+        msgs = store.get_recent_as_llm_messages("u1")
+        assert msgs == [
+            {"role": "user", "content": "What about ETH?"},
+            {"role": "assistant", "content": "ETH is looking bullish."},
+        ]
+
+    def test_user_context_tracks_assets(self):
+        """UserContext tracks discussed assets."""
+        from bot.nlp.conversation_store import ConversationStore
+        store = ConversationStore()
+        store.append("u1", "user", "analyze BTC")
+        store.append("u1", "user", "how about ETH?")
+        ctx = store.get_context("u1")
+        assert ctx is not None
+        assert ctx.last_discussed_asset == "ETH/USDT"
+        assert "BTC" in ctx.preferred_assets
+        assert "ETH" in ctx.preferred_assets
+        assert ctx.interaction_count == 2
+
+    def test_context_prompt_generation(self):
+        """build_context_prompt produces usable context string."""
+        from bot.nlp.conversation_store import ConversationStore
+        store = ConversationStore()
+        store.append("u1", "user", "check SOL")
+        store.append("u1", "user", "what about AVAX?")
+        prompt = store.build_context_prompt("u1", portfolio_summary="2 open")
+        assert "AVAX/USDT" in prompt
+        assert "SOL" in prompt
+        assert "2 open" in prompt
+
+    def test_clear_user(self):
+        """clear_user removes all data for a user."""
+        from bot.nlp.conversation_store import ConversationStore
+        store = ConversationStore()
+        store.append("u1", "user", "hello")
+        store.append("u1", "assistant", "hi")
+        store.clear_user("u1")
+        assert store.message_count("u1") == 0
+        assert store.get_context("u1") is None
+
+    def test_stats(self):
+        """stats returns correct counts."""
+        from bot.nlp.conversation_store import ConversationStore
+        store = ConversationStore(max_messages_per_user=50, max_users=200)
+        store.append("u1", "user", "msg1")
+        store.append("u1", "assistant", "reply1")
+        store.append("u2", "user", "msg2")
+        s = store.stats()
+        assert s["users"] == 2
+        assert s["total_messages"] == 3
+
+    def test_persistence_roundtrip(self):
+        """Messages survive save/load cycle via JSONL."""
+        import tempfile
+        from bot.nlp.conversation_store import ConversationStore
+        with tempfile.NamedTemporaryFile(suffix=".jsonl", delete=False) as f:
+            path = f.name
+        try:
+            store1 = ConversationStore(persist_path=path)
+            store1.append("u1", "user", "remember this")
+            store1.append("u1", "assistant", "I will remember")
+
+            # Load into a new store
+            store2 = ConversationStore(persist_path=path)
+            msgs = store2.get_recent("u1")
+            assert len(msgs) == 2
+            assert msgs[0].content == "remember this"
+        finally:
+            os.unlink(path)
+
+    def test_context_window_limits_returned_messages(self):
+        """Default context_window limits get_recent output."""
+        from bot.nlp.conversation_store import ConversationStore
+        store = ConversationStore(context_window=3, max_messages_per_user=20)
+        for i in range(10):
+            store.append("u1", "user", f"msg {i}")
+        msgs = store.get_recent("u1")  # no limit arg — uses context_window
+        assert len(msgs) == 3
+        assert msgs[0].content == "msg 7"

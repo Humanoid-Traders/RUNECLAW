@@ -413,11 +413,20 @@ async def llm_complete(
     config: LLMConfig,
     system_prompt: str,
     user_prompt: str,
+    history: list[dict] | None = None,
 ) -> str:
     """
     Unified completion call — handles OpenAI-format and Anthropic-format.
     Returns the text response string.
     Raises on failure so caller can catch and use rule-based fallback.
+
+    Args:
+        client: LLM client (AsyncOpenAI or AsyncAnthropic)
+        config: LLM configuration
+        system_prompt: System prompt string
+        user_prompt: Current user message
+        history: Optional list of prior messages [{role, content}, ...]
+                 for multi-turn conversation context.
     """
     import asyncio
 
@@ -425,25 +434,30 @@ async def llm_complete(
 
     async def _call():
         if sdk == "anthropic":
-            # Anthropic API format
+            # Anthropic API format — history goes into messages array
+            messages = []
+            if history:
+                messages.extend(history)
+            messages.append({"role": "user", "content": user_prompt})
             response = await client.messages.create(
                 model=config.model,
                 max_tokens=config.max_tokens,
                 system=system_prompt,
-                messages=[{"role": "user", "content": user_prompt}],
+                messages=messages,
             )
             return response.content[0].text
 
         else:
             # OpenAI-compatible format (works for OpenAI, Groq, Gemini, etc.)
+            messages = [{"role": "system", "content": system_prompt}]
+            if history:
+                messages.extend(history)
+            messages.append({"role": "user", "content": user_prompt})
             response = await client.chat.completions.create(
                 model=config.model,
                 temperature=config.temperature,
                 max_tokens=config.max_tokens,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
+                messages=messages,
             )
             return response.choices[0].message.content
 

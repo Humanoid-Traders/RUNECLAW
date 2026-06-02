@@ -35,6 +35,7 @@ from bot.skills.skill_registry import SkillRegistry, build_default_registry
 from bot.utils.logger import audit, system_log
 from bot.utils.user_store import UserStore
 from bot.nlp.intent_router import IntentRouter
+from bot.nlp.conversation_store import ConversationStore
 from bot.core.proactive_monitor import ProactiveMonitor
 from bot.warroom.warroom_bot import (
     render_start as wr_start,
@@ -111,6 +112,13 @@ class TelegramHandler:
         self.users.seed_admin(CONFIG.telegram.chat_id)
         # Natural-language intent router (Move 1)
         self.intent_router = IntentRouter()
+        # Conversation memory (Move 3 — multi-turn context)
+        self.conversations = ConversationStore(
+            max_messages_per_user=50,
+            max_users=200,
+            persist_path="data/conversations.jsonl",
+            context_window=10,
+        )
         # Proactive alert monitor (Move 2)
         self.monitor = ProactiveMonitor(engine)
 
@@ -233,11 +241,39 @@ class TelegramHandler:
         "If asked about non-crypto topics, briefly answer but steer back to trading. "
         "Never give financial advice — always note that you provide analysis, not recommendations. "
         "Available commands: /scan, /analyze, /dashboard, /portfolio, /risk, /status, "
-        "/backtest, /journal, /macro, /help. Suggest relevant commands when appropriate."
+        "/backtest, /journal, /macro, /help. Suggest relevant commands when appropriate. "
+        "You have memory of the current conversation. Refer to earlier messages naturally. "
+        "If the user mentioned an asset before, you can reference it without them repeating it."
     )
 
-    async def _llm_chat(self, question: str) -> str:
-        """Send a free-text question to the LLM and return the response.
+    def _build_chat_system_prompt(self, user_id: str) -> str:
+        """Build a personalized system prompt with user context."""
+        base = self._CHAT_SYSTEM_PROMPT
+
+        # Inject user-specific context
+        portfolio_summary = ""
+        engine_state = ""
+        try:
+            state = self.engine.portfolio.snapshot()
+            portfolio_summary = (
+                f"{state.open_positions} open positions, "
+                f"balance ~${CONFIG.paper_balance_usd:,.0f}"
+            )
+            cb = self.engine.risk.circuit_breaker_active
+            mode = "LIVE" if not CONFIG.simulation_mode else "PAPER"
+            engine_state = f"{mode} mode, CB={'ON' if cb else 'OFF'}"
+        except Exception:
+            pass
+
+        context_block = self.conversations.build_context_prompt(
+            user_id,
+            portfolio_summary=portfolio_summary,
+            engine_state=engine_state,
+        )
+        return base + context_block
+
+    async def _llm_chat(self, question: str, user_id: str = "") -> str:
+        """Send a free-text question to the LLM with multi-turn context.
         Uses CHAT tier routing — may use a different provider than thesis/scan."""
         import asyncio
 
@@ -262,15 +298,27 @@ class TelegramHandler:
             if client is None:
                 return "LLM client could not be created. Check your API key."
 
-            answer = await llm_complete(
-                client, chat_cfg, self._CHAT_SYSTEM_PROMPT, question)
+            # Build personalized system prompt
+            system_prompt = self._build_chat_system_prompt(user_id)
 
-            # Track cost (OpenAI-compat only — Anthropic doesn't return usage here)
-            # Approximate: ~500 prompt + 256 completion tokens
+            # Get conversation history for multi-turn context
+            history = []
+            if user_id:
+                history = self.conversations.get_recent_as_llm_messages(
+                    user_id, limit=8)
+
+            answer = await llm_complete(
+                client, chat_cfg, system_prompt, question,
+                history=history)
+
+            # Track cost (OpenAI-compat only)
             if chat_cfg.sdk_type() != "anthropic" and hasattr(self.engine, 'cost'):
+                # Approximate tokens: base + history + question + response
+                history_tokens = sum(len(m.get("content", "")) // 4
+                                     for m in history)
                 self.engine.cost.record_llm(
                     model=chat_cfg.model,
-                    prompt_tokens=500,
+                    prompt_tokens=500 + history_tokens,
                     completion_tokens=256,
                     category="chat",
                 )
@@ -337,8 +385,15 @@ class TelegramHandler:
                 audit(system_log, f"NL intent routed: '{text[:50]}' -> {intent.skill}",
                       action="intent_dispatch", result=intent.skill,
                       data={"confidence": intent.confidence, "source": intent.source})
+                # Store intent-routed message in conversation memory
+                self.conversations.append(tg_id, "user", text,
+                                           metadata={"intent": intent.skill})
                 try:
                     result = await skill.execute(self.engine, **intent.kwargs)
+                    # Store skill result as assistant message (truncated)
+                    self.conversations.append(tg_id, "assistant",
+                                               f"[{intent.skill}] executed successfully",
+                                               metadata={"skill": intent.skill})
                     await self._send(update, result)
                 except Exception as exc:
                     await self._send(update,
@@ -355,8 +410,16 @@ class TelegramHandler:
             return
 
         # ── Fallback: AI chat ─────────────────────────────────────
+        # Store user message in conversation memory
+        self.conversations.append(tg_id, "user", text,
+                                   metadata={"intent": intent.skill or "chat"})
+
         await self._send(update, "\U0001f9e0 <i>Thinking...</i>")
-        answer = await self._llm_chat(text)
+        answer = await self._llm_chat(text, user_id=tg_id)
+
+        # Store assistant response in conversation memory
+        self.conversations.append(tg_id, "assistant", answer)
+
         await self._send(update,
             f"\U0001f43e <b>RUNECLAW</b>\n\n{html.escape(answer)}")
 
