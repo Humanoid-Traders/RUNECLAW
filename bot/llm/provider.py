@@ -513,6 +513,19 @@ class BYOKManager:
         resolved_model = model or catalog.get("default_model", "gpt-4o")
         resolved_url = base_url or catalog.get("base_url", "")
 
+        # If no key provided, try env variable for this provider
+        if not api_key:
+            env_key_map = {
+                LLMProvider.GEMINI: "GEMINI_API_KEY",
+                LLMProvider.ANTHROPIC: "ANTHROPIC_API_KEY",
+                LLMProvider.GROQ: "GROQ_API_KEY",
+                LLMProvider.DEEPSEEK: "DEEPSEEK_API_KEY",
+                LLMProvider.OPENAI: "OPENAI_API_KEY",
+                LLMProvider.ALIBABA: "ALIBABA_API_KEY",
+            }
+            env_var = env_key_map.get(provider, "")
+            api_key = os.getenv(env_var, "") if env_var else ""
+
         self._runtime_config = LLMConfig(
             provider=provider,
             api_key=api_key,
