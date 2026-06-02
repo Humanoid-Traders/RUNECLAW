@@ -540,31 +540,35 @@ class LiveExecutor:
         try:
             exchange = await self._get_exchange()
 
-            # Fetch price to calculate qty
-            ticker = await exchange.fetch_ticker(symbol)
-            price = float(ticker["last"])
-            qty = amount_usd / price
-
-            # Precision: round down to exchange step
-            markets = await exchange.load_markets()
-            market = markets.get(symbol)
-            if market:
-                qty = float(exchange.amount_to_precision(symbol, qty))
-
-            if qty <= 0:
-                return {"error": f"Quantity too small after precision rounding (${amount_usd} at ${price:,.2f})"}
-
+            # Use cost-based market buy: tell Bitget to spend $X of USDT
+            # This avoids precision rounding issues with tiny quantities (e.g. BTC at $100K)
+            exchange.options["createMarketBuyOrderRequiresPrice"] = False
             order = await exchange.create_order(
                 symbol=symbol,
                 type="market",
                 side="buy",
-                amount=qty,
+                amount=amount_usd,  # interpreted as USDT cost when above flag is False
+                params={"cost": amount_usd},
             )
 
-            fill_price = float(order.get("average", 0) or order.get("price", 0) or price)
-            filled_qty = float(order.get("filled", 0) or qty)
-            cost = float(order.get("cost", 0) or fill_price * filled_qty)
+            # Fetch fill details — Bitget may not return them synchronously
             order_id = order.get("id", "unknown")
+            fill_price = float(order.get("average", 0) or order.get("price", 0) or 0)
+            filled_qty = float(order.get("filled", 0) or 0)
+            cost = float(order.get("cost", 0) or amount_usd)
+
+            # If fill details missing, fetch the order to get actuals
+            if not fill_price or not filled_qty:
+                try:
+                    fetched = await exchange.fetch_order(order_id, symbol)
+                    fill_price = float(fetched.get("average", 0) or fetched.get("price", 0) or 0)
+                    filled_qty = float(fetched.get("filled", 0) or 0)
+                    cost = float(fetched.get("cost", 0) or amount_usd)
+                except Exception:
+                    # Best-effort: estimate from ticker
+                    ticker = await exchange.fetch_ticker(symbol)
+                    fill_price = float(ticker["last"])
+                    filled_qty = amount_usd / fill_price
 
             live_order = LiveOrder(
                 order_id=order_id, symbol=symbol, side="buy",
