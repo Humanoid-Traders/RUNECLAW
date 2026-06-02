@@ -50,6 +50,7 @@ from bot.warroom.warroom_bot import (
     render_resume as wr_resume,
     render_emergency_stop as wr_emergency_stop,
     handle_callback as wr_handle_callback,
+    _bar,
 )
 
 
@@ -165,6 +166,7 @@ class TelegramHandler:
             # Live trading commands
             ("golive", self._cmd_golive), ("livebalance", self._cmd_livebalance),
             ("livepositions", self._cmd_livepositions), ("liveclose", self._cmd_liveclose),
+            ("buy", self._cmd_buy), ("sell", self._cmd_sell),
             ("health", self._cmd_health),
         ]:
             app.add_handler(CommandHandler(cmd, handler))
@@ -723,6 +725,15 @@ class TelegramHandler:
             "  /llmstatus     Current LLM\n"
             "  /llmtiers      Tier routing\n"
             "  /llmreset      Reset to .env\n"
+            "\n"
+            " LIVE TRADING\n"
+            "  /golive        Enable live mode\n"
+            "  /buy BTC 5     Buy $5 of BTC\n"
+            "  /sell BTC      Sell all BTC\n"
+            "  /livebalance   Bitget balance\n"
+            "  /livepositions Open positions\n"
+            "  /liveclose ID  Close position\n"
+            "  /health        System health\n"
         )
 
         if role == "admin":
@@ -1005,6 +1016,125 @@ class TelegramHandler:
         trade_id = args[0]
         result = await self.engine.live_executor.close_position(trade_id, "manual_telegram")
         await self._send(update, f"\U0001f510 {result}")
+
+    async def _cmd_buy(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """/buy BTC 5 — buy $5 worth of BTC/USDT on Bitget spot."""
+        if not await self._guard(update, "admin"):
+            return
+
+        args = ctx.args or []
+        if len(args) < 1:
+            await self._send(update,
+                "\U0001f6d2 <b>SPOT BUY</b>\n\n"
+                "<b>Usage:</b>\n"
+                "<code>/buy BTC 5</code>  — buy $5 of BTC\n"
+                "<code>/buy SOL 10</code> — buy $10 of SOL\n"
+                "<code>/buy ETH</code>    — buy $5 of ETH (default)\n\n"
+                "\u26a0\ufe0f Micro-test limits: $10/trade, $50 total.\n"
+                "Requires <code>/golive CONFIRM</code> first.")
+            return
+
+        asset = args[0].upper().replace("/USDT", "")
+        symbol = f"{asset}/USDT"
+        amount_usd = 5.0  # default
+        if len(args) >= 2:
+            try:
+                amount_usd = float(args[1])
+            except ValueError:
+                await self._send(update, "\u274c Invalid amount. Use: <code>/buy BTC 5</code>")
+                return
+
+        if amount_usd <= 0 or amount_usd > 10:
+            await self._send(update,
+                f"\u274c Amount must be $0.01 – $10.00 (micro-test limit).\n"
+                f"You entered: ${amount_usd:.2f}")
+            return
+
+        # Check live mode
+        from bot.config import RUNTIME
+        if not RUNTIME.live_mode:
+            await self._send(update,
+                "\U0001f512 <b>Live trading is OFF</b>\n\n"
+                "Enable with <code>/golive CONFIRM</code> first.")
+            return
+
+        await self._send(update,
+            f"\u23f3 Placing market BUY: <b>{symbol}</b> — ${amount_usd:.2f}...")
+
+        result = await self.engine.live_executor.buy_spot(symbol, amount_usd)
+
+        if "error" in result:
+            await self._send(update,
+                f"\u274c <b>BUY FAILED</b>\n\n"
+                f"<code>{result['error']}</code>")
+            return
+
+        # Success
+        bar = _bar(amount_usd / 10.0, 1.0, 10)  # 10 = micro limit
+        await self._send(update,
+            f"\u2705 <b>SPOT BUY FILLED</b>\n\n"
+            f"\U0001f4b0 <b>{symbol}</b>\n"
+            f"  Qty:   <code>{result['qty']:.8f}</code>\n"
+            f"  Price: <code>${result['price']:,.4f}</code>\n"
+            f"  Cost:  <code>${result['cost']:.2f}</code>\n"
+            f"  Order: <code>{result['order_id']}</code>\n\n"
+            f"  Budget {bar} ${amount_usd:.0f}/$10\n\n"
+            f"\U0001f4a1 Sell with: <code>/sell {asset}</code>")
+
+    async def _cmd_sell(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """/sell BTC [qty] — sell spot asset on Bitget."""
+        if not await self._guard(update, "admin"):
+            return
+
+        args = ctx.args or []
+        if len(args) < 1:
+            await self._send(update,
+                "\U0001f4b8 <b>SPOT SELL</b>\n\n"
+                "<b>Usage:</b>\n"
+                "<code>/sell BTC</code>     — sell all BTC\n"
+                "<code>/sell SOL 0.5</code> — sell 0.5 SOL\n\n"
+                "\u26a0\ufe0f Requires <code>/golive CONFIRM</code> first.")
+            return
+
+        asset = args[0].upper().replace("/USDT", "")
+        symbol = f"{asset}/USDT"
+        qty = 0.0
+        sell_all = True
+        if len(args) >= 2:
+            try:
+                qty = float(args[1])
+                sell_all = False
+            except ValueError:
+                await self._send(update, "\u274c Invalid quantity. Use: <code>/sell BTC 0.001</code>")
+                return
+
+        # Check live mode
+        from bot.config import RUNTIME
+        if not RUNTIME.live_mode:
+            await self._send(update,
+                "\U0001f512 <b>Live trading is OFF</b>\n\n"
+                "Enable with <code>/golive CONFIRM</code> first.")
+            return
+
+        action_desc = "all" if sell_all else f"{qty}"
+        await self._send(update,
+            f"\u23f3 Placing market SELL: <b>{symbol}</b> — {action_desc}...")
+
+        result = await self.engine.live_executor.sell_spot(symbol, qty=qty, sell_all=sell_all)
+
+        if "error" in result:
+            await self._send(update,
+                f"\u274c <b>SELL FAILED</b>\n\n"
+                f"<code>{result['error']}</code>")
+            return
+
+        await self._send(update,
+            f"\u2705 <b>SPOT SELL FILLED</b>\n\n"
+            f"\U0001f4b8 <b>{symbol}</b>\n"
+            f"  Qty:      <code>{result['qty']:.8f}</code>\n"
+            f"  Price:    <code>${result['price']:,.4f}</code>\n"
+            f"  Proceeds: <code>${result['proceeds']:.2f}</code>\n"
+            f"  Order:    <code>{result['order_id']}</code>")
 
     # ── Proactive Alerts (Move 2) ──────────────────────────────
 

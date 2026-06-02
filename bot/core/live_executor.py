@@ -508,6 +508,170 @@ class LiveExecutor:
             f"Realized PnL: ${total_pnl:.4f}"
         )
 
+    # ── Direct Spot Buy / Sell ───────────────────────────────────
+
+    async def buy_spot(self, symbol: str, amount_usd: float) -> dict:
+        """Buy a spot asset with a market order.
+
+        Args:
+            symbol: Trading pair (e.g. "BTC/USDT")
+            amount_usd: How many USDT to spend
+
+        Returns:
+            Dict with order details or error
+        """
+        # Enforce micro-test cap
+        amount_usd = min(amount_usd, MICRO_MAX_POSITION_USD)
+        if amount_usd <= 0:
+            return {"error": "Amount must be > 0"}
+
+        # Exposure check
+        total_exposure = self.total_exposure_usd
+        if total_exposure + amount_usd > MICRO_MAX_TOTAL_EXPOSURE:
+            return {
+                "error": f"Would exceed exposure limit: "
+                         f"${total_exposure + amount_usd:.2f} > ${MICRO_MAX_TOTAL_EXPOSURE}"
+            }
+
+        audit(trade_log, f"Spot BUY starting: {symbol} ${amount_usd:.2f}",
+              action="spot_buy", result="STARTING",
+              data={"symbol": symbol, "amount_usd": amount_usd})
+
+        try:
+            exchange = await self._get_exchange()
+
+            # Fetch price to calculate qty
+            ticker = await exchange.fetch_ticker(symbol)
+            price = float(ticker["last"])
+            qty = amount_usd / price
+
+            # Precision: round down to exchange step
+            markets = await exchange.load_markets()
+            market = markets.get(symbol)
+            if market:
+                qty = float(exchange.amount_to_precision(symbol, qty))
+
+            if qty <= 0:
+                return {"error": f"Quantity too small after precision rounding (${amount_usd} at ${price:,.2f})"}
+
+            order = await exchange.create_order(
+                symbol=symbol,
+                type="market",
+                side="buy",
+                amount=qty,
+            )
+
+            fill_price = float(order.get("average", 0) or order.get("price", 0) or price)
+            filled_qty = float(order.get("filled", 0) or qty)
+            cost = float(order.get("cost", 0) or fill_price * filled_qty)
+            order_id = order.get("id", "unknown")
+
+            live_order = LiveOrder(
+                order_id=order_id, symbol=symbol, side="buy",
+                order_type="market", amount=filled_qty, price=fill_price,
+                cost_usd=cost, status=order.get("status", "filled"), raw=order,
+            )
+            self._order_history.append(live_order)
+            self._prune_order_history()
+
+            audit(trade_log, f"Spot BUY filled: {symbol} {filled_qty} @ ${fill_price:,.4f}",
+                  action="spot_buy", result="FILLED",
+                  data={"order_id": order_id, "symbol": symbol,
+                        "qty": filled_qty, "price": fill_price, "cost": cost})
+
+            return {
+                "status": "filled",
+                "order_id": order_id,
+                "symbol": symbol,
+                "side": "buy",
+                "qty": filled_qty,
+                "price": fill_price,
+                "cost": cost,
+            }
+
+        except Exception as exc:
+            audit(trade_log, f"Spot BUY failed: {symbol} — {exc}",
+                  action="spot_buy", result="ERROR",
+                  data={"symbol": symbol, "amount_usd": amount_usd, "error": str(exc)})
+            return {"error": str(exc)}
+
+    async def sell_spot(self, symbol: str, qty: float = 0, sell_all: bool = False) -> dict:
+        """Sell a spot asset with a market order.
+
+        Args:
+            symbol: Trading pair (e.g. "BTC/USDT")
+            qty: Quantity in base currency to sell (0 = sell_all)
+            sell_all: If True, sell entire balance of the base asset
+
+        Returns:
+            Dict with order details or error
+        """
+        audit(trade_log, f"Spot SELL starting: {symbol} qty={qty} sell_all={sell_all}",
+              action="spot_sell", result="STARTING",
+              data={"symbol": symbol, "qty": qty, "sell_all": sell_all})
+
+        try:
+            exchange = await self._get_exchange()
+
+            if sell_all or qty <= 0:
+                # Fetch balance for the base asset
+                base = symbol.split("/")[0]
+                balance = await exchange.fetch_balance()
+                available = float(balance.get(base, {}).get("free", 0))
+                if available <= 0:
+                    return {"error": f"No {base} balance to sell"}
+                qty = available
+
+            # Precision
+            markets = await exchange.load_markets()
+            market = markets.get(symbol)
+            if market:
+                qty = float(exchange.amount_to_precision(symbol, qty))
+
+            if qty <= 0:
+                return {"error": "Quantity too small after precision rounding"}
+
+            order = await exchange.create_order(
+                symbol=symbol,
+                type="market",
+                side="sell",
+                amount=qty,
+            )
+
+            fill_price = float(order.get("average", 0) or order.get("price", 0) or 0)
+            filled_qty = float(order.get("filled", 0) or qty)
+            proceeds = float(order.get("cost", 0) or fill_price * filled_qty)
+            order_id = order.get("id", "unknown")
+
+            live_order = LiveOrder(
+                order_id=order_id, symbol=symbol, side="sell",
+                order_type="market", amount=filled_qty, price=fill_price,
+                cost_usd=proceeds, status=order.get("status", "filled"), raw=order,
+            )
+            self._order_history.append(live_order)
+            self._prune_order_history()
+
+            audit(trade_log, f"Spot SELL filled: {symbol} {filled_qty} @ ${fill_price:,.4f}",
+                  action="spot_sell", result="FILLED",
+                  data={"order_id": order_id, "symbol": symbol,
+                        "qty": filled_qty, "price": fill_price, "proceeds": proceeds})
+
+            return {
+                "status": "filled",
+                "order_id": order_id,
+                "symbol": symbol,
+                "side": "sell",
+                "qty": filled_qty,
+                "price": fill_price,
+                "proceeds": proceeds,
+            }
+
+        except Exception as exc:
+            audit(trade_log, f"Spot SELL failed: {symbol} — {exc}",
+                  action="spot_sell", result="ERROR",
+                  data={"symbol": symbol, "qty": qty, "error": str(exc)})
+            return {"error": str(exc)}
+
     # ── F-07 FIX: Position persistence ──────────────────────────────
 
     def _save_positions(self) -> None:
