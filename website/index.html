@@ -2186,6 +2186,7 @@ footer {
   <ul class="nav-links">
     <li><a href="#pipeline">Architecture</a></li>
     <li><a href="#features">Features</a></li>
+    <li><a href="#llm">LLM</a></li>
     <li><a href="#safety">Safety</a></li>
     <li><a href="#telegram">Commands</a></li>
     <li><a href="#results" style="color:var(--green-safe);font-weight:600">Results</a></li>
@@ -2392,6 +2393,325 @@ footer {
       <div class="feature-tag">Safe self-improvement</div>
     </div>
   </div>
+</section>
+
+<!-- ═══ NORSE DIVIDER ═══ -->
+<div class="norse-divider"><span class="rune-sym">&#5792; &#5768; &#5765;</span></div>
+
+<!-- ═══ LLM INTELLIGENCE ═══ -->
+<section id="llm" style="padding:80px 40px;">
+  <div class="reveal" style="text-align:center;">
+    <div class="section-label" style="justify-content:center;">AI Engine</div>
+    <h2 class="section-title">LLM Intelligence<br>&amp; Cost Optimization</h2>
+    <div class="blue-divider"></div>
+    <p class="section-desc" style="margin:0 auto;">RUNECLAW supports 11 LLM providers with BYOK (Bring Your Own Key). Multi-tier routing sends each task to the right model. A 4-layer optimization pipeline cuts token costs by up to 70%.</p>
+  </div>
+
+  <!-- Provider Grid -->
+  <div style="max-width:1100px;margin:50px auto 0;">
+    <h3 style="color:var(--ice);font-family:'Rajdhani',sans-serif;font-size:1.3rem;margin-bottom:24px;text-transform:uppercase;letter-spacing:2px;">&#129504; Supported Providers</h3>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px;">
+
+      <!-- Gemini -->
+      <div class="reveal reveal-delay-1" style="background:linear-gradient(135deg,rgba(16,163,127,0.08),rgba(16,163,127,0.02));border:1px solid rgba(16,163,127,0.2);border-radius:12px;padding:20px;">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
+          <span style="font-size:1.5rem;">&#128154;</span>
+          <span style="color:var(--ice);font-family:'Rajdhani',sans-serif;font-weight:600;font-size:1.1rem;">Google Gemini</span>
+          <span style="background:#10a37f;color:#fff;font-size:0.65rem;padding:2px 8px;border-radius:10px;font-weight:600;">DEFAULT</span>
+          <span style="background:rgba(16,163,127,0.2);color:#10a37f;font-size:0.65rem;padding:2px 8px;border-radius:10px;font-weight:600;">FREE TIER</span>
+        </div>
+        <div style="color:var(--silver);font-size:0.85rem;line-height:1.5;">
+          <code style="color:var(--blue-bright);font-size:0.8rem;">gemini-2.5-flash</code> &middot; <code style="color:var(--blue-bright);font-size:0.8rem;">gemini-2.5-pro</code><br>
+          Best free tier (2026). 1M+ context window, strong JSON output, agentic workflows. No credit card required.
+        </div>
+        <div style="margin-top:8px;font-size:0.75rem;color:var(--ash);">Cost: <span style="color:#10a37f;font-weight:600;">$0.00</span> &middot; Speed: Fast &middot; Quality: High</div>
+      </div>
+
+      <!-- Groq -->
+      <div class="reveal reveal-delay-2" style="background:linear-gradient(135deg,rgba(246,133,27,0.08),rgba(246,133,27,0.02));border:1px solid rgba(246,133,27,0.2);border-radius:12px;padding:20px;">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
+          <span style="font-size:1.5rem;">&#9889;</span>
+          <span style="color:var(--ice);font-family:'Rajdhani',sans-serif;font-weight:600;font-size:1.1rem;">Groq</span>
+          <span style="background:rgba(246,133,27,0.2);color:#f6851b;font-size:0.65rem;padding:2px 8px;border-radius:10px;font-weight:600;">FREE TIER</span>
+          <span style="background:rgba(246,133,27,0.15);color:#f6851b;font-size:0.65rem;padding:2px 8px;border-radius:10px;font-weight:600;">FASTEST</span>
+        </div>
+        <div style="color:var(--silver);font-size:0.85rem;line-height:1.5;">
+          <code style="color:var(--blue-bright);font-size:0.8rem;">llama-3.3-70b</code> &middot; <code style="color:var(--blue-bright);font-size:0.8rem;">qwen-qwq-32b</code><br>
+          Sub-second inference on custom LPU hardware. Best for high-frequency scan tier.
+        </div>
+        <div style="margin-top:8px;font-size:0.75rem;color:var(--ash);">Cost: <span style="color:#10a37f;font-weight:600;">$0.00</span> &middot; Speed: &lt;1s &middot; Quality: Good</div>
+      </div>
+
+      <!-- Anthropic -->
+      <div class="reveal reveal-delay-3" style="background:linear-gradient(135deg,rgba(204,169,120,0.08),rgba(204,169,120,0.02));border:1px solid rgba(204,169,120,0.2);border-radius:12px;padding:20px;">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
+          <span style="font-size:1.5rem;">&#129520;</span>
+          <span style="color:var(--ice);font-family:'Rajdhani',sans-serif;font-weight:600;font-size:1.1rem;">Anthropic Claude</span>
+        </div>
+        <div style="color:var(--silver);font-size:0.85rem;line-height:1.5;">
+          <code style="color:var(--blue-bright);font-size:0.8rem;">claude-sonnet-4</code> &middot; <code style="color:var(--blue-bright);font-size:0.8rem;">claude-opus-4</code><br>
+          Excellent reasoning and safety alignment. Best for risk analysis and thesis generation.
+        </div>
+        <div style="margin-top:8px;font-size:0.75rem;color:var(--ash);">Cost: ~$3/M tokens &middot; Speed: Medium &middot; Quality: Excellent</div>
+      </div>
+
+      <!-- OpenAI -->
+      <div class="reveal reveal-delay-1" style="background:linear-gradient(135deg,rgba(116,192,150,0.08),rgba(116,192,150,0.02));border:1px solid rgba(116,192,150,0.2);border-radius:12px;padding:20px;">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
+          <span style="font-size:1.5rem;">&#127919;</span>
+          <span style="color:var(--ice);font-family:'Rajdhani',sans-serif;font-weight:600;font-size:1.1rem;">OpenAI</span>
+        </div>
+        <div style="color:var(--silver);font-size:0.85rem;line-height:1.5;">
+          <code style="color:var(--blue-bright);font-size:0.8rem;">gpt-4o</code> &middot; <code style="color:var(--blue-bright);font-size:0.8rem;">gpt-4o-mini</code> &middot; <code style="color:var(--blue-bright);font-size:0.8rem;">o1-mini</code><br>
+          Industry standard. Best overall reasoning. gpt-4o-mini for cost-effective scanning.
+        </div>
+        <div style="margin-top:8px;font-size:0.75rem;color:var(--ash);">Cost: ~$15/M tokens &middot; Speed: Medium &middot; Quality: Best</div>
+      </div>
+
+      <!-- DeepSeek -->
+      <div class="reveal reveal-delay-2" style="background:linear-gradient(135deg,rgba(74,154,255,0.08),rgba(74,154,255,0.02));border:1px solid rgba(74,154,255,0.2);border-radius:12px;padding:20px;">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
+          <span style="font-size:1.5rem;">&#128171;</span>
+          <span style="color:var(--ice);font-family:'Rajdhani',sans-serif;font-weight:600;font-size:1.1rem;">DeepSeek</span>
+          <span style="background:rgba(74,154,255,0.2);color:var(--blue-bright);font-size:0.65rem;padding:2px 8px;border-radius:10px;font-weight:600;">CHEAPEST</span>
+        </div>
+        <div style="color:var(--silver);font-size:0.85rem;line-height:1.5;">
+          <code style="color:var(--blue-bright);font-size:0.8rem;">deepseek-chat</code> &middot; <code style="color:var(--blue-bright);font-size:0.8rem;">deepseek-reasoner</code><br>
+          Extremely cheap at $0.14/M tokens (100x cheaper than GPT-4o). Strong at finance tasks.
+        </div>
+        <div style="margin-top:8px;font-size:0.75rem;color:var(--ash);">Cost: <span style="color:#10a37f;font-weight:600;">$0.14/M</span> &middot; Speed: Medium &middot; Quality: Good</div>
+      </div>
+
+      <!-- Alibaba / Qwen -->
+      <div class="reveal reveal-delay-3" style="background:linear-gradient(135deg,rgba(255,106,0,0.08),rgba(255,106,0,0.02));border:1px solid rgba(255,106,0,0.2);border-radius:12px;padding:20px;">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
+          <span style="font-size:1.5rem;">&#9729;&#65039;</span>
+          <span style="color:var(--ice);font-family:'Rajdhani',sans-serif;font-weight:600;font-size:1.1rem;">Alibaba Qwen</span>
+          <span style="background:rgba(255,106,0,0.2);color:#ff6a00;font-size:0.65rem;padding:2px 8px;border-radius:10px;font-weight:600;">HACKATHON</span>
+        </div>
+        <div style="color:var(--silver);font-size:0.85rem;line-height:1.5;">
+          <code style="color:var(--blue-bright);font-size:0.8rem;">qwen3.6-plus</code> &middot; <code style="color:var(--blue-bright);font-size:0.8rem;">qwen3.6-flash</code><br>
+          Bitget AI Base Camp partner. $30 free credits via hackathon endpoint.
+        </div>
+        <div style="margin-top:8px;font-size:0.75rem;color:var(--ash);">Cost: ~$0.50/M tokens &middot; Speed: Fast &middot; Quality: Good</div>
+      </div>
+
+      <!-- Ollama -->
+      <div class="reveal reveal-delay-1" style="background:linear-gradient(135deg,rgba(255,255,255,0.05),rgba(255,255,255,0.01));border:1px solid rgba(255,255,255,0.1);border-radius:12px;padding:20px;">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
+          <span style="font-size:1.5rem;">&#128187;</span>
+          <span style="color:var(--ice);font-family:'Rajdhani',sans-serif;font-weight:600;font-size:1.1rem;">Ollama (Local)</span>
+          <span style="background:rgba(255,255,255,0.1);color:var(--silver);font-size:0.65rem;padding:2px 8px;border-radius:10px;font-weight:600;">PRIVATE</span>
+        </div>
+        <div style="color:var(--silver);font-size:0.85rem;line-height:1.5;">
+          <code style="color:var(--blue-bright);font-size:0.8rem;">llama3</code> &middot; <code style="color:var(--blue-bright);font-size:0.8rem;">qwen2.5</code> &middot; <code style="color:var(--blue-bright);font-size:0.8rem;">gemma2</code><br>
+          100% private. Zero data leaves your machine. No API key needed.
+        </div>
+        <div style="margin-top:8px;font-size:0.75rem;color:var(--ash);">Cost: <span style="color:#10a37f;font-weight:600;">$0.00</span> &middot; Speed: GPU-dependent &middot; Quality: Variable</div>
+      </div>
+
+      <!-- Mistral + OpenRouter + Together -->
+      <div class="reveal reveal-delay-2" style="background:linear-gradient(135deg,rgba(74,154,255,0.05),rgba(74,154,255,0.01));border:1px solid rgba(74,154,255,0.12);border-radius:12px;padding:20px;">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
+          <span style="font-size:1.5rem;">&#128279;</span>
+          <span style="color:var(--ice);font-family:'Rajdhani',sans-serif;font-weight:600;font-size:1.1rem;">+3 More Providers</span>
+        </div>
+        <div style="color:var(--silver);font-size:0.85rem;line-height:1.5;">
+          <b style="color:var(--bone);">Mistral</b> &mdash; EU-based, fast, low cost<br>
+          <b style="color:var(--bone);">OpenRouter</b> &mdash; 100+ models, single key, free models<br>
+          <b style="color:var(--bone);">Together AI</b> &mdash; Open-source models, $5 free credits<br>
+          <b style="color:var(--bone);">Custom</b> &mdash; Any OpenAI-compatible endpoint
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Multi-Tier Routing -->
+  <div style="max-width:1100px;margin:60px auto 0;">
+    <h3 style="color:var(--ice);font-family:'Rajdhani',sans-serif;font-size:1.3rem;margin-bottom:24px;text-transform:uppercase;letter-spacing:2px;">&#128640; Multi-Tier Routing</h3>
+    <p style="color:var(--silver);font-size:0.9rem;margin-bottom:24px;max-width:700px;">Different tasks need different models. RUNECLAW routes each task to the optimal provider &mdash; fast models for scanning, powerful models for thesis generation.</p>
+
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:14px;">
+      <div class="reveal reveal-delay-1" style="background:rgba(42,106,220,0.06);border:1px solid rgba(42,106,220,0.15);border-radius:10px;padding:18px;text-align:center;">
+        <div style="font-size:2rem;margin-bottom:6px;">&#9889;</div>
+        <div style="color:var(--ice);font-family:'Rajdhani',sans-serif;font-weight:600;font-size:1rem;">SCAN Tier</div>
+        <div style="color:var(--ash);font-size:0.8rem;margin:6px 0;">High-frequency market scans</div>
+        <div style="color:var(--blue-bright);font-size:0.85rem;font-weight:600;">Groq &middot; &lt;1s</div>
+        <div style="color:var(--silver);font-size:0.75rem;margin-top:4px;">Speed-critical, free tier</div>
+      </div>
+      <div class="reveal reveal-delay-2" style="background:rgba(42,106,220,0.06);border:1px solid rgba(42,106,220,0.15);border-radius:10px;padding:18px;text-align:center;">
+        <div style="font-size:2rem;margin-bottom:6px;">&#129504;</div>
+        <div style="color:var(--ice);font-family:'Rajdhani',sans-serif;font-weight:600;font-size:1rem;">THESIS Tier</div>
+        <div style="color:var(--ash);font-size:0.8rem;margin:6px 0;">Trade idea generation</div>
+        <div style="color:var(--blue-bright);font-size:0.85rem;font-weight:600;">Gemini Pro &middot; Claude</div>
+        <div style="color:var(--silver);font-size:0.75rem;margin-top:4px;">Needs deep reasoning</div>
+      </div>
+      <div class="reveal reveal-delay-3" style="background:rgba(42,106,220,0.06);border:1px solid rgba(42,106,220,0.15);border-radius:10px;padding:18px;text-align:center;">
+        <div style="font-size:2rem;margin-bottom:6px;">&#128218;</div>
+        <div style="color:var(--ice);font-family:'Rajdhani',sans-serif;font-weight:600;font-size:1rem;">LEARNING Tier</div>
+        <div style="color:var(--ash);font-size:0.8rem;margin:6px 0;">Reflection &amp; macro analysis</div>
+        <div style="color:var(--blue-bright);font-size:0.85rem;font-weight:600;">Gemini Pro</div>
+        <div style="color:var(--silver);font-size:0.75rem;margin-top:4px;">Needs context depth</div>
+      </div>
+      <div class="reveal reveal-delay-1" style="background:rgba(42,106,220,0.06);border:1px solid rgba(42,106,220,0.15);border-radius:10px;padding:18px;text-align:center;">
+        <div style="font-size:2rem;margin-bottom:6px;">&#128172;</div>
+        <div style="color:var(--ice);font-family:'Rajdhani',sans-serif;font-weight:600;font-size:1rem;">CHAT Tier</div>
+        <div style="color:var(--ash);font-size:0.8rem;margin:6px 0;">User Q&amp;A via Telegram</div>
+        <div style="color:var(--blue-bright);font-size:0.85rem;font-weight:600;">Groq &middot; Gemini Flash</div>
+        <div style="color:var(--silver);font-size:0.75rem;margin-top:4px;">Balanced speed + quality</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Token Optimization Pipeline -->
+  <div style="max-width:1100px;margin:60px auto 0;">
+    <h3 style="color:var(--ice);font-family:'Rajdhani',sans-serif;font-size:1.3rem;margin-bottom:24px;text-transform:uppercase;letter-spacing:2px;">&#128176; 4-Layer Cost Optimization</h3>
+    <p style="color:var(--silver);font-size:0.9rem;margin-bottom:30px;max-width:700px;">Every LLM call passes through a 4-layer pipeline that eliminates unnecessary API spend. Clear signals use free rules. Only ambiguous signals reach the full model.</p>
+
+    <!-- Savings headline -->
+    <div class="reveal" style="background:linear-gradient(135deg,rgba(16,163,127,0.1),rgba(42,106,220,0.05));border:1px solid rgba(16,163,127,0.25);border-radius:14px;padding:30px;margin-bottom:30px;text-align:center;">
+      <div style="font-size:3rem;font-family:'Cinzel',serif;font-weight:700;color:#10a37f;">Up to 70%</div>
+      <div style="color:var(--ice);font-family:'Rajdhani',sans-serif;font-size:1.2rem;margin-top:4px;">Token Cost Reduction</div>
+      <div style="color:var(--silver);font-size:0.85rem;margin-top:8px;">Measured across real trading sessions with semantic caching + tiered escalation</div>
+    </div>
+
+    <!-- 4 layers -->
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:14px;">
+      <div class="reveal reveal-delay-1" style="position:relative;background:rgba(16,163,127,0.06);border:1px solid rgba(16,163,127,0.2);border-radius:10px;padding:20px;">
+        <div style="position:absolute;top:10px;right:14px;font-size:0.65rem;background:rgba(16,163,127,0.2);color:#10a37f;padding:2px 8px;border-radius:8px;font-weight:600;">LAYER 1</div>
+        <div style="font-size:1.8rem;margin-bottom:6px;">&#128270;</div>
+        <div style="color:var(--ice);font-family:'Rajdhani',sans-serif;font-weight:600;">Semantic Cache</div>
+        <div style="color:var(--silver);font-size:0.82rem;margin-top:6px;line-height:1.4;">
+          TTL-bucketed cache keyed on market regime, RSI zone, and MACD direction. Similar market states reuse previous analysis. Saves ~$0.003 per cache hit.
+        </div>
+      </div>
+      <div class="reveal reveal-delay-2" style="position:relative;background:rgba(42,106,220,0.06);border:1px solid rgba(42,106,220,0.15);border-radius:10px;padding:20px;">
+        <div style="position:absolute;top:10px;right:14px;font-size:0.65rem;background:rgba(42,106,220,0.2);color:var(--blue-bright);padding:2px 8px;border-radius:8px;font-weight:600;">LAYER 2</div>
+        <div style="font-size:1.8rem;margin-bottom:6px;">&#128200;</div>
+        <div style="color:var(--ice);font-family:'Rajdhani',sans-serif;font-weight:600;">Tiered Pipeline</div>
+        <div style="color:var(--silver);font-size:0.82rem;margin-top:6px;line-height:1.4;">
+          <b style="color:var(--bone);">Tier 1</b>: Rule engine (free) for clear signals.<br>
+          <b style="color:var(--bone);">Tier 2</b>: Mini model (cheap) for moderate cases.<br>
+          <b style="color:var(--bone);">Tier 3</b>: Full model (best) for ambiguous setups.
+        </div>
+      </div>
+      <div class="reveal reveal-delay-3" style="position:relative;background:rgba(246,133,27,0.06);border:1px solid rgba(246,133,27,0.15);border-radius:10px;padding:20px;">
+        <div style="position:absolute;top:10px;right:14px;font-size:0.65rem;background:rgba(246,133,27,0.2);color:#f6851b;padding:2px 8px;border-radius:8px;font-weight:600;">LAYER 3</div>
+        <div style="font-size:1.8rem;margin-bottom:6px;">&#128230;</div>
+        <div style="color:var(--ice);font-family:'Rajdhani',sans-serif;font-weight:600;">Smart Batching</div>
+        <div style="color:var(--silver);font-size:0.82rem;margin-top:6px;line-height:1.4;">
+          Combines up to 5 symbols per LLM call. A single prompt analyzes multiple assets instead of one-by-one, cutting calls by up to 80%.
+        </div>
+      </div>
+      <div class="reveal reveal-delay-1" style="position:relative;background:rgba(204,169,120,0.06);border:1px solid rgba(204,169,120,0.15);border-radius:10px;padding:20px;">
+        <div style="position:absolute;top:10px;right:14px;font-size:0.65rem;background:rgba(204,169,120,0.2);color:#cca978;padding:2px 8px;border-radius:8px;font-weight:600;">LAYER 4</div>
+        <div style="font-size:1.8rem;margin-bottom:6px;">&#128260;</div>
+        <div style="color:var(--ice);font-family:'Rajdhani',sans-serif;font-weight:600;">Adaptive Frequency</div>
+        <div style="color:var(--silver);font-size:0.82rem;margin-top:6px;line-height:1.4;">
+          Skips LLM entirely in quiet / low-ADX markets. When volatility is flat, rule engine handles 100% of decisions at zero cost.
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- BYOK & Runtime Switching -->
+  <div style="max-width:1100px;margin:60px auto 0;">
+    <h3 style="color:var(--ice);font-family:'Rajdhani',sans-serif;font-size:1.3rem;margin-bottom:24px;text-transform:uppercase;letter-spacing:2px;">&#128273; BYOK &amp; Runtime Switching</h3>
+
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px;">
+      <div class="reveal reveal-delay-1" style="background:rgba(42,106,220,0.04);border:1px solid rgba(42,106,220,0.12);border-radius:12px;padding:22px;">
+        <div style="color:var(--ice);font-family:'Rajdhani',sans-serif;font-weight:600;font-size:1rem;margin-bottom:10px;">&#128274; Bring Your Own Key</div>
+        <div style="color:var(--silver);font-size:0.85rem;line-height:1.5;">
+          You supply the API key &mdash; we never store, log, or transmit it beyond the direct provider call. Set in <code>.env</code> or via Telegram at runtime. Keys are held in memory only.
+        </div>
+      </div>
+      <div class="reveal reveal-delay-2" style="background:rgba(42,106,220,0.04);border:1px solid rgba(42,106,220,0.12);border-radius:12px;padding:22px;">
+        <div style="color:var(--ice);font-family:'Rajdhani',sans-serif;font-weight:600;font-size:1rem;margin-bottom:10px;">&#128260; Live Provider Swap</div>
+        <div style="color:var(--silver);font-size:0.85rem;line-height:1.5;">
+          Switch providers mid-session without restart:<br>
+          <code style="color:var(--blue-bright);font-size:0.82rem;">/setllm groq</code> &mdash; switch to Groq<br>
+          <code style="color:var(--blue-bright);font-size:0.82rem;">/setllm anthropic sk-ant-...</code> &mdash; new key<br>
+          <code style="color:var(--blue-bright);font-size:0.82rem;">/llmstatus</code> &mdash; see active provider<br>
+          <code style="color:var(--blue-bright);font-size:0.82rem;">/llmreset</code> &mdash; revert to .env config
+        </div>
+      </div>
+      <div class="reveal reveal-delay-3" style="background:rgba(42,106,220,0.04);border:1px solid rgba(42,106,220,0.12);border-radius:12px;padding:22px;">
+        <div style="color:var(--ice);font-family:'Rajdhani',sans-serif;font-weight:600;font-size:1rem;margin-bottom:10px;">&#128176; Zero-Cost Setup</div>
+        <div style="color:var(--silver);font-size:0.85rem;line-height:1.5;">
+          No API key? No problem. RUNECLAW falls back to a rule-based analysis engine with zero LLM calls. Or grab a free key from:<br>
+          <b style="color:var(--bone);">Gemini</b> &mdash; unlimited free tier<br>
+          <b style="color:var(--bone);">Groq</b> &mdash; 100K tokens/day free<br>
+          <b style="color:var(--bone);">Ollama</b> &mdash; run locally, no key needed
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Cost Comparison Table -->
+  <div style="max-width:900px;margin:60px auto 0;">
+    <h3 style="color:var(--ice);font-family:'Rajdhani',sans-serif;font-size:1.3rem;margin-bottom:24px;text-transform:uppercase;letter-spacing:2px;">&#128202; Cost Per Analysis Call</h3>
+    <div class="reveal" style="background:rgba(4,6,12,0.6);border:1px solid rgba(42,106,220,0.12);border-radius:12px;overflow:hidden;">
+      <table style="width:100%;border-collapse:collapse;font-family:'JetBrains Mono',monospace;font-size:0.82rem;">
+        <thead>
+          <tr style="background:rgba(42,106,220,0.1);border-bottom:1px solid rgba(42,106,220,0.15);">
+            <th style="padding:12px 16px;text-align:left;color:var(--ice);font-weight:600;">Provider</th>
+            <th style="padding:12px 16px;text-align:right;color:var(--ice);font-weight:600;">Per /analyze</th>
+            <th style="padding:12px 16px;text-align:right;color:var(--ice);font-weight:600;">500 calls/day</th>
+            <th style="padding:12px 16px;text-align:center;color:var(--ice);font-weight:600;">Free Tier</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr style="border-bottom:1px solid rgba(255,255,255,0.04);">
+            <td style="padding:10px 16px;color:var(--bone);">Gemini 2.5 Flash</td>
+            <td style="padding:10px 16px;text-align:right;color:#10a37f;font-weight:600;">$0.00</td>
+            <td style="padding:10px 16px;text-align:right;color:#10a37f;font-weight:600;">$0.00</td>
+            <td style="padding:10px 16px;text-align:center;color:#10a37f;">&#10003;</td>
+          </tr>
+          <tr style="border-bottom:1px solid rgba(255,255,255,0.04);">
+            <td style="padding:10px 16px;color:var(--bone);">Groq Llama 3.3</td>
+            <td style="padding:10px 16px;text-align:right;color:#10a37f;font-weight:600;">$0.00</td>
+            <td style="padding:10px 16px;text-align:right;color:#10a37f;font-weight:600;">$0.00</td>
+            <td style="padding:10px 16px;text-align:center;color:#10a37f;">&#10003;</td>
+          </tr>
+          <tr style="border-bottom:1px solid rgba(255,255,255,0.04);">
+            <td style="padding:10px 16px;color:var(--bone);">Ollama (local)</td>
+            <td style="padding:10px 16px;text-align:right;color:#10a37f;font-weight:600;">$0.00</td>
+            <td style="padding:10px 16px;text-align:right;color:#10a37f;font-weight:600;">$0.00</td>
+            <td style="padding:10px 16px;text-align:center;color:#10a37f;">&#10003;</td>
+          </tr>
+          <tr style="border-bottom:1px solid rgba(255,255,255,0.04);">
+            <td style="padding:10px 16px;color:var(--bone);">DeepSeek Chat</td>
+            <td style="padding:10px 16px;text-align:right;color:var(--silver);">~$0.001</td>
+            <td style="padding:10px 16px;text-align:right;color:var(--silver);">~$0.50</td>
+            <td style="padding:10px 16px;text-align:center;color:var(--ash);">&#10007;</td>
+          </tr>
+          <tr style="border-bottom:1px solid rgba(255,255,255,0.04);">
+            <td style="padding:10px 16px;color:var(--bone);">Qwen 3.6 Plus</td>
+            <td style="padding:10px 16px;text-align:right;color:var(--silver);">~$0.003</td>
+            <td style="padding:10px 16px;text-align:right;color:var(--silver);">~$1.50</td>
+            <td style="padding:10px 16px;text-align:center;color:#f6851b;">$30 credits</td>
+          </tr>
+          <tr style="border-bottom:1px solid rgba(255,255,255,0.04);">
+            <td style="padding:10px 16px;color:var(--bone);">Claude Sonnet 4</td>
+            <td style="padding:10px 16px;text-align:right;color:var(--silver);">~$0.010</td>
+            <td style="padding:10px 16px;text-align:right;color:var(--silver);">~$5.00</td>
+            <td style="padding:10px 16px;text-align:center;color:var(--ash);">&#10007;</td>
+          </tr>
+          <tr>
+            <td style="padding:10px 16px;color:var(--bone);">GPT-4o</td>
+            <td style="padding:10px 16px;text-align:right;color:var(--silver);">~$0.025</td>
+            <td style="padding:10px 16px;text-align:right;color:var(--silver);">~$12.50</td>
+            <td style="padding:10px 16px;text-align:center;color:var(--ash);">&#10007;</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <div style="color:var(--ash);font-size:0.75rem;margin-top:10px;text-align:center;">
+      Costs are estimates based on ~1,500 tokens per /analyze call. Actual costs depend on prompt complexity and response length. With optimization pipeline enabled, effective cost is 30-70% lower.
+    </div>
+  </div>
+
 </section>
 
 <!-- ═══ NORSE DIVIDER ═══ -->
