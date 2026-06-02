@@ -980,48 +980,85 @@ class TelegramHandler:
             used = bal.get("used", 0)
             holdings = bal.get("holdings", [])
 
+            # Fetch prices and compute portfolio value
+            exchange = await self.engine.live_executor._get_exchange()
+            spot_items = []
+            total_usd = total
+            for h in sorted(holdings, key=lambda x: x["asset"]):
+                asset = h["asset"]
+                qty = h["total"]
+                symbol = f"{asset}/USDT"
+                usd_val = 0.0
+                price = 0.0
+                try:
+                    ticker = await exchange.fetch_ticker(symbol)
+                    price = float(ticker.get("last", 0))
+                    usd_val = qty * price
+                    total_usd += usd_val
+                except Exception:
+                    pass
+                spot_items.append({"asset": asset, "qty": qty, "price": price, "usd": usd_val})
+
+            # Live executor stats
+            executor = self.engine.live_executor
+            open_pos = executor.open_positions
+            closed_pos = executor.closed_positions
+            realized_pnl = sum(p.pnl_usd or 0 for p in closed_pos)
+            exposure = executor.total_exposure_usd
+
+            # PnL sign
+            pnl_sign = "+" if realized_pnl >= 0 else ""
+            pnl_icon = "\u26aa" if realized_pnl == 0 else ("\U0001f7e2" if realized_pnl > 0 else "\U0001f534")
+
+            # Header
             lines = [
-                "\U0001f4b0 <b>BITGET BALANCE</b>\n",
-                f"  USDT Total: <code>${total:.2f}</code>",
-                f"  USDT Free:  <code>${free:.2f}</code>",
-                f"  USDT Used:  <code>${used:.2f}</code>",
+                f"\U0001f4b0 <b>BITGET PORTFOLIO</b> \u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501",
+                f"   {pnl_icon}\u25c7  ${pnl_sign}{realized_pnl:.2f} ",
+                "",
+                "\U0001f4b3 <b>Balance</b>",
+                "",
+                f"  Cash \u00b7\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7 ${free:,.2f}",
+                f"  Used \u00b7\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7 ${used:,.2f}",
+                f"  Equity \u00b7\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7 ${total_usd:,.2f}",
+                f"  Exposure \u00b7\u00b7\u00b7\u00b7\u00b7\u00b7 ${exposure:,.2f}",
             ]
 
-            if holdings:
-                lines.append("\n\U0001f4e6 <b>SPOT HOLDINGS</b>\n")
-                # Try to fetch prices for USD value
-                exchange = await self.engine.live_executor._get_exchange()
-                total_usd = total  # start with USDT
-                for h in sorted(holdings, key=lambda x: x["asset"]):
-                    asset = h["asset"]
-                    qty = h["total"]
-                    symbol = f"{asset}/USDT"
-                    usd_val = 0.0
-                    price = 0.0
-                    try:
-                        ticker = await exchange.fetch_ticker(symbol)
-                        price = float(ticker.get("last", 0))
-                        usd_val = qty * price
-                        total_usd += usd_val
-                    except Exception:
-                        pass  # unlisted pair or no ticker
+            # Spot holdings section
+            real_holdings = [s for s in spot_items if s["usd"] >= 0.01]
+            dust_holdings = [s for s in spot_items if 0 < s["usd"] < 0.01]
 
-                    if usd_val >= 0.01:
-                        lines.append(
-                            f"  <b>{asset}</b>  "
-                            f"<code>{qty:.8g}</code>  "
-                            f"~<code>${usd_val:.2f}</code>"
-                        )
-                    else:
-                        lines.append(
-                            f"  <b>{asset}</b>  "
-                            f"<code>{qty:.8g}</code>  "
-                            f"<i>dust</i>"
-                        )
+            if real_holdings:
+                lines.append("")
+                lines.append("\U0001f4e6 <b>Spot Holdings</b>")
+                lines.append("")
+                for s in sorted(real_holdings, key=lambda x: -x["usd"]):
+                    pct = (s["usd"] / total_usd * 100) if total_usd > 0 else 0
+                    bar = _bar(pct / 100, 1.0, 8)
+                    lines.append(
+                        f"  \u25b8 <b>{s['asset']}</b>  "
+                        f"<code>{s['qty']:.8g}</code>  "
+                        f"${s['usd']:.2f}  "
+                        f"{bar} {pct:.0f}%"
+                    )
+                if dust_holdings:
+                    lines.append(f"  \u25b8 <i>+{len(dust_holdings)} dust</i>")
 
-                lines.append(f"\n  \U0001f4b5 <b>Total Value: ~${total_usd:.2f}</b>")
-            else:
-                lines.append("\n<i>No spot holdings (USDT only)</i>")
+            # PnL waterfall
+            lines.append("")
+            lines.append("\U0001f4c8 <b>PnL Waterfall</b>")
+            lines.append("")
+            lines.append(f"  \u25b8 Realized      ${pnl_sign}{realized_pnl:.4f}")
+            lines.append(f"  \u25b8 Exposure      ${exposure:,.2f}")
+            lines.append(f"  \u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501")
+            lines.append(f"  \u25b6 <b>NET         ${total_usd:,.2f}</b>")
+
+            # Footer
+            n_trades = len(closed_pos)
+            n_open = len(open_pos)
+            trade_word = "trade" if n_trades == 1 else "trades"
+            pos_word = f"{n_open} open" if n_open > 0 else "no open positions"
+            lines.append("")
+            lines.append(f"\u25c7 {n_trades} {trade_word} \u2022 {pos_word}")
 
             await self._send(update, "\n".join(lines))
         except Exception as exc:
