@@ -269,7 +269,7 @@ class RuneClawEngine:
 
         # Check #17: liquidity guard from order flow (fail-open if no data)
         if of_signal is not None:
-            liq_size = recheck.position_size_usd if recheck else 0.0
+            liq_size = risk_check.position_size_usd if risk_check else 0.0
             liq_reason = self.order_flow.liquidity_guard(
                 of_signal,
                 position_size_usd=liq_size,
