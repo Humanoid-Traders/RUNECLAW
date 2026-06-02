@@ -349,7 +349,7 @@ class TelegramHandler:
         _FALLBACK_PROVIDERS = [
             (LLMProvider.GEMINI, "GEMINI_API_KEY", "gemini-2.0-flash"),
             (LLMProvider.ANTHROPIC, "ANTHROPIC_API_KEY", "claude-haiku-4-5"),
-            (LLMProvider.ALIBABA, "ALIBABA_API_KEY", "qwen-turbo"),
+            (LLMProvider.ALIBABA, "ALIBABA_API_KEY", "qwen3.6-plus"),
         ]
         for provider, key_env, model in _FALLBACK_PROVIDERS:
             api_key = os.getenv(key_env, "")

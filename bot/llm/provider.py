@@ -149,14 +149,14 @@ PROVIDER_CATALOG: dict[LLMProvider, dict] = {
         "get_key_url": "https://openrouter.ai/keys",
     },
     LLMProvider.ALIBABA: {
-        "base_url": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
-        "default_model": "qwen-plus",
-        "recommended_models": ["qwen-max", "qwen-plus", "qwen-turbo", "qwen-long"],
+        "base_url": "https://hackathon.bitgetops.com/v1",
+        "default_model": "qwen3.6-plus",
+        "recommended_models": ["qwen3.6-plus", "qwen3.6-flash"],
         "sdk": "openai",
         "free_tier": False,
         "speed": "fast",
         "cost": "low",
-        "notes": "Alibaba Cloud DashScope — Qwen models. $30 free credits on signup.",
+        "notes": "Alibaba Cloud Qwen via Bitget Hackathon endpoint. $30 credits included.",
         "get_key_url": "https://dashscope.console.aliyun.com/apiKey",
     },
     LLMProvider.CUSTOM: {
