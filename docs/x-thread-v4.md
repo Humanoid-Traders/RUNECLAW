@@ -75,7 +75,7 @@ Backtested across 500 runs (5 regimes, 20 symbols):
 - Trailing stop exits: 100% WR (by construction)
 - Zero crashed runs
 
-Live scan validated on Bitget sub-account AG-77MZCFT2.
+Live scan validated on Bitget exchange.
 VTHO LONG conf=0.81, GENIUS rejected (regime mismatch). Working as designed.
 
 

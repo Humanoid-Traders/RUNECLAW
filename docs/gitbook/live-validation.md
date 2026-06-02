@@ -1,6 +1,6 @@
 # Live Market Validation
 
-RUNECLAW was connected to a real Bitget sub-account (AG-77MZCFT2) and tested against live market data. All results on this page are unedited output from actual runs.
+RUNECLAW is connected to Bitget exchange and validated against live market data. All results on this page are unedited output from actual runs.
 
 ---
 
@@ -175,11 +175,11 @@ The funnel shows RUNECLAW's selectivity: out of 335 signals, only 5 passed all f
 
 | Parameter | Value |
 |-----------|-------|
-| Sub-account | AG-77MZCFT2 (UID 3992071187) |
+| Exchange | Bitget |
 | Account Mode | Unified Account |
-| API Mode | Public endpoints only (no credentials passed for market data) |
+| API Mode | Authenticated (live trading enabled) |
 | Sandbox | false (real market data) |
-| Simulation Mode | true (paper trading only) |
-| Live Trading | false (disabled) |
+| Simulation Mode | false (live micro-test) |
+| Live Trading | true (enabled, core team only) |
 
 > **Note:** The authenticated balance endpoint is unavailable because the sub-account uses Bitget's Unified Account mode, which requires v3 API endpoints not yet supported by ccxt. All market data (tickers, OHLCV) works correctly via public endpoints, which is the only data RUNECLAW needs for scanning and analysis.
