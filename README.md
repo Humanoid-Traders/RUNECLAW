@@ -94,7 +94,16 @@ RUNECLAW supports any OpenAI-compatible LLM provider via `LLM_BASE_URL`:
 > **Zero-cost setup:** Set `LLM_PROVIDER=gemini` and `LLM_MODEL=gemini-2.5-flash` with a free API key from [Google AI Studio](https://aistudio.google.com/apikey). No credit card required.
 
 ### Solana Ecosystem Mode (NEW)
-Set `ASSET_UNIVERSE=solana` in `.env` or use `/mode solana` in the Telegram bot to prioritize 15 Solana ecosystem tokens. All tokens trade on Bitget with full USDT pair support.
+
+### Multi-Timeframe Scan Modes (NEW)
+Three dedicated scan commands with rich dashboard-grade output:
+- **`/scalp`** -- 5-minute candles, top 3 by volume, tight SL/TP for quick trades
+- **`/intraday`** -- 15-minute candles, top 5 movers by price change
+- **`/swing`** -- 4-hour candles, wide SL/TP, trend-following setups
+
+Each scan produces 4 sections: **Account Status** (equity, positions, circuit breaker), **Live Tickers** (price, 24h change, volume table), **Regime Assessment** (per-asset narrative with RSI, VWAP, EMA20, support/resistance levels), and **Scan Verdict** (actionable trade ideas with entry/SL/TP/R:R and confidence bars).
+
+### Solana Ecosystem ModeSet `ASSET_UNIVERSE=solana` in `.env` or use `/mode solana` in the Telegram bot to prioritize 15 Solana ecosystem tokens. All tokens trade on Bitget with full USDT pair support.
 
 **Tokens:** SOL, JUP, JTO, BONK, WIF, PYTH, RAY, ORCA, RENDER, HNT, MOBILE, W, JITO, TENSOR, DRIFT
 
@@ -318,21 +327,36 @@ python -m bot.main --mode scan
 
 | Command | Description |
 |---------|-------------|
+| `/start` | Main menu with War Room navigation |
+| `/status` | Engine status, health score, capital, risk gauge |
 | `/scan` | Scan market for top movers and volume spikes |
+| `/scalp` | Rich scalp scan (5m candles, top 3 by volume) |
+| `/intraday` | Rich intraday scan (15m candles, top 5 movers) |
+| `/swing` | Rich swing scan (4h candles, trend-based) |
 | `/analyze BTC` | Run AI analysis on a specific asset |
-| `/portfolio` | View paper portfolio summary |
+| `/run` | Strategy presets (dip sniper, momentum, scalper) |
+| `/portfolio` | View paper portfolio with PnL waterfall |
 | `/trade` | View and confirm/reject pending trades |
-| `/risk` | Risk metrics and circuit breaker status |
+| `/journal` | Trade history with win/loss breakdown |
+| `/risk` | Risk dashboard with visual gauges |
 | `/rejected` | Recent risk-rejected trades with failure reasons |
+| `/whynot [SYM]` | Explain why a trade was rejected |
+| `/dashboard` | Command center (status/risk/positions tabs) |
 | `/backtest` | Run backtest with synthetic data |
-| `/status` | Bot mode, equity, open positions |
-| `/halt` | Emergency kill-switch (trip breaker, cancel all) |
-| `/learn` | AI learning system dashboard |
+| `/walkforward` | Walk-forward validation (overfitting detection) |
+| `/macro` | Macro event calendar (FOMC, CPI, NFP) |
+| `/learn` | AI learning system dashboard (8 modules) |
 | `/patterns` | View detected market patterns |
 | `/proposals` | View pending improvement proposals |
 | `/optimize` | LLM token optimization stats |
+| `/costs` | Agent economics (LLM + infra breakdown) |
+| `/watch on\|off` | Toggle proactive alerts |
+| `/halt` | Emergency kill-switch (trip breaker, cancel all) |
+| `/pause` / `/resume` | Pause/resume trading |
 | `/mode solana` | Switch to Solana ecosystem mode (15 tokens) |
 | `/mode all` | Switch back to all Bitget markets |
+| `/setllm` | Switch LLM provider at runtime (BYOK) |
+| `/llmstatus` | Current LLM provider and model info |
 | `/help` | List all available commands |
 
 Trade confirmation uses Telegram inline keyboards -- tap **Confirm** or **Reject** directly in the chat.

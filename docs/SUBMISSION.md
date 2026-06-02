@@ -16,11 +16,12 @@ RUNECLAW is an AI trading agent that fuses 11-voter confluence scoring with a 21
 
 ### Strategy
 - **11-voter confluence scoring** -- RSI, MACD, Bollinger, Volume, ADX, VWAP, OBV, candlestick patterns (14 types), Fibonacci zones, sentiment fusion, plus LLM confidence (60/40 rule/AI blend)
+- **Multi-timeframe scan modes** -- `/scalp` (5m), `/intraday` (15m), `/swing` (4h) each with 4-section output: account status, live tickers, regime narrative (RSI/VWAP/EMA20/S-R), and scan verdict with actionable entry/SL/TP
 - **Multi-timeframe regime detection** -- ADX-14 classifies TREND_UP/DOWN/RANGE/CHOP; EMA20/50 alignment across 1H/4H/1D with BOS/CHoCH structural signals
 - **Smart money microstructure** -- liquidation cascade detection, funding-rate squeeze, whale flow tracking with stealth accumulation, composite score normalized [-1, 1]
 - **Self-improving learning loop** -- 8-module system (experience memory, reflection engine, strategy evaluator with S/A/B/C/D tiers, pattern learner, macro learner, model comparer, prompt optimizer, feedback collector); safety policy enforces immutable risk boundaries
 - **5 adaptive strategy modes** -- Trend Continuation, Breakout, Mean Reversion, Liquidity Sweep, Conservative; each with per-mode SL/TP multipliers and confidence thresholds
-- **40+ analysis modules** spanning technical indicators, candlestick detection, Fibonacci retracement, order flow, sentiment fusion, macro calendar, and explainability engine
+- **40+ commands with rich dashboard-grade output** -- gauges, progress bars, sparklines, sectioned cards, and consistent visual vocabulary across all Telegram interactions
 
 ### Risk
 - **21 fail-closed risk checks** -- position size, daily loss, drawdown, max positions, R:R minimum, confidence gate, correlation blocking, loss streak, entry sanity, stop-loss required, stale data guard, cooldown, portfolio exposure, per-symbol exposure, volatility guard, circuit breaker, liquidity guard, macro event gate, MTF alignment, concentration PCA, portfolio VaR
