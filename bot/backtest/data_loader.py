@@ -1,11 +1,12 @@
 """
 RUNECLAW Backtest Data Loader -- fetches or generates OHLCV data.
-Supports: Bitget API fetch, CSV file load, and synthetic data generation.
+Supports: Bitget API fetch, Binance public API, CSV file load, and synthetic data generation.
 """
 
 from __future__ import annotations
 
 import csv
+import logging
 import math
 import random
 from datetime import datetime, timedelta
@@ -14,6 +15,8 @@ from pathlib import Path
 from typing import Optional
 
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 from bot.backtest.models import BacktestBar
 
@@ -181,6 +184,90 @@ class DataLoader:
             price = close_price
 
         return result
+
+    @staticmethod
+    async def from_binance_public(
+        symbol: str = "BTCUSDT",
+        timeframe: str = "1h",
+        limit: int = 1000,
+        start_time: Optional[int] = None,
+    ) -> list[BacktestBar]:
+        """
+        Fetch historical OHLCV from the Binance public klines API.
+
+        No API key required -- uses the unauthenticated endpoint.
+
+        Parameters:
+            symbol: Binance-style pair, e.g. "BTCUSDT"
+            timeframe: candle interval (1m, 5m, 15m, 1h, 4h, 1d, etc.)
+            limit: number of candles to fetch (max 1000)
+            start_time: optional start time as Unix-ms timestamp
+        """
+        import aiohttp
+
+        url = "https://api.binance.com/api/v3/klines"
+        params: dict = {
+            "symbol": symbol.upper(),
+            "interval": timeframe,
+            "limit": min(limit, 1000),
+        }
+        if start_time is not None:
+            params["startTime"] = start_time
+
+        # Derive a human-readable symbol for the BacktestBar (e.g. BTCUSDT -> BTC/USDT)
+        readable_symbol = symbol.upper()
+        for quote in ("USDT", "BUSD", "USDC", "BTC", "ETH", "BNB"):
+            if readable_symbol.endswith(quote) and len(readable_symbol) > len(quote):
+                readable_symbol = f"{readable_symbol[:-len(quote)]}/{quote}"
+                break
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+                    if resp.status != 200:
+                        body = await resp.text()
+                        logger.error("Binance API error %s: %s", resp.status, body)
+                        return []
+                    data = await resp.json()
+        except Exception:
+            logger.exception("Failed to fetch klines from Binance")
+            return []
+
+        bars: list[BacktestBar] = []
+        for kline in data:
+            # Binance kline format:
+            # [open_time, open, high, low, close, volume, close_time, ...]
+            bars.append(BacktestBar(
+                timestamp=datetime.fromtimestamp(int(kline[0]) / 1000, tz=UTC),
+                open=float(kline[1]),
+                high=float(kline[2]),
+                low=float(kline[3]),
+                close=float(kline[4]),
+                volume=float(kline[5]),
+                symbol=readable_symbol,
+            ))
+
+        bars.sort(key=lambda b: b.timestamp)
+        return bars
+
+    @staticmethod
+    async def from_public_api(
+        symbol: str = "BTC/USDT",
+        timeframe: str = "1h",
+        limit: int = 1000,
+    ) -> list[BacktestBar]:
+        """
+        Convenience wrapper over :meth:`from_binance_public`.
+
+        Accepts human-readable symbols (``BTC/USDT``) and normalises them
+        to the Binance format (``BTCUSDT``) before fetching.
+        """
+        binance_symbol = symbol.replace("/", "").replace("-", "").upper()
+        return await DataLoader.from_binance_public(
+            symbol=binance_symbol,
+            timeframe=timeframe,
+            limit=limit,
+        )
 
     @staticmethod
     def save_csv(bars: list[BacktestBar], path: str) -> None:

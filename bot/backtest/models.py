@@ -36,6 +36,7 @@ class BacktestBar(BaseModel):
     low: float
     close: float
     volume: float
+    symbol: str = "BTC/USDT"
 
 
 class BacktestTrade(BaseModel):

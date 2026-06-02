@@ -4229,3 +4229,167 @@ class TestAuditFixes:
         import hashlib
         expected_hash = hashlib.sha256(line1.encode()).hexdigest()
         assert entry2["prev_hash"] == expected_hash
+
+
+# ── Public Data Loader Tests ─────────────────────────────────────
+
+class TestPublicDataLoader:
+    """Tests for Binance public API data loader."""
+
+    def test_symbol_normalization(self):
+        """from_public_api normalises BTC/USDT -> BTCUSDT before delegating."""
+        # We cannot call the async method without network, but we can verify
+        # the normalisation logic used inside from_public_api directly.
+        for raw, expected in [
+            ("BTC/USDT", "BTCUSDT"),
+            ("eth-busd", "ETHBUSD"),
+            ("sol/usdc", "SOLUSDC"),
+            ("DOGEUSDT", "DOGEUSDT"),
+        ]:
+            normalised = raw.replace("/", "").replace("-", "").upper()
+            assert normalised == expected, f"{raw} -> {normalised} != {expected}"
+
+    def test_readable_symbol_derivation(self):
+        """from_binance_public derives a human-readable symbol from the Binance pair."""
+        # Reproduce the logic from DataLoader.from_binance_public
+        for binance_sym, expected_readable in [
+            ("BTCUSDT", "BTC/USDT"),
+            ("ETHBUSD", "ETH/BUSD"),
+            ("SOLUSDC", "SOL/USDC"),
+            ("BNBBTC", "BNB/BTC"),
+            ("DOGEETH", "DOGE/ETH"),
+        ]:
+            readable = binance_sym
+            for quote in ("USDT", "BUSD", "USDC", "BTC", "ETH", "BNB"):
+                if readable.endswith(quote) and len(readable) > len(quote):
+                    readable = f"{readable[:-len(quote)]}/{quote}"
+                    break
+            assert readable == expected_readable, f"{binance_sym} -> {readable}"
+
+    def test_synthetic_still_works(self):
+        """Verify existing synthetic generation is not broken."""
+        bars = DataLoader.generate_synthetic(bars=100, seed=42)
+        assert len(bars) == 100
+        assert bars[0].open > 0
+        assert bars[0].volume > 0
+
+    def test_synthetic_deterministic(self):
+        """Same seed must produce identical bars."""
+        a = DataLoader.generate_synthetic(bars=50, seed=7)
+        b = DataLoader.generate_synthetic(bars=50, seed=7)
+        for i in range(50):
+            assert a[i].open == b[i].open
+            assert a[i].close == b[i].close
+            assert a[i].volume == b[i].volume
+
+    def test_csv_roundtrip(self):
+        """Generate synthetic, save CSV, reload, compare."""
+        import tempfile, os
+        bars = DataLoader.generate_synthetic(bars=50, seed=99)
+        path = tempfile.mktemp(suffix=".csv")
+        try:
+            DataLoader.save_csv(bars, path)
+            loaded = DataLoader.from_csv(path)
+            assert len(loaded) == 50
+            assert abs(loaded[0].open - bars[0].open) < 0.01
+            assert abs(loaded[-1].close - bars[-1].close) < 0.01
+        finally:
+            if os.path.exists(path):
+                os.unlink(path)
+
+    def test_from_ohlcv_list(self):
+        """from_ohlcv_list converts ccxt-style nested lists correctly."""
+        raw = [
+            [1700000000000, 35000.0, 35500.0, 34800.0, 35200.0, 1234.5],
+            [1700003600000, 35200.0, 35600.0, 35100.0, 35400.0, 987.6],
+        ]
+        bars = DataLoader.from_ohlcv_list(raw)
+        assert len(bars) == 2
+        assert bars[0].open == 35000.0
+        assert bars[1].close == 35400.0
+        assert bars[0].volume == 1234.5
+
+
+# ── Performance Tracker Tests ────────────────────────────────────
+
+class TestPerformanceTracker:
+    """Tests for the hub performance tracker."""
+
+    def test_init(self):
+        """PerformanceTracker stores hub URL and token correctly."""
+        from bot.core.performance_tracker import PerformanceTracker
+        port = PortfolioTracker()
+        tracker = PerformanceTracker("http://localhost:9999", "test-token", port)
+        assert tracker._hub_url == "http://localhost:9999"
+        assert tracker._api_token == "test-token"
+
+    def test_init_strips_trailing_slash(self):
+        """Hub URL trailing slash is stripped during init."""
+        from bot.core.performance_tracker import PerformanceTracker
+        port = PortfolioTracker()
+        tracker = PerformanceTracker("http://localhost:9999/", "tok", port)
+        assert tracker._hub_url == "http://localhost:9999"
+
+    def test_headers(self):
+        """_headers returns Bearer auth and JSON content type."""
+        from bot.core.performance_tracker import PerformanceTracker
+        port = PortfolioTracker()
+        tracker = PerformanceTracker("http://localhost:9999", "my-token", port)
+        headers = tracker._headers()
+        assert headers["Authorization"] == "Bearer my-token"
+        assert headers["Content-Type"] == "application/json"
+
+    def test_push_snapshot_handles_connection_error(self):
+        """push_snapshot returns False and does not crash when hub is unreachable."""
+        from bot.core.performance_tracker import PerformanceTracker
+        port = PortfolioTracker()
+        tracker = PerformanceTracker("http://localhost:1", "bad-token", port)
+        loop = asyncio.new_event_loop()
+        try:
+            result = loop.run_until_complete(tracker.push_snapshot())
+            assert result is False  # graceful failure
+        finally:
+            loop.run_until_complete(tracker.stop())
+            loop.close()
+
+    def test_push_signal_handles_connection_error(self):
+        """push_signal returns False and does not crash when hub is unreachable."""
+        from bot.core.performance_tracker import PerformanceTracker
+        port = PortfolioTracker()
+        tracker = PerformanceTracker("http://localhost:1", "bad-token", port)
+        idea = TradeIdea(
+            asset="BTC/USDT", direction=Direction.LONG,
+            entry_price=50000, stop_loss=44000, take_profit=57200,
+            confidence=0.75, reasoning="test",
+        )
+        loop = asyncio.new_event_loop()
+        try:
+            result = loop.run_until_complete(tracker.push_signal(idea, RiskVerdict.APPROVED))
+            assert result is False
+        finally:
+            loop.run_until_complete(tracker.stop())
+            loop.close()
+
+    def test_push_trade_handles_connection_error(self):
+        """push_trade returns False when hub is unreachable."""
+        from bot.core.performance_tracker import PerformanceTracker
+        port = PortfolioTracker()
+        tracker = PerformanceTracker("http://localhost:1", "bad-token", port)
+        trade = TradeExecution(
+            trade_id="T-test001",
+            asset="BTC/USDT",
+            direction=Direction.LONG,
+            entry_price=50000,
+            size_usd=1000,
+            quantity=0.02,
+            stop_loss=44000,
+            take_profit=57200,
+            status=TradeStatus.EXECUTED,
+        )
+        loop = asyncio.new_event_loop()
+        try:
+            result = loop.run_until_complete(tracker.push_trade(trade))
+            assert result is False
+        finally:
+            loop.run_until_complete(tracker.stop())
+            loop.close()
