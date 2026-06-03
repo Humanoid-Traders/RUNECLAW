@@ -649,7 +649,9 @@ class TelegramHandler:
         banner = self._banner()
         role = record.get("role", "trader")
         mode_str = "PAPER" if CONFIG.simulation_mode else "LIVE"
-        state = self.engine.portfolio.snapshot()
+        # Per-user portfolio
+        user_portfolio = self.engine.user_portfolios.get(tg_id)
+        state = user_portfolio.snapshot()
         cb_active = self.engine.risk.circuit_breaker_active
 
         SEP = "─" * 16
@@ -665,11 +667,12 @@ class TelegramHandler:
             f"- Engine: <code>v4.0</code>\n"
             f"- Mode: <code>{mode_str}</code>\n"
             f"- Role: <code>{role}</code>\n\n"
-            f"📊 <b>Dashboard</b>\n"
+            f"📊 <b>Your Portfolio</b>\n"
             f"{SEP}\n"
-            f"- Balance: <code>${CONFIG.paper_balance_usd:,.0f}</code>\n"
+            f"- Balance: <code>${state.equity_usd:,.2f}</code>\n"
             f"- Risk Checks: <code>21</code>\n"
-            f"- Open Positions: <code>{state.open_positions}</code>\n\n"
+            f"- Open Positions: <code>{state.open_positions}</code>\n"
+            f"- Total Trades: <code>{state.total_trades}</code>\n\n"
             f"<i>{now}  •  /help for all commands</i>\n\n"
             f"<i>⚠️ Not financial advice. Use at your own risk.\n"
             f"📜 AGPL-3.0 • github.com/Humanoid-Traders/RUNECLAW</i>"
@@ -1546,8 +1549,65 @@ class TelegramHandler:
     async def _cmd_portfolio(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._guard(update, "portfolio"):
             return
-        result = await self.registry.get("get_portfolio").execute(self.engine)
-        await self._send(update, result)
+        user_id = self._get_tg_id(update)
+        # Use per-user portfolio if it exists, otherwise show shared
+        if self.engine.user_portfolios.has_user(user_id):
+            portfolio = self.engine.user_portfolios.get(user_id)
+        else:
+            portfolio = self.engine.user_portfolios.get(user_id)  # creates new one
+
+        state = portfolio.snapshot()
+        positions = portfolio.open_positions
+        history = portfolio.trade_history
+
+        sep = "─" * 16
+        lines = [
+            f"\U0001f4bc <b>YOUR PORTFOLIO</b>",
+            sep,
+            "",
+            f"- Equity: <code>${state.equity_usd:,.2f}</code>",
+            f"- Cash: <code>${state.balance_usd:,.2f}</code>",
+            f"- Open Positions: <code>{state.open_positions}</code>",
+            f"- Daily PnL: <code>{'+' if state.daily_pnl >= 0 else ''}{state.daily_pnl:.2f}%</code> {'🟢' if state.daily_pnl >= 0 else '🔴'}",
+            f"- Drawdown: <code>{state.max_drawdown_pct:.2f}%</code>",
+        ]
+
+        if positions:
+            lines.extend(["", sep, "", "<b>Open Positions:</b>"])
+            for pos in positions:
+                d_icon = "🟢" if pos.direction.value == "LONG" else "🔴"
+                last = portfolio._last_prices.get(pos.asset, pos.entry_price)
+                if pos.direction.value == "LONG":
+                    pnl_pct = ((last - pos.entry_price) / pos.entry_price) * 100
+                else:
+                    pnl_pct = ((pos.entry_price - last) / pos.entry_price) * 100
+                pnl_icon = "🟢" if pnl_pct >= 0 else "🔴"
+                lines.append(
+                    f"\n{d_icon} <b>{pos.asset}</b> {pos.direction.value} | "
+                    f"{pnl_icon} {'+' if pnl_pct >= 0 else ''}{pnl_pct:.2f}%"
+                )
+                lines.append(f"  Entry: <code>${pos.entry_price:,.4f}</code> → Current: <code>${last:,.4f}</code>")
+                lines.append(f"  SL: <code>${pos.stop_loss:,.4f}</code> | TP: <code>${pos.take_profit:,.4f}</code>")
+
+        if history:
+            lines.extend(["", sep, "", "<b>Recent Trades:</b>"])
+            for t in history[-5:]:
+                pnl_icon = "✅" if t.pnl > 0 else "❌"
+                lines.append(f"  {pnl_icon} {t.asset} {t.direction.value} → <code>${t.pnl:+.2f}</code>")
+
+        # Session tally
+        if state.total_trades > 0:
+            wins = sum(1 for t in history if t.pnl > 0)
+            lines.extend([
+                "", sep, "",
+                f"<b>Session:</b> {wins}W/{state.total_trades - wins}L | "
+                f"Net: <code>${state.total_pnl:+.2f}</code> | "
+                f"Win rate: <code>{state.win_rate:.0%}</code>",
+            ])
+        else:
+            lines.extend(["", "<i>No trades yet. Use /scan to find signals.</i>"])
+
+        await self._send(update, "\n".join(lines))
 
     async def _cmd_trade(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._guard(update, "trade"):
@@ -1636,12 +1696,15 @@ class TelegramHandler:
     async def _cmd_status(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._guard(update, "status"):
             return
-        state = self.engine.portfolio.snapshot()
+        user_id = self._get_tg_id(update)
+        # Show per-user equity in status
+        user_portfolio = self.engine.user_portfolios.get(user_id)
+        state = user_portfolio.snapshot()
         cb = self.engine.risk.circuit_breaker_active
         macro = self.engine.macro_calendar.evaluate()
         mode = "PAPER" if CONFIG.simulation_mode else "LIVE"
-        equity = state.equity if hasattr(state, "equity") else state.balance if hasattr(state, "balance") else 10_000.0
-        daily_pnl = round(state.max_drawdown_pct * -1, 2) if state.max_drawdown_pct else 0.0
+        equity = state.equity_usd if hasattr(state, "equity_usd") else 10_000.0
+        daily_pnl = round(state.daily_pnl, 2) if hasattr(state, "daily_pnl") else 0.0
         drawdown = round(state.max_drawdown_pct, 2) if state.max_drawdown_pct else 0.0
 
         msg = render_status_card(
@@ -1894,14 +1957,16 @@ class TelegramHandler:
         await self._send(update, rendered["text"], reply_markup=kb)
 
     async def _cmd_open_positions(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-        """Show open positions in rich format."""
+        """Show open positions in rich format — per-user."""
         if not await self._guard(update, "portfolio"):
             return
+        user_id = self._get_tg_id(update)
+        portfolio = self.engine.user_portfolios.get(user_id)
+
         positions_data = []
-        # Pull from portfolio's internal position data
-        with self.engine.portfolio._lock:
-            for tid, pos in self.engine.portfolio._positions.items():
-                last_price = self.engine.portfolio._last_prices.get(pos.asset, pos.entry_price)
+        with portfolio._lock:
+            for tid, pos in portfolio._positions.items():
+                last_price = portfolio._last_prices.get(pos.asset, pos.entry_price)
                 if pos.direction.value == "LONG":
                     pnl_pct = ((last_price - pos.entry_price) / pos.entry_price) * 100
                 else:
@@ -1930,11 +1995,13 @@ class TelegramHandler:
                          reply_markup=InlineKeyboardMarkup(kb_rows) if kb_rows else None)
 
     async def _cmd_performance(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-        """Performance summary in War Room format."""
+        """Performance summary — per-user."""
         if not await self._guard(update, "portfolio"):
             return
-        state = self.engine.portfolio.snapshot()
-        trades = self.engine.portfolio.trade_history
+        user_id = self._get_tg_id(update)
+        portfolio = self.engine.user_portfolios.get(user_id)
+        state = portfolio.snapshot()
+        trades = portfolio.trade_history
         today_trades = len(trades)
         wins = sum(1 for t in trades if t.pnl > 0)
         win_rate = (wins / today_trades * 100) if today_trades > 0 else 0
@@ -2261,7 +2328,7 @@ class TelegramHandler:
                       f"Callback IDOR blocked: caller={caller_uid} expected={expected_uid}",
                       action="callback_idor_block", result="DENIED")
                 return
-            result = await self.engine.confirm_trade(trade_id)
+            result = await self.engine.confirm_trade(trade_id, user_id=caller_uid or "")
             # Rich confirmation message
             is_success = "Executed" in result or "executed" in result
             icon = "\u2705" if is_success else "\u26a0\ufe0f"

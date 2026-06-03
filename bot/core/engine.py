@@ -30,6 +30,7 @@ from bot.learning.orchestrator import LearningOrchestrator
 from bot.macro.calendar import MacroCalendar, build_2026_calendar
 from bot.risk.portfolio import PortfolioTracker
 from bot.risk.risk_engine import RiskEngine
+from bot.risk.multi_portfolio import MultiUserPortfolio
 from bot.utils.audit_chain import AuditChain, DecisionRecord
 from bot.utils.logger import audit, system_log, trade_log, scan_log
 from bot.utils.models import (
@@ -77,6 +78,11 @@ class RuneClawEngine:
         # Live executor for real Bitget orders (micro-test mode)
         self.live_executor = LiveExecutor()
         self.health = SystemHealthMonitor()
+        # Multi-user portfolio manager: per-user isolated paper wallets
+        self.user_portfolios = MultiUserPortfolio(
+            default_balance=CONFIG.paper_balance_usd,
+            on_trade_close=None,  # wired after risk engine init
+        )
         # C1 fix: wire trade-close callback so portfolio closes feed risk streak tracking
         self.portfolio._on_trade_close = self.risk.record_trade_result
         self.state: AgentState = AgentState.IDLE
@@ -407,9 +413,10 @@ class RuneClawEngine:
         self._pending_atr[idea.id] = atr_value
         return idea
 
-    async def confirm_trade(self, trade_id: str) -> str:
+    async def confirm_trade(self, trade_id: str, user_id: str = "") -> str:
         """
         Human confirms a pending trade idea.  This is the ONLY path to execution.
+        If user_id is provided, the trade is recorded in that user's isolated portfolio.
         """
         idea = self._pending_ideas.pop(trade_id, None)
         if idea is None:
@@ -581,8 +588,14 @@ class RuneClawEngine:
         # Paper trade execution
         self._transition(AgentState.EXECUTING, f"executing paper trade {trade_id}")
         size_usd = recheck.position_size_usd
+
+        # Determine target portfolio: per-user if user_id is set, else shared
+        target_portfolio = self.portfolio
+        if user_id:
+            target_portfolio = self.user_portfolios.get(user_id)
+
         try:
-            trade = self.portfolio.open_position(idea, size_usd)
+            trade = target_portfolio.open_position(idea, size_usd)
         except (ValueError, Exception) as exc:
             # F-04 fix: never silently lose a confirmed trade.
             # Log the failure as an audited rejection and return a clear message.
@@ -686,7 +699,14 @@ class RuneClawEngine:
             self.ws_feed.subscribe(pos_symbols)
             # Mark-to-market: feed current prices so snapshot() reflects unrealized PnL
             self.portfolio.mark_to_market(prices)
+            # Also update all per-user portfolios
+            self.user_portfolios.mark_to_market_all(prices)
             closed = self.portfolio.check_stops(prices)
+            # Check stops for per-user portfolios too
+            user_closed = self.user_portfolios.check_stops_all(prices)
+            # Merge user-closed trades into the main notification flow
+            for uid, user_trades in user_closed.items():
+                closed.extend(user_trades)
             for c in closed:
                 audit(
                     trade_log,
