@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>RUNECLAW — Register</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,-apple-system,sans-serif;background:#0a0c10;color:#e2e8f0;min-height:100vh;display:flex;flex-direction:column}
+:root{--green:#00d68f;--red:#f05252;--yellow:#f9c74f;--blue:#4dabf7;--dim:#1e2535;--border:#2a3347;--text2:#8892a4}
+
+/* ── NAV ── */
+nav{display:flex;align-items:center;justify-content:space-between;padding:14px 24px;border-bottom:1px solid var(--border);background:#0d1117}
+.logo{font-size:16px;font-weight:700;color:#fff;text-decoration:none}.logo span{color:var(--green)}
+.nav-links{display:flex;gap:14px;align-items:center}
+.nav-links a{font-size:13px;color:var(--text2);text-decoration:none;transition:.15s}.nav-links a:hover{color:#fff}
+.nav-links a.btn-nav{background:var(--green);color:#0a0c10;padding:6px 14px;border-radius:7px;font-weight:600}
+
+/* ── HERO ── */
+.hero{text-align:center;padding:60px 24px 40px}
+.hero h1{font-size:clamp(28px,5vw,46px);font-weight:700;line-height:1.15;margin-bottom:14px}
+.hero h1 span{color:var(--green)}
+.hero p{font-size:16px;color:var(--text2);max-width:520px;margin:0 auto 28px;line-height:1.6}
+.features{display:flex;gap:12px;justify-content:center;flex-wrap:wrap;margin-bottom:40px}
+.feat{background:var(--dim);border:1px solid var(--border);border-radius:10px;padding:10px 16px;font-size:13px;color:var(--text2)}
+.feat b{color:#fff}
+
+/* ── PANELS ── */
+main{flex:1;display:flex;align-items:flex-start;justify-content:center;padding:0 16px 60px;gap:24px;flex-wrap:wrap}
+.panel{background:var(--dim);border:1px solid var(--border);border-radius:14px;padding:28px;width:100%;max-width:420px}
+.panel h2{font-size:18px;font-weight:700;margin-bottom:20px}
+.panel h2 span{color:var(--green)}
+
+/* ── FORMS ── */
+.field{margin-bottom:14px}
+label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bottom:5px;text-transform:uppercase;letter-spacing:.6px}
+input[type=email],input[type=password],input[type=text]{width:100%;background:#111827;border:1px solid var(--border);border-radius:8px;color:#fff;font-size:14px;padding:10px 12px;outline:none;transition:.15s}
+input:focus{border-color:var(--green)}
+.btn{width:100%;padding:12px;border-radius:8px;border:none;cursor:pointer;font-size:14px;font-weight:700;transition:.15s;margin-top:4px}
+.btn-green{background:var(--green);color:#0a0c10}.btn-green:hover{opacity:.85}
+.btn-sec{background:transparent;border:1px solid var(--border);color:#fff}.btn-sec:hover{background:#2a3347}
+.err{font-size:12px;color:var(--red);margin-top:8px;min-height:18px}
+.ok{font-size:12px;color:var(--green);margin-top:8px;min-height:18px}
+.sep{display:flex;align-items:center;gap:10px;margin:16px 0;color:var(--text2);font-size:12px}
+.sep::before,.sep::after{content:'';flex:1;height:1px;background:var(--border)}
+.tab-row{display:flex;gap:2px;margin-bottom:20px}
+.tab-btn{flex:1;padding:8px;border-radius:6px 6px 0 0;border:1px solid var(--border);border-bottom:none;background:transparent;color:var(--text2);cursor:pointer;font-size:13px;font-weight:600;transition:.15s}
+.tab-btn.active{background:var(--dim);color:#fff}
+.step{display:none}.step.active{display:block}
+
+/* ── DASHBOARD ── */
+#dashboard{display:none}
+.dboard-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px}
+.dboard-header h2{font-size:17px;font-weight:700}
+.badge{display:inline-block;padding:2px 8px;border-radius:5px;font-size:11px;font-weight:700}
+.badge-green{background:rgba(0,214,143,.12);color:var(--green)}
+.badge-yellow{background:rgba(249,199,79,.12);color:var(--yellow)}
+.stats{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:20px}
+.stat{background:#111827;border:1px solid var(--border);border-radius:8px;padding:12px}
+.stat-label{font-size:11px;color:var(--text2);margin-bottom:4px}
+.stat-val{font-size:20px;font-weight:700}
+.link-box{background:#111827;border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:16px}
+.link-box h3{font-size:13px;font-weight:700;margin-bottom:10px}
+.token-display{font-family:monospace;font-size:13px;background:#0a0c10;border:1px solid var(--border);border-radius:6px;padding:10px 12px;word-break:break-all;color:var(--green);margin:10px 0;cursor:pointer;position:relative}
+.token-display::after{content:'click to copy';position:absolute;right:10px;top:50%;transform:translateY(-50%);font-size:10px;color:var(--text2);font-family:system-ui}
+.token-display.copied::after{content:'copied!';color:var(--green)}
+.steps-list{list-style:none;counter-reset:steps}
+.steps-list li{counter-increment:steps;display:flex;align-items:flex-start;gap:10px;font-size:13px;color:var(--text2);margin-bottom:8px;line-height:1.5}
+.steps-list li::before{content:counter(steps);min-width:22px;height:22px;border-radius:50%;background:rgba(0,214,143,.12);color:var(--green);font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:1px}
+.steps-list a{color:var(--green)}
+.linked-ok{background:rgba(0,214,143,.08);border:1px solid rgba(0,214,143,.2);border-radius:8px;padding:12px 14px;font-size:13px;color:var(--green);margin-bottom:16px;display:flex;align-items:center;gap:8px}
+.logout-btn{font-size:12px;color:var(--text2);cursor:pointer;background:none;border:none;padding:0}
+.logout-btn:hover{color:var(--red)}
+</style>
+</head>
+<body>
+
+<nav>
+  <a href="index.html" class="logo">⚔️ <span>RUNE</span>CLAW</a>
+  <div class="nav-links">
+    <a href="dashboard-pro.html">Dashboard</a>
+    <a href="https://t.me/HTRUNECLAW_bot" target="_blank">Telegram Bot</a>
+    <a href="https://humanoid-traders-1.gitbook.io/humanoid-traders-ai" target="_blank">Docs</a>
+    <a id="nav-cta" href="#" class="btn-nav" onclick="scrollToAuth()">Get Started</a>
+  </div>
+</nav>
+
+<section class="hero">
+  <h1>AI trading system.<br><span>Built for everyone.</span></h1>
+  <p>Register once, link your Telegram, and get personal access to RUNECLAW — full scan, signals, risk engine, and portfolio tracking.</p>
+  <div class="features">
+    <div class="feat"><b>67 symbols</b> scanned</div>
+    <div class="feat"><b>6 trader</b> profiles</div>
+    <div class="feat"><b>19 risk rules</b> enforced</div>
+    <div class="feat"><b>Always updated</b> automatically</div>
+    <div class="feat"><b>Paper trading</b> by default</div>
+  </div>
+</section>
+
+<main id="main-content">
+
+  <!-- ── AUTH PANEL (register / login) ─────────────────────────── -->
+  <div class="panel" id="auth-panel">
+    <div class="tab-row">
+      <button class="tab-btn active" onclick="switchTab('register')">Create account</button>
+      <button class="tab-btn" onclick="switchTab('login')">Log in</button>
+    </div>
+
+    <!-- Register -->
+    <div id="step-register" class="step active">
+      <div class="field">
+        <label>Email</label>
+        <input type="email" id="reg-email" placeholder="you@example.com" autocomplete="email">
+      </div>
+      <div class="field">
+        <label>Password</label>
+        <input type="password" id="reg-pass" placeholder="min 8 characters" autocomplete="new-password">
+      </div>
+      <div class="field">
+        <label>Confirm password</label>
+        <input type="password" id="reg-pass2" placeholder="repeat password">
+      </div>
+      <div class="err" id="reg-err"></div>
+      <button class="btn btn-green" onclick="doRegister()">Create free account</button>
+      <div class="sep">or</div>
+      <button class="btn btn-sec" onclick="switchTab('login')">Already have an account → Log in</button>
+    </div>
+
+    <!-- Login -->
+    <div id="step-login" class="step">
+      <div class="field">
+        <label>Email</label>
+        <input type="email" id="login-email" placeholder="you@example.com" autocomplete="email">
+      </div>
+      <div class="field">
+        <label>Password</label>
+        <input type="password" id="login-pass" placeholder="your password" autocomplete="current-password">
+      </div>
+      <div class="err" id="login-err"></div>
+      <button class="btn btn-green" onclick="doLogin()">Log in</button>
+      <div class="sep">or</div>
+      <button class="btn btn-sec" onclick="switchTab('register')">New here? Create account</button>
+    </div>
+  </div>
+
+  <!-- ── DASHBOARD PANEL (shown after login) ───────────────────── -->
+  <div class="panel" id="dashboard">
+    <div class="dboard-header">
+      <h2>Your <span>Dashboard</span></h2>
+      <button class="logout-btn" onclick="doLogout()">Log out</button>
+    </div>
+
+    <div class="stats">
+      <div class="stat">
+        <div class="stat-label">Account</div>
+        <div class="stat-val" id="d-email" style="font-size:13px;word-break:break-all">—</div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">Plan</div>
+        <div class="stat-val" id="d-plan">—</div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">Paper equity</div>
+        <div class="stat-val green" id="d-equity">$10,000</div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">Telegram</div>
+        <div class="stat-val" id="d-tg-status">—</div>
+      </div>
+    </div>
+
+    <!-- Linked state -->
+    <div class="linked-ok" id="linked-ok" style="display:none">
+      ✅ Telegram linked — you have full bot access
+    </div>
+
+    <!-- Link box (shown when not linked) -->
+    <div class="link-box" id="link-box">
+      <h3>🔗 Link your Telegram</h3>
+      <ol class="steps-list">
+        <li>Open <a href="https://t.me/HTRUNECLAW_bot" target="_blank">@HTRUNECLAW_bot</a> on Telegram</li>
+        <li>Copy your personal link token below</li>
+        <li>Send the bot: <code>/link &lt;token&gt;</code></li>
+      </ol>
+
+      <div id="token-area">
+        <button class="btn btn-green" style="margin-top:10px" onclick="getToken()">Generate link token</button>
+      </div>
+    </div>
+
+    <!-- Open dashboard button -->
+    <a href="dashboard-pro.html" class="btn btn-green" style="display:block;text-align:center;text-decoration:none;padding:12px;border-radius:8px;font-weight:700;font-size:14px">
+      Open trading dashboard →
+    </a>
+  </div>
+
+</main>
+
+<script>
+const API = window.RUNECLAW_API || '/api';
+let SESSION = null;
+
+function scrollToAuth(){document.getElementById('auth-panel').scrollIntoView({behavior:'smooth'});}
+
+function switchTab(t){
+  document.querySelectorAll('.tab-btn').forEach((b,i)=>b.classList.toggle('active',i===(t==='register'?0:1)));
+  document.getElementById('step-register').classList.toggle('active',t==='register');
+  document.getElementById('step-login').classList.toggle('active',t==='login');
+}
+
+function setErr(id,msg){document.getElementById(id).textContent=msg;}
+
+async function apiCall(path, body){
+  const r = await fetch(API+path,{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify(body),
+    credentials:'include'
+  });
+  return r.json();
+}
+
+async function doRegister(){
+  const email = document.getElementById('reg-email').value.trim();
+  const pass  = document.getElementById('reg-pass').value;
+  const pass2 = document.getElementById('reg-pass2').value;
+  setErr('reg-err','');
+  if(!email||!pass){setErr('reg-err','Email and password required.');return;}
+  if(pass!==pass2){setErr('reg-err','Passwords do not match.');return;}
+  if(pass.length<8){setErr('reg-err','Password must be at least 8 characters.');return;}
+  const res = await apiCall('/auth/register',{email,password:pass});
+  if(res.error){setErr('reg-err',res.error);return;}
+  SESSION=res;
+  showDashboard(res);
+}
+
+async function doLogin(){
+  const email = document.getElementById('login-email').value.trim();
+  const pass  = document.getElementById('login-pass').value;
+  setErr('login-err','');
+  if(!email||!pass){setErr('login-err','Email and password required.');return;}
+  const res = await apiCall('/auth/login',{email,password:pass});
+  if(res.error){setErr('login-err',res.error);return;}
+  SESSION=res;
+  showDashboard(res);
+}
+
+function doLogout(){
+  SESSION=null;
+  localStorage.removeItem('rc_session');
+  document.getElementById('auth-panel').style.display='block';
+  document.getElementById('dashboard').style.display='none';
+}
+
+function showDashboard(data){
+  document.getElementById('auth-panel').style.display='none';
+  document.getElementById('dashboard').style.display='block';
+  document.getElementById('d-email').textContent=data.email||'—';
+  document.getElementById('d-plan').textContent=data.plan||'free';
+  document.getElementById('d-equity').textContent='$'+(data.equity||10000).toLocaleString();
+  const linked = !!data.telegram_linked;
+  document.getElementById('d-tg-status').innerHTML=linked
+    ?'<span class="badge badge-green">Linked</span>'
+    :'<span class="badge badge-yellow">Not linked</span>';
+  document.getElementById('linked-ok').style.display=linked?'flex':'none';
+  document.getElementById('link-box').style.display=linked?'none':'block';
+  localStorage.setItem('rc_session',JSON.stringify({token:data.token,user_id:data.user_id}));
+}
+
+async function getToken(){
+  if(!SESSION?.token){return;}
+  const res = await fetch(API+'/auth/link-token',{
+    method:'POST',
+    headers:{'Authorization':'Bearer '+SESSION.token,'Content-Type':'application/json'}
+  }).then(r=>r.json());
+  if(res.error){alert(res.error);return;}
+  const ta = document.getElementById('token-area');
+  ta.innerHTML=`
+    <p style="font-size:12px;color:var(--text2);margin-bottom:4px">Your link token (valid 10 min):</p>
+    <div class="token-display" id="tok-box" onclick="copyToken()">${res.token}</div>
+    <p style="font-size:11px;color:var(--text2);margin-top:6px">Send to Telegram bot: <code>/link ${res.token}</code></p>
+    <button class="btn btn-sec" style="margin-top:10px;width:auto;padding:8px 16px" onclick="getToken()">Generate new token</button>`;
+}
+
+function copyToken(){
+  const tok = document.getElementById('tok-box');
+  navigator.clipboard.writeText(tok.textContent.trim());
+  tok.classList.add('copied');
+  setTimeout(()=>tok.classList.remove('copied'),2000);
+}
+
+// ── Auto-restore session ──────────────────────────────────────────────────────
+(async()=>{
+  const saved = localStorage.getItem('rc_session');
+  if(!saved) return;
+  try{
+    const s = JSON.parse(saved);
+    const res = await fetch(API+'/auth/me',{
+      headers:{'Authorization':'Bearer '+s.token}
+    }).then(r=>r.json());
+    if(res.error) throw new Error(res.error);
+    SESSION={...res,token:s.token};
+    showDashboard(SESSION);
+  }catch{
+    localStorage.removeItem('rc_session');
+  }
+})();
+</script>
+</body>
+</html>

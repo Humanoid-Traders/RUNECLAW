@@ -16,6 +16,7 @@ Endpoints:
 from __future__ import annotations
 
 import asyncio
+import os
 import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -28,6 +29,7 @@ from pydantic import BaseModel
 
 from bot.config import CONFIG
 from bot.core.engine import RuneClawEngine
+from bot.api.auth_routes import auth_router
 from bot.core.chart_patterns import scan_all_chart_patterns
 from bot.core.analyzer import _detect_candlestick_patterns
 from bot.utils.models import (
@@ -239,13 +241,18 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+_allowed_origins = os.getenv("CORS_ORIGINS", "*").split(",")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=_allowed_origins,
+    allow_credentials=len(_allowed_origins) == 1 and _allowed_origins[0] != "*",
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
 )
+
+# Mount auth routes for multi-user registration / login / link flow
+app.include_router(auth_router, prefix="/auth", tags=["auth"])
 
 
 # ── Endpoints ────────────────────────────────────────────────────
