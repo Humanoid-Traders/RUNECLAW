@@ -725,18 +725,24 @@ main#dashboard {
 </div>
 
 <script>
-// === DEMO DATA ===
-const DEMO = {
-  pnl: { daily: 1.8, weekly: 6.4, monthly: 12.1 },
-  pnlCurve: [0,0.2,0.15,0.4,0.35,0.5,0.7,0.65,0.8,1.0,0.95,1.1,1.3,1.2,1.4,1.35,1.5,1.6,1.55,1.7,1.85,1.75,1.8,1.8],
-  positions: [
-    { pair:'BTCUSDT', dir:'LONG', entry:67900, current:68240, pnl:0.5, tpPct:49 },
-    { pair:'ETHUSDT', dir:'SHORT', entry:3820, current:3790, pnl:0.7, tpPct:60 }
-  ],
-  risk: { current:1.2, limit:3.0, drawdown:0.8, openSlots:'2/3', leverage:'5x', pct:40 },
-  signal: { pair:'BTCUSDT', dir:'LONG', confidence:78, entry:'67,850-68,050', sl:'67,300', tp:'68,600', reason:'Trend reclaim + volume support' },
-  winRate: 61,
-  perf: { today:1.8, w7d:6.4, trades:5, wins:3, best:'BTCUSDT', worst:'XRPUSDT' }
+// === API CONFIG ===
+// Auto-detect: same origin behind nginx, or direct api_bridge
+const API_BASE = (location.hostname === 'localhost' || location.hostname === '127.0.0.1')
+  ? 'http://localhost:8000' : '/api';
+const AUTH_TOKEN = localStorage.getItem('runeclaw_token') || '';
+const HEADERS = AUTH_TOKEN
+  ? {'Authorization': 'Bearer ' + AUTH_TOKEN, 'Content-Type': 'application/json'}
+  : {'Content-Type': 'application/json'};
+
+// Live state
+let liveData = {
+  pnl: { daily: 0, weekly: 0, monthly: 0 },
+  pnlCurve: [],
+  positions: [],
+  risk: { current: 0, limit: 3.0, drawdown: 0, openSlots: '0/5', leverage: '1x', pct: 0 },
+  signal: null,
+  winRate: 0,
+  perf: { today: 0, w7d: 0, trades: 0, wins: 0, best: '--', worst: '--' }
 };
 
 // === TELEGRAM INIT ===
@@ -758,9 +764,117 @@ function updateClock() {
 setInterval(updateClock, 1000);
 updateClock();
 
-// === PNL LINE CHART ===
-(function renderPnlChart() {
-  const data = DEMO.pnlCurve;
+// === FETCH LIVE DATA ===
+async function fetchPortfolio() {
+  try {
+    const r = await fetch(API_BASE + '/portfolio', {headers: HEADERS});
+    if (!r.ok) throw new Error(r.status);
+    const d = await r.json();
+    const positions = (d.positions || []).map(p => ({
+      pair: (p.symbol || p.pair || '').replace('/',''),
+      dir: (p.direction || p.dir || 'LONG').toUpperCase(),
+      entry: p.entry_price || p.entry || 0,
+      current: p.current_price || p.current || p.entry_price || 0,
+      pnl: p.unrealized_pnl_pct || p.pnl || 0,
+      tpPct: p.tp_progress || 50
+    }));
+    const equity = d.equity || d.total_value || 10000;
+    const dailyPnl = d.daily_pnl || d.unrealized_pnl || 0;
+    const dailyPnlPct = equity > 0 ? (dailyPnl / equity * 100) : 0;
+    const trades = d.trade_history || d.closed_trades || [];
+    const wins = trades.filter(t => (t.pnl || t.profit || 0) > 0).length;
+    const winRate = trades.length > 0 ? Math.round(wins / trades.length * 100) : 0;
+    const pnlValues = trades.slice(-24).map(t => t.pnl || t.profit || 0);
+    let cumPnl = [0];
+    pnlValues.forEach(v => cumPnl.push(cumPnl[cumPnl.length-1] + v));
+
+    liveData.positions = positions;
+    liveData.pnl.daily = Math.round(dailyPnlPct * 100) / 100;
+    liveData.pnlCurve = cumPnl.length > 1 ? cumPnl : [0, 0];
+    liveData.winRate = winRate;
+    liveData.perf.today = liveData.pnl.daily;
+    liveData.perf.trades = trades.length;
+    liveData.perf.wins = wins;
+    if (trades.length > 0) {
+      const sorted = [...trades].sort((a,b) => (b.pnl||0) - (a.pnl||0));
+      liveData.perf.best = (sorted[0].symbol || '--').replace('/USDT','');
+      liveData.perf.worst = (sorted[sorted.length-1].symbol || '--').replace('/USDT','');
+    }
+    renderPositions();
+    renderPnlChart();
+    renderWinRing();
+    renderPerf();
+  } catch(e) { console.warn('Portfolio fetch failed:', e); }
+}
+
+async function fetchRisk() {
+  try {
+    const r = await fetch(API_BASE + '/risk/status', {headers: HEADERS});
+    if (!r.ok) throw new Error(r.status);
+    const d = await r.json();
+    const dailyLoss = d.daily_loss_pct || d.current_drawdown || 0;
+    const maxLoss = d.max_daily_loss_pct || 3.0;
+    const pct = maxLoss > 0 ? Math.min(Math.round(dailyLoss / maxLoss * 100), 100) : 0;
+    liveData.risk = {
+      current: Math.round(dailyLoss * 100) / 100,
+      limit: maxLoss,
+      drawdown: d.max_drawdown || d.drawdown || 0,
+      openSlots: (d.open_positions || 0) + '/' + (d.max_positions || 5),
+      leverage: (d.leverage || '1') + 'x',
+      pct: pct
+    };
+    renderRiskGauge();
+    renderRiskStats();
+  } catch(e) { console.warn('Risk fetch failed:', e); }
+}
+
+async function fetchLatestSignal() {
+  try {
+    const r = await fetch(API_BASE + '/scan', {method: 'POST', headers: HEADERS, body: JSON.stringify({})});
+    if (!r.ok) throw new Error(r.status);
+    const d = await r.json();
+    const results = d.results || [];
+    if (results.length > 0) {
+      const top = results.sort((a,b) => Math.abs(b.score||0) - Math.abs(a.score||0))[0];
+      liveData.signal = {
+        pair: (top.symbol || '').replace('/',''),
+        dir: (top.direction || 'LONG').toUpperCase(),
+        confidence: Math.round((top.score || top.confluence_score || 0.5) * 100),
+        entry: top.price ? top.price.toLocaleString() : '--',
+        sl: top.stop_loss ? top.stop_loss.toLocaleString() : '--',
+        tp: top.take_profit ? top.take_profit.toLocaleString() : '--',
+        reason: top.reason || top.summary || 'Signal from scan engine',
+        symbol: top.symbol || ''
+      };
+      renderSignal();
+    }
+  } catch(e) { console.warn('Scan fetch failed:', e); }
+}
+
+// === RENDER FUNCTIONS ===
+function renderPositions() {
+  const card = document.getElementById('positions-card');
+  const positions = liveData.positions;
+  const title = card.querySelector('.card-title');
+  title.textContent = 'OPEN POSITIONS (' + positions.length + ')';
+  const rows = positions.map(p => {
+    const pnlClass = p.pnl >= 0 ? 'positive' : 'negative';
+    const pnlSign = p.pnl >= 0 ? '+' : '';
+    const priceStr = v => v >= 1000 ? v.toLocaleString('en-US',{maximumFractionDigits:0}) : v >= 1 ? v.toFixed(2) : v.toFixed(4);
+    return '<div class="position-row">' +
+      '<div class="pos-header"><span class="pos-pair">' + p.pair + '</span><span class="pos-dir ' + p.dir.toLowerCase() + '">' + p.dir + '</span></div>' +
+      '<div class="pos-details"><span>Entry: <strong>' + priceStr(p.entry) + '</strong></span><span>Current: <strong>' + priceStr(p.current) + '</strong></span><span class="pos-pnl ' + pnlClass + '">' + pnlSign + p.pnl.toFixed(1) + '%</span></div>' +
+      '<div class="pos-progress-wrap"><div class="pos-progress-bar"><div class="pos-progress-fill" style="width:' + Math.min(p.tpPct, 100) + '%"></div></div>' +
+      '<button class="pos-close-btn" onclick="closePosition(this,\'' + p.pair + '\')">Close</button></div></div>';
+  }).join('');
+  // Replace all position rows
+  const existingRows = card.querySelectorAll('.position-row');
+  existingRows.forEach(r => r.remove());
+  title.insertAdjacentHTML('afterend', rows || '<div class="position-row" style="text-align:center;color:#8892A0;padding:16px">No open positions</div>');
+}
+
+function renderPnlChart() {
+  const data = liveData.pnlCurve.length > 1 ? liveData.pnlCurve : [0, 0];
   const w = 320, h = 120, pad = 2;
   const maxV = Math.max(...data), minV = Math.min(...data);
   const range = maxV - minV || 1;
@@ -768,7 +882,6 @@ updateClock();
     pad + (i / (data.length - 1)) * (w - pad * 2),
     h - pad - ((v - minV) / range) * (h - pad * 2)
   ]);
-  // smooth bezier
   function bezier(points) {
     let d = 'M' + points[0][0] + ',' + points[0][1];
     for (let i = 1; i < points.length; i++) {
@@ -781,82 +894,124 @@ updateClock();
   }
   const linePath = bezier(pts);
   const fillPath = linePath + ' L' + pts[pts.length-1][0] + ',' + h + ' L' + pts[0][0] + ',' + h + ' Z';
-  // grid lines
+  const isPositive = data[data.length-1] >= data[0];
+  const lineColor = isPositive ? '#00C853' : '#E63946';
   let grid = '';
-  for (let i = 1; i <= 3; i++) {
-    const y = (h / 4) * i;
-    grid += '<line x1="0" y1="'+y+'" x2="'+w+'" y2="'+y+'" stroke="#1A1F2B" stroke-width="0.5"/>';
-  }
+  for (let i = 1; i <= 3; i++) { const y = (h / 4) * i; grid += '<line x1="0" y1="'+y+'" x2="'+w+'" y2="'+y+'" stroke="#1A1F2B" stroke-width="0.5"/>'; }
   const svg = '<svg viewBox="0 0 '+w+' '+h+'" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">'
-    + '<defs><linearGradient id="pnlGrad" x1="0" y1="0" x2="0" y2="1">'
-    + '<stop offset="0%" stop-color="#00C853" stop-opacity="0.25"/>'
-    + '<stop offset="100%" stop-color="#00C853" stop-opacity="0"/>'
-    + '</linearGradient></defs>'
-    + grid
-    + '<path d="'+fillPath+'" fill="url(#pnlGrad)"/>'
-    + '<path d="'+linePath+'" fill="none" stroke="#00C853" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>'
-    + '</svg>';
+    + '<defs><linearGradient id="pnlGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="'+lineColor+'" stop-opacity="0.25"/><stop offset="100%" stop-color="'+lineColor+'" stop-opacity="0"/></linearGradient></defs>'
+    + grid + '<path d="'+fillPath+'" fill="url(#pnlGrad)"/><path d="'+linePath+'" fill="none" stroke="'+lineColor+'" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
   document.getElementById('pnl-chart').innerHTML = svg;
-})();
+  // Update PnL value
+  const pnlEl = document.getElementById('pnl-value');
+  const daily = liveData.pnl.daily;
+  pnlEl.textContent = (daily >= 0 ? '+' : '') + daily.toFixed(1) + '%';
+  pnlEl.className = 'pnl-value ' + (daily >= 0 ? 'positive' : 'negative');
+}
 
-// === RISK GAUGE ===
-(function renderRiskGauge() {
-  const pct = DEMO.risk.pct; // 0-100
+function renderRiskGauge() {
+  const pct = liveData.risk.pct;
   const cx = 100, cy = 95, r = 80;
-  const startAngle = Math.PI; // left
-  // arc segment helper
   function arc(from, to, color) {
-    const a1 = Math.PI + from * Math.PI;
-    const a2 = Math.PI + to * Math.PI;
+    const a1 = Math.PI + from * Math.PI, a2 = Math.PI + to * Math.PI;
     const x1 = cx + r * Math.cos(a1), y1 = cy + r * Math.sin(a1);
     const x2 = cx + r * Math.cos(a2), y2 = cy + r * Math.sin(a2);
     const large = (to - from) > 0.5 ? 1 : 0;
     return '<path d="M'+x1+','+y1+' A'+r+','+r+' 0 '+large+' 1 '+x2+','+y2+'" fill="none" stroke="'+color+'" stroke-width="10" stroke-linecap="round"/>';
   }
-  // needle angle
   const needleAngle = 180 + (pct / 100) * 180;
   const nx = cx + (r - 15) * Math.cos(needleAngle * Math.PI / 180);
   const ny = cy + (r - 15) * Math.sin(needleAngle * Math.PI / 180);
-
+  const riskVal = liveData.risk.current.toFixed(1) + '%';
+  const statusColor = pct < 40 ? '#00C853' : pct < 70 ? '#FFB020' : '#E63946';
+  const statusText = pct < 40 ? 'HEALTHY' : pct < 70 ? 'CAUTION' : 'DANGER';
   const svg = '<svg width="200" height="115" viewBox="0 0 200 115" xmlns="http://www.w3.org/2000/svg">'
-    + arc(0, 0.4, '#00C853')
-    + arc(0.4, 0.7, '#FFB020')
-    + arc(0.7, 1.0, '#E63946')
-    + '<line x1="'+cx+'" y1="'+cy+'" x2="'+nx+'" y2="'+ny+'" stroke="#E8ECF1" stroke-width="2.5" stroke-linecap="round" style="transform-origin:'+cx+'px '+cy+'px;animation:needle-swing 1s ease-out forwards"/>'
+    + arc(0, 0.4, '#00C853') + arc(0.4, 0.7, '#FFB020') + arc(0.7, 1.0, '#E63946')
+    + '<line x1="'+cx+'" y1="'+cy+'" x2="'+nx+'" y2="'+ny+'" stroke="#E8ECF1" stroke-width="2.5" stroke-linecap="round"/>'
     + '<circle cx="'+cx+'" cy="'+cy+'" r="5" fill="#E8ECF1"/>'
-    + '<text x="'+cx+'" y="'+(cy - 18)+'" text-anchor="middle" fill="#E8ECF1" font-size="22" font-weight="800" font-family="Inter,sans-serif">1.2%</text>'
-    + '<text x="'+cx+'" y="'+(cy - 2)+'" text-anchor="middle" fill="#00C853" font-size="10" font-weight="700" font-family="Inter,sans-serif" letter-spacing="1">HEALTHY</text>'
+    + '<text x="'+cx+'" y="'+(cy-18)+'" text-anchor="middle" fill="#E8ECF1" font-size="22" font-weight="800" font-family="Inter,sans-serif">'+riskVal+'</text>'
+    + '<text x="'+cx+'" y="'+(cy-2)+'" text-anchor="middle" fill="'+statusColor+'" font-size="10" font-weight="700" font-family="Inter,sans-serif" letter-spacing="1">'+statusText+'</text>'
     + '</svg>';
   document.getElementById('risk-gauge').innerHTML = svg;
-})();
+}
 
-// === WIN RATE RING ===
-(function renderWinRing() {
-  const pct = DEMO.winRate;
+function renderRiskStats() {
+  const r = liveData.risk;
+  const limitEl = document.querySelector('.risk-limit');
+  if (limitEl) limitEl.innerHTML = '<strong>' + r.current.toFixed(1) + '%</strong> / ' + r.limit.toFixed(1) + '% Daily Limit';
+  const stats = document.querySelectorAll('.risk-stat');
+  if (stats[0]) stats[0].innerHTML = 'Drawdown<span class="risk-stat-value">' + (typeof r.drawdown === 'number' ? r.drawdown.toFixed(1) + '%' : r.drawdown) + '</span>';
+  if (stats[1]) stats[1].innerHTML = 'Open<span class="risk-stat-value">' + r.openSlots + '</span>';
+  if (stats[2]) stats[2].innerHTML = 'Leverage<span class="risk-stat-value">' + r.leverage + '</span>';
+}
+
+function renderSignal() {
+  const s = liveData.signal;
+  if (!s) return;
+  const card = document.querySelector('.signal-card');
+  if (!card) return;
+  card.querySelector('.signal-pair').textContent = s.pair;
+  const dirBadge = card.querySelector('.signal-dir-badge');
+  dirBadge.textContent = s.dir;
+  dirBadge.className = 'signal-dir-badge ' + s.dir.toLowerCase();
+  card.querySelector('.signal-arrow').innerHTML = s.dir === 'LONG' ? '&#8593;' : '&#8595;';
+  card.querySelector('.confidence-label strong').textContent = s.confidence + '%';
+  card.querySelector('.confidence-fill').style.width = s.confidence + '%';
+  const levels = card.querySelectorAll('.signal-level strong');
+  if (levels[0]) levels[0].textContent = s.entry;
+  if (levels[1]) levels[1].textContent = s.sl;
+  if (levels[2]) levels[2].textContent = s.tp;
+  card.querySelector('.signal-reason').textContent = '"' + s.reason + '"';
+}
+
+function renderWinRing() {
+  const pct = liveData.winRate || 0;
   const r = 33, circ = 2 * Math.PI * r;
   const offset = circ - (pct / 100) * circ;
   const svg = '<svg width="80" height="80" viewBox="0 0 80 80">'
     + '<circle cx="40" cy="40" r="'+r+'" fill="none" stroke="#1A1F2B" stroke-width="6"/>'
     + '<circle cx="40" cy="40" r="'+r+'" fill="none" stroke="#00C853" stroke-width="6" stroke-linecap="round"'
-    + ' stroke-dasharray="'+circ+'" stroke-dashoffset="'+offset+'"'
-    + ' style="animation:ring-fill 1.2s ease-out forwards"/>'
-    + '</svg>';
+    + ' stroke-dasharray="'+circ+'" stroke-dashoffset="'+offset+'"/></svg>';
   const wrap = document.getElementById('win-ring');
   wrap.innerHTML = svg + '<div class="perf-ring-label">'+pct+'%<span class="perf-ring-sublabel">WIN</span></div>';
-})();
-
-// === INTERACTIONS ===
-function closePosition(btn) {
-  btn.textContent = 'Closing...';
-  btn.classList.add('closing');
-  setTimeout(() => { btn.textContent = 'Closed'; }, 1200);
 }
 
-function approveSignal(btn) {
-  btn.textContent = 'Approved';
-  btn.style.background = '#00A844';
-  btn.style.pointerEvents = 'none';
-  btn.nextElementSibling && (btn.nextElementSibling.style.display = 'none');
+function renderPerf() {
+  const p = liveData.perf;
+  const cells = document.querySelectorAll('.perf-cell');
+  if (cells[0]) cells[0].querySelector('.perf-cell-value').textContent = (p.today >= 0 ? '+' : '') + p.today.toFixed(1) + '%';
+  if (cells[1]) cells[1].querySelector('.perf-cell-value').textContent = (p.w7d >= 0 ? '+' : '') + p.w7d.toFixed(1) + '%';
+  if (cells[2]) cells[2].querySelector('.perf-cell-value').textContent = p.trades;
+  if (cells[3]) cells[3].querySelector('.perf-cell-value').textContent = p.wins;
+  if (cells[4]) cells[4].querySelector('.perf-cell-value').textContent = p.best;
+  if (cells[5]) cells[5].querySelector('.perf-cell-value').textContent = p.worst;
+}
+
+// === INTERACTIONS (with API calls) ===
+async function closePosition(btn, symbol) {
+  btn.textContent = 'Closing...';
+  btn.classList.add('closing');
+  btn.disabled = true;
+  try {
+    const sym = symbol.replace('USDT', '/USDT');
+    await fetch(API_BASE + '/portfolio/close/' + encodeURIComponent(sym), {method: 'POST', headers: HEADERS});
+    btn.textContent = 'Closed';
+    setTimeout(() => fetchPortfolio(), 1000);
+  } catch(e) { btn.textContent = 'Error'; }
+}
+
+async function approveSignal(btn) {
+  btn.textContent = 'Approving...';
+  btn.disabled = true;
+  try {
+    if (liveData.signal && liveData.signal.symbol) {
+      await fetch(API_BASE + '/confirm', {method: 'POST', headers: HEADERS,
+        body: JSON.stringify({symbol: liveData.signal.symbol, action: 'confirm'})});
+    }
+    btn.textContent = 'Approved';
+    btn.style.background = '#00A844';
+    btn.nextElementSibling && (btn.nextElementSibling.style.display = 'none');
+  } catch(e) { btn.textContent = 'Error'; }
 }
 
 function rejectSignal(btn) {
@@ -870,25 +1025,33 @@ function rejectSignal(btn) {
 function setMode(btn) {
   document.querySelectorAll('.strategy-btn').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
+  const mode = btn.getAttribute('data-mode') || 'balanced';
+  document.querySelector('.status-item strong').textContent = mode.charAt(0).toUpperCase() + mode.slice(1);
 }
 
-function showEmergencyConfirm() {
-  document.getElementById('confirm-overlay').classList.add('show');
-}
-function hideEmergencyConfirm() {
-  document.getElementById('confirm-overlay').classList.remove('show');
-}
-function confirmEmergency() {
+function showEmergencyConfirm() { document.getElementById('confirm-overlay').classList.add('show'); }
+function hideEmergencyConfirm() { document.getElementById('confirm-overlay').classList.remove('show'); }
+async function confirmEmergency() {
   hideEmergencyConfirm();
   const btn = document.querySelector('.emergency-btn');
   btn.textContent = 'STOPPING...';
   btn.style.background = '#8892A0';
   btn.style.pointerEvents = 'none';
-  setTimeout(() => {
-    btn.textContent = '⛔ ALL STOPPED';
-    btn.style.background = '#1A1F2B';
-  }, 1500);
+  try {
+    await fetch(API_BASE + '/risk/halt', {method: 'POST', headers: HEADERS});
+  } catch(e) {}
+  btn.textContent = '\u26d4 ALL STOPPED';
+  btn.style.background = '#1A1F2B';
 }
+
+// === INIT: fetch live data, then refresh every 10s ===
+(async function init() {
+  await Promise.all([fetchPortfolio(), fetchRisk()]);
+  fetchLatestSignal();
+  setInterval(fetchPortfolio, 10000);
+  setInterval(fetchRisk, 15000);
+  setInterval(fetchLatestSignal, 60000);
+})();
 </script>
 </body>
 </html>
