@@ -502,6 +502,16 @@ class RuneClawEngine:
         action = Permission.LIVE_TRADE if CONFIG.is_live() else Permission.PAPER_TRADE
         macro_ctx = self.macro_provider.get_context(symbol=idea.asset)
         macro_ok = macro_ctx.risk_state != "BLOCK_NEW_ENTRIES"
+
+        # Issue a human-approval token for live-mode compliance (Lock 5).
+        # The Telegram /confirm flow is the human approval gate — reaching
+        # this point means the operator already tapped "Confirm".
+        approval_token = None
+        if CONFIG.is_live():
+            approval_token = self.compliance.issue_approval_token(
+                trade_id, self.compliance_profile.subject_id,
+            )
+
         compliance_decision = self.compliance.authorize(
             action=action,
             profile=self.compliance_profile,
@@ -510,6 +520,7 @@ class RuneClawEngine:
             macro_ok=macro_ok,
             notional_usd=recheck.position_size_usd,
             trade_id=trade_id,
+            approval_token=approval_token,
         )
         if not compliance_decision.granted:
             self.audit_chain.append("AUTH_DENIED", {
