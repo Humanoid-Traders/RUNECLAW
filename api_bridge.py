@@ -25,6 +25,8 @@ from typing import Any, Optional
 import numpy as np
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from bot.config import CONFIG
@@ -566,6 +568,52 @@ async def patterns(symbol: str, timeframe: str = "1h", limit: int = 100):
         "price": round(float(closes[-1]), 6),
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
+
+
+# ── Emergency halt ──────────────────────────────────────────────
+
+@app.post("/risk/halt")
+async def risk_halt():
+    """Emergency stop — activate circuit breaker, close all positions."""
+    if engine is None:
+        raise HTTPException(503, "Engine not initialized")
+    try:
+        engine.risk._trip_circuit_breaker("Emergency halt from dashboard")
+    except Exception:
+        pass
+    return {"ok": True, "circuit_breaker_active": True, "message": "Emergency halt activated"}
+
+
+# ── Static website serving ──────────────────────────────────────
+# Serve website/ directory for dashboard, warroom, live-signals, register
+# This must be LAST so API routes take priority over static file catchall
+
+_WEBSITE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "website")
+if os.path.isdir(_WEBSITE_DIR):
+    @app.get("/warroom")
+    @app.get("/warroom.html")
+    async def serve_warroom():
+        return FileResponse(os.path.join(_WEBSITE_DIR, "warroom.html"))
+
+    @app.get("/live-signals")
+    @app.get("/live-signals.html")
+    async def serve_live_signals():
+        return FileResponse(os.path.join(_WEBSITE_DIR, "live-signals.html"))
+
+    @app.get("/register")
+    @app.get("/register.html")
+    async def serve_register():
+        return FileResponse(os.path.join(_WEBSITE_DIR, "register.html"))
+
+    @app.get("/dashboard")
+    async def serve_dashboard():
+        _dash = os.path.join(_WEBSITE_DIR, "dashboard-pro.html")
+        if os.path.exists(_dash):
+            return FileResponse(_dash)
+        return FileResponse(os.path.join(_WEBSITE_DIR, "index.html"))
+
+    # Mount static assets (JS, CSS, images) — must be after named routes
+    app.mount("/", StaticFiles(directory=_WEBSITE_DIR, html=True), name="website")
 
 
 # ── Run ──────────────────────────────────────────────────────────

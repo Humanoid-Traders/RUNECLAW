@@ -726,9 +726,11 @@ main#dashboard {
 
 <script>
 // === API CONFIG ===
-// Auto-detect: same origin behind nginx, or direct api_bridge
-const API_BASE = (location.hostname === 'localhost' || location.hostname === '127.0.0.1')
-  ? 'http://localhost:8000' : '/api';
+// When served from api_bridge (same origin), use '' for same-origin requests.
+// When served standalone/dev, fall back to localhost:8000.
+const API_BASE = (location.port === '8000' || location.pathname.startsWith('/warroom'))
+  ? '' : (location.hostname === 'localhost' || location.hostname === '127.0.0.1')
+    ? 'http://localhost:8000' : '/api';
 const AUTH_TOKEN = localStorage.getItem('runeclaw_token') || '';
 const HEADERS = AUTH_TOKEN
   ? {'Authorization': 'Bearer ' + AUTH_TOKEN, 'Content-Type': 'application/json'}
