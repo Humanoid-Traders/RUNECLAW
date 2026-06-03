@@ -126,6 +126,8 @@ class TelegramHandler:
 
     def build_app(self) -> Application:
         app = Application.builder().token(CONFIG.telegram.bot_token).build()
+        # Store engine in bot_data so standalone skill handlers can access it
+        app.bot_data["engine"] = self.engine
         for cmd, handler in [
             ("start", self._cmd_start), ("dashboard", self._cmd_dashboard),
             ("scan", self._cmd_scan), ("analyze", self._cmd_analyze),
