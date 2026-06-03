@@ -632,7 +632,19 @@ class RuneClawEngine:
             paper_trade_id=trade.trade_id,
         )
         self._transition(AgentState.IDLE, "trade executed")
-        return f"Executed paper {trade.direction.value} {trade.asset} (${size_usd:.2f})"
+        dir_icon = "🟢" if trade.direction.value == "LONG" else "🔴"
+        rr = idea.risk_reward_ratio if idea.risk_reward_ratio else 0
+        return (
+            f"{dir_icon} <b>PAPER {trade.direction.value} {trade.asset}</b>\n"
+            f"{'─' * 16}\n"
+            f"- Entry: <code>${idea.entry_price:,.4f}</code>\n"
+            f"- SL: <code>${idea.stop_loss:,.4f}</code>\n"
+            f"- TP: <code>${idea.take_profit:,.4f}</code>\n"
+            f"- Size: <code>${size_usd:.2f}</code>\n"
+            f"- R:R: <code>{rr:.1f}</code>\n"
+            f"- Risk: ✅ APPROVED ({len(recheck.checks_passed)} checks passed)\n"
+            f"- Mode: 📝 Paper"
+        )
 
     def reject_trade(self, trade_id: str) -> str:
         """Human explicitly rejects a pending idea."""

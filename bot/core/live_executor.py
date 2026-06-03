@@ -273,12 +273,18 @@ class LiveExecutor:
             sl_info = f" | SL order: {sl_id}" if sl_id else " | SL: manual"
             tp_info = f" | TP order: {tp_id}" if tp_id else " | TP: manual"
 
+            dir_icon = "🟢" if side == "buy" else "🔴"
             return (
-                f"LIVE {side.upper()} {idea.asset}\n"
-                f"Fill: ${fill_price:,.4f} | Qty: {filled_qty:.6f}\n"
-                f"Cost: ${cost:.2f} | Order: {order_id}\n"
-                f"SL: ${idea.stop_loss:,.4f}{sl_info}\n"
-                f"TP: ${idea.take_profit:,.4f}{tp_info}"
+                f"{dir_icon} <b>LIVE {side.upper()} {idea.asset}</b>\n"
+                f"{'─' * 16}\n"
+                f"- Fill: <code>${fill_price:,.4f}</code>\n"
+                f"- Qty: <code>{filled_qty:.6f}</code>\n"
+                f"- Cost: <code>${cost:.2f}</code>\n"
+                f"- SL: <code>${idea.stop_loss:,.4f}</code>{sl_info}\n"
+                f"- TP: <code>${idea.take_profit:,.4f}</code>{tp_info}\n"
+                f"- Order: <code>{order_id}</code>\n"
+                f"- Risk: ✅ APPROVED\n"
+                f"- Mode: 🔥 Live"
             )
 
         except ccxt.InsufficientFunds as exc:

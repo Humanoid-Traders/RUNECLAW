@@ -1,7 +1,7 @@
 """
-RUNECLAW Skill System v5 — polished dashboard cards.
-Compact, mobile-friendly Telegram layouts with visual gauges,
-sectioned cards, and consistent status vocabulary.
+RUNECLAW Skill System v6 — rich Telegram cards.
+Clean separators, emoji headers, bullet-point key-value pairs,
+<b>bold</b> section headers, <code>code</code> for prices/numbers.
 """
 
 from __future__ import annotations
@@ -70,12 +70,11 @@ def _header(emoji: str, title: str, w: int = 24) -> str:
     """Decorated card header with title bar."""
     return f"{emoji} <b>{title}</b> {'━' * w}"
 
+SEP = "\u2500" * 16  # ────────────────
+
 def _kv(key: str, val: str, w: int = 28) -> str:
-    """Key-value with dot-leader alignment for <pre> blocks."""
-    dots = w - len(key) - len(val) - 4
-    if dots < 2:
-        dots = 2
-    return f"  {key} {'·' * dots} {val}"
+    """Clean key-value line: '- Label: value'."""
+    return f"- {key}: {val}"
 
 def _pill(text: str) -> str:
     """Inline code badge."""
@@ -174,10 +173,11 @@ class ScanMarketSkill(BaseSkill):
         if not signals:
             return f"{_NEU} <b>SCANNER</b>\n\n<i>No signals detected.</i>"
 
+        now = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
         top = signals[:8]
         lines = [
-            _header("\U0001f50e", "MARKET SCANNER"),
-            f"   <i>{len(signals)} pairs detected</i>\n",
+            f"\U0001f50e <b>MARKET SCANNER</b>\n{SEP}",
+            f"<i>\u23f0 {now}  \u2022  {len(signals)} pairs detected</i>\n",
         ]
         lines.append("<pre>")
         for s in top:
@@ -196,8 +196,13 @@ class ScanMarketSkill(BaseSkill):
             )
         lines.append("</pre>")
 
-        if any(s.volume_spike for s in top):
-            lines.append(f"\n<i>\U0001f4a5 = volume spike detected</i>")
+        # Summary line
+        bullish = sum(1 for s in top if s.change_pct_24h > 0)
+        bearish = len(top) - bullish
+        spikes = sum(1 for s in top if s.volume_spike)
+        lines.append(f"\n{_OK} {bullish} bullish  {_BAD} {bearish} bearish")
+        if spikes:
+            lines.append(f"\U0001f4a5 {spikes} volume spike{'s' if spikes != 1 else ''} detected")
         return "\n".join(lines)
 
 
@@ -232,12 +237,10 @@ class AnalyzeAssetSkill(BaseSkill):
             vol_m = sig.volume_usd_24h / 1_000_000 if sig.volume_usd_24h else 0
             arrow = _spark(sig.change_pct_24h)
             return (
-                f"{_NEU} <b>{_esc(symbol)}</b>  {arrow}\n\n"
-                f"<pre>"
-                f"{_kv('Price', f'${sig.price:,.2f}')}\n"
-                f"{_kv('24h', f'{sig.change_pct_24h:+.1f}%')}\n"
-                f"{_kv('Volume', f'${vol_m:,.0f}M')}"
-                f"</pre>\n\n"
+                f"{_NEU} <b>{_esc(symbol)}</b>  {arrow}\n{SEP}\n\n"
+                f"- Price: <code>${sig.price:,.2f}</code>\n"
+                f"- 24h: <code>{sig.change_pct_24h:+.1f}%</code>\n"
+                f"- Volume: <code>${vol_m:,.0f}M</code>\n\n"
                 f"<i>\u25c7 No actionable signal \u2014 regime filter or low confluence</i>"
             )
 
@@ -276,7 +279,7 @@ class AnalyzeAssetSkill(BaseSkill):
         conf_ring = _progress_ring(conf * 100)
 
         return (
-            f"{_header(d_icon, f'{d}  {_esc(idea.asset)}')}\n\n"
+            f"{d_icon} <b>{d}  {_esc(idea.asset)}</b>\n{SEP}\n\n"
             f"<pre>"
             f"{ladder}"
             f"</pre>\n\n"
@@ -335,38 +338,30 @@ class CheckRiskSkill(BaseSkill):
         health_ring = _progress_ring(overall)
 
         return (
-            f"\U0001f43e <b>RUNECLAW STATUS</b> {'━' * 18}\n\n"
+            f"\U0001f43e <b>RUNECLAW STATUS</b>\n{SEP}\n\n"
             f"  {cb_s}  \u2502  {mode}  \u2502  {m_icon} {m_label}\n"
             f"  {health_ring} System Health {_pill(f'{overall:.0f}%')}\n\n"
             # ── Capital card ──
             f"\U0001f4b0 <b>Capital</b>\n"
-            f"<pre>"
-            f"{_kv('Equity', _money(state.equity_usd))}\n"
-            f"{_kv('Net', _money(net))}\n"
-            f"{_kv('Daily PnL', _money(state.daily_pnl, sign=True))}\n"
-            f"{_kv('Drawdown', f'{state.max_drawdown_pct:.1f}%')}"
-            f"</pre>\n\n"
+            f"- Equity: <code>{_money(state.equity_usd)}</code>\n"
+            f"- Net: <code>{_money(net)}</code>\n"
+            f"- Daily PnL: <code>{_money(state.daily_pnl, sign=True)}</code>\n"
+            f"- Drawdown: <code>{state.max_drawdown_pct:.1f}%</code>\n\n"
             # ── Positions card ──
             f"\U0001f4ca <b>Positions</b>\n"
-            f"<pre>"
-            f"{_kv('Open', f'{state.open_positions} / {CONFIG.risk.max_open_positions}')}\n"
-            f"{_kv('Total', str(state.total_trades))}\n"
-            f"{_kv('Win Rate', f'{state.win_rate:.0%}')}\n"
-            f"{_kv('Exposure', f'{exp_pct:.0f}%')}"
-            f"</pre>\n\n"
+            f"- Open: <code>{state.open_positions} / {CONFIG.risk.max_open_positions}</code>\n"
+            f"- Total: <code>{state.total_trades}</code>\n"
+            f"- Win Rate: <code>{state.win_rate:.0%}</code>\n"
+            f"- Exposure: <code>{exp_pct:.0f}%</code>\n\n"
             # ── Risk gate ──
             f"\U0001f6e1 <b>Risk Gate</b>\n"
-            f"<pre>"
-            f"{_kv('Breaker', 'TRIPPED' if cb else 'CLEAR')}\n"
-            f"{_kv('Streak', f'{streak} / {CONFIG.risk.max_consecutive_losses}')}\n"
-            f"{_kv('Checks', _traffic_light(18 if not cb else 14, 18))}"
-            f"</pre>\n\n"
+            f"- Breaker: <code>{'TRIPPED' if cb else 'CLEAR'}</code>\n"
+            f"- Streak: <code>{streak} / {CONFIG.risk.max_consecutive_losses}</code>\n"
+            f"- Checks: {_traffic_light(18 if not cb else 14, 18)}\n\n"
             # ── Costs ──
             f"\u26a1 <b>Costs</b>\n"
-            f"<pre>"
-            f"{_kv('LLM', f'${cost.llm_cost_usd:,.4f}')}\n"
-            f"{_kv('Infra', f'${cost.infra_cost_usd:,.4f}')}"
-            f"</pre>"
+            f"- LLM: <code>${cost.llm_cost_usd:,.4f}</code>\n"
+            f"- Infra: <code>${cost.infra_cost_usd:,.4f}</code>"
         )
 
     def _risk(self, state, cb, streak, total_exp, exp_pct, groups):
@@ -382,7 +377,7 @@ class CheckRiskSkill(BaseSkill):
         health_bar = _bar(risk_score, 100, 14)
 
         return (
-            f"{_header(_SHIELD, 'RISK DASHBOARD')}\n\n"
+            f"{_SHIELD} <b>RISK DASHBOARD</b>\n{SEP}\n\n"
             f"  {cb_icon} Circuit Breaker: <b>{cb_label}</b>\n"
             f"  \u25cf Health Score \u2502{health_bar}\u2502 {_pill(f'{risk_score}%')}\n\n"
             # ── Visual gauges ──
@@ -391,23 +386,19 @@ class CheckRiskSkill(BaseSkill):
             f"{_gauge('Streak', streak, CONFIG.risk.max_consecutive_losses, unit='#')}\n\n"
             # ── Capital breakdown ──
             f"\U0001f4b0 <b>Capital</b>\n"
-            f"<pre>"
-            f"{_kv('Equity', _money(state.equity_usd))}\n"
-            f"{_kv('Daily PnL', _money(state.daily_pnl, sign=True))}\n"
-            f"{_kv('Exposure', _money(total_exp))}\n"
-            f"{_kv('Positions', f'{state.open_positions} / {CONFIG.risk.max_open_positions}')}\n"
-            f"{_kv('Groups', grp)}"
-            f"</pre>\n\n"
+            f"- Equity: <code>{_money(state.equity_usd)}</code>\n"
+            f"- Daily PnL: <code>{_money(state.daily_pnl, sign=True)}</code>\n"
+            f"- Exposure: <code>{_money(total_exp)}</code>\n"
+            f"- Positions: <code>{state.open_positions} / {CONFIG.risk.max_open_positions}</code>\n"
+            f"- Groups: <code>{grp}</code>\n\n"
             # ── Configured limits ──
             f"\U0001f512 <b>Limits</b>\n"
-            f"<pre>"
-            f"{_kv('Min Conf', f'{CONFIG.risk.min_confidence:.0%}')}\n"
-            f"{_kv('Min R:R', f'{CONFIG.risk.min_risk_reward}x')}\n"
-            f"{_kv('Max DD', f'{CONFIG.risk.max_drawdown_pct}%')}\n"
-            f"{_kv('Max Daily', f'{CONFIG.risk.max_daily_loss_pct}%')}\n"
-            f"{_kv('Vol Guard', f'{CONFIG.risk.volatility_guard_atr_pct}% ATR')}\n"
-            f"{_kv('Checks', _traffic_light(18 if not cb else 14, 18))}"
-            f"</pre>"
+            f"- Min Conf: <code>{CONFIG.risk.min_confidence:.0%}</code>\n"
+            f"- Min R:R: <code>{CONFIG.risk.min_risk_reward}x</code>\n"
+            f"- Max DD: <code>{CONFIG.risk.max_drawdown_pct}%</code>\n"
+            f"- Max Daily: <code>{CONFIG.risk.max_daily_loss_pct}%</code>\n"
+            f"- Vol Guard: <code>{CONFIG.risk.volatility_guard_atr_pct}% ATR</code>\n"
+            f"- Checks: {_traffic_light(18 if not cb else 14, 18)}"
         )
 
 
@@ -427,15 +418,13 @@ class GetPortfolioSkill(BaseSkill):
         pnl_icon = _pnl_arrow(state.total_pnl)
 
         lines = [
-            _header("\U0001f4b0", "PORTFOLIO"),
+            f"\U0001f4b0 <b>PORTFOLIO</b>\n{SEP}",
             f"   {pnl_icon} {_pill(_money(state.total_pnl, sign=True))}\n",
             # ── Balance card ──
             f"\U0001f4b3 <b>Balance</b>",
-            "<pre>",
-            _kv("Cash", _money(state.balance_usd)),
-            _kv("Equity", _money(state.equity_usd)),
-            _kv("Win Rate", f"{state.win_rate:.0%}"),
-            "</pre>\n",
+            f"- Equity: <code>{_money(state.equity_usd)}</code>",
+            f"- Available: <code>{_money(state.balance_usd)}</code>",
+            f"- Win Rate: <code>{state.win_rate:.0%}</code>\n",
             # ── PnL waterfall ──
             f"\U0001f4c8 <b>PnL Waterfall</b>",
             "<pre>",
@@ -453,17 +442,25 @@ class GetPortfolioSkill(BaseSkill):
         open_pos = engine.portfolio.open_positions
         if open_pos:
             lines.append(f"\n\U0001f4ca <b>Open Positions</b>  ({len(open_pos)})")
+            lines.append(SEP)
             for pos in open_pos:
                 d_icon = _OK if pos.direction.value == "LONG" else _BAD
                 d_arrow = "\u25b2" if pos.direction.value == "LONG" else "\u25bc"
                 size = pos.entry_price * pos.quantity
                 lines.append(
-                    f"  {d_icon}{d_arrow} <b>{_esc(pos.asset)}</b>  "
-                    f"{_pill(f'${pos.entry_price:,.2f}')}  "
-                    f"size {_pill(f'${size:,.0f}')}"
+                    f"\n  {d_icon}{d_arrow} <b>{_esc(pos.asset)}</b>  {pos.direction.value}\n"
+                    f"  - Entry: <code>${pos.entry_price:,.2f}</code>\n"
+                    f"  - Size: <code>${size:,.0f}</code>"
                 )
         else:
             lines.append(f"\n<i>\u25c7 {state.total_trades} trades \u2022 no open positions</i>")
+
+        # Session tally
+        lines.append(f"\n{SEP}")
+        lines.append(
+            f"<i>Session: {state.total_trades} trades \u2022 "
+            f"Net {_money(net, sign=True)}</i>"
+        )
 
         return "\n".join(lines)
 
@@ -490,13 +487,11 @@ class ExplainTradeSkill(BaseSkill):
             if idea.id == trade_id:
                 d_icon = _OK if idea.direction.value == "LONG" else _BAD
                 return (
-                    f"{_header(_BOOK, 'EXPLANATION')}\n\n"
+                    f"{_BOOK} <b>EXPLANATION</b>\n{SEP}\n\n"
                     f"  {d_icon} {_pill(idea.id)}\n"
                     f"  {idea.direction.value} {_esc(idea.asset)}\n\n"
-                    f"<pre>"
-                    f"{_kv('Confidence', f'{idea.confidence:.0%}')}\n"
-                    f"{_kv('Signals', ', '.join(idea.signals_used))}"
-                    f"</pre>\n\n"
+                    f"- Confidence: <code>{idea.confidence:.0%}</code>\n"
+                    f"- Signals: <code>{', '.join(idea.signals_used)}</code>\n\n"
                     f"<blockquote>{_esc(idea.reasoning)}</blockquote>"
                 )
         return f"\u2718 Trade {_pill(_esc(trade_id))} not found."
@@ -532,7 +527,7 @@ class RunBacktestSkill(BaseSkill):
         sharpe_bar = _bar(min(max(r.sharpe_ratio, 0), 3.0), 3.0, 8)
 
         return (
-            f"{_header(_CHART, 'BACKTEST')}\n"
+            f"{_CHART} <b>BACKTEST</b>\n{SEP}\n"
             f"<i>\u25c7 Synthetic data \u2014 tests plumbing, not alpha</i>\n\n"
             # ── Scorecard ──
             f"\U0001f3c6 <b>Scorecard</b>\n"
@@ -554,12 +549,10 @@ class RunBacktestSkill(BaseSkill):
             f"</pre>\n\n"
             # ── Pipeline ──
             f"\U0001f504 <b>Pipeline</b>\n"
-            f"<pre>"
-            f"{_kv('Signals', str(r.total_signals_generated))}\n"
-            f"{_kv('Ideas', str(r.total_ideas_generated))}\n"
-            f"{_kv('Risk Reject', str(r.total_ideas_rejected_risk))}\n"
-            f"{_kv('Conf Reject', str(r.total_ideas_rejected_confidence))}"
-            f"</pre>\n\n"
+            f"- Signals: <code>{r.total_signals_generated}</code>\n"
+            f"- Ideas: <code>{r.total_ideas_generated}</code>\n"
+            f"- Risk Reject: <code>{r.total_ideas_rejected_risk}</code>\n"
+            f"- Conf Reject: <code>{r.total_ideas_rejected_confidence}</code>\n\n"
             f"<i>\u23f1 {r.bars_processed} bars \u2022 {r.duration_seconds:.1f}s \u2022 "
             f"{r.start_date} \u2192 {r.end_date}</i>"
         )
@@ -582,7 +575,7 @@ class RejectedTradesSkill(BaseSkill):
         count = int(kwargs.get("count", 5))
         recent = history[-count:]
 
-        lines = [_header(_WARN, f"REJECTED TRADES  ({len(recent)}/{len(history)})")]
+        lines = [f"{_WARN} <b>REJECTED TRADES</b>  ({len(recent)}/{len(history)})\n{SEP}"]
         lines.append("")
         for r in reversed(recent):
             d_icon = _OK if r["direction"] == "LONG" else _BAD
@@ -591,10 +584,18 @@ class RejectedTradesSkill(BaseSkill):
             fail_str = _esc(fails[0]) if fails else "unknown"
             extra = f" +{len(fails) - 1}" if len(fails) > 1 else ""
             conf_val = r["confidence"]
+            ts = r.get("timestamp", "")
+            ts_fmt = ""
+            if ts:
+                try:
+                    dt = datetime.fromisoformat(ts)
+                    ts_fmt = f"  \u23f0 {dt.strftime('%H:%M')}"
+                except Exception:
+                    ts_fmt = ""
             lines.append(
-                f"  {d_icon}{d_arrow} <b>{_esc(r['asset'])}</b>  {r['direction']}  "
-                f"{_pill(f'{conf_val:.0%}')}\n"
-                f"     \u2718 <code>{fail_str}</code>{extra}"
+                f"  {d_icon}{d_arrow} <b>{_esc(r['asset'])}</b>  {r['direction']}\n"
+                f"  - Confidence: <code>{conf_val:.0%}</code>{ts_fmt}\n"
+                f"  - Reason: <code>{fail_str}</code>{extra}"
             )
         return "\n".join(lines)
 
@@ -617,10 +618,10 @@ class HaltSkill(BaseSkill):
         audit(system_log, f"MANUAL HALT: {len(cancelled)} ideas cancelled",
               action="halt", result="HALTED", data={"cancelled_ids": cancelled})
         return (
-            f"\U0001f6a8 <b>EMERGENCY HALT</b> {'━' * 16}\n\n"
-            f"  {_BAD} Circuit Breaker: <b>TRIPPED</b>\n"
-            f"  \u2718 Ideas Cancelled: {_pill(str(len(cancelled)))}\n"
-            f"  \u25cf Engine: {_pill('HALTED')}\n\n"
+            f"\U0001f6a8 <b>EMERGENCY HALT</b>\n{SEP}\n\n"
+            f"- Circuit Breaker: {_BAD} <b>TRIPPED</b>\n"
+            f"- Ideas Cancelled: <code>{len(cancelled)}</code>\n"
+            f"- Engine: <code>HALTED</code>\n\n"
             f"<i>\u26a0 All trading paused. /reset to resume.</i>"
         )
 
@@ -646,7 +647,7 @@ class WalkForwardSkill(BaseSkill):
         result = await walk_forward_backtest(bars, config, n_folds=folds)
 
         lines = [
-            _header("\U0001f4c8", "WALK-FORWARD"),
+            f"\U0001f4c8 <b>WALK-FORWARD</b>\n{SEP}",
             "",
             "<pre>",
             f"  {'FOLD':>4}  {'TRAIN':>8}  {'TEST':>8}  {'TRADES':>7}",
@@ -690,16 +691,22 @@ class MacroCalendarSkill(BaseSkill):
             "EVENT_LOCKDOWN": _BAD, "POST_EVENT_VOLATILITY": "\U0001f7e0",
             "BLACKOUT": "\u26ab",
         }
+        severity_emoji = {
+            "low": "\U0001f7e2",      # green
+            "medium": "\U0001f7e1",   # yellow
+            "high": "\U0001f534",     # red
+            "critical": "\u26a0\ufe0f",  # warning
+        }
         icon = state_icons.get(snap.state.value, _NEU)
 
         lines = [
-            _header("\U0001f4c5", "MACRO CALENDAR"),
+            f"\U0001f4c5 <b>MACRO CALENDAR</b>\n{SEP}",
             "",
             f"  {icon} <b>{snap.state.value.replace('_', ' ').title()}</b>",
         ]
 
         if snap.active_event:
-            lines.append(f"  Active: <code>{_esc(snap.active_event.label)}</code>")
+            lines.append(f"- Active: <code>{_esc(snap.active_event.label)}</code>")
         if snap.time_until_next:
             hours = snap.time_until_next.total_seconds() / 3600
             if hours < 1:
@@ -708,14 +715,25 @@ class MacroCalendarSkill(BaseSkill):
                 t = f"{hours:.1f}h"
             else:
                 t = f"{hours / 24:.1f}d"
-            lines.append(f"  Next event in: <code>{t}</code>")
+            lines.append(f"- Next event in: <code>{t}</code>")
 
         if upcoming:
             lines.append(f"\n\U0001f4cb <b>Upcoming</b>")
             for ev in upcoming:
                 times = cal.format_event_times(ev)
-                lines.append(f"  \u2022 <b>{_esc(ev.label)}</b>")
-                lines.append(f"    <code>{times['utc']}</code>")
+                sev = getattr(ev, "severity", "medium")
+                sev_icon = severity_emoji.get(sev, _NEU)
+                day_str = ""
+                try:
+                    dt = datetime.fromisoformat(str(ev.timestamp).replace("Z", "+00:00"))
+                    day_str = dt.strftime("%a %b %d")
+                except Exception:
+                    day_str = ""
+                lines.append(f"  {sev_icon} <b>{_esc(ev.label)}</b>")
+                if day_str:
+                    lines.append(f"    {day_str} \u2022 <code>{times['utc']}</code>")
+                else:
+                    lines.append(f"    <code>{times['utc']}</code>")
                 lines.append(f"    <code>{times['et']}</code>")
         return "\n".join(lines)
 
@@ -736,7 +754,7 @@ class TradeJournalSkill(BaseSkill):
         count = int(kwargs.get("count", 10))
         recent = history[-count:]
 
-        lines = [_header("\U0001f4d3", f"TRADE JOURNAL  ({len(recent)}/{len(history)})")]
+        lines = [f"\U0001f4d3 <b>TRADE JOURNAL</b>  ({len(recent)}/{len(history)})\n{SEP}"]
         lines.append("")
 
         total_pnl = 0.0
@@ -756,17 +774,19 @@ class TradeJournalSkill(BaseSkill):
             size = trade.entry_price * trade.quantity
 
             lines.append(
-                f"  {icon}{arrow} <b>{_esc(trade.asset)}</b>  {trade.direction.value}\n"
-                f"     {_pill(f'${trade.pnl:+,.2f}')} {tag}{dur}\n"
-                f"     ${trade.entry_price:,.2f} \u2192 {exit_p}  size ${size:,.0f}"
+                f"  {icon}{arrow} <b>{_esc(trade.asset)}</b>  {trade.direction.value}  {tag}\n"
+                f"  - Entry: <code>${trade.entry_price:,.2f}</code> \u2192 Exit: <code>{exit_p}</code>\n"
+                f"  - PnL: <code>${trade.pnl:+,.2f}</code>  |  Size: <code>${size:,.0f}</code>{dur}"
             )
 
         wr = wins / len(recent) if recent else 0
         wr_bar = _bar(wr, 1.0, 8)
+        lines.append(f"\n{SEP}")
         lines.append(
-            f"\n<b>{wins}W / {len(recent)-wins}L</b>  "
-            f"\u2502{wr_bar}\u2502 {_pill(f'{wr:.0%}')}  "
-            f"Net {_pill(f'${total_pnl:+,.2f}')}"
+            f"<b>Session Summary</b>\n"
+            f"- Record: <b>{wins}W / {len(recent)-wins}L</b>  "
+            f"\u2502{wr_bar}\u2502 <code>{wr:.0%}</code>\n"
+            f"- Net PnL: <code>${total_pnl:+,.2f}</code>"
         )
         return "\n".join(lines)
 
@@ -786,15 +806,13 @@ class CostBreakdownSkill(BaseSkill):
         net = state.equity_usd - cost.operating_cost_usd
 
         lines = [
-            _header("\U0001f4b0", "AGENT ECONOMICS"),
+            f"\U0001f4b0 <b>AGENT ECONOMICS</b>\n{SEP}",
             "",
             f"\u26a1 <b>LLM Usage</b>",
-            "<pre>",
-            _kv("Total", f"${cost.llm_cost_usd:,.4f} ({cost.llm_calls} calls)"),
-            _kv("Tokens In", f"{cost.prompt_tokens:,}"),
-            _kv("Tokens Out", f"{cost.completion_tokens:,}"),
-            _kv("Avg/Call", f"${cost.avg_cost_per_call:,.6f}"),
-            "</pre>",
+            f"- Total: <code>${cost.llm_cost_usd:,.4f}</code> ({cost.llm_calls} calls)",
+            f"- Tokens In: <code>{cost.prompt_tokens:,}</code>",
+            f"- Tokens Out: <code>{cost.completion_tokens:,}</code>",
+            f"- Avg/Call: <code>${cost.avg_cost_per_call:,.6f}</code>",
         ]
 
         cats_found = False
@@ -803,32 +821,26 @@ class CostBreakdownSkill(BaseSkill):
             n = cost.calls_by_category.get(cat, 0)
             if n > 0:
                 if not cats_found:
-                    lines.extend([f"\n\U0001f4ca <b>Breakdown</b>", "<pre>"])
+                    lines.extend([f"\n\U0001f4ca <b>Breakdown</b>"])
                     cats_found = True
-                lines.append(_kv(cat.title(), f"${c:,.4f} ({n})"))
-        if cats_found:
-            lines.append("</pre>")
+                lines.append(f"- {cat.title()}: <code>${c:,.4f}</code> ({n})")
 
         lines.extend([
             f"\n\U0001f4b3 <b>Operating Total</b>",
-            "<pre>",
-            _kv("LLM", f"${cost.llm_cost_usd:,.4f}"),
-            _kv("Infra", f"${cost.infra_cost_usd:,.4f}"),
-            _kv("Total", f"${cost.operating_cost_usd:,.4f}"),
+            f"- LLM: <code>${cost.llm_cost_usd:,.4f}</code>",
+            f"- Infra: <code>${cost.infra_cost_usd:,.4f}</code>",
+            f"- Total: <code>${cost.operating_cost_usd:,.4f}</code>",
         ])
         if state.total_trades > 0:
             cpt = cost.operating_cost_usd / state.total_trades
-            lines.append(_kv("Per Trade", f"${cpt:,.4f}"))
+            lines.append(f"- Per Trade: <code>${cpt:,.4f}</code>")
 
         lines.extend([
-            "</pre>",
             f"\n\U0001f4c8 <b>Net</b>",
-            "<pre>",
-            _kv("Equity", _money(state.equity_usd)),
-            _kv("- Costs", f"${cost.operating_cost_usd:,.4f}"),
-            f"  {'━' * 26}",
-            _kv("= Net", _money(net)),
-            "</pre>",
+            f"- Equity: <code>{_money(state.equity_usd)}</code>",
+            f"- Costs: <code>-${cost.operating_cost_usd:,.4f}</code>",
+            f"{SEP}",
+            f"- <b>Net: <code>{_money(net)}</code></b>",
         ])
 
         # ── Cache hit-rate section ──
@@ -838,15 +850,13 @@ class CostBreakdownSkill(BaseSkill):
             hit_pct = cache_snap["hit_rate"] * 100
             lines.extend([
                 f"\n\U0001f9e0 <b>LLM Cache</b>",
-                "<pre>",
-                _kv("Hits", str(cache_snap["hits"])),
-                _kv("Misses", str(cache_snap["misses"])),
-                _kv("Hit Rate", f"{hit_pct:.1f}%"),
-                _kv("Evictions", str(cache_snap["evictions"])),
-                _kv("Expirations", str(cache_snap["expirations"])),
-                _kv("Est. Saved", f"${cache_snap['estimated_cost_saved_usd']:,.4f}"),
-                _kv("TTL", f"{cache_snap['default_ttl']:.0f}s"),
-                "</pre>",
+                f"- Hits: <code>{cache_snap['hits']}</code>",
+                f"- Misses: <code>{cache_snap['misses']}</code>",
+                f"- Hit Rate: <code>{hit_pct:.1f}%</code>",
+                f"- Evictions: <code>{cache_snap['evictions']}</code>",
+                f"- Expirations: <code>{cache_snap['expirations']}</code>",
+                f"- Est. Saved: <code>${cache_snap['estimated_cost_saved_usd']:,.4f}</code>",
+                f"- TTL: <code>{cache_snap['default_ttl']:.0f}s</code>",
             ])
         except Exception:
             pass  # cache not available — skip section
@@ -908,7 +918,7 @@ class RunStrategySkill(BaseSkill):
 
     @classmethod
     def _list(cls) -> str:
-        lines = [_header("\U0001f3af", "STRATEGY PRESETS")]
+        lines = [f"\U0001f3af <b>STRATEGY PRESETS</b>\n{SEP}"]
         lines.append("")
         for key, cfg in cls.PRESETS.items():
             aliases = [a for a, t in cls.ALIASES.items() if t == key]
@@ -1144,20 +1154,17 @@ class LearningDashboardSkill(BaseSkill):
 
         # ── Data summary ─────────────────────────────────────
         lines.append(f"\U0001f4be <b>Data Summary</b>")
-        lines.append("<pre>")
         total = sum(stats.values())
-        lines.append(_row("Total records", str(total)))
-        lines.append(_row("Strategies scored", str(score.get('strategies_evaluated', 0))))
-        lines.append(_row("Feedback entries", str(score.get('feedback_total', 0))))
-        lines.append("</pre>\n")
+        lines.append(f"- Total records: <code>{total}</code>")
+        lines.append(f"- Strategies scored: <code>{score.get('strategies_evaluated', 0)}</code>")
+        lines.append(f"- Feedback entries: <code>{score.get('feedback_total', 0)}</code>")
+        lines.append("")
 
         # ── Proposals ────────────────────────────────────────
         lines.extend([
             f"\U0001f4cb <b>Proposals</b>",
-            "<pre>",
-            _row("Pending", str(dash['pending_proposals'])),
-            _row("Blocked", str(dash['blocked_proposals'])),
-            "</pre>",
+            f"- Pending: <code>{dash['pending_proposals']}</code>",
+            f"- Blocked: <code>{dash['blocked_proposals']}</code>",
         ])
 
         # ── Strategy rankings ────────────────────────────────
@@ -1221,7 +1228,7 @@ class PatternsSkill(BaseSkill):
         patterns = engine.learning.detect_patterns()
         if not patterns:
             return f"{_NEU} <b>PATTERNS</b>\n\n<i>\u25c7 No patterns yet. Need more history.</i>"
-        lines = [_header("\U0001f50d", "PATTERNS")]
+        lines = [f"\U0001f50d <b>PATTERNS</b>\n{SEP}"]
         lines.append("")
         for p in patterns[:8]:
             exp = f" {_WARN}" if p.is_experimental else ""
@@ -1243,7 +1250,7 @@ class ProposalsSkill(BaseSkill):
         proposals = engine.learning.store.get_proposals()
         if not proposals:
             return f"{_NEU} <b>PROPOSALS</b>\n\n<i>\u25c7 No proposals yet.</i>"
-        lines = [_header("\U0001f4cb", f"PROPOSALS  ({len(proposals)})")]
+        lines = [f"\U0001f4cb <b>PROPOSALS  ({len(proposals)})</b>\n{SEP}"]
         lines.append("")
         for p in proposals[-6:]:
             icons = {"approved": _OK, "pending": _WARN, "rejected": _BAD, "blocked": "\u26ab"}
@@ -1269,36 +1276,30 @@ class OptimizationSkill(BaseSkill):
         total = tiers.get("total", 0)
 
         lines = [
-            _header("\u26a1", "TOKEN OPTIMIZER"),
+            f"\u26a1 <b>TOKEN OPTIMIZER</b>\n{SEP}",
             "",
             f"\U0001f4be <b>Cache</b>",
-            "<pre>",
-            _kv("Size", f"{cache.get('size', 0)}/{cache.get('max_size', 0)}"),
-            _kv("Hit Rate", f"{cache.get('hit_rate', 0):.0%}"),
-            _kv("Evictions", str(cache.get('evictions', 0))),
-            "</pre>",
+            f"- Size: <code>{cache.get('size', 0)}/{cache.get('max_size', 0)}</code>",
+            f"- Hit Rate: <code>{cache.get('hit_rate', 0):.0%}</code>",
+            f"- Evictions: <code>{cache.get('evictions', 0)}</code>",
             f"\n\U0001f4ca <b>Tier Distribution</b>",
-            "<pre>",
-            _kv("T1 Rules", f"{tiers.get('tier1_rules', 0)} (free)"),
-            _kv("T2 Mini", f"{tiers.get('tier2_mini', 0)} (cheap)"),
-            _kv("T3 Full", f"{tiers.get('tier3_full', 0)} (best)"),
+            f"- T1 Rules: <code>{tiers.get('tier1_rules', 0)}</code> (free)",
+            f"- T2 Mini: <code>{tiers.get('tier2_mini', 0)}</code> (cheap)",
+            f"- T3 Full: <code>{tiers.get('tier3_full', 0)}</code> (best)",
         ]
         if total > 0:
-            lines.append(_kv("Free %", f"{tiers.get('tier1_rules', 0) / total * 100:.0f}%"))
+            lines.append(f"- Free %: <code>{tiers.get('tier1_rules', 0) / total * 100:.0f}%</code>")
 
         saved = savings.get("total_estimated_cost_saved_usd", 0)
         lines.extend([
-            "</pre>",
             f"\n\U0001f4b0 <b>Savings</b>",
-            "<pre>",
-            _kv("Tokens", f"~{savings.get('total_estimated_tokens_saved', 0):,}"),
-            _kv("Cost", f"~${saved:,.4f}"),
+            f"- Tokens: <code>~{savings.get('total_estimated_tokens_saved', 0):,}</code>",
+            f"- Cost: <code>~${saved:,.4f}</code>",
         ])
         if cost.llm_cost_usd > 0:
             would_have = cost.llm_cost_usd + saved
             pct = (saved / would_have * 100) if would_have > 0 else 0
-            lines.append(_kv("Reduction", f"{pct:.0f}%"))
-        lines.append("</pre>")
+            lines.append(f"- Reduction: <code>{pct:.0f}%</code>")
         return "\n".join(lines)
 
 
@@ -1355,14 +1356,12 @@ class ProScanSkill(BaseSkill):
         sim = "PAPER" if CONFIG.simulation_mode else "\u26a0\ufe0f LIVE"
 
         header = (
-            f"{cfg['icon']} <b>{cfg['label']}</b> {'━' * 20}\n"
-            f"  {sim}  \u2502  Breaker: {cb_s}\n"
-            f"<pre>"
-            f"{_kv('Equity', _money(state.equity_usd))}\n"
-            f"{_kv('Open Pos', f'{state.open_positions} / {CONFIG.risk.max_open_positions}')}\n"
-            f"{_kv('Daily PnL', _money(state.daily_pnl, sign=True))}\n"
-            f"{_kv('Timeframe', cfg['timeframe'].upper())}"
-            f"</pre>\n"
+            f"{cfg['icon']} <b>{cfg['label']}</b>\n{SEP}\n"
+            f"  {sim}  \u2502  Breaker: {cb_s}\n\n"
+            f"- Equity: <code>{_money(state.equity_usd)}</code>\n"
+            f"- Open Pos: <code>{state.open_positions} / {CONFIG.risk.max_open_positions}</code>\n"
+            f"- Daily PnL: <code>{_money(state.daily_pnl, sign=True)}</code>\n"
+            f"- Timeframe: <code>{cfg['timeframe'].upper()}</code>\n"
         )
 
         # ── Section 2: Fetch live tickers ──
@@ -1572,7 +1571,7 @@ class WhyNotSkill(BaseSkill):
         conf_ring = _progress_ring(conf * 100)
 
         lines = [
-            _header("\u2718", f"REJECTED  {_esc(rej['symbol'])}"),
+            f"\u2718 <b>REJECTED  {_esc(rej['symbol'])}</b>\n{SEP}",
             "",
             f"  {d_icon}{d_arrow} <b>{rej['direction']}</b>  "
             f"{conf_ring} {_pill(f'{conf:.0%}')}",
@@ -1580,11 +1579,9 @@ class WhyNotSkill(BaseSkill):
         ]
 
         # Price info
-        lines.append("<pre>")
-        lines.append(_kv("Entry", f"${rej['entry_price']:,.2f}"))
-        lines.append(_kv("Stop", f"${rej['stop_loss']:,.2f}"))
-        lines.append(_kv("Target", f"${rej['take_profit']:,.2f}"))
-        lines.append("</pre>")
+        lines.append(f"- Entry: <code>${rej['entry_price']:,.2f}</code>")
+        lines.append(f"- Stop: <code>${rej['stop_loss']:,.2f}</code>")
+        lines.append(f"- Target: <code>${rej['take_profit']:,.2f}</code>")
 
         # Failed checks (detailed)
         failed = rej.get("checks_failed", [])
@@ -1680,13 +1677,11 @@ class PlaybookSkill(BaseSkill):
         lines: list[str] = []
 
         # ── Section 1: Scanner Status ──
-        lines.append(_header("📡", "SCANNER SWEEP"))
-        lines.append("<pre>")
-        lines.append(_kv("Universe", f"{len(DEEPSCAN_UNIVERSE)} symbols"))
-        lines.append(_kv("Timeframes", "4H · 1H · 5M"))
-        lines.append(_kv("Batch Mode", "Parallel async"))
-        lines.append(_kv("Last Scan", now))
-        lines.append("</pre>")
+        lines.append(f"\U0001f4e1 <b>SCANNER SWEEP</b>\n{SEP}")
+        lines.append(f"- Universe: <code>{len(DEEPSCAN_UNIVERSE)} symbols</code>")
+        lines.append(f"- Timeframes: <code>4H \u00b7 1H \u00b7 5M</code>")
+        lines.append(f"- Batch Mode: <code>Parallel async</code>")
+        lines.append(f"- Last Scan: <code>{now}</code>")
 
         # Show recent scan results if available
         signals = await engine.scanner.scan()
@@ -1699,17 +1694,15 @@ class PlaybookSkill(BaseSkill):
         lines.append("")
 
         # ── Section 2: AI Brain ──
-        lines.append(_header("🧠", "AI BRAIN"))
-        lines.append("<pre>")
-        lines.append(_kv("Profiles", "6 strategy modes"))
-        lines.append(_kv("Indicators", "14+ (RSI/MACD/BB/EMA/ADX/ATR/OBV/VWAP/MFI/Fib)"))
-        lines.append(_kv("Candle Patterns", "15 detected"))
-        lines.append(_kv("Chart Patterns", "13 (H&S/DT/DB/Flags/Tri/Wedge)"))
-        lines.append(_kv("Elliott Waves", "5-wave impulse count"))
-        lines.append(_kv("Market Structure", "HH/HL/BOS/CHoCH/Sweep"))
-        lines.append(_kv("MTF Alignment", "1H · 4H · 1D"))
-        lines.append(_kv("Order Flow", "CVD · Book · Whale · Funding"))
-        lines.append("</pre>")
+        lines.append(f"\n\U0001f9e0 <b>AI BRAIN</b>\n{SEP}")
+        lines.append(f"- Profiles: <code>6 strategy modes</code>")
+        lines.append(f"- Indicators: <code>14+ (RSI/MACD/BB/EMA/ADX/ATR/OBV/VWAP/MFI/Fib)</code>")
+        lines.append(f"- Candle Patterns: <code>15 detected</code>")
+        lines.append(f"- Chart Patterns: <code>13 (H&amp;S/DT/DB/Flags/Tri/Wedge)</code>")
+        lines.append(f"- Elliott Waves: <code>5-wave impulse count</code>")
+        lines.append(f"- Market Structure: <code>HH/HL/BOS/CHoCH/Sweep</code>")
+        lines.append(f"- MTF Alignment: <code>1H \u00b7 4H \u00b7 1D</code>")
+        lines.append(f"- Order Flow: <code>CVD \u00b7 Book \u00b7 Whale \u00b7 Funding</code>")
 
         # LLM status
         llm_provider = CONFIG.llm.provider if CONFIG.llm and CONFIG.llm.provider else "groq"
@@ -1717,53 +1710,47 @@ class PlaybookSkill(BaseSkill):
         lines.append("")
 
         # ── Section 3: Rulebook ──
-        lines.append(_header("🛡", "RULEBOOK"))
+        lines.append(f"\n\U0001f6e1 <b>RULEBOOK</b>\n{SEP}")
         risk = engine.risk
         total_checks = 19
-        lines.append("<pre>")
-        lines.append(_kv("Risk Checks", f"{total_checks} fail-closed gates"))
-        lines.append(_kv("Min Confidence", f"{CONFIG.risk.min_confidence:.0%}"))
-        lines.append(_kv("Min R:R", f"{CONFIG.risk.min_risk_reward}x"))
-        lines.append(_kv("Max Drawdown", f"{CONFIG.risk.max_drawdown_pct:.0f}%"))
-        lines.append(_kv("Max Positions", f"{CONFIG.risk.max_open_positions}"))
-        lines.append(_kv("Max Exposure", f"{CONFIG.risk.max_portfolio_exposure_pct:.0f}%"))
-        lines.append(_kv("Cooldown", f"{CONFIG.risk.cooldown_after_loss_seconds}s"))
-        lines.append(_kv("Circuit Breaker", f"{_BAD} TRIPPED" if cb else f"{_OK} CLEAR"))
-        lines.append("</pre>")
+        lines.append(f"- Risk Checks: <code>{total_checks} fail-closed gates</code>")
+        lines.append(f"- Min Confidence: <code>{CONFIG.risk.min_confidence:.0%}</code>")
+        lines.append(f"- Min R:R: <code>{CONFIG.risk.min_risk_reward}x</code>")
+        lines.append(f"- Max Drawdown: <code>{CONFIG.risk.max_drawdown_pct:.0f}%</code>")
+        lines.append(f"- Max Positions: <code>{CONFIG.risk.max_open_positions}</code>")
+        lines.append(f"- Max Exposure: <code>{CONFIG.risk.max_portfolio_exposure_pct:.0f}%</code>")
+        lines.append(f"- Cooldown: <code>{CONFIG.risk.cooldown_after_loss_seconds}s</code>")
+        lines.append(f"- Circuit Breaker: {_BAD} TRIPPED" if cb else f"- Circuit Breaker: {_OK} CLEAR")
         lines.append("")
 
         # ── Section 4: Live Execution ──
-        lines.append(_header("⚡", "LIVE EXECUTION"))
-        lines.append("<pre>")
-        lines.append(_kv("Mode", sim))
-        lines.append(_kv("Exchange", "Bitget"))
-        lines.append(_kv("Equity", _money(state.equity_usd)))
-        lines.append(_kv("Open Positions", f"{state.open_positions}"))
-        lines.append(_kv("Daily PnL", _money(state.daily_pnl, sign=True)))
-        lines.append(_kv("Trailing Stop", "Active (shared logic)"))
-        lines.append("</pre>")
+        lines.append(f"\u26a1 <b>LIVE EXECUTION</b>\n{SEP}")
+        lines.append(f"- Mode: <code>{sim}</code>")
+        lines.append(f"- Exchange: <code>Bitget</code>")
+        lines.append(f"- Equity: <code>{_money(state.equity_usd)}</code>")
+        lines.append(f"- Open Positions: <code>{state.open_positions}</code>")
+        lines.append(f"- Daily PnL: <code>{_money(state.daily_pnl, sign=True)}</code>")
+        lines.append(f"- Trailing Stop: <code>Active (shared logic)</code>")
         lines.append("")
 
         # ── Section 5: Active Positions ──
         positions = engine.portfolio._positions
         if positions:
-            lines.append(_header("📊", "ACTIVE POSITIONS"))
+            lines.append(f"\U0001f4ca <b>ACTIVE POSITIONS</b>\n{SEP}")
             for pid, pos in list(positions.items())[:5]:
                 d_val = pos.direction.value if hasattr(pos.direction, 'value') else str(pos.direction)
                 d_icon = _OK if d_val == "LONG" else _BAD
-                d_arrow = "▲" if d_val == "LONG" else "▼"
+                d_arrow = "\u25b2" if d_val == "LONG" else "\u25bc"
                 notional = pos.entry_price * pos.quantity
                 lines.append(
-                    f"  {d_icon}{d_arrow} <b>{_esc(pos.asset)}</b>"
+                    f"  {d_icon}{d_arrow} <b>{_esc(pos.asset)}</b>\n"
+                    f"  - Entry: <code>${pos.entry_price:,.2f}</code>\n"
+                    f"  - Size: <code>{_money(notional)}</code>\n"
+                    f"  - SL: <code>${pos.stop_loss:,.2f}</code>\n"
+                    f"  - TP: <code>${pos.take_profit:,.2f}</code>"
                 )
-                lines.append(f"<pre>")
-                lines.append(_kv("Entry", f"${pos.entry_price:,.2f}"))
-                lines.append(_kv("Size", _money(notional)))
-                lines.append(_kv("SL", f"${pos.stop_loss:,.2f}"))
-                lines.append(_kv("TP", f"${pos.take_profit:,.2f}"))
-                lines.append(f"</pre>")
         else:
-            lines.append(_header("📊", "ACTIVE POSITIONS"))
+            lines.append(f"\U0001f4ca <b>ACTIVE POSITIONS</b>\n{SEP}")
             lines.append(f"  {_NEU} <i>No open positions</i>")
 
         lines.append("")
@@ -1771,9 +1758,9 @@ class PlaybookSkill(BaseSkill):
         # ── Pending Ideas ──
         pending = engine._pending_ideas
         if pending:
-            lines.append(_header("🎯", f"QUEUED IDEAS ({len(pending)})"))
+            lines.append(f"\n\U0001f3af <b>QUEUED IDEAS ({len(pending)})</b>\n{SEP}")
             for tid, idea in list(pending.items())[:3]:
-                d = "▲" if idea.direction.value == "LONG" else "▼"
+                d = "\u25b2" if idea.direction.value == "LONG" else "\u25bc"
                 lines.append(
                     f"  {d} <b>{_esc(idea.asset)}</b>  "
                     f"{_pill(f'{idea.confidence:.0%}')}  "
@@ -1807,8 +1794,8 @@ class DeepScanSkill(BaseSkill):
         now = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
 
         lines: list[str] = []
-        lines.append(_header("🔬", f"DEEP SCAN — {timeframe.upper()}"))
-        lines.append(f"  {len(DEEPSCAN_UNIVERSE)} symbols · {timeframe} · chart + candle patterns")
+        lines.append(f"\U0001f52c <b>DEEP SCAN \u2014 {timeframe.upper()}</b>\n{SEP}")
+        lines.append(f"  {len(DEEPSCAN_UNIVERSE)} symbols \u00b7 {timeframe} \u00b7 chart + candle patterns")
         lines.append("")
 
         exchange = await engine.scanner._get_exchange()
@@ -1881,11 +1868,9 @@ class DeepScanSkill(BaseSkill):
         top = hits[:max_results]
 
         # Stats line
-        lines.append(f"<pre>")
-        lines.append(_kv("Scanned", f"{scanned} / {len(DEEPSCAN_UNIVERSE)}"))
-        lines.append(_kv("Hits", f"{len(hits)}"))
-        lines.append(_kv("Errors", f"{errors}"))
-        lines.append(f"</pre>")
+        lines.append(f"- Scanned: <code>{scanned} / {len(DEEPSCAN_UNIVERSE)}</code>")
+        lines.append(f"- Hits: <code>{len(hits)}</code>")
+        lines.append(f"- Errors: <code>{errors}</code>")
         lines.append("")
 
         if not top:

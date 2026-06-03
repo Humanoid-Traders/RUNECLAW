@@ -144,28 +144,54 @@ class ProactiveMonitor:
         cb_active = self.engine.risk.circuit_breaker_active
 
         if cb_active and not self._last_cb_state:
+            # Gather live context for the alert
+            drawdown_pct = getattr(self.engine.risk, 'current_drawdown_pct', None)
+            drawdown_str = f"{drawdown_pct:.2f}%" if drawdown_pct is not None else "N/A"
+            positions_count = 0
+            try:
+                positions_count = len(self.engine.portfolio.open_positions)
+            except Exception:
+                pass
+            daily_pnl = getattr(self.engine.risk, 'daily_pnl', None)
+            daily_pnl_str = f"${daily_pnl:+,.2f}" if daily_pnl is not None else "N/A"
+            ts = datetime.now(UTC).strftime("%H:%M:%S UTC")
+
             alerts.append(Alert(
                 alert_type="CIRCUIT_BREAKER",
                 severity="CRITICAL",
                 title="Circuit Breaker TRIPPED",
                 body=(
-                    "\U0001f6a8 <b>CIRCUIT BREAKER TRIPPED</b>\n\n"
-                    "The risk engine has halted all new entries.\n"
-                    "Reason: daily loss or drawdown limit breached.\n\n"
-                    "Open positions will continue to be monitored for SL/TP.\n"
-                    "Use /reset to manually clear after review."
+                    "\U0001f6a8 <b>CIRCUIT BREAKER TRIPPED</b>\n"
+                    "────────────────\n"
+                    "The risk engine has <b>halted all new entries</b>.\n\n"
+                    f"- Drawdown: <code>{drawdown_str}</code>\n"
+                    f"- Daily P&L: <code>{daily_pnl_str}</code>\n"
+                    f"- Open Positions: <code>{positions_count}</code>\n"
+                    f"- Triggered At: <code>{ts}</code>\n\n"
+                    "\U0001f6e1 Open positions are still monitored for SL/TP.\n"
+                    "────────────────\n"
+                    "\U0001f449 /status — review engine state\n"
+                    "\U0001f449 /positions — inspect open trades\n"
+                    "\U0001f449 /reset — clear after review"
                 ),
                 dedup_key="cb_tripped",
             ))
         elif not cb_active and self._last_cb_state:
+            ts = datetime.now(UTC).strftime("%H:%M:%S UTC")
             alerts.append(Alert(
                 alert_type="CIRCUIT_BREAKER",
                 severity="INFO",
                 title="Circuit Breaker Cleared",
                 body=(
-                    "\u2705 <b>CIRCUIT BREAKER CLEARED</b>\n\n"
-                    "Trading operations have resumed.\n"
-                    "The engine will begin scanning on the next cycle."
+                    "\u2705 <b>CIRCUIT BREAKER CLEARED</b>\n"
+                    "────────────────\n"
+                    "Risk limits are back within tolerance.\n"
+                    "Trading operations have <b>resumed</b>.\n\n"
+                    f"- Cleared At: <code>{ts}</code>\n\n"
+                    "\U0001f680 The engine will begin scanning on the next cycle.\n"
+                    "────────────────\n"
+                    "\U0001f449 /status — confirm engine state\n"
+                    "\U0001f449 /health — check system vitals"
                 ),
                 dedup_key="cb_cleared",
             ))
@@ -185,15 +211,43 @@ class ProactiveMonitor:
                         if key not in self._alerted_signals:
                             chg = f"{sig.change_pct_24h:+.1f}%" if sig.change_pct_24h else "N/A"
                             vol_m = sig.volume_usd_24h / 1_000_000 if sig.volume_usd_24h else 0
+                            base = sig.symbol.split('/')[0] if '/' in sig.symbol else sig.symbol
+
+                            # Direction hint from 24h change
+                            if sig.change_pct_24h and sig.change_pct_24h > 0:
+                                direction = "\U0001f7e2 Bullish momentum"
+                            elif sig.change_pct_24h and sig.change_pct_24h < 0:
+                                direction = "\U0001f534 Bearish pressure"
+                            else:
+                                direction = "\u26aa Neutral"
+
+                            # Optional RSI
+                            rsi = getattr(sig, 'rsi', None)
+                            rsi_str = f"<code>{rsi:.1f}</code>" if rsi is not None else "—"
+
+                            # Optional VWAP distance
+                            vwap = getattr(sig, 'vwap', None)
+                            if vwap and sig.price:
+                                vwap_dist = ((sig.price - vwap) / vwap) * 100
+                                vwap_str = f"<code>{vwap_dist:+.2f}%</code>"
+                            else:
+                                vwap_str = "—"
+
                             alerts.append(Alert(
                                 alert_type="VOLUME_SPIKE",
                                 severity="WARNING",
                                 title=f"Volume Spike: {sig.symbol}",
                                 body=(
-                                    f"\U0001f4a5 <b>VOLUME SPIKE</b>: {sig.symbol}\n\n"
-                                    f"Price: ${sig.price:,.2f} ({chg})\n"
-                                    f"Volume: ${vol_m:,.0f}M\n\n"
-                                    f"<i>Use /analyze {sig.symbol.split('/')[0]} for full analysis</i>"
+                                    f"\U0001f4a5 <b>VOLUME SPIKE — {sig.symbol}</b>\n"
+                                    "────────────────\n"
+                                    f"- Price: <code>${sig.price:,.2f}</code> ({chg})\n"
+                                    f"- 24h Volume: <code>${vol_m:,.1f}M</code>\n"
+                                    f"- RSI: {rsi_str}\n"
+                                    f"- vs VWAP: {vwap_str}\n"
+                                    f"- Bias: {direction}\n"
+                                    "────────────────\n"
+                                    f"\U0001f449 /analyze {base} — full technical breakdown\n"
+                                    f"\U0001f449 /chart {base} — view price chart"
                                 ),
                                 dedup_key=key,
                             ))
@@ -209,17 +263,25 @@ class ProactiveMonitor:
             if hasattr(self.engine, 'black_swan'):
                 for alert_obj in self.engine.black_swan.active_alerts:
                     key = f"bs_{alert_obj.anomaly_type}_{alert_obj.symbol}"
+                    sev = "CRITICAL" if alert_obj.severity == "SEVERE" else "WARNING"
+                    sev_icon = "\U0001f534" if alert_obj.severity == "SEVERE" else "\U0001f7e0"
+                    ts = datetime.now(UTC).strftime("%H:%M:%S UTC")
                     alerts.append(Alert(
                         alert_type="BLACK_SWAN",
-                        severity="CRITICAL" if alert_obj.severity == "SEVERE" else "WARNING",
+                        severity=sev,
                         title=f"Anomaly: {alert_obj.anomaly_type}",
                         body=(
-                            f"\U0001f6a8 <b>ANOMALY DETECTED</b>\n\n"
-                            f"Type: {alert_obj.anomaly_type}\n"
-                            f"Symbol: {alert_obj.symbol}\n"
-                            f"Severity: {alert_obj.severity}\n"
-                            f"Details: {alert_obj.description}\n\n"
-                            f"<i>Engine may auto-halt if severity is SEVERE</i>"
+                            f"\U0001f6a8 <b>ANOMALY DETECTED</b>\n"
+                            "────────────────\n"
+                            f"- Type: <code>{alert_obj.anomaly_type}</code>\n"
+                            f"- Symbol: <code>{alert_obj.symbol}</code>\n"
+                            f"- Severity: {sev_icon} <code>{alert_obj.severity}</code>\n"
+                            f"- Detected At: <code>{ts}</code>\n\n"
+                            f"<i>{alert_obj.description}</i>\n"
+                            "────────────────\n"
+                            "\u26a0\ufe0f Engine may auto-halt if severity is SEVERE.\n"
+                            f"\U0001f449 /status — check engine state\n"
+                            f"\U0001f449 /positions — review exposure"
                         ),
                         dedup_key=key,
                     ))
@@ -235,29 +297,42 @@ class ProactiveMonitor:
         if current_state != self._last_state:
             # Only alert on interesting transitions
             if current_state == "HALTED" and self._last_state != "HALTED":
+                ts = datetime.now(UTC).strftime("%H:%M:%S UTC")
                 alerts.append(Alert(
                     alert_type="STATE_CHANGE",
                     severity="CRITICAL",
                     title="Engine HALTED",
                     body=(
-                        "\u26d4 <b>ENGINE HALTED</b>\n\n"
-                        f"Previous state: {self._last_state}\n"
-                        "The engine has entered HALTED state.\n"
-                        "No new scans or analyses will run.\n\n"
-                        "Use /status for details, /reset to resume."
+                        "\u26d4 <b>ENGINE HALTED</b>\n"
+                        "────────────────\n"
+                        f"- Previous State: <code>{self._last_state or 'UNKNOWN'}</code>\n"
+                        f"- Halted At: <code>{ts}</code>\n\n"
+                        "No new scans or analyses will run.\n"
+                        "All automated trading is paused.\n"
+                        "────────────────\n"
+                        "\U0001f449 /status — review engine details\n"
+                        "\U0001f449 /health — check system vitals\n"
+                        "\U0001f449 /reset — resume after review"
                     ),
                     dedup_key="state_halted",
                 ))
             elif current_state == "COOLING_DOWN" and self._last_state != "COOLING_DOWN":
                 cooldown_sec = CONFIG.risk.cooldown_after_loss_seconds
+                cooldown_min = cooldown_sec / 60
                 alerts.append(Alert(
                     alert_type="STATE_CHANGE",
                     severity="WARNING",
                     title="Cooling Down",
                     body=(
-                        f"\u23f8 <b>COOLDOWN ACTIVE</b> ({cooldown_sec}s)\n\n"
+                        f"\u23f8 <b>COOLDOWN ACTIVE</b>\n"
+                        "────────────────\n"
+                        f"- Duration: <code>{cooldown_min:.0f} min</code> ({cooldown_sec}s)\n"
+                        f"- Previous State: <code>{self._last_state or 'UNKNOWN'}</code>\n\n"
                         "Post-loss cooldown period activated.\n"
-                        "The engine will resume scanning automatically."
+                        "The engine will resume scanning automatically.\n"
+                        "────────────────\n"
+                        "\U0001f449 /status — check countdown\n"
+                        "\U0001f449 /positions — review open trades"
                     ),
                     dedup_key="state_cooldown",
                 ))
@@ -273,18 +348,27 @@ class ProactiveMonitor:
                 key = f"signal_{idea_id}"
                 if key not in self._alerted_signals:
                     d = "\U0001f7e2 LONG" if idea.direction.upper() == "LONG" else "\U0001f534 SHORT"
+                    risk_amt = abs(idea.entry - idea.stop_loss)
+                    reward_amt = abs(idea.take_profit - idea.entry)
+                    rr_ratio = reward_amt / risk_amt if risk_amt > 0 else 0
+                    base = idea.asset.split('/')[0] if '/' in idea.asset else idea.asset
                     alerts.append(Alert(
                         alert_type="TRADE_SIGNAL",
                         severity="INFO",
                         title=f"Signal: {idea.asset}",
                         body=(
-                            f"\U0001f514 <b>NEW SIGNAL</b>: {idea.asset}\n\n"
-                            f"Direction: {d}\n"
-                            f"Confidence: {idea.confidence:.0%}\n"
-                            f"Entry: ${idea.entry:,.2f}\n"
-                            f"SL: ${idea.stop_loss:,.2f}\n"
-                            f"TP: ${idea.take_profit:,.2f}\n\n"
-                            f"<i>Awaiting confirmation in chat</i>"
+                            f"\U0001f514 <b>NEW SIGNAL — {idea.asset}</b>\n"
+                            "────────────────\n"
+                            f"- Direction: {d}\n"
+                            f"- Confidence: <code>{idea.confidence:.0%}</code>\n"
+                            f"- Entry: <code>${idea.entry:,.2f}</code>\n"
+                            f"- Stop Loss: <code>${idea.stop_loss:,.2f}</code>\n"
+                            f"- Take Profit: <code>${idea.take_profit:,.2f}</code>\n"
+                            f"- R:R Ratio: <code>{rr_ratio:.1f}</code>\n"
+                            "────────────────\n"
+                            "\u23f3 Awaiting operator confirmation.\n"
+                            f"\U0001f449 /analyze {base} — review analysis\n"
+                            f"\U0001f449 /confirm — approve this trade"
                         ),
                         dedup_key=key,
                     ))

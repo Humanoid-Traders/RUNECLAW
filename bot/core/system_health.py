@@ -129,18 +129,39 @@ class SystemHealthMonitor:
         """Format health snapshot for Telegram display."""
         s = self.snapshot()
         uptime_h = s.uptime_seconds / 3600
+        uptime_d = int(uptime_h // 24)
+        uptime_rem_h = uptime_h % 24
 
-        status_icon = {"HEALTHY": "\u2705", "DEGRADED": "\u26a0\ufe0f", "CRITICAL": "\ud83d\udea8"}.get(s.status, "\u2753")
+        status_icon = {
+            "HEALTHY": "\u2705",
+            "DEGRADED": "\u26a0\ufe0f",
+            "CRITICAL": "\U0001f6a8",
+        }.get(s.status, "\u2753")
+
+        exchange_icon = "\U0001f7e2" if s.exchange_connected else "\U0001f534"
+        exchange_str = "Connected" if s.exchange_connected else "DISCONNECTED"
+        ws_icon = "\U0001f7e2" if s.ws_connected else "\u26aa"
+        ws_str = "Connected" if s.ws_connected else "Disconnected"
+
+        if uptime_d > 0:
+            uptime_str = f"{uptime_d}d {uptime_rem_h:.1f}h"
+        else:
+            uptime_str = f"{uptime_h:.1f}h"
 
         lines = [
             f"{status_icon} <b>SYSTEM HEALTH: {s.status}</b>",
-            "",
-            f"  Uptime:      <code>{uptime_h:.1f}h</code>",
-            f"  API Latency: <code>{s.api_latency_ms:.0f}ms</code> (p99: <code>{s.api_latency_p99_ms:.0f}ms</code>)",
-            f"  Error Rate:  <code>{s.error_rate_pct:.1f}%</code> ({s.total_errors}/{s.total_api_calls})",
-            f"  Exchange:    {'connected' if s.exchange_connected else 'DISCONNECTED'}",
-            f"  WebSocket:   {'connected' if s.ws_connected else 'disconnected'}",
+            "────────────────",
+            f"- Uptime: <code>{uptime_str}</code>",
+            f"- API Latency: <code>{s.api_latency_ms:.0f}ms</code> (p99: <code>{s.api_latency_p99_ms:.0f}ms</code>)",
+            f"- Error Rate: <code>{s.error_rate_pct:.1f}%</code> ({s.total_errors}/{s.total_api_calls})",
+            f"- Exchange: {exchange_icon} {exchange_str}",
+            f"- WebSocket: {ws_icon} {ws_str}",
         ]
+        if s.last_successful_scan:
+            lines.append(f"- Last Scan: <code>{s.last_successful_scan[:19]}</code>")
         if s.last_error:
-            lines.append(f"  Last Error:  <code>{s.last_error[:60]}</code>")
+            lines.append(f"- Last Error: <code>{s.last_error[:60]}</code>")
+        lines.append("────────────────")
+        lines.append("\U0001f449 /status — engine overview")
+        lines.append("\U0001f449 /watch on — enable proactive alerts")
         return "\n".join(lines)

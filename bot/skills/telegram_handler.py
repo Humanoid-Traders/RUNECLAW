@@ -618,20 +618,22 @@ class TelegramHandler:
         record = self.users.register(tg_id, name=user_name)
 
         if not record.get("authorized", False):
+            SEP = "─" * 16
             msg = (
-                "<b>\u2694\ufe0f MULERUN WAR ROOM</b>\n"
-                "\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\n"
-                "Powered by <b>RUNECLAW Signal Engine</b>\n\n"
+                f"⚔️ <b>MULERUN WAR ROOM</b>\n"
+                f"{SEP}\n"
+                f"Powered by <b>RUNECLAW Signal Engine v4.0</b>\n\n"
                 f"Welcome, <b>{user_name}</b>.\n\n"
-                "\u2022 AI-powered crypto analysis\n"
-                "\u2022 21 fail-closed risk checks\n"
-                "\u2022 Human approval on every trade\n"
-                "\u2022 Full audit trail\n\n"
-                "\U0001f4cb <b>Registration received</b>\n"
-                f"Your Telegram ID: <code>{tg_id}</code>\n"
-                "Status: <code>pending approval</code>\n\n"
-                "An admin will review your access.\n"
-                "Use /help to see available commands.\n\n"
+                f"- AI-powered crypto analysis\n"
+                f"- 21 fail-closed risk checks\n"
+                f"- Human approval on every trade\n"
+                f"- Full audit trail\n\n"
+                f"📋 <b>Registration received</b>\n"
+                f"{SEP}\n"
+                f"- Telegram ID: <code>{tg_id}</code>\n"
+                f"- Status: <code>pending approval</code>\n\n"
+                f"An admin will review your access.\n"
+                f"Use /help to see available commands.\n\n"
                 f"<i>{now}</i>"
             )
             await self._send(update, msg)
@@ -650,24 +652,27 @@ class TelegramHandler:
         state = self.engine.portfolio.snapshot()
         cb_active = self.engine.risk.circuit_breaker_active
 
+        SEP = "─" * 16
+        status_icon = "🟢" if not cb_active else "🔴"
+        status_label = "ACTIVE" if not cb_active else "CB TRIGGERED"
+
         msg = (
-            "<b>\u2694\ufe0f MULERUN WAR ROOM</b>\n"
-            "\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\n"
-            "Powered by <b>RUNECLAW Signal Engine</b>\n\n"
-            "Signal locked. Risk checked. Claw ready.\n\n"
-            f"Status: <b>{'ACTIVE' if not cb_active else 'CB TRIGGERED'}</b> "
-            f"{'🟢' if not cb_active else '🔴'}\n"
-            f"Engine: v3.1 | Mode: {mode_str}\n"
-            f"<code>{banner}</code>\n\n"
-            f"<pre>"
-            f"  Balance    ${CONFIG.paper_balance_usd:>9,.0f}\n"
-            f"  Risk Checks          18\n"
-            f"  Open Pos   {state.open_positions:>10}\n"
-            f"  Role       {role:>10}"
-            f"</pre>\n\n"
-            f"<i>{now}  \u2022  /help for all commands</i>\n\n"
-            "<i>\u26a0\ufe0f Not financial advice. Use at your own risk.\n"
-            "\U0001f4dc AGPL-3.0 \u2022 github.com/Humanoid-Traders/RUNECLAW</i>"
+            f"⚔️ <b>MULERUN WAR ROOM</b>\n"
+            f"{SEP}\n"
+            f"Powered by <b>RUNECLAW Signal Engine v4.0</b>\n\n"
+            f"Signal locked. Risk checked. Claw ready.\n\n"
+            f"{status_icon} Status: <b>{status_label}</b>\n"
+            f"- Engine: <code>v4.0</code>\n"
+            f"- Mode: <code>{mode_str}</code>\n"
+            f"- Role: <code>{role}</code>\n\n"
+            f"📊 <b>Dashboard</b>\n"
+            f"{SEP}\n"
+            f"- Balance: <code>${CONFIG.paper_balance_usd:,.0f}</code>\n"
+            f"- Risk Checks: <code>21</code>\n"
+            f"- Open Positions: <code>{state.open_positions}</code>\n\n"
+            f"<i>{now}  •  /help for all commands</i>\n\n"
+            f"<i>⚠️ Not financial advice. Use at your own risk.\n"
+            f"📜 AGPL-3.0 • github.com/Humanoid-Traders/RUNECLAW</i>"
         )
         await self._send(update, msg, reply_markup=_KB_WARROOM)
 
@@ -679,21 +684,23 @@ class TelegramHandler:
         role = user.get("role", "pending") if user else "pending"
 
         if is_auth:
-            banner = self._banner()
+            SEP = "─" * 16
             header = (
-                "<b>\u2694\ufe0f MULERUN WAR ROOM</b>  "
-                f"[{role}]\n"
-                f"<code>{banner}</code>\n\n"
+                f"⚔️ <b>MULERUN WAR ROOM</b>  [{role}]\n"
+                f"{SEP}\n"
+                f"<i>Your AI-powered crypto trading command center</i>\n\n"
             )
         else:
+            SEP = "─" * 16
             header = (
-                "<b>\u2694\ufe0f MULERUN WAR ROOM</b>\n"
-                "<i>Status: pending approval \u2014 use /start to register</i>\n\n"
+                f"⚔️ <b>MULERUN WAR ROOM</b>\n"
+                f"{SEP}\n"
+                f"<i>Status: pending approval — use /start to register</i>\n\n"
             )
 
         sections = (
             "<pre>"
-            " WAR ROOM\n"
+            "⚔️ WAR ROOM\n"
             "  /start         Main menu\n"
             "  /status        Engine status\n"
             "  /latest_signal Latest signal\n"
@@ -703,7 +710,7 @@ class TelegramHandler:
             "  /daily_report  Daily report\n"
             "  /signals       Signal history\n"
             "\n"
-            " MARKET\n"
+            "📊 MARKET\n"
             "  /scan          Market scanner\n"
             "  /scalp         Scalp scan (5m)\n"
             "  /intraday      Intraday scan (15m)\n"
@@ -714,12 +721,12 @@ class TelegramHandler:
             "  /analyze BTC   AI analysis\n"
             "  /run           Strategy preset\n"
             "\n"
-            " PORTFOLIO\n"
+            "💼 PORTFOLIO\n"
             "  /portfolio     Holdings + PnL\n"
             "  /trade         Pending trades\n"
             "  /journal       Trade history\n"
             "\n"
-            " RISK CONTROL\n"
+            "🛡 RISK CONTROL\n"
             "  /risk          Risk dashboard\n"
             "  /rejected      Rejected trades\n"
             "  /whynot [SYM]  Why was it rejected\n"
@@ -729,13 +736,13 @@ class TelegramHandler:
             "  /halt          Circuit breaker\n"
             "  /reset         Reset breaker\n"
             "\n"
-            " INTELLIGENCE\n"
+            "🔍 INTELLIGENCE\n"
             "  /dashboard     Command center\n"
             "  /macro         Macro calendar\n"
             "  /backtest      Synthetic test\n"
             "  /walkforward   Walk-forward\n"
             "\n"
-            " AI SYSTEM\n"
+            "🤖 AI SYSTEM\n"
             "  /learn         Learning stats\n"
             "  /patterns      Detected patt.\n"
             "  /proposals     Improvements\n"
@@ -743,13 +750,13 @@ class TelegramHandler:
             "  /costs         Agent economics\n"
             "  /watch on|off  Proactive alerts\n"
             "\n"
-            " LLM BYOK\n"
+            "🔑 LLM BYOK\n"
             "  /setllm        Switch provider\n"
             "  /llmstatus     Current LLM\n"
             "  /llmtiers      Tier routing\n"
             "  /llmreset      Reset to .env\n"
             "\n"
-            " LIVE TRADING\n"
+            "🔥 LIVE TRADING\n"
             "  /golive        Enable live mode\n"
             "  /buy BTC 5     Buy $5 of BTC\n"
             "  /sell BTC      Sell all BTC\n"
@@ -758,8 +765,8 @@ class TelegramHandler:
             "  /liveclose ID  Close position\n"
             "  /health        System health\n"
             "\n"
-            " ACCOUNT\n"
-            "  /link <token>  Link Telegram\n"
+            "👤 ACCOUNT\n"
+            "  /link &lt;token&gt;  Link Telegram\n"
             "  /unlink        Unlink account\n"
             "  /me            Account info\n"
         )
@@ -767,7 +774,7 @@ class TelegramHandler:
         if role == "admin":
             sections += (
                 "\n"
-                " ADMIN\n"
+                "🔒 ADMIN\n"
                 "  /approve ID   Authorize user\n"
                 "  /revoke ID    Revoke access\n"
                 "  /users        List all users\n"
@@ -775,10 +782,10 @@ class TelegramHandler:
 
         sections += "</pre>\n\n"
         sections += (
-            "\U0001f4ac <i>You can also type naturally:\n"
+            "💬 <i>You can also type naturally:\n"
             "\"how's BTC?\", \"what's moving?\", \"check my portfolio\"</i>\n\n"
-            "<i>\u26a0\ufe0f Not financial advice. Use at your own risk.\n"
-            "\U0001f4dc AGPL-3.0 \u2022 github.com/Humanoid-Traders/RUNECLAW</i>"
+            "<i>⚠️ Not financial advice. Use at your own risk.\n"
+            "📜 AGPL-3.0 • github.com/Humanoid-Traders/RUNECLAW</i>"
         )
         await self._send(update, header + sections)
 
@@ -818,19 +825,23 @@ class TelegramHandler:
         if ok:
             target = self.users.get(target_id)
             name = target.get("name", "Unknown") if target else "Unknown"
+            SEP = "─" * 16
             await self._send(update,
-                f"\U0001f7e2 <b>User approved</b>\n\n"
-                f"ID: <code>{target_id}</code>\n"
-                f"Name: {html.escape(name)}\n"
-                f"Role: <code>{role}</code>")
+                f"✅ <b>USER APPROVED</b>\n"
+                f"{SEP}\n"
+                f"- Name: <b>{html.escape(name)}</b>\n"
+                f"- ID: <code>{target_id}</code>\n"
+                f"- Role: <code>{role}</code>\n"
+                f"- Status: 🟢 authorized")
             # Notify the approved user
             try:
                 await ctx.bot.send_message(
                     chat_id=int(target_id),
                     text=(
-                        f"\U0001f7e2 <b>Access granted</b>\n\n"
+                        f"🟢 <b>Access Granted</b>\n"
+                        f"{SEP}\n"
                         f"Your RUNECLAW account has been approved.\n"
-                        f"Role: <code>{role}</code>\n\n"
+                        f"- Role: <code>{role}</code>\n\n"
                         f"Use /start to begin trading."
                     ),
                     parse_mode="HTML")
@@ -838,7 +849,7 @@ class TelegramHandler:
                 pass  # User may not have started the bot yet
         else:
             await self._send(update,
-                f"\U0001f534 Failed to approve <code>{html.escape(target_id)}</code>")
+                f"🔴 Failed to approve <code>{html.escape(target_id)}</code>")
 
     async def _cmd_revoke(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """Admin only: /revoke <telegram_id>"""
@@ -861,13 +872,15 @@ class TelegramHandler:
 
         ok = self.users.revoke(target_id)
         if ok:
+            SEP = "─" * 16
             await self._send(update,
-                f"\U0001f7e1 <b>Access revoked</b>\n\n"
-                f"ID: <code>{target_id}</code>\n"
-                f"Status: <code>pending</code>")
+                f"⚠️ <b>ACCESS REVOKED</b>\n"
+                f"{SEP}\n"
+                f"- ID: <code>{target_id}</code>\n"
+                f"- Status: 🔴 <code>pending</code>")
         else:
             await self._send(update,
-                f"\U0001f534 User <code>{html.escape(target_id)}</code> not found")
+                f"🔴 User <code>{html.escape(target_id)}</code> not found")
 
     async def _cmd_users(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """Admin only: list all registered users."""
@@ -881,19 +894,23 @@ class TelegramHandler:
             return
 
         counts = self.users.count()
+        SEP = "─" * 16
         lines = [
-            f"\U0001f465 <b>USERS</b>  ({len(all_users)} total)\n",
-            "<pre>",
+            f"👥 <b>REGISTERED USERS</b>  ({len(all_users)} total)\n"
+            f"{SEP}\n",
         ]
 
-        # Summary
+        # Summary with role icons
+        role_icons = {"admin": "🔒", "trader": "⚔️", "viewer": "👁", "pending": "⏳"}
         for role in ("admin", "trader", "viewer", "pending"):
             c = counts.get(role, 0)
             if c > 0:
-                lines.append(f"  {role:<10} {c:>3}")
+                icon = role_icons.get(role, "")
+                lines.append(f"- {icon} {role}: <code>{c}</code>")
         lines.append("")
 
         # User list
+        lines.append("<pre>")
         lines.append(f" {'ID':<12}{'NAME':<14}{'ROLE':<10}")
         lines.append(f" {'─'*12}{'─'*14}{'─'*10}")
 
@@ -901,7 +918,7 @@ class TelegramHandler:
             tid = u["telegram_id"][-8:]  # Last 8 digits
             name = (u.get("name") or "?")[:12]
             role = u.get("role", "?")
-            auth = "\u2713" if u.get("authorized") else "\u2717"
+            auth = "✓" if u.get("authorized") else "✗"
             lines.append(f" {tid:<12}{name:<14}{auth} {role}")
 
         lines.append("</pre>")
@@ -1060,16 +1077,18 @@ class TelegramHandler:
             pnl_icon = "\u26aa" if realized_pnl == 0 else ("\U0001f7e2" if realized_pnl > 0 else "\U0001f534")
 
             # Header
+            SEP = "─" * 16
             lines = [
-                f"\U0001f4b0 <b>BITGET PORTFOLIO</b> \u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501",
-                f"   {pnl_icon}\u25c7  ${pnl_sign}{realized_pnl:.2f} ",
+                f"💰 <b>BITGET PORTFOLIO</b>",
+                f"{SEP}",
+                f"   {pnl_icon}  Realized PnL: <code>${pnl_sign}{realized_pnl:.2f}</code>",
                 "",
-                "\U0001f4b3 <b>Balance</b>",
-                "",
-                f"  Cash \u00b7\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7 ${free:,.2f}",
-                f"  Used \u00b7\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7 ${used:,.2f}",
-                f"  Equity \u00b7\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7 ${total_usd:,.2f}",
-                f"  Exposure \u00b7\u00b7\u00b7\u00b7\u00b7\u00b7 ${exposure:,.2f}",
+                "💳 <b>Balance</b>",
+                f"{SEP}",
+                f"- Cash: <code>${free:,.2f}</code>",
+                f"- Used: <code>${used:,.2f}</code>",
+                f"- Equity: <code>${total_usd:,.2f}</code>",
+                f"- Exposure: <code>${exposure:,.2f}</code>",
             ]
 
             # Spot holdings section
@@ -1078,28 +1097,28 @@ class TelegramHandler:
 
             if real_holdings:
                 lines.append("")
-                lines.append("\U0001f4e6 <b>Spot Holdings</b>")
-                lines.append("")
+                lines.append("📦 <b>Spot Holdings</b>")
+                lines.append(SEP)
                 for s in sorted(real_holdings, key=lambda x: -x["usd"]):
                     pct = (s["usd"] / total_usd * 100) if total_usd > 0 else 0
                     bar = _bar(pct / 100, 1.0, 8)
                     lines.append(
-                        f"  \u25b8 <b>{s['asset']}</b>  "
+                        f"- <b>{s['asset']}</b>  "
                         f"<code>{s['qty']:.8g}</code>  "
-                        f"${s['usd']:.2f}  "
+                        f"<code>${s['usd']:.2f}</code>  "
                         f"{bar} {pct:.0f}%"
                     )
                 if dust_holdings:
-                    lines.append(f"  \u25b8 <i>+{len(dust_holdings)} dust</i>")
+                    lines.append(f"- <i>+{len(dust_holdings)} dust</i>")
 
             # PnL waterfall
             lines.append("")
-            lines.append("\U0001f4c8 <b>PnL Waterfall</b>")
-            lines.append("")
-            lines.append(f"  \u25b8 Realized      ${pnl_sign}{realized_pnl:.4f}")
-            lines.append(f"  \u25b8 Exposure      ${exposure:,.2f}")
-            lines.append(f"  \u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501")
-            lines.append(f"  \u25b6 <b>NET         ${total_usd:,.2f}</b>")
+            lines.append("📈 <b>PnL Waterfall</b>")
+            lines.append(SEP)
+            lines.append(f"- Realized: <code>${pnl_sign}{realized_pnl:.4f}</code>")
+            lines.append(f"- Exposure: <code>${exposure:,.2f}</code>")
+            lines.append(SEP)
+            lines.append(f"- <b>NET: <code>${total_usd:,.2f}</code></b>")
 
             # Footer
             n_trades = len(closed_pos)
@@ -1107,7 +1126,7 @@ class TelegramHandler:
             trade_word = "trade" if n_trades == 1 else "trades"
             pos_word = f"{n_open} open" if n_open > 0 else "no open positions"
             lines.append("")
-            lines.append(f"\u25c7 {n_trades} {trade_word} \u2022 {pos_word}")
+            lines.append(f"<i>{n_trades} {trade_word} • {pos_word}</i>")
 
             await self._send(update, "\n".join(lines))
         except Exception as exc:
@@ -1120,15 +1139,19 @@ class TelegramHandler:
         positions = self.engine.live_executor._positions
         open_pos = [p for p in positions.values() if p.status == "open"]
         if not open_pos:
-            await self._send(update, "\U0001f4ad No live positions open.")
+            await self._send(update, "💭 No live positions open.")
             return
-        lines = ["\U0001f4ca <b>LIVE POSITIONS</b>\n"]
+        SEP = "─" * 16
+        lines = [f"📊 <b>LIVE POSITIONS</b>\n{SEP}\n"]
         for p in open_pos:
+            dir_icon = "🟢" if p.direction == "LONG" else "🔴"
             lines.append(
-                f"\u2022 <b>{p.direction} {p.symbol}</b>\n"
-                f"  Entry: ${p.entry_price:,.4f} | Qty: {p.quantity:.6f}\n"
-                f"  SL: ${p.stop_loss:,.4f} | TP: ${p.take_profit:,.4f}\n"
-                f"  ID: <code>{p.trade_id}</code>"
+                f"{dir_icon} <b>{p.direction} {p.symbol}</b>\n"
+                f"- Entry: <code>${p.entry_price:,.4f}</code>\n"
+                f"- Qty: <code>{p.quantity:.6f}</code>\n"
+                f"- SL: <code>${p.stop_loss:,.4f}</code>\n"
+                f"- TP: <code>${p.take_profit:,.4f}</code>\n"
+                f"- ID: <code>{p.trade_id}</code>\n"
             )
         await self._send(update, "\n".join(lines))
 
@@ -1197,16 +1220,18 @@ class TelegramHandler:
             return
 
         # Success
+        SEP = "─" * 16
         bar = _bar(amount_usd / 10.0, 1.0, 10)  # 10 = micro limit
         await self._send(update,
-            f"\u2705 <b>SPOT BUY FILLED</b>\n\n"
-            f"\U0001f4b0 <b>{symbol}</b>\n"
-            f"  Qty:   <code>{result['qty']:.8f}</code>\n"
-            f"  Price: <code>${result['price']:,.4f}</code>\n"
-            f"  Cost:  <code>${result['cost']:.2f}</code>\n"
-            f"  Order: <code>{result['order_id']}</code>\n\n"
-            f"  Budget {bar} ${amount_usd:.0f}/$10\n\n"
-            f"\U0001f4a1 Sell with: <code>/sell {asset}</code>")
+            f"✅ <b>SPOT BUY FILLED</b>\n"
+            f"{SEP}\n"
+            f"🟢 <b>{symbol}</b>\n\n"
+            f"- Qty: <code>{result['qty']:.8f}</code>\n"
+            f"- Price: <code>${result['price']:,.4f}</code>\n"
+            f"- Cost: <code>${result['cost']:.2f}</code>\n"
+            f"- Order: <code>{result['order_id']}</code>\n\n"
+            f"Budget: {bar} <code>${amount_usd:.0f}/$10</code>\n\n"
+            f"💡 Sell with: <code>/sell {asset}</code>")
 
     async def _cmd_sell(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """/sell BTC [qty] — sell spot asset on Bitget."""
@@ -1255,13 +1280,15 @@ class TelegramHandler:
                 f"<code>{result['error']}</code>")
             return
 
+        SEP = "─" * 16
         await self._send(update,
-            f"\u2705 <b>SPOT SELL FILLED</b>\n\n"
-            f"\U0001f4b8 <b>{symbol}</b>\n"
-            f"  Qty:      <code>{result['qty']:.8f}</code>\n"
-            f"  Price:    <code>${result['price']:,.4f}</code>\n"
-            f"  Proceeds: <code>${result['proceeds']:.2f}</code>\n"
-            f"  Order:    <code>{result['order_id']}</code>")
+            f"✅ <b>SPOT SELL FILLED</b>\n"
+            f"{SEP}\n"
+            f"🔴 <b>{symbol}</b>\n\n"
+            f"- Qty: <code>{result['qty']:.8f}</code>\n"
+            f"- Price: <code>${result['price']:,.4f}</code>\n"
+            f"- Proceeds: <code>${result['proceeds']:.2f}</code>\n"
+            f"- Order: <code>{result['order_id']}</code>")
 
     # ── Proactive Alerts (Move 2) ──────────────────────────────
 
@@ -1350,8 +1377,10 @@ class TelegramHandler:
         args = ctx.args or []
         if not args:
             providers = ", ".join(p.value for p in LLMProvider if p != LLMProvider.CUSTOM)
+            SEP = "─" * 16
             await self._send(update,
-                "\U0001f916 <b>BYOK — Bring Your Own Key</b>\n\n"
+                f"🤖 <b>BYOK — Bring Your Own Key</b>\n"
+                f"{SEP}\n\n"
                 "<pre>"
                 " /setllm &lt;provider&gt; &lt;api_key&gt;\n"
                 " /setllm groq gsk_your_key\n"
@@ -1360,7 +1389,7 @@ class TelegramHandler:
                 " /setllm openai sk-key gpt-4o-mini\n"
                 "</pre>\n\n"
                 f"<b>Providers:</b> <code>{providers}</code>\n\n"
-                "<i>Keys are stored in memory only — never saved to disk or logs.</i>")
+                "<i>🔑 Keys are stored in memory only — never saved to disk or logs.</i>")
             return
 
         provider_str = args[0].lower()
@@ -1375,7 +1404,17 @@ class TelegramHandler:
             audit(system_log, f"LLM provider switched to {provider_str}",
                   action="setllm", result="OK",
                   data={"provider": provider_str, "model": model or "default"})
-        await self._send(update, html.escape(msg))
+            SEP = "─" * 16
+            await self._send(update,
+                f"✅ <b>LLM PROVIDER UPDATED</b>\n"
+                f"{SEP}\n"
+                f"- Provider: <code>{html.escape(provider_str)}</code>\n"
+                f"- Model: <code>{html.escape(model or 'default')}</code>\n"
+                f"- Status: 🟢 active")
+        else:
+            await self._send(update,
+                f"🔴 <b>LLM UPDATE FAILED</b>\n\n"
+                f"{html.escape(msg)}")
 
     async def _cmd_llmstatus(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """/llmstatus — show current LLM provider and key fingerprint."""
@@ -1389,7 +1428,11 @@ class TelegramHandler:
             base_url=CONFIG.llm.base_url,
         )
         status = BYOK.status(env_config)
-        await self._send(update, f"<pre>{html.escape(status)}</pre>")
+        SEP = "─" * 16
+        await self._send(update,
+            f"🤖 <b>LLM STATUS</b>\n"
+            f"{SEP}\n"
+            f"<pre>{html.escape(status)}</pre>")
 
     async def _cmd_llmreset(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """/llmreset — clear runtime LLM key, revert to .env settings."""
@@ -1401,7 +1444,12 @@ class TelegramHandler:
         if hasattr(self.engine, 'analyzer') and hasattr(self.engine.analyzer, 'refresh_llm_client'):
             self.engine.analyzer.refresh_llm_client()
         audit(system_log, "LLM config reset to .env", action="llmreset", result="OK")
-        await self._send(update, html.escape(msg))
+        SEP = "─" * 16
+        await self._send(update,
+            f"🔄 <b>LLM CONFIG RESET</b>\n"
+            f"{SEP}\n"
+            f"- {html.escape(msg)}\n"
+            f"- Status: 🟢 using .env defaults")
 
     async def _cmd_llmtiers(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """/llmtiers — show multi-tier LLM routing configuration."""
@@ -1416,18 +1464,20 @@ class TelegramHandler:
         )
         active_cfg = BYOK.get_active_config(env_config)
 
-        lines = ["\U0001f3af <b>Multi-Tier LLM Routing</b>\n"]
+        SEP = "─" * 16
+        lines = [f"🎯 <b>Multi-Tier LLM Routing</b>\n{SEP}\n"]
         for tier in LLMTier:
             tier_cfg = resolve_tier_config(tier, active_cfg)
             provider_name = tier_cfg.provider.value if isinstance(tier_cfg.provider, LLMProvider) else str(tier_cfg.provider)
             default_route = DEFAULT_TIER_ROUTING.get(tier, {})
             is_custom = tier_cfg != active_cfg
             source = "tier-routed" if is_custom else "primary"
-            configured = "\u2705" if tier_cfg.is_configured() else "\u274c"
+            configured = "✅" if tier_cfg.is_configured() else "❌"
             lines.append(
-                f"{configured} <b>{tier.value.upper()}</b>: "
-                f"<code>{provider_name}</code> / <code>{tier_cfg.model}</code>\n"
-                f"   Source: {source} | {default_route.get('reason', 'default')}"
+                f"{configured} <b>{tier.value.upper()}</b>\n"
+                f"- Provider: <code>{provider_name}</code>\n"
+                f"- Model: <code>{tier_cfg.model}</code>\n"
+                f"- Source: {source} | {default_route.get('reason', 'default')}\n"
             )
 
         lines.append(
