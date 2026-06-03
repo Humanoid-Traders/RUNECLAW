@@ -728,5 +728,12 @@ renderSymGrid();renderSignals();renderPortfolio();
 tickClock();setInterval(tickClock,1000);
 setInterval(()=>{if(positions.length){renderPortfolio();}},5000);
 </script>
+<script>
+// Set API URL for the connector — override with your VPS IP/domain
+window.RUNECLAW_API = window.location.hostname === 'localhost'
+  ? 'http://localhost:8000'
+  : 'http://47.82.176.60:8000';
+</script>
+<script src="dashboard-connector.js"></script>
 </body>
 </html>
