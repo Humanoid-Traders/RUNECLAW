@@ -1712,7 +1712,7 @@ class PlaybookSkill(BaseSkill):
         lines.append("</pre>")
 
         # LLM status
-        llm_provider = CONFIG.llm.provider.value if CONFIG.llm and CONFIG.llm.provider else "groq"
+        llm_provider = CONFIG.llm.provider if CONFIG.llm and CONFIG.llm.provider else "groq"
         lines.append(f"  🤖 LLM: <b>{_esc(llm_provider.upper())}</b> + cascading fallback")
         lines.append("")
 
@@ -1749,20 +1749,18 @@ class PlaybookSkill(BaseSkill):
         if positions:
             lines.append(_header("📊", "ACTIVE POSITIONS"))
             for pid, pos in list(positions.items())[:5]:
-                d_icon = _OK if pos.direction == "LONG" else _BAD
-                d_arrow = "▲" if pos.direction == "LONG" else "▼"
-                pnl = (pos.current_price - pos.entry_price) / pos.entry_price * 100 if pos.entry_price else 0
-                if pos.direction == "SHORT":
-                    pnl = -pnl
-                pnl_icon = _OK if pnl > 0 else _BAD if pnl < 0 else _NEU
+                d_val = pos.direction.value if hasattr(pos.direction, 'value') else str(pos.direction)
+                d_icon = _OK if d_val == "LONG" else _BAD
+                d_arrow = "▲" if d_val == "LONG" else "▼"
+                notional = pos.entry_price * pos.quantity
                 lines.append(
-                    f"  {d_icon}{d_arrow} <b>{_esc(pos.symbol)}</b>  "
-                    f"{pnl_icon} {pnl:+.2f}%"
+                    f"  {d_icon}{d_arrow} <b>{_esc(pos.asset)}</b>"
                 )
                 lines.append(f"<pre>")
                 lines.append(_kv("Entry", f"${pos.entry_price:,.2f}"))
-                lines.append(_kv("Current", f"${pos.current_price:,.2f}"))
-                lines.append(_kv("Size", _money(pos.notional_usd)))
+                lines.append(_kv("Size", _money(notional)))
+                lines.append(_kv("SL", f"${pos.stop_loss:,.2f}"))
+                lines.append(_kv("TP", f"${pos.take_profit:,.2f}"))
                 lines.append(f"</pre>")
         else:
             lines.append(_header("📊", "ACTIVE POSITIONS"))
