@@ -32,6 +32,7 @@ from bot.core.engine import RuneClawEngine
 from bot.core.signal_tracker import SignalTracker
 from bot.llm.provider import BYOK, LLMConfig, LLMProvider, LLMTier, PROVIDER_CATALOG, DEFAULT_TIER_ROUTING, create_llm_client, llm_complete, resolve_tier_config
 from bot.skills.skill_registry import SkillRegistry, build_default_registry
+from bot.skills.scan_skill import cmd_scan as _scan_skill_handler, callback_confirm_reject as _scan_callback
 from bot.utils.logger import audit, system_log
 from bot.utils.user_store import UserStore
 from bot.nlp.intent_router import IntentRouter
@@ -170,6 +171,7 @@ class TelegramHandler:
             ("health", self._cmd_health),
             # Deep scan & playbook
             ("playbook", self._cmd_playbook), ("deepscan", self._cmd_deepscan),
+            ("fullscan", self._cmd_fullscan),
         ]:
             app.add_handler(CommandHandler(cmd, handler))
         app.add_handler(CallbackQueryHandler(self._handle_callback))
@@ -691,6 +693,7 @@ class TelegramHandler:
             "  /intraday      Intraday scan (15m)\n"
             "  /swing         Swing scan (4h)\n"
             "  /deepscan      Deep scan 67+ symbols\n"
+            "  /fullscan      Full scan w/ patterns\n"
             "  /playbook      System playbook\n"
             "  /analyze BTC   AI analysis\n"
             "  /run           Strategy preset\n"
@@ -1687,6 +1690,12 @@ class TelegramHandler:
             system_log.error(f"Deepscan error: {exc}")
             await self._send(update, f"🔴 <b>Deepscan error:</b> <code>{html.escape(str(exc)[:200])}</code>")
 
+    async def _cmd_fullscan(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """Full 67-symbol scan via scan_skill module. /fullscan [deep|deepall|swing|scalp|SYMBOL]"""
+        if not await self._guard(update, "scan"):
+            return
+        await _scan_skill_handler(update, ctx)
+
     async def _cmd_learn(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._guard(update, "learn"):
             return
@@ -2102,6 +2111,11 @@ class TelegramHandler:
                         text, parse_mode="HTML", reply_markup=_KB_DASH)
                 except Exception:
                     pass
+            return
+
+        # ── Scan skill callbacks (scan_confirm: / scan_reject:) ──
+        if data.startswith("scan_confirm:") or data.startswith("scan_reject:"):
+            await _scan_callback(update, ctx)
             return
 
         # ── Trade confirm/reject ─────────────────────────────

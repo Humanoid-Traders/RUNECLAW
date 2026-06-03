@@ -1,26 +1,41 @@
 # =============================================================================
-# RUNECLAW Dockerfile
+# RUNECLAW v2 Dockerfile — Multi-stage build (bot + API bridge)
 # =============================================================================
-FROM python:3.11-slim
+
+# ── Stage 1: base (shared deps) ─────────────────────────────────────────
+FROM python:3.11-slim AS base
 
 WORKDIR /app
 
-# Install Python dependencies first (layer caching)
-COPY bot/requirements.txt /app/bot/requirements.txt
-RUN pip install --no-cache-dir -r bot/requirements.txt
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc libssl-dev curl \
+    && rm -rf /var/lib/apt/lists/*
 
-# Copy application code
-COPY bot/ /app/bot/
-COPY tests/ /app/tests/
+COPY bot/requirements.txt ./requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt \
+    fastapi>=0.110 "uvicorn[standard]>=0.29"
 
-# Copy optional scripts (may not exist in all builds)
-COPY backtest_audit.p[y] /app/
+# ── Stage 2: production image ───────────────────────────────────────────
+FROM base AS production
 
-# Create logs and data directories
+ARG BUILD_SHA=dev
+ARG BUILD_DATE=unknown
+LABEL org.opencontainers.image.revision="${BUILD_SHA}"
+LABEL org.opencontainers.image.created="${BUILD_DATE}"
+LABEL maintainer="Humanoid Traders"
+
+WORKDIR /app
+
+COPY . .
+
 RUN mkdir -p /app/logs /app/data
 
-# Non-root user for security
-RUN useradd --create-home appuser && chown -R appuser:appuser /app
-USER appuser
+# Non-root user (security hardening)
+RUN useradd -m -u 1001 runeclaw && chown -R runeclaw:runeclaw /app
+USER runeclaw
 
-CMD ["python", "-m", "bot.main", "--mode", "telegram"]
+HEALTHCHECK --interval=15s --timeout=5s --retries=4 \
+    CMD curl -sf http://localhost:8000/health || exit 1
+
+# Default: API bridge — override with CMD in compose for the bot service
+CMD ["uvicorn", "api_bridge:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]

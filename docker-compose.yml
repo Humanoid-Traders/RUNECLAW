@@ -1,5 +1,5 @@
 # =============================================================================
-# RUNECLAW Docker Compose
+# RUNECLAW v2 Docker Compose — Bot + API Bridge + Redis
 # =============================================================================
 
 services:
@@ -7,22 +7,21 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      target: production
     container_name: runeclaw-bot
+    image: runeclaw:latest
     restart: unless-stopped
     env_file:
       - .env
     volumes:
       - ./logs:/app/logs
       - ./data:/app/data
-    command: python -m bot.main --mode telegram
-    healthcheck:
-      test: ["CMD", "python", "-c", "import socket; s=socket.socket(); s.settimeout(2); s.connect(('localhost', 8080)); s.close()"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
+    command: ["python", "-m", "bot.main", "--mode", "telegram"]
     depends_on:
-      - redis
+      api_bridge:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     deploy:
       resources:
         limits:
@@ -31,15 +30,45 @@ services:
         reservations:
           cpus: '0.5'
           memory: '512M'
+    networks:
+      - runeclaw_net
+
+  api_bridge:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    container_name: runeclaw-api
+    image: runeclaw:latest
+    command: ["uvicorn", "api_bridge:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+    volumes:
+      - ./logs:/app/logs
+      - ./data:/app/data
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: '2G'
+        reservations:
+          cpus: '0.5'
+          memory: '512M'
+    networks:
+      - runeclaw_net
 
   redis:
     image: redis:7-alpine
     container_name: runeclaw-redis
     restart: unless-stopped
-    # F-04 FIX: Do NOT expose Redis on host network. Bot connects via
-    # internal docker network name "redis". Password required.
-    # ports:
-    #   - "6379:6379"
     volumes:
       - redis-data:/data
     command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}
@@ -56,6 +85,12 @@ services:
         reservations:
           cpus: '0.25'
           memory: '64M'
+    networks:
+      - runeclaw_net
 
 volumes:
   redis-data:
+
+networks:
+  runeclaw_net:
+    driver: bridge
