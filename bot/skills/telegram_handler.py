@@ -39,6 +39,17 @@ from bot.utils.user_store import UserStore
 from bot.nlp.intent_router import IntentRouter
 from bot.nlp.conversation_store import ConversationStore
 from bot.core.proactive_monitor import ProactiveMonitor
+from bot.formatters.rich_cards import (
+    fetch_analysis_data,
+    render_analysis_card,
+    render_multi_analysis,
+    render_comparison_table,
+    render_recommended_orders,
+    render_pending_orders,
+    render_pnl_report,
+    render_open_positions,
+    render_status_card,
+)
 from bot.warroom.warroom_bot import (
     render_start as wr_start,
     render_status as wr_status,
@@ -1497,25 +1508,61 @@ class TelegramHandler:
                 "\u23f3 <b>No pending trades</b>\n\n"
                 "<i>Use /scan or /analyze to generate ideas</i>")
             return
+
+        # Fetch rich market data for all pending ideas
+        await self._send(update, "\u2694\ufe0f <i>Fetching live analysis...</i>")
+        try:
+            exchange = await self.engine.get_exchange()
+        except Exception:
+            exchange = None
+
+        assets_data = []
         for idea in pending:
-            d = "\U0001f7e2" if idea.direction.value == "LONG" else "\U0001f534"
+            if exchange:
+                data = await fetch_analysis_data(exchange, idea.asset, timeframe="1h")
+                if data:
+                    assets_data.append(data)
+
+        # If we have rich data for multiple ideas, render multi-analysis
+        if len(assets_data) >= 2 and len(pending) >= 2:
+            msg = render_multi_analysis(assets_data, list(pending))
             uid = update.effective_user.id if update.effective_user else ""
-            kb = InlineKeyboardMarkup([[
-                InlineKeyboardButton("\u2705 APPROVE", callback_data=f"confirm:{idea.id}:{uid}"),
-                InlineKeyboardButton("\u274c PASS", callback_data=f"reject:{idea.id}:{uid}"),
-            ]])
-            msg = (
-                f"{d} <b>{idea.direction.value}  {html.escape(idea.asset)}</b>\n\n"
-                f"<pre>"
-                f"  Entry  ${idea.entry_price:>10,.2f}\n"
-                f"  SL     ${idea.stop_loss:>10,.2f}\n"
-                f"  TP     ${idea.take_profit:>10,.2f}"
-                f"</pre>\n\n"
-                f"  Conf <code>{idea.confidence:.0%}</code>  \u2502  "
-                f"R:R <code>{idea.risk_reward_ratio}</code>\n\n"
-                f"<i>{html.escape(idea.reasoning[:200])}</i>"
-            )
+            buttons = []
+            for idea in pending:
+                pair = idea.asset.replace("/USDT", "")
+                buttons.append([
+                    InlineKeyboardButton(f"\u2705 {pair}", callback_data=f"confirm:{idea.id}:{uid}"),
+                    InlineKeyboardButton(f"\u274c PASS", callback_data=f"reject:{idea.id}:{uid}"),
+                ])
+            kb = InlineKeyboardMarkup(buttons)
             await self._send(update, msg, reply_markup=kb)
+        else:
+            # Single idea or fallback — render per idea
+            for i, idea in enumerate(pending):
+                uid = update.effective_user.id if update.effective_user else ""
+                kb = InlineKeyboardMarkup([[
+                    InlineKeyboardButton("\u2705 APPROVE", callback_data=f"confirm:{idea.id}:{uid}"),
+                    InlineKeyboardButton("\u274c PASS", callback_data=f"reject:{idea.id}:{uid}"),
+                ]])
+                if i < len(assets_data) and assets_data:
+                    # Rich analysis card
+                    card = render_analysis_card(assets_data[i], idea)
+                    await self._send(update, card, reply_markup=kb)
+                else:
+                    # Fallback: minimal format
+                    d = "\U0001f7e2" if idea.direction.value == "LONG" else "\U0001f534"
+                    msg = (
+                        f"{d} <b>{idea.direction.value}  {html.escape(idea.asset)}</b>\n\n"
+                        f"<pre>"
+                        f"  Entry  ${idea.entry_price:>10,.2f}\n"
+                        f"  SL     ${idea.stop_loss:>10,.2f}\n"
+                        f"  TP     ${idea.take_profit:>10,.2f}"
+                        f"</pre>\n\n"
+                        f"  Conf <code>{idea.confidence:.0%}</code>  \u2502  "
+                        f"R:R <code>{idea.risk_reward_ratio}</code>\n\n"
+                        f"<i>{html.escape(idea.reasoning[:200])}</i>"
+                    )
+                    await self._send(update, msg, reply_markup=kb)
 
     async def _cmd_risk(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._guard(update, "risk"):
@@ -1543,19 +1590,22 @@ class TelegramHandler:
         cb = self.engine.risk.circuit_breaker_active
         macro = self.engine.macro_calendar.evaluate()
         mode = "PAPER" if CONFIG.simulation_mode else "LIVE"
-        # Build War Room status card
-        data = {
-            "active": not cb,
-            "mode": mode,
-            "exchange": "Bitget",
-            "open_trades": state.open_positions,
-            "daily_pnl": round(state.max_drawdown_pct * -1, 2) if state.max_drawdown_pct else 0.0,
-            "risk_used": round(state.max_drawdown_pct, 2) if state.max_drawdown_pct else 0.0,
-            "market_bias": macro.state.value.replace("_", " ").title(),
-            "last_signal": "Use /scan",
-        }
-        rendered = wr_status(data)
-        await self._send(update, rendered["text"], reply_markup=_KB_WARROOM)
+        equity = state.equity if hasattr(state, "equity") else state.balance if hasattr(state, "balance") else 10_000.0
+        daily_pnl = round(state.max_drawdown_pct * -1, 2) if state.max_drawdown_pct else 0.0
+        drawdown = round(state.max_drawdown_pct, 2) if state.max_drawdown_pct else 0.0
+
+        msg = render_status_card(
+            mode=mode,
+            active=not cb,
+            equity=equity,
+            open_positions=state.open_positions,
+            daily_pnl=daily_pnl,
+            drawdown=drawdown,
+            max_drawdown=CONFIG.risk.max_daily_loss_pct,
+            market_bias=macro.state.value.replace("_", " ").title(),
+            pending_ideas=len(self.engine.pending_ideas) if hasattr(self.engine, "pending_ideas") else 0,
+        )
+        await self._send(update, msg, reply_markup=_KB_WARROOM)
 
     async def _cmd_rejected(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._guard(update, "rejected"):
@@ -1794,10 +1844,9 @@ class TelegramHandler:
         await self._send(update, rendered["text"], reply_markup=kb)
 
     async def _cmd_open_positions(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-        """Show open positions in War Room format."""
+        """Show open positions in rich format."""
         if not await self._guard(update, "portfolio"):
             return
-        state = self.engine.portfolio.snapshot()
         positions_data = []
         # Pull from portfolio's internal position data
         with self.engine.portfolio._lock:
@@ -1810,28 +1859,24 @@ class TelegramHandler:
                 positions_data.append({
                     "pair": pos.asset.replace("/", ""),
                     "direction": pos.direction.value,
-                    "entry": round(pos.entry_price, 2),
-                    "current": round(last_price, 2),
-                    "pnl": round(pnl_pct, 2),
-                    "sl": round(pos.stop_loss, 2),
-                    "tp1": round(pos.take_profit, 2),
+                    "entry": round(pos.entry_price, 6),
+                    "current": round(last_price, 6),
+                    "pnl_pct": round(pnl_pct, 2),
+                    "sl": round(pos.stop_loss, 6),
+                    "tp": round(pos.take_profit, 6),
+                    "size_usd": round(getattr(pos, "size_usd", 0), 2),
                 })
-        if not positions_data:
-            await self._send(update,
-                "<b>\U0001f4c8 OPEN POSITIONS (0)</b>\n"
-                "\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\n\n"
-                "No open positions.\n"
-                "Use /scan or /analyze to find signals.")
-            return
-        rendered = wr_positions(positions_data)
-        # Build keyboard with actual trade controls
+
+        msg = render_open_positions(positions_data)
+
+        # Build keyboard with close buttons
         kb_rows = []
         for pos in positions_data:
             kb_rows.append([
                 InlineKeyboardButton(f"\U0001f4cb {pos['pair']}", callback_data=f"pos_details_{pos['pair']}"),
                 InlineKeyboardButton(f"\u274c Close", callback_data=f"pos_close_{pos['pair']}"),
             ])
-        await self._send(update, rendered["text"],
+        await self._send(update, msg,
                          reply_markup=InlineKeyboardMarkup(kb_rows) if kb_rows else None)
 
     async def _cmd_performance(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -2167,8 +2212,12 @@ class TelegramHandler:
                       action="callback_idor_block", result="DENIED")
                 return
             result = await self.engine.confirm_trade(trade_id)
+            # Rich confirmation message
+            is_success = "Executed" in result or "executed" in result
+            icon = "\u2705" if is_success else "\u26a0\ufe0f"
             await self._send(update,
-                f"\u2705 <b>TRADE APPROVED</b>\n\n{result}", edit=True)
+                f"{icon} <b>TRADE {'EXECUTED' if is_success else 'RESULT'}</b>\n\n{result}",
+                edit=True)
         elif data.startswith("reject:"):
             parts = data.split(":")
             trade_id = parts[1]

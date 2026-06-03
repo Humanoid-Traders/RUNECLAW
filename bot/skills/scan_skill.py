@@ -9,6 +9,12 @@ from telegram.ext import ContextTypes
 from bot.compat import UTC
 from bot.core.chart_patterns import scan_all_chart_patterns
 from bot.utils.models import Direction, MarketSignal, RiskVerdict, TradeIdea
+from bot.formatters.rich_cards import (
+    fetch_analysis_data,
+    render_analysis_card,
+    compute_rsi as _compute_rsi,
+    compute_atr as _compute_atr,
+)
 
 log = logging.getLogger("runeclaw.scan_skill")
 
@@ -25,20 +31,7 @@ UNIVERSE = [f"{s}/USDT" for s in _SYMS.split()]
 
 # ── Helpers ────────────────────────────────────────────────────────
 
-def _compute_rsi(closes: np.ndarray, period: int = 14) -> float:
-    if len(closes) < period + 1:
-        return 50.0
-    deltas = np.diff(closes)
-    g, l = np.mean(np.maximum(deltas[-period:], 0)), np.mean(np.maximum(-deltas[-period:], 0))
-    return 100.0 if l == 0 else float(100.0 - 100.0 / (1.0 + g / l))
-
-
-def _compute_atr(highs: np.ndarray, lows: np.ndarray, closes: np.ndarray, period: int = 14) -> float:
-    if len(closes) < period + 1:
-        return 0.0
-    h, l, c = highs[1:], lows[1:], closes[:-1]
-    tr = np.maximum(h - l, np.maximum(np.abs(h - c), np.abs(l - c)))
-    return float(np.mean(tr[-period:]))
+# RSI and ATR imported from bot.formatters.rich_cards
 
 
 def _dir_emoji(d: str) -> str:
@@ -86,12 +79,16 @@ async def _scan_symbol(exchange, symbol: str) -> Optional[dict]:
 
 def _fmt_quick(r: dict) -> str:
     s = r["sym"].replace("/USDT", "")
-    return (f"{_dir_emoji(r['dir'])} <b>{s}</b>  ${r['price']:,.4g}  "
+    change = r.get("change_pct", 0)
+    change_str = f" | {'+' if change >= 0 else ''}{change:.1f}%" if change else ""
+    return (f"{_dir_emoji(r['dir'])} <b>{s}</b>  ${r['price']:,.4g}{change_str}  "
             f"RSI {r['rsi']}  Vol {r['vol_ratio']}x  {_score_bar(r['score'])} {r['score']:.0%}")
 
 def _fmt_detail(r: dict) -> str:
     s = r["sym"].replace("/USDT", "")
-    lines = [f"{_dir_emoji(r['dir'])} <b>{s}/USDT</b> -- {r['dir']}",
+    change = r.get("change_pct", 0)
+    change_str = f" | {'+' if change >= 0 else ''}{change:.1f}%" if change else ""
+    lines = [f"{_dir_emoji(r['dir'])} <b>{s}/USDT</b> \u2014 {r['dir']}{change_str}",
              f"  Price <code>${r['price']:,.6g}</code>  RSI <code>{r['rsi']}</code>  ATR <code>{r['atr']:.4g}</code>",
              f"  Vol <code>{r['vol_ratio']}x</code>  SMA20 <code>${r['sma20']:,.6g}</code>",
              f"  Score {_score_bar(r['score'])} <b>{r['score']:.0%}</b>"]
@@ -195,37 +192,57 @@ async def _scan_filtered(update: Update, context: ContextTypes.DEFAULT_TYPE,
 
 async def _scan_single(update: Update, context: ContextTypes.DEFAULT_TYPE,
                        engine, symbol: str) -> None:
-    msg = await update.message.reply_text(f"\u23f3 Deep scanning {symbol}...")
+    msg = await update.message.reply_text(f"\u2694\ufe0f <i>Deep scanning {symbol}...</i>", parse_mode="HTML")
     exchange = await engine.scanner._get_exchange()
+
+    # Fetch rich analysis data
+    data = await fetch_analysis_data(exchange, symbol, timeframe="1h")
     result = await _scan_symbol(exchange, symbol)
-    if result is None:
-        await msg.edit_text(f"Could not fetch data for {symbol}."); return
-    text = f"\U0001f50e <b>Deep Scan: {symbol}</b>\n\n" + _fmt_detail(result)
-    if result["patterns"]:
-        text += "\n\n<b>Chart Patterns:</b>\n"
-        for p in result["patterns"][:5]:
-            text += (f"  \u2022 <b>{p['name']}</b> -- {p['signal']} ({p.get('confidence',0):.0%})\n"
-                     f"    <i>{p.get('description','')}</i>\n")
+
+    if data is None and result is None:
+        await msg.edit_text(f"Could not fetch data for {symbol}.")
+        return
+
+    # Try to generate a trade idea
+    idea = None
     try:
-        signal = MarketSignal(symbol=symbol, price=result["price"],
-                              change_pct_24h=0.0, volume_usd_24h=0.0,
-                              momentum_score=result["score"])
-        idea: Optional[TradeIdea] = await engine._analyze_signal(signal, timeframe="1h")
-        if idea:
-            text += (f"\n<b>Trade Idea:</b>\n"
-                     f"  {_dir_emoji(idea.direction.value)} {idea.direction.value}  "
-                     f"Entry <code>${idea.entry_price:,.6g}</code>\n"
-                     f"  SL <code>${idea.stop_loss:,.6g}</code>  TP <code>${idea.take_profit:,.6g}</code>\n"
-                     f"  Conf <b>{idea.confidence:.0%}</b>  R:R <code>{idea.risk_reward_ratio}</code>\n"
-                     f"  <i>{idea.reasoning[:120]}</i>")
-            rc = engine.risk.evaluate(idea, atr=result["atr"])
-            ve = "\u2705" if rc.verdict == RiskVerdict.APPROVED else "\u26a0\ufe0f"
-            text += f"\n\n<b>Risk:</b> {ve} {rc.verdict.value} -- <i>{rc.reason}</i>"
+        if result:
+            signal = MarketSignal(symbol=symbol, price=result["price"],
+                                  change_pct_24h=data["change_pct"] if data else 0.0,
+                                  volume_usd_24h=data["volume_24h_usd"] if data else 0.0,
+                                  momentum_score=result["score"])
+            idea = await engine._analyze_signal(signal, timeframe="1h")
     except Exception as exc:
         log.warning("Engine analysis failed for %s: %s", symbol, exc)
+
+    if data:
+        # Rich analysis card
+        text = render_analysis_card(data, idea)
+
+        # Add chart patterns if available
+        if result and result.get("patterns"):
+            text += "\n\n<b>Chart Patterns:</b>\n"
+            for p in result["patterns"][:5]:
+                text += (f"  \u2022 <b>{p['name']}</b> \u2014 {p['signal']} ({p.get('confidence',0):.0%})\n"
+                         f"    <i>{p.get('description','')}</i>\n")
+
+        # Add risk verdict
+        if idea and result:
+            rc = engine.risk.evaluate(idea, atr=result["atr"])
+            ve = "\u2705" if rc.verdict == RiskVerdict.APPROVED else "\u26a0\ufe0f"
+            text += f"\n<b>Risk:</b> {ve} {rc.verdict.value} \u2014 <i>{rc.reason}</i>"
+    else:
+        # Fallback to old format
+        text = f"\U0001f50e <b>Deep Scan: {symbol}</b>\n\n" + _fmt_detail(result)
+        if result and result["patterns"]:
+            text += "\n\n<b>Chart Patterns:</b>\n"
+            for p in result["patterns"][:5]:
+                text += (f"  \u2022 <b>{p['name']}</b> -- {p['signal']} ({p.get('confidence',0):.0%})\n"
+                         f"    <i>{p.get('description','')}</i>\n")
+
     kb = InlineKeyboardMarkup([[
         InlineKeyboardButton("\u2705 Confirm",
-                             callback_data=f"scan_confirm:{symbol}:{result['dir']}:{result['price']}"),
+                             callback_data=f"scan_confirm:{symbol}:{result['dir'] if result else 'LONG'}:{result['price'] if result else 0}"),
         InlineKeyboardButton("\u274c Reject", callback_data=f"scan_reject:{symbol}"),
     ]])
     await msg.edit_text(text, parse_mode="HTML", reply_markup=kb)
