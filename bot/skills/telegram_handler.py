@@ -1661,8 +1661,12 @@ class TelegramHandler:
         if not await self._guard(update, "playbook"):
             return
         await self._send(update, "📋 <i>Assembling playbook...</i>")
-        result = await self.registry.get("playbook").execute(self.engine)
-        await self._send(update, result)
+        try:
+            result = await self.registry.get("playbook").execute(self.engine)
+            await self._send(update, result)
+        except Exception as exc:
+            system_log.error(f"Playbook error: {exc}")
+            await self._send(update, f"🔴 <b>Playbook error:</b> <code>{html.escape(str(exc)[:200])}</code>")
 
     async def _cmd_deepscan(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """Deep scan 67+ symbols with chart + candle patterns."""
@@ -1675,9 +1679,13 @@ class TelegramHandler:
             if arg in ("5m", "15m", "1h", "4h", "1d"):
                 tf = arg
         await self._send(update, f"🔬 <i>Deep scanning {tf.upper()} — this may take a minute...</i>")
-        result = await self.registry.get("deepscan").execute(
-            self.engine, timeframe=tf)
-        await self._send(update, result)
+        try:
+            result = await self.registry.get("deepscan").execute(
+                self.engine, timeframe=tf)
+            await self._send(update, result)
+        except Exception as exc:
+            system_log.error(f"Deepscan error: {exc}")
+            await self._send(update, f"🔴 <b>Deepscan error:</b> <code>{html.escape(str(exc)[:200])}</code>")
 
     async def _cmd_learn(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._guard(update, "learn"):
