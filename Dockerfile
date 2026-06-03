@@ -3,7 +3,9 @@
 # =============================================================================
 
 # ── Stage 1: base (shared deps) ─────────────────────────────────────────
-FROM python:3.11-slim AS base
+# Pin to digest for reproducible, tamper-evident builds.
+# python:3.11-slim @ 2026-05 (Debian bookworm)
+FROM python:3.11-slim@sha256:8f64a67710a53a55b8baa3dd37e1a5461e34676deff7a4e6b0e389a8d2a5a4c3 AS base
 
 WORKDIR /app
 

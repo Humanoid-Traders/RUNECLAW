@@ -6,9 +6,9 @@
 |_| \_\\___/|_| \_|_____\____|_____/_/   \_\_/\_/
 ```
 
-<h3 align="center">AI Trading Command Core | Forged in Volatility. Governed by Discipline.</h3>
+<h3 align="center">AI Trading Command Core | Governed by Discipline.</h3>
 <h4 align="center">by Humanoid Traders | for Bitget AI Base Camp</h4>
-<h5 align="center">🏆 Proudly built for Bitget AI Base Camp · Hackathon S1 – aiming for Best Strategy & Risk Award 🏆</h5>
+<h5 align="center">Built for Bitget AI Base Camp · Hackathon S1 — Strategy & Risk category</h5>
 
 <p align="center">
   <a href="https://humanoid-traders-1.gitbook.io/humanoid-traders-ai"><img src="https://img.shields.io/badge/Full_Documentation-%E2%86%92_GitBook-blue?style=for-the-badge&logo=gitbook&logoColor=white" alt="Full Documentation → GitBook"></a>
@@ -17,11 +17,10 @@
 <p align="center">
   <img src="https://img.shields.io/badge/python-3.11+-blue?logo=python&logoColor=white" alt="Python 3.11+">
   <img src="https://img.shields.io/badge/license-AGPL--3.0-blue" alt="License AGPL-3.0">
-  <img src="https://img.shields.io/badge/tests-361%20passing-brightgreen" alt="361 Tests Passing">
-  <img src="https://img.shields.io/badge/security%20scan-passed-brightgreen" alt="Security Scan Passed">
-  <img src="https://img.shields.io/badge/red%20team-100%25-brightgreen" alt="Red Team 100%">
+  <a href="https://github.com/Humanoid-Traders/RUNECLAW/actions/workflows/ci.yml"><img src="https://github.com/Humanoid-Traders/RUNECLAW/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
+  <img src="https://img.shields.io/badge/tests-862%20passing-brightgreen" alt="862 Tests Passing">
   <img src="https://img.shields.io/badge/security%20tests-29%20passing-blueviolet" alt="29 Security Tests">
-  <img src="https://img.shields.io/badge/red%20team-28%20attacks%20%7C%20100%25%20pass-critical" alt="Red Team 100% Pass">
+  <img src="https://img.shields.io/badge/red%20team-28%20scenarios%20%7C%20100%25%20pass-critical" alt="Red Team 28 Scenarios 100% Pass">
   <img src="https://img.shields.io/badge/risk%20checks-21%20fail--closed-red" alt="21 Risk Checks">
   <img src="https://img.shields.io/badge/mode-paper%20trading-orange" alt="Paper Trading">
   <img src="https://img.shields.io/badge/exchange-Bitget-blue" alt="Bitget">
@@ -56,7 +55,7 @@
 
 **RUNECLAW** is an AI trading command system built by **Humanoid Traders** for the Bitget AI Base Camp · Hackathon S1. It merges multi-timeframe analysis, confluence scoring, regime detection, order-flow microstructure, and risk-first logic into a disciplined framework -- all controllable through a Telegram bot interface.
 
-The system operates in **simulation-first mode by default**. Every trade idea must pass twenty-one independent risk checks, an adversarial self-critique gate, and receive explicit human confirmation before execution. An additional liquidity guard runs on live order-flow data when available. No exceptions.
+The system operates in **simulation-first mode by default**. Every trade idea must pass 21 independent risk checks, an adversarial self-critique gate, and receive explicit human confirmation before execution. An additional liquidity guard runs on live order-flow data when available. No exceptions.
 
 > **Shield risk engine available as MCP server -- any GetClaw agent can call it.** See `bot/mcp/server.py`.
 
@@ -177,12 +176,12 @@ to all agents when severity >= 0.8. Ready for production deployment as separate 
 ## Architecture
 
 ```
- Telegram Bot                       Bitget Exchange
-      |                                   |
-      v                                   v
+ Telegram Bot        API Bridge (8000)      Bitget Exchange
+      |                    |                      |
+      v                    v                      v
  +-----------+    +---------------+   +-----------+
  |  Skill    |--->|  RuneClaw     |-->|  Market   |
- |  Registry |   |  Engine       |   |  Scanner  |
+ |  Registry |    |  Engine       |   |  Scanner  |
  +-----------+    +-------+-------+   +-----------+
                           |                 |
                    +------+------+    OHLCV / Tickers
@@ -206,7 +205,24 @@ to all agents when severity >= 0.8. Ready for production deployment as separate 
                     +---------+
 ```
 
+**Runtime services:**
+- **Telegram Bot** (port 8080 internal) -- command interface, human-in-the-loop confirmation
+- **API Bridge** (port 8000) -- FastAPI REST API exposing engine endpoints (`/health`, `/scan`, `/portfolio`, `/risk/status`, `/confirm`)
+- **Redis** (port 6379 internal, not host-exposed) -- LLM cache, rate limiting, session state
+- **Dashboard** (served via API Bridge) -- War Room, Live Signals, portfolio views
+
 **Pipeline:** SCAN --> ANALYZE --> RISK GATE --> HUMAN CONFIRM --> EXECUTE (paper)
+
+### Runtime Services
+
+| Service | Port | Description |
+|---------|------|-------------|
+| **bot** | 8080 (internal) | Telegram bot + dashboard server. Socket healthcheck on 8080. |
+| **api_bridge** | 8000 | FastAPI REST API for external integrations (War Room, live signals, MCP). Healthcheck on `/health`. |
+| **redis** | 6379 (internal) | Session state, LLM cache, rate limiting. AOF persistence. Password-protected, not host-exposed. |
+| **nginx** | 80/443 | TLS reverse proxy (optional). Serves static website, proxies `/api/*` to api_bridge. |
+
+> **Note:** The bot service runs an HTTP server on port 8080 for the dashboard even in `--mode telegram`. The healthcheck depends on this. Redis is internal to the Docker network only.
 
 ---
 
@@ -267,7 +283,7 @@ to all agents when severity >= 0.8. Ready for production deployment as separate 
 - Risk/reward ratio minimum (1.2x)
 - Confidence threshold gate (≥60%)
 - Per-symbol exposure limit (20% max per asset)
-- Correlation group concentration guard
+- Correlation group concentration guard (max 2 positions per group, e.g., ALT_L1, SOLANA_ECO)
 - Consecutive loss streak detection + cooldown
 - Stale data guard (rejects ideas >5min old)
 - Volatility guard (ATR-based)
@@ -290,6 +306,31 @@ to all agents when severity >= 0.8. Ready for production deployment as separate 
 - Three channels: `trade.jsonl`, `risk.jsonl`, `system.jsonl`
 - Every decision, confirmation, and rejection is recorded
 - Machine-readable for post-hackathon analysis
+
+### Backtesting
+
+RUNECLAW provides two backtest modes:
+
+| Mode | Script | Data Source | LLM | Purpose |
+|------|--------|-------------|-----|---------|
+| **Synthetic** | `backtest_audit.py` | GBM+GARCH random walks | Off | Risk gate sanity checks on noise |
+| **Real-data** | `backtest_realdata.py` | Bitget historical OHLCV | Configurable | Strategy performance validation |
+
+```bash
+# Synthetic backtest (validates risk engine behavior)
+python backtest_audit.py
+
+# Real-data backtest with buy-and-hold benchmark
+python backtest_realdata.py --symbols default
+
+# Real-data with LLM analysis enabled
+python backtest_realdata.py --symbols all --llm
+```
+
+**Methodology transparency:**
+- Synthetic backtests use random-walk data and **cannot** validate alpha-generating modules (Smart Money, order flow, sentiment, liquidation cascade). They demonstrate the risk gate and rule-based fallback behave correctly under various noise regimes.
+- Real-data backtests use actual Bitget OHLCV with commission (0.10%) and slippage (0.05%) modeling, and include a buy-and-hold benchmark for comparison.
+- Results with `--llm` flag reflect the full AI analysis pipeline; without it, only the rule-based fallback runs.
 
 ---
 
@@ -422,8 +463,27 @@ runeclaw/
 |   |   |-- skill_definitions.yaml
 |   |-- requirements.txt
 |-- tests/
-|   |-- test_core.py            # 361 pytest tests
+|   |-- test_core.py            # 383 core engine tests
+|   |-- test_quant_skill.py     # 95 quant skill tests
+|   |-- test_learning.py        # 77 learning system tests
+|   |-- test_intent_and_monitor.py  # 47 intent routing + monitor tests
+|   |-- test_learning_cannot_override_risk.py  # 45 safety policy tests
+|   |-- test_ux_upgrades.py     # 39 UX upgrade tests
 |   |-- test_token_optimizer.py # 36 token optimizer tests
+|   |-- test_risk_upgrades.py   # 31 risk upgrade tests
+|   |-- test_quant_upgrades.py  # 31 quant upgrade tests
+|   |-- test_intelligence_upgrades.py  # 30 intelligence tests
+|   |-- test_security.py        # 29 security tests
+|   |-- test_macro.py           # 27 macro calendar tests
+|   |-- test_var_critique_attestation.py  # 25 VaR/critique/attestation tests
+|   |-- test_execution_upgrades.py  # 25 execution upgrade tests
+|   |-- test_logic_bugs.py      # 24 logic regression tests
+|   |-- test_exchange_and_compliance.py  # 20 exchange/compliance tests
+|   |-- test_manifest_and_whynot.py  # 10 manifest tests
+|   |-- test_live_executor.py   # 7 live executor tests
+|   |-- test_telegram_commands.py  # Telegram command tests
+|   |-- selftest_upgrade.py     # Self-test upgrade harness
+|   |-- (862 total test functions)
 |-- docs/
 |   |-- gitbook/                # Full GitBook documentation
 |   |-- SUBMISSION.md           # Hackathon submission document
@@ -434,9 +494,15 @@ runeclaw/
 |-- website/
 |   |-- index.html              # Landing page
 |   |-- dashboard-pro.html      # 3-tab command center dashboard
+|-- .github/
+|   |-- workflows/
+|       |-- ci.yml                 # CI/CD: lint, test (862), security scan, build, deploy
 |-- .env.example
 |-- pyproject.toml
 |-- Dockerfile
+|-- backtest_audit.py              # Synthetic data sanity check
+|-- run_deep_backtest.py           # 500-run robustness sweep
+|-- run_realdata_backtest.py       # Real-data backtest with benchmarks
 |-- LICENSE
 |-- README.md
 ```
@@ -483,7 +549,7 @@ RUNECLAW is designed with a **fail-closed** philosophy:
 - **Use read-only API keys** for market data operations. Only enable trade permissions if you explicitly intend to go live (not recommended for this prototype).
 - **Telegram bot token** grants full control of the bot. Keep it secret. Restrict `TELEGRAM_CHAT_ID` to your own chat ID.
 - **LLM API costs:** Each `/analyze` call consumes LLM tokens. Default is Gemini 2.5 Flash (free tier available). GPT-4o costs approximately $0.01-0.03 per analysis. Set `LLM_API_KEY=` (blank) to use the free rule-based fallback instead.
-- **No secrets in code.** All credentials load from environment variables with safe defaults. The codebase has been audited to confirm zero hardcoded secrets.
+- **No secrets in code.** All credentials load from environment variables with safe defaults. Run `gitleaks` or `trufflehog` over full history to verify.
 
 ### Security Hardening (Audit v3.0)
 
@@ -500,7 +566,7 @@ RUNECLAW is designed with a **fail-closed** philosophy:
 | AGPL | Compliance | `/start` and `/help` include source repository link and financial disclaimer |
 | Corruption | Hardening | Portfolio logs CRITICAL alert on corrupted state files instead of silent fallback |
 
-**29 dedicated security tests** in `tests/test_security.py` covering: log redaction, MCP auth, runtime state, cache keys, cost reset, portfolio corruption, input validation, and injection prevention.
+**29 dedicated security tests** in `tests/test_security.py` covering: log redaction, MCP auth, runtime state, cache keys, cost reset, portfolio corruption, input validation, and injection prevention. Note: security audit was AI-assisted and internal; no independent third-party audit has been performed.
 
 ---
 
@@ -510,11 +576,34 @@ This is a **hackathon prototype** (maturity: early-stage). Known limitations:
 
 - **Solo developer project** -- limited peer review beyond automated audits
 - **No live trading validation** -- all testing uses paper trading and synthetic data
+- **Backtest methodology caveat** -- backtests use synthetic GBM+GARCH price data with `use_llm=False`. This validates risk gate behavior and position sizing on random walks, but does **not** validate the alpha-generating modules (Smart Money, order flow, sentiment fusion, liquidation cascade) which require real market microstructure data. Backtest results should be interpreted as **engine sanity checks**, not evidence of profitability. Real-data, LLM-enabled, out-of-sample validation is needed to evaluate strategy performance.
 - **API latency and slippage** -- real exchange conditions differ from simulation
-- **Security audit conducted** -- AI-assisted deep audit (v3.0) with all 5 critical issues fixed, 29 security tests added
+- **Security audit conducted** -- AI-assisted deep audit (v3.0) with all 5 critical issues fixed, 29 security tests added. No independent third-party audit has been performed.
 - **LLM dependency** -- AI analysis quality depends on model availability and cost
 - **No guaranteed uptime** -- no monitoring, alerting, or failover infrastructure
-- **Scalability:** Single-instance today — swarm-ready via MCP protocol
+- **Scalability:** Single-instance today -- swarm-ready via MCP protocol
+- **Correlation guard** -- currently implemented as a per-group count cap (max 2 positions per correlation group), not a full pairwise correlation matrix. The `MAX_CORRELATION` config knob is reserved for future implementation.
+- **Confluence voters** -- the 10-voter model uses indicators derived from the same price-volume series (RSI, MACD, OBV, VWAP, Bollinger Bands), which are not statistically independent. Naive summation may double-count momentum signals. Weighted scoring mitigates this but does not eliminate it.
+
+### Backtest Methodology
+
+Three backtest harnesses, each with a different purpose:
+
+| Script | Data Source | LLM | Purpose |
+|--------|-----------|-----|---------|
+| `backtest_audit.py` | Synthetic (GBM+GARCH) | Off | Engine sanity check -- risk gate behavior on noise |
+| `run_realdata_backtest.py` | **Real Binance OHLCV** | Configurable | Strategy validation with buy-and-hold benchmarks |
+| `run_deep_backtest.py` | Synthetic (GBM+GARCH) | Off | 500-run robustness sweep (5 regimes x 20 symbols x 5 seeds) |
+
+Synthetic backtests validate the **risk engine and rule-based fallback only** -- they do not exercise the AI or market microstructure modules. The real-data backtest uses walk-forward out-of-sample validation (70/30 split) and is the appropriate instrument for evaluating strategy edge.
+
+```bash
+# Real-data backtest (no API key needed):
+python run_realdata_backtest.py
+
+# With LLM enabled:
+python run_realdata_backtest.py --llm --output results.json
+```
 
 ---
 
@@ -543,15 +632,15 @@ This is a **hackathon prototype** (maturity: early-stage). Known limitations:
 | Position sizing | **Fixed-fractional** with exposure caps | Fixed lot or % of balance |
 | Re-check on confirm | **Yes** -- market may have moved | No re-validation |
 | Backtest engine | **Built-in** with commission + slippage modeling | External or none |
-| Live market validation | **324 pairs scanned**, 3 assets analyzed on real Bitget data | Mock data only |
+| Live market connectivity | **324+ pairs scanned** on real Bitget data (read-only market data) | Mock data only |
 
-> RUNECLAW doesn't just generate trades -- it governs them. Safety and transparency are first-class features, not afterthoughts.
+> Safety and transparency are first-class design goals, not afterthoughts.
 
 ---
 
 ## Fork & Win With Us
 
-RUNECLAW is open for collaboration. If you're building for the Bitget AI Base Camp and want a battle-tested risk engine, scanner, or analysis pipeline -- fork it, extend it, and submit your own entry.
+RUNECLAW is open for collaboration. If you're building for the Bitget AI Base Camp and want a risk engine, scanner, or analysis pipeline -- fork it, extend it, and submit your own entry.
 
 **How to contribute:**
 
@@ -597,5 +686,5 @@ You are free to view, study, fork, and modify this code. If you distribute it or
 
 ---
 
-<p align="center"><b>RUNECLAW</b> -- Where Viking grit meets algorithmic precision.</p>
-<p align="center"><i>Forged for Bitget AI Base Camp · Hackathon S1 | System Prompt v2026</i></p>
+<p align="center"><b>RUNECLAW</b> -- Discipline over prediction. Transparency over hype.</p>
+<p align="center"><i>Built for Bitget AI Base Camp · Hackathon S1</i></p>

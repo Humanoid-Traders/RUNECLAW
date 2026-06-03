@@ -5,6 +5,8 @@
 services:
 
   # -- Telegram bot -----------------------------------------------------------
+  # The bot runs an internal dashboard server on port 8080 (not host-exposed).
+  # Healthcheck verifies the dashboard is responsive.
   bot:
     build:
       context: .
@@ -89,10 +91,10 @@ services:
     command: >
       redis-server
       --appendonly yes
-      --requirepass ${REDIS_PASSWORD:-changeme_redis_secret}
+      --requirepass ${REDIS_PASSWORD:?REDIS_PASSWORD must be set in .env}
     healthcheck:
       test: ["CMD", "redis-cli",
-             "-a", "${REDIS_PASSWORD:-changeme_redis_secret}", "ping"]
+             "-a", "${REDIS_PASSWORD}", "ping"]
       interval: 10s
       timeout: 5s
       retries: 3
