@@ -959,6 +959,21 @@ class TelegramHandler:
             return
 
         args = ctx.args or []
+        if args and args[0].upper() == "OFF":
+            # Disable live mode
+            from bot.config import RUNTIME
+            RUNTIME.live_mode = False
+            from bot.compliance.compliance_engine import Permission
+            self.engine.compliance_profile.permissions.discard(Permission.LIVE_TRADE)
+            audit(system_log, "LIVE TRADING DISABLED via /golive OFF",
+                  action="golive", result="DISABLED",
+                  data={"user": self._get_tg_id(update)})
+            await self._send(update,
+                "\U0001f534 <b>LIVE TRADING DISABLED</b>\n\n"
+                "Reverted to paper-trade mode.\n"
+                "Use <code>/golive CONFIRM</code> to re-enable.")
+            return
+
         if not args or args[0].upper() != "CONFIRM":
             await self._send(update,
                 "\u26a0\ufe0f <b>LIVE TRADING ACTIVATION</b>\n\n"
@@ -974,6 +989,12 @@ class TelegramHandler:
         # Enable live mode via RuntimeState (CONFIG is frozen)
         from bot.config import RUNTIME
         RUNTIME.live_mode = True
+
+        # Grant LIVE_TRADE permission on the engine's compliance profile
+        # so Lock 1 passes. This is the explicit human authorization.
+        from bot.compliance.compliance_engine import Permission
+        self.engine.compliance_profile.permissions.add(Permission.LIVE_TRADE)
+
         audit(system_log, "LIVE TRADING ENABLED via /golive",
               action="golive", result="ENABLED",
               data={"user": self._get_tg_id(update)})
