@@ -21,34 +21,33 @@ We appreciate responsible reports and will credit researchers (with permission) 
 
 RUNECLAW enforces a **fail-closed** design — if any safety check is ambiguous or fails, the trade is rejected.
 
-- **19-Check Risk Engine** — every order must pass all 19 independent pre-trade validations (position size, total exposure, drawdown, volatility, etc.) before execution. A single failure blocks the order.
-- **Frozen Config Dataclass** — safety limits are defined in an immutable `@dataclass(frozen=True)`. Runtime code cannot alter thresholds such as max position size ($10) or total exposure ($50).
-- **Tamper-Evident Audit Chain** — every decision, rejection, and execution is logged with a chained SHA-256 hash, making post-hoc log tampering detectable.
+- **21-Check Risk Engine** — every order must pass all pre-trade validations before execution. Of these, 16 are strict fail-closed (any failure = rejection), 1 is fail-open (#17 LIQUIDITY: no order-book data = pass), and 4 gracefully skip when data is insufficient (#18 MACRO, #19 MTF, #20 PCA, #21 VaR). See `config/risk_manifest.yaml` for the authoritative list.
+- **Bearer Token Authentication** — state-changing API endpoints (`/confirm`, `/portfolio/close`, `/risk/halt`, `/analyze`) require a `DASHBOARD_TOKEN` bearer token. Read-only endpoints (`/health`, `/scan`, `/portfolio`, `/risk/status`) do not require authentication.
+- **Simulation by Default** — live trading requires two explicit flags: `SIMULATION_MODE=false` and `LIVE_TRADING_ENABLED=true`. Both default to safe values.
+- **Risk Limits** — position sizing uses percentage-based limits (MAX_POSITION_PCT=2.0%, MAX_SYMBOL_EXPOSURE_PCT=20.0%) applied to current equity. On the default $10,000 paper balance, this yields a ~$200 risk budget and $2,000 max per-symbol exposure.
+- **Tamper-Evident Audit Chain** — every decision, rejection, and execution is logged with a chained SHA-256 hash, making post-hoc log tampering detectable. Ed25519 attestation available when `cryptography` package is installed.
 - **Human-in-the-Loop** — all trade executions require explicit human confirmation; the AI agent cannot autonomously place orders.
-- **68 Learning Safety Tests** — the test suite formally proves that AI suggestions cannot bypass, weaken, or override the risk engine.
+- **Non-Root Container** — Docker image runs as `runeclaw` user (uid 1001).
+- **Redis Security** — Redis requires `REDIS_PASSWORD` (no default; compose fails fast if unset), port not exposed to host.
 
 ## API Key Handling
 
 - API keys and secrets are loaded exclusively from a `.env` file, which is **gitignored** by default.
-- Keys are never logged, serialized, or included in audit output.
+- Keys are never logged, serialized, or included in audit output. Log redaction layer strips secrets from tracebacks.
 - Credentials are passed to the Bitget SDK at runtime only and are not persisted beyond process memory.
-- Contributors must **never** commit `.env`, API keys, or secrets. Pre-commit checks help enforce this.
+- Contributors must **never** commit `.env`, API keys, or secrets.
 
-## Micro-Test Safety Limits
+## Security Audit Status
 
-RUNECLAW ships with conservative defaults designed for hackathon and testnet use:
-
-| Limit              | Value |
-| ------------------ | ----- |
-| Max position size  | $10   |
-| Max total exposure | $50   |
-
-These limits are enforced at the frozen-config level and cannot be changed without a code modification and full test-suite pass.
+- **Internal AI-assisted audit** (v3.0) completed with all critical findings fixed and 29 dedicated security tests added.
+- **No independent third-party audit** has been performed. The "Security Scan Passed" badge is self-asserted, not CI-backed.
+- This is appropriate for a hackathon prototype; it should not be interpreted as production security assurance.
 
 ## Responsible Disclosure
 
-We follow a coordinated disclosure model. Please allow us reasonable time to address reported issues before publishing details. We commit to transparency and will publish post-mortems for any confirmed vulnerability.
+We follow a coordinated disclosure model. Please allow us reasonable time to address reported issues before publishing details.
 
 ---
 
 **Repository:** [github.com/Humanoid-Traders/RUNECLAW](https://github.com/Humanoid-Traders/RUNECLAW)
+**License:** AGPL-3.0-or-later

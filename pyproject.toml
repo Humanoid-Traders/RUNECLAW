@@ -17,6 +17,17 @@ dependencies = [
     "openai==2.38.0",
     "numpy==2.3.5",
     "aiohttp==3.13.4",
+    "fastapi>=0.110.0",
+    "uvicorn[standard]>=0.29.0",
+    "websockets==16.0",
+]
+
+[project.optional-dependencies]
+crypto = [
+    "cryptography>=41.0.0",
+]
+anthropic = [
+    "anthropic==0.104.1",
 ]
 
 [project.optional-dependencies]

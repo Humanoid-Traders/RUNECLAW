@@ -9,7 +9,7 @@ Endpoints:
   POST /confirm             - Confirm a pending trade idea
   POST /portfolio/close/{symbol} - Close an open position
   GET  /risk/status         - Risk engine state + circuit breaker
-  GET  /blackswan           - Black swan detector (stub)
+  GET  /blackswan           - Black swan detector status
   GET  /patterns/{symbol}   - Chart + candlestick pattern detection
 """
 
@@ -23,7 +23,8 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 import numpy as np
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends, Security
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -42,7 +43,7 @@ from bot.utils.models import (
 )
 
 # ── Universe ─────────────────────────────────────────────────────
-# 67 symbols covering majors, alt L1s, DeFi, memes, infra, AI
+# 66 symbols covering majors, alt L1s, DeFi, memes, infra, AI
 UNIVERSE: list[str] = [
     # Majors
     "BTC/USDT", "ETH/USDT",
@@ -51,7 +52,7 @@ UNIVERSE: list[str] = [
     "SUI/USDT", "APT/USDT", "ATOM/USDT", "TON/USDT", "HBAR/USDT",
     "TRX/USDT", "FTM/USDT", "SEI/USDT", "INJ/USDT",
     # L2 / Scaling
-    "MATIC/USDT", "ARB/USDT", "OP/USDT", "STRK/USDT", "IMX/USDT",
+    "POL/USDT", "ARB/USDT", "OP/USDT", "STRK/USDT", "IMX/USDT",
     "MANTA/USDT",
     # DeFi
     "LINK/USDT", "UNI/USDT", "AAVE/USDT", "MKR/USDT", "SNX/USDT",
@@ -61,7 +62,7 @@ UNIVERSE: list[str] = [
     "DOGE/USDT", "SHIB/USDT", "PEPE/USDT", "FLOKI/USDT", "WIF/USDT",
     "BONK/USDT", "BRETT/USDT", "MEME/USDT",
     # AI / Compute
-    "RENDER/USDT", "FET/USDT", "RNDR/USDT", "TAO/USDT", "ARKM/USDT",
+    "RENDER/USDT", "FET/USDT", "TAO/USDT", "ARKM/USDT",
     # Infra / Oracle
     "PYTH/USDT", "TIA/USDT", "DYM/USDT", "ALT/USDT",
     # Gaming / Metaverse
@@ -133,52 +134,66 @@ def _atr(highs: np.ndarray, lows: np.ndarray, closes: np.ndarray, period: int = 
 
 def _confluence_score(rsi: float, ema_short: float, ema_long: float,
                       price: float, vol_ratio: float) -> dict:
-    """Simple confluence scoring from basic indicators."""
-    votes = 0
+    """Directional confluence scoring from basic indicators.
+
+    Note: This is a simplified 5-indicator model used by the /scan API endpoint.
+    The full 10/11-voter confluence model runs inside the AI analyzer (bot/core/analyzer.py).
+    """
+    bullish = 0
+    bearish = 0
     total = 5
     signals = []
 
     # RSI
     if rsi < 30:
-        votes += 1
+        bullish += 1
         signals.append("RSI oversold (bullish)")
     elif rsi > 70:
-        votes += 1
+        bearish += 1
         signals.append("RSI overbought (bearish)")
 
     # EMA crossover
     if not np.isnan(ema_short) and not np.isnan(ema_long):
         if ema_short > ema_long:
-            votes += 1
+            bullish += 1
             signals.append("EMA9 > EMA21 (bullish)")
         else:
-            votes += 1
+            bearish += 1
             signals.append("EMA9 < EMA21 (bearish)")
 
     # Price vs EMA
     if not np.isnan(ema_long):
         if price > ema_long:
-            votes += 1
+            bullish += 1
             signals.append("Price > EMA21 (bullish)")
         else:
-            votes += 1
+            bearish += 1
             signals.append("Price < EMA21 (bearish)")
 
     # Volume spike
     if vol_ratio > 1.5:
-        votes += 1
+        bullish += 1  # volume confirms momentum direction
         signals.append(f"Volume spike {vol_ratio:.1f}x")
 
-    # Momentum (RSI slope proxy)
-    if 40 < rsi < 60:
-        signals.append("RSI neutral — no momentum edge")
+    # Momentum (RSI outside neutral zone)
+    if rsi < 40:
+        bullish += 1
+        signals.append("RSI bearish-to-neutral momentum")
+    elif rsi > 60:
+        bearish += 1
+        signals.append("RSI bullish-to-neutral momentum")
     else:
-        votes += 1
-        signals.append("RSI momentum confirmation")
+        signals.append("RSI neutral — no momentum edge")
+
+    # Directional score: positive = bullish, negative = bearish
+    direction = "BULLISH" if bullish > bearish else "BEARISH" if bearish > bullish else "NEUTRAL"
+    conviction = max(bullish, bearish)
 
     return {
-        "score": round(votes / max(total, 1), 2),
-        "votes": votes,
+        "score": round(conviction / max(total, 1), 2),
+        "bullish": bullish,
+        "bearish": bearish,
+        "direction": direction,
         "total": total,
         "signals": signals,
     }
@@ -189,7 +204,7 @@ async def _fetch_ohlcv(symbol: str, timeframe: str = "1h", limit: int = 100) -> 
     assert engine is not None
     async with _EXCHANGE_SEMAPHORE:
         try:
-            exchange = await engine.scanner._get_exchange()
+            exchange = await engine.get_exchange()
             return await exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
         except Exception:
             return None
@@ -228,7 +243,7 @@ async def lifespan(app: FastAPI):
     yield
     # Cleanup: close exchange connection
     try:
-        ex = engine.scanner._exchange
+        ex = await engine.get_exchange()
         if ex is not None:
             await ex.close()
     except Exception:
@@ -243,7 +258,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-_allowed_origins = os.getenv("CORS_ORIGINS", "*").split(",")
+_allowed_origins = os.getenv("DASHBOARD_CORS_ORIGIN", os.getenv("CORS_ORIGINS", "*")).split(",")
 
 app.add_middleware(
     CORSMiddleware,
@@ -255,6 +270,23 @@ app.add_middleware(
 
 # Mount auth routes for multi-user registration / login / link flow
 app.include_router(auth_router, prefix="/auth", tags=["auth"])
+
+# ── Auth dependency for state-changing endpoints ────────────────
+_DASHBOARD_TOKEN = os.getenv("DASHBOARD_TOKEN", "")
+_security = HTTPBearer(auto_error=False)
+
+async def require_dashboard_token(
+    credentials: HTTPAuthorizationCredentials = Security(_security),
+) -> str:
+    """Validate bearer token on state-changing endpoints."""
+    if not _DASHBOARD_TOKEN:
+        raise HTTPException(
+            status_code=503,
+            detail="DASHBOARD_TOKEN not configured — state-changing endpoints disabled",
+        )
+    if credentials is None or credentials.credentials != _DASHBOARD_TOKEN:
+        raise HTTPException(status_code=401, detail="Invalid or missing bearer token")
+    return credentials.credentials
 
 
 # ── Endpoints ────────────────────────────────────────────────────
@@ -349,7 +381,7 @@ async def _scan_single(symbol: str, timeframe: str, limit: int) -> dict | None:
 
 
 @app.post("/analyze")
-async def analyze(req: AnalyzeRequest):
+async def analyze(req: AnalyzeRequest, _token: str = Depends(require_dashboard_token)):
     """Run the full AI analyzer pipeline on a symbol."""
     assert engine is not None
 
@@ -362,20 +394,25 @@ async def analyze(req: AnalyzeRequest):
     closes = candles[:, 4].astype(float)
     price = float(closes[-1])
 
-    # 2. Build a MarketSignal for the analyzer
+    # 2. Compute real values from OHLCV (not placeholders)
+    change_pct_24h = ((price - float(closes[0])) / float(closes[0]) * 100) if float(closes[0]) > 0 else 0.0
+    vol_avg = float(np.mean(candles[-20:, 5])) if len(candles) >= 20 else float(np.mean(candles[:, 5]))
+    vol_current = float(candles[-1, 5])
+    vol_spike = vol_current > vol_avg * 1.5
+
     signal = MarketSignal(
         symbol=req.symbol,
         price=price,
-        change_pct_24h=0.0,
-        volume_usd_24h=float(candles[-1, 5]),
-        volume_spike=False,
-        momentum_score=0.0,
+        change_pct_24h=round(change_pct_24h, 2),
+        volume_usd_24h=vol_current,
+        volume_spike=vol_spike,
+        momentum_score=round((_rsi(closes) - 50) / 50, 2),  # normalize RSI to [-1, 1]
     )
 
     # 3. Get order flow (optional)
     of_signal = None
     try:
-        exchange = await engine.scanner._get_exchange()
+        exchange = await engine.get_exchange()
         of_signal = await engine.order_flow.analyze(exchange, req.symbol)
     except Exception:
         pass
@@ -423,7 +460,7 @@ async def portfolio():
 
 
 @app.post("/confirm")
-async def confirm_trade(req: ConfirmRequest):
+async def confirm_trade(req: ConfirmRequest, _token: str = Depends(require_dashboard_token)):
     """Confirm a trade idea and open a position."""
     assert engine is not None
 
@@ -439,8 +476,18 @@ async def confirm_trade(req: ConfirmRequest):
         reasoning=req.reasoning,
     )
 
-    # Risk gate
-    risk_result = engine.risk.evaluate(idea)
+    # Fetch ATR for volatility guard (audit fix: /confirm must pass ATR)
+    atr_val = None
+    ohlcv = await _fetch_ohlcv(req.asset, "1h", limit=100)
+    if ohlcv and len(ohlcv) >= 15:
+        candles = np.array(ohlcv)
+        highs = candles[:, 2].astype(float)
+        lows = candles[:, 3].astype(float)
+        closes = candles[:, 4].astype(float)
+        atr_val = _atr(highs, lows, closes)
+
+    # Risk gate with ATR
+    risk_result = engine.risk.evaluate(idea, atr=atr_val)
     if risk_result.verdict == RiskVerdict.REJECTED:
         return {
             "status": "rejected",
@@ -462,11 +509,10 @@ async def confirm_trade(req: ConfirmRequest):
 
 
 @app.post("/portfolio/close/{symbol}")
-async def close_position(symbol: str):
-    """Close an open position by symbol (paper trading)."""
+async def close_position(symbol: str, _token: str = Depends(require_dashboard_token)):
+    """Force-close an open position by symbol (paper trading)."""
     assert engine is not None
 
-    # Find position
     positions = engine.portfolio.open_positions
     target = None
     for pos in positions:
@@ -477,29 +523,18 @@ async def close_position(symbol: str):
     if target is None:
         raise HTTPException(status_code=404, detail=f"No open position for {symbol}")
 
-    # Fetch current price for mark-to-market
+    # Fetch current price
     ohlcv = await _fetch_ohlcv(symbol, "1m", limit=1)
-    if ohlcv:
-        current_price = float(ohlcv[-1][4])
-    else:
-        current_price = target.entry_price  # fallback
+    current_price = float(ohlcv[-1][4]) if ohlcv else target.entry_price
 
-    # Use check_stops with a price that triggers the close
-    closed = engine.portfolio.check_stops({symbol: current_price})
-    if not closed:
-        # Force mark-to-market and close via stop price
-        # Set stop to current price to force close
-        engine.portfolio.mark_to_market({symbol: current_price})
-        return {
-            "status": "marked_to_market",
-            "symbol": symbol,
-            "current_price": current_price,
-            "note": "Position marked but not closed — adjust stop to force exit",
-        }
+    # Force close using public API
+    execution = engine.portfolio.close_position(target.id, current_price)
+    if execution is None:
+        raise HTTPException(status_code=500, detail="Failed to close position")
 
     return {
         "status": "closed",
-        "executions": [e.model_dump(mode="json") for e in closed],
+        "execution": execution.model_dump(mode="json"),
     }
 
 
@@ -524,12 +559,28 @@ async def risk_status():
 
 @app.get("/blackswan")
 async def blackswan_status():
-    """Black swan detector — stub endpoint (module not available)."""
-    return {
-        "status": "inactive",
-        "alerts": [],
-        "note": "Black swan detection is not yet integrated. This is a stub endpoint.",
-    }
+    """Black swan detector status — returns latest anomaly alerts if available."""
+    assert engine is not None
+    try:
+        detector = getattr(engine, 'black_swan', None)
+        if detector is None:
+            return {
+                "status": "not_initialized",
+                "alerts": [],
+                "note": "Black swan detector not initialized in current engine configuration.",
+            }
+        alerts = getattr(detector, 'recent_alerts', [])
+        return {
+            "status": "active" if alerts else "monitoring",
+            "alerts": [a.model_dump(mode="json") if hasattr(a, 'model_dump') else a for a in alerts[-10:]],
+            "anomaly_types": ["CORRELATION_BREAKDOWN", "VOLUME_COLLAPSE", "PRICE_ACCELERATION", "VOLATILITY_EXPLOSION", "SPREAD_WIDENING"],
+        }
+    except Exception:
+        return {
+            "status": "error",
+            "alerts": [],
+            "note": "Black swan detector encountered an error.",
+        }
 
 
 @app.get("/patterns/{symbol}")
@@ -573,12 +624,12 @@ async def patterns(symbol: str, timeframe: str = "1h", limit: int = 100):
 # ── Emergency halt ──────────────────────────────────────────────
 
 @app.post("/risk/halt")
-async def risk_halt():
+async def risk_halt(_token: str = Depends(require_dashboard_token)):
     """Emergency stop — activate circuit breaker, close all positions."""
     if engine is None:
         raise HTTPException(503, "Engine not initialized")
     try:
-        engine.risk._trip_circuit_breaker("Emergency halt from dashboard")
+        engine.risk.emergency_halt("Emergency halt from dashboard")
     except Exception:
         pass
     return {"ok": True, "circuit_breaker_active": True, "message": "Emergency halt activated"}

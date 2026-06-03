@@ -1,7 +1,7 @@
 {
-  "version": "2026-Q1Q2",
-  "generated_utc": "2026-05-31T00:00:00Z",
-  "max_stale_hours": 168,
+  "version": "2026-Q1Q3",
+  "generated_utc": "2026-06-03T00:00:00Z",
+  "max_stale_hours": 720,
   "events": [
     {
       "type": "FOMC_DECISION",
@@ -142,6 +142,48 @@
       "scheduled_utc": "2026-06-06T12:30:00Z",
       "severity": "HIGH",
       "date_confidence": "confirmed"
+    },
+    {
+      "type": "CPI_RELEASE",
+      "label": "CPI Report — July 2026",
+      "scheduled_utc": "2026-07-14T12:30:00Z",
+      "severity": "HIGH",
+      "date_confidence": "estimated"
+    },
+    {
+      "type": "CPI_RELEASE",
+      "label": "CPI Report — August 2026",
+      "scheduled_utc": "2026-08-12T12:30:00Z",
+      "severity": "HIGH",
+      "date_confidence": "estimated"
+    },
+    {
+      "type": "CPI_RELEASE",
+      "label": "CPI Report — September 2026",
+      "scheduled_utc": "2026-09-10T12:30:00Z",
+      "severity": "HIGH",
+      "date_confidence": "estimated"
+    },
+    {
+      "type": "NFP_RELEASE",
+      "label": "Non-Farm Payrolls — July 2026",
+      "scheduled_utc": "2026-07-03T12:30:00Z",
+      "severity": "HIGH",
+      "date_confidence": "estimated"
+    },
+    {
+      "type": "NFP_RELEASE",
+      "label": "Non-Farm Payrolls — August 2026",
+      "scheduled_utc": "2026-08-08T12:30:00Z",
+      "severity": "HIGH",
+      "date_confidence": "estimated"
+    },
+    {
+      "type": "NFP_RELEASE",
+      "label": "Non-Farm Payrolls — September 2026",
+      "scheduled_utc": "2026-09-05T12:30:00Z",
+      "severity": "HIGH",
+      "date_confidence": "estimated"
     }
   ]
 }

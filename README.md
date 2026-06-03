@@ -21,7 +21,7 @@
   <img src="https://img.shields.io/badge/tests-862%20passing-brightgreen" alt="862 Tests Passing">
   <img src="https://img.shields.io/badge/security%20tests-29%20passing-blueviolet" alt="29 Security Tests">
   <img src="https://img.shields.io/badge/red%20team-28%20scenarios%20%7C%20100%25%20pass-critical" alt="Red Team 28 Scenarios 100% Pass">
-  <img src="https://img.shields.io/badge/risk%20checks-21%20fail--closed-red" alt="21 Risk Checks">
+  <img src="https://img.shields.io/badge/risk%20checks-21%20(16%20strict%20%2B%205%20advisory)-red" alt="21 Risk Checks">
   <img src="https://img.shields.io/badge/mode-paper%20trading-orange" alt="Paper Trading">
   <img src="https://img.shields.io/badge/exchange-Bitget-blue" alt="Bitget">
   <img src="https://img.shields.io/badge/bot-LIVE%20%40HTRUNECLAW__bot-26a5e4?logo=telegram" alt="Live Telegram Bot">
@@ -55,7 +55,7 @@
 
 **RUNECLAW** is an AI trading command system built by **Humanoid Traders** for the Bitget AI Base Camp · Hackathon S1. It merges multi-timeframe analysis, confluence scoring, regime detection, order-flow microstructure, and risk-first logic into a disciplined framework -- all controllable through a Telegram bot interface.
 
-The system operates in **simulation-first mode by default**. Every trade idea must pass 21 independent risk checks, an adversarial self-critique gate, and receive explicit human confirmation before execution. An additional liquidity guard runs on live order-flow data when available. No exceptions.
+The system operates in **simulation-first mode by default**. Every trade idea must pass 21 pre-trade risk checks (16 strict fail-closed gates + 1 fail-open liquidity guard + 4 advisory checks that skip when data is unavailable), an adversarial self-critique gate, and receive explicit human confirmation before execution.
 
 > **Shield risk engine available as MCP server -- any GetClaw agent can call it.** See `bot/mcp/server.py`.
 
@@ -229,7 +229,7 @@ to all agents when severity >= 0.8. Ready for production deployment as separate 
 ## Features
 
 ### Market Intelligence
-- Real-time scanning of all Bitget USDT pairs
+- Real-time scanning of 67 Bitget USDT pairs (API bridge) / 324+ pairs (Telegram bot)
 - Volume spike detection (2x rolling average)
 - Momentum scoring with configurable thresholds
 - Top N mover ranking with structured signal output
@@ -276,7 +276,7 @@ to all agents when severity >= 0.8. Ready for production deployment as separate 
 - Designed to support MiCA-style decision auditability
 
 ### Risk Engine (Fail-Closed)
-- **21 independent pre-trade checks** -- all fail-closed (one failure = rejection), including liquidity guard, macro event gate, multi-timeframe alignment, and concentration PCA
+- **21 pre-trade checks** -- 16 strict fail-closed (one failure = rejection), 1 fail-open (#17 LIQUIDITY: no order-book data = pass), 4 advisory/skip (#18 MACRO, #19 MTF, #20 PCA, #21 VaR: skip when data unavailable). See `config/risk_manifest.yaml` for the authoritative list.
 - Circuit breaker halts trading on daily loss or drawdown breach
 - Fixed-fractional position sizing: risk budget (2% of equity) divided by stop distance, capped at 20% notional
 - Max open positions limit
@@ -383,7 +383,7 @@ python -m bot.main --mode scan
 | `/rejected` | Recent risk-rejected trades with failure reasons |
 | `/whynot [SYM]` | Explain why a trade was rejected |
 | `/dashboard` | Command center (status/risk/positions tabs) |
-| `/backtest` | Run backtest with synthetic data |
+| `/backtest` | Run backtest with synthetic data (rule-based only, LLM off) |
 | `/walkforward` | Walk-forward validation (overfitting detection) |
 | `/macro` | Macro event calendar (FOMC, CPI, NFP) |
 | `/learn` | AI learning system dashboard (8 modules) |
@@ -514,7 +514,7 @@ runeclaw/
 RUNECLAW is designed with a **fail-closed** philosophy:
 
 - **Simulation by default.** Live trading requires two explicit environment flags.
-- **Every trade passes 21 checks.** All fail-closed (one failure = rejection). No overrides.
+- **Every trade passes 21 checks.** 16 strict fail-closed, 1 fail-open (liquidity), 4 advisory/skip. See `config/risk_manifest.yaml` for details.
 - **Circuit breaker.** Auto-halts on daily loss (5%) or max drawdown (10%).
 - **Human-in-the-loop.** No trade executes without explicit confirmation.
 - **Re-check on confirm.** Risk is re-evaluated at confirmation time because market conditions change.
@@ -621,7 +621,7 @@ python run_realdata_backtest.py --llm --output results.json
 
 | Capability | RUNECLAW | Typical Hackathon Bot |
 |------------|:--------:|:---------------------:|
-| Pre-trade risk checks | **21 independent checks** | 0-3 basic checks |
+| Pre-trade risk checks | **21 checks (16 strict + 5 advisory)** | 0-3 basic checks |
 | Fail-closed design | **Yes** -- any failure = rejection | Fail-open (errors skip checks) |
 | Circuit breaker | **Auto-halt** on daily loss / drawdown | None or manual only |
 | Human confirmation | **Required** via Telegram keyboard | Auto-execute or no gate |
