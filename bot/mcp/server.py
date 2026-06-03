@@ -117,6 +117,59 @@ TOOL_CATALOGUE: tuple[MCPToolDef, ...] = (
         description="Show macro-event calendar: current risk state and upcoming events.",
     ),
     MCPToolDef(
+        mcp_name="runeclaw_shield",
+        skill_name="_shield_evaluate",
+        description=(
+            "RUNECLAW Shield: 21 fail-closed risk checks on a trade proposal. "
+            "Any external agent can call this to get an immutable safety decision. "
+            "Returns approved/rejected with check details."
+        ),
+        params=(
+            MCPToolParam(
+                name="symbol", type="string",
+                description="Trading pair, e.g. 'BTC/USDT'.",
+            ),
+            MCPToolParam(
+                name="direction", type="string",
+                description="Trade direction: 'long' or 'short'.",
+            ),
+            MCPToolParam(
+                name="entry_price", type="number",
+                description="Proposed entry price.",
+            ),
+            MCPToolParam(
+                name="stop_loss", type="number",
+                description="Stop loss price.",
+            ),
+            MCPToolParam(
+                name="take_profit", type="number",
+                description="Take profit price.",
+            ),
+            MCPToolParam(
+                name="confidence", type="number",
+                description="Signal confidence 0.0-1.0.",
+                required=False,
+                default=0.65,
+            ),
+        ),
+    ),
+    MCPToolDef(
+        mcp_name="runeclaw_fullscan",
+        skill_name="_fullscan",
+        description=(
+            "Run full 67-symbol market scan across the RUNECLAW universe. "
+            "Returns ranked signals with RSI, volume, chart patterns, and scores."
+        ),
+        params=(
+            MCPToolParam(
+                name="mode", type="string",
+                description="Scan mode: 'quick' (top 10), 'deep' (all 67), 'swing', 'scalp'.",
+                required=False,
+                default="quick",
+            ),
+        ),
+    ),
+    MCPToolDef(
         mcp_name="runeclaw_backtest",
         skill_name="run_backtest",
         description="Run a backtest with synthetic data.",
@@ -263,7 +316,7 @@ class RuneClawMCPServer:
             ).to_dict()
 
         skill = self._registry.get(tdef.skill_name)
-        if skill is None:
+        if skill is None and not tdef.skill_name.startswith("_"):
             return MCPResponse(
                 status="error",
                 tool=name,
@@ -293,7 +346,13 @@ class RuneClawMCPServer:
 
         # --- execute -------------------------------------------------------
         try:
-            result_text = await skill.execute(self._engine, **kwargs)
+            # Special built-in tools that bypass the skill registry
+            if tdef.skill_name == "_shield_evaluate":
+                result_text = await self._shield_evaluate(**kwargs)
+            elif tdef.skill_name == "_fullscan":
+                result_text = await self._fullscan(**kwargs)
+            else:
+                result_text = await skill.execute(self._engine, **kwargs)
             audit(
                 system_log,
                 f"MCP tool '{name}' executed successfully",
@@ -326,6 +385,71 @@ class RuneClawMCPServer:
     async def shutdown(self) -> None:
         """Graceful shutdown hook (close exchange connections, etc.)."""
         audit(system_log, "MCP server shutting down", action="mcp_shutdown")
+
+    # -- RUNECLAW Shield: standalone risk evaluation -----------------------
+
+    async def _shield_evaluate(
+        self, symbol: str, direction: str, entry_price: float,
+        stop_loss: float, take_profit: float, confidence: float = 0.65,
+    ) -> str:
+        """Run 21 fail-closed risk checks on a trade proposal."""
+        from bot.utils.models import Direction, TradeIdea, RiskVerdict
+
+        dir_enum = Direction.LONG if direction.lower() == "long" else Direction.SHORT
+        idea = TradeIdea(
+            asset=symbol, direction=dir_enum, entry_price=entry_price,
+            stop_loss=stop_loss, take_profit=take_profit,
+            confidence=confidence, reasoning="MCP Shield evaluation",
+            source="mcp_shield",
+        )
+        # Compute ATR from stop distance as proxy
+        atr = abs(entry_price - stop_loss) * 3 if entry_price > 0 else None
+        result = self._engine.risk.evaluate(idea, atr=atr)
+        approved = result.verdict == RiskVerdict.APPROVED
+        return json.dumps({
+            "approved": approved,
+            "verdict": result.verdict.value,
+            "confidence": round(confidence, 3),
+            "risk_reward": round(idea.risk_reward_ratio, 2),
+            "position_size_usd": result.position_size_usd,
+            "checks_passed": len(result.checks_passed),
+            "checks_failed": len(result.checks_failed),
+            "failed_checks": result.checks_failed,
+            "reason": result.reason,
+        }, default=str)
+
+    async def _fullscan(self, mode: str = "quick") -> str:
+        """Run full 67-symbol scan and return structured results."""
+        from bot.skills.scan_skill import UNIVERSE, _scan_symbol, _compute_rsi
+
+        exchange = await self._engine.scanner._get_exchange()
+        results = []
+        symbols = UNIVERSE[:10] if mode == "quick" else UNIVERSE
+        batch_size = 10
+        for i in range(0, len(symbols), batch_size):
+            batch = symbols[i:i + batch_size]
+            tasks = [_scan_symbol(exchange, sym) for sym in batch]
+            batch_results = await asyncio.gather(*tasks, return_exceptions=True)
+            for r in batch_results:
+                if isinstance(r, dict) and r is not None:
+                    # Serialize pattern dicts for JSON
+                    if "patterns" in r:
+                        r["patterns"] = [
+                            {"name": p["name"], "signal": p["signal"],
+                             "confidence": round(p.get("confidence", 0), 2)}
+                            for p in r["patterns"][:3]
+                        ]
+                    results.append(r)
+            if i + batch_size < len(symbols):
+                await asyncio.sleep(1.0)
+
+        results.sort(key=lambda r: r.get("score", 0), reverse=True)
+        top = results[:20] if mode != "quick" else results[:10]
+        return json.dumps({
+            "mode": mode,
+            "total_scanned": len(results),
+            "signals": top,
+        }, default=str)
 
     # -- internal helpers ---------------------------------------------------
 
