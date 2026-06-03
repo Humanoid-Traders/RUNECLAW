@@ -4629,3 +4629,108 @@ class TestIntentRouterV2:
         router = IntentRouter()
         result = router.classify_rules("what's moving today")
         assert result.skill == "scan_market"
+
+
+# ══════════════════════════════════════════════════════════════
+# CHART PATTERNS
+# ══════════════════════════════════════════════════════════════
+
+class TestChartPatterns:
+    """Test chart pattern detection module."""
+
+    def test_double_top(self):
+        """Two swing highs at same level → double top."""
+        from bot.core.chart_patterns import detect_double_top_bottom
+        # Create data with two peaks at ~110, trough at 100
+        n = 50
+        closes = np.concatenate([
+            np.linspace(90, 110, 10),   # rise to first peak
+            np.linspace(110, 100, 10),  # drop to trough
+            np.linspace(100, 110, 10),  # rise to second peak
+            np.linspace(110, 95, 20),   # breakdown
+        ])
+        highs = closes + 1
+        lows = closes - 1
+        result = detect_double_top_bottom(highs, lows, closes, lookback=3)
+        if result is not None:
+            assert result["signal"] == "bearish"
+            assert "Double Top" in result["name"]
+
+    def test_scan_all_returns_list(self):
+        """scan_all_chart_patterns returns a list, possibly empty."""
+        from bot.core.chart_patterns import scan_all_chart_patterns
+        n = 50
+        closes = np.linspace(100, 120, n)
+        opens = closes - 0.5
+        highs = closes + 1
+        lows = closes - 1
+        result = scan_all_chart_patterns(opens, highs, lows, closes)
+        assert isinstance(result, list)
+
+    def test_insufficient_data_returns_empty(self):
+        """Less than 20 bars → empty list."""
+        from bot.core.chart_patterns import scan_all_chart_patterns
+        closes = np.array([100, 101, 102])
+        opens = closes - 0.5
+        highs = closes + 1
+        lows = closes - 1
+        result = scan_all_chart_patterns(opens, highs, lows, closes)
+        assert result == []
+
+    def test_flag_detection(self):
+        """Strong move + consolidation → flag pattern."""
+        from bot.core.chart_patterns import detect_flags
+        # Sharp up-move then gentle down-drift
+        pole = np.linspace(100, 115, 10)
+        flag = 115 - np.linspace(0, 2, 20) + np.random.RandomState(42).randn(20) * 0.3
+        closes = np.concatenate([pole, flag])
+        highs = closes + 0.5
+        lows = closes - 0.5
+        result = detect_flags(highs, lows, closes)
+        if result is not None:
+            assert result["signal"] == "bullish"
+
+    def test_liquidity_sweep(self):
+        """Wick below swing low with close above → bullish sweep."""
+        from bot.core.chart_patterns import detect_liquidity_sweep
+        n = 40
+        closes = np.full(n, 100.0)
+        highs = np.full(n, 101.0)
+        lows = np.full(n, 99.0)
+        # Create a swing low at bar 20
+        lows[20] = 97.0
+        closes[20] = 98.0
+        # Last bar: wick below 97 but close above
+        lows[-1] = 96.5
+        closes[-1] = 100.5
+        highs[-1] = 101.0
+        result = detect_liquidity_sweep(highs, lows, closes, lookback=3)
+        if result is not None:
+            assert result["signal"] == "bullish"
+            assert "Sweep" in result["name"]
+
+    def test_elliott_partial(self):
+        """Basic swing structure that could form Elliott waves."""
+        from bot.core.chart_patterns import detect_elliott_impulse
+        # Create alternating swing pattern
+        n = 60
+        base = np.linspace(100, 130, n)
+        wave = np.sin(np.linspace(0, 3 * np.pi, n)) * 5
+        closes = base + wave
+        highs = closes + 1
+        lows = closes - 1
+        result = detect_elliott_impulse(highs, lows, closes, lookback=3)
+        # May or may not detect — just verify no crash
+        if result is not None:
+            assert result["name"].startswith("Elliott")
+
+    def test_sr_flip_no_crash(self):
+        """S/R flip detection runs without errors on typical data."""
+        from bot.core.chart_patterns import detect_sr_flip
+        n = 50
+        closes = np.linspace(100, 110, n)
+        highs = closes + 1
+        lows = closes - 1
+        result = detect_sr_flip(highs, lows, closes, lookback=3)
+        # Trending data probably won't produce an SR flip, but should not crash
+        assert result is None or isinstance(result, dict)

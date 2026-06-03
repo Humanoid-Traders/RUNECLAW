@@ -168,6 +168,8 @@ class TelegramHandler:
             ("livepositions", self._cmd_livepositions), ("liveclose", self._cmd_liveclose),
             ("buy", self._cmd_buy), ("sell", self._cmd_sell),
             ("health", self._cmd_health),
+            # Deep scan & playbook
+            ("playbook", self._cmd_playbook), ("deepscan", self._cmd_deepscan),
         ]:
             app.add_handler(CommandHandler(cmd, handler))
         app.add_handler(CallbackQueryHandler(self._handle_callback))
@@ -688,6 +690,8 @@ class TelegramHandler:
             "  /scalp         Scalp scan (5m)\n"
             "  /intraday      Intraday scan (15m)\n"
             "  /swing         Swing scan (4h)\n"
+            "  /deepscan      Deep scan 67+ symbols\n"
+            "  /playbook      System playbook\n"
             "  /analyze BTC   AI analysis\n"
             "  /run           Strategy preset\n"
             "\n"
@@ -1650,6 +1654,29 @@ class TelegramHandler:
         await self._send(update, "\U0001f30a <i>Running Swing Scan (4h)...</i>")
         result = await self.registry.get("pro_scan").execute(
             self.engine, mode="swing")
+        await self._send(update, result)
+
+    async def _cmd_playbook(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """GetClaw-style full system playbook briefing."""
+        if not await self._guard(update, "playbook"):
+            return
+        await self._send(update, "📋 <i>Assembling playbook...</i>")
+        result = await self.registry.get("playbook").execute(self.engine)
+        await self._send(update, result)
+
+    async def _cmd_deepscan(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """Deep scan 67+ symbols with chart + candle patterns."""
+        if not await self._guard(update, "deepscan"):
+            return
+        # Parse optional timeframe from args: /deepscan 1h
+        tf = "4h"
+        if ctx.args:
+            arg = ctx.args[0].lower().strip()
+            if arg in ("5m", "15m", "1h", "4h", "1d"):
+                tf = arg
+        await self._send(update, f"🔬 <i>Deep scanning {tf.upper()} — this may take a minute...</i>")
+        result = await self.registry.get("deepscan").execute(
+            self.engine, timeframe=tf)
         await self._send(update, result)
 
     async def _cmd_learn(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:

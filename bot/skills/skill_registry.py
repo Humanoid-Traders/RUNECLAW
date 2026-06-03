@@ -1630,6 +1630,311 @@ class WhyNotSkill(BaseSkill):
 
 
 # ══════════════════════════════════════════════════════════════
+# DEEPSCAN UNIVERSE — 67+ symbols
+# ══════════════════════════════════════════════════════════════
+
+DEEPSCAN_UNIVERSE: list[str] = [
+    # Majors
+    "BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT", "XRP/USDT",
+    "ADA/USDT", "DOGE/USDT", "DOT/USDT", "LINK/USDT", "AVAX/USDT",
+    "LTC/USDT", "BCH/USDT", "ETC/USDT", "XLM/USDT", "TRX/USDT",
+    "ATOM/USDT", "NEAR/USDT", "ICP/USDT", "FIL/USDT", "XMR/USDT",
+    # L1/L2 & Infra
+    "SUI/USDT", "APT/USDT", "SEI/USDT", "TON/USDT", "HBAR/USDT",
+    "OP/USDT", "ARB/USDT", "INJ/USDT", "TIA/USDT", "ALGO/USDT",
+    # DeFi
+    "UNI/USDT", "AAVE/USDT", "CRV/USDT", "LDO/USDT", "PENDLE/USDT",
+    "DYDX/USDT", "JUP/USDT", "RENDER/USDT", "FET/USDT",
+    # AI & Narrative
+    "TAO/USDT", "VIRTUAL/USDT",
+    # Memes & Community
+    "1000BONK/USDT", "WIF/USDT", "APE/USDT", "TRUMP/USDT",
+    "FARTCOIN/USDT", "PENGU/USDT", "ORDI/USDT",
+    # Mid-caps
+    "ENA/USDT", "ONDO/USDT", "WLD/USDT",
+    "HYPE/USDT", "JTO/USDT", "DASH/USDT",
+    # Micro / Emerging
+    "LAB/USDT", "ZEC/USDT", "SKYAI/USDT", "SIREN/USDT", "PUMP/USDT",
+    "WLFI/USDT", "ASTER/USDT", "XPLUS/USDT", "RAVE/USDT",
+    "VVV/USDT", "BIO/USDT", "M/USDT", "CHIP/USDT", "B/USDT",
+]
+
+DEEPSCAN_TIMEFRAMES = ["4h", "1h", "5m"]
+
+
+# ══════════════════════════════════════════════════════════════
+# PLAYBOOK — GetClaw-style narrative briefing
+# ══════════════════════════════════════════════════════════════
+
+class PlaybookSkill(BaseSkill):
+    """Full system briefing: scanner → AI brain → rulebook → live execution → positions."""
+    name = "playbook"
+    description = "GetClaw-style narrative playbook"
+
+    async def execute(self, engine: RuneClawEngine, **kwargs: Any) -> str:
+        state = engine.portfolio.snapshot()
+        cb = engine.risk.circuit_breaker_active
+        sim = "PAPER" if CONFIG.simulation_mode else "⚠️ LIVE"
+        now = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
+
+        lines: list[str] = []
+
+        # ── Section 1: Scanner Status ──
+        lines.append(_header("📡", "SCANNER SWEEP"))
+        lines.append("<pre>")
+        lines.append(_kv("Universe", f"{len(DEEPSCAN_UNIVERSE)} symbols"))
+        lines.append(_kv("Timeframes", "4H · 1H · 5M"))
+        lines.append(_kv("Batch Mode", "Parallel async"))
+        lines.append(_kv("Last Scan", now))
+        lines.append("</pre>")
+
+        # Show recent scan results if available
+        signals = await engine.scanner.scan()
+        n_signals = len(signals) if signals else 0
+        movers = [s for s in (signals or []) if abs(s.change_pct_24h) > 3.0]
+        spikes = [s for s in (signals or []) if s.volume_spike]
+        lines.append(f"  {_OK} {n_signals} signals detected")
+        lines.append(f"  {_spark(3.0)} {len(movers)} movers (>3%)")
+        lines.append(f"  💥 {len(spikes)} volume spikes")
+        lines.append("")
+
+        # ── Section 2: AI Brain ──
+        lines.append(_header("🧠", "AI BRAIN"))
+        lines.append("<pre>")
+        lines.append(_kv("Profiles", "6 strategy modes"))
+        lines.append(_kv("Indicators", "14+ (RSI/MACD/BB/EMA/ADX/ATR/OBV/VWAP/MFI/Fib)"))
+        lines.append(_kv("Candle Patterns", "15 detected"))
+        lines.append(_kv("Chart Patterns", "13 (H&S/DT/DB/Flags/Tri/Wedge)"))
+        lines.append(_kv("Elliott Waves", "5-wave impulse count"))
+        lines.append(_kv("Market Structure", "HH/HL/BOS/CHoCH/Sweep"))
+        lines.append(_kv("MTF Alignment", "1H · 4H · 1D"))
+        lines.append(_kv("Order Flow", "CVD · Book · Whale · Funding"))
+        lines.append("</pre>")
+
+        # LLM status
+        llm_provider = CONFIG.llm.provider.value if CONFIG.llm and CONFIG.llm.provider else "groq"
+        lines.append(f"  🤖 LLM: <b>{_esc(llm_provider.upper())}</b> + cascading fallback")
+        lines.append("")
+
+        # ── Section 3: Rulebook ──
+        lines.append(_header("🛡", "RULEBOOK"))
+        risk = engine.risk
+        total_checks = 19
+        lines.append("<pre>")
+        lines.append(_kv("Risk Checks", f"{total_checks} fail-closed gates"))
+        lines.append(_kv("Min Confidence", f"{CONFIG.analyzer.confidence_threshold:.0%}"))
+        lines.append(_kv("Min R:R", f"{CONFIG.analyzer.min_rr_ratio}x"))
+        lines.append(_kv("Max Drawdown", f"{CONFIG.risk.max_drawdown_pct:.0%}"))
+        lines.append(_kv("Max Positions", f"{CONFIG.risk.max_open_positions}"))
+        lines.append(_kv("Max Exposure", f"{CONFIG.risk.max_portfolio_risk_pct:.0%}"))
+        lines.append(_kv("Cooldown", f"{CONFIG.risk.cooldown_seconds}s"))
+        lines.append(_kv("Circuit Breaker", f"{_BAD} TRIPPED" if cb else f"{_OK} CLEAR"))
+        lines.append("</pre>")
+        lines.append("")
+
+        # ── Section 4: Live Execution ──
+        lines.append(_header("⚡", "LIVE EXECUTION"))
+        lines.append("<pre>")
+        lines.append(_kv("Mode", sim))
+        lines.append(_kv("Exchange", "Bitget"))
+        lines.append(_kv("Equity", _money(state.equity_usd)))
+        lines.append(_kv("Open Positions", f"{state.open_positions}"))
+        lines.append(_kv("Daily PnL", _money(state.daily_pnl, sign=True)))
+        lines.append(_kv("Trailing Stop", "Active (shared logic)"))
+        lines.append("</pre>")
+        lines.append("")
+
+        # ── Section 5: Active Positions ──
+        positions = engine.portfolio._positions
+        if positions:
+            lines.append(_header("📊", "ACTIVE POSITIONS"))
+            for pid, pos in list(positions.items())[:5]:
+                d_icon = _OK if pos.direction == "LONG" else _BAD
+                d_arrow = "▲" if pos.direction == "LONG" else "▼"
+                pnl = (pos.current_price - pos.entry_price) / pos.entry_price * 100 if pos.entry_price else 0
+                if pos.direction == "SHORT":
+                    pnl = -pnl
+                pnl_icon = _OK if pnl > 0 else _BAD if pnl < 0 else _NEU
+                lines.append(
+                    f"  {d_icon}{d_arrow} <b>{_esc(pos.symbol)}</b>  "
+                    f"{pnl_icon} {pnl:+.2f}%"
+                )
+                lines.append(f"<pre>")
+                lines.append(_kv("Entry", f"${pos.entry_price:,.2f}"))
+                lines.append(_kv("Current", f"${pos.current_price:,.2f}"))
+                lines.append(_kv("Size", _money(pos.notional_usd)))
+                lines.append(f"</pre>")
+        else:
+            lines.append(_header("📊", "ACTIVE POSITIONS"))
+            lines.append(f"  {_NEU} <i>No open positions</i>")
+
+        lines.append("")
+
+        # ── Pending Ideas ──
+        pending = engine._pending_ideas
+        if pending:
+            lines.append(_header("🎯", f"QUEUED IDEAS ({len(pending)})"))
+            for tid, idea in list(pending.items())[:3]:
+                d = "▲" if idea.direction.value == "LONG" else "▼"
+                lines.append(
+                    f"  {d} <b>{_esc(idea.asset)}</b>  "
+                    f"{_pill(f'{idea.confidence:.0%}')}  "
+                    f"R:R {idea.risk_reward_ratio}x"
+                )
+            lines.append("")
+
+        # ── Footer ──
+        lines.append(f"<i>🕐 {now}  ·  /deepscan for full universe scan</i>")
+
+        return "\n".join(lines)
+
+
+# ══════════════════════════════════════════════════════════════
+# DEEPSCAN — comprehensive multi-timeframe scan
+# ══════════════════════════════════════════════════════════════
+
+class DeepScanSkill(BaseSkill):
+    """Scan the full DEEPSCAN_UNIVERSE across multiple timeframes with chart patterns."""
+    name = "deepscan"
+    description = "Deep scan 67+ symbols with chart patterns"
+
+    async def execute(self, engine: RuneClawEngine, **kwargs: Any) -> str:
+        import numpy as np
+        from bot.core.chart_patterns import scan_all_chart_patterns
+        from bot.core.analyzer import _detect_candlestick_patterns
+
+        timeframe = kwargs.get("timeframe", "4h")
+        max_results = int(kwargs.get("max_results", 15))
+
+        now = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
+
+        lines: list[str] = []
+        lines.append(_header("🔬", f"DEEP SCAN — {timeframe.upper()}"))
+        lines.append(f"  {len(DEEPSCAN_UNIVERSE)} symbols · {timeframe} · chart + candle patterns")
+        lines.append("")
+
+        exchange = await engine.scanner._get_exchange()
+
+        hits: list[dict] = []
+        errors = 0
+        scanned = 0
+
+        for symbol in DEEPSCAN_UNIVERSE:
+            try:
+                ohlcv = await exchange.fetch_ohlcv(symbol, timeframe, limit=100)
+            except Exception:
+                errors += 1
+                continue
+
+            if not ohlcv or len(ohlcv) < 30:
+                continue
+
+            scanned += 1
+
+            opens = np.array([c[1] for c in ohlcv], dtype=float)
+            highs = np.array([c[2] for c in ohlcv], dtype=float)
+            lows = np.array([c[3] for c in ohlcv], dtype=float)
+            closes = np.array([c[4] for c in ohlcv], dtype=float)
+            volumes = np.array([c[5] for c in ohlcv], dtype=float)
+
+            price = float(closes[-1])
+            chg = (closes[-1] - closes[-2]) / closes[-2] * 100 if closes[-2] != 0 else 0
+
+            # Chart patterns
+            chart_patterns = scan_all_chart_patterns(opens, highs, lows, closes)
+
+            # Candlestick patterns
+            candle_patterns = _detect_candlestick_patterns(opens, highs, lows, closes)
+
+            # RSI
+            deltas = np.diff(closes)
+            gain = np.where(deltas > 0, deltas, 0.0)
+            loss = np.where(deltas < 0, -deltas, 0.0)
+            period = min(14, len(gain))
+            avg_gain = float(np.mean(gain[-period:])) if period > 0 else 0
+            avg_loss = float(np.mean(loss[-period:])) + 1e-10 if period > 0 else 1
+            rsi = 100 - 100 / (1 + avg_gain / avg_loss)
+
+            # Volume spike
+            vol_avg = float(np.mean(volumes[-20:])) if len(volumes) >= 20 else float(np.mean(volumes))
+            vol_spike = float(volumes[-1]) > vol_avg * 2.0
+
+            # Score: more patterns + extreme RSI + volume spike = higher score
+            score = len(chart_patterns) * 2 + len(candle_patterns) * 1
+            if rsi < 30 or rsi > 70:
+                score += 2
+            if vol_spike:
+                score += 1
+
+            if score > 0 or abs(chg) > 3.0:
+                hits.append({
+                    "symbol": symbol,
+                    "price": price,
+                    "chg": float(chg),
+                    "rsi": rsi,
+                    "vol_spike": vol_spike,
+                    "chart_patterns": chart_patterns,
+                    "candle_patterns": candle_patterns,
+                    "score": score,
+                })
+
+        # Sort by score
+        hits.sort(key=lambda h: h["score"], reverse=True)
+        top = hits[:max_results]
+
+        # Stats line
+        lines.append(f"<pre>")
+        lines.append(_kv("Scanned", f"{scanned} / {len(DEEPSCAN_UNIVERSE)}"))
+        lines.append(_kv("Hits", f"{len(hits)}"))
+        lines.append(_kv("Errors", f"{errors}"))
+        lines.append(f"</pre>")
+        lines.append("")
+
+        if not top:
+            lines.append(f"  {_NEU} <i>No actionable patterns detected.</i>")
+            lines.append(f"\n<i>🕐 {now}</i>")
+            return "\n".join(lines)
+
+        # Results
+        for h in top:
+            arrow = _spark(h["chg"])
+            rsi_label = "OB" if h["rsi"] > 70 else "OS" if h["rsi"] < 30 else ""
+            rsi_icon = _BAD if h["rsi"] > 70 else _OK if h["rsi"] < 30 else _NEU
+            spike_icon = "💥" if h["vol_spike"] else ""
+
+            sym_clean = h["symbol"].replace("/USDT", "")
+            lines.append(
+                f"  {arrow} <b>{_esc(sym_clean)}</b>  "
+                f"${h['price']:,.4f}  {h['chg']:+.1f}%  "
+                f"{rsi_icon} RSI {h['rsi']:.0f}{rsi_label}  {spike_icon}"
+            )
+
+            # Chart patterns
+            if h["chart_patterns"]:
+                for cp in h["chart_patterns"][:3]:
+                    sig_icon = _OK if cp["signal"] == "bullish" else _BAD if cp["signal"] == "bearish" else _NEU
+                    conf_str = f"{cp['confidence']:.0%}"
+                    lines.append(
+                        f"    {sig_icon} {cp['name']}  "
+                        f"{_pill(conf_str)}  "
+                        f"<i>{cp['description']}</i>"
+                    )
+
+            # Candlestick patterns
+            if h["candle_patterns"]:
+                candle_str = ", ".join(
+                    f"{'🟢' if v == 'bullish' else '🔴' if v == 'bearish' else '⚪'}{k}"
+                    for k, v in list(h["candle_patterns"].items())[:4]
+                )
+                lines.append(f"    🕯 {candle_str}")
+
+            lines.append("")
+
+        lines.append(f"<i>🕐 {now}  ·  /playbook for full briefing</i>")
+        return "\n".join(lines)
+
+
+# ══════════════════════════════════════════════════════════════
 # REGISTRY
 # ══════════════════════════════════════════════════════════════
 
@@ -1646,7 +1951,8 @@ def build_default_registry() -> SkillRegistry:
                 CostBreakdownSkill, RunStrategySkill,
                 LearningDashboardSkill, FeedbackSkill, PatternsSkill,
                 ProposalsSkill, OptimizationSkill, QuantAnalyzeSkill,
-                WhyNotSkill, ProScanSkill):
+                WhyNotSkill, ProScanSkill,
+                PlaybookSkill, DeepScanSkill):
         registry.register(cls())
     register_getclaw_wrapper(registry)
     # v2 upgrade: macro intelligence, compliance, audit, kill-switch
