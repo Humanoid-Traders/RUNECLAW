@@ -217,7 +217,20 @@ class RiskEngine:
         if stop_distance_pct > 0:
             risk_budget = state.equity_usd * (CONFIG.risk.max_position_pct / 100.0)
             uncapped_position_usd = risk_budget / stop_distance_pct
-            position_usd = uncapped_position_usd  # uncapped -- check #2 will cap if needed
+            position_usd = uncapped_position_usd
+
+        # Auto-cap position at the per-symbol notional limit so tight stops
+        # don't produce oversized positions.  If the uncapped size exceeds
+        # 2x the cap (i.e. the stop is absurdly tight), the POSITION_SIZE
+        # check still rejects — we only auto-cap moderate overflows.
+        max_notional_usd = state.equity_usd * (CONFIG.risk.max_symbol_exposure_pct / 100.0)
+        if max_notional_usd > 0:
+            uncapped_notional_pct = (uncapped_position_usd / state.equity_usd * 100)
+            if uncapped_notional_pct > CONFIG.risk.max_symbol_exposure_pct * 2:
+                # Stop is too tight — position would be >2x the cap; reject, don't cap
+                pass  # let check #2 reject it
+            elif position_usd > max_notional_usd:
+                position_usd = max_notional_usd
 
         # ── Individual checks — each wrapped so a raised exception → REJECTED ──
         # This is the fail-closed contract: if ANY check cannot be evaluated,
