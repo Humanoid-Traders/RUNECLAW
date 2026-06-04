@@ -123,17 +123,51 @@ def _pct(v: float) -> str:
     return f"{sign}{v:.1f}%"
 
 
+def _verdict_header(status_icon: str, status_label: str, bias: str = "",
+                     risk_state: str = "", action: str = "") -> str:
+    """Build a one-glance verdict header block."""
+    lines = []
+    lines.append(f"⚔️ <b>RUNECLAW VERDICT</b>")
+    lines.append(SEP)
+    lines.append(f"  Status: {status_icon} <b>{status_label}</b>")
+    if bias:
+        lines.append(f"  Bias: <i>{bias}</i>")
+    if risk_state:
+        lines.append(f"  Risk State: <i>{risk_state}</i>")
+    if action:
+        lines.append(f"  Action: <i>{action}</i>")
+    lines.append("")
+    return "\n".join(lines)
+
+
 # ── Data-fetching helper (async) ─────────────────────────────────
 
 async def fetch_analysis_data(exchange, symbol: str, timeframe: str = "1h",
                               limit: int = 100) -> Optional[Dict[str, Any]]:
     """Fetch OHLCV + orderbook + ticker for a symbol. Returns None on failure."""
+    # Normalize symbol: try original, then variants
+    candidates = [symbol]
+    if ":USDT" in symbol:
+        candidates.append(symbol.split(":")[0])  # SUSHI/USDT:USDT -> SUSHI/USDT
+    elif "/" in symbol and ":USDT" not in symbol:
+        candidates.append(f"{symbol}:USDT")  # SUSHI/USDT -> SUSHI/USDT:USDT
+    if "/" not in symbol and "USDT" in symbol:
+        base = symbol.replace("USDT", "")
+        candidates = [f"{base}/USDT", f"{base}/USDT:USDT", symbol]
     try:
         ohlcv, ticker, orderbook = None, None, None
-        try:
-            ohlcv = await exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
-        except Exception as e:
-            log.warning("OHLCV fetch failed for %s: %s", symbol, e)
+        for sym in candidates:
+            try:
+                ohlcv = await exchange.fetch_ohlcv(sym, timeframe, limit=limit)
+                if ohlcv and len(ohlcv) >= 20:
+                    symbol = sym  # use the working symbol
+                    break
+                ohlcv = None
+            except Exception as e:
+                log.debug("OHLCV fetch failed for %s: %s", sym, e)
+                continue
+        if not ohlcv or len(ohlcv) < 20:
+            log.warning("OHLCV unavailable for %s (tried: %s)", symbol, candidates)
             return None
 
         try:
@@ -148,7 +182,7 @@ async def fetch_analysis_data(exchange, symbol: str, timeframe: str = "1h",
             log.debug("Orderbook fetch failed for %s: %s", symbol, e)
             orderbook = {"bids": [], "asks": []}
 
-        if not ohlcv or len(ohlcv) < 20:
+        if not ohlcv:
             return None
 
         o = np.array([c[1] for c in ohlcv], dtype=float)
@@ -246,7 +280,7 @@ def render_analysis_card(data: Dict[str, Any], idea: Optional[Any] = None) -> st
 
     # Header
     lines = [
-        f"\U0001f525 <b>{pair}</b> \u2014 {_fmt_price(price)} | {_pct(change)} | Vol {_fmt_vol(vol)}",
+        f"\u2694\ufe0f <b>{pair}</b> \u2014 {_fmt_price(price)} | {_pct(change)} | Vol {_fmt_vol(vol)}",
         "",
         "<b>Current Snapshot:</b>",
         f"- Last: {_fmt_price(price)} | High: {_fmt_price(data['high_24h'])} | Low: {_fmt_price(data['low_24h'])}",
@@ -427,6 +461,11 @@ def render_recommended_orders(assets: List[Dict[str, Any]],
     if is_pullback:
         lines.append("<i>Pullback entries \u2014 not chases.</i>")
 
+    # Next Best Action
+    if lines:
+        lines.append("")
+        lines.append(f"🎯 <b>Next Action:</b> <i>Entry is conditional. Wait for confirmation trigger before execution.</i>")
+
     return "\n".join(lines)
 
 
@@ -576,11 +615,25 @@ def render_multi_analysis(
     if not assets:
         return "No data available."
 
+    # Dedup: keep only unique symbols (last occurrence wins)
+    seen = {}
+    for a in assets:
+        seen[a.get("symbol") or a.get("pair", "")] = a
+    assets = list(seen.values())
+
+    # Dedup ideas by asset
+    if ideas:
+        seen_ideas = {}
+        for i in ideas:
+            seen_ideas[i.asset] = i
+        ideas = list(seen_ideas.values())
+
     names = " & ".join(a["pair"] for a in assets)
     parts = [
         f"\u2694\ufe0f <b>{names}</b> \u2014 LIVE ANALYSIS",
         "",
         SEP,
+        "",
     ]
 
     ideas_map = {}
@@ -616,7 +669,7 @@ def render_open_positions(positions: List[Dict[str, Any]]) -> str:
         return ("\U0001f4c8 <b>OPEN POSITIONS (0)</b>\n"
                 f"{SEP}\n\n"
                 "No open positions.\n"
-                "Use /scan or /analyze to find signals.")
+                "Try \"scan\" or \"analyze BTC\" to discover opportunities.")
 
     total_pnl = sum(p.get("pnl_pct", 0) for p in positions)
     pnl_icon = "\U0001f7e2\u25b2" if total_pnl > 0 else "\U0001f534\u25bc" if total_pnl < 0 else "\u26aa"
@@ -647,7 +700,18 @@ def render_open_positions(positions: List[Dict[str, Any]]) -> str:
             f"- SL: {_fmt_price(sl)} | TP: {_fmt_price(tp)}",
         ])
         if size_usd:
-            lines.append(f"- Size: {_fmt_price(size_usd)}")
+            pnl_usd = size_usd * pnl / 100 if pnl else 0
+            # Fee estimates
+            comm_pct = p.get("comm_pct", 0.1)
+            entry_fee = size_usd * (comm_pct / 100.0)
+            exit_fee = (current * (size_usd / entry) if entry > 0 else size_usd) * (comm_pct / 100.0)
+            hold_h = p.get("hold_hours", 0)
+            funding = size_usd * (0.01 / 100.0) * (hold_h / 8.0) if hold_h > 0 else 0
+            total_cost = entry_fee + exit_fee + funding
+            lines.append(f"- Size: {_fmt_price(size_usd)} | PNL: <code>${pnl_usd:+,.2f}</code>")
+            lines.append(f"- Fees: <code>${entry_fee:.2f}</code> + <code>${exit_fee:.2f}</code>"
+                         + (f" + fund <code>${funding:.2f}</code>" if funding > 0.005 else "")
+                         + f" = <code>${total_cost:.2f}</code>")
         lines.append("")
 
     return "\n".join(lines)

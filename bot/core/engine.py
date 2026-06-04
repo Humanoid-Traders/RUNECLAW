@@ -8,6 +8,7 @@ Human confirmation is REQUIRED before execution.
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from datetime import datetime
 from bot.compat import UTC
@@ -31,6 +32,7 @@ from bot.macro.calendar import MacroCalendar, build_2026_calendar
 from bot.risk.portfolio import PortfolioTracker
 from bot.risk.risk_engine import RiskEngine
 from bot.risk.multi_portfolio import MultiUserPortfolio
+from bot.core.dashboard_pusher import DashboardPusher
 from bot.utils.audit_chain import AuditChain, DecisionRecord
 from bot.utils.logger import audit, system_log, trade_log, scan_log
 from bot.utils.models import (
@@ -40,6 +42,8 @@ from bot.utils.models import (
     StateTransition,
     TradeIdea,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class RuneClawEngine:
@@ -83,6 +87,8 @@ class RuneClawEngine:
             default_balance=CONFIG.paper_balance_usd,
             on_trade_close=None,  # wired after risk engine init
         )
+        # Dashboard pusher — pushes portfolio snapshots to the live dashboard
+        self.dashboard_pusher = DashboardPusher(self)
         # C1 fix: wire trade-close callback so portfolio closes feed risk streak tracking
         self.portfolio._on_trade_close = self.risk.record_trade_result
         self.state: AgentState = AgentState.IDLE
@@ -98,6 +104,7 @@ class RuneClawEngine:
         # /whynot: store last RiskCheck per symbol when risk rejects a trade
         self._last_rejections: dict[str, dict] = {}
         self._last_scan_signals: list = []
+        self._ohlcv_cache: dict[str, tuple[float, list]] = {}
 
     # -- State management --
 
@@ -149,6 +156,8 @@ class RuneClawEngine:
         )
         # Start WebSocket feed for real-time price monitoring
         await self.ws_feed.start()
+        # Start dashboard pusher
+        await self.dashboard_pusher.start()
         # Subscribe to core symbols so the WS connection stays alive
         # even when no positions are open.  Position-specific symbols
         # are added dynamically in _check_open_positions().
@@ -245,14 +254,49 @@ class RuneClawEngine:
             return
 
         self._transition(AgentState.ANALYZING, "signals detected")
-        for signal in signals[:3]:  # Top 3 movers
-            idea = await self._analyze_signal(signal)
+
+        # Analyze top 5 signals concurrently
+        async def _safe_analyze(sig):
+            try:
+                return await self._analyze_signal(sig)
+            except Exception as e:
+                logger.debug("Signal analysis error: %s", e)
+                return None
+
+        tasks = [_safe_analyze(sig) for sig in signals[:5]]
+        results = await asyncio.gather(*tasks)
+        for idea in results:
             if idea:
+                # Dedup: if an idea for the same asset already exists, replace it
+                existing_id = None
+                for eid, eidea in self._pending_ideas.items():
+                    if eidea.asset == idea.asset:
+                        existing_id = eid
+                        break
+                if existing_id:
+                    self._pending_ideas.pop(existing_id)
+                    self._pending_atr.pop(existing_id, None)
                 self._pending_ideas[idea.id] = idea
 
         self._transition(AgentState.MONITORING, "checking open positions")
         await self._check_open_positions()
         self._transition(AgentState.IDLE, "tick cycle complete")
+
+    async def _cached_ohlcv(self, exchange, symbol, timeframe, limit=100, ttl=120):
+        """Fetch OHLCV with a simple TTL cache to avoid refetching within `ttl` seconds."""
+        key = f"{symbol}:{timeframe}"
+        now = time.monotonic()
+        if key in self._ohlcv_cache:
+            cached_time, cached_data = self._ohlcv_cache[key]
+            if now - cached_time < ttl:
+                return cached_data
+        data = await exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
+        self._ohlcv_cache[key] = (now, data)
+        # Evict old entries
+        if len(self._ohlcv_cache) > 200:
+            cutoff = now - ttl * 2
+            self._ohlcv_cache = {k: v for k, v in self._ohlcv_cache.items() if v[0] > cutoff}
+        return data
 
     async def _analyze_signal(self, signal: MarketSignal, *, timeframe: str = "1h") -> Optional[TradeIdea]:
         """Run full analysis pipeline on a single signal.
@@ -263,7 +307,23 @@ class RuneClawEngine:
         """
         try:
             exchange = await self.scanner._get_exchange()
-            ohlcv = await exchange.fetch_ohlcv(signal.symbol, timeframe, limit=100)
+            # Parallelize OHLCV fetch and order flow analysis
+            ohlcv_task = self._cached_ohlcv(exchange, signal.symbol, timeframe, limit=100)
+            of_task = self.order_flow.analyze(exchange, signal.symbol)
+            results = await asyncio.gather(ohlcv_task, of_task, return_exceptions=True)
+            ohlcv = results[0] if not isinstance(results[0], Exception) else None
+            of_signal = results[1] if not isinstance(results[1], Exception) else None
+            if isinstance(results[0], Exception):
+                audit(
+                    system_log,
+                    f"OHLCV fetch failed: {results[0]}",
+                    action="fetch_candles",
+                    result="ERROR",
+                )
+                return None
+            if isinstance(results[1], Exception):
+                audit(system_log, f"Order flow analysis failed: {results[1]}",
+                      action="order_flow", result="ERROR")
         except Exception as exc:
             audit(
                 system_log,
@@ -272,14 +332,6 @@ class RuneClawEngine:
                 result="ERROR",
             )
             return None
-
-        # Order flow analysis (fail-closed: returns neutral on any error)
-        of_signal = None
-        try:
-            of_signal = await self.order_flow.analyze(exchange, signal.symbol)
-        except Exception as exc:
-            audit(system_log, f"Order flow analysis failed: {exc}",
-                  action="order_flow", result="ERROR")
 
         idea = await self.analyzer.analyze(signal, ohlcv, order_flow=of_signal)
         if idea is None:
@@ -484,7 +536,7 @@ class RuneClawEngine:
         try:
             from bot.core.critique import TradeCritique
             critique = TradeCritique()
-            snapshot = self.portfolio.snapshot()
+            snapshot = self.user_portfolios.combined_snapshot() if self.user_portfolios.all_portfolios() else self.portfolio.snapshot()
             macro_ctx_for_critique = self.macro_provider.get_context(symbol=idea.asset)
             critique_result = critique.evaluate(idea, recheck, snapshot, macro_ctx_for_critique)
 
@@ -497,7 +549,14 @@ class RuneClawEngine:
                 })
                 self._transition(AgentState.IDLE, f"critique halted {trade_id}")
                 return f"Trade HALTED by adversarial review: {critique_result.bear_case}\nConcerns: {'; '.join(critique_result.concerns)}"
-            elif critique_result.verdict == "WARN":
+            # Apply critique confidence adjustment
+            if critique_result.confidence_adjustment != 0:
+                idea.confidence = max(0.0, min(1.0, idea.confidence + critique_result.confidence_adjustment))
+                audit(trade_log, f"Critique adjusted confidence by {critique_result.confidence_adjustment:+.2f} to {idea.confidence:.3f}",
+                      action="critique_adjust", result="ADJUSTED",
+                      data={"adjustment": critique_result.confidence_adjustment, "new_confidence": idea.confidence})
+
+            if critique_result.verdict == "WARN":
                 audit(trade_log, f"Critique WARNING for {trade_id}: {critique_result.bear_case}",
                       action="critique", result="WARN",
                       data={"concerns": critique_result.concerns})

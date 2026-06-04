@@ -70,8 +70,14 @@ def _find_swings(highs: np.ndarray, lows: np.ndarray, lookback: int = 5) -> dict
 
 # ── Structure Analysis ────────────────────────────────────────────
 
-def _analyze_structure(highs: np.ndarray, lows: np.ndarray, lookback: int = 5) -> dict:
+def _analyze_structure(highs: np.ndarray, lows: np.ndarray, closes: np.ndarray, lookback: int = 5) -> dict:
     """Detect market structure: HH/HL, LH/LL, BOS, CHoCH.
+
+    Args:
+        highs: High prices array
+        lows: Low prices array
+        closes: Close prices array
+        lookback: Swing detection lookback window
 
     Returns:
         structure: "bullish" | "bearish" | "ranging"
@@ -115,7 +121,7 @@ def _analyze_structure(highs: np.ndarray, lows: np.ndarray, lookback: int = 5) -
         result["bias"] = 0.0
 
     # Break of Structure: price closes beyond the last swing
-    current_price = float(highs[-1] + lows[-1]) / 2
+    current_price = float(closes[-1])
     if len(sh) >= 1 and current_price > sh[-1][1]:
         result["bos"] = True
         result["bias"] = min(1.0, result["bias"] + 0.3)
@@ -131,6 +137,14 @@ def _analyze_structure(highs: np.ndarray, lows: np.ndarray, lookback: int = 5) -
         now_bullish = sh[-1][1] > sh[-2][1] and sl[-1][1] > sl[-2][1]
 
         if (prev_bullish and now_bearish) or (prev_bearish and now_bullish):
+            result["choch"] = True
+    elif len(sh) >= 2 and len(sl) >= 2:
+        # With only 2 swing points, detect reversal from structure bias
+        now_bearish = sh[-1][1] < sh[-2][1] and sl[-1][1] < sl[-2][1]
+        now_bullish = sh[-1][1] > sh[-2][1] and sl[-1][1] > sl[-2][1]
+        # CHoCH if current structure opposes the BOS direction
+        if result["bos"] and ((result["bias"] > 0 and now_bearish) or
+                               (result["bias"] < 0 and now_bullish)):
             result["choch"] = True
 
     return result
@@ -178,14 +192,24 @@ def _analyze_single_tf(
         trend = "neutral"
         trend_score = 0.0
 
-    # RSI for momentum
+    # RSI for momentum (Wilder's smoothing)
     deltas = np.diff(closes)
     gain = np.where(deltas > 0, deltas, 0.0)
     loss = np.where(deltas < 0, -deltas, 0.0)
-    period = min(14, len(gain))
-    if period > 0:
-        avg_gain = float(np.mean(gain[-period:]))
-        avg_loss = float(np.mean(loss[-period:])) + 1e-10
+    period = 14
+    if len(deltas) < period:
+        avg_gain = float(np.mean(gain)) if len(gain) else 0
+        avg_loss = float(np.mean(loss)) if len(loss) else 1e-10
+    else:
+        # Initial SMA seed
+        avg_gain = float(np.mean(gain[:period]))
+        avg_loss = float(np.mean(loss[:period]))
+        # Wilder's smoothing for remaining bars
+        for i in range(period, len(gain)):
+            avg_gain = (avg_gain * (period - 1) + gain[i]) / period
+            avg_loss = (avg_loss * (period - 1) + loss[i]) / period
+        avg_loss = max(avg_loss, 1e-10)
+    if avg_loss > 0:
         rsi = 100 - 100 / (1 + avg_gain / avg_loss)
     else:
         rsi = 50.0
@@ -195,7 +219,7 @@ def _analyze_single_tf(
     adx = adx_data["adx"]
 
     # Market structure
-    structure = _analyze_structure(highs, lows, lookback=min(5, len(highs) // 6))
+    structure = _analyze_structure(highs, lows, closes, lookback=min(5, len(highs) // 6))
 
     return {
         "label": label,
@@ -250,13 +274,20 @@ class MTFConfluence:
         scores = [tf["trend_score"] for tf in tf_results.values()]
         labels_list = list(tf_results.keys())
 
-        # Alignment: average of trend scores. Strong when all same direction
-        avg_score = float(np.mean(scores))
-        result.alignment_score = round(float(np.clip(avg_score, -1, 1)), 4)
+        # Alignment: weighted average — daily carries most weight
+        tf_weights = {"1d": 0.5, "4h": 0.3, "1h": 0.2}
+        weighted_sum = 0.0
+        weight_total = 0.0
+        for tf_key, result_tf in tf_results.items():
+            w = tf_weights.get(tf_key, 0.2)
+            weighted_sum += result_tf["trend_score"] * w
+            weight_total += w
+        alignment_score = weighted_sum / weight_total if weight_total > 0 else 0.0
+        result.alignment_score = round(float(np.clip(alignment_score, -1, 1)), 4)
 
         # Classify aligned vs conflicting
-        majority_bullish = avg_score > 0.2
-        majority_bearish = avg_score < -0.2
+        majority_bullish = alignment_score > 0.2
+        majority_bearish = alignment_score < -0.2
         for label, tf in tf_results.items():
             if (majority_bullish and tf["trend_score"] > 0) or \
                (majority_bearish and tf["trend_score"] < 0):
@@ -265,7 +296,9 @@ class MTFConfluence:
                  (majority_bearish and tf["trend_score"] > 0.2):
                 result.conflicting_timeframes.append(label)
             else:
-                result.aligned_timeframes.append(label)  # neutral = not conflicting
+                # Only count as aligned if trend is clear (not neutral)
+                if abs(tf["trend_score"]) > 0.2:
+                    result.aligned_timeframes.append(label)
 
         # HTF trend: prefer daily, then 4h
         if "1d" in tf_results:

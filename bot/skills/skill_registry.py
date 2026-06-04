@@ -6,6 +6,7 @@ Clean separators, emoji headers, bullet-point key-value pairs,
 
 from __future__ import annotations
 
+import asyncio
 import html as _html
 from abc import ABC, abstractmethod
 from datetime import datetime
@@ -15,6 +16,14 @@ from typing import Any
 from bot.config import CONFIG
 from bot.core.engine import RuneClawEngine
 from bot.utils.logger import audit, system_log
+
+
+def _get_portfolio(engine: RuneClawEngine, **kwargs):
+    """Return per-user portfolio if user_id provided, else system portfolio."""
+    user_id = kwargs.get("user_id")
+    if user_id:
+        return engine.user_portfolios.get(user_id)
+    return engine.portfolio
 
 
 # ── Visual vocabulary ─────────────────────────────────────────
@@ -244,6 +253,12 @@ class AnalyzeAssetSkill(BaseSkill):
                 f"<i>\u25c7 No actionable signal \u2014 regime filter or low confluence</i>"
             )
 
+        # Dedup: replace any existing pending idea for the same asset
+        for eid in list(engine._pending_ideas):
+            if engine._pending_ideas[eid].asset == idea.asset:
+                engine._pending_ideas.pop(eid)
+                engine._pending_atr.pop(eid, None)
+                break
         engine._pending_ideas[idea.id] = idea
 
         d = idea.direction.value
@@ -300,16 +315,17 @@ class CheckRiskSkill(BaseSkill):
 
     async def execute(self, engine: RuneClawEngine, **kwargs: Any) -> str:
         mode = kwargs.get("mode", "risk")
-        state = engine.portfolio.snapshot()
+        portfolio = _get_portfolio(engine, **kwargs)
+        state = portfolio.snapshot()
         cb = engine.risk.circuit_breaker_active
         streak = engine.risk.consecutive_losses
         cost = engine.cost.snapshot()
-        total_exp = sum(p.entry_price * p.quantity for p in engine.portfolio.open_positions)
+        total_exp = sum(p.entry_price * p.quantity for p in portfolio.open_positions)
         exp_pct = (total_exp / state.equity_usd * 100) if state.equity_usd > 0 else 0
 
         from bot.risk.risk_engine import _CORRELATION_GROUPS
         groups: dict[str, int] = {}
-        for pos in engine.portfolio.open_positions:
+        for pos in portfolio.open_positions:
             g = _CORRELATION_GROUPS.get(pos.asset, pos.asset)
             groups[g] = groups.get(g, 0) + 1
 
@@ -411,7 +427,8 @@ class GetPortfolioSkill(BaseSkill):
     description = "Portfolio with PnL waterfall"
 
     async def execute(self, engine: RuneClawEngine, **kwargs: Any) -> str:
-        state = engine.portfolio.snapshot()
+        portfolio = _get_portfolio(engine, **kwargs)
+        state = portfolio.snapshot()
         cost = engine.cost.snapshot()
         net = state.equity_usd - cost.operating_cost_usd
         cpt = cost.operating_cost_usd / state.total_trades if state.total_trades > 0 else 0
@@ -439,7 +456,7 @@ class GetPortfolioSkill(BaseSkill):
             "</pre>",
         ]
 
-        open_pos = engine.portfolio.open_positions
+        open_pos = portfolio.open_positions
         if open_pos:
             lines.append(f"\n\U0001f4ca <b>Open Positions</b>  ({len(open_pos)})")
             lines.append(SEP)
@@ -622,7 +639,7 @@ class HaltSkill(BaseSkill):
             f"- Circuit Breaker: {_BAD} <b>TRIPPED</b>\n"
             f"- Ideas Cancelled: <code>{len(cancelled)}</code>\n"
             f"- Engine: <code>HALTED</code>\n\n"
-            f"<i>\u26a0 All trading paused. /reset to resume.</i>"
+            f"<i>\u26a0 All trading paused. Say \"reset\" to resume.</i>"
         )
 
 
@@ -747,7 +764,8 @@ class TradeJournalSkill(BaseSkill):
     description = "Trade history"
 
     async def execute(self, engine: RuneClawEngine, **kwargs: Any) -> str:
-        history = engine.portfolio._history
+        portfolio = _get_portfolio(engine, **kwargs)
+        history = portfolio._history
         if not history:
             return f"{_NEU} <b>TRADE JOURNAL</b>\n\n<i>\u25c7 No closed trades yet.</i>"
 
@@ -801,7 +819,8 @@ class CostBreakdownSkill(BaseSkill):
 
     async def execute(self, engine: RuneClawEngine, **kwargs: Any) -> str:
         cost = engine.cost.snapshot()
-        state = engine.portfolio.snapshot()
+        portfolio = _get_portfolio(engine, **kwargs)
+        state = portfolio.snapshot()
         rate_stats = engine.analyzer._rate_limiter.stats
         net = state.equity_usd - cost.operating_cost_usd
 
@@ -925,8 +944,8 @@ class RunStrategySkill(BaseSkill):
             a = f"  <i>/{aliases[0]}</i>" if aliases else ""
             lines.append(f"  {cfg['icon']} <b>{cfg['label']}</b>{a}")
             lines.append(f"     <i>{cfg['desc']}</i>")
-        lines.append(f"\n<i>\u25b8 Usage: /run &lt;name&gt; \u2022 21 checks active</i>")
-        lines.append(f"<i>\u25b8 Or: /run &lt;SYMBOL&gt; (e.g. /run BTC, /run SOL)</i>")
+        lines.append(f"\n<i>\u25b8 Say \"run\" + name \u2022 21 checks active</i>")
+        lines.append(f"<i>\u25b8 Or: say \"run BTC\", \"run SOL\", etc.</i>")
         return "\n".join(lines)
 
     @classmethod
@@ -955,7 +974,7 @@ class RunStrategySkill(BaseSkill):
             return (
                 f"\U0001f50e <b>Targeted: {_esc(sym)}</b>\n\n"
                 f"<i>No signals found for {_esc(sym)}.</i>\n"
-                f"<i>Try /scan for all pairs or /analyze {_esc(sym)} for deep analysis.</i>"
+                f"<i>Say \"scan\" for all pairs or \"analyze {_esc(sym)}\" for deep analysis.</i>"
             )
 
         results = []
@@ -978,7 +997,7 @@ class RunStrategySkill(BaseSkill):
         ]
         lines.extend(results or ["  <i>No actionable ideas passed analysis</i>"])
         if ideas > 0:
-            lines.append(f"\n<i>/trade to review and confirm</i>")
+            lines.append(f"\n<i>Say \"trade\" to review and confirm</i>")
         return "\n".join(lines)
 
     async def execute(self, engine: RuneClawEngine, **kwargs: Any) -> str:
@@ -1033,7 +1052,7 @@ class RunStrategySkill(BaseSkill):
         ]
         lines.extend(results or ["  <i>No actionable ideas passed filters</i>"])
         if ideas > 0:
-            lines.append(f"\n<i>/trade to review and confirm</i>")
+            lines.append(f"\n<i>Say \"trade\" to review and confirm</i>")
         return "\n".join(lines)
 
 
@@ -1045,16 +1064,17 @@ class LearningDashboardSkill(BaseSkill):
     name = "learning"
     description = "AI learning dashboard (/learn)"
 
-    # The 8 core learning modules: (store_key, display_name, description)
-    _MODULES: list[tuple[str, str, str]] = [
-        ("patterns",          "PatternMemory",            "Candle pattern recognition"),
-        ("regime",            "RegimeAdaptation",         "Market regime learning"),
-        ("indicator_weights", "IndicatorWeightEvolution",  "Indicator weight optimization"),
-        ("feedback",          "FeedbackLoop",             "Trade outcome learning"),
-        ("volatility",        "VolatilityProfiler",       "Volatility regime modeling"),
-        ("correlations",      "CorrelationTracker",       "Cross-asset correlation"),
-        ("drawdown",          "DrawdownRecovery",         "Recovery pattern learning"),
-        ("timing",            "TimingOptimizer",          "Entry/exit timing"),
+    # The 8 core learning modules: (module_key, display_name, description, actual_data_key)
+    # actual_data_key maps to the real key returned by store.stats()
+    _MODULES: list[tuple[str, str, str, str]] = [
+        ("patterns",          "PatternMemory",            "Candle pattern recognition",    "decisions"),
+        ("regime",            "RegimeAdaptation",         "Market regime learning",        "decisions"),
+        ("indicator_weights", "IndicatorWeightEvolution",  "Indicator weight optimization", "decisions"),
+        ("feedback",          "FeedbackLoop",             "Trade outcome learning",        "decisions"),
+        ("volatility",        "VolatilityProfiler",       "Volatility regime modeling",    "decisions"),
+        ("correlations",      "CorrelationTracker",       "Cross-asset correlation",       "decisions"),
+        ("drawdown",          "DrawdownRecovery",         "Recovery pattern learning",     "decisions"),
+        ("timing",            "TimingOptimizer",          "Entry/exit timing",             "decisions"),
     ]
 
     @staticmethod
@@ -1120,9 +1140,9 @@ class LearningDashboardSkill(BaseSkill):
 
         health_scores: list[float] = []
 
-        for key, mod_name, _desc in self._MODULES:
+        for key, mod_name, _desc, data_key in self._MODULES:
             detail = module_details.get(key, {})
-            obs = detail.get("observations", stats.get(key, 0))
+            obs = detail.get("observations", stats.get(data_key, 0))
             last_upd = detail.get("last_update")
             health = self._health_score(obs)
             health_scores.append(health)
@@ -1142,6 +1162,26 @@ class LearningDashboardSkill(BaseSkill):
         # ── Composite Learning Score ─────────────────────────
         composite = (
             sum(health_scores) / len(health_scores) if health_scores else 0.0
+        )
+        comp_dot, comp_label = self._module_status(composite)
+        comp_bar = _bar(composite, 100.0, 12)
+
+        # Derive the display score (/10) from module health so it stays consistent
+        health_based_score = round(composite / 10.0, 2)
+        if health_based_score >= 8:
+            health_tier = "S"
+        elif health_based_score >= 6:
+            health_tier = "A"
+        elif health_based_score >= 4:
+            health_tier = "B"
+        elif health_based_score >= 2:
+            health_tier = "C"
+        else:
+            health_tier = "D"
+        h_icon = tier_icons.get(health_tier, _NEU)
+
+        lines[1] = (
+            f"  {h_icon} Score: <code>{health_based_score}/10</code>  [{health_tier}]\n"
         )
         comp_dot, comp_label = self._module_status(composite)
         comp_bar = _bar(composite, 100.0, 12)
@@ -1211,7 +1251,7 @@ class FeedbackSkill(BaseSkill):
         if not did or not ft:
             return (
                 f"\U0001f4ac <b>FEEDBACK</b>\n\n"
-                f"<code>/feedback &lt;id&gt; &lt;type&gt; [text]</code>\n\n"
+                f"Say <code>feedback &lt;id&gt; &lt;type&gt; [text]</code>\n\n"
                 f"Types: <code>correct</code>, <code>incorrect</code>, "
                 f"<code>too_risky</code>, <code>too_conservative</code>, "
                 f"<code>good_rejection</code>, <code>good_explanation</code>"
@@ -1303,6 +1343,71 @@ class OptimizationSkill(BaseSkill):
         return "\n".join(lines)
 
 
+# ── Setup Quality helpers ──
+
+
+def _setup_quality_score(confidence: float, rr: float, rsi: float,
+                          vol_confirmed: bool, structure_clear: bool) -> tuple[int, str]:
+    """Rate setup quality 0-10 with label."""
+    score = 0
+    # Structure clarity (0-2)
+    if structure_clear:
+        score += 2
+    # Momentum confirmation (0-2)
+    if vol_confirmed:
+        score += 1
+    if 30 < rsi < 70:
+        score += 0  # neutral RSI = no bonus
+    elif rsi <= 30 or rsi >= 70:
+        score += 1  # extreme RSI = momentum signal
+    # Entry location via confidence (0-2)
+    if confidence >= 0.8:
+        score += 2
+    elif confidence >= 0.6:
+        score += 1
+    # Risk-to-reward (0-2)
+    if rr >= 3.0:
+        score += 2
+    elif rr >= 2.0:
+        score += 1
+    # Invalidation quality = confidence proxy (0-1)
+    if confidence >= 0.7:
+        score += 1
+    # Timeframe alignment bonus (0-1)
+    if structure_clear and confidence >= 0.6:
+        score += 1
+
+    score = min(10, score)
+
+    if score <= 3:
+        label = "No-Trade"
+    elif score <= 5:
+        label = "Weak Setup"
+    elif score <= 7:
+        label = "Tradable with confirmation"
+    elif score <= 9:
+        label = "High-Quality Setup"
+    else:
+        label = "Rare Premium Setup"
+
+    return score, label
+
+
+def _status_label(confidence: float, rr: float, rsi: float, in_midrange: bool) -> tuple[str, str]:
+    """Return (icon, label) for the setup status."""
+    if in_midrange and 40 < rsi < 60:
+        return "⛔", "No-Trade Zone"
+    if confidence >= 0.75 and rr >= 2.0:
+        return "🎯", "Execution Ready"
+    if confidence >= 0.7 and rr >= 1.5:
+        return "✅", "Valid Setup"
+    if confidence >= 0.5:
+        return "🟡", "Confirmation Pending"
+    if rsi > 80 or rsi < 20:
+        return "⚠️", "Elevated Risk"
+    return "🔒", "Stand Down"
+
+
 # ══════════════════════════════════════════════════════════════
 # WHYNOT — explain why a trade was rejected
 # ══════════════════════════════════════════════════════════════
@@ -1349,25 +1454,32 @@ class ProScanSkill(BaseSkill):
         mode = kwargs.get("mode", "intraday")
         cfg = self.MODE_CFG.get(mode, self.MODE_CFG["intraday"])
 
-        # ── Section 1: Account Status ──
-        state = engine.portfolio.snapshot()
+        # ── Account Status ──
+        portfolio = _get_portfolio(engine, **kwargs)
+        state = portfolio.snapshot()
         cb = engine.risk.circuit_breaker_active
-        cb_s = f"{_BAD} TRIPPED" if cb else f"{_OK} CLEAR"
         sim = "PAPER" if CONFIG.simulation_mode else "\u26a0\ufe0f LIVE"
 
         header = (
-            f"{cfg['icon']} <b>{cfg['label']}</b>\n{SEP}\n"
-            f"  {sim}  \u2502  Breaker: {cb_s}\n\n"
-            f"- Equity: <code>{_money(state.equity_usd)}</code>\n"
-            f"- Open Pos: <code>{state.open_positions} / {CONFIG.risk.max_open_positions}</code>\n"
-            f"- Daily PnL: <code>{_money(state.daily_pnl, sign=True)}</code>\n"
-            f"- Timeframe: <code>{cfg['timeframe'].upper()}</code>\n"
+            f"\u2694\ufe0f <b>RUNECLAW {cfg['label']}</b>\n{SEP}\n"
+            f"  {sim}  \u2502  Equity: <code>{_money(state.equity_usd)}</code>\n"
+            f"  Open: <code>{state.open_positions}/{CONFIG.risk.max_open_positions}</code>"
+            f"  \u2502  PnL: <code>{_money(state.daily_pnl, sign=True)}</code>\n"
+            f"  Timeframe: <code>{cfg['timeframe'].upper()}</code>"
+            f"  \u2502  Scan Mode: <code>Swing-by-swing</code>\n"
         )
 
-        # ── Section 2: Fetch live tickers ──
+        # ── Fetch live tickers ──
         signals = await engine.scanner.scan()
         if not signals:
-            return header + f"\n{_NEU} <i>No market signals detected.</i>"
+            return (
+                header +
+                f"\n\u2694\ufe0f <b>Executive Read</b>\n"
+                f"<i>The Claw sees no actionable movement. Market is compressed.\n"
+                f"No trigger, no trade. Stand down until structure resolves.</i>\n\n"
+                f"<b>Claw Verdict:</b> Observation mode.\n\n"
+                f"<i>\u26a0\ufe0f Not financial advice. Use your own risk management.</i>"
+            )
 
         # Sort by mode preference
         if cfg["sort"] == "volume":
@@ -1395,24 +1507,31 @@ class ProScanSkill(BaseSkill):
             )
         ticker_lines.append("</pre>\n")
 
-        # ── Section 3: Regime Assessment + Analysis ──
-        regime_lines = ["\U0001f9e0 <b>Regime Assessment</b>\n"]
+        # ── Structure Read per Asset ──
+        structure_lines = []
         ideas_found: list = []
 
-        for sig in top:
+        # Pre-fetch all OHLCV in parallel
+        exchange = await engine.scanner._get_exchange()
+
+        async def _fetch_ohlcv(sym):
             try:
-                exchange = await engine.scanner._get_exchange()
-                ohlcv = await exchange.fetch_ohlcv(
-                    sig.symbol, cfg["timeframe"], limit=100
-                )
+                return sym, await exchange.fetch_ohlcv(sym, cfg["timeframe"], limit=100)
             except Exception:
-                regime_lines.append(
+                return sym, None
+
+        ohlcv_results = dict(await asyncio.gather(*[_fetch_ohlcv(s.symbol) for s in top]))
+
+        for sig in top:
+            ohlcv = ohlcv_results.get(sig.symbol)
+            if ohlcv is None:
+                structure_lines.append(
                     f"  {_BAD} <b>{_esc(sig.symbol)}</b> \u2014 data unavailable\n"
                 )
                 continue
 
             if len(ohlcv) < 20:
-                regime_lines.append(
+                structure_lines.append(
                     f"  {_WARN} <b>{_esc(sig.symbol)}</b> \u2014 insufficient bars\n"
                 )
                 continue
@@ -1454,36 +1573,112 @@ class ProScanSkill(BaseSkill):
                 for p in closes[-19:]:
                     ema20 = p * k + ema20 * (1 - k)
 
-            # ADX proxy: average directional movement
+            # ── Premium structure analysis ──
             price = closes[-1]
-            trend_dir = "Bullish" if price > ema20 else "Bearish"
-            trend_icon = _OK if price > ema20 else _BAD
+            midrange = (resistance + support) / 2
+            above_ema = price > ema20
+            above_vwap = price > vwap
+            in_midrange = abs(price - midrange) < (resistance - support) * 0.25
 
-            # Build narrative
+            # Structural bias
+            if above_ema and above_vwap:
+                struct_bias = "Bullish structure"
+                struct_icon = _OK
+            elif not above_ema and not above_vwap:
+                struct_bias = "Bearish structure"
+                struct_icon = _BAD
+            elif in_midrange:
+                struct_bias = "Range-bound \u2022 Compression"
+                struct_icon = _WARN
+            else:
+                struct_bias = "Confirmation pending"
+                struct_icon = _NEU
+
+            # Risk state
+            if rsi > 80 or rsi < 20:
+                risk_state = "ELEVATED RISK"
+                risk_icon = "\U0001f534"
+            elif in_midrange:
+                risk_state = "NO-TRADE ZONE"
+                risk_icon = "\u26d4"
+            elif rsi > 70 or rsi < 30:
+                risk_state = "MODERATE RISK"
+                risk_icon = "\U0001f7e1"
+            else:
+                risk_state = "LOWER RISK"
+                risk_icon = "\U0001f7e2"
+
+            # Momentum
+            vol_avg = sum(volumes[-20:]) / 20 if len(volumes) >= 20 else sum(volumes) / max(len(volumes), 1)
+            vol_now = volumes[-1] if volumes else 0
+            vol_ratio = vol_now / vol_avg if vol_avg > 0 else 1
+            if vol_ratio > 1.5:
+                momentum_note = "Momentum expansion \u2022 Volume confirmed"
+            elif vol_ratio < 0.5:
+                momentum_note = "Momentum fade \u2022 Weak follow-through"
+            else:
+                momentum_note = "Neutral volume \u2022 Awaiting confirmation"
+
             rsi_label = "overbought" if rsi > 70 else "oversold" if rsi < 30 else "neutral"
-            vwap_pos = "above" if price > vwap else "below"
 
-            regime_lines.append(
-                f"  {trend_icon} <b>{_esc(sig.symbol)}</b>  {trend_dir}\n"
+            # Build premium card
+            structure_lines.append(
+                f"\n{struct_icon} <b>{_esc(sig.symbol)}</b>  {risk_icon} {risk_state}\n"
+            )
+            structure_lines.append(
+                f"<b>Structural Bias:</b> {struct_bias}\n"
                 f"<pre>"
-                f"  RSI({rsi:.0f}) {rsi_label}  \u2502  VWAP ${vwap:,.2f} ({vwap_pos})\n"
-                f"  Support ${support:,.2f}  \u2502  Resist ${resistance:,.2f}\n"
-                f"  EMA20 ${ema20:,.2f}  \u2502  Price ${price:,.2f}"
+                f"  Price    ${price:>10,.2f}  \u2502  EMA20  ${ema20:>10,.2f}\n"
+                f"  VWAP     ${vwap:>10,.2f}  \u2502  RSI    {rsi:>10.0f} ({rsi_label})"
                 f"</pre>"
             )
+            structure_lines.append(
+                f"<b>Liquidity Map:</b>\n"
+                f"  \u25b8 Buy-side: <code>${resistance:,.2f}</code> (swing high)\n"
+                f"  \u25b8 Sell-side: <code>${support:,.2f}</code> (swing low)\n"
+                f"  \u25b8 Midrange: <code>${midrange:,.2f}</code>\n"
+            )
+            structure_lines.append(f"<b>Momentum:</b> {momentum_note}\n")
 
-            # Narrative sentence
-            if rsi < 30 and price < ema20:
-                narrative = f"  <i>Oversold bounce potential. Price below EMA20, watching for reversal at ${support:,.2f}</i>"
-            elif rsi > 70 and price > ema20:
-                narrative = f"  <i>Extended move. Overbought conditions near resistance ${resistance:,.2f}</i>"
-            elif price > vwap and price > ema20:
-                narrative = f"  <i>Bullish bias. Trading above VWAP and EMA20, momentum intact</i>"
-            elif price < vwap and price < ema20:
-                narrative = f"  <i>Bearish pressure. Below VWAP and EMA20, watching ${support:,.2f} support</i>"
+            # Tactical scenarios
+            if above_ema and above_vwap:
+                structure_lines.append(
+                    f"<b>\u25b2 Long scenario:</b> Reclaim ${ema20:,.2f} + retest + hold. "
+                    f"Target: sweep above ${resistance:,.2f}.\n"
+                    f"<b>Invalidation:</b> Close below ${ema20:,.2f}.\n"
+                )
+                if rsi > 70:
+                    structure_lines.append(
+                        f"<i>\u26a0\ufe0f Overextended. Buyer exhaustion risk near ${resistance:,.2f}. "
+                        f"Do not chase the wick. Wait for the close.</i>\n"
+                    )
+            elif not above_ema and not above_vwap:
+                structure_lines.append(
+                    f"<b>\u25bc Short scenario:</b> Rejection at ${ema20:,.2f} + breakdown. "
+                    f"Target: sweep below ${support:,.2f}.\n"
+                    f"<b>Invalidation:</b> Close above ${ema20:,.2f}.\n"
+                )
+                if rsi < 30:
+                    structure_lines.append(
+                        f"<i>\u26a0\ufe0f Oversold. Seller exhaustion possible. "
+                        f"A sweep with reclaim at ${support:,.2f} is a reversal trigger.</i>\n"
+                    )
             else:
-                narrative = f"  <i>Consolidating between ${support:,.2f} - ${resistance:,.2f}</i>"
-            regime_lines.append(narrative + "\n")
+                structure_lines.append(
+                    f"<b>\u26d4 No-trade condition:</b> Price in decision zone "
+                    f"${support:,.2f} \u2014 ${resistance:,.2f}.\n"
+                    f"<i>The range is still in control. "
+                    f"No trigger, no trade. Wait for clean break or sweep.</i>\n"
+                )
+
+            # Setup Quality Score
+            _structure_clear = not in_midrange
+            _vol_conf = vol_ratio > 1.5
+            _conf = 0.5  # default pre-analysis confidence
+            _rr_val = 1.0  # default pre-analysis R:R
+            sq_score, sq_label = _setup_quality_score(_conf, _rr_val, rsi, _vol_conf, _structure_clear)
+            sq_bar = "█" * sq_score + "░" * (10 - sq_score)
+            structure_lines.append(f"  Setup Quality: {sq_bar} <code>{sq_score}/10</code> — <i>{sq_label}</i>\n")
 
             # Run full analysis pipeline with mode-specific timeframe
             idea = await engine._analyze_signal(sig, timeframe=cfg["timeframe"])
@@ -1491,12 +1686,15 @@ class ProScanSkill(BaseSkill):
                 engine._pending_ideas[idea.id] = idea
                 ideas_found.append(idea)
 
-        # ── Section 4: Scan Verdict ──
-        verdict_lines = ["\U0001f3af <b>Scan Verdict</b>\n"]
+        # ── Claw Verdict ──
+        verdict_lines = [f"\n\u2694\ufe0f <b>Claw Verdict</b>\n{SEP}"]
         if not ideas_found:
             verdict_lines.append(
-                f"  {_NEU} No actionable setups on {cfg['timeframe'].upper()} timeframe.\n"
-                f"  <i>All signals filtered by confidence/risk gate.</i>"
+                f"\n  <b>Verdict:</b> No actionable setups on {cfg['timeframe'].upper()}.\n"
+                f"  <i>The Claw does not force trades in low-quality conditions.\n"
+                f"  Stand down until structure resolves.\n"
+                f"  Confirmation first, execution second.</i>\n"
+                f"\n  <i>A missed trade is better than a forced trade.</i>"
             )
         else:
             for idea in ideas_found:
@@ -1504,36 +1702,103 @@ class ProScanSkill(BaseSkill):
                 d_arrow = "\u25b2" if idea.direction.value == "LONG" else "\u25bc"
                 sl_d = abs(idea.entry_price - idea.stop_loss)
                 tp_d = abs(idea.take_profit - idea.entry_price)
+                rr = tp_d / sl_d if sl_d > 0 else 0
                 conf_fill = int(idea.confidence * 10)
                 conf_bar = _BLOCKS[7] * conf_fill + _BLOCKS[0] * (10 - conf_fill)
 
+                if idea.confidence >= 0.7 and rr >= 2:
+                    setup_risk = "\U0001f7e2 LOWER RISK"
+                elif idea.confidence >= 0.5:
+                    setup_risk = "\U0001f7e1 MODERATE RISK"
+                else:
+                    setup_risk = "\U0001f534 ELEVATED RISK"
+
+                # Status label
+                _idea_midrange = False  # approximation; full midrange check was per-asset
+                status_icon, status_text = _status_label(idea.confidence, rr, 50.0, _idea_midrange)
+
+                # Setup quality for this idea
+                _idea_sq_score, _idea_sq_label = _setup_quality_score(
+                    idea.confidence, rr, 50.0, True, True
+                )
+                _idea_sq_bar = "█" * _idea_sq_score + "░" * (10 - _idea_sq_score)
+
                 verdict_lines.append(
+                    f"\n  {status_icon} <b>{status_text}</b>\n"
                     f"  {d_icon}{d_arrow} <b>{idea.direction.value} {_esc(idea.asset)}</b>  "
-                    f"\u2502{conf_bar}\u2502 {_pill(f'{idea.confidence:.0%}')}\n"
+                    f"{setup_risk}\n"
+                    f"  \u2502{conf_bar}\u2502 {_pill(f'{idea.confidence:.0%}')}\n"
                     f"<pre>"
-                    f"  Entry  ${idea.entry_price:>10,.2f}\n"
-                    f"  SL     ${idea.stop_loss:>10,.2f}  (-${sl_d:,.2f})\n"
-                    f"  TP     ${idea.take_profit:>10,.2f}  (+${tp_d:,.2f})\n"
-                    f"  R:R    {idea.risk_reward_ratio:>10}x"
+                    f"  Entry Zone    ${idea.entry_price:>10,.2f}\n"
+                    f"  Stop Loss     ${idea.stop_loss:>10,.2f}  (-${sl_d:,.2f})\n"
+                    f"  Take Profit   ${idea.take_profit:>10,.2f}  (+${tp_d:,.2f})\n"
+                    f"  R:R           {idea.risk_reward_ratio:>10}x"
                     f"</pre>"
+                    f"  Quality: {_idea_sq_bar} <code>{_idea_sq_score}/10</code> — <i>{_idea_sq_label}</i>"
                 )
                 if idea.reasoning:
-                    short_reason = idea.reasoning[:150]
+                    short_reason = idea.reasoning[:200]
                     verdict_lines.append(
                         f"  <blockquote>{_esc(short_reason)}</blockquote>"
                     )
-                verdict_lines.append(f"  {_pill(idea.id)}\n")
+                verdict_lines.append(
+                    f"  <i>Entry is conditional, not automatic. "
+                    f"Wait for confirmation trigger.</i>\n"
+                    f"  {_pill(idea.id)}"
+                )
 
             verdict_lines.append(
-                f"<i>\u25b8 /trade to review \u2022 /whynot for rejections</i>"
+                f"\n<i>\u25b8 Say \"trade\" to review \u2022 \"why not\" for rejections</i>"
             )
 
-        # ── Assemble final output ──
+        # Risk note
+        risk_note = (
+            f"\n\n<i>\u26a0\ufe0f Not financial advice. Use your own risk management.\n"
+            f"Protect capital first. Opportunity comes second.</i>"
+        )
+
+        # One-Glance Verdict
+        one_glance_lines = []
+        if ideas_found:
+            best = max(ideas_found, key=lambda i: i.confidence)
+            _best_sl_d = abs(best.entry_price - best.stop_loss)
+            _best_tp_d = abs(best.take_profit - best.entry_price)
+            _best_rr = _best_tp_d / _best_sl_d if _best_sl_d > 0 else 0
+            _gl_icon, _gl_text = _status_label(best.confidence, _best_rr, 50.0, False)
+            one_glance_lines.append(f"\n{_gl_icon} <b>One-Glance Verdict: {_gl_text}</b>")
+            one_glance_lines.append(
+                f"  {len(ideas_found)} actionable setup(s) detected  •  "
+                f"Best: <b>{_esc(best.asset)}</b> ({best.confidence:.0%} conf, {_best_rr:.1f}R)\n"
+            )
+        else:
+            one_glance_lines.append(f"\n🔒 <b>One-Glance Verdict: Stand Down</b>")
+            one_glance_lines.append(
+                f"  No actionable setups. The Claw watches structure.\n"
+            )
+
+        # Next Best Action
+        next_action_lines = []
+        next_action_lines.append(f"\n🎯 <b>Next Best Action</b>")
+        if ideas_found:
+            best_idea = ideas_found[0]
+            if best_idea.direction.value == "LONG":
+                next_action_lines.append(f"  Wait for confirmation above <code>${best_idea.entry_price:,.6g}</code> before entry.")
+            else:
+                next_action_lines.append(f"  Wait for rejection below <code>${best_idea.entry_price:,.6g}</code> before entry.")
+            next_action_lines.append(f"  <i>Entry is conditional. No trigger, no trade.</i>")
+        else:
+            next_action_lines.append(f"  Stand down. No actionable setups detected.")
+            next_action_lines.append(f"  <i>The Claw watches structure. Patience is edge.</i>")
+
+        # ── Assemble ──
         parts = [
             header,
+            "\n".join(one_glance_lines),
             "\n".join(ticker_lines),
-            "\n".join(regime_lines),
+            "\n".join(structure_lines),
             "\n".join(verdict_lines),
+            "\n".join(next_action_lines),
+            risk_note,
         ]
         return "\n".join(parts)
 
@@ -1548,8 +1813,8 @@ class WhyNotSkill(BaseSkill):
 
         if not rejections:
             return (f"{_NEU} <b>NO REJECTIONS</b>\n\n"
-                    "<i>No trades have been rejected yet. "
-                    "Use /scan or /analyze to generate ideas.</i>")
+                    "<i>No trades rejected yet. "
+                    "Say \"scan\" or \"analyze BTC\" to generate ideas.</i>")
 
         if symbol:
             # Normalize: strip /USDT if provided
@@ -1669,7 +1934,8 @@ class PlaybookSkill(BaseSkill):
     description = "GetClaw-style narrative playbook"
 
     async def execute(self, engine: RuneClawEngine, **kwargs: Any) -> str:
-        state = engine.portfolio.snapshot()
+        portfolio = _get_portfolio(engine, **kwargs)
+        state = portfolio.snapshot()
         cb = engine.risk.circuit_breaker_active
         sim = "PAPER" if CONFIG.simulation_mode else "⚠️ LIVE"
         now = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
@@ -1734,7 +2000,7 @@ class PlaybookSkill(BaseSkill):
         lines.append("")
 
         # ── Section 5: Active Positions ──
-        positions = engine.portfolio._positions
+        positions = portfolio._positions
         if positions:
             lines.append(f"\U0001f4ca <b>ACTIVE POSITIONS</b>\n{SEP}")
             for pid, pos in list(positions.items())[:5]:
@@ -1769,7 +2035,7 @@ class PlaybookSkill(BaseSkill):
             lines.append("")
 
         # ── Footer ──
-        lines.append(f"<i>🕐 {now}  ·  /deepscan for full universe scan</i>")
+        lines.append(f"<i>🕐 {now}  ·  say \"deep scan\" for full universe scan</i>")
 
         return "\n".join(lines)
 
@@ -1804,14 +2070,22 @@ class DeepScanSkill(BaseSkill):
         errors = 0
         scanned = 0
 
-        for symbol in DEEPSCAN_UNIVERSE:
-            try:
-                ohlcv = await exchange.fetch_ohlcv(symbol, timeframe, limit=100)
-            except Exception:
-                errors += 1
-                continue
+        # Parallel OHLCV fetch with rate limiting
+        sem = asyncio.Semaphore(10)  # max 10 concurrent
 
-            if not ohlcv or len(ohlcv) < 30:
+        async def _fetch_one(sym):
+            async with sem:
+                try:
+                    return sym, await exchange.fetch_ohlcv(sym, timeframe, limit=100)
+                except Exception:
+                    return sym, None
+
+        fetch_results = await asyncio.gather(*[_fetch_one(s) for s in DEEPSCAN_UNIVERSE])
+
+        for symbol, ohlcv in fetch_results:
+            if ohlcv is None or len(ohlcv) < 30:
+                if ohlcv is None:
+                    errors += 1
                 continue
 
             scanned += 1
@@ -1913,7 +2187,7 @@ class DeepScanSkill(BaseSkill):
 
             lines.append("")
 
-        lines.append(f"<i>🕐 {now}  ·  /playbook for full briefing</i>")
+        lines.append(f"<i>🕐 {now}  ·  say \"playbook\" for full briefing</i>")
         return "\n".join(lines)
 
 

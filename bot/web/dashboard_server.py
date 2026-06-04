@@ -11,6 +11,7 @@ F-03 FIX: CORS restricted to configured origin (not wildcard).
 from __future__ import annotations
 
 import json
+import hmac
 import os
 import pathlib
 from datetime import datetime, timezone
@@ -48,9 +49,12 @@ async def handle_state(request: web.Request) -> web.Response:
     engine = request.app["engine"]
     data: dict[str, Any] = {"timestamp": _ts()}
 
-    # Portfolio
+    # Portfolio (combined from all users)
     try:
-        snap = engine.portfolio.snapshot()
+        if engine.user_portfolios.all_portfolios():
+            snap = engine.user_portfolios.combined_snapshot()
+        else:
+            snap = engine.portfolio.snapshot()
         data["portfolio"] = _safe_dict(snap)
     except Exception:
         data["portfolio"] = {}
@@ -116,13 +120,16 @@ async def handle_positions(request: web.Request) -> web.Response:
     engine = request.app["engine"]
     positions = []
     try:
-        trailing = engine.portfolio.get_trailing_status()
-        for pos in engine.portfolio.open_positions:
-            d = _safe_dict(pos)
-            tid = getattr(pos, "trade_id", "")
-            if tid in trailing:
-                d.update(trailing[tid])
-            positions.append(d)
+        # Gather positions from all user portfolios
+        for uid, port in engine.user_portfolios.all_portfolios().items():
+            trailing = port.get_trailing_status() if hasattr(port, 'get_trailing_status') else {}
+            for pos in port.open_positions:
+                d = _safe_dict(pos)
+                d["user_id"] = uid
+                tid = getattr(pos, "trade_id", "")
+                if tid in trailing:
+                    d.update(trailing[tid])
+                positions.append(d)
     except Exception:
         pass
     return web.json_response({"positions": positions})
@@ -143,8 +150,9 @@ async def handle_signals(request: web.Request) -> web.Response:
     # Also include recent trade history
     trades = []
     try:
-        for t in (engine.portfolio.trade_history or [])[-20:]:
-            trades.append(_safe_dict(t))
+        for uid, port in engine.user_portfolios.all_portfolios().items():
+            for t in (port.trade_history or [])[-20:]:
+                trades.append(_safe_dict(t))
     except Exception:
         pass
 
@@ -177,7 +185,7 @@ async def auth_middleware(request: web.Request, handler):
             )
         auth_header = request.headers.get("Authorization", "")
         token = auth_header.removeprefix("Bearer ").strip()
-        if not token or token != _DASHBOARD_TOKEN:
+        if not token or not hmac.compare_digest(token, _DASHBOARD_TOKEN):
             return web.json_response({"error": "unauthorized"}, status=401)
     return await handler(request)
 

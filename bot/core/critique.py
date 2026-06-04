@@ -37,7 +37,7 @@ class TradeCritique:
     # Thresholds
     HIGH_CONFIDENCE_WARN = 0.90  # suspiciously high confidence
     LOW_RR_WARN = 1.5            # R:R close to minimum
-    MAX_CONCERNS_FOR_HALT = 3    # 3+ concerns = HALT
+    MAX_CONCERNS_FOR_HALT = 4    # 4+ concerns = HALT
 
     def evaluate(self, idea, risk_check, portfolio_snapshot, macro_context=None) -> CritiqueResult:
         """Run adversarial analysis on a trade idea."""

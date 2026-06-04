@@ -9,7 +9,9 @@ operations (risk checks, stop monitoring).
 
 from __future__ import annotations
 
+import glob
 import logging
+import os
 import threading
 from typing import Optional, Callable
 
@@ -20,6 +22,7 @@ from bot.utils.models import PortfolioState, TradeExecution, TradeIdea
 log = logging.getLogger("runeclaw.multi_portfolio")
 
 DEFAULT_PAPER_BALANCE = 10_000.0
+DATA_DIR = "data"
 
 
 class MultiUserPortfolio:
@@ -42,6 +45,38 @@ class MultiUserPortfolio:
         self._trailing_config = trailing_config
         self._portfolios: dict[str, PortfolioTracker] = {}
         self._lock = threading.Lock()
+        # Auto-load existing portfolios from disk
+        self._load_existing()
+
+    def _load_existing(self) -> None:
+        """Scan data/ for existing portfolio_*.json files and load them."""
+        pattern = os.path.join(DATA_DIR, "portfolio_*.json")
+        for path in glob.glob(pattern):
+            filename = os.path.basename(path)
+            # Extract user_id from "portfolio_{user_id}.json"
+            if not filename.startswith("portfolio_") or not filename.endswith(".json"):
+                continue
+            user_id = filename[len("portfolio_"):-len(".json")]
+            if not user_id:
+                continue
+            try:
+                portfolio = PortfolioTracker(
+                    initial_balance=None,  # None triggers _load_state_on_init()
+                    on_trade_close=self._on_trade_close,
+                    state_file=path,
+                    trailing_config=self._trailing_config,
+                )
+                self._portfolios[user_id] = portfolio
+                snap = portfolio.snapshot()
+                log.info(
+                    "Restored portfolio for user %s: balance=$%.2f, "
+                    "%d open positions, %d trades",
+                    user_id, snap.balance_usd,
+                    snap.open_positions, snap.total_trades,
+                )
+            except Exception as e:
+                log.error("Failed to load portfolio for user %s from %s: %s",
+                          user_id, path, e)
 
     def get(self, user_id: str) -> PortfolioTracker:
         """Get or create a portfolio for the given user."""

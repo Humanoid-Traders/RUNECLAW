@@ -36,6 +36,7 @@ from bot.core.token_optimizer import (
 )
 from bot.core.explainability import ExplainabilityEngine
 from bot.core.multi_timeframe import MTFConfluence
+from bot.core.sentiment import SentimentEngine
 from bot.core.smart_money import SmartMoneyEngine
 from bot.core.strategy_modes import StrategySelector, MODE_CONFIGS
 from bot.llm.provider import BYOK, LLMProvider, LLMTier, PROVIDER_CATALOG, create_llm_client, llm_complete, LLMConfig, resolve_tier_config
@@ -110,6 +111,7 @@ class Analyzer:
         # Advanced modules
         self._mtf = MTFConfluence()
         self._smart_money = SmartMoneyEngine()
+        self._sentiment = SentimentEngine()
         self._strategy_selector = StrategySelector()
         self._explainability = ExplainabilityEngine()
 
@@ -239,6 +241,17 @@ class Analyzer:
         if order_flow is not None:
             smart_money_score = self._smart_money.analyze(order_flow)
 
+        # ── Sentiment Analysis ──
+        try:
+            self._sentiment.update(
+                symbol=signal.symbol,
+                price=signal.price,
+                volume=signal.volume_usd_24h or 0,
+                price_change_pct=signal.change_pct_24h or 0,
+            )
+        except Exception:
+            pass
+
         # ── Strategy Mode Selection ──
         mode_selection = self._strategy_selector.select(
             regime=regime,
@@ -255,6 +268,7 @@ class Analyzer:
             mtf_result=mtf_result,
             smart_money_score=smart_money_score,
             mode_config=mode_config,
+            sentiment_engine=self._sentiment,
         )
 
         indicators["regime"] = regime.value
@@ -339,7 +353,7 @@ class Analyzer:
         # Apply regime penalty (RANGE: -0.10, CHOP: -0.15, else: 0)
         blended_confidence = round(max(0.0, blended_confidence - regime_confidence_penalty), 2)
 
-        # SIGNAL QUALITY: threshold at 0.60 (matches config.min_confidence)
+        # SIGNAL QUALITY: threshold at min_confidence (matches config)
         # RANGE/CHOP trades need high raw confluence to survive after penalty
         if blended_confidence < CONFIG.risk.min_confidence:
             audit(trade_log, "Low blended confidence -- skipping",
@@ -679,7 +693,7 @@ class Analyzer:
     @staticmethod
     def _score_confluence(indicators: dict, regime: Regime, signal: MarketSignal,
                           order_flow=None, mtf_result=None, smart_money_score=None,
-                          mode_config=None) -> float:
+                          mode_config=None, sentiment_engine=None) -> float:
         """
         Score agreement across indicators on a 0-1 scale.
 
@@ -814,6 +828,61 @@ class Analyzer:
             sm_votes, sm_weights, sm_labels = SmartMoneyEngine.to_confluence_votes(smart_money_score)
             votes += sm_votes
             weights += sm_weights
+
+        # Sentiment voter
+        if sentiment_engine is not None:
+            try:
+                sentiment_votes = sentiment_engine.to_confluence_votes()
+                for _name, vote_val, vote_weight in sentiment_votes:
+                    votes.append(vote_val)
+                    weights.append(vote_weight)
+            except Exception:
+                pass
+
+        # Volume Profile POC-magnet voter
+        poc_price = indicators.get("poc_price", 0)
+        atr = indicators.get("atr", 0)
+        if poc_price > 0 and atr > 0:
+            from bot.core.volume_profile import poc_magnet_signal
+            price = signal.price
+            magnet = poc_magnet_signal(price, poc_price, atr)
+            if magnet and magnet.get("direction"):
+                poc_vote = 0.5 if magnet["direction"] == "pull_up" else -0.5
+                poc_vote *= magnet.get("strength", 0.5)
+                votes.append(poc_vote)
+                weights.append(0.6)
+
+        # EMA ribbon voter
+        ema9 = indicators.get("ema_9")
+        ema21 = indicators.get("ema_21")
+        if ema9 is not None and ema21 is not None:
+            if ema9 > ema21:
+                votes.append(0.6)
+                weights.append(0.5)
+            elif ema9 < ema21:
+                votes.append(-0.6)
+                weights.append(0.5)
+
+        # Keltner squeeze voter (volatility compression = breakout imminent)
+        squeeze = indicators.get("kc_squeeze", False)
+        if squeeze:
+            # Squeeze detected — direction from MACD histogram
+            macd_hist_val = indicators.get("macd_histogram", 0)
+            if macd_hist_val > 0:
+                votes.append(0.5)
+                weights.append(0.7)
+            elif macd_hist_val < 0:
+                votes.append(-0.5)
+                weights.append(0.7)
+
+        # Taker buy/sell imbalance voter
+        taker_buy_ratio = indicators.get("taker_buy_ratio", 0.5)
+        if taker_buy_ratio > 0.55:
+            votes.append(0.5)
+            weights.append(0.5)
+        elif taker_buy_ratio < 0.45:
+            votes.append(-0.5)
+            weights.append(0.5)
 
         # Strategy mode boosts: amplify weights for mode-relevant factors
         if mode_config is not None and mode_config.confluence_boost:
@@ -1148,6 +1217,18 @@ class Analyzer:
         candle_patterns = indicators.get("candle_patterns", {})
         if candle_patterns:
             parts.append(f"Candles={candle_patterns}")
+
+        # Additional indicators for LLM context
+        if "poc_price" in indicators and indicators["poc_price"] > 0:
+            parts.append(f"POC=${indicators['poc_price']:.4f}")
+            parts.append(f"price_vs_poc={indicators.get('price_vs_poc', 'unknown')}")
+        if indicators.get("kc_squeeze"):
+            parts.append("squeeze=ACTIVE")
+        if "ema_9" in indicators and "ema_21" in indicators:
+            ema_trend = "bullish" if indicators["ema_9"] > indicators["ema_21"] else "bearish"
+            parts.append(f"ema_ribbon={ema_trend}")
+        if "taker_buy_ratio" in indicators:
+            parts.append(f"taker_ratio={indicators['taker_buy_ratio']:.2f}")
 
         if order_flow is not None:
             funding = f"{order_flow.funding_rate:.6f}" if order_flow.funding_rate is not None else "N/A"

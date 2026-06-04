@@ -111,7 +111,7 @@ class MarketScanner:
         """True if current volume is >2x the rolling average."""
         with self._lock:
             history = self._volume_history.setdefault(symbol, [])
-            if len(history) >= 5:
+            if len(history) >= 3:
                 avg = sum(history) / len(history)
                 is_spike = current_vol > avg * 2.0
             else:

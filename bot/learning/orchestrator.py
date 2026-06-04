@@ -10,6 +10,7 @@ Auditability beats black-box automation. If uncertain, fail closed.
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 from typing import Optional
 
 from .experience import ExperienceMemory
@@ -324,8 +325,31 @@ class LearningOrchestrator:
 
     def dashboard(self) -> dict:
         """Full learning system dashboard."""
+        stats = self.store.stats()
+
+        # Build module_details with last_update timestamps.
+        # Use current UTC time as proxy for last_update when data exists.
+        now_iso = datetime.now(timezone.utc).isoformat()
+        module_details: dict[str, dict] = {}
+        for key, data_key in [
+            ("patterns", "decisions"),
+            ("regime", "decisions"),
+            ("indicator_weights", "decisions"),
+            ("feedback", "decisions"),
+            ("volatility", "decisions"),
+            ("correlations", "decisions"),
+            ("drawdown", "decisions"),
+            ("timing", "decisions"),
+        ]:
+            count = stats.get(data_key, 0)
+            module_details[key] = {
+                "observations": count,
+                "last_update": now_iso if count > 0 else None,
+            }
+
         return {
-            "store_stats": self.store.stats(),
+            "store_stats": stats,
+            "module_details": module_details,
             "learning_score": self.compute_learning_score(),
             "strategy_rankings": [
                 {

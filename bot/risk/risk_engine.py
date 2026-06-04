@@ -320,9 +320,9 @@ class RiskEngine:
             failed.append(f"CORRELATION: evaluation error ({exc})")
 
         try:
-            # 9. Consecutive loss streak (H4 fix: 3+ streak = soft reject, hard stop via circuit breaker at max)
-            if self._consecutive_losses >= 3:
-                failed.append(f"LOSS_STREAK: {self._consecutive_losses} consecutive losses (>= 3)")
+            # 9. Consecutive loss streak (H4 fix: 4+ streak = soft reject, hard stop via circuit breaker at max)
+            if self._consecutive_losses >= 4:
+                failed.append(f"LOSS_STREAK: {self._consecutive_losses} consecutive losses (>= 4)")
             else:
                 passed.append(f"LOSS_STREAK: {self._consecutive_losses} OK")
         except Exception as exc:

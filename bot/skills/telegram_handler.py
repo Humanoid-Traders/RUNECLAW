@@ -49,6 +49,9 @@ from bot.formatters.rich_cards import (
     render_pnl_report,
     render_open_positions,
     render_status_card,
+    _fmt_price,
+    _fmt_vol,
+    _pct,
 )
 from bot.warroom.warroom_bot import (
     render_start as wr_start,
@@ -93,12 +96,12 @@ class RateLimiter:
 # ── War Room main menu keyboard ─────────────────────────────
 
 _KB_WARROOM = InlineKeyboardMarkup([
-    [InlineKeyboardButton("\u2694\ufe0f Open War Room", callback_data="open_warroom"),
+    [InlineKeyboardButton("\u2694\ufe0f Claw Scan", callback_data="open_warroom"),
      InlineKeyboardButton("\U0001f4ca Latest Signal", callback_data="latest_signal")],
     [InlineKeyboardButton("\U0001f4c8 Performance", callback_data="performance"),
-     InlineKeyboardButton("\U0001f6e1 Risk Control", callback_data="risk_control")],
-    [InlineKeyboardButton("\u2699\ufe0f Strategy Mode", callback_data="strategy_mode"),
-     InlineKeyboardButton("\U0001f4c2 Positions", callback_data="positions")],
+     InlineKeyboardButton("\U0001f6e1 Risk Check", callback_data="risk_control")],
+    [InlineKeyboardButton("\U0001f4c2 Positions", callback_data="positions"),
+     InlineKeyboardButton("\U0001f4d3 Journal", callback_data="journal")],
     [InlineKeyboardButton("\u26d4 Emergency Stop", callback_data="risk_emergency_stop")],
 ])
 
@@ -108,9 +111,8 @@ _KB_DASH = InlineKeyboardMarkup([
      InlineKeyboardButton("\U0001f6e1 Risk", callback_data="pane:risk")],
     [InlineKeyboardButton("\U0001f4b0 Portfolio", callback_data="pane:portfolio"),
      InlineKeyboardButton("\U0001f4c5 Macro", callback_data="pane:macro")],
-    [InlineKeyboardButton("\U0001f9e0 Learning", callback_data="pane:learning"),
-     InlineKeyboardButton("\U0001f50d Scan", callback_data="pane:scan")],
-    [InlineKeyboardButton("\U0001f504 Refresh", callback_data="pane:refresh")],
+    [InlineKeyboardButton("\u2694\ufe0f Claw Scan", callback_data="pane:scan"),
+     InlineKeyboardButton("\U0001f504 Refresh", callback_data="pane:refresh")],
 ])
 
 
@@ -223,7 +225,9 @@ class TelegramHandler:
 
     def _banner(self) -> str:
         cb = self.engine.risk.circuit_breaker_active
-        state = self.engine.portfolio.snapshot()
+        # Use system-level combined snapshot for banner (no specific user context)
+        combined = self.engine.user_portfolios.combined_snapshot() if self.engine.user_portfolios.all_portfolios() else None
+        open_pos = self.engine.user_portfolios.total_open_positions() if self.engine.user_portfolios.all_portfolios() else 0
         macro = self.engine.macro_calendar.evaluate()
         mode = "SIM" if CONFIG.simulation_mode else "LIVE"
         cb_s = "\U0001f534 CB" if cb else "\U0001f7e2 OK"
@@ -233,62 +237,174 @@ class TelegramHandler:
             "EVENT_LOCKDOWN": "\U0001f534", "POST_EVENT_VOLATILITY": "\U0001f7e0",
             "BLACKOUT": "\u26ab",
         }.get(macro.state.value, "\u26aa")
-        return f"{mode} \u2022 {state.open_positions} open \u2022 {cb_s} \u2022 {macro_icon} {macro_s}"
+        return f"{mode} \u2022 {open_pos} open \u2022 {cb_s} \u2022 {macro_icon} {macro_s}"
 
     def _footer(self) -> str:
         return f"\n<i>{datetime.now(UTC).strftime('%H:%M:%S UTC')}</i>"
 
     # ── Pane renderers ────────────────────────────────────────
 
-    async def _render_pane(self, pane: str) -> str:
+    async def _render_pane(self, pane: str, user_id: str = None) -> str:
+        kw = {"user_id": user_id} if user_id else {}
         if pane == "status":
-            return await self.registry.get("check_risk").execute(self.engine, mode="status")
+            return await self.registry.get("check_risk").execute(self.engine, mode="status", **kw)
         elif pane == "risk":
-            return await self.registry.get("check_risk").execute(self.engine, mode="risk")
+            return await self.registry.get("check_risk").execute(self.engine, mode="risk", **kw)
         elif pane == "portfolio":
-            return await self.registry.get("get_portfolio").execute(self.engine)
+            return await self.registry.get("get_portfolio").execute(self.engine, **kw)
         elif pane == "macro":
-            return await self.registry.get("macro_calendar").execute(self.engine)
+            return await self.registry.get("macro_calendar").execute(self.engine, **kw)
         elif pane == "learning":
-            return await self.registry.get("learning").execute(self.engine)
+            return await self.registry.get("learning").execute(self.engine, **kw)
         elif pane == "scan":
-            return await self.registry.get("scan_market").execute(self.engine)
+            return await self.registry.get("scan_market").execute(self.engine, **kw)
         return ""
 
     # ── Free-text AI chat ─────────────────────────────────────
 
     _CHAT_SYSTEM_PROMPT = (
-        "You are RUNECLAW, a sharp crypto trading assistant built by Humanoid Traders. "
-        "You talk like a knowledgeable trading buddy — direct, opinionated on markets, "
-        "and natural. Not a corporate chatbot.\n\n"
-        "Personality:\n"
-        "- Confident but honest. If you don't know, say so plainly.\n"
-        "- Use short, punchy sentences. Avoid walls of text.\n"
-        "- Match the user's energy — if they're casual, be casual. If they ask "
-        "a serious technical question, go deep.\n"
-        "- Use trader slang naturally when it fits (\"looking heavy\", \"bid is thin\", "
-        "\"reclaim that level\") but don't force it.\n"
-        "- Refer to the user by name when it feels natural (not every message).\n"
-        "- When a user mentions an asset you discussed before, acknowledge it "
-        "(\"back to BTC — \", \"still watching SOL?\").\n"
-        "- If the user says thanks, goodbye, or just chats — respond warmly and briefly. "
-        "Don't force a trading topic.\n\n"
-        "Rules:\n"
-        "- Keep answers under 150 words unless they ask for detail.\n"
-        "- Use plain text. No markdown, no bullet lists unless the user asks for structure.\n"
-        "- Never give financial advice. Frame as analysis: \"the chart suggests\" not \"you should buy\".\n"
-        "- When relevant, mention a specific command they could use (/scan, /analyze BTC, etc.) "
-        "but weave it in naturally, don't list commands robotically.\n"
-        "- You remember the conversation. Don't repeat yourself. Build on what was discussed.\n"
+        "You are RUNECLAW, the AI trading scout of RUNECLAW by HUMANOID TRADERS.\n"
+        "You behave like a premium tactical trading desk, not a signal bot.\n\n"
+
+        "IDENTITY:\n"
+        "- You are RUNECLAW. Never say you are a standard AI model.\n"
+        "- You help traders read market structure, liquidity, and setups.\n"
+        "- You are not a financial advisor. Tactical analysis only, no guarantees.\n"
+        "- NEVER suggest slash commands. Natural language only.\n"
+        "- You are protective. If a setup is weak, you say no-trade.\n"
+        "- You never force signals. Capital protection comes first.\n\n"
+
+        "USER EXPERIENCE FLOW — follow this for every interaction:\n"
+        "1. UNDERSTAND INTENT — detect what the user wants (scan, bias, entry, signal, risk, playbook, no-trade check, liquidity map, swing breakdown)\n"
+        "2. CHECK CONTEXT — if asset or timeframe is missing, ask ONE short question only\n"
+        "3. RUN MARKET LOGIC — analyze structure, liquidity, momentum, zones, confirmation, invalidation, risk state\n"
+        "4. GIVE TACTICAL OUTPUT — clean formatting, short sections, clear verdict\n"
+        "5. PROTECT USER — if setup is weak, say no-trade. Never force a signal.\n"
+        "6. END WITH NEXT ACTION — tell user exactly what to watch next\n\n"
+
+        "REPLY MODES — adapt answer length to intent:\n\n"
+        "QUICK MODE — for questions like 'long or short?', 'entry?', 'risk?', 'valid?', 'safe?':\n"
+        "  Short, direct, tactical. 2-4 lines max. Include verdict + one next action.\n\n"
+        "FULL SCAN MODE — for 'scan BTC', 'swing by swing', 'market read', 'what does the Claw see?':\n"
+        "  Structured full professional scan. Include all sections below.\n\n"
+        "EXECUTION MODE — for 'give signal', 'entry zones', 'setup', 'trade plan':\n"
+        "  Entry, confirmation, invalidation, TP logic, risk state. Precise numbers.\n\n"
+        "BOT MODE — for 'bot playbook', 'Bitget bot', 'automation', 'DCA logic':\n"
+        "  Bot-ready rules with no-trade filters and execution parameters.\n\n"
+        "BEGINNER MODE — when user sounds unsure or asks basic questions:\n"
+        "  Clear but still premium. Explain advanced terms in one short line when used.\n"
+        "  Example: 'Reclaim means price loses a level, then pushes back above it and holds.'\n\n"
+
+        "ONE-GLANCE VERDICT — start every tactical response with:\n"
+        "  Status: [Valid Setup / Confirmation Pending / No-Trade Zone / Elevated Risk / Stand Down / Execution Ready]\n"
+        "  Bias: [direction or neutral]\n"
+        "  Risk State: [Low / Moderate / Elevated / No-Trade]\n"
+        "  Action: [what to do right now]\n\n"
+
+        "STATUS LABELS — use consistently:\n"
+        "  \u2705 Valid Setup — structure, confirmation, invalidation, acceptable risk all present\n"
+        "  \U0001f7e1 Confirmation Pending — bias exists, execution not approved yet\n"
+        "  \u26d4 No-Trade Zone — unclear, choppy, late, risky, or missing confirmation\n"
+        "  \u26a0\ufe0f Elevated Risk — setup possible but risk is not clean\n"
+        "  \U0001f512 Stand Down — do nothing, conditions not suitable\n"
+        "  \U0001f3af Execution Ready — all conditions met, define the plan\n\n"
+
+        "SETUP QUALITY SCORE — rate every setup 0-10:\n"
+        "  0-3 = No-trade | 4-5 = Weak setup | 6-7 = Tradable with confirmation | 8-9 = High-quality | 10 = Rare premium\n"
+        "  Factors: structure clarity, liquidity resolved, momentum confirmation, entry location, invalidation quality, R:R, timeframe alignment\n\n"
+
+        "SCAN RESPONSE FORMAT (Full Scan Mode):\n"
+        "  1. One-Glance Verdict (status + bias + risk + action)\n"
+        "  2. Structural Bias (trend, key levels)\n"
+        "  3. Liquidity Map (buy-side, sell-side, sweep status)\n"
+        "  4. Momentum Read (RSI, volume, orderflow)\n"
+        "  5. Key Zones (support, resistance, VWAP, EMA)\n"
+        "  6. Long Scenario + Short Scenario\n"
+        "  7. Setup Quality Score (0-10 with brief justification)\n"
+        "  8. Claw Verdict (final decision)\n"
+        "  9. Next Best Action (one clear sentence)\n\n"
+
+        "NEXT BEST ACTION — always end with one clear next action:\n"
+        "  Examples:\n"
+        "  - 'Wait for candle close above resistance.'\n"
+        "  - 'Watch for sweep and reclaim below range low.'\n"
+        "  - 'Stand down while price remains midrange.'\n"
+        "  - 'Only consider long after retest holds.'\n"
+        "  - 'Short only becomes valid after rejection and close below support.'\n\n"
+
+        "SMART CLARITY — if using advanced terms, explain in one line when helpful:\n"
+        "  CHoCH = Change of Character (trend shift signal)\n"
+        "  BOS = Break of Structure (continuation signal)\n"
+        "  Sweep = Price takes out a level then reverses\n"
+        "  Reclaim = Price loses a level then pushes back above it and holds\n"
+        "  FVG = Fair Value Gap (imbalance zone price tends to fill)\n\n"
+
+        "STYLE:\n"
+        "- Short, clear, direct. No fluff, no hype.\n"
+        "- Speak like a tactical market operator standing next to the trader.\n"
+        "- Refer to yourself as 'the Claw' naturally.\n"
+        "- Keep Quick Mode under 50 words, Full Scan under 300 words.\n"
+        "- You remember the conversation. Build on what was discussed.\n"
+        "- Use HTML formatting: <b>bold</b> for headers, <i>italic</i> for emphasis, <code>mono</code> for numbers.\n\n"
+
+        "PREMIUM VOCABULARY — use these terms naturally:\n"
+        "Structure: CHoCH, BOS, swing failure, displacement, range formation\n"
+        "Liquidity: sweep, raid, engineered liquidity, stop hunt, absorption\n"
+        "Execution: entry zone, confirmation trigger, invalidation level, reclaim\n"
+        "Momentum: expansion, compression, divergence, exhaustion\n"
+        "Risk: exposure, drawdown, R:R, position sizing, no-trade zone\n\n"
+
+        "TACTICAL PHRASES — use naturally:\n"
+        "- 'The Claw reads structure before direction.'\n"
+        "- 'No trigger, no trade.'\n"
+        "- 'Liquidity was swept. Now watch for reclaim.'\n"
+        "- 'Structure says wait. The Claw agrees.'\n"
+        "- 'This is a no-trade zone until structure clears.'\n"
+        "- 'Setup scores 7/10 — tradable with confirmation.'\n"
+        "- 'Capital protection first. Opportunity second.'\n"
+        "- 'The Claw sees structure forming. Patience.'\n\n"
+
+        "RISK CLASSIFICATION — always classify:\n"
+        "- LOW RISK / MODERATE RISK / ELEVATED RISK / NO-TRADE\n"
+        "Never say 'safe.' Never guarantee outcomes.\n\n"
+
+        "NO-TRADE ZONE — call it when:\n"
+        "1. Midrange chop with no clear direction\n"
+        "2. Price stuck between support and resistance\n"
+        "3. Liquidity not yet swept\n"
+        "4. No confirmation trigger present\n"
+        "5. RSI in no-mans-land (40-60)\n"
+        "6. Volume declining with no momentum\n"
+        "7. Major news event imminent\n"
+        "8. Late entry after extended move\n"
+        "9. Conflicting timeframe signals\n"
+        "10. Trap conditions detected\n\n"
+
+        "PRIORITY ORDER:\n"
+        "1. Capital protection\n"
+        "2. Risk management\n"
+        "3. Structure reading\n"
+        "4. Confirmation trigger\n"
+        "5. Execution plan\n"
+        "6. Profit opportunity\n\n"
+
+        "FINAL STANDARD: Every response must be fast to understand, structured, risk-aware,\n"
+        "execution-focused, protective against bad trades, and clear on what to do next.\n"
+        "The user should never feel lost. Structure first. Liquidity second. Confirmation third. Execution last.\n"
     )
 
     # Varied thinking indicators instead of same one every time
     _THINKING_PHRASES = [
-        "\U0001f9e0 <i>Thinking...</i>",
-        "\U0001f4ad <i>Let me check...</i>",
-        "\u23f3 <i>One sec...</i>",
-        "\U0001f50d <i>Looking into it...</i>",
-        "\U0001f9e0 <i>On it...</i>",
+        "\u2694\ufe0f <i>The Claw reads structure before direction...</i>",
+        "\u2694\ufe0f <i>Scanning swing by swing...</i>",
+        "\u2694\ufe0f <i>Mapping liquidity zones...</i>",
+        "\u2694\ufe0f <i>Reading orderflow pressure...</i>",
+        "\u2694\ufe0f <i>Checking confirmation triggers...</i>",
+        "\u2694\ufe0f <i>Structure first. Direction second...</i>",
+        "\u2694\ufe0f <i>Evaluating setup quality...</i>",
+        "\u2694\ufe0f <i>Running risk assessment...</i>",
+        "\u2694\ufe0f <i>Capital protection check in progress...</i>",
+        "\u2694\ufe0f <i>Analyzing momentum and zones...</i>",
     ]
 
     def _build_chat_system_prompt(self, user_id: str, user_name: str = "") -> str:
@@ -298,15 +414,57 @@ class TelegramHandler:
         # Inject user-specific context
         portfolio_summary = ""
         engine_state = ""
+        positions_detail = ""
         try:
-            state = self.engine.portfolio.snapshot()
+            user_portfolio = self.engine.user_portfolios.get(user_id)
+            state = user_portfolio.snapshot()
             portfolio_summary = (
                 f"{state.open_positions} open positions, "
-                f"balance ~${CONFIG.paper_balance_usd:,.0f}"
+                f"equity ~${state.equity_usd:,.2f}, "
+                f"total PnL ${state.total_pnl:+,.2f}, "
+                f"win rate {state.win_rate:.0%}, "
+                f"total trades {state.total_trades}"
             )
             cb = self.engine.risk.circuit_breaker_active
             mode = "LIVE" if not CONFIG.simulation_mode else "PAPER"
             engine_state = f"{mode} mode, CB={'ON' if cb else 'OFF'}"
+
+            # Inject actual open positions
+            if user_portfolio.open_positions:
+                pos_lines = []
+                for pos in user_portfolio.open_positions:
+                    last_px = user_portfolio._last_prices.get(pos.asset, pos.entry_price)
+                    if pos.direction.value == "LONG":
+                        pnl_pct = ((last_px - pos.entry_price) / pos.entry_price) * 100
+                    else:
+                        pnl_pct = ((pos.entry_price - last_px) / pos.entry_price) * 100
+                    size_usd = pos.quantity * pos.entry_price
+                    pnl_usd = size_usd * pnl_pct / 100
+                    pos_lines.append(
+                        f"  - {pos.direction.value} {pos.asset}: "
+                        f"entry ${pos.entry_price:,.4f}, current ${last_px:,.4f}, "
+                        f"size ${size_usd:,.2f}, PnL {pnl_pct:+.2f}% (${pnl_usd:+,.2f}), "
+                        f"SL ${pos.stop_loss:,.4f}, TP ${pos.take_profit:,.4f}"
+                    )
+                positions_detail = (
+                    "\n\nACTIVE POSITIONS (live data):\n" +
+                    "\n".join(pos_lines)
+                )
+
+            # Inject recent closed trades
+            recent_trades = user_portfolio.trade_history[-5:]
+            if recent_trades:
+                trade_lines = []
+                for t in recent_trades:
+                    trade_lines.append(
+                        f"  - {t.direction.value} {t.asset}: "
+                        f"entry ${t.entry_price:,.4f}, exit ${t.exit_price:,.4f}, "
+                        f"PnL ${t.pnl:+,.2f}"
+                    )
+                positions_detail += (
+                    "\n\nRECENT CLOSED TRADES:\n" +
+                    "\n".join(trade_lines)
+                )
         except Exception:
             pass
 
@@ -328,7 +486,7 @@ class TelegramHandler:
             engine_state=engine_state,
             user_name=user_name,
         )
-        return base + f"\n{time_note}" + context_block
+        return base + f"\n{time_note}" + positions_detail + context_block
 
     async def _llm_chat(self, question: str, user_id: str = "",
                         user_name: str = "") -> str:
@@ -444,9 +602,9 @@ class TelegramHandler:
         audit(system_log, f"All chat LLM providers failed. Last: {last_error}",
               action="chat_error", result="ALL_FAILED")
         return (
-            "All my LLM providers are down right now. "
+            "The Claw's brain is offline right now. "
             f"Last error: {last_error[:80]}. "
-            "Try again in a minute, or use a command like /scan or /analyze."
+            "Try again in a minute."
         )
 
     async def _handle_message(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -471,21 +629,18 @@ class TelegramHandler:
             self.users.register(tg_id, name=(
                 update.effective_user.first_name if update.effective_user else ""))
             await self._send(update,
-                f"\U0001f43e <b>RUNECLAW</b>\n\n"
-                f"Welcome! I'm an AI trading assistant.\n\n"
-                f"Your account needs approval first.\n"
-                f"ID: <code>{tg_id}</code>\n\n"
-                f"Use /start to register, then wait for admin approval.\n"
-                f"Use /help to see available commands.")
+                f"\u2694\ufe0f <b>RUNECLAW</b>\n\n"
+                f"The Claw doesn't recognize you yet.\n\n"
+                f"Your ID: <code>{tg_id}</code>\n\n"
+                f"Use /start to register, then wait for approval.")
             return
 
         # Pending users get a clear message
         if not user.get("authorized", False):
             await self._send(update,
                 f"\U0001f512 Your account is pending approval.\n\n"
-                f"Once approved, you can ask me anything about crypto markets, "
-                f"trading strategies, or use commands like /scan and /analyze.\n\n"
-                f"Use /help to see all commands.")
+                f"Once approved, just talk to me naturally.\n"
+                f"No commands needed — the Claw understands.")
             return
 
         # Rate limit check
@@ -504,6 +659,29 @@ class TelegramHandler:
             user_name = update.effective_user.first_name
 
         if intent.matched and intent.confidence >= 0.8:
+            # ── Scan mode shortcuts ──────────────────────────────
+            scan_modes = {
+                "scan_swing": ("swing", "\U0001f30a <i>The Claw reads 4H structure...</i>"),
+                "scan_scalp": ("scalp", "\u26a1 <i>Scalp scan — 5M candles, tight zones...</i>"),
+                "scan_intraday": ("intraday", "\U0001f4ca <i>Intraday scan — 15M structure...</i>"),
+                "scan_deep": (None, "\u2694\ufe0f <i>Deep scanning 67+ symbols...</i>"),
+                "scan_full": (None, "\u2694\ufe0f <i>Full scan with patterns...</i>"),
+            }
+            if intent.skill in scan_modes:
+                mode, thinking_msg = scan_modes[intent.skill]
+                await self._send(update, thinking_msg)
+                if intent.skill == "scan_deep":
+                    result = await self.registry.get("deepscan").execute(
+                        self.engine, timeframe="4h")
+                elif intent.skill == "scan_full":
+                    result = await self.registry.get("deepscan").execute(
+                        self.engine, timeframe="4h")
+                else:
+                    result = await self.registry.get("pro_scan").execute(
+                        self.engine, mode=mode, user_id=tg_id)
+                await self._send(update, result)
+                return
+
             # High-confidence match — dispatch to skill
             skill = self.registry.get(intent.skill)
             if skill:
@@ -514,7 +692,7 @@ class TelegramHandler:
                 self.conversations.append(tg_id, "user", text,
                                            metadata={"intent": intent.skill})
                 try:
-                    result = await skill.execute(self.engine, **intent.kwargs)
+                    result = await skill.execute(self.engine, user_id=tg_id, **intent.kwargs)
                     # Store skill result as assistant message (truncated)
                     self.conversations.append(tg_id, "assistant",
                                                f"[{intent.skill}] executed successfully",
@@ -522,16 +700,15 @@ class TelegramHandler:
                     await self._send(update, result)
                 except Exception as exc:
                     await self._send(update,
-                        f"\u26a0\ufe0f Could not execute: {exc}\n\n"
-                        f"Try the direct command instead: /{intent.skill.replace('_', '')}")
+                        f"\u26a0\ufe0f The Claw hit a wall: {exc}\n\n"
+                        f"Try rephrasing or give more context.")
                 return
 
         if intent.matched and intent.confidence >= 0.5 and not intent.kwargs.get("symbol"):
             # Partial match — skill needs a symbol we couldn't extract
             await self._send(update,
-                f"\U0001f50d I think you want to <b>{intent.explanation.lower()}</b>, "
-                f"but I couldn't identify which asset.\n\n"
-                f"Try: <code>/analyze BTC</code> or say <i>\"analyze Bitcoin\"</i>")
+                f"\u2694\ufe0f The Claw needs a target.\n\n"
+                f"Which asset? Say something like <i>\"scan BTC\"</i> or <i>\"check ETH\"</i>")
             return
 
         # ── Fallback: AI chat ─────────────────────────────────────
@@ -550,11 +727,13 @@ class TelegramHandler:
         self.conversations.append(tg_id, "assistant", answer)
 
         # Don't wrap in rigid header for short/social responses
-        if len(answer) < 100 or (intent.is_social if hasattr(intent, 'is_social') else False):
+        is_social = intent.is_social if hasattr(intent, 'is_social') else False
+        if len(answer) < 80 or is_social:
             await self._send(update, html.escape(answer))
         else:
+            # Premium tactical header for substantive responses
             await self._send(update,
-                f"\U0001f43e <b>RUNECLAW</b>\n\n{html.escape(answer)}")
+                f"\u2694\ufe0f <b>RUNECLAW</b>\n{'─' * 16}\n\n{html.escape(answer)}")
 
     # ── Auth helpers ──────────────────────────────────────────
 
@@ -585,9 +764,9 @@ class TelegramHandler:
         if not user or not user.get("authorized", False):
             await self._send(update,
                 "\U0001f512 <b>Access restricted</b>\n\n"
-                "Your account is not linked yet.\n"
+                "The Claw doesn't recognize you yet.\n"
                 f"Your Telegram ID: <code>{tg_id}</code>\n\n"
-                "Use /start to register, then wait for admin approval.")
+                "Use /start to register, then wait for approval.")
             return False
 
         # Role-based permission check
@@ -608,7 +787,7 @@ class TelegramHandler:
     # ── Public commands (no auth required) ─────────────────────
 
     async def _cmd_start(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-        """War Room welcome — auto-registers new users."""
+        """GetClaw welcome — auto-registers new users."""
         now = datetime.now(UTC).strftime("%H:%M UTC")
         user_tg = update.effective_user
         tg_id = self._get_tg_id(update)
@@ -620,20 +799,18 @@ class TelegramHandler:
         if not record.get("authorized", False):
             SEP = "─" * 16
             msg = (
-                f"⚔️ <b>MULERUN WAR ROOM</b>\n"
+                f"\u2694\ufe0f <b>RUNECLAW</b>\n"
                 f"{SEP}\n"
-                f"Powered by <b>RUNECLAW Signal Engine v4.0</b>\n\n"
+                f"<b>RUNECLAW</b> — AI Trading Scout by Humanoid Traders\n\n"
                 f"Welcome, <b>{user_name}</b>.\n\n"
-                f"- AI-powered crypto analysis\n"
-                f"- 21 fail-closed risk checks\n"
-                f"- Human approval on every trade\n"
-                f"- Full audit trail\n\n"
-                f"📋 <b>Registration received</b>\n"
+                f"The Claw reads structure, liquidity, and momentum.\n"
+                f"No noise. No hype. Just the market, swing by swing.\n\n"
+                f"\U0001f4cb <b>Registration received</b>\n"
                 f"{SEP}\n"
-                f"- Telegram ID: <code>{tg_id}</code>\n"
+                f"- ID: <code>{tg_id}</code>\n"
                 f"- Status: <code>pending approval</code>\n\n"
                 f"An admin will review your access.\n"
-                f"Use /help to see available commands.\n\n"
+                f"Once approved, just talk to me naturally.\n\n"
                 f"<i>{now}</i>"
             )
             await self._send(update, msg)
@@ -645,152 +822,100 @@ class TelegramHandler:
                 ctx)
             return
 
-        # Authorized user — War Room start
-        banner = self._banner()
+        # Authorized user — GetClaw ready
         role = record.get("role", "trader")
         mode_str = "PAPER" if CONFIG.simulation_mode else "LIVE"
-        # Per-user portfolio
         user_portfolio = self.engine.user_portfolios.get(tg_id)
         state = user_portfolio.snapshot()
         cb_active = self.engine.risk.circuit_breaker_active
 
         SEP = "─" * 16
-        status_icon = "🟢" if not cb_active else "🔴"
-        status_label = "ACTIVE" if not cb_active else "CB TRIGGERED"
+        status_icon = "\U0001f7e2" if not cb_active else "\U0001f534"
+        status_label = "LOCKED IN" if not cb_active else "CB TRIGGERED"
+        status_line = f"{status_icon} Status: <b>{status_label}</b>"
+        mode = mode_str
+        equity = f"{state.equity_usd:,.2f}"
+        open_pos = state.open_positions
+        win_rate = f"{state.win_rate:.0%}".replace("%", "")
+        time = now
 
         msg = (
-            f"⚔️ <b>MULERUN WAR ROOM</b>\n"
+            f"\u2694\ufe0f <b>RUNECLAW</b>\n"
             f"{SEP}\n"
-            f"Powered by <b>RUNECLAW Signal Engine v4.0</b>\n\n"
+            f"<i>Premium Tactical Trading Desk</i>\n\n"
             f"Signal locked. Risk checked. Claw ready.\n\n"
-            f"{status_icon} Status: <b>{status_label}</b>\n"
-            f"- Engine: <code>v4.0</code>\n"
-            f"- Mode: <code>{mode_str}</code>\n"
-            f"- Role: <code>{role}</code>\n\n"
-            f"📊 <b>Your Portfolio</b>\n"
+            f"{status_line}\n"
+            f"- Mode: <code>{mode}</code>\n"
+            f"- Equity: <code>${equity}</code>\n"
+            f"- Open: <code>{open_pos}</code>\n"
+            f"- Win Rate: <code>{win_rate}%</code>\n\n"
+            f"\U0001f4ac <b>How to talk to the Claw:</b>\n"
             f"{SEP}\n"
-            f"- Balance: <code>${state.equity_usd:,.2f}</code>\n"
-            f"- Risk Checks: <code>21</code>\n"
-            f"- Open Positions: <code>{state.open_positions}</code>\n"
-            f"- Total Trades: <code>{state.total_trades}</code>\n\n"
-            f"<i>{now}  •  /help for all commands</i>\n\n"
-            f"<i>⚠️ Not financial advice. Use at your own risk.\n"
-            f"📜 AGPL-3.0 • github.com/Humanoid-Traders/RUNECLAW</i>"
+            f"<b>Quick:</b> <i>\"long or short?\" \u2022 \"safe?\" \u2022 \"risk?\"</i>\n"
+            f"<b>Scan:</b> <i>\"scan BTC\" \u2022 \"swing by swing SOL\"</i>\n"
+            f"<b>Execute:</b> <i>\"entry zones ETH\" \u2022 \"trade plan\"</i>\n"
+            f"<b>Bot:</b> <i>\"bot playbook\" \u2022 \"automation\"</i>\n"
+            f"<b>Deep:</b> <i>\"deep scan\" \u2022 \"deepscan\"</i>\n\n"
+            f"The Claw reads structure before direction.\n"
+            f"Capital protection first. Always.\n\n"
+            f"\u26a0\ufe0f <i>Not financial advice. Use at your own risk.</i>\n\n"
+            f"<i>{time}</i>"
         )
         await self._send(update, msg, reply_markup=_KB_WARROOM)
 
     async def _cmd_help(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-        """Always responds — War Room help menu."""
+        """GetClaw help — natural language guide."""
         tg_id = self._get_tg_id(update)
         is_auth = self.users.is_authorized(tg_id)
         user = self.users.get(tg_id)
         role = user.get("role", "pending") if user else "pending"
 
-        if is_auth:
-            SEP = "─" * 16
-            header = (
-                f"⚔️ <b>MULERUN WAR ROOM</b>  [{role}]\n"
-                f"{SEP}\n"
-                f"<i>Your AI-powered crypto trading command center</i>\n\n"
-            )
-        else:
-            SEP = "─" * 16
-            header = (
-                f"⚔️ <b>MULERUN WAR ROOM</b>\n"
-                f"{SEP}\n"
-                f"<i>Status: pending approval — use /start to register</i>\n\n"
-            )
+        SEP = "─" * 16
 
-        sections = (
-            "<pre>"
-            "⚔️ WAR ROOM\n"
-            "  /start         Main menu\n"
-            "  /status        Engine status\n"
-            "  /latest_signal Latest signal\n"
-            "  /open_positions Open trades\n"
-            "  /performance   PnL summary\n"
-            "  /strategy      Strategy mode\n"
-            "  /daily_report  Daily report\n"
-            "  /signals       Signal history\n"
-            "\n"
-            "📊 MARKET\n"
-            "  /scan          Market scanner\n"
-            "  /scalp         Scalp scan (5m)\n"
-            "  /intraday      Intraday scan (15m)\n"
-            "  /swing         Swing scan (4h)\n"
-            "  /deepscan      Deep scan 67+ symbols\n"
-            "  /fullscan      Full scan w/ patterns\n"
-            "  /playbook      System playbook\n"
-            "  /analyze BTC   AI analysis\n"
-            "  /run           Strategy preset\n"
-            "\n"
-            "💼 PORTFOLIO\n"
-            "  /portfolio     Holdings + PnL\n"
-            "  /trade         Pending trades\n"
-            "  /journal       Trade history\n"
-            "\n"
-            "🛡 RISK CONTROL\n"
-            "  /risk          Risk dashboard\n"
-            "  /rejected      Rejected trades\n"
-            "  /whynot [SYM]  Why was it rejected\n"
-            "  /pause         Pause trading\n"
-            "  /resume        Resume trading\n"
-            "  /emergency_stop Full stop\n"
-            "  /halt          Circuit breaker\n"
-            "  /reset         Reset breaker\n"
-            "\n"
-            "🔍 INTELLIGENCE\n"
-            "  /dashboard     Command center\n"
-            "  /macro         Macro calendar\n"
-            "  /backtest      Synthetic test\n"
-            "  /walkforward   Walk-forward\n"
-            "\n"
-            "🤖 AI SYSTEM\n"
-            "  /learn         Learning stats\n"
-            "  /patterns      Detected patt.\n"
-            "  /proposals     Improvements\n"
-            "  /optimize      Token optimizer\n"
-            "  /costs         Agent economics\n"
-            "  /watch on|off  Proactive alerts\n"
-            "\n"
-            "🔑 LLM BYOK\n"
-            "  /setllm        Switch provider\n"
-            "  /llmstatus     Current LLM\n"
-            "  /llmtiers      Tier routing\n"
-            "  /llmreset      Reset to .env\n"
-            "\n"
-            "🔥 LIVE TRADING\n"
-            "  /golive        Enable live mode\n"
-            "  /buy BTC 5     Buy $5 of BTC\n"
-            "  /sell BTC      Sell all BTC\n"
-            "  /livebalance   Bitget balance\n"
-            "  /livepositions Open positions\n"
-            "  /liveclose ID  Close position\n"
-            "  /health        System health\n"
-            "\n"
-            "👤 ACCOUNT\n"
-            "  /link &lt;token&gt;  Link Telegram\n"
-            "  /unlink        Unlink account\n"
-            "  /me            Account info\n"
+        if not is_auth:
+            await self._send(update,
+                f"\u2694\ufe0f <b>RUNECLAW</b>\n"
+                f"{SEP}\n"
+                f"<i>Status: pending approval — use /start to register</i>")
+            return
+
+        msg = (
+            f"\u2694\ufe0f <b>RUNECLAW — How to Talk to Me</b>\n"
+            f"{SEP}\n\n"
+            f"Just talk naturally. No commands needed.\n\n"
+            f"\U0001f50d <b>SCAN &amp; ANALYZE</b>\n"
+            f"<i>\"scan BTC\" • \"swing by swing ETH\"\n"
+            f"\"what does the Claw see on SOL?\"\n"
+            f"\"check setup on DOGE\" • \"market read\"\n"
+            f"\"scalp scan\" • \"deep scan\"</i>\n\n"
+            f"\U0001f4ca <b>ENTRY &amp; SIGNALS</b>\n"
+            f"<i>\"give entry zones\" • \"long or short?\"\n"
+            f"\"safe entry?\" • \"confirm setup\"\n"
+            f"\"where is liquidity?\"</i>\n\n"
+            f"\U0001f6e1 <b>RISK &amp; PORTFOLIO</b>\n"
+            f"<i>\"risk check\" • \"my portfolio\"\n"
+            f"\"open positions\" • \"my trades\"\n"
+            f"\"how's my PnL?\"</i>\n\n"
+            f"\U0001f4d3 <b>INTELLIGENCE</b>\n"
+            f"<i>\"macro events\" • \"trade journal\"\n"
+            f"\"run a backtest\" • \"bot playbook\"</i>\n\n"
+            f"\u26a1 <b>CONTROL</b>\n"
+            f"<i>\"pause the bot\" • \"emergency stop\"\n"
+            f"\"resume trading\"</i>\n\n"
         )
 
         if role == "admin":
-            sections += (
-                "\n"
-                "🔒 ADMIN\n"
-                "  /approve ID   Authorize user\n"
-                "  /revoke ID    Revoke access\n"
-                "  /users        List all users\n"
+            msg += (
+                f"\U0001f512 <b>ADMIN</b>\n"
+                f"<i>/approve ID • /revoke ID • /users</i>\n\n"
             )
 
-        sections += "</pre>\n\n"
-        sections += (
-            "💬 <i>You can also type naturally:\n"
-            "\"how's BTC?\", \"what's moving?\", \"check my portfolio\"</i>\n\n"
-            "<i>⚠️ Not financial advice. Use at your own risk.\n"
-            "📜 AGPL-3.0 • github.com/Humanoid-Traders/RUNECLAW</i>"
+        msg += (
+            f"<i>The Claw reads structure, liquidity, and momentum.\n"
+            f"No noise. Just the market, swing by swing.\n\n"
+            f"\u26a0\ufe0f Not financial advice. Use at your own risk.</i>"
         )
-        await self._send(update, header + sections)
+        await self._send(update, msg)
 
     # ── Admin commands ────────────────────────────────────────
 
@@ -1497,8 +1622,9 @@ class TelegramHandler:
         if not await self._guard(update, "dashboard"):
             return
         chat_id = update.effective_chat.id
+        user_id = self._get_tg_id(update)
         pane = self._last_pane.get(chat_id, "status")
-        body = await self._render_pane(pane)
+        body = await self._render_pane(pane, user_id=user_id)
         text = body + self._footer()
         await self._send(update, text, reply_markup=_KB_DASH)
         self._last_pane[chat_id] = pane
@@ -1506,7 +1632,8 @@ class TelegramHandler:
     async def _cmd_scan(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._guard(update, "scan"):
             return
-        result = await self.registry.get("scan_market").execute(self.engine)
+        user_id = self._get_tg_id(update)
+        result = await self.registry.get("scan_market").execute(self.engine, user_id=user_id)
         await self._send(update, result)
 
     async def _cmd_analyze(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1605,7 +1732,7 @@ class TelegramHandler:
                 f"Win rate: <code>{state.win_rate:.0%}</code>",
             ])
         else:
-            lines.extend(["", "<i>No trades yet. Use /scan to find signals.</i>"])
+            lines.extend(["", "<i>No trades yet. Say \"scan\" to find signals.</i>"])
 
         await self._send(update, "\n".join(lines))
 
@@ -1616,7 +1743,7 @@ class TelegramHandler:
         if not pending:
             await self._send(update,
                 "\u23f3 <b>No pending trades</b>\n\n"
-                "<i>Use /scan or /analyze to generate ideas</i>")
+                "<i>Say \"scan\" or \"analyze BTC\" to generate ideas</i>")
             return
 
         # Fetch rich market data for all pending ideas
@@ -1659,25 +1786,35 @@ class TelegramHandler:
                     card = render_analysis_card(assets_data[i], idea)
                     await self._send(update, card, reply_markup=kb)
                 else:
-                    # Fallback: minimal format
+                    # Fallback: detailed format without live market data
                     d = "\U0001f7e2" if idea.direction.value == "LONG" else "\U0001f534"
+                    entry, sl, tp = idea.entry_price, idea.stop_loss, idea.take_profit
+                    sl_pct = abs(entry - sl) / entry * 100 if entry > 0 else 0
+                    tp_pct = abs(tp - entry) / entry * 100 if entry > 0 else 0
+                    rr = idea.risk_reward_ratio
+                    pair = idea.asset.replace("/", "")
+
                     msg = (
-                        f"{d} <b>{idea.direction.value}  {html.escape(idea.asset)}</b>\n\n"
-                        f"<pre>"
-                        f"  Entry  ${idea.entry_price:>10,.2f}\n"
-                        f"  SL     ${idea.stop_loss:>10,.2f}\n"
-                        f"  TP     ${idea.take_profit:>10,.2f}"
-                        f"</pre>\n\n"
-                        f"  Conf <code>{idea.confidence:.0%}</code>  \u2502  "
-                        f"R:R <code>{idea.risk_reward_ratio}</code>\n\n"
-                        f"<i>{html.escape(idea.reasoning[:200])}</i>"
+                        f"\U0001f525 <b>{html.escape(pair)}</b> — {idea.direction.value} Setup\n"
+                        f"{'━' * 28}\n\n"
+                        f"<b>Setup — {idea.direction.value}:</b>\n"
+                        f"- Entry: <code>{entry:,.4f}</code>\n"
+                        f"- SL: <code>{sl:,.4f}</code> (-{sl_pct:.1f}%)\n"
+                        f"- TP: <code>{tp:,.4f}</code> (+{tp_pct:.1f}%)\n"
+                        f"- Risk/Reward: 1:{rr:.1f}\n"
+                        f"- Confidence: {idea.confidence:.0%}\n\n"
+                        f"<b>Analysis:</b>\n"
+                        f"<i>{html.escape(idea.reasoning[:300])}</i>\n\n"
+                        f"<i>⚠️ Live market data unavailable — approve with caution</i>"
                     )
                     await self._send(update, msg, reply_markup=kb)
 
     async def _cmd_risk(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._guard(update, "risk"):
             return
-        state = self.engine.portfolio.snapshot()
+        user_id = self._get_tg_id(update)
+        portfolio = self.engine.user_portfolios.get(user_id)
+        state = portfolio.snapshot()
         data = {
             "daily_loss_limit": CONFIG.risk.max_daily_loss_pct,
             "current_drawdown": round(state.max_drawdown_pct, 2) if state.max_drawdown_pct else 0.0,
@@ -1723,7 +1860,7 @@ class TelegramHandler:
     async def _cmd_rejected(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._guard(update, "rejected"):
             return
-        result = await self.registry.get("rejected_trades").execute(self.engine)
+        result = await self.registry.get("rejected_trades").execute(self.engine, user_id=self._get_tg_id(update))
         await self._send(update, result)
 
     async def _cmd_whynot(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1788,13 +1925,13 @@ class TelegramHandler:
     async def _cmd_journal(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._guard(update, "journal"):
             return
-        result = await self.registry.get("trade_journal").execute(self.engine)
+        result = await self.registry.get("trade_journal").execute(self.engine, user_id=self._get_tg_id(update))
         await self._send(update, result)
 
     async def _cmd_costs(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._guard(update, "costs"):
             return
-        result = await self.registry.get("costs").execute(self.engine)
+        result = await self.registry.get("costs").execute(self.engine, user_id=self._get_tg_id(update))
         await self._send(update, result)
 
     async def _cmd_run(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1827,30 +1964,30 @@ class TelegramHandler:
         await self._send(update, result)
 
     async def _cmd_scalp(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-        """Rich scalp scan: 5m candles, tight SL, top-3 by volume."""
+        """Scalp scan: 5m candles, tight SL, top-3 by volume."""
         if not await self._guard(update, "scan"):
             return
-        await self._send(update, "\u26a1 <i>Running Scalp Scan (5m)...</i>")
+        await self._send(update, "\u26a1 <i>Scalp scan — 5M candles, tight zones...</i>")
         result = await self.registry.get("pro_scan").execute(
-            self.engine, mode="scalp")
+            self.engine, mode="scalp", user_id=self._get_tg_id(update))
         await self._send(update, result)
 
     async def _cmd_intraday(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-        """Rich intraday scan: 15m candles, top-5 movers."""
+        """Intraday scan: 15m candles, top-5 movers."""
         if not await self._guard(update, "scan"):
             return
-        await self._send(update, "\U0001f4ca <i>Running Intraday Scan (15m)...</i>")
+        await self._send(update, "\U0001f4ca <i>Intraday scan — 15M structure...</i>")
         result = await self.registry.get("pro_scan").execute(
-            self.engine, mode="intraday")
+            self.engine, mode="intraday", user_id=self._get_tg_id(update))
         await self._send(update, result)
 
     async def _cmd_swing(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-        """Rich swing scan: 4h candles, wide SL/TP, trend-based."""
+        """Swing scan: 4h candles, wide SL/TP, trend-based."""
         if not await self._guard(update, "scan"):
             return
-        await self._send(update, "\U0001f30a <i>Running Swing Scan (4h)...</i>")
+        await self._send(update, "\U0001f30a <i>The Claw reads 4H structure...</i>")
         result = await self.registry.get("pro_scan").execute(
-            self.engine, mode="swing")
+            self.engine, mode="swing", user_id=self._get_tg_id(update))
         await self._send(update, result)
 
     async def _cmd_playbook(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1859,7 +1996,7 @@ class TelegramHandler:
             return
         await self._send(update, "📋 <i>Assembling playbook...</i>")
         try:
-            result = await self.registry.get("playbook").execute(self.engine)
+            result = await self.registry.get("playbook").execute(self.engine, user_id=self._get_tg_id(update))
             await self._send(update, result)
         except Exception as exc:
             system_log.error(f"Playbook error: {exc}")
@@ -1925,7 +2062,7 @@ class TelegramHandler:
             await self._send(update,
                 "<b>\U0001f4e1 NO ACTIVE SIGNALS</b>\n\n"
                 "No signals in queue.\n"
-                "Use /scan or /analyze to generate signals.")
+                "Say \"scan\" or \"analyze\" to generate signals.")
             return
         idea = pending[-1]  # most recent
         direction = idea.direction.value
@@ -1971,6 +2108,8 @@ class TelegramHandler:
                     pnl_pct = ((last_price - pos.entry_price) / pos.entry_price) * 100
                 else:
                     pnl_pct = ((pos.entry_price - last_price) / pos.entry_price) * 100
+                from datetime import datetime, timezone
+                hold_h = (datetime.now(timezone.utc) - pos.opened_at).total_seconds() / 3600
                 positions_data.append({
                     "pair": pos.asset.replace("/", ""),
                     "direction": pos.direction.value,
@@ -1979,7 +2118,9 @@ class TelegramHandler:
                     "pnl_pct": round(pnl_pct, 2),
                     "sl": round(pos.stop_loss, 6),
                     "tp": round(pos.take_profit, 6),
-                    "size_usd": round(getattr(pos, "size_usd", 0), 2),
+                    "size_usd": round(pos.quantity * pos.entry_price, 2),
+                    "comm_pct": CONFIG.risk.commission_pct,
+                    "hold_hours": round(hold_h, 1),
                 })
 
         msg = render_open_positions(positions_data)
@@ -2057,7 +2198,9 @@ class TelegramHandler:
         """Daily trading report."""
         if not await self._guard(update, "journal"):
             return
-        trades = self.engine.portfolio.trade_history
+        user_id = self._get_tg_id(update)
+        portfolio = self.engine.user_portfolios.get(user_id)
+        trades = portfolio.trade_history
         today_trades = len(trades)
         wins = sum(1 for t in trades if t.pnl > 0)
         losses = today_trades - wins
@@ -2073,7 +2216,7 @@ class TelegramHandler:
             best_trade = sorted_t[-1].asset.replace("/USDT", "")
             best_pnl = round(sorted_t[-1].pnl, 2)
 
-        state = self.engine.portfolio.snapshot()
+        state = portfolio.snapshot()
         dd = state.max_drawdown_pct if state.max_drawdown_pct else 0
         risk_status = "Healthy" if dd < 2.0 else "Warning" if dd < 3.0 else "Critical"
 
@@ -2200,7 +2343,7 @@ class TelegramHandler:
                 "All pending orders cancelled.\n"
                 "Circuit breaker engaged.\n"
                 "Bot is <b>PAUSED</b>.\n\n"
-                "Use /resume to reactivate.",
+                "Say \"resume\" to reactivate.",
                 edit=True)
             audit(system_log, "EMERGENCY STOP executed", action="emergency_stop", result="OK")
             return
@@ -2247,19 +2390,182 @@ class TelegramHandler:
 
         if data.startswith("pos_details_"):
             pair = data.removeprefix("pos_details_")
-            await self._send(update,
-                f"\U0001f4cb <b>{html.escape(pair)} Details</b>\n\n"
-                "Use /open_positions for full view.",
-                edit=True)
+            # Find the open position for this pair
+            user_id = self._get_tg_id(update)
+            portfolio = self.engine.user_portfolios.get(user_id)
+            pos_match = None
+            for p in portfolio.open_positions:
+                if p.asset.replace("/", "") == pair:
+                    pos_match = p
+                    break
+
+            # Fetch live analysis data
+            try:
+                exchange = await self.engine.get_exchange()
+            except Exception:
+                exchange = None
+
+            symbol = pair.replace("USDT", "/USDT") if "USDT" in pair else pair
+            adata = None
+            if exchange:
+                adata = await fetch_analysis_data(exchange, symbol, timeframe="1h")
+
+            if adata and pos_match:
+                last_px = adata["price"]
+                pnl_pct = ((last_px - pos_match.entry_price) / pos_match.entry_price * 100)
+                if pos_match.direction.value == "SHORT":
+                    pnl_pct = -pnl_pct
+                sz = pos_match.quantity * pos_match.entry_price
+                exit_notional = pos_match.quantity * last_px
+                pnl_usd = sz * pnl_pct / 100
+                d_emoji = "\U0001f7e2" if pos_match.direction.value == "LONG" else "\U0001f534"
+                pnl_emoji = "\U0001f7e2" if pnl_pct >= 0 else "\U0001f534"
+                sl_dist = abs(last_px - pos_match.stop_loss) / last_px * 100
+                tp_dist = abs(pos_match.take_profit - last_px) / last_px * 100
+
+                # Fee calculations
+                comm_pct = CONFIG.risk.commission_pct  # 0.1% per side default
+                entry_fee = sz * (comm_pct / 100.0)
+                exit_fee_est = exit_notional * (comm_pct / 100.0)
+                total_fees = entry_fee + exit_fee_est
+
+                # Funding rate estimate: ~0.01% per 8h session (standard perp rate)
+                from datetime import datetime, timezone
+                hold_hours = (datetime.now(timezone.utc) - pos_match.opened_at).total_seconds() / 3600
+                funding_sessions = hold_hours / 8.0
+                funding_rate = 0.01  # 0.01% per 8h — standard neutral rate
+                funding_paid = sz * (funding_rate / 100.0) * funding_sessions
+
+                # Net PNL after all fees
+                net_pnl = pnl_usd - total_fees - funding_paid
+
+                lines = [
+                    f"\U0001f4cb <b>{html.escape(pair)} — Position Detail</b>",
+                    "",
+                    f"<b>Position:</b>",
+                    f"- Direction: {d_emoji} {pos_match.direction.value}",
+                    f"- Entry: <code>{pos_match.entry_price:,.4f}</code>",
+                    f"- Current: <code>{last_px:,.4f}</code>",
+                    f"- Qty: <code>{pos_match.quantity:,.2f}</code> | Size: <code>${sz:,.2f}</code>",
+                    f"- Gross PNL: {pnl_emoji} <code>{pnl_pct:+.2f}%</code> (<code>${pnl_usd:+,.2f}</code>)",
+                    "",
+                    f"<b>Fees & Costs:</b>",
+                    f"- Entry fee ({comm_pct}%): <code>${entry_fee:.2f}</code>",
+                    f"- Exit fee ({comm_pct}%, est): <code>${exit_fee_est:.2f}</code>",
+                    f"- Funding ({funding_sessions:.1f} sessions x {funding_rate}%): <code>${funding_paid:.2f}</code>",
+                    f"- Hold time: <code>{hold_hours:.1f}h</code>",
+                    f"- Total costs: <code>${total_fees + funding_paid:.2f}</code>",
+                    f"- <b>Net PNL: <code>${net_pnl:+,.2f}</code></b>",
+                    "",
+                    f"<b>Risk Levels:</b>",
+                    f"- SL: <code>{pos_match.stop_loss:,.4f}</code> ({sl_dist:.1f}% away)",
+                    f"- TP: <code>{pos_match.take_profit:,.4f}</code> ({tp_dist:.1f}% away)",
+                    "",
+                    f"<b>Market Snapshot:</b>",
+                    f"- VWAP: {_fmt_price(adata['vwap'])} — {_pct(adata['vwap_pct'])} {'above' if adata['vwap_pct'] >= 0 else 'below'}",
+                    f"- RSI: <code>{adata['rsi']:.1f}</code> | ATR: {_fmt_price(adata['atr'])}",
+                    f"- Bid: {_fmt_vol(adata['bid_depth'])} vs Ask: {_fmt_vol(adata['ask_depth'])}",
+                    f"- Structure: {adata['structure']}",
+                ]
+                # Supports near SL
+                for i, s in enumerate(adata.get("supports", [])[:2], 1):
+                    lines.append(f"- Support {i}: {_fmt_price(s[0])}")
+                for i, r in enumerate(adata.get("resistances", [])[:2], 1):
+                    lines.append(f"- Resistance {i}: {_fmt_price(r[0])}")
+
+                kb = InlineKeyboardMarkup([[
+                    InlineKeyboardButton("\u274c Close Position", callback_data=f"pos_close_{pair}"),
+                    InlineKeyboardButton("\U0001f504 Refresh", callback_data=f"pos_details_{pair}"),
+                ]])
+                await self._send(update, "\n".join(lines), edit=True, reply_markup=kb)
+            elif pos_match:
+                # No market data — show position info only
+                d_emoji = "\U0001f7e2" if pos_match.direction.value == "LONG" else "\U0001f534"
+                sz = pos_match.quantity * pos_match.entry_price
+                comm_pct = CONFIG.risk.commission_pct
+                entry_fee = sz * (comm_pct / 100.0)
+                exit_fee_est = sz * (comm_pct / 100.0)  # estimate at entry price
+                from datetime import datetime, timezone
+                hold_hours = (datetime.now(timezone.utc) - pos_match.opened_at).total_seconds() / 3600
+                funding_sessions = hold_hours / 8.0
+                funding_paid = sz * (0.01 / 100.0) * funding_sessions
+
+                lines = [
+                    f"\U0001f4cb <b>{html.escape(pair)} — Position Detail</b>",
+                    "",
+                    f"- Direction: {d_emoji} {pos_match.direction.value}",
+                    f"- Entry: <code>{pos_match.entry_price:,.4f}</code>",
+                    f"- SL: <code>{pos_match.stop_loss:,.4f}</code>",
+                    f"- TP: <code>{pos_match.take_profit:,.4f}</code>",
+                    f"- Qty: <code>{pos_match.quantity:,.2f}</code> | Size: <code>${sz:,.2f}</code>",
+                    "",
+                    f"<b>Fees & Costs:</b>",
+                    f"- Entry fee ({comm_pct}%): <code>${entry_fee:.2f}</code>",
+                    f"- Exit fee ({comm_pct}%, est): <code>${exit_fee_est:.2f}</code>",
+                    f"- Funding ({hold_hours:.1f}h hold): <code>${funding_paid:.2f}</code>",
+                    f"- Total costs: <code>${entry_fee + exit_fee_est + funding_paid:.2f}</code>",
+                    "",
+                    "<i>Market data unavailable — say \"trade\" for full analysis</i>",
+                ]
+                await self._send(update, "\n".join(lines), edit=True)
+            else:
+                await self._send(update,
+                    f"\U0001f4cb <b>{html.escape(pair)}</b>\n\n"
+                    "Position not found. It may have been closed.\n"
+                    "Say \"open positions\" or \"performance\" for details.",
+                    edit=True)
             return
 
         if data.startswith("pos_close_"):
             pair = data.removeprefix("pos_close_")
-            await self._send(update,
-                f"\u274c <b>Close {html.escape(pair)}</b>\n\n"
-                "Position close requested.\n"
-                "Manual confirmation required on exchange.",
-                edit=True)
+            user_id = self._get_tg_id(update)
+            portfolio = self.engine.user_portfolios.get(user_id)
+
+            # Try to close position in paper portfolio
+            closed_trade = None
+            for pos in list(portfolio.open_positions):
+                if pos.asset.replace("/", "") == pair:
+                    try:
+                        exchange = await self.engine.get_exchange()
+                        ticker = await exchange.fetch_ticker(pos.asset)
+                        close_price = ticker.get("last", pos.entry_price)
+                        closed_trade = portfolio.close_position(pos.trade_id, close_price)
+                    except Exception as e:
+                        logger.warning("Close position error for %s: %s", pair, e)
+                        closed_trade = portfolio.close_position(pos.trade_id, pos.entry_price)
+                    break
+
+            if closed_trade:
+                pnl_emoji = "\U0001f7e2" if closed_trade.pnl >= 0 else "\U0001f534"
+                sz = closed_trade.quantity * closed_trade.entry_price
+                from datetime import datetime, timezone
+                hold_h = 0
+                if closed_trade.opened_at and closed_trade.closed_at:
+                    hold_h = (closed_trade.closed_at - closed_trade.opened_at).total_seconds() / 3600
+                funding_paid = sz * (0.01 / 100.0) * (hold_h / 8.0) if hold_h > 0 else 0
+
+                lines = [
+                    f"\u2705 <b>{html.escape(pair)} — Position Closed</b>",
+                    "",
+                    f"- Entry: <code>{closed_trade.entry_price:,.4f}</code>",
+                    f"- Exit: <code>{closed_trade.exit_price:,.4f}</code>",
+                    f"- Size: <code>${sz:,.2f}</code>",
+                    "",
+                    f"<b>PNL Breakdown:</b>",
+                    f"- Gross PNL: <code>${closed_trade.gross_pnl:+,.2f}</code>",
+                    f"- Commission: <code>${closed_trade.commission:.2f}</code>",
+                    f"- Funding ({hold_h:.1f}h): <code>${funding_paid:.2f}</code>",
+                    f"- <b>Net PNL: {pnl_emoji} <code>${closed_trade.pnl:+,.2f}</code></b>",
+                    "",
+                    "Say \"my portfolio\" for updated balance.",
+                ]
+                await self._send(update, "\n".join(lines), edit=True)
+            else:
+                await self._send(update,
+                    f"\u274c <b>{html.escape(pair)}</b>\n\n"
+                    "Position not found or already closed.\n"
+                    "Say \"open positions\" to check.",
+                    edit=True)
             return
 
         # ── Legacy pane callbacks (backward compat) ──────────
@@ -2269,7 +2575,7 @@ class TelegramHandler:
             if pane == "refresh":
                 pane = self._last_pane.get(chat_id, "status")
             self._last_pane[chat_id] = pane
-            body = await self._render_pane(pane)
+            body = await self._render_pane(pane, user_id=self._get_tg_id(update))
             text = body + self._footer()
             try:
                 await query.edit_message_text(
@@ -2293,7 +2599,7 @@ class TelegramHandler:
             }
             pane = pane_map.get(cmd, "status")
             self._last_pane[chat_id] = pane
-            body = await self._render_pane(pane)
+            body = await self._render_pane(pane, user_id=self._get_tg_id(update))
             text = body + self._footer()
             try:
                 await query.edit_message_text(

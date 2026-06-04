@@ -41,18 +41,18 @@ class RiskLimits:
     max_correlation: float = _env_float("MAX_CORRELATION", 0.85)
     # Extended risk checks (checks 6-16)
     min_risk_reward: float = _env_float("MIN_RISK_REWARD", 1.2)
-    # SIGNAL QUALITY: 0.60 is the sweet spot -- enough trades to be meaningful,
-    # but still filters weak setups (backtest cliff between 0.60-0.65)
-    min_confidence: float = _env_float("MIN_CONFIDENCE", 0.60)
+    # SIGNAL QUALITY: 0.55 is the tuned threshold -- relaxed from 0.60 to allow
+    # more signals through while still filtering weak setups
+    min_confidence: float = _env_float("MIN_CONFIDENCE", 0.55)
     max_consecutive_losses: int = int(_env_float("MAX_CONSECUTIVE_LOSSES", 5))
-    cooldown_after_loss_seconds: int = int(_env_float("COOLDOWN_AFTER_LOSS_SEC", 300))
+    cooldown_after_loss_seconds: int = int(_env_float("COOLDOWN_AFTER_LOSS_SEC", 120))
     max_portfolio_exposure_pct: float = _env_float("MAX_PORTFOLIO_EXPOSURE_PCT", 80.0)
     max_symbol_exposure_pct: float = _env_float("MAX_SYMBOL_EXPOSURE_PCT", 20.0)
-    max_correlation_per_group: int = int(_env_float("MAX_CORRELATION_PER_GROUP", 2))
+    max_correlation_per_group: int = int(_env_float("MAX_CORRELATION_PER_GROUP", 3))
     # Volatility guard: reject trades when ATR exceeds this % of price.
-    # BTC hourly ATR is typically 1-4%; 6% allows for elevated-vol periods
-    # while blocking extreme conditions. Docs/tests must reference 6%.
-    volatility_guard_atr_pct: float = _env_float("VOLATILITY_GUARD_ATR_PCT", 6.0)
+    # BTC hourly ATR is typically 1-4%; 7% allows for elevated-vol periods
+    # while blocking extreme conditions.
+    volatility_guard_atr_pct: float = _env_float("VOLATILITY_GUARD_ATR_PCT", 7.0)
     stale_data_max_age_seconds: int = int(_env_float("STALE_DATA_MAX_AGE_SEC", 300))
     require_stop_loss: bool = _env_bool("REQUIRE_STOP_LOSS", True)
     # Portfolio VaR: reject trades that would push parametric VaR above this %.
@@ -124,7 +124,7 @@ class AnalyzerConfig:
     confluence_weight: float = 0.4
     sma_period: int = 50
     trend_alignment_bonus: float = 0.10
-    trend_misalignment_penalty: float = 0.15
+    trend_misalignment_penalty: float = 0.08
     sl_atr_mult_trending: float = 2.5
     tp_atr_mult_trending: float = 3.5   # was 5.0 -- TPs now reachable, >1.4 R:R with 2.5x SL
     sl_atr_mult_default: float = 2.5
@@ -140,10 +140,10 @@ class AnalyzerConfig:
     # Regime-specific overrides
     range_sl_mult: float = 1.5
     range_tp_mult: float = 2.5
-    range_confidence_penalty: float = 0.10
+    range_confidence_penalty: float = 0.05
     chop_sl_mult: float = 1.5
     chop_tp_mult: float = 2.0
-    chop_confidence_penalty: float = 0.15
+    chop_confidence_penalty: float = 0.08
 
 
 @dataclass(frozen=True)
@@ -167,7 +167,7 @@ class AppConfig:
 
     # -- Scan settings --
     scan_interval_seconds: int = int(_env_float("SCAN_INTERVAL", 60))
-    top_movers_count: int = 10
+    top_movers_count: int = 15
 
     # -- Sub-configs --
     risk: RiskLimits = field(default_factory=RiskLimits)

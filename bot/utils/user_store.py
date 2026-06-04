@@ -21,13 +21,13 @@ ROLES = ("admin", "trader", "viewer", "pending")
 ROLE_PERMISSIONS: dict[str, set[str]] = {
     "admin": {"*"},  # everything
     "trader": {
-        "start", "help", "dashboard", "scan", "analyze", "portfolio",
+        "start", "help", "dashboard", "scan", "deepscan", "analyze", "portfolio",
         "trade", "risk", "status", "rejected", "halt", "reset", "macro",
         "backtest", "walkforward", "journal", "costs", "run", "learn",
-        "patterns", "proposals", "optimize", "mode",
+        "patterns", "proposals", "optimize", "mode", "playbook",
     },
     "viewer": {
-        "start", "help", "dashboard", "scan", "status", "risk",
+        "start", "help", "dashboard", "scan", "deepscan", "status", "risk",
         "portfolio", "macro", "journal", "costs", "learn", "patterns",
     },
     "pending": {"start", "help"},

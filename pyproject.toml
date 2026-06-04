@@ -29,8 +29,6 @@ crypto = [
 anthropic = [
     "anthropic==0.104.1",
 ]
-
-[project.optional-dependencies]
 dev = [
     "pytest==8.3.5",
     "pytest-asyncio==0.24.0",

@@ -397,7 +397,7 @@ body::after {
   <!-- Header -->
   <div class="header">
     <div class="header-left">
-      <h1>RUNECLAW</h1>
+      <h1>⚔️ RUNECLAW</h1>
       <span class="header-badge badge-sim" id="modeBadge">
         <span class="status-dot dot-amber" id="statusDot"></span>
         SIMULATION
@@ -503,12 +503,18 @@ body::after {
   </div>
 </div>
 <script>
-<script>
 const API = window.location.origin;
 const equityHistory = [];
 const MAX_POINTS = 300;
 let lastUpdate = 0;
 let connected = false;
+
+// Auth token — read from URL hash or prompt
+const _token = (new URLSearchParams(window.location.hash.slice(1))).get('token')
+  || localStorage.getItem('dashboard_token')
+  || prompt('Enter dashboard token:');
+if (_token) localStorage.setItem('dashboard_token', _token);
+const AUTH_HEADERS = _token ? {'Authorization': 'Bearer ' + _token} : {};
 
 // ── Helpers ────────────────────────────────────────────────
 function $(id) { return document.getElementById(id); }
@@ -516,6 +522,7 @@ function fmt(n, d=2) { return n != null ? Number(n).toFixed(d) : '--'; }
 function fmtUsd(n) { return n != null ? '$' + Number(n).toLocaleString('en', {minimumFractionDigits:2, maximumFractionDigits:2}) : '--'; }
 function pnlClass(n) { return n >= 0 ? 'pnl-pos' : 'pnl-neg'; }
 function pnlSign(n) { return n >= 0 ? '+' : ''; }
+function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 
 function stateClass(s) {
   const m = {idle:'state-idle', scanning:'state-scanning', analyzing:'state-analyzing',
@@ -637,8 +644,8 @@ function updatePositions(positions) {
     const cur = p.current_price || p.exit_price || '--';
     const trail = p.trailing_active ? '<span style="color:var(--amber);">&#9679;</span>' : '--';
     html += `<tr>
-      <td>${p.asset || p.symbol || '--'}</td>
-      <td class="${dirCls}">${dir}</td>
+      <td>${esc(p.asset || p.symbol || '--')}</td>
+      <td class="${dirCls}">${esc(dir)}</td>
       <td>${fmt(p.entry_price, 4)}</td>
       <td>${typeof cur === 'number' ? fmt(cur, 4) : cur}</td>
       <td class="${pnlClass(pnl)}">${pnlSign(pnl)}${fmt(pnl)}</td>
@@ -663,8 +670,8 @@ function updateTrades(trades) {
     const dirCls = dir === 'LONG' ? 'dir-long' : 'dir-short';
     const pnl = t.pnl || t.realized_pnl || 0;
     html += `<tr>
-      <td>${t.asset || t.symbol || '--'}</td>
-      <td class="${dirCls}">${dir}</td>
+      <td>${esc(t.asset || t.symbol || '--')}</td>
+      <td class="${dirCls}">${esc(dir)}</td>
       <td>${fmt(t.entry_price, 4)}</td>
       <td>${fmt(t.exit_price, 4)}</td>
       <td class="${pnlClass(pnl)}">${pnlSign(pnl)}${fmt(pnl)}</td>
@@ -723,10 +730,11 @@ function updateEngine(eng, tiers, cost) {
 async function fetchAll() {
   try {
     const [stateRes, posRes, sigRes] = await Promise.all([
-      fetch(API + '/api/state'),
-      fetch(API + '/api/positions'),
-      fetch(API + '/api/signals'),
+      fetch(API + '/api/state', {headers: AUTH_HEADERS}),
+      fetch(API + '/api/positions', {headers: AUTH_HEADERS}),
+      fetch(API + '/api/signals', {headers: AUTH_HEADERS}),
     ]);
+    if (!stateRes.ok || !posRes.ok || !sigRes.ok) throw new Error('API ' + stateRes.status);
     const state = await stateRes.json();
     const pos = await posRes.json();
     const sig = await sigRes.json();
@@ -756,7 +764,6 @@ tickClock();
 
 // Redraw chart on resize
 window.addEventListener('resize', drawChart);
-</script>
 </script>
 </body>
 </html>

@@ -38,6 +38,7 @@ class IntentResult:
     raw_text: str = ""              # Original user message
     explanation: str = ""           # Why this intent was chosen
     is_social: bool = False         # True if message is greeting/thanks/social
+    reply_mode: str = "standard"    # quick, full_scan, execution, bot, beginner, standard
 
     @property
     def matched(self) -> bool:
@@ -102,6 +103,9 @@ def _is_social_message(text: str) -> bool:
         trading_words = {
             "scan", "analyze", "portfolio", "risk", "backtest", "macro",
             "halt", "journal", "cost", "dashboard", "trade", "signal",
+            "positions", "position", "balance", "equity", "pnl",
+            "swing", "scalp", "intraday", "playbook", "performance",
+            "entry", "setup", "liquidity", "scan",
         }
         if not any(w.lower() in trading_words for w in words):
             # Only classify as social if it doesn't contain intent keywords
@@ -110,6 +114,66 @@ def _is_social_message(text: str) -> bool:
                     return False
             return True
     return False
+
+
+def _detect_reply_mode(text: str) -> str:
+    """Detect the appropriate reply mode for the user's message.
+
+    Returns: 'quick', 'full_scan', 'execution', 'bot', 'beginner', or 'standard'
+    """
+    lower = text.lower().strip()
+
+    # Quick mode — very short directional questions
+    quick_patterns = re.compile(
+        r"^(long or short|entry|risk|valid|safe|direction|bias|"
+        r"should i (enter|trade|buy|sell)|is (it|this) (safe|valid|good)|"
+        r"thumbs up or down|go or no.?go|yes or no)\??$",
+        re.IGNORECASE
+    )
+    if quick_patterns.search(lower):
+        return "quick"
+
+    # Bot mode
+    bot_patterns = re.compile(
+        r"\b(bot (playbook|settings?|config|rules?)|bitget bot|automation|"
+        r"dca (logic|settings?|bot)|grid bot|auto.?trade|bot.?ready)\b",
+        re.IGNORECASE
+    )
+    if bot_patterns.search(lower):
+        return "bot"
+
+    # Execution mode
+    exec_patterns = re.compile(
+        r"\b(give (me )?(a )?signal|entry zones?|trade (plan|setup)|"
+        r"setup|where (to|do i) (enter|buy|sell|long|short)|"
+        r"execution plan|exact entry|sl and tp|stop.?loss.+take.?profit)\b",
+        re.IGNORECASE
+    )
+    if exec_patterns.search(lower):
+        return "execution"
+
+    # Full scan mode
+    scan_patterns = re.compile(
+        r"\b(scan|swing by swing|market read|full (analysis|read|scan)|"
+        r"what does .{0,15}(claw|runeclaw) see|deep (analysis|dive|read)|"
+        r"technical analysis|complete (scan|analysis|breakdown))\b",
+        re.IGNORECASE
+    )
+    if scan_patterns.search(lower):
+        return "full_scan"
+
+    # Beginner mode — unsure language
+    beginner_patterns = re.compile(
+        r"\b(what (is|does|are) .{0,10}(mean|work)|explain|help me understand|"
+        r"i.?m (new|beginner|learning|confused|not sure)|"
+        r"how (does|do) .{0,15}(work|mean)|can you explain|"
+        r"what.?s (a |an )?(choch|bos|fvg|sweep|reclaim|liquidity|structure))\b",
+        re.IGNORECASE
+    )
+    if beginner_patterns.search(lower):
+        return "beginner"
+
+    return "standard"
 
 
 # ── Symbol extraction ─────────────────────────────────────────────────
@@ -175,13 +239,40 @@ def _rule(pattern: str, skill: str, needs_symbol: bool = False, explanation: str
 
 
 # --- Scan / market overview ---
-# More specific patterns — avoid matching "what's up" or "how's it going"
+# RUNECLAW natural language triggers — scan modes
+_rule(r"\b(swing(?: (?:scan|mode|trade))?|4h scan|swing by swing)\b",
+      "scan_swing", explanation="Swing scan (4h)")
+_rule(r"\b(scalp(?: (?:scan|mode|trade))?|5m scan|quick scan|fast scan)\b",
+      "scan_scalp", explanation="Scalp scan (5m)")
+_rule(r"\b(intraday(?: (?:scan|mode|trade))?|15m scan|day ?trade scan)\b",
+      "scan_intraday", explanation="Intraday scan (15m)")
+_rule(r"\b(deep ?scan|full universe|scan (all|everything)|67 symbols?)\b",
+      "scan_deep", explanation="Deep scan (67+ symbols)")
+_rule(r"\b(full ?scan|complete scan|scan with patterns)\b",
+      "scan_full", explanation="Full scan with patterns")
+# General scan triggers
+_rule(r"\b(claw scan|run the bot scan|market read|read the trend)\b",
+      "scan_market", explanation="RUNECLAW market scan request")
+_rule(r"\b(what does the claw see|what.?s the claw (reading|saying|showing))\b",
+      "analyze_asset", needs_symbol=True, explanation="RUNECLAW asset read request")
 _rule(r"\b(scan (the )?market|what.?s moving|anything moving|top movers?|market (scan|overview)|show me movers)\b",
       "scan_market", explanation="Market scan request")
 _rule(r"\b(volume spike|big moves?|unusual (volume|activity))\b",
       "scan_market", explanation="Volume/movement alert request")
+# Bare "scan" as last resort → general market scan
+_rule(r"^scan$",
+      "scan_market", explanation="General scan request")
 
 # --- Analyze specific asset ---
+# RUNECLAW triggers
+_rule(r"\b(check (the )?setup|give (me )?entry zones?|safe entry|confirm setup)\b",
+      "analyze_asset", needs_symbol=True, explanation="RUNECLAW setup check")
+_rule(r"\b(where is liquidity|liquidity (zones?|map|sweep))\b",
+      "analyze_asset", needs_symbol=True, explanation="RUNECLAW liquidity scan")
+_rule(r"\b(long or short|is this (long|short)|which (direction|side|way))\b",
+      "analyze_asset", needs_symbol=True, explanation="RUNECLAW bias check")
+_rule(r"\bscan\s+[A-Za-z]{2,6}\b",
+      "analyze_asset", needs_symbol=True, explanation="RUNECLAW asset scan")
 # Require stronger signal — "check" alone shouldn't match
 _rule(r"\b(analy[sz]e|look at|check out|how.?s .{0,10}(doing|looking|going))\b",
       "analyze_asset", needs_symbol=True, explanation="Asset analysis request")
@@ -197,8 +288,15 @@ _rule(r"\b(my (positions?|portfolio|book|trades?|holdings?|balance|equity)|show 
       "get_portfolio", explanation="Portfolio status request")
 _rule(r"\b(open positions?|what.?s open|current (positions?|trades?))\b",
       "get_portfolio", explanation="Open positions request")
+_rule(r"\b(pos+i[st]+ions?|posistions?)\b",
+      "get_portfolio", explanation="Positions request (typo-tolerant)")
+_rule(r"\b(portfolio|balance|equity|pnl|profit|loss|p&l)\b",
+      "get_portfolio", explanation="Portfolio keyword")
 
 # --- Risk ---
+# RUNECLAW risk triggers
+_rule(r"\b(risk check|check (my )?risk|am i (over)?exposed)\b",
+      "check_risk", explanation="RUNECLAW risk check")
 # "risk" alone is too aggressive — require compound phrases
 _rule(r"\b(risk (status|dashboard|check|engine|report)|show risk|check (the )?exposure|drawdown (status|report)|circuit.?breaker (status)?)\b",
       "check_risk", explanation="Risk status request")
@@ -206,11 +304,11 @@ _rule(r"\b(how.?s (the )?risk|risk level|am i safe)\b",
       "check_risk", explanation="Risk inquiry")
 
 # --- Status / dashboard ---
-_rule(r"\b(bot (status|state)|engine (status|state)|show (me )?dashboard|system status|is .{0,5}bot (running|alive|on))\b",
+_rule(r"\b(bot (status|state)|engine (status|state)|show (me )?dashboard|system status|is .{0,5}bot (running|alive|on)|status|dashboard)\b",
       "status", explanation="System status request")
 
 # --- Journal ---
-_rule(r"\b(trade (journal|history|log)|recent trades?|past trades?|show (my )?trades)\b",
+_rule(r"\b(trade (journal|history|log)|recent trades?|past trades?|show (my )?trades|journal|history|closed trades?)\b",
       "trade_journal", explanation="Trade journal request")
 
 # --- Macro ---
@@ -229,6 +327,14 @@ _rule(r"\b(show costs?|llm (cost|spending|budget)|api (cost|spending)|how much .
 # Only match explicit halt/stop commands, not casual "stop"
 _rule(r"\b(halt (the )?bot|stop (the )?(bot|trading|engine)|emergency (stop|halt)|kill (the )?bot|pause (the )?(bot|trading))\b",
       "halt", explanation="Emergency halt request")
+
+# --- RUNECLAW playbook ---
+_rule(r"\b(bot playbook|playbook|execution logic|run the playbook)\b",
+      "playbook", explanation="RUNECLAW playbook request")
+
+# --- RUNECLAW no-trade check ---
+_rule(r"\b(no trade|should i sit out|stay flat|skip this|sit this out)\b",
+      "check_risk", explanation="RUNECLAW no-trade assessment")
 
 # --- Patterns ---
 _rule(r"\b(detected patterns?|recurring patterns?|learned patterns?|pattern (analysis|recognition)|strategy scores?)\b",
@@ -270,6 +376,7 @@ class IntentRouter:
                 raw_text=text,
                 is_social=True,
                 explanation="Social/greeting message — route to conversational chat",
+                reply_mode="standard",
             )
 
         symbol = _extract_symbol(text)
@@ -290,6 +397,7 @@ class IntentRouter:
                             source="rules",
                             raw_text=text,
                             explanation=f"{explanation} (no symbol detected)",
+                            reply_mode=_detect_reply_mode(text),
                         )
                 return IntentResult(
                     skill=skill,
@@ -298,10 +406,11 @@ class IntentRouter:
                     source="rules",
                     raw_text=text,
                     explanation=explanation,
+                    reply_mode=_detect_reply_mode(text),
                 )
 
         # No rule matched
-        return IntentResult(raw_text=text)
+        return IntentResult(raw_text=text, reply_mode=_detect_reply_mode(text))
 
     async def classify(self, text: str, llm_fn=None) -> IntentResult:
         """Classify intent using rules first, then optional LLM fallback.

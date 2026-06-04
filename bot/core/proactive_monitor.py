@@ -136,6 +136,7 @@ class ProactiveMonitor:
         alerts.extend(self._check_black_swan())
         alerts.extend(self._check_state_changes())
         alerts.extend(self._check_trade_signals())
+        alerts.extend(self._check_sl_tp_proximity())
         return alerts
 
     def _check_circuit_breaker(self) -> list[Alert]:
@@ -149,7 +150,7 @@ class ProactiveMonitor:
             drawdown_str = f"{drawdown_pct:.2f}%" if drawdown_pct is not None else "N/A"
             positions_count = 0
             try:
-                positions_count = len(self.engine.portfolio.open_positions)
+                positions_count = self.engine.user_portfolios.total_open_positions() if self.engine.user_portfolios.all_portfolios() else 0
             except Exception:
                 pass
             daily_pnl = getattr(self.engine.risk, 'daily_pnl', None)
@@ -246,14 +247,14 @@ class ProactiveMonitor:
                                     f"- vs VWAP: {vwap_str}\n"
                                     f"- Bias: {direction}\n"
                                     "────────────────\n"
-                                    f"\U0001f449 /analyze {base} — full technical breakdown\n"
-                                    f"\U0001f449 /chart {base} — view price chart"
+                                    f"\U0001f449 Say \"analyze {base}\" for full technical breakdown\n"
+                                    f"\U0001f449 Say \"chart {base}\" to view price chart"
                                 ),
                                 dedup_key=key,
                             ))
                             self._alerted_signals.add(key)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("_check_volume_spikes error: %s", exc)
         return alerts
 
     def _check_black_swan(self) -> list[Alert]:
@@ -281,12 +282,12 @@ class ProactiveMonitor:
                             "────────────────\n"
                             "\u26a0\ufe0f Engine may auto-halt if severity is SEVERE.\n"
                             f"\U0001f449 /status — check engine state\n"
-                            f"\U0001f449 /positions — review exposure"
+                            f"\U0001f449 Say \"positions\" to review exposure"
                         ),
                         dedup_key=key,
                     ))
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("_check_black_swan error: %s", exc)
         return alerts
 
     def _check_state_changes(self) -> list[Alert]:
@@ -347,9 +348,9 @@ class ProactiveMonitor:
             for idea_id, idea in self.engine._pending_ideas.items():
                 key = f"signal_{idea_id}"
                 if key not in self._alerted_signals:
-                    d = "\U0001f7e2 LONG" if idea.direction.upper() == "LONG" else "\U0001f534 SHORT"
-                    risk_amt = abs(idea.entry - idea.stop_loss)
-                    reward_amt = abs(idea.take_profit - idea.entry)
+                    d = "\U0001f7e2 LONG" if idea.direction.value == "LONG" else "\U0001f534 SHORT"
+                    risk_amt = abs(idea.entry_price - idea.stop_loss)
+                    reward_amt = abs(idea.take_profit - idea.entry_price)
                     rr_ratio = reward_amt / risk_amt if risk_amt > 0 else 0
                     base = idea.asset.split('/')[0] if '/' in idea.asset else idea.asset
                     alerts.append(Alert(
@@ -361,20 +362,98 @@ class ProactiveMonitor:
                             "────────────────\n"
                             f"- Direction: {d}\n"
                             f"- Confidence: <code>{idea.confidence:.0%}</code>\n"
-                            f"- Entry: <code>${idea.entry:,.2f}</code>\n"
+                            f"- Entry: <code>${idea.entry_price:,.2f}</code>\n"
                             f"- Stop Loss: <code>${idea.stop_loss:,.2f}</code>\n"
                             f"- Take Profit: <code>${idea.take_profit:,.2f}</code>\n"
                             f"- R:R Ratio: <code>{rr_ratio:.1f}</code>\n"
                             "────────────────\n"
                             "\u23f3 Awaiting operator confirmation.\n"
-                            f"\U0001f449 /analyze {base} — review analysis\n"
-                            f"\U0001f449 /confirm — approve this trade"
+                            f"\U0001f449 Say \"analyze {base}\" to review analysis\n"
+                            f"\U0001f449 Say \"confirm\" to approve this trade"
                         ),
                         dedup_key=key,
                     ))
                     self._alerted_signals.add(key)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("_check_trade_signals error: %s", exc)
+        return alerts
+
+    def _check_sl_tp_proximity(self) -> list[Alert]:
+        """Alert when open positions approach their SL or TP levels."""
+        alerts = []
+        proximity_threshold = 0.015  # 1.5%
+        try:
+            # Collect positions from all user portfolios and the shared portfolio
+            all_positions = []
+            if self.engine.user_portfolios.all_portfolios():
+                for uid in self.engine.user_portfolios.all_portfolios():
+                    portfolio = self.engine.user_portfolios.get(uid)
+                    all_positions.extend(portfolio.open_positions)
+            else:
+                all_positions.extend(self.engine.portfolio.open_positions)
+
+            if not all_positions:
+                return alerts
+
+            # Get current prices from WS feed
+            ws_prices = {}
+            if self.engine.ws_feed.is_connected():
+                ws_prices = self.engine.ws_feed.get_prices() or {}
+
+            for pos in all_positions:
+                current_price = ws_prices.get(pos.asset)
+                if not current_price or current_price <= 0:
+                    continue
+                if not pos.stop_loss or not pos.take_profit or pos.entry_price <= 0:
+                    continue
+
+                # Check SL proximity
+                sl_distance_pct = abs(current_price - pos.stop_loss) / pos.entry_price
+                if sl_distance_pct <= proximity_threshold:
+                    key = f"sl_prox_{pos.asset}_{pos.trade_id}"
+                    base = pos.asset.split('/')[0] if '/' in pos.asset else pos.asset
+                    alerts.append(Alert(
+                        alert_type="SL_PROXIMITY",
+                        severity="WARNING",
+                        title=f"SL Proximity: {pos.asset}",
+                        body=(
+                            f"\u26a0\ufe0f <b>STOP LOSS APPROACHING — {pos.asset}</b>\n"
+                            "────────────────\n"
+                            f"- Current Price: <code>${current_price:,.4f}</code>\n"
+                            f"- Stop Loss: <code>${pos.stop_loss:,.4f}</code>\n"
+                            f"- Distance: <code>{sl_distance_pct:.2%}</code>\n"
+                            f"- Entry: <code>${pos.entry_price:,.4f}</code>\n"
+                            "────────────────\n"
+                            f"\U0001f449 /positions — review open trades\n"
+                            f"\U0001f449 Say \"analyze {base}\" for updated analysis"
+                        ),
+                        dedup_key=key,
+                    ))
+
+                # Check TP proximity
+                tp_distance_pct = abs(current_price - pos.take_profit) / pos.entry_price
+                if tp_distance_pct <= proximity_threshold:
+                    key = f"tp_prox_{pos.asset}_{pos.trade_id}"
+                    base = pos.asset.split('/')[0] if '/' in pos.asset else pos.asset
+                    alerts.append(Alert(
+                        alert_type="TP_PROXIMITY",
+                        severity="INFO",
+                        title=f"TP Proximity: {pos.asset}",
+                        body=(
+                            f"\U0001f3af <b>TAKE PROFIT APPROACHING — {pos.asset}</b>\n"
+                            "────────────────\n"
+                            f"- Current Price: <code>${current_price:,.4f}</code>\n"
+                            f"- Take Profit: <code>${pos.take_profit:,.4f}</code>\n"
+                            f"- Distance: <code>{tp_distance_pct:.2%}</code>\n"
+                            f"- Entry: <code>${pos.entry_price:,.4f}</code>\n"
+                            "────────────────\n"
+                            f"\U0001f449 /positions — review open trades\n"
+                            f"\U0001f449 Say \"analyze {base}\" for updated analysis"
+                        ),
+                        dedup_key=key,
+                    ))
+        except Exception as exc:
+            logger.debug("_check_sl_tp_proximity error: %s", exc)
         return alerts
 
     # ── Deduplication ─────────────────────────────────────────────
@@ -402,7 +481,9 @@ class ProactiveMonitor:
 
         # Prune alerted signals set
         if len(self._alerted_signals) > 500:
-            self._alerted_signals.clear()
+            # Evict oldest half instead of clearing all
+            to_remove = list(self._alerted_signals)[:250]
+            self._alerted_signals -= set(to_remove)
 
     # ── Dispatch ──────────────────────────────────────────────────
 

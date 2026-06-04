@@ -35,6 +35,7 @@ synthetic backtester, which has no L2/tick data.
 
 from __future__ import annotations
 
+import asyncio
 import os
 import threading
 from collections import deque
@@ -164,26 +165,73 @@ class OrderFlowAnalyzer:
         sig = OrderFlowSignal(symbol=symbol)
         ok: list[str] = []
 
+        # Parallelize all independent exchange fetches
+        deriv_sym = derivatives_symbol or symbol
+
+        book_task = exchange.fetch_order_book(symbol, limit=self.config.book_depth_levels)
+        trades_task = exchange.fetch_trades(symbol, limit=self.config.trades_window)
+        funding_task = exchange.fetch_funding_rate(deriv_sym)
+        oi_task = exchange.fetch_open_interest(deriv_sym)
+
+        book_result, trades_result, funding_result, oi_result = await asyncio.gather(
+            book_task, trades_task, funding_task, oi_task,
+            return_exceptions=True
+        )
+
         # 1. Order book
-        try:
-            book = await exchange.fetch_order_book(symbol, limit=self.config.book_depth_levels)
-            self._fill_book_metrics(sig, book)
-            ok.append("book")
-        except Exception as exc:  # noqa: BLE001
-            sig.notes.append(f"order_book unavailable: {exc}")
+        if isinstance(book_result, Exception):
+            sig.notes.append(f"order_book unavailable: {book_result}")
+        else:
+            try:
+                self._fill_book_metrics(sig, book_result)
+                ok.append("book")
+            except Exception as exc:  # noqa: BLE001
+                sig.notes.append(f"order_book processing error: {exc}")
 
         # 2. Trade flow + whales
-        try:
-            trades = await exchange.fetch_trades(symbol, limit=self.config.trades_window)
-            self._fill_trade_metrics(sig, trades, symbol)
-            self._fill_whale_metrics(sig, trades)
-            ok.append("trades")
-        except Exception as exc:  # noqa: BLE001
-            sig.notes.append(f"trades unavailable: {exc}")
+        if isinstance(trades_result, Exception):
+            sig.notes.append(f"trades unavailable: {trades_result}")
+        else:
+            try:
+                self._fill_trade_metrics(sig, trades_result, symbol)
+                self._fill_whale_metrics(sig, trades_result)
+                ok.append("trades")
+            except Exception as exc:  # noqa: BLE001
+                sig.notes.append(f"trades processing error: {exc}")
 
-        # 3. Derivatives (optional; perp only)
-        deriv_sym = derivatives_symbol or symbol
-        await self._fill_deriv_metrics(sig, exchange, deriv_sym, ok)
+        # 3. Derivatives: funding rate
+        if isinstance(funding_result, Exception):
+            sig.notes.append(f"funding n/a (spot symbol or unsupported): {funding_result}")
+        else:
+            try:
+                rate = funding_result.get("fundingRate")
+                if rate is not None:
+                    sig.funding_rate = float(rate)
+                    ok.append("funding")
+            except Exception as exc:  # noqa: BLE001
+                sig.notes.append(f"funding processing error: {exc}")
+
+        # 4. Derivatives: open interest
+        if isinstance(oi_result, Exception):
+            sig.notes.append(f"open_interest n/a: {oi_result}")
+        else:
+            try:
+                oi_usd = oi_result.get("openInterestValue")
+                if oi_usd is None:
+                    amt = oi_result.get("openInterestAmount")
+                    if amt is not None and sig.mid_price > 0:
+                        oi_usd = float(amt) * sig.mid_price
+                if oi_usd is not None:
+                    oi_usd = float(oi_usd)
+                    sig.open_interest_usd = round(oi_usd, 2)
+                    with self._lock:
+                        prev = self._oi_history.get(deriv_sym)
+                        self._oi_history[deriv_sym] = oi_usd
+                    if prev and prev > 0:
+                        sig.oi_change_pct = round((oi_usd - prev) / prev * 100, 3)
+                    ok.append("open_interest")
+            except Exception as exc:  # noqa: BLE001
+                sig.notes.append(f"open_interest processing error: {exc}")
 
         # 4. Composite + confidence
         self._fill_composite(sig, ok)
