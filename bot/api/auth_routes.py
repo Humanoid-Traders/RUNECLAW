@@ -33,18 +33,18 @@ security = HTTPBearer(auto_error=False)
 
 # -- JWT (stdlib only -- no PyJWT dependency) --------------------------------
 
-_default_secret = "change_this_to_a_random_secret_in_env"
+_HARDCODED_DEFAULT = "change_this_to_a_random_secret_in_env"
 JWT_SECRET = os.getenv("JWT_SECRET", "")
-if not JWT_SECRET or JWT_SECRET == _default_secret:
-    import warnings
-    JWT_SECRET = _default_secret
-    warnings.warn(
-        "JWT_SECRET not set or uses default value. "
-        "Generate one with: python3 -c \"import secrets; print(secrets.token_hex(32))\" "
-        "and set it in .env",
-        stacklevel=1,
+if not JWT_SECRET or JWT_SECRET == _HARDCODED_DEFAULT:
+    raise RuntimeError(
+        "FATAL: JWT_SECRET environment variable is not set or still uses the "
+        "hardcoded default. The server CANNOT start without a secure secret. "
+        "Generate one with:\n"
+        "  python3 -c \"import secrets; print(secrets.token_hex(32))\"\n"
+        "and set it as JWT_SECRET in your .env file."
     )
-JWT_TTL = 60 * 60 * 24 * 30  # 30 days
+JWT_ACCESS_TTL = 60 * 60          # 1 hour
+JWT_REFRESH_TTL = 60 * 60 * 24 * 7  # 7 days
 
 
 def _b64(data: bytes) -> str:
@@ -76,10 +76,12 @@ def _verify(token: str) -> Optional[dict]:
         return None
 
 
-def create_jwt(user_id: int) -> str:
+def create_jwt(user_id: int, *, token_type: str = "access") -> str:
+    ttl = JWT_ACCESS_TTL if token_type == "access" else JWT_REFRESH_TTL
     return _sign({
         "sub": user_id,
-        "exp": int(time.time()) + JWT_TTL,
+        "type": token_type,
+        "exp": int(time.time()) + ttl,
         "iat": int(time.time()),
     })
 
@@ -92,15 +94,19 @@ def get_current_user_id(
     payload = _verify(creds.credentials)
     if not payload:
         raise HTTPException(401, "Token invalid or expired")
+    if payload.get("type") != "access":
+        raise HTTPException(401, "Expected an access token")
     return payload["sub"]
 
 
-def _user_response(user_id: int, token: str) -> dict:
+def _user_response(user_id: int, token: str, refresh_token: str) -> dict:
     """Build the JSON body the website dashboard needs."""
     user = get_user_by_id(user_id)
     pf = get_user_portfolio(user_id)
     return {
         "token": token,
+        "refresh_token": refresh_token,
+        "expires_in": JWT_ACCESS_TTL,
         "user_id": user_id,
         "email": user.email,
         "plan": user.plan,
@@ -130,8 +136,9 @@ async def register(body: AuthIn):
         user_id = create_user(body.email, body.password)
     except ValueError:
         raise HTTPException(400, "Registration failed. Check email and password (8+ chars).")
-    token = create_jwt(user_id)
-    return _user_response(user_id, token)
+    token = create_jwt(user_id, token_type="access")
+    refresh = create_jwt(user_id, token_type="refresh")
+    return _user_response(user_id, token, refresh)
 
 
 # -- POST /auth/login ------------------------------------------------------
@@ -141,8 +148,9 @@ async def login(body: AuthIn):
     user = authenticate_user(body.email, body.password)
     if not user:
         raise HTTPException(401, "Invalid email or password")
-    token = create_jwt(user.id)
-    return _user_response(user.id, token)
+    token = create_jwt(user.id, token_type="access")
+    refresh = create_jwt(user.id, token_type="refresh")
+    return _user_response(user.id, token, refresh)
 
 
 # -- GET /auth/me -----------------------------------------------------------
@@ -152,8 +160,32 @@ async def me(user_id: int = Depends(get_current_user_id)):
     user = get_user_by_id(user_id)
     if not user:
         raise HTTPException(404, "User not found")
-    token = create_jwt(user_id)
-    return _user_response(user_id, token)
+    token = create_jwt(user_id, token_type="access")
+    refresh = create_jwt(user_id, token_type="refresh")
+    return _user_response(user_id, token, refresh)
+
+
+# -- POST /auth/refresh ----------------------------------------------------
+
+class RefreshIn(BaseModel):
+    refresh_token: str
+
+
+@auth_router.post("/refresh")
+async def refresh(body: RefreshIn):
+    """Exchange a valid refresh token for a new access + refresh token pair."""
+    payload = _verify(body.refresh_token)
+    if not payload:
+        raise HTTPException(401, "Refresh token invalid or expired")
+    if payload.get("type") != "refresh":
+        raise HTTPException(401, "Expected a refresh token")
+    user_id = payload["sub"]
+    user = get_user_by_id(user_id)
+    if not user:
+        raise HTTPException(404, "User not found")
+    token = create_jwt(user_id, token_type="access")
+    new_refresh = create_jwt(user_id, token_type="refresh")
+    return _user_response(user_id, token, new_refresh)
 
 
 # -- POST /auth/link-token -------------------------------------------------

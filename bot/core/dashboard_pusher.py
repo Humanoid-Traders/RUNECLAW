@@ -20,7 +20,7 @@ log = logging.getLogger("runeclaw.dashboard_pusher")
 
 PUSH_INTERVAL = 30  # seconds
 DASHBOARD_URL = os.environ.get("DASHBOARD_URL", "http://localhost:9090")
-DASHBOARD_KEY = os.environ.get("DASHBOARD_API_KEY", "runeclaw-beta-2026")
+DASHBOARD_KEY = os.environ.get("DASHBOARD_API_KEY", "")
 
 
 class DashboardPusher:
@@ -32,6 +32,9 @@ class DashboardPusher:
         self._session: Optional[aiohttp.ClientSession] = None
 
     async def start(self) -> None:
+        if not DASHBOARD_KEY:
+            log.warning("DASHBOARD_API_KEY not set — dashboard pusher disabled")
+            return
         if not DASHBOARD_URL:
             log.info("DASHBOARD_URL not set — dashboard pusher disabled")
             return

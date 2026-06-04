@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import traceback
 from dataclasses import asdict, dataclass, field
 from typing import Any
@@ -31,6 +32,9 @@ from bot.utils.logger import audit, system_log
 # C5 FIX: bearer token authentication for MCP tool calls.
 # Set MCP_AUTH_TOKEN in .env to require callers to authenticate.
 _MCP_AUTH_TOKEN: str = os.environ.get("MCP_AUTH_TOKEN", "")
+
+# SEC-H3 FIX: strict symbol format validator for MCP entry points.
+_SYMBOL_RE = re.compile(r'^[A-Z0-9]{1,15}(/[A-Z0-9]{1,15})?$')
 
 
 # ---------------------------------------------------------------------------
@@ -343,6 +347,15 @@ class RuneClawMCPServer:
                 kwargs[p.name] = self._coerce(arguments[p.name], p.type)
             elif p.default is not None:
                 kwargs[p.name] = p.default
+
+        # --- SEC-H3 FIX: validate symbol parameters ----------------------
+        if "symbol" in kwargs and isinstance(kwargs["symbol"], str):
+            if not _SYMBOL_RE.match(kwargs["symbol"]):
+                return MCPResponse(
+                    status="error",
+                    tool=name,
+                    result="Invalid symbol format. Expected e.g. 'BTC/USDT'.",
+                ).to_dict()
 
         # --- execute -------------------------------------------------------
         try:

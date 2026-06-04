@@ -180,6 +180,16 @@ def _detect_reply_mode(text: str) -> str:
 
 # ── Symbol extraction ─────────────────────────────────────────────────
 
+# SEC-H3 FIX: strict symbol format validator — prevents unsanitised strings
+# reaching CCXT or LLM layers.
+_SYMBOL_RE = re.compile(r'^[A-Z0-9]{1,15}(/[A-Z0-9]{1,15})?$')
+
+
+def _validate_symbol(symbol: str) -> Optional[str]:
+    """Return *symbol* unchanged if it matches the strict format, else None."""
+    return symbol if _SYMBOL_RE.match(symbol) else None
+
+
 # Common crypto symbols (without /USDT suffix)
 _KNOWN_SYMBOLS = {
     "btc", "bitcoin", "eth", "ethereum", "sol", "solana", "bnb", "xrp",
@@ -201,25 +211,33 @@ _NAME_TO_TICKER = {
 
 
 def _extract_symbol(text: str) -> Optional[str]:
-    """Extract a crypto symbol from free text. Returns 'BTC/USDT' format or None."""
+    """Extract a crypto symbol from free text. Returns 'BTC/USDT' format or None.
+
+    Every candidate is run through ``_validate_symbol`` before being returned
+    so that malformed strings never reach CCXT or the LLM (SEC-H3).
+    """
     lower = text.lower()
     words = re.findall(r'[a-zA-Z]+', lower)
 
     for word in words:
         # Check name mapping first
         if word in _NAME_TO_TICKER:
-            return f"{_NAME_TO_TICKER[word]}/USDT"
+            candidate = f"{_NAME_TO_TICKER[word]}/USDT"
+            return _validate_symbol(candidate)
         # Check known tickers
         if word in _KNOWN_SYMBOLS:
-            return f"{word.upper()}/USDT"
+            candidate = f"{word.upper()}/USDT"
+            return _validate_symbol(candidate)
 
     # Try explicit patterns like "BTC/USDT" or "$BTC"
     explicit = re.search(r'\$?([A-Z]{2,10})/USDT', text.upper())
     if explicit:
-        return f"{explicit.group(1)}/USDT"
+        candidate = f"{explicit.group(1)}/USDT"
+        return _validate_symbol(candidate)
     dollar = re.search(r'\$([A-Z]{2,10})\b', text.upper())
     if dollar and dollar.group(1).lower() in _KNOWN_SYMBOLS:
-        return f"{dollar.group(1)}/USDT"
+        candidate = f"{dollar.group(1)}/USDT"
+        return _validate_symbol(candidate)
 
     return None
 

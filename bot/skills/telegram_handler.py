@@ -28,6 +28,10 @@ from telegram.ext import (
 )
 
 from bot.config import CONFIG, _env_bool
+
+# SEC-H3 FIX: strict symbol regex — applied at every Telegram entry point
+# before symbols reach CCXT or the LLM.
+_SYMBOL_RE = re.compile(r'^[A-Z0-9]{1,15}(/[A-Z0-9]{1,15})?$')
 from bot.core.engine import RuneClawEngine
 from bot.core.signal_tracker import SignalTracker
 from bot.llm.provider import BYOK, LLMConfig, LLMProvider, LLMTier, PROVIDER_CATALOG, DEFAULT_TIER_ROUTING, create_llm_client, llm_complete, resolve_tier_config
@@ -91,6 +95,37 @@ class RateLimiter:
                 for uid in stale:
                     del self._calls[uid]
             return True
+
+
+# AG-H1: Prompt-injection sanitizer for free-form user text sent to LLM
+_INJECTION_PATTERNS = re.compile(
+    r"(ignore\s+(all\s+)?previous\s+instructions"
+    r"|ignore\s+above"
+    r"|disregard\s+(all\s+)?previous"
+    r"|system\s*:"
+    r"|<\|?(system|im_start|endoftext)\|?>"
+    r"|you\s+are\s+now\s+"
+    r"|act\s+as\s+if"
+    r"|pretend\s+you\s+are"
+    r"|new\s+instructions?\s*:"
+    r"|override\s+(previous\s+)?instructions"
+    r"|forget\s+(all\s+)?previous"
+    r"|do\s+not\s+follow\s+(the\s+)?(above|previous))",
+    re.IGNORECASE,
+)
+
+_MAX_CHAT_INPUT_LEN = 500
+
+
+def _sanitize_chat_input(text: str) -> str:
+    """Sanitize free-form user text before sending to LLM.
+
+    - Truncates to 500 characters
+    - Strips prompt-injection patterns
+    """
+    truncated = text[:_MAX_CHAT_INPUT_LEN]
+    sanitized = _INJECTION_PATTERNS.sub("[filtered]", truncated)
+    return sanitized.strip()
 
 
 # ── War Room main menu keyboard ─────────────────────────────
@@ -760,7 +795,8 @@ class TelegramHandler:
         thinking = random.choice(self._THINKING_PHRASES)
         await self._send(update, thinking)
 
-        answer = await self._llm_chat(text, user_id=tg_id, user_name=user_name)
+        answer = await self._llm_chat(
+            _sanitize_chat_input(text), user_id=tg_id, user_name=user_name)
 
         # Store assistant response in conversation memory
         self.conversations.append(tg_id, "assistant", answer)
@@ -1365,6 +1401,12 @@ class TelegramHandler:
 
         asset = args[0].upper().replace("/USDT", "")
         symbol = f"{asset}/USDT"
+
+        # SEC-H3 FIX: validate symbol before it reaches CCXT
+        if not _SYMBOL_RE.match(symbol):
+            await self._send(update, "\u274c Invalid symbol format.")
+            return
+
         amount_usd = 5.0  # default
         if len(args) >= 2:
             try:
@@ -1429,6 +1471,12 @@ class TelegramHandler:
 
         asset = args[0].upper().replace("/USDT", "")
         symbol = f"{asset}/USDT"
+
+        # SEC-H3 FIX: validate symbol before it reaches CCXT
+        if not _SYMBOL_RE.match(symbol):
+            await self._send(update, "\u274c Invalid symbol format.")
+            return
+
         qty = 0.0
         sell_all = True
         if len(args) >= 2:
@@ -1701,8 +1749,8 @@ class TelegramHandler:
         args = ctx.args
         if args:
             raw = args[0].upper().strip()
-            # Input validation: only allow alphanumeric + slash (e.g. BTC, BTC/USDT)
-            if not re.match(r"^[A-Z0-9]{1,20}(/[A-Z0-9]{1,10})?$", raw):
+            # SEC-H3 FIX: strict symbol validation before reaching CCXT/LLM
+            if not _SYMBOL_RE.match(raw):
                 await self._send(update,
                     "\U0001f534 Invalid symbol. Use format: <code>BTC</code> or <code>BTC/USDT</code>")
                 return

@@ -12,8 +12,11 @@ import json
 import threading
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
+import logging
 from pathlib import Path
 from typing import Optional
+
+_log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Data classes
@@ -135,8 +138,8 @@ class AuditChain:
                 try:
                     self.sign_latest_batch(batch_size=self._auto_sign_interval)
                     self._entries_since_sign = 0
-                except Exception:
-                    pass  # best-effort: signing is non-critical
+                except Exception as e:
+                    _log.debug("Auto-sign best-effort failed: %s", e)
             return entry
 
     def seal_decision(self, record: DecisionRecord) -> AuditEntry:

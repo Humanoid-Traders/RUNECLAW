@@ -23,6 +23,20 @@ from datetime import datetime
 from bot.compat import UTC
 from typing import Optional
 
+# AG-H1: Symbol validation regex — only uppercase alphanumeric, optional /pair
+_VALID_SYMBOL_RE = re.compile(r"^[A-Z0-9]{1,15}(/[A-Z0-9]{1,15})?$")
+
+
+def _sanitize_symbol(symbol: str) -> str:
+    """Validate and sanitize a trading symbol before use in LLM prompts.
+
+    Raises ValueError if the symbol doesn't match the expected format.
+    """
+    s = symbol.strip().upper()
+    if not _VALID_SYMBOL_RE.match(s):
+        raise ValueError(f"Invalid symbol format: {symbol!r}")
+    return s
+
 import numpy as np
 from openai import AsyncOpenAI
 
@@ -47,7 +61,7 @@ from bot.utils.models import Direction, MarketSignal, TradeIdea
 
 
 # Re-export for backward compatibility (tests import from here)
-__all__ = ["Analyzer", "Regime", "_ema", "_compute_adx"]
+__all__ = ["Analyzer", "Regime", "_ema", "_compute_adx", "_sanitize_symbol"]
 
 
 class Analyzer:
@@ -1112,7 +1126,7 @@ class Analyzer:
         fallback_chain = [
             (LLMProvider.GEMINI, "GEMINI_API_KEY", "gemini-2.5-flash"),
             (LLMProvider.GROQ, "GROQ_API_KEY", "llama-3.3-70b-versatile"),
-            (LLMProvider.ANTHROPIC, "ANTHROPIC_API_KEY", "claude-sonnet-4-20250514"),
+            (LLMProvider.ANTHROPIC, "ANTHROPIC_API_KEY", "claude-sonnet-4-6"),
             (LLMProvider.DEEPSEEK, "DEEPSEEK_API_KEY", "deepseek-chat"),
         ]
 
@@ -1208,9 +1222,14 @@ class Analyzer:
           - Strip redundant whitespace
           - Hard cap at 4000 chars (~1000 tokens) to prevent prompt bloat
           - Order flow appended only when available
+
+        AG-H1: Symbol is validated before interpolation into the prompt.
         """
+        # Sanitize symbol to prevent prompt injection via symbol strings
+        safe_symbol = _sanitize_symbol(signal.symbol)
+
         parts = [
-            f"Analyze {signal.symbol}.",
+            f"Analyze {safe_symbol}.",
             f"Price=${signal.price} 24h={signal.change_pct_24h}% vol_spike={signal.volume_spike}",
             f"Regime={indicators.get('regime', 'UNKNOWN')} Confluence={indicators.get('confluence', 0):.2f}",
             f"RSI={indicators.get('rsi')} MACD={indicators.get('macd')} MACD_hist={indicators.get('macd_histogram')}",

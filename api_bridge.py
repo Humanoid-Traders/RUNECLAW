@@ -17,13 +17,15 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import time
+from collections import defaultdict
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Any, Optional
 
 import numpy as np
-from fastapi import FastAPI, HTTPException, Depends, Security
+from fastapi import FastAPI, HTTPException, Depends, Security, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -88,6 +90,39 @@ _start_time: float = 0.0
 # Rate-limit: max concurrent exchange requests
 _EXCHANGE_SEMAPHORE = asyncio.Semaphore(5)
 _SCAN_BATCH_SIZE = 10
+
+# SEC-H4: In-memory rate limiter for API endpoints
+_rate_limits: dict[str, list[float]] = defaultdict(list)
+_RATE_LIMIT = 30  # requests per minute per client IP
+
+
+def _check_rate_limit(client_ip: str) -> bool:
+    """Return True if the request is allowed, False if rate-limited."""
+    now = time.time()
+    _rate_limits[client_ip] = [t for t in _rate_limits[client_ip] if now - t < 60]
+    if len(_rate_limits[client_ip]) >= _RATE_LIMIT:
+        return False
+    _rate_limits[client_ip].append(now)
+    # Prune stale entries to prevent unbounded memory growth
+    if len(_rate_limits) > 1000:
+        stale = [ip for ip, ts in _rate_limits.items()
+                 if not ts or now - ts[-1] > 120]
+        for ip in stale:
+            del _rate_limits[ip]
+    return True
+
+
+async def _require_rate_limit(request: Request) -> None:
+    """FastAPI dependency that enforces per-IP rate limiting."""
+    client_ip = request.client.host if request.client else "unknown"
+    if not _check_rate_limit(client_ip):
+        raise HTTPException(
+            status_code=429,
+            detail="Rate limit exceeded. Max 30 requests per minute.",
+        )
+
+# SEC-H3 FIX: strict symbol format validator for API entry points.
+_SYMBOL_RE = re.compile(r'^[A-Z0-9]{1,15}(/[A-Z0-9]{1,15})?$')
 
 
 # ── Helpers ──────────────────────────────────────────────────────
@@ -305,10 +340,17 @@ async def health():
 
 
 @app.post("/scan")
-async def scan(req: ScanRequest):
+async def scan(req: ScanRequest, _rl: None = Depends(_require_rate_limit)):
     """Batch-scan universe symbols for signals and indicators."""
     assert engine is not None
     symbols = req.symbols or UNIVERSE
+
+    # SEC-H3 FIX: validate any user-supplied symbols
+    if req.symbols:
+        for sym in req.symbols:
+            if not _SYMBOL_RE.match(sym):
+                raise HTTPException(status_code=400, detail=f"Invalid symbol format: '{sym}'")
+
     results: list[dict] = []
     errors: list[str] = []
 
@@ -381,9 +423,13 @@ async def _scan_single(symbol: str, timeframe: str, limit: int) -> dict | None:
 
 
 @app.post("/analyze")
-async def analyze(req: AnalyzeRequest, _token: str = Depends(require_dashboard_token)):
+async def analyze(req: AnalyzeRequest, _token: str = Depends(require_dashboard_token), _rl: None = Depends(_require_rate_limit)):
     """Run the full AI analyzer pipeline on a symbol."""
     assert engine is not None
+
+    # SEC-H3 FIX: validate symbol before it reaches CCXT/LLM
+    if not _SYMBOL_RE.match(req.symbol):
+        raise HTTPException(status_code=400, detail="Invalid symbol format. Expected e.g. 'BTC/USDT'.")
 
     # 1. Fetch OHLCV
     ohlcv = await _fetch_ohlcv(req.symbol, req.timeframe, req.limit)
@@ -460,9 +506,13 @@ async def portfolio():
 
 
 @app.post("/confirm")
-async def confirm_trade(req: ConfirmRequest, _token: str = Depends(require_dashboard_token)):
+async def confirm_trade(req: ConfirmRequest, _token: str = Depends(require_dashboard_token), _rl: None = Depends(_require_rate_limit)):
     """Confirm a trade idea and open a position."""
     assert engine is not None
+
+    # SEC-H3 FIX: validate asset symbol before it reaches CCXT
+    if not _SYMBOL_RE.match(req.asset):
+        raise HTTPException(status_code=400, detail="Invalid asset format. Expected e.g. 'BTC/USDT'.")
 
     direction = Direction.LONG if req.direction.upper() == "LONG" else Direction.SHORT
     idea = TradeIdea(
@@ -509,9 +559,13 @@ async def confirm_trade(req: ConfirmRequest, _token: str = Depends(require_dashb
 
 
 @app.post("/portfolio/close/{symbol}")
-async def close_position(symbol: str, _token: str = Depends(require_dashboard_token)):
+async def close_position(symbol: str, _token: str = Depends(require_dashboard_token), _rl: None = Depends(_require_rate_limit)):
     """Force-close an open position by symbol (paper trading)."""
     assert engine is not None
+
+    # SEC-H3 FIX: validate symbol before it reaches CCXT
+    if not _SYMBOL_RE.match(symbol):
+        raise HTTPException(status_code=400, detail="Invalid symbol format.")
 
     positions = engine.portfolio.open_positions
     target = None
@@ -584,9 +638,13 @@ async def blackswan_status():
 
 
 @app.get("/patterns/{symbol}")
-async def patterns(symbol: str, timeframe: str = "1h", limit: int = 100):
+async def patterns(symbol: str, timeframe: str = "1h", limit: int = 100, _rl: None = Depends(_require_rate_limit)):
     """Detect chart patterns and candlestick patterns for a symbol."""
     assert engine is not None
+
+    # SEC-H3 FIX: validate symbol before it reaches CCXT
+    if not _SYMBOL_RE.match(symbol):
+        raise HTTPException(status_code=400, detail="Invalid symbol format.")
 
     ohlcv = await _fetch_ohlcv(symbol, timeframe, limit)
     if not ohlcv or len(ohlcv) < 20:
@@ -624,7 +682,7 @@ async def patterns(symbol: str, timeframe: str = "1h", limit: int = 100):
 # ── Emergency halt ──────────────────────────────────────────────
 
 @app.post("/risk/halt")
-async def risk_halt(_token: str = Depends(require_dashboard_token)):
+async def risk_halt(_token: str = Depends(require_dashboard_token), _rl: None = Depends(_require_rate_limit)):
     """Emergency stop — activate circuit breaker, close all positions."""
     if engine is None:
         raise HTTPException(503, "Engine not initialized")

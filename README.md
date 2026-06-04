@@ -17,10 +17,10 @@
 <p align="center">
   <img src="https://img.shields.io/badge/python-3.11+-blue?logo=python&logoColor=white" alt="Python 3.11+">
   <img src="https://img.shields.io/badge/license-AGPL--3.0-blue" alt="License AGPL-3.0">
-  <a href="https://github.com/Humanoid-Traders/RUNECLAW/actions/workflows/ci.yml"><img src="https://github.com/Humanoid-Traders/RUNECLAW/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
-  <img src="https://img.shields.io/badge/tests-862%20passing-brightgreen" alt="862 Tests Passing">
+  <img src="https://img.shields.io/badge/CI-coming%20soon-lightgrey" alt="CI: Coming soon">
+  <img src="https://img.shields.io/badge/tests-862%20test%20functions%20defined-brightgreen" alt="862 Test Functions Defined">
   <img src="https://img.shields.io/badge/security%20tests-29%20passing-blueviolet" alt="29 Security Tests">
-  <img src="https://img.shields.io/badge/red%20team-28%20scenarios%20%7C%20100%25%20pass-critical" alt="Red Team 28 Scenarios 100% Pass">
+  <img src="https://img.shields.io/badge/red%20team-28%20scenarios%20%7C%20framework%20included-critical" alt="Red Team 28 Scenarios | Framework Included">
   <img src="https://img.shields.io/badge/risk%20checks-21%20(16%20strict%20%2B%205%20advisory)-red" alt="21 Risk Checks">
   <img src="https://img.shields.io/badge/mode-paper%20trading-orange" alt="Paper Trading">
   <img src="https://img.shields.io/badge/exchange-Bitget-blue" alt="Bitget">
@@ -132,7 +132,7 @@ Toggle with `/watch on|off` per chat. Read-only -- the monitor never creates tra
 An adversarial engine that attacks the risk engine with 28 scenarios across 10 categories:
 flash crashes, liquidity drains, correlated selloffs, stale data injection, confidence manipulation,
 R:R gaming, circuit breaker evasion, zero/negative values, direction inversion, and max position flooding.
-Verifies 100% pass rate -- every adversarial scenario correctly caught or approved. Includes ATR=0 bad-data test.
+Red-team testing framework included -- runs 28 adversarial scenarios to verify risk gate behavior. Includes ATR=0 bad-data test.
 
 ### Adversarial Self-Critique Gate (NEW)
 Pre-trade bear-case analysis that runs on every confirmed trade before execution:
@@ -159,14 +159,14 @@ Statistical anomaly detection that pre-empts the circuit breaker. Monitors 5 ano
 correlation breakdown, volume collapse, price acceleration (flash crash), volatility explosion (ATR spike),
 and bid-ask spread widening. Triggers pre-emptive halts BEFORE the circuit breaker's 5% daily loss threshold fires.
 
-### Sentiment Fusion Engine (NEW)
-Real-time sentiment as the 11th confluence voter. Combines:
+### Sentiment Proxy Engine (Price/Volume-Based) (NEW)
+Price-derived sentiment proxy as the 11th confluence voter. Combines:
 - **Fear & Greed Index** (0-100) from price momentum (40%), volume trend (30%), volatility (30%)
 - **Contrarian logic**: extreme fear -> bullish vote [+0.3, +0.6], extreme greed -> bearish vote [-0.6, -0.3]
 - **Funding-rate contrarian**: extreme positive funding adds bearish offset, extreme negative adds bullish
 
 ### Multi-Agent Swarm Protocol (NEW)
-Composable agent collaboration via MCP-compatible architecture. Five specialized agents:
+Composable agent collaboration via experimental, in-process pub/sub architecture. Five specialized agents:
 Scanner (perceives market), Analyst (generates theses), Risk (gates every trade), Executor (manages positions),
 Sentinel (monitors for black swans). Communication via SwarmBus pub/sub, with Sentinel broadcasting HALT
 to all agents when severity >= 0.8. Ready for production deployment as separate Agent Hub agents.
@@ -236,9 +236,9 @@ to all agents when severity >= 0.8. Ready for production deployment as separate 
 
 ### AI Analysis Engine
 - Technical indicators: RSI-14, MACD (12/26/9), Bollinger Bands (20/2), ATR-14, ADX-14, VWAP, SMA-50 trend alignment, On-Balance Volume (OBV), Rolling VWAP (20-bar and 50-bar)
-- Candlestick pattern detection: 14 patterns including doji, hammer, shooting star, engulfing, harami, tweezer top/bottom, morning/evening star, three white soldiers, three black crows
+- Candlestick pattern detection: 14 patterns (detected, contributed to pattern scoring) including doji, hammer, shooting star, engulfing, harami, tweezer top/bottom, morning/evening star, three white soldiers, three black crows
 - Fibonacci retracement levels: swing high/low detection over 50-bar lookback, standard levels (23.6%, 38.2%, 50%, 61.8%, 78.6%) with zone classification
-- 10-voter confluence scoring model (expanded from 6): RSI, MACD, Bollinger %B, Volume Spike, ADX, VWAP, OBV trend, candlestick pattern, Fibonacci zone, plus LLM confidence
+- 10-voter confluence scoring model (expanded from 6; some voters derived from overlapping data sources): RSI, MACD, Bollinger %B, Volume Spike, ADX, VWAP, OBV trend, candlestick pattern, Fibonacci zone, plus LLM confidence
 - LLM-powered directional thesis generation (Gemini 2.5 Flash default, GPT-4o / Anthropic / Groq compatible)
 - Rule-based fallback when no LLM key is configured
 - Structured `TradeIdea` output with entry, SL, TP, confidence, reasoning
@@ -421,8 +421,8 @@ runeclaw/
 |   |   |-- strategy_modes.py   # 5 adaptive strategy modes with per-mode configs
 |   |   |-- red_team.py         # 28-scenario adversarial stress tester
 |   |   |-- black_swan.py       # Statistical anomaly detection (5 anomaly types)
-|   |   |-- sentiment.py        # Sentiment fusion engine (11th confluence voter)
-|   |   |-- swarm.py            # Multi-agent swarm protocol (MCP-compatible)
+|   |   |-- sentiment.py        # Sentiment proxy engine (price/volume-based, 11th confluence voter)
+|   |   |-- swarm.py            # Multi-agent swarm protocol (experimental, in-process pub/sub)
 |   |   |-- explainability.py   # Reasoning chains, factor attribution, compliance
 |   |   |-- ta_utils.py         # Shared TA utilities (EMA, ADX, Regime)
 |   |   |-- metrics.py          # Sharpe/Sortino/Calmar from per-trade returns
@@ -496,7 +496,7 @@ runeclaw/
 |   |-- dashboard-pro.html      # 3-tab command center dashboard
 |-- .github/
 |   |-- workflows/
-|       |-- ci.yml                 # CI/CD: lint, test (862), security scan, build, deploy
+|       |-- ci.yml                 # CI/CD: planned (not yet active)
 |-- .env.example
 |-- pyproject.toml
 |-- Dockerfile
@@ -581,7 +581,7 @@ This is a **hackathon prototype** (maturity: early-stage). Known limitations:
 - **Security audit conducted** -- AI-assisted deep audit (v3.0) with all 5 critical issues fixed, 29 security tests added. No independent third-party audit has been performed.
 - **LLM dependency** -- AI analysis quality depends on model availability and cost
 - **No guaranteed uptime** -- no monitoring, alerting, or failover infrastructure
-- **Scalability:** Single-instance today -- swarm-ready via MCP protocol
+- **Scalability:** Single-instance today -- swarm uses experimental in-process pub/sub (not a production MCP deployment)
 - **Correlation guard** -- currently implemented as a per-group count cap (max 2 positions per correlation group), not a full pairwise correlation matrix. The `MAX_CORRELATION` config knob is reserved for future implementation.
 - **Confluence voters** -- the 10-voter model uses indicators derived from the same price-volume series (RSI, MACD, OBV, VWAP, Bollinger Bands), which are not statistically independent. Naive summation may double-count momentum signals. Weighted scoring mitigates this but does not eliminate it.
 
@@ -626,7 +626,7 @@ python run_realdata_backtest.py --llm --output results.json
 | Circuit breaker | **Auto-halt** on daily loss / drawdown | None or manual only |
 | Human confirmation | **Required** via Telegram keyboard | Auto-execute or no gate |
 | Regime detection | **ADX-14 regime filter** blocks counter-trend | Not considered |
-| Confluence scoring | **10-voter model** (RSI, MACD, BB, Vol, ADX, VWAP, OBV, candles, Fib, LLM) | 1-2 indicators |
+| Confluence scoring | **10-voter model** (some voters from overlapping data sources) | 1-2 indicators |
 | Audit trail | **Full JSONL** -- every decision logged | Minimal or none |
 | Simulation-first | **Default mode** -- live requires 2 explicit flags | Often live by default |
 | Position sizing | **Fixed-fractional** with exposure caps | Fixed lot or % of balance |

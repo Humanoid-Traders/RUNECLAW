@@ -593,7 +593,8 @@ class RiskEngine:
         try:
             state = self._portfolio.snapshot()
             equity = state.equity_usd
-        except Exception:
+        except Exception as e:
+            risk_log.debug("Portfolio snapshot unavailable in get_recommended_size: %s", e)
             return 0.0
 
         if equity <= 0:

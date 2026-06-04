@@ -1,6 +1,10 @@
 """
 RUNECLAW Backtest Validation Gate — strategy validation before live deployment.
 
+NOTE: Stub implementation — not yet wired to backtest harness.
+record_validation() must be called manually; no automated pipeline invokes it.
+The engine (bot/core/engine.py) does not consult this gate before executing trades.
+
 Thread-safe in-memory storage of validation results with badge formatting
 for War Room integration.
 """

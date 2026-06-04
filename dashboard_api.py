@@ -15,10 +15,13 @@ DATA_FILE = os.path.join(BASE_DIR, "data", "dashboard_snapshot.json")
 FEED_FILE = os.path.join(BASE_DIR, "data", "dashboard_feed.json")
 WEBSITE_DIR = os.path.join(BASE_DIR, "website")
 DASHBOARD_DIR = os.path.join(BASE_DIR, "dashboard_static")
-API_KEY = os.environ.get("DASHBOARD_API_KEY", "runeclaw-beta-2026")
+API_KEY = os.environ.get("DASHBOARD_API_KEY", "")
 CORS_ORIGIN = os.environ.get("DASHBOARD_CORS_ORIGIN", "")
+ENVIRONMENT = os.environ.get("ENVIRONMENT", "production")
 # Additional allowed origins (always permitted alongside CORS_ORIGIN)
-_EXTRA_ORIGINS = {"https://3v9vq3w2.mule.page", "http://localhost:9090"}
+_EXTRA_ORIGINS = {"https://3v9vq3w2.mule.page"}
+if ENVIRONMENT == "development":
+    _EXTRA_ORIGINS.add("http://localhost:9090")
 
 def load_json(path, fallback):
     try:
@@ -197,6 +200,10 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
+    if not API_KEY:
+        print("ERROR: DASHBOARD_API_KEY environment variable is not set. Refusing to start.")
+        print("Set it with: export DASHBOARD_API_KEY='your-secret-key'")
+        raise SystemExit(1)
     port = int(os.environ.get("DASHBOARD_PORT", 9090))
     os.makedirs(os.path.join(BASE_DIR, "data"), exist_ok=True)
     os.makedirs(WEBSITE_DIR, exist_ok=True)

@@ -461,8 +461,8 @@ class PortfolioTracker:
                 try:
                     import shutil
                     shutil.copy2(str(target_path), str(backup))
-                except Exception:
-                    pass  # best-effort backup
+                except Exception as e:
+                    trade_log.debug("Best-effort backup copy failed: %s", e)
             tmp = str(target_path) + ".tmp"
             with open(tmp, "w") as f:
                 json.dump(state, f, indent=2, default=str)
