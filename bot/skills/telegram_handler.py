@@ -1790,8 +1790,21 @@ class TelegramHandler:
         else:
             portfolio = self.engine.user_portfolios.get(user_id)  # creates new one
 
-        state = portfolio.snapshot()
         positions = portfolio.open_positions
+
+        # Fetch fresh prices before rendering so PnL is accurate
+        if positions:
+            try:
+                exchange = await self.engine.scanner._get_exchange()
+                syms = list({p.asset for p in positions})
+                tickers = await exchange.fetch_tickers(syms)
+                fresh_prices = {s: float(t.get("last", 0)) for s, t in tickers.items() if t.get("last")}
+                if fresh_prices:
+                    portfolio.mark_to_market(fresh_prices)
+            except Exception:
+                pass  # fall back to whatever prices we have
+
+        state = portfolio.snapshot()
         history = portfolio.trade_history
 
         sep = "─" * 16
@@ -1811,17 +1824,21 @@ class TelegramHandler:
             for pos in positions:
                 d_icon = "🟢" if pos.direction.value == "LONG" else "🔴"
                 last = portfolio._last_prices.get(pos.asset, pos.entry_price)
+                size_usd = pos.quantity * pos.entry_price
                 if pos.direction.value == "LONG":
                     pnl_pct = ((last - pos.entry_price) / pos.entry_price) * 100
                 else:
                     pnl_pct = ((pos.entry_price - last) / pos.entry_price) * 100
+                pnl_usd = size_usd * pnl_pct / 100
                 pnl_icon = "🟢" if pnl_pct >= 0 else "🔴"
+                arrow = "▲" if pnl_pct > 0 else "▼" if pnl_pct < 0 else "◇"
                 lines.append(
-                    f"\n{d_icon} <b>{pos.asset}</b> {pos.direction.value} | "
+                    f"\n{pnl_icon}{arrow} <b>{pos.asset}</b> {pos.direction.value} | "
                     f"{pnl_icon} {'+' if pnl_pct >= 0 else ''}{pnl_pct:.2f}%"
                 )
                 lines.append(f"  Entry: <code>${pos.entry_price:,.4f}</code> → Current: <code>${last:,.4f}</code>")
                 lines.append(f"  SL: <code>${pos.stop_loss:,.4f}</code> | TP: <code>${pos.take_profit:,.4f}</code>")
+                lines.append(f"  Size: <code>${size_usd:,.2f}</code> | PNL: <code>${pnl_usd:+,.2f}</code>")
 
         if history:
             lines.extend(["", sep, "", "<b>Recent Trades:</b>"])
@@ -2218,6 +2235,19 @@ class TelegramHandler:
         user_id = self._get_tg_id(update)
         portfolio = self.engine.user_portfolios.get(user_id)
 
+        # Fetch fresh prices before rendering
+        open_pos = portfolio.open_positions
+        if open_pos:
+            try:
+                exchange = await self.engine.scanner._get_exchange()
+                syms = list({p.asset for p in open_pos})
+                tickers = await exchange.fetch_tickers(syms)
+                fresh = {s: float(t.get("last", 0)) for s, t in tickers.items() if t.get("last")}
+                if fresh:
+                    portfolio.mark_to_market(fresh)
+            except Exception:
+                pass
+
         positions_data = []
         with portfolio._lock:
             for tid, pos in portfolio._positions.items():
@@ -2530,6 +2560,8 @@ class TelegramHandler:
 
             if adata and pos_match:
                 last_px = adata["price"]
+                # Update portfolio with fresh price so summary views stay in sync
+                portfolio.mark_to_market({pos_match.asset: last_px})
                 pnl_pct = ((last_px - pos_match.entry_price) / pos_match.entry_price * 100)
                 if pos_match.direction.value == "SHORT":
                     pnl_pct = -pnl_pct
