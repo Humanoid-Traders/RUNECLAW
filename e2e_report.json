@@ -1,0 +1,215 @@
+{
+  "timestamp": "2026-05-31T17:10:22Z",
+  "symbols_scanned": 8,
+  "ideas": 2,
+  "approved": 0,
+  "rejected": 2,
+  "filtered": 6,
+  "executed": 0,
+  "diagnostics": [
+    {
+      "symbol": "ILY/USDT",
+      "price": 0.4136,
+      "change_24h": -10.09,
+      "rsi": 19.6,
+      "atr_pct": 2.68,
+      "vol_ratio": 0.82,
+      "order_flow": {
+        "score": 0.27,
+        "whale": "neutral",
+        "cvd": "rising",
+        "imbalance": -0.24
+      },
+      "exchange_flow": {
+        "funding_rate": null,
+        "oi_usd": null,
+        "squeeze_risk": "NONE",
+        "funding_trend": "STABLE"
+      },
+      "status": "FILTERED"
+    },
+    {
+      "symbol": "BABYSHARK/USDT",
+      "price": 0.01036,
+      "change_24h": -13.81,
+      "rsi": 28.2,
+      "atr_pct": 6.17,
+      "vol_ratio": 0.89,
+      "order_flow": {
+        "score": -0.24,
+        "whale": "neutral",
+        "cvd": "falling",
+        "imbalance": -0.07
+      },
+      "exchange_flow": {
+        "funding_rate": null,
+        "oi_usd": null,
+        "squeeze_risk": "NONE",
+        "funding_trend": "STABLE"
+      },
+      "idea": {
+        "direction": "SHORT",
+        "confidence": 0.61,
+        "entry": 0.01036,
+        "sl": 0.012277,
+        "tp": 0.0074845,
+        "rr": 1.5,
+        "source": "unknown"
+      },
+      "risk": {
+        "verdict": "REJECTED",
+        "position_usd": 1080.86,
+        "passed": 18,
+        "failed": [
+          "VOLATILITY: ATR 6.17% > 6.0% guard"
+        ]
+      }
+    },
+    {
+      "symbol": "STG/USDT",
+      "price": 0.29,
+      "change_24h": 31.76,
+      "rsi": 74.6,
+      "atr_pct": 5.34,
+      "vol_ratio": 1.51,
+      "order_flow": {
+        "score": -0.28,
+        "whale": "neutral",
+        "cvd": "falling",
+        "imbalance": -0.29
+      },
+      "exchange_flow": {
+        "funding_rate": -0.001507,
+        "oi_usd": 15274968.0,
+        "squeeze_risk": "HIGH",
+        "funding_trend": "FALLING"
+      },
+      "status": "FILTERED"
+    },
+    {
+      "symbol": "SLX/USDT",
+      "price": 0.18293,
+      "change_24h": -11.78,
+      "rsi": 26.4,
+      "atr_pct": 3.28,
+      "vol_ratio": 0.02,
+      "order_flow": {
+        "score": 0.36,
+        "whale": "neutral",
+        "cvd": "rising",
+        "imbalance": 0.53
+      },
+      "exchange_flow": {
+        "funding_rate": null,
+        "oi_usd": null,
+        "squeeze_risk": "NONE",
+        "funding_trend": "STABLE"
+      },
+      "status": "FILTERED"
+    },
+    {
+      "symbol": "PHA/USDT",
+      "price": 0.039,
+      "change_24h": -11.56,
+      "rsi": 10.3,
+      "atr_pct": 1.45,
+      "vol_ratio": 0.96,
+      "order_flow": {
+        "score": -0.29,
+        "whale": "neutral",
+        "cvd": "falling",
+        "imbalance": 0.01
+      },
+      "exchange_flow": {
+        "funding_rate": 5e-05,
+        "oi_usd": 26744445.0,
+        "squeeze_risk": "NONE",
+        "funding_trend": "STABLE"
+      },
+      "status": "FILTERED"
+    },
+    {
+      "symbol": "HIVE/USDT",
+      "price": 0.0667,
+      "change_24h": 13.24,
+      "rsi": 53.0,
+      "atr_pct": 10.39,
+      "vol_ratio": 0.51,
+      "order_flow": {
+        "score": -0.26,
+        "whale": "neutral",
+        "cvd": "falling",
+        "imbalance": -0.05
+      },
+      "exchange_flow": {
+        "funding_rate": -0.001905,
+        "oi_usd": 25633898.0,
+        "squeeze_risk": "HIGH",
+        "funding_trend": "FALLING"
+      },
+      "idea": {
+        "direction": "LONG",
+        "confidence": 0.64,
+        "entry": 0.0667,
+        "sl": 0.045913,
+        "tp": 0.0978805,
+        "rr": 1.5,
+        "source": "unknown"
+      },
+      "risk": {
+        "verdict": "REJECTED",
+        "position_usd": 641.75,
+        "passed": 18,
+        "failed": [
+          "VOLATILITY: ATR 10.39% > 6.0% guard"
+        ]
+      }
+    },
+    {
+      "symbol": "VTHO/USDT",
+      "price": 0.000518,
+      "change_24h": -10.84,
+      "rsi": 28.6,
+      "atr_pct": 1.52,
+      "vol_ratio": 0.14,
+      "order_flow": {
+        "score": 0.18,
+        "whale": "neutral",
+        "cvd": "rising",
+        "imbalance": -0.28
+      },
+      "exchange_flow": {
+        "funding_rate": -0.000155,
+        "oi_usd": 2072732928.0,
+        "squeeze_risk": "NONE",
+        "funding_trend": "RISING"
+      },
+      "status": "FILTERED"
+    },
+    {
+      "symbol": "PORTAL/USDT",
+      "price": 0.01763,
+      "change_24h": 37.41,
+      "rsi": 58.6,
+      "atr_pct": 7.56,
+      "vol_ratio": 0.64,
+      "order_flow": {
+        "score": -0.18,
+        "whale": "neutral",
+        "cvd": "falling",
+        "imbalance": 0.07
+      },
+      "exchange_flow": {
+        "funding_rate": null,
+        "oi_usd": null,
+        "squeeze_risk": "NONE",
+        "funding_trend": "STABLE"
+      },
+      "status": "FILTERED"
+    }
+  ],
+  "weaknesses": [
+    "HIGH FILTER RATE \u2014 most symbols filtered by regime/confluence",
+    "NO APPROVED TRADES \u2014 risk gate blocked everything"
+  ]
+}

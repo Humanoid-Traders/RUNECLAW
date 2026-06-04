@@ -327,6 +327,11 @@ class LearningOrchestrator:
         """Full learning system dashboard."""
         stats = self.store.stats()
 
+        # Cache expensive calls to avoid duplicate computation
+        strategy_rankings = self.strategy.rank_strategies()
+        feedback_summary = self.feedback.get_feedback_summary()
+        model_accuracy = self.models.get_accuracy_summary()
+
         # Build module_details with last_update timestamps.
         # Use current UTC time as proxy for last_update when data exists.
         now_iso = datetime.now(timezone.utc).isoformat()
@@ -360,10 +365,10 @@ class LearningOrchestrator:
                     "trades": s.total_trades,
                     "overfitting": s.overfitting_warning,
                 }
-                for s in self.strategy.rank_strategies()[:10]
+                for s in strategy_rankings[:10]
             ],
-            "feedback_summary": self.feedback.get_feedback_summary(),
-            "model_accuracy": self.models.get_accuracy_summary(),
+            "feedback_summary": feedback_summary,
+            "model_accuracy": model_accuracy,
             "prompt_versions": self.prompts.get_version_report(),
             "pending_proposals": len(self.store.get_proposals(status="pending")),
             "blocked_proposals": len(self.store.get_proposals(status="rejected")),

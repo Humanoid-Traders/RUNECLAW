@@ -162,7 +162,7 @@ class SentimentEngine:
     """
 
     def __init__(self) -> None:
-        self._history: list[SentimentSnapshot] = []
+        self._history: dict[str, list[SentimentSnapshot]] = {}
         self._price_returns: dict[str, list[float]] = {}
         self._volume_history: dict[str, list[float]] = {}
 
@@ -253,21 +253,27 @@ class SentimentEngine:
             is_contrarian_active=contrarian_active,
         )
 
-        self._history.append(snapshot)
-        if len(self._history) > _MAX_HISTORY:
-            self._history = self._history[-_MAX_HISTORY:]
+        self._history.setdefault(symbol, []).append(snapshot)
+        if len(self._history[symbol]) > _MAX_HISTORY:
+            self._history[symbol] = self._history[symbol][-_MAX_HISTORY:]
 
         return snapshot
 
-    def get_confluence_vote(self) -> float:
+    def get_confluence_vote(self, symbol: str = "") -> float:
         """
         Return the most recent sentiment vote for the confluence model.
 
+        If *symbol* is given, returns the vote for that specific symbol.
+        Otherwise returns the most recent vote across all symbols.
         Returns ``0.0`` (neutral) if no data has been ingested yet.
         """
-        if not self._history:
+        if symbol and symbol in self._history and self._history[symbol]:
+            return self._history[symbol][-1].confluence_vote
+        # Fallback: most recent snapshot across all symbols
+        latest = self.latest
+        if latest is None:
             return 0.0
-        return self._history[-1].confluence_vote
+        return latest.confluence_vote
 
     def to_confluence_votes(self) -> list[tuple[str, float, float]]:
         """
@@ -289,9 +295,10 @@ class SentimentEngine:
 
         Defaults to ``NEUTRAL`` when no data has been ingested.
         """
-        if not self._history:
+        latest = self.latest
+        if latest is None:
             return SentimentRegime.NEUTRAL
-        return self._history[-1].regime
+        return latest.regime
 
     @property
     def latest(self) -> Optional[SentimentSnapshot]:
@@ -299,7 +306,16 @@ class SentimentEngine:
         The most recent :class:`SentimentSnapshot`, or ``None`` if the
         engine has not yet received any data.
         """
-        return self._history[-1] if self._history else None
+        if not self._history:
+            return None
+        # Find the most recent snapshot across all symbols
+        newest = None
+        for snapshots in self._history.values():
+            if snapshots:
+                candidate = snapshots[-1]
+                if newest is None or candidate.timestamp > newest.timestamp:
+                    newest = candidate
+        return newest
 
     # ------------------------------------------------------------------
     # Private helpers
@@ -310,14 +326,14 @@ class SentimentEngine:
         """
         Map rolling mean return to a 0-100 momentum score.
 
-        A mean return of +5 % maps to 100; -5 % maps to 0.  Values
+        A mean return of +15 % maps to 100; -15 % maps to 0.  Values
         outside that range are clipped.
         """
         if len(returns) == 0:
             return 50.0
         mean_ret = float(np.mean(returns))
-        # linear map: -5 -> 0, +5 -> 100
-        score = (mean_ret + 5.0) / 10.0 * 100.0
+        # linear map: -15 -> 0, +15 -> 100
+        score = (mean_ret + 15.0) / 30.0 * 100.0
         return float(np.clip(score, 0.0, 100.0))
 
     @staticmethod
@@ -343,14 +359,14 @@ class SentimentEngine:
         """
         Map rolling volatility to a 0-100 score (inverted: high vol = fear).
 
-        Std-dev of 0 maps to 100 (calm/greedy), std-dev of 5 maps to 0
+        Std-dev of 0 maps to 100 (calm/greedy), std-dev of 15 maps to 0
         (fearful).
         """
         if len(returns) < 2:
             return 50.0
         std = float(np.std(returns, ddof=1))
-        # linear map: 0 -> 100, 5 -> 0
-        score = (1.0 - std / 5.0) * 100.0
+        # linear map: 0 -> 100, 15 -> 0
+        score = (1.0 - std / 15.0) * 100.0
         return float(np.clip(score, 0.0, 100.0))
 
     @staticmethod

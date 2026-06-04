@@ -1,0 +1,95 @@
+[
+  {
+    "symbol": "NFP/USDT",
+    "price": 0.0103,
+    "change_24h": -11.21,
+    "direction": "SHORT",
+    "confidence": 0.6,
+    "entry": 0.0103,
+    "stop_loss": 0.012142,
+    "take_profit": 0.007537,
+    "rr_ratio": 1.5,
+    "risk_passed": true,
+    "risk_failed": [],
+    "funding_rate": null,
+    "squeeze_risk": "NONE",
+    "source": "unknown"
+  },
+  {
+    "symbol": "ILY/USDT",
+    "price": 0.413208,
+    "change_24h": -11.03,
+    "direction": "NONE",
+    "confidence": 0,
+    "risk_passed": false,
+    "reason": "Low conviction / regime filter"
+  },
+  {
+    "symbol": "BABYSHARK/USDT",
+    "price": 0.01045,
+    "change_24h": -13.56,
+    "direction": "NONE",
+    "confidence": 0,
+    "risk_passed": false,
+    "reason": "Low conviction / regime filter"
+  },
+  {
+    "symbol": "STG/USDT",
+    "price": 0.2923,
+    "change_24h": 30.49,
+    "direction": "NONE",
+    "confidence": 0,
+    "risk_passed": false,
+    "reason": "Low conviction / regime filter"
+  },
+  {
+    "symbol": "SLX/USDT",
+    "price": 0.18253,
+    "change_24h": -11.94,
+    "direction": "NONE",
+    "confidence": 0,
+    "risk_passed": false,
+    "reason": "Low conviction / regime filter"
+  },
+  {
+    "symbol": "BTC/USDT",
+    "price": 73545.47,
+    "change_24h": -0.52,
+    "direction": "SHORT",
+    "confidence": 0.6,
+    "entry": 73545.47,
+    "stop_loss": 73925.052858,
+    "take_profit": 72976.095713,
+    "rr_ratio": 1.5,
+    "risk_passed": true,
+    "risk_failed": [],
+    "funding_rate": 0.0001,
+    "squeeze_risk": "NONE",
+    "source": "unknown"
+  },
+  {
+    "symbol": "SOL/USDT",
+    "price": 81.6,
+    "change_24h": -1.54,
+    "direction": "SHORT",
+    "confidence": 0.61,
+    "entry": 81.6,
+    "stop_loss": 82.347142,
+    "take_profit": 80.479287,
+    "rr_ratio": 1.5,
+    "risk_passed": true,
+    "risk_failed": [],
+    "funding_rate": 3.5e-05,
+    "squeeze_risk": "NONE",
+    "source": "unknown"
+  },
+  {
+    "symbol": "ETH/USDT",
+    "price": 2003.15,
+    "change_24h": -1.17,
+    "direction": "NONE",
+    "confidence": 0,
+    "risk_passed": false,
+    "reason": "Low conviction / regime filter"
+  }
+]

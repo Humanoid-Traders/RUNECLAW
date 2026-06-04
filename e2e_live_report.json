@@ -1,0 +1,407 @@
+{
+  "timestamp": "2026-06-02T08:59:16.947832",
+  "total": 57,
+  "passed": 57,
+  "failed": 0,
+  "results": [
+    {
+      "category": "config",
+      "test": "simulation_mode default",
+      "passed": true,
+      "detail": "SIMULATION_MODE=True",
+      "ts": "2026-06-02T08:59:15.367883"
+    },
+    {
+      "category": "config",
+      "test": "live_trading default",
+      "passed": true,
+      "detail": "LIVE_TRADING_ENABLED=False",
+      "ts": "2026-06-02T08:59:15.367899"
+    },
+    {
+      "category": "config",
+      "test": "sandbox default",
+      "passed": true,
+      "detail": "BITGET_SANDBOX=True",
+      "ts": "2026-06-02T08:59:15.367905"
+    },
+    {
+      "category": "config",
+      "test": "is_live() returns False",
+      "passed": true,
+      "detail": "is_live()=False",
+      "ts": "2026-06-02T08:59:15.367914"
+    },
+    {
+      "category": "config",
+      "test": "runtime live_mode off",
+      "passed": true,
+      "detail": "RUNTIME.live_mode=False",
+      "ts": "2026-06-02T08:59:15.367919"
+    },
+    {
+      "category": "config",
+      "test": "confidence threshold",
+      "passed": true,
+      "detail": "min_confidence=0.6",
+      "ts": "2026-06-02T08:59:15.367926"
+    },
+    {
+      "category": "config",
+      "test": "min R:R ratio",
+      "passed": true,
+      "detail": "min_rr_ratio=1.2",
+      "ts": "2026-06-02T08:59:15.367931"
+    },
+    {
+      "category": "config",
+      "test": "max open positions",
+      "passed": true,
+      "detail": "max_open_positions=5",
+      "ts": "2026-06-02T08:59:15.367935"
+    },
+    {
+      "category": "config",
+      "test": "max daily loss pct",
+      "passed": true,
+      "detail": "max_daily_loss_pct=5.0",
+      "ts": "2026-06-02T08:59:15.367939"
+    },
+    {
+      "category": "conversation",
+      "test": "social: 'hey there!'",
+      "passed": true,
+      "detail": "is_social=True, expected=True (greeting)",
+      "ts": "2026-06-02T08:59:15.377170"
+    },
+    {
+      "category": "conversation",
+      "test": "social: 'good morning'",
+      "passed": true,
+      "detail": "is_social=True, expected=True (greeting)",
+      "ts": "2026-06-02T08:59:15.377189"
+    },
+    {
+      "category": "conversation",
+      "test": "social: 'how are you'",
+      "passed": true,
+      "detail": "is_social=True, expected=True (social)",
+      "ts": "2026-06-02T08:59:15.377202"
+    },
+    {
+      "category": "conversation",
+      "test": "social: 'thanks a lot'",
+      "passed": true,
+      "detail": "is_social=True, expected=True (thanks)",
+      "ts": "2026-06-02T08:59:15.377210"
+    },
+    {
+      "category": "conversation",
+      "test": "social: 'bye'",
+      "passed": true,
+      "detail": "is_social=True, expected=True (farewell)",
+      "ts": "2026-06-02T08:59:15.377218"
+    },
+    {
+      "category": "conversation",
+      "test": "social: 'yo what's up'",
+      "passed": true,
+      "detail": "is_social=True, expected=True (greeting)",
+      "ts": "2026-06-02T08:59:15.377224"
+    },
+    {
+      "category": "conversation",
+      "test": "social: 'lol nice'",
+      "passed": true,
+      "detail": "is_social=True, expected=True (short casual)",
+      "ts": "2026-06-02T08:59:15.377233"
+    },
+    {
+      "category": "conversation",
+      "test": "false-positive: 'stop loss is important'",
+      "passed": true,
+      "detail": "is_social=False, skill= (should not trigger halt)",
+      "ts": "2026-06-02T08:59:15.377455"
+    },
+    {
+      "category": "conversation",
+      "test": "false-positive: 'can you help me understand RSI'",
+      "passed": true,
+      "detail": "is_social=False, skill= (should not trigger /help)",
+      "ts": "2026-06-02T08:59:15.377505"
+    },
+    {
+      "category": "conversation",
+      "test": "false-positive: 'what's the risk of BTC'",
+      "passed": true,
+      "detail": "is_social=False, skill= (should not trigger /risk)",
+      "ts": "2026-06-02T08:59:15.377544"
+    },
+    {
+      "category": "conversation",
+      "test": "intent: 'analyze BTC'",
+      "passed": true,
+      "detail": "skill=analyze_asset, expected=analyze_asset",
+      "ts": "2026-06-02T08:59:15.377562"
+    },
+    {
+      "category": "conversation",
+      "test": "intent: 'backtest BTC'",
+      "passed": true,
+      "detail": "skill=run_backtest, expected=run_backtest",
+      "ts": "2026-06-02T08:59:15.377582"
+    },
+    {
+      "category": "conversation",
+      "test": "intent: 'scan the market for opportunities'",
+      "passed": true,
+      "detail": "skill=scan_market, expected=scan_market",
+      "ts": "2026-06-02T08:59:15.377602"
+    },
+    {
+      "category": "conversation",
+      "test": "mood: frustrated",
+      "passed": true,
+      "detail": "mood=frustrated",
+      "ts": "2026-06-02T08:59:15.379008"
+    },
+    {
+      "category": "conversation",
+      "test": "mood: excited",
+      "passed": true,
+      "detail": "mood=excited",
+      "ts": "2026-06-02T08:59:15.379060"
+    },
+    {
+      "category": "conversation",
+      "test": "context prompt has user name",
+      "passed": true,
+      "detail": "prompt contains name: True",
+      "ts": "2026-06-02T08:59:15.379077"
+    },
+    {
+      "category": "conversation",
+      "test": "context prompt has mood",
+      "passed": true,
+      "detail": "prompt mentions mood",
+      "ts": "2026-06-02T08:59:15.379085"
+    },
+    {
+      "category": "conversation",
+      "test": "context has history",
+      "passed": true,
+      "detail": "message_count=2",
+      "ts": "2026-06-02T08:59:15.379091"
+    },
+    {
+      "category": "trading",
+      "test": "engine init",
+      "passed": true,
+      "detail": "state=AgentState.IDLE",
+      "ts": "2026-06-02T08:59:16.755362"
+    },
+    {
+      "category": "trading",
+      "test": "portfolio wired",
+      "passed": true,
+      "detail": "portfolio=PortfolioTracker",
+      "ts": "2026-06-02T08:59:16.755378"
+    },
+    {
+      "category": "trading",
+      "test": "risk engine wired",
+      "passed": true,
+      "detail": "risk=RiskEngine",
+      "ts": "2026-06-02T08:59:16.755383"
+    },
+    {
+      "category": "trading",
+      "test": "portfolio->risk callback",
+      "passed": true,
+      "detail": "on_trade_close callback wired",
+      "ts": "2026-06-02T08:59:16.755387"
+    },
+    {
+      "category": "trading",
+      "test": "TradeIdea creation",
+      "passed": true,
+      "detail": "id=TI-20260602085916, dir=LONG",
+      "ts": "2026-06-02T08:59:16.755434"
+    },
+    {
+      "category": "trading",
+      "test": "risk evaluate runs",
+      "passed": true,
+      "detail": "verdict=REJECTED, checks_passed=17",
+      "ts": "2026-06-02T08:59:16.756130"
+    },
+    {
+      "category": "trading",
+      "test": "risk check count >= 17",
+      "passed": true,
+      "detail": "total_checks=20",
+      "ts": "2026-06-02T08:59:16.756140"
+    },
+    {
+      "category": "trading",
+      "test": "valid LONG accepted",
+      "passed": true,
+      "detail": "SL=2800 < Entry=3000 < TP=3500",
+      "ts": "2026-06-02T08:59:16.756170"
+    },
+    {
+      "category": "trading",
+      "test": "valid SHORT accepted",
+      "passed": true,
+      "detail": "TP=2500 < Entry=3000 < SL=3200",
+      "ts": "2026-06-02T08:59:16.756188"
+    },
+    {
+      "category": "trading",
+      "test": "invalid LONG rejected",
+      "passed": true,
+      "detail": "Correctly rejected SL=3200 > Entry=3000 for LONG",
+      "ts": "2026-06-02T08:59:16.756219"
+    },
+    {
+      "category": "trading",
+      "test": "invalid SHORT rejected",
+      "passed": true,
+      "detail": "Correctly rejected TP=3500 > Entry=3000 for SHORT",
+      "ts": "2026-06-02T08:59:16.756241"
+    },
+    {
+      "category": "trading",
+      "test": "portfolio snapshot",
+      "passed": true,
+      "detail": "equity=10000.00, positions=0",
+      "ts": "2026-06-02T08:59:16.756290"
+    },
+    {
+      "category": "trading",
+      "test": "mark-to-market update",
+      "passed": true,
+      "detail": "prices updated",
+      "ts": "2026-06-02T08:59:16.756302"
+    },
+    {
+      "category": "trading",
+      "test": "metrics compute",
+      "passed": true,
+      "detail": "result_type=MetricsSnapshot",
+      "ts": "2026-06-02T08:59:16.756941"
+    },
+    {
+      "category": "trading",
+      "test": "backtest engine init",
+      "passed": true,
+      "detail": "config=BTC/USDT:USDT",
+      "ts": "2026-06-02T08:59:16.767586"
+    },
+    {
+      "category": "security",
+      "test": "is_live gate closed",
+      "passed": true,
+      "detail": "Live trading correctly blocked",
+      "ts": "2026-06-02T08:59:16.767605"
+    },
+    {
+      "category": "security",
+      "test": "circuit breaker initially closed (after reset)",
+      "passed": true,
+      "detail": "circuit_open=False",
+      "ts": "2026-06-02T08:59:16.767612"
+    },
+    {
+      "category": "security",
+      "test": "emergency_halt works",
+      "passed": true,
+      "detail": "Circuit opened via emergency_halt()",
+      "ts": "2026-06-02T08:59:16.768613"
+    },
+    {
+      "category": "security",
+      "test": "circuit breaker blocks trades",
+      "passed": true,
+      "detail": "verdict=REJECTED",
+      "ts": "2026-06-02T08:59:16.769237"
+    },
+    {
+      "category": "security",
+      "test": "analyzer class exists",
+      "passed": true,
+      "detail": "Analyzer importable",
+      "ts": "2026-06-02T08:59:16.769249"
+    },
+    {
+      "category": "security",
+      "test": "no dangerous eval/exec",
+      "passed": true,
+      "detail": "suspicious lines: 0",
+      "ts": "2026-06-02T08:59:16.782462"
+    },
+    {
+      "category": "security",
+      "test": "MCP auth fail-closed",
+      "passed": true,
+      "detail": "MCP_AUTH_TOKEN unset -> server would refuse to start",
+      "ts": "2026-06-02T08:59:16.792155"
+    },
+    {
+      "category": "security",
+      "test": "dashboard token loaded",
+      "passed": true,
+      "detail": "token=unset (403 on all /api/*)",
+      "ts": "2026-06-02T08:59:16.813231"
+    },
+    {
+      "category": "security",
+      "test": "LLM config loaded",
+      "passed": true,
+      "detail": "provider=groq, providers_checked=[]",
+      "ts": "2026-06-02T08:59:16.813261"
+    },
+    {
+      "category": "security",
+      "test": "callback IDOR protection (M3)",
+      "passed": true,
+      "detail": "confirm/reject callbacks validate user ID",
+      "ts": "2026-06-02T08:59:16.946873"
+    },
+    {
+      "category": "security",
+      "test": "callback buttons include user ID",
+      "passed": true,
+      "detail": "callback_data includes :uid",
+      "ts": "2026-06-02T08:59:16.947362"
+    },
+    {
+      "category": "security",
+      "test": "Redis no weak default (M4)",
+      "passed": true,
+      "detail": "weak_default=NO, fail_loud=True",
+      "ts": "2026-06-02T08:59:16.947474"
+    },
+    {
+      "category": "security",
+      "test": "dependencies pinned (M5)",
+      "passed": true,
+      "detail": "unpinned=1: ['cryptography>=41.0.0']",
+      "ts": "2026-06-02T08:59:16.947549"
+    },
+    {
+      "category": "trading",
+      "test": "OrderFlowAnalyzer init",
+      "passed": true,
+      "detail": "importable",
+      "ts": "2026-06-02T08:59:16.947582"
+    },
+    {
+      "category": "trading",
+      "test": "order flow confluence method exists",
+      "passed": true,
+      "detail": "to_confluence_votes callable: True",
+      "ts": "2026-06-02T08:59:16.947590"
+    }
+  ]
+}

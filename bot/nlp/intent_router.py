@@ -80,6 +80,38 @@ _SOCIAL_CHAT = re.compile(
     re.IGNORECASE,
 )
 
+# ── Reply-mode patterns (compiled once at module level) ──────────────
+_QUICK_PATTERNS = re.compile(
+    r"^(long or short|entry|risk|valid|safe|direction|bias|"
+    r"should i (enter|trade|buy|sell)|is (it|this) (safe|valid|good)|"
+    r"thumbs up or down|go or no.?go|yes or no)\??$",
+    re.IGNORECASE
+)
+_BOT_PATTERNS = re.compile(
+    r"\b(bot (playbook|settings?|config|rules?)|bitget bot|automation|"
+    r"dca (logic|settings?|bot)|grid bot|auto.?trade|bot.?ready)\b",
+    re.IGNORECASE
+)
+_EXEC_PATTERNS = re.compile(
+    r"\b(give (me )?(a )?signal|entry zones?|trade (plan|setup)|"
+    r"setup|where (to|do i) (enter|buy|sell|long|short)|"
+    r"execution plan|exact entry|sl and tp|stop.?loss.+take.?profit)\b",
+    re.IGNORECASE
+)
+_SCAN_PATTERNS = re.compile(
+    r"\b(scan|swing by swing|market read|full (analysis|read|scan)|"
+    r"what does .{0,15}(claw|runeclaw) see|deep (analysis|dive|read)|"
+    r"technical analysis|complete (scan|analysis|breakdown))\b",
+    re.IGNORECASE
+)
+_BEGINNER_PATTERNS = re.compile(
+    r"\b(what (is|does|are) .{0,10}(mean|work)|explain|help me understand|"
+    r"i.?m (new|beginner|learning|confused|not sure)|"
+    r"how (does|do) .{0,15}(work|mean)|can you explain|"
+    r"what.?s (a |an )?(choch|bos|fvg|sweep|reclaim|liquidity|structure))\b",
+    re.IGNORECASE
+)
+
 
 def _is_social_message(text: str) -> bool:
     """Detect greetings, thanks, farewells, and casual social chat."""
@@ -124,53 +156,23 @@ def _detect_reply_mode(text: str) -> str:
     lower = text.lower().strip()
 
     # Quick mode — very short directional questions
-    quick_patterns = re.compile(
-        r"^(long or short|entry|risk|valid|safe|direction|bias|"
-        r"should i (enter|trade|buy|sell)|is (it|this) (safe|valid|good)|"
-        r"thumbs up or down|go or no.?go|yes or no)\??$",
-        re.IGNORECASE
-    )
-    if quick_patterns.search(lower):
+    if _QUICK_PATTERNS.search(lower):
         return "quick"
 
     # Bot mode
-    bot_patterns = re.compile(
-        r"\b(bot (playbook|settings?|config|rules?)|bitget bot|automation|"
-        r"dca (logic|settings?|bot)|grid bot|auto.?trade|bot.?ready)\b",
-        re.IGNORECASE
-    )
-    if bot_patterns.search(lower):
+    if _BOT_PATTERNS.search(lower):
         return "bot"
 
     # Execution mode
-    exec_patterns = re.compile(
-        r"\b(give (me )?(a )?signal|entry zones?|trade (plan|setup)|"
-        r"setup|where (to|do i) (enter|buy|sell|long|short)|"
-        r"execution plan|exact entry|sl and tp|stop.?loss.+take.?profit)\b",
-        re.IGNORECASE
-    )
-    if exec_patterns.search(lower):
+    if _EXEC_PATTERNS.search(lower):
         return "execution"
 
     # Full scan mode
-    scan_patterns = re.compile(
-        r"\b(scan|swing by swing|market read|full (analysis|read|scan)|"
-        r"what does .{0,15}(claw|runeclaw) see|deep (analysis|dive|read)|"
-        r"technical analysis|complete (scan|analysis|breakdown))\b",
-        re.IGNORECASE
-    )
-    if scan_patterns.search(lower):
+    if _SCAN_PATTERNS.search(lower):
         return "full_scan"
 
     # Beginner mode — unsure language
-    beginner_patterns = re.compile(
-        r"\b(what (is|does|are) .{0,10}(mean|work)|explain|help me understand|"
-        r"i.?m (new|beginner|learning|confused|not sure)|"
-        r"how (does|do) .{0,15}(work|mean)|can you explain|"
-        r"what.?s (a |an )?(choch|bos|fvg|sweep|reclaim|liquidity|structure))\b",
-        re.IGNORECASE
-    )
-    if beginner_patterns.search(lower):
+    if _BEGINNER_PATTERNS.search(lower):
         return "beginner"
 
     return "standard"
@@ -484,6 +486,8 @@ class IntentRouter:
         valid_skills = {
             "scan_market", "analyze_asset", "get_portfolio", "check_risk",
             "trade_journal", "macro_calendar", "costs", "help",
+            "run_backtest", "halt", "playbook", "patterns", "learning",
+            "status", "trade_journal", "whynot",
         }
         if skill_name in valid_skills:
             kwargs = {}

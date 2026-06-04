@@ -1684,7 +1684,7 @@ class ProScanSkill(BaseSkill):
             idea = await engine._analyze_signal(sig, timeframe=cfg["timeframe"])
             if idea:
                 engine._pending_ideas[idea.id] = idea
-                ideas_found.append(idea)
+                ideas_found.append((idea, rsi))
 
         # ── Claw Verdict ──
         verdict_lines = [f"\n\u2694\ufe0f <b>Claw Verdict</b>\n{SEP}"]
@@ -1697,7 +1697,7 @@ class ProScanSkill(BaseSkill):
                 f"\n  <i>A missed trade is better than a forced trade.</i>"
             )
         else:
-            for idea in ideas_found:
+            for idea, idea_rsi in ideas_found:
                 d_icon = _OK if idea.direction.value == "LONG" else _BAD
                 d_arrow = "\u25b2" if idea.direction.value == "LONG" else "\u25bc"
                 sl_d = abs(idea.entry_price - idea.stop_loss)
@@ -1715,11 +1715,11 @@ class ProScanSkill(BaseSkill):
 
                 # Status label
                 _idea_midrange = False  # approximation; full midrange check was per-asset
-                status_icon, status_text = _status_label(idea.confidence, rr, 50.0, _idea_midrange)
+                status_icon, status_text = _status_label(idea.confidence, rr, idea_rsi, _idea_midrange)
 
                 # Setup quality for this idea
                 _idea_sq_score, _idea_sq_label = _setup_quality_score(
-                    idea.confidence, rr, 50.0, True, True
+                    idea.confidence, rr, idea_rsi, True, True
                 )
                 _idea_sq_bar = "█" * _idea_sq_score + "░" * (10 - _idea_sq_score)
 

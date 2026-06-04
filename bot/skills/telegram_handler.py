@@ -740,8 +740,7 @@ class TelegramHandler:
                     await self._send(update, result)
                 except Exception as exc:
                     await self._send(update,
-                        f"\u26a0\ufe0f The Claw hit a wall: {exc}\n\n"
-                        f"Try rephrasing or give more context.")
+                        f"\u26a0\ufe0f The Claw hit a wall. Try again or use a command.")
                 return
 
         if intent.matched and intent.confidence >= 0.5 and not intent.kwargs.get("symbol"):
@@ -768,12 +767,18 @@ class TelegramHandler:
 
         # Don't wrap in rigid header for short/social responses
         is_social = intent.is_social if hasattr(intent, 'is_social') else False
+        # Don't escape if LLM produced HTML formatting tags
+        if any(tag in answer for tag in ['<b>', '<i>', '<code>', '<pre>']):
+            formatted = answer
+        else:
+            formatted = html.escape(answer)
+
         if len(answer) < 80 or is_social:
-            await self._send(update, html.escape(answer))
+            await self._send(update, formatted)
         else:
             # Premium tactical header for substantive responses
             await self._send(update,
-                f"\u2694\ufe0f <b>RUNECLAW</b>\n{'─' * 16}\n\n{html.escape(answer)}")
+                f"\u2694\ufe0f <b>RUNECLAW</b>\n{'─' * 16}\n\n{formatted}")
 
     # ── Auth helpers ──────────────────────────────────────────
 
@@ -822,6 +827,12 @@ class TelegramHandler:
         if not self._limiter.allow(uid):
             await self._send(update, "\u26a0\ufe0f Rate limit. Wait a moment.")
             return False
+
+        # Refresh last_seen for session timeout
+        user_record = self.users.get(tg_id)
+        if user_record:
+            user_record["last_seen"] = datetime.now(UTC).isoformat()
+
         return True
 
     # ── Public commands (no auth required) ─────────────────────
@@ -1205,7 +1216,7 @@ class TelegramHandler:
 
     async def _cmd_livebalance(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """/livebalance — check real USDT balance + spot holdings on Bitget."""
-        if not await self._guard(update, "scan"):
+        if not await self._guard(update, "portfolio"):
             return
         try:
             bal = await self.engine.live_executor.fetch_balance()
@@ -1302,7 +1313,7 @@ class TelegramHandler:
 
     async def _cmd_livepositions(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """/livepositions — show live open positions."""
-        if not await self._guard(update, "scan"):
+        if not await self._guard(update, "portfolio"):
             return
         positions = self.engine.live_executor._positions
         open_pos = [p for p in positions.values() if p.status == "open"]
@@ -1579,10 +1590,18 @@ class TelegramHandler:
                 f"- Provider: <code>{html.escape(provider_str)}</code>\n"
                 f"- Model: <code>{html.escape(model or 'default')}</code>\n"
                 f"- Status: 🟢 active")
+            try:
+                await update.message.delete()
+            except Exception:
+                pass  # Can't delete in all chat types
         else:
             await self._send(update,
                 f"🔴 <b>LLM UPDATE FAILED</b>\n\n"
                 f"{html.escape(msg)}")
+            try:
+                await update.message.delete()
+            except Exception:
+                pass  # Can't delete in all chat types
 
     async def _cmd_llmstatus(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """/llmstatus — show current LLM provider and key fingerprint."""
@@ -1794,11 +1813,13 @@ class TelegramHandler:
             exchange = None
 
         assets_data = []
-        for idea in pending:
-            if exchange:
-                data = await fetch_analysis_data(exchange, idea.asset, timeframe="1h")
-                if data:
-                    assets_data.append(data)
+        if exchange and pending:
+            async def _fetch_one(idea):
+                return await fetch_analysis_data(exchange, idea.asset, timeframe="1h")
+            results = await asyncio.gather(*[_fetch_one(idea) for idea in pending], return_exceptions=True)
+            for r in results:
+                if r and not isinstance(r, Exception):
+                    assets_data.append(r)
 
         # If we have rich data for multiple ideas, render multi-analysis
         if len(assets_data) >= 2 and len(pending) >= 2:
@@ -2204,7 +2225,7 @@ class TelegramHandler:
             best_pair = sorted_t[-1].asset.replace("/USDT", "")
 
         data = {
-            "today_pnl": round(-state.max_drawdown_pct, 2) if state.max_drawdown_pct else 0.0,
+            "today_pnl": round(state.daily_pnl, 2) if hasattr(state, "daily_pnl") else 0.0,
             "week_pnl": 0.0,
             "win_rate": win_rate,
             "trades_today": today_trades,

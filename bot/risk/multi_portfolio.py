@@ -12,6 +12,7 @@ from __future__ import annotations
 import glob
 import logging
 import os
+import re
 import threading
 from typing import Optional, Callable
 
@@ -86,6 +87,9 @@ class MultiUserPortfolio:
         with self._lock:
             # Double-check after acquiring lock
             if user_id not in self._portfolios:
+                user_id = re.sub(r'[^a-zA-Z0-9_-]', '', str(user_id))
+                if not user_id:
+                    raise ValueError("Invalid user_id: empty after sanitization")
                 state_file = f"data/portfolio_{user_id}.json"
                 portfolio = PortfolioTracker(
                     initial_balance=self._default_balance,
@@ -141,6 +145,9 @@ class MultiUserPortfolio:
         total_open = 0
         total_daily_pnl = 0.0
         max_dd = 0.0
+        total_initial_balance = 0.0
+        total_gross_pnl = 0.0
+        total_commission = 0.0
 
         for p in self._portfolios.values():
             snap = p.snapshot()
@@ -150,7 +157,20 @@ class MultiUserPortfolio:
             total_pnl += snap.total_pnl
             total_open += snap.open_positions
             total_daily_pnl += snap.daily_pnl
+            total_gross_pnl += snap.total_gross_pnl
+            total_commission += snap.total_commission
+            # NOTE: max_dd here is the worst individual drawdown, not a true
+            # combined drawdown.  We also compute an approximate combined
+            # drawdown below from combined equity vs sum of initial balances.
             max_dd = max(max_dd, snap.max_drawdown_pct)
+            total_initial_balance += getattr(p, '_initial_balance', snap.balance_usd)
+
+        # Approximate combined drawdown from combined equity vs sum of initial balances.
+        # This is more meaningful than the per-user max when portfolios diverge.
+        if total_initial_balance > 0:
+            combined_peak = max(total_initial_balance, total_equity)
+            combined_dd = ((combined_peak - total_equity) / combined_peak * 100) if combined_peak > 0 else 0.0
+            max_dd = max(max_dd, combined_dd)
 
         wins = 0
         total_count = 0
@@ -167,8 +187,8 @@ class MultiUserPortfolio:
             total_trades=total_count,
             win_rate=round(wins / total_count, 2) if total_count > 0 else 0.0,
             total_pnl=round(total_pnl, 2),
-            total_gross_pnl=0.0,
-            total_commission=0.0,
+            total_gross_pnl=round(total_gross_pnl, 2),
+            total_commission=round(total_commission, 2),
             daily_pnl=round(total_daily_pnl, 2),
             max_drawdown_pct=round(max_dd, 2),
         )

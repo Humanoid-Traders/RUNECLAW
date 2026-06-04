@@ -155,9 +155,15 @@ class RuneClawEngine:
             data={"simulation": CONFIG.simulation_mode},
         )
         # Start WebSocket feed for real-time price monitoring
-        await self.ws_feed.start()
+        try:
+            await self.ws_feed.start()
+        except Exception as e:
+            system_log.warning("WebSocket feed failed to start: %s", e)
         # Start dashboard pusher
-        await self.dashboard_pusher.start()
+        try:
+            await self.dashboard_pusher.start()
+        except Exception as e:
+            system_log.warning("Dashboard pusher failed to start: %s", e)
         # Subscribe to core symbols so the WS connection stays alive
         # even when no positions are open.  Position-specific symbols
         # are added dynamically in _check_open_positions().
@@ -555,6 +561,9 @@ class RuneClawEngine:
                 audit(trade_log, f"Critique adjusted confidence by {critique_result.confidence_adjustment:+.2f} to {idea.confidence:.3f}",
                       action="critique_adjust", result="ADJUSTED",
                       data={"adjustment": critique_result.confidence_adjustment, "new_confidence": idea.confidence})
+                if idea.confidence < CONFIG.risk.min_confidence:
+                    audit(system_log, f"Post-critique confidence {idea.confidence:.2f} below min {CONFIG.risk.min_confidence}", action="confirm", result="REJECT")
+                    return None
 
             if critique_result.verdict == "WARN":
                 audit(trade_log, f"Critique WARNING for {trade_id}: {critique_result.bear_case}",
@@ -746,11 +755,11 @@ class RuneClawEngine:
                 else:
                     # WS connected but no prices yet — fallback to REST
                     exchange = await self.scanner._get_exchange()
-                    tickers = await exchange.fetch_tickers()
+                    tickers = await exchange.fetch_tickers([p.asset for p in positions])
                     prices = {s: float(t.get("last", 0)) for s, t in tickers.items()}
             else:
                 exchange = await self.scanner._get_exchange()
-                tickers = await exchange.fetch_tickers()
+                tickers = await exchange.fetch_tickers([p.asset for p in positions])
                 prices = {s: float(t.get("last", 0)) for s, t in tickers.items()}
 
             # Subscribe open position symbols to WS feed for future ticks
@@ -774,7 +783,7 @@ class RuneClawEngine:
                     result="CLOSED",
                 )
                 # Enter cooldown after a loss
-                if c.pnl <= 0:
+                if c.pnl < 0:
                     self._cooldown_until = (
                         time.monotonic() + CONFIG.risk.cooldown_after_loss_seconds
                     )

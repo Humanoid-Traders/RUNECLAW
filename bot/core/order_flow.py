@@ -227,7 +227,7 @@ class OrderFlowAnalyzer:
                     with self._lock:
                         prev = self._oi_history.get(deriv_sym)
                         self._oi_history[deriv_sym] = oi_usd
-                    if prev and prev > 0:
+                    if prev is not None and prev > 0:
                         sig.oi_change_pct = round((oi_usd - prev) / prev * 100, 3)
                     ok.append("open_interest")
             except Exception as exc:  # noqa: BLE001
@@ -504,7 +504,7 @@ class OrderFlowAnalyzer:
             weights.append(0.9 * conf)
             labels.append("of_whale_bias")
         if sig.funding_rate is not None:
-            votes.append(-float(np.clip(sig.funding_rate / 0.0005, -1, 1)))
+            votes.append(-float(np.clip(sig.funding_rate / OrderFlowConfig().funding_extreme, -1, 1)))
             weights.append(0.5 * conf)
             labels.append("of_funding")
 

@@ -398,11 +398,13 @@ class PortfolioTracker:
 
     @property
     def open_positions(self) -> list[TradeExecution]:
-        return list(self._positions.values())
+        with self._lock:
+            return list(self._positions.values())
 
     @property
     def trade_history(self) -> list[TradeExecution]:
-        return list(self._history)
+        with self._lock:
+            return list(self._history)
 
     # -- Internal --
 

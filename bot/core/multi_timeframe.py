@@ -53,13 +53,13 @@ def _find_swings(highs: np.ndarray, lows: np.ndarray, lookback: int = 5) -> dict
 
     for i in range(lookback, len(highs) - lookback):
         # Swing high: higher than all neighbors
-        if all(highs[i] >= highs[i - j] for j in range(1, lookback + 1)) and \
-           all(highs[i] >= highs[i + j] for j in range(1, lookback + 1)):
+        if all(highs[i] > highs[i - j] for j in range(1, lookback + 1)) and \
+           all(highs[i] > highs[i + j] for j in range(1, lookback + 1)):
             swing_highs.append((i, float(highs[i])))
 
         # Swing low: lower than all neighbors
-        if all(lows[i] <= lows[i - j] for j in range(1, lookback + 1)) and \
-           all(lows[i] <= lows[i + j] for j in range(1, lookback + 1)):
+        if all(lows[i] < lows[i - j] for j in range(1, lookback + 1)) and \
+           all(lows[i] < lows[i + j] for j in range(1, lookback + 1)):
             swing_lows.append((i, float(lows[i])))
 
     return {
@@ -122,10 +122,10 @@ def _analyze_structure(highs: np.ndarray, lows: np.ndarray, closes: np.ndarray, 
 
     # Break of Structure: price closes beyond the last swing
     current_price = float(closes[-1])
-    if len(sh) >= 1 and current_price > sh[-1][1]:
+    if len(sh) >= 1 and current_price > sh[-1][1] * 1.001:
         result["bos"] = True
         result["bias"] = min(1.0, result["bias"] + 0.3)
-    elif len(sl) >= 1 and current_price < sl[-1][1]:
+    elif len(sl) >= 1 and current_price < sl[-1][1] * 0.999:
         result["bos"] = True
         result["bias"] = max(-1.0, result["bias"] - 0.3)
 

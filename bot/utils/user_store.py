@@ -70,6 +70,8 @@ class UserStore:
     def register(self, telegram_id: int | str, name: str = "",
                  auto_role: str = "pending") -> dict:
         """Register a new user or return existing. Never overwrites role."""
+        if auto_role not in ROLES:
+            auto_role = "pending"
         key = str(telegram_id)
         with self._lock:
             if key in self._users:
@@ -199,4 +201,4 @@ class UserStore:
                     elif self._users[key].get("role") != "admin":
                         self._users[key]["role"] = "admin"
                         self._users[key]["authorized"] = True
-                self._save()
+                    self._save()

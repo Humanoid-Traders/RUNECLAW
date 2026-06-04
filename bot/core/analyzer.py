@@ -40,7 +40,9 @@ from bot.core.sentiment import SentimentEngine
 from bot.core.smart_money import SmartMoneyEngine
 from bot.core.strategy_modes import StrategySelector, MODE_CONFIGS
 from bot.llm.provider import BYOK, LLMProvider, LLMTier, PROVIDER_CATALOG, create_llm_client, llm_complete, LLMConfig, resolve_tier_config
-from bot.utils.logger import audit, trade_log, scan_log
+from bot.core.volume_profile import compute_volume_profile, poc_magnet_signal
+from bot.core.order_flow import OrderFlowAnalyzer
+from bot.utils.logger import audit, system_log, trade_log, scan_log
 from bot.utils.models import Direction, MarketSignal, TradeIdea
 
 
@@ -249,8 +251,8 @@ class Analyzer:
                 volume=signal.volume_usd_24h or 0,
                 price_change_pct=signal.change_pct_24h or 0,
             )
-        except Exception:
-            pass
+        except Exception as e:
+            system_log.debug("Sentiment update error: %s", e)
 
         # ── Strategy Mode Selection ──
         mode_selection = self._strategy_selector.select(
@@ -286,22 +288,23 @@ class Analyzer:
         direction = Direction.LONG if thesis["direction"] == "LONG" else Direction.SHORT
 
         # SIGNAL QUALITY: ADX regime-aligned trading filter
-        # Counter-trend trades are dangerous -- skip entirely.
+        # Counter-trend trades are dangerous -- apply heavy penalty.
         # RANGE/CHOP: allow with confidence penalty instead of auto-skip.
         regime_confidence_penalty = 0.0
         regime_sl_override = None
         regime_tp_override = None
+        counter_trend_penalty = 1.0
 
         if regime == Regime.TREND_UP and direction == Direction.SHORT:
-            audit(trade_log, "Regime filter: TREND_UP but SHORT signal -- skipping",
-                  action="analyze", result="SKIP",
+            audit(trade_log, "Regime filter: TREND_UP but SHORT signal -- heavy penalty",
+                  action="analyze", result="PENALTY",
                   data={"symbol": signal.symbol, "regime": regime.value})
-            return None
+            counter_trend_penalty = 0.5  # Heavy penalty for counter-trend
         if regime == Regime.TREND_DOWN and direction == Direction.LONG:
-            audit(trade_log, "Regime filter: TREND_DOWN but LONG signal -- skipping",
-                  action="analyze", result="SKIP",
+            audit(trade_log, "Regime filter: TREND_DOWN but LONG signal -- heavy penalty",
+                  action="analyze", result="PENALTY",
                   data={"symbol": signal.symbol, "regime": regime.value})
-            return None
+            counter_trend_penalty = 0.5  # Heavy penalty for counter-trend
         if regime == Regime.RANGE:
             # RANGE: needs high raw confluence (0.70+) to survive after penalty
             regime_confidence_penalty = CONFIG.analyzer.range_confidence_penalty
@@ -321,7 +324,7 @@ class Analyzer:
                   data={"symbol": signal.symbol, "regime": regime.value,
                         "penalty": regime_confidence_penalty})
 
-        confidence = max(0.0, min(1.0, thesis.get("confidence", 0.0)))
+        confidence = max(0.0, min(1.0, thesis.get("confidence", 0.0))) * counter_trend_penalty
 
         # Blend LLM/rule-based confidence with confluence score
         blended_confidence = confidence * CONFIG.analyzer.llm_weight + confluence * CONFIG.analyzer.confluence_weight
@@ -510,7 +513,7 @@ class Analyzer:
         # ── Bollinger Bands (20, 2) ──
         if len(closes) >= 20:
             sma20 = np.mean(closes[-20:])
-            std20 = np.std(closes[-20:], ddof=1)
+            std20 = np.std(closes[-20:], ddof=0)
             results["bb_upper"] = round(sma20 + 2 * std20, 6)
             results["bb_lower"] = round(sma20 - 2 * std20, 6)
             results["bb_mid"] = round(sma20, 6)
@@ -529,7 +532,13 @@ class Analyzer:
             tr_lc = np.abs(lows[1:] - closes[:-1])
             true_range = np.maximum(tr_hl, np.maximum(tr_hc, tr_lc))
             if len(true_range) >= 14:
-                atr = np.mean(true_range[-14:])
+                # Wilder's ATR
+                period = 14
+                atr_vals = np.zeros(len(true_range))
+                atr_vals[period-1] = np.mean(true_range[:period])
+                for i in range(period, len(true_range)):
+                    atr_vals[i] = (atr_vals[i-1] * (period - 1) + true_range[i]) / period
+                atr = float(atr_vals[-1])
             else:
                 atr = np.mean(true_range)
             results["atr"] = round(float(atr), 6)
@@ -577,7 +586,6 @@ class Analyzer:
 
         # ── Volume Profile (POC + Value Area) ──
         if volumes is not None and len(volumes) >= 10:
-            from bot.core.volume_profile import compute_volume_profile
             vp = compute_volume_profile(closes, highs, lows, volumes)
             if vp is not None:
                 results["poc_price"] = vp.poc_price
@@ -812,7 +820,6 @@ class Analyzer:
 
         # Order flow votes (if available)
         if order_flow is not None:
-            from bot.core.order_flow import OrderFlowAnalyzer
             of_votes, of_weights, of_labels = OrderFlowAnalyzer.to_confluence_votes(order_flow)
             votes += of_votes
             weights += of_weights
@@ -843,7 +850,6 @@ class Analyzer:
         poc_price = indicators.get("poc_price", 0)
         atr = indicators.get("atr", 0)
         if poc_price > 0 and atr > 0:
-            from bot.core.volume_profile import poc_magnet_signal
             price = signal.price
             magnet = poc_magnet_signal(price, poc_price, atr)
             if magnet and magnet.get("direction"):
@@ -996,7 +1002,7 @@ class Analyzer:
             active_cfg = self._resolve_llm_config()
             model = self.THESIS_MODEL if use_full_model else self.SCAN_MODEL
         category = "thesis" if use_full_model else "analyze"
-        max_tokens = CONFIG.llm.max_tokens if use_full_model else 280
+        max_tokens = CONFIG.llm.max_tokens if use_full_model else 512
         tier_label = TieredPipeline.tier_label(tier)
 
         try:
@@ -1147,7 +1153,7 @@ class Analyzer:
                                 {"role": "user", "content": prompt},
                             ],
                             temperature=CONFIG.llm.temperature,
-                            max_tokens=CONFIG.llm.max_tokens if use_full_model else 280,
+                            max_tokens=CONFIG.llm.max_tokens if use_full_model else 512,
                         ),
                         timeout=CONFIG.llm.timeout_seconds + 5,  # extra grace for fallback
                     )
@@ -1216,7 +1222,8 @@ class Analyzer:
 
         candle_patterns = indicators.get("candle_patterns", {})
         if candle_patterns:
-            parts.append(f"Candles={candle_patterns}")
+            candle_str = ", ".join(f"{k}({v[:4]})" for k, v in candle_patterns.items())
+            parts.append(f"Candles: {candle_str}")
 
         # Additional indicators for LLM context
         if "poc_price" in indicators and indicators["poc_price"] > 0:
@@ -1332,7 +1339,7 @@ class Analyzer:
         elif rsi > 65:
             direction = "SHORT"
         else:
-            direction = "LONG"  # default bias
+            return None  # ambiguous confluence + neutral RSI -- no signal
 
         # Confidence from confluence strength + regime clarity
         conf_base = abs(confluence - 0.5) * 2  # 0-1 scale of confluence strength

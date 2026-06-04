@@ -127,7 +127,7 @@ class ExperienceMemory:
         similar = [
             d for d in decisions
             if d.market_regime == market_regime
-            and d.direction == direction
+            and (not direction or d.direction == direction)
             and d.pnl_result is not None  # only completed trades
         ]
         return similar[-limit:]

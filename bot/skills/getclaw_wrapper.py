@@ -38,7 +38,7 @@ class GetClawAdapter:
             entry_price=entry,
             stop_loss=stop,
             take_profit=take_profit,
-            confidence=1.0,
+            confidence=0.7,
             reasoning="GetClaw SDK signal",
             source="getclaw",
         )

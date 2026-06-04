@@ -82,12 +82,12 @@ def detect_head_and_shoulders(
         if head[1] > left[1] and head[1] > right[1]:
             # Shoulders roughly equal (within 3%)
             shoulder_diff = _pct_diff(left[1], right[1])
-            if shoulder_diff < 3.0:
+            if shoulder_diff < 5.0:
                 # Neckline from swing lows between shoulders
                 neckline_lows = [s for s in sl if left[0] < s[0] < right[0]]
                 neckline = np.mean([s[1] for s in neckline_lows]) if neckline_lows else min(left[1], right[1])
                 price = float(closes[-1])
-                conf = min(0.85, 0.6 + (1.0 - shoulder_diff / 3.0) * 0.25)
+                conf = min(0.85, 0.6 + (1.0 - shoulder_diff / 5.0) * 0.25)
                 if price < neckline:
                     conf = min(0.95, conf + 0.10)  # confirmed break
                 return {
@@ -104,11 +104,11 @@ def detect_head_and_shoulders(
         left, head, right = sl[-3], sl[-2], sl[-1]
         if head[1] < left[1] and head[1] < right[1]:
             shoulder_diff = _pct_diff(left[1], right[1])
-            if shoulder_diff < 3.0:
+            if shoulder_diff < 5.0:
                 neckline_highs = [s for s in sh if left[0] < s[0] < right[0]]
                 neckline = np.mean([s[1] for s in neckline_highs]) if neckline_highs else max(left[1], right[1])
                 price = float(closes[-1])
-                conf = min(0.85, 0.6 + (1.0 - shoulder_diff / 3.0) * 0.25)
+                conf = min(0.85, 0.6 + (1.0 - shoulder_diff / 5.0) * 0.25)
                 if price > neckline:
                     conf = min(0.95, conf + 0.10)
                 return {
@@ -138,12 +138,12 @@ def detect_double_top_bottom(
     if len(sh) >= 2:
         top1, top2 = sh[-2], sh[-1]
         diff = _pct_diff(top1[1], top2[1])
-        if diff < 1.5:
+        if diff < 3.0:
             price = float(closes[-1])
             # Trough between tops
             trough_lows = [s for s in sl if top1[0] < s[0] < top2[0]]
             neckline = min(s[1] for s in trough_lows) if trough_lows else min(top1[1], top2[1]) * 0.97
-            conf = min(0.85, 0.55 + (1.0 - diff / 1.5) * 0.30)
+            conf = min(0.85, 0.55 + (1.0 - diff / 3.0) * 0.30)
             if price < neckline:
                 conf = min(0.90, conf + 0.10)
             return {
@@ -158,11 +158,11 @@ def detect_double_top_bottom(
     if len(sl) >= 2:
         bot1, bot2 = sl[-2], sl[-1]
         diff = _pct_diff(bot1[1], bot2[1])
-        if diff < 1.5:
+        if diff < 3.0:
             price = float(closes[-1])
             peak_highs = [s for s in sh if bot1[0] < s[0] < bot2[0]]
             neckline = max(s[1] for s in peak_highs) if peak_highs else max(bot1[1], bot2[1]) * 1.03
-            conf = min(0.85, 0.55 + (1.0 - diff / 1.5) * 0.30)
+            conf = min(0.85, 0.55 + (1.0 - diff / 3.0) * 0.30)
             if price > neckline:
                 conf = min(0.90, conf + 0.10)
             return {
@@ -615,32 +615,37 @@ def detect_liquidity_sweep(
     sl = swings["swing_lows"]
 
     price = float(closes[-1])
-    last_low = float(lows[-1])
-    last_high = float(highs[-1])
 
-    # Bullish sweep: last bar wick went below a prior swing low but closed above it
+    # Check last 3 bars for sweeps (not just the last bar)
+    check_bars = min(3, len(lows))
+
+    # Bullish sweep: recent bar wick went below a prior swing low but price closed above it
     if sl:
         nearest_sl = sl[-1][1]
-        if last_low < nearest_sl * 0.998 and price > nearest_sl:
-            return {
-                "name": "Liquidity Sweep (Bullish)",
-                "signal": "bullish",
-                "confidence": 0.70,
-                "description": f"Swept lows at ${nearest_sl:,.2f}, reclaimed — trapped sellers",
-                "key_levels": {"swept_level": nearest_sl, "wick_low": last_low},
-            }
+        for offset in range(1, check_bars + 1):
+            last_low = float(lows[-offset])
+            if last_low < nearest_sl * 0.998 and price > nearest_sl:
+                return {
+                    "name": "Liquidity Sweep (Bullish)",
+                    "signal": "bullish",
+                    "confidence": 0.70,
+                    "description": f"Swept lows at ${nearest_sl:,.2f}, reclaimed — trapped sellers",
+                    "key_levels": {"swept_level": nearest_sl, "wick_low": last_low},
+                }
 
-    # Bearish sweep: last bar wick above a prior swing high but closed below it
+    # Bearish sweep: recent bar wick above a prior swing high but price closed below it
     if sh:
         nearest_sh = sh[-1][1]
-        if last_high > nearest_sh * 1.002 and price < nearest_sh:
-            return {
-                "name": "Liquidity Sweep (Bearish)",
-                "signal": "bearish",
-                "confidence": 0.70,
-                "description": f"Swept highs at ${nearest_sh:,.2f}, rejected — trapped buyers",
-                "key_levels": {"swept_level": nearest_sh, "wick_high": last_high},
-            }
+        for offset in range(1, check_bars + 1):
+            last_high = float(highs[-offset])
+            if last_high > nearest_sh * 1.002 and price < nearest_sh:
+                return {
+                    "name": "Liquidity Sweep (Bearish)",
+                    "signal": "bearish",
+                    "confidence": 0.70,
+                    "description": f"Swept highs at ${nearest_sh:,.2f}, rejected — trapped buyers",
+                    "key_levels": {"swept_level": nearest_sh, "wick_high": last_high},
+                }
 
     return None
 
@@ -657,6 +662,11 @@ def scan_all_chart_patterns(
     """
     if len(closes) < 20:
         return []
+
+    # TODO: Optimization — compute swing points ONCE here and pass to each
+    # detector instead of each detector calling _find_swings independently.
+    # Requires adding an optional `swings` parameter to each detector function.
+    # swings = _find_swings(highs, lows, lookback)
 
     detectors = [
         detect_head_and_shoulders,

@@ -128,12 +128,22 @@ class Handler(BaseHTTPRequestHandler):
             if length > 10_000_000:  # 10MB max
                 self._json_response({"error": "payload too large"}, 413)
                 return
-            body = json.loads(self.rfile.read(length))
+            try:
+                body = json.loads(self.rfile.read(length))
+            except (json.JSONDecodeError, ValueError):
+                self._json_response({"error": "invalid JSON"}, 400)
+                return
             body["received_at"] = datetime.now(timezone.utc).isoformat()
             save_json(DATA_FILE, body)
 
-            # Feed
+            # Feed — add new entry from snapshot, then truncate
             feed = load_json(FEED_FILE, [])
+            feed_entry = {
+                "timestamp": body.get("received_at", datetime.now(timezone.utc).isoformat()),
+                "traders": len(body.get("traders", [])),
+                "total_traders": body.get("total_traders", 0),
+            }
+            feed.insert(0, feed_entry)
             save_json(FEED_FILE, feed[:100])
 
             self._json_response({"ok":True,"traders":len(body.get("traders",[]))})
@@ -144,7 +154,46 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         pass
 
-    do_HEAD = do_GET
+    def do_HEAD(self):
+        """Handle HEAD requests — send headers only, no body."""
+        path = self.path.split("?")[0]
+
+        # API routes
+        if path in ("/api/snapshot", "/api/feed", "/api/health"):
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self._cors_headers()
+            self.end_headers()
+            return
+
+        # Dashboard routes
+        if path == "/dashboard" or path == "/dashboard/":
+            filepath = os.path.join(DASHBOARD_DIR, "index.html")
+        elif path.startswith("/dashboard/"):
+            rel = path[len("/dashboard/"):]
+            filepath = os.path.join(DASHBOARD_DIR, rel.lstrip("/"))
+        else:
+            # Website landing page
+            if path == "/" or path == "":
+                path = "/index.html"
+            filepath = os.path.join(WEBSITE_DIR, path.lstrip("/"))
+
+        filepath = os.path.realpath(filepath)
+        base_check = os.path.realpath(WEBSITE_DIR) if not filepath.startswith(os.path.realpath(DASHBOARD_DIR)) else os.path.realpath(DASHBOARD_DIR)
+        if not filepath.startswith(base_check):
+            self.send_response(403)
+            self.end_headers()
+            return
+        if os.path.isfile(filepath):
+            mime, _ = mimetypes.guess_type(filepath)
+            size = os.path.getsize(filepath)
+            self.send_response(200)
+            self.send_header("Content-Type", mime or "application/octet-stream")
+            self.send_header("Content-Length", size)
+            self.end_headers()
+        else:
+            self.send_response(404)
+            self.end_headers()
 
 
 if __name__ == "__main__":

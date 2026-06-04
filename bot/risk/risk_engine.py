@@ -166,7 +166,7 @@ class RiskEngine:
             self._record_trade_result_locked(pnl)
 
     def _record_trade_result_locked(self, pnl: float) -> None:
-        if pnl <= 0:
+        if pnl < 0:
             self._consecutive_losses += 1
             self._last_loss_time = time.time()
             self._save_state()
@@ -232,6 +232,11 @@ class RiskEngine:
             elif position_usd > max_notional_usd:
                 position_usd = max_notional_usd
 
+        # ── Apply regime-aware position size adjustment (Feature #3) ──
+        regime_params = self.get_regime_adjusted_params(self._current_regime, self._current_vol_state)
+        if regime_params.get("position_size_mult", 1.0) < 1.0:
+            position_usd *= regime_params["position_size_mult"]
+
         # ── Individual checks — each wrapped so a raised exception → REJECTED ──
         # This is the fail-closed contract: if ANY check cannot be evaluated,
         # the trade is REJECTED.  No silent pass-through on errors.
@@ -259,6 +264,7 @@ class RiskEngine:
         except Exception as exc:
             failed.append(f"POSITION_SIZE: evaluation error ({exc})")
 
+        daily_loss_pct = 0.0
         try:
             # 3. Daily loss (realized + unrealized) — measured against equity, not free cash
             daily_loss_pct = abs(state.daily_pnl / state.equity_usd * 100) if state.equity_usd > 0 else 0

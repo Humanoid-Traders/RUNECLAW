@@ -345,7 +345,7 @@ class ProactiveMonitor:
         """Alert when a new trade idea is generated and pending confirmation."""
         alerts = []
         try:
-            for idea_id, idea in self.engine._pending_ideas.items():
+            for idea_id, idea in list(self.engine._pending_ideas.items()):
                 key = f"signal_{idea_id}"
                 if key not in self._alerted_signals:
                     d = "\U0001f7e2 LONG" if idea.direction.value == "LONG" else "\U0001f534 SHORT"
@@ -408,7 +408,7 @@ class ProactiveMonitor:
                     continue
 
                 # Check SL proximity
-                sl_distance_pct = abs(current_price - pos.stop_loss) / pos.entry_price
+                sl_distance_pct = abs(current_price - pos.stop_loss) / current_price
                 if sl_distance_pct <= proximity_threshold:
                     key = f"sl_prox_{pos.asset}_{pos.trade_id}"
                     base = pos.asset.split('/')[0] if '/' in pos.asset else pos.asset
@@ -431,7 +431,7 @@ class ProactiveMonitor:
                     ))
 
                 # Check TP proximity
-                tp_distance_pct = abs(current_price - pos.take_profit) / pos.entry_price
+                tp_distance_pct = abs(current_price - pos.take_profit) / current_price
                 if tp_distance_pct <= proximity_threshold:
                     key = f"tp_prox_{pos.asset}_{pos.trade_id}"
                     base = pos.asset.split('/')[0] if '/' in pos.asset else pos.asset
@@ -492,7 +492,7 @@ class ProactiveMonitor:
         icon = _SEVERITY_ICON.get(alert.severity, "\u2139\ufe0f")
         full_msg = f"{icon} {alert.body}"
 
-        for chat_id in list(self._enabled_chats):
+        async def _send_to_chat(chat_id: str) -> None:
             try:
                 await send_fn(chat_id, full_msg)
                 audit(system_log,
@@ -502,3 +502,5 @@ class ProactiveMonitor:
                             "severity": alert.severity})
             except Exception as exc:
                 logger.debug("Failed to send alert to %s: %s", chat_id, exc)
+
+        await asyncio.gather(*[_send_to_chat(cid) for cid in list(self._enabled_chats)])
