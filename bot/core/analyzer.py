@@ -9,7 +9,8 @@ Upgraded with:
   - On-Balance Volume (OBV) with trend detection
   - Fibonacci retracement levels (swing high/low, 23.6%/38.2%/50%/61.8%/78.6%)
   - Candlestick pattern recognition (doji, hammer, engulfing, harami, morning/evening star, etc.)
-  - Confluence scoring model (10-voter weighted indicator agreement)
+  - Chart pattern detection (H&S, double top/bottom, flags, triangles, wedges, etc.)
+  - Confluence scoring model with chart pattern voter (weighted indicator agreement)
   - Robust LLM response parsing with fallback
   - Source tagging (LLM vs rule-based) on every output
 """
@@ -55,6 +56,7 @@ from bot.core.smart_money import SmartMoneyEngine
 from bot.core.strategy_modes import StrategySelector, MODE_CONFIGS
 from bot.llm.provider import BYOK, LLMProvider, LLMTier, PROVIDER_CATALOG, create_llm_client, llm_complete, LLMConfig, resolve_tier_config
 from bot.core.volume_profile import compute_volume_profile, poc_magnet_signal
+from bot.core.chart_patterns import scan_all_chart_patterns
 from bot.core.order_flow import OrderFlowAnalyzer
 from bot.utils.logger import audit, system_log, trade_log, scan_log
 from bot.utils.models import Direction, MarketSignal, TradeIdea
@@ -240,6 +242,22 @@ class Analyzer:
             bearish_patterns = [k for k, v in candle_patterns.items() if v == "bearish"]
             indicators["candle_bullish_count"] = len(bullish_patterns)
             indicators["candle_bearish_count"] = len(bearish_patterns)
+
+        # ── Geometric chart pattern detection (H&S, double top/bottom, flags, etc.) ──
+        chart_patterns = scan_all_chart_patterns(opens, highs, lows, closes)
+        if chart_patterns:
+            indicators["chart_patterns_geo"] = chart_patterns
+            bullish_geo = [p for p in chart_patterns if p.get("signal") == "bullish"]
+            bearish_geo = [p for p in chart_patterns if p.get("signal") == "bearish"]
+            indicators["chart_patterns_bullish_count"] = len(bullish_geo)
+            indicators["chart_patterns_bearish_count"] = len(bearish_geo)
+            # Weighted score uses pattern confidence values
+            indicators["chart_patterns_bullish_weight"] = round(
+                sum(p.get("confidence", 0.5) for p in bullish_geo), 2
+            )
+            indicators["chart_patterns_bearish_weight"] = round(
+                sum(p.get("confidence", 0.5) for p in bearish_geo), 2
+            )
 
         regime = self._detect_regime(indicators)
 
@@ -831,6 +849,21 @@ class Analyzer:
         elif fib_zone is not None:
             votes.append(0.0)
             weights.append(0.3)
+
+        # Chart patterns voter (weight 0.7 — geometric patterns from chart_patterns.py)
+        # Votes based on bullish vs bearish pattern count, scaled by confidence
+        geo_bull_w = indicators.get("chart_patterns_bullish_weight", 0)
+        geo_bear_w = indicators.get("chart_patterns_bearish_weight", 0)
+        geo_total = geo_bull_w + geo_bear_w
+        if geo_total > 0:
+            # Net vote scaled by imbalance: ranges from -1 to +1
+            geo_vote = (geo_bull_w - geo_bear_w) / geo_total
+            votes.append(geo_vote)
+            # Scale weight by number of patterns detected (more patterns = stronger signal)
+            geo_count = indicators.get("chart_patterns_bullish_count", 0) + \
+                        indicators.get("chart_patterns_bearish_count", 0)
+            scaled_weight = min(1.0, 0.7 * min(geo_count, 3))  # cap at 3 patterns
+            weights.append(scaled_weight)
 
         # Order flow votes (if available)
         if order_flow is not None:

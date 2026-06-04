@@ -1,24 +1,33 @@
 """
 Real-time sentiment analysis module for the RUNECLAW confluence scoring model.
 
-Aggregates sentiment from multiple simulated sources (fear/greed index, social
-momentum, funding rate) and produces a single [-1.0, +1.0] confluence vote
-compatible with the existing 10-voter scoring model.
+Aggregates sentiment from multiple sources — including the **Crypto Fear &
+Greed Index** fetched from the alternative.me public API — together with
+price/volume-derived signals (momentum, volume trend, volatility), social-
+momentum proxy, and funding-rate contrarian logic.  Produces a single
+[-1.0, +1.0] confluence vote compatible with the existing 10-voter scoring
+model.
 
 Includes contrarian logic: when crowd sentiment reaches extremes the signal
 flips direction. Extreme greed produces a bearish vote; extreme fear produces
-a bullish vote.
+a bullish vote.  The external Fear & Greed Index is blended into the final
+vote as an additional contrarian adjustment (cached for 1 hour).
 """
 
 from __future__ import annotations
 
+import logging
+import time
 from datetime import datetime
 from bot.compat import UTC
 from enum import Enum
 from typing import Optional
 
+import aiohttp
 import numpy as np
 from pydantic import BaseModel, Field
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -57,6 +66,15 @@ _CONTRARIAN_BEAR_MAX = -0.3
 
 # Confluence weight assigned to this voter
 _CONFLUENCE_WEIGHT = 0.6
+
+# External Fear & Greed Index (alternative.me) cache TTL in seconds
+_FG_CACHE_TTL = 3600  # 1 hour
+
+# External Fear & Greed API endpoint
+_FG_API_URL = "https://api.alternative.me/fng/?limit=1"
+
+# Maximum contrarian adjustment from external Fear & Greed Index
+_EXT_FG_MAX_ADJUSTMENT = 0.3
 
 
 # ---------------------------------------------------------------------------
@@ -165,10 +183,50 @@ class SentimentEngine:
         self._history: dict[str, list[SentimentSnapshot]] = {}
         self._price_returns: dict[str, list[float]] = {}
         self._volume_history: dict[str, list[float]] = {}
+        # External Fear & Greed Index cache
+        self._fear_greed_value: Optional[float] = None
+        self._fear_greed_ts: float = 0.0  # monotonic timestamp of last fetch
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
+
+    async def _fetch_fear_greed(self) -> Optional[float]:
+        """Fetch the Crypto Fear & Greed Index from alternative.me.
+
+        Returns the index value (0-100) or ``None`` on failure.  The result
+        is cached in ``self._fear_greed_value`` for ``_FG_CACHE_TTL`` seconds.
+        """
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(_FG_API_URL, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                    if resp.status != 200:
+                        logger.warning("Fear & Greed API returned status %s", resp.status)
+                        return self._fear_greed_value
+                    data = await resp.json()
+                    value = float(data["data"][0]["value"])
+                    self._fear_greed_value = value
+                    self._fear_greed_ts = time.monotonic()
+                    logger.info(
+                        "Fetched Fear & Greed Index: %.0f (%s)",
+                        value,
+                        data["data"][0].get("value_classification", ""),
+                    )
+                    return value
+        except Exception:
+            logger.warning("Failed to fetch Fear & Greed Index; using cached or None", exc_info=True)
+            return self._fear_greed_value
+
+    async def refresh_fear_greed(self) -> Optional[float]:
+        """Refresh the external Fear & Greed Index if the cache has expired.
+
+        Safe to call frequently — it is a no-op when the cache is fresh.
+        Returns the current cached value (or ``None`` if never fetched).
+        """
+        now = time.monotonic()
+        if self._fear_greed_value is None or (now - self._fear_greed_ts) >= _FG_CACHE_TTL:
+            return await self._fetch_fear_greed()
+        return self._fear_greed_value
 
     def update(
         self,
@@ -266,14 +324,34 @@ class SentimentEngine:
         If *symbol* is given, returns the vote for that specific symbol.
         Otherwise returns the most recent vote across all symbols.
         Returns ``0.0`` (neutral) if no data has been ingested yet.
+
+        When an external Fear & Greed value is available it is blended in
+        as a contrarian adjustment (up to +/-0.3).
         """
         if symbol and symbol in self._history and self._history[symbol]:
-            return self._history[symbol][-1].confluence_vote
-        # Fallback: most recent snapshot across all symbols
-        latest = self.latest
-        if latest is None:
+            base = self._history[symbol][-1].confluence_vote
+        else:
+            latest = self.latest
+            if latest is None:
+                return 0.0
+            base = latest.confluence_vote
+
+        return float(np.clip(base + self._ext_fg_adjustment(), -1.0, 1.0))
+
+    def _ext_fg_adjustment(self) -> float:
+        """Compute the contrarian adjustment from the external Fear & Greed Index.
+
+        * F&G < 25  (Extreme Fear)  -> +0.3  (contrarian bullish)
+        * F&G > 75  (Extreme Greed) -> -0.3  (contrarian bearish)
+        * 25 <= F&G <= 75           -> linear interpolation through 0
+        * No data                   -> 0.0
+        """
+        if self._fear_greed_value is None:
             return 0.0
-        return latest.confluence_vote
+        fg = self._fear_greed_value
+        # Linear map: 0 -> +0.3, 50 -> 0.0, 100 -> -0.3
+        adjustment = -_EXT_FG_MAX_ADJUSTMENT * (fg - 50.0) / 50.0
+        return float(np.clip(adjustment, -_EXT_FG_MAX_ADJUSTMENT, _EXT_FG_MAX_ADJUSTMENT))
 
     def to_confluence_votes(self) -> list[tuple[str, float, float]]:
         """

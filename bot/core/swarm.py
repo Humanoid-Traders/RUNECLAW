@@ -1,18 +1,18 @@
 """
-RUNECLAW Multi-Agent Swarm Protocol -- composable agent collaboration via MCP.
+RUNECLAW Multi-Agent Swarm Protocol -- in-process pub/sub coordination layer.
 
-Demonstrates the Agent Hub vision: multiple specialized RUNECLAW agents
-operating as a coordinated swarm where each agent has a single responsibility.
+Multiple specialized RUNECLAW agents operate as a coordinated swarm where
+each agent has a single responsibility.
 
 Swarm roles:
   - SCANNER:  Perceives market state, emits signals
   - ANALYST:  Generates trade theses from signals
-  - RISK:     Evaluates and gates every trade idea
+  - RISK:     Evaluates and gates every trade idea (delegates to RiskEngine)
   - EXECUTOR: Manages positions and portfolio
   - SENTINEL: Monitors for Black Swan anomalies
 
 Communication is via a shared SwarmBus (in-process message queue).
-In production, this maps to MCP tool calls between Agent Hub agents.
+Future work: can be extended to MCP tool calls between separate agents.
 """
 
 from __future__ import annotations
@@ -21,7 +21,10 @@ from datetime import datetime
 from bot.compat import UTC
 from enum import Enum
 from typing import Any, Callable, Optional
+import logging
 from pydantic import BaseModel, Field
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -71,8 +74,8 @@ class SwarmBus:
     """
     In-process message bus for agent communication.
 
-    In production, this would be replaced by MCP tool calls between
-    separate Agent Hub agents. The bus abstraction makes the swap trivial.
+    Future work: can be extended to MCP tool calls between separate agents.
+    The bus abstraction makes the swap trivial.
     """
 
     def __init__(self) -> None:
@@ -207,20 +210,29 @@ class AnalystAgent(SwarmAgent):
 
 
 class RiskAgent(SwarmAgent):
-    """Evaluates trade ideas and gates execution."""
+    """Evaluates trade ideas and gates execution via the real RiskEngine."""
     role = SwarmRole.RISK
     _name = "risk"
 
-    def __init__(self, bus: SwarmBus) -> None:
+    def __init__(self, bus: SwarmBus, risk_engine: Optional[Any] = None) -> None:
         super().__init__(bus)
         self._approved: int = 0
         self._rejected: int = 0
+        self._risk_engine = risk_engine
+        if risk_engine is None:
+            logger.warning(
+                "RiskAgent: no RiskEngine provided -- falling back to "
+                "simplified momentum threshold (NOT production-safe)"
+            )
 
     def handle(self, msg: SwarmMessage) -> None:
         if msg.msg_type == SwarmMessageType.TRADE_IDEA and self._alive:
-            # Simulate risk evaluation
-            momentum = abs(msg.payload.get("momentum", 0))
-            approved = momentum >= 0.3  # simplified threshold
+            if self._risk_engine is not None:
+                approved = self._evaluate_with_engine(msg)
+            else:
+                # Fallback: simplified threshold (test/demo only)
+                momentum = abs(msg.payload.get("momentum", 0))
+                approved = momentum >= 0.3
             if approved:
                 self._approved += 1
                 verdict = "APPROVED"
@@ -238,6 +250,35 @@ class RiskAgent(SwarmAgent):
                     "asset": msg.payload.get("asset"),
                 },
             )
+
+    def _evaluate_with_engine(self, msg: SwarmMessage) -> bool:
+        """Delegate to the real RiskEngine.evaluate() and return True if approved."""
+        from bot.utils.models import TradeIdea, Direction, RiskVerdict
+
+        payload = msg.payload
+        asset = payload.get("asset", "UNKNOWN")
+        momentum = abs(payload.get("momentum", 0))
+
+        # Build a TradeIdea suitable for RiskEngine.evaluate().
+        # The swarm payload is intentionally sparse, so we fill in
+        # conservative defaults for required fields.
+        try:
+            idea = TradeIdea(
+                id=payload.get("trade_id", "SWARM-0"),
+                asset=asset,
+                direction=Direction.LONG if momentum >= 0 else Direction.SHORT,
+                entry_price=payload.get("entry_price", 1.0),
+                stop_loss=payload.get("stop_loss", 0.95),
+                take_profit=payload.get("take_profit", 1.10),
+                confidence=min(momentum, 1.0),
+                reasoning="swarm-generated trade idea",
+                source="swarm",
+            )
+            risk_check = self._risk_engine.evaluate(idea)
+            return risk_check.verdict == RiskVerdict.APPROVED
+        except Exception as exc:
+            logger.error("RiskAgent: RiskEngine.evaluate() failed: %s", exc)
+            return False
 
 
 class ExecutorAgent(SwarmAgent):
@@ -309,15 +350,15 @@ class SwarmCoordinator:
     Provides a high-level API to run the full pipeline:
     signal → analysis → risk → execution, with sentinel monitoring.
 
-    In production, each agent would be a separate process/container
-    communicating via MCP tool calls through the Bitget Agent Hub.
+    Future work: each agent could run as a separate process/container
+    communicating via MCP tool calls.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, risk_engine: Optional[Any] = None) -> None:
         self.bus = SwarmBus()
         self.scanner = ScannerAgent(self.bus)
         self.analyst = AnalystAgent(self.bus)
-        self.risk = RiskAgent(self.bus)
+        self.risk = RiskAgent(self.bus, risk_engine=risk_engine)
         self.executor = ExecutorAgent(self.bus)
         self.sentinel = SentinelAgent(self.bus)
         self._halted = False
