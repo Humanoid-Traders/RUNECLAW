@@ -2076,13 +2076,25 @@ class DeepScanSkill(BaseSkill):
         async def _fetch_one(sym):
             async with sem:
                 try:
-                    return sym, await exchange.fetch_ohlcv(sym, timeframe, limit=100)
-                except Exception:
+                    ohlcv = await asyncio.wait_for(
+                        exchange.fetch_ohlcv(sym, timeframe, limit=100),
+                        timeout=15,  # 15s per symbol max
+                    )
+                    return sym, ohlcv
+                except (asyncio.TimeoutError, Exception):
                     return sym, None
 
-        fetch_results = await asyncio.gather(*[_fetch_one(s) for s in DEEPSCAN_UNIVERSE])
+        fetch_results = await asyncio.gather(
+            *[_fetch_one(s) for s in DEEPSCAN_UNIVERSE],
+            return_exceptions=True,
+        )
 
-        for symbol, ohlcv in fetch_results:
+        for result in fetch_results:
+            # Handle return_exceptions=True — skip any exceptions
+            if isinstance(result, Exception):
+                errors += 1
+                continue
+            symbol, ohlcv = result
             if ohlcv is None or len(ohlcv) < 30:
                 if ohlcv is None:
                     errors += 1

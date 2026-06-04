@@ -212,14 +212,54 @@ class TelegramHandler:
             method = update.message.reply_text
         else:
             return  # No valid target
-        try:
-            await method(text, parse_mode="HTML", reply_markup=reply_markup)
-        except Exception:
-            plain = re.sub(r"<[^>]+>", "", text)
+
+        # Telegram max message length is 4096 chars — split if needed
+        MAX_LEN = 4000  # leave margin for safety
+        chunks = self._split_message(text, MAX_LEN)
+
+        for i, chunk in enumerate(chunks):
+            # Only attach reply_markup to the last chunk
+            markup = reply_markup if i == len(chunks) - 1 else None
+            # Only allow edit for the first chunk (edits can't create new messages)
+            if i > 0:
+                # For subsequent chunks, always use reply_text
+                if update.message:
+                    send_method = update.message.reply_text
+                elif update.callback_query and update.callback_query.message:
+                    send_method = update.callback_query.message.reply_text
+                else:
+                    continue
+            else:
+                send_method = method
+
             try:
-                await method(plain, parse_mode=None, reply_markup=reply_markup)
-            except Exception:
-                pass
+                await send_method(chunk, parse_mode="HTML", reply_markup=markup)
+            except Exception as e:
+                system_log.debug("HTML send failed (%s), falling back to plain", e)
+                plain = re.sub(r"<[^>]+>", "", chunk)
+                try:
+                    await send_method(plain, parse_mode=None, reply_markup=markup)
+                except Exception as e2:
+                    system_log.error("Failed to send message chunk %d/%d: %s", i + 1, len(chunks), e2)
+
+    @staticmethod
+    def _split_message(text: str, max_len: int = 4000) -> list[str]:
+        """Split a long message into chunks, preferring line boundaries."""
+        if len(text) <= max_len:
+            return [text]
+        chunks = []
+        while text:
+            if len(text) <= max_len:
+                chunks.append(text)
+                break
+            # Find the last newline within the limit
+            split_at = text.rfind("\n", 0, max_len)
+            if split_at <= 0:
+                # No good break point — hard split
+                split_at = max_len
+            chunks.append(text[:split_at])
+            text = text[split_at:].lstrip("\n")
+        return chunks
 
     # ── Banner / Footer ───────────────────────────────────────
 
@@ -2014,11 +2054,20 @@ class TelegramHandler:
                 tf = arg
         await self._send(update, f"🔬 <i>Deep scanning {tf.upper()} — this may take a minute...</i>")
         try:
-            result = await self.registry.get("deepscan").execute(
-                self.engine, timeframe=tf)
-            await self._send(update, result)
+            result = await asyncio.wait_for(
+                self.registry.get("deepscan").execute(
+                    self.engine, timeframe=tf),
+                timeout=120,  # 2 minute max
+            )
+            if result:
+                await self._send(update, result)
+            else:
+                await self._send(update, "🔴 <b>Deepscan returned empty result.</b>")
+        except asyncio.TimeoutError:
+            system_log.error("Deepscan timed out after 120s")
+            await self._send(update, "🔴 <b>Deepscan timed out.</b> Exchange may be slow — try again.")
         except Exception as exc:
-            system_log.error(f"Deepscan error: {exc}")
+            system_log.error(f"Deepscan error: {exc}", exc_info=True)
             await self._send(update, f"🔴 <b>Deepscan error:</b> <code>{html.escape(str(exc)[:200])}</code>")
 
     async def _cmd_fullscan(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -2531,7 +2580,7 @@ class TelegramHandler:
                         close_price = ticker.get("last", pos.entry_price)
                         closed_trade = portfolio.close_position(pos.trade_id, close_price)
                     except Exception as e:
-                        logger.warning("Close position error for %s: %s", pair, e)
+                        system_log.warning("Close position error for %s: %s", pair, e)
                         closed_trade = portfolio.close_position(pos.trade_id, pos.entry_price)
                     break
 
