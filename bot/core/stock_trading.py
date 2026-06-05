@@ -137,16 +137,22 @@ def get_market_session(now: Optional[datetime] = None) -> MarketSession:
 
 # Sector mapping for correlation awareness
 STOCK_SECTORS: dict[str, str] = {
-    "AAPL/USDT": "Technology", "MSFT/USDT": "Technology",
-    "GOOGL/USDT": "Technology", "AMZN/USDT": "Technology",
-    "META/USDT": "Technology", "NVDA/USDT": "Technology",
-    "AMD/USDT": "Technology", "NFLX/USDT": "Technology",
-    "CRM/USDT": "Technology", "TSLA/USDT": "Consumer/EV",
-    "JPM/USDT": "Financials", "GS/USDT": "Financials",
-    "V/USDT": "Financials", "MA/USDT": "Financials",
-    "COIN/USDT": "Crypto-Adjacent", "MSTR/USDT": "Crypto-Adjacent",
-    "MARA/USDT": "Crypto-Adjacent", "RIOT/USDT": "Crypto-Adjacent",
-    "SPY/USDT": "Index", "QQQ/USDT": "Index",
+    # Primary tokenized ("ON" suffix)
+    "AAPLON/USDT": "Technology", "MSFTON/USDT": "Technology",
+    "GOOGLON/USDT": "Technology", "AMZNON/USDT": "Technology",
+    "METAON/USDT": "Technology", "NVDAON/USDT": "Technology",
+    "TSLAON/USDT": "Consumer/EV", "AMDON/USDT": "Technology",
+    "QQQON/USDT": "Index", "SPYON/USDT": "Index",
+    # Replica RWA ("R" prefix)
+    "RAAPL/USDT": "Technology", "RMSFT/USDT": "Technology",
+    "RGOOGL/USDT": "Technology", "RAMZN/USDT": "Technology",
+    "RMETA/USDT": "Technology", "RNVDA/USDT": "Technology",
+    "RTSLA/USDT": "Consumer/EV", "RAMD/USDT": "Technology",
+    "RSPY/USDT": "Index", "RQQQ/USDT": "Index",
+    "RCOIN/USDT": "Crypto-Adjacent", "RHOOD/USDT": "Crypto-Adjacent",
+    "RARM/USDT": "Semiconductors", "RMRVL/USDT": "Semiconductors",
+    "RDELL/USDT": "Technology", "RINTC/USDT": "Semiconductors",
+    "RNOK/USDT": "Telecom", "RANET/USDT": "Networking",
 }
 
 
@@ -231,8 +237,14 @@ def format_stock_signal_line(symbol: str, price: float, change_pct: float,
     else:
         emoji = "\u26aa"      # Gray (flat)
 
-    # Ticker without /USDT
-    ticker = symbol.replace("/USDT", "")
+    # Ticker without /USDT, clean up ON suffix and R prefix for display
+    raw_ticker = symbol.replace("/USDT", "")
+    if raw_ticker.endswith("ON"):
+        ticker = raw_ticker[:-2]  # AAPLON -> AAPL
+    elif raw_ticker.startswith("R") and len(raw_ticker) > 2:
+        ticker = raw_ticker[1:]   # RAAPL -> AAPL
+    else:
+        ticker = raw_ticker
     sector = get_stock_sector(symbol) or ""
     sector_tag = f" [{sector}]" if sector else ""
 

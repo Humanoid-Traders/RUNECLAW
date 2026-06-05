@@ -2220,12 +2220,28 @@ class TelegramHandler:
             await self._send(update, f"\U0001f534 <b>Exchange error:</b> {html.escape(str(exc)[:200])}")
             return
 
-        # Filter to stock symbols
+        # Filter to stock symbols — try exact match first, then fuzzy
         stock_set = set(US_STOCK_SYMBOLS)
         stock_signals = []
-        for symbol in stock_set:
-            tick = tickers.get(symbol)
-            if not tick:
+
+        # Also detect any symbol with stock-like naming (ON suffix or R prefix)
+        stock_name_patterns = {
+            "AAPL", "MSFT", "GOOGL", "AMZN", "META", "NVDA", "TSLA",
+            "AMD", "QQQ", "SPY", "COIN", "HOOD", "ARM", "MRVL",
+            "DELL", "INTC", "NOK", "ANET", "NFLX", "CRM",
+        }
+        for sym, tick in tickers.items():
+            if not sym.endswith("/USDT"):
+                continue
+            # Check exact match or pattern match
+            is_stock = sym in stock_set
+            if not is_stock:
+                base = sym.replace("/USDT", "")
+                for pat in stock_name_patterns:
+                    if pat in base.upper():
+                        is_stock = True
+                        break
+            if not is_stock:
                 continue
             try:
                 price = float(tick.get("last", 0) or 0)
@@ -2234,7 +2250,7 @@ class TelegramHandler:
                 if price <= 0:
                     continue
                 stock_signals.append({
-                    "symbol": symbol,
+                    "symbol": sym,
                     "price": price,
                     "change_pct": round(change, 2),
                     "volume": round(volume, 2),

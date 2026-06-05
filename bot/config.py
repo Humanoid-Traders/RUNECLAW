@@ -87,19 +87,28 @@ SOLANA_ECOSYSTEM_SYMBOLS: list[str] = [
 
 
 # US Stock tokenized perpetual contracts on Bitget.
-# These are tokenized derivatives that track US equity prices 24/7,
-# but liquidity and spread conditions follow US market hours.
+# Bitget uses two formats for tokenized equities:
+#   - "ON" suffix: AAPLON/USDT (primary tokenized derivatives)
+#   - "R" prefix: RAAPL/USDT (replica/RWA tokens)
+# These track US equity prices, tradeable 24/7 on spot market.
 # Track 3: US Stock AI Trading capability.
 US_STOCK_SYMBOLS: list[str] = [
-    # Mega-cap tech
-    "AAPL/USDT", "MSFT/USDT", "GOOGL/USDT", "AMZN/USDT", "META/USDT",
-    "NVDA/USDT", "TSLA/USDT", "AMD/USDT", "NFLX/USDT", "CRM/USDT",
-    # Financials & industrials
-    "JPM/USDT", "GS/USDT", "V/USDT", "MA/USDT",
-    # Crypto-adjacent equities
-    "COIN/USDT", "MSTR/USDT", "MARA/USDT", "RIOT/USDT",
-    # ETFs (if listed as tokenized perps)
-    "SPY/USDT", "QQQ/USDT",
+    # Primary tokenized ("ON" suffix) — higher liquidity
+    "AAPLON/USDT", "MSFTON/USDT", "GOOGLON/USDT", "AMZNON/USDT",
+    "METAON/USDT", "NVDAON/USDT", "TSLAON/USDT", "AMDON/USDT",
+    "QQQON/USDT", "SPYON/USDT",
+    # Replica RWA tokens ("R" prefix) — broader coverage
+    "RAAPL/USDT", "RMSFT/USDT", "RGOOGL/USDT", "RAMZN/USDT",
+    "RMETA/USDT", "RNVDA/USDT", "RTSLA/USDT", "RAMD/USDT",
+    "RSPY/USDT", "RQQQ/USDT",
+    "RCOIN/USDT",  # Coinbase — crypto-adjacent
+    "RHOOD/USDT",  # Robinhood — crypto-adjacent
+    "RARM/USDT",   # ARM Holdings
+    "RMRVL/USDT",  # Marvell
+    "RDELL/USDT",  # Dell
+    "RINTC/USDT",  # Intel
+    "RNOK/USDT",   # Nokia
+    "RANET/USDT",  # Arista Networks
 ]
 
 # US stock market hours (Eastern Time / UTC-4 during EDT)
