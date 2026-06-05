@@ -3,11 +3,11 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta name="description" content="RUNECLAW — AI-powered crypto trading command core with 21-check risk engine, 9-state FSM, and Telegram integration. Built for Bitget AI Base Camp · Hackathon S1.">
+<meta name="description" content="RUNECLAW — AI-powered crypto trading command core with 23-check risk engine, 9-state FSM, and Telegram integration. Built for Bitget AI Base Camp · Hackathon S1.">
 <meta name="keywords" content="RUNECLAW, AI trading, crypto trading bot, Bitget, risk engine, paper trading, Telegram bot, hackathon">
 <meta name="author" content="Humanoid Traders">
 <meta property="og:title" content="RUNECLAW — AI Trading Command Core">
-<meta property="og:description" content="Institutional-grade AI trading assistant with 21 fail-closed risk checks, 9-state FSM, and human-in-the-loop confirmation. Simulation-first.">
+<meta property="og:description" content="Institutional-grade AI trading assistant with 23 fail-closed risk checks, 9-state FSM, and human-in-the-loop confirmation. Simulation-first.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://lgl3crf9.mule.page/">
 <meta property="og:image" content="https://lgl3crf9.mule.page/og_image_1200x630.jpg">
@@ -15,7 +15,7 @@
 <meta property="og:image:height" content="630">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="RUNECLAW — AI Trading Command Core">
-<meta name="twitter:description" content="AI trading assistant with 21 fail-closed risk checks. Built for Bitget AI Base Camp · Hackathon S1 by Humanoid Traders.">
+<meta name="twitter:description" content="AI trading assistant with 23 fail-closed risk checks. Built for Bitget AI Base Camp · Hackathon S1 by Humanoid Traders.">
 <meta name="twitter:image" content="https://lgl3crf9.mule.page/og_image_1200x630.jpg">
 <link rel="icon" type="image/png" sizes="256x256" href="app_icon_256.png">
 <link rel="icon" type="image/png" sizes="512x512" href="app_icon_512.png">
@@ -2309,7 +2309,7 @@ footer {
     <div class="pipe-stage risk-gate">
       <span class="pipe-icon">&#128737;</span>
       <div class="pipe-name">Risk Gate</div>
-      <div class="pipe-desc">21 fail-closed checks, circuit breaker</div>
+      <div class="pipe-desc">23 fail-closed checks, circuit breaker</div>
     </div>
     <div class="pipe-stage">
       <span class="pipe-icon">&#9995;</span>
@@ -3310,13 +3310,14 @@ window.addEventListener('scroll', () => {
   });
 }, { passive: true });
 
-// ═══ RISK ENGINE DEEP DIVE — render 21 checks ═══
+// ═══ RISK ENGINE DEEP DIVE — render 23 checks ═══
 (function() {
   const riskChecks = [
     'Position Size','Daily Loss','Drawdown','Max Positions','Risk-Reward',
     'Confidence','Correlation','Loss Streak','Entry Price','Stop-Loss Req',
     'Stale Data','Cooldown','Portfolio Exp','Symbol Exposure','Volatility Guard','Circuit Breaker',
-    'Liquidity Guard','Macro Event','MTF Alignment','Concentration PCA','Portfolio VaR'
+    'Liquidity Guard','Macro Event','MTF Alignment','Concentration PCA','Portfolio VaR',
+    'Taker 3-Bar Gate','Bid Dominance'
   ];
   const failIndex = 14; // Volatility Guard fails
   const grid = document.getElementById('riskDeepGrid');
