@@ -1,7 +1,7 @@
 """
 RUNECLAW Risk Engine -- FAIL-CLOSED pre-trade gatekeeper.
 
-21 independent pre-trade checks. ANY failure = REJECTED. No overrides.
+23 independent pre-trade checks. ANY failure = REJECTED. No overrides.
 Design: if a check cannot be evaluated, the trade is REJECTED (fail-closed).
 
 Note: Check #17 (liquidity guard) lives in engine.py via OrderFlowAnalyzer,
@@ -29,6 +29,8 @@ Checks:
   19. Multi-timeframe trend alignment (MTF_ALIGNMENT)
   20. Portfolio concentration via PCA on correlation matrix (CONCENTRATION_PCA)
   21. Portfolio VaR — parametric Value at Risk (PORTFOLIO_VAR)
+  22. Taker 3-bar gate (Gate 2) — 3 consecutive bars confirming direction
+  23. Bid dominance gate (Rule 20) — bid:ask >= 2:1 for LONG entries
 """
 
 from __future__ import annotations
@@ -104,7 +106,7 @@ class RiskEngine:
     """
     Pre-trade and post-trade risk checks.
     Design principle: if ANY check cannot be evaluated, the trade is REJECTED.
-    21 independent checks -- all must pass (20 in-engine + #17 liquidity in engine.py via OrderFlowAnalyzer).
+    23 independent checks -- all must pass (20 in-engine + #17 liquidity in engine.py via OrderFlowAnalyzer + #22 taker 3-bar + #23 bid dominance).
 
     Threading model: RUNECLAW runs on a single-threaded asyncio event loop.
     The RLock exists as a defensive measure but does NOT guarantee correctness
@@ -117,7 +119,8 @@ class RiskEngine:
 
     def __init__(self, portfolio: "PortfolioTracker", state_file: Optional[str] = None,
                  macro_calendar: Optional["MacroCalendar"] = None,
-                 macro_provider: Optional[Any] = None) -> None:  # noqa: F821
+                 macro_provider: Optional[Any] = None,
+                 order_flow_analyzer: Optional[Any] = None) -> None:  # noqa: F821
         self._portfolio = portfolio
         self._circuit_open = False
         self._consecutive_losses = 0
@@ -130,11 +133,14 @@ class RiskEngine:
         self._state_file = state_file or _STATE_FILE
         self._macro_calendar = macro_calendar
         self._macro_provider = macro_provider  # v2: enhanced macro-event provider
+        self._order_flow = order_flow_analyzer  # Gate 2 + Rule 20
         # Regime-aware risk (Feature #3)
         self._current_regime: str = "UNKNOWN"
         self._current_vol_state: str = "NORMAL"
         # v2: macro size multiplier from last evaluation
         self._last_macro_size_multiplier: float = 1.0
+        # Last order flow signal for gate checks
+        self._last_of_signal: Optional[Any] = None
         # F-01: reload persisted safety state so restarts don't clear the breaker
         self._load_state()
 
@@ -150,6 +156,14 @@ class RiskEngine:
     def rejection_history(self) -> list[dict]:
         """Recent risk rejections for audit/display."""
         return list(self._rejection_history)
+
+    def set_order_flow_signal(self, signal) -> None:
+        """Cache the latest OrderFlowSignal for Gate 2 / Rule 20 checks."""
+        self._last_of_signal = signal
+
+    def set_order_flow_analyzer(self, analyzer) -> None:
+        """Set the order flow analyzer for Gate 2 / Rule 20."""
+        self._order_flow = analyzer
 
     @property
     def stats(self) -> dict:
@@ -180,7 +194,7 @@ class RiskEngine:
 
     def evaluate(self, idea: TradeIdea, atr: Optional[float] = None) -> RiskCheck:
         """
-        Run all 21 pre-trade checks (16 in-engine + #17 liquidity + #18 macro + #19 MTF alignment + #20 concentration PCA + #21 portfolio VaR).
+        Run all 23 pre-trade checks (16 in-engine + #17 liquidity + #18 macro + #19 MTF + #20 PCA + #21 VaR + #22 taker 3-bar + #23 bid dominance).
         Returns RiskCheck with APPROVED or REJECTED.
         Pass atr= for volatility guard check.
         """
@@ -502,6 +516,34 @@ class RiskEngine:
                 passed.append(f"PORTFOLIO_VAR: {proposed_var:.2f}% <= {max_var}% limit")
         except Exception as exc:
             failed.append(f"PORTFOLIO_VAR: evaluation error ({exc})")
+
+        # 22. Taker 3-bar gate (Gate 2) — fail-open if no order flow analyzer
+        try:
+            if self._order_flow is not None:
+                direction_str = idea.direction.value if hasattr(idea.direction, 'value') else str(idea.direction)
+                gate2 = self._order_flow.check_taker_3bar_gate(idea.asset, direction_str)
+                if gate2["passed"]:
+                    passed.append(f"TAKER_3BAR: {gate2['reason']}")
+                else:
+                    failed.append(f"TAKER_3BAR: {gate2['reason']}")
+            else:
+                passed.append("TAKER_3BAR: skipped (no order flow analyzer)")
+        except Exception as exc:
+            failed.append(f"TAKER_3BAR: evaluation error ({exc})")
+
+        # 23. Bid dominance gate (Rule 20) — bid:ask >= 2:1 for LONG
+        try:
+            if self._order_flow is not None and self._last_of_signal is not None:
+                direction_str = idea.direction.value if hasattr(idea.direction, 'value') else str(idea.direction)
+                gate20 = self._order_flow.check_bid_dominance(self._last_of_signal, direction_str)
+                if gate20["passed"]:
+                    passed.append(f"BID_DOMINANCE: {gate20['reason']}")
+                else:
+                    failed.append(f"BID_DOMINANCE: {gate20['reason']}")
+            else:
+                passed.append("BID_DOMINANCE: skipped (no order flow data)")
+        except Exception as exc:
+            failed.append(f"BID_DOMINANCE: evaluation error ({exc})")
 
         # -- Verdict --
         verdict = RiskVerdict.APPROVED if len(failed) == 0 else RiskVerdict.REJECTED

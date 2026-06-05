@@ -1246,6 +1246,49 @@ class Analyzer:
         opt_snap["savings"]["total_estimated_tokens_saved"] = total_tokens
         return opt_snap
 
+    # -- E8: VWAP Resilience Ranker --
+
+    @staticmethod
+    def rank_vwap_resilience(results: list[dict], direction: str = "long") -> list[dict]:
+        """E8: Rank symbols by VWAP resilience score.
+
+        resilience_score = (price - VWAP) / VWAP * 100
+
+        For LONG candidates: sort descending (closest to/above VWAP = first to flip)
+        For SHORT candidates: sort ascending (most below VWAP = most damaged)
+
+        Args:
+            results: list of dicts with at least {symbol, price, vwap}
+            direction: "long" or "short"
+
+        Returns:
+            Ranked list of dicts with: symbol, price, vwap, vwap_gap_pct, rank
+        """
+        ranked = []
+        for r in results:
+            price = r.get("price", 0)
+            vwap = r.get("vwap", 0)
+            symbol = r.get("symbol", "???")
+            if not vwap or vwap <= 0 or not price or price <= 0:
+                continue
+            gap_pct = (price - vwap) / vwap * 100
+            ranked.append({
+                "symbol": symbol,
+                "price": round(price, 6),
+                "vwap": round(vwap, 6),
+                "vwap_gap_pct": round(gap_pct, 2),
+                "book_bias": r.get("book_imbalance", 0),
+                "rsi": r.get("rsi", None),
+            })
+
+        reverse = direction.lower() == "long"  # descending for longs
+        ranked.sort(key=lambda x: x["vwap_gap_pct"], reverse=reverse)
+
+        for i, item in enumerate(ranked):
+            item["rank"] = i + 1
+
+        return ranked
+
     @staticmethod
     def _build_prompt(signal: MarketSignal, indicators: dict, order_flow=None) -> str:
         """Build a compressed prompt for LLM analysis.

@@ -137,6 +137,8 @@ class ProactiveMonitor:
         alerts.extend(self._check_state_changes())
         alerts.extend(self._check_trade_signals())
         alerts.extend(self._check_sl_tp_proximity())
+        alerts.extend(self._check_time_stops())
+        alerts.extend(self._check_scale_out())
         return alerts
 
     def _check_circuit_breaker(self) -> list[Alert]:
@@ -504,3 +506,175 @@ class ProactiveMonitor:
                 logger.debug("Failed to send alert to %s: %s", chat_id, exc)
 
         await asyncio.gather(*[_send_to_chat(cid) for cid in list(self._enabled_chats)])
+
+    # ── Time Stops (Rules 6/17) ──────────────────────────────────
+
+    def _check_time_stops(self) -> list[Alert]:
+        """Alert when positions exceed time limits without profit."""
+        alerts = []
+        if not CONFIG.time_stop.enabled:
+            return alerts
+
+        try:
+            all_positions = []
+            if self.engine.user_portfolios.all_portfolios():
+                for uid in self.engine.user_portfolios.all_portfolios():
+                    portfolio = self.engine.user_portfolios.get(uid)
+                    all_positions.extend(portfolio.open_positions)
+            else:
+                all_positions.extend(self.engine.portfolio.open_positions)
+
+            if not all_positions:
+                return alerts
+
+            now = datetime.now(UTC)
+            cfg = CONFIG.time_stop
+
+            # Get current prices
+            ws_prices = {}
+            if self.engine.ws_feed.is_connected():
+                ws_prices = self.engine.ws_feed.get_prices() or {}
+
+            for pos in all_positions:
+                opened_at = getattr(pos, 'opened_at', None)
+                if not opened_at:
+                    continue
+
+                # Calculate age in hours
+                age_hours = (now - opened_at).total_seconds() / 3600.0
+
+                # Determine trade type from SL distance: tight SL = intraday, wide = swing
+                # Heuristic: if SL distance < 2% = intraday, else swing
+                sl_pct = abs(pos.entry_price - pos.stop_loss) / pos.entry_price if pos.entry_price > 0 and pos.stop_loss > 0 else 0
+                is_intraday = sl_pct < 0.02
+                warn_hours = cfg.intraday_warn_hours if is_intraday else cfg.swing_warn_hours
+                close_hours = cfg.intraday_close_hours if is_intraday else cfg.swing_close_hours
+                trade_type = "intraday" if is_intraday else "swing"
+
+                # Check if position is in profit
+                current_price = ws_prices.get(pos.asset) or 0
+                if current_price <= 0:
+                    continue
+                if pos.direction.value == "LONG":
+                    in_profit = current_price > pos.entry_price
+                else:
+                    in_profit = current_price < pos.entry_price
+
+                if in_profit:
+                    continue  # Time stops only apply to positions NOT in profit
+
+                base = pos.asset.split('/')[0] if '/' in pos.asset else pos.asset
+
+                # Force close check
+                if age_hours >= close_hours:
+                    key = f"time_close_{pos.trade_id}"
+                    alerts.append(Alert(
+                        alert_type="TIME_STOP_CLOSE",
+                        severity="CRITICAL",
+                        title=f"Time Stop: {pos.asset}",
+                        body=(
+                            f"\u23f0 <b>TIME STOP — {pos.asset}</b>\n"
+                            "────────────────\n"
+                            f"- Type: <code>{trade_type}</code>\n"
+                            f"- Open: <code>{age_hours:.1f}h</code> (limit: {close_hours:.0f}h)\n"
+                            f"- Entry: <code>${pos.entry_price:,.4f}</code>\n"
+                            f"- Current: <code>${current_price:,.4f}</code>\n"
+                            f"- Status: <b>NOT in profit — AUTO-CLOSE recommended</b>\n"
+                            "────────────────\n"
+                            f"\U0001f449 /close {base} — close position manually\n"
+                            "\U0001f449 /positions — review all open trades"
+                        ),
+                        dedup_key=key,
+                    ))
+                # Warning check
+                elif age_hours >= warn_hours:
+                    key = f"time_warn_{pos.trade_id}"
+                    remaining = close_hours - age_hours
+                    alerts.append(Alert(
+                        alert_type="TIME_STOP_WARN",
+                        severity="WARNING",
+                        title=f"Time Warning: {pos.asset}",
+                        body=(
+                            f"\u23f3 <b>TIME WARNING — {pos.asset}</b>\n"
+                            "────────────────\n"
+                            f"- Type: <code>{trade_type}</code>\n"
+                            f"- Open: <code>{age_hours:.1f}h</code>\n"
+                            f"- Auto-close in: <code>{remaining:.1f}h</code>\n"
+                            f"- Entry: <code>${pos.entry_price:,.4f}</code>\n"
+                            f"- Current: <code>${current_price:,.4f}</code>\n"
+                            f"- Status: NOT in profit\n"
+                            "────────────────\n"
+                            f"Position will be flagged for close at {close_hours:.0f}h if not profitable."
+                        ),
+                        dedup_key=key,
+                    ))
+        except Exception as exc:
+            logger.debug("_check_time_stops error: %s", exc)
+        return alerts
+
+    # ── Scale-Out Ladder (Rule 9) ────────────────────────────────
+
+    def _check_scale_out(self) -> list[Alert]:
+        """Check scale-out ladder levels for open positions."""
+        alerts = []
+        if not CONFIG.scale_out.enabled:
+            return alerts
+
+        try:
+            scale_out = getattr(self.engine, 'scale_out', None)
+            if scale_out is None:
+                return alerts
+
+            all_positions = []
+            if self.engine.user_portfolios.all_portfolios():
+                for uid in self.engine.user_portfolios.all_portfolios():
+                    portfolio = self.engine.user_portfolios.get(uid)
+                    all_positions.extend(portfolio.open_positions)
+            else:
+                all_positions.extend(self.engine.portfolio.open_positions)
+
+            if not all_positions:
+                return alerts
+
+            ws_prices = {}
+            if self.engine.ws_feed.is_connected():
+                ws_prices = self.engine.ws_feed.get_prices() or {}
+
+            for pos in all_positions:
+                current_price = ws_prices.get(pos.asset) or 0
+                if current_price <= 0:
+                    continue
+
+                # Get ATR if available
+                atr = 0.0
+                if hasattr(self.engine, '_last_scan_signals'):
+                    for sig in self.engine._last_scan_signals:
+                        if sig.symbol == pos.asset:
+                            atr = getattr(sig, 'atr', 0.0) or 0.0
+                            break
+
+                actions = scale_out.check(pos.trade_id, current_price, atr)
+                for action in actions:
+                    if action.action_type == "partial_close":
+                        key = f"scaleout_{pos.trade_id}_t{action.tranche_id}"
+                        base = pos.asset.split('/')[0] if '/' in pos.asset else pos.asset
+                        alerts.append(Alert(
+                            alert_type="SCALE_OUT",
+                            severity="INFO",
+                            title=f"Scale-Out: {pos.asset} T{action.tranche_id}",
+                            body=(
+                                f"\U0001f4b0 <b>SCALE-OUT — {pos.asset}</b>\n"
+                                "────────────────\n"
+                                f"- Tranche: <code>T{action.tranche_id}</code>\n"
+                                f"- Close: <code>{action.close_pct:.0%}</code> of position\n"
+                                f"- Trigger: <code>${action.trigger_price:,.4f}</code>\n"
+                                f"- Reason: {action.reason}\n"
+                                "────────────────\n"
+                                f"\U0001f449 /positions — review position\n"
+                                f"\U0001f449 /close {base} — manual close"
+                            ),
+                            dedup_key=key,
+                        ))
+        except Exception as exc:
+            logger.debug("_check_scale_out error: %s", exc)
+        return alerts

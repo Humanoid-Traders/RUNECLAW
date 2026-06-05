@@ -148,6 +148,8 @@ class OrderFlowAnalyzer:
         self._cvd_history: dict[str, deque] = {}   # symbol -> deque[float] per-call deltas
         self._price_history: dict[str, deque] = {}  # symbol -> deque[float] mid prices (for divergence)
         self._oi_history: dict[str, float] = {}     # symbol -> last open_interest_usd
+        # Gate 2: Taker 3-bar ratios (buy_vol/sell_vol per bar)
+        self._taker_bar_ratios: dict[str, deque] = {}  # symbol -> deque[float] recent bar ratios
 
     # -- Public API --
 
@@ -298,6 +300,13 @@ class OrderFlowAnalyzer:
         sig.sell_volume_usd = round(sell_usd, 2)
         sig.aggressor_ratio = round(buy_usd / total, 4) if total > 0 else 0.5
         sig.cvd_window_usd = round(delta, 2)
+
+        # Gate 2: track taker bar ratio (buy/sell) for 3-bar rule
+        bar_ratio = (buy_usd / sell_usd) if sell_usd > 0 else (2.0 if buy_usd > 0 else 1.0)
+        with self._lock:
+            ratios = self._taker_bar_ratios.setdefault(
+                symbol, deque(maxlen=10))
+            ratios.append(round(bar_ratio, 4))
 
         # Rolling CVD + trend across calls
         with self._lock:
@@ -562,6 +571,100 @@ class OrderFlowAnalyzer:
                     f"${effective_threshold:,.0f} (position=${position_size_usd:,.0f})")
         return None
 
+    # -- Gate 2: Taker 3-Bar Rule --
+
+    def check_taker_3bar_gate(self, symbol: str, direction: str) -> dict:
+        """Gate 2: Require 3 consecutive taker bars confirming direction.
+
+        For LONG: 3 consecutive bars where buy_vol > sell_vol (ratio > 1.0)
+        For SHORT: 3 consecutive bars where sell_vol > buy_vol (ratio < 1.0)
+
+        Returns dict with: passed, direction, ratios, streak_count, reason.
+        """
+        with self._lock:
+            ratios_deque = self._taker_bar_ratios.get(symbol)
+            if not ratios_deque or len(ratios_deque) < 3:
+                return {
+                    "passed": False,
+                    "direction": direction,
+                    "ratios": list(ratios_deque) if ratios_deque else [],
+                    "streak_count": 0,
+                    "reason": f"insufficient taker data ({len(ratios_deque) if ratios_deque else 0}/3 bars)",
+                }
+            ratios = list(ratios_deque)
+
+        last_3 = ratios[-3:]
+        dir_upper = direction.upper()
+
+        if dir_upper == "LONG":
+            streak = sum(1 for r in reversed(ratios) if r > 1.0)
+            # Count from the end until broken
+            actual_streak = 0
+            for r in reversed(ratios):
+                if r > 1.0:
+                    actual_streak += 1
+                else:
+                    break
+            confirmed = all(r > 1.0 for r in last_3)
+        else:  # SHORT
+            actual_streak = 0
+            for r in reversed(ratios):
+                if r < 1.0:
+                    actual_streak += 1
+                else:
+                    break
+            confirmed = all(r < 1.0 for r in last_3)
+
+        return {
+            "passed": confirmed,
+            "direction": dir_upper,
+            "ratios": [round(r, 3) for r in last_3],
+            "streak_count": actual_streak,
+            "reason": "3-bar taker gate confirmed" if confirmed else (
+                f"taker flow not aligned: last 3 ratios {[round(r, 3) for r in last_3]}"
+            ),
+        }
+
+    # -- Rule 20: Bid Dominance Gate --
+
+    def check_bid_dominance(self, sig: OrderFlowSignal, direction: str) -> dict:
+        """Rule 20: Require bid:ask depth ratio >= 2:1 for LONG entries.
+
+        SHORT entries are not subject to this gate.
+        Returns dict with: passed, bid_ask_ratio, required_ratio, reason.
+        """
+        dir_upper = direction.upper()
+        if dir_upper != "LONG":
+            return {
+                "passed": True,
+                "bid_ask_ratio": None,
+                "required_ratio": None,
+                "reason": "bid dominance gate only applies to LONG entries",
+            }
+
+        if "book" not in sig.components_ok:
+            return {
+                "passed": False,
+                "bid_ask_ratio": None,
+                "required_ratio": 2.0,
+                "reason": "order book data unavailable (fail-closed)",
+            }
+
+        bid_ask_ratio = (sig.bid_depth_usd / sig.ask_depth_usd) if sig.ask_depth_usd > 0 else 0.0
+        required = 2.0
+        passed = bid_ask_ratio >= required
+
+        return {
+            "passed": passed,
+            "bid_ask_ratio": round(bid_ask_ratio, 2),
+            "required_ratio": required,
+            "reason": (
+                f"bid dominance {bid_ask_ratio:.2f}:1 confirmed"
+                if passed else
+                f"bid:ask ratio {bid_ask_ratio:.2f}:1 < {required:.1f}:1 required"
+            ),
+        }
+
     # -- Internals --
 
     @staticmethod
@@ -587,3 +690,6 @@ class OrderFlowAnalyzer:
             if len(self._oi_history) > self.config.max_tracked_symbols:
                 for k in list(self._oi_history)[:-self.config.max_tracked_symbols]:
                     del self._oi_history[k]
+            if len(self._taker_bar_ratios) > self.config.max_tracked_symbols:
+                for k in list(self._taker_bar_ratios)[:-self.config.max_tracked_symbols]:
+                    del self._taker_bar_ratios[k]
