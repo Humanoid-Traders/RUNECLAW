@@ -86,6 +86,32 @@ SOLANA_ECOSYSTEM_SYMBOLS: list[str] = [
 ]
 
 
+# US Stock tokenized perpetual contracts on Bitget.
+# These are tokenized derivatives that track US equity prices 24/7,
+# but liquidity and spread conditions follow US market hours.
+# Track 3: US Stock AI Trading capability.
+US_STOCK_SYMBOLS: list[str] = [
+    # Mega-cap tech
+    "AAPL/USDT", "MSFT/USDT", "GOOGL/USDT", "AMZN/USDT", "META/USDT",
+    "NVDA/USDT", "TSLA/USDT", "AMD/USDT", "NFLX/USDT", "CRM/USDT",
+    # Financials & industrials
+    "JPM/USDT", "GS/USDT", "V/USDT", "MA/USDT",
+    # Crypto-adjacent equities
+    "COIN/USDT", "MSTR/USDT", "MARA/USDT", "RIOT/USDT",
+    # ETFs (if listed as tokenized perps)
+    "SPY/USDT", "QQQ/USDT",
+]
+
+# US stock market hours (Eastern Time / UTC-4 during EDT)
+# Regular session: 09:30-16:00 ET
+# Pre-market: 04:00-09:30 ET
+# After-hours: 16:00-20:00 ET
+US_MARKET_OPEN_HOUR_UTC = 13   # 09:00 ET in UTC (pre-market starts)
+US_MARKET_CLOSE_HOUR_UTC = 21  # 17:00 ET in UTC (after-hours end)
+US_REGULAR_OPEN_HOUR_UTC = 13  # 09:30 ET = 13:30 UTC
+US_REGULAR_CLOSE_HOUR_UTC = 20  # 16:00 ET = 20:00 UTC
+
+
 @dataclass(frozen=True)
 class TelegramConfig:
     """Telegram bot settings."""
@@ -188,6 +214,34 @@ class TimeStopConfig:
 
 
 @dataclass(frozen=True)
+class StockTradingConfig:
+    """US Stock tokenized trading parameters.
+
+    Stocks have different characteristics than crypto:
+    - Lower volatility (ATR typically 1-3% vs crypto's 3-10%)
+    - Market-hours liquidity concentration
+    - Earnings/macro event sensitivity
+    - Correlation to indices (SPY/QQQ)
+    """
+    enabled: bool = _env_bool("STOCK_TRADING_ENABLED", True)
+    # Risk parameters tuned for stock volatility
+    volatility_guard_atr_pct: float = _env_float("STOCK_VOL_GUARD_ATR_PCT", 4.0)
+    min_risk_reward: float = _env_float("STOCK_MIN_RR", 1.5)
+    max_position_pct: float = _env_float("STOCK_MAX_POS_PCT", 3.0)
+    max_symbol_exposure_pct: float = _env_float("STOCK_MAX_SYMBOL_EXP_PCT", 15.0)
+    # SL/TP multipliers (tighter for stocks)
+    sl_atr_mult: float = _env_float("STOCK_SL_ATR_MULT", 2.0)
+    tp_atr_mult: float = _env_float("STOCK_TP_ATR_MULT", 3.0)
+    # Market hours: reduce size or block outside regular hours
+    block_outside_hours: bool = _env_bool("STOCK_BLOCK_OUTSIDE_HOURS", False)
+    reduce_size_outside_hours: float = _env_float("STOCK_REDUCE_OFF_HOURS", 0.5)  # 50% size
+    # Earnings lockout: hours before/after earnings to avoid
+    earnings_lockout_hours: float = _env_float("STOCK_EARNINGS_LOCKOUT_H", 4.0)
+    # Max correlated stock positions (e.g., don't hold 5 tech stocks)
+    max_sector_positions: int = int(_env_float("STOCK_MAX_SECTOR_POS", 2))
+
+
+@dataclass(frozen=True)
 class AppConfig:
     """Top-level application configuration."""
 
@@ -213,6 +267,7 @@ class AppConfig:
     scale_out: ScaleOutConfig = field(default_factory=ScaleOutConfig)
     two_tranche: TwoTrancheConfig = field(default_factory=TwoTrancheConfig)
     time_stop: TimeStopConfig = field(default_factory=TimeStopConfig)
+    stocks: StockTradingConfig = field(default_factory=StockTradingConfig)
 
     def is_live(self) -> bool:
         """Live trading requires BOTH flags AND a Telegram chat allow-list.
@@ -283,7 +338,7 @@ class RuntimeState:
 
     @asset_universe.setter
     def asset_universe(self, value: str) -> None:
-        if value not in ("all", "solana"):
+        if value not in ("all", "solana", "stocks", "hybrid"):
             raise ValueError(f"Invalid asset universe: {value!r}")
         with self._lock:
             self._asset_universe = value

@@ -99,6 +99,17 @@ _CORRELATION_GROUPS: dict[str, str] = {
     "RNDR/USDT": "AI", "AGIX/USDT": "AI",
     # Exchange tokens
     "BNB/USDT": "CEX", "CRO/USDT": "CEX", "OKB/USDT": "CEX",
+    # US Stock tokenized (Track 3) — grouped by sector
+    "AAPL/USDT": "STOCK_TECH", "MSFT/USDT": "STOCK_TECH",
+    "GOOGL/USDT": "STOCK_TECH", "AMZN/USDT": "STOCK_TECH",
+    "META/USDT": "STOCK_TECH", "NVDA/USDT": "STOCK_TECH",
+    "AMD/USDT": "STOCK_TECH", "NFLX/USDT": "STOCK_TECH",
+    "CRM/USDT": "STOCK_TECH", "TSLA/USDT": "STOCK_TECH",
+    "JPM/USDT": "STOCK_FIN", "GS/USDT": "STOCK_FIN",
+    "V/USDT": "STOCK_FIN", "MA/USDT": "STOCK_FIN",
+    "COIN/USDT": "STOCK_CRYPTO", "MSTR/USDT": "STOCK_CRYPTO",
+    "MARA/USDT": "STOCK_CRYPTO", "RIOT/USDT": "STOCK_CRYPTO",
+    "SPY/USDT": "STOCK_INDEX", "QQQ/USDT": "STOCK_INDEX",
 }
 
 

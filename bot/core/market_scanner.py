@@ -13,7 +13,7 @@ from typing import Optional
 
 import ccxt.async_support as ccxt
 
-from bot.config import CONFIG, SOLANA_ECOSYSTEM_SYMBOLS
+from bot.config import CONFIG, SOLANA_ECOSYSTEM_SYMBOLS, US_STOCK_SYMBOLS
 from bot.utils.logger import audit, system_log
 from bot.utils.models import MarketSignal
 
@@ -81,12 +81,27 @@ class MarketScanner:
 
         # If Solana ecosystem mode, boost Solana tokens to top of results
         from bot.config import RUNTIME
-        if RUNTIME.asset_universe == "solana":
+        universe = RUNTIME.asset_universe
+        if universe == "solana":
             solana_set = set(SOLANA_ECOSYSTEM_SYMBOLS)
             solana_signals = [s for s in signals if s.symbol in solana_set]
             other_signals = [s for s in signals if s.symbol not in solana_set]
             # Solana ecosystem first, then fill remaining slots with other assets
             top = (solana_signals + other_signals)[: CONFIG.top_movers_count]
+        elif universe == "stocks":
+            # Stock-only mode: filter to US stock tokenized symbols
+            stock_set = set(US_STOCK_SYMBOLS)
+            stock_signals = [s for s in signals if s.symbol in stock_set]
+            stock_signals.sort(key=lambda s: abs(s.momentum_score), reverse=True)
+            top = stock_signals[: CONFIG.top_movers_count]
+        elif universe == "hybrid":
+            # Hybrid: show both crypto movers and stock movers
+            stock_set = set(US_STOCK_SYMBOLS)
+            stock_signals = [s for s in signals if s.symbol in stock_set]
+            crypto_signals = [s for s in signals if s.symbol not in stock_set]
+            # Half slots for stocks, half for crypto
+            half = max(CONFIG.top_movers_count // 2, 5)
+            top = (stock_signals[:half] + crypto_signals[:half])[: CONFIG.top_movers_count]
         else:
             top = signals[: CONFIG.top_movers_count]
 

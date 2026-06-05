@@ -223,6 +223,7 @@ class TelegramHandler:
             # Deep scan & playbook
             ("playbook", self._cmd_playbook), ("deepscan", self._cmd_deepscan),
             ("fullscan", self._cmd_fullscan),
+            ("stockscan", self._cmd_stockscan),
             # Multi-user commands
             ("link", _cmd_link), ("unlink", _cmd_unlink), ("me", _cmd_me),
         ]:
@@ -1146,28 +1147,35 @@ class TelegramHandler:
     # ── Mode switching ────────────────────────────────────────
 
     async def _cmd_mode(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-        """Switch asset universe: /mode solana | /mode all"""
+        """Switch asset universe: /mode solana | /mode all | /mode stocks | /mode hybrid"""
         if not await self._guard(update, "mode"):
             return
 
         args = (update.message.text or "").split()
-        valid_modes = {"all", "solana"}
+        valid_modes = {"all", "solana", "stocks", "hybrid"}
 
         if len(args) < 2 or args[1].lower() not in valid_modes:
             from bot.config import RUNTIME
             current = RUNTIME.asset_universe
-            icon = "\u2600\ufe0f" if current == "solana" else "\U0001f30d"
+            icons = {"solana": "\u2600\ufe0f", "all": "\U0001f30d", "stocks": "\U0001f4c8", "hybrid": "\U0001f500"}
+            icon = icons.get(current, "\U0001f30d")
             lines = [
                 f"\U0001f504 <b>ASSET UNIVERSE</b>\n",
                 f"Current: {icon} <b>{current.upper()}</b>\n",
                 "Usage:",
-                "  <code>/mode solana</code> \u2014 15 Solana ecosystem tokens",
                 "  <code>/mode all</code> \u2014 all Bitget USDT pairs",
+                "  <code>/mode solana</code> \u2014 15 Solana ecosystem tokens",
+                "  <code>/mode stocks</code> \u2014 20 US stock tokenized perps",
+                "  <code>/mode hybrid</code> \u2014 crypto + stocks combined",
             ]
             if current == "solana":
                 from bot.config import SOLANA_ECOSYSTEM_SYMBOLS
                 tokens = ", ".join(s.replace("/USDT", "") for s in SOLANA_ECOSYSTEM_SYMBOLS)
                 lines.append(f"\nTokens: <i>{tokens}</i>")
+            elif current == "stocks":
+                from bot.config import US_STOCK_SYMBOLS
+                tickers = ", ".join(s.replace("/USDT", "") for s in US_STOCK_SYMBOLS)
+                lines.append(f"\nStocks: <i>{tickers}</i>")
             await self._send(update, "\n".join(lines))
             return
 
@@ -1183,15 +1191,42 @@ class TelegramHandler:
                 "\u2600\ufe0f <b>SOLANA MODE ACTIVE</b>\n\n"
                 f"Scanner now prioritizes {len(SOLANA_ECOSYSTEM_SYMBOLS)} Solana ecosystem tokens:\n"
                 f"<i>{tokens}</i>\n\n"
-                "All 21 risk checks still apply. Meme tokens (BONK, WIF) "
+                "All 23 risk checks still apply. Meme tokens (BONK, WIF) "
                 "use tighter volatility and correlation limits.\n\n"
+                "Use <code>/mode all</code> to switch back."
+            ))
+        elif new_mode == "stocks":
+            from bot.config import US_STOCK_SYMBOLS
+            from bot.core.stock_trading import get_market_session, format_stock_scan_header
+            session = get_market_session()
+            tickers = ", ".join(s.replace("/USDT", "") for s in US_STOCK_SYMBOLS)
+            await self._send(update, (
+                "\U0001f4c8 <b>US STOCK MODE ACTIVE</b>\n\n"
+                f"{format_stock_scan_header(session)}\n\n"
+                f"Scanner now targets {len(US_STOCK_SYMBOLS)} tokenized US stock perps:\n"
+                f"<i>{tickers}</i>\n\n"
+                "Stock-specific risk rules:\n"
+                f"\u2022 ATR guard: {CONFIG.stocks.volatility_guard_atr_pct}%\n"
+                f"\u2022 Min R:R: {CONFIG.stocks.min_risk_reward}\n"
+                f"\u2022 Max position: {CONFIG.stocks.max_position_pct}%\n"
+                f"\u2022 Off-hours size: {CONFIG.stocks.reduce_size_outside_hours:.0%}\n"
+                f"\u2022 Max sector positions: {CONFIG.stocks.max_sector_positions}\n\n"
+                "Use <code>/mode all</code> to switch back."
+            ))
+        elif new_mode == "hybrid":
+            await self._send(update, (
+                "\U0001f500 <b>HYBRID MODE ACTIVE</b>\n\n"
+                "Scanner shows both crypto movers and US stock tokenized perps.\n"
+                "Risk engine applies stock-specific rules to stock symbols "
+                "and crypto rules to crypto symbols automatically.\n\n"
                 "Use <code>/mode all</code> to switch back."
             ))
         else:
             await self._send(update, (
                 "\U0001f30d <b>ALL MARKETS MODE</b>\n\n"
                 "Scanner now covers all Bitget USDT pairs.\n"
-                "Use <code>/mode solana</code> to focus on Solana ecosystem."
+                "Use <code>/mode solana</code> for Solana or "
+                "<code>/mode stocks</code> for US stocks."
             ))
 
     # ── Live Trading Commands ─────────────────────────────────
@@ -2161,6 +2196,93 @@ class TelegramHandler:
         if not await self._guard(update, "scan"):
             return
         await _scan_skill_handler(update, ctx)
+
+    async def _cmd_stockscan(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """/stockscan — Scan US stock tokenized perpetuals."""
+        if not await self._guard(update, "scan"):
+            return
+
+        from bot.core.stock_trading import (
+            get_market_session, format_stock_scan_header,
+            format_stock_signal_line, is_stock_symbol, get_stock_risk_params,
+        )
+        from bot.config import US_STOCK_SYMBOLS
+
+        session = get_market_session()
+        await self._send(update,
+            f"\U0001f4c8 <i>Scanning US stock tokenized perps...</i>\n"
+            f"{format_stock_scan_header(session)}")
+
+        try:
+            exchange = await self.engine.get_exchange()
+            tickers = await exchange.fetch_tickers()
+        except Exception as exc:
+            await self._send(update, f"\U0001f534 <b>Exchange error:</b> {html.escape(str(exc)[:200])}")
+            return
+
+        # Filter to stock symbols
+        stock_set = set(US_STOCK_SYMBOLS)
+        stock_signals = []
+        for symbol in stock_set:
+            tick = tickers.get(symbol)
+            if not tick:
+                continue
+            try:
+                price = float(tick.get("last", 0) or 0)
+                change = float(tick.get("percentage", 0) or 0)
+                volume = float(tick.get("quoteVolume", 0) or 0)
+                if price <= 0:
+                    continue
+                stock_signals.append({
+                    "symbol": symbol,
+                    "price": price,
+                    "change_pct": round(change, 2),
+                    "volume": round(volume, 2),
+                })
+            except (TypeError, ValueError):
+                continue
+
+        if not stock_signals:
+            await self._send(update,
+                "\U0001f534 <b>No stock symbols found on exchange.</b>\n\n"
+                "Stock tokenized perps may not be available on this Bitget account.\n"
+                "Check if your account has access to tokenized equity derivatives.")
+            return
+
+        # Sort by absolute change
+        stock_signals.sort(key=lambda s: abs(s["change_pct"]), reverse=True)
+
+        # Build output
+        lines = [
+            f"\U0001f4c8 <b>US STOCK SCAN</b> \u2014 {len(stock_signals)} symbols  |  "
+            f"{datetime.now(UTC).strftime('%H:%M')} UTC\n",
+            format_stock_scan_header(session),
+            "",
+        ]
+
+        # Get risk params
+        risk_note = ""
+        if session.is_weekend:
+            risk_note = "\n\u26a0\ufe0f <i>Weekend: reduced liquidity, wider spreads</i>\n"
+        elif session.session_name in ("closed", "pre_market", "after_hours"):
+            risk_note = f"\n\u26a0\ufe0f <i>{session.session_name.replace('_', ' ').title()}: size reduced to {session.size_multiplier:.0%}</i>\n"
+        if risk_note:
+            lines.append(risk_note)
+
+        for sig in stock_signals[:15]:
+            line = format_stock_signal_line(
+                sig["symbol"], sig["price"], sig["change_pct"],
+            )
+            lines.append(line)
+
+        # Summary
+        gainers = sum(1 for s in stock_signals if s["change_pct"] > 0)
+        losers = sum(1 for s in stock_signals if s["change_pct"] < 0)
+        total_vol = sum(s["volume"] for s in stock_signals)
+        lines.append(f"\n\U0001f7e2 {gainers} up  \U0001f534 {losers} down  |  Vol: ${total_vol/1e6:.1f}M")
+        lines.append("\n<code>/mode stocks</code> to auto-scan stocks  |  <code>/mode hybrid</code> for both")
+
+        await self._send(update, "\n".join(lines))
 
     async def _cmd_learn(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._guard(update, "learn"):
