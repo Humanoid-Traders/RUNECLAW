@@ -3013,7 +3013,63 @@ Cost/trade: $0.0024 | ROI drag: 0.001%
       </div>
     </div>
   </div>
-</section>
+
+  <!-- AgentBench verified results -->
+  <div style="margin-top:48px;">
+    <div class="reveal" style="text-align:center;">
+      <h3 style="font-family:var(--font-display);font-size:22px;color:var(--ice);letter-spacing:0.06em;margin-bottom:8px;">AgentBench Verified Backtest</h3>
+      <p class="section-desc" style="margin:0 auto;font-size:14px;">Reproducible scorecard via <a href="https://github.com/zkasuran/bitget-agentbench" target="_blank" style="color:var(--blue-bright);text-decoration:none;">bitget-agentbench</a> &middot; Real Bitget candle data &middot; SHA256-verified &middot; Deterministic across all seeds</p>
+    </div>
+  </div>
+  <div style="display:grid; grid-template-columns: repeat(3, 1fr); gap: 20px; max-width: 960px; margin: 24px auto 0;">
+    <div class="perf-card reveal reveal-delay-1" style="padding:20px;">
+      <div class="perf-label" style="font-size:13px; margin-bottom:14px; text-align:center;">BTCUSDT &middot; 4H &middot; 930 bars</div>
+      <div style="text-align:center;">
+        <div style="color:var(--green-safe); font-family:var(--font-display); font-size:24px; margin-bottom:4px;">+0.79%</div>
+        <div style="color:var(--silver); font-size:11px; margin-bottom:12px;">Total Return</div>
+      </div>
+      <div style="font-family:var(--font-mono); font-size:11px; line-height:2; color:var(--bone);">
+        <div>Sharpe &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span style="color:var(--green-safe);">1.74</span></div>
+        <div>Profit Factor <span style="color:var(--green-safe);">9.40</span></div>
+        <div>Win Rate &nbsp;&nbsp;&nbsp;&nbsp;<span style="color:var(--bone);">40%</span></div>
+        <div>Max DD &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span style="color:var(--green-safe);">0.32%</span></div>
+        <div>Trades &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span style="color:var(--bone);">5</span></div>
+      </div>
+    </div>
+    <div class="perf-card reveal reveal-delay-2" style="padding:20px;">
+      <div class="perf-label" style="font-size:13px; margin-bottom:14px; text-align:center;">ETHUSDT &middot; 4H &middot; 929 bars</div>
+      <div style="text-align:center;">
+        <div style="color:var(--green-safe); font-family:var(--font-display); font-size:24px; margin-bottom:4px;">+1.38%</div>
+        <div style="color:var(--silver); font-size:11px; margin-bottom:12px;">Total Return</div>
+      </div>
+      <div style="font-family:var(--font-mono); font-size:11px; line-height:2; color:var(--bone);">
+        <div>Sharpe &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span style="color:var(--green-safe);">2.56</span></div>
+        <div>Profit Factor <span style="color:var(--green-safe);">&infin;</span></div>
+        <div>Win Rate &nbsp;&nbsp;&nbsp;&nbsp;<span style="color:var(--green-safe);">100%</span></div>
+        <div>Max DD &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span style="color:var(--green-safe);">0.39%</span></div>
+        <div>Trades &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span style="color:var(--bone);">3</span></div>
+      </div>
+    </div>
+    <div class="perf-card reveal reveal-delay-3" style="padding:20px;">
+      <div class="perf-label" style="font-size:13px; margin-bottom:14px; text-align:center;">SOLUSDT &middot; 4H &middot; 929 bars</div>
+      <div style="text-align:center;">
+        <div style="color:var(--bone); font-family:var(--font-display); font-size:24px; margin-bottom:4px;">-0.01%</div>
+        <div style="color:var(--silver); font-size:11px; margin-bottom:12px;">Total Return</div>
+      </div>
+      <div style="font-family:var(--font-mono); font-size:11px; line-height:2; color:var(--bone);">
+        <div>Sharpe &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span style="color:var(--bone);">-0.22</span></div>
+        <div>Profit Factor <span style="color:var(--bone);">0.92</span></div>
+        <div>Win Rate &nbsp;&nbsp;&nbsp;&nbsp;<span style="color:var(--bone);">25%</span></div>
+        <div>Max DD &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span style="color:var(--green-safe);">0.05%</span></div>
+        <div>Trades &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span style="color:var(--bone);">4</span></div>
+      </div>
+    </div>
+  </div>
+  <div style="max-width:960px; margin:16px auto 0; text-align:center;">
+    <div style="font-family:var(--font-mono); font-size:11px; color:var(--ash);">
+      GetClaw confluence engine &middot; 12 weighted indicator voters &middot; Long-only spot &middot; 0 violations &middot; Beats both baseline agents (SMA crossover &amp; RSI mean-reversion)
+    </div>
+  </div>
 
 <!-- ═══ DEMO VIDEO ═══ -->
 <section id="demo" style="padding:60px 40px;text-align:center;">
@@ -3159,11 +3215,12 @@ Cost/trade: $0.0024 | ROI drag: 0.001%
     <div class="judge-subtitle">Judge Evaluation Mode</div>
     <ul class="judge-list">
       <li><span class="check">&#10003;</span><span><strong>Track 1: Trading Agent</strong> &mdash; Fully autonomous AI trading pipeline on Bitget</span></li>
-      <li><span class="check">&#10003;</span><span><strong>21 independent risk checks, fail-closed</strong> &mdash; Any single failure blocks the trade</span></li>
+      <li><span class="check">&#10003;</span><span><strong>23 independent risk checks, fail-closed</strong> &mdash; Any single failure blocks the trade</span></li>
       <li><span class="check">&#10003;</span><span><strong>Human confirmation required</strong> for every trade before execution</span></li>
       <li><span class="check">&#10003;</span><span><strong>Simulation-first</strong> &mdash; Paper trading is the default mode, no real money at risk</span></li>
       <li><span class="check">&#10003;</span><span><strong>Full audit trail</strong> &mdash; JSON structured logging for every decision and state change</span></li>
       <li><span class="check">&#10003;</span><span><strong>Backtested: 500 runs, 5 regimes</strong> &mdash; Latest: +3.18% return, 80% WR, PF=2.48, max DD -2.45%</span></li>
+      <li><span class="check">&#10003;</span><span><strong>AgentBench verified</strong> &mdash; Reproducible scorecard on real Bitget candles: +0.79% BTC, +1.38% ETH, Sharpe up to 2.56</span></li>
       <li><span class="check">&#10003;</span><span><strong>Live Bitget scan</strong> &mdash; 384 USDT pairs scanned in real-time via exchange API</span></li>
       <li><span class="check">&#10003;</span><span><strong>Live analysis validated</strong> &mdash; VTHO LONG conf=0.81, NFP LONG conf=0.74, GENIUS rejected (regime filter)</span></li>
       <li><span class="check">&#10003;</span><span><strong>Agent state machine</strong> with 9 formal states and validated transitions</span></li>
