@@ -586,6 +586,7 @@ interface TradeState {
 let trade: TradeState | null = null;
 let _symbol = "BTCUSDT";
 let _lastSlBar = -999; // bar index of last stop loss (for cooldown)
+let _consecutiveLosses = 0; // track consecutive losing trades
 
 // ── The Agent ──────────────────────────────────────────────────────
 
@@ -596,6 +597,7 @@ const agent: StrategyAgent = {
     _symbol = meta.symbol;
     trade = null;
     _lastSlBar = -999;
+    _consecutiveLosses = 0;
   },
 
   onBar(bar: Bar, ctx: BarContext): Order[] {
@@ -620,6 +622,7 @@ const agent: StrategyAgent = {
           tag: `SL hit ${trade.stopLoss.toFixed(2)}`,
         });
         _lastSlBar = ctx.index;
+        _consecutiveLosses++;
         trade = null;
         return orders;
       }
@@ -633,13 +636,14 @@ const agent: StrategyAgent = {
           size: ctx.position.size,
           tag: `TP hit ${trade.takeProfit.toFixed(2)}`,
         });
+        _consecutiveLosses = 0;
         trade = null;
         return orders;
       }
 
-      // Time stop: exit if no profit after 24 bars (~4 days on 4h)
+      // Time stop: exit if no profit after 16 bars (~2.5 days on 4h)
       const barsHeld = ctx.index - trade.entryBar;
-      if (barsHeld >= 24 && price <= trade.entryPrice) {
+      if (barsHeld >= 16 && price <= trade.entryPrice) {
         orders.push({
           symbol: _symbol,
           side: "sell",
@@ -647,19 +651,21 @@ const agent: StrategyAgent = {
           size: ctx.position.size,
           tag: `time-stop ${barsHeld} bars`,
         });
+        _consecutiveLosses++;
         trade = null;
         return orders;
       }
 
-      // Trailing stop: if price ran 2x ATR above entry, trail at 1.5x ATR below peak
+      // Trailing stop: activate after price runs 1x ATR above entry
       const confluence = computeConfluence(allBars);
       if (confluence) {
         const trailDist = confluence.atrValue * 1.5;
         const trailLevel = trade.peakPrice - trailDist;
         if (
-          trade.peakPrice > trade.entryPrice + confluence.atrValue * 2 &&
+          trade.peakPrice > trade.entryPrice + confluence.atrValue * 1.0 &&
           price < trailLevel
         ) {
+          const exitPnl = price - trade.entryPrice;
           orders.push({
             symbol: _symbol,
             side: "sell",
@@ -667,6 +673,7 @@ const agent: StrategyAgent = {
             size: ctx.position.size,
             tag: `trail-stop peak=${trade.peakPrice.toFixed(2)}`,
           });
+          if (exitPnl > 0) _consecutiveLosses = 0; else _consecutiveLosses++;
           trade = null;
           return orders;
         }
@@ -676,6 +683,7 @@ const agent: StrategyAgent = {
           confluence.direction === "SHORT" &&
           confluence.confidence >= 0.60
         ) {
+          const exitPnl = price - trade.entryPrice;
           orders.push({
             symbol: _symbol,
             side: "sell",
@@ -683,6 +691,7 @@ const agent: StrategyAgent = {
             size: ctx.position.size,
             tag: `reversal conf=${confluence.confidence.toFixed(2)}`,
           });
+          if (exitPnl > 0) _consecutiveLosses = 0; else _consecutiveLosses++;
           trade = null;
           return orders;
         }
@@ -704,6 +713,26 @@ const agent: StrategyAgent = {
 
     // Cooldown after stop loss
     if (ctx.index - _lastSlBar < CFG.cooldownBars) return [];
+
+    // Consecutive loss circuit breaker: require higher confidence after 2+ losses
+    if (_consecutiveLosses >= 2 && confluence.confidence < 0.70) return [];
+
+    // ── Price position filter: buy dips, not tops ──
+    // Only enter in bottom 40% of 20-bar price range
+    const recentCloses = allBars.slice(-20).map((b) => b.close);
+    const hi20 = Math.max(...recentCloses);
+    const lo20 = Math.min(...recentCloses);
+    const range20 = hi20 - lo20;
+    if (range20 > 0) {
+      const positionInRange = (price - lo20) / range20;
+      if (positionInRange > 0.7) return []; // don't buy in top 30% of range
+    }
+
+    // ── SMA50 macro filter ──
+    // Block longs below SMA50 unless RSI is deeply oversold (<40)
+    const closes50 = allBars.map((b) => b.close);
+    const sma50Val = sma(closes50, CFG.smaPeriod);
+    if (sma50Val !== null && price < sma50Val && confluence.rsiValue > 40) return [];
 
     // Volatility guard: reject if ATR too high
     const atrPct = confluence.atrValue / price;
