@@ -1,0 +1,39 @@
+{
+  "agent": "getclaw-runeclaw",
+  "metrics": {
+    "startingEquity": 10000,
+    "finalEquity": 10067.597101690173,
+    "totalReturnPct": 0.6759710169017308,
+    "maxDrawdownPct": 0.8035983270889588,
+    "sharpe": 0.950339985436372,
+    "sortino": 0.3478124617824621,
+    "winRatePct": 50,
+    "profitFactor": 2.1193274000093862,
+    "totalTrades": 6,
+    "totalFees": 12.1433277275237,
+    "turnover": 1.209381917006932,
+    "exposurePct": 10.441334768568353,
+    "violations": 0
+  },
+  "manifest": {
+    "agentbenchVersion": "0.1.0",
+    "symbol": "ETHUSDT",
+    "granularity": "4h",
+    "source": "fixture",
+    "bars": 929,
+    "firstBarTime": 1767254400000,
+    "lastBarTime": 1780617600000,
+    "datasetSha256": "476be8fd0db936b4af04768aaa9753a2f4c2bf37d08d89a0c25a90b0e5862e5c",
+    "schemaVersion": 1,
+    "engine": {
+      "startingEquity": 10000,
+      "feeBps": 10,
+      "slippageBps": 1,
+      "seed": 42
+    },
+    "risk": {
+      "maxDrawdownKill": 0.3,
+      "maxPositionSize": 1
+    }
+  }
+}

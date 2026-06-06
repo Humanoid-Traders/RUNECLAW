@@ -1,0 +1,21 @@
+{
+  "agentbenchVersion": "0.1.0",
+  "symbol": "SOLUSDT",
+  "granularity": "4h",
+  "source": "fixture",
+  "bars": 929,
+  "firstBarTime": 1767254400000,
+  "lastBarTime": 1780617600000,
+  "datasetSha256": "604eef551bf3a613bd734bfe6ad0743c694aed1b42985f83b329183034840448",
+  "schemaVersion": 1,
+  "engine": {
+    "startingEquity": 10000,
+    "feeBps": 10,
+    "slippageBps": 1,
+    "seed": 42
+  },
+  "risk": {
+    "maxDrawdownKill": 0.3,
+    "maxPositionSize": 1
+  }
+}
