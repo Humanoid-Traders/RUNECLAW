@@ -129,7 +129,7 @@ def convert_hf_to_gguf():
     writer.add_feed_forward_length(intermediate_size)
     writer.add_head_count(num_heads)
     writer.add_head_count_kv(num_kv_heads)
-    writer.add_layer_norm_rms_epsilon(rms_eps)
+    writer.add_layer_norm_rms_eps(rms_eps)
     writer.add_rope_freq_base(rope_theta)
     writer.add_file_type(GGMLQuantizationType.F16)
 
