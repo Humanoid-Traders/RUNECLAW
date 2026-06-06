@@ -1,10 +1,9 @@
-#!/usr/bin/env python3
 r"""
 RUNECLAW - Export Merged Model from Checkpoint
 ================================================
-Run this FIRST after training completes.
-Saves the LoRA-merged model as safetensors (no build tools needed).
-Uses transformers + peft directly (does NOT require unsloth).
+Uses transformers + peft (NOT unsloth).
+If torch DLL fails, run this first:
+  pip install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu128 --force-reinstall
 
 Usage:
   venv\Scripts\activate
@@ -18,7 +17,6 @@ import os
 import sys
 import glob
 import json
-import torch
 
 
 def find_checkpoint():
@@ -43,14 +41,7 @@ def find_base_model(checkpoint_dir):
         base = config.get("base_model_name_or_path", "")
         if base:
             return base
-
-    # Fallback: check for common locations
-    for name in ["adapter_model.safetensors", "adapter_model.bin"]:
-        if os.path.exists(os.path.join(checkpoint_dir, name)):
-            # Has adapter but no config — use default base
-            return "unsloth/Llama-3.2-3B-Instruct-bnb-4bit"
-
-    return None
+    return "unsloth/Llama-3.2-3B-Instruct-bnb-4bit"
 
 
 def main():
@@ -66,34 +57,53 @@ def main():
 
     print(f"\nFound checkpoint: {checkpoint}")
 
-    # Detect base model
     base_model = find_base_model(checkpoint)
-    if base_model:
-        print(f"Base model: {base_model}")
-    else:
-        print("WARNING: Could not detect base model, using default")
-        base_model = "unsloth/Llama-3.2-3B-Instruct-bnb-4bit"
+    print(f"Base model: {base_model}")
 
-    # ── Step 1: Load base model + LoRA adapter ─────────────────
+    # ── Test torch first ──────────────────────────────────────
+    print("\n[0/3] Testing PyTorch...")
+    try:
+        import torch
+        print(f"  PyTorch {torch.__version__}")
+        if torch.cuda.is_available():
+            print(f"  CUDA: {torch.cuda.get_device_name(0)}")
+        else:
+            print("  CUDA not available (will use CPU for merge - slower but works)")
+    except ImportError as e:
+        print(f"\n  ERROR: Cannot import torch: {e}")
+        print("\n  FIX: Run this command first:")
+        print("  pip install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu128 --force-reinstall")
+        sys.exit(1)
+
+    # ── Step 1: Load base model + LoRA adapter ────────────────
     print("\n[1/3] Loading base model + LoRA adapter...")
 
     from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
     from peft import PeftModel
 
-    # Load in 4-bit (same as training)
-    bnb_config = BitsAndBytesConfig(
-        load_in_4bit=True,
-        bnb_4bit_quant_type="nf4",
-        bnb_4bit_compute_dtype=torch.float16,
-        bnb_4bit_use_double_quant=True,
-    )
+    device_map = "auto"
+    load_kwargs = {}
 
-    print("  Loading base model (4-bit)...")
+    if torch.cuda.is_available():
+        print("  Using GPU (4-bit loading)...")
+        bnb_config = BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_quant_type="nf4",
+            bnb_4bit_compute_dtype=torch.float16,
+            bnb_4bit_use_double_quant=True,
+        )
+        load_kwargs["quantization_config"] = bnb_config
+        load_kwargs["torch_dtype"] = torch.float16
+    else:
+        print("  Using CPU (16-bit loading, this will use ~6GB RAM)...")
+        device_map = "cpu"
+        load_kwargs["torch_dtype"] = torch.float16
+
+    print(f"  Loading base: {base_model}")
     base = AutoModelForCausalLM.from_pretrained(
         base_model,
-        quantization_config=bnb_config,
-        device_map="auto",
-        torch_dtype=torch.float16,
+        device_map=device_map,
+        **load_kwargs,
     )
 
     print("  Loading tokenizer...")
@@ -101,25 +111,23 @@ def main():
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    print(f"  Loading LoRA adapter from {checkpoint}...")
+    print(f"  Loading LoRA from {checkpoint}...")
     model = PeftModel.from_pretrained(base, checkpoint)
-    print("  Model loaded.")
+    print("  Loaded.")
 
-    # ── Step 2: Merge and save ─────────────────────────────────
-    print("\n[2/3] Merging LoRA weights and saving...")
+    # ── Step 2: Merge and save ────────────────────────────────
+    print("\n[2/3] Merging LoRA weights...")
+    model = model.merge_and_unload()
 
     output_dir = "./runeclaw-model-merged"
     os.makedirs(output_dir, exist_ok=True)
-
-    print("  Merging LoRA into base model...")
-    model = model.merge_and_unload()
 
     print(f"  Saving to {output_dir}/ ...")
     model.save_pretrained(output_dir, safe_serialization=True)
     tokenizer.save_pretrained(output_dir)
     print("  Saved.")
 
-    # ── Step 3: Verify ─────────────────────────────────────────
+    # ── Step 3: Verify ────────────────────────────────────────
     print("\n[3/3] Verifying output...")
 
     total_size = 0
@@ -129,8 +137,7 @@ def main():
     size_gb = total_size / 1024**3
     print(f"  Total size: {size_gb:.1f} GB")
 
-    required = ["config.json", "tokenizer.json"]
-    for fname in required:
+    for fname in ["config.json", "tokenizer.json"]:
         path = os.path.join(output_dir, fname)
         status = "OK" if os.path.exists(path) else "MISSING"
         print(f"  {status}: {fname}")
