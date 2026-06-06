@@ -44,7 +44,7 @@ const CFG = {
   riskPerTradePct: 0.02,    // risk 2% of equity per trade
   maxPositionPct: 0.10,     // max 10% of equity in one position
   minBarsRequired: 50,      // need enough history for all indicators
-  maxEntryRsi: 62,          // don't enter long above this RSI
+  maxEntryRsi: 60,          // don't enter long above this RSI
   cooldownBars: 6,          // bars to wait after a stop loss
 } as const;
 
