@@ -33,15 +33,41 @@ def find_checkpoint():
 
 
 def find_base_model(checkpoint_dir):
-    """Read the base model name from the adapter config."""
+    """Read the base model name from the adapter config.
+    Maps quantized model names to full-precision equivalents
+    (4-bit weights can't be loaded as float16 for export).
+    """
     config_path = os.path.join(checkpoint_dir, "adapter_config.json")
+    base = "unsloth/Llama-3.2-3B-Instruct-bnb-4bit"
     if os.path.exists(config_path):
         with open(config_path, "r") as f:
             config = json.load(f)
-        base = config.get("base_model_name_or_path", "")
-        if base:
-            return base
-    return "unsloth/Llama-3.2-3B-Instruct-bnb-4bit"
+        base = config.get("base_model_name_or_path", base)
+
+    # Map quantized models to full-precision equivalents
+    # LoRA adapters are compatible — they only contain delta weights
+    QUANT_TO_FULL = {
+        "unsloth/Llama-3.2-3B-Instruct-bnb-4bit": "unsloth/Llama-3.2-3B-Instruct",
+        "unsloth/Llama-3.2-1B-Instruct-bnb-4bit": "unsloth/Llama-3.2-1B-Instruct",
+        "unsloth/Meta-Llama-3.1-8B-Instruct-bnb-4bit": "unsloth/Meta-Llama-3.1-8B-Instruct",
+        "unsloth/Llama-3.1-8B-Instruct-bnb-4bit": "unsloth/Meta-Llama-3.1-8B-Instruct",
+    }
+
+    if base in QUANT_TO_FULL:
+        full = QUANT_TO_FULL[base]
+        print(f"  Adapter trained on: {base}")
+        print(f"  Using full-precision: {full}")
+        print(f"  (4-bit weights can't be exported — full-precision is compatible)")
+        return full
+
+    # Generic pattern: strip -bnb-4bit suffix
+    if "-bnb-4bit" in base:
+        full = base.replace("-bnb-4bit", "")
+        print(f"  Adapter trained on: {base}")
+        print(f"  Using full-precision: {full}")
+        return full
+
+    return base
 
 
 def main():
