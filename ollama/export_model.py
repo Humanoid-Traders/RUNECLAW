@@ -77,33 +77,18 @@ def main():
 
     # ── Step 1: Load base model + LoRA adapter ────────────────
     print("\n[1/3] Loading base model + LoRA adapter...")
+    print("  Loading in float16 (NOT 4-bit) so weights can be saved.")
+    print("  This uses ~6GB RAM for 3B model — your 64GB handles it fine.")
 
-    from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+    from transformers import AutoModelForCausalLM, AutoTokenizer
     from peft import PeftModel
 
-    device_map = "auto"
-    load_kwargs = {}
-
-    if torch.cuda.is_available():
-        print("  Using GPU (4-bit loading)...")
-        bnb_config = BitsAndBytesConfig(
-            load_in_4bit=True,
-            bnb_4bit_quant_type="nf4",
-            bnb_4bit_compute_dtype=torch.float16,
-            bnb_4bit_use_double_quant=True,
-        )
-        load_kwargs["quantization_config"] = bnb_config
-        load_kwargs["torch_dtype"] = torch.float16
-    else:
-        print("  Using CPU (16-bit loading, this will use ~6GB RAM)...")
-        device_map = "cpu"
-        load_kwargs["torch_dtype"] = torch.float16
-
+    # Must load in float16 (NOT 4-bit) — 4-bit weights can't be saved back
     print(f"  Loading base: {base_model}")
     base = AutoModelForCausalLM.from_pretrained(
         base_model,
-        device_map=device_map,
-        **load_kwargs,
+        torch_dtype=torch.float16,
+        device_map="cpu",  # CPU to avoid VRAM limits, uses RAM instead
     )
 
     print("  Loading tokenizer...")
