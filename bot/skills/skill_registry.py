@@ -2060,7 +2060,7 @@ class DeepScanSkill(BaseSkill):
         now = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
 
         lines: list[str] = []
-        lines.append(f"\U0001f52c <b>DEEP SCAN \u2014 {timeframe.upper()}</b>\n{SEP}")
+        lines.append(_header("\U0001f52c", f"DEEP SCAN \u2014 {timeframe.upper()}"))
         lines.append(f"  {len(DEEPSCAN_UNIVERSE)} symbols \u00b7 {timeframe} \u00b7 chart + candle patterns")
         lines.append("")
 
@@ -2153,53 +2153,60 @@ class DeepScanSkill(BaseSkill):
         hits.sort(key=lambda h: h["score"], reverse=True)
         top = hits[:max_results]
 
-        # Stats line
-        lines.append(f"- Scanned: <code>{scanned} / {len(DEEPSCAN_UNIVERSE)}</code>")
-        lines.append(f"- Hits: <code>{len(hits)}</code>")
-        lines.append(f"- Errors: <code>{errors}</code>")
-        lines.append("")
+        # ── Stats card ───────────────────────────────────────
+        lines.append("<pre>")
+        def _ds_kv(k: str, v: str, w: int = 22) -> str:
+            dots = "\u00b7" * max(1, w - len(k) - len(str(v)))
+            return f"  {k} {dots} {v}"
+        lines.append(_ds_kv("Scanned", f"{scanned}/{len(DEEPSCAN_UNIVERSE)}"))
+        lines.append(_ds_kv("Hits", str(len(hits))))
+        lines.append(_ds_kv("Errors", str(errors)))
+        lines.append("</pre>")
 
         if not top:
-            lines.append(f"  {_NEU} <i>No actionable patterns detected.</i>")
-            lines.append(f"\n<i>🕐 {now}</i>")
+            lines.append(f"\n  {_NEU} <i>No actionable patterns detected.</i>")
+            lines.append(f"\n<i>\U0001f551 {now}</i>")
             return "\n".join(lines)
 
-        # Results
+        # ── Results ─────────────────────────────────────────
         for h in top:
             arrow = _spark(h["chg"])
-            rsi_label = "OB" if h["rsi"] > 70 else "OS" if h["rsi"] < 30 else ""
-            rsi_icon = _BAD if h["rsi"] > 70 else _OK if h["rsi"] < 30 else _NEU
-            spike_icon = "💥" if h["vol_spike"] else ""
+            rsi_val = h["rsi"]
+            rsi_tag = " OB" if rsi_val > 70 else " OS" if rsi_val < 30 else ""
+            rsi_icon = _BAD if rsi_val > 70 else _OK if rsi_val < 30 else _NEU
+            spike = " \U0001f4a5" if h["vol_spike"] else ""
 
             sym_clean = h["symbol"].replace("/USDT", "")
+            # Symbol header line
             lines.append(
-                f"  {arrow} <b>{_esc(sym_clean)}</b>  "
-                f"${h['price']:,.4f}  {h['chg']:+.1f}%  "
-                f"{rsi_icon} RSI {h['rsi']:.0f}{rsi_label}  {spike_icon}"
+                f"{arrow} <b>{_esc(sym_clean)}</b>  "
+                f"<code>${h['price']:,.4f}</code>  {h['chg']:+.1f}%  "
+                f"{rsi_icon} RSI <code>{rsi_val:.0f}{rsi_tag}</code>{spike}"
             )
 
-            # Chart patterns
+            # Chart patterns with confidence bar
             if h["chart_patterns"]:
                 for cp in h["chart_patterns"][:3]:
                     sig_icon = _OK if cp["signal"] == "bullish" else _BAD if cp["signal"] == "bearish" else _NEU
-                    conf_str = f"{cp['confidence']:.0%}"
+                    conf = cp["confidence"]
+                    filled = int(conf * 6)
+                    bar_str = "\u2588" * filled + "\u2591" * (6 - filled)
                     lines.append(
-                        f"    {sig_icon} {cp['name']}  "
-                        f"{_pill(conf_str)}  "
-                        f"<i>{cp['description']}</i>"
+                        f"  {sig_icon} {cp['name']}  "
+                        f"{bar_str} <code>{conf:.0%}</code>"
                     )
 
-            # Candlestick patterns
+            # Candlestick patterns — compact badges
             if h["candle_patterns"]:
-                candle_str = ", ".join(
-                    f"{'🟢' if v == 'bullish' else '🔴' if v == 'bearish' else '⚪'}{k}"
-                    for k, v in list(h["candle_patterns"].items())[:4]
-                )
-                lines.append(f"    🕯 {candle_str}")
+                parts = []
+                for k, v in list(h["candle_patterns"].items())[:4]:
+                    c_icon = _OK if v == "bullish" else _BAD if v == "bearish" else _NEU
+                    parts.append(f"{c_icon}{k}")
+                lines.append(f"  \U0001f56f {', '.join(parts)}")
 
             lines.append("")
 
-        lines.append(f"<i>🕐 {now}  ·  say \"playbook\" for full briefing</i>")
+        lines.append(f"<i>\U0001f551 {now}  \u00b7  say \"playbook\" for full briefing</i>")
         return "\n".join(lines)
 
 
