@@ -1,16 +1,8 @@
 #!/usr/bin/env python3
 """
-RUNECLAW Local LoRA Fine-Tuning Script
-=======================================
-For ASUS ProArt P16 (RTX 4060 8GB / RTX 4070 8GB)
-
-Prerequisites (run once):
-  1. Install Python 3.10+ from python.org
-  2. Install CUDA Toolkit 12.1+: https://developer.nvidia.com/cuda-downloads
-  3. Install PyTorch with CUDA:
-       pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
-  4. Install dependencies:
-       pip install unsloth[cu121] datasets trl peft accelerate bitsandbytes
+RUNECLAW Local LoRA Fine-Tuning Script (Optimized)
+===================================================
+For ASUS ProArt P16 with RTX 5090 Laptop GPU
 
 Usage:
   python train_local.py
@@ -27,14 +19,11 @@ import torch
 
 def preflight():
     print("=" * 60)
-    print("RUNECLAW Local Fine-Tuning")
+    print("RUNECLAW Local Fine-Tuning (Optimized)")
     print("=" * 60)
 
-    # Check CUDA
     if not torch.cuda.is_available():
         print("\nERROR: CUDA not available!")
-        print("Install CUDA Toolkit: https://developer.nvidia.com/cuda-downloads")
-        print("Install PyTorch CUDA: pip install torch --index-url https://download.pytorch.org/whl/cu121")
         sys.exit(1)
 
     gpu_name = torch.cuda.get_device_name(0)
@@ -44,49 +33,29 @@ def preflight():
     print(f"VRAM: {vram_gb:.1f} GB")
     print(f"CUDA: {torch.version.cuda}")
     print(f"PyTorch: {torch.__version__}")
-
-    if vram_gb < 6:
-        print(f"\nWARNING: {vram_gb:.1f}GB VRAM is tight. Training may be slow or OOM.")
-        print("Consider using Colab (free T4 with 15GB) instead.")
-
     return vram_gb
-
-
-def get_training_config(vram_gb):
-    """Adjust batch size and settings based on available VRAM."""
-    if vram_gb >= 15:
-        # RTX 5090 Laptop (16GB), RTX 4090, A100, etc.
-        return {"batch_size": 4, "grad_accum": 2, "max_seq_length": 4096}
-    elif vram_gb >= 12:
-        return {"batch_size": 4, "grad_accum": 2, "max_seq_length": 4096}
-    elif vram_gb >= 8:
-        return {"batch_size": 2, "grad_accum": 4, "max_seq_length": 2048}
-    else:
-        return {"batch_size": 1, "grad_accum": 8, "max_seq_length": 1024}
 
 
 # ── Main Training Pipeline ───────────────────────────────────────
 
 def main():
     vram_gb = preflight()
-    config = get_training_config(vram_gb)
-
-    print(f"\nConfig for {vram_gb:.0f}GB VRAM:")
-    print(f"  Batch size:       {config['batch_size']}")
-    print(f"  Grad accumulation: {config['grad_accum']}")
-    print(f"  Max seq length:   {config['max_seq_length']}")
-    print(f"  Effective batch:  {config['batch_size'] * config['grad_accum']}")
 
     # ── Step 1: Load Model ────────────────────────────────────
     print("\n[1/6] Loading Llama 3.2 3B (4-bit quantized)...")
     from unsloth import FastLanguageModel
 
+    MAX_SEQ = 1024  # Most samples are 200-600 tokens, 1024 covers 99%+
+
     model, tokenizer = FastLanguageModel.from_pretrained(
         model_name="unsloth/Llama-3.2-3B-Instruct-bnb-4bit",
-        max_seq_length=config["max_seq_length"],
+        max_seq_length=MAX_SEQ,
         dtype=None,
         load_in_4bit=True,
     )
+    tokenizer.padding_side = "right"
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
     print("  Model loaded.")
 
     # ── Step 2: Apply LoRA ────────────────────────────────────
@@ -110,7 +79,6 @@ def main():
     print("\n[3/6] Loading training data...")
     import json as _json
 
-    # Look for the training data file
     data_paths = [
         "./training_data/combined_training.jsonl",
         "./combined_training.jsonl",
@@ -124,11 +92,8 @@ def main():
 
     if data_file is None:
         print("  ERROR: combined_training.jsonl not found!")
-        print("  Place it in the same directory as this script,")
-        print("  or in a 'training_data' subdirectory.")
         sys.exit(1)
 
-    # Load JSONL manually (avoids Python 3.14 dill/pickle issues)
     rows = []
     with open(data_file, "r", encoding="utf-8") as fh:
         for line in fh:
@@ -137,8 +102,8 @@ def main():
                 rows.append(_json.loads(line))
     print(f"  Loaded {len(rows)} samples from {data_file}")
 
-    # ── Step 4: Format for Llama 3.2 ─────────────────────────
-    print("\n[4/6] Formatting dataset...")
+    # ── Step 4: Format and tokenize ──────────────────────────
+    print("\n[4/6] Formatting and tokenizing...")
 
     SYSTEM_PROMPT = (
         "You are RUNECLAW, an AI trading analyst. You analyze cryptocurrency "
@@ -148,74 +113,111 @@ def main():
         "Capital preservation above all."
     )
 
+    # Format all texts
     formatted_texts = []
     for example in rows:
-        messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
-        ]
+        messages = [{"role": "system", "content": SYSTEM_PROMPT}]
         user_msg = example["instruction"]
         if example.get("input") and example["input"].strip():
             user_msg += "\n\n" + example["input"]
-
         messages.append({"role": "user", "content": user_msg})
         messages.append({"role": "assistant", "content": example["output"]})
-
         text = tokenizer.apply_chat_template(
             messages, tokenize=False, add_generation_prompt=False
         )
         formatted_texts.append(text)
 
-    print(f"  Formatted {len(formatted_texts)} samples")
+    # Check token length distribution
+    print(f"  Checking token lengths...")
+    sample_lengths = []
+    for t in formatted_texts[:500]:
+        toks = tokenizer(t, truncation=False)["input_ids"]
+        sample_lengths.append(len(toks))
+    avg_len = sum(sample_lengths) / len(sample_lengths)
+    max_len = max(sample_lengths)
+    under_1024 = sum(1 for l in sample_lengths if l <= 1024)
+    print(f"  Avg tokens: {avg_len:.0f}, Max: {max_len}, Under 1024: {under_1024}/{len(sample_lengths)}")
+    print(f"  Using max_seq_length={MAX_SEQ} (vs 4096 before = {4096/MAX_SEQ:.0f}x faster)")
 
-    # ── Step 5: Train ─────────────────────────────────────────
-    print("\n[5/6] Starting training...")
-    print("  This will take 1-3 hours depending on your GPU.")
-    print("  You can safely minimize this window.\n")
-
-    # Build a pure PyTorch dataset to completely bypass HF datasets/dill
-    # (Python 3.14 broke dill serialization)
+    # Tokenize with DYNAMIC length (no padding to max!)
     from torch.utils.data import Dataset as TorchDataset
+    from torch.nn.utils.rnn import pad_sequence
+    import torch
 
-    class TextDataset(TorchDataset):
+    class DynamicDataset(TorchDataset):
+        """Tokenizes to actual length, no padding waste."""
         def __init__(self, texts, tokenizer, max_length):
-            self.encodings = []
+            self.items = []
             print(f"  Tokenizing {len(texts)} samples...")
             for i, text in enumerate(texts):
                 enc = tokenizer(
                     text,
                     truncation=True,
                     max_length=max_length,
-                    padding="max_length",
+                    padding=False,  # NO PADDING - key optimization
                     return_tensors="pt",
                 )
-                self.encodings.append({
-                    "input_ids": enc["input_ids"].squeeze(),
-                    "attention_mask": enc["attention_mask"].squeeze(),
-                    "labels": enc["input_ids"].squeeze().clone(),
+                ids = enc["input_ids"].squeeze()
+                self.items.append({
+                    "input_ids": ids,
+                    "attention_mask": torch.ones_like(ids),
+                    "labels": ids.clone(),
                 })
-                if (i + 1) % 1000 == 0:
-                    print(f"    {i + 1}/{len(texts)} tokenized...")
+                if (i + 1) % 2000 == 0:
+                    print(f"    {i + 1}/{len(texts)}...")
             print(f"  Tokenization complete.")
 
         def __len__(self):
-            return len(self.encodings)
+            return len(self.items)
 
         def __getitem__(self, idx):
-            return self.encodings[idx]
+            return self.items[idx]
 
-    train_dataset = TextDataset(formatted_texts, tokenizer, config["max_seq_length"])
+    # Custom collator that pads to batch max (not global max)
+    class DynamicPadCollator:
+        def __init__(self, pad_id):
+            self.pad_id = pad_id
+
+        def __call__(self, batch):
+            input_ids = [item["input_ids"] for item in batch]
+            labels = [item["labels"] for item in batch]
+            attention_mask = [item["attention_mask"] for item in batch]
+
+            input_ids = pad_sequence(input_ids, batch_first=True, padding_value=self.pad_id)
+            labels = pad_sequence(labels, batch_first=True, padding_value=-100)
+            attention_mask = pad_sequence(attention_mask, batch_first=True, padding_value=0)
+
+            return {
+                "input_ids": input_ids,
+                "labels": labels,
+                "attention_mask": attention_mask,
+            }
+
+    train_dataset = DynamicDataset(formatted_texts, tokenizer, MAX_SEQ)
+    collator = DynamicPadCollator(tokenizer.pad_token_id)
+
+    # ── Step 5: Train ─────────────────────────────────────────
+    print("\n[5/6] Starting training...")
 
     from transformers import Trainer, TrainingArguments
 
+    # 1 epoch with 10K samples is plenty for LoRA fine-tuning
+    num_epochs = 1
+    total_steps = len(train_dataset) // (8)  # batch 4 * grad_accum 2
+    print(f"  Epochs: {num_epochs}")
+    print(f"  Estimated steps: {total_steps}")
+    print(f"  Dynamic padding = each batch padded to its own max length")
+    print(f"  Expected speedup: ~8-10x vs fixed 4096 padding\n")
+
     training_args = TrainingArguments(
-        per_device_train_batch_size=config["batch_size"],
-        gradient_accumulation_steps=config["grad_accum"],
-        warmup_steps=50,
-        num_train_epochs=3,
+        per_device_train_batch_size=8,       # larger batch, smaller sequences
+        gradient_accumulation_steps=1,        # no accumulation needed
+        warmup_steps=30,
+        num_train_epochs=num_epochs,
         learning_rate=2e-4,
         fp16=not torch.cuda.is_bf16_supported(),
         bf16=torch.cuda.is_bf16_supported(),
-        logging_steps=25,
+        logging_steps=10,
         optim="adamw_8bit",
         weight_decay=0.01,
         lr_scheduler_type="cosine",
@@ -223,12 +225,15 @@ def main():
         output_dir="./runeclaw-checkpoints",
         save_strategy="epoch",
         report_to="none",
+        dataloader_pin_memory=True,
+        dataloader_num_workers=0,
     )
 
     trainer = Trainer(
         model=model,
         args=training_args,
         train_dataset=train_dataset,
+        data_collator=collator,
     )
 
     stats = trainer.train()
@@ -250,7 +255,6 @@ def main():
     gguf_path = os.path.join(output_dir, "unsloth.Q4_K_M.gguf")
     size_gb = os.path.getsize(gguf_path) / 1024**3
 
-    # Create Modelfile next to GGUF
     modelfile_path = os.path.join(output_dir, "Modelfile")
     with open(modelfile_path, "w") as f:
         f.write(f"""FROM ./unsloth.Q4_K_M.gguf
@@ -267,7 +271,6 @@ SYSTEM \"\"\"{SYSTEM_PROMPT}\"\"\"
     print(f"\n  GGUF exported: {gguf_path} ({size_gb:.1f} GB)")
     print(f"  Modelfile:     {modelfile_path}")
 
-    # ── Done ──────────────────────────────────────────────────
     print("\n" + "=" * 60)
     print("DONE! Your fine-tuned RUNECLAW model is ready.")
     print("=" * 60)
@@ -286,55 +289,5 @@ Next steps:
 """)
 
 
-# ── Quick Test Mode ───────────────────────────────────────────────
-
-def test_model():
-    """Test an already-trained model."""
-    print("Loading model for testing...")
-    from unsloth import FastLanguageModel
-
-    model, tokenizer = FastLanguageModel.from_pretrained(
-        "runeclaw-checkpoints/checkpoint-*",
-        max_seq_length=2048,
-        load_in_4bit=True,
-    )
-    FastLanguageModel.for_inference(model)
-
-    prompt = """Analyze BTC/USDT for a potential trade.
-
-Market data:
-- Price: $67,432.10
-- RSI-14: 28.5 (oversold)
-- MACD Histogram: 125.3 (positive)
-- Bollinger %B: 0.15
-- ADX: 34, +DI > -DI (TREND_UP)
-- Price is at 61.8% Fibonacci retracement
-- Volume spike with price increase"""
-
-    messages = [
-        {"role": "system", "content": "You are RUNECLAW, an AI trading analyst."},
-        {"role": "user", "content": prompt},
-    ]
-
-    inputs = tokenizer.apply_chat_template(
-        messages, tokenize=True, add_generation_prompt=True,
-        return_tensors="pt"
-    ).to("cuda")
-
-    outputs = model.generate(
-        input_ids=inputs, max_new_tokens=1024,
-        temperature=0.3, top_p=0.9,
-    )
-
-    response = tokenizer.decode(outputs[0][inputs.shape[-1]:], skip_special_tokens=True)
-    print("=" * 60)
-    print("RUNECLAW Response:")
-    print("=" * 60)
-    print(response)
-
-
 if __name__ == "__main__":
-    if len(sys.argv) > 1 and sys.argv[1] == "test":
-        test_model()
-    else:
-        main()
+    main()
