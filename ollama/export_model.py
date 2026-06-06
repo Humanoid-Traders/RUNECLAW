@@ -108,7 +108,70 @@ def main():
     os.makedirs(output_dir, exist_ok=True)
 
     print(f"  Saving to {output_dir}/ ...")
-    model.save_pretrained(output_dir, safe_serialization=True)
+
+    # Save state dict directly (bypasses broken revert_weight_conversion)
+    from safetensors.torch import save_file
+    state_dict = model.state_dict()
+
+    # Split into shards if large (>2GB per shard)
+    shard_size = 2 * 1024**3  # 2GB
+    total_bytes = sum(v.numel() * v.element_size() for v in state_dict.values())
+
+    if total_bytes > shard_size:
+        # Multi-shard save
+        current_shard = {}
+        current_bytes = 0
+        shard_idx = 1
+        shard_files = []
+        weight_map = {}
+
+        for key, tensor in state_dict.items():
+            tensor_bytes = tensor.numel() * tensor.element_size()
+            if current_bytes + tensor_bytes > shard_size and current_shard:
+                fname = f"model-{shard_idx:05d}-of-PLACEHOLDER.safetensors"
+                shard_files.append(fname)
+                save_file(current_shard, os.path.join(output_dir, fname))
+                for k in current_shard:
+                    weight_map[k] = fname
+                print(f"    Saved shard {shard_idx} ({current_bytes / 1024**3:.1f} GB)")
+                current_shard = {}
+                current_bytes = 0
+                shard_idx += 1
+            current_shard[key] = tensor.contiguous().to(torch.float16)
+            current_bytes += tensor_bytes
+
+        if current_shard:
+            fname = f"model-{shard_idx:05d}-of-PLACEHOLDER.safetensors"
+            shard_files.append(fname)
+            save_file(current_shard, os.path.join(output_dir, fname))
+            for k in current_shard:
+                weight_map[k] = fname
+            print(f"    Saved shard {shard_idx} ({current_bytes / 1024**3:.1f} GB)")
+
+        # Fix shard filenames
+        total_shards = len(shard_files)
+        for i, old_name in enumerate(shard_files):
+            new_name = old_name.replace("PLACEHOLDER", f"{total_shards:05d}")
+            os.rename(
+                os.path.join(output_dir, old_name),
+                os.path.join(output_dir, new_name),
+            )
+            for k in weight_map:
+                if weight_map[k] == old_name:
+                    weight_map[k] = new_name
+
+        # Write index
+        index = {"metadata": {"total_size": total_bytes}, "weight_map": weight_map}
+        with open(os.path.join(output_dir, "model.safetensors.index.json"), "w") as f:
+            json.dump(index, f, indent=2)
+    else:
+        # Single file save
+        clean_dict = {k: v.contiguous().to(torch.float16) for k, v in state_dict.items()}
+        save_file(clean_dict, os.path.join(output_dir, "model.safetensors"))
+        print(f"    Saved single file ({total_bytes / 1024**3:.1f} GB)")
+
+    # Save config and tokenizer
+    model.config.save_pretrained(output_dir)
     tokenizer.save_pretrained(output_dir)
     print("  Saved.")
 
