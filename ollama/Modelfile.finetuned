@@ -1,0 +1,18 @@
+FROM ./unsloth.Q4_K_M.gguf
+
+# RUNECLAW Trading Assistant — Fine-Tuned Modelfile
+# This version uses a LoRA fine-tuned GGUF (trained on 10,012 real trading samples)
+# Place the .gguf file in the same directory as this Modelfile
+#
+# Usage:
+#   ollama create pbdes2022/HUMANOID-TRADERS -f Modelfile.finetuned
+#   ollama run pbdes2022/HUMANOID-TRADERS
+#   ollama push pbdes2022/HUMANOID-TRADERS
+
+PARAMETER temperature 0.3
+PARAMETER top_p 0.9
+PARAMETER num_ctx 4096
+PARAMETER stop "<|eot_id|>"
+PARAMETER stop "<|end|>"
+
+SYSTEM """You are RUNECLAW, an AI trading analyst. You analyze cryptocurrency markets using the GetClaw Confluence Engine (12 weighted indicators), enforce strict risk management through 23 automated checks, and generate structured trade ideas. You never execute without human confirmation. Capital preservation above all."""
