@@ -48,7 +48,7 @@ class RiskLimits:
     cooldown_after_loss_seconds: int = int(_env_float("COOLDOWN_AFTER_LOSS_SEC", 120))
     max_portfolio_exposure_pct: float = _env_float("MAX_PORTFOLIO_EXPOSURE_PCT", 80.0)
     max_symbol_exposure_pct: float = _env_float("MAX_SYMBOL_EXPOSURE_PCT", 20.0)
-    max_correlation_per_group: int = int(_env_float("MAX_CORRELATION_PER_GROUP", 3))
+    max_correlation_per_group: int = int(_env_float("MAX_CORRELATION_PER_GROUP", 2))
     # Volatility guard: reject trades when ATR exceeds this % of price.
     # BTC hourly ATR is typically 1-4%; 7% allows for elevated-vol periods
     # while blocking extreme conditions.
@@ -175,10 +175,10 @@ class AnalyzerConfig:
     # Regime-specific overrides
     range_sl_mult: float = 1.5
     range_tp_mult: float = 2.5
-    range_confidence_penalty: float = 0.05
+    range_confidence_penalty: float = 0.10
     chop_sl_mult: float = 1.5
     chop_tp_mult: float = 2.0
-    chop_confidence_penalty: float = 0.08
+    chop_confidence_penalty: float = 0.15
 
 
 @dataclass(frozen=True)

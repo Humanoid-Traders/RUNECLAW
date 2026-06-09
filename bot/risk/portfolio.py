@@ -33,7 +33,7 @@ class TrailingStopConfig:
     """Configuration for the enhanced trailing stop engine."""
     activation_pct: float = 50.0         # activate after price reaches 50% of TP distance
     trail_distance_atr_mult: float = 2.0  # trail at ATR * this multiplier
-    min_profit_lock_pct: float = 0.3      # minimum profit to lock in (% of entry)
+    min_profit_lock_pct: float = 0.3      # minimum profit to lock in (0.3% of entry price)
 
 
 class PortfolioTracker:
@@ -352,7 +352,13 @@ class PortfolioTracker:
             for p in self._positions.values():
                 if asset is not None and p.asset != asset:
                     continue
-                price = self._last_prices.get(p.asset, p.entry_price)
+                price = self._last_prices.get(p.asset, None)
+                if price is None:
+                    price = p.entry_price
+                    logging.getLogger(__name__).warning(
+                        "No market price for %s — falling back to entry price %.8f (stale valuation)",
+                        p.asset, p.entry_price,
+                    )
                 total += price * p.quantity
             return total
 
@@ -361,7 +367,13 @@ class PortfolioTracker:
         open_value = 0.0
         unrealized_pnl = 0.0
         for p in self._positions.values():
-            current_price = self._last_prices.get(p.asset, p.entry_price)
+            current_price = self._last_prices.get(p.asset, None)
+            if current_price is None:
+                current_price = p.entry_price
+                logging.getLogger(__name__).warning(
+                    "No market price for %s — falling back to entry price %.8f (stale valuation)",
+                    p.asset, p.entry_price,
+                )
             open_value += current_price * p.quantity
             if p.direction == Direction.LONG:
                 unrealized_pnl += (current_price - p.entry_price) * p.quantity
@@ -376,7 +388,10 @@ class PortfolioTracker:
         # M5 fix: use UTC date, not local timezone
         today_key = datetime.now(UTC).date().isoformat()
         realized_daily = self._daily_pnl.get(today_key, 0.0)
-        # Include unrealized PnL in daily figure for risk checks
+        # Include unrealized PnL in daily figure for conservative risk management:
+        # this ensures risk checks account for paper losses before they are realized,
+        # preventing the system from opening new positions while sitting on large
+        # unrealized drawdowns that could breach daily loss limits on close.
         daily_pnl = realized_daily + unrealized_pnl
         drawdown = ((self._peak_equity - equity) / self._peak_equity * 100) if self._peak_equity > 0 else 0
 

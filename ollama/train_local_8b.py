@@ -276,58 +276,39 @@ def main():
     print(f"  Final loss: {stats.training_loss:.4f}")
     print(f"  Runtime: {stats.metrics['train_runtime']:.0f}s")
 
-    # ── Step 6: Export to GGUF ────────────────────────────
-    print("\n[6/6] Exporting to GGUF for Ollama...")
+    # ── Step 6: Save LoRA Adapter ─────────────────────────
+    print("\n[6/6] Saving LoRA adapter...")
 
-    output_dir = f"./{MODEL_NAME}-model"
-    model.save_pretrained_gguf(
-        output_dir,
-        tokenizer,
-        quantization_method="q4_k_m",
-    )
+    adapter_dir = f"./{MODEL_NAME}-checkpoints/final-adapter"
+    model.save_pretrained(adapter_dir)
+    tokenizer.save_pretrained(adapter_dir)
 
-    gguf_path = os.path.join(output_dir, "unsloth.Q4_K_M.gguf")
-    size_gb = os.path.getsize(gguf_path) / 1024**3
-
-    modelfile_path = os.path.join(output_dir, "Modelfile")
-    with open(modelfile_path, "w") as f:
-        f.write(f"""FROM ./unsloth.Q4_K_M.gguf
-
-PARAMETER temperature 0.3
-PARAMETER top_p 0.9
-PARAMETER num_ctx 4096
-PARAMETER stop "<|eot_id|>"
-PARAMETER stop "<|end|>"
-
-SYSTEM \"\"\"{SYSTEM_PROMPT}\"\"\"
-""")
-
-    print(f"\n  GGUF exported: {gguf_path} ({size_gb:.1f} GB)")
-    print(f"  Modelfile:     {modelfile_path}")
+    print(f"\n  Adapter saved: {adapter_dir}")
 
     print("\n" + "=" * 60)
-    print("DONE! Your fine-tuned RUNECLAW 8B model is ready.")
+    print("TRAINING COMPLETE! LoRA adapter saved.")
     print("=" * 60)
     print(f"""
-Next steps:
+Next steps — use the proven export pipeline:
 
-  1. Import into Ollama:
-     cd {output_dir}
-     ollama create pbdes2022/HUMANOID-TRADERS-8B -f Modelfile
+  1. Export merged model (merges LoRA into base weights):
+     python export_model.py
 
-  2. Test it:
-     ollama run pbdes2022/HUMANOID-TRADERS-8B "Scan BTC/USDT for trade setups"
+  2. Convert to GGUF (official llama.cpp converter):
+     python convert_official.py
 
-  3. Compare with 3B model:
-     ollama run pbdes2022/HUMANOID-TRADERS "Scan BTC/USDT for trade setups"
+  3. The script will create the Ollama model automatically.
+     Then test it:
+     ollama run runeclaw "Scan BTC/USDT for trade setups"
 
   4. Push to Ollama registry:
-     ollama push pbdes2022/HUMANOID-TRADERS-8B
+     ollama cp runeclaw pbdes2022/humanoid-traders-8b
+     ollama push pbdes2022/humanoid-traders-8b
 
 Notes:
-  - 8B GGUF is ~5GB (vs ~2GB for 3B)
-  - 8B inference is ~2x slower but significantly better reasoning
-  - Both models can coexist in Ollama — choose based on speed vs quality
+  - 8B GGUF (Q4_K_M) is ~5GB vs ~2GB for 3B
+  - 8B inference is slower but significantly better reasoning
+  - Both models can coexist in Ollama
 """)
 
 

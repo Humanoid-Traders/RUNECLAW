@@ -99,6 +99,8 @@ class MarketScanner:
             stock_set = set(US_STOCK_SYMBOLS)
             stock_signals = [s for s in signals if s.symbol in stock_set]
             crypto_signals = [s for s in signals if s.symbol not in stock_set]
+            stock_signals.sort(key=lambda s: abs(s.momentum_score), reverse=True)
+            crypto_signals.sort(key=lambda s: abs(s.momentum_score), reverse=True)
             # Half slots for stocks, half for crypto
             half = max(CONFIG.top_movers_count // 2, 5)
             top = (stock_signals[:half] + crypto_signals[:half])[: CONFIG.top_movers_count]

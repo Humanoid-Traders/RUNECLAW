@@ -1267,7 +1267,7 @@ class TestEngineFSM:
         engine._pending_atr[idea.id] = 500.0  # ATR for volatility guard
 
         result = self._run(engine.confirm_trade(idea.id))
-        assert "Executed paper" in result
+        assert "PAPER" in result
         assert idea.id not in engine._pending_ideas
         assert engine.state == AgentState.IDLE
 
@@ -2783,10 +2783,12 @@ class TestMultiTimeframe:
         n = 30
         highs = np.zeros(n)
         lows = np.zeros(n)
+        closes = np.zeros(n)
         for i in range(n):
             highs[i] = 100 + i * 2 + np.sin(i * 0.5) * 5
             lows[i] = 95 + i * 2 + np.sin(i * 0.5) * 5
-        result = _analyze_structure(highs, lows, lookback=2)
+            closes[i] = (highs[i] + lows[i]) / 2
+        result = _analyze_structure(highs, lows, closes, lookback=2)
         assert result["structure"] in ("bullish", "ranging")
 
 
@@ -3666,7 +3668,7 @@ class TestBacktestIntegration:
     def test_backtest_commission_applied(self):
         config = BacktestConfig(
             symbol="BTC/USDT", initial_balance=10000.0,
-            commission_rate=0.001, slippage_rate=0.0005,
+            commission_pct=0.1, slippage_pct=0.05,
         )
         engine = BacktestEngine(config)
         bars = DataLoader.generate_synthetic(bars=500, start_price=100.0, seed=42)

@@ -158,7 +158,7 @@ class MetricsEngine:
         if len(self._timestamps) >= 2:
             total_seconds = (self._timestamps[-1] - self._timestamps[0]).total_seconds()
             if total_seconds > 0:
-                seconds_per_obs = total_seconds / len(returns)
+                seconds_per_obs = total_seconds / len(active_returns)
                 periods_per_year = (365.25 * 24 * 3600) / seconds_per_obs
             else:
                 periods_per_year = 2190  # fallback
@@ -186,7 +186,7 @@ class MetricsEngine:
         if len(self._timestamps) >= 2:
             total_seconds = (self._timestamps[-1] - self._timestamps[0]).total_seconds()
             if total_seconds > 0:
-                seconds_per_obs = total_seconds / len(returns)
+                seconds_per_obs = total_seconds / len(active_returns)
                 periods_per_year = (365.25 * 24 * 3600) / seconds_per_obs
             else:
                 periods_per_year = 2190

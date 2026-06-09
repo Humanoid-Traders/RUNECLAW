@@ -91,6 +91,7 @@ class RuneClawEngine:
         self.dashboard_pusher = DashboardPusher(self)
         # C1 fix: wire trade-close callback so portfolio closes feed risk streak tracking
         self.portfolio._on_trade_close = self.risk.record_trade_result
+        self.user_portfolios._on_trade_close = self.risk.record_trade_result
         self.state: AgentState = AgentState.IDLE
         self._state_history: list[StateTransition] = []
         self._max_state_history = 1000  # F-13 FIX: cap state history
@@ -202,6 +203,8 @@ class RuneClawEngine:
                 self._transition(AgentState.HALTED, "circuit breaker active")
             await self._check_open_positions()
             return
+        elif self.state == AgentState.HALTED:
+            self._transition(AgentState.IDLE, "circuit breaker cleared")
 
         # Check cooldown
         if self._cooldown_until and time.monotonic() < self._cooldown_until:
@@ -219,15 +222,16 @@ class RuneClawEngine:
             if (now - idea.timestamp).total_seconds() > 300
         ]
         for idea_id in expired_ids:
-            expired_idea = self._pending_ideas.pop(idea_id)
+            expired_idea = self._pending_ideas.pop(idea_id, None)
             self._pending_atr.pop(idea_id, None)  # clean up stored ATR
-            audit(
-                trade_log,
-                f"Trade idea {idea_id} expired (TTL)",
-                action="ttl_expire",
-                result="EXPIRED",
-                data={"asset": expired_idea.asset, "age_seconds": (now - expired_idea.timestamp).total_seconds()},
-            )
+            if expired_idea:
+                audit(
+                    trade_log,
+                    f"Trade idea {idea_id} expired (TTL)",
+                    action="ttl_expire",
+                    result="EXPIRED",
+                    data={"asset": expired_idea.asset, "age_seconds": (now - expired_idea.timestamp).total_seconds()},
+                )
 
         self._transition(AgentState.SCANNING, "beginning scan cycle")
         signals = await self.scanner.scan()
@@ -275,7 +279,7 @@ class RuneClawEngine:
             if idea:
                 # Dedup: if an idea for the same asset already exists, replace it
                 existing_id = None
-                for eid, eidea in self._pending_ideas.items():
+                for eid, eidea in list(self._pending_ideas.items()):
                     if eidea.asset == idea.asset:
                         existing_id = eid
                         break
@@ -563,7 +567,7 @@ class RuneClawEngine:
                       data={"adjustment": critique_result.confidence_adjustment, "new_confidence": idea.confidence})
                 if idea.confidence < CONFIG.risk.min_confidence:
                     audit(system_log, f"Post-critique confidence {idea.confidence:.2f} below min {CONFIG.risk.min_confidence}", action="confirm", result="REJECT")
-                    return None
+                    return f"Trade {trade_id} rejected: post-critique confidence {idea.confidence:.2f} below minimum {CONFIG.risk.min_confidence}"
 
             if critique_result.verdict == "WARN":
                 audit(trade_log, f"Critique WARNING for {trade_id}: {critique_result.bear_case}",
@@ -799,6 +803,7 @@ class RuneClawEngine:
                 action="monitor",
                 result="ERROR",
             )
+            self._transition(AgentState.IDLE, f"monitor error: {exc}")
 
         # Also check live positions if in live mode
         if CONFIG.is_live():

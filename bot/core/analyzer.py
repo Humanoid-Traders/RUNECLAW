@@ -431,6 +431,12 @@ class Analyzer:
         stop_loss = entry - sl_mult * atr if direction == Direction.LONG else entry + sl_mult * atr
         take_profit = entry + tp_mult * atr if direction == Direction.LONG else entry - tp_mult * atr
 
+        # Guard against negative SL/TP from extreme ATR values
+        if direction == Direction.LONG and stop_loss <= 0:
+            stop_loss = entry * 0.01  # floor at 1% of entry
+        elif direction == Direction.SHORT and take_profit <= 0:
+            take_profit = entry * 0.01
+
         # Tag source
         source = thesis.get("source", "unknown")
 
@@ -975,6 +981,8 @@ class Analyzer:
         """
         if self._llm is None:
             result = self._rule_based_thesis(signal, indicators)
+            if result is None:
+                return None
             result["source"] = "RULE_ENGINE"
             return result
 
@@ -992,6 +1000,8 @@ class Analyzer:
         if not AdaptiveFrequency.should_use_llm(signal, indicators):
             self._opt_stats.record_adaptive_skip()
             result = self._rule_based_thesis(signal, indicators)
+            if result is None:
+                return None
             result["source"] = "RULE_ENGINE_ADAPTIVE"
             return result
 
@@ -1002,6 +1012,8 @@ class Analyzer:
         if tier == 1:
             # Tier 1: Rule engine handles clear-cut signals (FREE)
             result = self._rule_based_thesis(signal, indicators)
+            if result is None:
+                return None
             result["source"] = "RULE_ENGINE_TIER1"
             # Cache the rule result too (saves re-computation)
             self._llm_cache.put(cache_key, result, signal.symbol)
@@ -1016,6 +1028,8 @@ class Analyzer:
             audit(trade_log, f"LLM daily budget exhausted ({self._llm_calls_today} calls), using rules",
                   action="analyze", result="LLM_BUDGET")
             result = self._rule_based_thesis(signal, indicators)
+            if result is None:
+                return None
             result["source"] = "RULE_ENGINE_BUDGET"
             return result
 
@@ -1026,6 +1040,8 @@ class Analyzer:
                 audit(trade_log, f"LLM daily dollar budget exhausted (${snap.llm_cost_usd:.4f} >= ${CONFIG.llm.daily_budget_usd}), using rules",
                       action="analyze", result="LLM_BUDGET_USD")
                 result = self._rule_based_thesis(signal, indicators)
+                if result is None:
+                    return None
                 result["source"] = "RULE_ENGINE_BUDGET"
                 return result
 
@@ -1125,6 +1141,8 @@ class Analyzer:
                 self._llm_cache.put(cache_key, fallback_result, signal.symbol)
                 return fallback_result
             result = self._rule_based_thesis(signal, indicators)
+            if result is None:
+                return None
             result["source"] = "RULE_ENGINE_FALLBACK"
             return result
 
@@ -1281,7 +1299,7 @@ class Analyzer:
                 "rsi": r.get("rsi", None),
             })
 
-        reverse = direction.lower() == "long"  # descending for longs
+        reverse = direction.lower() != "long"  # ascending for longs, descending for shorts
         ranked.sort(key=lambda x: x["vwap_gap_pct"], reverse=reverse)
 
         for i, item in enumerate(ranked):

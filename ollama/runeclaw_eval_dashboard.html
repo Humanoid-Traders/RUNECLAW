@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>RUNECLAW Eval Dashboard</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: system-ui, sans-serif; background: #0d0f14; color: #e2e8f0; min-height: 100vh; }
+  .header { background: #111318; border-bottom: 1px solid #1e2330; padding: 20px 32px; display: flex; align-items: center; justify-content: space-between; }
+  .logo { display: flex; align-items: center; gap: 12px; }
+  .logo-icon { font-size: 22px; }
+  .logo-text { font-size: 16px; font-weight: 600; letter-spacing: 0.04em; color: #f1f5f9; }
+  .logo-sub { font-size: 11px; color: #64748b; letter-spacing: 0.08em; text-transform: uppercase; margin-top: 1px; }
+  .run-btn { background: #2563eb; color: #fff; border: none; border-radius: 6px; padding: 8px 16px; font-size: 13px; font-weight: 500; cursor: pointer; display: flex; align-items: center; gap: 6px; transition: background 0.15s; }
+  .run-btn:hover { background: #1d4ed8; }
+  .main { padding: 24px 32px; max-width: 1100px; margin: 0 auto; }
+  .model-bar { background: #111318; border: 1px solid #1e2330; border-radius: 8px; padding: 12px 16px; margin-bottom: 20px; display: flex; align-items: center; gap: 12px; }
+  .model-bar input { flex: 1; background: #0d0f14; border: 1px solid #2d3347; border-radius: 5px; padding: 7px 12px; color: #e2e8f0; font-size: 13px; font-family: monospace; }
+  .model-bar input:focus { outline: none; border-color: #2563eb; }
+  .load-btn { background: transparent; border: 1px solid #2d3347; border-radius: 5px; padding: 7px 14px; color: #94a3b8; font-size: 13px; cursor: pointer; transition: all 0.15s; }
+  .load-btn:hover { border-color: #2563eb; color: #2563eb; }
+  .metric-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 20px; }
+  .metric-card { background: #111318; border: 1px solid #1e2330; border-radius: 8px; padding: 16px; }
+  .metric-label { font-size: 11px; color: #64748b; letter-spacing: 0.06em; text-transform: uppercase; margin-bottom: 6px; }
+  .metric-value { font-size: 28px; font-weight: 700; color: #f1f5f9; font-variant-numeric: tabular-nums; }
+  .metric-value.good { color: #22c55e; }
+  .metric-value.warn { color: #f59e0b; }
+  .metric-value.bad  { color: #ef4444; }
+  .metric-sub { font-size: 11px; color: #475569; margin-top: 4px; }
+  .section-title { font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: #64748b; margin-bottom: 10px; }
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px; }
+  .panel { background: #111318; border: 1px solid #1e2330; border-radius: 8px; padding: 16px; }
+  .check-row { display: flex; align-items: center; gap: 10px; padding: 7px 0; border-bottom: 1px solid #1a1f2e; }
+  .check-row:last-child { border-bottom: none; }
+  .check-name { font-size: 12px; color: #94a3b8; font-family: monospace; flex: 1; }
+  .check-bar-wrap { width: 120px; height: 6px; background: #1e2330; border-radius: 3px; overflow: hidden; }
+  .check-bar { height: 100%; border-radius: 3px; transition: width 0.4s; }
+  .check-pct { font-size: 12px; font-variant-numeric: tabular-nums; color: #94a3b8; width: 36px; text-align: right; }
+  .prompt-table { width: 100%; border-collapse: collapse; }
+  .prompt-table th { font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; color: #475569; padding: 8px 12px; text-align: left; border-bottom: 1px solid #1e2330; }
+  .prompt-table td { padding: 9px 12px; font-size: 12px; border-bottom: 1px solid #141820; vertical-align: top; }
+  .prompt-table tr:hover td { background: #131720; }
+  .grade-badge { display: inline-block; width: 22px; height: 22px; border-radius: 4px; font-size: 11px; font-weight: 700; text-align: center; line-height: 22px; }
+  .grade-A { background: #14532d; color: #86efac; }
+  .grade-B { background: #1e3a5f; color: #7dd3fc; }
+  .grade-C { background: #713f12; color: #fde68a; }
+  .grade-D { background: #7c2d12; color: #fdba74; }
+  .grade-F { background: #450a0a; color: #fca5a5; }
+  .score-bar { display: flex; align-items: center; gap: 8px; }
+  .score-track { flex: 1; height: 5px; background: #1e2330; border-radius: 3px; overflow: hidden; }
+  .score-fill { height: 100%; border-radius: 3px; }
+  .score-num { font-size: 11px; color: #64748b; font-variant-numeric: tabular-nums; min-width: 28px; }
+  .tag { display: inline-block; font-size: 10px; padding: 2px 7px; border-radius: 3px; font-family: monospace; }
+  .tag-ok  { background: #14532d; color: #86efac; }
+  .tag-bad { background: #450a0a; color: #fca5a5; }
+  .tag-skip { background: #1e2330; color: #64748b; }
+  .direction-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 4px; }
+  .long  { background: #22c55e; }
+  .short { background: #ef4444; }
+  .none  { background: #475569; }
+  .empty-state { padding: 48px; text-align: center; color: #475569; }
+  .empty-state .icon { font-size: 32px; margin-bottom: 12px; }
+  .empty-state p { font-size: 14px; line-height: 1.6; }
+  .empty-state code { font-size: 12px; background: #111318; border: 1px solid #1e2330; padding: 2px 8px; border-radius: 4px; color: #94a3b8; }
+  .timestamp { font-size: 11px; color: #475569; }
+  .fix-list { list-style: none; }
+  .fix-list li { font-size: 12px; color: #94a3b8; padding: 6px 0; border-bottom: 1px solid #1a1f2e; display: flex; gap: 8px; }
+  .fix-list li:last-child { border-bottom: none; }
+  .fix-icon { color: #ef4444; font-size: 14px; flex-shrink: 0; }
+  .file-drop { border: 1px dashed #2d3347; border-radius: 6px; padding: 10px 14px; font-size: 12px; color: #64748b; cursor: pointer; transition: all 0.15s; text-align: center; }
+  .file-drop:hover { border-color: #2563eb; color: #2563eb; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="logo">
+    <span class="logo-icon">⚔️</span>
+    <div>
+      <div class="logo-text">RUNECLAW EVAL</div>
+      <div class="logo-sub">Model scoring dashboard</div>
+    </div>
+  </div>
+  <span class="timestamp" id="ts">No results loaded</span>
+</div>
+
+<div class="main">
+
+  <div class="model-bar">
+    <span style="font-size:12px;color:#64748b;">Load results:</span>
+    <input type="text" id="json-path" placeholder="Paste eval JSON path or drop file below..." readonly>
+    <label class="file-drop" for="file-input" style="cursor:pointer;padding:7px 14px;white-space:nowrap">
+      📂 Load JSON
+      <input type="file" id="file-input" accept=".json" style="display:none">
+    </label>
+    <button class="load-btn" onclick="loadSample()">Load sample</button>
+  </div>
+
+  <div id="dashboard" class="empty-state">
+    <div class="icon">📊</div>
+    <p>Run the eval script, then load the results JSON here.</p>
+    <p style="margin-top:12px;">
+      <code>python runeclaw_eval.py --model pbdes2022/HUMANOID-TRADERS --output results.json</code>
+    </p>
+  </div>
+
+</div>
+
+<script>
+const SAMPLE = {
+  model: "pbdes2022/HUMANOID-TRADERS",
+  timestamp: new Date().toISOString(),
+  total_prompts: 9,
+  avg_score: 61.4,
+  grades: { A:1, B:2, C:3, D:1, F:2 },
+  direction_accuracy: 71.4,
+  verdict_accuracy: 55.6,
+  check_averages: {
+    required_fields: 82,
+    direction_valid: 89,
+    entry_price_positive: 100,
+    sl_tp_geometry: 67,
+    risk_reward: 56,
+    confidence_range: 78,
+    signals_used: 72,
+    reasoning_quality: 68,
+    direction_match: 71,
+    verdict_match: 56,
+    regime_awareness: 50,
+  },
+  weak_checks: [
+    ["regime_awareness", 50],
+    ["verdict_match", 56],
+    ["risk_reward", 56],
+    ["sl_tp_geometry", 67],
+    ["reasoning_quality", 68],
+  ],
+  results: [
+    { id:"eval-001", category:"long_strong_signal",    score:91.2, grade:"A", direction_correct:true,  verdict_correct:true,  parse_error:"" },
+    { id:"eval-002", category:"long_fibonacci",        score:78.4, grade:"B", direction_correct:true,  verdict_correct:null,  parse_error:"" },
+    { id:"eval-003", category:"short_strong_signal",   score:83.1, grade:"B", direction_correct:true,  verdict_correct:true,  parse_error:"" },
+    { id:"eval-004", category:"short_high_confidence", score:67.5, grade:"C", direction_correct:false, verdict_correct:null,  parse_error:"" },
+    { id:"eval-005", category:"no_trade_low_conf",     score:62.0, grade:"C", direction_correct:null,  verdict_correct:false, parse_error:"" },
+    { id:"eval-006", category:"no_trade_high_vol",     score:58.3, grade:"C", direction_correct:null,  verdict_correct:false, parse_error:"" },
+    { id:"eval-007", category:"no_trade_poor_rr",      score:44.1, grade:"D", direction_correct:true,  verdict_correct:false, parse_error:"" },
+    { id:"eval-008", category:"choppy_regime",         score:29.0, grade:"F", direction_correct:null,  verdict_correct:false, parse_error:"" },
+    { id:"eval-009", category:"strong_trend_up",       score:18.2, grade:"F", direction_correct:true,  verdict_correct:false, parse_error:"Regime multipliers not applied" },
+  ]
+};
+
+function scoreColor(s) {
+  if (s >= 80) return '#22c55e';
+  if (s >= 60) return '#f59e0b';
+  return '#ef4444';
+}
+
+function gradeClass(g) { return 'grade-' + g; }
+
+function directionHTML(cat) {
+  if (cat && cat.startsWith('long'))  return '<span class="direction-dot long"></span>LONG';
+  if (cat && cat.startsWith('short')) return '<span class="direction-dot short"></span>SHORT';
+  return '<span class="direction-dot none"></span>—';
+}
+
+function boolTag(val) {
+  if (val === null || val === undefined) return '<span class="tag tag-skip">—</span>';
+  return val ? '<span class="tag tag-ok">✓</span>' : '<span class="tag tag-bad">✗</span>';
+}
+
+function render(data) {
+  const avg = data.avg_score || 0;
+  const dirAcc = data.direction_accuracy;
+  const verdAcc = data.verdict_accuracy;
+
+  let gradeHtml = '';
+  for (const [g, n] of Object.entries(data.grades || {})) {
+    gradeHtml += `<span class="grade-badge ${gradeClass(g)}" style="margin-right:4px">${g}×${n}</span>`;
+  }
+
+  let checksHtml = '';
+  const checkAvg = data.check_averages || {};
+  const sorted = Object.entries(checkAvg).sort((a,b) => a[1]-b[1]);
+  for (const [name, pct] of sorted) {
+    const col = pct >= 80 ? '#22c55e' : pct >= 55 ? '#f59e0b' : '#ef4444';
+    checksHtml += `<div class="check-row">
+      <span class="check-name">${name}</span>
+      <div class="check-bar-wrap"><div class="check-bar" style="width:${pct}%;background:${col}"></div></div>
+      <span class="check-pct" style="color:${col}">${pct}%</span>
+    </div>`;
+  }
+
+  let fixHtml = '';
+  for (const [name, pct] of (data.weak_checks || []).slice(0,5)) {
+    fixHtml += `<li><span class="fix-icon">↓</span><span><strong style="color:#e2e8f0">${name}</strong> — ${pct}% pass rate. ${fixHint(name)}</span></li>`;
+  }
+
+  let rowsHtml = '';
+  for (const r of (data.results || [])) {
+    const sc = r.score || 0;
+    const cat = r.category || '';
+    rowsHtml += `<tr>
+      <td><code style="font-size:11px;color:#64748b">${r.id}</code></td>
+      <td><span style="font-size:11px;color:#94a3b8">${cat.replace(/_/g,' ')}</span></td>
+      <td><span class="grade-badge ${gradeClass(r.grade)}">${r.grade}</span></td>
+      <td>
+        <div class="score-bar">
+          <div class="score-track"><div class="score-fill" style="width:${sc}%;background:${scoreColor(sc)}"></div></div>
+          <span class="score-num">${sc.toFixed(0)}</span>
+        </div>
+      </td>
+      <td>${boolTag(r.direction_correct)}</td>
+      <td>${boolTag(r.verdict_correct)}</td>
+      <td style="color:${r.parse_error?'#ef4444':'#475569'};font-size:11px;">${r.parse_error||'—'}</td>
+    </tr>`;
+  }
+
+  const avgClass = avg >= 75 ? 'good' : avg >= 55 ? 'warn' : 'bad';
+  const dirClass = dirAcc == null ? '' : dirAcc >= 75 ? 'good' : dirAcc >= 55 ? 'warn' : 'bad';
+  const verdClass = verdAcc == null ? '' : verdAcc >= 75 ? 'good' : verdAcc >= 55 ? 'warn' : 'bad';
+
+  document.getElementById('ts').textContent = 'Last run: ' + (data.timestamp ? new Date(data.timestamp).toLocaleString() : '—');
+
+  document.getElementById('dashboard').innerHTML = `
+    <div class="metric-row">
+      <div class="metric-card">
+        <div class="metric-label">Avg score</div>
+        <div class="metric-value ${avgClass}">${avg.toFixed(1)}</div>
+        <div class="metric-sub">out of 100</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Direction accuracy</div>
+        <div class="metric-value ${dirClass}">${dirAcc != null ? dirAcc + '%' : '—'}</div>
+        <div class="metric-sub">LONG / SHORT correct</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Verdict accuracy</div>
+        <div class="metric-value ${verdClass}">${verdAcc != null ? verdAcc + '%' : '—'}</div>
+        <div class="metric-sub">APPROVED / REJECTED</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Grades</div>
+        <div style="margin-top:8px">${gradeHtml}</div>
+        <div class="metric-sub">${data.total_prompts} prompts tested</div>
+      </div>
+    </div>
+
+    <div class="two-col">
+      <div class="panel">
+        <div class="section-title">Check pass rates</div>
+        ${checksHtml}
+      </div>
+      <div class="panel">
+        <div class="section-title">Priority fixes</div>
+        <ul class="fix-list">${fixHtml}</ul>
+        <div style="margin-top:16px;padding-top:12px;border-top:1px solid #1e2330">
+          <div class="section-title">Hardcoded thresholds</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-top:6px">
+            ${[['Max risk/trade','2.0%'],['Max daily loss','5.0%'],['Max drawdown','10.0%'],['Min R:R','1.2:1'],['Min confidence','0.55'],['Min confluence','0.60']].map(([k,v])=>`
+              <div style="font-size:11px;color:#64748b;">${k}</div>
+              <div style="font-size:11px;color:#94a3b8;text-align:right;font-family:monospace">${v}</div>
+            `).join('')}
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel" style="margin-bottom:20px">
+      <div class="section-title" style="margin-bottom:10px">Prompt results</div>
+      <table class="prompt-table">
+        <thead><tr>
+          <th>ID</th><th>Category</th><th>Grade</th><th>Score</th>
+          <th>Direction ✓</th><th>Verdict ✓</th><th>Error</th>
+        </tr></thead>
+        <tbody>${rowsHtml}</tbody>
+      </table>
+    </div>
+
+    <div style="font-size:11px;color:#2d3347;text-align:center;padding-bottom:8px">
+      Model: ${data.model || '—'} · RUNECLAW eval harness
+    </div>
+  `;
+
+  document.getElementById('json-path').value = data.model || '';
+}
+
+function fixHint(name) {
+  const hints = {
+    regime_awareness: 'Add regime context to more training prompts.',
+    regime_sizing: 'Model mentions regime but doesn\'t adjust sizing. Add explicit multiplier examples: CHOPPY→0.5x, STRONG_TREND→1.5x, HIGH_VOL→0.3x.',
+    verdict_match: 'Train on more rejection cases — no-trade edge cases.',
+    risk_reward: 'Check R:R math in training data; enforce 1.2:1 min throughout.',
+    sl_tp_geometry: 'Ensure SL/TP polarity is consistent in all 33K samples.',
+    reasoning_quality: 'Increase chain-of-thought samples; add indicator keyword requirements.',
+    confidence_range: 'Normalize confidence scores; add confluence score examples.',
+    signals_used: 'Require at least 3 named signals in every training output.',
+    direction_match: 'Add more counter-signal training examples to reduce bias.',
+  };
+  return hints[name] || 'Review failing prompts for pattern.';
+}
+
+function loadSample() { render(SAMPLE); }
+
+document.getElementById('file-input').addEventListener('change', function(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = function(ev) {
+    try {
+      const data = JSON.parse(ev.target.result);
+      render(data);
+    } catch(err) {
+      alert('Invalid JSON: ' + err.message);
+    }
+  };
+  reader.readAsText(file);
+});
+</script>
+</body>
+</html>

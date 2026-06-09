@@ -22,6 +22,11 @@ import json
 def find_checkpoint():
     """Find the latest checkpoint directory."""
     patterns = [
+        "./runeclaw-8b-max-checkpoints/final-adapter",
+        "./runeclaw-8b-max-checkpoints/checkpoint-*",
+        "./runeclaw-8b-checkpoints/final-adapter",
+        "./runeclaw-8b-checkpoints/checkpoint-*",
+        "./runeclaw-checkpoints/final-adapter",
         "./runeclaw-checkpoints/checkpoint-*",
         "./runeclaw-model/checkpoint-*",
     ]
@@ -174,14 +179,15 @@ def main():
                 weight_map[k] = fname
             print(f"    Saved shard {shard_idx} ({current_bytes / 1024**3:.1f} GB)")
 
-        # Fix shard filenames
+        # Fix shard filenames (use os.replace for Windows compatibility)
         total_shards = len(shard_files)
         for i, old_name in enumerate(shard_files):
             new_name = old_name.replace("PLACEHOLDER", f"{total_shards:05d}")
-            os.rename(
-                os.path.join(output_dir, old_name),
-                os.path.join(output_dir, new_name),
-            )
+            old_path = os.path.join(output_dir, old_name)
+            new_path = os.path.join(output_dir, new_name)
+            if os.path.exists(new_path):
+                os.remove(new_path)
+            os.replace(old_path, new_path)
             for k in weight_map:
                 if weight_map[k] == old_name:
                     weight_map[k] = new_name

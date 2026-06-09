@@ -454,7 +454,7 @@ class OrderFlowAnalyzer:
                 with self._lock:
                     prev = self._oi_history.get(deriv_sym)
                     self._oi_history[deriv_sym] = oi_usd
-                if prev and prev > 0:
+                if prev is not None and prev > 0:
                     sig.oi_change_pct = round((oi_usd - prev) / prev * 100, 3)
                 ok.append("open_interest")
         except Exception as exc:  # noqa: BLE001

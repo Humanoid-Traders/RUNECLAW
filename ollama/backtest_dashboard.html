@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>RUNECLAW Backtest Dashboard</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: system-ui, sans-serif; background: #0d0f14; color: #e2e8f0; min-height: 100vh; }
+  .header { background: #111318; border-bottom: 1px solid #1e2330; padding: 18px 32px; display: flex; align-items: center; justify-content: space-between; }
+  .logo { display: flex; align-items: center; gap: 12px; }
+  .logo-icon { font-size: 20px; }
+  .logo-text { font-size: 15px; font-weight: 600; letter-spacing: 0.04em; }
+  .logo-sub { font-size: 11px; color: #64748b; letter-spacing: 0.08em; text-transform: uppercase; }
+  .main { padding: 24px 32px; max-width: 1100px; margin: 0 auto; }
+  .controls { background: #111318; border: 1px solid #1e2330; border-radius: 8px; padding: 12px 16px; margin-bottom: 20px; display: flex; align-items: center; gap: 12px; }
+  .load-btn { background: transparent; border: 1px solid #2d3347; border-radius: 5px; padding: 7px 14px; color: #94a3b8; font-size: 13px; cursor: pointer; }
+  .load-btn:hover { border-color: #2563eb; color: #2563eb; }
+  .verdict-banner { padding: 14px 18px; border-radius: 8px; margin-bottom: 20px; font-size: 14px; line-height: 1.5; border: 1px solid; }
+  .verdict-good { background: #0f2a1a; border-color: #14532d; color: #86efac; }
+  .verdict-warn { background: #2a2410; border-color: #713f12; color: #fde68a; }
+  .verdict-bad  { background: #2a1010; border-color: #450a0a; color: #fca5a5; }
+  .metric-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 20px; }
+  .metric-card { background: #111318; border: 1px solid #1e2330; border-radius: 8px; padding: 14px; }
+  .metric-label { font-size: 10px; color: #64748b; letter-spacing: 0.06em; text-transform: uppercase; margin-bottom: 6px; }
+  .metric-value { font-size: 24px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .metric-value.good { color: #22c55e; } .metric-value.warn { color: #f59e0b; } .metric-value.bad { color: #ef4444; }
+  .metric-sub { font-size: 10px; color: #475569; margin-top: 3px; }
+  .panel { background: #111318; border: 1px solid #1e2330; border-radius: 8px; padding: 16px; margin-bottom: 20px; }
+  .panel-title { font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: #64748b; margin-bottom: 14px; }
+  .chart-wrap { position: relative; height: 260px; }
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .empty-state { padding: 48px; text-align: center; color: #475569; }
+  .empty-state .icon { font-size: 32px; margin-bottom: 12px; }
+  .empty-state code { font-size: 12px; background: #0d0f14; border: 1px solid #1e2330; padding: 2px 8px; border-radius: 4px; color: #94a3b8; }
+  .stat-line { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #1a1f2e; font-size: 13px; }
+  .stat-line:last-child { border: none; }
+  .stat-label { color: #64748b; } .stat-val { font-variant-numeric: tabular-nums; }
+  .timestamp { font-size: 11px; color: #475569; }
+</style>
+</head>
+<body>
+<div class="header">
+  <div class="logo">
+    <span class="logo-icon">⚔️</span>
+    <div><div class="logo-text">RUNECLAW BACKTEST</div><div class="logo-sub">Out-of-sample, after costs</div></div>
+  </div>
+  <span class="timestamp" id="ts">No backtest loaded</span>
+</div>
+<div class="main">
+  <div class="controls">
+    <span style="font-size:12px;color:#64748b;">Load backtest JSON:</span>
+    <label class="load-btn" for="file-input">📂 Load file<input type="file" id="file-input" accept=".json" style="display:none"></label>
+    <button class="load-btn" onclick="loadSample()">Load sample</button>
+  </div>
+  <div id="dashboard" class="empty-state">
+    <div class="icon">📈</div>
+    <p>Run the backtest, then load the results JSON.</p>
+    <p style="margin-top:12px;"><code>python backtest_runner.py</code> → produces results JSON via <code>results_to_json()</code></p>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script>
+const SAMPLE = {
+  metrics: {
+    n_trades: 61, n_filled: 61, n_no_fill: 0, win_rate: 0.279, loss_rate: 0.721,
+    avg_win_r: 1.93, avg_loss_r: -1.04, expectancy_r: -0.2151, profit_factor: 0.71,
+    total_r: -13.1, total_pnl_quote: -2476, total_costs_quote: 354, cost_drag_r: 1.77,
+    max_drawdown_pct: 24.8, max_drawdown_r: 13.1, sharpe: -1.26, sortino: -8.4,
+    avg_bars_held: 22.4, target_rate: 0.28, stop_rate: 0.72, timeout_rate: 0,
+    longest_loss_streak: 9, final_equity: 7524, starting_equity: 10000, return_pct: -24.8,
+  },
+  verdict: "NO EDGE — expectancy is zero or negative after costs. The model produces well-formed trades that do not make money on unseen data.",
+  trades: Array.from({length:61}, (_,i) => {
+    const win = Math.random() < 0.279;
+    return { symbol:"TEST/USDT", direction: Math.random()>0.5?"LONG":"SHORT",
+             outcome: win?"target":"stop", r_multiple: win? 1.93 : -1.04,
+             net_return_pct: win? 5.8 : -3.1, pnl_quote: win? 386:-208,
+             bars_held: Math.floor(Math.random()*40)+5, confidence: 0.5+Math.random()*0.4 };
+  }),
+};
+
+let chartRefs = [];
+function destroyCharts() { chartRefs.forEach(c => c.destroy()); chartRefs = []; }
+
+function cls(v, goodAbove, warnAbove) {
+  if (v > goodAbove) return 'good'; if (v > warnAbove) return 'warn'; return 'bad';
+}
+
+function render(data) {
+  const m = data.metrics;
+  const trades = data.trades || [];
+
+  // Build equity curve from trades
+  let eq = m.starting_equity;
+  const curve = [eq];
+  const ordered = [...trades];
+  for (const t of ordered) { eq += t.pnl_quote || 0; curve.push(eq); }
+
+  // Drawdown curve
+  let peak = curve[0]; const dd = curve.map(v => { peak = Math.max(peak, v); return -((peak - v)/peak*100); });
+
+  // R-multiple distribution buckets
+  const buckets = {"<-1":0,"-1..0":0,"0..1":0,"1..2":0,">2":0};
+  trades.forEach(t => { const r = t.r_multiple;
+    if (r < -1) buckets["<-1"]++; else if (r<0) buckets["-1..0"]++;
+    else if (r<1) buckets["0..1"]++; else if (r<2) buckets["1..2"]++; else buckets[">2"]++; });
+
+  const exp = m.expectancy_r;
+  const vClass = exp > 0.05 ? 'verdict-good' : exp > 0 ? 'verdict-warn' : 'verdict-bad';
+
+  document.getElementById('ts').textContent = `${m.n_filled} trades · ${m.return_pct >= 0 ? '+' : ''}${m.return_pct}%`;
+
+  document.getElementById('dashboard').className = '';
+  document.getElementById('dashboard').innerHTML = `
+    <div class="verdict-banner ${vClass}">${data.verdict || ''}</div>
+    <div class="metric-row">
+      <div class="metric-card">
+        <div class="metric-label">Expectancy (R/trade)</div>
+        <div class="metric-value ${cls(exp,0.05,0)}">${exp >= 0 ? '+' : ''}${exp.toFixed(4)}</div>
+        <div class="metric-sub">the number that matters</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Profit factor</div>
+        <div class="metric-value ${cls(m.profit_factor,1.2,1.0)}">${m.profit_factor.toFixed(2)}</div>
+        <div class="metric-sub">gross win ÷ gross loss</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Win rate</div>
+        <div class="metric-value">${(m.win_rate*100).toFixed(1)}%</div>
+        <div class="metric-sub">+${m.avg_win_r}R / ${m.avg_loss_r}R</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Max drawdown</div>
+        <div class="metric-value ${cls(-m.max_drawdown_pct,-15,-30)}">${m.max_drawdown_pct.toFixed(1)}%</div>
+        <div class="metric-sub">${m.max_drawdown_r}R</div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-title">Equity curve (after costs)</div>
+      <div class="chart-wrap"><canvas id="equityChart" role="img" aria-label="Equity curve over trades"></canvas></div>
+    </div>
+
+    <div class="two-col">
+      <div class="panel">
+        <div class="panel-title">Drawdown</div>
+        <div class="chart-wrap" style="height:200px"><canvas id="ddChart" role="img" aria-label="Drawdown percentage over trades"></canvas></div>
+      </div>
+      <div class="panel">
+        <div class="panel-title">R-multiple distribution</div>
+        <div class="chart-wrap" style="height:200px"><canvas id="distChart" role="img" aria-label="Distribution of trade R-multiples"></canvas></div>
+      </div>
+    </div>
+
+    <div class="two-col">
+      <div class="panel">
+        <div class="panel-title">Outcomes</div>
+        <div class="stat-line"><span class="stat-label">Target hit</span><span class="stat-val" style="color:#22c55e">${(m.target_rate*100).toFixed(0)}%</span></div>
+        <div class="stat-line"><span class="stat-label">Stopped out</span><span class="stat-val" style="color:#ef4444">${(m.stop_rate*100).toFixed(0)}%</span></div>
+        <div class="stat-line"><span class="stat-label">Timed out</span><span class="stat-val">${(m.timeout_rate*100).toFixed(0)}%</span></div>
+        <div class="stat-line"><span class="stat-label">No fill</span><span class="stat-val">${m.n_no_fill}</span></div>
+      </div>
+      <div class="panel">
+        <div class="panel-title">Risk & costs</div>
+        <div class="stat-line"><span class="stat-label">Sharpe / Sortino</span><span class="stat-val">${m.sharpe.toFixed(2)} / ${m.sortino.toFixed(2)}</span></div>
+        <div class="stat-line"><span class="stat-label">Longest loss streak</span><span class="stat-val">${m.longest_loss_streak}</span></div>
+        <div class="stat-line"><span class="stat-label">Total costs paid</span><span class="stat-val">$${m.total_costs_quote.toLocaleString()}</span></div>
+        <div class="stat-line"><span class="stat-label">Cost drag</span><span class="stat-val">~${m.cost_drag_r}R</span></div>
+        <div class="stat-line"><span class="stat-label">Avg bars held</span><span class="stat-val">${m.avg_bars_held}</span></div>
+      </div>
+    </div>
+  `;
+
+  destroyCharts();
+  const gridColor = 'rgba(148,163,184,0.08)';
+  const baseOpts = { responsive:true, maintainAspectRatio:false,
+    plugins:{legend:{display:false}}, scales:{x:{display:false,grid:{color:gridColor}},
+    y:{grid:{color:gridColor},ticks:{color:'#64748b',font:{size:10}}}} };
+
+  chartRefs.push(new Chart(document.getElementById('equityChart'), {
+    type:'line', data:{labels:curve.map((_,i)=>i),
+      datasets:[{data:curve, borderColor: curve[curve.length-1]>=curve[0]?'#22c55e':'#ef4444',
+        backgroundColor:'rgba(37,99,235,0.05)', fill:true, borderWidth:2, pointRadius:0, tension:0.1}]},
+    options: baseOpts }));
+
+  chartRefs.push(new Chart(document.getElementById('ddChart'), {
+    type:'line', data:{labels:dd.map((_,i)=>i),
+      datasets:[{data:dd, borderColor:'#ef4444', backgroundColor:'rgba(239,68,68,0.1)',
+        fill:true, borderWidth:1.5, pointRadius:0, tension:0.1}]},
+    options: baseOpts }));
+
+  chartRefs.push(new Chart(document.getElementById('distChart'), {
+    type:'bar', data:{labels:Object.keys(buckets),
+      datasets:[{data:Object.values(buckets),
+        backgroundColor:Object.keys(buckets).map(k=>k.includes('-')&&k!=='-1..0'?'#ef4444':(k==='-1..0'?'#f59e0b':'#22c55e'))}]},
+    options:{...baseOpts, scales:{...baseOpts.scales, x:{grid:{color:gridColor},ticks:{color:'#64748b',font:{size:10}}}}} }));
+}
+
+function loadSample(){ render(SAMPLE); }
+document.getElementById('file-input').addEventListener('change', e=>{
+  const f=e.target.files[0]; if(!f) return;
+  const r=new FileReader(); r.onload=ev=>{ try{render(JSON.parse(ev.target.result));}catch(err){alert('Invalid JSON: '+err.message);} };
+  r.readAsText(f);
+});
+</script>
+</body>
+</html>

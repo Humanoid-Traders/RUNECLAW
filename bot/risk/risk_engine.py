@@ -287,7 +287,7 @@ class RiskEngine:
             else:
                 notional_pct = (position_usd / state.equity_usd * 100)
                 max_notional_pct = CONFIG.risk.max_symbol_exposure_pct  # 20% default
-                if notional_pct <= max_notional_pct + 0.01:  # tiny epsilon for float math
+                if notional_pct < max_notional_pct + 0.01:  # tiny epsilon for float math
                     passed.append(f"POSITION_SIZE: notional {notional_pct:.1f}% <= {max_notional_pct}%")
                 else:
                     failed.append(f"POSITION_SIZE: notional {notional_pct:.1f}% exceeds {max_notional_pct}% cap")
@@ -356,9 +356,9 @@ class RiskEngine:
             failed.append(f"CORRELATION: evaluation error ({exc})")
 
         try:
-            # 9. Consecutive loss streak (H4 fix: 4+ streak = soft reject, hard stop via circuit breaker at max)
-            if self._consecutive_losses >= 4:
-                failed.append(f"LOSS_STREAK: {self._consecutive_losses} consecutive losses (>= 4)")
+            # 9. Consecutive loss streak (H4 fix: 3+ streak = soft reject, hard stop via circuit breaker at max)
+            if self._consecutive_losses >= 3:
+                failed.append(f"LOSS_STREAK: {self._consecutive_losses} consecutive losses (>= 3)")
             else:
                 passed.append(f"LOSS_STREAK: {self._consecutive_losses} OK")
         except Exception as exc:
@@ -440,7 +440,7 @@ class RiskEngine:
 
         try:
             # 16. Volatility guard (fail-closed: ATR required and must be > 0)
-            # Meme coins get a tighter threshold (4% vs 6% default)
+            # Meme coins get a tighter threshold (4% vs 7% default)
             symbol = getattr(idea, "asset", "") or ""
             meme_group = _CORRELATION_GROUPS.get(f"{symbol}/USDT" if "/" not in symbol else symbol)
             is_meme = meme_group == "MEME"
