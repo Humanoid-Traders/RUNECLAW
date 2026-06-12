@@ -16,6 +16,8 @@ from typing import Optional
 
 import aiohttp
 
+from bot.config import CONFIG
+
 log = logging.getLogger("runeclaw.dashboard_pusher")
 
 PUSH_INTERVAL = 30  # seconds
@@ -129,14 +131,21 @@ class DashboardPusher:
         # System-level stats
         combined = multi.combined_snapshot() if multi.all_portfolios() else None
 
+        # LIVE FIX: use real exchange equity in LIVE mode
+        system_equity = round(combined.equity_usd, 2) if combined else 0
+        if CONFIG.is_live():
+            live_eq = self.engine.get_effective_equity()
+            if live_eq > 0:
+                system_equity = round(live_eq, 2)
+
         return {
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "bot_version": "4.0-beta",
-            "mode": "PAPER",
+            "mode": "LIVE" if CONFIG.is_live() else "PAPER",
             "total_traders": len(traders),
             "total_open_positions": multi.total_open_positions() if multi.all_portfolios() else 0,
             "system": {
-                "equity": round(combined.equity_usd, 2) if combined else 0,
+                "equity": system_equity,
                 "total_pnl": round(combined.total_pnl, 2) if combined else 0,
                 "total_trades": combined.total_trades if combined else 0,
                 "win_rate": round(combined.win_rate * 100, 1) if combined else 0,

@@ -75,6 +75,17 @@ class RuneClawEngine:
         )
         self.compliance = ComplianceEngine()
         self.compliance_profile = default_demo_profile()
+        # LIVE FIX: if env-level config enables live trading, auto-grant
+        # LIVE_TRADE permission so the bot doesn't require /golive CONFIRM
+        # after every restart.  The five-lock compliance engine still enforces
+        # all other gates (risk, macro, notional cap, human approval).
+        if CONFIG.is_live():
+            from bot.compliance.compliance_engine import Permission as _Perm
+            self.compliance_profile.permissions.add(_Perm.LIVE_TRADE)
+            system_log.info(
+                "LIVE_TRADE permission auto-granted from env config "
+                "(SIMULATION_MODE=false, LIVE_TRADING_ENABLED=true)"
+            )
         self.audit_chain = AuditChain("logs/audit_chain.jsonl")
         self.learning = LearningOrchestrator()
         # WebSocket feed for real-time price monitoring (supplements REST polling)
@@ -112,6 +123,57 @@ class RuneClawEngine:
     async def get_exchange(self):
         """Public accessor for the exchange instance (for skills that need OHLCV)."""
         return await self.scanner._get_exchange()
+
+    # -- Live equity cache --
+
+    _live_balance_cache: dict = {}
+    _live_balance_cache_ts: float = 0.0
+    _LIVE_BALANCE_TTL: float = 30.0  # cache live balance for 30 seconds
+
+    async def get_live_equity(self) -> Optional[dict]:
+        """Fetch real exchange balance in LIVE mode (cached).
+
+        Returns dict with 'equity', 'free', 'used', 'holdings' or None if
+        not in live mode or fetch fails.
+        """
+        if not CONFIG.is_live():
+            return None
+        now = time.monotonic()
+        if (now - self._live_balance_cache_ts) < self._LIVE_BALANCE_TTL and self._live_balance_cache:
+            return self._live_balance_cache
+        try:
+            bal = await self.live_executor.fetch_balance()
+            if "error" not in bal or bal.get("total", 0) > 0:
+                self._live_balance_cache = bal
+                self._live_balance_cache_ts = now
+                return bal
+        except Exception as exc:
+            system_log.debug("Live balance fetch failed: %s", exc)
+        return self._live_balance_cache if self._live_balance_cache else None
+
+    def get_effective_equity(self, user_id: str = "") -> float:
+        """Return the equity figure to display/use for sizing.
+
+        In LIVE mode: returns cached live exchange equity (USDT balance).
+        In PAPER mode: returns the user's paper portfolio equity.
+        """
+        if CONFIG.is_live() and self._live_balance_cache:
+            return self._live_balance_cache.get("total", 0.0)
+        portfolio = self.user_portfolios.get(user_id) if user_id else self.portfolio
+        return portfolio.snapshot().equity_usd
+
+    async def get_effective_equity_async(self, user_id: str = "") -> float:
+        """Async version that fetches live balance if cache is empty.
+
+        Use this in Telegram command handlers to ensure fresh data.
+        """
+        if CONFIG.is_live():
+            if not self._live_balance_cache:
+                await self.get_live_equity()
+            if self._live_balance_cache:
+                return self._live_balance_cache.get("total", 0.0)
+        portfolio = self.user_portfolios.get(user_id) if user_id else self.portfolio
+        return portfolio.snapshot().equity_usd
 
     def _transition(self, new_state: AgentState, reason: str = "") -> None:
         """Transition the FSM to a new state. Every transition is audit-logged."""
@@ -193,6 +255,13 @@ class RuneClawEngine:
 
     async def _tick(self) -> None:
         """One full scan-analyze cycle."""
+        # Refresh live balance cache if in live mode
+        if CONFIG.is_live():
+            try:
+                await self.get_live_equity()
+            except Exception:
+                pass  # non-fatal: use cached value
+
         # Sync WebSocket status to health monitor
         self.health.set_ws_status(self.ws_feed.is_connected())
 
@@ -378,8 +447,10 @@ class RuneClawEngine:
             atr_value = sum(true_ranges) / len(true_ranges)
 
         # Risk gate — pass ATR so all 18 checks run
+        # LIVE FIX: pass actual exchange equity so sizing is based on real capital
+        live_eq = self._live_balance_cache.get("total", 0.0) if (CONFIG.is_live() and self._live_balance_cache) else None
         self._transition(AgentState.RISK_CHECK, f"evaluating {signal.symbol}")
-        risk_check = self.risk.evaluate(idea, atr=atr_value)
+        risk_check = self.risk.evaluate(idea, atr=atr_value, live_equity=live_eq)
 
         # Log risk evaluation to scan log
         audit(scan_log, f"Risk evaluation: {risk_check.verdict.value} for {idea.asset}",
@@ -518,7 +589,9 @@ class RuneClawEngine:
         # Stale-data check #12 guards against time drift (>300s = reject).
         self._transition(AgentState.RISK_CHECK, f"re-checking risk for {trade_id}")
         try:
-            recheck = self.risk.evaluate(idea, atr=stored_atr)
+            # LIVE FIX: pass live equity for re-check sizing too
+            live_eq_recheck = self._live_balance_cache.get("total", 0.0) if (CONFIG.is_live() and self._live_balance_cache) else None
+            recheck = self.risk.evaluate(idea, atr=stored_atr, live_equity=live_eq_recheck)
         except Exception as exc:
             # Fix 6: if re-check raises, do NOT silently lose the idea.
             # Log it as a failed re-check and return a clear message.
@@ -618,6 +691,20 @@ class RuneClawEngine:
             # Live mode — execute via LiveExecutor with micro-test safety limits
             self._transition(AgentState.EXECUTING, f"executing LIVE trade {trade_id}")
             size_usd = recheck.position_size_usd
+
+            # LIVE FIX: Cap position size at actual exchange equity to prevent
+            # InsufficientFunds errors.  The risk engine sizes based on paper
+            # portfolio equity; in LIVE mode the real account may be smaller.
+            live_bal = self._live_balance_cache
+            if live_bal:
+                available = live_bal.get("free", 0.0)
+                if size_usd > available:
+                    audit(trade_log,
+                          f"Live size clamped: ${size_usd:.2f} -> ${available:.2f} (exchange available)",
+                          action="live_size_clamp", result="CLAMPED",
+                          data={"requested": round(size_usd, 2), "available": round(available, 2)})
+                    size_usd = available
+
             result = await self.live_executor.execute(idea, size_usd)
 
             # Also record as paper trade for portfolio tracking / metrics

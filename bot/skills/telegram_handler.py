@@ -494,9 +494,15 @@ class TelegramHandler:
         try:
             user_portfolio = self.engine.user_portfolios.get(user_id)
             state = user_portfolio.snapshot()
+            # LIVE FIX: use real equity in LIVE mode for AI context
+            if CONFIG.is_live():
+                eff_equity = self.engine.get_effective_equity(user_id)
+                eq_display = eff_equity if eff_equity > 0 else state.equity_usd
+            else:
+                eq_display = state.equity_usd
             portfolio_summary = (
                 f"{state.open_positions} open positions, "
-                f"equity ~${state.equity_usd:,.2f}, "
+                f"equity ~${eq_display:,.2f}, "
                 f"total PnL ${state.total_pnl:+,.2f}, "
                 f"win rate {state.win_rate:.0%}, "
                 f"total trades {state.total_trades}"
@@ -917,12 +923,19 @@ class TelegramHandler:
         state = user_portfolio.snapshot()
         cb_active = self.engine.risk.circuit_breaker_active
 
+        # LIVE FIX: show real exchange equity in LIVE mode
+        if mode_str == "LIVE":
+            live_eq = await self.engine.get_effective_equity_async(tg_id)
+            display_equity = live_eq if live_eq > 0 else state.equity_usd
+        else:
+            display_equity = state.equity_usd
+
         SEP = "─" * 16
         status_icon = "\U0001f7e2" if not cb_active else "\U0001f534"
         status_label = "LOCKED IN" if not cb_active else "CB TRIGGERED"
         status_line = f"{status_icon} Status: <b>{status_label}</b>"
         mode = mode_str
-        equity = f"{state.equity_usd:,.2f}"
+        equity = f"{display_equity:,.2f}"
         open_pos = state.open_positions
         win_rate = f"{state.win_rate:.0%}".replace("%", "")
         time = now
@@ -1291,6 +1304,10 @@ class TelegramHandler:
             return
         try:
             bal = await self.engine.live_executor.fetch_balance()
+            # LIVE FIX: update engine's cached balance so /status shows fresh data
+            if "error" not in bal or bal.get("total", 0) > 0:
+                self.engine._live_balance_cache = bal
+                self.engine._live_balance_cache_ts = time.time()
             total = bal.get("total", 0)
             free = bal.get("free", 0)
             used = bal.get("used", 0)
@@ -1842,13 +1859,22 @@ class TelegramHandler:
         state = portfolio.snapshot()
         history = portfolio.trade_history
 
+        # LIVE FIX: in LIVE mode, show real exchange balance prominently
+        mode_str = "LIVE" if CONFIG.is_live() else "PAPER"
+        if mode_str == "LIVE":
+            display_equity = await self.engine.get_effective_equity_async(user_id)
+            if display_equity <= 0:
+                display_equity = state.equity_usd
+        else:
+            display_equity = state.equity_usd
+
         sep = "─" * 16
         lines = [
-            f"\U0001f4bc <b>YOUR PORTFOLIO</b>",
+            f"\U0001f4bc <b>YOUR PORTFOLIO</b> ({mode_str})",
             sep,
             "",
-            f"- Equity: <code>${state.equity_usd:,.2f}</code>",
-            f"- Cash: <code>${state.balance_usd:,.2f}</code>",
+            f"- Equity: <code>${display_equity:,.2f}</code>",
+            f"- Cash: <code>${state.balance_usd:,.2f}</code>" if mode_str == "PAPER" else f"- Paper Balance: <code>${state.balance_usd:,.2f}</code>",
             f"- Open Positions: <code>{state.open_positions}</code>",
             f"- Daily PnL: <code>{'+' if state.daily_pnl >= 0 else ''}{state.daily_pnl:.2f}%</code> {'🟢' if state.daily_pnl >= 0 else '🔴'}",
             f"- Drawdown: <code>{state.max_drawdown_pct:.2f}%</code>",
@@ -2001,7 +2027,13 @@ class TelegramHandler:
         cb = self.engine.risk.circuit_breaker_active
         macro = self.engine.macro_calendar.evaluate()
         mode = "PAPER" if CONFIG.simulation_mode else "LIVE"
-        equity = state.equity_usd if hasattr(state, "equity_usd") else 10_000.0
+        # LIVE FIX: show real exchange equity in LIVE mode
+        if mode == "LIVE":
+            equity = await self.engine.get_effective_equity_async(user_id)
+            if equity <= 0:
+                equity = state.equity_usd
+        else:
+            equity = state.equity_usd if hasattr(state, "equity_usd") else 10_000.0
         daily_pnl = round(state.daily_pnl, 2) if hasattr(state, "daily_pnl") else 0.0
         drawdown = round(state.max_drawdown_pct, 2) if state.max_drawdown_pct else 0.0
 
@@ -2373,41 +2405,95 @@ class TelegramHandler:
         user_id = self._get_tg_id(update)
         portfolio = self.engine.user_portfolios.get(user_id)
 
-        # Fetch fresh prices before rendering
-        open_pos = portfolio.open_positions
-        if open_pos:
-            try:
-                exchange = await self.engine.scanner._get_exchange()
-                syms = list({p.asset for p in open_pos})
-                tickers = await exchange.fetch_tickers(syms)
-                fresh = {s: float(t.get("last", 0)) for s, t in tickers.items() if t.get("last")}
-                if fresh:
-                    portfolio.mark_to_market(fresh)
-            except Exception:
-                pass
-
         positions_data = []
-        with portfolio._lock:
-            for tid, pos in portfolio._positions.items():
-                last_price = portfolio._last_prices.get(pos.asset, pos.entry_price)
-                if pos.direction.value == "LONG":
-                    pnl_pct = ((last_price - pos.entry_price) / pos.entry_price) * 100
-                else:
-                    pnl_pct = ((pos.entry_price - last_price) / pos.entry_price) * 100
-                from datetime import datetime, timezone
-                hold_h = (datetime.now(timezone.utc) - pos.opened_at).total_seconds() / 3600
-                positions_data.append({
-                    "pair": pos.asset.replace("/", ""),
-                    "direction": pos.direction.value,
-                    "entry": round(pos.entry_price, 6),
-                    "current": round(last_price, 6),
-                    "pnl_pct": round(pnl_pct, 2),
-                    "sl": round(pos.stop_loss, 6),
-                    "tp": round(pos.take_profit, 6),
-                    "size_usd": round(pos.quantity * pos.entry_price, 2),
-                    "comm_pct": CONFIG.risk.commission_pct,
-                    "hold_hours": round(hold_h, 1),
-                })
+
+        # LIVE FIX: in LIVE mode, show positions from LiveExecutor
+        if CONFIG.is_live():
+            live_positions = self.engine.live_executor.open_positions
+            if live_positions:
+                try:
+                    exchange = await self.engine.scanner._get_exchange()
+                    syms = list({p.symbol for p in live_positions})
+                    tickers = await exchange.fetch_tickers(syms)
+                    prices = {s: float(t.get("last", 0)) for s, t in tickers.items() if t.get("last")}
+                except Exception:
+                    prices = {}
+
+                for pos in live_positions:
+                    last_price = prices.get(pos.symbol, pos.entry_price)
+                    if pos.direction == "LONG":
+                        pnl_pct = ((last_price - pos.entry_price) / pos.entry_price) * 100
+                        upnl_usd = (last_price - pos.entry_price) * pos.quantity
+                    else:
+                        pnl_pct = ((pos.entry_price - last_price) / pos.entry_price) * 100
+                        upnl_usd = (pos.entry_price - last_price) * pos.quantity
+                    from datetime import datetime, timezone
+                    hold_h = (datetime.now(timezone.utc) - pos.opened_at).total_seconds() / 3600
+                    cost = pos.cost_usd if pos.cost_usd > 0 else pos.entry_price * pos.quantity
+                    notional = last_price * pos.quantity
+                    leverage = notional / cost if cost > 0 else 1.0
+                    sl_dist = abs(last_price - pos.stop_loss) / last_price * 100 if last_price else 0
+                    tp_dist = abs(pos.take_profit - last_price) / last_price * 100 if last_price else 0
+                    risk_left = abs(last_price - pos.stop_loss) if pos.stop_loss else 0
+                    reward_left = abs(pos.take_profit - last_price) if pos.take_profit else 0
+                    rr_live = reward_left / risk_left if risk_left > 0 else 0
+                    positions_data.append({
+                        "pair": pos.symbol.replace("/", ""),
+                        "direction": pos.direction,
+                        "entry": round(pos.entry_price, 6),
+                        "current": round(last_price, 6),
+                        "pnl_pct": round(pnl_pct, 2),
+                        "pnl_usd": round(upnl_usd, 4),
+                        "sl": round(pos.stop_loss, 6),
+                        "tp": round(pos.take_profit, 6),
+                        "sl_dist_pct": round(sl_dist, 2),
+                        "tp_dist_pct": round(tp_dist, 2),
+                        "size_usd": round(cost, 2),
+                        "notional_usd": round(notional, 2),
+                        "leverage": round(leverage, 2),
+                        "rr_live": round(rr_live, 2),
+                        "quantity": pos.quantity,
+                        "comm_pct": CONFIG.risk.commission_pct,
+                        "hold_hours": round(hold_h, 1),
+                        "sl_order": "exchange" if pos.sl_order_id else "manual",
+                        "tp_order": "exchange" if pos.tp_order_id else "manual",
+                        "trade_id": pos.trade_id,
+                    })
+        else:
+            # PAPER mode: show paper positions
+            open_pos = portfolio.open_positions
+            if open_pos:
+                try:
+                    exchange = await self.engine.scanner._get_exchange()
+                    syms = list({p.asset for p in open_pos})
+                    tickers = await exchange.fetch_tickers(syms)
+                    fresh = {s: float(t.get("last", 0)) for s, t in tickers.items() if t.get("last")}
+                    if fresh:
+                        portfolio.mark_to_market(fresh)
+                except Exception:
+                    pass
+
+            with portfolio._lock:
+                for tid, pos in portfolio._positions.items():
+                    last_price = portfolio._last_prices.get(pos.asset, pos.entry_price)
+                    if pos.direction.value == "LONG":
+                        pnl_pct = ((last_price - pos.entry_price) / pos.entry_price) * 100
+                    else:
+                        pnl_pct = ((pos.entry_price - last_price) / pos.entry_price) * 100
+                    from datetime import datetime, timezone
+                    hold_h = (datetime.now(timezone.utc) - pos.opened_at).total_seconds() / 3600
+                    positions_data.append({
+                        "pair": pos.asset.replace("/", ""),
+                        "direction": pos.direction.value,
+                        "entry": round(pos.entry_price, 6),
+                        "current": round(last_price, 6),
+                        "pnl_pct": round(pnl_pct, 2),
+                        "sl": round(pos.stop_loss, 6),
+                        "tp": round(pos.take_profit, 6),
+                        "size_usd": round(pos.quantity * pos.entry_price, 2),
+                        "comm_pct": CONFIG.risk.commission_pct,
+                        "hold_hours": round(hold_h, 1),
+                    })
 
         msg = render_open_positions(positions_data)
 
@@ -2676,14 +2762,24 @@ class TelegramHandler:
 
         if data.startswith("pos_details_"):
             pair = data.removeprefix("pos_details_")
-            # Find the open position for this pair
+            # Find the open position for this pair — check LIVE executor first
             user_id = self._get_tg_id(update)
             portfolio = self.engine.user_portfolios.get(user_id)
             pos_match = None
-            for p in portfolio.open_positions:
-                if p.asset.replace("/", "") == pair:
-                    pos_match = p
-                    break
+            is_live_pos = False
+
+            if CONFIG.is_live():
+                for lp in self.engine.live_executor.open_positions:
+                    if lp.symbol.replace("/", "") == pair:
+                        pos_match = lp
+                        is_live_pos = True
+                        break
+
+            if pos_match is None:
+                for p in portfolio.open_positions:
+                    if p.asset.replace("/", "") == pair:
+                        pos_match = p
+                        break
 
             # Fetch live analysis data
             try:
@@ -2698,64 +2794,109 @@ class TelegramHandler:
 
             if adata and pos_match:
                 last_px = adata["price"]
-                # Update portfolio with fresh price so summary views stay in sync
-                portfolio.mark_to_market({pos_match.asset: last_px})
-                pnl_pct = ((last_px - pos_match.entry_price) / pos_match.entry_price * 100)
-                if pos_match.direction.value == "SHORT":
+
+                # Extract fields uniformly from live or paper position
+                if is_live_pos:
+                    _entry = pos_match.entry_price
+                    _qty = pos_match.quantity
+                    _dir = pos_match.direction  # already a string
+                    _sl = pos_match.stop_loss
+                    _tp = pos_match.take_profit
+                    _opened = pos_match.opened_at
+                    _cost = pos_match.cost_usd if pos_match.cost_usd > 0 else _entry * _qty
+                    _sl_oid = pos_match.sl_order_id
+                    _tp_oid = pos_match.tp_order_id
+                else:
+                    portfolio.mark_to_market({pos_match.asset: last_px})
+                    _entry = pos_match.entry_price
+                    _qty = pos_match.quantity
+                    _dir = pos_match.direction.value if hasattr(pos_match.direction, 'value') else str(pos_match.direction)
+                    _sl = pos_match.stop_loss
+                    _tp = pos_match.take_profit
+                    _opened = pos_match.opened_at
+                    _cost = _entry * _qty
+                    _sl_oid = None
+                    _tp_oid = None
+
+                pnl_pct = ((last_px - _entry) / _entry * 100)
+                if _dir == "SHORT":
                     pnl_pct = -pnl_pct
-                sz = pos_match.quantity * pos_match.entry_price
-                exit_notional = pos_match.quantity * last_px
-                pnl_usd = sz * pnl_pct / 100
-                d_emoji = "\U0001f7e2" if pos_match.direction.value == "LONG" else "\U0001f534"
+                sz = _cost
+                exit_notional = _qty * last_px
+                pnl_usd = (_qty * (last_px - _entry)) if _dir == "LONG" else (_qty * (_entry - last_px))
+                d_emoji = "\U0001f7e2" if _dir == "LONG" else "\U0001f534"
                 pnl_emoji = "\U0001f7e2" if pnl_pct >= 0 else "\U0001f534"
-                sl_dist = abs(last_px - pos_match.stop_loss) / last_px * 100
-                tp_dist = abs(pos_match.take_profit - last_px) / last_px * 100
+                sl_dist = abs(last_px - _sl) / last_px * 100 if last_px else 0
+                tp_dist = abs(_tp - last_px) / last_px * 100 if last_px else 0
+
+                # R:R from current price
+                risk_left = abs(last_px - _sl) if _sl else 0
+                reward_left = abs(_tp - last_px) if _tp else 0
+                rr_live = reward_left / risk_left if risk_left > 0 else 0
+
+                # Leverage
+                notional_now = _qty * last_px
+                leverage = notional_now / sz if sz > 0 else 1.0
 
                 # Fee calculations
-                comm_pct = CONFIG.risk.commission_pct  # 0.1% per side default
+                comm_pct = CONFIG.risk.commission_pct
                 entry_fee = sz * (comm_pct / 100.0)
                 exit_fee_est = exit_notional * (comm_pct / 100.0)
                 total_fees = entry_fee + exit_fee_est
 
-                # Funding rate estimate: ~0.01% per 8h session (standard perp rate)
+                # Funding rate estimate
                 from datetime import datetime, timezone
-                hold_hours = (datetime.now(timezone.utc) - pos_match.opened_at).total_seconds() / 3600
+                hold_hours = (datetime.now(timezone.utc) - _opened).total_seconds() / 3600
                 funding_sessions = hold_hours / 8.0
-                funding_rate = 0.01  # 0.01% per 8h — standard neutral rate
+                funding_rate = 0.01
                 funding_paid = sz * (funding_rate / 100.0) * funding_sessions
 
                 # Net PNL after all fees
                 net_pnl = pnl_usd - total_fees - funding_paid
 
+                # Hold time display
+                if hold_hours < 1:
+                    hold_str = f"{hold_hours * 60:.0f}m"
+                elif hold_hours < 24:
+                    hold_str = f"{hold_hours:.1f}h"
+                else:
+                    hold_str = f"{hold_hours / 24:.1f}d"
+
+                # SL/TP order status
+                sl_status = "\u2705 exchange" if _sl_oid else "\u26a0\ufe0f manual"
+                tp_status = "\u2705 exchange" if _tp_oid else "\u26a0\ufe0f manual"
+
+                mode_tag = " \U0001f534 LIVE" if is_live_pos else ""
+
                 lines = [
-                    f"\U0001f4cb <b>{html.escape(pair)} — Position Detail</b>",
+                    f"\U0001f4cb <b>{html.escape(pair)} \u2014 Position Detail</b>{mode_tag}",
                     "",
                     f"<b>Position:</b>",
-                    f"- Direction: {d_emoji} {pos_match.direction.value}",
-                    f"- Entry: <code>{pos_match.entry_price:,.4f}</code>",
-                    f"- Current: <code>{last_px:,.4f}</code>",
-                    f"- Qty: <code>{pos_match.quantity:,.2f}</code> | Size: <code>${sz:,.2f}</code>",
-                    f"- Gross PNL: {pnl_emoji} <code>{pnl_pct:+.2f}%</code> (<code>${pnl_usd:+,.2f}</code>)",
-                    "",
-                    f"<b>Fees & Costs:</b>",
-                    f"- Entry fee ({comm_pct}%): <code>${entry_fee:.2f}</code>",
-                    f"- Exit fee ({comm_pct}%, est): <code>${exit_fee_est:.2f}</code>",
-                    f"- Funding ({funding_sessions:.1f} sessions x {funding_rate}%): <code>${funding_paid:.2f}</code>",
-                    f"- Hold time: <code>{hold_hours:.1f}h</code>",
-                    f"- Total costs: <code>${total_fees + funding_paid:.2f}</code>",
-                    f"- <b>Net PNL: <code>${net_pnl:+,.2f}</code></b>",
+                    f"- Direction: {d_emoji} {_dir}",
+                    f"- Entry: <code>{_entry:,.6f}</code>",
+                    f"- Current: <code>{last_px:,.6f}</code>",
+                    f"- Qty: <code>{_qty:,.4f}</code> | Size: <code>${sz:,.2f}</code>",
+                    f"- Notional: <code>${notional_now:,.2f}</code> | Leverage: <code>{leverage:.1f}x</code>",
+                    f"- Gross PnL: {pnl_emoji} <code>{pnl_pct:+.2f}%</code> (<code>${pnl_usd:+,.4f}</code>)",
+                    f"- Hold: <code>{hold_str}</code> | R:R: <code>{rr_live:.2f}x</code>",
                     "",
                     f"<b>Risk Levels:</b>",
-                    f"- SL: <code>{pos_match.stop_loss:,.4f}</code> ({sl_dist:.1f}% away)",
-                    f"- TP: <code>{pos_match.take_profit:,.4f}</code> ({tp_dist:.1f}% away)",
+                    f"- SL: <code>{_sl:,.6f}</code> ({sl_dist:.1f}% away) {sl_status}",
+                    f"- TP: <code>{_tp:,.6f}</code> ({tp_dist:.1f}% away) {tp_status}",
+                    "",
+                    f"<b>Fees & Costs:</b>",
+                    f"- Entry fee ({comm_pct}%): <code>${entry_fee:.4f}</code>",
+                    f"- Exit fee ({comm_pct}%, est): <code>${exit_fee_est:.4f}</code>",
+                    f"- Funding ({funding_sessions:.1f} sessions x {funding_rate}%): <code>${funding_paid:.4f}</code>",
+                    f"- Total costs: <code>${total_fees + funding_paid:.4f}</code>",
+                    f"- <b>Net PnL: <code>${net_pnl:+,.4f}</code></b>",
                     "",
                     f"<b>Market Snapshot:</b>",
-                    f"- VWAP: {_fmt_price(adata['vwap'])} — {_pct(adata['vwap_pct'])} {'above' if adata['vwap_pct'] >= 0 else 'below'}",
+                    f"- VWAP: {_fmt_price(adata['vwap'])} \u2014 {_pct(adata['vwap_pct'])} {'above' if adata['vwap_pct'] >= 0 else 'below'}",
                     f"- RSI: <code>{adata['rsi']:.1f}</code> | ATR: {_fmt_price(adata['atr'])}",
                     f"- Bid: {_fmt_vol(adata['bid_depth'])} vs Ask: {_fmt_vol(adata['ask_depth'])}",
                     f"- Structure: {adata['structure']}",
                 ]
-                # Supports near SL
                 for i, s in enumerate(adata.get("supports", [])[:2], 1):
                     lines.append(f"- Support {i}: {_fmt_price(s[0])}")
                 for i, r in enumerate(adata.get("resistances", [])[:2], 1):
@@ -2768,32 +2909,51 @@ class TelegramHandler:
                 await self._send(update, "\n".join(lines), edit=True, reply_markup=kb)
             elif pos_match:
                 # No market data — show position info only
-                d_emoji = "\U0001f7e2" if pos_match.direction.value == "LONG" else "\U0001f534"
-                sz = pos_match.quantity * pos_match.entry_price
+                if is_live_pos:
+                    _entry = pos_match.entry_price
+                    _qty = pos_match.quantity
+                    _dir = pos_match.direction
+                    _sl = pos_match.stop_loss
+                    _tp = pos_match.take_profit
+                    _opened = pos_match.opened_at
+                    _cost = pos_match.cost_usd if pos_match.cost_usd > 0 else _entry * _qty
+                else:
+                    _entry = pos_match.entry_price
+                    _qty = pos_match.quantity
+                    _dir = pos_match.direction.value if hasattr(pos_match.direction, 'value') else str(pos_match.direction)
+                    _sl = pos_match.stop_loss
+                    _tp = pos_match.take_profit
+                    _opened = pos_match.opened_at
+                    _cost = _entry * _qty
+
+                d_emoji = "\U0001f7e2" if _dir == "LONG" else "\U0001f534"
+                sz = _cost
                 comm_pct = CONFIG.risk.commission_pct
                 entry_fee = sz * (comm_pct / 100.0)
-                exit_fee_est = sz * (comm_pct / 100.0)  # estimate at entry price
+                exit_fee_est = sz * (comm_pct / 100.0)
                 from datetime import datetime, timezone
-                hold_hours = (datetime.now(timezone.utc) - pos_match.opened_at).total_seconds() / 3600
+                hold_hours = (datetime.now(timezone.utc) - _opened).total_seconds() / 3600
                 funding_sessions = hold_hours / 8.0
                 funding_paid = sz * (0.01 / 100.0) * funding_sessions
 
+                mode_tag = " \U0001f534 LIVE" if is_live_pos else ""
                 lines = [
-                    f"\U0001f4cb <b>{html.escape(pair)} — Position Detail</b>",
+                    f"\U0001f4cb <b>{html.escape(pair)} \u2014 Position Detail</b>{mode_tag}",
                     "",
-                    f"- Direction: {d_emoji} {pos_match.direction.value}",
-                    f"- Entry: <code>{pos_match.entry_price:,.4f}</code>",
-                    f"- SL: <code>{pos_match.stop_loss:,.4f}</code>",
-                    f"- TP: <code>{pos_match.take_profit:,.4f}</code>",
-                    f"- Qty: <code>{pos_match.quantity:,.2f}</code> | Size: <code>${sz:,.2f}</code>",
+                    f"- Direction: {d_emoji} {_dir}",
+                    f"- Entry: <code>{_entry:,.6f}</code>",
+                    f"- SL: <code>{_sl:,.6f}</code>",
+                    f"- TP: <code>{_tp:,.6f}</code>",
+                    f"- Qty: <code>{_qty:,.4f}</code> | Size: <code>${sz:,.2f}</code>",
+                    f"- Hold: <code>{hold_hours:.1f}h</code>",
                     "",
                     f"<b>Fees & Costs:</b>",
-                    f"- Entry fee ({comm_pct}%): <code>${entry_fee:.2f}</code>",
-                    f"- Exit fee ({comm_pct}%, est): <code>${exit_fee_est:.2f}</code>",
-                    f"- Funding ({hold_hours:.1f}h hold): <code>${funding_paid:.2f}</code>",
-                    f"- Total costs: <code>${entry_fee + exit_fee_est + funding_paid:.2f}</code>",
+                    f"- Entry fee ({comm_pct}%): <code>${entry_fee:.4f}</code>",
+                    f"- Exit fee ({comm_pct}%, est): <code>${exit_fee_est:.4f}</code>",
+                    f"- Funding ({hold_hours:.1f}h hold): <code>${funding_paid:.4f}</code>",
+                    f"- Total costs: <code>${entry_fee + exit_fee_est + funding_paid:.4f}</code>",
                     "",
-                    "<i>Market data unavailable — say \"trade\" for full analysis</i>",
+                    "<i>Market data unavailable \u2014 say \"trade\" for full analysis</i>",
                 ]
                 await self._send(update, "\n".join(lines), edit=True)
             else:
@@ -2809,19 +2969,59 @@ class TelegramHandler:
             user_id = self._get_tg_id(update)
             portfolio = self.engine.user_portfolios.get(user_id)
 
-            # Try to close position in paper portfolio
             closed_trade = None
-            for pos in list(portfolio.open_positions):
-                if pos.asset.replace("/", "") == pair:
-                    try:
-                        exchange = await self.engine.get_exchange()
-                        ticker = await exchange.fetch_ticker(pos.asset)
-                        close_price = ticker.get("last", pos.entry_price)
-                        closed_trade = portfolio.close_position(pos.trade_id, close_price)
-                    except Exception as e:
-                        system_log.warning("Close position error for %s: %s", pair, e)
-                        closed_trade = portfolio.close_position(pos.trade_id, pos.entry_price)
-                    break
+            live_closed = False
+
+            # LIVE mode: close via LiveExecutor
+            if CONFIG.is_live():
+                executor = self.engine.live_executor
+                for lp in list(executor.open_positions):
+                    if lp.symbol.replace("/", "") == pair:
+                        try:
+                            result = await executor.close_position(lp.trade_id)
+                            live_closed = True
+                            # Build a simple response from LivePosition
+                            from datetime import datetime, timezone
+                            hold_h = (datetime.now(timezone.utc) - lp.opened_at).total_seconds() / 3600
+                            cost = lp.cost_usd if lp.cost_usd > 0 else lp.entry_price * lp.quantity
+                            close_px = lp.close_price or lp.entry_price
+                            pnl_val = lp.pnl_usd or 0
+                            pnl_emoji = "\U0001f7e2" if pnl_val >= 0 else "\U0001f534"
+                            lines = [
+                                f"\u2705 <b>{html.escape(pair)} \u2014 Live Position Closed</b>",
+                                "",
+                                f"- Entry: <code>{lp.entry_price:,.6f}</code>",
+                                f"- Exit: <code>{close_px:,.6f}</code>",
+                                f"- Size: <code>${cost:,.2f}</code>",
+                                f"- Hold: <code>{hold_h:.1f}h</code>",
+                                f"- <b>PnL: {pnl_emoji} <code>${pnl_val:+,.4f}</code></b>",
+                                "",
+                                f"Result: {result}",
+                                "",
+                                "Say \"open positions\" for updated view.",
+                            ]
+                            await self._send(update, "\n".join(lines), edit=True)
+                        except Exception as e:
+                            await self._send(update,
+                                f"\u274c <b>Close failed for {html.escape(pair)}</b>\n\n"
+                                f"Error: {html.escape(str(e)[:200])}\n"
+                                "Try again or close manually on exchange.",
+                                edit=True)
+                        break
+
+            if not live_closed:
+                # Paper mode close
+                for pos in list(portfolio.open_positions):
+                    if pos.asset.replace("/", "") == pair:
+                        try:
+                            exchange = await self.engine.get_exchange()
+                            ticker = await exchange.fetch_ticker(pos.asset)
+                            close_price = ticker.get("last", pos.entry_price)
+                            closed_trade = portfolio.close_position(pos.trade_id, close_price)
+                        except Exception as e:
+                            system_log.warning("Close position error for %s: %s", pair, e)
+                            closed_trade = portfolio.close_position(pos.trade_id, pos.entry_price)
+                        break
 
             if closed_trade:
                 pnl_emoji = "\U0001f7e2" if closed_trade.pnl >= 0 else "\U0001f534"

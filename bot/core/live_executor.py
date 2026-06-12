@@ -207,13 +207,37 @@ class LiveExecutor:
             # Determine side
             side = "buy" if idea.direction == Direction.LONG else "sell"
 
+            # Load markets for precision rounding
+            markets = await exchange.load_markets()
+            market = markets.get(idea.asset)
+            if market:
+                quantity = float(exchange.amount_to_precision(idea.asset, quantity))
+
+            if quantity <= 0:
+                audit(trade_log, f"Quantity too small after precision: {idea.asset} ${size_usd}",
+                      action="live_execute", result="QUANTITY_TOO_SMALL",
+                      data={"asset": idea.asset, "size_usd": size_usd, "price": current_price})
+                return f"BLOCKED: quantity too small after precision rounding for {idea.asset}"
+
             # Place market order
-            order = await exchange.create_order(
-                symbol=idea.asset,
-                type="market",
-                side=side,
-                amount=quantity,
-            )
+            # For spot BUY on Bitget UTA: use cost-based ordering to avoid
+            # precision issues and "insufficient balance" errors
+            if side == "buy":
+                exchange.options["createMarketBuyOrderRequiresPrice"] = False
+                order = await exchange.create_order(
+                    symbol=idea.asset,
+                    type="market",
+                    side=side,
+                    amount=size_usd,
+                    params={"cost": size_usd},
+                )
+            else:
+                order = await exchange.create_order(
+                    symbol=idea.asset,
+                    type="market",
+                    side=side,
+                    amount=quantity,
+                )
 
             # Parse result
             fill_price = float(order.get("average", 0) or order.get("price", 0) or current_price)

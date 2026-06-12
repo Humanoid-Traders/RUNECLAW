@@ -693,22 +693,75 @@ def render_open_positions(positions: List[Dict[str, Any]]) -> str:
         size_usd = p.get("size_usd", 0)
         pnl_icon = "\U0001f7e2" if pnl > 0 else "\U0001f534" if pnl < 0 else "\u26aa"
 
+        # Enhanced fields
+        pnl_usd_val = p.get("pnl_usd")
+        leverage = p.get("leverage")
+        rr_live = p.get("rr_live")
+        sl_dist = p.get("sl_dist_pct")
+        tp_dist = p.get("tp_dist_pct")
+        notional = p.get("notional_usd")
+        qty = p.get("quantity")
+        sl_order = p.get("sl_order")
+        tp_order = p.get("tp_order")
+        hold_h = p.get("hold_hours", 0)
+
+        # Hold time display
+        if hold_h < 1:
+            hold_str = f"{hold_h * 60:.0f}m"
+        elif hold_h < 24:
+            hold_str = f"{hold_h:.1f}h"
+        else:
+            hold_str = f"{hold_h / 24:.1f}d"
+
         lines.extend([
             "",
-            f"{d_icon} <b>{pair} {direction}</b> | {pnl_icon} {_pct(pnl)}",
+            f"{d_icon} <b>{pair} {direction}</b> | {pnl_icon} {_pct(pnl)}"
+            + (f" | \u23f1 {hold_str}" if hold_h else ""),
             f"- Entry: {_fmt_price(entry)} \u2192 Current: {_fmt_price(current)}",
-            f"- SL: {_fmt_price(sl)} | TP: {_fmt_price(tp)}",
         ])
+
+        # SL/TP with distance
+        sl_line = f"- SL: {_fmt_price(sl)}"
+        if sl_dist is not None:
+            sl_line += f" ({sl_dist:.1f}% away)"
+        if sl_order:
+            sl_line += f" {'✅' if sl_order == 'exchange' else '⚠️ manual'}"
+        tp_line = f"  TP: {_fmt_price(tp)}"
+        if tp_dist is not None:
+            tp_line += f" ({tp_dist:.1f}% away)"
+        if tp_order:
+            tp_line += f" {'✅' if tp_order == 'exchange' else '⚠️ manual'}"
+        lines.append(sl_line)
+        lines.append(tp_line)
+
         if size_usd:
-            pnl_usd = size_usd * pnl / 100 if pnl else 0
+            # PnL in USD
+            if pnl_usd_val is not None:
+                display_pnl_usd = pnl_usd_val
+            else:
+                display_pnl_usd = size_usd * pnl / 100 if pnl else 0
+
+            size_line = f"- Size: {_fmt_price(size_usd)}"
+            if notional and notional != size_usd:
+                size_line += f" | Notional: {_fmt_price(notional)}"
+            lines.append(size_line)
+
+            detail_line = f"- PnL: <code>${display_pnl_usd:+,.4f}</code>"
+            if leverage is not None:
+                detail_line += f" | Lev: <code>{leverage:.1f}x</code>"
+            if rr_live is not None:
+                detail_line += f" | R:R: <code>{rr_live:.2f}x</code>"
+            lines.append(detail_line)
+
+            if qty:
+                lines.append(f"- Qty: <code>{qty:,.4f}</code>")
+
             # Fee estimates
             comm_pct = p.get("comm_pct", 0.1)
             entry_fee = size_usd * (comm_pct / 100.0)
             exit_fee = (current * (size_usd / entry) if entry > 0 else size_usd) * (comm_pct / 100.0)
-            hold_h = p.get("hold_hours", 0)
             funding = size_usd * (0.01 / 100.0) * (hold_h / 8.0) if hold_h > 0 else 0
             total_cost = entry_fee + exit_fee + funding
-            lines.append(f"- Size: {_fmt_price(size_usd)} | PNL: <code>${pnl_usd:+,.2f}</code>")
             lines.append(f"- Fees: <code>${entry_fee:.2f}</code> + <code>${exit_fee:.2f}</code>"
                          + (f" + fund <code>${funding:.2f}</code>" if funding > 0.005 else "")
                          + f" = <code>${total_cost:.2f}</code>")

@@ -208,16 +208,17 @@ class RiskEngine:
             self._consecutive_losses = 0
             self._save_state()
 
-    def evaluate(self, idea: TradeIdea, atr: Optional[float] = None) -> RiskCheck:
+    def evaluate(self, idea: TradeIdea, atr: Optional[float] = None, live_equity: Optional[float] = None) -> RiskCheck:
         """
         Run all 23 pre-trade checks (16 in-engine + #17 liquidity + #18 macro + #19 MTF + #20 PCA + #21 VaR + #22 taker 3-bar + #23 bid dominance).
         Returns RiskCheck with APPROVED or REJECTED.
         Pass atr= for volatility guard check.
+        Pass live_equity= to override paper equity for sizing in LIVE mode.
         """
         with self._lock:
-            return self._evaluate_locked(idea, atr)
+            return self._evaluate_locked(idea, atr, live_equity=live_equity)
 
-    def _evaluate_locked(self, idea: TradeIdea, atr: Optional[float] = None) -> RiskCheck:
+    def _evaluate_locked(self, idea: TradeIdea, atr: Optional[float] = None, live_equity: Optional[float] = None) -> RiskCheck:
         self._total_checks += 1
         passed: list[str] = []
         failed: list[str] = []
@@ -234,7 +235,14 @@ class RiskEngine:
                 timestamp=datetime.now(UTC),
             )
 
-        position_usd = state.equity_usd * (CONFIG.risk.max_position_pct / 100.0)
+        # LIVE FIX: In LIVE mode, use actual exchange equity for sizing
+        # instead of paper portfolio equity.  This prevents sizing $2K
+        # positions against $10K paper when the real account has $50.
+        sizing_equity = state.equity_usd
+        if live_equity is not None and live_equity > 0:
+            sizing_equity = live_equity
+
+        position_usd = sizing_equity * (CONFIG.risk.max_position_pct / 100.0)
 
         # Fixed-fractional risk sizing: size by stop distance, not flat notional.
         # risk_budget = equity * max_position_pct (the max we're willing to lose)
@@ -245,7 +253,7 @@ class RiskEngine:
         stop_distance_pct = abs(idea.entry_price - idea.stop_loss) / idea.entry_price if idea.entry_price > 0 else 0
         uncapped_position_usd = position_usd  # fallback: flat notional
         if stop_distance_pct > 0:
-            risk_budget = state.equity_usd * (CONFIG.risk.max_position_pct / 100.0)
+            risk_budget = sizing_equity * (CONFIG.risk.max_position_pct / 100.0)
             uncapped_position_usd = risk_budget / stop_distance_pct
             position_usd = uncapped_position_usd
 
@@ -253,9 +261,9 @@ class RiskEngine:
         # don't produce oversized positions.  If the uncapped size exceeds
         # 2x the cap (i.e. the stop is absurdly tight), the POSITION_SIZE
         # check still rejects — we only auto-cap moderate overflows.
-        max_notional_usd = state.equity_usd * (CONFIG.risk.max_symbol_exposure_pct / 100.0)
+        max_notional_usd = sizing_equity * (CONFIG.risk.max_symbol_exposure_pct / 100.0)
         if max_notional_usd > 0:
-            uncapped_notional_pct = (uncapped_position_usd / state.equity_usd * 100)
+            uncapped_notional_pct = (uncapped_position_usd / sizing_equity * 100) if sizing_equity > 0 else 999
             if uncapped_notional_pct > CONFIG.risk.max_symbol_exposure_pct * 2:
                 # Stop is too tight — position would be >2x the cap; reject, don't cap
                 pass  # let check #2 reject it
@@ -282,10 +290,10 @@ class RiskEngine:
 
         try:
             # 2. Position size — enforces notional cap (the check has real authority)
-            if state.equity_usd <= 0:
+            if sizing_equity <= 0:
                 failed.append("EQUITY: zero or negative equity")
             else:
-                notional_pct = (position_usd / state.equity_usd * 100)
+                notional_pct = (position_usd / sizing_equity * 100)
                 max_notional_pct = CONFIG.risk.max_symbol_exposure_pct  # 20% default
                 if notional_pct < max_notional_pct + 0.01:  # tiny epsilon for float math
                     passed.append(f"POSITION_SIZE: notional {notional_pct:.1f}% <= {max_notional_pct}%")
@@ -297,7 +305,7 @@ class RiskEngine:
         daily_loss_pct = 0.0
         try:
             # 3. Daily loss (realized + unrealized) — measured against equity, not free cash
-            daily_loss_pct = abs(state.daily_pnl / state.equity_usd * 100) if state.equity_usd > 0 else 0
+            daily_loss_pct = abs(state.daily_pnl / sizing_equity * 100) if sizing_equity > 0 else 0
             if state.daily_pnl < 0 and daily_loss_pct >= CONFIG.risk.max_daily_loss_pct:
                 failed.append(f"DAILY_LOSS: {daily_loss_pct:.1f}% >= {CONFIG.risk.max_daily_loss_pct}%")
                 self._trip_circuit_breaker("daily loss limit breached")
@@ -414,8 +422,8 @@ class RiskEngine:
         try:
             # 14. Portfolio exposure limit (mark-to-market)
             open_value = self._portfolio.get_position_value()
-            exposure_pct = (open_value / state.equity_usd * 100) if state.equity_usd > 0 else 0
-            new_exposure = exposure_pct + (position_usd / state.equity_usd * 100 if state.equity_usd > 0 else 0)
+            exposure_pct = (open_value / sizing_equity * 100) if sizing_equity > 0 else 0
+            new_exposure = exposure_pct + (position_usd / sizing_equity * 100 if sizing_equity > 0 else 0)
             if new_exposure > CONFIG.risk.max_portfolio_exposure_pct:
                 failed.append(f"PORTFOLIO_EXPOSURE: {new_exposure:.1f}% > {CONFIG.risk.max_portfolio_exposure_pct}%")
             else:
@@ -427,7 +435,7 @@ class RiskEngine:
             # 15. Per-symbol exposure limit (mark-to-market)
             symbol_value = self._portfolio.get_position_value(asset=idea.asset)
             new_symbol_value = symbol_value + position_usd
-            symbol_exposure_pct = (new_symbol_value / state.equity_usd * 100) if state.equity_usd > 0 else 0
+            symbol_exposure_pct = (new_symbol_value / sizing_equity * 100) if sizing_equity > 0 else 0
             if symbol_exposure_pct > CONFIG.risk.max_symbol_exposure_pct:
                 failed.append(
                     f"SYMBOL_EXPOSURE: {idea.asset} at {symbol_exposure_pct:.1f}% > "
@@ -585,7 +593,7 @@ class RiskEngine:
             verdict=verdict,
             position_size_usd=round(position_usd, 2),
             position_pct=round(
-                (position_usd / state.equity_usd * 100) if state.equity_usd > 0 else 0, 2
+                (position_usd / sizing_equity * 100) if sizing_equity > 0 else 0, 2
             ),
             daily_loss_pct=round(daily_loss_pct, 2),
             drawdown_pct=round(state.max_drawdown_pct, 2),

@@ -1993,31 +1993,131 @@ class PlaybookSkill(BaseSkill):
         lines.append(f"\u26a1 <b>LIVE EXECUTION</b>\n{SEP}")
         lines.append(f"- Mode: <code>{sim}</code>")
         lines.append(f"- Exchange: <code>Bitget</code>")
-        lines.append(f"- Equity: <code>{_money(state.equity_usd)}</code>")
-        lines.append(f"- Open Positions: <code>{state.open_positions}</code>")
+
+        # LIVE FIX: show real exchange equity in LIVE mode
+        if CONFIG.is_live():
+            display_equity = await engine.get_effective_equity_async(kwargs.get("user_id", ""))
+            if display_equity <= 0:
+                display_equity = state.equity_usd
+            executor = engine.live_executor
+            live_pos = executor.open_positions
+            live_open_count = len(live_pos)
+            total_exposure = executor.total_exposure_usd
+            closed_trades = executor.closed_positions
+            realized_pnl = sum(p.pnl_usd or 0 for p in closed_trades)
+            utilization_pct = (total_exposure / display_equity * 100) if display_equity > 0 else 0
+            free_bal = engine._live_balance_cache.get("free", 0.0) if engine._live_balance_cache else 0.0
+
+            lines.append(f"- Equity: <code>{_money(display_equity)}</code>")
+            lines.append(f"- Available: <code>{_money(free_bal)}</code>")
+            lines.append(f"- Open Positions: <code>{live_open_count}</code>")
+            lines.append(f"- Total Exposure: <code>{_money(total_exposure)}</code>")
+            lines.append(f"- Utilization: <code>{utilization_pct:.1f}%</code>")
+            lines.append(f"- Realized PnL: <code>{_money(realized_pnl, sign=True)}</code> ({len(closed_trades)} trades)")
+            from bot.core.live_executor import MICRO_MAX_POSITION_USD, MICRO_MAX_TOTAL_EXPOSURE, MICRO_MAX_OPEN_POSITIONS
+            lines.append(f"- Micro Limits: <code>${MICRO_MAX_POSITION_USD:.0f}/pos · ${MICRO_MAX_TOTAL_EXPOSURE:.0f} total · {MICRO_MAX_OPEN_POSITIONS} max</code>")
+        else:
+            lines.append(f"- Equity: <code>{_money(state.equity_usd)}</code>")
+            lines.append(f"- Open Positions: <code>{state.open_positions}</code>")
+
         lines.append(f"- Daily PnL: <code>{_money(state.daily_pnl, sign=True)}</code>")
         lines.append(f"- Trailing Stop: <code>Active (shared logic)</code>")
         lines.append("")
 
         # ── Section 5: Active Positions ──
-        positions = portfolio._positions
-        if positions:
-            lines.append(f"\U0001f4ca <b>ACTIVE POSITIONS</b>\n{SEP}")
-            for pid, pos in list(positions.items())[:5]:
-                d_val = pos.direction.value if hasattr(pos.direction, 'value') else str(pos.direction)
-                d_icon = _OK if d_val == "LONG" else _BAD
-                d_arrow = "\u25b2" if d_val == "LONG" else "\u25bc"
-                notional = pos.entry_price * pos.quantity
-                lines.append(
-                    f"  {d_icon}{d_arrow} <b>{_esc(pos.asset)}</b>\n"
-                    f"  - Entry: <code>${pos.entry_price:,.2f}</code>\n"
-                    f"  - Size: <code>{_money(notional)}</code>\n"
-                    f"  - SL: <code>${pos.stop_loss:,.2f}</code>\n"
-                    f"  - TP: <code>${pos.take_profit:,.2f}</code>"
-                )
+        # LIVE FIX: in LIVE mode, show positions from LiveExecutor
+        if CONFIG.is_live():
+            live_positions = engine.live_executor.open_positions
+            if live_positions:
+                # Fetch fresh prices for unrealized PnL
+                live_prices: dict[str, float] = {}
+                try:
+                    _exchange = await engine.scanner._get_exchange()
+                    _syms = list({p.symbol for p in live_positions})
+                    _tickers = await _exchange.fetch_tickers(_syms)
+                    live_prices = {s: float(t.get("last", 0)) for s, t in _tickers.items() if t.get("last")}
+                except Exception:
+                    pass
+
+                lines.append(f"\U0001f4ca <b>ACTIVE POSITIONS (LIVE)</b>\n{SEP}")
+                for pos in live_positions[:5]:
+                    d_icon = _OK if pos.direction == "LONG" else _BAD
+                    d_arrow = "\u25b2" if pos.direction == "LONG" else "\u25bc"
+                    cur_price = live_prices.get(pos.symbol, pos.entry_price)
+                    notional = cur_price * pos.quantity
+                    cost = pos.cost_usd if pos.cost_usd > 0 else pos.entry_price * pos.quantity
+
+                    # Unrealized PnL
+                    if pos.direction == "LONG":
+                        upnl = (cur_price - pos.entry_price) * pos.quantity
+                        upnl_pct = ((cur_price - pos.entry_price) / pos.entry_price * 100) if pos.entry_price else 0
+                    else:
+                        upnl = (pos.entry_price - cur_price) * pos.quantity
+                        upnl_pct = ((pos.entry_price - cur_price) / pos.entry_price * 100) if pos.entry_price else 0
+                    pnl_icon = "\U0001f7e2" if upnl >= 0 else "\U0001f534"
+
+                    # Hold time
+                    from datetime import timezone
+                    hold_secs = (datetime.now(timezone.utc) - pos.opened_at).total_seconds()
+                    if hold_secs < 3600:
+                        hold_str = f"{hold_secs / 60:.0f}m"
+                    elif hold_secs < 86400:
+                        hold_str = f"{hold_secs / 3600:.1f}h"
+                    else:
+                        hold_str = f"{hold_secs / 86400:.1f}d"
+
+                    # Distance to SL/TP
+                    sl_dist_pct = abs(cur_price - pos.stop_loss) / cur_price * 100 if cur_price else 0
+                    tp_dist_pct = abs(pos.take_profit - cur_price) / cur_price * 100 if cur_price else 0
+
+                    # R:R from current price
+                    risk_from_here = abs(cur_price - pos.stop_loss) if pos.stop_loss else 0
+                    reward_from_here = abs(pos.take_profit - cur_price) if pos.take_profit else 0
+                    rr_live = (reward_from_here / risk_from_here) if risk_from_here > 0 else 0
+
+                    # Leverage (notional / cost)
+                    leverage = notional / cost if cost > 0 else 1.0
+
+                    # Exposure % of equity
+                    exp_pct = (cost / display_equity * 100) if display_equity > 0 else 0
+
+                    # SL/TP order status
+                    sl_status = "\u2705" if pos.sl_order_id else "\u26a0\ufe0f manual"
+                    tp_status = "\u2705" if pos.tp_order_id else "\u26a0\ufe0f manual"
+
+                    lines.append(
+                        f"  {d_icon}{d_arrow} <b>{_esc(pos.symbol)}</b>  ·  {hold_str}\n"
+                        f"  {pnl_icon} PnL: <code>{_money(upnl, sign=True)} ({upnl_pct:+.2f}%)</code>\n"
+                        f"  - Entry: <code>${pos.entry_price:,.6f}</code>\n"
+                        f"  - Current: <code>${cur_price:,.6f}</code>\n"
+                        f"  - Size: <code>{_money(cost)}</code> · Notional: <code>{_money(notional)}</code>\n"
+                        f"  - Leverage: <code>{leverage:.1f}x</code> · Exposure: <code>{exp_pct:.1f}%</code>\n"
+                        f"  - SL: <code>${pos.stop_loss:,.6f}</code> ({sl_dist_pct:.1f}% away) {sl_status}\n"
+                        f"  - TP: <code>${pos.take_profit:,.6f}</code> ({tp_dist_pct:.1f}% away) {tp_status}\n"
+                        f"  - Live R:R: <code>{rr_live:.2f}x</code> · Qty: <code>{pos.quantity:,.4f}</code>"
+                    )
+            else:
+                lines.append(f"\U0001f4ca <b>ACTIVE POSITIONS</b>\n{SEP}")
+                lines.append(f"  {_NEU} <i>No open positions</i>")
         else:
-            lines.append(f"\U0001f4ca <b>ACTIVE POSITIONS</b>\n{SEP}")
-            lines.append(f"  {_NEU} <i>No open positions</i>")
+            positions = portfolio._positions
+            if positions:
+                lines.append(f"\U0001f4ca <b>ACTIVE POSITIONS</b>\n{SEP}")
+                for pid, pos in list(positions.items())[:5]:
+                    d_val = pos.direction.value if hasattr(pos.direction, 'value') else str(pos.direction)
+                    d_icon = _OK if d_val == "LONG" else _BAD
+                    d_arrow = "\u25b2" if d_val == "LONG" else "\u25bc"
+                    notional = pos.entry_price * pos.quantity
+                    lines.append(
+                        f"  {d_icon}{d_arrow} <b>{_esc(pos.asset)}</b>\n"
+                        f"  - Entry: <code>${pos.entry_price:,.2f}</code>\n"
+                        f"  - Size: <code>{_money(notional)}</code>\n"
+                        f"  - SL: <code>${pos.stop_loss:,.2f}</code>\n"
+                        f"  - TP: <code>${pos.take_profit:,.2f}</code>"
+                    )
+            else:
+                lines.append(f"\U0001f4ca <b>ACTIVE POSITIONS</b>\n{SEP}")
+                lines.append(f"  {_NEU} <i>No open positions</i>")
 
         lines.append("")
 
