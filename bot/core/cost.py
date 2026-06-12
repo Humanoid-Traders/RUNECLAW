@@ -34,8 +34,12 @@ from bot.utils.logger import audit, system_log
 # pricing, which changes and differs by model.  Do not trust these numbers.
 # Keep in config/env for production; hardcoded here for prototype convenience.
 LLM_PRICING: dict[str, dict[str, float]] = {
-    "gpt-4o":      {"in": 2.50, "out": 10.00},
-    "gpt-4o-mini": {"in": 0.15, "out": 0.60},
+    "gpt-4o":              {"in": 2.50,  "out": 10.00},
+    "gpt-4o-mini":         {"in": 0.15,  "out": 0.60},
+    "claude-sonnet-4-6":   {"in": 3.00,  "out": 15.00},
+    "claude-opus-4-6":     {"in": 15.00, "out": 75.00},
+    "claude-haiku-4-5":    {"in": 0.80,  "out": 4.00},
+    "claude-3-5-sonnet-20241022": {"in": 3.00, "out": 15.00},
 }
 
 # Categories for per-bucket cost tracking

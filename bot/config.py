@@ -67,13 +67,19 @@ class RiskLimits:
 
 @dataclass(frozen=True)
 class ExchangeConfig:
-    """Bitget API credentials."""
+    """Bitget API credentials and trading mode."""
     api_key: str = _env("BITGET_API_KEY")
     api_secret: str = _env("BITGET_API_SECRET")
     passphrase: str = _env("BITGET_PASSPHRASE")
     sandbox: bool = _env_bool("BITGET_SANDBOX", True)  # Sandbox by default; override via env
     # Asset universe filter: "all" scans everything, "solana" adds Solana ecosystem priority
     asset_universe: str = _env("ASSET_UNIVERSE", "all")  # all | solana | custom
+    # Trading mode: "spot" for no leverage, "futures" for USDT-M perpetual
+    trade_mode: str = _env("TRADE_MODE", "futures")
+    # Default leverage (1x = no leverage, 5x = default for futures)
+    default_leverage: int = int(_env_float("DEFAULT_LEVERAGE", 5))
+    # Margin mode: "crossed" or "isolated"
+    margin_mode: str = _env("MARGIN_MODE", "crossed")
 
 
 # Solana ecosystem tokens tracked on Bitget (centralized pairs).

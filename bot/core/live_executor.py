@@ -72,6 +72,7 @@ class LivePosition:
     cost_usd: float
     stop_loss: float
     take_profit: float
+    leverage: int = 1      # leverage multiplier (1 = no leverage)
     sl_order_id: Optional[str] = None
     tp_order_id: Optional[str] = None
     opened_at: datetime = field(default_factory=lambda: datetime.now(UTC))
@@ -105,6 +106,7 @@ class LiveExecutor:
                     "BITGET_API_KEY and BITGET_API_SECRET required for live trading. "
                     "Set them in .env and restart."
                 )
+            is_futures = cfg.trade_mode == "futures"
             self._exchange = ccxt.bitget({
                 "apiKey": cfg.api_key,
                 "secret": cfg.api_secret,
@@ -113,11 +115,34 @@ class LiveExecutor:
                 "timeout": 30000,
                 "enableRateLimit": True,
                 "options": {
-                    "defaultType": "spot",
+                    "defaultType": "swap" if is_futures else "spot",
                     "uta": True,  # Support Bitget Unified Trading Account
                 },
             })
+            # Set leverage and margin mode for futures
+            if is_futures:
+                logger.info("Futures mode: leverage=%dx, margin=%s",
+                            cfg.default_leverage, cfg.margin_mode)
         return self._exchange
+
+    async def _ensure_leverage(self, symbol: str) -> None:
+        """Set leverage and margin mode for a symbol (futures only)."""
+        cfg = CONFIG.exchange
+        if cfg.trade_mode != "futures":
+            return
+        exchange = await self._get_exchange()
+        try:
+            await exchange.set_margin_mode(
+                cfg.margin_mode, symbol,
+                params={"productType": "USDT-FUTURES"})
+        except Exception as exc:
+            logger.debug("Margin mode set info for %s: %s", symbol, exc)
+        try:
+            await exchange.set_leverage(
+                cfg.default_leverage, symbol,
+                params={"productType": "USDT-FUTURES"})
+        except Exception as exc:
+            logger.debug("Leverage set info for %s: %s", symbol, exc)
 
     async def close(self) -> None:
         """Clean up exchange connection."""
@@ -196,9 +221,20 @@ class LiveExecutor:
 
         try:
             exchange = await self._get_exchange()
+            is_futures = CONFIG.exchange.trade_mode == "futures"
+
+            # Set leverage for this symbol (futures only)
+            await self._ensure_leverage(idea.asset)
+
+            # Convert symbol for futures if needed
+            symbol = idea.asset
+            if is_futures:
+                # Bitget futures use SYMBOL:USDT format internally via ccxt
+                # but load_markets handles the mapping
+                pass
 
             # Fetch current price to calculate quantity
-            ticker = await exchange.fetch_ticker(idea.asset)
+            ticker = await exchange.fetch_ticker(symbol)
             current_price = float(ticker["last"])
 
             # Calculate quantity
@@ -209,23 +245,36 @@ class LiveExecutor:
 
             # Load markets for precision rounding
             markets = await exchange.load_markets()
-            market = markets.get(idea.asset)
+            market = markets.get(symbol)
             if market:
-                quantity = float(exchange.amount_to_precision(idea.asset, quantity))
+                quantity = float(exchange.amount_to_precision(symbol, quantity))
 
             if quantity <= 0:
-                audit(trade_log, f"Quantity too small after precision: {idea.asset} ${size_usd}",
+                audit(trade_log, f"Quantity too small after precision: {symbol} ${size_usd}",
                       action="live_execute", result="QUANTITY_TOO_SMALL",
-                      data={"asset": idea.asset, "size_usd": size_usd, "price": current_price})
-                return f"BLOCKED: quantity too small after precision rounding for {idea.asset}"
+                      data={"asset": symbol, "size_usd": size_usd, "price": current_price})
+                return f"BLOCKED: quantity too small after precision rounding for {symbol}"
 
             # Place market order
-            # For spot BUY on Bitget UTA: use cost-based ordering to avoid
-            # precision issues and "insufficient balance" errors
-            if side == "buy":
+            if is_futures:
+                # Futures: use USDT-FUTURES product type
+                leverage = CONFIG.exchange.default_leverage
+                order = await exchange.create_order(
+                    symbol=symbol,
+                    type="market",
+                    side=side,
+                    amount=quantity,
+                    params={
+                        "productType": "USDT-FUTURES",
+                        "marginMode": CONFIG.exchange.margin_mode,
+                        "leverage": str(leverage),
+                    },
+                )
+            elif side == "buy":
+                # Spot BUY on Bitget UTA: use cost-based ordering
                 exchange.options["createMarketBuyOrderRequiresPrice"] = False
                 order = await exchange.create_order(
-                    symbol=idea.asset,
+                    symbol=symbol,
                     type="market",
                     side=side,
                     amount=size_usd,
@@ -233,7 +282,7 @@ class LiveExecutor:
                 )
             else:
                 order = await exchange.create_order(
-                    symbol=idea.asset,
+                    symbol=symbol,
                     type="market",
                     side=side,
                     amount=quantity,
@@ -260,6 +309,7 @@ class LiveExecutor:
             self._order_history.append(live_order)
 
             # Track position
+            leverage = CONFIG.exchange.default_leverage if is_futures else 1
             position = LivePosition(
                 trade_id=idea.id,
                 symbol=idea.asset,
@@ -269,6 +319,7 @@ class LiveExecutor:
                 cost_usd=cost,
                 stop_loss=idea.stop_loss,
                 take_profit=idea.take_profit,
+                leverage=leverage,
             )
             self._positions[idea.id] = position
 
@@ -297,18 +348,22 @@ class LiveExecutor:
             sl_info = f" | SL order: {sl_id}" if sl_id else " | SL: manual"
             tp_info = f" | TP order: {tp_id}" if tp_id else " | TP: manual"
 
+            lev_info = f" | {leverage}x" if leverage > 1 else ""
+            mode_label = "FUTURES" if is_futures else "SPOT"
             dir_icon = "🟢" if side == "buy" else "🔴"
             return (
-                f"{dir_icon} <b>LIVE {side.upper()} {idea.asset}</b>\n"
+                f"{dir_icon} <b>LIVE {side.upper()} {idea.asset}</b> ({mode_label}{lev_info})\n"
                 f"{'─' * 16}\n"
                 f"- Fill: <code>${fill_price:,.4f}</code>\n"
                 f"- Qty: <code>{filled_qty:.6f}</code>\n"
                 f"- Cost: <code>${cost:.2f}</code>\n"
+                f"- Notional: <code>${fill_price * filled_qty:.2f}</code>\n"
+                f"- Leverage: <code>{leverage}x</code>\n"
                 f"- SL: <code>${idea.stop_loss:,.4f}</code>{sl_info}\n"
                 f"- TP: <code>${idea.take_profit:,.4f}</code>{tp_info}\n"
                 f"- Order: <code>{order_id}</code>\n"
                 f"- Risk: ✅ APPROVED\n"
-                f"- Mode: 🔥 Live"
+                f"- Mode: 🔥 Live {mode_label}"
             )
 
         except ccxt.InsufficientFunds as exc:
@@ -336,12 +391,14 @@ class LiveExecutor:
     ) -> tuple[Optional[str], Optional[str]]:
         """Attempt to place SL/TP orders. Returns (sl_order_id, tp_order_id).
 
-        Best-effort: spot markets on some exchanges don't support
-        conditional orders. Fails silently and logs.
+        For futures: uses trigger orders with productType=USDT-FUTURES.
+        For spot: best-effort trigger orders (may not be supported).
         """
         sl_id = None
         tp_id = None
         close_side = "sell" if direction == Direction.LONG else "buy"
+        is_futures = CONFIG.exchange.trade_mode == "futures"
+        extra_params = {"productType": "USDT-FUTURES"} if is_futures else {}
 
         # Stop-loss
         try:
@@ -353,14 +410,15 @@ class LiveExecutor:
                 params={
                     "triggerPrice": stop_loss,
                     "triggerType": "last",
+                    **extra_params,
                 },
             )
             sl_id = sl_order.get("id")
             audit(trade_log, f"SL order placed: {sl_id}",
                   action="sl_order", result="OK",
-                  data={"symbol": symbol, "trigger": stop_loss})
+                  data={"symbol": symbol, "trigger": stop_loss, "futures": is_futures})
         except Exception as exc:
-            logger.debug("SL order failed (expected for spot): %s", exc)
+            logger.warning("SL order failed for %s: %s", symbol, exc)
             audit(trade_log, f"SL order not placed: {exc}",
                   action="sl_order", result="SKIP",
                   data={"symbol": symbol, "reason": str(exc)[:200]})
@@ -375,14 +433,15 @@ class LiveExecutor:
                 params={
                     "triggerPrice": take_profit,
                     "triggerType": "last",
+                    **extra_params,
                 },
             )
             tp_id = tp_order.get("id")
             audit(trade_log, f"TP order placed: {tp_id}",
                   action="tp_order", result="OK",
-                  data={"symbol": symbol, "trigger": take_profit})
+                  data={"symbol": symbol, "trigger": take_profit, "futures": is_futures})
         except Exception as exc:
-            logger.debug("TP order failed (expected for spot): %s", exc)
+            logger.warning("TP order failed for %s: %s", symbol, exc)
             audit(trade_log, f"TP order not placed: {exc}",
                   action="tp_order", result="SKIP",
                   data={"symbol": symbol, "reason": str(exc)[:200]})

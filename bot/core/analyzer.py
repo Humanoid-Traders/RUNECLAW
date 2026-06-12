@@ -1086,10 +1086,27 @@ class Analyzer:
 
             if sdk_type == "anthropic":
                 # Use unified llm_complete for Anthropic (different API format)
-                raw_text = await llm_complete(
-                    active_client, active_cfg, sys_content, prompt)
+                # Track usage from Anthropic response
+                import anthropic as _anthropic_mod
+                messages = [{"role": "user", "content": prompt}]
+                response = await active_client.messages.create(
+                    model=model,
+                    max_tokens=max_tokens,
+                    system=sys_content,
+                    messages=messages,
+                )
+                raw_text = response.content[0].text if response.content else ""
                 self._llm_calls_today += 1
-                # Anthropic doesn't return usage in the same format — skip cost tracking
+                # Anthropic returns usage in response.usage
+                _usage = getattr(response, "usage", None)
+                if _usage is not None and self._cost is not None:
+                    self._cost.record_llm(
+                        model=model,
+                        prompt_tokens=getattr(_usage, "input_tokens", 0) or 0,
+                        completion_tokens=getattr(_usage, "output_tokens", 0) or 0,
+                        symbol=signal.symbol,
+                        category=category,
+                    )
                 result = self._parse_llm_response(raw_text or "")
             else:
                 # OpenAI-compatible path (OpenAI, Groq, Gemini, DeepSeek, etc.)

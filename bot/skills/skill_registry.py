@@ -822,7 +822,15 @@ class CostBreakdownSkill(BaseSkill):
         portfolio = _get_portfolio(engine, **kwargs)
         state = portfolio.snapshot()
         rate_stats = engine.analyzer._rate_limiter.stats
-        net = state.equity_usd - cost.operating_cost_usd
+
+        # Use live equity in LIVE mode
+        if CONFIG.is_live():
+            econ_equity = await engine.get_effective_equity_async(kwargs.get("user_id", ""))
+            if econ_equity <= 0:
+                econ_equity = state.equity_usd
+        else:
+            econ_equity = state.equity_usd
+        net = econ_equity - cost.operating_cost_usd
 
         lines = [
             f"\U0001f4b0 <b>AGENT ECONOMICS</b>\n{SEP}",
@@ -856,7 +864,7 @@ class CostBreakdownSkill(BaseSkill):
 
         lines.extend([
             f"\n\U0001f4c8 <b>Net</b>",
-            f"- Equity: <code>{_money(state.equity_usd)}</code>",
+            f"- Equity: <code>{_money(econ_equity)}</code>",
             f"- Costs: <code>-${cost.operating_cost_usd:,.4f}</code>",
             f"{SEP}",
             f"- <b>Net: <code>{_money(net)}</code></b>",
@@ -2075,8 +2083,8 @@ class PlaybookSkill(BaseSkill):
                     reward_from_here = abs(pos.take_profit - cur_price) if pos.take_profit else 0
                     rr_live = (reward_from_here / risk_from_here) if risk_from_here > 0 else 0
 
-                    # Leverage (notional / cost)
-                    leverage = notional / cost if cost > 0 else 1.0
+                    # Leverage (from position or computed)
+                    leverage = getattr(pos, 'leverage', 0) or (notional / cost if cost > 0 else 1.0)
 
                     # Exposure % of equity
                     exp_pct = (cost / display_equity * 100) if display_equity > 0 else 0

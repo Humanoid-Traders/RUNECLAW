@@ -2431,7 +2431,7 @@ class TelegramHandler:
                     hold_h = (datetime.now(timezone.utc) - pos.opened_at).total_seconds() / 3600
                     cost = pos.cost_usd if pos.cost_usd > 0 else pos.entry_price * pos.quantity
                     notional = last_price * pos.quantity
-                    leverage = notional / cost if cost > 0 else 1.0
+                    leverage = getattr(pos, 'leverage', 0) or (notional / cost if cost > 0 else 1.0)
                     sl_dist = abs(last_price - pos.stop_loss) / last_price * 100 if last_price else 0
                     tp_dist = abs(pos.take_profit - last_price) / last_price * 100 if last_price else 0
                     risk_left = abs(last_price - pos.stop_loss) if pos.stop_loss else 0
