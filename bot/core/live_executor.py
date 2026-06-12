@@ -507,28 +507,46 @@ class LiveExecutor:
             close_side = "sell" if pos.direction == "LONG" else "buy"
 
             # Determine if this position is futures or spot based on leverage
-            is_futures_pos = pos.leverage > 1
+            is_futures_pos = (pos.leverage or 1) > 1
             params: dict = {}
             if is_futures_pos:
                 params["productType"] = "USDT-FUTURES"
 
             # If the position is spot but exchange defaultType is swap,
-            # temporarily switch to spot for the close order
+            # we need a separate spot exchange instance to close it
             original_type = exchange.options.get("defaultType", "spot")
-            if not is_futures_pos and original_type == "swap":
-                exchange.options["defaultType"] = "spot"
+            needs_spot_switch = not is_futures_pos and original_type == "swap"
 
-            try:
+            if needs_spot_switch:
+                # Create a temporary spot exchange for closing spot positions
+                cfg = CONFIG.exchange
+                spot_exchange = ccxt.bitget({
+                    "apiKey": cfg.api_key,
+                    "secret": cfg.api_secret,
+                    "password": cfg.passphrase,
+                    "sandbox": cfg.sandbox,
+                    "timeout": 30000,
+                    "enableRateLimit": True,
+                    "options": {"defaultType": "spot"},
+                })
+                try:
+                    await spot_exchange.load_markets()
+                    order = await spot_exchange.create_order(
+                        symbol=pos.symbol,
+                        type="market",
+                        side=close_side,
+                        amount=pos.quantity,
+                    )
+                finally:
+                    await spot_exchange.close()
+            else:
                 order = await exchange.create_order(
                     symbol=pos.symbol,
                     type="market",
                     side=close_side,
                     amount=pos.quantity,
-                    params=params if params else None,
+                    params=params,
                 )
-            finally:
-                # Restore original defaultType
-                exchange.options["defaultType"] = original_type
 
             fill_price = float(order.get("average", 0) or order.get("price", 0) or close_price)
 
