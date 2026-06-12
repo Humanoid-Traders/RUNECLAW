@@ -506,12 +506,29 @@ class LiveExecutor:
             exchange = await self._get_exchange()
             close_side = "sell" if pos.direction == "LONG" else "buy"
 
-            order = await exchange.create_order(
-                symbol=pos.symbol,
-                type="market",
-                side=close_side,
-                amount=pos.quantity,
-            )
+            # Determine if this position is futures or spot based on leverage
+            is_futures_pos = pos.leverage > 1
+            params: dict = {}
+            if is_futures_pos:
+                params["productType"] = "USDT-FUTURES"
+
+            # If the position is spot but exchange defaultType is swap,
+            # temporarily switch to spot for the close order
+            original_type = exchange.options.get("defaultType", "spot")
+            if not is_futures_pos and original_type == "swap":
+                exchange.options["defaultType"] = "spot"
+
+            try:
+                order = await exchange.create_order(
+                    symbol=pos.symbol,
+                    type="market",
+                    side=close_side,
+                    amount=pos.quantity,
+                    params=params if params else None,
+                )
+            finally:
+                # Restore original defaultType
+                exchange.options["defaultType"] = original_type
 
             fill_price = float(order.get("average", 0) or order.get("price", 0) or close_price)
 
@@ -798,6 +815,7 @@ class LiveExecutor:
                     "cost_usd": pos.cost_usd,
                     "stop_loss": pos.stop_loss,
                     "take_profit": pos.take_profit,
+                    "leverage": pos.leverage,
                     "sl_order_id": pos.sl_order_id,
                     "tp_order_id": pos.tp_order_id,
                     "opened_at": pos.opened_at.isoformat() if pos.opened_at else None,
@@ -831,6 +849,7 @@ class LiveExecutor:
                     cost_usd=float(pdata["cost_usd"]),
                     stop_loss=float(pdata["stop_loss"]),
                     take_profit=float(pdata["take_profit"]),
+                    leverage=int(pdata.get("leverage", 1)),
                     sl_order_id=pdata.get("sl_order_id"),
                     tp_order_id=pdata.get("tp_order_id"),
                     opened_at=opened_at,
