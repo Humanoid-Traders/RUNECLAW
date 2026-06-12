@@ -3002,6 +3002,7 @@ class TelegramHandler:
                             ]
                             await self._send(update, "\n".join(lines), edit=True)
                         except Exception as e:
+                            live_closed = True  # prevent fallthrough to "not found"
                             await self._send(update,
                                 f"\u274c <b>Close failed for {html.escape(pair)}</b>\n\n"
                                 f"Error: {html.escape(str(e)[:200])}\n"
