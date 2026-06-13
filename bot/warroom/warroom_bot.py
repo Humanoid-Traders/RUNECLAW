@@ -216,6 +216,15 @@ def render_signal(data: Dict[str, Any]) -> Dict[str, Any]:
     tp2 = data.get("tp2", 0)
     reason = data.get("reason", "")
 
+    # Dynamic precision based on price magnitude
+    ref = max(entry_low, entry_high, tp1, sl, 0.001)
+    if ref >= 100:
+        p = 2
+    elif ref >= 1:
+        p = 4
+    else:
+        p = 5
+
     # Confidence bar
     conf_ring = _progress_ring(confidence)
     cbar = _conf_bar(confidence)
@@ -227,12 +236,12 @@ def render_signal(data: Dict[str, Any]) -> Dict[str, Any]:
         # ── Price ladder ──
         f"\U0001f3af <b>Price Levels</b>\n"
         "<pre>"
-        f"  \U0001f3af TP2   \u2502 ${tp2:>10,.2f}\n"
-        f"  \U0001f3af TP1   \u2502 ${tp1:>10,.2f}\n"
+        f"  \U0001f3af TP2   \u2502 $  {tp2:>10.{p}f}\n"
+        f"  \U0001f3af TP1   \u2502 $  {tp1:>10.{p}f}\n"
         f"  {'─' * 6}\u253c{'─' * 20}\n"
-        f"  {d_arrow}  IN   \u2502 ${entry_low:>10,.2f} \u2013 ${entry_high:>10,.2f}\n"
+        f"  {d_arrow}  IN   \u2502 $  {entry_low:.{p}f} \u2013 ${entry_high:.{p}f}\n"
         f"  {'─' * 6}\u253c{'─' * 20}\n"
-        f"  \U0001f6d1 SL    \u2502 ${sl:>10,.2f}"
+        f"  \U0001f6d1 SL    \u2502 $  {sl:>10.{p}f}"
         "</pre>\n\n"
         f"<blockquote>{reason[:200]}</blockquote>"
     )
@@ -402,14 +411,14 @@ def render_daily_report(data: Dict[str, Any]) -> Dict[str, Any]:
 
     text = (
         f"{_header(chr(0x1F4D3), 'DAILY REPORT')}\n"
-        f"   {_pnl_arrow(net)} Net PnL: {_pill(f'{net:+.2f}%')}\n\n"
+        f"   {_pnl_arrow(net)} Net PnL: {_pill(f'${net:+.2f}')}\n\n"
         # ── Trade summary ──
         f"\U0001f4ca <b>Trade Summary</b>\n"
         "<pre>"
         f"{_kv('Total', str(trades))}\n"
         f"{_kv('Wins', str(wins) + ' ' + _OK)}\n"
         f"{_kv('Losses', str(losses) + ' ' + _BAD)}\n"
-        f"{_kv('Net PnL', f'{net:+.2f}%')}"
+        f"{_kv('Net PnL', f'${net:+.2f}')}"
         "</pre>\n\n"
         # ── Win Rate ──
         f"\U0001f3af <b>Win Rate</b>\n"
@@ -417,8 +426,8 @@ def render_daily_report(data: Dict[str, Any]) -> Dict[str, Any]:
         # ── Highlights ──
         f"\U0001f3c6 <b>Highlights</b>\n"
         "<pre>"
-        f"{_kv('Best', f'{best_t} {best_p:+.2f}%')}  {_OK}\n"
-        f"{_kv('Worst', f'{worst_t} {worst_p:+.2f}%')}  {_BAD}"
+        f"{_kv('Best', f'{best_t} ${best_p:+.2f}')}  {_OK}\n"
+        f"{_kv('Worst', f'{worst_t} ${worst_p:+.2f}')}  {_BAD}"
         "</pre>\n\n"
         # ── Risk ──
         f"{_SHIELD} <b>Risk Status</b>\n"

@@ -337,7 +337,14 @@ class Analyzer:
                   action="analyze", result="PENALTY",
                   data={"symbol": signal.symbol, "regime": regime.value})
             counter_trend_penalty = 0.5  # Heavy penalty for counter-trend
-        if regime == Regime.RANGE:
+        if regime == Regime.EXPANSION:
+            # EXPANSION: volatility breakout from compression. Boost confidence
+            # slightly — these are the highest-probability setups.
+            regime_confidence_penalty = -0.05  # negative = bonus
+            audit(trade_log, "Regime: EXPANSION -- volatility breakout, confidence boost",
+                  action="analyze", result="BOOST",
+                  data={"symbol": signal.symbol, "regime": regime.value})
+        elif regime == Regime.RANGE:
             # RANGE: needs high raw confluence (0.70+) to survive after penalty
             regime_confidence_penalty = CONFIG.analyzer.range_confidence_penalty
             regime_sl_override = CONFIG.analyzer.range_sl_mult
@@ -713,16 +720,25 @@ class Analyzer:
     @staticmethod
     def _detect_regime(indicators: dict) -> Regime:
         """
-        Classify market regime using ADX + directional indicators.
+        Classify market regime using ADX + directional indicators + squeeze.
 
         ADX > 25 + DI+ > DI- → TREND_UP
         ADX > 25 + DI- > DI+ → TREND_DOWN
+        ADX 20-30 + squeeze releasing → EXPANSION (breakout from compression)
         ADX < 20             → RANGE (mean-reversion favorable)
         ADX 20-25            → CHOP (no clear structure)
         """
         adx = indicators.get("adx", 0)
         plus_di = indicators.get("plus_di", 0)
         minus_di = indicators.get("minus_di", 0)
+        squeeze = indicators.get("kc_squeeze", False)
+
+        # EXPANSION: ADX is rising through the 20-30 zone AND Keltner squeeze
+        # is active (BB inside KC = volatility compressed, about to expand).
+        # This identifies the exact moment capital is about to expand into
+        # a new directional move — the highest-probability entry window.
+        if squeeze and 18 <= adx <= 35:
+            return Regime.EXPANSION
 
         if adx > 25:
             if plus_di > minus_di:

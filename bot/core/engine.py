@@ -449,8 +449,18 @@ class RuneClawEngine:
         # Risk gate — pass ATR so all 18 checks run
         # LIVE FIX: pass actual exchange equity so sizing is based on real capital
         live_eq = self._live_balance_cache.get("total", 0.0) if (CONFIG.is_live() and self._live_balance_cache) else None
+        # Pass micro-test cap so risk evaluates the actual execution size
+        from bot.core.live_executor import MICRO_MAX_POSITION_USD
+        exec_cap = MICRO_MAX_POSITION_USD if CONFIG.is_live() else None
+        # LIVE FIX: pass live open position count so risk check #5 is accurate
+        # Use max of live executor and paper portfolio to be conservative
+        live_open = None
+        if CONFIG.is_live():
+            live_count = len(self.live_executor.open_positions)
+            paper_count = self.portfolio.snapshot().open_positions if hasattr(self, 'portfolio') else 0
+            live_open = max(live_count, paper_count)
         self._transition(AgentState.RISK_CHECK, f"evaluating {signal.symbol}")
-        risk_check = self.risk.evaluate(idea, atr=atr_value, live_equity=live_eq)
+        risk_check = self.risk.evaluate(idea, atr=atr_value, live_equity=live_eq, max_position_usd=exec_cap, live_open_count=live_open)
 
         # Log risk evaluation to scan log
         audit(scan_log, f"Risk evaluation: {risk_check.verdict.value} for {idea.asset}",
@@ -591,7 +601,14 @@ class RuneClawEngine:
         try:
             # LIVE FIX: pass live equity for re-check sizing too
             live_eq_recheck = self._live_balance_cache.get("total", 0.0) if (CONFIG.is_live() and self._live_balance_cache) else None
-            recheck = self.risk.evaluate(idea, atr=stored_atr, live_equity=live_eq_recheck)
+            from bot.core.live_executor import MICRO_MAX_POSITION_USD
+            recheck_cap = MICRO_MAX_POSITION_USD if CONFIG.is_live() else None
+            live_open_recheck = None
+            if CONFIG.is_live():
+                live_ct = len(self.live_executor.open_positions)
+                paper_ct = self.portfolio.snapshot().open_positions if hasattr(self, 'portfolio') else 0
+                live_open_recheck = max(live_ct, paper_ct)
+            recheck = self.risk.evaluate(idea, atr=stored_atr, live_equity=live_eq_recheck, max_position_usd=recheck_cap, live_open_count=live_open_recheck)
         except Exception as exc:
             # Fix 6: if re-check raises, do NOT silently lose the idea.
             # Log it as a failed re-check and return a clear message.
@@ -707,11 +724,20 @@ class RuneClawEngine:
 
             result = await self.live_executor.execute(idea, size_usd)
 
-            # Also record as paper trade for portfolio tracking / metrics
-            try:
-                paper_trade = self.portfolio.open_position(idea, size_usd)
-            except Exception:
-                paper_trade = None  # non-fatal: live order is the source of truth
+            # Only record paper trade if live execution succeeded
+            # (result starts with error prefixes when execution fails)
+            live_failed = any(result.startswith(prefix) for prefix in (
+                "EXECUTION FAILED:", "INSUFFICIENT FUNDS:", "INVALID ORDER:",
+                "BLOCKED:", "PREFLIGHT FAILED:",
+            ))
+
+            if not live_failed:
+                # Also record as paper trade for portfolio tracking / metrics
+                try:
+                    lev = CONFIG.exchange.default_leverage if CONFIG.exchange.trade_mode == "futures" else 1
+                    paper_trade = self.portfolio.open_position(idea, size_usd, leverage=lev)
+                except Exception:
+                    paper_trade = None  # non-fatal: live order is the source of truth
 
             # Seal decision to tamper-evident audit chain
             self.audit_chain.seal_decision(DecisionRecord(
@@ -754,7 +780,8 @@ class RuneClawEngine:
             target_portfolio = self.user_portfolios.get(user_id)
 
         try:
-            trade = target_portfolio.open_position(idea, size_usd)
+            lev = CONFIG.exchange.default_leverage if CONFIG.exchange.trade_mode == "futures" else 1
+            trade = target_portfolio.open_position(idea, size_usd, leverage=lev)
         except (ValueError, Exception) as exc:
             # F-04 fix: never silently lose a confirmed trade.
             # Log the failure as an audited rejection and return a clear message.
@@ -902,6 +929,17 @@ class RuneClawEngine:
             except Exception as exc:
                 audit(system_log, f"Live position monitor error: {exc}",
                       action="live_monitor", result="ERROR")
+
+            # F-14 FIX: Reconcile tracked positions with exchange
+            # Detects positions closed by exchange-side SL/TP triggers
+            try:
+                reconciled = await self.live_executor.reconcile_positions()
+                for msg in reconciled:
+                    audit(trade_log, f"Position reconciled: {msg}",
+                          action="reconcile", result="CLOSED")
+            except Exception as exc:
+                audit(system_log, f"Reconciliation error: {exc}",
+                      action="reconcile", result="ERROR")
 
     @property
     def pending_ideas(self) -> list[TradeIdea]:

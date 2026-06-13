@@ -127,6 +127,14 @@ class OrderFlowSignal(BaseModel):
     open_interest_usd: Optional[float] = None
     oi_change_pct: Optional[float] = None
 
+    # Spot vs Futures divergence
+    spot_volume_usd: float = 0.0         # total spot trade volume in window
+    futures_oi_change_pct: Optional[float] = None  # alias for oi_change_pct for clarity
+    spot_futures_divergence: str = "none"  # "spot_led_bullish" | "spec_led_bearish" | "none"
+
+    # OI-Price divergence (squeeze detection)
+    oi_price_divergence: str = "none"     # "squeeze_building" | "genuine_demand" | "leverage_unwind" | "none"
+
     # Composite
     smart_money_score: float = 0.0       # blended [-1, 1]
     confidence: float = 0.0              # [0, 1] -- fraction of components that resolved
@@ -150,6 +158,10 @@ class OrderFlowAnalyzer:
         self._oi_history: dict[str, float] = {}     # symbol -> last open_interest_usd
         # Gate 2: Taker 3-bar ratios (buy_vol/sell_vol per bar)
         self._taker_bar_ratios: dict[str, deque] = {}  # symbol -> deque[float] recent bar ratios
+        # Spot vs Futures: rolling spot volume history for divergence detection
+        self._spot_vol_history: dict[str, deque] = {}   # symbol -> deque[float] spot volume per call
+        self._oi_val_history: dict[str, deque] = {}     # symbol -> deque[float] OI snapshots for trend
+        self._price_snap_history: dict[str, deque] = {} # symbol -> deque[float] price snapshots for OI-price div
 
     # -- Public API --
 
@@ -229,21 +241,44 @@ class OrderFlowAnalyzer:
                     with self._lock:
                         prev = self._oi_history.get(deriv_sym)
                         self._oi_history[deriv_sym] = oi_usd
+                        # Track OI snapshots for divergence detection
+                        oi_val_hist = self._oi_val_history.setdefault(
+                            deriv_sym, deque(maxlen=self.config.cvd_history_len))
+                        oi_val_hist.append(oi_usd)
+                        # Track price snapshots alongside OI
+                        if sig.mid_price > 0:
+                            px_hist = self._price_snap_history.setdefault(
+                                deriv_sym, deque(maxlen=self.config.cvd_history_len))
+                            px_hist.append(sig.mid_price)
                     if prev is not None and prev > 0:
                         sig.oi_change_pct = round((oi_usd - prev) / prev * 100, 3)
+                    sig.futures_oi_change_pct = sig.oi_change_pct
                     ok.append("open_interest")
             except Exception as exc:  # noqa: BLE001
                 sig.notes.append(f"open_interest processing error: {exc}")
 
-        # 4. Composite + confidence
+        # 5. Spot vs Futures divergence + OI-Price divergence
+        try:
+            self._fill_spot_futures_divergence(sig, deriv_sym)
+        except Exception as exc:  # noqa: BLE001
+            sig.notes.append(f"spot_futures_divergence error: {exc}")
+        try:
+            self._fill_oi_price_divergence(sig, deriv_sym)
+        except Exception as exc:  # noqa: BLE001
+            sig.notes.append(f"oi_price_divergence error: {exc}")
+
+        # 6. Composite + confidence
         self._fill_composite(sig, ok)
         sig.components_ok = ok
 
         audit(system_log, f"OrderFlow {symbol}: score={sig.smart_money_score:+.2f} "
-              f"conf={sig.confidence:.2f}",
+              f"conf={sig.confidence:.2f} sf_div={sig.spot_futures_divergence} "
+              f"oi_px_div={sig.oi_price_divergence}",
               action="order_flow", result="OK",
               data={"symbol": symbol, "score": sig.smart_money_score,
                     "confidence": sig.confidence, "whale_bias": sig.whale_bias,
+                    "spot_futures_div": sig.spot_futures_divergence,
+                    "oi_price_div": sig.oi_price_divergence,
                     "components": ok})
         self._prune()
         return sig
@@ -307,6 +342,13 @@ class OrderFlowAnalyzer:
             ratios = self._taker_bar_ratios.setdefault(
                 symbol, deque(maxlen=10))
             ratios.append(round(bar_ratio, 4))
+
+        # Track spot volume for spot-vs-futures divergence
+        sig.spot_volume_usd = round(total, 2)
+        with self._lock:
+            spot_hist = self._spot_vol_history.setdefault(
+                symbol, deque(maxlen=self.config.cvd_history_len))
+            spot_hist.append(total)
 
         # Rolling CVD + trend across calls
         with self._lock:
@@ -460,6 +502,92 @@ class OrderFlowAnalyzer:
         except Exception as exc:  # noqa: BLE001
             sig.notes.append(f"open_interest n/a: {exc}")
 
+    def _fill_spot_futures_divergence(self, sig: OrderFlowSignal, deriv_sym: str) -> None:
+        """Detect divergence between spot demand and futures speculation.
+
+        Bullish (spot_led_bullish): Spot volume is rising while OI is stable
+        or declining — real buying demand without speculative leverage.
+
+        Bearish (spec_led_bearish): OI is rising aggressively while spot
+        volume is flat/declining — speculative leverage without real demand.
+        This often precedes liquidation cascades.
+        """
+        with self._lock:
+            spot_hist = self._spot_vol_history.get(sig.symbol)
+            oi_hist = self._oi_val_history.get(deriv_sym)
+
+        if not spot_hist or len(spot_hist) < 4:
+            return
+        if not oi_hist or len(oi_hist) < 4:
+            return
+
+        spot_list = list(spot_hist)
+        oi_list = list(oi_hist)
+
+        half_s = len(spot_list) // 2
+        half_o = len(oi_list) // 2
+
+        spot_recent = float(np.mean(spot_list[half_s:]))
+        spot_prior = float(np.mean(spot_list[:half_s]))
+        oi_recent = float(np.mean(oi_list[half_o:]))
+        oi_prior = float(np.mean(oi_list[:half_o]))
+
+        # Relative changes
+        spot_chg = (spot_recent - spot_prior) / spot_prior if spot_prior > 0 else 0
+        oi_chg = (oi_recent - oi_prior) / oi_prior if oi_prior > 0 else 0
+
+        # Spot rising (+10%) while OI flat or declining
+        if spot_chg > 0.10 and oi_chg < 0.05:
+            sig.spot_futures_divergence = "spot_led_bullish"
+        # OI rising (+10%) while spot flat or declining
+        elif oi_chg > 0.10 and spot_chg < 0.05:
+            sig.spot_futures_divergence = "spec_led_bearish"
+
+    def _fill_oi_price_divergence(self, sig: OrderFlowSignal, deriv_sym: str) -> None:
+        """Detect OI vs price divergence to identify squeeze risk or genuine demand.
+
+        squeeze_building: OI rising + price flat/declining — leverage is
+        building without price follow-through. Liquidation cascade risk
+        increases.  The direction of the squeeze depends on funding rate
+        (positive funding = longs crowded = short squeeze less likely).
+
+        genuine_demand: OI rising + price rising — new money entering with
+        conviction. The rally has structural support.
+
+        leverage_unwind: OI falling + price falling — leveraged positions
+        being liquidated. Often marks capitulation / near-bottom.
+        """
+        with self._lock:
+            oi_hist = self._oi_val_history.get(deriv_sym)
+            price_hist = self._price_snap_history.get(deriv_sym)
+
+        if not oi_hist or len(oi_hist) < 3:
+            return
+        if not price_hist or len(price_hist) < 3:
+            return
+
+        oi_list = list(oi_hist)
+        price_list = list(price_hist)
+
+        # Use last 3 observations minimum
+        oi_early = float(np.mean(oi_list[:len(oi_list) // 2])) if len(oi_list) >= 4 else float(oi_list[0])
+        oi_late = float(np.mean(oi_list[len(oi_list) // 2:])) if len(oi_list) >= 4 else float(oi_list[-1])
+        px_early = float(np.mean(price_list[:len(price_list) // 2])) if len(price_list) >= 4 else float(price_list[0])
+        px_late = float(np.mean(price_list[len(price_list) // 2:])) if len(price_list) >= 4 else float(price_list[-1])
+
+        oi_chg = (oi_late - oi_early) / oi_early if oi_early > 0 else 0
+        px_chg = (px_late - px_early) / px_early if px_early > 0 else 0
+
+        # OI rising (>5%) but price flat (<2%) — leverage building, squeeze risk
+        if oi_chg > 0.05 and abs(px_chg) < 0.02:
+            sig.oi_price_divergence = "squeeze_building"
+        # Both rising — genuine demand rally
+        elif oi_chg > 0.05 and px_chg > 0.02:
+            sig.oi_price_divergence = "genuine_demand"
+        # Both falling — leverage unwind / capitulation
+        elif oi_chg < -0.05 and px_chg < -0.02:
+            sig.oi_price_divergence = "leverage_unwind"
+
     def _fill_composite(self, sig: OrderFlowSignal, ok: list[str]) -> None:
         c = self.config
         contribs: list[tuple[float, float]] = []  # (value[-1,1], weight)
@@ -525,6 +653,34 @@ class OrderFlowAnalyzer:
                 votes.append(-1.0)
             weights.append(0.8 * conf)  # high weight — divergence is meaningful
             labels.append("of_cvd_divergence")
+
+        # Spot vs Futures divergence: structural flow signal
+        if sig.spot_futures_divergence != "none":
+            if sig.spot_futures_divergence == "spot_led_bullish":
+                votes.append(1.0)
+            elif sig.spot_futures_divergence == "spec_led_bearish":
+                votes.append(-1.0)
+            weights.append(0.9 * conf)  # high weight — capital flow divergence
+            labels.append("of_spot_futures_div")
+
+        # OI-Price divergence: squeeze and demand detection
+        if sig.oi_price_divergence != "none":
+            if sig.oi_price_divergence == "genuine_demand":
+                # OI + price both rising — confirms the move
+                votes.append(1.0)
+            elif sig.oi_price_divergence == "leverage_unwind":
+                # OI + price both falling — capitulation, contrarian bullish
+                votes.append(0.5)
+            elif sig.oi_price_divergence == "squeeze_building":
+                # OI rising, price flat — direction depends on funding
+                # If funding is very positive, longs are crowded → lean bearish
+                # If funding is negative, shorts are crowded → lean bullish
+                if sig.funding_rate is not None:
+                    votes.append(-1.0 if sig.funding_rate > 0.0001 else 1.0)
+                else:
+                    votes.append(0.0)  # can't determine direction without funding
+            weights.append(0.7 * conf)
+            labels.append("of_oi_price_div")
 
         return votes, weights, labels
 
@@ -681,15 +837,9 @@ class OrderFlowAnalyzer:
 
     def _prune(self) -> None:
         with self._lock:
-            if len(self._cvd_history) > self.config.max_tracked_symbols:
-                for k in list(self._cvd_history)[:-self.config.max_tracked_symbols]:
-                    del self._cvd_history[k]
-            if len(self._price_history) > self.config.max_tracked_symbols:
-                for k in list(self._price_history)[:-self.config.max_tracked_symbols]:
-                    del self._price_history[k]
-            if len(self._oi_history) > self.config.max_tracked_symbols:
-                for k in list(self._oi_history)[:-self.config.max_tracked_symbols]:
-                    del self._oi_history[k]
-            if len(self._taker_bar_ratios) > self.config.max_tracked_symbols:
-                for k in list(self._taker_bar_ratios)[:-self.config.max_tracked_symbols]:
-                    del self._taker_bar_ratios[k]
+            for store in (self._cvd_history, self._price_history, self._oi_history,
+                          self._taker_bar_ratios, self._spot_vol_history,
+                          self._oi_val_history, self._price_snap_history):
+                if len(store) > self.config.max_tracked_symbols:
+                    for k in list(store)[:-self.config.max_tracked_symbols]:
+                        del store[k]

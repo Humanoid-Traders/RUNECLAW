@@ -73,14 +73,14 @@ class PortfolioTracker:
 
     # -- Public API --
 
-    def open_position(self, idea: TradeIdea, size_usd: float) -> TradeExecution:
+    def open_position(self, idea: TradeIdea, size_usd: float, leverage: int = 1) -> TradeExecution:
         """Open a new paper position from an approved TradeIdea."""
         with self._lock:
-            result = self._open_position_locked(idea, size_usd)
+            result = self._open_position_locked(idea, size_usd, leverage)
             self._auto_save()
             return result
 
-    def _open_position_locked(self, idea: TradeIdea, size_usd: float) -> TradeExecution:
+    def _open_position_locked(self, idea: TradeIdea, size_usd: float, leverage: int = 1) -> TradeExecution:
         # Guard: prevent division by zero or negative entry
         if idea.entry_price <= 0:
             audit(trade_log, f"Invalid entry price: {idea.entry_price}",
@@ -99,7 +99,10 @@ class PortfolioTracker:
                   action="open_position", result="REJECTED")
             raise ValueError("Insufficient balance to open position")
 
-        qty = size_usd / idea.entry_price
+        # For futures with leverage: size_usd is the margin (collateral).
+        # Notional = margin * leverage, qty = notional / price.
+        notional = size_usd * leverage
+        qty = notional / idea.entry_price
 
         trade = TradeExecution(
             trade_id=idea.id,
@@ -111,6 +114,7 @@ class PortfolioTracker:
             take_profit=idea.take_profit,
             status=TradeStatus.EXECUTED,
             is_paper=True,
+            leverage=leverage,
             opened_at=datetime.now(UTC),
         )
 
@@ -162,6 +166,9 @@ class PortfolioTracker:
 
         size_usd = trade.entry_price * trade.quantity
         exit_notional = exit_price * trade.quantity
+        # Margin is the actual collateral locked (notional / leverage)
+        lev = getattr(trade, 'leverage', 1) or 1
+        margin_usd = size_usd / lev
 
         # Exchange commission: 0.1% taker fee each side (entry + exit)
         commission_pct = CONFIG.risk.commission_pct
@@ -177,7 +184,7 @@ class PortfolioTracker:
             "closed_at": datetime.now(UTC),
         })
 
-        self.balance += size_usd + net_pnl
+        self.balance += margin_usd + net_pnl
         self._history.append(trade)
         self._record_daily_pnl(net_pnl)
         self._update_peak()

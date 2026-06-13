@@ -208,17 +208,19 @@ class RiskEngine:
             self._consecutive_losses = 0
             self._save_state()
 
-    def evaluate(self, idea: TradeIdea, atr: Optional[float] = None, live_equity: Optional[float] = None) -> RiskCheck:
+    def evaluate(self, idea: TradeIdea, atr: Optional[float] = None, live_equity: Optional[float] = None, max_position_usd: Optional[float] = None, live_open_count: Optional[int] = None) -> RiskCheck:
         """
         Run all 23 pre-trade checks (16 in-engine + #17 liquidity + #18 macro + #19 MTF + #20 PCA + #21 VaR + #22 taker 3-bar + #23 bid dominance).
         Returns RiskCheck with APPROVED or REJECTED.
         Pass atr= for volatility guard check.
         Pass live_equity= to override paper equity for sizing in LIVE mode.
+        Pass max_position_usd= to cap sizing at execution limit (e.g. micro-test $10).
+        Pass live_open_count= to override paper open position count in LIVE mode.
         """
         with self._lock:
-            return self._evaluate_locked(idea, atr, live_equity=live_equity)
+            return self._evaluate_locked(idea, atr, live_equity=live_equity, max_position_usd=max_position_usd, live_open_count=live_open_count)
 
-    def _evaluate_locked(self, idea: TradeIdea, atr: Optional[float] = None, live_equity: Optional[float] = None) -> RiskCheck:
+    def _evaluate_locked(self, idea: TradeIdea, atr: Optional[float] = None, live_equity: Optional[float] = None, max_position_usd: Optional[float] = None, live_open_count: Optional[int] = None) -> RiskCheck:
         self._total_checks += 1
         passed: list[str] = []
         failed: list[str] = []
@@ -256,6 +258,15 @@ class RiskEngine:
             risk_budget = sizing_equity * (CONFIG.risk.max_position_pct / 100.0)
             uncapped_position_usd = risk_budget / stop_distance_pct
             position_usd = uncapped_position_usd
+
+        # Apply execution cap (e.g., micro-test $10 limit).
+        # The risk engine must evaluate the ACTUAL position size that will
+        # be executed, not the theoretical uncapped size.  Without this,
+        # a $10 micro-test position on a $100 account (10% exposure) gets
+        # rejected because the theoretical size (e.g., $43) exceeds 20%.
+        if max_position_usd is not None and max_position_usd > 0:
+            position_usd = min(position_usd, max_position_usd)
+            uncapped_position_usd = min(uncapped_position_usd, max_position_usd)
 
         # Auto-cap position at the per-symbol notional limit so tight stops
         # don't produce oversized positions.  If the uncapped size exceeds
@@ -327,10 +338,12 @@ class RiskEngine:
 
         try:
             # 5. Open positions limit
-            if state.open_positions >= CONFIG.risk.max_open_positions:
-                failed.append(f"MAX_POSITIONS: {state.open_positions} >= {CONFIG.risk.max_open_positions}")
+            # LIVE FIX: use live executor's position count when available
+            effective_open = live_open_count if live_open_count is not None else state.open_positions
+            if effective_open >= CONFIG.risk.max_open_positions:
+                failed.append(f"MAX_POSITIONS: {effective_open} >= {CONFIG.risk.max_open_positions}")
             else:
-                passed.append(f"OPEN_POSITIONS: {state.open_positions} OK")
+                passed.append(f"OPEN_POSITIONS: {effective_open} OK")
         except Exception as exc:
             failed.append(f"MAX_POSITIONS: evaluation error ({exc})")
 
@@ -448,11 +461,12 @@ class RiskEngine:
 
         try:
             # 16. Volatility guard (fail-closed: ATR required and must be > 0)
-            # Meme coins get a tighter threshold (4% vs 7% default)
+            # Meme coins get a HIGHER threshold (10%) to avoid false rejections
+            # on inherently volatile tokens; large-caps use the default (7%).
             symbol = getattr(idea, "asset", "") or ""
             meme_group = _CORRELATION_GROUPS.get(f"{symbol}/USDT" if "/" not in symbol else symbol)
             is_meme = meme_group == "MEME"
-            vol_threshold = min(CONFIG.risk.volatility_guard_atr_pct, 4.0) if is_meme else CONFIG.risk.volatility_guard_atr_pct
+            vol_threshold = max(CONFIG.risk.volatility_guard_atr_pct, 10.0) if is_meme else CONFIG.risk.volatility_guard_atr_pct
 
             if atr is None:
                 failed.append("VOLATILITY: ATR data unavailable (fail-closed)")
@@ -745,10 +759,15 @@ class RiskEngine:
 
     _REGIME_MULTIPLIERS: dict[str, dict[str, float]] = {
         "CHOPPY": {"position_size_mult": 0.5, "cooldown_mult": 2.0, "stop_width_mult": 1.0},
+        "CHOP": {"position_size_mult": 0.5, "cooldown_mult": 2.0, "stop_width_mult": 1.0},
         "STRONG_TREND_UP": {"position_size_mult": 1.5, "cooldown_mult": 0.5, "stop_width_mult": 1.0},
         "STRONG_TREND_DOWN": {"position_size_mult": 1.5, "cooldown_mult": 0.5, "stop_width_mult": 1.0},
+        "TREND_UP": {"position_size_mult": 1.2, "cooldown_mult": 0.7, "stop_width_mult": 1.0},
+        "TREND_DOWN": {"position_size_mult": 1.2, "cooldown_mult": 0.7, "stop_width_mult": 1.0},
+        "EXPANSION": {"position_size_mult": 1.3, "cooldown_mult": 0.5, "stop_width_mult": 0.9},
         "HIGH_VOLATILITY": {"position_size_mult": 0.3, "cooldown_mult": 1.0, "stop_width_mult": 1.5},
         "RANGING": {"position_size_mult": 0.7, "cooldown_mult": 1.5, "stop_width_mult": 1.0},
+        "RANGE": {"position_size_mult": 0.7, "cooldown_mult": 1.5, "stop_width_mult": 1.0},
     }
 
     _DEFAULT_MULTIPLIERS: dict[str, float] = {

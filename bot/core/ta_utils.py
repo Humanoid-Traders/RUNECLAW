@@ -13,9 +13,16 @@ import numpy as np
 
 
 class Regime(str, Enum):
-    """Market regime classification based on ADX + directional movement."""
+    """Market regime classification based on ADX + directional movement.
+
+    EXPANSION: volatility breakout from compression (squeeze release).
+    Detected when ADX crosses above 20 while Bollinger Bandwidth is
+    expanding after a contraction — signals the start of a new directional
+    move.  Position sizing can increase in this regime.
+    """
     TREND_UP = "TREND_UP"
     TREND_DOWN = "TREND_DOWN"
+    EXPANSION = "EXPANSION"
     RANGE = "RANGE"
     CHOP = "CHOP"
     UNKNOWN = "UNKNOWN"

@@ -147,6 +147,7 @@ class TradeExecution(BaseModel):
     commission: float = 0.0   # exchange commission (entry + exit)
     exit_price: Optional[float] = None
     is_paper: bool = True
+    leverage: int = 1          # leverage multiplier (1 = spot / no leverage)
     opened_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     closed_at: Optional[datetime] = None
 

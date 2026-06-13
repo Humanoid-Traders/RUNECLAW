@@ -55,24 +55,25 @@ class TradeCritique:
             confidence_adj -= 0.03
 
         # 3. Concentration risk (same direction as existing positions)
-        open_positions = portfolio_snapshot.open_positions if hasattr(portfolio_snapshot, 'open_positions') else []
-        same_direction_count = sum(
-            1 for p in open_positions
-            if hasattr(p, 'direction') and p.direction == idea.direction
-        )
-        if same_direction_count >= 3:
-            concerns.append(f"{same_direction_count} existing positions in same direction — crowded directional bet")
-            confidence_adj -= 0.05
+        # PortfolioState.open_positions is an int (count), not a list.
+        # Use it for portfolio heat check; direction/asset checks require
+        # the actual positions list from the portfolio object.
+        open_count = 0
+        if hasattr(portfolio_snapshot, 'open_positions'):
+            val = portfolio_snapshot.open_positions
+            if isinstance(val, int):
+                open_count = val
+            elif hasattr(val, '__len__'):
+                open_count = len(val)
 
         # 4. Same-asset double-down
-        same_asset = [p for p in open_positions if hasattr(p, 'asset') and p.asset == idea.asset]
-        if same_asset:
-            concerns.append(f"Already have open position in {idea.asset} — doubling down increases concentration risk")
-            confidence_adj -= 0.05
+        # Cannot check per-asset or per-direction without position objects;
+        # skip these checks when only a count is available.
+        # (The risk engine enforces max-positions and concentration limits.)
 
         # 5. Portfolio heat check (many open positions)
-        if len(open_positions) >= 4:
-            concerns.append(f"{len(open_positions)} open positions — portfolio is hot, adding more increases tail risk")
+        if open_count >= 4:
+            concerns.append(f"{open_count} open positions — portfolio is hot, adding more increases tail risk")
             confidence_adj -= 0.03
 
         # 6. Macro headwind

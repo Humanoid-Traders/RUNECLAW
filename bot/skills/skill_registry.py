@@ -137,6 +137,17 @@ def _money(v: float, sign: bool = False) -> str:
         return f"${v:+,.2f}"
     return f"${v:,.2f}"
 
+def _price(v: float) -> str:
+    """Adaptive price formatting — more decimals for sub-penny tokens."""
+    if v >= 1.0:
+        return f"${v:,.2f}"
+    elif v >= 0.01:
+        return f"${v:,.4f}"
+    elif v >= 0.0001:
+        return f"${v:,.6f}"
+    else:
+        return f"${v:.8f}"
+
 def _row(label: str, value: str, w: int = 28) -> str:
     """Right-aligned row inside <pre>: '  Label     $1,234.56'"""
     gap = w - len(label) - len(value) - 4
@@ -320,8 +331,27 @@ class CheckRiskSkill(BaseSkill):
         cb = engine.risk.circuit_breaker_active
         streak = engine.risk.consecutive_losses
         cost = engine.cost.snapshot()
-        total_exp = sum(p.entry_price * p.quantity for p in portfolio.open_positions)
-        exp_pct = (total_exp / state.equity_usd * 100) if state.equity_usd > 0 else 0
+
+        # LIVE FIX: use real exchange equity and live positions in LIVE mode
+        if CONFIG.is_live():
+            live_eq = await engine.get_effective_equity_async(kwargs.get("user_id", ""))
+            display_equity = live_eq if live_eq > 0 else state.equity_usd
+            executor = engine.live_executor
+            live_open = executor.open_positions
+            live_closed = executor.closed_positions
+            total_exp = sum(lp.cost_usd for lp in live_open)
+            display_open = len(live_open)
+            display_total_trades = len(live_closed)
+            display_pnl = sum((p.pnl_usd or 0) for p in live_closed)
+            display_win_rate = (sum(1 for t in live_closed if (t.pnl_usd or 0) > 0) / len(live_closed)) if live_closed else 0.0
+        else:
+            display_equity = state.equity_usd
+            total_exp = sum(p.entry_price * p.quantity for p in portfolio.open_positions)
+            display_open = state.open_positions
+            display_total_trades = state.total_trades
+            display_pnl = state.daily_pnl
+            display_win_rate = state.win_rate
+        exp_pct = (total_exp / display_equity * 100) if display_equity > 0 else 0
 
         from bot.risk.risk_engine import _CORRELATION_GROUPS
         groups: dict[str, int] = {}
@@ -330,10 +360,15 @@ class CheckRiskSkill(BaseSkill):
             groups[g] = groups.get(g, 0) + 1
 
         if mode == "status":
-            return self._status(engine, state, cb, streak, cost, exp_pct)
-        return self._risk(state, cb, streak, total_exp, exp_pct, groups)
+            return self._status(engine, state, cb, streak, cost, exp_pct,
+                                display_equity, display_open, display_total_trades,
+                                display_pnl, display_win_rate)
+        return self._risk(state, cb, streak, total_exp, exp_pct, groups,
+                          display_equity, display_open, display_pnl)
 
-    def _status(self, engine, state, cb, streak, cost, exp_pct):
+    def _status(self, engine, state, cb, streak, cost, exp_pct,
+                display_equity, display_open, display_total_trades,
+                display_pnl, display_win_rate):
         mode = "PAPER" if CONFIG.simulation_mode else "\u26a0\ufe0f LIVE"
         cb_s = f"{_BAD} TRIPPED" if cb else f"{_OK} CLEAR"
         macro = engine.macro_calendar.evaluate()
@@ -344,8 +379,8 @@ class CheckRiskSkill(BaseSkill):
         }
         m_icon = macro_icons.get(macro.state.value, _NEU)
         m_label = macro.state.value.replace("_", " ").title()
-        net = state.equity_usd - cost.operating_cost_usd
-        pnl_icon = _status(state.daily_pnl)
+        net = display_equity - cost.operating_cost_usd
+        pnl_icon = _status(display_pnl)
 
         # Health score: combine drawdown headroom + win rate + streak safety
         dd_health = max(0, 100 - (state.max_drawdown_pct / CONFIG.risk.max_drawdown_pct * 100)) if CONFIG.risk.max_drawdown_pct > 0 else 100
@@ -359,15 +394,15 @@ class CheckRiskSkill(BaseSkill):
             f"  {health_ring} System Health {_pill(f'{overall:.0f}%')}\n\n"
             # ── Capital card ──
             f"\U0001f4b0 <b>Capital</b>\n"
-            f"- Equity: <code>{_money(state.equity_usd)}</code>\n"
+            f"- Equity: <code>{_money(display_equity)}</code>\n"
             f"- Net: <code>{_money(net)}</code>\n"
-            f"- Daily PnL: <code>{_money(state.daily_pnl, sign=True)}</code>\n"
+            f"- Daily PnL: <code>{_money(display_pnl, sign=True)}</code>\n"
             f"- Drawdown: <code>{state.max_drawdown_pct:.1f}%</code>\n\n"
             # ── Positions card ──
             f"\U0001f4ca <b>Positions</b>\n"
-            f"- Open: <code>{state.open_positions} / {CONFIG.risk.max_open_positions}</code>\n"
-            f"- Total: <code>{state.total_trades}</code>\n"
-            f"- Win Rate: <code>{state.win_rate:.0%}</code>\n"
+            f"- Open: <code>{display_open} / {CONFIG.risk.max_open_positions}</code>\n"
+            f"- Total: <code>{display_total_trades}</code>\n"
+            f"- Win Rate: <code>{display_win_rate:.0%}</code>\n"
             f"- Exposure: <code>{exp_pct:.0f}%</code>\n\n"
             # ── Risk gate ──
             f"\U0001f6e1 <b>Risk Gate</b>\n"
@@ -380,7 +415,8 @@ class CheckRiskSkill(BaseSkill):
             f"- Infra: <code>${cost.infra_cost_usd:,.4f}</code>"
         )
 
-    def _risk(self, state, cb, streak, total_exp, exp_pct, groups):
+    def _risk(self, state, cb, streak, total_exp, exp_pct, groups,
+              display_equity, display_open, display_pnl):
         cb_icon = _BAD if cb else _OK
         cb_label = "TRIPPED" if cb else "CLEAR"
         grp = ", ".join(f"{g}={c}" for g, c in groups.items()) if groups else "none"
@@ -402,10 +438,10 @@ class CheckRiskSkill(BaseSkill):
             f"{_gauge('Streak', streak, CONFIG.risk.max_consecutive_losses, unit='#')}\n\n"
             # ── Capital breakdown ──
             f"\U0001f4b0 <b>Capital</b>\n"
-            f"- Equity: <code>{_money(state.equity_usd)}</code>\n"
-            f"- Daily PnL: <code>{_money(state.daily_pnl, sign=True)}</code>\n"
+            f"- Equity: <code>{_money(display_equity)}</code>\n"
+            f"- Daily PnL: <code>{_money(display_pnl, sign=True)}</code>\n"
             f"- Exposure: <code>{_money(total_exp)}</code>\n"
-            f"- Positions: <code>{state.open_positions} / {CONFIG.risk.max_open_positions}</code>\n"
+            f"- Positions: <code>{display_open} / {CONFIG.risk.max_open_positions}</code>\n"
             f"- Groups: <code>{grp}</code>\n\n"
             # ── Configured limits ──
             f"\U0001f512 <b>Limits</b>\n"
@@ -427,6 +463,62 @@ class GetPortfolioSkill(BaseSkill):
     description = "Portfolio with PnL waterfall"
 
     async def execute(self, engine: RuneClawEngine, **kwargs: Any) -> str:
+        from bot.config import CONFIG
+
+        # LIVE mode: show real exchange data
+        if CONFIG.is_live() and hasattr(engine, 'live_executor'):
+            executor = engine.live_executor
+            live_open = executor.open_positions
+            live_closed = executor.closed_positions
+
+            # Get real equity
+            user_id = kwargs.get("user_id", "")
+            display_equity = 0.0
+            try:
+                display_equity = await engine.get_effective_equity_async(user_id)
+            except Exception:
+                pass
+            if display_equity <= 0:
+                portfolio = _get_portfolio(engine, **kwargs)
+                display_equity = portfolio.snapshot().equity_usd
+
+            live_total_pnl = sum((p.pnl_usd or 0) for p in live_closed)
+            live_exposure = sum(lp.cost_usd for lp in live_open)
+            wins = sum(1 for p in live_closed if (p.pnl_usd or 0) > 0)
+            total_closed = len(live_closed)
+            wr = (wins / total_closed * 100) if total_closed > 0 else 0
+
+            pnl_icon = "\U0001f7e2" if live_total_pnl >= 0 else "\U0001f534"
+
+            lines = [
+                f"<b>Portfolio</b> (LIVE)\n",
+                f"Equity: <code>${display_equity:,.2f}</code>",
+                f"Open: <code>{len(live_open)}</code> | Exposure: <code>${live_exposure:,.2f}</code>",
+                f"Realized PnL: {pnl_icon} <code>${live_total_pnl:+,.2f}</code>",
+            ]
+            if total_closed > 0:
+                lines.append(f"Trades: <code>{total_closed}</code> | Win rate: <code>{wr:.0f}%</code>")
+
+            if live_open:
+                lines.append("")
+                for lp in live_open:
+                    d_icon = "\U0001f7e2" if lp.direction == "LONG" else "\U0001f534"
+                    lev_str = f" {lp.leverage}x" if (getattr(lp, 'leverage', 0) or 0) > 1 else ""
+                    lines.append(f"{d_icon} <b>{lp.symbol}</b> {lp.direction}{lev_str} | ${lp.cost_usd:,.2f}")
+
+            if live_closed:
+                lines.extend(["", "<b>Recent:</b>"])
+                for t in live_closed[-5:]:
+                    pnl_val = t.pnl_usd or 0
+                    icon = "\U0001f7e2" if pnl_val >= 0 else "\U0001f534"
+                    lines.append(f"  {icon} {t.symbol} {t.direction} <code>${pnl_val:+,.2f}</code>")
+
+            if not live_open and not live_closed:
+                lines.append("\nNo trades yet. Say \"scan\" to find setups.")
+
+            return "\n".join(lines)
+
+        # PAPER mode: original behavior
         portfolio = _get_portfolio(engine, **kwargs)
         state = portfolio.snapshot()
         cost = engine.cost.snapshot()
@@ -1468,11 +1560,25 @@ class ProScanSkill(BaseSkill):
         cb = engine.risk.circuit_breaker_active
         sim = "PAPER" if CONFIG.simulation_mode else "\u26a0\ufe0f LIVE"
 
+        # LIVE FIX: use real exchange equity and live positions in LIVE mode
+        if CONFIG.is_live():
+            scan_equity = await engine.get_effective_equity_async(kwargs.get("user_id", ""))
+            if scan_equity <= 0:
+                scan_equity = state.equity_usd
+            executor = engine.live_executor
+            scan_open = len(executor.open_positions)
+            live_closed = executor.closed_positions
+            scan_pnl = sum((p.pnl_usd or 0) for p in live_closed)
+        else:
+            scan_equity = state.equity_usd
+            scan_open = state.open_positions
+            scan_pnl = state.daily_pnl
+
         header = (
             f"\u2694\ufe0f <b>RUNECLAW {cfg['label']}</b>\n{SEP}\n"
-            f"  {sim}  \u2502  Equity: <code>{_money(state.equity_usd)}</code>\n"
-            f"  Open: <code>{state.open_positions}/{CONFIG.risk.max_open_positions}</code>"
-            f"  \u2502  PnL: <code>{_money(state.daily_pnl, sign=True)}</code>\n"
+            f"  {sim}  \u2502  Equity: <code>{_money(scan_equity)}</code>\n"
+            f"  Open: <code>{scan_open}/{CONFIG.risk.max_open_positions}</code>"
+            f"  \u2502  PnL: <code>{_money(scan_pnl, sign=True)}</code>\n"
             f"  Timeframe: <code>{cfg['timeframe'].upper()}</code>"
             f"  \u2502  Scan Mode: <code>Swing-by-swing</code>\n"
         )
@@ -1509,7 +1615,7 @@ class ProScanSkill(BaseSkill):
             spike = "\U0001f4a5" if s.volume_spike else " "
             ticker_lines.append(
                 f" {arrow} {_esc(s.symbol):<9s}"
-                f"  ${s.price:<11,.2f}"
+                f"  {_price(s.price):<12s}"
                 f"  {chg:>6}"
                 f"  ${vol_m:,.0f}M {spike}"
             )
@@ -1629,6 +1735,17 @@ class ProScanSkill(BaseSkill):
 
             rsi_label = "overbought" if rsi > 70 else "oversold" if rsi < 30 else "neutral"
 
+            # Adaptive price decimals for sub-penny tokens
+            pd = 2
+            if price < 1.0:
+                pd = 4
+            if price < 0.01:
+                pd = 6
+            if price < 0.0001:
+                pd = 8
+            pf = f"{{:>10,.{pd}f}}"  # price format for <pre> block
+            pf2 = f"{{:,.{pd}f}}"     # price format inline
+
             # Build premium card
             structure_lines.append(
                 f"\n{struct_icon} <b>{_esc(sig.symbol)}</b>  {risk_icon} {risk_state}\n"
@@ -1636,45 +1753,45 @@ class ProScanSkill(BaseSkill):
             structure_lines.append(
                 f"<b>Structural Bias:</b> {struct_bias}\n"
                 f"<pre>"
-                f"  Price    ${price:>10,.2f}  \u2502  EMA20  ${ema20:>10,.2f}\n"
-                f"  VWAP     ${vwap:>10,.2f}  \u2502  RSI    {rsi:>10.0f} ({rsi_label})"
+                f"  Price    ${pf.format(price)}  \u2502  EMA20  ${pf.format(ema20)}\n"
+                f"  VWAP     ${pf.format(vwap)}  \u2502  RSI    {rsi:>10.0f} ({rsi_label})"
                 f"</pre>"
             )
             structure_lines.append(
                 f"<b>Liquidity Map:</b>\n"
-                f"  \u25b8 Buy-side: <code>${resistance:,.2f}</code> (swing high)\n"
-                f"  \u25b8 Sell-side: <code>${support:,.2f}</code> (swing low)\n"
-                f"  \u25b8 Midrange: <code>${midrange:,.2f}</code>\n"
+                f"  \u25b8 Buy-side: <code>${pf2.format(resistance)}</code> (swing high)\n"
+                f"  \u25b8 Sell-side: <code>${pf2.format(support)}</code> (swing low)\n"
+                f"  \u25b8 Midrange: <code>${pf2.format(midrange)}</code>\n"
             )
             structure_lines.append(f"<b>Momentum:</b> {momentum_note}\n")
 
             # Tactical scenarios
             if above_ema and above_vwap:
                 structure_lines.append(
-                    f"<b>\u25b2 Long scenario:</b> Reclaim ${ema20:,.2f} + retest + hold. "
-                    f"Target: sweep above ${resistance:,.2f}.\n"
-                    f"<b>Invalidation:</b> Close below ${ema20:,.2f}.\n"
+                    f"<b>\u25b2 Long scenario:</b> Reclaim ${pf2.format(ema20)} + retest + hold. "
+                    f"Target: sweep above ${pf2.format(resistance)}.\n"
+                    f"<b>Invalidation:</b> Close below ${pf2.format(ema20)}.\n"
                 )
                 if rsi > 70:
                     structure_lines.append(
-                        f"<i>\u26a0\ufe0f Overextended. Buyer exhaustion risk near ${resistance:,.2f}. "
+                        f"<i>\u26a0\ufe0f Overextended. Buyer exhaustion risk near ${pf2.format(resistance)}. "
                         f"Do not chase the wick. Wait for the close.</i>\n"
                     )
             elif not above_ema and not above_vwap:
                 structure_lines.append(
-                    f"<b>\u25bc Short scenario:</b> Rejection at ${ema20:,.2f} + breakdown. "
-                    f"Target: sweep below ${support:,.2f}.\n"
-                    f"<b>Invalidation:</b> Close above ${ema20:,.2f}.\n"
+                    f"<b>\u25bc Short scenario:</b> Rejection at ${pf2.format(ema20)} + breakdown. "
+                    f"Target: sweep below ${pf2.format(support)}.\n"
+                    f"<b>Invalidation:</b> Close above ${pf2.format(ema20)}.\n"
                 )
                 if rsi < 30:
                     structure_lines.append(
                         f"<i>\u26a0\ufe0f Oversold. Seller exhaustion possible. "
-                        f"A sweep with reclaim at ${support:,.2f} is a reversal trigger.</i>\n"
+                        f"A sweep with reclaim at ${pf2.format(support)} is a reversal trigger.</i>\n"
                     )
             else:
                 structure_lines.append(
                     f"<b>\u26d4 No-trade condition:</b> Price in decision zone "
-                    f"${support:,.2f} \u2014 ${resistance:,.2f}.\n"
+                    f"${pf2.format(support)} \u2014 ${pf2.format(resistance)}.\n"
                     f"<i>The range is still in control. "
                     f"No trigger, no trade. Wait for clean break or sweep.</i>\n"
                 )
@@ -1737,9 +1854,9 @@ class ProScanSkill(BaseSkill):
                     f"{setup_risk}\n"
                     f"  \u2502{conf_bar}\u2502 {_pill(f'{idea.confidence:.0%}')}\n"
                     f"<pre>"
-                    f"  Entry Zone    ${idea.entry_price:>10,.2f}\n"
-                    f"  Stop Loss     ${idea.stop_loss:>10,.2f}  (-${sl_d:,.2f})\n"
-                    f"  Take Profit   ${idea.take_profit:>10,.2f}  (+${tp_d:,.2f})\n"
+                    f"  Entry Zone    ${_price(idea.entry_price):>12s}\n"
+                    f"  Stop Loss     ${_price(idea.stop_loss):>12s}  (-${_price(sl_d)})\n"
+                    f"  Take Profit   ${_price(idea.take_profit):>12s}  (+${_price(tp_d)})\n"
                     f"  R:R           {idea.risk_reward_ratio:>10}x"
                     f"</pre>"
                     f"  Quality: {_idea_sq_bar} <code>{_idea_sq_score}/10</code> — <i>{_idea_sq_label}</i>"
@@ -1768,11 +1885,11 @@ class ProScanSkill(BaseSkill):
         # One-Glance Verdict
         one_glance_lines = []
         if ideas_found:
-            best = max(ideas_found, key=lambda i: i.confidence)
+            best, _best_rsi = max(ideas_found, key=lambda i: i[0].confidence)
             _best_sl_d = abs(best.entry_price - best.stop_loss)
             _best_tp_d = abs(best.take_profit - best.entry_price)
             _best_rr = _best_tp_d / _best_sl_d if _best_sl_d > 0 else 0
-            _gl_icon, _gl_text = _status_label(best.confidence, _best_rr, 50.0, False)
+            _gl_icon, _gl_text = _status_label(best.confidence, _best_rr, _best_rsi, False)
             one_glance_lines.append(f"\n{_gl_icon} <b>One-Glance Verdict: {_gl_text}</b>")
             one_glance_lines.append(
                 f"  {len(ideas_found)} actionable setup(s) detected  •  "

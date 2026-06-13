@@ -120,34 +120,31 @@ _MAX_CHAT_INPUT_LEN = 500
 def _sanitize_chat_input(text: str) -> str:
     """Sanitize free-form user text before sending to LLM.
 
-    - Truncates to 500 characters
-    - Strips prompt-injection patterns
+    - Strips prompt-injection patterns FIRST
+    - Then truncates to 500 characters
     """
-    truncated = text[:_MAX_CHAT_INPUT_LEN]
-    sanitized = _INJECTION_PATTERNS.sub("[filtered]", truncated)
-    return sanitized.strip()
+    sanitized = _INJECTION_PATTERNS.sub("[filtered]", text)
+    truncated = sanitized[:_MAX_CHAT_INPUT_LEN]
+    return truncated.strip()
 
 
 # ── War Room main menu keyboard ─────────────────────────────
 
 _KB_WARROOM = InlineKeyboardMarkup([
-    [InlineKeyboardButton("\u2694\ufe0f Claw Scan", callback_data="open_warroom"),
-     InlineKeyboardButton("\U0001f4ca Latest Signal", callback_data="latest_signal")],
-    [InlineKeyboardButton("\U0001f4c8 Performance", callback_data="performance"),
-     InlineKeyboardButton("\U0001f6e1 Risk Check", callback_data="risk_control")],
-    [InlineKeyboardButton("\U0001f4c2 Positions", callback_data="positions"),
-     InlineKeyboardButton("\U0001f4d3 Journal", callback_data="journal")],
-    [InlineKeyboardButton("\u26d4 Emergency Stop", callback_data="risk_emergency_stop")],
+    [InlineKeyboardButton("Scan Market", callback_data="open_warroom"),
+     InlineKeyboardButton("Latest Signal", callback_data="latest_signal")],
+    [InlineKeyboardButton("Positions", callback_data="positions"),
+     InlineKeyboardButton("Performance", callback_data="performance")],
+    [InlineKeyboardButton("Risk", callback_data="risk_control"),
+     InlineKeyboardButton("Stop Bot", callback_data="risk_emergency_stop")],
 ])
 
 # Legacy dashboard keyboard (kept for /dashboard command compatibility)
 _KB_DASH = InlineKeyboardMarkup([
-    [InlineKeyboardButton("\U0001f4ca Status", callback_data="pane:status"),
-     InlineKeyboardButton("\U0001f6e1 Risk", callback_data="pane:risk")],
-    [InlineKeyboardButton("\U0001f4b0 Portfolio", callback_data="pane:portfolio"),
-     InlineKeyboardButton("\U0001f4c5 Macro", callback_data="pane:macro")],
-    [InlineKeyboardButton("\u2694\ufe0f Claw Scan", callback_data="pane:scan"),
-     InlineKeyboardButton("\U0001f504 Refresh", callback_data="pane:refresh")],
+    [InlineKeyboardButton("Status", callback_data="pane:status"),
+     InlineKeyboardButton("Risk", callback_data="pane:risk")],
+    [InlineKeyboardButton("Portfolio", callback_data="pane:portfolio"),
+     InlineKeyboardButton("Scan", callback_data="pane:scan")],
 ])
 
 
@@ -301,19 +298,13 @@ class TelegramHandler:
 
     def _banner(self) -> str:
         cb = self.engine.risk.circuit_breaker_active
-        # Use system-level combined snapshot for banner (no specific user context)
         combined = self.engine.user_portfolios.combined_snapshot() if self.engine.user_portfolios.all_portfolios() else None
         open_pos = self.engine.user_portfolios.total_open_positions() if self.engine.user_portfolios.all_portfolios() else 0
         macro = self.engine.macro_calendar.evaluate()
         mode = "SIM" if CONFIG.simulation_mode else "LIVE"
-        cb_s = "\U0001f534 CB" if cb else "\U0001f7e2 OK"
-        macro_s = macro.state.value.replace("_", " ").title()
-        macro_icon = {
-            "NORMAL": "\U0001f7e2", "PRE_EVENT_CAUTION": "\U0001f7e1",
-            "EVENT_LOCKDOWN": "\U0001f534", "POST_EVENT_VOLATILITY": "\U0001f7e0",
-            "BLACKOUT": "\u26ab",
-        }.get(macro.state.value, "\u26aa")
-        return f"{mode} \u2022 {open_pos} open \u2022 {cb_s} \u2022 {macro_icon} {macro_s}"
+        cb_s = "paused" if cb else "running"
+        macro_s = macro.state.value.replace("_", " ").lower()
+        return f"{mode} | {open_pos} open | {cb_s} | macro: {macro_s}"
 
     def _footer(self) -> str:
         return f"\n<i>{datetime.now(UTC).strftime('%H:%M:%S UTC')}</i>"
@@ -339,147 +330,75 @@ class TelegramHandler:
     # ── Free-text AI chat ─────────────────────────────────────
 
     _CHAT_SYSTEM_PROMPT = (
-        "You are RUNECLAW, the AI trading scout of RUNECLAW by HUMANOID TRADERS.\n"
-        "You behave like a premium tactical trading desk, not a signal bot.\n\n"
+        "You are RUNECLAW, an AI trading assistant.\n"
+        "Talk like a knowledgeable friend — casual, clear, no jargon overload.\n\n"
 
-        "IDENTITY:\n"
-        "- You are RUNECLAW. Never say you are a standard AI model.\n"
-        "- You help traders read market structure, liquidity, and setups.\n"
-        "- You are not a financial advisor. Tactical analysis only, no guarantees.\n"
-        "- NEVER suggest slash commands. Natural language only.\n"
-        "- You are protective. If a setup is weak, you say no-trade.\n"
-        "- You never force signals. Capital protection comes first.\n\n"
+        "PERSONALITY:\n"
+        "- Friendly and direct. Like texting a trading buddy.\n"
+        "- Keep answers short and actionable.\n"
+        "- Use plain language. Say 'price is pulling back' not 'retracement to liquidity zone'.\n"
+        "- If a setup looks bad, say so honestly. Don't force trades.\n"
+        "- You protect the user's capital above all else.\n"
+        "- NEVER suggest slash commands. Just talk naturally.\n"
+        "- NEVER say you are a generic AI. You are RUNECLAW.\n\n"
 
-        "USER EXPERIENCE FLOW — follow this for every interaction:\n"
-        "1. UNDERSTAND INTENT — detect what the user wants (scan, bias, entry, signal, risk, playbook, no-trade check, liquidity map, swing breakdown)\n"
-        "2. CHECK CONTEXT — if asset or timeframe is missing, ask ONE short question only\n"
-        "3. RUN MARKET LOGIC — analyze structure, liquidity, momentum, zones, confirmation, invalidation, risk state\n"
-        "4. GIVE TACTICAL OUTPUT — clean formatting, short sections, clear verdict\n"
-        "5. PROTECT USER — if setup is weak, say no-trade. Never force a signal.\n"
-        "6. END WITH NEXT ACTION — tell user exactly what to watch next\n\n"
+        "HOW TO RESPOND:\n"
+        "1. Figure out what they want (scan? trade? portfolio check? just chatting?)\n"
+        "2. If info is missing, ask one quick question\n"
+        "3. Give a clear answer with specific numbers when relevant\n"
+        "4. If the setup is weak, say 'I'd skip this one' and explain why briefly\n"
+        "5. End with what to watch next\n\n"
 
-        "REPLY MODES — adapt answer length to intent:\n\n"
-        "QUICK MODE — for questions like 'long or short?', 'entry?', 'risk?', 'valid?', 'safe?':\n"
-        "  Short, direct, tactical. 2-4 lines max. Include verdict + one next action.\n\n"
-        "FULL SCAN MODE — for 'scan BTC', 'swing by swing', 'market read', 'what does the Claw see?':\n"
-        "  Structured full professional scan. Include all sections below.\n\n"
-        "EXECUTION MODE — for 'give signal', 'entry zones', 'setup', 'trade plan':\n"
-        "  Entry, confirmation, invalidation, TP logic, risk state. Precise numbers.\n\n"
-        "BOT MODE — for 'bot playbook', 'Bitget bot', 'automation', 'DCA logic':\n"
-        "  Bot-ready rules with no-trade filters and execution parameters.\n\n"
-        "BEGINNER MODE — when user sounds unsure or asks basic questions:\n"
-        "  Clear but still premium. Explain advanced terms in one short line when used.\n"
-        "  Example: 'Reclaim means price loses a level, then pushes back above it and holds.'\n\n"
+        "ANSWER LENGTH:\n"
+        "- Quick questions ('long or short?', 'safe?') = 2-4 lines\n"
+        "- Scans ('scan BTC', 'analyze SOL') = structured but concise, ~10-15 lines\n"
+        "- Trade plans = entry, SL, TP, and reasoning\n\n"
 
-        "ONE-GLANCE VERDICT — start every tactical response with:\n"
-        "  Status: [Valid Setup / Confirmation Pending / No-Trade Zone / Elevated Risk / Stand Down / Execution Ready]\n"
-        "  Bias: [direction or neutral]\n"
-        "  Risk State: [Low / Moderate / Elevated / No-Trade]\n"
-        "  Action: [what to do right now]\n\n"
+        "WHEN EXPLAINING:\n"
+        "  If the user sounds new, keep it simple. Explain terms briefly inline.\n"
+        "  Example: 'Price swept below support (took out the stops) and bounced back.'\n\n"
 
-        "STATUS LABELS — use consistently:\n"
-        "  \u2705 Valid Setup — structure, confirmation, invalidation, acceptable risk all present\n"
-        "  \U0001f7e1 Confirmation Pending — bias exists, execution not approved yet\n"
-        "  \u26d4 No-Trade Zone — unclear, choppy, late, risky, or missing confirmation\n"
-        "  \u26a0\ufe0f Elevated Risk — setup possible but risk is not clean\n"
-        "  \U0001f512 Stand Down — do nothing, conditions not suitable\n"
-        "  \U0001f3af Execution Ready — all conditions met, define the plan\n\n"
-
-        "SETUP QUALITY SCORE — rate every setup 0-10:\n"
-        "  0-3 = No-trade | 4-5 = Weak setup | 6-7 = Tradable with confirmation | 8-9 = High-quality | 10 = Rare premium\n"
-        "  Factors: structure clarity, liquidity resolved, momentum confirmation, entry location, invalidation quality, R:R, timeframe alignment\n\n"
-
-        "SCAN RESPONSE FORMAT (Full Scan Mode):\n"
-        "  1. One-Glance Verdict (status + bias + risk + action)\n"
-        "  2. Structural Bias (trend, key levels)\n"
-        "  3. Liquidity Map (buy-side, sell-side, sweep status)\n"
-        "  4. Momentum Read (RSI, volume, orderflow)\n"
-        "  5. Key Zones (support, resistance, VWAP, EMA)\n"
-        "  6. Long Scenario + Short Scenario\n"
-        "  7. Setup Quality Score (0-10 with brief justification)\n"
-        "  8. Claw Verdict (final decision)\n"
-        "  9. Next Best Action (one clear sentence)\n\n"
-
-        "NEXT BEST ACTION — always end with one clear next action:\n"
-        "  Examples:\n"
-        "  - 'Wait for candle close above resistance.'\n"
-        "  - 'Watch for sweep and reclaim below range low.'\n"
-        "  - 'Stand down while price remains midrange.'\n"
-        "  - 'Only consider long after retest holds.'\n"
-        "  - 'Short only becomes valid after rejection and close below support.'\n\n"
-
-        "SMART CLARITY — if using advanced terms, explain in one line when helpful:\n"
-        "  CHoCH = Change of Character (trend shift signal)\n"
-        "  BOS = Break of Structure (continuation signal)\n"
-        "  Sweep = Price takes out a level then reverses\n"
-        "  Reclaim = Price loses a level then pushes back above it and holds\n"
-        "  FVG = Fair Value Gap (imbalance zone price tends to fill)\n\n"
+        "SCAN FORMAT — for full analysis requests:\n"
+        "  1. Quick verdict (bullish/bearish/choppy + what to do)\n"
+        "  2. What the chart shows (trend, key levels, structure)\n"
+        "  3. Momentum (RSI, volume, orderflow if relevant)\n"
+        "  4. Long scenario + Short scenario\n"
+        "  5. Setup quality (1-10)\n"
+        "  6. What to watch next\n\n"
 
         "STYLE:\n"
-        "- Short, clear, direct. No fluff, no hype.\n"
-        "- Speak like a tactical market operator standing next to the trader.\n"
-        "- Refer to yourself as 'the Claw' naturally.\n"
+        "- Talk like a friend who happens to be good at trading.\n"
+        "- Keep it real. Say 'I wouldn't touch this' instead of 'No-Trade Zone detected.'\n"
+        "- Never refer to yourself as 'the Claw.' Just say 'I' or speak naturally.\n"
+        "- Use HTML formatting: <b>bold</b> for headers, <code>mono</code> for numbers.\n"
+        "- No emoji overload. One or two per message max.\n"
         "- Keep Quick Mode under 50 words, Full Scan under 300 words.\n"
-        "- You remember the conversation. Build on what was discussed.\n"
-        "- Use HTML formatting: <b>bold</b> for headers, <i>italic</i> for emphasis, <code>mono</code> for numbers.\n\n"
+        "- You remember the conversation. Build on what was discussed.\n\n"
 
-        "PREMIUM VOCABULARY — use these terms naturally:\n"
-        "Structure: CHoCH, BOS, swing failure, displacement, range formation\n"
-        "Liquidity: sweep, raid, engineered liquidity, stop hunt, absorption\n"
-        "Execution: entry zone, confirmation trigger, invalidation level, reclaim\n"
-        "Momentum: expansion, compression, divergence, exhaustion\n"
-        "Risk: exposure, drawdown, R:R, position sizing, no-trade zone\n\n"
+        "TERMS you can use naturally (explain if user seems new):\n"
+        "CHoCH, BOS, sweep, reclaim, FVG, displacement, stop hunt, absorption\n\n"
 
-        "TACTICAL PHRASES — use naturally:\n"
-        "- 'The Claw reads structure before direction.'\n"
-        "- 'No trigger, no trade.'\n"
-        "- 'Liquidity was swept. Now watch for reclaim.'\n"
-        "- 'Structure says wait. The Claw agrees.'\n"
-        "- 'This is a no-trade zone until structure clears.'\n"
-        "- 'Setup scores 7/10 — tradable with confirmation.'\n"
-        "- 'Capital protection first. Opportunity second.'\n"
-        "- 'The Claw sees structure forming. Patience.'\n\n"
+        "WHEN TO SAY NO:\n"
+        "- Choppy, no clear direction\n"
+        "- No confirmation yet\n"
+        "- RSI stuck in no-man's land (40-60)\n"
+        "- Late entry after a big move\n"
+        "- Conflicting signals across timeframes\n"
+        "Just say 'I'd sit this one out' and explain briefly why.\n\n"
 
-        "RISK CLASSIFICATION — always classify:\n"
-        "- LOW RISK / MODERATE RISK / ELEVATED RISK / NO-TRADE\n"
-        "Never say 'safe.' Never guarantee outcomes.\n\n"
-
-        "NO-TRADE ZONE — call it when:\n"
-        "1. Midrange chop with no clear direction\n"
-        "2. Price stuck between support and resistance\n"
-        "3. Liquidity not yet swept\n"
-        "4. No confirmation trigger present\n"
-        "5. RSI in no-mans-land (40-60)\n"
-        "6. Volume declining with no momentum\n"
-        "7. Major news event imminent\n"
-        "8. Late entry after extended move\n"
-        "9. Conflicting timeframe signals\n"
-        "10. Trap conditions detected\n\n"
-
-        "PRIORITY ORDER:\n"
-        "1. Capital protection\n"
-        "2. Risk management\n"
-        "3. Structure reading\n"
-        "4. Confirmation trigger\n"
-        "5. Execution plan\n"
-        "6. Profit opportunity\n\n"
-
-        "FINAL STANDARD: Every response must be fast to understand, structured, risk-aware,\n"
-        "execution-focused, protective against bad trades, and clear on what to do next.\n"
-        "The user should never feel lost. Structure first. Liquidity second. Confirmation third. Execution last.\n"
+        "ALWAYS END WITH: one clear thing to watch next.\n"
     )
 
     # Varied thinking indicators instead of same one every time
     _THINKING_PHRASES = [
-        "\u2694\ufe0f <i>The Claw reads structure before direction...</i>",
-        "\u2694\ufe0f <i>Scanning swing by swing...</i>",
-        "\u2694\ufe0f <i>Mapping liquidity zones...</i>",
-        "\u2694\ufe0f <i>Reading orderflow pressure...</i>",
-        "\u2694\ufe0f <i>Checking confirmation triggers...</i>",
-        "\u2694\ufe0f <i>Structure first. Direction second...</i>",
-        "\u2694\ufe0f <i>Evaluating setup quality...</i>",
-        "\u2694\ufe0f <i>Running risk assessment...</i>",
-        "\u2694\ufe0f <i>Capital protection check in progress...</i>",
+        "<i>Looking at the chart...</i>",
+        "<i>Checking the setup...</i>",
+        "<i>Pulling up the data...</i>",
+        "<i>Reading the orderflow...</i>",
+        "<i>Let me check that...</i>",
+        "<i>Analyzing the structure...</i>",
+        "<i>Running the numbers...</i>",
+        "<i>Checking risk levels...</i>",
         "\u2694\ufe0f <i>Analyzing momentum and zones...</i>",
     ]
 
@@ -684,7 +603,7 @@ class TelegramHandler:
         audit(system_log, f"All chat LLM providers failed. Last: {last_error}",
               action="chat_error", result="ALL_FAILED")
         return (
-            "The Claw's brain is offline right now. "
+            "I'm having trouble thinking right now. "
             f"Last error: {last_error[:80]}. "
             "Try again in a minute."
         )
@@ -712,7 +631,7 @@ class TelegramHandler:
                 update.effective_user.first_name if update.effective_user else ""))
             await self._send(update,
                 f"\u2694\ufe0f <b>RUNECLAW</b>\n\n"
-                f"The Claw doesn't recognize you yet.\n\n"
+                f"I don't recognize you yet.\n\n"
                 f"Your ID: <code>{tg_id}</code>\n\n"
                 f"Use /start to register, then wait for approval.")
             return
@@ -743,7 +662,7 @@ class TelegramHandler:
         if intent.matched and intent.confidence >= 0.8:
             # ── Scan mode shortcuts ──────────────────────────────
             scan_modes = {
-                "scan_swing": ("swing", "\U0001f30a <i>The Claw reads 4H structure...</i>"),
+                "scan_swing": ("swing", "<i>Checking the 4H chart...</i>"),
                 "scan_scalp": ("scalp", "\u26a1 <i>Scalp scan — 5M candles, tight zones...</i>"),
                 "scan_intraday": ("intraday", "\U0001f4ca <i>Intraday scan — 15M structure...</i>"),
                 "scan_deep": (None, "\u2694\ufe0f <i>Deep scanning 67+ symbols...</i>"),
@@ -782,13 +701,13 @@ class TelegramHandler:
                     await self._send(update, result)
                 except Exception as exc:
                     await self._send(update,
-                        f"\u26a0\ufe0f The Claw hit a wall. Try again or use a command.")
+                        f"Something went wrong. Try again or use a command.")
                 return
 
         if intent.matched and intent.confidence >= 0.5 and not intent.kwargs.get("symbol"):
             # Partial match — skill needs a symbol we couldn't extract
             await self._send(update,
-                f"\u2694\ufe0f The Claw needs a target.\n\n"
+                f"What coin do you want me to look at?\n\n"
                 f"Which asset? Say something like <i>\"scan BTC\"</i> or <i>\"check ETH\"</i>")
             return
 
@@ -852,7 +771,7 @@ class TelegramHandler:
         if not user or not user.get("authorized", False):
             await self._send(update,
                 "\U0001f512 <b>Access restricted</b>\n\n"
-                "The Claw doesn't recognize you yet.\n"
+                "I don't recognize you yet.\n"
                 f"Your Telegram ID: <code>{tg_id}</code>\n\n"
                 "Use /start to register, then wait for approval.")
             return False
@@ -891,28 +810,19 @@ class TelegramHandler:
         record = self.users.register(tg_id, name=user_name)
 
         if not record.get("authorized", False):
-            SEP = "─" * 16
             msg = (
-                f"\u2694\ufe0f <b>RUNECLAW</b>\n"
-                f"{SEP}\n"
-                f"<b>RUNECLAW</b> — AI Trading Scout by Humanoid Traders\n\n"
-                f"Welcome, <b>{user_name}</b>.\n\n"
-                f"The Claw reads structure, liquidity, and momentum.\n"
-                f"No noise. No hype. Just the market, swing by swing.\n\n"
-                f"\U0001f4cb <b>Registration received</b>\n"
-                f"{SEP}\n"
-                f"- ID: <code>{tg_id}</code>\n"
-                f"- Status: <code>pending approval</code>\n\n"
-                f"An admin will review your access.\n"
-                f"Once approved, just talk to me naturally.\n\n"
-                f"<i>{now}</i>"
+                f"<b>Hey {user_name}!</b>\n\n"
+                f"I'm RUNECLAW, your AI trading assistant.\n"
+                f"I scan the market, find setups, and manage risk for you.\n\n"
+                f"Your account is pending approval.\n"
+                f"ID: <code>{tg_id}</code>\n\n"
+                f"An admin will get you set up soon.\n"
+                f"Once approved, just chat with me like normal."
             )
             await self._send(update, msg)
             await self._notify_admins(
-                "\U0001f195 <b>New user registered</b>\n\n"
-                f"Name: <b>{user_name}</b>\n"
-                f"ID: <code>{tg_id}</code>\n\n"
-                f"Approve with: <code>/approve {tg_id}</code>",
+                f"New user: <b>{user_name}</b> (<code>{tg_id}</code>)\n"
+                f"Approve: <code>/approve {tg_id}</code>",
                 ctx)
             return
 
@@ -927,39 +837,38 @@ class TelegramHandler:
         if mode_str == "LIVE":
             live_eq = await self.engine.get_effective_equity_async(tg_id)
             display_equity = live_eq if live_eq > 0 else state.equity_usd
+            executor = self.engine.live_executor
+            open_pos = len(executor.open_positions)
+            live_closed = executor.closed_positions
+            if live_closed:
+                wins = sum(1 for t in live_closed if (t.pnl_usd or 0) > 0)
+                win_rate = f"{wins / len(live_closed) * 100:.0f}"
+            else:
+                win_rate = "N/A"
         else:
             display_equity = state.equity_usd
+            open_pos = state.open_positions
+            win_rate = f"{state.win_rate:.0%}".replace("%", "")
 
         SEP = "─" * 16
         status_icon = "\U0001f7e2" if not cb_active else "\U0001f534"
-        status_label = "LOCKED IN" if not cb_active else "CB TRIGGERED"
-        status_line = f"{status_icon} Status: <b>{status_label}</b>"
+        status_label = "Active" if not cb_active else "Paused"
         mode = mode_str
         equity = f"{display_equity:,.2f}"
-        open_pos = state.open_positions
-        win_rate = f"{state.win_rate:.0%}".replace("%", "")
         time = now
 
         msg = (
-            f"\u2694\ufe0f <b>RUNECLAW</b>\n"
-            f"{SEP}\n"
-            f"<i>Premium Tactical Trading Desk</i>\n\n"
-            f"Signal locked. Risk checked. Claw ready.\n\n"
-            f"{status_line}\n"
-            f"- Mode: <code>{mode}</code>\n"
-            f"- Equity: <code>${equity}</code>\n"
-            f"- Open: <code>{open_pos}</code>\n"
-            f"- Win Rate: <code>{win_rate}%</code>\n\n"
-            f"\U0001f4ac <b>How to talk to the Claw:</b>\n"
-            f"{SEP}\n"
-            f"<b>Quick:</b> <i>\"long or short?\" \u2022 \"safe?\" \u2022 \"risk?\"</i>\n"
-            f"<b>Scan:</b> <i>\"scan BTC\" \u2022 \"swing by swing SOL\"</i>\n"
-            f"<b>Execute:</b> <i>\"entry zones ETH\" \u2022 \"trade plan\"</i>\n"
-            f"<b>Bot:</b> <i>\"bot playbook\" \u2022 \"automation\"</i>\n"
-            f"<b>Deep:</b> <i>\"deep scan\" \u2022 \"deepscan\"</i>\n\n"
-            f"The Claw reads structure before direction.\n"
-            f"Capital protection first. Always.\n\n"
-            f"\u26a0\ufe0f <i>Not financial advice. Use at your own risk.</i>\n\n"
+            f"<b>RUNECLAW</b>\n"
+            f"{SEP}\n\n"
+            f"Hey {user_name}, here's where things stand:\n\n"
+            f"{status_icon} <b>{status_label}</b> | {mode}\n"
+            f"Equity: <code>${equity}</code>\n"
+            f"Open positions: <code>{open_pos}</code>\n"
+            f"Win rate: <code>{win_rate}{'%' if win_rate != 'N/A' else ''}</code>\n\n"
+            f"<b>Talk to me:</b>\n"
+            f"<i>\"scan BTC\" - \"show my positions\" - \"what's the risk?\"</i>\n"
+            f"<i>\"analyze SOL\" - \"how's my PnL?\" - \"pause the bot\"</i>\n\n"
+            f"Just type what you need, no commands required.\n\n"
             f"<i>{time}</i>"
         )
         await self._send(update, msg, reply_markup=_KB_WARROOM)
@@ -981,41 +890,25 @@ class TelegramHandler:
             return
 
         msg = (
-            f"\u2694\ufe0f <b>RUNECLAW — How to Talk to Me</b>\n"
-            f"{SEP}\n\n"
-            f"Just talk naturally. No commands needed.\n\n"
-            f"\U0001f50d <b>SCAN &amp; ANALYZE</b>\n"
-            f"<i>\"scan BTC\" • \"swing by swing ETH\"\n"
-            f"\"what does the Claw see on SOL?\"\n"
-            f"\"check setup on DOGE\" • \"market read\"\n"
-            f"\"scalp scan\" • \"deep scan\"</i>\n\n"
-            f"\U0001f4ca <b>ENTRY &amp; SIGNALS</b>\n"
-            f"<i>\"give entry zones\" • \"long or short?\"\n"
-            f"\"safe entry?\" • \"confirm setup\"\n"
-            f"\"where is liquidity?\"</i>\n\n"
-            f"\U0001f6e1 <b>RISK &amp; PORTFOLIO</b>\n"
-            f"<i>\"risk check\" • \"my portfolio\"\n"
-            f"\"open positions\" • \"my trades\"\n"
-            f"\"how's my PnL?\"</i>\n\n"
-            f"\U0001f4d3 <b>INTELLIGENCE</b>\n"
-            f"<i>\"macro events\" • \"trade journal\"\n"
-            f"\"run a backtest\" • \"bot playbook\"</i>\n\n"
-            f"\u26a1 <b>CONTROL</b>\n"
-            f"<i>\"pause the bot\" • \"emergency stop\"\n"
-            f"\"resume trading\"</i>\n\n"
+            f"<b>How to use RUNECLAW</b>\n\n"
+            f"Just type what you want, like texting a friend:\n\n"
+            f"<b>Market stuff</b>\n"
+            f"<i>\"scan BTC\" - \"analyze ETH\" - \"what's moving?\"</i>\n\n"
+            f"<b>Trades & signals</b>\n"
+            f"<i>\"give me an entry\" - \"long or short?\" - \"show signal\"</i>\n\n"
+            f"<b>Portfolio & risk</b>\n"
+            f"<i>\"my positions\" - \"how's my PnL?\" - \"risk check\"</i>\n\n"
+            f"<b>Controls</b>\n"
+            f"<i>\"pause\" - \"resume\" - \"emergency stop\"</i>\n\n"
+            f"That's it. No commands to memorize."
         )
 
         if role == "admin":
             msg += (
-                f"\U0001f512 <b>ADMIN</b>\n"
-                f"<i>/approve ID • /revoke ID • /users</i>\n\n"
+                f"\n\n<b>Admin</b>\n"
+                f"<i>/approve ID - /revoke ID - /users</i>"
             )
 
-        msg += (
-            f"<i>The Claw reads structure, liquidity, and momentum.\n"
-            f"No noise. Just the market, swing by swing.\n\n"
-            f"\u26a0\ufe0f Not financial advice. Use at your own risk.</i>"
-        )
         await self._send(update, msg)
 
     # ── Admin commands ────────────────────────────────────────
@@ -1825,8 +1718,8 @@ class TelegramHandler:
         if new_idea is not None:
             uid = update.effective_user.id if update.effective_user else ""
             kb = InlineKeyboardMarkup([[
-                InlineKeyboardButton("\u2705 APPROVE", callback_data=f"confirm:{new_idea.id}:{uid}"),
-                InlineKeyboardButton("\u274c PASS", callback_data=f"reject:{new_idea.id}:{uid}"),
+                InlineKeyboardButton("Take it", callback_data=f"confirm:{new_idea.id}:{uid}"),
+                InlineKeyboardButton("Skip", callback_data=f"reject:{new_idea.id}:{uid}"),
             ]])
             await self._send(update, result, reply_markup=kb)
         else:
@@ -1861,63 +1754,131 @@ class TelegramHandler:
 
         # LIVE FIX: in LIVE mode, show real exchange balance prominently
         mode_str = "LIVE" if CONFIG.is_live() else "PAPER"
+        sep = "─" * 16
+
         if mode_str == "LIVE":
+            # ── LIVE MODE: show real exchange data ──
             display_equity = await self.engine.get_effective_equity_async(user_id)
             if display_equity <= 0:
                 display_equity = state.equity_usd
+
+            executor = self.engine.live_executor
+            live_open = executor.open_positions
+            live_closed = executor.closed_positions
+
+            # Calculate live PnL from closed positions
+            live_total_pnl = sum((p.pnl_usd or 0) for p in live_closed)
+            live_unrealized = 0.0
+            # Unrealized PnL for open positions
+            for lp in live_open:
+                if hasattr(lp, 'pnl_usd') and lp.pnl_usd:
+                    live_unrealized += lp.pnl_usd
+
+            # Live exposure
+            live_exposure = sum(lp.cost_usd for lp in live_open)
+
+            lines = [
+                f"\U0001f4bc <b>YOUR PORTFOLIO</b> (LIVE)",
+                sep,
+                "",
+                f"- Equity: <code>${display_equity:,.2f}</code>",
+                f"- Open Positions: <code>{len(live_open)}</code>",
+                f"- Exposure: <code>${live_exposure:,.2f}</code>",
+                f"- Realized PnL: <code>${live_total_pnl:+,.2f}</code> {'🟢' if live_total_pnl >= 0 else '🔴'}",
+            ]
+            if live_unrealized != 0:
+                lines.append(f"- Unrealized PnL: <code>${live_unrealized:+,.2f}</code> {'🟢' if live_unrealized >= 0 else '🔴'}")
+
+            # Open positions from LiveExecutor
+            if live_open:
+                lines.extend(["", sep, "", "<b>Open Positions:</b>"])
+                for lp in live_open:
+                    d_icon = "🟢" if lp.direction == "LONG" else "🔴"
+                    lev_str = f" {lp.leverage}x" if (lp.leverage or 1) > 1 else ""
+                    lines.append(
+                        f"\n{d_icon} <b>{lp.symbol}</b> {lp.direction}{lev_str}"
+                    )
+                    lines.append(f"  Entry: <code>${lp.entry_price:,.6f}</code>")
+                    lines.append(f"  Size: <code>${lp.cost_usd:,.2f}</code>")
+                    if lp.stop_loss:
+                        lines.append(f"  SL: <code>${lp.stop_loss:,.6f}</code> | TP: <code>${lp.take_profit:,.6f}</code>")
+
+            # Recent closed trades from LiveExecutor
+            if live_closed:
+                recent = live_closed[-5:]
+                lines.extend(["", sep, "", "<b>Recent Trades:</b>"])
+                for t in recent:
+                    pnl_val = t.pnl_usd or 0
+                    pnl_icon = "✅" if pnl_val >= 0 else "❌"
+                    pair = t.symbol.replace("/", "")
+                    lines.append(f"  {pnl_icon} {pair} {t.direction} → <code>${pnl_val:+,.2f}</code>")
+
+            # Session tally from LiveExecutor
+            if live_closed:
+                wins = sum(1 for t in live_closed if (t.pnl_usd or 0) > 0)
+                losses = len(live_closed) - wins
+                wr = wins / len(live_closed) * 100 if live_closed else 0
+                lines.extend([
+                    "", sep, "",
+                    f"<b>Session:</b> {wins}W/{losses}L | "
+                    f"Net: <code>${live_total_pnl:+,.2f}</code> | "
+                    f"Win rate: <code>{wr:.0f}%</code>",
+                ])
+            else:
+                lines.extend(["", "<i>No live trades yet. Say \"scan\" to find signals.</i>"])
+
         else:
+            # ── PAPER MODE: show paper portfolio data ──
             display_equity = state.equity_usd
+            lines = [
+                f"\U0001f4bc <b>YOUR PORTFOLIO</b> (PAPER)",
+                sep,
+                "",
+                f"- Equity: <code>${display_equity:,.2f}</code>",
+                f"- Cash: <code>${state.balance_usd:,.2f}</code>",
+                f"- Open Positions: <code>{state.open_positions}</code>",
+                f"- Daily PnL: <code>{'+' if state.daily_pnl >= 0 else ''}{state.daily_pnl:.2f}%</code> {'🟢' if state.daily_pnl >= 0 else '🔴'}",
+                f"- Drawdown: <code>{state.max_drawdown_pct:.2f}%</code>",
+            ]
 
-        sep = "─" * 16
-        lines = [
-            f"\U0001f4bc <b>YOUR PORTFOLIO</b> ({mode_str})",
-            sep,
-            "",
-            f"- Equity: <code>${display_equity:,.2f}</code>",
-            f"- Cash: <code>${state.balance_usd:,.2f}</code>" if mode_str == "PAPER" else f"- Paper Balance: <code>${state.balance_usd:,.2f}</code>",
-            f"- Open Positions: <code>{state.open_positions}</code>",
-            f"- Daily PnL: <code>{'+' if state.daily_pnl >= 0 else ''}{state.daily_pnl:.2f}%</code> {'🟢' if state.daily_pnl >= 0 else '🔴'}",
-            f"- Drawdown: <code>{state.max_drawdown_pct:.2f}%</code>",
-        ]
+            if positions:
+                lines.extend(["", sep, "", "<b>Open Positions:</b>"])
+                for pos in positions:
+                    d_icon = "🟢" if pos.direction.value == "LONG" else "🔴"
+                    last = portfolio._last_prices.get(pos.asset, pos.entry_price)
+                    size_usd = pos.quantity * pos.entry_price
+                    if pos.direction.value == "LONG":
+                        pnl_pct = ((last - pos.entry_price) / pos.entry_price) * 100
+                    else:
+                        pnl_pct = ((pos.entry_price - last) / pos.entry_price) * 100
+                    pnl_usd = size_usd * pnl_pct / 100
+                    pnl_icon = "🟢" if pnl_pct >= 0 else "🔴"
+                    arrow = "▲" if pnl_pct > 0 else "▼" if pnl_pct < 0 else "◇"
+                    lines.append(
+                        f"\n{pnl_icon}{arrow} <b>{pos.asset}</b> {pos.direction.value} | "
+                        f"{pnl_icon} {'+' if pnl_pct >= 0 else ''}{pnl_pct:.2f}%"
+                    )
+                    lines.append(f"  Entry: <code>${pos.entry_price:,.4f}</code> → Current: <code>${last:,.4f}</code>")
+                    lines.append(f"  SL: <code>${pos.stop_loss:,.4f}</code> | TP: <code>${pos.take_profit:,.4f}</code>")
+                    lines.append(f"  Size: <code>${size_usd:,.2f}</code> | PNL: <code>${pnl_usd:+,.2f}</code>")
 
-        if positions:
-            lines.extend(["", sep, "", "<b>Open Positions:</b>"])
-            for pos in positions:
-                d_icon = "🟢" if pos.direction.value == "LONG" else "🔴"
-                last = portfolio._last_prices.get(pos.asset, pos.entry_price)
-                size_usd = pos.quantity * pos.entry_price
-                if pos.direction.value == "LONG":
-                    pnl_pct = ((last - pos.entry_price) / pos.entry_price) * 100
-                else:
-                    pnl_pct = ((pos.entry_price - last) / pos.entry_price) * 100
-                pnl_usd = size_usd * pnl_pct / 100
-                pnl_icon = "🟢" if pnl_pct >= 0 else "🔴"
-                arrow = "▲" if pnl_pct > 0 else "▼" if pnl_pct < 0 else "◇"
-                lines.append(
-                    f"\n{pnl_icon}{arrow} <b>{pos.asset}</b> {pos.direction.value} | "
-                    f"{pnl_icon} {'+' if pnl_pct >= 0 else ''}{pnl_pct:.2f}%"
-                )
-                lines.append(f"  Entry: <code>${pos.entry_price:,.4f}</code> → Current: <code>${last:,.4f}</code>")
-                lines.append(f"  SL: <code>${pos.stop_loss:,.4f}</code> | TP: <code>${pos.take_profit:,.4f}</code>")
-                lines.append(f"  Size: <code>${size_usd:,.2f}</code> | PNL: <code>${pnl_usd:+,.2f}</code>")
+            if history:
+                lines.extend(["", sep, "", "<b>Recent Trades:</b>"])
+                for t in history[-5:]:
+                    pnl_icon = "✅" if t.pnl > 0 else "❌"
+                    lines.append(f"  {pnl_icon} {t.asset} {t.direction.value} → <code>${t.pnl:+.2f}</code>")
 
-        if history:
-            lines.extend(["", sep, "", "<b>Recent Trades:</b>"])
-            for t in history[-5:]:
-                pnl_icon = "✅" if t.pnl > 0 else "❌"
-                lines.append(f"  {pnl_icon} {t.asset} {t.direction.value} → <code>${t.pnl:+.2f}</code>")
-
-        # Session tally
-        if state.total_trades > 0:
-            wins = sum(1 for t in history if t.pnl > 0)
-            lines.extend([
-                "", sep, "",
-                f"<b>Session:</b> {wins}W/{state.total_trades - wins}L | "
-                f"Net: <code>${state.total_pnl:+.2f}</code> | "
-                f"Win rate: <code>{state.win_rate:.0%}</code>",
-            ])
-        else:
-            lines.extend(["", "<i>No trades yet. Say \"scan\" to find signals.</i>"])
+            # Session tally
+            if state.total_trades > 0:
+                wins = sum(1 for t in history if t.pnl > 0)
+                lines.extend([
+                    "", sep, "",
+                    f"<b>Session:</b> {wins}W/{state.total_trades - wins}L | "
+                    f"Net: <code>${state.total_pnl:+.2f}</code> | "
+                    f"Win rate: <code>{state.win_rate:.0%}</code>",
+                ])
+            else:
+                lines.extend(["", "<i>No trades yet. Say \"scan\" to find signals.</i>"])
 
         await self._send(update, "\n".join(lines))
 
@@ -1927,12 +1888,12 @@ class TelegramHandler:
         pending = self.engine.pending_ideas
         if not pending:
             await self._send(update,
-                "\u23f3 <b>No pending trades</b>\n\n"
-                "<i>Say \"scan\" or \"analyze BTC\" to generate ideas</i>")
+                "No trades waiting right now.\n\n"
+                "Say \"scan\" or \"analyze BTC\" to find setups.")
             return
 
         # Fetch rich market data for all pending ideas
-        await self._send(update, "\u2694\ufe0f <i>Fetching live analysis...</i>")
+        await self._send(update, "<i>Pulling live data...</i>")
         try:
             exchange = await self.engine.get_exchange()
         except Exception:
@@ -1956,7 +1917,7 @@ class TelegramHandler:
                 pair = idea.asset.replace("/USDT", "")
                 buttons.append([
                     InlineKeyboardButton(f"\u2705 {pair}", callback_data=f"confirm:{idea.id}:{uid}"),
-                    InlineKeyboardButton(f"\u274c PASS", callback_data=f"reject:{idea.id}:{uid}"),
+                    InlineKeyboardButton(f"Skip", callback_data=f"reject:{idea.id}:{uid}"),
                 ])
             kb = InlineKeyboardMarkup(buttons)
             await self._send(update, msg, reply_markup=kb)
@@ -1965,8 +1926,8 @@ class TelegramHandler:
             for i, idea in enumerate(pending):
                 uid = update.effective_user.id if update.effective_user else ""
                 kb = InlineKeyboardMarkup([[
-                    InlineKeyboardButton("\u2705 APPROVE", callback_data=f"confirm:{idea.id}:{uid}"),
-                    InlineKeyboardButton("\u274c PASS", callback_data=f"reject:{idea.id}:{uid}"),
+                    InlineKeyboardButton("Take it", callback_data=f"confirm:{idea.id}:{uid}"),
+                    InlineKeyboardButton("Skip", callback_data=f"reject:{idea.id}:{uid}"),
                 ]])
                 if i < len(assets_data) and assets_data:
                     # Rich analysis card
@@ -2002,18 +1963,23 @@ class TelegramHandler:
         user_id = self._get_tg_id(update)
         portfolio = self.engine.user_portfolios.get(user_id)
         state = portfolio.snapshot()
+        # LIVE FIX: use real open position count
+        if CONFIG.is_live() and hasattr(self.engine, 'live_executor'):
+            open_count = len(self.engine.live_executor.open_positions)
+        else:
+            open_count = state.open_positions
         data = {
             "daily_loss_limit": CONFIG.risk.max_daily_loss_pct,
             "current_drawdown": round(state.max_drawdown_pct, 2) if state.max_drawdown_pct else 0.0,
             "max_open_trades": CONFIG.risk.max_open_positions,
-            "open_trades": state.open_positions,
-            "leverage_cap": 5,
+            "open_trades": open_count,
+            "leverage_cap": CONFIG.exchange.default_leverage,
         }
         rendered = wr_risk(data)
         kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("\U0001f6e1 Safe Mode", callback_data="risk_safe_mode"),
-             InlineKeyboardButton("\u23f8 Pause Bot", callback_data="risk_pause")],
-            [InlineKeyboardButton("\u26d4 Emergency Stop", callback_data="risk_emergency_stop")],
+            [InlineKeyboardButton("Safe Mode", callback_data="risk_safe_mode"),
+             InlineKeyboardButton("Pause", callback_data="risk_pause")],
+            [InlineKeyboardButton("Stop Bot", callback_data="risk_emergency_stop")],
         ])
         await self._send(update, rendered["text"], reply_markup=kb)
 
@@ -2027,21 +1993,26 @@ class TelegramHandler:
         cb = self.engine.risk.circuit_breaker_active
         macro = self.engine.macro_calendar.evaluate()
         mode = "PAPER" if CONFIG.simulation_mode else "LIVE"
-        # LIVE FIX: show real exchange equity in LIVE mode
+        # LIVE FIX: show real exchange equity and live position count
         if mode == "LIVE":
             equity = await self.engine.get_effective_equity_async(user_id)
             if equity <= 0:
                 equity = state.equity_usd
+            executor = self.engine.live_executor
+            open_count = len(executor.open_positions)
+            live_closed = executor.closed_positions
+            daily_pnl = round(sum((t.pnl_usd or 0) for t in live_closed), 2) if live_closed else 0.0
         else:
             equity = state.equity_usd if hasattr(state, "equity_usd") else 10_000.0
-        daily_pnl = round(state.daily_pnl, 2) if hasattr(state, "daily_pnl") else 0.0
+            open_count = state.open_positions
+            daily_pnl = round(state.daily_pnl, 2) if hasattr(state, "daily_pnl") else 0.0
         drawdown = round(state.max_drawdown_pct, 2) if state.max_drawdown_pct else 0.0
 
         msg = render_status_card(
             mode=mode,
             active=not cb,
             equity=equity,
-            open_positions=state.open_positions,
+            open_positions=open_count,
             daily_pnl=daily_pnl,
             drawdown=drawdown,
             max_drawdown=CONFIG.risk.max_daily_loss_pct,
@@ -2161,27 +2132,39 @@ class TelegramHandler:
         if not await self._guard(update, "scan"):
             return
         await self._send(update, "\u26a1 <i>Scalp scan — 5M candles, tight zones...</i>")
-        result = await self.registry.get("pro_scan").execute(
-            self.engine, mode="scalp", user_id=self._get_tg_id(update))
-        await self._send(update, result)
+        try:
+            result = await self.registry.get("pro_scan").execute(
+                self.engine, mode="scalp", user_id=self._get_tg_id(update))
+            await self._send(update, result)
+        except Exception as exc:
+            system_log.error(f"Scalp scan error: {exc}", exc_info=True)
+            await self._send(update, f"🔴 <b>Scalp scan error:</b> <code>{html.escape(str(exc)[:200])}</code>")
 
     async def _cmd_intraday(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """Intraday scan: 15m candles, top-5 movers."""
         if not await self._guard(update, "scan"):
             return
         await self._send(update, "\U0001f4ca <i>Intraday scan — 15M structure...</i>")
-        result = await self.registry.get("pro_scan").execute(
-            self.engine, mode="intraday", user_id=self._get_tg_id(update))
-        await self._send(update, result)
+        try:
+            result = await self.registry.get("pro_scan").execute(
+                self.engine, mode="intraday", user_id=self._get_tg_id(update))
+            await self._send(update, result)
+        except Exception as exc:
+            system_log.error(f"Intraday scan error: {exc}", exc_info=True)
+            await self._send(update, f"🔴 <b>Intraday scan error:</b> <code>{html.escape(str(exc)[:200])}</code>")
 
     async def _cmd_swing(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """Swing scan: 4h candles, wide SL/TP, trend-based."""
         if not await self._guard(update, "scan"):
             return
-        await self._send(update, "\U0001f30a <i>The Claw reads 4H structure...</i>")
-        result = await self.registry.get("pro_scan").execute(
-            self.engine, mode="swing", user_id=self._get_tg_id(update))
-        await self._send(update, result)
+        await self._send(update, "<i>Checking the 4H chart...</i>")
+        try:
+            result = await self.registry.get("pro_scan").execute(
+                self.engine, mode="swing", user_id=self._get_tg_id(update))
+            await self._send(update, result)
+        except Exception as exc:
+            system_log.error(f"Swing scan error: {exc}", exc_info=True)
+            await self._send(update, f"🔴 <b>Swing scan error:</b> <code>{html.escape(str(exc)[:200])}</code>")
 
     async def _cmd_playbook(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """GetClaw-style full system playbook briefing."""
@@ -2365,9 +2348,8 @@ class TelegramHandler:
         pending = self.engine.pending_ideas
         if not pending:
             await self._send(update,
-                "<b>\U0001f4e1 NO ACTIVE SIGNALS</b>\n\n"
-                "No signals in queue.\n"
-                "Say \"scan\" or \"analyze\" to generate signals.")
+                "Nothing in the queue right now.\n"
+                "Say \"scan\" or \"analyze\" to look for setups.")
             return
         idea = pending[-1]  # most recent
         direction = idea.direction.value
@@ -2375,26 +2357,53 @@ class TelegramHandler:
         entry = idea.entry_price
         sl = idea.stop_loss
         tp = idea.take_profit
-        spread = abs(entry - sl) * 0.3  # approximate entry range
+
+        # Dynamic precision based on price magnitude
+        if entry >= 100:
+            prec = 2
+        elif entry >= 1:
+            prec = 4
+        else:
+            prec = 5
+
+        # Entry zone: use 38.2% Fibonacci retracement toward SL
+        # LONG: entry_low = entry - 0.382 * (entry - sl), entry_high = entry
+        # SHORT: entry_low = entry, entry_high = entry + 0.382 * (sl - entry)
+        sl_dist = abs(entry - sl)
+        fib_382 = sl_dist * 0.382
+        if direction == "LONG":
+            entry_low = entry - fib_382
+            entry_high = entry
+        else:
+            entry_low = entry
+            entry_high = entry + fib_382
+
+        # TP2: extend 50% of the TP1-entry distance beyond TP1
+        tp_dist = abs(tp - entry)
+        if direction == "LONG":
+            tp2 = tp + tp_dist * 0.5
+        else:
+            tp2 = tp - tp_dist * 0.5
+
         data = {
             "pair": idea.asset.replace("/", ""),
             "direction": direction,
             "confidence": confidence,
             "risk_level": "High" if confidence < 50 else "Medium" if confidence < 70 else "Low",
-            "entry_low": round(min(entry, entry - spread), 2),
-            "entry_high": round(max(entry, entry + spread), 2),
-            "sl": round(sl, 2),
-            "tp1": round(tp, 2),
-            "tp2": round(tp * 1.005 if direction == "LONG" else tp * 0.995, 2),
+            "entry_low": round(entry_low, prec),
+            "entry_high": round(entry_high, prec),
+            "sl": round(sl, prec),
+            "tp1": round(tp, prec),
+            "tp2": round(tp2, prec),
             "reason": idea.reasoning[:200] if idea.reasoning else "AI analysis",
         }
         rendered = wr_signal(data)
         # Map approve/reject to actual trade IDs
         uid = update.effective_user.id if update.effective_user else ""
         kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("\u2705 Approve Trade", callback_data=f"confirm:{idea.id}:{uid}")],
-            [InlineKeyboardButton("\U0001f441 Watch Only", callback_data=f"signal_watch_{idea.asset}")],
-            [InlineKeyboardButton("\u274c Reject", callback_data=f"reject:{idea.id}:{uid}")],
+            [InlineKeyboardButton("Take it", callback_data=f"confirm:{idea.id}:{uid}")],
+            [InlineKeyboardButton("Watch", callback_data=f"signal_watch_{idea.asset}")],
+            [InlineKeyboardButton("Skip", callback_data=f"reject:{idea.id}:{uid}")],
         ])
         await self._send(update, rendered["text"], reply_markup=kb)
 
@@ -2497,12 +2506,13 @@ class TelegramHandler:
 
         msg = render_open_positions(positions_data)
 
-        # Build keyboard with close buttons
+        # Build keyboard with close buttons — use trade_id for unique identification
         kb_rows = []
         for pos in positions_data:
+            tid = pos.get('trade_id', pos['pair'])
             kb_rows.append([
-                InlineKeyboardButton(f"\U0001f4cb {pos['pair']}", callback_data=f"pos_details_{pos['pair']}"),
-                InlineKeyboardButton(f"\u274c Close", callback_data=f"pos_close_{pos['pair']}"),
+                InlineKeyboardButton(f"{pos['pair']}", callback_data=f"pos_details_{tid}"),
+                InlineKeyboardButton(f"Close", callback_data=f"pos_close_{tid}"),
             ])
         await self._send(update, msg,
                          reply_markup=InlineKeyboardMarkup(kb_rows) if kb_rows else None)
@@ -2512,28 +2522,53 @@ class TelegramHandler:
         if not await self._guard(update, "portfolio"):
             return
         user_id = self._get_tg_id(update)
-        portfolio = self.engine.user_portfolios.get(user_id)
-        state = portfolio.snapshot()
-        trades = portfolio.trade_history
-        today_trades = len(trades)
-        wins = sum(1 for t in trades if t.pnl > 0)
-        win_rate = (wins / today_trades * 100) if today_trades > 0 else 0
-        # Find best/worst pairs
-        best_pair = "N/A"
-        worst_pair = "N/A"
-        if trades:
-            sorted_t = sorted(trades, key=lambda t: t.pnl)
-            worst_pair = sorted_t[0].asset.replace("/USDT", "")
-            best_pair = sorted_t[-1].asset.replace("/USDT", "")
 
-        data = {
-            "today_pnl": round(state.daily_pnl, 2) if hasattr(state, "daily_pnl") else 0.0,
-            "week_pnl": 0.0,
-            "win_rate": win_rate,
-            "trades_today": today_trades,
-            "best_pair": best_pair,
-            "worst_pair": worst_pair,
-        }
+        # LIVE mode: use real trade data from executor
+        if CONFIG.is_live() and hasattr(self.engine, 'live_executor'):
+            executor = self.engine.live_executor
+            live_closed = executor.closed_positions
+            live_open = executor.open_positions
+            today_trades = len(live_closed)
+            wins = sum(1 for t in live_closed if (t.pnl_usd or 0) > 0)
+            win_rate = (wins / today_trades * 100) if today_trades > 0 else 0
+            total_pnl = sum((t.pnl_usd or 0) for t in live_closed)
+            unrealized = 0.0  # would need mark-to-market
+            best_pair = "N/A"
+            worst_pair = "N/A"
+            if live_closed:
+                sorted_t = sorted(live_closed, key=lambda t: (t.pnl_usd or 0))
+                worst_pair = sorted_t[0].symbol.replace("/USDT", "")
+                best_pair = sorted_t[-1].symbol.replace("/USDT", "")
+            data = {
+                "today_pnl": round(total_pnl, 2),
+                "week_pnl": 0.0,
+                "win_rate": win_rate,
+                "trades_today": today_trades,
+                "best_pair": best_pair,
+                "worst_pair": worst_pair,
+            }
+        else:
+            portfolio = self.engine.user_portfolios.get(user_id)
+            state = portfolio.snapshot()
+            trades = portfolio.trade_history
+            today_trades = len(trades)
+            wins = sum(1 for t in trades if t.pnl > 0)
+            win_rate = (wins / today_trades * 100) if today_trades > 0 else 0
+            best_pair = "N/A"
+            worst_pair = "N/A"
+            if trades:
+                sorted_t = sorted(trades, key=lambda t: t.pnl)
+                worst_pair = sorted_t[0].asset.replace("/USDT", "")
+                best_pair = sorted_t[-1].asset.replace("/USDT", "")
+            data = {
+                "today_pnl": round(state.daily_pnl, 2) if hasattr(state, "daily_pnl") else 0.0,
+                "week_pnl": 0.0,
+                "win_rate": win_rate,
+                "trades_today": today_trades,
+                "best_pair": best_pair,
+                "worst_pair": worst_pair,
+            }
+
         rendered = wr_performance(data)
         await self._send(update, rendered["text"])
 
@@ -2571,26 +2606,50 @@ class TelegramHandler:
         if not await self._guard(update, "journal"):
             return
         user_id = self._get_tg_id(update)
-        portfolio = self.engine.user_portfolios.get(user_id)
-        trades = portfolio.trade_history
-        today_trades = len(trades)
-        wins = sum(1 for t in trades if t.pnl > 0)
-        losses = today_trades - wins
-        net_pnl = sum(t.pnl for t in trades)
-        best_trade = "N/A"
-        best_pnl = 0.0
-        worst_trade = "N/A"
-        worst_pnl = 0.0
-        if trades:
-            sorted_t = sorted(trades, key=lambda t: t.pnl)
-            worst_trade = sorted_t[0].asset.replace("/USDT", "")
-            worst_pnl = round(sorted_t[0].pnl, 2)
-            best_trade = sorted_t[-1].asset.replace("/USDT", "")
-            best_pnl = round(sorted_t[-1].pnl, 2)
 
-        state = portfolio.snapshot()
-        dd = state.max_drawdown_pct if state.max_drawdown_pct else 0
-        risk_status = "Healthy" if dd < 2.0 else "Warning" if dd < 3.0 else "Critical"
+        # LIVE mode: use real trade data from executor
+        if CONFIG.is_live() and hasattr(self.engine, 'live_executor'):
+            executor = self.engine.live_executor
+            closed = executor.closed_positions
+            today_trades = len(closed)
+            wins = sum(1 for t in closed if (t.pnl_usd or 0) > 0)
+            losses = today_trades - wins
+            net_pnl = sum((t.pnl_usd or 0) for t in closed)
+            best_trade = "N/A"
+            best_pnl = 0.0
+            worst_trade = "N/A"
+            worst_pnl = 0.0
+            if closed:
+                sorted_t = sorted(closed, key=lambda t: (t.pnl_usd or 0))
+                worst_trade = sorted_t[0].symbol.replace("/USDT", "")
+                worst_pnl = round(sorted_t[0].pnl_usd or 0, 2)
+                best_trade = sorted_t[-1].symbol.replace("/USDT", "")
+                best_pnl = round(sorted_t[-1].pnl_usd or 0, 2)
+
+            live_eq = await self.engine.get_effective_equity_async(user_id)
+            dd = 0.0
+            risk_status = "Healthy"
+        else:
+            portfolio = self.engine.user_portfolios.get(user_id)
+            trades = portfolio.trade_history
+            today_trades = len(trades)
+            wins = sum(1 for t in trades if t.pnl > 0)
+            losses = today_trades - wins
+            net_pnl = sum(t.pnl for t in trades)
+            best_trade = "N/A"
+            best_pnl = 0.0
+            worst_trade = "N/A"
+            worst_pnl = 0.0
+            if trades:
+                sorted_t = sorted(trades, key=lambda t: t.pnl)
+                worst_trade = sorted_t[0].asset.replace("/USDT", "")
+                worst_pnl = round(sorted_t[0].pnl, 2)
+                best_trade = sorted_t[-1].asset.replace("/USDT", "")
+                best_pnl = round(sorted_t[-1].pnl, 2)
+
+            state = portfolio.snapshot()
+            dd = state.max_drawdown_pct if state.max_drawdown_pct else 0
+            risk_status = "Healthy" if dd < 2.0 else "Warning" if dd < 3.0 else "Critical"
 
         data = {
             "trades": today_trades, "wins": wins, "losses": losses,
@@ -2610,10 +2669,10 @@ class TelegramHandler:
         current = RUNTIME.strategy_mode
         rendered = wr_strategy_mode(current)
         kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("\U0001f6e1 Defensive", callback_data="mode_defensive"),
-             InlineKeyboardButton("\u2694\ufe0f Balanced", callback_data="mode_balanced")],
-            [InlineKeyboardButton("\U0001f525 Aggressive", callback_data="mode_aggressive"),
-             InlineKeyboardButton("\U0001f9d8 Manual", callback_data="mode_manual")],
+            [InlineKeyboardButton("Defensive", callback_data="mode_defensive"),
+             InlineKeyboardButton("Balanced", callback_data="mode_balanced")],
+            [InlineKeyboardButton("Aggressive", callback_data="mode_aggressive"),
+             InlineKeyboardButton("Manual", callback_data="mode_manual")],
         ])
         await self._send(update, rendered["text"], reply_markup=kb)
 
@@ -2682,10 +2741,9 @@ class TelegramHandler:
         # ── Risk panel callbacks ─────────────────────────────
 
         if data == "risk_safe_mode":
-            # Safe mode: keep bot running but acknowledge reduced exposure
             await self._send(update,
-                "\U0001f6e1 <b>Safe Mode activated</b>\n\n"
-                "Exposure reduced. Only high-confidence signals will pass.",
+                "Safe mode is on.\n\n"
+                "I'll only take high-confidence setups from here.",
                 edit=True)
             audit(system_log, "Safe mode activated", action="safe_mode", result="OK")
             return
@@ -2700,8 +2758,8 @@ class TelegramHandler:
         if data == "risk_emergency_stop":
             rendered = wr_emergency_stop()
             kb = InlineKeyboardMarkup([
-                [InlineKeyboardButton("\u26d4 CONFIRM STOP", callback_data="emergency_confirm"),
-                 InlineKeyboardButton("\u21a9\ufe0f Cancel", callback_data="emergency_cancel")],
+                [InlineKeyboardButton("Yes, stop everything", callback_data="emergency_confirm"),
+                 InlineKeyboardButton("Cancel", callback_data="emergency_cancel")],
             ])
             await self._send(update, rendered["text"], reply_markup=kb, edit=True if query.message else False)
             return
@@ -2711,11 +2769,9 @@ class TelegramHandler:
             # Clear pending ideas (must access the underlying dict, not the property copy)
             self.engine._pending_ideas.clear()
             await self._send(update,
-                "\u26d4 <b>EMERGENCY STOP EXECUTED</b>\n\n"
-                "All pending orders cancelled.\n"
-                "Circuit breaker engaged.\n"
-                "Bot is <b>PAUSED</b>.\n\n"
-                "Say \"resume\" to reactivate.",
+                "Bot stopped.\n\n"
+                "All pending orders cancelled, circuit breaker is on.\n"
+                "Say \"resume\" when you're ready to start again.",
                 edit=True)
             audit(system_log, "EMERGENCY STOP executed", action="emergency_stop", result="OK")
             return
@@ -2761,8 +2817,11 @@ class TelegramHandler:
         # ── Position callbacks ───────────────────────────────
 
         if data.startswith("pos_details_"):
-            pair = data.removeprefix("pos_details_")
-            # Find the open position for this pair — check LIVE executor first
+            ident = data.removeprefix("pos_details_")
+            # ident can be a trade_id (TI-xxxx) or a pair name (EDGEUSDT)
+            is_trade_id = ident.startswith("TI-")
+            pair = ident  # fallback for display
+            # Find the open position — check LIVE executor first
             user_id = self._get_tg_id(update)
             portfolio = self.engine.user_portfolios.get(user_id)
             pos_match = None
@@ -2770,10 +2829,17 @@ class TelegramHandler:
 
             if CONFIG.is_live():
                 for lp in self.engine.live_executor.open_positions:
-                    if lp.symbol.replace("/", "") == pair:
-                        pos_match = lp
-                        is_live_pos = True
-                        break
+                    if is_trade_id:
+                        if lp.trade_id == ident:
+                            pos_match = lp
+                            is_live_pos = True
+                            pair = lp.symbol.replace("/", "")
+                            break
+                    else:
+                        if lp.symbol.replace("/", "") == ident:
+                            pos_match = lp
+                            is_live_pos = True
+                            break
 
             if pos_match is None:
                 for p in portfolio.open_positions:
@@ -2834,9 +2900,13 @@ class TelegramHandler:
                 reward_left = abs(_tp - last_px) if _tp else 0
                 rr_live = reward_left / risk_left if risk_left > 0 else 0
 
-                # Leverage
+                # Leverage — prefer stored value from position, fall back to notional/cost
                 notional_now = _qty * last_px
-                leverage = notional_now / sz if sz > 0 else 1.0
+                if is_live_pos and getattr(pos_match, 'leverage', 0) and pos_match.leverage > 1:
+                    leverage = float(pos_match.leverage)
+                else:
+                    _stored_lev = getattr(pos_match, 'leverage', 0) if not is_live_pos else 0
+                    leverage = float(_stored_lev) if _stored_lev and _stored_lev > 1 else (notional_now / sz if sz > 0 else 1.0)
 
                 # Fee calculations
                 comm_pct = CONFIG.risk.commission_pct
@@ -2863,48 +2933,34 @@ class TelegramHandler:
                     hold_str = f"{hold_hours / 24:.1f}d"
 
                 # SL/TP order status
-                sl_status = "\u2705 exchange" if _sl_oid else "\u26a0\ufe0f manual"
-                tp_status = "\u2705 exchange" if _tp_oid else "\u26a0\ufe0f manual"
+                sl_tag = "on exchange" if _sl_oid else "not set"
+                tp_tag = "on exchange" if _tp_oid else "not set"
 
-                mode_tag = " \U0001f534 LIVE" if is_live_pos else ""
+                mode_tag = " LIVE" if is_live_pos else ""
+                lev_str = f" | {leverage:.0f}x" if leverage > 1 else ""
 
                 lines = [
-                    f"\U0001f4cb <b>{html.escape(pair)} \u2014 Position Detail</b>{mode_tag}",
+                    f"<b>{html.escape(pair)}</b>{mode_tag}",
+                    f"{d_emoji} {_dir} | {pnl_emoji} {pnl_pct:+.2f}% (${pnl_usd:+,.2f})",
                     "",
-                    f"<b>Position:</b>",
-                    f"- Direction: {d_emoji} {_dir}",
-                    f"- Entry: <code>{_entry:,.6f}</code>",
-                    f"- Current: <code>{last_px:,.6f}</code>",
-                    f"- Qty: <code>{_qty:,.4f}</code> | Size: <code>${sz:,.2f}</code>",
-                    f"- Notional: <code>${notional_now:,.2f}</code> | Leverage: <code>{leverage:.1f}x</code>",
-                    f"- Gross PnL: {pnl_emoji} <code>{pnl_pct:+.2f}%</code> (<code>${pnl_usd:+,.4f}</code>)",
-                    f"- Hold: <code>{hold_str}</code> | R:R: <code>{rr_live:.2f}x</code>",
-                    "",
-                    f"<b>Risk Levels:</b>",
-                    f"- SL: <code>{_sl:,.6f}</code> ({sl_dist:.1f}% away) {sl_status}",
-                    f"- TP: <code>{_tp:,.6f}</code> ({tp_dist:.1f}% away) {tp_status}",
-                    "",
-                    f"<b>Fees & Costs:</b>",
-                    f"- Entry fee ({comm_pct}%): <code>${entry_fee:.4f}</code>",
-                    f"- Exit fee ({comm_pct}%, est): <code>${exit_fee_est:.4f}</code>",
-                    f"- Funding ({funding_sessions:.1f} sessions x {funding_rate}%): <code>${funding_paid:.4f}</code>",
-                    f"- Total costs: <code>${total_fees + funding_paid:.4f}</code>",
-                    f"- <b>Net PnL: <code>${net_pnl:+,.4f}</code></b>",
-                    "",
-                    f"<b>Market Snapshot:</b>",
-                    f"- VWAP: {_fmt_price(adata['vwap'])} \u2014 {_pct(adata['vwap_pct'])} {'above' if adata['vwap_pct'] >= 0 else 'below'}",
-                    f"- RSI: <code>{adata['rsi']:.1f}</code> | ATR: {_fmt_price(adata['atr'])}",
-                    f"- Bid: {_fmt_vol(adata['bid_depth'])} vs Ask: {_fmt_vol(adata['ask_depth'])}",
-                    f"- Structure: {adata['structure']}",
+                    f"Entry <code>{_entry:,.6f}</code> / Now <code>{last_px:,.6f}</code>",
+                    f"Size <code>${sz:,.2f}</code>{lev_str} | Hold {hold_str} | R:R {rr_live:.1f}x",
+                    f"SL <code>{_sl:,.6f}</code> ({sl_dist:.1f}%) {sl_tag}",
+                    f"TP <code>{_tp:,.6f}</code> ({tp_dist:.1f}%) {tp_tag}",
+                    f"Net PnL <code>${net_pnl:+,.2f}</code> (fees ${total_fees + funding_paid:.2f})",
                 ]
-                for i, s in enumerate(adata.get("supports", [])[:2], 1):
-                    lines.append(f"- Support {i}: {_fmt_price(s[0])}")
-                for i, r in enumerate(adata.get("resistances", [])[:2], 1):
-                    lines.append(f"- Resistance {i}: {_fmt_price(r[0])}")
 
+                # Add market context on one line if available
+                if adata:
+                    rsi_val = adata.get('rsi', 0)
+                    rsi_label = "overbought" if rsi_val > 70 else "oversold" if rsi_val < 30 else "neutral"
+                    lines.append(f"RSI {rsi_val:.0f} ({rsi_label}) | {adata.get('structure', '')}")
+
+                # Use trade_id for buttons if we have a live position
+                btn_id = pos_match.trade_id if is_live_pos else pair
                 kb = InlineKeyboardMarkup([[
-                    InlineKeyboardButton("\u274c Close Position", callback_data=f"pos_close_{pair}"),
-                    InlineKeyboardButton("\U0001f504 Refresh", callback_data=f"pos_details_{pair}"),
+                    InlineKeyboardButton("Close", callback_data=f"pos_close_{btn_id}"),
+                    InlineKeyboardButton("Refresh", callback_data=f"pos_details_{btn_id}"),
                 ]])
                 await self._send(update, "\n".join(lines), edit=True, reply_markup=kb)
             elif pos_match:
@@ -2958,14 +3014,16 @@ class TelegramHandler:
                 await self._send(update, "\n".join(lines), edit=True)
             else:
                 await self._send(update,
-                    f"\U0001f4cb <b>{html.escape(pair)}</b>\n\n"
-                    "Position not found. It may have been closed.\n"
-                    "Say \"open positions\" or \"performance\" for details.",
+                    f"<b>{html.escape(pair)}</b>\n\n"
+                    "Can't find this position — it might have been closed already.\n"
+                    "Say \"positions\" to see what's open.",
                     edit=True)
             return
 
         if data.startswith("pos_close_"):
-            pair = data.removeprefix("pos_close_")
+            ident = data.removeprefix("pos_close_")
+            is_trade_id = ident.startswith("TI-")
+            pair = ident  # fallback for display
             user_id = self._get_tg_id(update)
             portfolio = self.engine.user_portfolios.get(user_id)
 
@@ -2976,7 +3034,9 @@ class TelegramHandler:
             if CONFIG.is_live():
                 executor = self.engine.live_executor
                 for lp in list(executor.open_positions):
-                    if lp.symbol.replace("/", "") == pair:
+                    matched = (lp.trade_id == ident) if is_trade_id else (lp.symbol.replace("/", "") == ident)
+                    if matched:
+                        pair = lp.symbol.replace("/", "")  # ensure display name
                         try:
                             result = await executor.close_position(lp.trade_id)
                             live_closed = True
@@ -2988,27 +3048,24 @@ class TelegramHandler:
                             pnl_val = lp.pnl_usd or 0
                             pnl_emoji = "\U0001f7e2" if pnl_val >= 0 else "\U0001f534"
                             lines = [
-                                f"\u2705 <b>{html.escape(pair)} \u2014 Live Position Closed</b>",
+                                f"<b>{html.escape(pair)} closed</b>",
                                 "",
-                                f"- Entry: <code>{lp.entry_price:,.6f}</code>",
-                                f"- Exit: <code>{close_px:,.6f}</code>",
-                                f"- Size: <code>${cost:,.2f}</code>",
-                                f"- Hold: <code>{hold_h:.1f}h</code>",
-                                f"- <b>PnL: {pnl_emoji} <code>${pnl_val:+,.4f}</code></b>",
-                                "",
-                                f"Result: {result}",
-                                "",
-                                "Say \"open positions\" for updated view.",
+                                f"Entry <code>{lp.entry_price:,.6f}</code> / Exit <code>{close_px:,.6f}</code>",
+                                f"Size <code>${cost:,.2f}</code> | Hold {hold_h:.1f}h",
+                                f"{pnl_emoji} PnL: <code>${pnl_val:+,.2f}</code>",
                             ]
                             await self._send(update, "\n".join(lines), edit=True)
                         except Exception as e:
                             live_closed = True  # prevent fallthrough to "not found"
                             await self._send(update,
-                                f"\u274c <b>Close failed for {html.escape(pair)}</b>\n\n"
-                                f"Error: {html.escape(str(e)[:200])}\n"
-                                "Try again or close manually on exchange.",
+                                f"Couldn't close {html.escape(pair)}.\n\n"
+                                f"{html.escape(str(e)[:200])}\n"
+                                "You can try again or close it on the exchange directly.",
                                 edit=True)
                         break
+
+            if live_closed:
+                return  # Already sent response (success or error) — do not fall through
 
             if not live_closed:
                 # Paper mode close
@@ -3124,12 +3181,17 @@ class TelegramHandler:
                       action="callback_idor_block", result="DENIED")
                 return
             result = await self.engine.confirm_trade(trade_id, user_id=caller_uid or "")
-            # Rich confirmation message
-            is_success = "Executed" in result or "executed" in result
-            icon = "\u2705" if is_success else "\u26a0\ufe0f"
-            await self._send(update,
-                f"{icon} <b>TRADE {'EXECUTED' if is_success else 'RESULT'}</b>\n\n{result}",
-                edit=True)
+            # Detect failure by checking for known error prefixes
+            _fail_prefixes = (
+                "EXECUTION FAILED:", "INSUFFICIENT FUNDS:", "INVALID ORDER:",
+                "BLOCKED:", "PREFLIGHT FAILED:", "Risk re-check FAILED",
+                "Trade not found", "not found", "expired", "No pending",
+            )
+            is_failure = any(result.startswith(p) for p in _fail_prefixes)
+            if not is_failure:
+                await self._send(update, f"Done, trade is live.\n\n{result}", edit=True)
+            else:
+                await self._send(update, f"Trade didn't go through.\n\n{result}", edit=True)
         elif data.startswith("reject:"):
             parts = data.split(":")
             trade_id = parts[1]
@@ -3146,7 +3208,6 @@ class TelegramHandler:
                       action="callback_idor_block", result="DENIED")
                 return
             result = self.engine.reject_trade(trade_id)
-            await self._send(update,
-                f"\u274c <b>TRADE REJECTED</b>\n\n{result}", edit=True)
+            await self._send(update, f"Got it, trade skipped.\n\n{result}", edit=True)
 
         audit(system_log, f"Callback: {data}", action="telegram_callback")
