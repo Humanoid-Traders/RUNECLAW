@@ -14,6 +14,7 @@ Safety invariants:
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -62,6 +63,7 @@ class LiveOrder:
     price: float       # fill price (0 if pending)
     cost_usd: float    # total cost in USDT
     status: str        # "filled", "open", "canceled", "failed"
+    client_oid: str = ""  # idempotency key (Bitget clientOid)
     timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
     raw: dict = field(default_factory=dict)
 
@@ -266,6 +268,190 @@ class LiveExecutor:
 
         return None
 
+    # ── Order idempotency (UPGRADE: clientOid + timeout-safe recovery) ────
+    @staticmethod
+    def _client_oid(trade_id: str) -> str:
+        """Build a deterministic, Bitget-safe clientOid for a trade idea.
+
+        The same trade_id always maps to the same clientOid, so a retried or
+        timed-out submission can never create a duplicate exchange order:
+        Bitget rejects a second order carrying a clientOid it has already seen.
+        Output is alphanumeric and <= 32 chars (well within Bitget's 64 limit).
+        """
+        safe = "".join(ch for ch in str(trade_id) if ch.isalnum())
+        if not safe:
+            safe = hashlib.sha256(str(trade_id).encode()).hexdigest()
+        return ("rc" + safe)[:32]
+
+    @staticmethod
+    def _validate_order_limits(
+        market: Optional[dict], quantity: float, notional_usd: float
+    ) -> Optional[str]:
+        """Check an order against the exchange's min amount / min notional filters.
+
+        Returns an error string if the order would be rejected by the venue, else
+        None. Catching this locally turns a confusing exchange rejection into a
+        clean, auditable BLOCK before any capital leaves the account.
+        """
+        if not market:
+            return None
+        limits = market.get("limits") or {}
+        amt_min = (limits.get("amount") or {}).get("min")
+        cost_min = (limits.get("cost") or {}).get("min")
+        try:
+            if amt_min is not None and quantity < float(amt_min):
+                return (f"quantity {quantity} below exchange minimum "
+                        f"{amt_min} {market.get('base', '')}")
+        except (TypeError, ValueError):
+            pass
+        try:
+            if cost_min is not None and notional_usd < float(cost_min):
+                return (f"notional ${notional_usd:.4f} below exchange minimum "
+                        f"${float(cost_min):.4f}")
+        except (TypeError, ValueError):
+            pass
+        return None
+
+    @staticmethod
+    def _round_price_to_market(exchange: "ccxt.Exchange", symbol: str, price: float) -> Optional[str]:
+        """Round a price onto the symbol's tick grid using ccxt's market filters.
+
+        Uses the exchange's own ``price_to_precision`` (which respects tick size
+        and rounding mode) rather than a decimal-places heuristic. Returns None
+        if the venue/market data is unavailable so the caller can fall back.
+        """
+        try:
+            return exchange.price_to_precision(symbol, price)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("price_to_precision failed for %s @ %s: %s", symbol, price, exc)
+            return None
+
+    async def _find_order_by_client_oid(
+        self, exchange: "ccxt.Exchange", symbol: str, coid: str
+    ) -> Optional[dict]:
+        """Best-effort lookup of an order by its clientOid.
+
+        Used after a network failure/timeout to determine whether an order
+        actually landed on the exchange before deciding to treat it as failed.
+        Returns the order dict if found, else None.
+        """
+        def _matches(o: dict) -> bool:
+            if not isinstance(o, dict):
+                return False
+            if o.get("clientOrderId") == coid:
+                return True
+            info = o.get("info") or {}
+            return isinstance(info, dict) and info.get("clientOid") == coid
+
+        # 1) ccxt unified fetch by clientOrderId (params), if the venue supports it
+        for fetcher in ("fetch_open_orders", "fetch_closed_orders"):
+            fn = getattr(exchange, fetcher, None)
+            if fn is None:
+                continue
+            try:
+                orders = await fn(symbol)
+                for o in orders or []:
+                    if _matches(o):
+                        return o
+            except Exception as exc:  # noqa: BLE001 — best effort, never fatal
+                logger.debug("clientOid lookup via %s failed: %s", fetcher, exc)
+        return None
+
+    async def _create_order_idempotent(
+        self,
+        exchange: "ccxt.Exchange",
+        *,
+        symbol: str,
+        type: str,
+        side: str,
+        amount: float,
+        coid: str,
+        params: Optional[dict] = None,
+    ) -> dict:
+        """Place an order with an idempotency key, recovering from timeouts.
+
+        Flow:
+          1. Inject clientOid into params (Bitget dedups on it).
+          2. Try create_order normally.
+          3. On ANY exception, query the exchange by clientOid. If the order
+             actually landed, return it (so a timed-out-but-filled order is
+             reconciled instead of lost — and never re-submitted). Only if the
+             lookup confirms the order is absent do we re-raise.
+        """
+        params = dict(params or {})
+        params.setdefault("clientOid", coid)       # Bitget raw param
+        params.setdefault("clientOrderId", coid)   # ccxt unified alias
+        try:
+            return await exchange.create_order(
+                symbol=symbol, type=type, side=side, amount=amount, params=params
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "create_order raised for %s (coid=%s): %s — checking whether it landed",
+                symbol, coid, exc,
+            )
+            audit(trade_log, f"Order submit error for {symbol}; reconciling by clientOid",
+                  action="live_execute", result="SUBMIT_ERROR_RECONCILE",
+                  data={"symbol": symbol, "coid": coid, "error": str(exc)[:200]})
+            found = await self._find_order_by_client_oid(exchange, symbol, coid)
+            if found is not None:
+                logger.warning("Recovered order for %s via clientOid %s — NOT resubmitting",
+                               symbol, coid)
+                audit(trade_log, f"Recovered order via clientOid for {symbol}",
+                      action="live_execute", result="RECOVERED_BY_COID",
+                      data={"symbol": symbol, "coid": coid,
+                            "order_id": found.get("id", "unknown")})
+                return found
+            # Confirmed absent — safe to surface the failure to the caller.
+            raise
+
+    async def detect_untracked_positions(self) -> dict:
+        """Detect exchange positions that RUNECLAW is NOT tracking locally.
+
+        Complements ``reconcile_positions()`` (which handles the opposite
+        direction — local-open / exchange-closed). This catches *orphans*: a
+        live position on Bitget with no local record — the exact failure mode a
+        timed-out-but-landed order could create. Read-only: it reports and
+        audits, and never touches money state automatically.
+
+        Returns {"untracked": [symbols], "errors": [...]}.
+        """
+        report: dict[str, Any] = {"untracked": [], "errors": []}
+        if not CONFIG.is_live():
+            report["errors"].append("not in live mode")
+            return report
+        try:
+            exchange = await self._get_exchange()
+            try:
+                ex_positions = await exchange.fetch_positions()
+            except Exception as exc:  # noqa: BLE001
+                report["errors"].append(f"fetch_positions failed: {exc}")
+                return report
+
+            tracked = {
+                p.symbol.replace(":USDT", "") for p in self._positions.values()
+                if p.status == "open"
+            }
+            for p in ex_positions or []:
+                if not isinstance(p, dict):
+                    continue
+                try:
+                    if float(p.get("contracts") or 0) == 0:
+                        continue
+                except (TypeError, ValueError):
+                    continue
+                sym = (p.get("symbol") or "").replace(":USDT", "")
+                if sym and sym not in tracked:
+                    report["untracked"].append(sym)
+                    audit(trade_log,
+                          f"ORPHAN: exchange position {sym} has no local record — manual review needed",
+                          action="reconcile", result="UNTRACKED_ON_EXCHANGE",
+                          data={"symbol": sym, "contracts": p.get("contracts")})
+        except Exception as exc:  # noqa: BLE001
+            report["errors"].append(str(exc))
+            logger.warning("detect_untracked_positions() failed: %s", exc)
+        return report
+
     # ── Execute trade ────────────────────────────────────────────
 
     async def execute(self, idea: TradeIdea, size_usd: float) -> str:
@@ -309,6 +495,11 @@ class LiveExecutor:
         try:
             exchange = await self._get_exchange()
             is_futures = CONFIG.exchange.trade_mode == "futures"
+
+            # UPGRADE: deterministic idempotency key for this trade idea.
+            # Reused for every order/cancel below so a timeout-retry can never
+            # double-submit (Bitget dedups on clientOid).
+            coid = self._client_oid(idea.id)
 
             # Check if futures market exists for this symbol
             # Some tokens (e.g., SNEK) are spot-only on Bitget
@@ -391,6 +582,19 @@ class LiveExecutor:
                       data={"asset": symbol, "size_usd": size_usd, "price": current_price})
                 return f"BLOCKED: quantity too small after precision rounding for {symbol}"
 
+            # UPGRADE: validate against the venue's min-amount / min-notional
+            # filters so a sub-minimum order is BLOCKED cleanly here instead of
+            # being rejected by Bitget after submission.
+            limit_err = self._validate_order_limits(market, quantity, quantity * current_price)
+            if limit_err:
+                if spot_exchange:
+                    await spot_exchange.close()
+                audit(trade_log, f"Order below exchange limits: {symbol} — {limit_err}",
+                      action="live_execute", result="BELOW_EXCHANGE_MIN",
+                      data={"asset": symbol, "size_usd": size_usd,
+                            "quantity": quantity, "price": current_price})
+                return f"BLOCKED: {limit_err}"
+
             # Place market order
             if is_futures:
                 # Futures: use USDT-FUTURES product type
@@ -426,29 +630,35 @@ class LiveExecutor:
                 }
                 if self._hedge_mode:
                     futures_params["tradeSide"] = "open"
-                order = await exchange.create_order(
+                order = await self._create_order_idempotent(
+                    exchange,
                     symbol=symbol,
                     type="market",
                     side=side,
                     amount=quantity,
+                    coid=coid,
                     params=futures_params,
                 )
             elif side == "buy":
                 # Spot BUY on Bitget UTA: use cost-based ordering
                 active_exchange.options["createMarketBuyOrderRequiresPrice"] = False
-                order = await active_exchange.create_order(
+                order = await self._create_order_idempotent(
+                    active_exchange,
                     symbol=symbol,
                     type="market",
                     side=side,
                     amount=size_usd,
+                    coid=coid,
                     params={"cost": size_usd},
                 )
             else:
-                order = await active_exchange.create_order(
+                order = await self._create_order_idempotent(
+                    active_exchange,
                     symbol=symbol,
                     type="market",
                     side=side,
                     amount=quantity,
+                    coid=coid,
                 )
 
             # Clean up spot exchange if we created one
@@ -476,6 +686,7 @@ class LiveExecutor:
                 price=fill_price,
                 cost_usd=cost,
                 status=status,
+                client_oid=coid,
                 raw=order,
             )
             self._order_history.append(live_order)
@@ -608,9 +819,16 @@ class LiveExecutor:
                     price_precision = mkt["precision"]["price"]
             except Exception:
                 pass
+            # UPGRADE: round SL/TP onto the symbol's tick grid via ccxt's own
+            # price_to_precision (tick-aware) rather than a decimal-places
+            # heuristic. Pass the rounded strings through; the v3 helper keeps
+            # its heuristic as a fallback when these are None.
+            sl_rounded = self._round_price_to_market(exchange, symbol, stop_loss)
+            tp_rounded = self._round_price_to_market(exchange, symbol, take_profit)
             sl_id, tp_id = await self._place_sl_tp_v3(
                 symbol, direction, quantity, stop_loss, take_profit,
                 price_precision=price_precision,
+                sl_str=sl_rounded, tp_str=tp_rounded,
             )
         else:
             # Classic mode: use ccxt trigger orders
@@ -670,6 +888,8 @@ class LiveExecutor:
         self, symbol: str, direction: Direction, quantity: float,
         stop_loss: float, take_profit: float,
         price_precision: object = None,
+        sl_str: Optional[str] = None,
+        tp_str: Optional[str] = None,
     ) -> tuple[Optional[str], Optional[str]]:
         """Place SL/TP via Bitget v3 REST API for UTA accounts.
 
@@ -756,10 +976,15 @@ class LiveExecutor:
                 "category": "USDT-FUTURES",
                 "symbol": bitget_symbol,
                 "posSide": pos_side,
-                "takeProfit": _round_price(take_profit),
-                "stopLoss": _round_price(stop_loss),
+                # UPGRADE: prefer tick-grid-rounded prices from ccxt
+                # price_to_precision; fall back to the local heuristic.
+                "takeProfit": tp_str if tp_str is not None else _round_price(take_profit),
+                "stopLoss": sl_str if sl_str is not None else _round_price(stop_loss),
                 "tpOrderType": "market",
                 "slOrderType": "market",
+                # UPGRADE: idempotency key so a retried SL/TP placement
+                # cannot create a duplicate strategy order on the position.
+                "clientOid": self._client_oid(bitget_symbol + pos_side + "sltp"),
             })
 
             if result.get("code") == "00000":
