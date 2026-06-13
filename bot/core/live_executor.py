@@ -212,7 +212,10 @@ class LiveExecutor:
             req.add_header("ACCESS-PASSPHRASE", cfg.passphrase)
             req.add_header("Content-Type", "application/json")
             req.add_header("locale", "en-US")
-            resp_raw = _urllib_req.urlopen(req, timeout=10)
+            # AUDIT FIX: offload blocking urlopen to thread to avoid
+            # freezing the event loop (dashboard, WS feeds, Telegram).
+            import asyncio as _asyncio
+            resp_raw = await _asyncio.to_thread(_urllib_req.urlopen, req, None, 10)
             resp_data = _json.loads(resp_raw.read())
 
             if resp_data.get("code") == "00000":
@@ -706,6 +709,7 @@ class LiveExecutor:
             req.add_header("Content-Type", "application/json")
             req.add_header("locale", "en-US")
             try:
+                # AUDIT FIX: kept sync here — callers use asyncio.to_thread
                 resp = _urllib_req.urlopen(req, timeout=10)
                 return _json.loads(resp.read())
             except Exception as e:
@@ -745,8 +749,10 @@ class LiveExecutor:
                 return f"{price:.8f}"
 
         # Place combined TP/SL strategy order
+        # AUDIT FIX: offload blocking _v3_post to thread pool
+        import asyncio as _asyncio
         try:
-            result = _v3_post("/api/v3/trade/place-strategy-order", {
+            result = await _asyncio.to_thread(_v3_post, "/api/v3/trade/place-strategy-order", {
                 "category": "USDT-FUTURES",
                 "symbol": bitget_symbol,
                 "posSide": pos_side,

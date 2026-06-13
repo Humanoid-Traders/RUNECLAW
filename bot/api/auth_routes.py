@@ -16,9 +16,10 @@ Endpoints:
 
 from __future__ import annotations
 import os, time, hmac, hashlib, json, base64
+from collections import defaultdict
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
 
@@ -30,6 +31,39 @@ from bot.db.models import (
 
 auth_router = APIRouter()
 security = HTTPBearer(auto_error=False)
+
+# -- AUDIT FIX: Auth rate-limiter & failed-login lockout ----------------------
+
+_AUTH_WINDOW_SEC = 60          # sliding window
+_AUTH_MAX_ATTEMPTS = 5         # max attempts per IP per window
+_LOCKOUT_SEC = 300             # 5-min lockout after exceeding
+_auth_attempts: dict[str, list[float]] = defaultdict(list)
+_auth_lockouts: dict[str, float] = {}
+
+
+def _check_auth_rate_limit(request: Request) -> None:
+    """Per-IP rate limit for auth endpoints. Raises 429 if exceeded."""
+    ip = request.client.host if request.client else "unknown"
+    now = time.time()
+    # Check lockout
+    if ip in _auth_lockouts:
+        if now < _auth_lockouts[ip]:
+            raise HTTPException(
+                status_code=429,
+                detail=f"Too many attempts. Try again in {int(_auth_lockouts[ip] - now)}s.",
+            )
+        else:
+            del _auth_lockouts[ip]
+    # Prune old attempts
+    _auth_attempts[ip] = [t for t in _auth_attempts[ip] if now - t < _AUTH_WINDOW_SEC]
+    if len(_auth_attempts[ip]) >= _AUTH_MAX_ATTEMPTS:
+        _auth_lockouts[ip] = now + _LOCKOUT_SEC
+        _auth_attempts[ip].clear()
+        raise HTTPException(
+            status_code=429,
+            detail=f"Too many attempts. Locked out for {_LOCKOUT_SEC}s.",
+        )
+    _auth_attempts[ip].append(now)
 
 # -- JWT (stdlib only -- no PyJWT dependency) --------------------------------
 
@@ -131,7 +165,8 @@ class AuthIn(BaseModel):
 # -- POST /auth/register ---------------------------------------------------
 
 @auth_router.post("/register")
-async def register(body: AuthIn):
+async def register(body: AuthIn, request: Request):
+    _check_auth_rate_limit(request)
     try:
         user_id = create_user(body.email, body.password)
     except ValueError:
@@ -144,7 +179,8 @@ async def register(body: AuthIn):
 # -- POST /auth/login ------------------------------------------------------
 
 @auth_router.post("/login")
-async def login(body: AuthIn):
+async def login(body: AuthIn, request: Request):
+    _check_auth_rate_limit(request)
     user = authenticate_user(body.email, body.password)
     if not user:
         raise HTTPException(401, "Invalid email or password")

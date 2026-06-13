@@ -236,7 +236,7 @@ def _confluence_score(rsi: float, ema_short: float, ema_long: float,
 
 async def _fetch_ohlcv(symbol: str, timeframe: str = "1h", limit: int = 100) -> list | None:
     """Fetch OHLCV with rate limiting. Returns None on failure."""
-    assert engine is not None
+    if engine is None: raise HTTPException(status_code=503, detail="Engine not initialized")
     async with _EXCHANGE_SEMAPHORE:
         try:
             exchange = await engine.get_exchange()
@@ -319,7 +319,9 @@ async def require_dashboard_token(
             status_code=503,
             detail="DASHBOARD_TOKEN not configured — state-changing endpoints disabled",
         )
-    if credentials is None or credentials.credentials != _DASHBOARD_TOKEN:
+    # AUDIT FIX: constant-time comparison to prevent timing attacks
+    import hmac as _hmac
+    if credentials is None or not _hmac.compare_digest(credentials.credentials, _DASHBOARD_TOKEN):
         raise HTTPException(status_code=401, detail="Invalid or missing bearer token")
     return credentials.credentials
 
@@ -342,7 +344,7 @@ async def health():
 @app.post("/scan")
 async def scan(req: ScanRequest, _rl: None = Depends(_require_rate_limit)):
     """Batch-scan universe symbols for signals and indicators."""
-    assert engine is not None
+    if engine is None: raise HTTPException(status_code=503, detail="Engine not initialized")
     symbols = req.symbols or UNIVERSE
 
     # SEC-H3 FIX: validate any user-supplied symbols
@@ -425,7 +427,7 @@ async def _scan_single(symbol: str, timeframe: str, limit: int) -> dict | None:
 @app.post("/analyze")
 async def analyze(req: AnalyzeRequest, _token: str = Depends(require_dashboard_token), _rl: None = Depends(_require_rate_limit)):
     """Run the full AI analyzer pipeline on a symbol."""
-    assert engine is not None
+    if engine is None: raise HTTPException(status_code=503, detail="Engine not initialized")
 
     # SEC-H3 FIX: validate symbol before it reaches CCXT/LLM
     if not _SYMBOL_RE.match(req.symbol):
@@ -496,7 +498,7 @@ async def analyze(req: AnalyzeRequest, _token: str = Depends(require_dashboard_t
 @app.get("/portfolio")
 async def portfolio():
     """Return portfolio snapshot and open positions."""
-    assert engine is not None
+    if engine is None: raise HTTPException(status_code=503, detail="Engine not initialized")
     snap = engine.portfolio.snapshot()
     positions = [p.model_dump(mode="json") for p in engine.portfolio.open_positions]
     return {
@@ -508,7 +510,7 @@ async def portfolio():
 @app.post("/confirm")
 async def confirm_trade(req: ConfirmRequest, _token: str = Depends(require_dashboard_token), _rl: None = Depends(_require_rate_limit)):
     """Confirm a trade idea and open a position."""
-    assert engine is not None
+    if engine is None: raise HTTPException(status_code=503, detail="Engine not initialized")
 
     # SEC-H3 FIX: validate asset symbol before it reaches CCXT
     if not _SYMBOL_RE.match(req.asset):
@@ -561,7 +563,7 @@ async def confirm_trade(req: ConfirmRequest, _token: str = Depends(require_dashb
 @app.post("/portfolio/close/{symbol}")
 async def close_position(symbol: str, _token: str = Depends(require_dashboard_token), _rl: None = Depends(_require_rate_limit)):
     """Force-close an open position by symbol (paper trading)."""
-    assert engine is not None
+    if engine is None: raise HTTPException(status_code=503, detail="Engine not initialized")
 
     # SEC-H3 FIX: validate symbol before it reaches CCXT
     if not _SYMBOL_RE.match(symbol):
@@ -595,7 +597,7 @@ async def close_position(symbol: str, _token: str = Depends(require_dashboard_to
 @app.get("/risk/status")
 async def risk_status():
     """Return risk engine state."""
-    assert engine is not None
+    if engine is None: raise HTTPException(status_code=503, detail="Engine not initialized")
     return {
         "circuit_breaker_active": engine.risk.circuit_breaker_active,
         "consecutive_losses": engine.risk.consecutive_losses,
@@ -614,7 +616,7 @@ async def risk_status():
 @app.get("/blackswan")
 async def blackswan_status():
     """Black swan detector status — returns latest anomaly alerts if available."""
-    assert engine is not None
+    if engine is None: raise HTTPException(status_code=503, detail="Engine not initialized")
     try:
         detector = getattr(engine, 'black_swan', None)
         if detector is None:
@@ -640,7 +642,7 @@ async def blackswan_status():
 @app.get("/patterns/{symbol}")
 async def patterns(symbol: str, timeframe: str = "1h", limit: int = 100, _rl: None = Depends(_require_rate_limit)):
     """Detect chart patterns and candlestick patterns for a symbol."""
-    assert engine is not None
+    if engine is None: raise HTTPException(status_code=503, detail="Engine not initialized")
 
     # SEC-H3 FIX: validate symbol before it reaches CCXT
     if not _SYMBOL_RE.match(symbol):
