@@ -26,7 +26,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from bot.compat import UTC
-from typing import Optional, Set
+from typing import Any, Callable, Optional, Set
 
 from bot.config import CONFIG
 from bot.utils.logger import audit, system_log
@@ -45,6 +45,7 @@ class Alert:
     body: str             # Full message (HTML formatted for Telegram)
     timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
     dedup_key: str = ""   # For deduplication (same key = don't re-alert within cooldown)
+    idea: Any = None      # optional TradeIdea — enables an attached setup chart
 
 
 # ── Alert severity icons ──────────────────────────────────────────────
@@ -86,6 +87,14 @@ class ProactiveMonitor:
         self._last_cb_state: bool = False          # last circuit breaker state
         self._last_state: str = ""                 # last engine FSM state
         self._alerted_signals: set = set()         # signal IDs already alerted
+        # Optional async callback(chat_id, idea) -> None to push a setup chart
+        # alongside a signal alert. Set via set_chart_fn(); never required.
+        self._chart_fn: Optional[Callable] = None
+
+    def set_chart_fn(self, chart_fn) -> None:
+        """Register an async callback(chat_id, idea) that pushes a setup chart
+        for signal alerts. Optional — alerts work fine without it."""
+        self._chart_fn = chart_fn
 
     def enable_chat(self, chat_id: str) -> None:
         """Enable proactive alerts for a chat."""
@@ -374,6 +383,7 @@ class ProactiveMonitor:
                             f"\U0001f449 Say \"confirm\" to approve this trade"
                         ),
                         dedup_key=key,
+                        idea=idea,
                     ))
                     self._alerted_signals.add(key)
         except Exception as exc:
@@ -497,6 +507,11 @@ class ProactiveMonitor:
         async def _send_to_chat(chat_id: str) -> None:
             try:
                 await send_fn(chat_id, full_msg)
+                if alert.idea is not None and self._chart_fn is not None:
+                    try:
+                        await self._chart_fn(chat_id, alert.idea)
+                    except Exception as cexc:  # noqa: BLE001 — charts are best-effort
+                        logger.debug("proactive chart send failed: %s", cexc)
                 audit(system_log,
                       f"Proactive alert sent: {alert.alert_type}",
                       action="proactive_alert",

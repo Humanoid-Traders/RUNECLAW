@@ -133,6 +133,13 @@ class TelegramConfig:
     bot_token: str = _env("TELEGRAM_BOT_TOKEN")
     chat_id: str = _env("TELEGRAM_CHAT_ID")
     rate_limit_per_minute: int = 20
+    # Opt-in: attach a rendered price/EMA/RSI chart to analysis cards.
+    # Off by default — requires the optional `charts` extra (mplfinance).
+    send_charts: bool = _env_bool("TELEGRAM_SEND_CHARTS", False)
+    chart_theme: str = _env("TELEGRAM_CHART_THEME", "dark")  # "dark" | "light"
+    # Comma-separated timeframes for setup charts, highest first (e.g. "4h,1h").
+    # 2+ are delivered as a Telegram album; a single value sends one photo.
+    chart_timeframes: str = _env("TELEGRAM_CHART_TIMEFRAMES", "1h")
 
 
 @dataclass(frozen=True)

@@ -390,6 +390,28 @@ class Analyzer:
             else:
                 blended_confidence -= 0.05  # volume contradicts direction
 
+        # IMPROVEMENT #2: order-flow opposition guard.
+        # Microstructure (book imbalance, CVD trend, CVD-price divergence) is
+        # the fastest read on real positioning. If it strongly OPPOSES the
+        # chosen direction we cut confidence — and veto outright when the
+        # opposition is severe and well-evidenced. This only reduces confidence
+        # or skips; it never raises it, so it can't manufacture a trade.
+        try:
+            opposition, of_conf, of_bias = self._order_flow_opposition(order_flow, direction)
+            if opposition > 0.0:
+                if opposition >= 0.7 and of_conf >= 0.5:
+                    audit(trade_log,
+                          "Order-flow veto: microstructure strongly opposes direction",
+                          action="analyze", result="SKIP",
+                          data={"symbol": signal.symbol,
+                                "direction": direction.value,
+                                "of_bias": round(of_bias, 3),
+                                "of_confidence": round(of_conf, 3)})
+                    return None
+                blended_confidence -= 0.15 * opposition * of_conf
+        except Exception:
+            pass  # guard must never raise
+
         blended_confidence = round(max(0.0, min(1.0, blended_confidence)), 2)
 
         # Apply regime penalty (RANGE: -0.10, CHOP: -0.15, else: 0)
@@ -753,6 +775,39 @@ class Analyzer:
     # -- Confluence Scoring --
 
     @staticmethod
+    def _order_flow_opposition(order_flow, direction) -> tuple[float, float, float]:
+        """Measure how strongly order flow opposes a chosen direction.
+
+        Returns (opposition, of_confidence, of_bias):
+          - of_bias: mean microstructure bias in [-1, 1] (+ = bullish)
+          - opposition: in [0, 1]; >0 only when flow opposes ``direction``
+          - of_confidence: the snapshot's own data confidence
+        Aligned or absent flow returns opposition 0.0 — the guard never
+        manufactures opposition where the evidence doesn't support it.
+        """
+        of_conf = float(getattr(order_flow, "confidence", 0.0) or 0.0)
+        if order_flow is None or of_conf <= 0.0:
+            return 0.0, 0.0, 0.0
+        comps = getattr(order_flow, "components_ok", set()) or set()
+        of_dir, n = 0.0, 0
+        if "book" in comps:
+            of_dir += float(np.clip(getattr(order_flow, "book_imbalance", 0.0), -1, 1)); n += 1
+        if "trades" in comps:
+            of_dir += {"rising": 1.0, "falling": -1.0, "flat": 0.0}.get(
+                getattr(order_flow, "cvd_trend", "flat"), 0.0); n += 1
+        div = getattr(order_flow, "cvd_price_divergence", "none")
+        if div == "bullish_div":
+            of_dir += 1.0; n += 1
+        elif div == "bearish_div":
+            of_dir += -1.0; n += 1
+        if n == 0:
+            return 0.0, of_conf, 0.0
+        of_dir /= n
+        dir_sign = 1.0 if direction == Direction.LONG else -1.0
+        opposition = max(0.0, -of_dir * dir_sign)
+        return opposition, of_conf, of_dir
+
+    @staticmethod
     def _score_confluence(indicators: dict, regime: Regime, signal: MarketSignal,
                           order_flow=None, mtf_result=None, smart_money_score=None,
                           mode_config=None, sentiment_engine=None) -> float:
@@ -769,6 +824,20 @@ class Analyzer:
         votes: list[float] = []
         weights: list[float] = []
 
+        # IMPROVEMENT #1: activate strategy-mode confluence boosts.
+        # Each mode amplifies the weight of the factors that matter for it
+        # (e.g. MEAN_REVERSION boosts rsi/bb/cvd-divergence). When no mode or
+        # no boost is configured the factor is 1.0 — i.e. behaviour is
+        # identical to before, so this can never silently change the default.
+        boost_map: dict[str, float] = (
+            mode_config.confluence_boost
+            if (mode_config is not None and getattr(mode_config, "confluence_boost", None))
+            else {}
+        )
+
+        def _boost(weight: float, label: str) -> float:
+            return weight * boost_map.get(label, 1.0)
+
         # RSI vote (weight 1.5 — strong mean-reversion signal)
         rsi = indicators.get("rsi", 50)
         if rsi < 30:
@@ -781,7 +850,7 @@ class Analyzer:
             votes.append(-0.3)
         else:
             votes.append(0.0)
-        weights.append(1.5)
+        weights.append(_boost(1.5, "rsi"))
 
         # MACD vote (weight 1.0)
         macd_hist = indicators.get("macd_histogram", 0)
@@ -801,7 +870,7 @@ class Analyzer:
             votes.append(-1.0)  # near upper band → bearish
         else:
             votes.append(0.0)
-        weights.append(1.0)
+        weights.append(_boost(1.0, "bb_pct_b"))
 
         # Volume spike vote (weight 0.8 — confirms directional moves)
         if signal.volume_spike:
@@ -891,19 +960,19 @@ class Analyzer:
         if order_flow is not None:
             of_votes, of_weights, of_labels = OrderFlowAnalyzer.to_confluence_votes(order_flow)
             votes += of_votes
-            weights += of_weights
+            weights += [_boost(w, l) for w, l in zip(of_weights, of_labels)]
 
         # Multi-timeframe votes (if available)
         if mtf_result is not None:
             mtf_votes, mtf_weights, mtf_labels = MTFConfluence.to_confluence_votes(mtf_result)
             votes += mtf_votes
-            weights += mtf_weights
+            weights += [_boost(w, l) for w, l in zip(mtf_weights, mtf_labels)]
 
         # Smart money votes (if available)
         if smart_money_score is not None:
             sm_votes, sm_weights, sm_labels = SmartMoneyEngine.to_confluence_votes(smart_money_score)
             votes += sm_votes
-            weights += sm_weights
+            weights += [_boost(w, l) for w, l in zip(sm_weights, sm_labels)]
 
         # Sentiment voter
         if sentiment_engine is not None:
@@ -959,12 +1028,8 @@ class Analyzer:
             votes.append(-0.5)
             weights.append(0.5)
 
-        # Strategy mode boosts: amplify weights for mode-relevant factors
-        if mode_config is not None and mode_config.confluence_boost:
-            # Build label list for all votes (we need to track labels for boost)
-            # Note: boost is applied by increasing weight on matching labels
-            # This is a soft influence, not a hard override
-            pass  # boosts applied via mode_config during strategy selection
+        # IMPROVEMENT #1: boosts are now applied inline at each voter via
+        # _boost(weight, label) using the labels the sub-engines return.
 
         # LB-2 FIX: assert votes/weights are aligned before computation.
         # zip() silently truncates to the shorter list, hiding mismatches.

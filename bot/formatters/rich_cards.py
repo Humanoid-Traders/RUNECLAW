@@ -259,6 +259,7 @@ async def fetch_analysis_data(exchange, symbol: str, timeframe: str = "1h",
             "resistances": resistances,
             "structure": structure,
             "ohlcv": {"o": o, "h": h, "l": l, "c": c, "v": v},
+            "ohlcv_raw": ohlcv,  # raw CCXT [ts,o,h,l,c,v] — used by chart renderer
         }
     except Exception as e:
         log.error("fetch_analysis_data failed for %s: %s", symbol, e)

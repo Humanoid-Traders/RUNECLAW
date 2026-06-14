@@ -275,6 +275,63 @@ class TelegramHandler:
                 except Exception as e2:
                     system_log.error("Failed to send message chunk %d/%d: %s", i + 1, len(chunks), e2)
 
+    async def _maybe_send_chart(self, update: Update, data: dict, idea) -> None:
+        """Opt-in: attach setup chart(s) for an analysis card.
+
+        Gated by TELEGRAM_SEND_CHARTS (off by default). Renders one chart per
+        configured timeframe (TELEGRAM_CHART_TIMEFRAMES) off-thread and sends
+        them as a single photo or an album. Degrades silently on any failure.
+        """
+        try:
+            if not CONFIG.telegram.send_charts:
+                return
+            from bot.skills import chart_renderer
+            if not chart_renderer.charts_available():
+                return
+            bot = update.get_bot()
+            chat_id = update.effective_chat.id if update.effective_chat else None
+            if chat_id is None or idea is None:
+                return
+            candles_by_tf = await self._fetch_chart_timeframes(idea.asset, data)
+            if not candles_by_tf:
+                return
+            await chart_renderer.send_idea_charts_multi(
+                bot, chat_id, candles_by_tf, idea, theme=CONFIG.telegram.chart_theme)
+        except Exception as exc:  # noqa: BLE001 — charts are best-effort
+            system_log.debug("chart send skipped: %s", exc)
+
+    def _chart_timeframes(self) -> list:
+        """Parse TELEGRAM_CHART_TIMEFRAMES into an ordered list (highest first)."""
+        raw = CONFIG.telegram.chart_timeframes or "1h"
+        tfs = [t.strip() for t in raw.split(",") if t.strip()]
+        return tfs[:4] or ["1h"]   # cap at 4 (Telegram album practical limit here)
+
+    async def _fetch_chart_timeframes(self, asset: str, primary_data: dict | None) -> dict:
+        """Fetch candles for each configured timeframe -> {tf: ohlcv_raw}.
+
+        Reuses already-fetched candles for the primary 1h timeframe when present
+        so we don't double-fetch what the analysis card already loaded.
+        """
+        out: dict = {}
+        tfs = self._chart_timeframes()
+        exchange = None
+        for tf in tfs:
+            if tf == "1h" and primary_data and primary_data.get("ohlcv_raw"):
+                out[tf] = primary_data["ohlcv_raw"]
+                continue
+            try:
+                if exchange is None:
+                    exchange = await self.engine.get_exchange()
+                if exchange is None:
+                    break
+                d = await fetch_analysis_data(exchange, asset, timeframe=tf)
+                candles = (d or {}).get("ohlcv_raw")
+                if candles:
+                    out[tf] = candles
+            except Exception as exc:  # noqa: BLE001
+                system_log.debug("chart tf %s fetch failed: %s", tf, exc)
+        return out
+
     @staticmethod
     def _split_message(text: str, max_len: int = 4000) -> list[str]:
         """Split a long message into chunks, preferring line boundaries."""
@@ -1514,6 +1571,26 @@ class TelegramHandler:
                     chat_id=int(chat_id), text=text, parse_mode="HTML")
             except Exception:
                 pass
+
+        # Opt-in: push a setup chart (with entry/SL/TP lines) alongside each
+        # proactive NEW SIGNAL alert. Renders off-thread; degrades silently.
+        async def _chart_fn(chat_id: str, idea) -> None:
+            try:
+                if not CONFIG.telegram.send_charts:
+                    return
+                from bot.skills import chart_renderer
+                if not chart_renderer.charts_available():
+                    return
+                candles_by_tf = await self._fetch_chart_timeframes(idea.asset, None)
+                if not candles_by_tf:
+                    return
+                await chart_renderer.send_idea_charts_multi(
+                    bot, int(chat_id), candles_by_tf, idea,
+                    theme=CONFIG.telegram.chart_theme)
+            except Exception as exc:  # noqa: BLE001 — best-effort
+                system_log.debug("proactive chart_fn skipped: %s", exc)
+
+        self.monitor.set_chart_fn(_chart_fn)
         self._monitor_task = asyncio.create_task(self.monitor.run(_send_fn))
 
     async def stop_monitor(self) -> None:
@@ -1933,6 +2010,7 @@ class TelegramHandler:
                     # Rich analysis card
                     card = render_analysis_card(assets_data[i], idea)
                     await self._send(update, card, reply_markup=kb)
+                    await self._maybe_send_chart(update, assets_data[i], idea)
                 else:
                     # Fallback: detailed format without live market data
                     d = "\U0001f7e2" if idea.direction.value == "LONG" else "\U0001f534"

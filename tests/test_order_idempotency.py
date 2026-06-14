@@ -79,8 +79,9 @@ async def test_confirmed_absent_order_reraises():
 
 
 @pytest.mark.asyncio
-async def test_orphan_detection_flags_untracked_positions():
-    from unittest.mock import patch, MagicMock
+async def test_orphan_detection_flags_untracked_positions(monkeypatch):
+    from bot.config import CONFIG
+    monkeypatch.setattr(type(CONFIG), "is_live", lambda self: True)
 
     class _Fx:
         async def fetch_positions(self):
@@ -94,14 +95,9 @@ async def test_orphan_detection_flags_untracked_positions():
 
     async def _get():
         return ex._exchange
+    monkeypatch.setattr(ex, "_get_exchange", _get)
 
-    # Mock CONFIG at module level (frozen dataclass can't be patched directly)
-    mock_config = MagicMock()
-    mock_config.is_live.return_value = True
-
-    with patch("bot.core.live_executor.CONFIG", mock_config):
-        ex._get_exchange = _get
-        report = await ex.detect_untracked_positions()
+    report = await ex.detect_untracked_positions()
     assert report["untracked"] == ["ETH/USDT"]
 
 
