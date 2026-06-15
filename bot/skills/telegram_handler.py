@@ -476,25 +476,66 @@ class TelegramHandler:
         try:
             user_portfolio = self.engine.user_portfolios.get(user_id)
             state = user_portfolio.snapshot()
-            # LIVE FIX: use real equity in LIVE mode for AI context
-            if CONFIG.is_live():
+
+            is_live = CONFIG.is_live()
+            executor = self.engine.live_executor if is_live else None
+
+            # LIVE FIX: use real equity and live executor stats in LIVE mode
+            if is_live:
                 eff_equity = self.engine.get_effective_equity(user_id)
                 eq_display = eff_equity if eff_equity > 0 else state.equity_usd
+                # Use live executor stats (actual exchange trades)
+                live_closed = executor.closed_positions if executor else []
+                live_open = executor.open_positions if executor else []
+                total_trades = len(live_closed)
+                wins = sum(1 for t in live_closed if (t.pnl_usd or 0) > 0)
+                win_rate_val = wins / total_trades if total_trades > 0 else 0
+                total_pnl = sum(t.pnl_usd or 0 for t in live_closed)
+                portfolio_summary = (
+                    f"{len(live_open)} open positions, "
+                    f"equity ~${eq_display:,.2f}, "
+                    f"total PnL ${total_pnl:+,.2f}, "
+                    f"win rate {win_rate_val:.0%}, "
+                    f"total trades {total_trades}"
+                )
             else:
                 eq_display = state.equity_usd
-            portfolio_summary = (
-                f"{state.open_positions} open positions, "
-                f"equity ~${eq_display:,.2f}, "
-                f"total PnL ${state.total_pnl:+,.2f}, "
-                f"win rate {state.win_rate:.0%}, "
-                f"total trades {state.total_trades}"
-            )
+                portfolio_summary = (
+                    f"{state.open_positions} open positions, "
+                    f"equity ~${eq_display:,.2f}, "
+                    f"total PnL ${state.total_pnl:+,.2f}, "
+                    f"win rate {state.win_rate:.0%}, "
+                    f"total trades {state.total_trades}"
+                )
             cb = self.engine.risk.circuit_breaker_active
             mode = "LIVE" if not CONFIG.simulation_mode else "PAPER"
             engine_state = f"{mode} mode, CB={'ON' if cb else 'OFF'}"
 
             # Inject actual open positions
-            if user_portfolio.open_positions:
+            if is_live and executor:
+                # Use live executor positions (actual exchange positions)
+                if executor.open_positions:
+                    pos_lines = []
+                    for pos in executor.open_positions:
+                        if pos.status == "pending_fill":
+                            pos_lines.append(
+                                f"  - PENDING {pos.direction} {pos.symbol}: "
+                                f"limit ${pos.entry_price:,.4f}, "
+                                f"SL ${pos.stop_loss:,.4f}, TP ${pos.take_profit:,.4f}"
+                            )
+                        else:
+                            size_usd = pos.quantity * pos.entry_price
+                            pos_lines.append(
+                                f"  - {pos.direction} {pos.symbol}: "
+                                f"entry ${pos.entry_price:,.4f}, "
+                                f"size ${pos.cost_usd:,.2f}, lev {pos.leverage}x, "
+                                f"SL ${pos.stop_loss:,.4f}, TP ${pos.take_profit:,.4f}"
+                            )
+                    positions_detail = (
+                        "\n\nACTIVE POSITIONS (live exchange):\n" +
+                        "\n".join(pos_lines)
+                    )
+            elif user_portfolio.open_positions:
                 pos_lines = []
                 for pos in user_portfolio.open_positions:
                     last_px = user_portfolio._last_prices.get(pos.asset, pos.entry_price)
@@ -516,19 +557,38 @@ class TelegramHandler:
                 )
 
             # Inject recent closed trades
-            recent_trades = user_portfolio.trade_history[-5:]
-            if recent_trades:
-                trade_lines = []
-                for t in recent_trades:
-                    trade_lines.append(
-                        f"  - {t.direction.value} {t.asset}: "
-                        f"entry ${t.entry_price:,.4f}, exit ${t.exit_price:,.4f}, "
-                        f"PnL ${t.pnl:+,.2f}"
+            if is_live and executor:
+                # Use live executor closed trades (actual exchange fills)
+                live_closed = executor.closed_positions
+                recent_trades_live = live_closed[-5:] if live_closed else []
+                if recent_trades_live:
+                    trade_lines = []
+                    for t in recent_trades_live:
+                        pnl_val = t.pnl_usd or 0
+                        exit_px = t.close_price or t.entry_price
+                        trade_lines.append(
+                            f"  - {t.direction} {t.symbol}: "
+                            f"entry ${t.entry_price:,.4f}, exit ${exit_px:,.4f}, "
+                            f"PnL ${pnl_val:+,.2f}"
+                        )
+                    positions_detail += (
+                        "\n\nRECENT CLOSED TRADES (live):\n" +
+                        "\n".join(trade_lines)
                     )
-                positions_detail += (
-                    "\n\nRECENT CLOSED TRADES:\n" +
-                    "\n".join(trade_lines)
-                )
+            else:
+                recent_trades = user_portfolio.trade_history[-5:]
+                if recent_trades:
+                    trade_lines = []
+                    for t in recent_trades:
+                        trade_lines.append(
+                            f"  - {t.direction.value} {t.asset}: "
+                            f"entry ${t.entry_price:,.4f}, exit ${t.exit_price:,.4f}, "
+                            f"PnL ${t.pnl:+,.2f}"
+                        )
+                    positions_detail += (
+                        "\n\nRECENT CLOSED TRADES:\n" +
+                        "\n".join(trade_lines)
+                    )
         except Exception:
             pass
 
