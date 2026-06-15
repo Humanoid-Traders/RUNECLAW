@@ -283,22 +283,28 @@ class TelegramHandler:
         them as a single photo or an album. Degrades silently on any failure.
         """
         try:
+            system_log.info("_maybe_send_chart called for %s", idea.asset if idea else "None")
             if not CONFIG.telegram.send_charts:
+                system_log.info("charts disabled in config, skipping")
                 return
             from bot.skills import chart_renderer
             if not chart_renderer.charts_available():
+                system_log.info("chart libs not available, skipping")
                 return
             bot = update.get_bot()
             chat_id = update.effective_chat.id if update.effective_chat else None
             if chat_id is None or idea is None:
+                system_log.info("chart skipped: chat_id=%s idea=%s", chat_id, idea)
                 return
             candles_by_tf = await self._fetch_chart_timeframes(idea.asset, data)
+            system_log.info("chart candles fetched: %s", {k: len(v) for k, v in candles_by_tf.items()} if candles_by_tf else "empty")
             if not candles_by_tf:
                 return
             await chart_renderer.send_idea_charts_multi(
                 bot, chat_id, candles_by_tf, idea, theme=CONFIG.telegram.chart_theme)
+            system_log.info("chart sent successfully for %s", idea.asset)
         except Exception as exc:  # noqa: BLE001 — charts are best-effort
-            system_log.debug("chart send skipped: %s", exc)
+            system_log.warning("chart send skipped: %s", exc, exc_info=True)
 
     def _chart_timeframes(self) -> list:
         """Parse TELEGRAM_CHART_TIMEFRAMES into an ordered list (highest first)."""
@@ -1576,19 +1582,24 @@ class TelegramHandler:
         # proactive NEW SIGNAL alert. Renders off-thread; degrades silently.
         async def _chart_fn(chat_id: str, idea) -> None:
             try:
+                system_log.info("proactive _chart_fn called for %s", idea.asset if idea else "None")
                 if not CONFIG.telegram.send_charts:
+                    system_log.info("proactive chart: disabled in config")
                     return
                 from bot.skills import chart_renderer
                 if not chart_renderer.charts_available():
+                    system_log.info("proactive chart: libs not available")
                     return
                 candles_by_tf = await self._fetch_chart_timeframes(idea.asset, None)
+                system_log.info("proactive chart candles: %s", {k: len(v) for k, v in candles_by_tf.items()} if candles_by_tf else "empty")
                 if not candles_by_tf:
                     return
                 await chart_renderer.send_idea_charts_multi(
                     bot, int(chat_id), candles_by_tf, idea,
                     theme=CONFIG.telegram.chart_theme)
+                system_log.info("proactive chart sent for %s", idea.asset)
             except Exception as exc:  # noqa: BLE001 — best-effort
-                system_log.debug("proactive chart_fn skipped: %s", exc)
+                system_log.warning("proactive chart_fn skipped: %s", exc, exc_info=True)
 
         self.monitor.set_chart_fn(_chart_fn)
         self._monitor_task = asyncio.create_task(self.monitor.run(_send_fn))
@@ -1998,6 +2009,10 @@ class TelegramHandler:
                 ])
             kb = InlineKeyboardMarkup(buttons)
             await self._send(update, msg, reply_markup=kb)
+            # Send charts for multi-analysis too
+            for i, idea in enumerate(pending):
+                if i < len(assets_data) and assets_data:
+                    await self._maybe_send_chart(update, assets_data[i], idea)
         else:
             # Single idea or fallback — render per idea
             for i, idea in enumerate(pending):

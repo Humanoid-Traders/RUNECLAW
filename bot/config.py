@@ -202,6 +202,33 @@ class CacheConfig:
 
 
 @dataclass(frozen=True)
+class TrailingStopConfig:
+    """Trailing stop configuration for live positions.
+
+    Strategy: trailing stop activates after 1R profit, then trails at
+    trail_atr_mult * ATR behind the best favorable price.
+    """
+    enabled: bool = _env_bool("TRAILING_STOP_ENABLED", True)
+    # ATR multiplier for trailing distance (1.5 = trail at 1.5x ATR)
+    trail_atr_mult: float = _env_float("TRAILING_ATR_MULT", 1.5)
+    # Minimum price move (%) before updating exchange SL order.
+    # Avoids spamming the exchange with tiny SL adjustments.
+    min_sl_update_pct: float = _env_float("TRAILING_MIN_SL_UPDATE_PCT", 0.3)
+
+
+@dataclass(frozen=True)
+class LimitOrderConfig:
+    """Limit order support configuration."""
+    enabled: bool = _env_bool("LIMIT_ORDERS_ENABLED", True)
+    # Default order type: "market" or "limit"
+    default_order_type: str = _env("DEFAULT_ORDER_TYPE", "market")
+    # Max seconds to wait for a limit order fill before cancelling
+    expire_seconds: int = int(_env_float("LIMIT_ORDER_EXPIRE_SEC", 14400))  # 4 hours
+    # Check interval for pending limit orders (seconds)
+    check_interval_seconds: int = int(_env_float("LIMIT_CHECK_INTERVAL_SEC", 30))
+
+
+@dataclass(frozen=True)
 class ScaleOutConfig:
     """Rule 9: Scale-out ladder for partial profit taking."""
     enabled: bool = _env_bool("SCALE_OUT_ENABLED", True)
@@ -289,6 +316,8 @@ class AppConfig:
     scale_out: ScaleOutConfig = field(default_factory=ScaleOutConfig)
     two_tranche: TwoTrancheConfig = field(default_factory=TwoTrancheConfig)
     time_stop: TimeStopConfig = field(default_factory=TimeStopConfig)
+    trailing: TrailingStopConfig = field(default_factory=TrailingStopConfig)
+    limit_orders: LimitOrderConfig = field(default_factory=LimitOrderConfig)
     stocks: StockTradingConfig = field(default_factory=StockTradingConfig)
 
     def is_live(self) -> bool:

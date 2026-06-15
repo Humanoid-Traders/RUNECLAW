@@ -8,6 +8,7 @@ add `model_config = ConfigDict(frozen=True)` explicitly.
 from __future__ import annotations
 
 from datetime import datetime
+from uuid import uuid4
 from bot.compat import UTC
 from enum import Enum
 from typing import Optional
@@ -70,7 +71,7 @@ class StateTransition(BaseModel):
 
 class TradeIdea(BaseModel):
     """A fully-formed trade thesis produced by the AI analyzer."""
-    id: str = Field(default_factory=lambda: f"TI-{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}")
+    id: str = Field(default_factory=lambda: f"TI-{uuid4().hex[:8]}")
     asset: str
     direction: Direction
     entry_price: float

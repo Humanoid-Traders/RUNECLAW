@@ -4,10 +4,12 @@ RUNECLAW Live Executor — places real orders on Bitget via ccxt.
 Safety invariants:
   - MICRO_TEST_MODE caps every position at $10 and total exposure at $50
   - Every order is audited before and after submission
-  - Market orders only (simplest, most reliable for micro-amounts)
+  - Market AND limit orders supported (configurable via DEFAULT_ORDER_TYPE)
+  - Trailing stops: activates after 1R profit, trails at 1.5x ATR (shared with paper)
   - Fail-closed: any API error aborts the trade and logs the failure
   - The executor never modifies risk limits or bypasses any gate
   - SL/TP are placed as separate stop-market / take-profit-market orders
+  - Trailing SL updates cancel+replace exchange strategy orders
   - F-07 FIX: Positions are persisted to disk and reconciled on restart
 """
 
@@ -29,6 +31,7 @@ import ccxt.async_support as ccxt
 from bot.config import CONFIG
 from bot.utils.logger import audit, trade_log, system_log
 from bot.utils.models import Direction, TradeIdea
+from bot.utils.trailing import make_trailing_state, update_trailing_stop
 
 logger = logging.getLogger(__name__)
 
@@ -87,7 +90,15 @@ class LivePosition:
     closed_at: Optional[datetime] = None
     close_price: Optional[float] = None
     pnl_usd: Optional[float] = None
-    status: str = "open"   # "open", "closed", "error"
+    status: str = "open"   # "open", "closed", "error", "pending_fill"
+    # Trailing stop state (managed by bot/utils/trailing.py)
+    trailing_state: Optional[dict] = None
+    # Order type: "market" (filled immediately) or "limit" (pending fill)
+    order_type: str = "market"
+    # For limit orders: the exchange order ID to poll for fills
+    limit_order_id: Optional[str] = None
+    # ATR at entry time — needed for trailing stop initialization
+    atr_at_entry: float = 0.0
 
 
 class LiveExecutor:
@@ -104,6 +115,7 @@ class LiveExecutor:
         self._closed_trades: list[LivePosition] = []  # F-14: persisted closed trades
         self._order_history: list[LiveOrder] = []
         self._hedge_mode: Optional[bool] = None  # None=unknown, True=hedge, False=one-way
+        self._is_uta: Optional[bool] = None  # None=unknown, cached after first detection
         # F-07 FIX: Load persisted positions on startup
         self._load_positions()
         # F-14 FIX: Load persisted closed trades on startup
@@ -148,13 +160,13 @@ class LiveExecutor:
                 cfg.margin_mode, symbol,
                 params={"productType": "USDT-FUTURES"})
         except Exception as exc:
-            logger.debug("Margin mode set info for %s: %s", symbol, exc)
+            logger.warning("Margin mode set failed for %s: %s", symbol, exc)
         try:
             await exchange.set_leverage(
                 cfg.default_leverage, symbol,
                 params={"productType": "USDT-FUTURES"})
         except Exception as exc:
-            logger.debug("Leverage set info for %s: %s", symbol, exc)
+            logger.warning("Leverage set failed for %s (may use exchange default): %s", symbol, exc)
         # Detect hold mode (one-way vs hedge) on first call
         if self._hedge_mode is None:
             await self._detect_hold_mode()
@@ -179,6 +191,7 @@ class LiveExecutor:
                 data = data[0]
             hold_mode = data.get("holdMode", "") if isinstance(data, dict) else ""
             self._hedge_mode = (hold_mode == "double_hold")
+            self._is_uta = False
             logger.info("Bitget position mode (v2): %s (hedge=%s)", hold_mode, self._hedge_mode)
             return
         except Exception as exc:
@@ -188,6 +201,7 @@ class LiveExecutor:
                 self._hedge_mode = False
                 return
             logger.info("UTA account detected (40085), trying v3 settings endpoint")
+            self._is_uta = True
 
         # ── Attempt 2: v3 /api/v3/account/settings (UTA accounts) ──
         try:
@@ -277,10 +291,12 @@ class LiveExecutor:
         timed-out submission can never create a duplicate exchange order:
         Bitget rejects a second order carrying a clientOid it has already seen.
         Output is alphanumeric and <= 32 chars (well within Bitget's 64 limit).
+        When the cleaned input exceeds 30 chars, we hash to avoid collisions
+        from prefix-truncation.
         """
         safe = "".join(ch for ch in str(trade_id) if ch.isalnum())
-        if not safe:
-            safe = hashlib.sha256(str(trade_id).encode()).hexdigest()
+        if not safe or len(safe) > 30:
+            safe = hashlib.sha256(str(trade_id).encode()).hexdigest()[:30]
         return ("rc" + safe)[:32]
 
     @staticmethod
@@ -428,8 +444,14 @@ class LiveExecutor:
                 report["errors"].append(f"fetch_positions failed: {exc}")
                 return report
 
+            def _normalize_sym(s: str) -> str:
+                """Normalize symbol to a common format for comparison.
+                ETH/USDT:USDT -> ETH/USDT, ETHUSDT -> ETHUSDT, ETH/USDT -> ETH/USDT"""
+                return s.replace(":USDT", "")
+
             tracked = {
-                p.symbol.replace(":USDT", "") for p in self._positions.values()
+                _normalize_sym(p.symbol)
+                for p in self._positions.values()
                 if p.status == "open"
             }
             for p in ex_positions or []:
@@ -440,7 +462,8 @@ class LiveExecutor:
                         continue
                 except (TypeError, ValueError):
                     continue
-                sym = (p.get("symbol") or "").replace(":USDT", "")
+                raw_sym = (p.get("symbol") or "")
+                sym = _normalize_sym(raw_sym)
                 if sym and sym not in tracked:
                     report["untracked"].append(sym)
                     audit(trade_log,
@@ -454,16 +477,25 @@ class LiveExecutor:
 
     # ── Execute trade ────────────────────────────────────────────
 
-    async def execute(self, idea: TradeIdea, size_usd: float) -> str:
+    async def execute(self, idea: TradeIdea, size_usd: float,
+                      order_type: str = "", atr_value: float = 0.0) -> str:
         """Execute a live trade on Bitget.
 
         Args:
             idea: The approved TradeIdea
             size_usd: Position size in USD (will be clamped to micro limits)
+            order_type: "market" or "limit" (empty = use config default)
+            atr_value: ATR at entry time (for trailing stop initialization)
 
         Returns:
             Human-readable result string
         """
+        # Resolve order type: explicit > config > default
+        if not order_type:
+            order_type = CONFIG.limit_orders.default_order_type if CONFIG.limit_orders.enabled else "market"
+        order_type = order_type.lower()
+        if order_type not in ("market", "limit"):
+            order_type = "market"
         # Clamp to micro limit
         size_usd = min(size_usd, MICRO_MAX_POSITION_USD)
 
@@ -595,7 +627,17 @@ class LiveExecutor:
                             "quantity": quantity, "price": current_price})
                 return f"BLOCKED: {limit_err}"
 
-            # Place market order
+            # Place order (market or limit)
+            use_limit = (order_type == "limit" and CONFIG.limit_orders.enabled)
+            # Limit orders use the idea's entry_price; for spot cost-based buys,
+            # limit is placed at entry_price and the exchange fills at that price or better.
+            limit_price = idea.entry_price if use_limit else None
+            if use_limit and market:
+                # Round limit price to exchange tick grid
+                limit_price = float(
+                    active_exchange.price_to_precision(symbol, limit_price)
+                ) if limit_price else None
+
             if is_futures:
                 # Futures: use USDT-FUTURES product type
                 # tradeSide only required in hedge (double_hold) mode
@@ -630,17 +672,17 @@ class LiveExecutor:
                 }
                 if self._hedge_mode:
                     futures_params["tradeSide"] = "open"
-                order = await self._create_order_idempotent(
-                    exchange,
-                    symbol=symbol,
-                    type="market",
-                    side=side,
-                    amount=quantity,
-                    coid=coid,
-                    params=futures_params,
-                )
-            elif side == "buy":
-                # Spot BUY on Bitget UTA: use cost-based ordering
+
+                otype = "limit" if use_limit else "market"
+                create_kwargs: dict[str, Any] = {
+                    "symbol": symbol, "type": otype, "side": side,
+                    "amount": quantity, "coid": coid, "params": futures_params,
+                }
+                if use_limit and limit_price:
+                    futures_params["price"] = str(limit_price)
+                order = await self._create_order_idempotent(exchange, **create_kwargs)
+            elif side == "buy" and not use_limit:
+                # Spot BUY on Bitget UTA: use cost-based ordering (market only)
                 active_exchange.options["createMarketBuyOrderRequiresPrice"] = False
                 order = await self._create_order_idempotent(
                     active_exchange,
@@ -650,6 +692,17 @@ class LiveExecutor:
                     amount=size_usd,
                     coid=coid,
                     params={"cost": size_usd},
+                )
+            elif use_limit:
+                # Limit order (spot or spot-fallback)
+                order = await self._create_order_idempotent(
+                    active_exchange,
+                    symbol=symbol,
+                    type="limit",
+                    side=side,
+                    amount=quantity,
+                    coid=coid,
+                    params={"price": str(limit_price)} if limit_price else {},
                 )
             else:
                 order = await self._create_order_idempotent(
@@ -666,26 +719,40 @@ class LiveExecutor:
                 await spot_exchange.close()
 
             # Parse result
-            fill_price = float(order.get("average", 0) or order.get("price", 0) or current_price)
-            filled_qty = float(order.get("filled", 0) or quantity)
-            # cost_usd = margin (collateral), not notional. For futures, notional / leverage.
-            raw_cost = float(order.get("cost", 0) or fill_price * filled_qty)
-            if is_futures and leverage_mult > 1:
-                cost = raw_cost / leverage_mult  # store margin, not notional
-            else:
-                cost = raw_cost
+            order_status = order.get("status", "unknown")
             order_id = order.get("id", "unknown")
-            status = order.get("status", "unknown")
+
+            # Handle limit orders that haven't filled yet
+            is_pending_limit = (use_limit and order_status in ("open", "new", "pending"))
+
+            if is_pending_limit:
+                # Limit order placed but not yet filled — track as pending
+                fill_price = idea.entry_price  # expected fill
+                filled_qty = quantity  # expected quantity
+                raw_cost = fill_price * filled_qty
+                if is_futures and leverage_mult > 1:
+                    cost = raw_cost / leverage_mult
+                else:
+                    cost = raw_cost
+            else:
+                fill_price = float(order.get("average", 0) or order.get("price", 0) or current_price)
+                filled_qty = float(order.get("filled", 0) or quantity)
+                # cost_usd = margin (collateral), not notional. For futures, notional / leverage.
+                raw_cost = float(order.get("cost", 0) or fill_price * filled_qty)
+                if is_futures and leverage_mult > 1:
+                    cost = raw_cost / leverage_mult  # store margin, not notional
+                else:
+                    cost = raw_cost
 
             live_order = LiveOrder(
                 order_id=order_id,
                 symbol=idea.asset,
                 side=side,
-                order_type="market",
+                order_type=order_type,
                 amount=filled_qty,
                 price=fill_price,
                 cost_usd=cost,
-                status=status,
+                status=order_status,
                 client_oid=coid,
                 raw=order,
             )
@@ -694,6 +761,18 @@ class LiveExecutor:
             # Track position
             leverage = CONFIG.exchange.default_leverage if is_futures else 1
             spot_fallback = not is_futures and CONFIG.exchange.trade_mode == "futures"
+
+            # Initialize trailing stop state if enabled
+            trailing_st = None
+            if CONFIG.trailing.enabled and atr_value > 0:
+                initial_risk = abs(fill_price - idea.stop_loss)
+                trailing_st = make_trailing_state(
+                    entry_price=fill_price,
+                    direction=idea.direction.value,
+                    initial_risk=initial_risk,
+                    atr_value=atr_value,
+                )
+
             position = LivePosition(
                 trade_id=idea.id,
                 symbol=idea.asset,
@@ -705,6 +784,11 @@ class LiveExecutor:
                 take_profit=idea.take_profit,
                 leverage=leverage,
                 is_spot=spot_fallback,
+                trailing_state=trailing_st,
+                order_type=order_type,
+                limit_order_id=order_id if is_pending_limit else None,
+                atr_at_entry=atr_value,
+                status="pending_fill" if is_pending_limit else "open",
             )
             self._positions[idea.id] = position
 
@@ -713,13 +797,38 @@ class LiveExecutor:
             # F-13 FIX: prune order history
             self._prune_order_history()
 
+            if is_pending_limit:
+                audit(trade_log, f"Limit order PLACED: {side} {idea.asset} @ ${fill_price:,.4f}",
+                      action="live_execute", result="LIMIT_PLACED",
+                      data={
+                          "order_id": order_id, "trade_id": idea.id,
+                          "side": side, "limit_price": fill_price,
+                          "quantity": filled_qty, "cost_usd": cost,
+                      })
+                lev_info = f" | {leverage}x" if leverage > 1 else ""
+                mode_label = "FUTURES" if is_futures else "SPOT"
+                dir_icon = "🟢" if side == "buy" else "🔴"
+                return (
+                    f"{dir_icon} <b>LIMIT ORDER {side.upper()} {idea.asset}</b> ({mode_label}{lev_info})\n"
+                    f"{'─' * 16}\n"
+                    f"- Limit: <code>${fill_price:,.4f}</code>\n"
+                    f"- Current: <code>${current_price:,.4f}</code>\n"
+                    f"- Qty: <code>{filled_qty:.6f}</code>\n"
+                    f"- Cost: <code>${cost:.2f}</code>\n"
+                    f"- SL: <code>${idea.stop_loss:,.4f}</code>\n"
+                    f"- TP: <code>${idea.take_profit:,.4f}</code>\n"
+                    f"- Order: <code>{order_id}</code>\n"
+                    f"- Status: ⏳ PENDING FILL\n"
+                    f"- Mode: 🔥 Live {mode_label}"
+                )
+
             audit(trade_log, f"Live order FILLED: {side} {idea.asset}",
                   action="live_execute", result="FILLED",
                   data={
                       "order_id": order_id, "trade_id": idea.id,
                       "side": side, "fill_price": fill_price,
                       "quantity": filled_qty, "cost_usd": cost,
-                      "status": status,
+                      "status": order_status,
                   })
 
             # Try to place SL/TP orders (best-effort — not all exchanges support this for spot)
@@ -736,6 +845,9 @@ class LiveExecutor:
             lev_info = f" | {leverage}x" if leverage > 1 else ""
             mode_label = "FUTURES" if is_futures else "SPOT"
             dir_icon = "🟢" if side == "buy" else "🔴"
+            trail_info = ""
+            if trailing_st:
+                trail_info = "\n- Trailing: ✅ armed (activates at 1R)"
             return (
                 f"{dir_icon} <b>LIVE {side.upper()} {idea.asset}</b> ({mode_label}{lev_info})\n"
                 f"{'─' * 16}\n"
@@ -747,7 +859,7 @@ class LiveExecutor:
                 f"- SL: <code>${idea.stop_loss:,.4f}</code>{sl_info}\n"
                 f"- TP: <code>${idea.take_profit:,.4f}</code>{tp_info}\n"
                 f"- Order: <code>{order_id}</code>\n"
-                f"- Risk: ✅ APPROVED\n"
+                f"- Risk: ✅ APPROVED{trail_info}\n"
                 f"- Mode: 🔥 Live {mode_label}"
             )
 
@@ -797,34 +909,48 @@ class LiveExecutor:
             # Spot: skip SL/TP (not reliably supported)
             return sl_id, tp_id
 
-        # Detect if UTA mode by checking if v2 API would fail
-        # We already know from _detect_hold_mode if this is UTA
-        use_v3 = False
-        try:
-            await exchange.privateMixGetV2MixAccountAccount(
-                {"symbol": "BTCUSDT", "productType": "USDT-FUTURES"})
-        except Exception as exc:
-            if "40085" in str(exc):
-                use_v3 = True
+        # Use cached UTA detection result instead of making an extra API call.
+        # _detect_hold_mode already ran during _ensure_leverage and set _is_uta.
+        use_v3 = self._is_uta if self._is_uta is not None else False
+        if self._is_uta is None:
+            # First call — haven't detected yet; probe once
+            try:
+                await exchange.privateMixGetV2MixAccountAccount(
+                    {"symbol": "BTCUSDT", "productType": "USDT-FUTURES"})
+            except Exception as exc:
+                if "40085" in str(exc):
+                    use_v3 = True
+                    self._is_uta = True
+                else:
+                    self._is_uta = False
 
         if use_v3:
             # UTA mode: place SL/TP via Bitget v3 REST API directly
             # Get tick size from exchange markets for proper price precision
             price_precision = None
+            # Try both spot and swap symbol formats for market lookup
+            swap_symbol = symbol if ":USDT" in symbol else f"{symbol}:USDT"
+            lookup_symbols = [symbol, swap_symbol]
             try:
                 if not exchange.markets:
                     await exchange.load_markets()
-                mkt = exchange.markets.get(symbol)
-                if mkt and mkt.get("precision", {}).get("price") is not None:
-                    price_precision = mkt["precision"]["price"]
+                for sym in lookup_symbols:
+                    mkt = exchange.markets.get(sym)
+                    if mkt and mkt.get("precision", {}).get("price") is not None:
+                        price_precision = mkt["precision"]["price"]
+                        break
             except Exception:
                 pass
             # UPGRADE: round SL/TP onto the symbol's tick grid via ccxt's own
             # price_to_precision (tick-aware) rather than a decimal-places
-            # heuristic. Pass the rounded strings through; the v3 helper keeps
-            # its heuristic as a fallback when these are None.
-            sl_rounded = self._round_price_to_market(exchange, symbol, stop_loss)
-            tp_rounded = self._round_price_to_market(exchange, symbol, take_profit)
+            # heuristic. Try swap symbol format first, then spot.
+            sl_rounded = None
+            tp_rounded = None
+            for sym in lookup_symbols:
+                sl_rounded = self._round_price_to_market(exchange, sym, stop_loss)
+                tp_rounded = self._round_price_to_market(exchange, sym, take_profit)
+                if sl_rounded is not None and tp_rounded is not None:
+                    break
             sl_id, tp_id = await self._place_sl_tp_v3(
                 symbol, direction, quantity, stop_loss, take_profit,
                 price_precision=price_precision,
@@ -910,8 +1036,12 @@ class LiveExecutor:
         # Strip "/USDT" from ccxt symbol format to get Bitget symbol
         bitget_symbol = symbol.replace("/USDT", "USDT").replace(":USDT", "")
 
-        # In one-way mode, posSide should be "long" for long positions
-        pos_side = "long" if direction == Direction.LONG else "short"
+        # In hedge mode, posSide must be "long"/"short" to identify which position.
+        # In one-way mode, Bitget v3 API requires posSide to be "net" or omitted.
+        if self._hedge_mode:
+            pos_side = "long" if direction == Direction.LONG else "short"
+        else:
+            pos_side = "net"
 
         def _v3_post(path: str, body_dict: dict) -> dict:
             body = _json.dumps(body_dict)
@@ -971,15 +1101,18 @@ class LiveExecutor:
         # Place combined TP/SL strategy order
         # AUDIT FIX: offload blocking _v3_post to thread pool
         import asyncio as _asyncio
+        tp_final = tp_str if tp_str is not None else _round_price(take_profit)
+        sl_final = sl_str if sl_str is not None else _round_price(stop_loss)
+        logger.info("v3 SL/TP request: symbol=%s posSide=%s TP=%s SL=%s (raw TP=%s SL=%s, rounded=%s/%s, precision=%s)",
+                     bitget_symbol, pos_side, tp_final, sl_final,
+                     take_profit, stop_loss, tp_str, sl_str, price_precision)
         try:
             result = await _asyncio.to_thread(_v3_post, "/api/v3/trade/place-strategy-order", {
                 "category": "USDT-FUTURES",
                 "symbol": bitget_symbol,
                 "posSide": pos_side,
-                # UPGRADE: prefer tick-grid-rounded prices from ccxt
-                # price_to_precision; fall back to the local heuristic.
-                "takeProfit": tp_str if tp_str is not None else _round_price(take_profit),
-                "stopLoss": sl_str if sl_str is not None else _round_price(stop_loss),
+                "takeProfit": tp_final,
+                "stopLoss": sl_final,
                 "tpOrderType": "market",
                 "slOrderType": "market",
                 # UPGRADE: idempotency key so a retried SL/TP placement
@@ -989,11 +1122,14 @@ class LiveExecutor:
 
             if result.get("code") == "00000":
                 data = result.get("data", {})
-                sl_id = data.get("slOrderId") or "v3-strategy"
-                tp_id = data.get("tpOrderId") or "v3-strategy"
-                audit(trade_log, f"v3 SL/TP strategy order placed: SL={sl_id} TP={tp_id}",
+                # Bitget v3 returns orderId for the combined strategy order
+                order_id = data.get("orderId") or data.get("slOrderId") or data.get("tpOrderId") or "v3-strategy"
+                sl_id = order_id
+                tp_id = order_id
+                audit(trade_log, f"v3 SL/TP strategy order placed: order={order_id}",
                       action="sl_tp_v3", result="OK",
-                      data={"symbol": bitget_symbol, "sl": stop_loss, "tp": take_profit})
+                      data={"symbol": bitget_symbol, "sl": sl_final, "tp": tp_final,
+                            "order_id": order_id})
             else:
                 error_msg = result.get("msg", str(result))
                 logger.warning("v3 strategy order failed: %s", error_msg)
@@ -1011,7 +1147,14 @@ class LiveExecutor:
     # ── Position management ──────────────────────────────────────
 
     async def check_positions(self) -> list[str]:
-        """Check open positions against current prices. Returns list of close messages."""
+        """Check open positions against current prices. Returns list of close/update messages.
+
+        Handles:
+        1. Static SL/TP hits → close position
+        2. Trailing stop updates → tighten SL when price moves favorably
+        3. Pending limit order fills → transition to open position
+        4. Pending limit order expiry → cancel stale limit orders
+        """
         if not self._positions:
             return []
 
@@ -1021,39 +1164,230 @@ class LiveExecutor:
             tickers = await exchange.fetch_tickers()
 
             for trade_id, pos in list(self._positions.items()):
+                # ── Handle pending limit orders ──
+                if pos.status == "pending_fill":
+                    msg = await self._check_pending_limit(exchange, trade_id, pos)
+                    if msg:
+                        closed_messages.append(msg)
+                    continue
+
                 if pos.status != "open":
                     continue
                 price = float(tickers.get(pos.symbol, {}).get("last", 0))
                 if price <= 0:
                     continue
 
+                # ── Trailing stop update ──
+                if CONFIG.trailing.enabled and pos.trailing_state is not None:
+                    old_sl = pos.stop_loss
+                    new_sl, trailing_active = update_trailing_stop(
+                        pos.trailing_state, price, pos.stop_loss, pos.direction
+                    )
+                    if new_sl != old_sl:
+                        pos.stop_loss = new_sl
+                        self._save_positions()
+                        # Check if the SL moved enough to update on exchange
+                        sl_change_pct = abs(new_sl - old_sl) / old_sl * 100 if old_sl > 0 else 100
+                        if sl_change_pct >= CONFIG.trailing.min_sl_update_pct:
+                            await self._update_exchange_sl(
+                                exchange, pos, new_sl
+                            )
+                            audit(trade_log,
+                                  f"Trailing SL updated: {pos.symbol} SL ${old_sl:.4f} -> ${new_sl:.4f}",
+                                  action="trailing_sl", result="UPDATED",
+                                  data={"trade_id": trade_id, "old_sl": old_sl,
+                                        "new_sl": new_sl, "price": price,
+                                        "trailing_active": trailing_active})
+
+                # ── Static SL/TP check ──
                 should_close = False
                 reason = ""
 
                 if pos.direction == "LONG":
                     if price <= pos.stop_loss:
                         should_close = True
-                        reason = "SL HIT"
+                        reason = "TRAILING SL HIT" if (pos.trailing_state and pos.trailing_state.get("trailing_active")) else "SL HIT"
                     elif price >= pos.take_profit:
                         should_close = True
                         reason = "TP HIT"
                 else:  # SHORT
                     if price >= pos.stop_loss:
                         should_close = True
-                        reason = "SL HIT"
+                        reason = "TRAILING SL HIT" if (pos.trailing_state and pos.trailing_state.get("trailing_active")) else "SL HIT"
                     elif price <= pos.take_profit:
                         should_close = True
                         reason = "TP HIT"
 
-                if should_close and not pos.sl_order_id:
-                    # No exchange-level SL/TP — close manually
+                if should_close:
+                    # Close manually if no exchange SL/TP, or if SL/TP exists but
+                    # price has blown through the level (exchange SL/TP may have
+                    # been cancelled or failed).
                     msg = await self.close_position(trade_id, reason, price)
                     closed_messages.append(msg)
 
         except Exception as exc:
-            logger.debug("Position check error: %s", exc)
+            logger.warning("Position check error: %s", exc)
 
         return closed_messages
+
+    async def _check_pending_limit(self, exchange: "ccxt.Exchange",
+                                    trade_id: str, pos: LivePosition) -> Optional[str]:
+        """Check if a pending limit order has been filled or should be cancelled.
+
+        Returns a message string if status changed, else None.
+        """
+        if not pos.limit_order_id:
+            return None
+
+        try:
+            order = await exchange.fetch_order(pos.limit_order_id, pos.symbol)
+            order_status = order.get("status", "unknown")
+
+            if order_status in ("closed", "filled"):
+                # Limit order filled — transition to open position
+                fill_price = float(order.get("average", 0) or order.get("price", 0) or pos.entry_price)
+                filled_qty = float(order.get("filled", 0) or pos.quantity)
+
+                pos.entry_price = fill_price
+                pos.quantity = filled_qty
+                pos.status = "open"
+                pos.limit_order_id = None
+
+                # Recalculate cost
+                raw_cost = fill_price * filled_qty
+                if pos.leverage > 1:
+                    pos.cost_usd = raw_cost / pos.leverage
+                else:
+                    pos.cost_usd = raw_cost
+
+                # Initialize trailing state now that we have a real fill
+                if CONFIG.trailing.enabled and pos.atr_at_entry > 0:
+                    initial_risk = abs(fill_price - pos.stop_loss)
+                    pos.trailing_state = make_trailing_state(
+                        entry_price=fill_price,
+                        direction=pos.direction,
+                        initial_risk=initial_risk,
+                        atr_value=pos.atr_at_entry,
+                    )
+
+                # Place SL/TP now that position is filled
+                direction = Direction.LONG if pos.direction == "LONG" else Direction.SHORT
+                sl_id, tp_id = await self._place_sl_tp(
+                    exchange, pos.symbol, direction,
+                    filled_qty, pos.stop_loss, pos.take_profit
+                )
+                pos.sl_order_id = sl_id
+                pos.tp_order_id = tp_id
+
+                self._save_positions()
+
+                audit(trade_log, f"Limit order FILLED: {pos.symbol} @ ${fill_price:,.4f}",
+                      action="limit_fill", result="FILLED",
+                      data={"trade_id": trade_id, "fill_price": fill_price,
+                            "quantity": filled_qty})
+
+                sl_info = f" | SL: {sl_id}" if sl_id else ""
+                tp_info = f" | TP: {tp_id}" if tp_id else ""
+                trail_info = " | Trailing: armed" if pos.trailing_state else ""
+                return (
+                    f"LIMIT FILLED: {pos.direction} {pos.symbol}\n"
+                    f"Fill: ${fill_price:,.4f} | Qty: {filled_qty:.6f}{sl_info}{tp_info}{trail_info}"
+                )
+
+            elif order_status in ("canceled", "cancelled", "rejected", "expired"):
+                # Limit order cancelled/rejected — remove position
+                pos.status = "closed"
+                pos.closed_at = datetime.now(UTC)
+                pos.pnl_usd = 0.0
+                self._save_positions()
+
+                audit(trade_log, f"Limit order {order_status}: {pos.symbol}",
+                      action="limit_cancel", result=order_status.upper(),
+                      data={"trade_id": trade_id})
+
+                return f"LIMIT {order_status.upper()}: {pos.direction} {pos.symbol} — order not filled"
+
+            else:
+                # Still open — check expiry
+                age_sec = (datetime.now(UTC) - pos.opened_at).total_seconds()
+                if age_sec > CONFIG.limit_orders.expire_seconds:
+                    # Cancel expired limit order
+                    try:
+                        await exchange.cancel_order(pos.limit_order_id, pos.symbol)
+                    except Exception as exc:
+                        logger.warning("Failed to cancel expired limit order %s: %s",
+                                       pos.limit_order_id, exc)
+
+                    pos.status = "closed"
+                    pos.closed_at = datetime.now(UTC)
+                    pos.pnl_usd = 0.0
+                    self._save_positions()
+
+                    audit(trade_log, f"Limit order EXPIRED after {age_sec:.0f}s: {pos.symbol}",
+                          action="limit_expire", result="EXPIRED",
+                          data={"trade_id": trade_id, "age_sec": age_sec})
+
+                    return f"LIMIT EXPIRED: {pos.direction} {pos.symbol} — cancelled after {age_sec/3600:.1f}h"
+
+        except Exception as exc:
+            logger.warning("Pending limit check failed for %s: %s", trade_id, exc)
+
+        return None
+
+    async def _update_exchange_sl(self, exchange: "ccxt.Exchange",
+                                   pos: LivePosition, new_sl: float) -> None:
+        """Cancel old SL order and place a new one at the tightened level.
+
+        Best-effort: trailing stop still works locally even if exchange
+        update fails — check_positions() will close at the new SL.
+        """
+        is_futures = not getattr(pos, "is_spot", False)
+        if not is_futures:
+            return  # spot SL/TP not reliably supported
+
+        # Cancel existing SL order
+        if pos.sl_order_id:
+            try:
+                await exchange.cancel_order(pos.sl_order_id, pos.symbol)
+            except Exception as exc:
+                logger.debug("Cancel old SL order %s failed: %s", pos.sl_order_id, exc)
+
+        # Place new SL at tightened level
+        direction = Direction.LONG if pos.direction == "LONG" else Direction.SHORT
+        use_v3 = self._is_uta if self._is_uta is not None else False
+
+        if use_v3:
+            # Round to tick grid
+            swap_symbol = pos.symbol if ":USDT" in pos.symbol else f"{pos.symbol}:USDT"
+            sl_rounded = self._round_price_to_market(exchange, swap_symbol, new_sl)
+            if sl_rounded is None:
+                sl_rounded = self._round_price_to_market(exchange, pos.symbol, new_sl)
+
+            # Place SL-only via v3 (keep existing TP)
+            sl_id, _ = await self._place_sl_tp_v3(
+                pos.symbol, direction, pos.quantity,
+                new_sl, pos.take_profit,
+                sl_str=sl_rounded,
+            )
+            if sl_id:
+                pos.sl_order_id = sl_id
+                self._save_positions()
+        else:
+            # Classic mode: place trigger order
+            close_side = "sell" if direction == Direction.LONG else "buy"
+            extra_params = {"productType": "USDT-FUTURES"}
+            if self._hedge_mode:
+                extra_params["tradeSide"] = "close"
+            try:
+                sl_order = await exchange.create_order(
+                    symbol=pos.symbol, type="market", side=close_side,
+                    amount=pos.quantity,
+                    params={"triggerPrice": new_sl, "triggerType": "last", **extra_params},
+                )
+                pos.sl_order_id = sl_order.get("id")
+                self._save_positions()
+            except Exception as exc:
+                logger.warning("Failed to update exchange SL for %s: %s", pos.symbol, exc)
 
     async def close_position(self, trade_id: str, reason: str = "manual",
                               close_price: float = 0) -> str:
@@ -1066,9 +1400,10 @@ class LiveExecutor:
             exchange = await self._get_exchange()
             close_side = "sell" if pos.direction == "LONG" else "buy"
 
-            # Determine if this position is futures or spot based on is_spot flag
-            # (leverage alone is unreliable: spot fallback has leverage=1 but is_spot=True)
-            is_futures_pos = not getattr(pos, "is_spot", False) and (pos.leverage or 1) > 1
+            # Determine if this position is futures or spot.
+            # Use is_spot flag as primary discriminator (leverage alone is unreliable:
+            # a 1x futures position would incorrectly be treated as spot).
+            is_futures_pos = not getattr(pos, "is_spot", False)
 
             if is_futures_pos:
                 close_params = {"productType": "USDT-FUTURES"}
@@ -1216,7 +1551,7 @@ class LiveExecutor:
 
     @property
     def open_positions(self) -> list[LivePosition]:
-        return [p for p in self._positions.values() if p.status == "open"]
+        return [p for p in self._positions.values() if p.status in ("open", "pending_fill")]
 
     @property
     def closed_positions(self) -> list[LivePosition]:
@@ -1420,7 +1755,7 @@ class LiveExecutor:
         try:
             data: dict[str, Any] = {}
             for tid, pos in self._positions.items():
-                if pos.status != "open":
+                if pos.status not in ("open", "pending_fill"):
                     continue
                 data[tid] = {
                     "trade_id": pos.trade_id,
@@ -1437,6 +1772,10 @@ class LiveExecutor:
                     "tp_order_id": pos.tp_order_id,
                     "opened_at": pos.opened_at.isoformat() if pos.opened_at else None,
                     "status": pos.status,
+                    "trailing_state": pos.trailing_state,
+                    "order_type": pos.order_type,
+                    "limit_order_id": pos.limit_order_id,
+                    "atr_at_entry": pos.atr_at_entry,
                 }
             path = Path(_POSITIONS_FILE)
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -1472,6 +1811,10 @@ class LiveExecutor:
                     tp_order_id=pdata.get("tp_order_id"),
                     opened_at=opened_at,
                     status=pdata.get("status", "open"),
+                    trailing_state=pdata.get("trailing_state"),
+                    order_type=pdata.get("order_type", "market"),
+                    limit_order_id=pdata.get("limit_order_id"),
+                    atr_at_entry=float(pdata.get("atr_at_entry", 0)),
                 )
             if self._positions:
                 audit(trade_log, f"Loaded {len(self._positions)} live positions from disk",

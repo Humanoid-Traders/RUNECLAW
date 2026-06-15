@@ -232,6 +232,25 @@ class RuneClawEngine:
         # are added dynamically in _check_open_positions().
         self.ws_feed.subscribe(["BTC/USDT", "ETH/USDT", "SOL/USDT"])
 
+        # Startup reconciliation: sync local state with exchange before
+        # accepting any new signals. Catches positions closed/opened
+        # during downtime or crashes.
+        if CONFIG.is_live():
+            try:
+                reconciled = await self.live_executor.reconcile_positions()
+                for msg in reconciled:
+                    audit(trade_log, f"Startup reconcile: {msg}",
+                          action="startup_reconcile", result="CLOSED")
+                orphans = await self.live_executor.detect_untracked_positions()
+                if orphans.get("untracked"):
+                    audit(system_log,
+                          f"Startup: untracked exchange positions: {orphans['untracked']}",
+                          action="startup_orphan", result="WARNING",
+                          data=orphans)
+            except Exception as exc:
+                audit(system_log, f"Startup reconciliation error: {exc}",
+                      action="startup_reconcile", result="ERROR")
+
         while self._running:
             try:
                 await self._tick()
@@ -722,7 +741,10 @@ class RuneClawEngine:
                           data={"requested": round(size_usd, 2), "available": round(available, 2)})
                     size_usd = available
 
-            result = await self.live_executor.execute(idea, size_usd)
+            result = await self.live_executor.execute(
+                idea, size_usd,
+                atr_value=stored_atr or 0.0,
+            )
 
             # Only record paper trade if live execution succeeded
             # (result starts with error prefixes when execution fails)
@@ -940,6 +962,19 @@ class RuneClawEngine:
             except Exception as exc:
                 audit(system_log, f"Reconciliation error: {exc}",
                       action="reconcile", result="ERROR")
+
+            # Detect orphaned exchange positions with no local record
+            # (e.g. from a timed-out-but-filled order)
+            try:
+                orphan_report = await self.live_executor.detect_untracked_positions()
+                if orphan_report.get("untracked"):
+                    audit(system_log,
+                          f"Untracked exchange positions detected: {orphan_report['untracked']}",
+                          action="orphan_detect", result="WARNING",
+                          data=orphan_report)
+            except Exception as exc:
+                audit(system_log, f"Orphan detection error: {exc}",
+                      action="orphan_detect", result="ERROR")
 
     @property
     def pending_ideas(self) -> list[TradeIdea]:

@@ -511,7 +511,7 @@ class ProactiveMonitor:
                     try:
                         await self._chart_fn(chat_id, alert.idea)
                     except Exception as cexc:  # noqa: BLE001 — charts are best-effort
-                        logger.debug("proactive chart send failed: %s", cexc)
+                        logger.warning("proactive chart send failed: %s", cexc, exc_info=True)
                 audit(system_log,
                       f"Proactive alert sent: {alert.alert_type}",
                       action="proactive_alert",
