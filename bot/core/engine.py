@@ -470,6 +470,28 @@ class RuneClawEngine:
                 true_ranges.append(tr)
             atr_value = sum(true_ranges) / len(true_ranges)
 
+        # ── Duplicate symbol guard ──────────────────────────────────
+        # Block new trades on symbols that already have an open position.
+        symbol_key = idea.asset.replace("/USDT", "").replace("USDT", "").upper()
+        already_open = False
+        if CONFIG.is_live() and hasattr(self, 'live_executor'):
+            for lp in self.live_executor.open_positions:
+                lp_key = lp.symbol.replace("/USDT", "").replace("USDT", "").upper()
+                if lp_key == symbol_key:
+                    already_open = True
+                    break
+        if not already_open and hasattr(self, 'portfolio'):
+            for pp in self.portfolio.open_positions:
+                pp_key = pp.asset.replace("/USDT", "").replace("USDT", "").upper()
+                if pp_key == symbol_key:
+                    already_open = True
+                    break
+        if already_open:
+            audit(scan_log, f"Signal skipped: already have open position on {idea.asset}",
+                  action="duplicate_symbol", result="SKIPPED")
+            self._transition(AgentState.ANALYZING, "duplicate symbol, skipping")
+            return None
+
         # Risk gate — pass ATR so all 18 checks run
         # LIVE FIX: pass actual exchange equity so sizing is based on real capital
         live_eq = self._live_balance_cache.get("total", 0.0) if (CONFIG.is_live() and self._live_balance_cache) else None
