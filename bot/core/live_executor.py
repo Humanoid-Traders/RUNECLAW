@@ -1036,12 +1036,10 @@ class LiveExecutor:
         # Strip "/USDT" from ccxt symbol format to get Bitget symbol
         bitget_symbol = symbol.replace("/USDT", "USDT").replace(":USDT", "")
 
-        # In hedge mode, posSide must be "long"/"short" to identify which position.
-        # In one-way mode, Bitget v3 API requires posSide to be "net" or omitted.
-        if self._hedge_mode:
-            pos_side = "long" if direction == Direction.LONG else "short"
-        else:
-            pos_side = "net"
+        # v3 strategy order API:
+        # Both hedge mode AND one-way mode require posSide = "long" or "short".
+        # UTA v3 does NOT accept "net" and does NOT allow omitting posSide.
+        pos_side = "long" if direction == Direction.LONG else "short"
 
         def _v3_post(path: str, body_dict: dict) -> dict:
             body = _json.dumps(body_dict)
@@ -1103,22 +1101,24 @@ class LiveExecutor:
         import asyncio as _asyncio
         tp_final = tp_str if tp_str is not None else _round_price(take_profit)
         sl_final = sl_str if sl_str is not None else _round_price(stop_loss)
+
+        # Build payload: posSide is always "long"/"short" (even one-way mode)
+        payload: dict[str, str] = {
+            "category": "USDT-FUTURES",
+            "symbol": bitget_symbol,
+            "posSide": pos_side,
+            "takeProfit": tp_final,
+            "stopLoss": sl_final,
+            "tpOrderType": "market",
+            "slOrderType": "market",
+            "clientOid": self._client_oid(bitget_symbol + pos_side + "sltp"),
+        }
+
         logger.info("v3 SL/TP request: symbol=%s posSide=%s TP=%s SL=%s (raw TP=%s SL=%s, rounded=%s/%s, precision=%s)",
                      bitget_symbol, pos_side, tp_final, sl_final,
                      take_profit, stop_loss, tp_str, sl_str, price_precision)
         try:
-            result = await _asyncio.to_thread(_v3_post, "/api/v3/trade/place-strategy-order", {
-                "category": "USDT-FUTURES",
-                "symbol": bitget_symbol,
-                "posSide": pos_side,
-                "takeProfit": tp_final,
-                "stopLoss": sl_final,
-                "tpOrderType": "market",
-                "slOrderType": "market",
-                # UPGRADE: idempotency key so a retried SL/TP placement
-                # cannot create a duplicate strategy order on the position.
-                "clientOid": self._client_oid(bitget_symbol + pos_side + "sltp"),
-            })
+            result = await _asyncio.to_thread(_v3_post, "/api/v3/trade/place-strategy-order", payload)
 
             if result.get("code") == "00000":
                 data = result.get("data", {})
