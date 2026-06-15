@@ -108,6 +108,7 @@ class RuneClawEngine:
         self._max_state_history = 1000  # F-13 FIX: cap state history
         self._running = False
         self._confirm_callback: Optional[Callable] = None
+        self._close_notify_callback: Optional[Callable] = None
         self._pending_ideas: dict[str, TradeIdea] = {}
         self._pending_atr: dict[str, Optional[float]] = {}  # H1: store ATR for re-check
         self._cooldown_until: float = 0.0
@@ -204,6 +205,10 @@ class RuneClawEngine:
     def set_confirmation_callback(self, cb: Callable) -> None:
         """Register the human-confirmation gate (e.g. Telegram inline keyboard)."""
         self._confirm_callback = cb
+
+    def set_close_notify_callback(self, cb: Callable) -> None:
+        """Register a callback to notify users when a trade is closed."""
+        self._close_notify_callback = cb
 
     # -- Main loop --
 
@@ -948,6 +953,11 @@ class RuneClawEngine:
                 for msg in live_closed:
                     audit(trade_log, f"Live position auto-closed: {msg}",
                           action="live_auto_close", result="CLOSED")
+                    if self._close_notify_callback:
+                        try:
+                            await self._close_notify_callback(msg)
+                        except Exception as exc:
+                            logger.debug("Close notify failed: %s", exc)
             except Exception as exc:
                 audit(system_log, f"Live position monitor error: {exc}",
                       action="live_monitor", result="ERROR")
@@ -959,6 +969,11 @@ class RuneClawEngine:
                 for msg in reconciled:
                     audit(trade_log, f"Position reconciled: {msg}",
                           action="reconcile", result="CLOSED")
+                    if self._close_notify_callback:
+                        try:
+                            await self._close_notify_callback(msg)
+                        except Exception as exc:
+                            logger.debug("Close notify (reconcile) failed: %s", exc)
             except Exception as exc:
                 audit(system_log, f"Reconciliation error: {exc}",
                       action="reconcile", result="ERROR")

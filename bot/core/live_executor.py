@@ -1525,10 +1525,20 @@ class LiveExecutor:
                   })
 
             pnl_str = f"+${pnl:.4f}" if pnl >= 0 else f"-${abs(pnl):.4f}"
+            pnl_pct = ((fill_price - pos.entry_price) / pos.entry_price * 100)
+            if pos.direction == "SHORT":
+                pnl_pct = -pnl_pct
+            hold_secs = (pos.closed_at - pos.opened_at).total_seconds() if pos.closed_at and pos.opened_at else 0
+            if hold_secs < 3600:
+                hold_str = f"{hold_secs / 60:.0f}m"
+            elif hold_secs < 86400:
+                hold_str = f"{hold_secs / 3600:.1f}h"
+            else:
+                hold_str = f"{hold_secs / 86400:.1f}d"
             return (
                 f"CLOSED {pos.direction} {pos.symbol} ({reason})\n"
                 f"Entry: ${pos.entry_price:,.4f} → Exit: ${fill_price:,.4f}\n"
-                f"PnL: {pnl_str}"
+                f"PnL: {pnl_str} ({pnl_pct:+.2f}%) | Hold: {hold_str}"
             )
 
         except Exception as exc:

@@ -1718,6 +1718,31 @@ class TelegramHandler:
         self.monitor.set_chart_fn(_chart_fn)
         self._monitor_task = asyncio.create_task(self.monitor.run(_send_fn))
 
+        # Register trade-close notification callback
+        admin_chat_id = CONFIG.telegram.chat_id
+        async def _on_trade_closed(msg: str) -> None:
+            """Send a rich close confirmation to admin when a trade is closed."""
+            if not admin_chat_id:
+                return
+            try:
+                # Parse the close message from live_executor
+                # Format: "CLOSED LONG BTC/USDT (SL HIT)\nEntry: $X → Exit: $Y\nPnL: +$Z"
+                lines = msg.strip().split("\n")
+                header = lines[0] if lines else msg
+                # Build a rich notification
+                is_win = "+$" in msg or "+$" in msg
+                emoji = "\u2705" if is_win else "\u274c"
+                card = f"{emoji} <b>Trade Closed</b>\n\n"
+                for line in lines:
+                    card += f"{html.escape(line)}\n"
+                await bot.send_message(
+                    chat_id=int(admin_chat_id), text=card.strip(),
+                    parse_mode="HTML")
+            except Exception as exc:
+                system_log.debug("Close notify send failed: %s", exc)
+
+        self.engine.set_close_notify_callback(_on_trade_closed)
+
     async def stop_monitor(self) -> None:
         """Stop the proactive monitor."""
         self.monitor.stop()
