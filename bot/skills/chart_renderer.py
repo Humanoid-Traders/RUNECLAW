@@ -810,6 +810,104 @@ async def _send_single_photo(bot, chat_id, png: bytes, caption: str) -> bool:
     except Exception as exc:  # noqa: BLE001
         logger.debug("send_photo HTML failed (%s) — retrying plain", exc)
         buf.seek(0)
-        await bot.send_photo(chat_id=int(chat_id), photo=buf,
-                             caption=_strip_html(caption)[:_CAPTION_LIMIT], parse_mode=None)
-    return True
+
+
+def _composite_pngs(png_list: list[bytes]) -> Optional[bytes]:
+    """Stack multiple PNG images vertically into one composite image.
+
+    Used to combine multi-timeframe charts (e.g. 4h + 1h) into a single
+    image that can be sent as one photo with inline keyboard buttons.
+    Returns PNG bytes, or None on failure.
+
+    BLOCKING — invoke with ``asyncio.to_thread``.
+    """
+    try:
+        from PIL import Image
+    except ImportError:
+        logger.debug("Pillow not installed — cannot composite charts")
+        return None
+    if not png_list:
+        return None
+    if len(png_list) == 1:
+        return png_list[0]
+    try:
+        images = [Image.open(io.BytesIO(p)) for p in png_list]
+        total_height = sum(im.height for im in images)
+        max_width = max(im.width for im in images)
+        composite = Image.new("RGB", (max_width, total_height))
+        y = 0
+        for im in images:
+            # Center horizontally if widths differ
+            x = (max_width - im.width) // 2
+            composite.paste(im, (x, y))
+            y += im.height
+        buf = io.BytesIO()
+        composite.save(buf, format="PNG", optimize=True)
+        return buf.getvalue()
+    except Exception as exc:
+        logger.debug("composite failed: %s", exc)
+        return None
+
+
+async def build_idea_chart_composite(candles_by_tf: dict, idea,
+                                     dpi: int = 160,
+                                     theme: str = _DEFAULT_THEME) -> Optional[bytes]:
+    """Render multi-timeframe charts and composite into a single PNG.
+
+    Returns PNG bytes ready for send_photo, or None on failure.
+    Used by the signal flow to embed chart + buttons in one message.
+    """
+    try:
+        pair, direction, subtitle, levels = _idea_meta(idea)
+        rendered = []
+        for tf, candles in (candles_by_tf or {}).items():
+            png = await asyncio.to_thread(
+                build_chart_png, candles, f"{pair} {direction} · {tf}".strip(),
+                25, dpi, levels, theme, f"{subtitle}   ·   {tf}".strip(" ·"))
+            if png:
+                rendered.append(png)
+        if not rendered:
+            return None
+        if len(rendered) == 1:
+            return rendered[0]
+        return await asyncio.to_thread(_composite_pngs, rendered)
+    except Exception as exc:
+        logger.debug("build_idea_chart_composite failed: %s", exc)
+        return None
+
+
+async def build_position_chart(bot, symbol: str,
+                               entry: float = 0, sl: float = 0, tp: float = 0,
+                               theme: str = _DEFAULT_THEME,
+                               dpi: int = 140) -> Optional[bytes]:
+    """Fetch candles and render a quick 1h chart for a position status card.
+
+    If entry/sl/tp are provided, overlays them as horizontal levels.
+    Returns PNG bytes or None. Does NOT send — caller handles delivery.
+    """
+    if not _CHARTS_AVAILABLE:
+        return None
+    try:
+        import ccxt.async_support as ccxt
+        exchange = ccxt.bitget({"options": {"defaultType": "spot"}})
+        try:
+            candles = await exchange.fetch_ohlcv(symbol, "1h", limit=60)
+        finally:
+            await exchange.close()
+        if not candles or len(candles) < 25:
+            return None
+        pair = symbol.replace("/", "")
+        levels = {}
+        if entry > 0:
+            levels["entry"] = entry
+        if sl > 0:
+            levels["sl"] = sl
+        if tp > 0:
+            levels["tp"] = tp
+        png = await asyncio.to_thread(
+            build_chart_png, candles, f"{pair} · 1h", 25, dpi,
+            levels or None, theme, "")
+        return png
+    except Exception as exc:
+        logger.debug("build_position_chart failed for %s: %s", symbol, exc)
+        return None

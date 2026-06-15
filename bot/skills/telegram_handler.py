@@ -275,6 +275,37 @@ class TelegramHandler:
                 except Exception as e2:
                     system_log.error("Failed to send message chunk %d/%d: %s", i + 1, len(chunks), e2)
 
+    async def _send_photo(self, update: Update, png: bytes, caption: str,
+                          reply_markup=None) -> bool:
+        """Send a photo with HTML caption + inline keyboard. Returns True on success."""
+        import io as _io
+        bot = update.get_bot()
+        chat_id = update.effective_chat.id if update.effective_chat else None
+        if not chat_id or not png:
+            return False
+        buf = _io.BytesIO(png)
+        buf.name = "chart.png"
+        cap = caption[:1024]  # Telegram photo caption limit
+        try:
+            await bot.send_photo(
+                chat_id=int(chat_id), photo=buf,
+                caption=cap, parse_mode="HTML",
+                reply_markup=reply_markup)
+            return True
+        except Exception as exc:
+            system_log.debug("send_photo HTML failed (%s), retrying plain", exc)
+            buf.seek(0)
+            try:
+                plain_cap = re.sub(r"<[^>]+>", "", cap)
+                await bot.send_photo(
+                    chat_id=int(chat_id), photo=buf,
+                    caption=plain_cap, parse_mode=None,
+                    reply_markup=reply_markup)
+                return True
+            except Exception as exc2:
+                system_log.warning("send_photo failed: %s", exc2)
+                return False
+
     async def _maybe_send_chart(self, update: Update, data: dict, idea) -> None:
         """Opt-in: attach setup chart(s) for an analysis card.
 
@@ -305,6 +336,29 @@ class TelegramHandler:
             system_log.info("chart sent successfully for %s", idea.asset)
         except Exception as exc:  # noqa: BLE001 — charts are best-effort
             system_log.warning("chart send skipped: %s", exc, exc_info=True)
+
+    async def _build_chart_composite(self, data: dict, idea) -> Optional[bytes]:
+        """Build a composite chart PNG for embedding in a signal message.
+
+        Returns PNG bytes or None. Does NOT send — caller uses send_photo
+        with the PNG + caption + inline keyboard in one message.
+        """
+        try:
+            if not CONFIG.telegram.send_charts:
+                return None
+            from bot.skills import chart_renderer
+            if not chart_renderer.charts_available():
+                return None
+            if idea is None:
+                return None
+            candles_by_tf = await self._fetch_chart_timeframes(idea.asset, data)
+            if not candles_by_tf:
+                return None
+            return await chart_renderer.build_idea_chart_composite(
+                candles_by_tf, idea, theme=CONFIG.telegram.chart_theme)
+        except Exception as exc:
+            system_log.warning("chart composite build failed: %s", exc)
+            return None
 
     def _chart_timeframes(self) -> list:
         """Parse TELEGRAM_CHART_TIMEFRAMES into an ordered list (highest first)."""
@@ -2068,11 +2122,18 @@ class TelegramHandler:
                     InlineKeyboardButton(f"Skip", callback_data=f"reject:{idea.id}:{uid}"),
                 ])
             kb = InlineKeyboardMarkup(buttons)
-            await self._send(update, msg, reply_markup=kb)
-            # Send charts for multi-analysis too
-            for i, idea in enumerate(pending):
-                if i < len(assets_data) and assets_data:
-                    await self._maybe_send_chart(update, assets_data[i], idea)
+            # Try to build composite chart for first idea and send as photo+buttons
+            chart_sent = False
+            if assets_data:
+                chart_png = await self._build_chart_composite(assets_data[0], pending[0])
+                if chart_png:
+                    # Send full analysis as text first, then chart+buttons as photo
+                    await self._send(update, msg)
+                    pair0 = pending[0].asset.replace("/", "")
+                    cap = f"<b>{html.escape(pair0)}</b> — {len(pending)} setups"
+                    chart_sent = await self._send_photo(update, chart_png, cap, reply_markup=kb)
+            if not chart_sent:
+                await self._send(update, msg, reply_markup=kb)
         else:
             # Single idea or fallback — render per idea
             for i, idea in enumerate(pending):
@@ -2082,10 +2143,33 @@ class TelegramHandler:
                     InlineKeyboardButton("Skip", callback_data=f"reject:{idea.id}:{uid}"),
                 ]])
                 if i < len(assets_data) and assets_data:
-                    # Rich analysis card
+                    # Rich analysis card — try chart+buttons as one message
                     card = render_analysis_card(assets_data[i], idea)
-                    await self._send(update, card, reply_markup=kb)
-                    await self._maybe_send_chart(update, assets_data[i], idea)
+                    chart_png = await self._build_chart_composite(assets_data[i], idea)
+                    if chart_png:
+                        # Build concise caption for photo (1024 char limit)
+                        pair = idea.asset.replace("/", "")
+                        d = idea.direction.value
+                        entry = idea.entry_price
+                        sl, tp = idea.stop_loss, idea.take_profit
+                        sl_pct = abs(entry - sl) / entry * 100 if entry > 0 else 0
+                        tp_pct = abs(tp - entry) / entry * 100 if entry > 0 else 0
+                        rr = idea.risk_reward_ratio
+                        price = assets_data[i].get("price", entry)
+                        rsi = assets_data[i].get("rsi", 0)
+                        cap = (
+                            f"<b>{html.escape(pair)}</b> — {d} Setup\n"
+                            f"Entry: <code>{entry:,.4f}</code> | Now: <code>{price:,.4f}</code>\n"
+                            f"SL: <code>{sl:,.4f}</code> (-{sl_pct:.1f}%) | TP: <code>{tp:,.4f}</code> (+{tp_pct:.1f}%)\n"
+                            f"R:R 1:{rr:.1f} | Conf {idea.confidence:.0%} | RSI {rsi:.0f}\n"
+                            f"{html.escape(idea.reasoning[:200])}"
+                        )
+                        # Send full card as text, then chart+buttons as photo
+                        await self._send(update, card)
+                        await self._send_photo(update, chart_png, cap, reply_markup=kb)
+                    else:
+                        # No chart available — send text+buttons as before
+                        await self._send(update, card, reply_markup=kb)
                 else:
                     # Fallback: detailed format without live market data
                     d = "\U0001f7e2" if idea.direction.value == "LONG" else "\U0001f534"
@@ -3115,7 +3199,26 @@ class TelegramHandler:
                     InlineKeyboardButton("Close", callback_data=f"pos_close_{btn_id}"),
                     InlineKeyboardButton("Refresh", callback_data=f"pos_details_{btn_id}"),
                 ]])
-                await self._send(update, "\n".join(lines), edit=True, reply_markup=kb)
+
+                # Try to attach a position chart
+                chart_png = None
+                try:
+                    from bot.skills.chart_renderer import build_position_chart
+                    chart_png = await build_position_chart(
+                        None, symbol, entry=_entry, sl=_sl, tp=_tp)
+                except Exception:
+                    pass
+
+                if chart_png:
+                    card_text = "\n".join(lines)
+                    # Send text card first, then chart with buttons
+                    await self._send(update, card_text, edit=True)
+                    cap = (f"<b>{html.escape(pair)}</b> · 1h\n"
+                           f"Entry <code>{_entry:,.6f}</code> | Now <code>{last_px:,.6f}</code>\n"
+                           f"{pnl_emoji} {pnl_pct:+.2f}% (${pnl_usd:+,.2f})")
+                    await self._send_photo(update, chart_png, cap, reply_markup=kb)
+                else:
+                    await self._send(update, "\n".join(lines), edit=True, reply_markup=kb)
             elif pos_match:
                 # No market data — show position info only
                 if is_live_pos:
