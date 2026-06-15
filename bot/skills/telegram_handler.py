@@ -3470,9 +3470,21 @@ class TelegramHandler:
             )
             is_failure = any(result.startswith(p) for p in _fail_prefixes)
             if not is_failure:
-                await self._send(update, f"Done, trade is live.\n\n{result}", edit=True)
+                msg = f"\u2705 <b>Trade executed!</b>\n\n{result}"
             else:
-                await self._send(update, f"Trade didn't go through.\n\n{result}", edit=True)
+                msg = f"\u274c <b>Trade didn't go through</b>\n\n{result}"
+            # Try edit first (works for text messages), fall back to new message
+            # (needed when buttons are on a photo message from chart flow)
+            try:
+                await self._send(update, msg, edit=True)
+            except Exception:
+                await self._send(update, msg)
+            # Remove buttons from the original message (best-effort)
+            try:
+                if update.callback_query and update.callback_query.message:
+                    await update.callback_query.message.edit_reply_markup(reply_markup=None)
+            except Exception:
+                pass
         elif data.startswith("reject:"):
             parts = data.split(":")
             trade_id = parts[1]
@@ -3489,6 +3501,15 @@ class TelegramHandler:
                       action="callback_idor_block", result="DENIED")
                 return
             result = self.engine.reject_trade(trade_id)
-            await self._send(update, f"Got it, trade skipped.\n\n{result}", edit=True)
+            msg = f"\u274c Got it, trade skipped.\n\n{result}"
+            try:
+                await self._send(update, msg, edit=True)
+            except Exception:
+                await self._send(update, msg)
+            try:
+                if update.callback_query and update.callback_query.message:
+                    await update.callback_query.message.edit_reply_markup(reply_markup=None)
+            except Exception:
+                pass
 
         audit(system_log, f"Callback: {data}", action="telegram_callback")
