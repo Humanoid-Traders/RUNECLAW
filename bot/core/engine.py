@@ -111,6 +111,7 @@ class RuneClawEngine:
         self._close_notify_callback: Optional[Callable] = None
         self._pending_ideas: dict[str, TradeIdea] = {}
         self._pending_atr: dict[str, Optional[float]] = {}  # H1: store ATR for re-check
+        self._pending_pyramid: dict[str, bool] = {}  # Track pyramid add flags
         self._cooldown_until: float = 0.0
         self._last_rebalance_check: float = 0.0  # monotonic timestamp
         self._rebalance_interval: float = 4 * 3600  # 4 hours minimum between checks
@@ -470,27 +471,101 @@ class RuneClawEngine:
                 true_ranges.append(tr)
             atr_value = sum(true_ranges) / len(true_ranges)
 
-        # ── Duplicate symbol guard ──────────────────────────────────
-        # Block new trades on symbols that already have an open position.
+        # ── Smart pyramid / duplicate symbol guard ─────────────────
+        # Rules: max 2 entries per symbol, same direction adds require
+        # 1R profit + 70% confidence. Opposite direction with high
+        # confidence triggers a flip (close existing + open new).
         symbol_key = idea.asset.replace("/USDT", "").replace("USDT", "").upper()
-        already_open = False
+        existing_positions = []  # list of (position, is_live, current_price)
+
         if CONFIG.is_live() and hasattr(self, 'live_executor'):
             for lp in self.live_executor.open_positions:
                 lp_key = lp.symbol.replace("/USDT", "").replace("USDT", "").upper()
                 if lp_key == symbol_key:
-                    already_open = True
-                    break
-        if not already_open and hasattr(self, 'portfolio'):
+                    existing_positions.append((lp, True))
+
+        if not existing_positions and hasattr(self, 'portfolio'):
             for pp in self.portfolio.open_positions:
                 pp_key = pp.asset.replace("/USDT", "").replace("USDT", "").upper()
                 if pp_key == symbol_key:
-                    already_open = True
-                    break
-        if already_open:
-            audit(scan_log, f"Signal skipped: already have open position on {idea.asset}",
-                  action="duplicate_symbol", result="SKIPPED")
-            self._transition(AgentState.ANALYZING, "duplicate symbol, skipping")
-            return None
+                    existing_positions.append((pp, False))
+
+        is_pyramid_add = False
+        if existing_positions:
+            # Max 2 entries per symbol
+            if len(existing_positions) >= 2:
+                audit(scan_log, f"Signal skipped: max 2 positions on {idea.asset}",
+                      action="pyramid_maxed", result="SKIPPED")
+                self._transition(AgentState.ANALYZING, "max entries reached, skipping")
+                return None
+
+            pos, is_live = existing_positions[0]
+            pos_dir = pos.direction if isinstance(pos.direction, str) else pos.direction.value
+            idea_dir = idea.direction.value
+
+            same_direction = (pos_dir.upper() == idea_dir.upper())
+
+            if same_direction:
+                # ── Same direction: pyramid add ──
+                # Condition 1: confidence >= 70%
+                if idea.confidence < 0.70:
+                    audit(scan_log, f"Pyramid skipped: confidence {idea.confidence:.0%} < 70% for {idea.asset}",
+                          action="pyramid_low_conf", result="SKIPPED")
+                    self._transition(AgentState.ANALYZING, "pyramid confidence too low")
+                    return None
+
+                # Condition 2: existing position is at least 1R in profit
+                entry_px = pos.entry_price
+                sl_px = pos.stop_loss if hasattr(pos, 'stop_loss') else getattr(pos, 'stop_loss', 0)
+                initial_risk = abs(entry_px - sl_px) if sl_px else 0
+                current_price = idea.entry_price  # new signal's entry = current price
+                if pos_dir.upper() == "LONG":
+                    unrealized = current_price - entry_px
+                else:
+                    unrealized = entry_px - current_price
+
+                if initial_risk <= 0 or unrealized < initial_risk:
+                    r_achieved = unrealized / initial_risk if initial_risk > 0 else 0
+                    audit(scan_log,
+                          f"Pyramid skipped: {idea.asset} only {r_achieved:.2f}R in profit (need 1R)",
+                          action="pyramid_insufficient_profit", result="SKIPPED")
+                    self._transition(AgentState.ANALYZING, "pyramid: not enough profit")
+                    return None
+
+                # All conditions met — flag as pyramid add
+                is_pyramid_add = True
+                audit(scan_log,
+                      f"Pyramid APPROVED: {idea.asset} {r_achieved:.2f}R profit, conf {idea.confidence:.0%}",
+                      action="pyramid_approved", result="APPROVED",
+                      data={"r_achieved": round(r_achieved, 2), "confidence": idea.confidence})
+            else:
+                # ── Opposite direction: flip if strong signal ──
+                if idea.confidence < 0.70:
+                    audit(scan_log, f"Flip skipped: confidence {idea.confidence:.0%} < 70% for {idea.asset}",
+                          action="flip_low_conf", result="SKIPPED")
+                    self._transition(AgentState.ANALYZING, "flip confidence too low")
+                    return None
+
+                # Close existing position before opening opposite
+                if is_live and hasattr(self, 'live_executor'):
+                    close_msg = await self.live_executor.close_position(
+                        pos.trade_id, reason="FLIP to " + idea_dir)
+                    audit(trade_log, f"Position flipped: {close_msg}",
+                          action="flip_close", result="CLOSED")
+                    if self._close_notify_callback:
+                        try:
+                            await self._close_notify_callback(close_msg)
+                        except Exception:
+                            pass
+                elif hasattr(self, 'portfolio'):
+                    self.portfolio.close_position(pos.asset, current_price, reason="FLIP")
+
+                audit(scan_log, f"Flip APPROVED: {idea.asset} {pos_dir} -> {idea_dir}, conf {idea.confidence:.0%}",
+                      action="flip_approved", result="APPROVED")
+
+        # Store pyramid flag for confirm_trade to apply half-size + SL-to-breakeven
+        if is_pyramid_add:
+            self._pending_pyramid[idea.id] = True
 
         # Risk gate — pass ATR so all 18 checks run
         # LIVE FIX: pass actual exchange equity so sizing is based on real capital
@@ -754,6 +829,35 @@ class RuneClawEngine:
             # Live mode — execute via LiveExecutor with micro-test safety limits
             self._transition(AgentState.EXECUTING, f"executing LIVE trade {trade_id}")
             size_usd = recheck.position_size_usd
+
+            # ── Pyramid add: half size + move existing SL to breakeven ──
+            _pending_pyramid = getattr(self, '_pending_pyramid', {})
+            if _pending_pyramid.pop(trade_id, False):
+                original_size = size_usd
+                size_usd = size_usd * 0.5
+                audit(trade_log,
+                      f"Pyramid add: half size ${original_size:.2f} -> ${size_usd:.2f}",
+                      action="pyramid_half_size", result="APPLIED")
+
+                # Move existing position's SL to breakeven
+                symbol_key = idea.asset.replace("/USDT", "").replace("USDT", "").upper()
+                for lp in self.live_executor.open_positions:
+                    lp_key = lp.symbol.replace("/USDT", "").replace("USDT", "").upper()
+                    if lp_key == symbol_key and lp.trade_id != trade_id:
+                        old_sl = lp.stop_loss
+                        lp.stop_loss = lp.entry_price  # breakeven
+                        audit(trade_log,
+                              f"Pyramid: moved {lp.symbol} SL to breakeven ${lp.entry_price:.4f} (was ${old_sl:.4f})",
+                              action="pyramid_sl_breakeven", result="MOVED")
+                        # Update exchange SL
+                        try:
+                            exchange = await self.live_executor._get_exchange()
+                            await self.live_executor._update_exchange_sl(
+                                exchange, lp, lp.entry_price)
+                        except Exception as exc:
+                            logger.debug("Failed to update exchange SL to BE: %s", exc)
+                        self.live_executor._save_positions()
+                        break
 
             # LIVE FIX: Cap position size at actual exchange equity to prevent
             # InsufficientFunds errors.  The risk engine sizes based on paper
