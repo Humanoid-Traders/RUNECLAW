@@ -1199,6 +1199,25 @@ class LiveExecutor:
                                         "new_sl": new_sl, "price": price,
                                         "trailing_active": trailing_active})
 
+                # ── Retry SL/TP placement if missing ──
+                if not pos.sl_order_id and not pos.tp_order_id and pos.stop_loss > 0 and pos.take_profit > 0:
+                    try:
+                        direction = Direction.LONG if pos.direction == "LONG" else Direction.SHORT
+                        sl_id, tp_id = await self._place_sl_tp(
+                            exchange, pos.symbol, direction,
+                            pos.quantity, pos.stop_loss, pos.take_profit
+                        )
+                        if sl_id or tp_id:
+                            pos.sl_order_id = sl_id
+                            pos.tp_order_id = tp_id
+                            self._save_positions()
+                            audit(trade_log,
+                                  f"SL/TP retry succeeded: {pos.symbol} SL={pos.stop_loss:.4f} TP={pos.take_profit:.4f}",
+                                  action="sltp_retry", result="PLACED",
+                                  data={"trade_id": trade_id, "sl_id": sl_id, "tp_id": tp_id})
+                    except Exception as exc:
+                        logger.debug("SL/TP retry failed for %s: %s", pos.symbol, exc)
+
                 # ── Static SL/TP check ──
                 should_close = False
                 reason = ""
