@@ -138,6 +138,35 @@ class UserStore:
         user = self.get(telegram_id)
         return user is not None and user.get("authorized", False)
 
+    def can_trade_live(self, telegram_id: int | str) -> bool:
+        """Check if user is allowed to execute live trades.
+
+        Only admins can trade live by default. Users with explicit
+        'can_trade_live' flag override this. Non-admins always get
+        paper execution even when the bot is in live mode.
+        """
+        user = self.get(telegram_id)
+        if not user or not user.get("authorized", False):
+            return False
+        # Explicit flag takes priority
+        if "can_trade_live" in user:
+            return bool(user["can_trade_live"])
+        # Default: only admins can trade live
+        return user.get("role") == "admin"
+
+    def set_live_trading(self, telegram_id: int | str, enabled: bool) -> bool:
+        """Grant or revoke live trading permission for a user."""
+        key = str(telegram_id)
+        with self._lock:
+            if key not in self._users:
+                return False
+            self._users[key]["can_trade_live"] = enabled
+            self._save()
+            audit(system_log,
+                  f"Live trading {'enabled' if enabled else 'disabled'} for user {key}",
+                  action="live_trading_permission", result="OK")
+            return True
+
     def has_permission(self, telegram_id: int | str, command: str) -> bool:
         """Check if user has permission for a specific command.
 

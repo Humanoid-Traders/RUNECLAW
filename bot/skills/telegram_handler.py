@@ -158,6 +158,8 @@ class TelegramHandler:
         self.users = UserStore()
         # Seed admin from .env TELEGRAM_CHAT_ID
         self.users.seed_admin(CONFIG.telegram.chat_id)
+        # Wire user store into engine for role-based live/paper routing
+        self.engine._user_store = self.users
         # Natural-language intent router (Move 1)
         self.intent_router = IntentRouter()
         # Conversation memory (Move 3 — multi-turn context)
@@ -207,6 +209,7 @@ class TelegramHandler:
             # Admin commands
             ("approve", self._cmd_approve), ("revoke", self._cmd_revoke),
             ("users", self._cmd_users),
+            ("grant_live", self._cmd_grant_live), ("revoke_live", self._cmd_revoke_live),
             # LLM BYOK commands
             ("setllm", self._cmd_setllm), ("llmstatus", self._cmd_llmstatus),
             ("llmreset", self._cmd_llmreset), ("llmtiers", self._cmd_llmtiers),
@@ -1136,14 +1139,18 @@ class TelegramHandler:
         if ok:
             target = self.users.get(target_id)
             name = target.get("name", "Unknown") if target else "Unknown"
-            SEP = "─" * 16
+            can_live = self.users.can_trade_live(target_id)
+            trade_mode = "\U0001f525 Live" if can_live else "\U0001f4dd Paper"
+            SEP = "\u2500" * 16
             await self._send(update,
-                f"✅ <b>USER APPROVED</b>\n"
+                f"\u2705 <b>USER APPROVED</b>\n"
                 f"{SEP}\n"
                 f"- Name: <b>{html.escape(name)}</b>\n"
                 f"- ID: <code>{target_id}</code>\n"
                 f"- Role: <code>{role}</code>\n"
-                f"- Status: 🟢 authorized")
+                f"- Trading: {trade_mode}\n"
+                f"- Status: \U0001f7e2 authorized\n\n"
+                f"<i>Use /grant_live or /revoke_live to change trading mode</i>")
             # Notify the approved user
             try:
                 await ctx.bot.send_message(
@@ -1191,7 +1198,68 @@ class TelegramHandler:
                 f"- Status: 🔴 <code>pending</code>")
         else:
             await self._send(update,
-                f"🔴 User <code>{html.escape(target_id)}</code> not found")
+                f"\U0001f534 User <code>{html.escape(target_id)}</code> not found")
+
+    async def _cmd_grant_live(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """Admin only: /grant_live <telegram_id> — allow user to trade live."""
+        if not self._is_admin(update):
+            await self._send(update, "\U0001f512 Admin only.")
+            return
+        args = ctx.args or []
+        if not args:
+            await self._send(update,
+                "\U0001f4cb <b>Usage</b>\n\n"
+                "<code>/grant_live &lt;telegram_id&gt;</code>\n\n"
+                "Grants live trading permission to a user.\n"
+                "Without this, users trade paper only.")
+            return
+        target_id = args[0].strip()
+        if not target_id.isdigit():
+            await self._send(update, "\U0001f534 Invalid Telegram ID.")
+            return
+        user = self.users.get(target_id)
+        if not user or not user.get("authorized"):
+            await self._send(update,
+                f"\U0001f534 User <code>{target_id}</code> not found or not approved.\n"
+                f"Use /approve first.")
+            return
+        ok = self.users.set_live_trading(target_id, True)
+        if ok:
+            name = user.get("name", "Unknown")
+            await self._send(update,
+                f"\U0001f525 <b>LIVE TRADING GRANTED</b>\n\n"
+                f"- User: <b>{html.escape(name)}</b> (<code>{target_id}</code>)\n"
+                f"- Role: <code>{user.get('role', 'trader')}</code>\n"
+                f"- Trading: \U0001f525 Live\n\n"
+                f"<i>This user can now execute live trades on the exchange.</i>")
+        else:
+            await self._send(update, f"\U0001f534 Failed to grant live trading.")
+
+    async def _cmd_revoke_live(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """Admin only: /revoke_live <telegram_id> — restrict user to paper only."""
+        if not self._is_admin(update):
+            await self._send(update, "\U0001f512 Admin only.")
+            return
+        args = ctx.args or []
+        if not args:
+            await self._send(update,
+                "<code>/revoke_live &lt;telegram_id&gt;</code>\n\n"
+                "Restricts user to paper trading only.")
+            return
+        target_id = args[0].strip()
+        if not target_id.isdigit():
+            await self._send(update, "\U0001f534 Invalid Telegram ID.")
+            return
+        ok = self.users.set_live_trading(target_id, False)
+        if ok:
+            user = self.users.get(target_id)
+            name = user.get("name", "Unknown") if user else "Unknown"
+            await self._send(update,
+                f"\U0001f4dd <b>LIVE TRADING REVOKED</b>\n\n"
+                f"- User: <b>{html.escape(name)}</b> (<code>{target_id}</code>)\n"
+                f"- Trading: \U0001f4dd Paper only")
+        else:
+            await self._send(update, f"\U0001f534 User not found.")
 
     async def _cmd_users(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """Admin only: list all registered users."""
@@ -1221,16 +1289,19 @@ class TelegramHandler:
         lines.append("")
 
         # User list
+        _dash = "\u2500"
         lines.append("<pre>")
-        lines.append(f" {'ID':<12}{'NAME':<14}{'ROLE':<10}")
-        lines.append(f" {'─'*12}{'─'*14}{'─'*10}")
+        lines.append(f" {'ID':<12}{'NAME':<14}{'ROLE':<10}{'MODE'}")
+        lines.append(f" {_dash*12}{_dash*14}{_dash*10}{_dash*6}")
 
         for u in all_users[-15:]:  # Show last 15
             tid = u["telegram_id"][-8:]  # Last 8 digits
             name = (u.get("name") or "?")[:12]
             role = u.get("role", "?")
-            auth = "✓" if u.get("authorized") else "✗"
-            lines.append(f" {tid:<12}{name:<14}{auth} {role}")
+            auth = "\u2713" if u.get("authorized") else "\u2717"
+            can_live = self.users.can_trade_live(u["telegram_id"])
+            mode = "LIVE" if can_live else "paper"
+            lines.append(f" {tid:<12}{name:<14}{auth} {role:<8}{mode}")
 
         lines.append("</pre>")
 

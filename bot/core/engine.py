@@ -112,6 +112,7 @@ class RuneClawEngine:
         self._pending_ideas: dict[str, TradeIdea] = {}
         self._pending_atr: dict[str, Optional[float]] = {}  # H1: store ATR for re-check
         self._pending_pyramid: dict[str, bool] = {}  # Track pyramid add flags
+        self._user_store = None  # Set by TelegramHandler for role-based execution
         self._cooldown_until: float = 0.0
         self._last_rebalance_check: float = 0.0  # monotonic timestamp
         self._rebalance_interval: float = 4 * 3600  # 4 hours minimum between checks
@@ -822,8 +823,17 @@ class RuneClawEngine:
             return f"Execution denied: {compliance_decision.reasons[-1] if compliance_decision.reasons else 'compliance check failed'}"
 
         # H2 fix: guard is_live() — only proceed to live execution when is_live() is True
-        if not CONFIG.is_live():
-            # Not live mode — execute as paper trade
+        # Role-based routing: non-admin users get paper execution even in live mode
+        user_can_live = True  # default for backward compat
+        if self._user_store and user_id:
+            user_can_live = self._user_store.can_trade_live(user_id)
+
+        if not CONFIG.is_live() or not user_can_live:
+            # Not live mode OR user doesn't have live permission — execute as paper trade
+            if CONFIG.is_live() and not user_can_live:
+                audit(trade_log,
+                      f"User {user_id} routed to paper: no live trading permission",
+                      action="paper_fallback", result="PAPER")
             pass  # fall through to paper trade below
         else:
             # Live mode — execute via LiveExecutor with micro-test safety limits
