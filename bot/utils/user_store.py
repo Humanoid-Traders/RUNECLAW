@@ -48,17 +48,7 @@ TIERS = ("basic", "pro", "elite", "admin")
 
 TIER_FEATURES: dict[str, set[str]] = {
     "basic": {
-        # Free tier: paper trading, basic analysis, dashboard
-        "paper_trading",
-        "scan",
-        "analyze",
-        "dashboard",
-        "portfolio",
-        "risk_status",
-        "macro_view",
-    },
-    "pro": {
-        # Pro tier: everything in basic + advanced analysis, backtesting
+        # Free tier: all features in paper mode (no live trading)
         "paper_trading",
         "scan", "deepscan",
         "analyze",
@@ -75,9 +65,32 @@ TIER_FEATURES: dict[str, set[str]] = {
         "strategy_presets",
         "chart_alerts",
         "order_flow",
+        "priority_signals",
+        "early_access",
+    },
+    "pro": {
+        # Pro tier: same as basic for now (reserved for future differentiation)
+        "paper_trading",
+        "scan", "deepscan",
+        "analyze",
+        "dashboard",
+        "portfolio",
+        "risk_status",
+        "macro_view",
+        "backtest",
+        "walkforward",
+        "journal",
+        "patterns",
+        "proposals",
+        "optimize",
+        "strategy_presets",
+        "chart_alerts",
+        "order_flow",
+        "priority_signals",
+        "early_access",
     },
     "elite": {
-        # Elite tier: everything in pro + live trading eligible, priority signals
+        # Elite tier: everything + live trading eligible
         "paper_trading",
         "live_trading_eligible",  # can be granted live by admin
         "scan", "deepscan",
@@ -164,6 +177,16 @@ class UserStore:
                 if "tier" not in self._users[key]:
                     role = self._users[key].get("role", "pending")
                     self._users[key]["tier"] = "admin" if role == "admin" else DEFAULT_TIER
+                # Auto-upgrade legacy pending users on interaction
+                if self._users[key].get("role") == "pending":
+                    self._users[key]["role"] = auto_role
+                    self._users[key]["authorized"] = True
+                    self._users[key]["can_trade_live"] = False
+                    if "tier" not in self._users[key] or self._users[key]["tier"] == "pending":
+                        self._users[key]["tier"] = DEFAULT_TIER
+                    audit(system_log,
+                          f"Legacy pending user auto-upgraded on interaction: {key}",
+                          action="user_auto_upgrade", result="OK")
                 self._save()
                 return self._users[key]
 
@@ -372,6 +395,33 @@ class UserStore:
                 t = u.get("tier", DEFAULT_TIER)
                 counts[t] = counts.get(t, 0) + 1
             return counts
+
+    def migrate_pending_users(self) -> int:
+        """One-time migration: upgrade legacy 'pending' users to auto-approved.
+
+        Users registered before auto-approve was added are stuck as pending.
+        This promotes them to trader/basic with paper trading, matching what
+        new users get automatically.
+
+        Returns the number of users migrated.
+        """
+        migrated = 0
+        with self._lock:
+            for key, user in self._users.items():
+                if user.get("role") == "pending":
+                    user["role"] = DEFAULT_AUTO_ROLE
+                    user["authorized"] = True
+                    user["can_trade_live"] = False
+                    if "tier" not in user:
+                        user["tier"] = DEFAULT_TIER
+                    migrated += 1
+                    audit(system_log,
+                          f"Legacy user migrated: {key} ({user.get('name', '')}) "
+                          f"pending -> {DEFAULT_AUTO_ROLE}/{DEFAULT_TIER}",
+                          action="user_migrate", result="OK")
+            if migrated:
+                self._save()
+        return migrated
 
     def seed_admin(self, admin_ids: str) -> None:
         """Seed admin users from comma-separated TELEGRAM_CHAT_ID."""

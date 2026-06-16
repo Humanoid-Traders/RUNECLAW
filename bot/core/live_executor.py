@@ -838,9 +838,11 @@ class LiveExecutor:
             )
             position.sl_order_id = sl_id
             position.tp_order_id = tp_id
+            # Persist SL/TP order IDs to disk immediately
+            self._save_positions()
 
-            sl_info = f" | SL order: {sl_id}" if sl_id else " | SL: manual"
-            tp_info = f" | TP order: {tp_id}" if tp_id else " | TP: manual"
+            sl_info = f" | SL order: {sl_id}" if sl_id else " | SL: pending"
+            tp_info = f" | TP order: {tp_id}" if tp_id else " | TP: pending"
 
             lev_info = f" | {leverage}x" if leverage > 1 else ""
             mode_label = "FUTURES" if is_futures else "SPOT"
@@ -906,7 +908,23 @@ class LiveExecutor:
         is_futures = CONFIG.exchange.trade_mode == "futures"
 
         if not is_futures:
-            # Spot: skip SL/TP (not reliably supported)
+            # Spot: use Bitget v2 spot plan orders for SL/TP
+            price_precision = None
+            try:
+                if not exchange.markets:
+                    await exchange.load_markets()
+                mkt = exchange.markets.get(symbol)
+                if mkt and mkt.get("precision", {}).get("price") is not None:
+                    price_precision = mkt["precision"]["price"]
+            except Exception:
+                pass
+            sl_rounded = self._round_price_to_market(exchange, symbol, stop_loss)
+            tp_rounded = self._round_price_to_market(exchange, symbol, take_profit)
+            sl_id, tp_id = await self._place_sl_tp_spot(
+                symbol, direction, quantity, stop_loss, take_profit,
+                price_precision=price_precision,
+                sl_str=sl_rounded, tp_str=tp_rounded,
+            )
             return sl_id, tp_id
 
         # Use cached UTA detection result instead of making an extra API call.
@@ -1102,20 +1120,27 @@ class LiveExecutor:
         tp_final = tp_str if tp_str is not None else _round_price(take_profit)
         sl_final = sl_str if sl_str is not None else _round_price(stop_loss)
 
-        # Build payload: posSide is always "long"/"short" (even one-way mode)
+        # Build payload:
+        # - ONE-WAY MODE: omit posSide (causes 40019/40020 errors)
+        # - HEDGE MODE: include posSide = "long"/"short"
         payload: dict[str, str] = {
             "category": "USDT-FUTURES",
             "symbol": bitget_symbol,
-            "posSide": pos_side,
+            "type": "tpsl",
+            "tpslMode": "full",
             "takeProfit": tp_final,
             "stopLoss": sl_final,
             "tpOrderType": "market",
             "slOrderType": "market",
             "clientOid": self._client_oid(bitget_symbol + pos_side + "sltp"),
         }
+        # Only include posSide in hedge mode
+        if self._hedge_mode:
+            payload["posSide"] = pos_side
 
-        logger.info("v3 SL/TP request: symbol=%s posSide=%s TP=%s SL=%s (raw TP=%s SL=%s, rounded=%s/%s, precision=%s)",
-                     bitget_symbol, pos_side, tp_final, sl_final,
+        logger.info("v3 SL/TP request: symbol=%s hedge=%s posSide=%s TP=%s SL=%s (raw TP=%s SL=%s, rounded=%s/%s, precision=%s)",
+                     bitget_symbol, self._hedge_mode, pos_side if self._hedge_mode else "omitted",
+                     tp_final, sl_final,
                      take_profit, stop_loss, tp_str, sl_str, price_precision)
         try:
             result = await _asyncio.to_thread(_v3_post, "/api/v3/trade/place-strategy-order", payload)
@@ -1129,17 +1154,201 @@ class LiveExecutor:
                 audit(trade_log, f"v3 SL/TP strategy order placed: order={order_id}",
                       action="sl_tp_v3", result="OK",
                       data={"symbol": bitget_symbol, "sl": sl_final, "tp": tp_final,
-                            "order_id": order_id})
+                            "order_id": order_id, "hedge_mode": self._hedge_mode})
             else:
                 error_msg = result.get("msg", str(result))
-                logger.warning("v3 strategy order failed: %s", error_msg)
+                error_code = result.get("code", "")
+                logger.warning("v3 strategy order failed (code=%s): %s", error_code, error_msg)
                 audit(trade_log, f"v3 SL/TP failed: {error_msg}",
-                      action="sl_tp_v3", result="SKIP",
-                      data={"symbol": bitget_symbol, "response": str(result)[:300]})
+                      action="sl_tp_v3", result="FAIL",
+                      data={"symbol": bitget_symbol, "response": str(result)[:300],
+                            "payload": {k: v for k, v in payload.items() if k != "clientOid"}})
+
+                # Retry with posSide if omitting it failed (some UTA configs need it)
+                if not self._hedge_mode and error_code in ("40019", "40020"):
+                    logger.info("Retrying v3 SL/TP with posSide=%s", pos_side)
+                    payload["posSide"] = pos_side
+                    retry_result = await _asyncio.to_thread(
+                        _v3_post, "/api/v3/trade/place-strategy-order", payload)
+                    if retry_result.get("code") == "00000":
+                        data = retry_result.get("data", {})
+                        order_id = data.get("orderId") or data.get("slOrderId") or data.get("tpOrderId") or "v3-strategy"
+                        sl_id = order_id
+                        tp_id = order_id
+                        audit(trade_log, f"v3 SL/TP retry with posSide OK: order={order_id}",
+                              action="sl_tp_v3_retry", result="OK",
+                              data={"symbol": bitget_symbol, "sl": sl_final, "tp": tp_final})
+                    else:
+                        retry_msg = retry_result.get("msg", str(retry_result))
+                        logger.warning("v3 SL/TP retry also failed: %s", retry_msg)
+                        audit(trade_log, f"v3 SL/TP retry failed: {retry_msg}",
+                              action="sl_tp_v3_retry", result="FAIL",
+                              data={"symbol": bitget_symbol, "response": str(retry_result)[:300]})
         except Exception as exc:
             logger.warning("v3 SL/TP placement error for %s: %s", bitget_symbol, exc)
             audit(trade_log, f"v3 SL/TP error: {exc}",
                   action="sl_tp_v3", result="ERROR",
+                  data={"symbol": bitget_symbol, "error": str(exc)[:200]})
+
+        return sl_id, tp_id
+
+    async def _place_sl_tp_spot(
+        self, symbol: str, direction: Direction, quantity: float,
+        stop_loss: float, take_profit: float,
+        price_precision: object = None,
+        sl_str: Optional[str] = None,
+        tp_str: Optional[str] = None,
+    ) -> tuple[Optional[str], Optional[str]]:
+        """Place SL/TP via Bitget v2 spot plan orders.
+
+        Uses /api/v2/spot/trade/place-plan-order to create trigger orders
+        that fire when the market price reaches the SL or TP level.
+
+        For LONG positions: SL sells when price drops, TP sells when price rises.
+        For SHORT positions (rare in spot): SL buys when price rises, TP buys when price drops.
+        """
+        import urllib.request as _urllib_req
+        import hmac as _hmac
+        import hashlib as _hashlib
+        import base64 as _base64
+        import time as _time
+        import json as _json
+        import asyncio as _asyncio
+
+        cfg = CONFIG.exchange
+        sl_id = None
+        tp_id = None
+
+        # Strip "/USDT" from ccxt symbol format to get Bitget symbol
+        bitget_symbol = symbol.replace("/USDT", "USDT").replace(":USDT", "")
+
+        # Close side: sell to close a long, buy to close a short
+        close_side = "sell" if direction == Direction.LONG else "buy"
+
+        def _v2_post(path: str, body_dict: dict) -> dict:
+            body = _json.dumps(body_dict)
+            ts = str(int(_time.time() * 1000))
+            pre_sign = ts + "POST" + path + body
+            sig = _base64.b64encode(
+                _hmac.new(cfg.api_secret.encode(), pre_sign.encode(), _hashlib.sha256).digest()
+            ).decode()
+            url = "https://api.bitget.com" + path
+            req = _urllib_req.Request(url, data=body.encode(), method="POST")
+            req.add_header("ACCESS-KEY", cfg.api_key)
+            req.add_header("ACCESS-SIGN", sig)
+            req.add_header("ACCESS-TIMESTAMP", ts)
+            req.add_header("ACCESS-PASSPHRASE", cfg.passphrase)
+            req.add_header("Content-Type", "application/json")
+            req.add_header("locale", "en-US")
+            try:
+                resp = _urllib_req.urlopen(req, timeout=10)
+                return _json.loads(resp.read())
+            except Exception as e:
+                if hasattr(e, 'read'):
+                    return _json.loads(e.read().decode())
+                return {"code": "ERROR", "msg": str(e)}
+
+        def _round_price(price: float) -> str:
+            """Round price to exchange-allowed precision."""
+            if price_precision is not None:
+                if isinstance(price_precision, int):
+                    dp = price_precision
+                elif isinstance(price_precision, float) and price_precision < 1:
+                    import math
+                    dp = max(0, -int(math.floor(math.log10(price_precision))))
+                else:
+                    dp = int(price_precision)
+                return f"{price:.{dp}f}"
+            if price >= 1000:
+                return f"{price:.1f}"
+            elif price >= 10:
+                return f"{price:.2f}"
+            elif price >= 1:
+                return f"{price:.3f}"
+            elif price >= 0.1:
+                return f"{price:.4f}"
+            elif price >= 0.01:
+                return f"{price:.5f}"
+            elif price >= 0.001:
+                return f"{price:.6f}"
+            else:
+                return f"{price:.8f}"
+
+        tp_final = tp_str if tp_str is not None else _round_price(take_profit)
+        sl_final = sl_str if sl_str is not None else _round_price(stop_loss)
+
+        # Quantity string — use same precision logic
+        qty_str = f"{quantity}"
+
+        logger.info("Spot SL/TP request: symbol=%s side=%s qty=%s SL=%s TP=%s",
+                     bitget_symbol, close_side, qty_str, sl_final, tp_final)
+
+        # ── Place SL (stop-loss) plan order ──
+        sl_payload = {
+            "symbol": bitget_symbol,
+            "side": close_side,
+            "triggerPrice": sl_final,
+            "orderType": "market",
+            "size": qty_str,
+            "triggerType": "fill_price",
+            "clientOid": self._client_oid(bitget_symbol + "spot_sl"),
+        }
+
+        try:
+            sl_result = await _asyncio.to_thread(
+                _v2_post, "/api/v2/spot/trade/place-plan-order", sl_payload)
+
+            if sl_result.get("code") == "00000":
+                data = sl_result.get("data", {})
+                sl_id = data.get("orderId") or data.get("clientOid") or "spot-sl"
+                audit(trade_log, f"Spot SL plan order placed: {sl_id}",
+                      action="spot_sl_order", result="OK",
+                      data={"symbol": bitget_symbol, "trigger": sl_final, "order_id": sl_id})
+            else:
+                error_msg = sl_result.get("msg", str(sl_result))
+                error_code = sl_result.get("code", "")
+                logger.warning("Spot SL plan order failed (code=%s): %s", error_code, error_msg)
+                audit(trade_log, f"Spot SL plan order failed: {error_msg}",
+                      action="spot_sl_order", result="FAIL",
+                      data={"symbol": bitget_symbol, "response": str(sl_result)[:300]})
+        except Exception as exc:
+            logger.warning("Spot SL plan order error for %s: %s", bitget_symbol, exc)
+            audit(trade_log, f"Spot SL error: {exc}",
+                  action="spot_sl_order", result="ERROR",
+                  data={"symbol": bitget_symbol, "error": str(exc)[:200]})
+
+        # ── Place TP (take-profit) plan order ──
+        tp_payload = {
+            "symbol": bitget_symbol,
+            "side": close_side,
+            "triggerPrice": tp_final,
+            "orderType": "market",
+            "size": qty_str,
+            "triggerType": "fill_price",
+            "clientOid": self._client_oid(bitget_symbol + "spot_tp"),
+        }
+
+        try:
+            tp_result = await _asyncio.to_thread(
+                _v2_post, "/api/v2/spot/trade/place-plan-order", tp_payload)
+
+            if tp_result.get("code") == "00000":
+                data = tp_result.get("data", {})
+                tp_id = data.get("orderId") or data.get("clientOid") or "spot-tp"
+                audit(trade_log, f"Spot TP plan order placed: {tp_id}",
+                      action="spot_tp_order", result="OK",
+                      data={"symbol": bitget_symbol, "trigger": tp_final, "order_id": tp_id})
+            else:
+                error_msg = tp_result.get("msg", str(tp_result))
+                error_code = tp_result.get("code", "")
+                logger.warning("Spot TP plan order failed (code=%s): %s", error_code, error_msg)
+                audit(trade_log, f"Spot TP plan order failed: {error_msg}",
+                      action="spot_tp_order", result="FAIL",
+                      data={"symbol": bitget_symbol, "response": str(tp_result)[:300]})
+        except Exception as exc:
+            logger.warning("Spot TP plan order error for %s: %s", bitget_symbol, exc)
+            audit(trade_log, f"Spot TP error: {exc}",
+                  action="spot_tp_order", result="ERROR",
                   data={"symbol": bitget_symbol, "error": str(exc)[:200]})
 
         return sl_id, tp_id

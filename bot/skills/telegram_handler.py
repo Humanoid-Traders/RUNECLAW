@@ -43,6 +43,7 @@ from bot.utils.user_store import UserStore
 from bot.nlp.intent_router import IntentRouter
 from bot.nlp.conversation_store import ConversationStore
 from bot.core.proactive_monitor import ProactiveMonitor
+from bot.marketing.channel_forwarder import ChannelForwarder
 from bot.formatters.rich_cards import (
     fetch_analysis_data,
     render_analysis_card,
@@ -158,6 +159,11 @@ class TelegramHandler:
         self.users = UserStore()
         # Seed admin from .env TELEGRAM_CHAT_ID
         self.users.seed_admin(CONFIG.telegram.chat_id)
+        # Migrate legacy pending users to auto-approved trader/basic
+        _migrated = self.users.migrate_pending_users()
+        if _migrated:
+            audit(system_log, f"Migrated {_migrated} legacy pending users to trader/basic",
+                  action="startup_migration", result="OK")
         # Wire user store into engine for role-based live/paper routing
         self.engine._user_store = self.users
         # Natural-language intent router (Move 1)
@@ -171,6 +177,8 @@ class TelegramHandler:
         )
         # Proactive alert monitor (Move 2)
         self.monitor = ProactiveMonitor(engine)
+        # Channel forwarder for marketing auto-posts
+        self.forwarder = ChannelForwarder()
 
     def build_app(self) -> Application:
         app = Application.builder().token(CONFIG.telegram.bot_token).build()
@@ -211,6 +219,8 @@ class TelegramHandler:
             ("users", self._cmd_users),
             ("grant_live", self._cmd_grant_live), ("revoke_live", self._cmd_revoke_live),
             ("set_tier", self._cmd_set_tier),
+            # Marketing / channel forwarder
+            ("channel", self._cmd_channel), ("broadcast", self._cmd_broadcast),
             # LLM BYOK commands
             ("setllm", self._cmd_setllm), ("llmstatus", self._cmd_llmstatus),
             ("llmreset", self._cmd_llmreset), ("llmtiers", self._cmd_llmtiers),
@@ -815,6 +825,11 @@ class TelegramHandler:
         user = self.users.get(tg_id)
         text = update.message.text.strip()
 
+        # Auto-detect group chats for channel forwarder
+        chat = update.effective_chat
+        if chat and chat.type in ("group", "supergroup", "channel"):
+            self.forwarder.detect_group(chat.id, chat.type, chat.title or "")
+
         if not text:
             return
 
@@ -1073,40 +1088,135 @@ class TelegramHandler:
         await self._send(update, msg, reply_markup=_KB_WARROOM)
 
     async def _cmd_help(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-        """GetClaw help — natural language guide."""
+        """GetClaw help — organized command reference."""
         tg_id = self._get_tg_id(update)
         is_auth = self.users.is_authorized(tg_id)
         user = self.users.get(tg_id)
         role = user.get("role", "pending") if user else "pending"
 
-        SEP = "─" * 16
+        _sep = "\u2500" * 20
 
         if not is_auth:
             await self._send(update,
                 f"\u2694\ufe0f <b>RUNECLAW</b>\n"
-                f"{SEP}\n"
-                f"<i>Status: pending approval — use /start to register</i>")
+                f"{_sep}\n"
+                f"<i>Status: pending approval \u2014 use /start to register</i>")
             return
 
+        tier_label = self.users.tier_label(tg_id)
+        can_live = self.users.can_trade_live(tg_id)
+        trade_mode = "\U0001f525 Live" if can_live else "\U0001f4dd Paper"
+
         msg = (
-            f"<b>How to use RUNECLAW</b>\n\n"
-            f"Just type what you want, like texting a friend:\n\n"
-            f"<b>Market stuff</b>\n"
-            f"<i>\"scan BTC\" - \"analyze ETH\" - \"what's moving?\"</i>\n\n"
-            f"<b>Trades & signals</b>\n"
-            f"<i>\"give me an entry\" - \"long or short?\" - \"show signal\"</i>\n\n"
-            f"<b>Portfolio & risk</b>\n"
-            f"<i>\"my positions\" - \"how's my PnL?\" - \"risk check\"</i>\n\n"
-            f"<b>Controls</b>\n"
-            f"<i>\"pause\" - \"resume\" - \"emergency stop\"</i>\n\n"
-            f"That's it. No commands to memorize."
+            f"\u2694\ufe0f <b>RUNECLAW \u2014 Command Guide</b>\n"
+            f"{_sep}\n"
+            f"{tier_label} | {trade_mode}\n\n"
+
+            # Tip
+            f"\U0001f4ac <i>You can also just type naturally:</i>\n"
+            f"<i>\"scan BTC\" \u2014 \"how's my PnL?\" \u2014 \"what's moving?\"</i>\n\n"
+
+            # Market Analysis
+            f"\U0001f50d <b>Market Analysis</b>\n"
+            f"/scan \u2014 quick market scan\n"
+            f"/deepscan \u2014 deep multi-timeframe scan\n"
+            f"/fullscan \u2014 full scan (all pairs)\n"
+            f"/analyze <i>BTC</i> \u2014 detailed coin analysis\n"
+            f"/macro \u2014 macro outlook\n"
+            f"/patterns \u2014 chart pattern detection\n\n"
+
+            # Trading
+            f"\U0001f4b9 <b>Trading</b>\n"
+            f"/trade <i>BTC</i> \u2014 generate trade idea\n"
+            f"/latest_signal \u2014 last signal\n"
+            f"/signals \u2014 signal history & stats\n"
+            f"/proposals \u2014 pending trade proposals\n\n"
+
+            # Portfolio & Risk
+            f"\U0001f4ca <b>Portfolio & Risk</b>\n"
+            f"/portfolio \u2014 holdings & PnL\n"
+            f"/open_positions \u2014 current positions\n"
+            f"/risk \u2014 risk dashboard\n"
+            f"/performance \u2014 performance stats\n"
+            f"/daily_report \u2014 daily summary\n"
+            f"/journal \u2014 trade journal\n"
+            f"/costs \u2014 fee breakdown\n\n"
+
+            # Strategy
+            f"\U0001f3af <b>Strategy Presets</b>\n"
+            f"/momentum \u2014 trend following\n"
+            f"/swing \u2014 swing trades\n"
+            f"/scalp \u2014 quick scalps\n"
+            f"/dip \u2014 dip buying\n"
+            f"/intraday \u2014 intraday setups\n"
+            f"/strategy \u2014 current strategy info\n"
+            f"/mode \u2014 switch strategy mode\n"
+            f"/playbook \u2014 strategy playbook\n\n"
+
+            # Tools
+            f"\U0001f6e0 <b>Tools</b>\n"
+            f"/backtest \u2014 run backtest\n"
+            f"/walkforward \u2014 walk-forward test\n"
+            f"/optimize \u2014 parameter optimization\n"
+            f"/watch <i>BTC 65000</i> \u2014 price alert\n"
+            f"/learn \u2014 trading lessons\n\n"
+
+            # Controls
+            f"\u2699\ufe0f <b>Controls</b>\n"
+            f"/dashboard \u2014 overview panel\n"
+            f"/status \u2014 engine status\n"
+            f"/health \u2014 system health\n"
+            f"/pause \u2014 pause trading\n"
+            f"/resume \u2014 resume trading\n"
+            f"/halt \u2014 halt engine\n"
+            f"/emergency_stop \u2014 kill switch\n"
+            f"/rejected \u2014 rejected trades\n"
+            f"/whynot \u2014 why last trade was rejected\n"
+            f"/reset \u2014 reset engine state\n"
         )
 
+        # Account
+        msg += (
+            f"\n\U0001f464 <b>Account</b>\n"
+            f"/me \u2014 your profile\n"
+            f"/link \u2014 link exchange account\n"
+            f"/start \u2014 refresh session\n"
+        )
+
+        # LLM settings (show for all authorized users)
+        msg += (
+            f"\n\U0001f916 <b>AI Settings</b>\n"
+            f"/llmstatus \u2014 current AI model\n"
+            f"/llmtiers \u2014 available models\n"
+            f"/setllm \u2014 change AI model\n"
+            f"/llmreset \u2014 reset to default\n"
+        )
+
+        # Live trading (show for users with live access)
+        if can_live or role == "admin":
+            msg += (
+                f"\n\U0001f525 <b>Live Trading</b>\n"
+                f"/golive \u2014 enable live execution\n"
+                f"/livebalance \u2014 exchange balance\n"
+                f"/livepositions \u2014 exchange positions\n"
+                f"/liveclose <i>id</i> \u2014 close position\n"
+                f"/buy <i>BTC 5</i> \u2014 spot buy\n"
+                f"/sell <i>BTC</i> \u2014 spot sell\n"
+            )
+
+        # Admin section
         if role == "admin":
             msg += (
-                f"\n\n<b>Admin</b>\n"
-                f"<i>/approve ID - /revoke ID - /users</i>\n"
-                f"<i>/set_tier ID tier - /grant_live ID - /revoke_live ID</i>"
+                f"\n\U0001f6e1 <b>Admin</b>\n"
+                f"/users \u2014 all users\n"
+                f"/approve <i>ID</i> \u2014 approve user\n"
+                f"/revoke <i>ID</i> \u2014 revoke access\n"
+                f"/set_tier <i>ID tier</i> \u2014 change tier\n"
+                f"/grant_live <i>ID</i> \u2014 enable live trading\n"
+                f"/revoke_live <i>ID</i> \u2014 disable live trading\n"
+                f"/stockscan \u2014 stock market scan\n"
+                f"/channel \u2014 manage auto-posting\n"
+                f"/broadcast \u2014 send message to groups\n"
             )
 
         await self._send(update, msg)
@@ -1324,6 +1434,113 @@ class TelegramHandler:
         else:
             await self._send(update, "\U0001f534 Failed to update tier.")
 
+    # ── Marketing / Channel commands ──────────────────────────
+
+    async def _cmd_channel(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """/channel — manage marketing channel auto-posting."""
+        # Allow bot admins OR Telegram group admins
+        is_bot_admin = self._is_admin(update)
+        is_group_admin = False
+        if not is_bot_admin and update.effective_chat and update.effective_chat.type in ("group", "supergroup"):
+            try:
+                member = await ctx.bot.get_chat_member(
+                    update.effective_chat.id, update.effective_user.id)
+                is_group_admin = member.status in ("creator", "administrator")
+            except Exception:
+                pass
+        if not is_bot_admin and not is_group_admin:
+            await self._send(update, "\U0001f512 Admin only.")
+            return
+
+        # Auto-detect this group if command is run in one
+        chat = update.effective_chat
+        if chat and chat.type in ("group", "supergroup"):
+            self.forwarder.detect_group(chat.id, chat.type, chat.title or "")
+
+        args = ctx.args or []
+        if not args:
+            groups = self.forwarder.group_ids
+            status = "\U0001f7e2 ON" if self.forwarder.is_enabled else "\U0001f534 OFF"
+            _sep = "\u2500" * 18
+            msg = (
+                f"\U0001f4e1 <b>Channel Forwarder</b>\n"
+                f"{_sep}\n\n"
+                f"Status: {status}\n"
+                f"Groups: <code>{len(groups)}</code>\n"
+            )
+            if groups:
+                for gid in groups:
+                    msg += f"\u2022 <code>{gid}</code>\n"
+            msg += (
+                f"\n<b>Commands:</b>\n"
+                f"<code>/channel on</code> \u2014 enable auto-posting\n"
+                f"<code>/channel off</code> \u2014 disable auto-posting\n"
+                f"<code>/channel add &lt;chat_id&gt;</code> \u2014 add group\n"
+                f"<code>/channel remove &lt;chat_id&gt;</code> \u2014 remove group\n"
+                f"<code>/channel test</code> \u2014 send test message\n\n"
+                f"<i>Groups are also auto-detected when the bot receives a message in them.</i>"
+            )
+            await self._send(update, msg)
+            return
+
+        sub = args[0].lower()
+        if sub == "on":
+            self.forwarder.set_enabled(True)
+            await self._send(update, "\U0001f7e2 Channel auto-posting <b>enabled</b>.")
+        elif sub == "off":
+            self.forwarder.set_enabled(False)
+            await self._send(update, "\U0001f534 Channel auto-posting <b>disabled</b>.")
+        elif sub == "add" and len(args) >= 2:
+            try:
+                gid = int(args[1])
+                self.forwarder.add_group(gid)
+                await self._send(update, f"\u2705 Group <code>{gid}</code> added.")
+            except ValueError:
+                await self._send(update, "\u274c Invalid chat ID. Must be a number.")
+        elif sub == "remove" and len(args) >= 2:
+            try:
+                gid = int(args[1])
+                self.forwarder.remove_group(gid)
+                await self._send(update, f"\u2705 Group <code>{gid}</code> removed.")
+            except ValueError:
+                await self._send(update, "\u274c Invalid chat ID.")
+        elif sub == "test":
+            now = datetime.now(UTC).strftime("%H:%M UTC")
+            await self.forwarder.post_custom(
+                f"\U0001f916 <b>RUNECLAW Test</b>\n\n"
+                f"Channel forwarder is working.\n"
+                f"Signals, trade results, and daily reports will auto-post here.\n\n"
+                f"<i>{now}</i>")
+            await self._send(update, "\u2705 Test message sent to all groups.")
+        else:
+            await self._send(update,
+                "\u274c Unknown subcommand. Use <code>/channel</code> for help.")
+
+    async def _cmd_broadcast(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """/broadcast <message> — send a custom message to all marketing channels."""
+        is_bot_admin = self._is_admin(update)
+        is_group_admin = False
+        if not is_bot_admin and update.effective_chat and update.effective_chat.type in ("group", "supergroup"):
+            try:
+                member = await ctx.bot.get_chat_member(
+                    update.effective_chat.id, update.effective_user.id)
+                is_group_admin = member.status in ("creator", "administrator")
+            except Exception:
+                pass
+        if not is_bot_admin and not is_group_admin:
+            await self._send(update, "\U0001f512 Admin only.")
+            return
+        args = ctx.args or []
+        if not args:
+            await self._send(update,
+                "\U0001f4e2 <b>Broadcast</b>\n\n"
+                "<code>/broadcast Your message here</code>\n\n"
+                "Sends a custom message to all registered groups.")
+            return
+        text = " ".join(args)
+        await self.forwarder.post_custom(f"\U0001f4e2 {html.escape(text)}")
+        await self._send(update, f"\u2705 Broadcast sent to {self.forwarder.group_count} group(s).")
+
     async def _cmd_users(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """Admin only: list all registered users."""
         if not self._is_admin(update):
@@ -1486,11 +1703,11 @@ class TelegramHandler:
             await self._send(update,
                 "\u26a0\ufe0f <b>LIVE TRADING ACTIVATION</b>\n\n"
                 "This will enable <b>real order execution</b> on Bitget.\n\n"
-                "Micro-test safety limits:\n"
-                "\u2022 Max $10 per position\n"
-                "\u2022 Max $50 total exposure\n"
-                "\u2022 Max 5 concurrent positions\n"
-                "\u2022 Spot market only\n\n"
+                f"Safety limits:\n"
+                f"\u2022 Max {CONFIG.risk.max_open_positions} concurrent positions\n"
+                f"\u2022 Max {CONFIG.risk.max_symbol_exposure_pct:.0f}% per symbol\n"
+                f"\u2022 USDT-M perpetual futures\n"
+                f"\u2022 Default {CONFIG.trading.default_leverage}x leverage\n\n"
                 "To confirm, type:\n<code>/golive CONFIRM</code>")
             return
 
@@ -1508,8 +1725,9 @@ class TelegramHandler:
               data={"user": self._get_tg_id(update)})
         await self._send(update,
             "\U0001f7e2 <b>LIVE TRADING ENABLED</b>\n\n"
-            "Real orders will execute on Bitget.\n"
-            "Micro-test limits active ($10/pos, $50 total).\n\n"
+            "Real orders will execute on Bitget (USDT-M futures).\n"
+            f"Limits: {CONFIG.risk.max_open_positions} positions, "
+            f"{CONFIG.trading.default_leverage}x leverage.\n\n"
             "\u2022 <code>/livebalance</code> — check USDT balance\n"
             "\u2022 <code>/livepositions</code> — view open positions\n"
             "\u2022 <code>/liveclose &lt;id&gt;</code> — close a position\n"
@@ -1832,6 +2050,8 @@ class TelegramHandler:
     async def start_monitor(self, bot) -> None:
         """Start the proactive monitor background task.
         Called from main.py after the Telegram app is initialized."""
+        # Wire up channel forwarder
+        self.forwarder.set_bot(bot)
         async def _send_fn(chat_id: str, text: str) -> None:
             try:
                 await bot.send_message(
@@ -1863,6 +2083,21 @@ class TelegramHandler:
                 system_log.warning("proactive chart_fn skipped: %s", exc, exc_info=True)
 
         self.monitor.set_chart_fn(_chart_fn)
+
+        # Hook: forward new signals to marketing channels
+        _forwarder = self.forwarder
+        _original_dispatch = self.monitor._dispatch
+
+        async def _dispatch_with_forward(alert, send_fn):
+            await _original_dispatch(alert, send_fn)
+            # Forward trade signals to marketing channels
+            if alert.alert_type == "TRADE_SIGNAL" and alert.idea is not None:
+                try:
+                    await _forwarder.post_signal(alert.idea)
+                except Exception:
+                    pass
+
+        self.monitor._dispatch = _dispatch_with_forward
         self._monitor_task = asyncio.create_task(self.monitor.run(_send_fn))
 
         # Register trade-close notification callback
@@ -1887,6 +2122,12 @@ class TelegramHandler:
                     parse_mode="HTML")
             except Exception as exc:
                 system_log.debug("Close notify send failed: %s", exc)
+
+            # Forward trade close to marketing channels
+            try:
+                await _forwarder.post_trade_closed(msg)
+            except Exception:
+                pass
 
         self.engine.set_close_notify_callback(_on_trade_closed)
 
@@ -3070,6 +3311,22 @@ class TelegramHandler:
         rendered = wr_daily_report(data)
         await self._send(update, rendered["text"])
 
+        # Forward daily report to marketing channels
+        try:
+            win_rate = (wins / today_trades * 100) if today_trades > 0 else 0
+            report_summary = (
+                f"Trades: <code>{today_trades}</code> | "
+                f"W/L: <code>{wins}/{losses}</code> | "
+                f"Win Rate: <code>{win_rate:.0f}%</code>\n"
+                f"Net PnL: <code>${net_pnl:+,.2f}</code>\n"
+                f"Best: <code>{best_trade}</code> (${best_pnl:+,.2f})\n"
+                f"Worst: <code>{worst_trade}</code> (${worst_pnl:+,.2f})\n"
+                f"Risk: {risk_status}"
+            )
+            await self.forwarder.post_daily_report(report_summary)
+        except Exception:
+            pass
+
     async def _cmd_strategy(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """Strategy mode selector."""
         if not await self._guard(update, "run"):
@@ -3342,8 +3599,14 @@ class TelegramHandler:
                     hold_str = f"{hold_hours / 24:.1f}d"
 
                 # SL/TP order status
-                sl_tag = "on exchange" if _sl_oid else "not set"
-                tp_tag = "on exchange" if _tp_oid else "not set"
+                if _sl_oid:
+                    sl_tag = "on exchange"
+                else:
+                    sl_tag = "bot-managed"
+                if _tp_oid:
+                    tp_tag = "on exchange"
+                else:
+                    tp_tag = "bot-managed"
 
                 mode_tag = " LIVE" if is_live_pos else ""
                 lev_str = f" | {leverage:.0f}x" if leverage > 1 else ""
@@ -3618,6 +3881,15 @@ class TelegramHandler:
             is_failure = any(result.startswith(p) for p in _fail_prefixes)
             if not is_failure:
                 msg = f"\u2705 <b>Trade executed!</b>\n\n{result}"
+                # Forward trade open to marketing channels
+                idea = self.engine._pending_ideas.get(trade_id) or self.engine._last_confirmed_idea
+                if idea:
+                    can_live = self.users.can_trade_live(caller_uid or "")
+                    _mode = "LIVE" if can_live and not CONFIG.simulation_mode else "PAPER"
+                    try:
+                        await self.forwarder.post_trade_opened(idea, mode=_mode)
+                    except Exception:
+                        pass
             else:
                 msg = f"\u274c <b>Trade didn't go through</b>\n\n{result}"
             # Try edit first (works for text messages), fall back to new message

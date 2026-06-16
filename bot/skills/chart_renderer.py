@@ -390,6 +390,11 @@ def render_chart_png(df, title: str = "RUNECLAW Setup", dpi: int = 160,
                                   va="bottom" if kind == "high" else "top",
                                   alpha=0.85, zorder=4)
 
+            # ── Wave analysis & pattern overlays ──
+            _elliott_wave_overlay(df, price_ax, t)
+            _fibonacci_levels_overlay(df, price_ax, t)
+            _pattern_zones_overlay(df, price_ax, t)
+
             # RSI overbought/oversold shaded zones + clean ticks.
             if rsi_ax is not None:
                 rsi_ax.axhspan(70, 100, color=t["down"], alpha=0.08, zorder=0)
@@ -568,6 +573,428 @@ def _swing_labels(df, max_each: int = 2):
         return out[-(max_each * 2):]
     except Exception:  # noqa: BLE001
         return []
+
+
+def _elliott_wave_overlay(df, price_ax, t):
+    """Draw Elliott Wave labels (1-2-3-4-5 / A-B-C) on swing points.
+
+    Lazy-imports the chart_patterns detectors so the overlay is optional.
+    Fails silently if the module or detection fails.
+    """
+    try:
+        from bot.core.chart_patterns import detect_elliott_impulse, detect_elliott_corrective
+    except Exception:  # noqa: BLE001
+        return
+    try:
+        import numpy as np
+        highs = df["High"].to_numpy()
+        lows = df["Low"].to_numpy()
+        closes = df["Close"].to_numpy()
+        n = len(df)
+        if n < 20:
+            return
+
+        span = (float(highs.max()) - float(lows.min())) or 1.0
+        offset_hi = span * 0.035   # label offset above swing highs
+        offset_lo = span * 0.035   # label offset below swing lows
+
+        impulse = detect_elliott_impulse(highs, lows, closes, lookback=5)
+        if not impulse:
+            return
+
+        kl = impulse.get("key_levels", {})
+        is_bullish = impulse.get("signal") == "bullish"
+        wave_color = t["up"] if is_bullish else t["down"]
+
+        # ── Build wave-point list from key_levels ──
+        # Full 5-wave impulse keys: w1_start, w3_top, w4_low, w5_top (bullish)
+        # Partial impulse keys: w1_start, w1_top, w2_low, w3_top
+        wave_points = []  # [(x_index, y_price, label, is_high)]
+        from bot.core.multi_timeframe import _find_swings
+        swings = _find_swings(highs, lows, lookback=5)
+        sh = swings.get("swing_highs", [])
+        sl = swings.get("swing_lows", [])
+
+        if is_bullish:
+            # Map key_levels to swing indices
+            if "w4_low" in kl and "w5_top" in kl:
+                # Full 5-wave: SL0->SH0->SL1->SH1->SL2->SH2
+                if len(sl) >= 3 and len(sh) >= 3:
+                    wave_points = [
+                        (sl[0][0], sl[0][1], "\u2460", False),   # 1 start (low)
+                        (sh[0][0], sh[0][1], "\u2461", True),    # 2 (high)
+                        (sl[1][0], sl[1][1], "\u2462", False),   # 3 (low)
+                        (sh[1][0], sh[1][1], "\u2463", True),    # 4 (high)
+                        (sl[2][0], sl[2][1], "\u2464", False),   # 5 (low)
+                        (sh[2][0], sh[2][1], "\u2465", True),    # end (high)
+                    ]
+            elif "w1_top" in kl and "w2_low" in kl:
+                # Partial (waves 1-3)
+                if len(sl) >= 2 and len(sh) >= 2:
+                    wave_points = [
+                        (sl[0][0], sl[0][1], "\u2460", False),
+                        (sh[0][0], sh[0][1], "\u2461", True),
+                        (sl[1][0], sl[1][1], "\u2462", False),
+                        (sh[1][0], sh[1][1], "\u2463", True),
+                    ]
+        else:
+            # Bearish partial: w1_start(high), w1_low, w2_high, w3_low
+            if len(sh) >= 2 and len(sl) >= 2:
+                wave_points = [
+                    (sh[0][0], sh[0][1], "\u2460", True),
+                    (sl[0][0], sl[0][1], "\u2461", False),
+                    (sh[1][0], sh[1][1], "\u2462", True),
+                    (sl[1][0], sl[1][1], "\u2463", False),
+                ]
+
+        if not wave_points:
+            return
+
+        # ── Draw dashed connecting lines between wave points ──
+        wx = [p[0] for p in wave_points]
+        wy = [p[1] for p in wave_points]
+        price_ax.plot(wx, wy, color=wave_color, lw=0.8, ls=(0, (4, 3)),
+                      alpha=0.6, zorder=2)
+
+        # ── Draw circled number labels ──
+        for xi, yi, label, is_high in wave_points:
+            if xi < 0 or xi >= n:
+                continue
+            y_pos = yi + offset_hi if is_high else yi - offset_lo
+            va = "bottom" if is_high else "top"
+            price_ax.text(
+                xi, y_pos, label, color="#ffffff", fontsize=7.5,
+                fontweight="bold", ha="center", va=va,
+                bbox=dict(boxstyle="round,pad=0.16", fc=wave_color,
+                          ec="none", alpha=0.88),
+                zorder=5,
+            )
+
+        # ── A-B-C corrective overlay ──
+        try:
+            corrective = detect_elliott_corrective(highs, lows, closes, lookback=5)
+        except Exception:  # noqa: BLE001
+            corrective = None
+        if corrective:
+            ckl = corrective.get("key_levels", {})
+            abc_bullish = corrective.get("signal") == "bullish"
+            abc_color = t["up"] if abc_bullish else t["down"]
+            abc_labels = ["\u24B6", "\u24B7", "\u24B8"]  # (A) (B) (C)
+
+            # Find bar indices for each ABC price level by scanning swings.
+            # key_levels may have _idx fields (original) or just prices (linter).
+            def _find_idx(price_val, swing_list):
+                """Find the swing index closest to a price value."""
+                best_i, best_d = None, float("inf")
+                for si, sp in swing_list:
+                    d = abs(sp - price_val)
+                    if d < best_d:
+                        best_d, best_i = d, si
+                return best_i
+
+            abc_points = []
+            for key_price, key_idx, lbl, high, swing_src in [
+                ("a_end", "a_end_idx", abc_labels[0], not abc_bullish,
+                 sl if not abc_bullish else sh),
+                ("b_end", "b_end_idx", abc_labels[1], abc_bullish,
+                 sh if not abc_bullish else sl),
+                ("c_end", "c_end_idx", abc_labels[2], not abc_bullish,
+                 sl if not abc_bullish else sh),
+            ]:
+                p = ckl.get(key_price)
+                if p is None:
+                    continue
+                idx = ckl.get(key_idx)
+                if idx is None:
+                    idx = _find_idx(float(p), swing_src)
+                if idx is not None:
+                    abc_points.append((int(idx), float(p), lbl, high))
+
+            if abc_points:
+                # Include the start of wave A for connecting line
+                a_start_p = ckl.get("a_start")
+                line_pts = []
+                if a_start_p is not None:
+                    a_start_idx = ckl.get("a_start_idx")
+                    if a_start_idx is None:
+                        src = sh if not abc_bullish else sl
+                        a_start_idx = _find_idx(float(a_start_p), src)
+                    if a_start_idx is not None:
+                        line_pts.append((int(a_start_idx), float(a_start_p)))
+                line_pts.extend([(p[0], p[1]) for p in abc_points])
+
+                lx = [p[0] for p in line_pts]
+                ly = [p[1] for p in line_pts]
+                price_ax.plot(lx, ly, color=abc_color, lw=0.8,
+                              ls=(0, (4, 3)), alpha=0.6, zorder=2)
+
+                for xi, yi, label, is_high in abc_points:
+                    if xi < 0 or xi >= n:
+                        continue
+                    y_pos = yi + offset_hi if is_high else yi - offset_lo
+                    va = "bottom" if is_high else "top"
+                    price_ax.text(
+                        xi, y_pos, label, color="#ffffff", fontsize=7.5,
+                        fontweight="bold", ha="center", va=va,
+                        bbox=dict(boxstyle="round,pad=0.16", fc=abc_color,
+                                  ec="none", alpha=0.88),
+                        zorder=5,
+                    )
+    except Exception:  # noqa: BLE001 — never crash the chart
+        return
+
+
+def _fibonacci_levels_overlay(df, price_ax, t):
+    """Draw Fibonacci retracement levels across the visible chart range.
+
+    Identifies the major swing high/low in the DataFrame and draws
+    horizontal dotted lines at standard Fibonacci ratios with right-edge
+    labels showing ratio and price.
+    """
+    try:
+        hi = df["High"].to_numpy()
+        lo = df["Low"].to_numpy()
+        n = len(df)
+        if n < 10:
+            return
+
+        swing_high = float(hi.max())
+        swing_low = float(lo.min())
+        diff = swing_high - swing_low
+        if diff <= 0:
+            return
+
+        # Standard Fibonacci ratios and their color assignments.
+        fib_spec = [
+            (0.236, t["muted"]),
+            (0.382, "#D4A843"),
+            (0.5,   t["text"]),
+            (0.618, "#D4A843"),
+            (0.786, t["muted"]),
+        ]
+
+        # Alpha per level: golden-ratio levels are slightly more visible.
+        alpha_map = {0.236: 0.35, 0.382: 0.50, 0.5: 0.40, 0.618: 0.50, 0.786: 0.35}
+
+        ytx = price_ax.get_yaxis_transform()
+
+        for ratio, color in fib_spec:
+            level = swing_low + diff * (1.0 - ratio)  # retracement from high
+            a = alpha_map.get(ratio, 0.4)
+            price_ax.axhline(level, color=color, lw=0.7, ls=":", alpha=a, zorder=1)
+            # Right-edge label: ratio + price
+            label = f" {ratio:.3f}  {_fmt(level)} "
+            price_ax.text(
+                1.002, level, label, transform=ytx, color=color,
+                fontsize=6.5, va="center", ha="left", alpha=a + 0.15,
+                clip_on=False, zorder=3,
+            )
+    except Exception:  # noqa: BLE001
+        return
+
+
+def _pattern_zones_overlay(df, price_ax, t):
+    """Draw shaded zones and labels for detected chart patterns.
+
+    Lazy-imports scan_all_chart_patterns; fails silently on error.
+    Patterns already handled by the Elliott overlay are skipped.
+    """
+    try:
+        from bot.core.chart_patterns import scan_all_chart_patterns
+    except Exception:  # noqa: BLE001
+        return
+    try:
+        import numpy as np
+        opens = df["Open"].to_numpy()
+        highs = df["High"].to_numpy()
+        lows = df["Low"].to_numpy()
+        closes = df["Close"].to_numpy()
+        n = len(df)
+        if n < 20:
+            return
+
+        patterns = scan_all_chart_patterns(opens, highs, lows, closes, lookback=5)
+        span = (float(highs.max()) - float(lows.min())) or 1.0
+
+        for pat in patterns:
+            name = pat.get("name", "")
+            kl = pat.get("key_levels", {})
+            sig = pat.get("signal", "neutral")
+            is_bull = sig == "bullish"
+
+            # Skip Elliott patterns (handled by _elliott_wave_overlay)
+            if "Elliott" in name or "Liquidity" in name or "S/R Flip" in name:
+                continue
+
+            shade_color = t["up"] if is_bull else t["down"]
+            shade_alpha = 0.06
+
+            # ── Head & Shoulders / Inverse H&S ──
+            if "Head" in name and "Shoulders" in name:
+                head = kl.get("head")
+                ls_val = kl.get("left_shoulder")
+                rs_val = kl.get("right_shoulder")
+                neckline = kl.get("neckline")
+
+                if head is not None and neckline is not None:
+                    # Shade zone between neckline and head
+                    price_ax.axhspan(neckline, head, color=shade_color,
+                                     alpha=shade_alpha, zorder=0)
+                    # Neckline as dashed line
+                    price_ax.axhline(neckline, color=shade_color, lw=1.0,
+                                     ls="--", alpha=0.55, zorder=2)
+                    # Dots at shoulder/head swing points (approximate x positions)
+                    from bot.core.multi_timeframe import _find_swings
+                    swings = _find_swings(highs, lows, lookback=5)
+                    sh = swings.get("swing_highs", [])
+                    sl = swings.get("swing_lows", [])
+                    pts = sh[-3:] if "Inverse" not in name else sl[-3:]
+                    for px, py in pts:
+                        if 0 <= px < n:
+                            price_ax.scatter(px, py, s=22, color=shade_color,
+                                             alpha=0.7, zorder=4, edgecolors="none")
+
+            # ── Double Top / Double Bottom ──
+            elif "Double" in name:
+                neckline = kl.get("neckline")
+                top_vals = [kl.get("top1"), kl.get("top2"),
+                            kl.get("bot1"), kl.get("bot2")]
+                top_vals = [v for v in top_vals if v is not None]
+                if neckline is not None and top_vals:
+                    extreme = max(top_vals) if not is_bull else min(top_vals)
+                    price_ax.axhspan(neckline, extreme, color=shade_color,
+                                     alpha=shade_alpha, zorder=0)
+                    price_ax.axhline(neckline, color=shade_color, lw=0.9,
+                                     ls="--", alpha=0.5, zorder=2)
+
+            # ── Triangles (ascending / descending / symmetrical) ──
+            elif "Triangle" in name:
+                upper = kl.get("resistance") or kl.get("resistance_falling") or kl.get("upper")
+                lower = kl.get("support_rising") or kl.get("support") or kl.get("lower")
+                if upper is not None and lower is not None:
+                    from bot.core.multi_timeframe import _find_swings
+                    swings = _find_swings(highs, lows, lookback=5)
+                    sh = swings.get("swing_highs", [])
+                    sl = swings.get("swing_lows", [])
+                    # Draw converging trendlines from swing points
+                    if len(sh) >= 2:
+                        hx = [p[0] for p in sh[-3:]]
+                        hy = [p[1] for p in sh[-3:]]
+                        # Extend to right edge
+                        if len(hx) >= 2:
+                            slope = (hy[-1] - hy[0]) / max(1, hx[-1] - hx[0])
+                            ext_y = hy[-1] + slope * (n - 1 - hx[-1])
+                            price_ax.plot(hx + [n - 1], hy + [ext_y],
+                                          color=shade_color, lw=0.9, ls="--",
+                                          alpha=0.5, zorder=2)
+                    if len(sl) >= 2:
+                        lx = [p[0] for p in sl[-3:]]
+                        ly = [p[1] for p in sl[-3:]]
+                        if len(lx) >= 2:
+                            slope = (ly[-1] - ly[0]) / max(1, lx[-1] - lx[0])
+                            ext_y = ly[-1] + slope * (n - 1 - lx[-1])
+                            price_ax.plot(lx + [n - 1], ly + [ext_y],
+                                          color=shade_color, lw=0.9, ls="--",
+                                          alpha=0.5, zorder=2)
+                    # Light shading between current upper/lower
+                    price_ax.axhspan(lower, upper, color=shade_color,
+                                     alpha=shade_alpha * 0.7, zorder=0)
+
+            # ── Wedges (rising / falling) ──
+            elif "Wedge" in name:
+                upper = kl.get("upper")
+                lower = kl.get("lower")
+                if upper is not None and lower is not None:
+                    from bot.core.multi_timeframe import _find_swings
+                    swings = _find_swings(highs, lows, lookback=5)
+                    sh = swings.get("swing_highs", [])
+                    sl = swings.get("swing_lows", [])
+                    if len(sh) >= 2:
+                        hx = [p[0] for p in sh[-3:]]
+                        hy = [p[1] for p in sh[-3:]]
+                        if len(hx) >= 2:
+                            slope = (hy[-1] - hy[0]) / max(1, hx[-1] - hx[0])
+                            ext_y = hy[-1] + slope * (n - 1 - hx[-1])
+                            price_ax.plot(hx + [n - 1], hy + [ext_y],
+                                          color=shade_color, lw=0.9, ls="--",
+                                          alpha=0.5, zorder=2)
+                    if len(sl) >= 2:
+                        lx = [p[0] for p in sl[-3:]]
+                        ly = [p[1] for p in sl[-3:]]
+                        if len(lx) >= 2:
+                            slope = (ly[-1] - ly[0]) / max(1, lx[-1] - lx[0])
+                            ext_y = ly[-1] + slope * (n - 1 - lx[-1])
+                            price_ax.plot(lx + [n - 1], ly + [ext_y],
+                                          color=shade_color, lw=0.9, ls="--",
+                                          alpha=0.5, zorder=2)
+                    price_ax.axhspan(lower, upper, color=shade_color,
+                                     alpha=shade_alpha * 0.7, zorder=0)
+
+            # ── Flags (bull / bear) ──
+            elif "Flag" in name:
+                pole_top = kl.get("pole_top")
+                pole_base = kl.get("pole_base")
+                flag_edge = kl.get("flag_low") or kl.get("flag_high")
+                if pole_top is not None and pole_base is not None:
+                    # Draw pole as a solid line segment
+                    pole_start_x = max(0, n - 30)
+                    pole_end_x = max(0, n - 20)
+                    price_ax.plot([pole_start_x, pole_end_x],
+                                  [pole_base, pole_top], color=shade_color,
+                                  lw=1.0, alpha=0.5, zorder=2)
+                    # Flag channel: parallel lines over the flag region
+                    if flag_edge is not None:
+                        ch_top = max(pole_top, flag_edge) if is_bull else pole_top
+                        ch_bot = min(pole_base, flag_edge) if not is_bull else pole_base
+                        flag_start = max(0, n - 20)
+                        price_ax.plot([flag_start, n - 1], [ch_top, ch_top],
+                                      color=shade_color, lw=0.8, ls="--",
+                                      alpha=0.45, zorder=2)
+                        price_ax.plot([flag_start, n - 1], [ch_bot, ch_bot],
+                                      color=shade_color, lw=0.8, ls="--",
+                                      alpha=0.45, zorder=2)
+                        price_ax.axhspan(ch_bot, ch_top, color=shade_color,
+                                         alpha=shade_alpha, zorder=0)
+
+            # ── Cup and Handle ──
+            elif "Cup" in name:
+                left_lip = kl.get("left_lip")
+                right_lip = kl.get("right_lip")
+                cup_bottom = kl.get("cup_bottom")
+                if left_lip is not None and cup_bottom is not None and right_lip is not None:
+                    # Shade the cup zone
+                    price_ax.axhspan(cup_bottom, max(left_lip, right_lip),
+                                     color=shade_color, alpha=shade_alpha, zorder=0)
+                    # Breakout level
+                    price_ax.axhline(right_lip, color=shade_color, lw=0.8,
+                                     ls="--", alpha=0.5, zorder=2)
+
+            # ── Rectangle ──
+            elif "Rectangle" in name:
+                support = kl.get("support")
+                resistance = kl.get("resistance")
+                if support is not None and resistance is not None:
+                    price_ax.axhspan(support, resistance, color=t["muted"],
+                                     alpha=shade_alpha, zorder=0)
+                    price_ax.axhline(support, color=t["muted"], lw=0.7,
+                                     ls=":", alpha=0.4, zorder=2)
+                    price_ax.axhline(resistance, color=t["muted"], lw=0.7,
+                                     ls=":", alpha=0.4, zorder=2)
+
+            # ── Pattern name badge ──
+            # Place a small label at the midpoint of the pattern zone.
+            all_vals = [v for v in kl.values() if isinstance(v, (int, float))]
+            if all_vals:
+                mid_y = (max(all_vals) + min(all_vals)) / 2
+                price_ax.text(
+                    n * 0.05, mid_y, name, color="#ffffff", fontsize=6.5,
+                    fontweight="bold", ha="left", va="center",
+                    bbox=dict(boxstyle="round,pad=0.14", fc=shade_color,
+                              ec="none", alpha=0.80),
+                    zorder=5,
+                )
+    except Exception:  # noqa: BLE001 — never crash the chart
+        return
 
 
 def _fmt(price: float) -> str:

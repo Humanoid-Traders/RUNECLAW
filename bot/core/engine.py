@@ -110,6 +110,7 @@ class RuneClawEngine:
         self._confirm_callback: Optional[Callable] = None
         self._close_notify_callback: Optional[Callable] = None
         self._pending_ideas: dict[str, TradeIdea] = {}
+        self._last_confirmed_idea: Optional[TradeIdea] = None
         self._pending_atr: dict[str, Optional[float]] = {}  # H1: store ATR for re-check
         self._pending_pyramid: dict[str, bool] = {}  # Track pyramid add flags
         self._user_store = None  # Set by TelegramHandler for role-based execution
@@ -686,6 +687,9 @@ class RuneClawEngine:
         idea = self._pending_ideas.pop(trade_id, None)
         if idea is None:
             return f"Trade {trade_id} not found or expired."
+
+        # Store for marketing forwarder access
+        self._last_confirmed_idea = idea
 
         # H1 fix: re-check with stored ATR so volatility guard runs
         stored_atr = self._pending_atr.pop(trade_id, None)

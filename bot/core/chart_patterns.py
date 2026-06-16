@@ -11,6 +11,10 @@ Detects classic chart patterns from OHLCV data using swing point analysis:
   - Cup and Handle
   - Support/Resistance Flip
   - Basic Elliott Wave impulse counting
+  - Elliott ABC Corrective Waves (Zigzag / Flat)
+  - Wyckoff Accumulation / Distribution phases
+  - Harmonic Patterns (Gartley, Butterfly, Bat, Crab)
+  - Fibonacci Extensions
 
 Design rules:
   - Fail-closed: insufficient data → empty results
@@ -599,6 +603,127 @@ def detect_elliott_impulse(
     return None
 
 
+# ── Elliott Wave Corrective (ABC) ──────────────────────────────
+
+def detect_elliott_corrective(
+    highs: np.ndarray, lows: np.ndarray, closes: np.ndarray,
+    lookback: int = 5,
+) -> Optional[PatternResult]:
+    """Detect ABC corrective wave after a prior impulse move.
+
+    Correction types detected:
+      - Zigzag (5-3-5): sharp A, B retraces 50-78.6% of A, C extends 100-161.8% of A
+      - Flat (3-3-5): B retraces ~100% of A, C extends slightly past A
+
+    Wave B must not exceed the start of the prior impulse.
+    Confidence: 0.55 for partial (A-B visible), 0.65 for complete ABC.
+    """
+    swings = _find_swings(highs, lows, lookback)
+    sh = swings["swing_highs"]
+    sl = swings["swing_lows"]
+
+    def _classify_abc(a_wave: float, b_retrace: float,
+                      c_ext: float, c_complete: bool) -> Optional[str]:
+        """Return correction type or None."""
+        # Zigzag: B retraces 50-78.6%, C extends 100-161.8% of A
+        if 0.45 <= b_retrace <= 0.83:
+            if c_complete and 0.90 <= c_ext <= 1.72:
+                return "Zigzag"
+            if not c_complete:
+                return "Zigzag (partial)"
+        # Flat: B retraces ~100% of A, C extends slightly past A
+        if 0.85 <= b_retrace <= 1.10:
+            if c_complete and 0.90 <= c_ext <= 1.30:
+                return "Flat"
+            if not c_complete:
+                return "Flat (partial)"
+        return None
+
+    # ── Bearish correction (after bullish impulse) ──
+    # Impulse top -> swing low (A end) -> swing high (B end) -> swing low (C end)
+    if len(sh) >= 2 and len(sl) >= 2:
+        impulse_top = sh[-2]
+        a_end = sl[-2]
+        b_end = sh[-1]
+        c_end = sl[-1]
+
+        if (impulse_top[0] < a_end[0] < b_end[0]
+                and impulse_top[1] > a_end[1]
+                and b_end[1] < impulse_top[1]):
+            a_start = impulse_top[1]
+            a_wave = a_start - a_end[1]
+            if a_wave > 0:
+                b_retrace = (b_end[1] - a_end[1]) / a_wave
+
+                c_complete = (c_end[0] > b_end[0] and c_end[1] < b_end[1])
+                c_ext = (b_end[1] - c_end[1]) / a_wave if c_complete else 0
+
+                pattern_type = _classify_abc(a_wave, b_retrace, c_ext, c_complete)
+                if pattern_type is not None:
+                    conf = 0.65 if c_complete else 0.55
+                    levels: dict = {
+                        "a_start": a_start,
+                        "a_end": a_end[1],
+                        "b_end": b_end[1],
+                    }
+                    if c_complete:
+                        levels["c_end"] = c_end[1]
+                    return {
+                        "name": f"Elliott ABC {pattern_type}",
+                        "signal": "bearish",
+                        "confidence": conf,
+                        "description": (
+                            f"ABC correction ({pattern_type}) after impulse top"
+                            f" ${a_start:,.2f}: B retrace {b_retrace:.0%}"
+                            + (f", C extension {c_ext:.0%}" if c_complete else "")
+                        ),
+                        "key_levels": levels,
+                    }
+
+    # ── Bullish correction (after bearish impulse) ──
+    # Impulse bottom -> swing high (A end) -> swing low (B end) -> swing high (C end)
+    if len(sl) >= 2 and len(sh) >= 2:
+        impulse_bottom = sl[-2]
+        a_end_h = sh[-2]
+        b_end_l = sl[-1]
+        c_end_h = sh[-1]
+
+        if (impulse_bottom[0] < a_end_h[0] < b_end_l[0]
+                and impulse_bottom[1] < a_end_h[1]
+                and b_end_l[1] > impulse_bottom[1]):
+            a_start = impulse_bottom[1]
+            a_wave = a_end_h[1] - a_start
+            if a_wave > 0:
+                b_retrace = (a_end_h[1] - b_end_l[1]) / a_wave
+
+                c_complete = (c_end_h[0] > b_end_l[0] and c_end_h[1] > b_end_l[1])
+                c_ext = (c_end_h[1] - b_end_l[1]) / a_wave if c_complete else 0
+
+                pattern_type = _classify_abc(a_wave, b_retrace, c_ext, c_complete)
+                if pattern_type is not None:
+                    conf = 0.65 if c_complete else 0.55
+                    levels = {
+                        "a_start": a_start,
+                        "a_end": a_end_h[1],
+                        "b_end": b_end_l[1],
+                    }
+                    if c_complete:
+                        levels["c_end"] = c_end_h[1]
+                    return {
+                        "name": f"Elliott ABC {pattern_type}",
+                        "signal": "bullish",
+                        "confidence": conf,
+                        "description": (
+                            f"ABC correction ({pattern_type}) after impulse bottom"
+                            f" ${a_start:,.2f}: B retrace {b_retrace:.0%}"
+                            + (f", C extension {c_ext:.0%}" if c_complete else "")
+                        ),
+                        "key_levels": levels,
+                    }
+
+    return None
+
+
 # ── Liquidity Sweep ──────────────────────────────────────────────
 
 def detect_liquidity_sweep(
@@ -650,6 +775,369 @@ def detect_liquidity_sweep(
     return None
 
 
+# ── Wyckoff Phases ─────────────────────────────────────────────
+
+def detect_wyckoff_phases(
+    highs: np.ndarray, lows: np.ndarray, closes: np.ndarray,
+    lookback: int = 5,
+) -> Optional[PatternResult]:
+    """Detect Wyckoff Accumulation or Distribution phases.
+
+    Accumulation (bullish): SC -> AR -> ST -> Spring -> SOS
+    Distribution (bearish): BC -> AR -> ST -> UTAD -> SOW
+
+    Uses price action within a range-bound area over the last 60-100 bars.
+    Bar range (high - low) is used as a volume proxy when volume data is
+    not directly available.
+    """
+    n = len(closes)
+    window = min(100, n)
+    if window < 40:
+        return None
+
+    h = highs[-window:]
+    l = lows[-window:]
+    c = closes[-window:]
+
+    # Bar range as a volume proxy (wider bars ~ higher volume)
+    bar_range = h - l
+    avg_range = float(np.mean(bar_range)) if len(bar_range) > 0 else 0
+    if avg_range == 0:
+        return None
+
+    # ── Detect range-bound action ──
+    mid_start = window // 5
+    mid_end = window - window // 5
+    mid_highs = h[mid_start:mid_end]
+    mid_lows = l[mid_start:mid_end]
+    if len(mid_highs) < 20:
+        return None
+
+    range_top = float(np.max(mid_highs))
+    range_bot = float(np.min(mid_lows))
+    range_size = range_top - range_bot
+    if range_size <= 0:
+        return None
+
+    range_pct = range_size / range_bot * 100
+    if range_pct > 25 or range_pct < 1:
+        return None
+
+    phases_found: list[str] = []
+    key_levels: dict = {"range_top": range_top, "range_bot": range_bot}
+
+    # ── Accumulation scan ──
+    # Selling Climax: early bar with range > 2x average, close near lows
+    sc_idx = None
+    for i in range(0, min(window // 3, len(bar_range))):
+        if bar_range[i] > avg_range * 2 and (c[i] - l[i]) < (h[i] - l[i]) * 0.35:
+            sc_idx = i
+            key_levels["sc_low"] = float(l[i])
+            phases_found.append("SC")
+            break
+
+    # Automatic Rally: first significant up move after SC
+    ar_idx = None
+    if sc_idx is not None:
+        for i in range(sc_idx + 1, min(sc_idx + window // 4, len(c))):
+            if float(c[i]) > float(c[sc_idx]) and float(h[i]) >= range_top * 0.95:
+                ar_idx = i
+                key_levels["ar_high"] = float(h[i])
+                phases_found.append("AR")
+                break
+
+    # Secondary Test: price retests SC low on lower range (volume)
+    st_idx = None
+    if sc_idx is not None and ar_idx is not None:
+        sc_low = float(l[sc_idx])
+        for i in range(ar_idx + 1, len(c)):
+            if (float(l[i]) <= sc_low * 1.02
+                    and bar_range[i] < bar_range[sc_idx]):
+                st_idx = i
+                key_levels["st_low"] = float(l[i])
+                phases_found.append("ST")
+                break
+
+    # Spring: price dips below SC low then reverses quickly
+    spring_idx = None
+    search_start = st_idx if st_idx is not None else (ar_idx if ar_idx is not None else None)
+    if search_start is not None:
+        sc_low = key_levels.get("sc_low", range_bot)
+        for i in range(search_start + 1, len(c)):
+            if float(l[i]) < sc_low and float(c[i]) > sc_low:
+                spring_idx = i
+                key_levels["spring_low"] = float(l[i])
+                phases_found.append("Spring")
+                break
+
+    # Sign of Strength: price breaks above AR high on strong range
+    if ar_idx is not None:
+        ar_high = key_levels.get("ar_high", range_top)
+        sos_search = spring_idx if spring_idx is not None else (
+            st_idx if st_idx is not None else ar_idx)
+        for i in range(sos_search + 1, len(c)):
+            if float(c[i]) > ar_high and bar_range[i] > avg_range:
+                key_levels["sos_high"] = float(h[i])
+                phases_found.append("SOS")
+                break
+
+    if len(phases_found) >= 2:
+        conf = min(0.70, 0.55 + len(phases_found) * 0.04)
+        return {
+            "name": "Wyckoff Accumulation",
+            "signal": "bullish",
+            "confidence": round(conf, 2),
+            "description": (
+                f"Wyckoff accumulation: phases {', '.join(phases_found)}"
+                f" in range ${range_bot:,.2f}-${range_top:,.2f}"
+            ),
+            "key_levels": key_levels,
+        }
+
+    # ── Distribution scan ──
+    phases_found = []
+    key_levels = {"range_top": range_top, "range_bot": range_bot}
+
+    # Buying Climax: early bar with range > 2x average, close near highs
+    bc_idx = None
+    for i in range(0, min(window // 3, len(bar_range))):
+        if bar_range[i] > avg_range * 2 and (h[i] - c[i]) < (h[i] - l[i]) * 0.35:
+            bc_idx = i
+            key_levels["bc_high"] = float(h[i])
+            phases_found.append("BC")
+            break
+
+    # Automatic Reaction: first significant down move after BC
+    ar_d_idx = None
+    if bc_idx is not None:
+        for i in range(bc_idx + 1, min(bc_idx + window // 4, len(c))):
+            if float(c[i]) < float(c[bc_idx]) and float(l[i]) <= range_bot * 1.05:
+                ar_d_idx = i
+                key_levels["ar_low"] = float(l[i])
+                phases_found.append("AR")
+                break
+
+    # Upthrust After Distribution: price pokes above BC high then reverses
+    if bc_idx is not None:
+        bc_high = key_levels.get("bc_high", range_top)
+        search_start_d = ar_d_idx if ar_d_idx is not None else bc_idx
+        for i in range(search_start_d + 1, len(c)):
+            if float(h[i]) > bc_high and float(c[i]) < bc_high:
+                key_levels["utad_high"] = float(h[i])
+                phases_found.append("UTAD")
+                break
+
+    # Sign of Weakness: price breaks below AR low
+    if ar_d_idx is not None:
+        ar_low = key_levels.get("ar_low", range_bot)
+        for i in range(ar_d_idx + 1, len(c)):
+            if float(c[i]) < ar_low and bar_range[i] > avg_range:
+                key_levels["sow_low"] = float(l[i])
+                phases_found.append("SOW")
+                break
+
+    if len(phases_found) >= 2:
+        conf = min(0.70, 0.55 + len(phases_found) * 0.04)
+        return {
+            "name": "Wyckoff Distribution",
+            "signal": "bearish",
+            "confidence": round(conf, 2),
+            "description": (
+                f"Wyckoff distribution: phases {', '.join(phases_found)}"
+                f" in range ${range_bot:,.2f}-${range_top:,.2f}"
+            ),
+            "key_levels": key_levels,
+        }
+
+    return None
+
+
+# ── Harmonic Patterns ──────────────────────────────────────────
+
+def detect_harmonic_pattern(
+    highs: np.ndarray, lows: np.ndarray, closes: np.ndarray,
+    lookback: int = 5,
+) -> Optional[PatternResult]:
+    """Detect XABCD harmonic patterns: Gartley, Butterfly, Bat, Crab.
+
+    Finds 5 alternating swing points and checks Fibonacci ratio rules
+    between the XA, AB, BC, CD legs with +/-10% tolerance.
+    """
+    swings = _find_swings(highs, lows, lookback)
+    sh = swings["swing_highs"]
+    sl = swings["swing_lows"]
+
+    def _ratio_in_range(actual: float, lo: float, hi: float,
+                        tol: float = 0.10) -> bool:
+        """Check if *actual* falls within [lo, hi] with tolerance on edges."""
+        return lo * (1 - tol) <= actual <= hi * (1 + tol)
+
+    # Pattern ratio definitions:
+    #   xb = XA->B retracement, ac = AB->C extension, xd = XA->D retracement
+    PATTERNS = {
+        "Gartley":   {"xb": (0.618, 0.618), "ac": (1.272, 1.618), "xd": (0.786, 0.786)},
+        "Butterfly": {"xb": (0.786, 0.786), "ac": (1.618, 2.618), "xd": (1.272, 1.618)},
+        "Bat":       {"xb": (0.382, 0.500), "ac": (1.618, 2.618), "xd": (0.886, 0.886)},
+        "Crab":      {"xb": (0.382, 0.618), "ac": (2.240, 3.618), "xd": (1.618, 1.618)},
+    }
+
+    def _check_xabcd(x: float, a: float, b: float, c: float, d: float,
+                     x_idx: int, a_idx: int, b_idx: int, c_idx: int,
+                     d_idx: int, bullish: bool) -> Optional[PatternResult]:
+        """Check all harmonic patterns against XABCD points."""
+        xa = abs(a - x)
+        if xa == 0:
+            return None
+        ab = abs(b - a)
+        bc = abs(c - b)
+
+        xb_ratio = ab / xa          # B retracement of XA
+        ac_ratio = bc / ab if ab != 0 else 0  # C extension of AB
+
+        for name, rules in PATTERNS.items():
+            xb_lo, xb_hi = rules["xb"]
+            ac_lo, ac_hi = rules["ac"]
+            xd_lo, xd_hi = rules["xd"]
+
+            if not _ratio_in_range(xb_ratio, xb_lo, xb_hi):
+                continue
+            if not _ratio_in_range(ac_ratio, ac_lo, ac_hi):
+                continue
+
+            # D check: for patterns where D extends beyond X (xd > 1),
+            # measure from X; otherwise measure A->D / XA.
+            if xd_hi > 1.0:
+                xd_actual = abs(d - x) / xa
+            else:
+                xd_actual = abs(d - a) / xa
+            if not _ratio_in_range(xd_actual, xd_lo, xd_hi):
+                continue
+
+            direction = "Bullish" if bullish else "Bearish"
+            mid_xb = (xb_lo + xb_hi) / 2
+            conf = 0.60 + min(0.15, 0.05 * (1.0 - abs(xb_ratio - mid_xb)))
+            return {
+                "name": f"{direction} {name}",
+                "signal": "bullish" if bullish else "bearish",
+                "confidence": round(min(0.75, conf), 2),
+                "description": (
+                    f"{direction} {name}: XB={xb_ratio:.3f},"
+                    f" AC={ac_ratio:.3f}, XD ratio confirmed"
+                ),
+                "key_levels": {
+                    "X": x, "A": a, "B": b, "C": c, "D": d,
+                    "X_idx": x_idx, "A_idx": a_idx, "B_idx": b_idx,
+                    "C_idx": c_idx, "D_idx": d_idx,
+                },
+            }
+        return None
+
+    # ── Bullish harmonic: X(low) A(high) B(low) C(high) D(low) ──
+    if len(sl) >= 3 and len(sh) >= 2:
+        x_pt, b_pt, d_pt = sl[-3], sl[-2], sl[-1]
+        a_pt, c_pt = sh[-2], sh[-1]
+        if (x_pt[0] < a_pt[0] < b_pt[0] < c_pt[0] < d_pt[0]):
+            result = _check_xabcd(
+                x_pt[1], a_pt[1], b_pt[1], c_pt[1], d_pt[1],
+                x_pt[0], a_pt[0], b_pt[0], c_pt[0], d_pt[0],
+                bullish=True,
+            )
+            if result is not None:
+                return result
+
+    # ── Bearish harmonic: X(high) A(low) B(high) C(low) D(high) ──
+    if len(sh) >= 3 and len(sl) >= 2:
+        x_pt, b_pt, d_pt = sh[-3], sh[-2], sh[-1]
+        a_pt, c_pt = sl[-2], sl[-1]
+        if (x_pt[0] < a_pt[0] < b_pt[0] < c_pt[0] < d_pt[0]):
+            result = _check_xabcd(
+                x_pt[1], a_pt[1], b_pt[1], c_pt[1], d_pt[1],
+                x_pt[0], a_pt[0], b_pt[0], c_pt[0], d_pt[0],
+                bullish=False,
+            )
+            if result is not None:
+                return result
+
+    return None
+
+
+# ── Fibonacci Extensions (helper) ──────────────────────────────
+
+def detect_fibonacci_extensions(
+    highs: np.ndarray, lows: np.ndarray, closes: np.ndarray,
+    lookback: int = 5,
+) -> Optional[PatternResult]:
+    """Compute Fibonacci extension targets from the most recent impulse wave.
+
+    Given an impulse (start -> end) followed by a retracement, project
+    extension levels at 1.0, 1.272, 1.618, 2.0, and 2.618 of the impulse.
+    Returns None if no clear impulse + retracement is found.
+    """
+    swings = _find_swings(highs, lows, lookback)
+    sh = swings["swing_highs"]
+    sl = swings["swing_lows"]
+
+    result = None
+
+    # Bullish: swing low -> swing high -> retracement low
+    if len(sh) >= 1 and len(sl) >= 2:
+        start_low = sl[-2]
+        impulse_high = sh[-1]
+        retrace_low = sl[-1]
+        if (start_low[0] < impulse_high[0] < retrace_low[0]
+                and impulse_high[1] > start_low[1]
+                and retrace_low[1] > start_low[1]
+                and retrace_low[1] < impulse_high[1]):
+            impulse = impulse_high[1] - start_low[1]
+            ext_base = retrace_low[1]
+            result = {
+                "name": "Fibonacci Extensions (Bullish)",
+                "signal": "bullish",
+                "confidence": 0.60,
+                "description": (
+                    f"Fib extensions from impulse ${start_low[1]:,.2f}"
+                    f" -> ${impulse_high[1]:,.2f}, retrace ${retrace_low[1]:,.2f}"
+                ),
+                "key_levels": {
+                    "ext_1.000": round(ext_base + impulse * 1.000, 2),
+                    "ext_1.272": round(ext_base + impulse * 1.272, 2),
+                    "ext_1.618": round(ext_base + impulse * 1.618, 2),
+                    "ext_2.000": round(ext_base + impulse * 2.000, 2),
+                    "ext_2.618": round(ext_base + impulse * 2.618, 2),
+                },
+            }
+
+    # Bearish: swing high -> swing low -> retracement high
+    if result is None and len(sl) >= 1 and len(sh) >= 2:
+        start_high = sh[-2]
+        impulse_low = sl[-1]
+        retrace_high = sh[-1]
+        if (start_high[0] < impulse_low[0] < retrace_high[0]
+                and impulse_low[1] < start_high[1]
+                and retrace_high[1] < start_high[1]
+                and retrace_high[1] > impulse_low[1]):
+            impulse = start_high[1] - impulse_low[1]
+            ext_base = retrace_high[1]
+            result = {
+                "name": "Fibonacci Extensions (Bearish)",
+                "signal": "bearish",
+                "confidence": 0.60,
+                "description": (
+                    f"Fib extensions from impulse ${start_high[1]:,.2f}"
+                    f" -> ${impulse_low[1]:,.2f}, retrace ${retrace_high[1]:,.2f}"
+                ),
+                "key_levels": {
+                    "ext_1.000": round(ext_base - impulse * 1.000, 2),
+                    "ext_1.272": round(ext_base - impulse * 1.272, 2),
+                    "ext_1.618": round(ext_base - impulse * 1.618, 2),
+                    "ext_2.000": round(ext_base - impulse * 2.000, 2),
+                    "ext_2.618": round(ext_base - impulse * 2.618, 2),
+                },
+            }
+
+    return result
+
+
 # ── Master Scanner ───────────────────────────────────────────────
 
 def scan_all_chart_patterns(
@@ -678,7 +1166,11 @@ def scan_all_chart_patterns(
         detect_cup_and_handle,
         detect_sr_flip,
         detect_elliott_impulse,
+        detect_elliott_corrective,
         detect_liquidity_sweep,
+        detect_wyckoff_phases,
+        detect_harmonic_pattern,
+        detect_fibonacci_extensions,
     ]
 
     results: list[PatternResult] = []

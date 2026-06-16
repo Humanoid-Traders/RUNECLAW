@@ -258,6 +258,17 @@ class Analyzer:
             indicators["chart_patterns_bearish_weight"] = round(
                 sum(p.get("confidence", 0.5) for p in bearish_geo), 2
             )
+            # Extract specific wave patterns for dedicated voters
+            for p in chart_patterns:
+                name = p.get("name", "")
+                if "Wyckoff" in name:
+                    indicators["wyckoff_pattern"] = p
+                elif "Harmonic" in name or any(h in name for h in ("Gartley", "Butterfly", "Bat", "Crab")):
+                    indicators["harmonic_pattern"] = p
+                elif "Elliott" in name:
+                    indicators["elliott_pattern"] = p
+                elif "Fibonacci" in name and "ext" in name.lower():
+                    indicators["fib_extensions"] = p
 
         regime = self._detect_regime(indicators)
 
@@ -955,6 +966,42 @@ class Analyzer:
                         indicators.get("chart_patterns_bearish_count", 0)
             scaled_weight = min(1.0, 0.7 * min(geo_count, 3))  # cap at 3 patterns
             weights.append(scaled_weight)
+
+        # Wyckoff phase voter (weight 0.8 — accumulation/distribution cycle)
+        wyckoff = indicators.get("wyckoff_pattern")
+        if wyckoff:
+            w_signal = wyckoff.get("signal", "neutral")
+            w_conf = wyckoff.get("confidence", 0.5)
+            if w_signal == "bullish":
+                votes.append(w_conf)
+                weights.append(0.8)
+            elif w_signal == "bearish":
+                votes.append(-w_conf)
+                weights.append(0.8)
+
+        # Harmonic pattern voter (weight 0.75 — Gartley/Butterfly/Bat/Crab)
+        harmonic = indicators.get("harmonic_pattern")
+        if harmonic:
+            h_signal = harmonic.get("signal", "neutral")
+            h_conf = harmonic.get("confidence", 0.5)
+            if h_signal == "bullish":
+                votes.append(h_conf)
+                weights.append(0.75)
+            elif h_signal == "bearish":
+                votes.append(-h_conf)
+                weights.append(0.75)
+
+        # Elliott Wave voter (weight 0.65 — impulse/corrective wave structure)
+        elliott = indicators.get("elliott_pattern")
+        if elliott:
+            e_signal = elliott.get("signal", "neutral")
+            e_conf = elliott.get("confidence", 0.5)
+            if e_signal == "bullish":
+                votes.append(e_conf)
+                weights.append(0.65)
+            elif e_signal == "bearish":
+                votes.append(-e_conf)
+                weights.append(0.65)
 
         # Order flow votes (if available)
         if order_flow is not None:
