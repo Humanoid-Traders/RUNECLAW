@@ -268,10 +268,22 @@ class TelegramHandler:
             try:
                 await send_method(chunk, parse_mode="HTML", reply_markup=markup)
             except Exception as e:
+                # If editing failed (e.g. photo message), fall back to new message
+                if edit and update.callback_query and update.callback_query.message:
+                    fallback_method = update.callback_query.message.reply_text
+                    try:
+                        await fallback_method(chunk, parse_mode="HTML", reply_markup=markup)
+                        continue
+                    except Exception:
+                        pass
                 system_log.debug("HTML send failed (%s), falling back to plain", e)
                 plain = re.sub(r"<[^>]+>", "", chunk)
+                # Try plain text as new message if edit failed
+                plain_method = send_method
+                if edit and update.callback_query and update.callback_query.message:
+                    plain_method = update.callback_query.message.reply_text
                 try:
-                    await send_method(plain, parse_mode=None, reply_markup=markup)
+                    await plain_method(plain, parse_mode=None, reply_markup=markup)
                 except Exception as e2:
                     system_log.error("Failed to send message chunk %d/%d: %s", i + 1, len(chunks), e2)
 
