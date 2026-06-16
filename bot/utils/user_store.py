@@ -1,7 +1,15 @@
 """
-RUNECLAW User Store — file-backed user management with roles.
+RUNECLAW User Store — file-backed user management with roles and tiers.
 Persists to data/users.json. Thread-safe with file locking.
-F-14 FIX: Session timeout — sensitive commands require re-activity within 24h.
+
+Roles control access (what you CAN do):
+  admin > trader > viewer > pending
+
+Tiers control features (what you GET):
+  admin > elite > pro > basic
+
+New users are auto-approved as trader/basic with paper trading.
+Only admins (or users explicitly granted) can trade live.
 """
 
 from __future__ import annotations
@@ -15,9 +23,9 @@ from typing import Optional
 
 from bot.utils.logger import audit, system_log
 
-# Roles: admin > trader > viewer > pending
+# ── Roles: access control ──────────────────────────────────────
 ROLES = ("admin", "trader", "viewer", "pending")
-# Commands each role can access
+
 ROLE_PERMISSIONS: dict[str, set[str]] = {
     "admin": {"*"},  # everything
     "trader": {
@@ -33,9 +41,76 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
     "pending": {"start", "help"},
 }
 
+# ── Tiers: feature gating ──────────────────────────────────────
+# Each tier inherits all features from lower tiers.
+# Tier hierarchy: basic < pro < elite < admin
+TIERS = ("basic", "pro", "elite", "admin")
+
+TIER_FEATURES: dict[str, set[str]] = {
+    "basic": {
+        # Free tier: paper trading, basic analysis, dashboard
+        "paper_trading",
+        "scan",
+        "analyze",
+        "dashboard",
+        "portfolio",
+        "risk_status",
+        "macro_view",
+    },
+    "pro": {
+        # Pro tier: everything in basic + advanced analysis, backtesting
+        "paper_trading",
+        "scan", "deepscan",
+        "analyze",
+        "dashboard",
+        "portfolio",
+        "risk_status",
+        "macro_view",
+        "backtest",
+        "walkforward",
+        "journal",
+        "patterns",
+        "proposals",
+        "optimize",
+        "strategy_presets",
+        "chart_alerts",
+        "order_flow",
+    },
+    "elite": {
+        # Elite tier: everything in pro + live trading eligible, priority signals
+        "paper_trading",
+        "live_trading_eligible",  # can be granted live by admin
+        "scan", "deepscan",
+        "analyze",
+        "dashboard",
+        "portfolio",
+        "risk_status",
+        "macro_view",
+        "backtest",
+        "walkforward",
+        "journal",
+        "patterns",
+        "proposals",
+        "optimize",
+        "strategy_presets",
+        "chart_alerts",
+        "order_flow",
+        "priority_signals",
+        "early_access",
+    },
+    "admin": {
+        "*",  # everything
+    },
+}
+
+# Default tier for new auto-approved users
+DEFAULT_TIER = "basic"
+# Default role for new auto-approved users
+DEFAULT_AUTO_ROLE = "trader"
+
 
 class UserStore:
-    """JSON-file backed user database."""
+    """JSON-file backed user database with roles and tiers."""
 
     def __init__(self, path: str | Path = "data/users.json") -> None:
         self._path = Path(path)
@@ -68,10 +143,16 @@ class UserStore:
             return self._users.get(str(telegram_id))
 
     def register(self, telegram_id: int | str, name: str = "",
-                 auto_role: str = "pending") -> dict:
-        """Register a new user or return existing. Never overwrites role."""
+                 auto_role: str = "") -> dict:
+        """Register a new user or return existing.
+
+        New users are auto-approved as trader/basic with paper trading.
+        Never overwrites role/tier on existing users.
+        """
+        if not auto_role:
+            auto_role = DEFAULT_AUTO_ROLE
         if auto_role not in ROLES:
-            auto_role = "pending"
+            auto_role = DEFAULT_AUTO_ROLE
         key = str(telegram_id)
         with self._lock:
             if key in self._users:
@@ -79,21 +160,29 @@ class UserStore:
                 self._users[key]["last_seen"] = datetime.now(UTC).isoformat()
                 if name and not self._users[key].get("name"):
                     self._users[key]["name"] = name
+                # Backfill tier for legacy users without one
+                if "tier" not in self._users[key]:
+                    role = self._users[key].get("role", "pending")
+                    self._users[key]["tier"] = "admin" if role == "admin" else DEFAULT_TIER
                 self._save()
                 return self._users[key]
 
+            # New user: auto-approve as trader with basic tier
             user = {
                 "telegram_id": key,
                 "name": name,
                 "role": auto_role,
-                "authorized": auto_role not in ("pending",),
+                "tier": DEFAULT_TIER,
+                "authorized": True,  # auto-approved
+                "can_trade_live": False,  # paper only by default
                 "created_at": datetime.now(UTC).isoformat(),
                 "last_seen": datetime.now(UTC).isoformat(),
             }
             self._users[key] = user
             self._save()
-            audit(system_log, f"New user registered: {key} ({name}) as {auto_role}",
-                  action="user_register", result="OK")
+            audit(system_log,
+                  f"New user auto-approved: {key} ({name}) role={auto_role} tier={DEFAULT_TIER}",
+                  action="user_auto_approve", result="OK")
             return user
 
     def authorize(self, telegram_id: int | str, role: str = "trader") -> bool:
@@ -104,17 +193,24 @@ class UserStore:
         with self._lock:
             if key not in self._users:
                 # Auto-create if approving unknown ID
+                tier = "admin" if role == "admin" else DEFAULT_TIER
                 self._users[key] = {
                     "telegram_id": key,
                     "name": "",
                     "role": role,
+                    "tier": tier,
                     "authorized": True,
+                    "can_trade_live": role == "admin",
                     "created_at": datetime.now(UTC).isoformat(),
                     "last_seen": datetime.now(UTC).isoformat(),
                 }
             else:
                 self._users[key]["role"] = role
                 self._users[key]["authorized"] = True
+                # Auto-set tier for admin role
+                if role == "admin":
+                    self._users[key]["tier"] = "admin"
+                    self._users[key]["can_trade_live"] = True
             self._save()
             audit(system_log, f"User authorized: {key} as {role}",
                   action="user_authorize", result="OK")
@@ -128,6 +224,7 @@ class UserStore:
                 return False
             self._users[key]["role"] = "pending"
             self._users[key]["authorized"] = False
+            self._users[key]["can_trade_live"] = False
             self._save()
             audit(system_log, f"User revoked: {key}",
                   action="user_revoke", result="OK")
@@ -137,6 +234,8 @@ class UserStore:
         """Check if user exists and is authorized."""
         user = self.get(telegram_id)
         return user is not None and user.get("authorized", False)
+
+    # ── Live trading permission ────────────────────────────────
 
     def can_trade_live(self, telegram_id: int | str) -> bool:
         """Check if user is allowed to execute live trades.
@@ -167,6 +266,60 @@ class UserStore:
                   action="live_trading_permission", result="OK")
             return True
 
+    # ── Tier management ────────────────────────────────────────
+
+    def get_tier(self, telegram_id: int | str) -> str:
+        """Get user's current tier. Returns 'basic' for unknown users."""
+        user = self.get(telegram_id)
+        if not user:
+            return DEFAULT_TIER
+        return user.get("tier", DEFAULT_TIER)
+
+    def set_tier(self, telegram_id: int | str, tier: str) -> bool:
+        """Set a user's tier. Admin only operation."""
+        if tier not in TIERS:
+            return False
+        key = str(telegram_id)
+        with self._lock:
+            if key not in self._users:
+                return False
+            old_tier = self._users[key].get("tier", DEFAULT_TIER)
+            self._users[key]["tier"] = tier
+            self._save()
+            audit(system_log,
+                  f"User tier changed: {key} {old_tier} -> {tier}",
+                  action="tier_change", result="OK")
+            return True
+
+    def has_feature(self, telegram_id: int | str, feature: str) -> bool:
+        """Check if a user's tier grants access to a specific feature.
+
+        Usage:
+            if users.has_feature(uid, "backtest"):
+                # run backtest
+            else:
+                # "Upgrade to Pro to unlock backtesting"
+        """
+        user = self.get(telegram_id)
+        if not user:
+            return feature in TIER_FEATURES.get(DEFAULT_TIER, set())
+        tier = user.get("tier", DEFAULT_TIER)
+        features = TIER_FEATURES.get(tier, set())
+        return "*" in features or feature in features
+
+    def tier_label(self, telegram_id: int | str) -> str:
+        """Human-readable tier label with icon."""
+        tier = self.get_tier(telegram_id)
+        labels = {
+            "basic": "\U0001f7e2 Basic",
+            "pro": "\U0001f535 Pro",
+            "elite": "\U0001f7e1 Elite",
+            "admin": "\U0001f534 Admin",
+        }
+        return labels.get(tier, "\U0001f7e2 Basic")
+
+    # ── Command permission check ───────────────────────────────
+
     def has_permission(self, telegram_id: int | str, command: str) -> bool:
         """Check if user has permission for a specific command.
 
@@ -195,6 +348,8 @@ class UserStore:
                     pass
         return True
 
+    # ── Listing and counting ───────────────────────────────────
+
     def list_users(self) -> list[dict]:
         """List all registered users."""
         with self._lock:
@@ -207,6 +362,15 @@ class UserStore:
             for u in self._users.values():
                 r = u.get("role", "pending")
                 counts[r] = counts.get(r, 0) + 1
+            return counts
+
+    def count_by_tier(self) -> dict[str, int]:
+        """Count users by tier."""
+        with self._lock:
+            counts: dict[str, int] = {}
+            for u in self._users.values():
+                t = u.get("tier", DEFAULT_TIER)
+                counts[t] = counts.get(t, 0) + 1
             return counts
 
     def seed_admin(self, admin_ids: str) -> None:
@@ -223,11 +387,16 @@ class UserStore:
                             "telegram_id": key,
                             "name": "Admin",
                             "role": "admin",
+                            "tier": "admin",
                             "authorized": True,
+                            "can_trade_live": True,
                             "created_at": datetime.now(UTC).isoformat(),
                             "last_seen": datetime.now(UTC).isoformat(),
                         }
-                    elif self._users[key].get("role") != "admin":
-                        self._users[key]["role"] = "admin"
+                    else:
+                        if self._users[key].get("role") != "admin":
+                            self._users[key]["role"] = "admin"
+                        self._users[key]["tier"] = "admin"
                         self._users[key]["authorized"] = True
+                        self._users[key]["can_trade_live"] = True
                     self._save()

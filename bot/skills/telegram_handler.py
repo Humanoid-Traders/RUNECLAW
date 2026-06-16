@@ -210,6 +210,7 @@ class TelegramHandler:
             ("approve", self._cmd_approve), ("revoke", self._cmd_revoke),
             ("users", self._cmd_users),
             ("grant_live", self._cmd_grant_live), ("revoke_live", self._cmd_revoke_live),
+            ("set_tier", self._cmd_set_tier),
             # LLM BYOK commands
             ("setllm", self._cmd_setllm), ("llmstatus", self._cmd_llmstatus),
             ("llmreset", self._cmd_llmreset), ("llmtiers", self._cmd_llmtiers),
@@ -1042,12 +1043,17 @@ class TelegramHandler:
             open_pos = state.open_positions
             win_rate = f"{state.win_rate:.0%}".replace("%", "")
 
-        SEP = "─" * 16
+        SEP = "\u2500" * 16
         status_icon = "\U0001f7e2" if not cb_active else "\U0001f534"
         status_label = "Active" if not cb_active else "Paused"
         mode = mode_str
         equity = f"{display_equity:,.2f}"
         time = now
+
+        # Show user's tier and trading mode
+        tier_label = self.users.tier_label(tg_id)
+        can_live = self.users.can_trade_live(tg_id)
+        trade_mode = "\U0001f525 Live" if can_live else "\U0001f4dd Paper"
 
         msg = (
             f"<b>RUNECLAW</b>\n"
@@ -1056,7 +1062,8 @@ class TelegramHandler:
             f"{status_icon} <b>{status_label}</b> | {mode}\n"
             f"Equity: <code>${equity}</code>\n"
             f"Open positions: <code>{open_pos}</code>\n"
-            f"Win rate: <code>{win_rate}{'%' if win_rate != 'N/A' else ''}</code>\n\n"
+            f"Win rate: <code>{win_rate}{'%' if win_rate != 'N/A' else ''}</code>\n"
+            f"Tier: {tier_label} | Trading: {trade_mode}\n\n"
             f"<b>Talk to me:</b>\n"
             f"<i>\"scan BTC\" - \"show my positions\" - \"what's the risk?\"</i>\n"
             f"<i>\"analyze SOL\" - \"how's my PnL?\" - \"pause the bot\"</i>\n\n"
@@ -1098,7 +1105,8 @@ class TelegramHandler:
         if role == "admin":
             msg += (
                 f"\n\n<b>Admin</b>\n"
-                f"<i>/approve ID - /revoke ID - /users</i>"
+                f"<i>/approve ID - /revoke ID - /users</i>\n"
+                f"<i>/set_tier ID tier - /grant_live ID - /revoke_live ID</i>"
             )
 
         await self._send(update, msg)
@@ -1261,6 +1269,61 @@ class TelegramHandler:
         else:
             await self._send(update, f"\U0001f534 User not found.")
 
+    async def _cmd_set_tier(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """Admin only: /set_tier <telegram_id> <tier> — change user tier."""
+        if not self._is_admin(update):
+            await self._send(update, "\U0001f512 Admin only.")
+            return
+        args = ctx.args or []
+        if len(args) < 2:
+            from bot.utils.user_store import TIERS
+            tiers_str = " / ".join(f"<code>{t}</code>" for t in TIERS)
+            await self._send(update,
+                "\U0001f4cb <b>Usage</b>\n\n"
+                f"<code>/set_tier &lt;telegram_id&gt; &lt;tier&gt;</code>\n\n"
+                f"Tiers: {tiers_str}\n\n"
+                "\U0001f7e2 <b>basic</b> — Paper trading, basic analysis\n"
+                "\U0001f535 <b>pro</b> — + Backtesting, patterns, strategies\n"
+                "\U0001f7e1 <b>elite</b> — + Live eligible, priority signals, early access\n"
+                "\U0001f534 <b>admin</b> — Full access")
+            return
+        target_id = args[0].strip()
+        tier = args[1].strip().lower()
+        if not target_id.isdigit():
+            await self._send(update, "\U0001f534 Invalid Telegram ID.")
+            return
+        from bot.utils.user_store import TIERS
+        if tier not in TIERS:
+            await self._send(update,
+                f"\U0001f534 Invalid tier: <code>{html.escape(tier)}</code>\n"
+                f"Valid: {', '.join(f'<code>{t}</code>' for t in TIERS)}")
+            return
+        user = self.users.get(target_id)
+        if not user:
+            await self._send(update, f"\U0001f534 User <code>{target_id}</code> not found.")
+            return
+        ok = self.users.set_tier(target_id, tier)
+        if ok:
+            name = user.get("name", "Unknown")
+            tier_label = self.users.tier_label(target_id)
+            await self._send(update,
+                f"\U0001f3af <b>TIER UPDATED</b>\n\n"
+                f"- User: <b>{html.escape(name)}</b> (<code>{target_id}</code>)\n"
+                f"- Tier: {tier_label}\n"
+                f"- Role: <code>{user.get('role', 'trader')}</code>")
+            # Notify the user
+            try:
+                await ctx.bot.send_message(
+                    chat_id=int(target_id),
+                    text=(f"\U0001f3af <b>Account Upgraded</b>\n\n"
+                          f"Your tier has been updated to: {tier_label}\n"
+                          f"Use /start to see your new features."),
+                    parse_mode="HTML")
+            except Exception:
+                pass
+        else:
+            await self._send(update, "\U0001f534 Failed to update tier.")
+
     async def _cmd_users(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """Admin only: list all registered users."""
         if not self._is_admin(update):
@@ -1291,17 +1354,18 @@ class TelegramHandler:
         # User list
         _dash = "\u2500"
         lines.append("<pre>")
-        lines.append(f" {'ID':<12}{'NAME':<14}{'ROLE':<10}{'MODE'}")
-        lines.append(f" {_dash*12}{_dash*14}{_dash*10}{_dash*6}")
+        lines.append(f" {'ID':<10}{'NAME':<12}{'ROLE':<8}{'TIER':<7}{'MODE'}")
+        lines.append(f" {_dash*10}{_dash*12}{_dash*8}{_dash*7}{_dash*6}")
 
         for u in all_users[-15:]:  # Show last 15
             tid = u["telegram_id"][-8:]  # Last 8 digits
-            name = (u.get("name") or "?")[:12]
+            name = (u.get("name") or "?")[:10]
             role = u.get("role", "?")
+            tier = u.get("tier", "basic")
             auth = "\u2713" if u.get("authorized") else "\u2717"
             can_live = self.users.can_trade_live(u["telegram_id"])
             mode = "LIVE" if can_live else "paper"
-            lines.append(f" {tid:<12}{name:<14}{auth} {role:<8}{mode}")
+            lines.append(f" {tid:<10}{name:<12}{auth}{role:<7}{tier:<7}{mode}")
 
         lines.append("</pre>")
 

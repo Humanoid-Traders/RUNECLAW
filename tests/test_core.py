@@ -2526,11 +2526,12 @@ class TestTelegramAuth:
         import os; os.unlink(tmp)
 
     def test_auth_rejects_unlisted_chat(self):
-        """Registered but pending user should be rejected."""
+        """Revoked user should be rejected (new users are auto-approved)."""
         handler, tmp = self._make_handler()
         handler.users.register(99999, name="test")
+        handler.users.revoke(99999)  # revoke to simulate blocked user
         result = handler._check_auth(self._make_update(99999))
-        assert result is False, "Pending user should be rejected"
+        assert result is False, "Revoked user should be rejected"
         import os; os.unlink(tmp)
 
     def test_auth_allows_open_mode(self):
