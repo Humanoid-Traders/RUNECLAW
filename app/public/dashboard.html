@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>RUNECLAW — Trading Dashboard</title>
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@700&family=Rajdhani:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#060610;--bg2:#0a0a14;--panel:#0d0d1a;--panel2:#111118;--border:#1e1e30;--border2:#2a2a3a;--gold:#d4a843;--gold-dim:#8a7030;--green:#00e676;--green-dim:#00c853;--red:#ff3d3d;--red-dim:#e53935;--cyan:#00e5ff;--text:#e0e0e0;--text2:#8892a0;--text3:#5a5a6a;--font-h:'Cinzel',serif;--font-b:'Rajdhani',sans-serif;--font-m:'Cascadia Code','JetBrains Mono',monospace}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--font-b);background:var(--bg);color:var(--text);min-height:100vh;font-size:14px}
+::-webkit-scrollbar{width:6px}::-webkit-scrollbar-track{background:var(--bg)}::-webkit-scrollbar-thumb{background:var(--border2);border-radius:3px}
+
+/* NAV */
+.nav{display:flex;align-items:center;justify-content:space-between;padding:10px 24px;border-bottom:1px solid var(--border);background:var(--bg2);position:sticky;top:0;z-index:100}
+.brand{font-family:var(--font-h);font-size:15px;letter-spacing:3px;color:var(--gold);text-decoration:none}
+.nav-right{display:flex;align-items:center;gap:16px}
+.nav-link{font-size:13px;color:var(--text2);text-decoration:none;transition:.15s}.nav-link:hover{color:var(--text)}
+.user-pill{display:flex;align-items:center;gap:8px;background:var(--panel);border:1px solid var(--border);border-radius:20px;padding:4px 14px 4px 10px;font-size:12px;color:var(--text2)}
+.user-dot{width:7px;height:7px;border-radius:50%;background:var(--green);animation:pulse 2s ease infinite}
+.logout-btn{background:none;border:none;color:var(--text3);cursor:pointer;font-size:12px;font-family:var(--font-b)}.logout-btn:hover{color:var(--red)}
+
+/* LAYOUT */
+.container{max-width:1200px;margin:0 auto;padding:20px}
+.grid-4{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:20px}
+.grid-2{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px}
+.grid-3-1{display:grid;grid-template-columns:2fr 1fr;gap:16px;margin-bottom:20px}
+
+/* PANELS */
+.pnl{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:18px;position:relative;overflow:hidden}
+.pnl::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,transparent,var(--gold),transparent)}
+.pnl-title{font-family:var(--font-h);font-size:11px;letter-spacing:2px;color:var(--gold);text-transform:uppercase;margin-bottom:14px}
+
+/* STAT CARDS */
+.stat-card{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:16px;text-align:center;transition:.2s}
+.stat-card:hover{border-color:var(--gold-dim);box-shadow:0 0 15px rgba(212,168,67,.1)}
+.stat-lbl{font-size:11px;color:var(--text2);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px}
+.stat-val{font-size:26px;font-weight:700;font-family:var(--font-m);line-height:1.2}
+.stat-sub{font-size:11px;color:var(--text3);margin-top:4px}
+.val-gold{color:var(--gold)}.val-green{color:var(--green)}.val-red{color:var(--red)}.val-cyan{color:var(--cyan)}
+
+/* TABLE */
+.ttable{width:100%;border-collapse:collapse;font-size:13px}
+.ttable th{text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--text3);padding:8px 10px;border-bottom:1px solid var(--border)}
+.ttable td{padding:8px 10px;border-bottom:1px solid rgba(30,30,48,.5);color:var(--text2);font-family:var(--font-m);font-size:12px}
+.ttable tr:hover td{background:rgba(212,168,67,.03)}
+.scroll-wrap{max-height:340px;overflow-y:auto}
+
+/* TAGS */
+.tag{display:inline-block;padding:2px 8px;border-radius:4px;font-size:10px;font-weight:700;letter-spacing:.5px}
+.tag-long{background:rgba(0,230,118,.1);color:var(--green);border:1px solid rgba(0,230,118,.2)}
+.tag-short{background:rgba(255,61,61,.1);color:var(--red);border:1px solid rgba(255,61,61,.2)}
+.tag-win{color:var(--green)}.tag-loss{color:var(--red)}
+
+/* EQUITY CHART */
+.chart-wrap{width:100%;height:180px;position:relative}
+.chart-wrap svg{width:100%;height:100%}
+
+/* LOADING */
+.loading{text-align:center;padding:40px;color:var(--text3);font-size:13px}
+.spinner{display:inline-block;width:20px;height:20px;border:2px solid var(--border);border-top-color:var(--gold);border-radius:50%;animation:spin .8s linear infinite;margin-bottom:10px}
+
+/* EMPTY */
+.empty-msg{text-align:center;padding:30px;color:var(--text3);font-size:13px}
+
+/* RESPONSIVE */
+@media(max-width:900px){.grid-4{grid-template-columns:repeat(2,1fr)}.grid-2,.grid-3-1{grid-template-columns:1fr}}
+@media(max-width:500px){.grid-4{grid-template-columns:1fr}.nav{padding:10px 14px}.container{padding:14px}}
+
+/* ANIMATIONS */
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes fadeUp{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
+</style>
+</head>
+<body>
+<!-- NAV -->
+<nav class="nav">
+  <a href="/" class="brand">RUNECLAW</a>
+  <div class="nav-right">
+    <a href="/" class="nav-link">Home</a>
+    <a href="https://t.me/HTRUNECLAW_bot" target="_blank" class="nav-link">Telegram</a>
+    <div class="user-pill"><div class="user-dot"></div><span id="nav-email">-</span></div>
+    <button class="logout-btn" onclick="doLogout()">Log out</button>
+  </div>
+</nav>
+
+<!-- LOADING STATE -->
+<div id="loading" class="loading">
+  <div class="spinner"></div>
+  <div>Loading dashboard...</div>
+</div>
+
+<!-- MAIN CONTENT (hidden until loaded) -->
+<div id="app" class="container" style="display:none">
+
+  <!-- TOP STATS -->
+  <div class="grid-4" id="stats-row">
+    <div class="stat-card"><div class="stat-lbl">Equity</div><div class="stat-val val-gold" id="s-equity">-</div><div class="stat-sub">starting $10,000</div></div>
+    <div class="stat-card"><div class="stat-lbl">Net PnL</div><div class="stat-val" id="s-pnl">-</div><div class="stat-sub" id="s-pnl-sub">-</div></div>
+    <div class="stat-card"><div class="stat-lbl">Win Rate</div><div class="stat-val val-cyan" id="s-winrate">-</div><div class="stat-sub" id="s-wl">-</div></div>
+    <div class="stat-card"><div class="stat-lbl">Sharpe Ratio</div><div class="stat-val" id="s-sharpe">-</div><div class="stat-sub" id="s-pf">-</div></div>
+  </div>
+
+  <!-- EQUITY CURVE + FEES -->
+  <div class="grid-3-1">
+    <div class="pnl">
+      <div class="pnl-title">Equity Curve</div>
+      <div class="chart-wrap" id="eq-chart"><div class="empty-msg">No data yet</div></div>
+    </div>
+    <div>
+      <div class="pnl" style="margin-bottom:16px">
+        <div class="pnl-title">Fee Summary</div>
+        <div style="text-align:center;padding:10px 0">
+          <div class="stat-lbl">Total Fees Paid</div>
+          <div class="stat-val val-red" id="s-fees" style="font-size:22px">-</div>
+        </div>
+      </div>
+      <div class="pnl">
+        <div class="pnl-title">Session</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;text-align:center">
+          <div><div class="stat-lbl">Trades</div><div style="font-size:18px;font-weight:700;color:var(--text)" id="s-total">0</div></div>
+          <div><div class="stat-lbl">Open</div><div style="font-size:18px;font-weight:700;color:var(--cyan)" id="s-open">0</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- OPEN POSITIONS -->
+  <div class="pnl" style="margin-bottom:20px">
+    <div class="pnl-title">Open Positions</div>
+    <div id="open-wrap">
+      <div class="empty-msg" id="no-open">No open positions</div>
+      <table class="ttable" id="open-table" style="display:none">
+        <thead><tr><th>Symbol</th><th>Direction</th><th>Entry</th><th>Size</th><th>SL</th><th>TP</th><th>Opened</th></tr></thead>
+        <tbody id="open-body"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- TRADE HISTORY -->
+  <div class="pnl">
+    <div class="pnl-title">Trade History</div>
+    <div class="scroll-wrap">
+      <table class="ttable" id="hist-table">
+        <thead><tr><th>#</th><th>Symbol</th><th>Direction</th><th>Entry</th><th>Exit</th><th>PnL</th><th>Fees</th><th>Closed</th></tr></thead>
+        <tbody id="hist-body"></tbody>
+      </table>
+    </div>
+    <div class="empty-msg" id="no-hist" style="display:none">No closed trades yet</div>
+  </div>
+
+</div>
+<script>
+const API='/api';
+let TOKEN=null;
+
+// -- Auth guard --
+async function checkAuth(){
+  const saved=localStorage.getItem('rc_session');
+  if(!saved){window.location.href='/';return null;}
+  try{
+    const s=JSON.parse(saved);
+    const res=await fetch(API+'/auth/me',{headers:{'Authorization':'Bearer '+s.token}}).then(r=>r.json());
+    if(res.error)throw new Error(res.error);
+    TOKEN=s.token;
+    document.getElementById('nav-email').textContent=res.email;
+    return s.token;
+  }catch{localStorage.removeItem('rc_session');window.location.href='/';return null;}
+}
+
+function doLogout(){
+  localStorage.removeItem('rc_session');window.location.href='/';
+}
+
+function authFetch(path){
+  return fetch(API+path,{headers:{'Authorization':'Bearer '+TOKEN}}).then(r=>r.json());
+}
+
+// -- Formatters --
+function fmtUsd(v){return '$'+Math.abs(v).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});}
+function fmtPrice(v){v=parseFloat(v);if(v>=1000)return v.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});if(v>=1)return v.toFixed(4);return v.toFixed(6);}
+function fmtDate(d){if(!d)return'-';const dt=new Date(d);return dt.toLocaleDateString('en-US',{month:'short',day:'numeric'})+' '+dt.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',hour12:false});}
+
+// -- Stats --
+async function loadStats(){
+  const data=await authFetch('/trades/stats');
+  document.getElementById('s-equity').textContent=fmtUsd(data.equity);
+  const pnlEl=document.getElementById('s-pnl');
+  pnlEl.textContent=(data.net_pnl>=0?'+':'-')+fmtUsd(data.net_pnl);
+  pnlEl.className='stat-val '+(data.net_pnl>=0?'val-green':'val-red');
+  document.getElementById('s-pnl-sub').textContent=data.wins+'W / '+data.losses+'L';
+  document.getElementById('s-winrate').textContent=data.win_rate.toFixed(1)+'%';
+  document.getElementById('s-wl').textContent=data.wins+' wins, '+data.losses+' losses';
+  const sharpeEl=document.getElementById('s-sharpe');
+  sharpeEl.textContent=data.sharpe.toFixed(2);
+  sharpeEl.className='stat-val '+(data.sharpe>=1?'val-green':data.sharpe>=0?'val-gold':'val-red');
+  document.getElementById('s-pf').textContent='PF: '+data.profit_factor.toFixed(2);
+  document.getElementById('s-fees').textContent=fmtUsd(data.total_fees);
+  document.getElementById('s-total').textContent=data.total_trades;
+  document.getElementById('s-open').textContent=data.open_positions;
+}
+
+// -- Equity curve --
+async function loadEquityCurve(){
+  const data=await authFetch('/trades/equity-curve');
+  const snaps=data.snapshots;
+  if(!snaps||snaps.length<2){return;}
+  const vals=snaps.map(s=>parseFloat(s.equity));
+  const min=Math.min(...vals),max=Math.max(...vals);
+  const range=max-min||1;
+  const W=600,H=160,pad=5;
+  const points=vals.map((v,i)=>{
+    const x=pad+(i/(vals.length-1))*(W-2*pad);
+    const y=H-pad-((v-min)/range)*(H-2*pad);
+    return x.toFixed(1)+','+y.toFixed(1);
+  });
+  const polyline=points.join(' ');
+  const areaPoints=points.join(' ')+' '+((W-pad).toFixed(1)+','+(H-pad).toFixed(1))+' '+(pad.toFixed(1)+','+(H-pad).toFixed(1));
+  const startVal=fmtUsd(vals[0]),endVal=fmtUsd(vals[vals.length-1]);
+  const isUp=vals[vals.length-1]>=vals[0];
+  const lineColor=isUp?'#00e676':'#ff3d3d';
+  const fillColor=isUp?'rgba(0,230,118,0.08)':'rgba(255,61,61,0.08)';
+
+  document.getElementById('eq-chart').innerHTML=`
+    <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
+      <defs><linearGradient id="eqfill" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="${lineColor}" stop-opacity="0.2"/>
+        <stop offset="100%" stop-color="${lineColor}" stop-opacity="0"/>
+      </linearGradient></defs>
+      <polygon points="${areaPoints}" fill="url(#eqfill)"/>
+      <polyline points="${polyline}" fill="none" stroke="${lineColor}" stroke-width="1.5" stroke-linejoin="round"/>
+      <text x="${pad}" y="12" fill="${'#8892a0'}" font-size="9" font-family="Rajdhani">${startVal}</text>
+      <text x="${W-pad}" y="12" fill="${lineColor}" font-size="9" font-family="Rajdhani" text-anchor="end">${endVal}</text>
+    </svg>`;
+}
+
+// -- Open positions --
+async function loadOpenPositions(){
+  const data=await authFetch('/trades/open');
+  const pos=data.positions;
+  if(!pos||pos.length===0){document.getElementById('no-open').style.display='block';document.getElementById('open-table').style.display='none';return;}
+  document.getElementById('no-open').style.display='none';
+  document.getElementById('open-table').style.display='table';
+  const body=document.getElementById('open-body');
+  body.innerHTML=pos.map(p=>`<tr>
+    <td style="color:var(--text)">${p.symbol}</td>
+    <td><span class="tag tag-${p.direction.toLowerCase()}">${p.direction}</span></td>
+    <td>${fmtPrice(p.entry_price)}</td>
+    <td>${fmtUsd(parseFloat(p.size_usd))}</td>
+    <td>${p.stop_loss?fmtPrice(p.stop_loss):'-'}</td>
+    <td>${p.take_profit?fmtPrice(p.take_profit):'-'}</td>
+    <td>${fmtDate(p.opened_at)}</td>
+  </tr>`).join('');
+}
+
+// -- Trade history --
+async function loadHistory(){
+  const data=await authFetch('/trades/history?limit=50');
+  const trades=data.trades;
+  if(!trades||trades.length===0){document.getElementById('hist-table').style.display='none';document.getElementById('no-hist').style.display='block';return;}
+  document.getElementById('hist-table').style.display='table';document.getElementById('no-hist').style.display='none';
+  const body=document.getElementById('hist-body');
+  body.innerHTML=trades.map((t,i)=>{
+    const pnl=parseFloat(t.pnl);
+    const pnlClass=pnl>=0?'tag-win':'tag-loss';
+    const pnlSign=pnl>=0?'+':'';
+    return `<tr>
+      <td style="color:var(--text3)">${data.total-i}</td>
+      <td style="color:var(--text)">${t.symbol}</td>
+      <td><span class="tag tag-${t.direction.toLowerCase()}">${t.direction}</span></td>
+      <td>${fmtPrice(t.entry_price)}</td>
+      <td>${fmtPrice(t.exit_price)}</td>
+      <td class="${pnlClass}" style="font-weight:600">${pnlSign}${fmtUsd(pnl)}</td>
+      <td style="color:var(--text3)">${fmtUsd(parseFloat(t.fees))}</td>
+      <td>${fmtDate(t.closed_at)}</td>
+    </tr>`;
+  }).join('');
+}
+
+// -- Init --
+(async()=>{
+  const token=await checkAuth();
+  if(!token)return;
+  try{
+    await Promise.all([loadStats(),loadEquityCurve(),loadOpenPositions(),loadHistory()]);
+  }catch(err){console.error('Dashboard load error:',err);}
+  document.getElementById('loading').style.display='none';
+  document.getElementById('app').style.display='block';
+  document.getElementById('app').style.animation='fadeUp .4s ease';
+})();
+</script>
+</body>
+</html>

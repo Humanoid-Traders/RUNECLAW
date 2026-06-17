@@ -9,7 +9,7 @@ Every incoming message passes through require_registered().
 """
 
 from __future__ import annotations
-import functools, logging, os
+import functools, json, logging, os, urllib.request, urllib.error
 from telegram import Update
 from telegram.ext import ContextTypes
 from telegram.constants import ParseMode
@@ -23,7 +23,25 @@ from bot.db.models import User as DBUser
 
 log = logging.getLogger(__name__)
 
-REGISTER_URL = os.getenv("WEBSITE_URL", "https://YOUR_DOMAIN/register")
+WEBSITE_URL = os.getenv("WEBSITE_URL", "https://deryrgeb.mule.page")
+REGISTER_URL = WEBSITE_URL
+
+
+def _ensure_local_user(user_id: int, email: str, plan: str) -> None:
+    """Create a stub user in the bot's local SQLite if it doesn't exist yet.
+    This bridges the website (MySQL) and bot (SQLite) user stores."""
+    from bot.db.models import get_db
+    with get_db() as db:
+        existing = db.execute("SELECT id FROM users WHERE id = ?", (user_id,)).fetchone()
+        if existing:
+            return
+        # Insert stub user with a placeholder password hash (not usable for login)
+        db.execute(
+            "INSERT INTO users (id, email, password_hash, plan) VALUES (?, ?, ?, ?)",
+            (user_id, email, "website-linked:no-local-password", plan),
+        )
+        db.execute("INSERT INTO user_settings (user_id) VALUES (?)", (user_id,))
+        db.execute("INSERT INTO user_portfolio (user_id) VALUES (?)", (user_id,))
 
 
 # -- UserContext: injected into every handler --------------------------------
@@ -137,15 +155,48 @@ async def cmd_link(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     token = context.args[0].strip()
-    user_id = consume_link_token(token)
 
-    if user_id is None:
+    # Validate token via website API (tokens live in MySQL, not local SQLite)
+    api_url = f"{WEBSITE_URL}/api/auth/validate-token"
+    payload = json.dumps({"token": token, "chat_id": chat_id}).encode()
+    req_obj = urllib.request.Request(
+        api_url,
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req_obj, timeout=10) as resp:
+            result = json.loads(resp.read().decode())
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            await update.message.reply_text(
+                "Token invalid or expired (tokens last 10 minutes).\n"
+                f"Generate a new one at {REGISTER_URL}",
+            )
+            return
+        log.error(f"Token validation HTTP error: {e.code}")
         await update.message.reply_text(
-            "Token invalid or expired (tokens last 10 minutes).\n"
-            f"Generate a new one at {REGISTER_URL}",
+            "Could not validate token. Please try again in a moment.",
+        )
+        return
+    except Exception as exc:
+        log.error(f"Token validation error: {exc}")
+        await update.message.reply_text(
+            "Could not reach the website to validate your token.\n"
+            "Please try again in a moment.",
         )
         return
 
+    user_id = result["user_id"]
+    email = result["email"]
+    plan = result.get("plan", "free")
+
+    # Ensure a matching user record exists in local SQLite (website uses MySQL,
+    # bot uses SQLite -- we create a stub so FK constraints are satisfied)
+    _ensure_local_user(user_id, email, plan)
+
+    # Link in local SQLite so bot commands work
     success = link_telegram(user_id, chat_id, username)
     if not success:
         await update.message.reply_text(
@@ -154,11 +205,10 @@ async def cmd_link(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         )
         return
 
-    user = get_user_by_chat_id(chat_id)
     await update.message.reply_text(
         f"Linked successfully!\n\n"
-        f"Account: {user.email}\n"
-        f"Plan: {user.plan}\n\n"
+        f"Account: {email}\n"
+        f"Plan: {plan}\n\n"
         "You now have full access to RUNECLAW.\n"
         "Try: /scan /portfolio /fullscan",
     )
