@@ -63,6 +63,10 @@ class RiskLimits:
     # Scaled dynamically by position size; this is the absolute floor.
     # Default $2K allows micro-test trades ($10-$50) to pass on smaller pairs.
     min_book_depth_usd: float = _env_float("MIN_BOOK_DEPTH_USD", 2_000.0)
+    # Leverage-aware margin risk cap: max % of margin (cost) that can be lost
+    # on a single trade.  SL distance × leverage must not exceed this.
+    # With 5x leverage, 10% means SL can be at most 2% from entry.
+    max_margin_risk_pct: float = _env_float("MAX_MARGIN_RISK_PCT", 10.0)
 
 
 @dataclass(frozen=True)
@@ -174,15 +178,15 @@ class AnalyzerConfig:
     trend_alignment_bonus: float = 0.10
     trend_misalignment_penalty: float = 0.08
     sl_atr_mult_trending: float = 2.5
-    tp_atr_mult_trending: float = 3.5   # was 5.0 -- TPs now reachable, >1.4 R:R with 2.5x SL
+    tp_atr_mult_trending: float = 3.0   # was 3.5 -- tightened: only 1/35 trades hit TP at 3.5x
     sl_atr_mult_default: float = 2.5
-    tp_atr_mult_default: float = 3.05   # was 3.0 -- avoids floating-point boundary at min R:R 1.2
+    tp_atr_mult_default: float = 2.8   # was 3.05 -- tightened to capture more wins
     min_candles: int = 30
     # Volatility-adaptive SL/TP overrides (audit C8: externalized from analyzer.py)
     high_vol_threshold: float = 0.03    # ATR/price above this = high volatility
     low_vol_threshold: float = 0.01     # ATR/price below this = low volatility
     high_vol_sl_mult: float = 3.0       # wider stops in high vol
-    high_vol_tp_mult: float = 4.5       # R:R = 1.5
+    high_vol_tp_mult: float = 3.8       # was 4.5 -- tightened for reachable TPs
     low_vol_sl_mult: float = 2.0        # tighter stops in low vol
     low_vol_tp_mult: float = 3.0        # R:R = 1.5
     # Regime-specific overrides
@@ -192,6 +196,9 @@ class AnalyzerConfig:
     chop_sl_mult: float = 1.5
     chop_tp_mult: float = 2.0
     chop_confidence_penalty: float = 0.15
+    # RSI hard block: reject LONG when RSI >= this, reject SHORT when RSI <= inverse
+    rsi_overbought_block: float = _env_float("RSI_OVERBOUGHT_BLOCK", 72.0)
+    rsi_oversold_block: float = _env_float("RSI_OVERSOLD_BLOCK", 28.0)
 
 
 @dataclass(frozen=True)

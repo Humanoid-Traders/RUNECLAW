@@ -40,8 +40,8 @@ def _make_idea(
     asset: str = "BTC/USDT",
     direction: Direction = Direction.LONG,
     entry: float = 65000.0,
-    sl: float = 58500.0,     # 10% below entry — keeps position_usd within 20% notional
-    tp: float = 72800.0,     # 1.2x RR: entry + 1.2 * (entry - sl) = 65000 + 7800
+    sl: float = 63700.0,     # 2% below entry — within 10% margin risk at 5x leverage
+    tp: float = 66560.0,     # 1.2x RR: entry + 1.2 * (entry - sl) = 65000 + 1560
     confidence: float = 0.72,
     idea_id: str = "TI-test001",
 ) -> TradeIdea:
@@ -69,6 +69,8 @@ def _make_risk(portfolio: PortfolioTracker) -> RiskEngine:
 
 # Default ATR for tests: 2600 (4% of 65000 entry — passes the 6% volatility guard)
 _DEFAULT_ATR = 2600.0
+# Default max position for tests: caps sizing to avoid POSITION_SIZE rejection
+_DEFAULT_MAX_POS = 100.0
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -82,7 +84,7 @@ class TestRiskEngine:
         port = _make_portfolio()
         risk = _make_risk(port)
         idea = _make_idea()
-        result = risk.evaluate(idea, atr=_DEFAULT_ATR)
+        result = risk.evaluate(idea, atr=_DEFAULT_ATR, max_position_usd=100.0)
         assert result.verdict == RiskVerdict.APPROVED
         assert len(result.checks_failed) == 0
         assert "checks passed" in result.reason
@@ -91,7 +93,7 @@ class TestRiskEngine:
         port = _make_portfolio()
         risk = _make_risk(port)
         idea = _make_idea(confidence=0.3)
-        result = risk.evaluate(idea, atr=_DEFAULT_ATR)
+        result = risk.evaluate(idea, atr=_DEFAULT_ATR, max_position_usd=_DEFAULT_MAX_POS)
         assert result.verdict == RiskVerdict.REJECTED
         assert any("CONFIDENCE" in f for f in result.checks_failed)
 
@@ -101,7 +103,7 @@ class TestRiskEngine:
         # SL far, TP close → bad R:R
         idea = _make_idea(entry=65000, sl=60000, tp=66000)
         assert idea.risk_reward_ratio < 1.5
-        result = risk.evaluate(idea, atr=_DEFAULT_ATR)
+        result = risk.evaluate(idea, atr=_DEFAULT_ATR, max_position_usd=_DEFAULT_MAX_POS)
         assert result.verdict == RiskVerdict.REJECTED
         assert any("RISK_REWARD" in f for f in result.checks_failed)
 
@@ -109,7 +111,7 @@ class TestRiskEngine:
         port = _make_portfolio()
         risk = _make_risk(port)
         idea = _make_idea(entry=0)
-        result = risk.evaluate(idea, atr=_DEFAULT_ATR)
+        result = risk.evaluate(idea, atr=_DEFAULT_ATR, max_position_usd=_DEFAULT_MAX_POS)
         assert result.verdict == RiskVerdict.REJECTED
         assert any("ENTRY_PRICE" in f for f in result.checks_failed)
 
@@ -119,7 +121,7 @@ class TestRiskEngine:
         # Simulate 5% daily loss
         port._daily_pnl[datetime.now().strftime("%Y-%m-%d")] = -500.0
         idea = _make_idea()
-        result = risk.evaluate(idea, atr=_DEFAULT_ATR)
+        result = risk.evaluate(idea, atr=_DEFAULT_ATR, max_position_usd=_DEFAULT_MAX_POS)
         assert result.verdict == RiskVerdict.REJECTED
         assert risk.circuit_breaker_active
 
@@ -127,12 +129,12 @@ class TestRiskEngine:
         port = _make_portfolio()
         risk = _make_risk(port)
         risk._circuit_open = True
-        result = risk.evaluate(_make_idea(), atr=_DEFAULT_ATR)
+        result = risk.evaluate(_make_idea(), atr=_DEFAULT_ATR, max_position_usd=_DEFAULT_MAX_POS)
         assert result.verdict == RiskVerdict.REJECTED
 
         risk.reset_circuit_breaker()
         assert not risk.circuit_breaker_active
-        result2 = risk.evaluate(_make_idea(), atr=_DEFAULT_ATR)
+        result2 = risk.evaluate(_make_idea(), atr=_DEFAULT_ATR, max_position_usd=_DEFAULT_MAX_POS)
         assert result2.verdict == RiskVerdict.APPROVED
 
     def test_reject_max_positions(self):
@@ -143,7 +145,7 @@ class TestRiskEngine:
             idea = _make_idea(idea_id=f"TI-fill{i}", entry=65000 + i)
             port.open_position(idea, 200)
         idea = _make_idea(idea_id="TI-toomany")
-        result = risk.evaluate(idea, atr=_DEFAULT_ATR)
+        result = risk.evaluate(idea, atr=_DEFAULT_ATR, max_position_usd=_DEFAULT_MAX_POS)
         assert result.verdict == RiskVerdict.REJECTED
         assert any("MAX_POSITIONS" in f for f in result.checks_failed)
 
@@ -156,7 +158,7 @@ class TestRiskEngine:
             port.open_position(idea, 200)
         # Third MEME should be blocked
         idea = _make_idea(asset="PEPE/USDT", idea_id="TI-meme3")
-        result = risk.evaluate(idea, atr=_DEFAULT_ATR)
+        result = risk.evaluate(idea, atr=_DEFAULT_ATR, max_position_usd=_DEFAULT_MAX_POS)
         assert result.verdict == RiskVerdict.REJECTED
         assert any("CORRELATION" in f for f in result.checks_failed)
 
@@ -166,7 +168,7 @@ class TestRiskEngine:
         port.open_position(_make_idea(asset="DOGE/USDT", idea_id="TI-a"), 200)
         port.open_position(_make_idea(asset="BTC/USDT", idea_id="TI-b"), 200)
         idea = _make_idea(asset="ETH/USDT", idea_id="TI-c")
-        result = risk.evaluate(idea, atr=_DEFAULT_ATR)
+        result = risk.evaluate(idea, atr=_DEFAULT_ATR, max_position_usd=_DEFAULT_MAX_POS)
         assert result.verdict == RiskVerdict.APPROVED
 
     def test_consecutive_loss_streak(self):
@@ -186,7 +188,7 @@ class TestRiskEngine:
         # Reset cooldown so it doesn't mask the streak check
         risk._last_loss_time = None
         idea = _make_idea()
-        result = risk.evaluate(idea, atr=_DEFAULT_ATR)
+        result = risk.evaluate(idea, atr=_DEFAULT_ATR, max_position_usd=_DEFAULT_MAX_POS)
         assert result.verdict == RiskVerdict.REJECTED
         assert any("LOSS_STREAK" in f for f in result.checks_failed)
 
@@ -198,7 +200,7 @@ class TestRiskEngine:
         original = port.snapshot
         port.snapshot = lambda: (_ for _ in ()).throw(RuntimeError("db error"))
         idea = _make_idea()
-        result = risk.evaluate(idea, atr=_DEFAULT_ATR)
+        result = risk.evaluate(idea, atr=_DEFAULT_ATR, max_position_usd=_DEFAULT_MAX_POS)
         assert result.verdict == RiskVerdict.REJECTED
         assert "unavailable" in result.reason.lower()
         port.snapshot = original
@@ -537,7 +539,7 @@ class TestRiskEngineNewChecks:
         port = _make_portfolio()
         risk = _make_risk(port)
         idea = self._make_idea(stop_loss=0)
-        check = risk.evaluate(idea, atr=_DEFAULT_ATR)
+        check = risk.evaluate(idea, atr=_DEFAULT_ATR, max_position_usd=_DEFAULT_MAX_POS)
         assert check.verdict == RiskVerdict.REJECTED
         assert any("STOP_LOSS" in f for f in check.checks_failed)
 
@@ -553,7 +555,7 @@ class TestRiskEngineNewChecks:
         # Manually set timestamp to 10 minutes ago
         old_ts = datetime.now(UTC) - timedelta(seconds=600)
         idea = idea.model_copy(update={"timestamp": old_ts})
-        check = risk.evaluate(idea, atr=_DEFAULT_ATR)
+        check = risk.evaluate(idea, atr=_DEFAULT_ATR, max_position_usd=_DEFAULT_MAX_POS)
         assert check.verdict == RiskVerdict.REJECTED
         assert any("STALE_DATA" in f for f in check.checks_failed)
 
@@ -561,7 +563,7 @@ class TestRiskEngineNewChecks:
         port = _make_portfolio()
         risk = _make_risk(port)
         idea = self._make_idea()
-        check = risk.evaluate(idea, atr=_DEFAULT_ATR)
+        check = risk.evaluate(idea, atr=_DEFAULT_ATR, max_position_usd=_DEFAULT_MAX_POS)
         # Should not fail on stale data
         assert not any("STALE_DATA" in f for f in check.checks_failed)
 
@@ -570,7 +572,7 @@ class TestRiskEngineNewChecks:
         risk = _make_risk(port)
         idea = self._make_idea()
         risk.record_trade_result(-100)  # record a loss
-        check = risk.evaluate(idea, atr=_DEFAULT_ATR)
+        check = risk.evaluate(idea, atr=_DEFAULT_ATR, max_position_usd=_DEFAULT_MAX_POS)
         assert check.verdict == RiskVerdict.REJECTED
         assert any("COOLDOWN" in f for f in check.checks_failed)
 
@@ -579,7 +581,7 @@ class TestRiskEngineNewChecks:
         risk = _make_risk(port)
         idea = self._make_idea()
         # ATR of 5000 on a 50000 entry = 10%, above 6% volatility guard threshold
-        check = risk.evaluate(idea, atr=5000)
+        check = risk.evaluate(idea, atr=5000, max_position_usd=_DEFAULT_MAX_POS)
         assert check.verdict == RiskVerdict.REJECTED
         assert any("VOLATILITY" in f for f in check.checks_failed)
 
@@ -588,14 +590,14 @@ class TestRiskEngineNewChecks:
         risk = _make_risk(port)
         idea = self._make_idea()
         # ATR of 500 on 50000 = 1%, below 6% volatility guard threshold
-        check = risk.evaluate(idea, atr=500)
+        check = risk.evaluate(idea, atr=500, max_position_usd=_DEFAULT_MAX_POS)
         assert not any("VOLATILITY" in f for f in check.checks_failed)
 
     def test_stats_tracking(self):
         port = _make_portfolio()
         risk = _make_risk(port)
         idea = self._make_idea()
-        risk.evaluate(idea, atr=_DEFAULT_ATR)
+        risk.evaluate(idea, atr=_DEFAULT_ATR, max_position_usd=_DEFAULT_MAX_POS)
         stats = risk.stats
         assert stats["total_checks"] == 1
 
@@ -686,12 +688,12 @@ class TestIntegration:
 
         # Generate a trade idea manually
         idea = _make_idea(
-            asset="BTC/USDT", entry=50000, sl=45000, tp=65000,
+            asset="BTC/USDT", entry=50000, sl=49000, tp=51200,
             confidence=0.75, idea_id="TI-integ001",
         )
 
         # Risk check should approve
-        check = risk.evaluate(idea, atr=_DEFAULT_ATR)
+        check = risk.evaluate(idea, atr=_DEFAULT_ATR, max_position_usd=_DEFAULT_MAX_POS)
         assert check.verdict == RiskVerdict.APPROVED
 
         # Open position with the approved size
@@ -702,11 +704,11 @@ class TestIntegration:
         assert len(port.open_positions) == 1
 
         # Check stops -- price not hitting SL or TP
-        closed = port.check_stops({"BTC/USDT": 51000})
+        closed = port.check_stops({"BTC/USDT": 50500})
         assert len(closed) == 0
 
         # Close position manually at profit
-        closed_trade = port.close_position("TI-integ001", 54000)
+        closed_trade = port.close_position("TI-integ001", 50800)
         assert closed_trade is not None
         assert closed_trade.pnl > 0
         assert len(port.open_positions) == 0
@@ -731,7 +733,7 @@ class TestIntegration:
         # Every subsequent trade should be rejected
         for i in range(3):
             idea = _make_idea(idea_id=f"TI-cascade{i}")
-            result = risk.evaluate(idea, atr=_DEFAULT_ATR)
+            result = risk.evaluate(idea, atr=_DEFAULT_ATR, max_position_usd=_DEFAULT_MAX_POS)
             assert result.verdict == RiskVerdict.REJECTED
             assert any("CIRCUIT_BREAKER" in f for f in result.checks_failed)
 
@@ -745,7 +747,7 @@ class TestIntegration:
 
         # Immediately evaluate -- should be rejected due to cooldown
         idea = _make_idea(idea_id="TI-cool001")
-        result = risk.evaluate(idea, atr=_DEFAULT_ATR)
+        result = risk.evaluate(idea, atr=_DEFAULT_ATR, max_position_usd=_DEFAULT_MAX_POS)
         assert result.verdict == RiskVerdict.REJECTED
         assert any("COOLDOWN" in f for f in result.checks_failed)
 
@@ -813,7 +815,7 @@ class TestEdgeCases:
         port = _make_portfolio(10000)
         risk = _make_risk(port)
         idea = _make_idea(confidence=0.0, idea_id="TI-zeroconf")
-        result = risk.evaluate(idea, atr=_DEFAULT_ATR)
+        result = risk.evaluate(idea, atr=_DEFAULT_ATR, max_position_usd=_DEFAULT_MAX_POS)
         assert result.verdict == RiskVerdict.REJECTED
         assert any("CONFIDENCE" in f for f in result.checks_failed)
 
@@ -1218,7 +1220,7 @@ class TestEngineFSM:
         ts = datetime.now(UTC) - timedelta(seconds=age_seconds)
         return TradeIdea(
             id=trade_id, asset=asset, direction=Direction.LONG,
-            entry_price=65000, stop_loss=58500, take_profit=72800,
+            entry_price=65000, stop_loss=63700, take_profit=66560,
             confidence=0.75, reasoning="Test idea",
             signals_used=["rsi", "macd"], source="test", timestamp=ts,
         )
@@ -2443,8 +2445,8 @@ class TestSafetyGates:
             asset="BTC/USDT",
             direction=Direction.LONG,
             entry_price=50000.0,
-            stop_loss=44000.0,       # 12% stop → position under 20% notional cap
-            take_profit=57200.0,     # R:R = 7200/6000 = 1.2
+            stop_loss=49000.0,       # 2% stop → within margin risk cap at 5x
+            take_profit=51200.0,     # R:R = 1200/1000 = 1.2
             confidence=0.75,
             reasoning="test",
             signals_used=["rsi"],
@@ -3731,7 +3733,7 @@ class TestQwenIntegration:
         assert cfg.high_vol_threshold == 0.03
         assert cfg.low_vol_threshold == 0.01
         assert cfg.high_vol_sl_mult == 3.0
-        assert cfg.high_vol_tp_mult == 4.5
+        assert cfg.high_vol_tp_mult == 3.8
         assert cfg.low_vol_sl_mult == 2.0
         assert cfg.low_vol_tp_mult == 3.0
 

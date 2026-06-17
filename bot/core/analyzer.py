@@ -581,6 +581,48 @@ class Analyzer:
         elif direction == Direction.SHORT and take_profit <= 0:
             take_profit = entry * 0.01
 
+        # ── Leverage-aware SL cap ──────────────────────────────────
+        # Prevent outsized losses when leverage is used.
+        # max_margin_risk_pct caps the max loss as % of margin (cost).
+        # SL distance % × leverage = margin risk %.
+        # If it exceeds the cap, tighten SL (keeping R:R ratio intact).
+        leverage = CONFIG.exchange.default_leverage
+        if leverage > 1 and entry > 0:
+            sl_dist_pct = abs(entry - stop_loss) / entry
+            margin_risk_pct = sl_dist_pct * leverage * 100  # % of margin at risk
+            max_margin_risk = CONFIG.risk.max_margin_risk_pct
+            if margin_risk_pct > max_margin_risk:
+                # Compute the tighter SL distance
+                max_sl_dist_pct = max_margin_risk / (leverage * 100)
+                old_sl_dist = abs(entry - stop_loss)
+                new_sl_dist = entry * max_sl_dist_pct
+                # Preserve R:R ratio by scaling TP proportionally
+                old_tp_dist = abs(take_profit - entry)
+                rr_ratio = old_tp_dist / old_sl_dist if old_sl_dist > 0 else 1.2
+                new_tp_dist = new_sl_dist * rr_ratio
+                if direction == Direction.LONG:
+                    stop_loss = entry - new_sl_dist
+                    take_profit = entry + new_tp_dist
+                else:
+                    stop_loss = entry + new_sl_dist
+                    take_profit = entry - new_tp_dist
+                audit(trade_log,
+                      f"SL tightened for leverage: {margin_risk_pct:.1f}% margin risk → {max_margin_risk:.1f}% (SL dist {sl_dist_pct*100:.2f}% → {max_sl_dist_pct*100:.2f}%)",
+                      action="leverage_sl_cap", result="TIGHTENED")
+
+        # ── RSI hard block: reject trades into overbought/oversold ──
+        rsi_val = indicators.get("rsi", 50)
+        if direction == Direction.LONG and rsi_val >= CONFIG.analyzer.rsi_overbought_block:
+            audit(trade_log,
+                  f"LONG rejected: RSI {rsi_val:.1f} >= {CONFIG.analyzer.rsi_overbought_block} (overbought)",
+                  action="rsi_block", result="BLOCKED")
+            return None
+        if direction == Direction.SHORT and rsi_val <= CONFIG.analyzer.rsi_oversold_block:
+            audit(trade_log,
+                  f"SHORT rejected: RSI {rsi_val:.1f} <= {CONFIG.analyzer.rsi_oversold_block} (oversold)",
+                  action="rsi_block", result="BLOCKED")
+            return None
+
         # Tag source
         source = thesis.get("source", "unknown")
 

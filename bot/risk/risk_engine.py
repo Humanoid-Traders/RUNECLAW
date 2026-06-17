@@ -269,17 +269,11 @@ class RiskEngine:
             uncapped_position_usd = min(uncapped_position_usd, max_position_usd)
 
         # Auto-cap position at the per-symbol notional limit so tight stops
-        # don't produce oversized positions.  If the uncapped size exceeds
-        # 2x the cap (i.e. the stop is absurdly tight), the POSITION_SIZE
-        # check still rejects — we only auto-cap moderate overflows.
-        max_notional_usd = sizing_equity * (CONFIG.risk.max_symbol_exposure_pct / 100.0)
-        if max_notional_usd > 0:
-            uncapped_notional_pct = (uncapped_position_usd / sizing_equity * 100) if sizing_equity > 0 else 999
-            if uncapped_notional_pct > CONFIG.risk.max_symbol_exposure_pct * 2:
-                # Stop is too tight — position would be >2x the cap; reject, don't cap
-                pass  # let check #2 reject it
-            elif position_usd > max_notional_usd:
-                position_usd = max_notional_usd
+        # don't produce oversized positions.  This ensures the POSITION_SIZE
+        # check passes while the MARGIN_RISK check guards the actual risk.
+        max_notional_usd = sizing_equity * (CONFIG.risk.max_position_pct / 100.0)
+        if max_notional_usd > 0 and position_usd > max_notional_usd:
+            position_usd = max_notional_usd
 
         # ── Apply regime-aware position size adjustment (Feature #3) ──
         regime_params = self.get_regime_adjusted_params(self._current_regime, self._current_vol_state)
@@ -356,6 +350,23 @@ class RiskEngine:
                 passed.append(f"RISK_REWARD: {rr} OK")
         except Exception as exc:
             failed.append(f"RISK_REWARD: evaluation error ({exc})")
+
+        try:
+            # 6b. Leverage-aware margin risk cap
+            # SL distance % × leverage must not exceed max_margin_risk_pct
+            leverage = CONFIG.exchange.default_leverage
+            if leverage > 1 and idea.entry_price > 0:
+                sl_dist_pct = abs(idea.entry_price - idea.stop_loss) / idea.entry_price * 100
+                margin_risk = sl_dist_pct * leverage
+                max_margin_risk = CONFIG.risk.max_margin_risk_pct
+                if margin_risk > max_margin_risk + 0.5:  # small tolerance
+                    failed.append(f"MARGIN_RISK: {margin_risk:.1f}% (SL {sl_dist_pct:.1f}% × {leverage}x) exceeds {max_margin_risk:.1f}% cap")
+                else:
+                    passed.append(f"MARGIN_RISK: {margin_risk:.1f}% OK (SL {sl_dist_pct:.1f}% × {leverage}x)")
+            else:
+                passed.append("MARGIN_RISK: no leverage, skipped")
+        except Exception as exc:
+            failed.append(f"MARGIN_RISK: evaluation error ({exc})")
 
         try:
             # 7. Confidence threshold
