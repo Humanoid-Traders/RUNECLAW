@@ -888,6 +888,7 @@ class RuneClawEngine:
 
             result = await self.live_executor.execute(
                 idea, size_usd,
+                order_type=idea.order_type,
                 atr_value=stored_atr or 0.0,
             )
 

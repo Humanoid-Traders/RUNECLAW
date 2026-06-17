@@ -62,6 +62,90 @@ from bot.utils.logger import audit, system_log, trade_log, scan_log
 from bot.utils.models import Direction, MarketSignal, TradeIdea
 
 
+# ── Limit entry helper ───────────────────────────────────────────
+
+def _compute_limit_entry(
+    current_price: float, atr: float, direction: Direction,
+    indicators: dict, closes: np.ndarray,
+) -> Optional[float]:
+    """Compute a smarter limit entry price using nearby support/resistance.
+
+    For LONG: find a support level slightly below current price (pullback entry).
+    For SHORT: find a resistance level slightly above current price.
+
+    Returns a limit price, or None if market entry is best.
+
+    The limit price must be:
+      - Within 1 ATR of current price (not too far — order should fill)
+      - At least 0.15 ATR better than current (worth waiting for)
+      - Based on a real level: EMA, VWAP, Fibonacci, recent swing, or POC
+    """
+    if atr <= 0 or current_price <= 0:
+        return None
+
+    min_improvement = 0.15 * atr  # minimum edge to justify a limit
+    max_distance = 1.0 * atr     # don't set limit too far away
+
+    candidates: list[float] = []
+
+    # 1. EMA support/resistance
+    ema9 = indicators.get("ema_9")
+    ema21 = indicators.get("ema_21")
+    if ema9 is not None:
+        candidates.append(float(ema9))
+    if ema21 is not None:
+        candidates.append(float(ema21))
+
+    # 2. VWAP
+    vwap = indicators.get("vwap")
+    if vwap is not None and vwap > 0:
+        candidates.append(float(vwap))
+
+    # 3. Volume Profile POC
+    poc = indicators.get("poc_price")
+    if poc is not None and poc > 0:
+        candidates.append(float(poc))
+
+    # 4. Fibonacci levels from chart patterns
+    chart_patterns = indicators.get("chart_patterns_geo", [])
+    for p in chart_patterns:
+        levels = p.get("key_levels", {})
+        for key, val in levels.items():
+            if isinstance(val, (int, float)) and val > 0:
+                candidates.append(float(val))
+
+    # 5. Recent swing low (LONG) or swing high (SHORT)
+    if len(closes) >= 20:
+        if direction == Direction.LONG:
+            recent_low = float(np.min(closes[-20:]))
+            candidates.append(recent_low)
+        else:
+            recent_high = float(np.max(closes[-20:]))
+            candidates.append(recent_high)
+
+    # Filter candidates: must be a better price within the allowed range
+    best_limit = None
+    best_improvement = 0.0
+
+    for level in candidates:
+        if direction == Direction.LONG:
+            # For longs, limit should be BELOW current price (buy cheaper)
+            improvement = current_price - level
+            if improvement >= min_improvement and improvement <= max_distance:
+                if improvement > best_improvement:
+                    best_improvement = improvement
+                    best_limit = level
+        else:
+            # For shorts, limit should be ABOVE current price (sell higher)
+            improvement = level - current_price
+            if improvement >= min_improvement and improvement <= max_distance:
+                if improvement > best_improvement:
+                    best_improvement = improvement
+                    best_limit = level
+
+    return best_limit
+
+
 # Re-export for backward compatibility (tests import from here)
 __all__ = ["Analyzer", "Regime", "_ema", "_compute_adx", "_sanitize_symbol"]
 
@@ -440,6 +524,17 @@ class Analyzer:
         entry = signal.price
         atr = indicators.get("atr", entry * 0.02)
 
+        # ── Smart limit entry detection ──
+        # If price is extended from a key level, suggest a limit order at a
+        # better entry (pullback to support for longs, resistance for shorts).
+        # Only when CONFIG.limit_orders.enabled is True.
+        order_type = "market"
+        limit_entry = None
+        if CONFIG.limit_orders.enabled:
+            limit_entry = _compute_limit_entry(
+                entry, atr, direction, indicators, closes
+            )
+
         # STRATEGY: adaptive ATR multipliers based on volatility regime
         # Strategy mode provides baseline SL/TP; volatility/regime can override
         # Compute normalized volatility: ATR as a percentage of price
@@ -470,6 +565,15 @@ class Analyzer:
 
         stop_loss = entry - sl_mult * atr if direction == Direction.LONG else entry + sl_mult * atr
         take_profit = entry + tp_mult * atr if direction == Direction.LONG else entry - tp_mult * atr
+
+        # Apply limit entry if a better price was found
+        if limit_entry is not None and limit_entry != entry:
+            # Shift SL/TP by the same offset so R:R stays the same
+            offset = entry - limit_entry  # positive = limit is below market (better for longs)
+            entry = limit_entry
+            stop_loss = stop_loss - offset
+            take_profit = take_profit - offset
+            order_type = "limit"
 
         # Guard against negative SL/TP from extreme ATR values
         if direction == Direction.LONG and stop_loss <= 0:
@@ -510,6 +614,7 @@ class Analyzer:
             ),
             signals_used=list(indicators.keys()),
             timestamp=datetime.now(UTC),
+            order_type=order_type,
         )
 
         # ── Explainability Report ──

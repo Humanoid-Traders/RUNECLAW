@@ -82,6 +82,7 @@ class TradeIdea(BaseModel):
     signals_used: list[str] = Field(default_factory=list)
     source: str = "unknown"
     timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    order_type: str = "market"  # "market" or "limit"
 
     @property
     def risk_reward_ratio(self) -> float:

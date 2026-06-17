@@ -2570,8 +2570,10 @@ class TelegramHandler:
                         rr = idea.risk_reward_ratio
                         price = assets_data[i].get("price", entry)
                         rsi = assets_data[i].get("rsi", 0)
+                        _otype = getattr(idea, 'order_type', 'market').upper()
+                        _otype_tag = f" | {_otype}" if _otype == "LIMIT" else ""
                         cap = (
-                            f"<b>{html.escape(pair)}</b> — {d} Setup\n"
+                            f"<b>{html.escape(pair)}</b> — {d} Setup{_otype_tag}\n"
                             f"Entry: <code>{entry:,.4f}</code> | Now: <code>{price:,.4f}</code>\n"
                             f"SL: <code>{sl:,.4f}</code> (-{sl_pct:.1f}%) | TP: <code>{tp:,.4f}</code> (+{tp_pct:.1f}%)\n"
                             f"R:R 1:{rr:.1f} | Conf {idea.confidence:.0%} | RSI {rsi:.0f}\n"
@@ -2592,11 +2594,13 @@ class TelegramHandler:
                     rr = idea.risk_reward_ratio
                     pair = idea.asset.replace("/", "")
 
+                    _otype = getattr(idea, 'order_type', 'market').upper()
+                    _otype_tag = f" ({_otype} ORDER)" if _otype == "LIMIT" else ""
                     msg = (
-                        f"\U0001f525 <b>{html.escape(pair)}</b> — {idea.direction.value} Setup\n"
+                        f"\U0001f525 <b>{html.escape(pair)}</b> — {idea.direction.value} Setup{_otype_tag}\n"
                         f"{'━' * 28}\n\n"
                         f"<b>Setup — {idea.direction.value}:</b>\n"
-                        f"- Entry: <code>{entry:,.4f}</code>\n"
+                        f"- Entry: <code>{entry:,.4f}</code>{' (limit)' if _otype == 'LIMIT' else ''}\n"
                         f"- SL: <code>{sl:,.4f}</code> (-{sl_pct:.1f}%)\n"
                         f"- TP: <code>{tp:,.4f}</code> (+{tp_pct:.1f}%)\n"
                         f"- Risk/Reward: 1:{rr:.1f}\n"
