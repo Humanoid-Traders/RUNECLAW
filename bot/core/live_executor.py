@@ -36,10 +36,10 @@ from bot.utils.trailing import make_trailing_state, update_trailing_stop
 logger = logging.getLogger(__name__)
 
 
-# ── Safety limits for micro-testing ──────────────────────────────────
-
-MICRO_MAX_POSITION_USD = 10.0     # Max $10 per trade
-MICRO_MAX_TOTAL_EXPOSURE = 50.0   # Max $50 total open exposure
+# ── Safety limits ────────────────────────────────────────────────────
+# $800 deposit, $100 margin per trade at 5x = $500 notional per trade
+MICRO_MAX_POSITION_USD = 100.0    # Max $100 margin per trade
+MICRO_MAX_TOTAL_EXPOSURE = 500.0  # Max $500 total margin exposure
 MICRO_MAX_OPEN_POSITIONS = 5      # Max 5 concurrent positions
 
 # F-07 FIX: Persistence file for live positions
@@ -106,7 +106,7 @@ class LiveExecutor:
 
     Usage:
         executor = LiveExecutor()
-        result = await executor.execute(idea, size_usd=10.0)
+        result = await executor.execute(idea, size_usd=100.0)
     """
 
     def __init__(self) -> None:

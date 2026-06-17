@@ -31,7 +31,7 @@ def _env_float(key: str, default: float = 0.0) -> float:
 @dataclass(frozen=True)
 class RiskLimits:
     """Hard risk limits -- breaching any one triggers circuit breaker."""
-    max_position_pct: float = _env_float("MAX_POSITION_PCT", 2.0)
+    max_position_pct: float = _env_float("MAX_POSITION_PCT", 13.0)
     max_daily_loss_pct: float = _env_float("MAX_DAILY_LOSS_PCT", 5.0)
     max_drawdown_pct: float = _env_float("MAX_DRAWDOWN_PCT", 10.0)
     max_open_positions: int = int(_env_float("MAX_OPEN_POSITIONS", 5))

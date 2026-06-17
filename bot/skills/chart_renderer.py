@@ -322,18 +322,21 @@ def render_chart_png(df, title: str = "RUNECLAW Setup", dpi: int = 160,
             price_ax.fill_between(xs, e9, e21, where=(e9 < e21), interpolate=True,
                                   color=t["down"], alpha=0.10, zorder=0)
 
-            # Swing high/low markers (local extrema over a ±k window).
+            # Swing high/low markers — only show the last 8 of each to
+            # avoid cluttering the chart with dozens of tiny triangles.
             k = 3
             hi = df["High"]; lo = df["Low"]
             hi_mask = (hi == hi.rolling(2 * k + 1, center=True).max())
             lo_mask = (lo == lo.rolling(2 * k + 1, center=True).min())
             span = (hi.max() - lo.min()) or 1.0
-            for i in [j for j, m in enumerate(hi_mask) if m]:
+            hi_pts = [j for j, m in enumerate(hi_mask) if m]
+            lo_pts = [j for j, m in enumerate(lo_mask) if m]
+            for i in hi_pts[-8:]:
                 price_ax.scatter(i, hi.iloc[i] + span * 0.02, marker="v",
-                                 s=18, color=t["down"], alpha=0.55, zorder=3)
-            for i in [j for j, m in enumerate(lo_mask) if m]:
+                                 s=14, color=t["down"], alpha=0.45, zorder=3)
+            for i in lo_pts[-8:]:
                 price_ax.scatter(i, lo.iloc[i] - span * 0.02, marker="^",
-                                 s=18, color=t["up"], alpha=0.55, zorder=3)
+                                 s=14, color=t["up"], alpha=0.45, zorder=3)
 
             # BOS / CHoCH structure lines (reuse the engine's structure logic).
             n = len(df)
@@ -354,24 +357,34 @@ def render_chart_png(df, title: str = "RUNECLAW Setup", dpi: int = 160,
             # ── Smart-money concepts: FVG, order blocks, sweeps, swing tags ──
             if smc:
                 # Fair value gaps (shaded imbalance bands, label at left edge).
+                _fvg_placed: list[float] = []
                 for z in _fair_value_gaps(df):
                     col = t["up"] if z["bull"] else t["down"]
                     price_ax.fill_between([z["start"], n - 1], z["bottom"], z["top"],
-                                          color=col, alpha=0.12, zorder=1)
-                    if z["start"] < n * 0.85:  # skip label near the right pills
-                        price_ax.text(z["start"], (z["top"] + z["bottom"]) / 2, "FVG",
-                                      color=col, fontsize=6.5, fontweight="bold",
-                                      va="center", ha="left", alpha=0.9, zorder=4)
-                # Order blocks (bordered zone + OB tag).
+                                          color=col, alpha=0.10, zorder=1)
+                    mid = (z["top"] + z["bottom"]) / 2
+                    # Only place label if not too close to another and not near right edge
+                    if z["start"] < n * 0.80 and not any(abs(mid - py) < span * 0.03 for py in _fvg_placed):
+                        price_ax.text(z["start"], mid, "FVG",
+                                      color=col, fontsize=6, fontweight="bold",
+                                      va="center", ha="left", alpha=0.8, zorder=4)
+                        _fvg_placed.append(mid)
+                # Order blocks (bordered zone + OB tag) — skip labels that
+                # would overlap with previously placed ones.
+                _ob_placed: list[float] = []
+                _ob_min_gap = span * 0.04
                 for ob in _order_blocks(df):
                     col = t["up"] if ob["bull"] else t["down"]
                     price_ax.fill_between([ob["start"], n - 1], ob["bottom"], ob["top"],
-                                          color=col, alpha=0.16, edgecolor=col,
+                                          color=col, alpha=0.12, edgecolor=col,
                                           linewidth=0.8, zorder=1)
-                    price_ax.text(ob["start"], ob["bottom"], "OB", color="#ffffff",
-                                  fontsize=6.5, fontweight="bold", va="top", ha="left",
-                                  bbox=dict(boxstyle="round,pad=0.12", fc=col, ec="none",
-                                            alpha=0.85), zorder=4)
+                    label_y = ob["bottom"]
+                    if not any(abs(label_y - py) < _ob_min_gap for py in _ob_placed):
+                        price_ax.text(ob["start"], label_y, "OB", color="#ffffff",
+                                      fontsize=6, fontweight="bold", va="top", ha="left",
+                                      bbox=dict(boxstyle="round,pad=0.10", fc=col, ec="none",
+                                                alpha=0.75), zorder=4)
+                        _ob_placed.append(label_y)
                 # Liquidity sweep marker on the swept level.
                 sweep = _liquidity_sweep(df)
                 if sweep and sweep.get("level"):
@@ -382,13 +395,22 @@ def render_chart_png(df, title: str = "RUNECLAW Setup", dpi: int = 160,
                                   fontsize=6.5, fontweight="bold", va="center", ha="left",
                                   bbox=dict(boxstyle="round,pad=0.12", fc=scol, ec="none",
                                             alpha=0.85), zorder=4)
-                # HH/HL/LH/LL swing structure tags.
-                for sx, sy, lab, kind in _swing_labels(df):
+                # HH/HL/LH/LL swing structure tags — deduplicate labels
+                # that are too close vertically (within 3% of price range).
+                _swing_items = _swing_labels(df)
+                _placed_y: list[float] = []
+                min_gap = span * 0.04
+                for sx, sy, lab, kind in _swing_items:
                     off = span * 0.045 if kind == "high" else -span * 0.045
-                    price_ax.text(sx, sy + off, lab, color=t["muted"], fontsize=6.5,
+                    label_y = sy + off
+                    # Skip if too close to an already-placed label
+                    if any(abs(label_y - py) < min_gap for py in _placed_y):
+                        continue
+                    _placed_y.append(label_y)
+                    price_ax.text(sx, label_y, lab, color=t["muted"], fontsize=6.5,
                                   fontweight="bold", ha="center",
                                   va="bottom" if kind == "high" else "top",
-                                  alpha=0.85, zorder=4)
+                                  alpha=0.75, zorder=4)
 
             # ── Wave analysis & pattern overlays ──
             _elliott_wave_overlay(df, price_ax, t)
@@ -748,8 +770,9 @@ def _fibonacci_levels_overlay(df, price_ax, t):
     """Draw Fibonacci retracement levels across the visible chart range.
 
     Identifies the major swing high/low in the DataFrame and draws
-    horizontal dotted lines at standard Fibonacci ratios with right-edge
-    labels showing ratio and price.
+    horizontal dotted lines at standard Fibonacci ratios with small
+    left-aligned labels inside the chart (not at the right edge, to
+    avoid colliding with the price axis and trade-level pills).
     """
     try:
         hi = df["High"].to_numpy()
@@ -774,20 +797,28 @@ def _fibonacci_levels_overlay(df, price_ax, t):
         ]
 
         # Alpha per level: golden-ratio levels are slightly more visible.
-        alpha_map = {0.236: 0.35, 0.382: 0.50, 0.5: 0.40, 0.618: 0.50, 0.786: 0.35}
+        alpha_map = {0.236: 0.30, 0.382: 0.45, 0.5: 0.35, 0.618: 0.45, 0.786: 0.30}
 
-        ytx = price_ax.get_yaxis_transform()
+        # Collision guard: skip fib levels that are too close to entry/SL/TP
+        # lines or too close to each other (within 2% of range).
+        placed_y: list[float] = []
+        min_gap = diff * 0.035
 
         for ratio, color in fib_spec:
             level = swing_low + diff * (1.0 - ratio)  # retracement from high
-            a = alpha_map.get(ratio, 0.4)
-            price_ax.axhline(level, color=color, lw=0.7, ls=":", alpha=a, zorder=1)
-            # Right-edge label: ratio + price
-            label = f" {ratio:.3f}  {_fmt(level)} "
+            # Skip if too close to an already-placed level
+            if any(abs(level - py) < min_gap for py in placed_y):
+                continue
+            placed_y.append(level)
+
+            a = alpha_map.get(ratio, 0.35)
+            price_ax.axhline(level, color=color, lw=0.6, ls=":", alpha=a, zorder=1)
+            # Label inside the chart, near the left edge (x=5% of chart width)
+            label = f"{ratio:.3f}"
             price_ax.text(
-                1.002, level, label, transform=ytx, color=color,
-                fontsize=6.5, va="center", ha="left", alpha=a + 0.15,
-                clip_on=False, zorder=3,
+                n * 0.02, level, label, color=color,
+                fontsize=6, va="center", ha="left", alpha=a + 0.15,
+                zorder=3,
             )
     except Exception:  # noqa: BLE001
         return
