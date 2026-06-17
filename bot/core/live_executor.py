@@ -99,6 +99,9 @@ class LivePosition:
     limit_order_id: Optional[str] = None
     # ATR at entry time — needed for trailing stop initialization
     atr_at_entry: float = 0.0
+    # Fee tracking: commission deducted from PnL
+    gross_pnl: Optional[float] = None
+    commission: Optional[float] = None
 
 
 class LiveExecutor:
@@ -1701,15 +1704,24 @@ class LiveExecutor:
             if fill_price == 0:
                 fill_price = pos.entry_price  # absolute fallback — no phantom PnL
 
-            # Calculate PnL
+            # Calculate PnL with fee deduction
             if pos.direction == "LONG":
-                pnl = (fill_price - pos.entry_price) * pos.quantity
+                gross_pnl = (fill_price - pos.entry_price) * pos.quantity
             else:
-                pnl = (pos.entry_price - fill_price) * pos.quantity
+                gross_pnl = (pos.entry_price - fill_price) * pos.quantity
+
+            # Exchange commission: entry + exit notional × fee rate
+            entry_notional = pos.entry_price * pos.quantity
+            exit_notional = fill_price * pos.quantity
+            commission_pct = CONFIG.risk.commission_pct  # default 0.1% per side
+            commission = (entry_notional + exit_notional) * (commission_pct / 100.0)
+            net_pnl = gross_pnl - commission
 
             pos.status = "closed"
             pos.close_price = fill_price
-            pos.pnl_usd = pnl
+            pos.gross_pnl = round(gross_pnl, 4)
+            pos.commission = round(commission, 4)
+            pos.pnl_usd = round(net_pnl, 4)
             pos.closed_at = datetime.now(UTC)
 
             # F-07 FIX: persist after closing (removes from open positions file)
@@ -1725,15 +1737,17 @@ class LiveExecutor:
                     except Exception:
                         pass
 
-            audit(trade_log, f"Live position closed: {pos.symbol} PnL=${pnl:.4f}",
+            audit(trade_log, f"Live position closed: {pos.symbol} net=${net_pnl:.4f} (gross=${gross_pnl:.4f}, fee=${commission:.4f})",
                   action="live_close", result="CLOSED",
                   data={
                       "trade_id": trade_id, "reason": reason,
                       "entry": pos.entry_price, "exit": fill_price,
-                      "pnl_usd": round(pnl, 4),
+                      "pnl_usd": round(net_pnl, 4),
+                      "gross_pnl": round(gross_pnl, 4),
+                      "commission": round(commission, 4),
                   })
 
-            pnl_str = f"+${pnl:.4f}" if pnl >= 0 else f"-${abs(pnl):.4f}"
+            pnl_str = f"+${net_pnl:.4f}" if net_pnl >= 0 else f"-${abs(net_pnl):.4f}"
             pnl_pct = ((fill_price - pos.entry_price) / pos.entry_price * 100)
             if pos.direction == "SHORT":
                 pnl_pct = -pnl_pct
@@ -1744,10 +1758,11 @@ class LiveExecutor:
                 hold_str = f"{hold_secs / 3600:.1f}h"
             else:
                 hold_str = f"{hold_secs / 86400:.1f}d"
+            fee_str = f"${commission:.2f}"
             return (
                 f"CLOSED {pos.direction} {pos.symbol} ({reason})\n"
                 f"Entry: ${pos.entry_price:,.4f} → Exit: ${fill_price:,.4f}\n"
-                f"PnL: {pnl_str} ({pnl_pct:+.2f}%) | Hold: {hold_str}"
+                f"PnL: {pnl_str} ({pnl_pct:+.2f}%) | Fees: {fee_str} | Hold: {hold_str}"
             )
 
         except Exception as exc:
@@ -2088,6 +2103,8 @@ class LiveExecutor:
                     "leverage": pos.leverage,
                     "close_price": pos.close_price,
                     "pnl_usd": pos.pnl_usd,
+                    "gross_pnl": pos.gross_pnl,
+                    "commission": pos.commission,
                     "opened_at": pos.opened_at.isoformat() if pos.opened_at else None,
                     "closed_at": pos.closed_at.isoformat() if pos.closed_at else None,
                     "status": "closed",
@@ -2124,6 +2141,8 @@ class LiveExecutor:
                     leverage=int(item.get("leverage", 1)),
                     close_price=float(item.get("close_price", 0)),
                     pnl_usd=float(item.get("pnl_usd", 0)),
+                    gross_pnl=float(item.get("gross_pnl", 0)) if item.get("gross_pnl") is not None else None,
+                    commission=float(item.get("commission", 0)) if item.get("commission") is not None else None,
                     opened_at=opened_at,
                     closed_at=closed_at,
                     status="closed",

@@ -571,10 +571,11 @@ class TelegramHandler:
                 wins = sum(1 for t in live_closed if (t.pnl_usd or 0) > 0)
                 win_rate_val = wins / total_trades if total_trades > 0 else 0
                 total_pnl = sum(t.pnl_usd or 0 for t in live_closed)
+                total_fees = sum(t.commission or 0 for t in live_closed)
                 portfolio_summary = (
                     f"{len(live_open)} open positions, "
                     f"equity ~${eq_display:,.2f}, "
-                    f"total PnL ${total_pnl:+,.2f}, "
+                    f"net PnL ${total_pnl:+,.2f} (fees ${total_fees:.2f}), "
                     f"win rate {win_rate_val:.0%}, "
                     f"total trades {total_trades}"
                 )
@@ -1772,6 +1773,7 @@ class TelegramHandler:
             open_pos = executor.open_positions
             closed_pos = executor.closed_positions
             realized_pnl = sum(p.pnl_usd or 0 for p in closed_pos)
+            total_fees = sum(p.commission or 0 for p in closed_pos)
             exposure = executor.total_exposure_usd
 
             # PnL sign
@@ -1783,7 +1785,7 @@ class TelegramHandler:
             lines = [
                 f"💰 <b>BITGET PORTFOLIO</b>",
                 f"{SEP}",
-                f"   {pnl_icon}  Realized PnL: <code>${pnl_sign}{realized_pnl:.2f}</code>",
+                f"   {pnl_icon}  Net PnL: <code>${pnl_sign}{realized_pnl:.2f}</code> (fees: ${total_fees:.2f})",
                 "",
                 "💳 <b>Balance</b>",
                 f"{SEP}",
@@ -2381,8 +2383,10 @@ class TelegramHandler:
             live_open = executor.open_positions
             live_closed = executor.closed_positions
 
-            # Calculate live PnL from closed positions
+            # Calculate live PnL from closed positions (net of fees)
             live_total_pnl = sum((p.pnl_usd or 0) for p in live_closed)
+            live_total_fees = sum((p.commission or 0) for p in live_closed)
+            live_total_gross = sum((p.gross_pnl or p.pnl_usd or 0) for p in live_closed)
             live_unrealized = 0.0
             # Unrealized PnL for open positions
             for lp in live_open:
@@ -2399,7 +2403,8 @@ class TelegramHandler:
                 f"- Equity: <code>${display_equity:,.2f}</code>",
                 f"- Open Positions: <code>{len(live_open)}</code>",
                 f"- Exposure: <code>${live_exposure:,.2f}</code>",
-                f"- Realized PnL: <code>${live_total_pnl:+,.2f}</code> {'🟢' if live_total_pnl >= 0 else '🔴'}",
+                f"- Net PnL: <code>${live_total_pnl:+,.2f}</code> {'🟢' if live_total_pnl >= 0 else '🔴'}",
+                f"- Fees Paid: <code>${live_total_fees:,.2f}</code>",
             ]
             if live_unrealized != 0:
                 lines.append(f"- Unrealized PnL: <code>${live_unrealized:+,.2f}</code> {'🟢' if live_unrealized >= 0 else '🔴'}")
@@ -2421,12 +2426,14 @@ class TelegramHandler:
             # Recent closed trades from LiveExecutor
             if live_closed:
                 recent = live_closed[-5:]
-                lines.extend(["", sep, "", "<b>Recent Trades:</b>"])
+                lines.extend(["", sep, "", "<b>Recent Trades (net of fees):</b>"])
                 for t in recent:
                     pnl_val = t.pnl_usd or 0
+                    fee_val = t.commission or 0
                     pnl_icon = "✅" if pnl_val >= 0 else "❌"
                     pair = t.symbol.replace("/", "")
-                    lines.append(f"  {pnl_icon} {pair} {t.direction} → <code>${pnl_val:+,.2f}</code>")
+                    fee_note = f" (fee ${fee_val:.2f})" if fee_val > 0 else ""
+                    lines.append(f"  {pnl_icon} {pair} {t.direction} → <code>${pnl_val:+,.2f}</code>{fee_note}")
 
             # Session tally from LiveExecutor
             if live_closed:
