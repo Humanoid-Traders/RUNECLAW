@@ -162,7 +162,11 @@ async def cmd_link(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     req_obj = urllib.request.Request(
         api_url,
         data=payload,
-        headers={"Content-Type": "application/json"},
+        headers={
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "User-Agent": "RUNECLAW-Bot/1.0",
+        },
         method="POST",
     )
     try:
