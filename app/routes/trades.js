@@ -88,8 +88,8 @@ router.get('/history', async (req, res) => {
     const [rows] = await pool.execute(
       `SELECT id, symbol, direction, entry_price, exit_price, size_usd, pnl, fees, pattern, opened_at, closed_at
        FROM trades WHERE user_id = ? AND status = 'CLOSED'
-       ORDER BY closed_at DESC LIMIT ${limit} OFFSET ${offset}`,
-      [uid]
+       ORDER BY closed_at DESC LIMIT ? OFFSET ?`,
+      [uid, limit, offset]
     );
 
     const [countRows] = await pool.execute(

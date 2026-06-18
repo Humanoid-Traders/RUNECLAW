@@ -186,13 +186,13 @@ async function fetchPublicPortfolio() {
   try {
     const r = await fetch('/api/bot/sync/portfolio-summary');
     const d = await r.json();
-    if (d.portfolio) { publicPortfolio = d.portfolio; renderCircuit(); }
+    if (d.portfolio) { publicPortfolio = d.portfolio; renderCircuit(); renderPortfolio(); }
   } catch(e) {}
 }
 
 async function fetchPortfolio() {
   if (!LOGGED_IN) {
-    document.getElementById('portfolioContent').innerHTML = '<div class="empty-msg">Log in to view portfolio data</div>';
+    renderPortfolio();
     return;
   }
   try {
@@ -201,9 +201,12 @@ async function fetchPortfolio() {
       fetch('/api/trades/stats', {headers:h}), fetch('/api/trades/open', {headers:h}), fetch('/api/trades/equity-curve', {headers:h})
     ]);
     const stats = await s.json(); const open = await o.json(); const eq = await e.json();
-    portfolioData = { stats, positions: open.positions||[], snapshots: eq.snapshots||[] };
+    // Only use authenticated data if it has real trades
+    if (stats && stats.total_trades > 0) {
+      portfolioData = { stats, positions: open.positions||[], snapshots: eq.snapshots||[] };
+    }
     renderPortfolio(); renderCircuit();
-  } catch(e) {}
+  } catch(e) { renderPortfolio(); }
 }
 
 function renderRegime() {
@@ -243,15 +246,16 @@ function renderRegime() {
 
 function renderCircuit() {
   const el = document.getElementById('circuitContent');
-  // Use authenticated portfolio data first, then public summary, then defaults
+  // Use authenticated portfolio data first, then scan circuit breaker, then public summary
   const s = portfolioData?.stats || {};
   const pp = publicPortfolio || {};
-  const eq = s.equity || pp.equity || 800;
-  const pnl = s.net_pnl || pp.net_pnl || 0;
-  const op = s.open_positions || pp.open_count || 0;
-  const wr = s.win_rate || pp.win_rate || 0;
+  const cb = scanData?.circuit_breaker || {};
+  const eq = s.equity || cb.equity || pp.equity || 800;
+  const pnl = s.net_pnl != null && s.net_pnl !== 0 ? s.net_pnl : (cb.net_pnl != null ? cb.net_pnl : (pp.net_pnl || 0));
+  const op = s.open_positions || cb.open_count || pp.open_count || 0;
+  const wr = s.win_rate || cb.win_rate || pp.win_rate || 0;
   const sharpe = s.sharpe || 0;
-  const trades = s.total_trades || pp.total_trades || 0;
+  const trades = s.total_trades || cb.total_trades || pp.total_trades || 0;
   let pc = 'ok'; if(pnl<-30) pc='warn'; if(pnl<-40) pc='danger';
   const rules = scanData?.circuit_breaker?.rules || [];
 
@@ -343,9 +347,24 @@ function renderEntryCards() {
 
 function renderPortfolio() {
   const el=document.getElementById('portfolioContent');
-  if(!LOGGED_IN){el.innerHTML='<div class="empty-msg">Log in to view portfolio data</div>';return;}
-  if(!portfolioData)return;
-  const s=portfolioData.stats, pos=portfolioData.positions, snaps=portfolioData.snapshots;
+  // Source priority: authenticated portfolio > scan data circuit breaker > public portfolio summary
+  const pp = publicPortfolio || {};
+  const cb = scanData?.circuit_breaker || {};
+  // Build best-available stats from all sources
+  const hasAuth = portfolioData && portfolioData.stats && portfolioData.stats.total_trades > 0;
+  const hasCB = cb.equity || cb.total_trades;
+  const hasPub = pp.equity > 800 || pp.total_trades > 0; // 800 is the default fallback, don't treat as real data
+  const usePublic = !hasAuth && (hasCB || hasPub);
+  const s = hasAuth ? portfolioData.stats : (usePublic ? {
+    equity: cb.equity || pp.equity || 0,
+    net_pnl: cb.net_pnl != null ? cb.net_pnl : (pp.net_pnl || 0),
+    win_rate: cb.win_rate != null ? cb.win_rate : (pp.win_rate || 0),
+    total_trades: cb.total_trades || pp.total_trades || 0,
+    open_positions: cb.open_count || pp.open_count || 0
+  } : null);
+  if(!s){el.innerHTML='<div class="empty-msg">No portfolio data yet. Run /scan in Telegram.</div>';return;}
+  const pos = hasAuth ? portfolioData.positions : [];
+  const snaps = hasAuth ? portfolioData.snapshots : [];
   let h=`<div class="port-stats">
     <div class="port-stat"><div class="ps-label">Equity</div><div class="ps-val" style="color:var(--gold)">$${fmt(s.equity)}</div></div>
     <div class="port-stat"><div class="ps-label">Net P&L</div><div class="ps-val ${pctC(s.net_pnl)}">${s.net_pnl>=0?'+':''}$${fmt(s.net_pnl)}</div></div>
@@ -363,7 +382,13 @@ function renderPortfolio() {
     h+='<div style="font-family:var(--mono);font-size:11px;margin-top:8px"><div style="color:var(--text3);margin-bottom:4px">OPEN POSITIONS</div>';
     for(const p of pos) h+=`<div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid var(--border)"><span class="sym">${p.symbol}</span><span class="${p.direction==='LONG'?'pos':'neg'}">${p.direction}</span><span>$${fmt(p.entry_price)}</span></div>`;
     h+='</div>';
+  } else if(s.open_positions > 0) {
+    h+=`<div class="empty-msg" style="margin-top:8px">${s.open_positions} open position${s.open_positions>1?'s':''} (synced from bot)</div>`;
   } else h+='<div class="empty-msg" style="margin-top:8px">No open positions</div>';
+  if(usePublic) {
+    const syncTime = cb.updated_at || pp.updated_at;
+    if(syncTime) h+=`<div style="font-family:var(--mono);font-size:10px;color:var(--text3);margin-top:6px">Last sync: ${new Date(syncTime).toLocaleString()}</div>`;
+  }
   el.innerHTML=h;
 }
 

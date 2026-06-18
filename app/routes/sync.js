@@ -5,10 +5,22 @@
  */
 
 const express = require('express');
+const crypto = require('crypto');
 const { pool } = require('../db');
 
 const router = express.Router();
-const SYNC_SECRET = process.env.BOT_SYNC_SECRET || 'runeclaw-sync-2026';
+
+// CRITICAL: No fallback secret. Refuse to serve sync if unset.
+const SYNC_SECRET = process.env.BOT_SYNC_SECRET;
+if (!SYNC_SECRET || SYNC_SECRET.length < 32) {
+  console.error('WARNING: BOT_SYNC_SECRET must be set (>=32 chars) for sync endpoints to work.');
+  console.error('Generate one: node -e "console.log(require(\'crypto\').randomBytes(48).toString(\'hex\'))"');
+  // Don't crash the server — sync routes will just reject all requests
+}
+
+// Authorized bot user ID: only this user's data can be written via sync.
+// In a single-operator deployment, the bot always syncs as user 1.
+const AUTHORIZED_BOT_USER_ID = parseInt(process.env.BOT_USER_ID) || 1;
 
 // -- In-memory stores (persist within same cold start) --
 let latestScan = null;
@@ -66,10 +78,13 @@ router.get('/portfolio-summary', async (req, res) => {
   }
 });
 
-// Auth middleware for bot sync (all routes below require X-Bot-Secret)
+// Auth middleware for bot sync — constant-time comparison
 function botAuth(req, res, next) {
+  if (!SYNC_SECRET) {
+    return res.status(503).json({ error: 'Sync not configured (BOT_SYNC_SECRET unset)' });
+  }
   const secret = req.headers['x-bot-secret'];
-  if (!secret || secret !== SYNC_SECRET) {
+  if (!secret || !crypto.timingSafeEqual(Buffer.from(secret), Buffer.from(SYNC_SECRET))) {
     return res.status(403).json({ error: 'Invalid bot secret' });
   }
   next();
@@ -77,32 +92,20 @@ function botAuth(req, res, next) {
 
 router.use(botAuth);
 
-// GET /api/bot/sync/users - List all users (for debugging)
-router.get('/users', async (req, res) => {
-  try {
-    const [rows] = await pool.execute('SELECT id, email, plan, telegram_linked FROM users');
-    res.json({ users: rows });
-  } catch (err) {
-    console.error('Users list error:', err.message);
-    res.status(500).json({ error: 'Failed to list users' });
-  }
-});
-
 /**
  * POST /api/bot/sync
  * Body: {
- *   user_id: number,
  *   equity: number,
  *   positions: [{ symbol, direction, entry_price, size_usd, fees, pattern, stop_loss, take_profit, opened_at }],
  *   closed_trades: [{ symbol, direction, entry_price, exit_price, size_usd, pnl, fees, pattern, opened_at, closed_at }]
  * }
  *
- * Replaces all trade data for the user with the synced data.
+ * Replaces all trade data for the authorized bot user. user_id is server-enforced, not client-supplied.
  */
 router.post('/', async (req, res) => {
   try {
-    const { user_id, equity, positions, closed_trades } = req.body;
-    if (!user_id) return res.status(400).json({ error: 'user_id required' });
+    const user_id = AUTHORIZED_BOT_USER_ID; // Server-enforced, ignores any client-supplied user_id
+    const { equity, positions, closed_trades } = req.body;
 
     // Clear existing trades and snapshots for this user
     await pool.execute('DELETE FROM trades WHERE user_id = ?', [user_id]);
@@ -164,13 +167,14 @@ router.post('/', async (req, res) => {
 /**
  * POST /api/bot/trade-event
  * Called by the bot when a single trade opens or closes.
- * Body: { user_id, event: "open"|"close", trade: {...}, equity }
+ * Body: { event: "open"|"close", trade: {...}, equity }
  */
 router.post('/trade-event', async (req, res) => {
   try {
-    const { user_id, event, trade, equity } = req.body;
-    if (!user_id || !event || !trade) {
-      return res.status(400).json({ error: 'user_id, event, and trade required' });
+    const user_id = AUTHORIZED_BOT_USER_ID; // Server-enforced
+    const { event, trade, equity } = req.body;
+    if (!event || !trade) {
+      return res.status(400).json({ error: 'event and trade required' });
     }
 
     if (event === 'open') {

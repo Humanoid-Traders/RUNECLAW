@@ -48,6 +48,11 @@ def _build_scan_payload(results: list[dict], engine=None) -> dict:
 
     # ── Circuit breaker from engine ──
     cb_rules = []
+    cb_equity = 0
+    cb_net_pnl = 0
+    cb_win_rate = 0
+    cb_total_trades = 0
+    cb_open_count = 0
     if engine:
         try:
             from bot.risk.risk_engine import RiskEngine
@@ -55,6 +60,14 @@ def _build_scan_payload(results: list[dict], engine=None) -> dict:
             portfolio = engine.portfolio
             state = portfolio.snapshot()
             cb_active = risk.circuit_breaker_active
+            cb_equity = state.equity_usd
+            cb_open_count = state.open_positions
+            # Compute stats from portfolio history
+            history = list(portfolio._history) if hasattr(portfolio, '_history') else []
+            cb_total_trades = len(history)
+            wins = sum(1 for t in history if getattr(t, 'net_pnl', 0) > 0)
+            cb_win_rate = (wins / cb_total_trades * 100) if cb_total_trades > 0 else 0
+            cb_net_pnl = sum(getattr(t, 'net_pnl', 0) for t in history)
             cb_rules = [
                 {"label": "Circuit Breaker", "active": cb_active},
                 {"label": f"Daily PnL: ${state.daily_pnl:+.2f}", "active": state.daily_pnl < -state.equity_usd * 0.05},
@@ -160,7 +173,14 @@ def _build_scan_payload(results: list[dict], engine=None) -> dict:
 
     return {
         "regime": regime,
-        "circuit_breaker": {"rules": cb_rules},
+        "circuit_breaker": {
+            "rules": cb_rules,
+            "equity": cb_equity,
+            "net_pnl": round(cb_net_pnl, 2),
+            "win_rate": round(cb_win_rate, 1),
+            "total_trades": cb_total_trades,
+            "open_count": cb_open_count,
+        },
         "symbols": symbols,
         "entry_cards": entry_cards,
         "key_call": key_call,

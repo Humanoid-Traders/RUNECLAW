@@ -1,3 +1,16 @@
+const crypto = require('crypto');
+
+// Auto-generate secrets for ephemeral/demo deployments if not set.
+// In production, these MUST be set via environment variables.
+if (!process.env.JWT_SECRET) {
+  process.env.JWT_SECRET = crypto.randomBytes(48).toString('hex');
+  console.log('WARNING: JWT_SECRET auto-generated (ephemeral). Set it in env for persistent auth.');
+}
+if (!process.env.BOT_SYNC_SECRET) {
+  process.env.BOT_SYNC_SECRET = crypto.randomBytes(48).toString('hex');
+  console.log('WARNING: BOT_SYNC_SECRET auto-generated (ephemeral). Set it in env for bot sync.');
+}
+
 const express = require('express');
 const path = require('path');
 const { migrate } = require('./db');
@@ -8,8 +21,16 @@ const marketRouter = require('./routes/market');
 
 const app = express();
 
-app.use(express.json());
+app.use(express.json({ limit: '1mb' })); // Cap payload size
 app.use(express.static(path.join(__dirname, 'public')));
+
+// Security headers
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  next();
+});
 
 // API routes
 app.use('/api/auth', authRouter);
@@ -36,7 +57,8 @@ app.use((err, req, res, next) => {
     process.exit(1);
   }
 
-  app.listen(3000, '0.0.0.0', () => {
-    console.log('RUNECLAW app running on port 3000');
+  const PORT = process.env.PORT || 8080;
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`RUNECLAW app running on port ${PORT}`);
   });
 })();

@@ -5,8 +5,53 @@ const crypto = require('crypto');
 const { pool } = require('./db');
 
 const router = express.Router();
-const JWT_SECRET = process.env.JWT_SECRET || 'runeclaw-jwt-secret-2026';
-const JWT_EXPIRY = '7d';
+
+// CRITICAL: No fallback secret. Refuse to start if unset or too short.
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET || JWT_SECRET.length < 32) {
+  console.error('FATAL: JWT_SECRET must be set (>=32 chars). Refusing to start.');
+  console.error('Generate one: node -e "console.log(require(\'crypto\').randomBytes(48).toString(\'hex\'))"');
+  process.exit(1);
+}
+const JWT_EXPIRY = '1h'; // Shortened from 7d; use refresh tokens for longer sessions
+
+// Rate limiting: per-IP sliding window
+const loginAttempts = new Map(); // ip -> { count, firstAttempt, lockedUntil }
+const RATE_LIMIT_WINDOW = 15 * 60 * 1000; // 15 min
+const RATE_LIMIT_MAX = 10;
+const LOCKOUT_DURATION = 5 * 60 * 1000; // 5 min lockout after max attempts
+
+function pruneRateLimits() {
+  const now = Date.now();
+  for (const [ip, entry] of loginAttempts) {
+    if (now - entry.firstAttempt > RATE_LIMIT_WINDOW && (!entry.lockedUntil || now > entry.lockedUntil)) {
+      loginAttempts.delete(ip);
+    }
+  }
+  // Cap map size to prevent unbounded growth
+  if (loginAttempts.size > 10000) {
+    const entries = [...loginAttempts.entries()].sort((a, b) => a[1].firstAttempt - b[1].firstAttempt);
+    for (let i = 0; i < entries.length - 5000; i++) loginAttempts.delete(entries[i][0]);
+  }
+}
+setInterval(pruneRateLimits, 60000);
+
+function checkRateLimit(ip) {
+  const now = Date.now();
+  const entry = loginAttempts.get(ip);
+  if (!entry) return true;
+  if (entry.lockedUntil && now < entry.lockedUntil) return false;
+  if (now - entry.firstAttempt > RATE_LIMIT_WINDOW) { loginAttempts.delete(ip); return true; }
+  return entry.count < RATE_LIMIT_MAX;
+}
+
+function recordAttempt(ip) {
+  const now = Date.now();
+  const entry = loginAttempts.get(ip) || { count: 0, firstAttempt: now };
+  entry.count++;
+  if (entry.count >= RATE_LIMIT_MAX) entry.lockedUntil = now + LOCKOUT_DURATION;
+  loginAttempts.set(ip, entry);
+}
 
 // -- Middleware --
 
@@ -53,23 +98,27 @@ router.post('/register', async (req, res) => {
   try {
     const { email, password } = req.body;
     if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
-    if (password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters' });
+    // Validate email format
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ error: 'Invalid email format' });
+    if (password.length < 10) return res.status(400).json({ error: 'Password must be at least 10 characters' });
 
-    const hash = await bcrypt.hash(password, 10);
+    const normalizedEmail = email.trim().toLowerCase();
+    const hash = await bcrypt.hash(password, 12);
     const [result] = await pool.execute(
       'INSERT INTO users (email, password_hash) VALUES (?, ?)',
-      [email, hash]
+      [normalizedEmail, hash]
     );
     const userId = result.insertId;
 
     // Seed demo trades for new user
     await seedDemoData(userId);
 
-    const token = signToken({ id: userId, email });
+    const token = signToken({ id: userId, email: normalizedEmail });
     const equity = await getUserEquity(userId);
-    res.json({ token, user_id: userId, email, plan: 'free', telegram_linked: false, equity });
+    res.json({ token, user_id: userId, email: normalizedEmail, plan: 'free', telegram_linked: false, equity });
   } catch (err) {
-    if (err.code === 'ER_DUP_ENTRY') return res.status(409).json({ error: 'Email already registered' });
+    // Uniform response to prevent user enumeration (don't reveal ER_DUP_ENTRY)
+    if (err.code === 'ER_DUP_ENTRY') return res.status(400).json({ error: 'Registration failed. Please try a different email.' });
     console.error('Register error:', err.message);
     res.status(500).json({ error: 'Registration failed' });
   }
@@ -77,15 +126,27 @@ router.post('/register', async (req, res) => {
 
 router.post('/login', async (req, res) => {
   try {
+    const clientIp = req.ip || req.socket.remoteAddress || 'unknown';
+    if (!checkRateLimit(clientIp)) {
+      return res.status(429).json({ error: 'Too many login attempts. Try again later.' });
+    }
+
     const { email, password } = req.body;
     if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
 
-    const [rows] = await pool.execute('SELECT * FROM users WHERE email = ?', [email]);
-    if (rows.length === 0) return res.status(401).json({ error: 'Invalid credentials' });
+    const normalizedEmail = email.trim().toLowerCase();
+    const [rows] = await pool.execute('SELECT * FROM users WHERE email = ?', [normalizedEmail]);
+    if (rows.length === 0) {
+      recordAttempt(clientIp);
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
 
     const user = rows[0];
     const valid = await bcrypt.compare(password, user.password_hash);
-    if (!valid) return res.status(401).json({ error: 'Invalid credentials' });
+    if (!valid) {
+      recordAttempt(clientIp);
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
 
     const token = signToken(user);
     const equity = await getUserEquity(user.id);

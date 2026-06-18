@@ -18,7 +18,10 @@ from typing import Optional
 log = logging.getLogger(__name__)
 
 WEBSITE_URL = os.getenv("WEBSITE_URL", "https://deryrgeb.mule.page")
-SYNC_SECRET = os.getenv("BOT_SYNC_SECRET", "runeclaw-sync-2026")
+SYNC_SECRET = os.getenv("BOT_SYNC_SECRET", "")
+
+if not SYNC_SECRET:
+    log.warning("BOT_SYNC_SECRET not set — website sync will be rejected by the server.")
 
 
 def _attr(obj, key, default=None):

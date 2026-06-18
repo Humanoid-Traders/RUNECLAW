@@ -16,7 +16,10 @@ const server = http.createServer((req, res) => {
     // Remove content-encoding to avoid double-decompression issues
     const headers = { ...proxyRes.headers };
     delete headers['content-encoding'];
-    delete headers['content-security-policy'];
+    // Add restrictive CSP if upstream doesn't provide one
+    if (!headers['content-security-policy']) {
+      headers['content-security-policy'] = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; connect-src 'self' https://api.bitget.com; img-src 'self' data:; frame-ancestors 'none'";
+    }
     res.writeHead(proxyRes.statusCode, headers);
     proxyRes.pipe(res);
   });

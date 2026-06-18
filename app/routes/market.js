@@ -36,6 +36,11 @@ function cached(key, ttlMs, fetcher) {
   };
 }
 
+// Symbol validation — prevent query-param injection
+function validateSymbol(sym) {
+  return /^[A-Z0-9]{1,20}$/.test(sym);
+}
+
 // GET /api/market/tickers - All futures tickers
 router.get('/tickers', async (req, res) => {
   try {
@@ -52,6 +57,7 @@ router.get('/tickers', async (req, res) => {
 router.get('/ticker/:symbol', async (req, res) => {
   try {
     const sym = req.params.symbol.toUpperCase();
+    if (!validateSymbol(sym)) return res.status(400).json({ error: 'Invalid symbol' });
     const data = await cached(`ticker_${sym}`, 3000, () =>
       fetchJSON(`https://api.bitget.com/api/v2/mix/market/ticker?symbol=${sym}&productType=USDT-FUTURES`)
     )();
@@ -65,6 +71,7 @@ router.get('/ticker/:symbol', async (req, res) => {
 router.get('/depth/:symbol', async (req, res) => {
   try {
     const sym = req.params.symbol.toUpperCase();
+    if (!validateSymbol(sym)) return res.status(400).json({ error: 'Invalid symbol' });
     const data = await cached(`depth_${sym}`, 5000, () =>
       fetchJSON(`https://api.bitget.com/api/v2/mix/market/merge-depth?symbol=${sym}&productType=USDT-FUTURES&precision=price&limit=5`)
     )();
@@ -78,7 +85,9 @@ router.get('/depth/:symbol', async (req, res) => {
 router.get('/candles/:symbol', async (req, res) => {
   try {
     const sym = req.params.symbol.toUpperCase();
+    if (!validateSymbol(sym)) return res.status(400).json({ error: 'Invalid symbol' });
     const gran = req.query.granularity || '1h';
+    if (!/^(1min|5min|15min|30min|1h|2h|4h|6h|12h|1d|1w)$/.test(gran)) return res.status(400).json({ error: 'Invalid granularity' });
     const limit = Math.min(parseInt(req.query.limit) || 24, 200);
     const data = await cached(`candles_${sym}_${gran}`, 15000, () =>
       fetchJSON(`https://api.bitget.com/api/v2/mix/market/candles?symbol=${sym}&productType=USDT-FUTURES&granularity=${gran}&limit=${limit}`)
@@ -93,6 +102,7 @@ router.get('/candles/:symbol', async (req, res) => {
 router.get('/funding/:symbol', async (req, res) => {
   try {
     const sym = req.params.symbol.toUpperCase();
+    if (!validateSymbol(sym)) return res.status(400).json({ error: 'Invalid symbol' });
     const data = await cached(`funding_${sym}`, 30000, () =>
       fetchJSON(`https://api.bitget.com/api/v2/mix/market/current-fund-rate?symbol=${sym}&productType=USDT-FUTURES`)
     )();
