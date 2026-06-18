@@ -22,7 +22,7 @@ from bot.core.cost import CostTracker
 from bot.core.system_health import SystemHealthMonitor
 from bot.core.exchange_flow import ExchangeFlowProvider
 from bot.core.macro_events import MacroEventProvider
-from bot.core.live_executor import LiveExecutor
+from bot.core.live_executor import LiveExecutor, normalize_symbol
 from bot.core.market_scanner import MarketScanner
 from bot.core.order_flow import OrderFlowAnalyzer
 from bot.core.ws_feed import BitgetWSFeed
@@ -511,7 +511,6 @@ class RuneClawEngine:
         # Rules: max 2 entries per symbol, same direction adds require
         # 1R profit + 70% confidence. Opposite direction with high
         # confidence triggers a flip (close existing + open new).
-        from bot.core.live_executor import normalize_symbol
         symbol_key = normalize_symbol(idea.asset)
         existing_positions = []  # list of (position, is_live, current_price)
 
