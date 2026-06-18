@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import os
+import signal
 import sys
 
 from bot.config import CONFIG
@@ -20,6 +22,8 @@ from bot.core.engine import RuneClawEngine
 from bot.skills.skill_registry import build_default_registry
 from bot.skills.telegram_handler import TelegramHandler
 from bot.utils.logger import audit, system_log
+
+_PID_FILE = os.path.join(os.environ.get("RUNECLAW_STATE_DIR", "data"), "runeclaw.pid")
 
 
 def _banner() -> str:
@@ -37,6 +41,46 @@ def _banner() -> str:
 
 def run_telegram() -> None:
     """Start the Telegram bot with the trading engine."""
+    # ── PID-file guard: prevent duplicate instances ──
+    os.makedirs(os.path.dirname(_PID_FILE) or ".", exist_ok=True)
+    if os.path.exists(_PID_FILE):
+        try:
+            old_pid = int(open(_PID_FILE).read().strip())
+            # Check if the old process is still running
+            os.kill(old_pid, 0)  # signal 0 = just check, don't kill
+            # Process exists — kill it before starting fresh
+            print(f"  Killing stale bot instance (PID {old_pid})...")
+            os.kill(old_pid, signal.SIGTERM)
+            import time
+            time.sleep(3)
+            # Force kill if still alive
+            try:
+                os.kill(old_pid, 0)
+                os.kill(old_pid, signal.SIGKILL)
+                time.sleep(1)
+            except ProcessLookupError:
+                pass
+        except (ProcessLookupError, ValueError):
+            pass  # Process already dead, stale PID file
+        except PermissionError:
+            print(f"  WARNING: Cannot kill existing process. May cause Telegram conflicts.")
+
+    # Write our PID
+    with open(_PID_FILE, "w") as f:
+        f.write(str(os.getpid()))
+
+    def _cleanup_pid():
+        try:
+            if os.path.exists(_PID_FILE):
+                stored = int(open(_PID_FILE).read().strip())
+                if stored == os.getpid():
+                    os.unlink(_PID_FILE)
+        except Exception:
+            pass
+
+    import atexit
+    atexit.register(_cleanup_pid)
+
     engine = RuneClawEngine()
     handler = TelegramHandler(engine)
     app = handler.build_app()
@@ -69,7 +113,7 @@ def run_telegram() -> None:
         try:
             await app.initialize()
             await app.start()
-            await app.updater.start_polling()
+            await app.updater.start_polling(drop_pending_updates=True)
             # Start proactive alert monitor (Move 2)
             await handler.start_monitor(app.bot)
             await engine_task

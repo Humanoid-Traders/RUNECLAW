@@ -264,12 +264,12 @@ class RuneClawEngine:
                 for msg in reconciled:
                     audit(trade_log, f"Startup reconcile: {msg}",
                           action="startup_reconcile", result="CLOSED")
-                orphans = await self.live_executor.detect_untracked_positions()
-                if orphans.get("untracked"):
+                # Adopt any exchange positions not tracked locally
+                adopted = await self.live_executor.adopt_exchange_positions()
+                if adopted:
                     audit(system_log,
-                          f"Startup: untracked exchange positions: {orphans['untracked']}",
-                          action="startup_orphan", result="WARNING",
-                          data=orphans)
+                          f"Startup: adopted {len(adopted)} exchange positions: {adopted}",
+                          action="startup_adopt", result="OK")
             except Exception as exc:
                 audit(system_log, f"Startup reconciliation error: {exc}",
                       action="startup_reconcile", result="ERROR")

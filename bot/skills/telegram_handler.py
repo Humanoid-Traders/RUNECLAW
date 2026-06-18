@@ -3130,6 +3130,95 @@ class TelegramHandler:
                         "tp_order": "exchange" if pos.tp_order_id else "manual",
                         "trade_id": pos.trade_id,
                     })
+            else:
+                # No locally-tracked positions — fall back to exchange API
+                # to catch orphans (positions opened outside bot or lost on restart)
+                try:
+                    exchange = await self.engine.live_executor._get_exchange()
+                    ex_positions = await exchange.fetch_positions()
+                    open_ex = [p for p in (ex_positions or [])
+                               if isinstance(p, dict) and float(p.get("contracts") or 0) > 0]
+                    if open_ex:
+                        syms = [p.get("symbol", "") for p in open_ex]
+                        tickers = await exchange.fetch_tickers(syms)
+                        prices = {s: float(t.get("last", 0)) for s, t in tickers.items() if t.get("last")}
+                        # Try to fetch open trigger/conditional orders for SL/TP
+                        sl_tp_map = {}  # symbol -> {"sl": price, "tp": price}
+                        try:
+                            open_orders = await exchange.fetch_open_orders()
+                            for o in (open_orders or []):
+                                osym = o.get("symbol", "")
+                                otype = (o.get("type") or "").lower()
+                                oside = (o.get("side") or "").lower()
+                                trigger = float(o.get("triggerPrice") or o.get("stopPrice") or 0)
+                                if trigger <= 0:
+                                    continue
+                                if osym not in sl_tp_map:
+                                    sl_tp_map[osym] = {"sl": 0, "tp": 0}
+                                # For a LONG: sell stop = SL, sell limit/take-profit = TP
+                                # For a SHORT: buy stop = SL, buy limit/take-profit = TP
+                                if "stop" in otype or "loss" in otype:
+                                    sl_tp_map[osym]["sl"] = trigger
+                                elif "take" in otype or "profit" in otype:
+                                    sl_tp_map[osym]["tp"] = trigger
+                                elif oside == "sell":
+                                    # Closing sell = likely SL or TP for a long
+                                    # Use price relative to entry to guess
+                                    sl_tp_map[osym].setdefault("_sells", []).append(trigger)
+                                elif oside == "buy":
+                                    sl_tp_map[osym].setdefault("_buys", []).append(trigger)
+                        except Exception:
+                            pass  # Orders fetch not critical
+                        from datetime import datetime, timezone
+                        for p in open_ex:
+                            sym = p.get("symbol", "")
+                            side = (p.get("side") or "long").upper()
+                            contracts = float(p.get("contracts") or 0)
+                            entry_price = float(p.get("entryPrice") or p.get("info", {}).get("openPriceAvg") or 0)
+                            notional = float(p.get("notional") or 0)
+                            margin = float(p.get("initialMargin") or p.get("collateral") or 0)
+                            lev = float(p.get("leverage") or 1)
+                            unrealized = float(p.get("unrealizedPnl") or 0)
+                            last_price = prices.get(sym, entry_price)
+                            pnl_pct = (unrealized / margin * 100) if margin > 0 else 0
+                            # SL/TP from conditional orders
+                            sym_orders = sl_tp_map.get(sym, {})
+                            sl_price = sym_orders.get("sl", 0)
+                            tp_price = sym_orders.get("tp", 0)
+                            # Timestamp handling
+                            ts = p.get("timestamp")
+                            if ts:
+                                opened = datetime.fromtimestamp(ts / 1000, tz=timezone.utc)
+                                hold_h = (datetime.now(timezone.utc) - opened).total_seconds() / 3600
+                            else:
+                                hold_h = 0.0
+                            sl_dist = abs(last_price - sl_price) / last_price * 100 if sl_price and last_price else 0
+                            tp_dist = abs(tp_price - last_price) / last_price * 100 if tp_price and last_price else 0
+                            positions_data.append({
+                                "pair": sym.replace("/", "").replace(":USDT", ""),
+                                "direction": side,
+                                "entry": round(entry_price, 6),
+                                "current": round(last_price, 6),
+                                "pnl_pct": round(pnl_pct, 2),
+                                "pnl_usd": round(unrealized, 4),
+                                "sl": round(sl_price, 6),
+                                "tp": round(tp_price, 6),
+                                "sl_dist_pct": round(sl_dist, 2),
+                                "tp_dist_pct": round(tp_dist, 2),
+                                "size_usd": round(margin, 2),
+                                "notional_usd": round(notional, 2),
+                                "leverage": round(lev, 2),
+                                "rr_live": 0,
+                                "quantity": contracts,
+                                "comm_pct": CONFIG.risk.commission_pct,
+                                "hold_hours": round(hold_h, 1),
+                                "sl_order": "exchange" if sl_price > 0 else "none",
+                                "tp_order": "exchange" if tp_price > 0 else "none",
+                                "trade_id": sym,
+                                "untracked": True,
+                            })
+                except Exception as exc:
+                    logger.warning("Exchange position fallback failed: %s", exc)
         else:
             # PAPER mode: show paper positions
             open_pos = portfolio.open_positions
@@ -3185,27 +3274,73 @@ class TelegramHandler:
             return
         user_id = self._get_tg_id(update)
 
-        # LIVE mode: use real trade data from executor
+        # LIVE mode: use real trade data from executor + exchange fallback
         if CONFIG.is_live() and hasattr(self.engine, 'live_executor'):
             executor = self.engine.live_executor
             live_closed = executor.closed_positions
-            live_open = executor.open_positions
-            today_trades = len(live_closed)
+
+            # ── Exchange trade history fallback ──
+            # If local closed_trades is empty, try to fetch recent trades
+            # from the exchange to capture trades closed outside the bot
+            if not live_closed:
+                try:
+                    exchange = await executor._get_exchange()
+                    # Fetch recent closed orders across major pairs
+                    import time as _time
+                    since_ms = int((_time.time() - 7 * 86400) * 1000)  # last 7 days
+                    ex_trades = await exchange.fetch_my_trades(symbol=None, since=since_ms, limit=50)
+                    if ex_trades:
+                        from bot.core.live_executor import LivePosition
+                        # Group trades by order to reconstruct PnL
+                        _trade_pnl_map: dict[str, float] = {}
+                        _trade_sym_map: dict[str, str] = {}
+                        for t in ex_trades:
+                            oid = t.get("order", t.get("id", "unknown"))
+                            info = t.get("info", {})
+                            pnl = float(info.get("profit", 0) or 0)
+                            _trade_pnl_map[oid] = _trade_pnl_map.get(oid, 0) + pnl
+                            _trade_sym_map[oid] = t.get("symbol", "UNKNOWN")
+                        # Create synthetic LivePosition entries for display
+                        for oid, pnl in _trade_pnl_map.items():
+                            if pnl == 0:
+                                continue  # skip zero-PnL (likely open leg)
+                            sym = _trade_sym_map.get(oid, "UNKNOWN")
+                            lp = LivePosition(
+                                trade_id=f"EX-{oid}",
+                                symbol=sym,
+                                side="long",
+                                entry_price=0,
+                                qty=0,
+                                cost_usd=0,
+                                leverage=1,
+                                sl_price=None,
+                                tp_price=None,
+                            )
+                            lp.status = "closed"
+                            lp.pnl_usd = pnl
+                            live_closed.append(lp)
+                        if live_closed:
+                            audit(system_log, f"Performance: loaded {len(live_closed)} trades from exchange history",
+                                  action="perf_exchange_fallback", result="OK")
+                except Exception as exc:
+                    audit(system_log, f"Performance exchange fallback error: {exc}",
+                          action="perf_exchange_fallback", result="ERROR")
+
+            total_trades = len(live_closed)
             wins = sum(1 for t in live_closed if (t.pnl_usd or 0) > 0)
-            win_rate = (wins / today_trades * 100) if today_trades > 0 else 0
+            win_rate = (wins / total_trades * 100) if total_trades > 0 else 0
             total_pnl = sum((t.pnl_usd or 0) for t in live_closed)
-            unrealized = 0.0  # would need mark-to-market
             best_pair = "N/A"
             worst_pair = "N/A"
             if live_closed:
                 sorted_t = sorted(live_closed, key=lambda t: (t.pnl_usd or 0))
-                worst_pair = sorted_t[0].symbol.replace("/USDT", "")
-                best_pair = sorted_t[-1].symbol.replace("/USDT", "")
+                worst_pair = sorted_t[0].symbol.replace("/USDT", "").replace(":USDT", "")
+                best_pair = sorted_t[-1].symbol.replace("/USDT", "").replace(":USDT", "")
             data = {
                 "today_pnl": round(total_pnl, 2),
-                "week_pnl": 0.0,
+                "week_pnl": round(total_pnl, 2),  # all closed = week total for now
                 "win_rate": win_rate,
-                "trades_today": today_trades,
+                "trades_today": total_trades,
                 "best_pair": best_pair,
                 "worst_pair": worst_pair,
             }
@@ -3506,17 +3641,20 @@ class TelegramHandler:
             is_live_pos = False
 
             if CONFIG.is_live():
+                ident_clean = ident.replace("/", "").replace(":USDT", "")
                 for lp in self.engine.live_executor.open_positions:
                     if is_trade_id:
                         if lp.trade_id == ident:
                             pos_match = lp
                             is_live_pos = True
-                            pair = lp.symbol.replace("/", "")
+                            pair = lp.symbol.replace("/", "").replace(":USDT", "")
                             break
                     else:
-                        if lp.symbol.replace("/", "") == ident:
+                        lp_clean = lp.symbol.replace("/", "").replace(":USDT", "")
+                        if lp_clean == ident_clean:
                             pos_match = lp
                             is_live_pos = True
+                            pair = lp_clean
                             break
 
             if pos_match is None:
@@ -3524,6 +3662,48 @@ class TelegramHandler:
                     if p.asset.replace("/", "") == pair:
                         pos_match = p
                         break
+
+            # Fallback: check exchange directly for untracked positions
+            is_untracked = False
+            if pos_match is None and CONFIG.is_live():
+                try:
+                    exchange_fallback = await self.engine.live_executor._get_exchange()
+                    ex_positions = await exchange_fallback.fetch_positions()
+                    ident_clean = ident.replace("/", "").replace(":USDT", "")
+                    for ep in (ex_positions or []):
+                        if not isinstance(ep, dict):
+                            continue
+                        contracts = float(ep.get("contracts") or 0)
+                        if contracts <= 0:
+                            continue
+                        ep_sym = ep.get("symbol", "")
+                        ep_clean = ep_sym.replace("/", "").replace(":USDT", "")
+                        if ep_clean == ident_clean or ep_sym == ident:
+                            # Build a lightweight mock object for rendering
+                            from types import SimpleNamespace
+                            from datetime import datetime, timezone
+                            ts = ep.get("timestamp")
+                            opened = datetime.fromtimestamp(ts / 1000, tz=timezone.utc) if ts else datetime.now(timezone.utc)
+                            pos_match = SimpleNamespace(
+                                entry_price=float(ep.get("entryPrice") or ep.get("info", {}).get("openPriceAvg") or 0),
+                                quantity=contracts,
+                                direction=(ep.get("side") or "long").upper(),
+                                stop_loss=0,
+                                take_profit=0,
+                                opened_at=opened,
+                                cost_usd=float(ep.get("initialMargin") or ep.get("collateral") or 0),
+                                leverage=float(ep.get("leverage") or 1),
+                                sl_order_id=None,
+                                tp_order_id=None,
+                                trade_id=ep_sym,
+                                symbol=ep_sym,
+                            )
+                            is_live_pos = True
+                            is_untracked = True
+                            pair = ep_clean
+                            break
+                except Exception:
+                    pass
 
             # Fetch live analysis data
             try:
@@ -3737,9 +3917,14 @@ class TelegramHandler:
             if CONFIG.is_live():
                 executor = self.engine.live_executor
                 for lp in list(executor.open_positions):
-                    matched = (lp.trade_id == ident) if is_trade_id else (lp.symbol.replace("/", "") == ident)
+                    if is_trade_id:
+                        matched = lp.trade_id == ident
+                    else:
+                        lp_clean = lp.symbol.replace("/", "").replace(":USDT", "")
+                        ident_clean = ident.replace("/", "").replace(":USDT", "")
+                        matched = lp_clean == ident_clean
                     if matched:
-                        pair = lp.symbol.replace("/", "")  # ensure display name
+                        pair = lp.symbol.replace("/", "").replace(":USDT", "")
                         try:
                             result = await executor.close_position(lp.trade_id)
                             live_closed = True
@@ -3769,6 +3954,103 @@ class TelegramHandler:
 
             if live_closed:
                 return  # Already sent response (success or error) — do not fall through
+
+            # LIVE mode fallback: close untracked exchange positions directly
+            if CONFIG.is_live() and not live_closed:
+                try:
+                    exchange = await self.engine.live_executor._get_exchange()
+                    ex_positions = await exchange.fetch_positions()
+                    for ep in (ex_positions or []):
+                        if not isinstance(ep, dict):
+                            continue
+                        contracts = float(ep.get("contracts") or 0)
+                        if contracts <= 0:
+                            continue
+                        ep_sym = ep.get("symbol", "")
+                        ep_clean = ep_sym.replace("/", "").replace(":USDT", "")
+                        ident_clean = ident.replace("/", "").replace(":USDT", "")
+                        if ep_clean == ident_clean or ep_sym == ident:
+                            # Found it on exchange — close directly
+                            side = (ep.get("side") or "long").upper()
+                            close_side = "sell" if side == "LONG" else "buy"
+                            entry_price = float(ep.get("entryPrice") or 0)
+                            margin = float(ep.get("initialMargin") or ep.get("collateral") or 0)
+                            leverage = int(float(ep.get("leverage") or 1))
+                            close_params = {"productType": "USDT-FUTURES"}
+                            hedge = getattr(self.engine.live_executor, '_hedge_mode', False)
+                            if hedge:
+                                close_params["tradeSide"] = "close"
+                            try:
+                                order = await exchange.create_order(
+                                    symbol=ep_sym, type="market",
+                                    side=close_side, amount=contracts,
+                                    params=close_params,
+                                )
+                                # Get fill price — try order response, then fetch ticker
+                                fill_price = float(order.get("average") or order.get("price") or 0)
+                                if fill_price <= 0:
+                                    try:
+                                        ticker = await exchange.fetch_ticker(ep_sym)
+                                        fill_price = float(ticker.get("last") or 0)
+                                    except Exception:
+                                        fill_price = entry_price  # last resort
+
+                                # Calculate PnL
+                                if side == "LONG":
+                                    gross_pnl = (fill_price - entry_price) * contracts
+                                else:
+                                    gross_pnl = (entry_price - fill_price) * contracts
+                                comm_pct = CONFIG.risk.commission_pct
+                                commission = (entry_price * contracts + fill_price * contracts) * (comm_pct / 100.0)
+                                net_pnl = gross_pnl - commission
+
+                                # Record trade in closed_trades.json via executor
+                                from datetime import datetime, timezone
+                                from bot.core.live_executor import LivePosition
+                                ts = ep.get("timestamp")
+                                opened_at = datetime.fromtimestamp(ts / 1000, tz=timezone.utc) if ts else datetime.now(timezone.utc)
+                                closed_pos = LivePosition(
+                                    trade_id=f"TI-manual-{ep_clean}-{int(datetime.now(timezone.utc).timestamp())}",
+                                    symbol=ep_sym,
+                                    direction=side,
+                                    entry_price=entry_price,
+                                    quantity=contracts,
+                                    cost_usd=margin,
+                                    stop_loss=0,
+                                    take_profit=0,
+                                    leverage=leverage,
+                                    status="closed",
+                                    close_price=fill_price,
+                                    gross_pnl=round(gross_pnl, 4),
+                                    commission=round(commission, 4),
+                                    pnl_usd=round(net_pnl, 4),
+                                    opened_at=opened_at,
+                                    closed_at=datetime.now(timezone.utc),
+                                )
+                                self.engine.live_executor._append_closed_trade(closed_pos)
+
+                                pnl_emoji = "\U0001f7e2" if net_pnl >= 0 else "\U0001f534"
+                                lines = [
+                                    f"\u2705 <b>{html.escape(ep_clean)} — Position Closed</b>",
+                                    "",
+                                    f"Entry <code>{entry_price:,.6f}</code> / Exit <code>{fill_price:,.6f}</code>",
+                                    f"Size <code>${margin:,.2f}</code> | {leverage}x",
+                                    f"{pnl_emoji} Net PnL: <code>${net_pnl:+,.2f}</code> (fees ${commission:.2f})",
+                                ]
+                                await self._send(update, "\n".join(lines), edit=True)
+                            except Exception as e:
+                                await self._send(update,
+                                    f"Couldn't close {html.escape(ep_clean)} on exchange.\n\n"
+                                    f"{html.escape(str(e)[:200])}\n"
+                                    "Try closing it on the exchange directly.",
+                                    edit=True)
+                            live_closed = True
+                            break
+                except Exception as exc:
+                    logger.warning("Exchange direct close fallback failed: %s", exc)
+
+            if live_closed:
+                return
 
             if not live_closed:
                 # Paper mode close

@@ -708,13 +708,19 @@ def render_open_positions(positions: List[Dict[str, Any]]) -> str:
         lev_str = f" | {leverage:.0f}x" if leverage and leverage > 1 else ""
         rr_str = f" | R:R {rr_live:.1f}" if rr_live else ""
         sl_tag = " on exchange" if sl_order == "exchange" else ""
+        # Show "None" for missing SL/TP (untracked exchange positions)
+        sl_str = _fmt_price(sl) if sl and sl > 0 else "<i>None</i>"
+        tp_str = _fmt_price(tp) if tp and tp > 0 else "<i>None</i>"
+        untracked = p.get("untracked", False)
 
         lines.extend([
             f"{d_icon} <b>{pair}</b> {direction} | {pnl_icon} {_pct(pnl)} (${pnl_usd_val:+,.2f})",
             f"  {_fmt_price(entry)} -> {_fmt_price(current)} | ${size_usd:.0f}{lev_str}{rr_str} | {hold_str}",
-            f"  SL {_fmt_price(sl)} / TP {_fmt_price(tp)}{sl_tag}",
-            "",
+            f"  SL {sl_str} / TP {tp_str}{sl_tag}",
         ])
+        if untracked:
+            lines.append("  \u26a0\ufe0f <i>Untracked — opened outside bot</i>")
+        lines.append("")
 
     return "\n".join(lines)
 

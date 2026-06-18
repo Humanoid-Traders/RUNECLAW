@@ -321,8 +321,8 @@ def render_performance(data: Dict[str, Any]) -> Dict[str, Any]:
         # ── PnL card ──
         f"\U0001f4b0 <b>Returns</b>\n"
         "<pre>"
-        f"{_kv('Today', f'{today:+.2f}%')}  {_pnl_arrow(today)}\n"
-        f"{_kv('7-Day', f'{week:+.2f}%')}  {_pnl_arrow(week)}\n"
+        f"{_kv('Today', _money(today, sign=True))}  {_pnl_arrow(today)}\n"
+        f"{_kv('7-Day', _money(week, sign=True))}  {_pnl_arrow(week)}\n"
         f"{_kv('Trades', str(trades))}\n"
         f"{_kv('Trend', f'<code>{pnl_trend}</code>')}"
         "</pre>\n\n"

@@ -478,6 +478,105 @@ class LiveExecutor:
             logger.warning("detect_untracked_positions() failed: %s", exc)
         return report
 
+    async def adopt_exchange_positions(self) -> list[str]:
+        """Adopt any exchange positions not tracked locally into _positions.
+
+        Called on startup after detect_untracked_positions(). This ensures
+        every open position on the exchange has a corresponding LivePosition
+        so /open_positions, /close, and performance all work correctly.
+
+        Returns list of adopted symbol names.
+        """
+        adopted: list[str] = []
+        if not CONFIG.is_live():
+            return adopted
+        try:
+            exchange = await self._get_exchange()
+            ex_positions = await exchange.fetch_positions()
+
+            def _normalize_sym(s: str) -> str:
+                return s.replace(":USDT", "")
+
+            tracked = {
+                _normalize_sym(p.symbol)
+                for p in self._positions.values()
+                if p.status in ("open", "pending_fill")
+            }
+
+            for p in ex_positions or []:
+                if not isinstance(p, dict):
+                    continue
+                try:
+                    contracts = float(p.get("contracts") or 0)
+                except (TypeError, ValueError):
+                    continue
+                if contracts <= 0:
+                    continue
+
+                raw_sym = p.get("symbol") or ""
+                sym = _normalize_sym(raw_sym)
+                if sym in tracked:
+                    continue
+
+                # Adopt this position
+                side = (p.get("side") or "long").upper()
+                entry_price = float(p.get("entryPrice") or p.get("info", {}).get("openPriceAvg") or 0)
+                margin = float(p.get("initialMargin") or p.get("collateral") or 0)
+                leverage = int(float(p.get("leverage") or 1))
+                ts = p.get("timestamp")
+                if ts:
+                    opened_at = datetime.fromtimestamp(ts / 1000, tz=UTC)
+                else:
+                    opened_at = datetime.now(UTC)
+
+                trade_id = f"TI-adopted-{raw_sym.replace('/', '-')}-{int(opened_at.timestamp())}"
+                lp = LivePosition(
+                    trade_id=trade_id,
+                    symbol=raw_sym,
+                    direction=side,
+                    entry_price=entry_price,
+                    quantity=contracts,
+                    cost_usd=margin,
+                    stop_loss=0,
+                    take_profit=0,
+                    leverage=leverage,
+                    is_spot=False,
+                    opened_at=opened_at,
+                    status="open",
+                )
+
+                # Try to find SL/TP from open trigger orders
+                try:
+                    open_orders = await exchange.fetch_open_orders(raw_sym)
+                    for o in (open_orders or []):
+                        trigger = float(o.get("triggerPrice") or o.get("stopPrice") or 0)
+                        if trigger <= 0:
+                            continue
+                        otype = (o.get("type") or "").lower()
+                        if "stop" in otype or "loss" in otype:
+                            lp.stop_loss = trigger
+                            lp.sl_order_id = o.get("id")
+                        elif "take" in otype or "profit" in otype:
+                            lp.take_profit = trigger
+                            lp.tp_order_id = o.get("id")
+                except Exception:
+                    pass  # Non-critical — position still adopted without SL/TP
+
+                self._positions[trade_id] = lp
+                adopted.append(sym)
+                audit(trade_log,
+                      f"ADOPTED exchange position: {sym} {side} entry={entry_price} qty={contracts} lev={leverage}x",
+                      action="adopt_position", result="OK",
+                      data={"trade_id": trade_id, "symbol": raw_sym,
+                            "entry_price": entry_price, "contracts": contracts})
+
+            if adopted:
+                self._save_positions()
+
+        except Exception as exc:
+            logger.warning("adopt_exchange_positions() failed: %s", exc)
+        return adopted
+
     # ── Execute trade ────────────────────────────────────────────
 
     async def execute(self, idea: TradeIdea, size_usd: float,
