@@ -35,6 +35,7 @@ from bot.core.ta_utils import Regime
 class StrategyMode(str, Enum):
     TREND_CONTINUATION = "TREND_CONTINUATION"
     BREAKOUT = "BREAKOUT"
+    TURTLE_BREAKOUT = "TURTLE_BREAKOUT"
     MEAN_REVERSION = "MEAN_REVERSION"
     LIQUIDITY_SWEEP = "LIQUIDITY_SWEEP"
     CONSERVATIVE = "CONSERVATIVE"  # default / uncertain
@@ -86,9 +87,11 @@ MODE_CONFIGS: dict[StrategyMode, ModeConfig] = {
         confluence_boost={
             "rsi": 1.5,                # RSI extremes are key
             "bb_pct_b": 1.5,           # Bollinger extremes
+            "stoch": 1.8,              # Stochastic oversold/overbought is primary
             "of_cvd_divergence": 1.8,  # CVD divergence = absorption = reversal
+            "reversal": 1.5,           # Pin bars, capitulation
         },
-        description="Fade extremes in ranging markets. RSI/BB extremes, "
+        description="Fade extremes in ranging markets. Stochastic + RSI/BB extremes, "
                     "CVD divergence, tight SL/TP.",
     ),
     StrategyMode.LIQUIDITY_SWEEP: ModeConfig(
@@ -112,6 +115,20 @@ MODE_CONFIGS: dict[StrategyMode, ModeConfig] = {
         confluence_boost={},
         description="Default / uncertain regime. Standard parameters with "
                     "higher confidence threshold. Safety-first.",
+    ),
+    StrategyMode.TURTLE_BREAKOUT: ModeConfig(
+        mode=StrategyMode.TURTLE_BREAKOUT,
+        sl_mult=2.0,
+        tp_mult=4.5,   # R:R = 2.25 — Turtle system lets winners run
+        min_confidence=0.60,
+        confluence_boost={
+            "donchian": 2.0,           # Donchian breakout IS the signal
+            "stoch": 1.3,              # Momentum confirmation
+            "mtf_alignment": 1.5,      # HTF trend alignment
+            "of_cvd_trend": 1.3,       # Volume confirming breakout
+        },
+        description="Turtle breakout system. 20/55-bar Donchian channel breakout "
+                    "with volume confirmation and ATR trailing stop.",
     ),
 }
 
@@ -155,6 +172,12 @@ class StrategySelector:
         rsi = indicators.get("rsi", 50)
         bb_pct_b = indicators.get("bb_pct_b", 0.5)
         bb_width = indicators.get("bb_width", 0)
+        stoch_k = indicators.get("stoch_k", 50)
+        stoch_d = indicators.get("stoch_d", 50)
+        dc_breakout_high = indicators.get("dc_breakout_high", False)
+        dc_breakout_low = indicators.get("dc_breakout_low", False)
+        dc55_breakout_high = indicators.get("dc55_breakout_high", False)
+        dc55_breakout_low = indicators.get("dc55_breakout_low", False)
 
         # Score: TREND_CONTINUATION
         score_trend = 0.0
@@ -186,8 +209,35 @@ class StrategySelector:
             score_mr += 0.4  # RSI extreme
         if bb_pct_b > 0.95 or bb_pct_b < 0.05:
             score_mr += 0.3  # BB extreme
+        # Stochastic extremes boost mean-reversion
+        if stoch_k > 80 or stoch_k < 20:
+            score_mr += 0.3
+        # Stochastic divergence = strong mean-reversion signal
+        if indicators.get("stoch_bull_div") or indicators.get("stoch_bear_div"):
+            score_mr += 0.3
+        # Pin bars / capitulation support reversal thesis
+        if indicators.get("pin_bar_bullish") or indicators.get("pin_bar_bearish"):
+            score_mr += 0.2
+        if indicators.get("capitulation_sell") or indicators.get("capitulation_buy"):
+            score_mr += 0.3
         scores[StrategyMode.MEAN_REVERSION] = score_mr
-        reasons[StrategyMode.MEAN_REVERSION] = f"RSI={rsi:.0f}, BB%B={bb_pct_b:.2f}"
+        reasons[StrategyMode.MEAN_REVERSION] = f"RSI={rsi:.0f}, BB%B={bb_pct_b:.2f}, Stoch={stoch_k:.0f}"
+
+        # Score: TURTLE_BREAKOUT
+        score_turtle = 0.0
+        if dc_breakout_high or dc_breakout_low:
+            score_turtle += 0.5   # 20-bar Donchian breakout
+        if dc55_breakout_high or dc55_breakout_low:
+            score_turtle += 0.3   # 55-bar confirmation
+        if regime in (Regime.TREND_UP, Regime.TREND_DOWN):
+            score_turtle += 0.2   # trending regime supports breakout
+        if regime == Regime.EXPANSION:
+            score_turtle += 0.3   # volatility breakout
+        # Volume confirmation
+        if indicators.get("vol_momentum") == "expanding":
+            score_turtle += 0.2
+        scores[StrategyMode.TURTLE_BREAKOUT] = score_turtle
+        reasons[StrategyMode.TURTLE_BREAKOUT] = f"DC_break={'HIGH' if dc_breakout_high else 'LOW' if dc_breakout_low else 'none'}, DC55={'yes' if (dc55_breakout_high or dc55_breakout_low) else 'no'}"
 
         # Score: LIQUIDITY_SWEEP
         score_liq = 0.0

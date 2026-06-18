@@ -313,7 +313,7 @@ class Analyzer:
                   result="SKIP", data={"symbol": signal.symbol, "error": str(exc)})
             return None
 
-        indicators = self._compute_indicators(highs, lows, closes, volumes)
+        indicators = self._compute_indicators(highs, lows, closes, volumes, opens=opens)
         if indicators is None:
             audit(trade_log, "Indicator computation failed (insufficient data)", action="analyze",
                   result="SKIP", data={"symbol": signal.symbol, "candles": len(candles)})
@@ -728,6 +728,7 @@ class Analyzer:
     def _compute_indicators(
         highs: np.ndarray, lows: np.ndarray, closes: np.ndarray,
         volumes: Optional[np.ndarray] = None,
+        opens: Optional[np.ndarray] = None,
     ) -> Optional[dict]:
         """
         Calculate RSI-14, MACD (12/26/9), Bollinger Bands (20/2),
@@ -896,6 +897,104 @@ class Analyzer:
             results["ema_21"] = round(ema21, 6)
             results["ema_ribbon_spread"] = round((ema9 - ema21) / ema21 * 100, 4) if ema21 > 0 else 0
             results["ema_ribbon_trend"] = "bullish" if ema9 > ema21 else "bearish"
+
+        # ── Stochastic Oscillator (14, 3, 3) — momentum + overbought/oversold ──
+        stoch_k_period = 14
+        stoch_smooth = 3
+        if len(closes) >= stoch_k_period + stoch_smooth:
+            # Raw %K: (Close - Lowest Low) / (Highest High - Lowest Low) * 100
+            raw_k = np.zeros(len(closes) - stoch_k_period + 1)
+            for si in range(len(raw_k)):
+                window_h = highs[si:si + stoch_k_period]
+                window_l = lows[si:si + stoch_k_period]
+                hh = np.max(window_h)
+                ll = np.min(window_l)
+                raw_k[si] = ((closes[si + stoch_k_period - 1] - ll) / (hh - ll) * 100
+                             if hh > ll else 50.0)
+            # Smooth %K (3-period SMA of raw %K)
+            if len(raw_k) >= stoch_smooth:
+                smooth_k = np.convolve(raw_k, np.ones(stoch_smooth) / stoch_smooth, mode='valid')
+                # %D = 3-period SMA of smooth %K
+                if len(smooth_k) >= stoch_smooth:
+                    smooth_d = np.convolve(smooth_k, np.ones(stoch_smooth) / stoch_smooth, mode='valid')
+                    results["stoch_k"] = round(float(smooth_k[-1]), 2)
+                    results["stoch_d"] = round(float(smooth_d[-1]), 2)
+                    # Crossover detection
+                    if len(smooth_k) >= 2 and len(smooth_d) >= 2:
+                        results["stoch_cross_up"] = (smooth_k[-1] > smooth_d[-1] and
+                                                      smooth_k[-2] <= smooth_d[-2])
+                        results["stoch_cross_down"] = (smooth_k[-1] < smooth_d[-1] and
+                                                        smooth_k[-2] >= smooth_d[-2])
+                    # Divergence: price makes new low but stoch makes higher low (bullish)
+                    if len(smooth_k) >= 20:
+                        price_low_10 = float(np.min(closes[-10:]))
+                        price_low_prev = float(np.min(closes[-20:-10]))
+                        stoch_low_10 = float(np.min(smooth_k[-10:]))
+                        stoch_low_prev = float(np.min(smooth_k[-20:-10]))
+                        results["stoch_bull_div"] = (price_low_10 < price_low_prev and
+                                                      stoch_low_10 > stoch_low_prev)
+                        price_high_10 = float(np.max(closes[-10:]))
+                        price_high_prev = float(np.max(closes[-20:-10]))
+                        stoch_high_10 = float(np.max(smooth_k[-10:]))
+                        stoch_high_prev = float(np.max(smooth_k[-20:-10]))
+                        results["stoch_bear_div"] = (price_high_10 > price_high_prev and
+                                                      stoch_high_10 < stoch_high_prev)
+
+        # ── Donchian Channels (20-period) — Turtle Breakout ──
+        dc_period = 20
+        if len(closes) >= dc_period:
+            dc_high = float(np.max(highs[-dc_period:]))
+            dc_low = float(np.min(lows[-dc_period:]))
+            dc_mid = (dc_high + dc_low) / 2
+            results["dc_upper"] = round(dc_high, 6)
+            results["dc_lower"] = round(dc_low, 6)
+            results["dc_mid"] = round(dc_mid, 6)
+            results["dc_width"] = round((dc_high - dc_low) / dc_low * 100 if dc_low > 0 else 0, 4)
+            # Breakout detection
+            results["dc_breakout_high"] = float(closes[-1]) >= dc_high
+            results["dc_breakout_low"] = float(closes[-1]) <= dc_low
+            # Position within channel (0=bottom, 1=top)
+            results["dc_position"] = round(
+                (closes[-1] - dc_low) / (dc_high - dc_low) if dc_high > dc_low else 0.5, 4
+            )
+            # 55-period Donchian for Turtle system confirmation
+            dc55_period = min(55, len(closes))
+            if dc55_period >= 40:
+                dc55_high = float(np.max(highs[-dc55_period:]))
+                dc55_low = float(np.min(lows[-dc55_period:]))
+                results["dc55_upper"] = round(dc55_high, 6)
+                results["dc55_lower"] = round(dc55_low, 6)
+                results["dc55_breakout_high"] = float(closes[-1]) >= dc55_high
+                results["dc55_breakout_low"] = float(closes[-1]) <= dc55_low
+
+        # ── Reversal Signal Detection ──
+        if opens is not None and len(opens) >= 3 and len(closes) >= 3:
+            # Pin bar: long wick, small body, wick >= 2x body
+            body = abs(closes[-1] - opens[-1])
+            upper_wick = highs[-1] - max(closes[-1], opens[-1])
+            lower_wick = min(closes[-1], opens[-1]) - lows[-1]
+            candle_range = highs[-1] - lows[-1]
+            if candle_range > 0:
+                body_ratio = body / candle_range
+                results["pin_bar_bullish"] = (lower_wick >= 2 * body and
+                                               body_ratio < 0.35 and
+                                               upper_wick < body)
+                results["pin_bar_bearish"] = (upper_wick >= 2 * body and
+                                               body_ratio < 0.35 and
+                                               lower_wick < body)
+            # Inside bar: current bar fully contained within previous bar
+            results["inside_bar"] = (highs[-1] <= highs[-2] and lows[-1] >= lows[-2])
+            # Capitulation volume: extreme volume + large red candle
+            if volumes is not None and len(volumes) >= 20:
+                avg_vol_20 = float(np.mean(volumes[-20:]))
+                cur_vol = float(volumes[-1])
+                is_large_red = (closes[-1] < opens[-1] and
+                                body / candle_range > 0.6 if candle_range > 0 else False)
+                is_large_green = (closes[-1] > opens[-1] and
+                                  body / candle_range > 0.6 if candle_range > 0 else False)
+                results["capitulation_sell"] = (cur_vol >= 3 * avg_vol_20 and is_large_red)
+                results["capitulation_buy"] = (cur_vol >= 3 * avg_vol_20 and is_large_green)
+                results["vol_capitulation_ratio"] = round(cur_vol / avg_vol_20 if avg_vol_20 > 0 else 1.0, 2)
 
         # ── VWAP Bands (±1σ, ±2σ) — intraday statistical extremes ──
         if volumes is not None and len(volumes) >= 20 and "vwap" in results:
@@ -1149,6 +1248,74 @@ class Analyzer:
                         indicators.get("chart_patterns_bearish_count", 0)
             scaled_weight = min(1.0, 0.7 * min(geo_count, 3))  # cap at 3 patterns
             weights.append(scaled_weight)
+
+        # Stochastic voter (weight 1.2 — momentum + mean-reversion)
+        stoch_k = indicators.get("stoch_k")
+        stoch_d = indicators.get("stoch_d")
+        if stoch_k is not None and stoch_d is not None:
+            stoch_vote = 0.0
+            if stoch_k < 20 and stoch_d < 20:
+                stoch_vote = 1.0   # oversold → bullish
+            elif stoch_k > 80 and stoch_d > 80:
+                stoch_vote = -1.0  # overbought → bearish
+            elif indicators.get("stoch_cross_up"):
+                stoch_vote = 0.7   # bullish crossover
+            elif indicators.get("stoch_cross_down"):
+                stoch_vote = -0.7  # bearish crossover
+            elif indicators.get("stoch_bull_div"):
+                stoch_vote = 0.8   # bullish divergence
+            elif indicators.get("stoch_bear_div"):
+                stoch_vote = -0.8  # bearish divergence
+            elif stoch_k < 40:
+                stoch_vote = 0.3
+            elif stoch_k > 60:
+                stoch_vote = -0.3
+            votes.append(stoch_vote)
+            weights.append(_boost(1.2, "stoch"))
+
+        # Donchian Channel voter (weight 1.0 — Turtle Breakout)
+        dc_breakout_high = indicators.get("dc_breakout_high", False)
+        dc_breakout_low = indicators.get("dc_breakout_low", False)
+        dc_position = indicators.get("dc_position")
+        if dc_position is not None:
+            dc_vote = 0.0
+            if dc_breakout_high:
+                dc_vote = 1.0    # 20-bar high breakout → strong bullish
+            elif dc_breakout_low:
+                dc_vote = -1.0   # 20-bar low breakout → strong bearish
+            elif dc_position > 0.8:
+                dc_vote = 0.5    # near top of channel
+            elif dc_position < 0.2:
+                dc_vote = -0.5   # near bottom of channel
+            # Boost if 55-period confirms
+            if indicators.get("dc55_breakout_high"):
+                dc_vote = min(1.0, dc_vote + 0.3)
+            elif indicators.get("dc55_breakout_low"):
+                dc_vote = max(-1.0, dc_vote - 0.3)
+            votes.append(dc_vote)
+            weights.append(_boost(1.0, "donchian"))
+
+        # Reversal signal voter (weight 0.9 — pin bars, inside bars, capitulation)
+        rev_vote = 0.0
+        rev_has_signal = False
+        if indicators.get("pin_bar_bullish"):
+            rev_vote += 0.7
+            rev_has_signal = True
+        if indicators.get("pin_bar_bearish"):
+            rev_vote -= 0.7
+            rev_has_signal = True
+        if indicators.get("capitulation_sell"):
+            rev_vote += 0.9  # capitulation selling = contrarian bullish
+            rev_has_signal = True
+        if indicators.get("capitulation_buy"):
+            rev_vote -= 0.9  # euphoric buying = contrarian bearish
+            rev_has_signal = True
+        if indicators.get("inside_bar"):
+            # Inside bar: neutral, but indicates compression → breakout coming
+            rev_has_signal = True
+        if rev_has_signal:
+            votes.append(max(-1.0, min(1.0, rev_vote)))
+            weights.append(_boost(0.9, "reversal"))
 
         # Wyckoff phase voter (weight 0.8 — accumulation/distribution cycle)
         wyckoff = indicators.get("wyckoff_pattern")
