@@ -672,11 +672,39 @@ async def callback_confirm_reject(update: Update, context: ContextTypes.DEFAULT_
         rc = engine.risk.evaluate(idea, atr=atr)
         ve = "\u2705" if rc.verdict == RiskVerdict.APPROVED else "\u26a0\ufe0f"
         await query.edit_message_reply_markup(reply_markup=None)
-        await query.message.reply_text(
-            f"{ve} <b>{symbol} {direction.value}</b> -- Risk: <b>{rc.verdict.value}</b>\n"
-            f"  Entry <code>${price:,.6g}</code>  SL <code>${sl:,.6g}</code>  TP <code>${tp:,.6g}</code>\n"
-            f"  R:R <code>{idea.risk_reward_ratio}</code>\n  <i>{rc.reason}</i>",
-            parse_mode="HTML")
+
+        if rc.verdict != RiskVerdict.APPROVED:
+            await query.message.reply_text(
+                f"{ve} <b>{symbol} {direction.value}</b> -- Risk: <b>{rc.verdict.value}</b>\n"
+                f"  Entry <code>${price:,.6g}</code>  SL <code>${sl:,.6g}</code>  TP <code>${tp:,.6g}</code>\n"
+                f"  R:R <code>{idea.risk_reward_ratio}</code>\n  <i>{rc.reason}</i>",
+                parse_mode="HTML")
+            return
+
+        # Risk passed — register as pending idea and execute via confirm_trade
+        trade_id = idea.id
+        engine._pending_ideas[trade_id] = idea
+        engine._pending_atr[trade_id] = atr
+
+        caller_uid = str(update.effective_user.id) if update.effective_user else ""
+        result = await engine.confirm_trade(trade_id, user_id=caller_uid)
+
+        # Check if execution succeeded
+        _fail_prefixes = (
+            "EXECUTION FAILED:", "INSUFFICIENT FUNDS:", "INVALID ORDER:",
+            "BLOCKED:", "PREFLIGHT FAILED:", "Risk re-check FAILED",
+            "Trade not found", "not found", "expired", "No pending",
+            "Trade REJECTED", "Trade HALTED", "Execution denied",
+        )
+        is_failure = any(result.startswith(p) for p in _fail_prefixes)
+        if is_failure:
+            await query.message.reply_text(
+                f"\u274c <b>{symbol} {direction.value}</b> -- Execution failed\n\n{result}",
+                parse_mode="HTML")
+        else:
+            await query.message.reply_text(
+                f"\u2705 <b>{symbol} {direction.value} EXECUTED</b>\n\n{result}",
+                parse_mode="HTML")
     except Exception as exc:
         log.error("Confirm callback failed for %s: %s", symbol, exc)
-        await query.message.reply_text(f"\u26a0\ufe0f Risk evaluation failed: {exc}", parse_mode="HTML")
+        await query.message.reply_text(f"\u26a0\ufe0f Execution failed: {exc}", parse_mode="HTML")
