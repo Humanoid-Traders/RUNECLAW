@@ -2087,14 +2087,55 @@ class TelegramHandler:
 
         self.monitor.set_chart_fn(_chart_fn)
 
-        # Hook: forward new signals to marketing channels
+        # Signal card image renderer — sends a styled PNG card for each signal
+        _bot_ref = bot
+        async def _signal_card_fn(chat_id: str, idea, rank: int = 1,
+                                  scan_data: dict = None) -> None:
+            try:
+                from bot.formatters.signal_card import signal_card_from_idea
+                png = signal_card_from_idea(idea, rank=rank, scan_data=scan_data or {})
+                if png:
+                    import io as _io
+                    buf = _io.BytesIO(png)
+                    buf.name = "signal.png"
+                    uid = CONFIG.telegram.chat_id or chat_id
+                    # Build confirm/reject buttons on the card image
+                    kb = InlineKeyboardMarkup([[
+                        InlineKeyboardButton("Take it",
+                            callback_data=f"confirm:{idea.id}:{uid}"),
+                        InlineKeyboardButton("Skip",
+                            callback_data=f"reject:{idea.id}:{uid}"),
+                    ]])
+                    pair = idea.asset.replace("/USDT", "")
+                    direction = idea.direction.value if hasattr(idea.direction, "value") else str(idea.direction)
+                    cap = f"<b>{pair} {direction}</b> | Conf {idea.confidence*100:.0f}%"
+                    await _bot_ref.send_photo(
+                        chat_id=int(chat_id), photo=buf,
+                        caption=cap, parse_mode="HTML",
+                        reply_markup=kb)
+            except Exception as exc:
+                system_log.debug("Signal card send failed: %s", exc)
+
+        self._signal_card_fn = _signal_card_fn
+
+        # Hook: forward new signals to marketing channels + send signal card
         _forwarder = self.forwarder
         _original_dispatch = self.monitor._dispatch
 
         async def _dispatch_with_forward(alert, send_fn):
             await _original_dispatch(alert, send_fn)
-            # Forward trade signals to marketing channels
+            # Send signal card image for trade signals
             if alert.alert_type == "TRADE_SIGNAL" and alert.idea is not None:
+                for cid in list(self.monitor._enabled_chats):
+                    try:
+                        # Gather scan data for the card
+                        sd = {}
+                        if hasattr(alert, 'data') and alert.data:
+                            sd = alert.data
+                        await _signal_card_fn(cid, alert.idea, rank=1, scan_data=sd)
+                    except Exception:
+                        pass
+                # Forward to marketing channels
                 try:
                     await _forwarder.post_signal(alert.idea)
                 except Exception:
@@ -2339,7 +2380,21 @@ class TelegramHandler:
                 InlineKeyboardButton("Take it", callback_data=f"confirm:{new_idea.id}:{uid}"),
                 InlineKeyboardButton("Skip", callback_data=f"reject:{new_idea.id}:{uid}"),
             ]])
-            await self._send(update, result, reply_markup=kb)
+            # Send signal card image with confirm/reject buttons
+            card_sent = False
+            if hasattr(self, '_signal_card_fn'):
+                try:
+                    chat_id = str(update.effective_chat.id) if update.effective_chat else ""
+                    if chat_id:
+                        from bot.formatters.signal_card import signal_card_from_idea
+                        png = signal_card_from_idea(new_idea, rank=1)
+                        if png:
+                            cap = result[:1024] if len(result) <= 1024 else result[:1020] + "..."
+                            card_sent = await self._send_photo(update, png, cap, reply_markup=kb)
+                except Exception as exc:
+                    system_log.debug("Analyze signal card failed: %s", exc)
+            if not card_sent:
+                await self._send(update, result, reply_markup=kb)
         else:
             await self._send(update, result)
 
