@@ -145,6 +145,38 @@ METAL_SECTORS: dict[str, str] = {
     "XPD/USDT:USDT": "Precious",
 }
 
+# ── Commodity Perpetuals ─────────────────────────────────────────
+# Energy futures on Bitget — USDT-M perpetual contracts.
+COMMODITY_PERPETUALS: list[str] = [
+    "CL/USDT:USDT",       # WTI Crude Oil
+    "BZ/USDT:USDT",       # Brent Crude Oil
+    "NATGAS/USDT:USDT",   # Natural Gas
+]
+
+# ── Pre-IPO Stock Perpetuals ─────────────────────────────────────
+# Pre-IPO tech company tokens on Bitget — USDT-M perpetual contracts.
+PRE_IPO_PERPETUALS: list[str] = [
+    "OPENAI/USDT:USDT",      # OpenAI (preOPAI)
+    "ANTHROPIC/USDT:USDT",   # Anthropic
+]
+
+# ── ETF Perpetuals ───────────────────────────────────────────────
+# Exchange-Traded Fund perpetual contracts on Bitget — USDT-M.
+ETF_PERPETUALS: list[str] = [
+    "XLK/USDT:USDT",     # Technology Select Sector SPDR ETF
+    "DFEN/USDT:USDT",    # Direxion Aero & Def Bull 3X ETF
+    "KWEB/USDT:USDT",    # KraneShares CSI China Internet ETF
+    "SGOV/USDT:USDT",    # iShares 0-3M Treasury ETF
+    "EWH/USDT:USDT",     # iShares MSCI Hong Kong ETF
+    "INDA/USDT:USDT",    # iShares MSCI India ETF
+]
+
+# ── Combined TradFi Universe ────────────────────────────────────
+# All non-crypto USDT-M perpetuals: metals + commodities + ETFs + pre-IPO
+TRADFI_PERPETUALS: list[str] = (
+    METAL_PERPETUALS + COMMODITY_PERPETUALS + PRE_IPO_PERPETUALS + ETF_PERPETUALS
+)
+
 # US stock market hours (Eastern Time / UTC-4 during EDT)
 # Regular session: 09:30-16:00 ET
 # Pre-market: 04:00-09:30 ET
@@ -420,7 +452,8 @@ class RuntimeState:
 
     @asset_universe.setter
     def asset_universe(self, value: str) -> None:
-        if value not in ("all", "solana", "stocks", "hybrid", "metals"):
+        if value not in ("all", "solana", "stocks", "hybrid", "metals",
+                         "commodities", "etfs", "pre_ipo", "tradfi"):
             raise ValueError(f"Invalid asset universe: {value!r}")
         with self._lock:
             self._asset_universe = value

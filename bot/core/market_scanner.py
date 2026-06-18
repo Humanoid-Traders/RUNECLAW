@@ -13,7 +13,11 @@ from typing import Optional
 
 import ccxt.async_support as ccxt
 
-from bot.config import CONFIG, SOLANA_ECOSYSTEM_SYMBOLS, US_STOCK_SYMBOLS, METAL_PERPETUALS
+from bot.config import (
+    CONFIG, SOLANA_ECOSYSTEM_SYMBOLS, US_STOCK_SYMBOLS,
+    METAL_PERPETUALS, COMMODITY_PERPETUALS, PRE_IPO_PERPETUALS,
+    ETF_PERPETUALS, TRADFI_PERPETUALS,
+)
 from bot.utils.logger import audit, system_log
 from bot.utils.models import MarketSignal
 
@@ -59,9 +63,19 @@ class MarketScanner:
         from bot.config import RUNTIME
         universe = RUNTIME.asset_universe
 
+        # Futures-based universes and their symbol sets
+        FUTURES_UNIVERSES: dict[str, set[str]] = {
+            "metals": set(METAL_PERPETUALS),
+            "commodities": set(COMMODITY_PERPETUALS),
+            "pre_ipo": set(PRE_IPO_PERPETUALS),
+            "etfs": set(ETF_PERPETUALS),
+            "tradfi": set(TRADFI_PERPETUALS),
+        }
+        is_futures_universe = universe in FUTURES_UNIVERSES
+
         try:
-            if universe == "metals":
-                # Metal perpetuals are futures-only — use swap exchange
+            if is_futures_universe:
+                # TradFi perpetuals are futures-only — use swap exchange
                 exchange = await self._get_futures_exchange()
                 tickers = await exchange.fetch_tickers(params={
                     "productType": "USDT-FUTURES",
@@ -77,13 +91,13 @@ class MarketScanner:
         signals: list[MarketSignal] = []
         seen_symbols: set[str] = set()
 
-        # For metals mode, match against the perpetual symbol set
-        metal_set = set(METAL_PERPETUALS) if universe == "metals" else set()
+        # For futures universes, filter to the known symbol set
+        futures_filter = FUTURES_UNIVERSES.get(universe, set())
 
         for symbol, tick in tickers.items():
-            if universe == "metals":
-                # Only process known metal perpetuals
-                if symbol not in metal_set:
+            if is_futures_universe:
+                # Only process symbols in this universe's set
+                if symbol not in futures_filter:
                     continue
             else:
                 if not symbol.endswith("/USDT"):
@@ -96,8 +110,8 @@ class MarketScanner:
                 price = float(tick.get("last", 0) or 0)
                 if price <= 0:
                     continue
-                # Lower volume threshold for metals (less liquid than BTC)
-                min_vol = 10_000 if universe == "metals" else 50_000
+                # Lower volume threshold for TradFi perpetuals (less liquid)
+                min_vol = 10_000 if is_futures_universe else 50_000
                 if volume < min_vol:
                     continue
 
@@ -142,8 +156,8 @@ class MarketScanner:
             # Half slots for stocks, half for crypto
             half = max(CONFIG.top_movers_count // 2, 5)
             top = (stock_signals[:half] + crypto_signals[:half])[: CONFIG.top_movers_count]
-        elif universe == "metals":
-            # Already filtered at ticker level — just sort and cap
+        elif is_futures_universe:
+            # Futures universes already filtered at ticker level — sort and cap
             signals.sort(key=lambda s: abs(s.momentum_score), reverse=True)
             top = signals[: CONFIG.top_movers_count]
         else:

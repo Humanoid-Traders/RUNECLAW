@@ -1637,26 +1637,38 @@ class TelegramHandler:
     # ── Mode switching ────────────────────────────────────────
 
     async def _cmd_mode(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-        """Switch asset universe: /mode solana | /mode all | /mode stocks | /mode hybrid"""
+        """Switch asset universe: /mode solana | /mode all | /mode stocks | /mode metals | etc."""
         if not await self._guard(update, "mode"):
             return
 
         args = (update.message.text or "").split()
-        valid_modes = {"all", "solana", "stocks", "hybrid"}
+        valid_modes = {"all", "solana", "stocks", "hybrid", "metals",
+                       "commodities", "etfs", "pre_ipo", "tradfi"}
 
         if len(args) < 2 or args[1].lower() not in valid_modes:
             from bot.config import RUNTIME
             current = RUNTIME.asset_universe
-            icons = {"solana": "\u2600\ufe0f", "all": "\U0001f30d", "stocks": "\U0001f4c8", "hybrid": "\U0001f500"}
+            icons = {
+                "solana": "\u2600\ufe0f", "all": "\U0001f30d", "stocks": "\U0001f4c8",
+                "hybrid": "\U0001f500", "metals": "\u2699\ufe0f", "commodities": "\U0001f6e2\ufe0f",
+                "etfs": "\U0001f4ca", "pre_ipo": "\U0001f680", "tradfi": "\U0001f3e6",
+            }
             icon = icons.get(current, "\U0001f30d")
             lines = [
                 f"\U0001f504 <b>ASSET UNIVERSE</b>\n",
                 f"Current: {icon} <b>{current.upper()}</b>\n",
-                "Usage:",
+                "<b>Crypto:</b>",
                 "  <code>/mode all</code> \u2014 all Bitget USDT pairs",
-                "  <code>/mode solana</code> \u2014 15 Solana ecosystem tokens",
-                "  <code>/mode stocks</code> \u2014 20 US stock tokenized perps",
+                "  <code>/mode solana</code> \u2014 Solana ecosystem tokens",
+                "",
+                "<b>TradFi Perpetuals (Futures):</b>",
+                "  <code>/mode stocks</code> \u2014 US stock tokenized perps",
                 "  <code>/mode hybrid</code> \u2014 crypto + stocks combined",
+                "  <code>/mode metals</code> \u2014 Gold, Silver, Platinum, Copper",
+                "  <code>/mode commodities</code> \u2014 WTI Oil, Brent, Natural Gas",
+                "  <code>/mode etfs</code> \u2014 ETF perpetuals (XLK, KWEB, etc.)",
+                "  <code>/mode pre_ipo</code> \u2014 Pre-IPO (OpenAI, Anthropic)",
+                "  <code>/mode tradfi</code> \u2014 ALL TradFi combined",
             ]
             if current == "solana":
                 from bot.config import SOLANA_ECOSYSTEM_SYMBOLS
@@ -1666,6 +1678,21 @@ class TelegramHandler:
                 from bot.config import US_STOCK_SYMBOLS
                 tickers = ", ".join(s.replace("/USDT", "") for s in US_STOCK_SYMBOLS)
                 lines.append(f"\nStocks: <i>{tickers}</i>")
+            elif current in ("metals", "commodities", "etfs", "pre_ipo", "tradfi"):
+                from bot.config import (
+                    METAL_PERPETUALS, COMMODITY_PERPETUALS,
+                    PRE_IPO_PERPETUALS, ETF_PERPETUALS, TRADFI_PERPETUALS,
+                )
+                perp_map = {
+                    "metals": METAL_PERPETUALS,
+                    "commodities": COMMODITY_PERPETUALS,
+                    "pre_ipo": PRE_IPO_PERPETUALS,
+                    "etfs": ETF_PERPETUALS,
+                    "tradfi": TRADFI_PERPETUALS,
+                }
+                symbols = perp_map.get(current, [])
+                names = ", ".join(s.split("/")[0] for s in symbols)
+                lines.append(f"\nAssets: <i>{names}</i>")
             await self._send(update, "\n".join(lines))
             return
 
@@ -1709,6 +1736,58 @@ class TelegramHandler:
                 "Scanner shows both crypto movers and US stock tokenized perps.\n"
                 "Risk engine applies stock-specific rules to stock symbols "
                 "and crypto rules to crypto symbols automatically.\n\n"
+                "Use <code>/mode all</code> to switch back."
+            ))
+        elif new_mode == "metals":
+            from bot.config import METAL_PERPETUALS
+            names = ", ".join(s.split("/")[0] for s in METAL_PERPETUALS)
+            await self._send(update, (
+                "\u2699\ufe0f <b>METALS MODE ACTIVE</b>\n\n"
+                f"Scanner targets {len(METAL_PERPETUALS)} metal perpetual contracts (USDT-M Futures):\n"
+                f"<i>{names}</i>\n\n"
+                "These are commodity-backed perpetuals tradeable 24/7.\n"
+                "Lower volume threshold applied for less liquid metals.\n\n"
+                "Use <code>/mode all</code> to switch back."
+            ))
+        elif new_mode == "commodities":
+            from bot.config import COMMODITY_PERPETUALS
+            names = ", ".join(s.split("/")[0] for s in COMMODITY_PERPETUALS)
+            await self._send(update, (
+                "\U0001f6e2\ufe0f <b>COMMODITIES MODE ACTIVE</b>\n\n"
+                f"Scanner targets {len(COMMODITY_PERPETUALS)} energy commodity perpetuals:\n"
+                f"<i>{names}</i>\n\n"
+                "WTI Oil, Brent Crude, Natural Gas — USDT-M Futures.\n\n"
+                "Use <code>/mode all</code> to switch back."
+            ))
+        elif new_mode == "etfs":
+            from bot.config import ETF_PERPETUALS
+            names = ", ".join(s.split("/")[0] for s in ETF_PERPETUALS)
+            await self._send(update, (
+                "\U0001f4ca <b>ETF MODE ACTIVE</b>\n\n"
+                f"Scanner targets {len(ETF_PERPETUALS)} ETF perpetual contracts:\n"
+                f"<i>{names}</i>\n\n"
+                "Tech, Defense, China Internet, Treasury, HK, India ETFs.\n\n"
+                "Use <code>/mode all</code> to switch back."
+            ))
+        elif new_mode == "pre_ipo":
+            from bot.config import PRE_IPO_PERPETUALS
+            names = ", ".join(s.split("/")[0] for s in PRE_IPO_PERPETUALS)
+            await self._send(update, (
+                "\U0001f680 <b>PRE-IPO MODE ACTIVE</b>\n\n"
+                f"Scanner targets {len(PRE_IPO_PERPETUALS)} pre-IPO stock perpetuals:\n"
+                f"<i>{names}</i>\n\n"
+                "Pre-IPO tech company tokens on Bitget — high volatility, use caution.\n\n"
+                "Use <code>/mode all</code> to switch back."
+            ))
+        elif new_mode == "tradfi":
+            from bot.config import TRADFI_PERPETUALS
+            names = ", ".join(s.split("/")[0] for s in TRADFI_PERPETUALS)
+            await self._send(update, (
+                "\U0001f3e6 <b>TRADFI MODE ACTIVE</b>\n\n"
+                f"Scanner covers ALL {len(TRADFI_PERPETUALS)} TradFi perpetuals:\n"
+                f"<i>{names}</i>\n\n"
+                "Metals + Commodities + ETFs + Pre-IPO combined.\n"
+                "All USDT-M Futures.\n\n"
                 "Use <code>/mode all</code> to switch back."
             ))
         else:
