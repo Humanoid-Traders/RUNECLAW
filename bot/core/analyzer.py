@@ -415,8 +415,11 @@ class Analyzer:
             self._last_rejection_diag = {
                 "symbol": signal.symbol, "regime": regime.value,
                 "confluence": round(confluence, 3),
-                "reason": "LLM thesis returned None (all providers failed)",
-                "source": "llm_fail",
+                "reason": (
+                    "Ambiguous signal — confluence in neutral zone, "
+                    "no strong directional bias from RSI or MACD"
+                ),
+                "source": "no_thesis",
             }
             return None
 
@@ -1768,20 +1771,29 @@ class Analyzer:
         candle_patterns = ind.get("candle_patterns", {})
 
         # Direction from confluence (>0.5 = bullish, <0.5 = bearish)
-        if confluence > 0.55:
+        # EXPANSION regime narrows the ambiguous zone — these are high-probability setups
+        is_expansion = regime == "EXPANSION"
+        bull_thresh = 0.52 if is_expansion else 0.55
+        bear_thresh = 0.48 if is_expansion else 0.45
+
+        if confluence > bull_thresh:
             direction = "LONG"
-        elif confluence < 0.45:
+        elif confluence < bear_thresh:
             direction = "SHORT"
         elif rsi < 35:
             direction = "LONG"
         elif rsi > 65:
             direction = "SHORT"
+        elif macd_hist > 0 and confluence >= 0.50:
+            direction = "LONG"   # MACD tiebreaker: positive histogram + slight bullish lean
+        elif macd_hist < 0 and confluence <= 0.50:
+            direction = "SHORT"  # MACD tiebreaker: negative histogram + slight bearish lean
         else:
-            return None  # ambiguous confluence + neutral RSI -- no signal
+            return None  # ambiguous confluence + neutral RSI + no MACD signal -- no signal
 
         # Confidence from confluence strength + regime clarity
         conf_base = abs(confluence - 0.5) * 2  # 0-1 scale of confluence strength
-        regime_bonus = 0.1 if regime in ("TREND_UP", "TREND_DOWN") else 0
+        regime_bonus = 0.1 if regime in ("TREND_UP", "TREND_DOWN", "EXPANSION") else 0
         spike_bonus = 0.1 if signal.volume_spike else 0
         adx_bonus = 0.05 if adx > 25 else 0
 
