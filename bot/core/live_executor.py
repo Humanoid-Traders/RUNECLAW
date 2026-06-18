@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from bot.compat import UTC
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 import ccxt.async_support as ccxt
 
@@ -119,6 +119,8 @@ class LiveExecutor:
         self._order_history: list[LiveOrder] = []
         self._hedge_mode: Optional[bool] = None  # None=unknown, True=hedge, False=one-way
         self._is_uta: Optional[bool] = None  # None=unknown, cached after first detection
+        # Callback: invoked after any position is closed (for balance cache invalidation)
+        self.on_position_closed: Optional[Callable] = None
         # F-07 FIX: Load persisted positions on startup
         self._load_positions()
         # F-14 FIX: Load persisted closed trades on startup
@@ -258,7 +260,7 @@ class LiveExecutor:
 
     # ── Pre-flight checks ────────────────────────────────────────
 
-    def _preflight_check(self, size_usd: float) -> Optional[str]:
+    def _preflight_check(self, size_usd: float, symbol: str = "") -> Optional[str]:
         """Run micro-test safety checks. Returns error string or None."""
         # Cap position size
         if size_usd > MICRO_MAX_POSITION_USD:
@@ -282,6 +284,19 @@ class LiveExecutor:
         open_count = sum(1 for p in self._positions.values() if p.status == "open")
         if open_count >= MICRO_MAX_OPEN_POSITIONS:
             return f"Already {open_count} open positions (max {MICRO_MAX_OPEN_POSITIONS})"
+
+        # DUPLICATE SYMBOL GUARD: block opening a second position on the same symbol
+        if symbol:
+            norm = symbol.replace(":USDT", "").replace("/USDT", "").upper()
+            for p in self._positions.values():
+                if p.status != "open":
+                    continue
+                p_norm = p.symbol.replace(":USDT", "").replace("/USDT", "").upper()
+                if p_norm == norm:
+                    return (
+                        f"Already have an open {p.direction} position on {p.symbol} "
+                        f"(trade {p.trade_id}). Close it first or wait for SL/TP."
+                    )
 
         return None
 
@@ -602,7 +617,7 @@ class LiveExecutor:
         size_usd = min(size_usd, MICRO_MAX_POSITION_USD)
 
         # Pre-flight
-        preflight_err = self._preflight_check(size_usd)
+        preflight_err = self._preflight_check(size_usd, symbol=idea.asset)
         if preflight_err:
             audit(trade_log, f"Live execution blocked: {preflight_err}",
                   action="live_execute", result="BLOCKED",
@@ -1827,6 +1842,8 @@ class LiveExecutor:
             self._save_positions()
             # F-14 FIX: persist closed trade to closed_trades.json
             self._append_closed_trade(pos)
+            # Notify engine to invalidate balance cache
+            self._fire_position_closed(pos)
 
             # Cancel any outstanding SL/TP orders
             for oid in [pos.sl_order_id, pos.tp_order_id]:
@@ -2099,6 +2116,16 @@ class LiveExecutor:
                   action="spot_sell", result="ERROR",
                   data={"symbol": symbol, "qty": qty, "error": str(exc)})
             return {"error": str(exc)}
+
+    # ── Balance cache invalidation callback ────────────────────────
+
+    def _fire_position_closed(self, pos: LivePosition) -> None:
+        """Notify listeners (engine) that a position was closed so balance cache refreshes."""
+        if self.on_position_closed:
+            try:
+                self.on_position_closed(pos)
+            except Exception:
+                pass  # Non-critical — don't break close flow
 
     # ── F-07 FIX: Position persistence ──────────────────────────────
 

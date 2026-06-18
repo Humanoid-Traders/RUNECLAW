@@ -92,6 +92,8 @@ class RuneClawEngine:
         self.ws_feed = BitgetWSFeed()
         # Live executor for real Bitget orders (micro-test mode)
         self.live_executor = LiveExecutor()
+        # Wire balance cache invalidation: when a live position closes, clear cached equity
+        self.live_executor.on_position_closed = lambda pos: self._invalidate_live_balance_cache()
         self.health = SystemHealthMonitor()
         # Multi-user portfolio manager: per-user isolated paper wallets
         self.user_portfolios = MultiUserPortfolio(
@@ -169,6 +171,11 @@ class RuneClawEngine:
         except Exception as exc:
             system_log.debug("Live balance fetch failed: %s", exc)
         return self._live_balance_cache if self._live_balance_cache else None
+
+    def _invalidate_live_balance_cache(self) -> None:
+        """Force a fresh balance fetch on the next equity check."""
+        self._live_balance_cache = {}
+        self._live_balance_cache_ts = 0.0
 
     def get_effective_equity(self, user_id: str = "") -> float:
         """Return the equity figure to display/use for sizing.
