@@ -10,7 +10,22 @@ const { pool } = require('../db');
 const router = express.Router();
 const SYNC_SECRET = process.env.BOT_SYNC_SECRET || 'runeclaw-sync-2026';
 
-// Auth middleware for bot sync
+// -- In-memory scan data store (persists across requests within same cold start) --
+let latestScan = null;
+
+/**
+ * GET /api/bot/sync/scan
+ * Dashboard fetches latest scan data (no auth required — data is public market info).
+ * This route is registered BEFORE botAuth middleware so it's publicly accessible.
+ */
+router.get('/scan', (req, res) => {
+  if (!latestScan) {
+    return res.json({ scan: null, message: 'No scan data yet. Run /getclaw in Telegram.' });
+  }
+  res.json({ scan: latestScan });
+});
+
+// Auth middleware for bot sync (all routes below require X-Bot-Secret)
 function botAuth(req, res, next) {
   const secret = req.headers['x-bot-secret'];
   if (!secret || secret !== SYNC_SECRET) {
@@ -145,12 +160,12 @@ router.post('/trade-event', async (req, res) => {
   }
 });
 
-// -- In-memory scan data store (persists across requests within same cold start) --
-let latestScan = null;
+// -- In-memory scan data store is declared above (before botAuth) --
 
 /**
  * POST /api/bot/sync/scan
  * Bot pushes GetClaw scan results after each scan cycle.
+ * (authenticated — requires X-Bot-Secret)
  */
 router.post('/scan', async (req, res) => {
   try {
@@ -163,17 +178,6 @@ router.post('/scan', async (req, res) => {
     console.error('Scan sync error:', err.message);
     res.status(500).json({ error: 'Scan sync failed' });
   }
-});
-
-/**
- * GET /api/bot/sync/scan
- * Dashboard fetches latest scan data (no auth required — data is public market info).
- */
-router.get('/scan', (req, res) => {
-  if (!latestScan) {
-    return res.json({ scan: null, message: 'No scan data yet. Run /getclaw in Telegram.' });
-  }
-  res.json({ scan: latestScan });
 });
 
 module.exports = router;
