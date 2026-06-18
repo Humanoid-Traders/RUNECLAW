@@ -142,7 +142,7 @@ a{color:var(--gold);text-decoration:none}
 </div>
 <script>
 const TOKEN = localStorage.getItem('token');
-if (!TOKEN) window.location.href = '/';
+const LOGGED_IN = !!TOKEN;
 
 const SYMBOLS = [
   'BTCUSDT','ETHUSDT','SOLUSDT','BNBUSDT','AVAXUSDT','ADAUSDT',
@@ -183,6 +183,10 @@ async function fetchScan() {
 }
 
 async function fetchPortfolio() {
+  if (!LOGGED_IN) {
+    document.getElementById('portfolioContent').innerHTML = '<div class="empty-msg">Log in to view portfolio data</div>';
+    return;
+  }
   try {
     const h = { Authorization: 'Bearer ' + TOKEN };
     const [s, o, e] = await Promise.all([
@@ -198,8 +202,8 @@ function renderRegime() {
   const el = document.getElementById('regimePanel');
   const btc = tickerData['BTCUSDT'];
   if (!btc) return;
-  const price = parseFloat(btc.lastPr), open24 = parseFloat(btc.open), high = parseFloat(btc.high24h), low = parseFloat(btc.low24h);
-  const change = (price - open24) / open24 * 100;
+  const price = parseFloat(btc.lastPr), open24 = parseFloat(btc.open24h || btc.openUtc), high = parseFloat(btc.high24h), low = parseFloat(btc.low24h);
+  const change = parseFloat(btc.change24h) * 100 || ((price - open24) / open24 * 100);
   const range = high > low ? (price - low) / (high - low) * 100 : 50;
   const vol = parseFloat(btc.quoteVolume);
 
@@ -256,8 +260,8 @@ function renderUniverse() {
   const rows = [];
   for (const sym of alts) {
     const t = tickerData[sym]; if (!t) continue;
-    const price = parseFloat(t.lastPr), open24 = parseFloat(t.open), high = parseFloat(t.high24h), low = parseFloat(t.low24h);
-    const change = (price-open24)/open24*100, range = high>low?(price-low)/(high-low)*100:50, vol = parseFloat(t.quoteVolume);
+    const price = parseFloat(t.lastPr), open24 = parseFloat(t.open24h || t.openUtc), high = parseFloat(t.high24h), low = parseFloat(t.low24h);
+    const change = parseFloat(t.change24h) * 100 || ((price-open24)/open24*100), range = high>low?(price-low)/(high-low)*100:50, vol = parseFloat(t.quoteVolume);
     const name = sym.replace('USDT','');
     let bookRatio=null, bookSide='', status='skip', statusLabel='SKIP';
     if (scanData?.symbols?.[sym]) {
@@ -309,13 +313,15 @@ function renderEntryCards() {
 }
 
 function renderPortfolio() {
-  const el=document.getElementById('portfolioContent');if(!portfolioData)return;
+  const el=document.getElementById('portfolioContent');
+  if(!LOGGED_IN){el.innerHTML='<div class="empty-msg">Log in to view portfolio data</div>';return;}
+  if(!portfolioData)return;
   const s=portfolioData.stats, pos=portfolioData.positions, snaps=portfolioData.snapshots;
   let h=`<div class="port-stats">
     <div class="port-stat"><div class="ps-label">Equity</div><div class="ps-val" style="color:var(--gold)">$${fmt(s.equity)}</div></div>
     <div class="port-stat"><div class="ps-label">Net P&L</div><div class="ps-val ${pctC(s.net_pnl)}">${s.net_pnl>=0?'+':''}$${fmt(s.net_pnl)}</div></div>
     <div class="port-stat"><div class="ps-label">Win Rate</div><div class="ps-val">${fmt(s.win_rate,1)}%</div></div>
-    <div class="port-stat"><div class="ps-label">Trades</div><div class="ps-val">${s.total_trades}</div></div>
+    <div class="port-stat"><div class="ps-label">Trades</div><div class="ps-val">${s.total_trades||0}</div></div>
   </div>`;
   if(snaps.length>1){
     const vals=snaps.map(s=>parseFloat(s.equity)),min=Math.min(...vals)*0.998,max=Math.max(...vals)*1.002,w=600,ht=100;
