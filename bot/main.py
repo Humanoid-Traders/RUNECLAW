@@ -116,7 +116,25 @@ def run_telegram() -> None:
             await app.updater.start_polling(drop_pending_updates=True)
             # Start proactive alert monitor (Move 2)
             await handler.start_monitor(app.bot)
-            await engine_task
+
+            # Keep running forever — restart engine if it crashes
+            while True:
+                try:
+                    await engine_task
+                    # Engine exited cleanly — shouldn't happen, restart
+                    audit(system_log, "Engine loop exited unexpectedly, restarting",
+                          action="engine_restart", result="RESTARTING")
+                    print("  WARNING: Engine exited, restarting in 5s...")
+                    await asyncio.sleep(5)
+                    engine_task = asyncio.create_task(engine.run())
+                except asyncio.CancelledError:
+                    break
+                except Exception as exc:
+                    audit(system_log, f"Engine crashed: {exc}",
+                          action="engine_crash", result="ERROR")
+                    print(f"  ERROR: Engine crashed: {exc}. Restarting in 10s...")
+                    await asyncio.sleep(10)
+                    engine_task = asyncio.create_task(engine.run())
         finally:
             await handler.stop_monitor()
             if dashboard_runner:
