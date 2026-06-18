@@ -178,7 +178,7 @@ async function fetchScan() {
   try {
     const r = await fetch('/api/bot/sync/scan');
     const d = await r.json();
-    if (d.scan) { scanData = d.scan; renderRegime(); renderCircuit(); renderEntryCards(); renderKeyCall(); renderUniverse(); }
+    if (d.scan) { scanData = d.scan; renderRegime(); renderCircuit(); renderEntryCards(); renderKeyCall(); renderUniverse(); renderPortfolio(); }
   } catch(e) {}
 }
 
@@ -351,7 +351,7 @@ function renderPortfolio() {
   const cb = scanData?.circuit_breaker || {};
   const hasAuth = portfolioData && portfolioData.stats && portfolioData.stats.total_trades > 0;
   const hasCB = cb.equity != null || cb.total_trades != null;
-  const hasPub = pp.equity > 800 || pp.total_trades > 0;
+  const hasPub = pp.equity > 0 || pp.total_trades > 0;
   const usePublic = !hasAuth && (hasCB || hasPub);
   const s = hasAuth ? portfolioData.stats : (usePublic ? {
     equity: cb.equity != null ? cb.equity : (pp.equity || 0),
