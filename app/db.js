@@ -158,6 +158,12 @@ class MemoryDB {
       return [{ insertId: this._nextSnapId - 1 }, []];
     }
 
+    // Global equity snapshot query (no user_id filter) - for public portfolio summary
+    if (cmd.includes('FROM EQUITY_SNAPSHOTS') && cmd.includes('ORDER BY SNAPSHOT_AT DESC') && params.length === 0) {
+      const rows = [...this.snapshots].sort((a, b) => new Date(b.snapshot_at) - new Date(a.snapshot_at)).slice(0, 1);
+      return [rows, []];
+    }
+
     if (cmd.includes('FROM EQUITY_SNAPSHOTS') && cmd.includes('ORDER BY SNAPSHOT_AT DESC')) {
       const rows = this.snapshots.filter(s => s.user_id === params[0]).sort((a, b) => new Date(b.snapshot_at) - new Date(a.snapshot_at)).slice(0, 1);
       return [rows, []];
@@ -166,6 +172,23 @@ class MemoryDB {
     if (cmd.includes('FROM EQUITY_SNAPSHOTS')) {
       const rows = this.snapshots.filter(s => s.user_id === params[0]).sort((a, b) => new Date(a.snapshot_at) - new Date(b.snapshot_at)).slice(0, 365);
       return [rows, []];
+    }
+
+    // Global trade stats queries (no user_id filter) - for public portfolio summary
+    if (cmd.includes('COUNT(*)') && cmd.includes('SUM(PNL)') && cmd.includes("STATUS = 'CLOSED'") && params.length === 0) {
+      const closed = this.trades.filter(t => t.status === 'CLOSED');
+      const net_pnl = closed.reduce((a, t) => a + (parseFloat(t.pnl) || 0), 0);
+      return [[{ total: closed.length, net_pnl }], []];
+    }
+
+    if (cmd.includes('COUNT(*)') && cmd.includes("STATUS = 'OPEN'") && params.length === 0) {
+      const count = this.trades.filter(t => t.status === 'OPEN').length;
+      return [[{ open_count: count }], []];
+    }
+
+    if (cmd.includes('COUNT(*)') && cmd.includes('PNL > 0') && params.length === 0) {
+      const wins = this.trades.filter(t => t.status === 'CLOSED' && parseFloat(t.pnl) > 0).length;
+      return [[{ wins }], []];
     }
 
     return [[], []];

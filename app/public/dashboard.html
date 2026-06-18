@@ -153,7 +153,7 @@ const SYMBOLS = [
   'OPUSDT','AAVEUSDT','DOTUSDT','ATOMUSDT'
 ];
 
-let tickerData = {}, scanData = null, portfolioData = null;
+let tickerData = {}, scanData = null, portfolioData = null, publicPortfolio = null;
 
 function fmt(n, d=2) { return n != null ? Number(n).toFixed(d) : '--'; }
 function fmtK(n) { if(n==null)return'--';n=Number(n);if(n>=1e9)return(n/1e9).toFixed(1)+'B';if(n>=1e6)return(n/1e6).toFixed(1)+'M';if(n>=1e3)return(n/1e3).toFixed(1)+'K';return n.toFixed(0); }
@@ -179,6 +179,14 @@ async function fetchScan() {
     const r = await fetch('/api/bot/sync/scan');
     const d = await r.json();
     if (d.scan) { scanData = d.scan; renderRegime(); renderCircuit(); renderEntryCards(); renderKeyCall(); renderUniverse(); }
+  } catch(e) {}
+}
+
+async function fetchPublicPortfolio() {
+  try {
+    const r = await fetch('/api/bot/sync/portfolio-summary');
+    const d = await r.json();
+    if (d.portfolio) { publicPortfolio = d.portfolio; renderCircuit(); }
   } catch(e) {}
 }
 
@@ -235,8 +243,15 @@ function renderRegime() {
 
 function renderCircuit() {
   const el = document.getElementById('circuitContent');
+  // Use authenticated portfolio data first, then public summary, then defaults
   const s = portfolioData?.stats || {};
-  const eq = s.equity||800, pnl = s.net_pnl||0, op = s.open_positions||0, wr = s.win_rate||0;
+  const pp = publicPortfolio || {};
+  const eq = s.equity || pp.equity || 800;
+  const pnl = s.net_pnl || pp.net_pnl || 0;
+  const op = s.open_positions || pp.open_count || 0;
+  const wr = s.win_rate || pp.win_rate || 0;
+  const sharpe = s.sharpe || 0;
+  const trades = s.total_trades || pp.total_trades || 0;
   let pc = 'ok'; if(pnl<-30) pc='warn'; if(pnl<-40) pc='danger';
   const rules = scanData?.circuit_breaker?.rules || [];
 
@@ -245,8 +260,8 @@ function renderCircuit() {
     <div class="cb-item ${pc}"><div class="cb-label">Net P&L</div><div class="cb-val">${pnl>=0?'+':''}$${fmt(pnl)}</div></div>
     <div class="cb-item ok"><div class="cb-label">Open Pos</div><div class="cb-val">${op}</div></div>
     <div class="cb-item ${wr>=50?'ok':wr>=40?'warn':'danger'}"><div class="cb-label">Win Rate</div><div class="cb-val">${fmt(wr,1)}%</div></div>
-    <div class="cb-item ok"><div class="cb-label">Sharpe</div><div class="cb-val">${fmt(s.sharpe||0)}</div></div>
-    <div class="cb-item ok"><div class="cb-label">Trades</div><div class="cb-val">${s.total_trades||0}</div></div>
+    <div class="cb-item ok"><div class="cb-label">Sharpe</div><div class="cb-val">${fmt(sharpe)}</div></div>
+    <div class="cb-item ok"><div class="cb-label">Trades</div><div class="cb-val">${trades}</div></div>
   </div>
   <div class="rules-row">
     ${rules.length > 0 ? rules.map(r=>`<span class="rule-tag ${r.active?'active':'clear'}">${r.label}</span>`).join('') :
@@ -347,10 +362,12 @@ function renderKeyCall() {
 
 async function init() {
   await fetchTickers();
-  await Promise.all([fetchScan(), fetchPortfolio()]);
+  await Promise.all([fetchScan(), fetchPublicPortfolio(), fetchPortfolio()]);
+  renderCircuit(); // ensure circuit breaker renders even if fetches return no data
   setInterval(fetchTickers, 5000);
   setInterval(fetchScan, 30000);
-  setInterval(fetchPortfolio, 60000);
+  setInterval(fetchPublicPortfolio, 60000);
+  if (LOGGED_IN) setInterval(fetchPortfolio, 60000);
 }
 init();
 </script>

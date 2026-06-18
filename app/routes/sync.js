@@ -10,19 +10,60 @@ const { pool } = require('../db');
 const router = express.Router();
 const SYNC_SECRET = process.env.BOT_SYNC_SECRET || 'runeclaw-sync-2026';
 
-// -- In-memory scan data store (persists across requests within same cold start) --
+// -- In-memory stores (persist within same cold start) --
 let latestScan = null;
+let latestPortfolio = null; // { equity, open_count, net_pnl, total_trades, win_rate, updated_at }
 
 /**
  * GET /api/bot/sync/scan
  * Dashboard fetches latest scan data (no auth required — data is public market info).
- * This route is registered BEFORE botAuth middleware so it's publicly accessible.
  */
 router.get('/scan', (req, res) => {
   if (!latestScan) {
-    return res.json({ scan: null, message: 'No scan data yet. Run /getclaw in Telegram.' });
+    return res.json({ scan: null, message: 'No scan data yet. Run /scan in Telegram.' });
   }
   res.json({ scan: latestScan });
+});
+
+/**
+ * GET /api/bot/sync/portfolio-summary
+ * Dashboard fetches bot portfolio summary (no auth required — shows synced data).
+ */
+router.get('/portfolio-summary', async (req, res) => {
+  // Return cached in-memory summary if available
+  if (latestPortfolio) {
+    return res.json({ portfolio: latestPortfolio });
+  }
+  // Fallback: try to read from DB (latest equity snapshot for any user)
+  try {
+    const [snapRows] = await pool.execute(
+      'SELECT equity, snapshot_at FROM equity_snapshots ORDER BY snapshot_at DESC LIMIT 1'
+    );
+    const [tradeRows] = await pool.execute(
+      "SELECT COUNT(*) as total, COALESCE(SUM(pnl),0) as net_pnl FROM trades WHERE status = 'CLOSED'"
+    );
+    const [openRows] = await pool.execute(
+      "SELECT COUNT(*) as open_count FROM trades WHERE status = 'OPEN'"
+    );
+    const [winRows] = await pool.execute(
+      "SELECT COUNT(*) as wins FROM trades WHERE status = 'CLOSED' AND pnl > 0"
+    );
+    const equity = snapRows.length > 0 ? parseFloat(snapRows[0].equity) : 800;
+    const total = tradeRows[0]?.total || 0;
+    const netPnl = parseFloat(tradeRows[0]?.net_pnl || 0);
+    const openCount = openRows[0]?.open_count || 0;
+    const wins = winRows[0]?.wins || 0;
+    const winRate = total > 0 ? (wins / total) * 100 : 0;
+
+    latestPortfolio = {
+      equity, open_count: openCount, net_pnl: netPnl,
+      total_trades: total, win_rate: winRate,
+      updated_at: snapRows[0]?.snapshot_at || new Date().toISOString()
+    };
+    res.json({ portfolio: latestPortfolio });
+  } catch (err) {
+    res.json({ portfolio: { equity: 800, open_count: 0, net_pnl: 0, total_trades: 0, win_rate: 0 } });
+  }
 });
 
 // Auth middleware for bot sync (all routes below require X-Bot-Secret)
@@ -102,7 +143,18 @@ router.post('/', async (req, res) => {
       [user_id, eq, new Date()]
     );
 
-    res.json({ ok: true, synced: { closed: (closed_trades || []).length, open: (positions || []).length, equity: eq } });
+    // Update in-memory portfolio summary
+    const closedCount = (closed_trades || []).length;
+    const openCount = (positions || []).length;
+    const netPnl = (closed_trades || []).reduce((a, t) => a + (parseFloat(t.pnl) || 0), 0);
+    const wins = (closed_trades || []).filter(t => parseFloat(t.pnl) > 0).length;
+    latestPortfolio = {
+      equity: eq, open_count: openCount, net_pnl: netPnl,
+      total_trades: closedCount, win_rate: closedCount > 0 ? (wins / closedCount) * 100 : 0,
+      updated_at: new Date().toISOString()
+    };
+
+    res.json({ ok: true, synced: { closed: closedCount, open: openCount, equity: eq } });
   } catch (err) {
     console.error('Sync error:', err.message);
     res.status(500).json({ error: 'Sync failed' });
