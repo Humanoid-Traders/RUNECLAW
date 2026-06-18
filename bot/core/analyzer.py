@@ -216,6 +216,8 @@ class Analyzer:
         self._sentiment = SentimentEngine()
         self._strategy_selector = StrategySelector()
         self._explainability = ExplainabilityEngine()
+        # Diagnostic info for the last rejected analysis
+        self._last_rejection_diag: Optional[dict] = None
 
     def _resolve_llm_config(self) -> Optional[LLMConfig]:
         """Build LLMConfig from BYOK runtime or .env config."""
@@ -410,6 +412,12 @@ class Analyzer:
         thesis = await self._llm_thesis(signal, indicators, order_flow=order_flow)
 
         if thesis is None:
+            self._last_rejection_diag = {
+                "symbol": signal.symbol, "regime": regime.value,
+                "confluence": round(confluence, 3),
+                "reason": "LLM thesis returned None (all providers failed)",
+                "source": "llm_fail",
+            }
             return None
 
         direction = Direction.LONG if thesis["direction"] == "LONG" else Direction.SHORT
@@ -502,6 +510,13 @@ class Analyzer:
                                 "direction": direction.value,
                                 "of_bias": round(of_bias, 3),
                                 "of_confidence": round(of_conf, 3)})
+                    self._last_rejection_diag = {
+                        "symbol": signal.symbol, "regime": regime.value,
+                        "confluence": round(confluence, 3),
+                        "direction": direction.value,
+                        "reason": f"Order-flow veto: microstructure opposes {direction.value}",
+                        "source": "order_flow_veto",
+                    }
                     return None
                 blended_confidence -= 0.15 * opposition * of_conf
         except Exception:
@@ -515,6 +530,24 @@ class Analyzer:
         # SIGNAL QUALITY: threshold at min_confidence (matches config)
         # RANGE/CHOP trades need high raw confluence to survive after penalty
         if blended_confidence < CONFIG.risk.min_confidence:
+            thesis_src = thesis.get("source", "unknown")
+            self._last_rejection_diag = {
+                "symbol": signal.symbol,
+                "regime": regime.value,
+                "confluence": round(confluence, 3),
+                "direction": direction.value,
+                "raw_confidence": round(confidence, 3),
+                "blended": round(blended_confidence, 3),
+                "threshold": CONFIG.risk.min_confidence,
+                "regime_penalty": round(regime_confidence_penalty, 3),
+                "counter_trend_penalty": round(counter_trend_penalty, 3),
+                "source": thesis_src,
+                "reason": (
+                    f"Score {blended_confidence:.0%} < {CONFIG.risk.min_confidence:.0%} threshold"
+                    + (f" (regime {regime.value} penalty -{regime_confidence_penalty:.0%})" if regime_confidence_penalty > 0 else "")
+                    + (f" (counter-trend penalty)" if counter_trend_penalty < 1.0 else "")
+                ),
+            }
             audit(trade_log, "Low blended confidence -- skipping",
                   action="analyze", result="SKIP",
                   data={"symbol": signal.symbol, "raw_conf": confidence,

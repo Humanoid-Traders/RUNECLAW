@@ -256,13 +256,34 @@ class AnalyzeAssetSkill(BaseSkill):
         if idea is None:
             vol_m = sig.volume_usd_24h / 1_000_000 if sig.volume_usd_24h else 0
             arrow = _spark(sig.change_pct_24h)
-            return (
+            # Pull diagnostics from analyzer
+            diag = getattr(engine.analyzer, "_last_rejection_diag", None) or {}
+            diag_lines = []
+            if diag.get("regime"):
+                diag_lines.append(f"Regime: <code>{diag['regime']}</code>")
+            if diag.get("direction"):
+                diag_lines.append(f"Bias: <code>{diag['direction']}</code>")
+            if diag.get("confluence"):
+                diag_lines.append(f"Confluence: <code>{diag['confluence']:.0%}</code>")
+            if diag.get("blended") is not None:
+                diag_lines.append(f"Final score: <code>{diag['blended']:.0%}</code>")
+            if diag.get("threshold"):
+                diag_lines.append(f"Threshold: <code>{diag['threshold']:.0%}</code>")
+            if diag.get("regime_penalty") and diag["regime_penalty"] > 0:
+                diag_lines.append(f"Regime penalty: <code>-{diag['regime_penalty']:.0%}</code>")
+            reason_text = diag.get("reason", "regime filter or low confluence")
+            diag_detail = "\n".join(f"  {l}" for l in diag_lines)
+            msg = (
                 f"{_NEU} <b>{_esc(symbol)}</b>  {arrow}\n{SEP}\n\n"
                 f"- Price: <code>${sig.price:,.2f}</code>\n"
                 f"- 24h: <code>{sig.change_pct_24h:+.1f}%</code>\n"
                 f"- Volume: <code>${vol_m:,.0f}M</code>\n\n"
-                f"<i>\u25c7 No actionable signal \u2014 regime filter or low confluence</i>"
             )
+            if diag_lines:
+                msg += f"<i>\u25c7 {_esc(reason_text)}</i>\n\n{diag_detail}"
+            else:
+                msg += f"<i>\u25c7 No actionable signal \u2014 {_esc(reason_text)}</i>"
+            return msg
 
         # Dedup: replace any existing pending idea for the same asset
         for eid in list(engine._pending_ideas):
