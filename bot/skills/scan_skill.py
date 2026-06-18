@@ -689,12 +689,53 @@ async def callback_confirm_reject(update: Update, context: ContextTypes.DEFAULT_
         caller_uid = str(update.effective_user.id) if update.effective_user else ""
         result = await engine.confirm_trade(trade_id, user_id=caller_uid)
 
+        # ── Auto re-analyze on price drift rejection ──
+        # If price moved since scan, rebuild the idea at the current price
+        # and retry once (max 1 retry to avoid loops).
+        if "price drifted" in result.lower() and "re-analyze" in result.lower():
+            await query.message.reply_text(
+                f"\u26a0\ufe0f <b>Price moved — auto re-analyzing {symbol}...</b>",
+                parse_mode="HTML")
+            try:
+                ticker = await exchange.fetch_ticker(symbol)
+                new_price = float(ticker.get("last", 0))
+                if new_price > 0:
+                    new_sl = round(new_price * (0.97 if direction == Direction.LONG else 1.03), 6)
+                    new_tp = round(new_price * (1.06 if direction == Direction.LONG else 0.94), 6)
+                    new_idea = TradeIdea(
+                        asset=symbol, direction=direction, entry_price=new_price,
+                        stop_loss=new_sl, take_profit=new_tp, confidence=0.6,
+                        reasoning=f"Auto re-analyzed after price drift for {symbol}",
+                        source="scan_skill_retry")
+                    # Re-fetch ATR with fresh data
+                    ohlcv2 = await exchange.fetch_ohlcv(symbol, "4h", limit=30)
+                    h2 = np.array([c2[2] for c2 in ohlcv2], dtype=float)
+                    l2 = np.array([c2[3] for c2 in ohlcv2], dtype=float)
+                    c2 = np.array([c2[4] for c2 in ohlcv2], dtype=float)
+                    atr2 = _compute_atr(h2, l2, c2)
+                    rc2 = engine.risk.evaluate(new_idea, atr=atr2)
+                    if rc2.verdict != RiskVerdict.APPROVED:
+                        await query.message.reply_text(
+                            f"\u274c <b>{symbol} {direction.value}</b> re-analysis rejected\n"
+                            f"  New entry: <code>${new_price:,.6g}</code>\n"
+                            f"  <i>{rc2.reason}</i>",
+                            parse_mode="HTML")
+                        return
+                    retry_id = new_idea.id
+                    engine._pending_ideas[retry_id] = new_idea
+                    engine._pending_atr[retry_id] = atr2
+                    result = await engine.confirm_trade(retry_id, user_id=caller_uid)
+            except Exception as retry_exc:
+                log.error("Auto re-analyze failed for %s: %s", symbol, retry_exc)
+                result = f"Auto re-analyze failed: {retry_exc}"
+
         # Check if execution succeeded
         _fail_prefixes = (
             "EXECUTION FAILED:", "INSUFFICIENT FUNDS:", "INVALID ORDER:",
             "BLOCKED:", "PREFLIGHT FAILED:", "Risk re-check FAILED",
             "Trade not found", "not found", "expired", "No pending",
             "Trade REJECTED", "Trade HALTED", "Execution denied",
+            "Auto re-analyze failed",
         )
         is_failure = any(result.startswith(p) for p in _fail_prefixes)
         if is_failure:

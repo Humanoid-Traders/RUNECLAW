@@ -4166,11 +4166,51 @@ class TelegramHandler:
                       action="callback_idor_block", result="DENIED")
                 return
             result = await self.engine.confirm_trade(trade_id, user_id=caller_uid or "")
+
+            # ── Auto re-analyze on price drift ──
+            # If price moved since analysis, rebuild the idea at current price and retry once
+            if "price drifted" in result.lower() and "re-analyze" in result.lower():
+                original_idea = self.engine._last_confirmed_idea
+                if original_idea:
+                    try:
+                        await self._send(update,
+                            f"\u26a0\ufe0f <b>Price moved — auto re-analyzing {original_idea.asset}...</b>")
+                        exchange = await self.engine.scanner._get_exchange()
+                        ticker = await exchange.fetch_ticker(original_idea.asset)
+                        new_price = float(ticker.get("last", 0))
+                        if new_price > 0:
+                            d = original_idea.direction
+                            from bot.utils.models import Direction
+                            is_long = d == Direction.LONG
+                            new_sl = round(new_price * (0.97 if is_long else 1.03), 6)
+                            new_tp = round(new_price * (1.06 if is_long else 0.94), 6)
+                            from bot.utils.models import TradeIdea
+                            new_idea = TradeIdea(
+                                asset=original_idea.asset, direction=d,
+                                entry_price=new_price, stop_loss=new_sl, take_profit=new_tp,
+                                confidence=original_idea.confidence,
+                                reasoning=f"Auto re-analyzed after price drift",
+                                source="auto_reanalyze")
+                            ohlcv = await exchange.fetch_ohlcv(original_idea.asset, "4h", limit=30)
+                            h = [c[2] for c in ohlcv]; l = [c[3] for c in ohlcv]; cl = [c[4] for c in ohlcv]
+                            import numpy as _np
+                            h_a, l_a, c_a = _np.array(h, dtype=float), _np.array(l, dtype=float), _np.array(cl, dtype=float)
+                            tr = _np.maximum(h_a[1:] - l_a[1:], _np.maximum(abs(h_a[1:] - c_a[:-1]), abs(l_a[1:] - c_a[:-1])))
+                            atr2 = float(_np.mean(tr[-14:])) if len(tr) >= 14 else float(_np.mean(tr))
+                            retry_id = new_idea.id
+                            self.engine._pending_ideas[retry_id] = new_idea
+                            self.engine._pending_atr[retry_id] = atr2
+                            result = await self.engine.confirm_trade(retry_id, user_id=caller_uid or "")
+                    except Exception as retry_exc:
+                        audit(system_log, f"Auto re-analyze failed: {retry_exc}",
+                              action="auto_reanalyze", result="ERROR")
+
             # Detect failure by checking for known error prefixes
             _fail_prefixes = (
                 "EXECUTION FAILED:", "INSUFFICIENT FUNDS:", "INVALID ORDER:",
                 "BLOCKED:", "PREFLIGHT FAILED:", "Risk re-check FAILED",
                 "Trade not found", "not found", "expired", "No pending",
+                "Trade REJECTED", "Trade HALTED", "Execution denied",
             )
             is_failure = any(result.startswith(p) for p in _fail_prefixes)
             if not is_failure:
