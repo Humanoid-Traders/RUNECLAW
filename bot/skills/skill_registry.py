@@ -2184,7 +2184,7 @@ class PlaybookSkill(BaseSkill):
         # ── Section 1: Scanner Status ──
         lines.append(f"\U0001f4e1 <b>SCANNER SWEEP</b>\n{SEP}")
         lines.append(f"- Universe: <code>{len(DEEPSCAN_UNIVERSE)} symbols</code>")
-        lines.append(f"- Timeframes: <code>4H \u00b7 1H \u00b7 5M</code>")
+        lines.append(f"- Timeframes: <code>4H \u00b7 1H \u00b7 15M \u00b7 5M</code>")
         lines.append(f"- Batch Mode: <code>Parallel async</code>")
         lines.append(f"- Last Scan: <code>{now}</code>")
 
