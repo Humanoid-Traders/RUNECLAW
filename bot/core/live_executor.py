@@ -142,6 +142,7 @@ class LiveExecutor:
         self._order_history: list[LiveOrder] = []
         self._hedge_mode: Optional[bool] = None  # None=unknown, True=hedge, False=one-way
         self._is_uta: Optional[bool] = None  # None=unknown, cached after first detection
+        self._last_close_data: Optional[dict] = None  # Structured data from most recent close
         # Callback: invoked after any position is closed (for balance cache invalidation)
         self.on_position_closed: Optional[Callable] = None
         # F-07 FIX: Load persisted positions on startup
@@ -1890,11 +1891,29 @@ class LiveExecutor:
             else:
                 hold_str = f"{hold_secs / 86400:.1f}d"
             fee_str = f"${commission:.2f}"
-            return (
+            close_msg = (
                 f"CLOSED {pos.direction} {pos.symbol} ({reason})\n"
                 f"Entry: ${pos.entry_price:,.4f} → Exit: ${fill_price:,.4f}\n"
                 f"PnL: {pnl_str} ({pnl_pct:+.2f}%) | Fees: {fee_str} | Hold: {hold_str}"
             )
+
+            # Store structured close data for rich rendering
+            self._last_close_data = {
+                "symbol": pos.symbol,
+                "direction": pos.direction,
+                "reason": reason,
+                "entry": pos.entry_price,
+                "exit": fill_price,
+                "pnl_pct": pnl_pct,
+                "pnl_usd": round(net_pnl, 4),
+                "gross_pnl": round(gross_pnl, 4),
+                "fees": round(commission, 4),
+                "size_usd": round(pos.cost_usd, 2) if pos.cost_usd > 0 else round(pos.entry_price * pos.quantity, 2),
+                "leverage": pos.leverage or 1,
+                "hold_time": hold_str,
+            }
+
+            return close_msg
 
         except Exception as exc:
             audit(trade_log, f"Live close failed: {exc}",
@@ -2373,11 +2392,35 @@ class LiveExecutor:
                         self._append_closed_trade(pos)
 
                         pnl_str = f"+${pnl:.4f}" if pnl >= 0 else f"-${abs(pnl):.4f}"
+                        pnl_pct = ((est_exit - pos.entry_price) / pos.entry_price * 100) if pos.entry_price else 0
+                        if pos.direction == "SHORT":
+                            pnl_pct = -pnl_pct
+                        hold_secs = (pos.closed_at - pos.opened_at).total_seconds() if pos.closed_at and pos.opened_at else 0
+                        if hold_secs < 3600:
+                            hold_str = f"{hold_secs / 60:.0f}m"
+                        elif hold_secs < 86400:
+                            hold_str = f"{hold_secs / 3600:.1f}h"
+                        else:
+                            hold_str = f"{hold_secs / 86400:.1f}d"
                         msg = (
                             f"RECONCILED {pos.direction} {pos.symbol} ({reason})\n"
                             f"Entry: ${pos.entry_price:,.4f} -> Exit: ~${est_exit:,.4f}\n"
-                            f"PnL: {pnl_str}"
+                            f"PnL: {pnl_str} ({pnl_pct:+.2f}%) | Hold: {hold_str}"
                         )
+                        self._last_close_data = {
+                            "symbol": pos.symbol,
+                            "direction": pos.direction,
+                            "reason": reason,
+                            "entry": pos.entry_price,
+                            "exit": est_exit,
+                            "pnl_pct": pnl_pct,
+                            "pnl_usd": round(pnl, 4),
+                            "gross_pnl": round(pnl, 4),
+                            "fees": 0,
+                            "size_usd": round(pos.cost_usd, 2) if pos.cost_usd > 0 else round(pos.entry_price * pos.quantity, 2),
+                            "leverage": pos.leverage or 1,
+                            "hold_time": hold_str,
+                        }
                         messages.append(msg)
 
                         audit(trade_log,

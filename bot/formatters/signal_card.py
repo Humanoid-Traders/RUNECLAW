@@ -537,6 +537,145 @@ def render_position_card(data: Dict[str, Any]) -> bytes:
     wm_w = draw.textlength(wm, font=f_small)
     draw.text((W - PAD - wm_w, H - 20), wm, fill=_DIM, font=f_small)
 
+    _buf = io.BytesIO()
+    img.save(_buf, format="PNG", optimize=True)
+    return _buf.getvalue()
+
+
+def render_close_card(data: Dict[str, Any]) -> bytes:
+    """Render a trade close confirmation as a styled PNG card.
+
+    Args:
+        data: Dict with keys:
+            symbol, direction, reason, entry, exit, pnl_pct,
+            pnl_usd (net), fees, size_usd, leverage, hold_time
+
+    Returns:
+        PNG bytes
+    """
+    try:
+        from PIL import Image, ImageDraw, ImageFont
+    except ImportError:
+        log.warning("Pillow not installed, cannot render close card")
+        return b""
+
+    W, H = 520, 360
+    PAD = 20
+
+    img = Image.new("RGB", (W, H), _BG)
+    draw = ImageDraw.Draw(img)
+
+    def _font(size: int, bold: bool = False):
+        for path in [
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold
+            else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf" if bold
+            else "/usr/share/fonts/TTF/DejaVuSans.ttf",
+        ]:
+            try:
+                return ImageFont.truetype(path, size)
+            except (OSError, IOError):
+                continue
+        return ImageFont.load_default()
+
+    f_title = _font(20, bold=True)
+    f_label = _font(10)
+    f_value = _font(14, bold=True)
+    f_badge = _font(12, bold=True)
+    f_small = _font(10)
+
+    symbol = data.get("symbol", "???").replace("/USDT", "").replace(":USDT", "").replace("/", "")
+    direction = data.get("direction", "LONG").upper()
+    reason = data.get("reason", "closed").upper()
+    entry = data.get("entry", 0)
+    exit_px = data.get("exit", 0)
+    pnl_pct = data.get("pnl_pct", 0)
+    pnl_usd = data.get("pnl_usd", 0)
+    fees = data.get("fees", 0)
+    size_usd = data.get("size_usd", 0)
+    leverage = data.get("leverage", 1)
+    hold_time = data.get("hold_time", "")
+
+    is_win = pnl_usd >= 0
+    pnl_color = _GREEN if is_win else _RED
+
+    def _fmt(price: float) -> str:
+        if price == 0:
+            return "\u2014"
+        if price >= 100:
+            return f"{price:,.2f}"
+        elif price >= 1:
+            return f"{price:.4f}"
+        elif price >= 0.01:
+            return f"{price:.5f}"
+        else:
+            return f"{price:.6f}"
+
+    y = PAD
+    stripe_color = _GREEN if is_win else _RED
+    draw.rectangle([0, 0, W, 4], fill=stripe_color)
+
+    # ── Header: SYMBOL  [CLOSED]  reason ──
+    draw.text((PAD, y), symbol, fill=_WHITE, font=f_title)
+    sym_w = draw.textlength(symbol, font=f_title)
+
+    badge_x = PAD + sym_w + 12
+    badge_text = " CLOSED "
+    badge_tw = draw.textlength(badge_text, font=f_badge)
+    draw.rounded_rectangle(
+        [badge_x, y + 2, badge_x + badge_tw + 4, y + 22],
+        radius=4, fill=stripe_color)
+    draw.text((badge_x + 2, y + 5), badge_text, fill=(0, 0, 0), font=f_badge)
+
+    reason_x = badge_x + badge_tw + 16
+    draw.text((reason_x, y + 5), reason, fill=_GRAY, font=f_badge)
+    y += 34
+
+    # ── PnL Hero Row ──
+    pnl_sign = "+" if pnl_pct >= 0 else ""
+    pnl_text = f"{pnl_sign}{pnl_pct:.2f}%"
+    big_font = _font(28, bold=True)
+    draw.text((PAD, y), pnl_text, fill=pnl_color, font=big_font)
+    pnl_tw = draw.textlength(pnl_text, font=big_font)
+    usd_text = f"  (${pnl_usd:+,.2f})"
+    draw.text((PAD + pnl_tw, y + 8), usd_text, fill=pnl_color, font=f_value)
+    y += 42
+
+    draw.line([(PAD, y), (W - PAD, y)], fill=_BORDER, width=1)
+    y += 12
+
+    CELL_W = (W - PAD * 3) // 2
+    CELL_H = 52
+    GAP = 10
+    c1 = PAD
+    c2 = PAD + CELL_W + GAP
+
+    def _cell(x, cy, label, value, color=_WHITE, w=CELL_W):
+        draw.rounded_rectangle([x, cy, x + w, cy + CELL_H],
+                               radius=6, fill=_CARD_BG, outline=_BORDER)
+        draw.text((x + 10, cy + 6), label, fill=_GRAY, font=f_label)
+        draw.text((x + 10, cy + 24), value, fill=color, font=f_value)
+
+    _cell(c1, y, "ENTRY", _fmt(entry))
+    _cell(c2, y, "EXIT", _fmt(exit_px), pnl_color)
+    y += CELL_H + GAP
+
+    lev_str = f" | {leverage:.0f}x" if leverage > 1 else ""
+    _cell(c1, y, "SIZE", f"${size_usd:,.2f}{lev_str}")
+    _cell(c2, y, f"{direction} | HOLD", hold_time)
+    y += CELL_H + GAP
+
+    net_text = f"${pnl_usd:+,.2f}"
+    fees_text = f"fees ${fees:.2f}"
+    full_w = W - PAD * 2
+    _cell(c1, y, "NET PnL", f"{net_text}  ({fees_text})", pnl_color, w=full_w)
+    y += CELL_H + GAP + 4
+
+    draw.rectangle([0, H - 4, W, H], fill=stripe_color)
+    wm = "RUNECLAW"
+    wm_w = draw.textlength(wm, font=f_small)
+    draw.text((W - PAD - wm_w, H - 20), wm, fill=_DIM, font=f_small)
+
     buf = io.BytesIO()
     img.save(buf, format="PNG", optimize=True)
     return buf.getvalue()

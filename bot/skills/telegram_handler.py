@@ -2282,19 +2282,40 @@ class TelegramHandler:
             if not admin_chat_id:
                 return
             try:
-                # Parse the close message from live_executor
-                # Format: "CLOSED LONG BTC/USDT (SL HIT)\nEntry: $X → Exit: $Y\nPnL: +$Z"
-                lines = msg.strip().split("\n")
-                header = lines[0] if lines else msg
-                # Build a rich notification
-                is_win = "+$" in msg or "+$" in msg
-                emoji = "\u2705" if is_win else "\u274c"
-                card = f"{emoji} <b>Trade Closed</b>\n\n"
-                for line in lines:
-                    card += f"{html.escape(line)}\n"
-                await bot.send_message(
-                    chat_id=int(admin_chat_id), text=card.strip(),
-                    parse_mode="HTML")
+                # Try to render a styled PNG close card
+                close_data = getattr(self.engine.live_executor, '_last_close_data', None)
+                close_png = None
+                if close_data:
+                    try:
+                        from bot.formatters.signal_card import render_close_card
+                        close_png = render_close_card(close_data)
+                    except Exception as exc:
+                        system_log.debug("Close card render failed: %s", exc)
+
+                if close_png:
+                    # Send as photo with brief caption
+                    sym = close_data.get("symbol", "").replace("/", "").replace(":USDT", "")
+                    direction = close_data.get("direction", "")
+                    pnl_usd = close_data.get("pnl_usd", 0)
+                    reason = close_data.get("reason", "closed")
+                    pnl_emoji = "\u2705" if pnl_usd >= 0 else "\u274c"
+                    cap = (f"{pnl_emoji} <b>{html.escape(sym)}</b> {direction} CLOSED\n"
+                           f"PnL: ${pnl_usd:+,.2f} | {html.escape(reason)}")
+                    await bot.send_photo(
+                        chat_id=int(admin_chat_id),
+                        photo=close_png,
+                        caption=cap,
+                        parse_mode="HTML")
+                else:
+                    # Fallback to text
+                    is_win = "+$" in msg
+                    emoji = "\u2705" if is_win else "\u274c"
+                    card = f"{emoji} <b>Trade Closed</b>\n\n"
+                    for line in msg.strip().split("\n"):
+                        card += f"{html.escape(line)}\n"
+                    await bot.send_message(
+                        chat_id=int(admin_chat_id), text=card.strip(),
+                        parse_mode="HTML")
             except Exception as exc:
                 system_log.debug("Close notify send failed: %s", exc)
 
@@ -4325,21 +4346,38 @@ class TelegramHandler:
                         try:
                             result = await executor.close_position(lp.trade_id)
                             live_closed = True
-                            # Build a simple response from LivePosition
-                            from datetime import datetime, timezone
-                            hold_h = (datetime.now(timezone.utc) - lp.opened_at).total_seconds() / 3600
-                            cost = lp.cost_usd if lp.cost_usd > 0 else lp.entry_price * lp.quantity
-                            close_px = lp.close_price or lp.entry_price
-                            pnl_val = lp.pnl_usd or 0
-                            pnl_emoji = "\U0001f7e2" if pnl_val >= 0 else "\U0001f534"
-                            lines = [
-                                f"<b>{html.escape(pair)} closed</b>",
-                                "",
-                                f"Entry <code>{lp.entry_price:,.6f}</code> / Exit <code>{close_px:,.6f}</code>",
-                                f"Size <code>${cost:,.2f}</code> | Hold {hold_h:.1f}h",
-                                f"{pnl_emoji} PnL: <code>${pnl_val:+,.2f}</code>",
-                            ]
-                            await self._send(update, "\n".join(lines), edit=True)
+                            # Render styled PNG close card
+                            close_data = getattr(executor, '_last_close_data', None)
+                            close_png = None
+                            if close_data:
+                                try:
+                                    from bot.formatters.signal_card import render_close_card
+                                    close_png = render_close_card(close_data)
+                                except Exception:
+                                    pass
+
+                            if close_png:
+                                pnl_val = close_data.get("pnl_usd", 0)
+                                pnl_emoji = "\u2705" if pnl_val >= 0 else "\u274c"
+                                cap = (f"{pnl_emoji} <b>{html.escape(pair)}</b> CLOSED\n"
+                                       f"PnL: ${pnl_val:+,.2f} | {html.escape(close_data.get('reason', 'manual'))}")
+                                await self._send_photo(update, close_png, cap)
+                            else:
+                                # Fallback to text
+                                from datetime import datetime, timezone
+                                hold_h = (datetime.now(timezone.utc) - lp.opened_at).total_seconds() / 3600
+                                cost = lp.cost_usd if lp.cost_usd > 0 else lp.entry_price * lp.quantity
+                                close_px = lp.close_price or lp.entry_price
+                                pnl_val = lp.pnl_usd or 0
+                                pnl_emoji = "\U0001f7e2" if pnl_val >= 0 else "\U0001f534"
+                                lines = [
+                                    f"<b>{html.escape(pair)} closed</b>",
+                                    "",
+                                    f"Entry <code>{lp.entry_price:,.6f}</code> / Exit <code>{close_px:,.6f}</code>",
+                                    f"Size <code>${cost:,.2f}</code> | Hold {hold_h:.1f}h",
+                                    f"{pnl_emoji} PnL: <code>${pnl_val:+,.2f}</code>",
+                                ]
+                                await self._send(update, "\n".join(lines), edit=True)
                             # Remove buttons from the original details message
                             try:
                                 if update.callback_query and update.callback_query.message:
