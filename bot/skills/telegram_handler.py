@@ -1091,9 +1091,11 @@ class TelegramHandler:
             executor = self.engine.live_executor
             open_pos = len(executor.open_positions)
             live_closed = executor.closed_positions
-            if live_closed:
-                wins = sum(1 for t in live_closed if (t.pnl_usd or 0) > 0)
-                win_rate = f"{wins / len(live_closed) * 100:.0f}"
+            # Exclude adopted orphan trades from win rate
+            user_closed = [t for t in live_closed if not getattr(t, "trade_id", "").startswith("TI-adopted")]
+            if user_closed:
+                wins = sum(1 for t in user_closed if (t.pnl_usd or 0) > 0)
+                win_rate = f"{wins / len(user_closed) * 100:.0f}"
             else:
                 win_rate = "N/A"
         else:
@@ -3652,10 +3654,15 @@ class TelegramHandler:
                     audit(system_log, f"Performance exchange fallback error: {exc}",
                           action="perf_exchange_fallback", result="ERROR")
 
-            total_trades = len(live_closed)
-            wins = sum(1 for t in live_closed if (t.pnl_usd or 0) > 0)
+            # ── Separate adopted vs user-initiated trades ──
+            user_trades = [t for t in live_closed if not getattr(t, "trade_id", "").startswith("TI-adopted")]
+            adopted_trades = [t for t in live_closed if getattr(t, "trade_id", "").startswith("TI-adopted")]
+            adopted_pnl = sum((t.pnl_usd or 0) for t in adopted_trades)
+
+            total_trades = len(user_trades)
+            wins = sum(1 for t in user_trades if (t.pnl_usd or 0) > 0)
             win_rate = (wins / total_trades * 100) if total_trades > 0 else 0
-            total_pnl = sum((t.pnl_usd or 0) for t in live_closed)
+            total_pnl = sum((t.pnl_usd or 0) for t in user_trades)
 
             # ── Date-filtered PnL ──
             from datetime import datetime as _dt, timedelta as _td
@@ -3667,7 +3674,7 @@ class TelegramHandler:
             today_pnl = 0.0
             week_pnl = 0.0
             trades_today = 0
-            for t in live_closed:
+            for t in user_trades:
                 closed_at = getattr(t, "closed_at", None)
                 if closed_at:
                     if isinstance(closed_at, str):
@@ -3694,8 +3701,8 @@ class TelegramHandler:
 
             best_pair = "N/A"
             worst_pair = "N/A"
-            if live_closed:
-                sorted_t = sorted(live_closed, key=lambda t: (t.pnl_usd or 0))
+            if user_trades:
+                sorted_t = sorted(user_trades, key=lambda t: (t.pnl_usd or 0))
                 worst_pair = sorted_t[0].symbol.replace("/USDT", "").replace(":USDT", "")
                 best_pair = sorted_t[-1].symbol.replace("/USDT", "").replace(":USDT", "")
             data = {
@@ -3707,6 +3714,8 @@ class TelegramHandler:
                 "total_trades": total_trades,
                 "best_pair": best_pair,
                 "worst_pair": worst_pair,
+                "adopted_count": len(adopted_trades),
+                "adopted_pnl": round(adopted_pnl, 2),
             }
         else:
             portfolio = self.engine.user_portfolios.get(user_id)
@@ -3771,7 +3780,8 @@ class TelegramHandler:
         # LIVE mode: use real trade data from executor
         if CONFIG.is_live() and hasattr(self.engine, 'live_executor'):
             executor = self.engine.live_executor
-            closed = executor.closed_positions
+            closed = [t for t in executor.closed_positions
+                       if not getattr(t, "trade_id", "").startswith("TI-adopted")]
             today_trades = len(closed)
             wins = sum(1 for t in closed if (t.pnl_usd or 0) > 0)
             losses = today_trades - wins

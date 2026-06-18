@@ -1926,11 +1926,43 @@ class LiveExecutor:
     # ── Account info ─────────────────────────────────────────────
 
     async def fetch_balance(self) -> dict:
-        """Fetch USDT balance and all spot holdings from Bitget."""
+        """Fetch USDT balance and all spot holdings from Bitget.
+
+        Returns 'equity' (includes unrealized PnL) when available from the
+        exchange response; falls back to 'total' (wallet balance only).
+        The 'total' key is always the equity-aware value for display purposes.
+        """
         try:
             exchange = await self._get_exchange()
             balance = await exchange.fetch_balance()
             usdt = balance.get("USDT", {})
+
+            # ── Extract equity from raw Bitget response ──
+            # Bitget USDT-FUTURES returns equity/usdtEquity/accountEquity in
+            # the raw info, which includes unrealized PnL.  ccxt's 'total'
+            # field is only wallet balance (free + used) and excludes unrealized.
+            wallet_total = float(usdt.get("total", 0))
+            equity = wallet_total  # default: wallet balance
+            raw_info = balance.get("info", {})
+            raw_data = raw_info.get("data", []) if isinstance(raw_info, dict) else []
+            if isinstance(raw_data, dict):
+                raw_data = [raw_data]
+            for item in (raw_data if isinstance(raw_data, list) else []):
+                if not isinstance(item, dict):
+                    continue
+                # Try multiple field names Bitget uses for equity
+                for key in ("usdtEquity", "accountEquity", "equity"):
+                    val = item.get(key)
+                    if val is not None:
+                        try:
+                            eq_val = float(val)
+                            if eq_val > 0:
+                                equity = eq_val
+                                break
+                        except (ValueError, TypeError):
+                            continue
+                if equity != wallet_total:
+                    break
 
             # Collect all non-zero spot holdings
             holdings = []
@@ -1948,7 +1980,8 @@ class LiveExecutor:
             return {
                 "free": float(usdt.get("free", 0)),
                 "used": float(usdt.get("used", 0)),
-                "total": float(usdt.get("total", 0)),
+                "total": equity,  # equity-aware value for display
+                "wallet_total": wallet_total,  # raw wallet balance
                 "holdings": holdings,
             }
         except Exception as exc:

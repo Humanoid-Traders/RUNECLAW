@@ -310,6 +310,8 @@ def render_performance(data: Dict[str, Any]) -> Dict[str, Any]:
     total_trades = data.get("total_trades", trades)
     best = data.get("best_pair", "N/A")
     worst = data.get("worst_pair", "N/A")
+    adopted_count = data.get("adopted_count", 0)
+    adopted_pnl = data.get("adopted_pnl", 0.0)
 
     wr_bar = _bar(wr, 100.0, 10)
     wr_ring = _progress_ring(wr)
@@ -325,7 +327,7 @@ def render_performance(data: Dict[str, Any]) -> Dict[str, Any]:
         "<pre>"
         f"{_kv('Today', _money(today, sign=True))}  {_pnl_arrow(today)}\n"
         f"{_kv('7-Day', _money(week, sign=True))}  {_pnl_arrow(week)}\n"
-        f"{_kv('Total', _money(total, sign=True))}  {_pnl_arrow(total)}\n"
+        f"{_kv('All-time', _money(total, sign=True))}  {_pnl_arrow(total)}\n"
         f"{_kv('Trades', f'{trades} today / {total_trades} total')}\n"
         f"{_kv('Trend', f'<code>{pnl_trend}</code>')}"
         "</pre>\n\n"
@@ -337,9 +339,18 @@ def render_performance(data: Dict[str, Any]) -> Dict[str, Any]:
         "<pre>"
         f"{_kv('Best', best + ' ' + chr(0x1F3C6))}\n"
         f"{_kv('Worst', worst)}"
-        "</pre>\n\n"
-        f"<i>\u23f1 {_timestamp()}</i>"
+        "</pre>"
     )
+
+    # ── Adopted orphan trades (if any) ──
+    if adopted_count > 0:
+        text += (
+            f"\n\n\u26a0\ufe0f <i>Excluded {adopted_count} adopted orphan"
+            f"{'s' if adopted_count != 1 else ''}"
+            f" ({_money(adopted_pnl, sign=True)})</i>"
+        )
+
+    text += f"\n\n<i>\u23f1 {_timestamp()}</i>"
     return {"text": text}
 
 
