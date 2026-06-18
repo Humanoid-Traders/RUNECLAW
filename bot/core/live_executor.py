@@ -424,6 +424,7 @@ class LiveExecutor:
         side: str,
         amount: float,
         coid: str,
+        price: Optional[float] = None,
         params: Optional[dict] = None,
     ) -> dict:
         """Place an order with an idempotency key, recovering from timeouts.
@@ -441,7 +442,8 @@ class LiveExecutor:
         params.setdefault("clientOrderId", coid)   # ccxt unified alias
         try:
             return await exchange.create_order(
-                symbol=symbol, type=type, side=side, amount=amount, params=params
+                symbol=symbol, type=type, side=side, amount=amount,
+                price=price, params=params
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning(
@@ -842,7 +844,8 @@ class LiveExecutor:
                     "amount": quantity, "coid": coid, "params": futures_params,
                 }
                 if use_limit and limit_price:
-                    futures_params["price"] = str(limit_price)
+                    # ccxt requires price as a top-level param for limit orders
+                    create_kwargs["price"] = limit_price
                 order = await self._create_order_idempotent(exchange, **create_kwargs)
             elif side == "buy" and not use_limit:
                 # Spot BUY on Bitget UTA: use cost-based ordering (market only)

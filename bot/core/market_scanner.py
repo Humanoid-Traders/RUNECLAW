@@ -26,7 +26,7 @@ import ccxt.async_support as ccxt
 from bot.config import (
     CONFIG, SOLANA_ECOSYSTEM_SYMBOLS, US_STOCK_SYMBOLS,
     METAL_PERPETUALS, COMMODITY_PERPETUALS, PRE_IPO_PERPETUALS,
-    ETF_PERPETUALS, TRADFI_PERPETUALS,
+    ETF_PERPETUALS, TRADFI_PERPETUALS, STOCK_PERPETUALS,
 )
 from bot.utils.logger import audit, system_log
 from bot.utils.models import MarketSignal
@@ -39,6 +39,7 @@ _PRE_IPO_SET = set(PRE_IPO_PERPETUALS)
 _ETF_SET = set(ETF_PERPETUALS)
 _TRADFI_SET = set(TRADFI_PERPETUALS)
 _STOCK_SET = set(US_STOCK_SYMBOLS)
+_STOCK_PERP_SET = set(STOCK_PERPETUALS)
 
 
 def _classify_symbol(symbol: str) -> str:
@@ -51,7 +52,7 @@ def _classify_symbol(symbol: str) -> str:
         return "Pre-IPO"
     if symbol in _ETF_SET:
         return "ETF"
-    if symbol in _STOCK_SET:
+    if symbol in _STOCK_PERP_SET or symbol in _STOCK_SET:
         return "Stock"
     return "Crypto"
 

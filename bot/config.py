@@ -171,10 +171,32 @@ ETF_PERPETUALS: list[str] = [
     "INDA/USDT:USDT",    # iShares MSCI India ETF
 ]
 
+# ── Stock Perpetual Contracts ────────────────────────────────────
+# US equity USDT-M perpetual futures on Bitget (separate from spot tokenized).
+# These are actual futures contracts, tradeable 24/7 with leverage.
+STOCK_PERPETUALS: list[str] = [
+    "TSLA/USDT:USDT",    # Tesla
+    "AAPL/USDT:USDT",    # Apple
+    "MSFT/USDT:USDT",    # Microsoft
+    "GOOGL/USDT:USDT",   # Alphabet
+    "AMZN/USDT:USDT",    # Amazon
+    "META/USDT:USDT",    # Meta Platforms
+    "NVDA/USDT:USDT",    # NVIDIA
+    "AMD/USDT:USDT",     # AMD
+    "COIN/USDT:USDT",    # Coinbase
+    "MSTR/USDT:USDT",    # MicroStrategy
+    "HOOD/USDT:USDT",    # Robinhood
+    "PLTR/USDT:USDT",    # Palantir
+    "ARM/USDT:USDT",     # ARM Holdings
+    "MRVL/USDT:USDT",    # Marvell
+    "INTC/USDT:USDT",    # Intel
+]
+
 # ── Combined TradFi Universe ────────────────────────────────────
-# All non-crypto USDT-M perpetuals: metals + commodities + ETFs + pre-IPO
+# All non-crypto USDT-M perpetuals: metals + commodities + ETFs + pre-IPO + stocks
 TRADFI_PERPETUALS: list[str] = (
-    METAL_PERPETUALS + COMMODITY_PERPETUALS + PRE_IPO_PERPETUALS + ETF_PERPETUALS
+    METAL_PERPETUALS + COMMODITY_PERPETUALS + PRE_IPO_PERPETUALS
+    + ETF_PERPETUALS + STOCK_PERPETUALS
 )
 
 # US stock market hours (Eastern Time / UTC-4 during EDT)
@@ -284,7 +306,7 @@ class LimitOrderConfig:
     """Limit order support configuration."""
     enabled: bool = _env_bool("LIMIT_ORDERS_ENABLED", True)
     # Default order type: "market" or "limit"
-    default_order_type: str = _env("DEFAULT_ORDER_TYPE", "market")
+    default_order_type: str = _env("DEFAULT_ORDER_TYPE", "limit")
     # Max seconds to wait for a limit order fill before cancelling
     expire_seconds: int = int(_env_float("LIMIT_ORDER_EXPIRE_SEC", 14400))  # 4 hours
     # Check interval for pending limit orders (seconds)

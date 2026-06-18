@@ -564,12 +564,20 @@ class Analyzer:
         # If price is extended from a key level, suggest a limit order at a
         # better entry (pullback to support for longs, resistance for shorts).
         # Only when CONFIG.limit_orders.enabled is True.
-        order_type = "market"
+        order_type = CONFIG.limit_orders.default_order_type if CONFIG.limit_orders.enabled else "market"
         limit_entry = None
         if CONFIG.limit_orders.enabled:
             limit_entry = _compute_limit_entry(
                 entry, atr, direction, indicators, closes
             )
+            # If no pullback level found but default is "limit", use a small
+            # offset (0.1 ATR) from market price to get price improvement
+            if limit_entry is None and order_type == "limit":
+                offset = 0.1 * atr
+                if direction == Direction.LONG:
+                    limit_entry = round(entry - offset, 8)
+                else:
+                    limit_entry = round(entry + offset, 8)
 
         # STRATEGY: adaptive ATR multipliers based on volatility regime
         # Strategy mode provides baseline SL/TP; volatility/regime can override
