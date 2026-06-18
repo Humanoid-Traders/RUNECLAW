@@ -13,20 +13,22 @@ from typing import Optional
 
 import ccxt.async_support as ccxt
 
-from bot.config import CONFIG, SOLANA_ECOSYSTEM_SYMBOLS, US_STOCK_SYMBOLS
+from bot.config import CONFIG, SOLANA_ECOSYSTEM_SYMBOLS, US_STOCK_SYMBOLS, METAL_PERPETUALS
 from bot.utils.logger import audit, system_log
 from bot.utils.models import MarketSignal
 
 
 class MarketScanner:
-    """Scans the Bitget spot market for actionable signals."""
+    """Scans the Bitget spot + futures markets for actionable signals."""
 
     def __init__(self) -> None:
         self._exchange: Optional[ccxt.Exchange] = None
+        self._futures_exchange: Optional[ccxt.Exchange] = None
         self._volume_history: dict[str, list[float]] = {}  # rolling window
         self._lock = threading.RLock()
 
     async def _get_exchange(self) -> ccxt.Exchange:
+        """Spot exchange for crypto/stock scanning."""
         if self._exchange is None:
             self._exchange = ccxt.bitget({
                 "sandbox": CONFIG.exchange.sandbox,
@@ -35,14 +37,38 @@ class MarketScanner:
             })
         return self._exchange
 
+    async def _get_futures_exchange(self) -> ccxt.Exchange:
+        """Futures (swap) exchange for metal perpetuals scanning."""
+        if self._futures_exchange is None:
+            self._futures_exchange = ccxt.bitget({
+                "sandbox": CONFIG.exchange.sandbox,
+                "timeout": 30000,
+                "enableRateLimit": True,
+                "options": {
+                    "defaultType": "swap",
+                },
+            })
+        return self._futures_exchange
+
     async def scan(self) -> list[MarketSignal]:
         """
         Fetch tickers, rank by 24h change, filter for volume spikes.
         Returns the top N signals sorted by momentum.
         """
+        # Determine asset universe early to choose exchange type
+        from bot.config import RUNTIME
+        universe = RUNTIME.asset_universe
+
         try:
-            exchange = await self._get_exchange()
-            tickers = await exchange.fetch_tickers()
+            if universe == "metals":
+                # Metal perpetuals are futures-only — use swap exchange
+                exchange = await self._get_futures_exchange()
+                tickers = await exchange.fetch_tickers(params={
+                    "productType": "USDT-FUTURES",
+                })
+            else:
+                exchange = await self._get_exchange()
+                tickers = await exchange.fetch_tickers()
         except Exception as exc:
             audit(system_log, f"Scanner exchange error: {exc}",
                   action="scan", result="ERROR")
@@ -50,15 +76,29 @@ class MarketScanner:
 
         signals: list[MarketSignal] = []
         seen_symbols: set[str] = set()
+
+        # For metals mode, match against the perpetual symbol set
+        metal_set = set(METAL_PERPETUALS) if universe == "metals" else set()
+
         for symbol, tick in tickers.items():
-            if not symbol.endswith("/USDT"):
-                continue
+            if universe == "metals":
+                # Only process known metal perpetuals
+                if symbol not in metal_set:
+                    continue
+            else:
+                if not symbol.endswith("/USDT"):
+                    continue
+
             seen_symbols.add(symbol)
             try:
                 change = float(tick.get("percentage", 0) or 0)
                 volume = float(tick.get("quoteVolume", 0) or 0)
                 price = float(tick.get("last", 0) or 0)
-                if price <= 0 or volume < 50_000:
+                if price <= 0:
+                    continue
+                # Lower volume threshold for metals (less liquid than BTC)
+                min_vol = 10_000 if universe == "metals" else 50_000
+                if volume < min_vol:
                     continue
 
                 spike = self._detect_volume_spike(symbol, volume)
@@ -80,8 +120,6 @@ class MarketScanner:
         signals.sort(key=lambda s: abs(s.momentum_score), reverse=True)
 
         # If Solana ecosystem mode, boost Solana tokens to top of results
-        from bot.config import RUNTIME
-        universe = RUNTIME.asset_universe
         if universe == "solana":
             solana_set = set(SOLANA_ECOSYSTEM_SYMBOLS)
             solana_signals = [s for s in signals if s.symbol in solana_set]
@@ -104,6 +142,10 @@ class MarketScanner:
             # Half slots for stocks, half for crypto
             half = max(CONFIG.top_movers_count // 2, 5)
             top = (stock_signals[:half] + crypto_signals[:half])[: CONFIG.top_movers_count]
+        elif universe == "metals":
+            # Already filtered at ticker level — just sort and cap
+            signals.sort(key=lambda s: abs(s.momentum_score), reverse=True)
+            top = signals[: CONFIG.top_movers_count]
         else:
             top = signals[: CONFIG.top_movers_count]
 
@@ -153,3 +195,6 @@ class MarketScanner:
         if self._exchange:
             await self._exchange.close()
             self._exchange = None
+        if self._futures_exchange:
+            await self._futures_exchange.close()
+            self._futures_exchange = None

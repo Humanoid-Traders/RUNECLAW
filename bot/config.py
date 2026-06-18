@@ -121,6 +121,30 @@ US_STOCK_SYMBOLS: list[str] = [
     "RANET/USDT",  # Arista Networks
 ]
 
+
+# TradFi Metal Perpetual Contracts on Bitget.
+# These track commodity spot prices via USDT-M futures.
+# Gold, Silver, Platinum, Palladium, Copper — tradeable 24/7.
+# Playbook: GetAgent Metal Perpetuals strategy.
+METAL_PERPETUALS: list[str] = [
+    "XAU/USDT:USDT",     # Gold (XAU/USD) — Bitget USDT-M perpetual
+    "XAG/USDT:USDT",     # Silver (XAG/USD)
+    "PAXG/USDT:USDT",    # PAX Gold (tokenized gold)
+    "XPT/USDT:USDT",     # Platinum (XPT/USD)
+    "COPPER/USDT:USDT",  # Copper
+    "XPD/USDT:USDT",     # Palladium (XPD/USD)
+]
+
+# Metal classification for risk / correlation awareness
+METAL_SECTORS: dict[str, str] = {
+    "XAU/USDT:USDT": "Precious",
+    "XAG/USDT:USDT": "Precious",
+    "PAXG/USDT:USDT": "Precious",
+    "XPT/USDT:USDT": "Precious",
+    "COPPER/USDT:USDT": "Industrial",
+    "XPD/USDT:USDT": "Precious",
+}
+
 # US stock market hours (Eastern Time / UTC-4 during EDT)
 # Regular session: 09:30-16:00 ET
 # Pre-market: 04:00-09:30 ET
@@ -396,7 +420,7 @@ class RuntimeState:
 
     @asset_universe.setter
     def asset_universe(self, value: str) -> None:
-        if value not in ("all", "solana", "stocks", "hybrid"):
+        if value not in ("all", "solana", "stocks", "hybrid", "metals"):
             raise ValueError(f"Invalid asset universe: {value!r}")
         with self._lock:
             self._asset_universe = value
