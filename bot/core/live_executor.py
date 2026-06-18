@@ -593,6 +593,36 @@ class LiveExecutor:
                 except Exception:
                     pass  # Non-critical — position still adopted without SL/TP
 
+                # If no SL/TP found, calculate safety defaults (3% SL, 6% TP)
+                if lp.stop_loss <= 0 and entry_price > 0:
+                    default_sl_pct = 0.03
+                    default_tp_pct = 0.06
+                    if side == "LONG":
+                        lp.stop_loss = round(entry_price * (1 - default_sl_pct), 8)
+                        lp.take_profit = round(entry_price * (1 + default_tp_pct), 8)
+                    else:
+                        lp.stop_loss = round(entry_price * (1 + default_sl_pct), 8)
+                        lp.take_profit = round(entry_price * (1 - default_tp_pct), 8)
+
+                    # Place exchange-side SL/TP for safety
+                    try:
+                        direction = Direction.LONG if side == "LONG" else Direction.SHORT
+                        sl_id, tp_id = await self._place_sl_tp(
+                            exchange, raw_sym, direction, contracts,
+                            lp.stop_loss, lp.take_profit,
+                        )
+                        if sl_id:
+                            lp.sl_order_id = sl_id
+                        if tp_id:
+                            lp.tp_order_id = tp_id
+                        audit(trade_log,
+                              f"ADOPTED position safety SL/TP placed: {raw_sym} SL=${lp.stop_loss:.4f} TP=${lp.take_profit:.4f}",
+                              action="adopt_safety_sltp", result="OK")
+                    except Exception as exc:
+                        audit(trade_log,
+                              f"ADOPTED position: failed to place safety SL/TP for {raw_sym}: {exc}",
+                              action="adopt_safety_sltp", result="ERROR")
+
                 self._positions[trade_id] = lp
                 adopted.append(sym)
                 audit(trade_log,

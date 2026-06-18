@@ -1987,12 +1987,15 @@ class TelegramHandler:
         lines = [f"📊 <b>LIVE POSITIONS</b>\n{SEP}\n"]
         for p in open_pos:
             dir_icon = "🟢" if p.direction == "LONG" else "🔴"
+            sym_display = p.symbol.replace("/", "").replace(":USDT", "")
+            sl_str = f"${p.stop_loss:,.4f}" if p.stop_loss > 0 else "⚠️ NOT SET"
+            tp_str = f"${p.take_profit:,.4f}" if p.take_profit > 0 else "⚠️ NOT SET"
             lines.append(
-                f"{dir_icon} <b>{p.direction} {p.symbol}</b>\n"
+                f"{dir_icon} <b>{p.direction} {sym_display}</b>\n"
                 f"- Entry: <code>${p.entry_price:,.4f}</code>\n"
                 f"- Qty: <code>{p.quantity:.6f}</code>\n"
-                f"- SL: <code>${p.stop_loss:,.4f}</code>\n"
-                f"- TP: <code>${p.take_profit:,.4f}</code>\n"
+                f"- SL: <code>{sl_str}</code>\n"
+                f"- TP: <code>{tp_str}</code>\n"
                 f"- ID: <code>{p.trade_id}</code>\n"
             )
         await self._send(update, "\n".join(lines))
