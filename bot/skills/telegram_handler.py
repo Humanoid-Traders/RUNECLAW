@@ -1642,14 +1642,15 @@ class TelegramHandler:
             return
 
         args = (update.message.text or "").split()
-        valid_modes = {"all", "solana", "stocks", "hybrid", "metals",
+        valid_modes = {"all_markets", "all", "solana", "stocks", "hybrid", "metals",
                        "commodities", "etfs", "pre_ipo", "tradfi"}
 
         if len(args) < 2 or args[1].lower() not in valid_modes:
             from bot.config import RUNTIME
             current = RUNTIME.asset_universe
             icons = {
-                "solana": "\u2600\ufe0f", "all": "\U0001f30d", "stocks": "\U0001f4c8",
+                "all_markets": "\U0001f310", "solana": "\u2600\ufe0f",
+                "all": "\U0001f30d", "stocks": "\U0001f4c8",
                 "hybrid": "\U0001f500", "metals": "\u2699\ufe0f", "commodities": "\U0001f6e2\ufe0f",
                 "etfs": "\U0001f4ca", "pre_ipo": "\U0001f680", "tradfi": "\U0001f3e6",
             }
@@ -1657,8 +1658,11 @@ class TelegramHandler:
             lines = [
                 f"\U0001f504 <b>ASSET UNIVERSE</b>\n",
                 f"Current: {icon} <b>{current.upper()}</b>\n",
+                "<b>Multi-Asset:</b>",
+                "  <code>/mode all_markets</code> \u2014 EVERYTHING: crypto + all TradFi futures",
+                "",
                 "<b>Crypto:</b>",
-                "  <code>/mode all</code> \u2014 all Bitget USDT pairs",
+                "  <code>/mode all</code> \u2014 all Bitget USDT spot pairs",
                 "  <code>/mode solana</code> \u2014 Solana ecosystem tokens",
                 "",
                 "<b>TradFi Perpetuals (Futures):</b>",
@@ -1790,12 +1794,23 @@ class TelegramHandler:
                 "All USDT-M Futures.\n\n"
                 "Use <code>/mode all</code> to switch back."
             ))
+        elif new_mode == "all_markets":
+            from bot.config import TRADFI_PERPETUALS
+            await self._send(update, (
+                "\U0001f310 <b>ALL MARKETS MODE ACTIVE</b>\n\n"
+                "Scanner now covers <b>everything</b> in one scan:\n"
+                "\u2022 All Bitget crypto spot pairs\n"
+                f"\u2022 {len(TRADFI_PERPETUALS)} TradFi futures (metals, oil, ETFs, pre-IPO)\n\n"
+                "Results are categorized by asset class.\n"
+                "Spot + Futures fetched in parallel.\n\n"
+                "Use <code>/mode all</code> for crypto-only."
+            ))
         else:
             await self._send(update, (
-                "\U0001f30d <b>ALL MARKETS MODE</b>\n\n"
-                "Scanner now covers all Bitget USDT pairs.\n"
-                "Use <code>/mode solana</code> for Solana or "
-                "<code>/mode stocks</code> for US stocks."
+                "\U0001f30d <b>CRYPTO-ONLY MODE</b>\n\n"
+                "Scanner now covers all Bitget USDT spot pairs.\n"
+                "Use <code>/mode all_markets</code> for everything or "
+                "<code>/mode solana</code> for Solana."
             ))
 
     # ── Live Trading Commands ─────────────────────────────────

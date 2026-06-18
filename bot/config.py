@@ -77,7 +77,7 @@ class ExchangeConfig:
     passphrase: str = _env("BITGET_PASSPHRASE")
     sandbox: bool = _env_bool("BITGET_SANDBOX", True)  # Sandbox by default; override via env
     # Asset universe filter: "all" scans everything, "solana" adds Solana ecosystem priority
-    asset_universe: str = _env("ASSET_UNIVERSE", "all")  # all | solana | custom
+    asset_universe: str = _env("ASSET_UNIVERSE", "all_markets")  # all_markets | all | solana | metals | tradfi | etc.
     # Trading mode: "spot" for no leverage, "futures" for USDT-M perpetual
     trade_mode: str = _env("TRADE_MODE", "futures")
     # Default leverage (1x = no leverage, 5x = default for futures)
@@ -452,7 +452,7 @@ class RuntimeState:
 
     @asset_universe.setter
     def asset_universe(self, value: str) -> None:
-        if value not in ("all", "solana", "stocks", "hybrid", "metals",
+        if value not in ("all_markets", "all", "solana", "stocks", "hybrid", "metals",
                          "commodities", "etfs", "pre_ipo", "tradfi"):
             raise ValueError(f"Invalid asset universe: {value!r}")
         with self._lock:

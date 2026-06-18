@@ -1624,38 +1624,73 @@ class ProScanSkill(BaseSkill):
 
         top = signals[:cfg["top_n"]]
 
-        ticker_lines = ["\U0001f4e1 <b>Live Tickers</b>", "<pre>"]
-        ticker_lines.append(
-            f" {'PAIR':<10s}  {'PRICE':>12s}  {'24h':>7s}  {'VOL':>8s}"
-        )
-        ticker_lines.append(f" {'─'*10}  {'─'*12}  {'─'*7}  {'─'*8}")
+        # ── Categorized Live Tickers ──
+        from bot.core.market_scanner import CATEGORY_META
+        ticker_lines = ["\U0001f4e1 <b>Live Tickers</b>"]
+
+        # Group signals by category
+        by_cat: dict[str, list] = {}
         for s in top:
-            arrow = _spark(s.change_pct_24h)
-            vol_m = s.volume_usd_24h / 1_000_000 if s.volume_usd_24h else 0
-            chg = f"{s.change_pct_24h:+.1f}%"
-            spike = "\U0001f4a5" if s.volume_spike else " "
+            by_cat.setdefault(s.asset_category, []).append(s)
+
+        # Sort categories by display priority
+        sorted_cats = sorted(by_cat.keys(),
+                             key=lambda c: CATEGORY_META.get(c, ("", 99))[1])
+
+        for cat in sorted_cats:
+            cat_icon = CATEGORY_META.get(cat, ("\U0001f4b0", 99))[0]
+            cat_sigs = by_cat[cat]
+            ticker_lines.append(f"\n{cat_icon} <b>{cat}</b>")
+            ticker_lines.append("<pre>")
             ticker_lines.append(
-                f" {arrow} {_esc(s.symbol):<9s}"
-                f"  {_price(s.price):<12s}"
-                f"  {chg:>6}"
-                f"  ${vol_m:,.0f}M {spike}"
+                f" {'PAIR':<12s}  {'PRICE':>12s}  {'24h':>7s}  {'VOL':>8s}"
             )
-        ticker_lines.append("</pre>\n")
+            ticker_lines.append(f" {'─'*12}  {'─'*12}  {'─'*7}  {'─'*8}")
+            for s in cat_sigs:
+                arrow = _spark(s.change_pct_24h)
+                vol_m = s.volume_usd_24h / 1_000_000 if s.volume_usd_24h else 0
+                chg = f"{s.change_pct_24h:+.1f}%"
+                spike = "\U0001f4a5" if s.volume_spike else " "
+                # Clean symbol display: strip :USDT suffix for futures
+                display_sym = s.symbol.replace(":USDT", "")
+                ticker_lines.append(
+                    f" {arrow} {_esc(display_sym):<11s}"
+                    f"  {_price(s.price):<12s}"
+                    f"  {chg:>6}"
+                    f"  ${vol_m:,.0f}M {spike}"
+                )
+            ticker_lines.append("</pre>")
+        ticker_lines.append("")
 
         # ── Structure Read per Asset ──
         structure_lines = []
         ideas_found: list = []
 
         # Pre-fetch all OHLCV in parallel
-        exchange = await engine.scanner._get_exchange()
-
-        async def _fetch_ohlcv(sym):
+        spot_exchange = await engine.scanner._get_exchange()
+        # For futures symbols, use futures exchange
+        futures_exchange = None
+        has_futures = any(s.asset_category != "Crypto" for s in top)
+        if has_futures:
             try:
-                return sym, await exchange.fetch_ohlcv(sym, cfg["timeframe"], limit=100)
+                futures_exchange = await engine.scanner._get_futures_exchange()
+            except Exception:
+                pass
+
+        async def _fetch_ohlcv(sym, category):
+            try:
+                if category != "Crypto" and futures_exchange:
+                    return sym, await futures_exchange.fetch_ohlcv(
+                        sym, cfg["timeframe"], limit=100)
+                else:
+                    return sym, await spot_exchange.fetch_ohlcv(
+                        sym, cfg["timeframe"], limit=100)
             except Exception:
                 return sym, None
 
-        ohlcv_results = dict(await asyncio.gather(*[_fetch_ohlcv(s.symbol) for s in top]))
+        ohlcv_results = dict(await asyncio.gather(
+            *[_fetch_ohlcv(s.symbol, s.asset_category) for s in top]
+        ))
 
         for sig in top:
             ohlcv = ohlcv_results.get(sig.symbol)

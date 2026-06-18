@@ -1,11 +1,21 @@
 """
 RUNECLAW Market Scanner -- detects tradeable opportunities.
-Fetches top movers, screens for volume anomalies and momentum,
-and emits structured MarketSignal objects for downstream analysis.
+Fetches top movers from spot + futures markets, screens for volume
+anomalies and momentum, classifies by asset category, and emits
+structured MarketSignal objects for downstream analysis.
+
+Supported universes:
+  - "all_markets" (default) — spot crypto + ALL TradFi futures in one scan
+  - "all"        — spot crypto only
+  - "solana"     — Solana ecosystem priority
+  - "stocks"     — US stock tokenized perps
+  - "hybrid"     — crypto + stocks combined
+  - Single-category: "metals", "commodities", "etfs", "pre_ipo", "tradfi"
 """
 
 from __future__ import annotations
 
+import asyncio
 import threading
 from datetime import datetime
 from bot.compat import UTC
@@ -20,6 +30,41 @@ from bot.config import (
 )
 from bot.utils.logger import audit, system_log
 from bot.utils.models import MarketSignal
+
+
+# ── Symbol → Category classification ────────────────────────────
+_METAL_SET = set(METAL_PERPETUALS)
+_COMMODITY_SET = set(COMMODITY_PERPETUALS)
+_PRE_IPO_SET = set(PRE_IPO_PERPETUALS)
+_ETF_SET = set(ETF_PERPETUALS)
+_TRADFI_SET = set(TRADFI_PERPETUALS)
+_STOCK_SET = set(US_STOCK_SYMBOLS)
+
+
+def _classify_symbol(symbol: str) -> str:
+    """Return the asset category for a given symbol."""
+    if symbol in _METAL_SET:
+        return "Metal"
+    if symbol in _COMMODITY_SET:
+        return "Commodity"
+    if symbol in _PRE_IPO_SET:
+        return "Pre-IPO"
+    if symbol in _ETF_SET:
+        return "ETF"
+    if symbol in _STOCK_SET:
+        return "Stock"
+    return "Crypto"
+
+
+# Category display config: (icon, sort_priority)
+CATEGORY_META: dict[str, tuple[str, int]] = {
+    "Crypto":    ("\U0001f4b0", 0),
+    "Metal":     ("\u2699\ufe0f", 1),
+    "Commodity": ("\U0001f6e2\ufe0f", 2),
+    "ETF":       ("\U0001f4ca", 3),
+    "Pre-IPO":   ("\U0001f680", 4),
+    "Stock":     ("\U0001f4c8", 5),
+}
 
 
 class MarketScanner:
@@ -42,7 +87,7 @@ class MarketScanner:
         return self._exchange
 
     async def _get_futures_exchange(self) -> ccxt.Exchange:
-        """Futures (swap) exchange for metal perpetuals scanning."""
+        """Futures (swap) exchange for TradFi perpetuals scanning."""
         if self._futures_exchange is None:
             self._futures_exchange = ccxt.bitget({
                 "sandbox": CONFIG.exchange.sandbox,
@@ -54,35 +99,139 @@ class MarketScanner:
             })
         return self._futures_exchange
 
+    # ── Main scan entry point ────────────────────────────────────
+
     async def scan(self) -> list[MarketSignal]:
         """
         Fetch tickers, rank by 24h change, filter for volume spikes.
-        Returns the top N signals sorted by momentum.
+        Returns the top N signals sorted by momentum, with asset_category set.
         """
-        # Determine asset universe early to choose exchange type
         from bot.config import RUNTIME
         universe = RUNTIME.asset_universe
 
-        # Futures-based universes and their symbol sets
+        # Futures-only universes
         FUTURES_UNIVERSES: dict[str, set[str]] = {
-            "metals": set(METAL_PERPETUALS),
-            "commodities": set(COMMODITY_PERPETUALS),
-            "pre_ipo": set(PRE_IPO_PERPETUALS),
-            "etfs": set(ETF_PERPETUALS),
-            "tradfi": set(TRADFI_PERPETUALS),
+            "metals": _METAL_SET,
+            "commodities": _COMMODITY_SET,
+            "pre_ipo": _PRE_IPO_SET,
+            "etfs": _ETF_SET,
+            "tradfi": _TRADFI_SET,
         }
-        is_futures_universe = universe in FUTURES_UNIVERSES
 
+        if universe == "all_markets":
+            # ── Unified scan: spot + futures in parallel ──
+            return await self._scan_all_markets()
+        elif universe in FUTURES_UNIVERSES:
+            return await self._scan_futures(FUTURES_UNIVERSES[universe])
+        else:
+            return await self._scan_spot(universe)
+
+    # ── Unified all-markets scan ─────────────────────────────────
+
+    async def _scan_all_markets(self) -> list[MarketSignal]:
+        """Fetch spot crypto AND futures TradFi tickers in parallel."""
+        spot_task = self._fetch_spot_tickers()
+        futures_task = self._fetch_futures_tickers()
+
+        spot_result, futures_result = await asyncio.gather(
+            spot_task, futures_task, return_exceptions=True,
+        )
+
+        signals: list[MarketSignal] = []
+        seen_symbols: set[str] = set()
+
+        # Process spot tickers (crypto)
+        if isinstance(spot_result, dict):
+            for symbol, tick in spot_result.items():
+                if not symbol.endswith("/USDT"):
+                    continue
+                sig = self._process_ticker(symbol, tick, min_vol=50_000)
+                if sig:
+                    seen_symbols.add(symbol)
+                    signals.append(sig)
+        else:
+            audit(system_log, f"Spot fetch error: {spot_result}",
+                  action="scan", result="PARTIAL")
+
+        # Process futures tickers (TradFi perpetuals)
+        if isinstance(futures_result, dict):
+            for symbol, tick in futures_result.items():
+                if symbol not in _TRADFI_SET:
+                    continue
+                sig = self._process_ticker(symbol, tick, min_vol=5_000)
+                if sig:
+                    seen_symbols.add(symbol)
+                    signals.append(sig)
+        else:
+            audit(system_log, f"Futures fetch error: {futures_result}",
+                  action="scan", result="PARTIAL")
+
+        if not signals:
+            audit(system_log, "All-markets scan: no signals",
+                  action="scan", result="EMPTY")
+            return []
+
+        # Sort by absolute momentum, then allocate slots per category
+        signals.sort(key=lambda s: abs(s.momentum_score), reverse=True)
+        top = self._allocate_slots(signals)
+
+        self._evict_stale(seen_symbols)
+
+        cats = {}
+        for s in top:
+            cats[s.asset_category] = cats.get(s.asset_category, 0) + 1
+        audit(system_log,
+              f"All-markets scan: {len(top)} signals from {len(signals)} pairs",
+              action="scan", result="OK",
+              data={"count": len(top), "categories": cats})
+        return top
+
+    def _allocate_slots(self, signals: list[MarketSignal]) -> list[MarketSignal]:
+        """
+        Smart slot allocation: ensure each category gets representation,
+        then fill remaining slots with top movers overall.
+
+        Allocation:
+          - Each category with signals gets at least 2 slots (or all if fewer)
+          - Remaining slots filled by strongest movers across all categories
+        """
+        max_total = CONFIG.top_movers_count
+
+        # Group by category
+        by_cat: dict[str, list[MarketSignal]] = {}
+        for s in signals:
+            by_cat.setdefault(s.asset_category, []).append(s)
+
+        # Guarantee slots per category
+        guaranteed: list[MarketSignal] = []
+        used: set[str] = set()  # symbol dedup
+        min_per_cat = 2
+
+        for cat in sorted(by_cat, key=lambda c: CATEGORY_META.get(c, ("", 99))[1]):
+            cat_signals = by_cat[cat]
+            for s in cat_signals[:min_per_cat]:
+                if s.symbol not in used:
+                    guaranteed.append(s)
+                    used.add(s.symbol)
+
+        # Fill remaining from overall top movers
+        remaining = max_total - len(guaranteed)
+        if remaining > 0:
+            for s in signals:
+                if s.symbol not in used:
+                    guaranteed.append(s)
+                    used.add(s.symbol)
+                    if len(guaranteed) >= max_total:
+                        break
+
+        return guaranteed[:max_total]
+
+    # ── Spot-only scan ───────────────────────────────────────────
+
+    async def _scan_spot(self, universe: str) -> list[MarketSignal]:
+        """Original spot-only scan logic."""
         try:
-            if is_futures_universe:
-                # TradFi perpetuals are futures-only — use swap exchange
-                exchange = await self._get_futures_exchange()
-                tickers = await exchange.fetch_tickers(params={
-                    "productType": "USDT-FUTURES",
-                })
-            else:
-                exchange = await self._get_exchange()
-                tickers = await exchange.fetch_tickers()
+            tickers = await self._fetch_spot_tickers()
         except Exception as exc:
             audit(system_log, f"Scanner exchange error: {exc}",
                   action="scan", result="ERROR")
@@ -91,94 +240,111 @@ class MarketScanner:
         signals: list[MarketSignal] = []
         seen_symbols: set[str] = set()
 
-        # For futures universes, filter to the known symbol set
-        futures_filter = FUTURES_UNIVERSES.get(universe, set())
-
         for symbol, tick in tickers.items():
-            if is_futures_universe:
-                # Only process symbols in this universe's set
-                if symbol not in futures_filter:
-                    continue
-            else:
-                if not symbol.endswith("/USDT"):
-                    continue
-
-            seen_symbols.add(symbol)
-            try:
-                change = float(tick.get("percentage", 0) or 0)
-                volume = float(tick.get("quoteVolume", 0) or 0)
-                price = float(tick.get("last", 0) or 0)
-                if price <= 0:
-                    continue
-                # Lower volume threshold for TradFi perpetuals (less liquid)
-                min_vol = 10_000 if is_futures_universe else 50_000
-                if volume < min_vol:
-                    continue
-
-                spike = self._detect_volume_spike(symbol, volume)
-                momentum = self._momentum_score(change, spike)
-
-                signals.append(MarketSignal(
-                    symbol=symbol,
-                    price=price,
-                    change_pct_24h=round(change, 2),
-                    volume_usd_24h=round(volume, 2),
-                    volume_spike=spike,
-                    momentum_score=round(momentum, 3),
-                    timestamp=datetime.now(UTC),
-                ))
-            except (TypeError, ValueError):
+            if not symbol.endswith("/USDT"):
                 continue
+            sig = self._process_ticker(symbol, tick, min_vol=50_000)
+            if sig:
+                seen_symbols.add(symbol)
+                signals.append(sig)
 
-        # Sort by absolute momentum descending
         signals.sort(key=lambda s: abs(s.momentum_score), reverse=True)
 
-        # If Solana ecosystem mode, boost Solana tokens to top of results
+        # Universe-specific filtering
         if universe == "solana":
             solana_set = set(SOLANA_ECOSYSTEM_SYMBOLS)
-            solana_signals = [s for s in signals if s.symbol in solana_set]
-            other_signals = [s for s in signals if s.symbol not in solana_set]
-            # Solana ecosystem first, then fill remaining slots with other assets
-            top = (solana_signals + other_signals)[: CONFIG.top_movers_count]
+            sol = [s for s in signals if s.symbol in solana_set]
+            other = [s for s in signals if s.symbol not in solana_set]
+            top = (sol + other)[:CONFIG.top_movers_count]
         elif universe == "stocks":
-            # Stock-only mode: filter to US stock tokenized symbols
-            stock_set = set(US_STOCK_SYMBOLS)
-            stock_signals = [s for s in signals if s.symbol in stock_set]
-            stock_signals.sort(key=lambda s: abs(s.momentum_score), reverse=True)
-            top = stock_signals[: CONFIG.top_movers_count]
+            top = [s for s in signals if s.symbol in _STOCK_SET][:CONFIG.top_movers_count]
         elif universe == "hybrid":
-            # Hybrid: show both crypto movers and stock movers
-            stock_set = set(US_STOCK_SYMBOLS)
-            stock_signals = [s for s in signals if s.symbol in stock_set]
-            crypto_signals = [s for s in signals if s.symbol not in stock_set]
-            stock_signals.sort(key=lambda s: abs(s.momentum_score), reverse=True)
-            crypto_signals.sort(key=lambda s: abs(s.momentum_score), reverse=True)
-            # Half slots for stocks, half for crypto
+            stock_sigs = [s for s in signals if s.symbol in _STOCK_SET]
+            crypto_sigs = [s for s in signals if s.symbol not in _STOCK_SET]
             half = max(CONFIG.top_movers_count // 2, 5)
-            top = (stock_signals[:half] + crypto_signals[:half])[: CONFIG.top_movers_count]
-        elif is_futures_universe:
-            # Futures universes already filtered at ticker level — sort and cap
-            signals.sort(key=lambda s: abs(s.momentum_score), reverse=True)
-            top = signals[: CONFIG.top_movers_count]
+            top = (stock_sigs[:half] + crypto_sigs[:half])[:CONFIG.top_movers_count]
         else:
-            top = signals[: CONFIG.top_movers_count]
+            top = signals[:CONFIG.top_movers_count]
 
-        # Evict stale symbols not seen in this scan to cap memory
-        with self._lock:
-            stale = [s for s in self._volume_history if s not in seen_symbols]
-            for s in stale:
-                del self._volume_history[s]
-            # Hard cap: if still over 500 symbols, trim oldest entries
-            if len(self._volume_history) > 500:
-                excess = len(self._volume_history) - 500
-                for key in list(self._volume_history)[:excess]:
-                    del self._volume_history[key]
-
+        self._evict_stale(seen_symbols)
         audit(system_log, f"Scan complete: {len(top)} signals from {len(signals)} pairs",
               action="scan", result="OK", data={"count": len(top)})
         return top
 
-    # -- Internal helpers --
+    # ── Futures-only scan ────────────────────────────────────────
+
+    async def _scan_futures(self, symbol_filter: set[str]) -> list[MarketSignal]:
+        """Scan only futures perpetuals matching the given symbol set."""
+        try:
+            tickers = await self._fetch_futures_tickers()
+        except Exception as exc:
+            audit(system_log, f"Scanner futures error: {exc}",
+                  action="scan", result="ERROR")
+            return []
+
+        signals: list[MarketSignal] = []
+        seen_symbols: set[str] = set()
+
+        for symbol, tick in tickers.items():
+            if symbol not in symbol_filter:
+                continue
+            sig = self._process_ticker(symbol, tick, min_vol=5_000)
+            if sig:
+                seen_symbols.add(symbol)
+                signals.append(sig)
+
+        signals.sort(key=lambda s: abs(s.momentum_score), reverse=True)
+        top = signals[:CONFIG.top_movers_count]
+
+        self._evict_stale(seen_symbols)
+        audit(system_log, f"Futures scan: {len(top)} signals from {len(signals)} pairs",
+              action="scan", result="OK", data={"count": len(top)})
+        return top
+
+    # ── Ticker fetchers ──────────────────────────────────────────
+
+    async def _fetch_spot_tickers(self) -> dict:
+        exchange = await self._get_exchange()
+        return await exchange.fetch_tickers()
+
+    async def _fetch_futures_tickers(self) -> dict:
+        exchange = await self._get_futures_exchange()
+        return await exchange.fetch_tickers(params={
+            "productType": "USDT-FUTURES",
+        })
+
+    # ── Shared processing ────────────────────────────────────────
+
+    def _process_ticker(
+        self, symbol: str, tick: dict, min_vol: float = 50_000,
+    ) -> Optional[MarketSignal]:
+        """Convert a raw ticker dict into a MarketSignal, or None if filtered."""
+        try:
+            change = float(tick.get("percentage", 0) or 0)
+            volume = float(tick.get("quoteVolume", 0) or 0)
+            price = float(tick.get("last", 0) or 0)
+        except (TypeError, ValueError):
+            return None
+
+        if price <= 0 or volume < min_vol:
+            return None
+
+        spike = self._detect_volume_spike(symbol, volume)
+        momentum = self._momentum_score(change, spike)
+        category = _classify_symbol(symbol)
+
+        return MarketSignal(
+            symbol=symbol,
+            price=price,
+            change_pct_24h=round(change, 2),
+            volume_usd_24h=round(volume, 2),
+            volume_spike=spike,
+            momentum_score=round(momentum, 3),
+            timestamp=datetime.now(UTC),
+            asset_category=category,
+        )
+
+    # ── Internal helpers ─────────────────────────────────────────
 
     def _detect_volume_spike(self, symbol: str, current_vol: float) -> bool:
         """True if current volume is >2x the rolling average."""
@@ -204,6 +370,17 @@ class MarketScanner:
         if volume_spike:
             base *= 1.3
         return max(min(base, 1.0), -1.0)
+
+    def _evict_stale(self, seen_symbols: set[str]) -> None:
+        """Remove volume history for symbols not seen in this scan."""
+        with self._lock:
+            stale = [s for s in self._volume_history if s not in seen_symbols]
+            for s in stale:
+                del self._volume_history[s]
+            if len(self._volume_history) > 500:
+                excess = len(self._volume_history) - 500
+                for key in list(self._volume_history)[:excess]:
+                    del self._volume_history[key]
 
     async def close(self) -> None:
         if self._exchange:

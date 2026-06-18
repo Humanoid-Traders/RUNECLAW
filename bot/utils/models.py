@@ -57,6 +57,7 @@ class MarketSignal(BaseModel):
     volume_spike: bool = False
     momentum_score: float = Field(default=0.0, ge=-1.0, le=1.0)
     timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    asset_category: str = "Crypto"  # Crypto | Metal | Commodity | ETF | Pre-IPO | Stock
 
 
 class StateTransition(BaseModel):

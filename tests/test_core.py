@@ -3807,7 +3807,7 @@ class TestSolanaEcosystem:
         from bot.config import ExchangeConfig
         cfg = ExchangeConfig()
         assert hasattr(cfg, "asset_universe")
-        assert cfg.asset_universe in ("all", "solana", "custom")
+        assert cfg.asset_universe in ("all_markets", "all", "solana", "custom")
 
     def test_scanner_solana_filter_prioritizes(self):
         """When asset_universe=solana, Solana tokens should appear first in results."""
