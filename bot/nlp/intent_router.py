@@ -239,6 +239,23 @@ def _extract_symbol(text: str) -> Optional[str]:
         candidate = f"{dollar.group(1)}/USDT"
         return _validate_symbol(candidate)
 
+    # Fallback: any word that looks like a ticker (2-10 uppercase letters)
+    # next to a command keyword — treat as symbol even if not in known list
+    _CMD_WORDS = {"analyze", "scan", "check", "trade", "buy", "sell", "long",
+                  "short", "signal", "setup", "look", "analyse", "chart", "read"}
+    has_cmd = any(w in _CMD_WORDS for w in words)
+    if has_cmd:
+        for word in words:
+            if word not in _CMD_WORDS and len(word) >= 2 and word.isalpha():
+                # Skip common English words that aren't tickers
+                _SKIP = {"the", "at", "is", "in", "on", "up", "my", "me", "it",
+                         "do", "to", "for", "what", "how", "and", "or", "not",
+                         "this", "that", "with", "from", "into", "like", "want",
+                         "good", "bad", "now", "can", "will", "set", "get"}
+                if word not in _SKIP and len(word) <= 10:
+                    candidate = f"{word.upper()}/USDT"
+                    return _validate_symbol(candidate)
+
     return None
 
 
