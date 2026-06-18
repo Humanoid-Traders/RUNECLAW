@@ -3441,18 +3441,105 @@ class TelegramHandler:
                         "hold_hours": round(hold_h, 1),
                     })
 
-        msg = render_open_positions(positions_data)
+        if not positions_data:
+            await self._send(update,
+                "No open positions right now.\n"
+                "Say \"scan\" or \"analyze BTC\" to find setups.")
+            return
 
-        # Build keyboard with close buttons — use trade_id for unique identification
-        kb_rows = []
+        # ── Render each position as a styled PNG card ──
+        from bot.formatters.signal_card import render_position_card
+
+        total_pnl = sum(p.get("pnl_pct", 0) for p in positions_data)
+        pnl_icon = "\U0001f7e2" if total_pnl > 0 else "\U0001f534" if total_pnl < 0 else ""
+        header = (f"<b>Open Positions ({len(positions_data)})</b> "
+                  f"{pnl_icon} {total_pnl:+.2f}% total")
+        await self._send(update, header)
+
         for pos in positions_data:
             tid = pos.get('trade_id', pos['pair'])
-            kb_rows.append([
-                InlineKeyboardButton(f"{pos['pair']}", callback_data=f"pos_details_{tid}"),
-                InlineKeyboardButton(f"Close", callback_data=f"pos_close_{tid}"),
-            ])
-        await self._send(update, msg,
-                         reply_markup=InlineKeyboardMarkup(kb_rows) if kb_rows else None)
+            pair = pos.get("pair", "N/A")
+            direction = pos.get("direction", "LONG")
+            entry = pos.get("entry", 0)
+            current = pos.get("current", entry)
+            pnl_pct = pos.get("pnl_pct", 0)
+            pnl_usd = pos.get("pnl_usd", 0)
+            sl = pos.get("sl", 0)
+            tp = pos.get("tp", 0)
+            sl_dist = pos.get("sl_dist_pct", 0)
+            tp_dist = pos.get("tp_dist_pct", 0)
+            size_usd = pos.get("size_usd", 0)
+            leverage = pos.get("leverage", 1)
+            rr_live = pos.get("rr_live", 0)
+            hold_h = pos.get("hold_hours", 0)
+            sl_order = pos.get("sl_order", "")
+            tp_order = pos.get("tp_order", "")
+            comm_pct = pos.get("comm_pct", CONFIG.risk.commission_pct)
+
+            # Hold time display
+            if hold_h < 1:
+                hold_str = f"{hold_h * 60:.0f}m"
+            elif hold_h < 24:
+                hold_str = f"{hold_h:.1f}h"
+            else:
+                hold_str = f"{hold_h / 24:.1f}d"
+
+            # Fee calculations
+            entry_fee = size_usd * (comm_pct / 100.0)
+            exit_notional = pos.get("notional_usd", current * pos.get("quantity", 0))
+            exit_fee = exit_notional * (comm_pct / 100.0)
+            total_fees = entry_fee + exit_fee
+            funding_sessions = hold_h / 8.0
+            funding_paid = size_usd * (0.01 / 100.0) * funding_sessions
+            net_pnl = pnl_usd - total_fees - funding_paid
+
+            sl_tag = "on exchange" if sl_order == "exchange" else "bot-managed"
+            tp_tag = "on exchange" if tp_order == "exchange" else "bot-managed"
+
+            pos_card_data = {
+                "symbol": pair.replace("USDT", "/USDT") if "USDT" in pair else pair,
+                "direction": direction,
+                "is_live": CONFIG.is_live(),
+                "entry": entry,
+                "now": current,
+                "pnl_pct": pnl_pct,
+                "pnl_usd": pnl_usd,
+                "net_pnl": net_pnl,
+                "fees": total_fees + funding_paid,
+                "size_usd": size_usd,
+                "leverage": leverage,
+                "hold_time": hold_str,
+                "rr": rr_live,
+                "sl": sl,
+                "tp": tp,
+                "sl_pct": sl_dist,
+                "tp_pct": tp_dist,
+                "sl_status": sl_tag,
+                "tp_status": tp_tag,
+            }
+
+            try:
+                card_png = render_position_card(pos_card_data)
+            except Exception as exc:
+                system_log.debug("Position card render failed for %s: %s", pair, exc)
+                card_png = None
+
+            d_emoji = "\U0001f7e2" if direction == "LONG" else "\U0001f534"
+            pnl_emoji = "\U0001f7e2" if pnl_pct >= 0 else "\U0001f534"
+            kb = InlineKeyboardMarkup([[
+                InlineKeyboardButton(f"{pair}", callback_data=f"pos_details_{tid}"),
+                InlineKeyboardButton("Close", callback_data=f"pos_close_{tid}"),
+            ]])
+
+            if card_png:
+                mode_tag = "LIVE" if CONFIG.is_live() else "PAPER"
+                cap = (f"<b>{html.escape(pair)}</b> {mode_tag}\n"
+                       f"{d_emoji} {direction} | {pnl_emoji} {pnl_pct:+.2f}% (${pnl_usd:+,.2f})")
+                await self._send_photo(update, card_png, cap, reply_markup=kb)
+            else:
+                # Fallback to text if PNG render fails
+                msg = render_open_positions([pos])
+                await self._send(update, msg, reply_markup=kb)
 
     async def _cmd_performance(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """Performance summary — per-user."""
