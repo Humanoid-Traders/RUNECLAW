@@ -531,7 +531,7 @@ class LiveExecutor:
             ex_positions = await exchange.fetch_positions()
 
             tracked = {
-                normalize_symbol(p.symbol)
+                (normalize_symbol(p.symbol), p.direction)
                 for p in self._positions.values()
                 if p.status in ("open", "pending_fill")
             }
@@ -548,11 +548,11 @@ class LiveExecutor:
 
                 raw_sym = p.get("symbol") or ""
                 sym = normalize_symbol(raw_sym)
-                if sym in tracked:
+                side = (p.get("side") or "long").upper()
+                if (sym, side) in tracked:
                     continue
 
                 # Adopt this position
-                side = (p.get("side") or "long").upper()
                 entry_price = float(p.get("entryPrice") or p.get("info", {}).get("openPriceAvg") or 0)
                 margin = float(p.get("initialMargin") or p.get("collateral") or 0)
                 leverage = int(float(p.get("leverage") or 1))
@@ -595,16 +595,22 @@ class LiveExecutor:
                 except Exception:
                     pass  # Non-critical — position still adopted without SL/TP
 
-                # If no SL/TP found, calculate safety defaults (3% SL, 6% TP)
-                if lp.stop_loss <= 0 and entry_price > 0:
+                # If SL or TP missing, calculate safety defaults (3% SL, 6% TP)
+                need_sl = lp.stop_loss <= 0 and entry_price > 0
+                need_tp = lp.take_profit <= 0 and entry_price > 0
+                if need_sl or need_tp:
                     default_sl_pct = 0.03
                     default_tp_pct = 0.06
-                    if side == "LONG":
-                        lp.stop_loss = round(entry_price * (1 - default_sl_pct), 8)
-                        lp.take_profit = round(entry_price * (1 + default_tp_pct), 8)
-                    else:
-                        lp.stop_loss = round(entry_price * (1 + default_sl_pct), 8)
-                        lp.take_profit = round(entry_price * (1 - default_tp_pct), 8)
+                    if need_sl:
+                        if side == "LONG":
+                            lp.stop_loss = round(entry_price * (1 - default_sl_pct), 8)
+                        else:
+                            lp.stop_loss = round(entry_price * (1 + default_sl_pct), 8)
+                    if need_tp:
+                        if side == "LONG":
+                            lp.take_profit = round(entry_price * (1 + default_tp_pct), 8)
+                        else:
+                            lp.take_profit = round(entry_price * (1 - default_tp_pct), 8)
 
                     # Place exchange-side SL/TP for safety
                     try:
@@ -861,6 +867,9 @@ class LiveExecutor:
                 )
             elif use_limit:
                 # Limit order (spot or spot-fallback)
+                create_kwargs: dict[str, Any] = {}
+                if limit_price:
+                    create_kwargs["price"] = limit_price
                 order = await self._create_order_idempotent(
                     active_exchange,
                     symbol=symbol,
@@ -868,7 +877,7 @@ class LiveExecutor:
                     side=side,
                     amount=quantity,
                     coid=coid,
-                    params={"price": str(limit_price)} if limit_price else {},
+                    price=limit_price if limit_price else None,
                 )
             else:
                 order = await self._create_order_idempotent(
@@ -1801,6 +1810,15 @@ class LiveExecutor:
             # a 1x futures position would incorrectly be treated as spot).
             is_futures_pos = not getattr(pos, "is_spot", False)
 
+            # Cancel SL/TP orders BEFORE closing — prevents race condition where
+            # a trigger fires between close-fill and cancel, opening an opposite pos.
+            for oid in [pos.sl_order_id, pos.tp_order_id]:
+                if oid:
+                    try:
+                        await exchange.cancel_order(oid, pos.symbol)
+                    except Exception:
+                        pass  # May already be cancelled/expired
+
             if is_futures_pos:
                 close_params = {"productType": "USDT-FUTURES"}
                 if self._hedge_mode:
@@ -1895,14 +1913,6 @@ class LiveExecutor:
             self._append_closed_trade(pos)
             # Notify engine to invalidate balance cache
             self._fire_position_closed(pos)
-
-            # Cancel any outstanding SL/TP orders
-            for oid in [pos.sl_order_id, pos.tp_order_id]:
-                if oid:
-                    try:
-                        await exchange.cancel_order(oid, pos.symbol)
-                    except Exception:
-                        pass
 
             audit(trade_log, f"Live position closed: {pos.symbol} net=${net_pnl:.4f} (gross=${gross_pnl:.4f}, fee=${commission:.4f})",
                   action="live_close", result="CLOSED",
@@ -2453,7 +2463,16 @@ class LiveExecutor:
 
                         pos.status = "closed"
                         pos.close_price = est_exit
-                        pos.pnl_usd = pnl
+                        # Deduct commission on reconciled close (same as manual close)
+                        entry_notional = pos.entry_price * pos.quantity
+                        exit_notional = est_exit * pos.quantity
+                        commission_pct = CONFIG.risk.commission_pct
+                        commission = (entry_notional + exit_notional) * (commission_pct / 100.0)
+                        gross_pnl = pnl
+                        net_pnl = gross_pnl - commission
+                        pos.gross_pnl = round(gross_pnl, 4)
+                        pos.commission = round(commission, 4)
+                        pos.pnl_usd = round(net_pnl, 4)
                         pos.closed_at = datetime.now(UTC)
 
                         self._save_positions()
@@ -2484,9 +2503,9 @@ class LiveExecutor:
                             "entry": pos.entry_price,
                             "exit": est_exit,
                             "pnl_pct": pnl_pct,
-                            "pnl_usd": round(pnl, 4),
-                            "gross_pnl": round(pnl, 4),
-                            "fees": 0,
+                            "pnl_usd": round(net_pnl, 4),
+                            "gross_pnl": round(gross_pnl, 4),
+                            "fees": round(commission, 4),
                             "size_usd": round(pos.cost_usd, 2) if pos.cost_usd > 0 else round(pos.entry_price * pos.quantity, 2),
                             "leverage": pos.leverage or 1,
                             "hold_time": hold_str,

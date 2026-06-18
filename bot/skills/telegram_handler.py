@@ -3795,9 +3795,9 @@ class TelegramHandler:
             worst_pnl = 0.0
             if closed:
                 sorted_t = sorted(closed, key=lambda t: (t.pnl_usd or 0))
-                worst_trade = sorted_t[0].symbol.replace("/USDT", "")
+                worst_trade = sorted_t[0].symbol.replace("/USDT", "").replace(":USDT", "")
                 worst_pnl = round(sorted_t[0].pnl_usd or 0, 2)
-                best_trade = sorted_t[-1].symbol.replace("/USDT", "")
+                best_trade = sorted_t[-1].symbol.replace("/USDT", "").replace(":USDT", "")
                 best_pnl = round(sorted_t[-1].pnl_usd or 0, 2)
 
             live_eq = await self.engine.get_effective_equity_async(user_id)
@@ -3816,9 +3816,9 @@ class TelegramHandler:
             worst_pnl = 0.0
             if trades:
                 sorted_t = sorted(trades, key=lambda t: t.pnl)
-                worst_trade = sorted_t[0].asset.replace("/USDT", "")
+                worst_trade = sorted_t[0].asset.replace("/USDT", "").replace(":USDT", "")
                 worst_pnl = round(sorted_t[0].pnl, 2)
-                best_trade = sorted_t[-1].asset.replace("/USDT", "")
+                best_trade = sorted_t[-1].asset.replace("/USDT", "").replace(":USDT", "")
                 best_pnl = round(sorted_t[-1].pnl, 2)
 
             state = portfolio.snapshot()

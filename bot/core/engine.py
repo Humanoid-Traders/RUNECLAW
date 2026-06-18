@@ -560,8 +560,8 @@ class RuneClawEngine:
                 else:
                     unrealized = entry_px - current_price
 
+                r_achieved = unrealized / initial_risk if initial_risk > 0 else 0
                 if initial_risk <= 0 or unrealized < initial_risk:
-                    r_achieved = unrealized / initial_risk if initial_risk > 0 else 0
                     audit(scan_log,
                           f"Pyramid skipped: {idea.asset} only {r_achieved:.2f}R in profit (need 1R)",
                           action="pyramid_insufficient_profit", result="SKIPPED")
@@ -594,7 +594,7 @@ class RuneClawEngine:
                         except Exception:
                             pass
                 elif hasattr(self, 'portfolio'):
-                    self.portfolio.close_position(pos.asset, current_price, reason="FLIP")
+                    self.portfolio.close_position(pos.trade_id, current_price)
 
                 audit(scan_log, f"Flip APPROVED: {idea.asset} {pos_dir} -> {idea_dir}, conf {idea.confidence:.0%}",
                       action="flip_approved", result="APPROVED")
