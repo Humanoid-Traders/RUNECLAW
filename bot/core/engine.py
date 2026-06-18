@@ -510,18 +510,19 @@ class RuneClawEngine:
         # Rules: max 2 entries per symbol, same direction adds require
         # 1R profit + 70% confidence. Opposite direction with high
         # confidence triggers a flip (close existing + open new).
-        symbol_key = idea.asset.replace("/USDT", "").replace("USDT", "").upper()
+        from bot.core.live_executor import normalize_symbol
+        symbol_key = normalize_symbol(idea.asset)
         existing_positions = []  # list of (position, is_live, current_price)
 
         if CONFIG.is_live() and hasattr(self, 'live_executor'):
             for lp in self.live_executor.open_positions:
-                lp_key = lp.symbol.replace("/USDT", "").replace("USDT", "").upper()
+                lp_key = normalize_symbol(lp.symbol)
                 if lp_key == symbol_key:
                     existing_positions.append((lp, True))
 
         if not existing_positions and hasattr(self, 'portfolio'):
             for pp in self.portfolio.open_positions:
-                pp_key = pp.asset.replace("/USDT", "").replace("USDT", "").upper()
+                pp_key = normalize_symbol(pp.asset)
                 if pp_key == symbol_key:
                     existing_positions.append((pp, False))
 
@@ -887,9 +888,9 @@ class RuneClawEngine:
                       action="pyramid_half_size", result="APPLIED")
 
                 # Move existing position's SL to breakeven
-                symbol_key = idea.asset.replace("/USDT", "").replace("USDT", "").upper()
+                symbol_key = normalize_symbol(idea.asset)
                 for lp in self.live_executor.open_positions:
-                    lp_key = lp.symbol.replace("/USDT", "").replace("USDT", "").upper()
+                    lp_key = normalize_symbol(lp.symbol)
                     if lp_key == symbol_key and lp.trade_id != trade_id:
                         old_sl = lp.stop_loss
                         lp.stop_loss = lp.entry_price  # breakeven

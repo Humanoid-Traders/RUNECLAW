@@ -36,6 +36,29 @@ from bot.utils.trailing import make_trailing_state, update_trailing_stop
 logger = logging.getLogger(__name__)
 
 
+def normalize_symbol(s: str) -> str:
+    """Canonical symbol normalizer — strips all ccxt suffixes to a bare base.
+
+    Examples:
+        MEGA/USDT:USDT  →  MEGA
+        MEGA/USDT       →  MEGA
+        MEGAUSDT        →  MEGA
+        XAU/USDT:USDT   →  XAU
+    """
+    return s.replace(":USDT", "").replace("/USDT", "").replace("USDT", "").upper()
+
+
+def display_symbol(s: str) -> str:
+    """Format a ccxt symbol for user-facing display.
+
+    Examples:
+        MEGA/USDT:USDT  →  MEGAUSDT
+        MEGA/USDT       →  MEGAUSDT
+        MEGAUSDT        →  MEGAUSDT
+    """
+    return s.replace("/", "").replace(":USDT", "")
+
+
 # ── Safety limits ────────────────────────────────────────────────────
 # $800 deposit, $100 margin per trade at 5x = $500 notional per trade
 MICRO_MAX_POSITION_USD = 100.0    # Max $100 margin per trade
@@ -287,11 +310,11 @@ class LiveExecutor:
 
         # DUPLICATE SYMBOL GUARD: block opening a second position on the same symbol
         if symbol:
-            norm = symbol.replace(":USDT", "").replace("/USDT", "").upper()
+            norm = normalize_symbol(symbol)
             for p in self._positions.values():
                 if p.status != "open":
                     continue
-                p_norm = p.symbol.replace(":USDT", "").replace("/USDT", "").upper()
+                p_norm = normalize_symbol(p.symbol)
                 if p_norm == norm:
                     return (
                         f"Already have an open {p.direction} position on {p.symbol} "
@@ -462,13 +485,8 @@ class LiveExecutor:
                 report["errors"].append(f"fetch_positions failed: {exc}")
                 return report
 
-            def _normalize_sym(s: str) -> str:
-                """Normalize symbol to a common format for comparison.
-                ETH/USDT:USDT -> ETH/USDT, ETHUSDT -> ETHUSDT, ETH/USDT -> ETH/USDT"""
-                return s.replace(":USDT", "")
-
             tracked = {
-                _normalize_sym(p.symbol)
+                normalize_symbol(p.symbol)
                 for p in self._positions.values()
                 if p.status == "open"
             }
@@ -481,7 +499,7 @@ class LiveExecutor:
                 except (TypeError, ValueError):
                     continue
                 raw_sym = (p.get("symbol") or "")
-                sym = _normalize_sym(raw_sym)
+                sym = normalize_symbol(raw_sym)
                 if sym and sym not in tracked:
                     report["untracked"].append(sym)
                     audit(trade_log,
@@ -509,11 +527,8 @@ class LiveExecutor:
             exchange = await self._get_exchange()
             ex_positions = await exchange.fetch_positions()
 
-            def _normalize_sym(s: str) -> str:
-                return s.replace(":USDT", "")
-
             tracked = {
-                _normalize_sym(p.symbol)
+                normalize_symbol(p.symbol)
                 for p in self._positions.values()
                 if p.status in ("open", "pending_fill")
             }
@@ -529,7 +544,7 @@ class LiveExecutor:
                     continue
 
                 raw_sym = p.get("symbol") or ""
-                sym = _normalize_sym(raw_sym)
+                sym = normalize_symbol(raw_sym)
                 if sym in tracked:
                     continue
 

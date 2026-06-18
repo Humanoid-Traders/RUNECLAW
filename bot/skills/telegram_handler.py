@@ -2650,7 +2650,7 @@ class TelegramHandler:
                     pnl_val = t.pnl_usd or 0
                     fee_val = t.commission or 0
                     pnl_icon = "✅" if pnl_val >= 0 else "❌"
-                    pair = t.symbol.replace("/", "")
+                    pair = t.symbol.replace("/", "").replace(":USDT", "")
                     fee_note = f" (fee ${fee_val:.2f})" if fee_val > 0 else ""
                     lines.append(f"  {pnl_icon} {pair} {t.direction} → <code>${pnl_val:+,.2f}</code>{fee_note}")
 
@@ -3327,7 +3327,7 @@ class TelegramHandler:
                     reward_left = abs(pos.take_profit - last_price) if pos.take_profit else 0
                     rr_live = reward_left / risk_left if risk_left > 0 else 0
                     positions_data.append({
-                        "pair": pos.symbol.replace("/", ""),
+                        "pair": pos.symbol.replace("/", "").replace(":USDT", ""),
                         "direction": pos.direction,
                         "entry": round(pos.entry_price, 6),
                         "current": round(last_price, 6),
