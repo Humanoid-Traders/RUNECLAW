@@ -3989,10 +3989,15 @@ class TelegramHandler:
                 await self._send(update, "\n".join(lines), edit=True)
             else:
                 await self._send(update,
-                    f"<b>{html.escape(pair)}</b>\n\n"
-                    "Can't find this position — it might have been closed already.\n"
-                    "Say \"positions\" to see what's open.",
+                    f"\u2705 <b>{html.escape(pair)}</b> — position closed.\n\n"
+                    "Say \"positions\" to see current state.",
                     edit=True)
+                # Remove stale buttons
+                try:
+                    if update.callback_query and update.callback_query.message:
+                        await update.callback_query.message.edit_reply_markup(reply_markup=None)
+                except Exception:
+                    pass
             return
 
         if data.startswith("pos_close_"):
@@ -4035,6 +4040,12 @@ class TelegramHandler:
                                 f"{pnl_emoji} PnL: <code>${pnl_val:+,.2f}</code>",
                             ]
                             await self._send(update, "\n".join(lines), edit=True)
+                            # Remove buttons from the original details message
+                            try:
+                                if update.callback_query and update.callback_query.message:
+                                    await update.callback_query.message.edit_reply_markup(reply_markup=None)
+                            except Exception:
+                                pass
                         except Exception as e:
                             live_closed = True  # prevent fallthrough to "not found"
                             await self._send(update,
@@ -4130,6 +4141,12 @@ class TelegramHandler:
                                     f"{pnl_emoji} Net PnL: <code>${net_pnl:+,.2f}</code> (fees ${commission:.2f})",
                                 ]
                                 await self._send(update, "\n".join(lines), edit=True)
+                                # Remove buttons
+                                try:
+                                    if update.callback_query and update.callback_query.message:
+                                        await update.callback_query.message.edit_reply_markup(reply_markup=None)
+                                except Exception:
+                                    pass
                             except Exception as e:
                                 await self._send(update,
                                     f"Couldn't close {html.escape(ep_clean)} on exchange.\n\n"
@@ -4185,10 +4202,15 @@ class TelegramHandler:
                 await self._send(update, "\n".join(lines), edit=True)
             else:
                 await self._send(update,
-                    f"\u274c <b>{html.escape(pair)}</b>\n\n"
-                    "Position not found or already closed.\n"
-                    "Say \"open positions\" to check.",
+                    f"\u2705 <b>{html.escape(pair)}</b> — already closed.\n\n"
+                    "Say \"positions\" to see current state.",
                     edit=True)
+                # Remove stale buttons
+                try:
+                    if update.callback_query and update.callback_query.message:
+                        await update.callback_query.message.edit_reply_markup(reply_markup=None)
+                except Exception:
+                    pass
             return
 
         # ── Legacy pane callbacks (backward compat) ──────────
