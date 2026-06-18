@@ -4605,6 +4605,21 @@ class TelegramHandler:
         if data.startswith("confirm:"):
             parts = data.split(":")
             trade_id = parts[1]
+
+            # Double-tap guard: skip if this trade was already confirmed
+            if not hasattr(self, '_confirmed_ids'):
+                self._confirmed_ids: set[str] = set()
+            if trade_id in self._confirmed_ids:
+                try:
+                    await query.answer("Already confirmed")
+                except Exception:
+                    pass
+                return
+            self._confirmed_ids.add(trade_id)
+            # Cap the set to prevent unbounded growth
+            if len(self._confirmed_ids) > 100:
+                self._confirmed_ids = set(list(self._confirmed_ids)[-50:])
+
             # M3 FIX: validate callback belongs to requesting user
             expected_uid = parts[2] if len(parts) > 2 else None
             caller_uid = str(update.effective_user.id) if update.effective_user else None
@@ -4693,6 +4708,18 @@ class TelegramHandler:
         elif data.startswith("reject:"):
             parts = data.split(":")
             trade_id = parts[1]
+
+            # Double-tap guard
+            if not hasattr(self, '_confirmed_ids'):
+                self._confirmed_ids: set[str] = set()
+            if trade_id in self._confirmed_ids:
+                try:
+                    await query.answer("Already processed")
+                except Exception:
+                    pass
+                return
+            self._confirmed_ids.add(trade_id)
+
             # M3 FIX: validate callback belongs to requesting user
             expected_uid = parts[2] if len(parts) > 2 else None
             caller_uid = str(update.effective_user.id) if update.effective_user else None
