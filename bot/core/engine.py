@@ -408,8 +408,9 @@ class RuneClawEngine:
             if idea:
                 # Dedup: if an idea for the same asset already exists, replace it
                 existing_id = None
+                idea_key = normalize_symbol(idea.asset)
                 for eid, eidea in list(self._pending_ideas.items()):
-                    if eidea.asset == idea.asset:
+                    if normalize_symbol(eidea.asset) == idea_key:
                         existing_id = eid
                         break
                 if existing_id:

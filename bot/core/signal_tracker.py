@@ -187,7 +187,7 @@ class SignalTracker:
 
         if blacklisted:
             lines.append(
-                f"\n⛔ <i>Blacklisted: {', '.join(s.replace('/USDT','') for s in blacklisted)}</i>"
+                f"\n⛔ <i>Blacklisted: {', '.join(s.replace('/USDT','').replace(':USDT','') for s in blacklisted)}</i>"
             )
 
         return "\n".join(lines)

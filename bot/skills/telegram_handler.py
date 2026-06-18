@@ -4023,7 +4023,7 @@ class TelegramHandler:
 
             if pos_match is None:
                 for p in portfolio.open_positions:
-                    if p.asset.replace("/", "") == pair:
+                    if p.asset.replace("/", "").replace(":USDT", "") == pair:
                         pos_match = p
                         break
 
@@ -4502,7 +4502,7 @@ class TelegramHandler:
             if not live_closed:
                 # Paper mode close
                 for pos in list(portfolio.open_positions):
-                    if pos.asset.replace("/", "") == pair:
+                    if pos.asset.replace("/", "").replace(":USDT", "") == pair:
                         try:
                             exchange = await self.engine.get_exchange()
                             ticker = await exchange.fetch_ticker(pos.asset)

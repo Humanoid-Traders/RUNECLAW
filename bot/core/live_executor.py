@@ -1707,9 +1707,11 @@ class LiveExecutor:
             return  # spot SL/TP not reliably supported
 
         # Cancel existing SL order
+        old_sl_id = pos.sl_order_id
         if pos.sl_order_id:
             try:
                 await exchange.cancel_order(pos.sl_order_id, pos.symbol)
+                pos.sl_order_id = None  # Clear immediately — re-set only on successful placement
             except Exception as exc:
                 logger.debug("Cancel old SL order %s failed: %s", pos.sl_order_id, exc)
 
@@ -2390,6 +2392,8 @@ class LiveExecutor:
 
                         self._save_positions()
                         self._append_closed_trade(pos)
+                        # Invalidate balance cache on reconciled close
+                        self._fire_position_closed(pos)
 
                         pnl_str = f"+${pnl:.4f}" if pnl >= 0 else f"-${abs(pnl):.4f}"
                         pnl_pct = ((est_exit - pos.entry_price) / pos.entry_price * 100) if pos.entry_price else 0
