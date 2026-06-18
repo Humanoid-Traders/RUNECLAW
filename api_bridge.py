@@ -291,6 +291,9 @@ app = FastAPI(
     title="RUNECLAW API Bridge",
     version="1.0.0",
     lifespan=lifespan,
+    docs_url=None,       # Disable Swagger UI (F-08)
+    redoc_url=None,       # Disable ReDoc (F-08)
+    openapi_url=None,     # Disable OpenAPI schema (F-09)
 )
 
 _allowed_origins = os.getenv("DASHBOARD_CORS_ORIGIN", os.getenv("CORS_ORIGINS", "*")).split(",")
@@ -496,7 +499,7 @@ async def analyze(req: AnalyzeRequest, _token: str = Depends(require_dashboard_t
 
 
 @app.get("/portfolio")
-async def portfolio():
+async def portfolio(_token: str = Depends(require_dashboard_token)):
     """Return portfolio snapshot and open positions."""
     if engine is None: raise HTTPException(status_code=503, detail="Engine not initialized")
     snap = engine.portfolio.snapshot()
@@ -595,7 +598,7 @@ async def close_position(symbol: str, _token: str = Depends(require_dashboard_to
 
 
 @app.get("/risk/status")
-async def risk_status():
+async def risk_status(_token: str = Depends(require_dashboard_token)):
     """Return risk engine state."""
     if engine is None: raise HTTPException(status_code=503, detail="Engine not initialized")
     return {

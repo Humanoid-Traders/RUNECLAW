@@ -246,16 +246,16 @@ function renderRegime() {
 
 function renderCircuit() {
   const el = document.getElementById('circuitContent');
-  // Use authenticated portfolio data first, then scan circuit breaker, then public summary
   const s = portfolioData?.stats || {};
   const pp = publicPortfolio || {};
   const cb = scanData?.circuit_breaker || {};
+  // Use != null checks to avoid 0 being treated as falsy
   const eq = s.equity || cb.equity || pp.equity || 800;
-  const pnl = s.net_pnl != null && s.net_pnl !== 0 ? s.net_pnl : (cb.net_pnl != null ? cb.net_pnl : (pp.net_pnl || 0));
-  const op = s.open_positions || cb.open_count || pp.open_count || 0;
-  const wr = s.win_rate || cb.win_rate || pp.win_rate || 0;
+  const pnl = s.net_pnl != null ? s.net_pnl : (cb.net_pnl != null ? cb.net_pnl : (pp.net_pnl != null ? pp.net_pnl : 0));
+  const op = s.open_positions != null ? s.open_positions : (cb.open_count != null ? cb.open_count : (pp.open_count || 0));
+  const wr = cb.win_rate != null ? cb.win_rate : (s.win_rate != null ? s.win_rate : (pp.win_rate || 0));
   const sharpe = s.sharpe || 0;
-  const trades = s.total_trades || cb.total_trades || pp.total_trades || 0;
+  const trades = cb.total_trades != null ? cb.total_trades : (s.total_trades != null ? s.total_trades : (pp.total_trades || 0));
   let pc = 'ok'; if(pnl<-30) pc='warn'; if(pnl<-40) pc='danger';
   const rules = scanData?.circuit_breaker?.rules || [];
 
@@ -347,48 +347,70 @@ function renderEntryCards() {
 
 function renderPortfolio() {
   const el=document.getElementById('portfolioContent');
-  // Source priority: authenticated portfolio > scan data circuit breaker > public portfolio summary
   const pp = publicPortfolio || {};
   const cb = scanData?.circuit_breaker || {};
-  // Build best-available stats from all sources
   const hasAuth = portfolioData && portfolioData.stats && portfolioData.stats.total_trades > 0;
-  const hasCB = cb.equity || cb.total_trades;
-  const hasPub = pp.equity > 800 || pp.total_trades > 0; // 800 is the default fallback, don't treat as real data
+  const hasCB = cb.equity != null || cb.total_trades != null;
+  const hasPub = pp.equity > 800 || pp.total_trades > 0;
   const usePublic = !hasAuth && (hasCB || hasPub);
   const s = hasAuth ? portfolioData.stats : (usePublic ? {
-    equity: cb.equity || pp.equity || 0,
+    equity: cb.equity != null ? cb.equity : (pp.equity || 0),
     net_pnl: cb.net_pnl != null ? cb.net_pnl : (pp.net_pnl || 0),
     win_rate: cb.win_rate != null ? cb.win_rate : (pp.win_rate || 0),
-    total_trades: cb.total_trades || pp.total_trades || 0,
-    open_positions: cb.open_count || pp.open_count || 0
+    total_trades: cb.total_trades != null ? cb.total_trades : (pp.total_trades || 0),
+    open_positions: cb.open_count != null ? cb.open_count : (pp.open_count || 0)
   } : null);
   if(!s){el.innerHTML='<div class="empty-msg">No portfolio data yet. Run /scan in Telegram.</div>';return;}
-  const pos = hasAuth ? portfolioData.positions : [];
-  const snaps = hasAuth ? portfolioData.snapshots : [];
-  let h=`<div class="port-stats">
+  const isLive = cb.live_mode;
+  const modeTag = isLive ? '<span style="color:var(--green);font-size:10px;letter-spacing:1px">&#9679; LIVE</span>' : '<span style="color:var(--orange);font-size:10px;letter-spacing:1px">PAPER</span>';
+  let h=`<div style="text-align:right;margin-bottom:4px">${modeTag}</div>`;
+  h+=`<div class="port-stats">
     <div class="port-stat"><div class="ps-label">Equity</div><div class="ps-val" style="color:var(--gold)">$${fmt(s.equity)}</div></div>
     <div class="port-stat"><div class="ps-label">Net P&L</div><div class="ps-val ${pctC(s.net_pnl)}">${s.net_pnl>=0?'+':''}$${fmt(s.net_pnl)}</div></div>
     <div class="port-stat"><div class="ps-label">Win Rate</div><div class="ps-val">${fmt(s.win_rate,1)}%</div></div>
     <div class="port-stat"><div class="ps-label">Trades</div><div class="ps-val">${s.total_trades||0}</div></div>
   </div>`;
+  const livePos = cb.open_positions || [];
+  const authPos = hasAuth ? portfolioData.positions : [];
+  const pos = authPos.length > 0 ? authPos : livePos;
+  const snaps = hasAuth ? portfolioData.snapshots : [];
   if(snaps.length>1){
-    const vals=snaps.map(s=>parseFloat(s.equity)),min=Math.min(...vals)*0.998,max=Math.max(...vals)*1.002,w=600,ht=100;
-    const pts=vals.map((v,i)=>`${(i/(vals.length-1))*w},${ht-((v-min)/(max-min))*ht}`).join(' ');
+    const vals=snaps.map(s=>parseFloat(s.equity)),mn=Math.min(...vals)*0.998,mx=Math.max(...vals)*1.002,w=600,ht=100;
+    const pts=vals.map((v,i)=>`${(i/(vals.length-1))*w},${ht-((v-mn)/(mx-mn))*ht}`).join(' ');
     h+=`<svg class="equity-chart" viewBox="0 0 ${w} ${ht}" preserveAspectRatio="none">
       <defs><linearGradient id="eqg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="var(--gold)" stop-opacity="0.3"/><stop offset="1" stop-color="var(--gold)" stop-opacity="0"/></linearGradient></defs>
       <polygon points="0,${ht} ${pts} ${w},${ht}" fill="url(#eqg)"/><polyline points="${pts}" fill="none" stroke="var(--gold)" stroke-width="2"/></svg>`;
   }
   if(pos.length>0){
     h+='<div style="font-family:var(--mono);font-size:11px;margin-top:8px"><div style="color:var(--text3);margin-bottom:4px">OPEN POSITIONS</div>';
-    for(const p of pos) h+=`<div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid var(--border)"><span class="sym">${p.symbol}</span><span class="${p.direction==='LONG'?'pos':'neg'}">${p.direction}</span><span>$${fmt(p.entry_price)}</span></div>`;
+    for(const p of pos){
+      const sym=p.symbol||'';const dir=(p.direction||p.side||'').toUpperCase();
+      const entry=p.entry_price||p.entryPrice||0;const upnl=p.unrealized_pnl!=null?p.unrealized_pnl:p.unrealizedPnl;
+      h+=`<div style="display:flex;justify-content:space-between;gap:8px;padding:3px 0;border-bottom:1px solid var(--border)">
+        <span class="sym">${sym}</span><span class="${dir==='LONG'?'pos':'neg'}">${dir}</span>
+        <span>$${fmtP(entry)}</span>
+        ${upnl!=null?`<span class="${Number(upnl)>=0?'pos':'neg'}">${Number(upnl)>=0?'+':''}$${fmt(upnl)}</span>`:''}
+      </div>`;
+    }
     h+='</div>';
-  } else if(s.open_positions > 0) {
-    h+=`<div class="empty-msg" style="margin-top:8px">${s.open_positions} open position${s.open_positions>1?'s':''} (synced from bot)</div>`;
+  } else if(s.open_positions>0){
+    h+=`<div class="empty-msg" style="margin-top:8px">${s.open_positions} open position${s.open_positions>1?'s':''}</div>`;
   } else h+='<div class="empty-msg" style="margin-top:8px">No open positions</div>';
-  if(usePublic) {
-    const syncTime = cb.updated_at || pp.updated_at;
-    if(syncTime) h+=`<div style="font-family:var(--mono);font-size:10px;color:var(--text3);margin-top:6px">Last sync: ${new Date(syncTime).toLocaleString()}</div>`;
+  const closedTrades=cb.closed_trades||[];
+  if(closedTrades.length>0){
+    h+='<div style="font-family:var(--mono);font-size:11px;margin-top:10px"><div style="color:var(--text3);margin-bottom:4px">RECENT TRADES</div>';
+    for(const t of closedTrades.slice(-5).reverse()){
+      const pnl=parseFloat(t.pnl||0);
+      h+=`<div style="display:flex;justify-content:space-between;gap:8px;padding:3px 0;border-bottom:1px solid var(--border)">
+        <span class="sym">${(t.symbol||'').replace('/USDT','')}</span>
+        <span class="${(t.direction||'').toUpperCase()==='LONG'?'pos':'neg'}">${(t.direction||'').toUpperCase()}</span>
+        <span class="${pnl>=0?'pos':'neg'}">${pnl>=0?'+':''}$${fmt(pnl)}</span>
+      </div>`;
+    }
+    h+='</div>';
   }
+  const syncTime=scanData?.received_at||scanData?.timestamp||cb.updated_at||pp.updated_at;
+  if(syncTime) h+=`<div style="font-family:var(--mono);font-size:10px;color:var(--text3);margin-top:6px">Last sync: ${new Date(syncTime).toLocaleString()}</div>`;
   el.innerHTML=h;
 }
 

@@ -30,23 +30,55 @@ let latestPortfolio = null; // { equity, open_count, net_pnl, total_trades, win_
  * GET /api/bot/sync/scan
  * Dashboard fetches latest scan data (no auth required — data is public market info).
  */
-router.get('/scan', (req, res) => {
-  if (!latestScan) {
-    return res.json({ scan: null, message: 'No scan data yet. Run /scan in Telegram.' });
+router.get('/scan', async (req, res) => {
+  if (latestScan) {
+    return res.json({ scan: latestScan });
   }
-  res.json({ scan: latestScan });
+  // Cold start: try to load from DB
+  try {
+    const [rows] = await pool.execute('SELECT scan_json, updated_at FROM scan_cache WHERE id = 1');
+    if (rows.length > 0 && rows[0].scan_json) {
+      latestScan = JSON.parse(rows[0].scan_json);
+      return res.json({ scan: latestScan });
+    }
+  } catch (err) {
+    console.error('Scan cache load error:', err.message);
+  }
+  return res.json({ scan: null, message: 'No scan data yet. Run /scan in Telegram.' });
 });
 
 /**
  * GET /api/bot/sync/portfolio-summary
  * Dashboard fetches bot portfolio summary (no auth required — shows synced data).
+ * Priority: in-memory cache → scan circuit_breaker → DB fallback
  */
 router.get('/portfolio-summary', async (req, res) => {
   // Return cached in-memory summary if available
   if (latestPortfolio) {
     return res.json({ portfolio: latestPortfolio });
   }
-  // Fallback: try to read from DB (latest equity snapshot for any user)
+  // Try to build from persisted scan data (circuit_breaker has live exchange data)
+  if (!latestScan) {
+    try {
+      const [rows] = await pool.execute('SELECT scan_json FROM scan_cache WHERE id = 1');
+      if (rows.length > 0 && rows[0].scan_json) {
+        latestScan = JSON.parse(rows[0].scan_json);
+      }
+    } catch (err) { /* ignore */ }
+  }
+  const cb = latestScan?.circuit_breaker;
+  if (cb && (cb.equity != null || cb.total_trades != null)) {
+    latestPortfolio = {
+      equity: cb.equity || 0,
+      open_count: cb.open_count || 0,
+      net_pnl: cb.net_pnl || 0,
+      total_trades: cb.total_trades || 0,
+      win_rate: cb.win_rate || 0,
+      updated_at: latestScan.received_at || latestScan.timestamp || new Date().toISOString()
+    };
+    return res.json({ portfolio: latestPortfolio });
+  }
+  // Final fallback: read from DB
   try {
     const [snapRows] = await pool.execute(
       'SELECT equity, snapshot_at FROM equity_snapshots ORDER BY snapshot_at DESC LIMIT 1'
@@ -229,6 +261,27 @@ router.post('/scan', async (req, res) => {
       ...req.body,
       received_at: new Date().toISOString(),
     };
+    // Persist to DB so it survives cold starts
+    try {
+      await pool.execute(
+        'REPLACE INTO scan_cache (id, scan_json) VALUES (1, ?)',
+        [JSON.stringify(latestScan)]
+      );
+    } catch (dbErr) {
+      console.error('Scan cache write error:', dbErr.message);
+    }
+    // Update portfolio summary from circuit_breaker if present
+    const cb = latestScan.circuit_breaker;
+    if (cb && (cb.equity != null || cb.total_trades != null)) {
+      latestPortfolio = {
+        equity: cb.equity || 0,
+        open_count: cb.open_count || 0,
+        net_pnl: cb.net_pnl || 0,
+        total_trades: cb.total_trades || 0,
+        win_rate: cb.win_rate || 0,
+        updated_at: latestScan.received_at,
+      };
+    }
     res.json({ ok: true });
   } catch (err) {
     console.error('Scan sync error:', err.message);

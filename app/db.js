@@ -28,6 +28,7 @@ class MemoryDB {
     this._nextUserId = 1;
     this._nextTradeId = 1;
     this._nextSnapId = 1;
+    this.scanCache = null; // { scan_json, updated_at }
   }
 
   // Minimal query interface matching mysql2 pool.execute() return format
@@ -191,6 +192,16 @@ class MemoryDB {
       return [[{ wins }], []];
     }
 
+    // -- SCAN CACHE --
+    if (cmd.includes('REPLACE INTO SCAN_CACHE') || (cmd.includes('INSERT') && cmd.includes('SCAN_CACHE'))) {
+      this.scanCache = { id: 1, scan_json: params[0], updated_at: new Date() };
+      return [{ affectedRows: 1 }, []];
+    }
+
+    if (cmd.includes('FROM SCAN_CACHE')) {
+      return [this.scanCache ? [this.scanCache] : [], []];
+    }
+
     return [[], []];
   }
 }
@@ -243,6 +254,13 @@ async function migrate() {
         equity DECIMAL(14,2) NOT NULL,
         snapshot_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         INDEX idx_user_snap (user_id, snapshot_at)
+      )
+    `);
+    await pool.execute(`
+      CREATE TABLE IF NOT EXISTS scan_cache (
+        id INT PRIMARY KEY DEFAULT 1,
+        scan_json LONGTEXT NOT NULL,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
       )
     `);
   }

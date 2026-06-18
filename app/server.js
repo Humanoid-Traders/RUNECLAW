@@ -1,14 +1,20 @@
 const crypto = require('crypto');
 
-// Auto-generate secrets for ephemeral/demo deployments if not set.
-// In production, these MUST be set via environment variables.
+// Auto-generate JWT_SECRET ONLY in ephemeral/dev mode.
+// In production (or any deployment without EPHEMERAL=true), JWT_SECRET MUST be set
+// via environment variables. auth.js will refuse to start if it's missing or < 32 chars.
 if (!process.env.JWT_SECRET) {
-  process.env.JWT_SECRET = crypto.randomBytes(48).toString('hex');
-  console.log('WARNING: JWT_SECRET auto-generated (ephemeral). Set it in env for persistent auth.');
+  if (process.env.EPHEMERAL === 'true' || process.env.NODE_ENV !== 'production') {
+    process.env.JWT_SECRET = crypto.randomBytes(48).toString('hex');
+    console.log('WARNING: JWT_SECRET auto-generated (ephemeral). Set it in env for persistent auth.');
+    console.log('NOTE: This is only safe for single-process deployments. In clustered/multi-replica setups, all processes must share the same JWT_SECRET.');
+  }
+  // If production without EPHEMERAL=true, let auth.js enforce the fatal exit.
 }
 if (!process.env.BOT_SYNC_SECRET) {
-  process.env.BOT_SYNC_SECRET = crypto.randomBytes(48).toString('hex');
-  console.log('WARNING: BOT_SYNC_SECRET auto-generated (ephemeral). Set it in env for bot sync.');
+  // Deterministic sync secret so the bot can match it across cold starts.
+  // Override with BOT_SYNC_SECRET env var in production.
+  process.env.BOT_SYNC_SECRET = 'nAJuMDCeT-lpoPsmyNCig47DcIbNZ_UnyRpfIirDiGB_CgrHhJmw5NIYq3PYupbg';
 }
 
 const express = require('express');

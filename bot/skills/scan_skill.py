@@ -19,6 +19,146 @@ from bot.formatters.rich_cards import (
 log = logging.getLogger("runeclaw.scan_skill")
 
 
+# ── Live exchange data fetcher ───────────────────────────────────
+
+def _fetch_live_exchange_data() -> Optional[dict]:
+    """Fetch real account balance, positions, and trade history from Bitget.
+    Returns dict with equity, net_pnl, win_rate, total_trades, open_count,
+    open_positions, closed_trades. Returns None on failure.
+    """
+    import json, os
+
+    result = {
+        "equity": 0, "net_pnl": 0, "win_rate": 0,
+        "total_trades": 0, "open_count": 0,
+        "open_positions": [], "closed_trades": [],
+    }
+
+    # 1. Read closed trades from disk (bot's trade log)
+    trades_file = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "closed_trades.json"
+    )
+    # Also check parent directory
+    if not os.path.exists(trades_file):
+        trades_file = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+            "closed_trades.json"
+        )
+
+    closed_trades = []
+    if os.path.exists(trades_file):
+        try:
+            with open(trades_file) as f:
+                closed_trades = json.load(f)
+            if isinstance(closed_trades, dict):
+                closed_trades = closed_trades.get("trades", [])
+        except Exception as exc:
+            log.warning("Failed to read closed_trades.json: %s", exc)
+
+    total = len(closed_trades)
+    total_pnl = sum(float(t.get("net_pnl", t.get("pnl", 0)) or 0) for t in closed_trades)
+    wins = sum(1 for t in closed_trades if float(t.get("net_pnl", t.get("pnl", 0)) or 0) > 0)
+    win_rate = (wins / total * 100) if total > 0 else 0
+
+    # Format closed trades for dashboard (last 20)
+    for t in closed_trades[-20:]:
+        result["closed_trades"].append({
+            "symbol": t.get("symbol", ""),
+            "direction": t.get("direction", t.get("side", "")),
+            "entry_price": float(t.get("entry_price", t.get("entry", 0)) or 0),
+            "exit_price": float(t.get("exit_price", t.get("exit", 0)) or 0),
+            "pnl": float(t.get("net_pnl", t.get("pnl", 0)) or 0),
+            "closed_at": t.get("closed_at", t.get("timestamp", "")),
+        })
+
+    # 2. Fetch real balance + positions from Bitget via ccxt (sync)
+    try:
+        import ccxt as ccxt_sync
+        exchange = ccxt_sync.bitget({
+            "apiKey": os.getenv("BITGET_API_KEY", ""),
+            "secret": os.getenv("BITGET_API_SECRET", ""),
+            "password": os.getenv("BITGET_PASSPHRASE", ""),
+            "timeout": 15000,
+            "enableRateLimit": True,
+            "options": {
+                "defaultType": "swap",
+                "uta": True,  # Unified Trading Account mode
+            },
+        })
+
+        # Fetch balance (try multiple approaches for UTA compatibility)
+        try:
+            bal = exchange.fetch_balance({"type": "swap", "productType": "USDT-FUTURES"})
+        except Exception:
+            try:
+                bal = exchange.fetch_balance({"type": "swap"})
+            except Exception:
+                bal = exchange.fetch_balance()
+
+        usdt = bal.get("USDT", {})
+        if isinstance(usdt, dict):
+            equity = float(usdt.get("total", 0) or 0)
+        else:
+            equity = float(usdt or 0)
+        if equity == 0:
+            equity = float(bal.get("total", {}).get("USDT", 0) or 0)
+
+        # Fetch open positions (try with and without productType)
+        try:
+            positions = exchange.fetch_positions(params={"productType": "USDT-FUTURES"})
+        except Exception:
+            try:
+                positions = exchange.fetch_positions()
+            except Exception:
+                positions = []
+        open_pos = [p for p in positions if abs(float(p.get("contracts", 0) or 0)) > 0]
+
+        unrealized_pnl = 0
+        for p in open_pos:
+            upnl = float(p.get("unrealizedPnl", 0) or 0)
+            unrealized_pnl += upnl
+            result["open_positions"].append({
+                "symbol": p.get("symbol", "").replace(":USDT", "").replace("/", ""),
+                "direction": (p.get("side", "") or "").upper(),
+                "entry_price": float(p.get("entryPrice", 0) or 0),
+                "contracts": float(p.get("contracts", 0) or 0),
+                "notional": float(p.get("notional", 0) or 0),
+                "unrealized_pnl": round(upnl, 2),
+                "margin": float(p.get("initialMargin", p.get("collateral", 0)) or 0),
+                "leverage": p.get("leverage", ""),
+            })
+
+        result["equity"] = round(equity, 2)
+        result["net_pnl"] = round(total_pnl + unrealized_pnl, 2)
+        result["win_rate"] = round(win_rate, 1)
+        result["total_trades"] = total
+        result["open_count"] = len(open_pos)
+
+        log.info("Live data: equity=$%.2f, pnl=$%.2f, %d trades (%d wins), %d open",
+                 equity, total_pnl, total, wins, len(open_pos))
+        return result
+
+    except ImportError:
+        log.warning("ccxt not available for sync exchange fetch")
+        # Still return trade file data with 0 equity
+        if total > 0:
+            result["net_pnl"] = round(total_pnl, 2)
+            result["win_rate"] = round(win_rate, 1)
+            result["total_trades"] = total
+            return result
+        return None
+    except Exception as exc:
+        log.warning("Exchange fetch failed: %s", exc)
+        # Still return trade file data
+        if total > 0:
+            result["net_pnl"] = round(total_pnl, 2)
+            result["win_rate"] = round(win_rate, 1)
+            result["total_trades"] = total
+            return result
+        return None
+
+
 # ── Dashboard sync helper ─────────────────────────────────────────
 
 def _build_scan_payload(results: list[dict], engine=None) -> dict:
@@ -46,14 +186,37 @@ def _build_scan_payload(results: list[dict], engine=None) -> dict:
             regime["label"] = "NEUTRAL"
             regime["score"] = (btc["rsi"] - 50) / 50
 
-    # ── Circuit breaker from engine ──
+    # ── Circuit breaker from engine + real exchange data ──
     cb_rules = []
     cb_equity = 0
     cb_net_pnl = 0
     cb_win_rate = 0
     cb_total_trades = 0
     cb_open_count = 0
-    if engine:
+    cb_open_positions = []  # Actual position details for dashboard
+    cb_closed_trades = []   # Recent closed trades for dashboard
+
+    # Try to get REAL exchange data first (live mode)
+    live_data_loaded = False
+    if not CONFIG.simulation_mode and CONFIG.live_trading_enabled:
+        try:
+            live_data = _fetch_live_exchange_data()
+            if live_data:
+                cb_equity = live_data["equity"]
+                cb_net_pnl = live_data["net_pnl"]
+                cb_win_rate = live_data["win_rate"]
+                cb_total_trades = live_data["total_trades"]
+                cb_open_count = live_data["open_count"]
+                cb_open_positions = live_data.get("open_positions", [])
+                cb_closed_trades = live_data.get("closed_trades", [])
+                live_data_loaded = True
+                log.info("Live exchange data loaded: equity=$%.2f, %d trades, %d open",
+                         cb_equity, cb_total_trades, cb_open_count)
+        except Exception as exc:
+            log.warning("Failed to fetch live exchange data, falling back to paper: %s", exc)
+
+    # Fallback to paper portfolio if live data not available
+    if engine and not live_data_loaded:
         try:
             from bot.risk.risk_engine import RiskEngine
             risk = engine.risk
@@ -68,13 +231,22 @@ def _build_scan_payload(results: list[dict], engine=None) -> dict:
             wins = sum(1 for t in history if getattr(t, 'net_pnl', 0) > 0)
             cb_win_rate = (wins / cb_total_trades * 100) if cb_total_trades > 0 else 0
             cb_net_pnl = sum(getattr(t, 'net_pnl', 0) for t in history)
+        except Exception as exc:
+            log.warning("Paper portfolio data unavailable: %s", exc)
+
+    if engine:
+        try:
+            risk = engine.risk
+            portfolio = engine.portfolio
+            state = portfolio.snapshot()
+            cb_active = risk.circuit_breaker_active
             cb_rules = [
                 {"label": "Circuit Breaker", "active": cb_active},
                 {"label": f"Daily PnL: ${state.daily_pnl:+.2f}", "active": state.daily_pnl < -state.equity_usd * 0.05},
-                {"label": f"Open Positions: {state.open_positions}/{CONFIG.risk.max_open_positions}", "active": state.open_positions >= CONFIG.risk.max_open_positions},
+                {"label": f"Open Positions: {cb_open_count}/{CONFIG.risk.max_open_positions}", "active": cb_open_count >= CONFIG.risk.max_open_positions},
             ]
         except Exception as exc:
-            log.warning("CB data unavailable: %s", exc)
+            log.warning("CB rules unavailable: %s", exc)
 
     # ── Symbols table ──
     symbols = {}
@@ -180,6 +352,9 @@ def _build_scan_payload(results: list[dict], engine=None) -> dict:
             "win_rate": round(cb_win_rate, 1),
             "total_trades": cb_total_trades,
             "open_count": cb_open_count,
+            "open_positions": cb_open_positions,
+            "closed_trades": cb_closed_trades,
+            "live_mode": not CONFIG.simulation_mode and CONFIG.live_trading_enabled,
         },
         "symbols": symbols,
         "entry_cards": entry_cards,
