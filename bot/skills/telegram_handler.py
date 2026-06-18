@@ -2128,11 +2128,7 @@ class TelegramHandler:
             if alert.alert_type == "TRADE_SIGNAL" and alert.idea is not None:
                 for cid in list(self.monitor._enabled_chats):
                     try:
-                        # Gather scan data for the card
-                        sd = {}
-                        if hasattr(alert, 'data') and alert.data:
-                            sd = alert.data
-                        await _signal_card_fn(cid, alert.idea, rank=1, scan_data=sd)
+                        await _signal_card_fn(cid, alert.idea, rank=1)
                     except Exception:
                         pass
                 # Forward to marketing channels

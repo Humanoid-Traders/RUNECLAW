@@ -254,7 +254,67 @@ def signal_card_from_idea(idea, rank: int = 1, scan_data: Optional[Dict] = None)
     Returns:
         PNG bytes
     """
+    import re as _re
     sd = scan_data or {}
+
+    # Extract RSI from idea reasoning if not in scan_data
+    rsi = sd.get("rsi", 0)
+    if not rsi and hasattr(idea, "reasoning") and idea.reasoning:
+        m = _re.search(r'RSI[=:\s]+(\d+\.?\d*)', idea.reasoning, _re.IGNORECASE)
+        if m:
+            rsi = float(m.group(1))
+
+    # Extract pattern from reasoning
+    pattern = sd.get("pattern", "")
+    if not pattern and hasattr(idea, "reasoning") and idea.reasoning:
+        # Look for common patterns mentioned
+        _patterns = [
+            "Double Bottom", "Double Top", "Head & Shoulders", "Inverse H&S",
+            "Bull Flag", "Bear Flag", "Ascending Triangle", "Descending Triangle",
+            "Cup & Handle", "Falling Wedge", "Rising Wedge", "Breakout",
+            "Pullback", "Liquidity Sweep", "Elliott Wave",
+        ]
+        reasoning_lower = idea.reasoning.lower()
+        for p in _patterns:
+            if p.lower() in reasoning_lower:
+                pattern = p
+                break
+
+    # Extract volume info
+    vol_x = sd.get("volume_x", sd.get("vol_spike", 0))
+    if not vol_x and hasattr(idea, "reasoning") and idea.reasoning:
+        m = _re.search(r'vol[_\s]*spike[=:\s]*([\d.]+)', idea.reasoning, _re.IGNORECASE)
+        if m:
+            vol_x = float(m.group(1))
+        else:
+            m = _re.search(r'Vol\s+([\d.]+)x', idea.reasoning)
+            if m:
+                vol_x = float(m.group(1))
+
+    # Extract regime/mode for summary
+    regime = ""
+    if hasattr(idea, "reasoning") and idea.reasoning:
+        m = _re.search(r'Regime[=:\s]*(\w+)', idea.reasoning, _re.IGNORECASE)
+        if m:
+            regime = m.group(1)
+
+    # Build summary line
+    summary = sd.get("summary", "")
+    if not summary:
+        dir_str = idea.direction.value if hasattr(idea.direction, "value") else str(idea.direction)
+        parts = [f"{dir_str} bias"]
+        if rsi:
+            parts.append(f"RSI {rsi:.1f}")
+        conf = idea.confidence
+        if conf <= 1:
+            conf *= 100
+        parts.append(f"Score {conf:.0f}%")
+        if vol_x:
+            parts.append(f"Vol {vol_x:.1f}x avg")
+        if regime:
+            parts.append(regime)
+        summary = " | ".join(parts)
+
     data = {
         "rank": rank,
         "symbol": idea.asset,
@@ -265,10 +325,10 @@ def signal_card_from_idea(idea, rank: int = 1, scan_data: Optional[Dict] = None)
         "tp2": sd.get("tp2", 0),
         "margin_usd": sd.get("margin_usd", sd.get("position_size_usd", 0)),
         "rr": idea.risk_reward_ratio if hasattr(idea, "risk_reward_ratio") else 0,
-        "pattern": sd.get("pattern", ""),
-        "rsi": sd.get("rsi", 0),
+        "pattern": pattern,
+        "rsi": rsi,
         "confidence": idea.confidence,
-        "volume_x": sd.get("volume_x", sd.get("vol_spike", 0)),
-        "summary": sd.get("summary", ""),
+        "volume_x": vol_x,
+        "summary": summary,
     }
     return render_signal_card(data)
