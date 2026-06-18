@@ -332,3 +332,211 @@ def signal_card_from_idea(idea, rank: int = 1, scan_data: Optional[Dict] = None)
         "summary": summary,
     }
     return render_signal_card(data)
+
+
+# ═══════════════════════════════════════════════════════════════════
+# POSITION CARD — styled PNG for open/closed position monitoring
+# ═══════════════════════════════════════════════════════════════════
+
+def render_position_card(data: Dict[str, Any]) -> bytes:
+    """Render a live position status as a styled PNG card.
+
+    Args:
+        data: Dict with keys:
+            - symbol: str (e.g. "GRASS/USDT")
+            - direction: str ("LONG" or "SHORT")
+            - is_live: bool
+            - entry: float
+            - now: float (current price)
+            - pnl_pct: float (e.g. -0.17)
+            - pnl_usd: float (e.g. -0.87)
+            - net_pnl: float (after fees)
+            - fees: float
+            - size_usd: float
+            - leverage: float
+            - hold_time: str (e.g. "2m", "1.4h")
+            - rr: float (R:R ratio)
+            - sl: float
+            - tp: float
+            - sl_pct: float (distance %)
+            - tp_pct: float (distance %)
+            - sl_status: str ("on exchange" or "bot-managed")
+            - tp_status: str
+            - rsi: float (optional)
+            - rsi_label: str (optional, "oversold"/"neutral"/"overbought")
+            - structure: str (optional, trend narrative)
+
+    Returns:
+        PNG bytes
+    """
+    try:
+        from PIL import Image, ImageDraw, ImageFont
+    except ImportError:
+        log.warning("Pillow not installed, cannot render position card")
+        return b""
+
+    W, H = 520, 480
+    PAD = 20
+
+    img = Image.new("RGB", (W, H), _BG)
+    draw = ImageDraw.Draw(img)
+
+    def _font(size: int, bold: bool = False):
+        for path in [
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold
+            else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf" if bold
+            else "/usr/share/fonts/TTF/DejaVuSans.ttf",
+        ]:
+            try:
+                return ImageFont.truetype(path, size)
+            except (OSError, IOError):
+                continue
+        return ImageFont.load_default()
+
+    f_title = _font(20, bold=True)
+    f_label = _font(10)
+    f_value = _font(14, bold=True)
+    f_big = _font(18, bold=True)
+    f_small = _font(10)
+    f_badge = _font(12, bold=True)
+
+    # ── Extract data ──
+    symbol = data.get("symbol", "???").replace("/USDT", "").replace(":USDT", "")
+    direction = data.get("direction", "LONG").upper()
+    is_live = data.get("is_live", True)
+    entry = data.get("entry", 0)
+    now_px = data.get("now", 0)
+    pnl_pct = data.get("pnl_pct", 0)
+    pnl_usd = data.get("pnl_usd", 0)
+    net_pnl = data.get("net_pnl", 0)
+    fees = data.get("fees", 0)
+    size_usd = data.get("size_usd", 0)
+    leverage = data.get("leverage", 1)
+    hold_time = data.get("hold_time", "")
+    rr = data.get("rr", 0)
+    sl = data.get("sl", 0)
+    tp = data.get("tp", 0)
+    sl_pct = data.get("sl_pct", 0)
+    tp_pct = data.get("tp_pct", 0)
+    sl_status = data.get("sl_status", "")
+    tp_status = data.get("tp_status", "")
+    rsi = data.get("rsi", 0)
+    rsi_label = data.get("rsi_label", "")
+    structure = data.get("structure", "")
+
+    is_long = direction == "LONG"
+    dir_color = _GREEN if is_long else _RED
+    pnl_positive = net_pnl >= 0
+    pnl_color = _GREEN if pnl_positive else _RED
+
+    def _fmt(price: float) -> str:
+        if price == 0:
+            return "—"
+        if price >= 100:
+            return f"{price:,.2f}"
+        elif price >= 1:
+            return f"{price:.4f}"
+        elif price >= 0.01:
+            return f"{price:.5f}"
+        else:
+            return f"{price:.6f}"
+
+    y = PAD
+
+    # ── Accent stripe ──
+    stripe_color = _GREEN if pnl_positive else _RED
+    draw.rectangle([0, 0, W, 4], fill=stripe_color)
+
+    # ── Header: SYMBOL  [LONG]  LIVE ──
+    draw.text((PAD, y), symbol, fill=_WHITE, font=f_title)
+    sym_w = draw.textlength(symbol, font=f_title)
+
+    badge_x = PAD + sym_w + 12
+    badge_text = f" {direction} "
+    badge_tw = draw.textlength(badge_text, font=f_badge)
+    draw.rounded_rectangle(
+        [badge_x, y + 2, badge_x + badge_tw + 4, y + 22],
+        radius=4, fill=dir_color)
+    draw.text((badge_x + 2, y + 5), badge_text, fill=(0, 0, 0), font=f_badge)
+
+    if is_live:
+        live_x = badge_x + badge_tw + 16
+        draw.text((live_x, y + 5), "LIVE", fill=_GREEN, font=f_badge)
+
+    y += 34
+
+    # ── PnL Hero Row ──
+    pnl_sign = "+" if pnl_pct >= 0 else ""
+    pnl_text = f"{pnl_sign}{pnl_pct:.2f}%"
+    draw.text((PAD, y), pnl_text, fill=pnl_color, font=_font(28, bold=True))
+    pnl_w = draw.textlength(pnl_text, font=_font(28, bold=True))
+
+    usd_text = f"  (${net_pnl:+,.2f})"
+    draw.text((PAD + pnl_w, y + 8), usd_text, fill=pnl_color, font=f_value)
+
+    y += 42
+
+    # ── Separator ──
+    draw.line([(PAD, y), (W - PAD, y)], fill=_BORDER, width=1)
+    y += 12
+
+    # ── Entry / Now row ──
+    CELL_W = (W - PAD * 3) // 2
+    CELL_H = 52
+    GAP = 10
+
+    def _cell(x, cy, label, value, color=_WHITE, w=CELL_W):
+        draw.rounded_rectangle([x, cy, x + w, cy + CELL_H],
+                               radius=6, fill=_CARD_BG, outline=_BORDER)
+        draw.text((x + 10, cy + 6), label, fill=_GRAY, font=f_label)
+        draw.text((x + 10, cy + 24), value, fill=color, font=f_value)
+
+    c1 = PAD
+    c2 = PAD + CELL_W + GAP
+
+    _cell(c1, y, "ENTRY", _fmt(entry))
+    _cell(c2, y, "NOW", _fmt(now_px), pnl_color)
+    y += CELL_H + GAP
+
+    # ── SL / TP row ──
+    sl_text = f"{_fmt(sl)}  ({sl_pct:.1f}%)" if sl else "—"
+    tp_text = f"{_fmt(tp)}  ({tp_pct:.1f}%)" if tp else "—"
+    _cell(c1, y, f"STOP LOSS  {sl_status}", sl_text, _RED)
+    _cell(c2, y, f"TAKE PROFIT  {tp_status}", tp_text, _GREEN)
+    y += CELL_H + GAP
+
+    # ── Size / Hold / R:R / Fees row ──
+    lev_str = f" | {leverage:.0f}x" if leverage > 1 else ""
+    _cell(c1, y, "SIZE", f"${size_usd:,.2f}{lev_str}")
+    rr_str = f"{rr:.1f}x" if rr else "—"
+    _cell(c2, y, "R:R | HOLD", f"{rr_str} | {hold_time}")
+    y += CELL_H + GAP
+
+    # ── Net PnL + Fees row ──
+    net_text = f"${net_pnl:+,.2f}"
+    fees_text = f"fees ${fees:.2f}"
+    full_w = W - PAD * 2
+    _cell(c1, y, "NET PnL", f"{net_text}  ({fees_text})", pnl_color, w=full_w)
+    y += CELL_H + GAP + 4
+
+    # ── Market context line ──
+    if rsi:
+        ctx_parts = [f"RSI {rsi:.0f} ({rsi_label})"]
+        if structure:
+            ctx_parts.append(structure)
+        ctx_text = " | ".join(ctx_parts)
+        draw.text((PAD, y), ctx_text, fill=_GRAY, font=f_small)
+        y += 18
+
+    # ── Bottom stripe ──
+    draw.rectangle([0, H - 4, W, H], fill=stripe_color)
+
+    # ── Watermark ──
+    wm = "RUNECLAW"
+    wm_w = draw.textlength(wm, font=f_small)
+    draw.text((W - PAD - wm_w, H - 20), wm, fill=_DIM, font=f_small)
+
+    buf = io.BytesIO()
+    img.save(buf, format="PNG", optimize=True)
+    return buf.getvalue()

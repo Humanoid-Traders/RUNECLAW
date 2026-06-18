@@ -4051,7 +4051,45 @@ class TelegramHandler:
                     InlineKeyboardButton("Refresh", callback_data=f"pos_details_{btn_id}"),
                 ]])
 
-                # Try to attach a position chart
+                # ── Render styled position card PNG ──
+                pos_card_png = None
+                try:
+                    from bot.formatters.signal_card import render_position_card
+                    pos_card_data = {
+                        "symbol": symbol,
+                        "direction": _dir,
+                        "is_live": is_live_pos,
+                        "entry": _entry,
+                        "now": last_px,
+                        "pnl_pct": pnl_pct,
+                        "pnl_usd": pnl_usd,
+                        "net_pnl": net_pnl,
+                        "fees": total_fees + funding_paid,
+                        "size_usd": sz,
+                        "leverage": leverage,
+                        "hold_time": hold_str,
+                        "rr": rr_live,
+                        "sl": _sl,
+                        "tp": _tp,
+                        "sl_pct": sl_dist,
+                        "tp_pct": tp_dist,
+                        "sl_status": sl_tag,
+                        "tp_status": tp_tag,
+                    }
+                    if adata:
+                        pos_card_data["rsi"] = adata.get("rsi", 0)
+                        rsi_val = adata.get("rsi", 0)
+                        pos_card_data["rsi_label"] = (
+                            "overbought" if rsi_val > 70
+                            else "oversold" if rsi_val < 30
+                            else "neutral"
+                        )
+                        pos_card_data["structure"] = adata.get("structure", "")
+                    pos_card_png = render_position_card(pos_card_data)
+                except Exception as exc:
+                    system_log.debug("Position card render failed: %s", exc)
+
+                # Try to build a position chart
                 chart_png = None
                 try:
                     from bot.skills.chart_renderer import build_position_chart
@@ -4060,9 +4098,20 @@ class TelegramHandler:
                 except Exception:
                     pass
 
-                if chart_png:
+                if pos_card_png:
+                    # Send the styled position card as a photo with buttons
+                    mode_tag = "LIVE" if is_live_pos else "PAPER"
+                    cap = (f"<b>{html.escape(pair)}</b> {mode_tag}\n"
+                           f"{d_emoji} {_dir} | {pnl_emoji} {pnl_pct:+.2f}% (${pnl_usd:+,.2f})")
+                    await self._send_photo(update, pos_card_png, cap, reply_markup=kb)
+                    # Also send chart below if available
+                    if chart_png:
+                        chart_cap = (f"<b>{html.escape(pair)}</b> · 1h\n"
+                                     f"Entry <code>{_entry:,.6f}</code> | "
+                                     f"Now <code>{last_px:,.6f}</code>")
+                        await self._send_photo(update, chart_png, chart_cap)
+                elif chart_png:
                     card_text = "\n".join(lines)
-                    # Send text card first, then chart with buttons
                     await self._send(update, card_text, edit=True)
                     cap = (f"<b>{html.escape(pair)}</b> · 1h\n"
                            f"Entry <code>{_entry:,.6f}</code> | Now <code>{last_px:,.6f}</code>\n"
