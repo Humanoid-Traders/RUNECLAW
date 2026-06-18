@@ -902,12 +902,53 @@ class TelegramHandler:
                 # Store intent-routed message in conversation memory
                 self.conversations.append(tg_id, "user", text,
                                            metadata={"intent": intent.skill})
+
+                # For analyze_asset: track pending ideas so we can attach signal card
+                ids_before = set()
+                if intent.skill == "analyze_asset":
+                    ids_before = set(idea.id for idea in self.engine.pending_ideas)
+
                 try:
                     result = await skill.execute(self.engine, user_id=tg_id, **intent.kwargs)
                     # Store skill result as assistant message (truncated)
                     self.conversations.append(tg_id, "assistant",
                                                f"[{intent.skill}] executed successfully",
                                                metadata={"skill": intent.skill})
+
+                    # For analyze_asset: check if a new trade idea was created
+                    if intent.skill == "analyze_asset" and ids_before is not None:
+                        new_idea = None
+                        for idea in self.engine.pending_ideas:
+                            if idea.id not in ids_before:
+                                new_idea = idea
+                                break
+                        if new_idea:
+                            uid = update.effective_user.id if update.effective_user else ""
+                            kb = InlineKeyboardMarkup([[
+                                InlineKeyboardButton("Take it",
+                                    callback_data=f"confirm:{new_idea.id}:{uid}"),
+                                InlineKeyboardButton("Skip",
+                                    callback_data=f"reject:{new_idea.id}:{uid}"),
+                            ]])
+                            # Try to send signal card image
+                            card_sent = False
+                            try:
+                                from bot.formatters.signal_card import signal_card_from_idea
+                                png = signal_card_from_idea(new_idea, rank=1)
+                                if png:
+                                    pair = new_idea.asset.replace("/USDT", "")
+                                    d = new_idea.direction.value if hasattr(new_idea.direction, "value") else str(new_idea.direction)
+                                    cap = f"<b>{pair} {d}</b> | Conf {new_idea.confidence*100:.0f}%"
+                                    card_sent = await self._send_photo(update, png, cap, reply_markup=kb)
+                            except Exception:
+                                pass
+                            # Send text result (with or without card)
+                            if card_sent:
+                                await self._send(update, result)
+                            else:
+                                await self._send(update, result, reply_markup=kb)
+                            return
+
                     await self._send(update, result)
                 except Exception as exc:
                     await self._send(update,
