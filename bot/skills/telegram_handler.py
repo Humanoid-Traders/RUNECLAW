@@ -37,7 +37,7 @@ from bot.core.signal_tracker import SignalTracker
 from bot.llm.provider import BYOK, LLMConfig, LLMProvider, LLMTier, PROVIDER_CATALOG, DEFAULT_TIER_ROUTING, create_llm_client, llm_complete, resolve_tier_config
 from bot.skills.skill_registry import SkillRegistry, build_default_registry
 from bot.skills.scan_skill import cmd_scan as _scan_skill_handler, callback_confirm_reject as _scan_callback
-from bot.skills.user_middleware import cmd_link as _cmd_link, cmd_unlink as _cmd_unlink, cmd_me as _cmd_me
+from bot.skills.user_middleware import cmd_link as _cmd_link, cmd_unlink as _cmd_unlink, cmd_me as _cmd_me, cmd_sync as _cmd_sync
 from bot.utils.logger import audit, system_log
 from bot.utils.user_store import UserStore
 from bot.nlp.intent_router import IntentRouter
@@ -237,6 +237,7 @@ class TelegramHandler:
             ("stockscan", self._cmd_stockscan),
             # Multi-user commands
             ("link", _cmd_link), ("unlink", _cmd_unlink), ("me", _cmd_me),
+            ("sync", _cmd_sync),
         ]:
             app.add_handler(CommandHandler(cmd, handler))
         app.add_handler(CallbackQueryHandler(self._handle_callback))

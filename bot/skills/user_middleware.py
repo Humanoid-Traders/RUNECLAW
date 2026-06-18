@@ -209,6 +209,14 @@ async def cmd_link(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         )
         return
 
+    # Initial sync: push current portfolio state to website
+    try:
+        from bot.utils.website_sync import sync_in_background
+        portfolio = get_user_portfolio(user_id)
+        sync_in_background(user_id, portfolio.get("equity", 800), [], [])
+    except Exception as exc:
+        log.warning(f"Initial sync failed: {exc}")
+
     await update.message.reply_text(
         f"Linked successfully!\n\n"
         f"Account: {email}\n"
@@ -256,3 +264,35 @@ async def cmd_me(update: Update, context: ContextTypes.DEFAULT_TYPE,
         f"Notifications: <code>{'on' if s.notifications_on else 'off'}</code>",
         parse_mode="HTML",
     )
+
+
+# -- /sync command -----------------------------------------------------------
+
+@require_registered
+async def cmd_sync(update: Update, context: ContextTypes.DEFAULT_TYPE,
+                   uc: UserContext) -> None:
+    """Manually sync portfolio data to the website dashboard."""
+    try:
+        from bot.utils.website_sync import sync_portfolio
+        pf = uc.portfolio
+        positions = pf.get("positions", [])
+        history = pf.get("trade_history", [])
+        success = sync_portfolio(uc.user_id, pf["equity"], positions, history)
+        if success:
+            await update.message.reply_text(
+                "Dashboard synced.\n"
+                f"Equity: ${pf['equity']:.2f}\n"
+                f"Open positions: {len(positions)}\n"
+                f"Closed trades: {len(history)}\n\n"
+                f"View at: {REGISTER_URL}/dashboard",
+            )
+        else:
+            await update.message.reply_text(
+                "Sync failed. Please try again in a moment.",
+            )
+    except Exception as exc:
+        log.error(f"Sync command error: {exc}")
+        await update.message.reply_text(
+            "Sync failed. Please try again in a moment.",
+        )
+

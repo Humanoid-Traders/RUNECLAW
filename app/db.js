@@ -77,6 +77,17 @@ class MemoryDB {
     }
 
     // -- TRADES --
+    if (cmd.includes('DELETE FROM TRADES') && cmd.includes('USER_ID')) {
+      if (cmd.includes('LIMIT 1')) {
+        // Delete one open trade by symbol
+        const idx = this.trades.findIndex(t => t.user_id === params[0] && t.symbol === params[1] && t.status === 'OPEN');
+        if (idx >= 0) this.trades.splice(idx, 1);
+      } else {
+        this.trades = this.trades.filter(t => t.user_id !== params[0]);
+      }
+      return [{ affectedRows: 0 }, []];
+    }
+
     if (cmd.includes('INSERT INTO TRADES')) {
       const trade = { id: this._nextTradeId++ };
       // Parse based on param count
@@ -137,9 +148,19 @@ class MemoryDB {
     }
 
     // -- EQUITY SNAPSHOTS --
+    if (cmd.includes('DELETE FROM EQUITY_SNAPSHOTS')) {
+      this.snapshots = this.snapshots.filter(s => s.user_id !== params[0]);
+      return [{ affectedRows: 0 }, []];
+    }
+
     if (cmd.includes('INSERT INTO EQUITY_SNAPSHOTS')) {
       this.snapshots.push({ id: this._nextSnapId++, user_id: params[0], equity: params[1], snapshot_at: params[2] });
       return [{ insertId: this._nextSnapId - 1 }, []];
+    }
+
+    if (cmd.includes('FROM EQUITY_SNAPSHOTS') && cmd.includes('ORDER BY SNAPSHOT_AT DESC')) {
+      const rows = this.snapshots.filter(s => s.user_id === params[0]).sort((a, b) => new Date(b.snapshot_at) - new Date(a.snapshot_at)).slice(0, 1);
+      return [rows, []];
     }
 
     if (cmd.includes('FROM EQUITY_SNAPSHOTS')) {

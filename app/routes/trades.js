@@ -37,7 +37,13 @@ router.get('/stats', async (req, res) => {
     const totalTrades = parseInt(pnlRows[0].total_trades);
     const wins = parseInt(winRows[0].wins);
     const winRate = totalTrades > 0 ? (wins / totalTrades * 100) : 0;
-    const equity = 10000 + netPnl;
+
+    // Use latest synced equity snapshot if available
+    const [snapRows] = await pool.execute(
+      'SELECT equity FROM equity_snapshots WHERE user_id = ? ORDER BY snapshot_at DESC LIMIT 1',
+      [uid]
+    );
+    const equity = snapRows.length > 0 ? parseFloat(snapRows[0].equity) : (10000 + netPnl);
 
     // Compute Sharpe from trade returns
     let sharpe = 0;

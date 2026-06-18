@@ -31,6 +31,15 @@ function signToken(user) {
 }
 
 async function getUserEquity(userId) {
+  // Use latest synced equity snapshot if available
+  const [snapRows] = await pool.execute(
+    'SELECT equity FROM equity_snapshots WHERE user_id = ? ORDER BY snapshot_at DESC LIMIT 1',
+    [userId]
+  );
+  if (snapRows.length > 0) {
+    return parseFloat(snapRows[0].equity);
+  }
+  // Fallback: compute from trade PnL (for users who haven't synced yet)
   const [rows] = await pool.execute(
     'SELECT COALESCE(SUM(pnl), 0) as total_pnl FROM trades WHERE user_id = ? AND status = ?',
     [userId, 'CLOSED']
