@@ -996,10 +996,10 @@ class RunStrategySkill(BaseSkill):
     description = "Execute a strategy preset"
 
     PRESETS: dict[str, dict[str, Any]] = {
-        "btc dip sniper": {
-            "label": "BTC Dip Sniper", "icon": "\U0001f3af",
-            "desc": "BTC only \u2022 RSI &lt; 35 \u2022 TREND_DOWN \u2022 conf \u2265 70%",
-            "symbols": ["BTC/USDT"], "rsi_threshold": 35,
+        "dip sniper": {
+            "label": "Dip Sniper", "icon": "\U0001f3af",
+            "desc": "All pairs \u2022 RSI &lt; 35 \u2022 TREND_DOWN \u2022 conf \u2265 70%",
+            "symbols": None, "rsi_threshold": 35,
             "regime": "TREND_DOWN", "confidence_threshold": 0.70,
             "volume_spike_min": None, "sl_atr_mult": None, "tp_atr_mult": None,
         },
@@ -1026,7 +1026,7 @@ class RunStrategySkill(BaseSkill):
         },
     }
     ALIASES: dict[str, str] = {
-        "dip": "btc dip sniper", "momentum": "momentum hunter",
+        "dip": "dip sniper", "momentum": "momentum hunter",
         "scalp": "safe scalper", "scan all": "full scan",
     }
 
@@ -1905,7 +1905,7 @@ class ProScanSkill(BaseSkill):
         next_action_lines = []
         next_action_lines.append(f"\n🎯 <b>Next Best Action</b>")
         if ideas_found:
-            best_idea = ideas_found[0]
+            best_idea, _ = ideas_found[0]
             if best_idea.direction.value == "LONG":
                 next_action_lines.append(f"  Wait for confirmation above <code>${best_idea.entry_price:,.6g}</code> before entry.")
             else:

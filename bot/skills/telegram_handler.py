@@ -2784,7 +2784,7 @@ class TelegramHandler:
         """Shortcut for /run dip."""
         if not await self._guard(update, "run"):
             return
-        await self._send(update, "\u23f3 <i>Running BTC Dip Sniper...</i>")
+        await self._send(update, "\u23f3 <i>Running Dip Sniper (all symbols)...</i>")
         result = await self.registry.get("run_strategy").execute(
             self.engine, strategy="dip")
         await self._send(update, result)
