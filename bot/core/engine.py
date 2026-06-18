@@ -1153,18 +1153,24 @@ class RuneClawEngine:
                 audit(system_log, f"Reconciliation error: {exc}",
                       action="reconcile", result="ERROR")
 
-            # Detect orphaned exchange positions with no local record
-            # (e.g. from a timed-out-but-filled order)
+            # Adopt orphaned exchange positions with no local record
+            # (e.g. from a timed-out-but-filled order, manual trade, or
+            # local state loss). Runs every tick — not just on startup.
             try:
-                orphan_report = await self.live_executor.detect_untracked_positions()
-                if orphan_report.get("untracked"):
+                adopted = await self.live_executor.adopt_exchange_positions()
+                if adopted:
                     audit(system_log,
-                          f"Untracked exchange positions detected: {orphan_report['untracked']}",
-                          action="orphan_detect", result="WARNING",
-                          data=orphan_report)
+                          f"Adopted {len(adopted)} orphan positions: {adopted}",
+                          action="tick_adopt", result="OK",
+                          data={"adopted": adopted})
+                    if self._adopt_notify_callback:
+                        try:
+                            await self._adopt_notify_callback(adopted)
+                        except Exception:
+                            pass
             except Exception as exc:
-                audit(system_log, f"Orphan detection error: {exc}",
-                      action="orphan_detect", result="ERROR")
+                audit(system_log, f"Orphan adoption error: {exc}",
+                      action="tick_adopt", result="ERROR")
 
     @property
     def pending_ideas(self) -> list[TradeIdea]:
