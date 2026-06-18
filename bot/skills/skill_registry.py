@@ -194,35 +194,51 @@ class ScanMarketSkill(BaseSkill):
             return f"{_NEU} <b>SCANNER</b>\n\n<i>No signals detected.</i>"
 
         now = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
-        top = signals[:8]
+        top = signals[:10]
+
+        from bot.core.market_scanner import CATEGORY_META
+
         lines = [
             f"\U0001f50e <b>MARKET SCANNER</b>\n{SEP}",
             f"<i>\u23f0 {now}  \u2022  {len(signals)} pairs detected</i>\n",
         ]
-        lines.append("<pre>")
+
+        # Group by category
+        by_cat: dict[str, list] = {}
         for s in top:
-            arrow = _spark(s.change_pct_24h)
-            vol_m = s.volume_usd_24h / 1_000_000 if s.volume_usd_24h else 0
-            chg = f"{s.change_pct_24h:+.1f}%"
-            spike = " \U0001f4a5" if s.volume_spike else ""
-            # Build volume intensity mini-bar (1-4 blocks)
-            vol_lvl = min(int(vol_m / 10) + 1, 4)
-            vol_bar = "\u2588" * vol_lvl + "\u2591" * (4 - vol_lvl)
-            lines.append(
-                f" {arrow} {_esc(s.symbol):<10s}"
-                f"  ${s.price:<12,.2f}"
-                f"  {chg:>7}"
-                f"  {vol_bar} ${vol_m:,.0f}M{spike}"
-            )
-        lines.append("</pre>")
+            by_cat.setdefault(s.asset_category, []).append(s)
+
+        sorted_cats = sorted(by_cat.keys(),
+                             key=lambda c: CATEGORY_META.get(c, ("", 99))[1])
+
+        for cat in sorted_cats:
+            cat_icon = CATEGORY_META.get(cat, ("\U0001f4b0", 99))[0]
+            cat_sigs = by_cat[cat]
+            lines.append(f"{cat_icon} <b>{cat}</b>")
+            lines.append("<pre>")
+            for s in cat_sigs:
+                arrow = _spark(s.change_pct_24h)
+                vol_m = s.volume_usd_24h / 1_000_000 if s.volume_usd_24h else 0
+                chg = f"{s.change_pct_24h:+.1f}%"
+                spike = " \U0001f4a5" if s.volume_spike else ""
+                display_sym = s.symbol.replace(":USDT", "")
+                lines.append(
+                    f" {arrow} {_esc(display_sym):<12s}"
+                    f"  {_price(s.price):<12s}"
+                    f"  {chg:>7}"
+                    f"  ${vol_m:,.0f}M{spike}"
+                )
+            lines.append("</pre>")
 
         # Summary line
         bullish = sum(1 for s in top if s.change_pct_24h > 0)
         bearish = len(top) - bullish
         spikes = sum(1 for s in top if s.volume_spike)
-        lines.append(f"\n{_OK} {bullish} bullish  {_BAD} {bearish} bearish")
+        cats_found = len(by_cat)
+        lines.append(f"\n{_OK} {bullish} bullish  {_BAD} {bearish} bearish  \u2022  {cats_found} categories")
         if spikes:
             lines.append(f"\U0001f4a5 {spikes} volume spike{'s' if spikes != 1 else ''} detected")
+        lines.append(f"\n<i>\U0001f504 /mode all_markets \u2022 say \"deep scan\" for full analysis</i>")
         return "\n".join(lines)
 
 
