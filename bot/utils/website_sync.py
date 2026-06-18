@@ -21,6 +21,14 @@ WEBSITE_URL = os.getenv("WEBSITE_URL", "https://deryrgeb.mule.page")
 SYNC_SECRET = os.getenv("BOT_SYNC_SECRET", "runeclaw-sync-2026")
 
 
+def _attr(obj, key, default=None):
+    """Safely get attribute from Pydantic model or dict."""
+    if isinstance(obj, dict):
+        return obj.get(key, default)
+    val = getattr(obj, key, default)
+    return val if val is not None else default
+
+
 def _post(path: str, data: dict) -> Optional[dict]:
     """POST JSON to the website API. Returns response dict or None on error."""
     url = f"{WEBSITE_URL}{path}"
@@ -58,30 +66,30 @@ def sync_portfolio(user_id: int, equity: float,
     open_list = []
     for p in positions:
         open_list.append({
-            "symbol": getattr(p, "asset", None) or p.get("asset", ""),
-            "direction": str(getattr(p, "direction", None) or p.get("direction", "")).split(".")[-1],
-            "entry_price": float(getattr(p, "entry_price", 0) or p.get("entry_price", 0)),
-            "size_usd": float(getattr(p, "quantity", 0) or p.get("quantity", 0)) * float(getattr(p, "entry_price", 0) or p.get("entry_price", 0)),
-            "fees": float(getattr(p, "commission", 0) or p.get("commission", 0)),
-            "pattern": getattr(p, "pattern", None) or p.get("pattern"),
-            "stop_loss": float(getattr(p, "stop_loss", 0) or p.get("stop_loss", 0)),
-            "take_profit": float(getattr(p, "take_profit", 0) or p.get("take_profit", 0)),
-            "opened_at": str(getattr(p, "opened_at", None) or p.get("opened_at", "")),
+            "symbol": _attr(p, "asset", ""),
+            "direction": str(_attr(p, "direction", "")).split(".")[-1],
+            "entry_price": float(_attr(p, "entry_price", 0)),
+            "size_usd": float(_attr(p, "quantity", 0)) * float(_attr(p, "entry_price", 0)),
+            "fees": float(_attr(p, "commission", 0)),
+            "pattern": _attr(p, "pattern"),
+            "stop_loss": float(_attr(p, "stop_loss", 0)),
+            "take_profit": float(_attr(p, "take_profit", 0)),
+            "opened_at": str(_attr(p, "opened_at", "")),
         })
 
     closed_list = []
     for t in closed_trades:
         closed_list.append({
-            "symbol": getattr(t, "asset", None) or t.get("asset", ""),
-            "direction": str(getattr(t, "direction", None) or t.get("direction", "")).split(".")[-1],
-            "entry_price": float(getattr(t, "entry_price", 0) or t.get("entry_price", 0)),
-            "exit_price": float(getattr(t, "exit_price", 0) or t.get("exit_price", 0)),
-            "size_usd": float(getattr(t, "quantity", 0) or t.get("quantity", 0)) * float(getattr(t, "entry_price", 0) or t.get("entry_price", 0)),
-            "pnl": float(getattr(t, "pnl", 0) or t.get("pnl", 0)),
-            "fees": float(getattr(t, "commission", 0) or t.get("commission", 0)),
-            "pattern": getattr(t, "pattern", None) or t.get("pattern"),
-            "opened_at": str(getattr(t, "opened_at", None) or t.get("opened_at", "")),
-            "closed_at": str(getattr(t, "closed_at", None) or t.get("closed_at", "")),
+            "symbol": _attr(t, "asset", ""),
+            "direction": str(_attr(t, "direction", "")).split(".")[-1],
+            "entry_price": float(_attr(t, "entry_price", 0)),
+            "exit_price": float(_attr(t, "exit_price", 0)),
+            "size_usd": float(_attr(t, "quantity", 0)) * float(_attr(t, "entry_price", 0)),
+            "pnl": float(_attr(t, "pnl", 0)),
+            "fees": float(_attr(t, "commission", 0)),
+            "pattern": _attr(t, "pattern"),
+            "opened_at": str(_attr(t, "opened_at", "")),
+            "closed_at": str(_attr(t, "closed_at", "")),
         })
 
     result = _post("/api/bot/sync", {
@@ -101,21 +109,21 @@ def sync_portfolio(user_id: int, equity: float,
 def sync_trade_event(user_id: int, event: str, trade, equity: float) -> bool:
     """Push a single trade event (open/close) to the website."""
     trade_data = {
-        "symbol": getattr(trade, "asset", None) or trade.get("asset", ""),
-        "direction": str(getattr(trade, "direction", None) or trade.get("direction", "")).split(".")[-1],
-        "entry_price": float(getattr(trade, "entry_price", 0) or trade.get("entry_price", 0)),
-        "size_usd": float(getattr(trade, "quantity", 0) or trade.get("quantity", 0)) * float(getattr(trade, "entry_price", 0) or trade.get("entry_price", 0)),
-        "fees": float(getattr(trade, "commission", 0) or trade.get("commission", 0)),
-        "pattern": getattr(trade, "pattern", None) or trade.get("pattern"),
-        "stop_loss": float(getattr(trade, "stop_loss", 0) or trade.get("stop_loss", 0)),
-        "take_profit": float(getattr(trade, "take_profit", 0) or trade.get("take_profit", 0)),
+        "symbol": _attr(trade, "asset", ""),
+        "direction": str(_attr(trade, "direction", "")).split(".")[-1],
+        "entry_price": float(_attr(trade, "entry_price", 0)),
+        "size_usd": float(_attr(trade, "quantity", 0)) * float(_attr(trade, "entry_price", 0)),
+        "fees": float(_attr(trade, "commission", 0)),
+        "pattern": _attr(trade, "pattern"),
+        "stop_loss": float(_attr(trade, "stop_loss", 0)),
+        "take_profit": float(_attr(trade, "take_profit", 0)),
     }
 
     if event == "close":
-        trade_data["exit_price"] = float(getattr(trade, "exit_price", 0) or trade.get("exit_price", 0))
-        trade_data["pnl"] = float(getattr(trade, "pnl", 0) or trade.get("pnl", 0))
-        trade_data["opened_at"] = str(getattr(trade, "opened_at", None) or trade.get("opened_at", ""))
-        trade_data["closed_at"] = str(getattr(trade, "closed_at", None) or trade.get("closed_at", ""))
+        trade_data["exit_price"] = float(_attr(trade, "exit_price", 0))
+        trade_data["pnl"] = float(_attr(trade, "pnl", 0))
+        trade_data["opened_at"] = str(_attr(trade, "opened_at", ""))
+        trade_data["closed_at"] = str(_attr(trade, "closed_at", ""))
 
     result = _post("/api/bot/sync/trade-event", {
         "user_id": user_id,
@@ -147,6 +155,38 @@ def sync_event_in_background(user_id: int, event: str, trade, equity: float) -> 
     t = threading.Thread(
         target=sync_trade_event,
         args=(user_id, event, trade, equity),
+        daemon=True,
+    )
+    t.start()
+
+
+def sync_scan_data(scan_payload: dict) -> bool:
+    """Push scan results to the website dashboard.
+
+    scan_payload should match the dashboard's expected schema:
+    {
+        regime: { label, score, gate, long_short, funding },
+        circuit_breaker: { rules: [{ label, active }] },
+        symbols: { 'ADAUSDT': { book_ratio, book_side, status, status_label } },
+        entry_cards: [{ symbol, direction, score, entry, stop_loss, tp1, tp2,
+                        margin, rr, book_ratio, trigger, thesis }],
+        key_call: "HTML narrative string",
+        timestamp: "2026-06-18 11:28 CST"
+    }
+    """
+    result = _post("/api/bot/sync/scan", scan_payload)
+    if result and result.get("ok"):
+        log.info("Scan data synced to website dashboard")
+        return True
+    log.warning("Scan data sync failed")
+    return False
+
+
+def sync_scan_in_background(scan_payload: dict) -> None:
+    """Non-blocking scan data sync."""
+    t = threading.Thread(
+        target=sync_scan_data,
+        args=(scan_payload,),
         daemon=True,
     )
     t.start()

@@ -1925,6 +1925,48 @@ class ProScanSkill(BaseSkill):
             "\n".join(next_action_lines),
             risk_note,
         ]
+
+        # Push scan data to website dashboard
+        try:
+            from bot.skills.scan_skill import _build_scan_payload
+            from bot.utils.website_sync import sync_scan_in_background
+            # Convert signals to scan_skill format
+            scan_results = []
+            for sig in signals:
+                scan_results.append({
+                    "sym": sig.symbol,
+                    "price": sig.price,
+                    "dir": "LONG" if sig.change_pct_24h > 0 else "SHORT",
+                    "score": max(sig.momentum_score, 0),
+                    "rsi": 50.0,  # RSI computed per-asset above, but not stored on signal
+                    "atr": 0,
+                    "vol_ratio": sig.volume_usd_24h / 1_000_000 if sig.volume_usd_24h else 1.0,
+                    "patterns": [],
+                })
+            payload = _build_scan_payload(scan_results, engine)
+            # Enhance with ideas if available
+            if ideas_found:
+                for idea, idea_rsi in ideas_found:
+                    sym_key = idea.asset.replace("/", "")
+                    atr_val = abs(idea.entry_price - idea.stop_loss) / 2.5
+                    payload["entry_cards"].append({
+                        "symbol": idea.asset.replace("/USDT", ""),
+                        "direction": idea.direction.value,
+                        "score": idea.confidence,
+                        "entry": str(idea.entry_price),
+                        "stop_loss": str(idea.stop_loss),
+                        "tp1": str(idea.take_profit),
+                        "tp2": str(round(idea.entry_price + (idea.take_profit - idea.entry_price) * 1.5, 6)),
+                        "margin": str(round(idea.entry_price * 0.01, 2)),
+                        "rr": str(idea.risk_reward_ratio),
+                        "book_ratio": 0,
+                        "trigger": f"Confidence {idea.confidence:.0%}",
+                        "thesis": idea.reasoning[:200] if idea.reasoning else "",
+                    })
+            sync_scan_in_background(payload)
+        except Exception as exc:
+            system_log.warning("Dashboard scan push failed: %s", exc)
+
         return "\n".join(parts)
 
 
@@ -2432,6 +2474,29 @@ class DeepScanSkill(BaseSkill):
             lines.append("")
 
         lines.append(f"<i>\U0001f551 {now}  \u00b7  say \"playbook\" for full briefing</i>")
+
+        # Push scan data to website dashboard
+        try:
+            from bot.skills.scan_skill import _build_scan_payload
+            from bot.utils.website_sync import sync_scan_in_background
+            # Convert hits to scan_skill format
+            scan_results = []
+            for h in hits:
+                scan_results.append({
+                    "sym": h["symbol"],
+                    "price": h["price"],
+                    "dir": "LONG" if h["rsi"] < 50 or h["chg"] > 0 else "SHORT",
+                    "score": min(h["score"] / 10.0, 1.0),  # normalize score
+                    "rsi": round(h["rsi"], 1),
+                    "atr": 0,
+                    "vol_ratio": 2.0 if h["vol_spike"] else 1.0,
+                    "patterns": h.get("chart_patterns", []),
+                })
+            payload = _build_scan_payload(scan_results, engine)
+            sync_scan_in_background(payload)
+        except Exception as exc:
+            system_log.warning("Dashboard scan push failed: %s", exc)
+
         return "\n".join(lines)
 
 

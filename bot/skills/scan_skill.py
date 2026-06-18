@@ -18,6 +18,156 @@ from bot.formatters.rich_cards import (
 
 log = logging.getLogger("runeclaw.scan_skill")
 
+
+# ── Dashboard sync helper ─────────────────────────────────────────
+
+def _build_scan_payload(results: list[dict], engine=None) -> dict:
+    """Convert raw scan results into the website dashboard schema and push.
+
+    Transforms _scan_symbol() dicts into the format expected by the War Room:
+    regime, symbols, entry_cards, key_call, circuit_breaker.
+    """
+    from bot.config import CONFIG
+
+    now = datetime.now(UTC)
+
+    # ── Regime from BTC ──
+    btc = next((r for r in results if "BTC" in r["sym"]), None)
+    regime = {"label": "NEUTRAL", "score": 0.0, "gate": 0, "long_short": "", "funding": ""}
+    if btc:
+        regime["gate"] = btc["price"]
+        if btc["rsi"] > 60 and btc["dir"] == "LONG":
+            regime["label"] = "BULLISH"
+            regime["score"] = min((btc["rsi"] - 50) / 30, 1.0)
+        elif btc["rsi"] < 40 and btc["dir"] == "SHORT":
+            regime["label"] = "BEARISH"
+            regime["score"] = -min((50 - btc["rsi"]) / 30, 1.0)
+        else:
+            regime["label"] = "NEUTRAL"
+            regime["score"] = (btc["rsi"] - 50) / 50
+
+    # ── Circuit breaker from engine ──
+    cb_rules = []
+    if engine:
+        try:
+            from bot.risk.risk_engine import RiskEngine
+            risk = engine.risk
+            portfolio = engine.portfolio
+            state = portfolio.snapshot()
+            cb_active = risk.circuit_breaker_active
+            cb_rules = [
+                {"label": "Circuit Breaker", "active": cb_active},
+                {"label": f"Daily PnL: ${state.daily_pnl:+.2f}", "active": state.daily_pnl < -state.equity_usd * 0.05},
+                {"label": f"Open Positions: {state.open_positions}/{CONFIG.risk.max_open_positions}", "active": state.open_positions >= CONFIG.risk.max_open_positions},
+            ]
+        except Exception as exc:
+            log.warning("CB data unavailable: %s", exc)
+
+    # ── Symbols table ──
+    symbols = {}
+    for r in results:
+        sym_key = r["sym"].replace("/", "")
+        score = r["score"]
+        if score >= 0.6:
+            status, label = "setup", "SETUP"
+        elif score >= 0.4:
+            status, label = "alert", "ALERT"
+        elif score >= 0.2:
+            status, label = "watch", "WATCH"
+        else:
+            status, label = "skip", "SKIP"
+
+        # Book ratio approximation from vol_ratio
+        book_ratio = round(r.get("vol_ratio", 1.0) * 10, 2)
+        book_side = "BID" if r["dir"] == "LONG" else "ASK"
+
+        symbols[sym_key] = {
+            "book_ratio": book_ratio,
+            "book_side": book_side,
+            "status": status,
+            "status_label": label,
+            "price": r["price"],
+            "rsi": r["rsi"],
+            "score": score,
+            "direction": r["dir"],
+            "vol_ratio": r.get("vol_ratio", 1.0),
+            "atr": r.get("atr", 0),
+        }
+
+    # ── Entry cards (top setups only) ──
+    entry_cards = []
+    setups = [r for r in results if r["score"] >= 0.4]
+    for r in setups[:8]:
+        price = r["price"]
+        atr = r.get("atr", price * 0.02)
+        if r["dir"] == "LONG":
+            sl = round(price - atr * 2.5, 6)
+            tp1 = round(price + atr * 3.0, 6)
+            tp2 = round(price + atr * 5.0, 6)
+        else:
+            sl = round(price + atr * 2.5, 6)
+            tp1 = round(price - atr * 3.0, 6)
+            tp2 = round(price - atr * 5.0, 6)
+
+        risk_dist = abs(price - sl)
+        rr = round(abs(tp1 - price) / risk_dist, 2) if risk_dist > 0 else 0
+
+        # Patterns as trigger description
+        pat_names = [p["name"] for p in r.get("patterns", [])[:2]]
+        trigger = ", ".join(pat_names) if pat_names else f"RSI {r['rsi']}, Vol {r.get('vol_ratio', 1.0)}x"
+
+        entry_cards.append({
+            "symbol": r["sym"].replace("/USDT", ""),
+            "direction": r["dir"],
+            "score": r["score"],
+            "entry": str(price),
+            "stop_loss": str(sl),
+            "tp1": str(tp1),
+            "tp2": str(tp2),
+            "margin": str(round(price * 0.01, 2)),  # ~1% margin reference
+            "rr": str(rr),
+            "book_ratio": round(r.get("vol_ratio", 1.0) * 10, 2),
+            "trigger": trigger,
+            "thesis": f"{r['dir']} bias | RSI {r['rsi']} | Score {r['score']:.0%} | Vol {r.get('vol_ratio', 1.0)}x avg",
+        })
+
+    # ── Key call narrative ──
+    if results:
+        longs = sum(1 for r in results if r["dir"] == "LONG")
+        shorts = len(results) - longs
+        top3 = results[:3]
+        top_names = ", ".join(r["sym"].replace("/USDT", "") for r in top3)
+        bias = "LONG" if longs > shorts else "SHORT" if shorts > longs else "MIXED"
+        key_call = (
+            f"<b>Market bias: {bias}</b> ({longs}L / {shorts}S across {len(results)} symbols)\n"
+            f"Top movers: {top_names}\n"
+        )
+        if btc:
+            key_call += f"BTC RSI: {btc['rsi']:.0f} | Price: ${btc['price']:,.2f}\n"
+        key_call += f"Scanned at {now.strftime('%H:%M UTC')}"
+    else:
+        key_call = "No scan data available."
+
+    return {
+        "regime": regime,
+        "circuit_breaker": {"rules": cb_rules},
+        "symbols": symbols,
+        "entry_cards": entry_cards,
+        "key_call": key_call,
+        "timestamp": now.strftime("%Y-%m-%d %H:%M UTC"),
+    }
+
+
+def _push_scan_to_dashboard(results: list[dict], engine=None) -> None:
+    """Build scan payload and push to website in background."""
+    try:
+        from bot.utils.website_sync import sync_scan_in_background
+        payload = _build_scan_payload(results, engine)
+        sync_scan_in_background(payload)
+    except Exception as exc:
+        log.warning("Dashboard scan push failed: %s", exc)
+
+
 # ── Symbol universe (67) ───────────────────────────────────────────
 _SYMS = (
     "BTC ETH SOL TON XRP DOGE BNB SUI ADA LINK BCH AVAX DOT ICP NEAR "
@@ -170,6 +320,10 @@ async def _scan_batch(update: Update, context: ContextTypes.DEFAULT_TYPE,
     ]])
     await msg.edit_text(text, parse_mode="HTML", reply_markup=kb)
 
+    # Push scan data to website dashboard
+    all_results = sorted((r for r in raw if r), key=lambda x: x["score"], reverse=True)
+    _push_scan_to_dashboard(all_results, engine)
+
 
 async def _scan_filtered(update: Update, context: ContextTypes.DEFAULT_TYPE,
                          engine, filter_type: str) -> None:
@@ -188,6 +342,10 @@ async def _scan_filtered(update: Update, context: ContextTypes.DEFAULT_TYPE,
         await msg.edit_text(f"No {label.lower()} setups found right now."); return
     header = f"\U0001f3af <b>RUNECLAW {label} Scan</b> -- {len(results)} setups\n"
     await msg.edit_text(header + "\n" + "\n\n".join(_fmt_detail(r) for r in results), parse_mode="HTML")
+
+    # Push all scan results (not just filtered) to dashboard
+    all_results = sorted((r for r in raw if r is not None), key=lambda x: x["score"], reverse=True)
+    _push_scan_to_dashboard(all_results, engine)
 
 
 async def _scan_single(update: Update, context: ContextTypes.DEFAULT_TYPE,

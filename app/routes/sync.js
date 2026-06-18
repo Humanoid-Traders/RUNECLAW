@@ -145,4 +145,35 @@ router.post('/trade-event', async (req, res) => {
   }
 });
 
+// -- In-memory scan data store (persists across requests within same cold start) --
+let latestScan = null;
+
+/**
+ * POST /api/bot/sync/scan
+ * Bot pushes GetClaw scan results after each scan cycle.
+ */
+router.post('/scan', async (req, res) => {
+  try {
+    latestScan = {
+      ...req.body,
+      received_at: new Date().toISOString(),
+    };
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('Scan sync error:', err.message);
+    res.status(500).json({ error: 'Scan sync failed' });
+  }
+});
+
+/**
+ * GET /api/bot/sync/scan
+ * Dashboard fetches latest scan data (no auth required — data is public market info).
+ */
+router.get('/scan', (req, res) => {
+  if (!latestScan) {
+    return res.json({ scan: null, message: 'No scan data yet. Run /getclaw in Telegram.' });
+  }
+  res.json({ scan: latestScan });
+});
+
 module.exports = router;

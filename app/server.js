@@ -4,6 +4,7 @@ const { migrate } = require('./db');
 const { router: authRouter } = require('./auth');
 const tradesRouter = require('./routes/trades');
 const syncRouter = require('./routes/sync');
+const marketRouter = require('./routes/market');
 
 const app = express();
 
@@ -14,6 +15,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.use('/api/auth', authRouter);
 app.use('/api/trades', tradesRouter);
 app.use('/api/bot/sync', syncRouter);
+app.use('/api/market', marketRouter);
 
 // SPA fallback - serve index.html for non-API routes
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));

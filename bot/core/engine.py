@@ -101,7 +101,22 @@ class RuneClawEngine:
         # Dashboard pusher — pushes portfolio snapshots to the live dashboard
         self.dashboard_pusher = DashboardPusher(self)
         # C1 fix: wire trade-close callback so portfolio closes feed risk streak tracking
-        self.portfolio._on_trade_close = self.risk.record_trade_result
+        # Also sync trade events to the website dashboard
+        def _on_trade_close_composite(net_pnl: float) -> None:
+            self.risk.record_trade_result(net_pnl)
+            # Auto-sync to website dashboard
+            try:
+                from bot.utils.website_sync import sync_in_background
+                state = self.portfolio.snapshot()
+                sync_in_background(
+                    user_id=1,  # default user; multi-user resolves via telegram handler
+                    equity=state.equity_usd,
+                    positions=list(self.portfolio.open_positions),
+                    closed_trades=list(self.portfolio._history[-50:]),
+                )
+            except Exception:
+                pass  # non-critical, don't break trading flow
+        self.portfolio._on_trade_close = _on_trade_close_composite
         self.user_portfolios._on_trade_close = self.risk.record_trade_result
         self.state: AgentState = AgentState.IDLE
         self._state_history: list[StateTransition] = []
