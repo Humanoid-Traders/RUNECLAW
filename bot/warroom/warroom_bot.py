@@ -304,8 +304,10 @@ def render_risk(data: Dict[str, Any]) -> Dict[str, Any]:
 def render_performance(data: Dict[str, Any]) -> Dict[str, Any]:
     today = data.get("today_pnl", 0.0)
     week = data.get("week_pnl", 0.0)
+    total = data.get("total_pnl", week)
     wr = data.get("win_rate", 0.0)
     trades = data.get("trades_today", 0)
+    total_trades = data.get("total_trades", trades)
     best = data.get("best_pair", "N/A")
     worst = data.get("worst_pair", "N/A")
 
@@ -317,13 +319,14 @@ def render_performance(data: Dict[str, Any]) -> Dict[str, Any]:
 
     text = (
         f"{_header(chr(0x1F4CA), 'PERFORMANCE')}\n"
-        f"   {_pnl_arrow(today)} {_pill(_money(today, sign=True))}\n\n"
+        f"   {_pnl_arrow(today)} {_pill(_money(today, sign=True))} today\n\n"
         # ── PnL card ──
         f"\U0001f4b0 <b>Returns</b>\n"
         "<pre>"
         f"{_kv('Today', _money(today, sign=True))}  {_pnl_arrow(today)}\n"
         f"{_kv('7-Day', _money(week, sign=True))}  {_pnl_arrow(week)}\n"
-        f"{_kv('Trades', str(trades))}\n"
+        f"{_kv('Total', _money(total, sign=True))}  {_pnl_arrow(total)}\n"
+        f"{_kv('Trades', f'{trades} today / {total_trades} total')}\n"
         f"{_kv('Trend', f'<code>{pnl_trend}</code>')}"
         "</pre>\n\n"
         # ── Win Rate gauge ──

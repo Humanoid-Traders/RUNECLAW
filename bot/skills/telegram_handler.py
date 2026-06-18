@@ -3422,6 +3422,42 @@ class TelegramHandler:
             wins = sum(1 for t in live_closed if (t.pnl_usd or 0) > 0)
             win_rate = (wins / total_trades * 100) if total_trades > 0 else 0
             total_pnl = sum((t.pnl_usd or 0) for t in live_closed)
+
+            # ── Date-filtered PnL ──
+            from datetime import datetime as _dt, timedelta as _td
+            from bot.compat import UTC as _UTC
+            _now = _dt.now(_UTC)
+            _today_start = _now.replace(hour=0, minute=0, second=0, microsecond=0)
+            _week_start = _today_start - _td(days=7)
+
+            today_pnl = 0.0
+            week_pnl = 0.0
+            trades_today = 0
+            for t in live_closed:
+                closed_at = getattr(t, "closed_at", None)
+                if closed_at:
+                    if isinstance(closed_at, str):
+                        try:
+                            closed_at = _dt.fromisoformat(closed_at)
+                        except (ValueError, TypeError):
+                            closed_at = None
+                    if closed_at is not None:
+                        # Ensure timezone-aware
+                        if closed_at.tzinfo is None:
+                            closed_at = closed_at.replace(tzinfo=_UTC)
+                        pnl = t.pnl_usd or 0
+                        if closed_at >= _today_start:
+                            today_pnl += pnl
+                            trades_today += 1
+                        if closed_at >= _week_start:
+                            week_pnl += pnl
+                        continue
+                # Fallback: if no closed_at, count in total only
+            # If no date info at all, fall back to total for both
+            if today_pnl == 0 and week_pnl == 0 and total_pnl != 0:
+                week_pnl = total_pnl
+                trades_today = total_trades
+
             best_pair = "N/A"
             worst_pair = "N/A"
             if live_closed:
@@ -3429,10 +3465,12 @@ class TelegramHandler:
                 worst_pair = sorted_t[0].symbol.replace("/USDT", "").replace(":USDT", "")
                 best_pair = sorted_t[-1].symbol.replace("/USDT", "").replace(":USDT", "")
             data = {
-                "today_pnl": round(total_pnl, 2),
-                "week_pnl": round(total_pnl, 2),  # all closed = week total for now
+                "today_pnl": round(today_pnl, 2),
+                "week_pnl": round(week_pnl, 2),
+                "total_pnl": round(total_pnl, 2),
                 "win_rate": win_rate,
-                "trades_today": total_trades,
+                "trades_today": trades_today,
+                "total_trades": total_trades,
                 "best_pair": best_pair,
                 "worst_pair": worst_pair,
             }
