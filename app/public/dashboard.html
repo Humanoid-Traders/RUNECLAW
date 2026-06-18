@@ -303,22 +303,36 @@ function renderUniverse() {
   el.innerHTML=h;
 }
 
+function fmtP(v) {
+  // Smart price formatting based on magnitude
+  const n = parseFloat(v); if(isNaN(n)) return '--';
+  if(n >= 1000) return n.toLocaleString('en-US',{maximumFractionDigits:2});
+  if(n >= 1) return n.toFixed(4);
+  if(n >= 0.01) return n.toFixed(5);
+  return n.toFixed(6);
+}
+
 function renderEntryCards() {
   const el = document.getElementById('entryContent');
-  if(!scanData?.entry_cards?.length){el.innerHTML='<div class="empty-msg">Run /getclaw in Telegram to generate entry cards</div>';return;}
+  if(!scanData?.entry_cards?.length){el.innerHTML='<div class="empty-msg">Run /scan in Telegram to generate entry cards</div>';return;}
   let h='<div class="entry-cards">';
   scanData.entry_cards.forEach((c,i)=>{
-    const rank=i+1, stars='&#11088;'.repeat(Math.min(Math.round(c.score||3),5)), dc=(c.direction||'LONG').toLowerCase();
+    const rank=i+1, dc=(c.direction||'LONG').toLowerCase();
+    const bookSide = dc==='long' ? 'BID' : 'ASK';
+    const bookColor = dc==='long' ? 'var(--green)' : 'var(--red)';
+    const scorePct = Math.round((c.score||0)*100);
+    const rr = parseFloat(c.rr||0);
+    const rrColor = rr >= 2 ? 'var(--green)' : rr >= 1.2 ? 'var(--gold)' : 'var(--red)';
     h+=`<div class="entry-card rank-${rank}"><div style="display:flex;align-items:center;justify-content:space-between"><div>
       <span class="entry-rank">#${rank}</span><span class="entry-sym">${c.symbol||'--'}</span><span class="entry-dir ${dc}">${c.direction||'LONG'}</span>
-      <span class="entry-stars">${stars}</span></div>${c.book_ratio?`<span style="font-family:var(--mono);font-size:11px;color:var(--green)">${fmt(c.book_ratio,1)}x BID</span>`:''}</div>
+      </div>${c.book_ratio?`<span style="font-family:var(--mono);font-size:11px;color:${bookColor}">${fmt(c.book_ratio,1)}x ${bookSide}</span>`:''}</div>
       <div class="entry-grid">
-        <div class="eg-item"><div class="eg-label">Entry</div><div class="eg-val">$${c.entry||'--'}</div></div>
-        <div class="eg-item"><div class="eg-label">Stop Loss</div><div class="eg-val red">$${c.stop_loss||'--'}</div></div>
-        <div class="eg-item"><div class="eg-label">TP1</div><div class="eg-val green">$${c.tp1||'--'}</div></div>
-        <div class="eg-item"><div class="eg-label">TP2</div><div class="eg-val green">$${c.tp2||'--'}</div></div>
-        <div class="eg-item"><div class="eg-label">Margin</div><div class="eg-val">$${c.margin||'--'}</div></div>
-        <div class="eg-item"><div class="eg-label">R:R</div><div class="eg-val">1:${c.rr||'--'}</div></div>
+        <div class="eg-item"><div class="eg-label">ENTRY</div><div class="eg-val">$${fmtP(c.entry)}</div></div>
+        <div class="eg-item"><div class="eg-label">STOP LOSS</div><div class="eg-val red">$${fmtP(c.stop_loss)}</div></div>
+        <div class="eg-item"><div class="eg-label">TP1</div><div class="eg-val green">$${fmtP(c.tp1)}</div></div>
+        <div class="eg-item"><div class="eg-label">TP2</div><div class="eg-val green">$${fmtP(c.tp2)}</div></div>
+        <div class="eg-item"><div class="eg-label">MARGIN</div><div class="eg-val">$${c.margin||'--'}</div></div>
+        <div class="eg-item"><div class="eg-label">R:R</div><div class="eg-val" style="color:${rrColor}">1:${fmt(rr,1)}</div></div>
       </div>
       ${c.trigger?`<div class="entry-trigger">&#9888; ${c.trigger}</div>`:''}
       ${c.thesis?`<div class="entry-thesis">${c.thesis}</div>`:''}

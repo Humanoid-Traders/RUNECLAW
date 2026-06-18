@@ -77,8 +77,9 @@ def _build_scan_payload(results: list[dict], engine=None) -> dict:
         else:
             status, label = "skip", "SKIP"
 
-        # Book ratio approximation from vol_ratio
-        book_ratio = round(r.get("vol_ratio", 1.0) * 10, 2)
+        # Book ratio from vol_ratio (capped at reasonable range)
+        vr = r.get("vol_ratio", 1.0) or 1.0
+        book_ratio = round(vr, 2)
         book_side = "BID" if r["dir"] == "LONG" else "ASK"
 
         symbols[sym_key] = {
@@ -90,7 +91,7 @@ def _build_scan_payload(results: list[dict], engine=None) -> dict:
             "rsi": r["rsi"],
             "score": score,
             "direction": r["dir"],
-            "vol_ratio": r.get("vol_ratio", 1.0),
+            "vol_ratio": vr,
             "atr": r.get("atr", 0),
         }
 
@@ -99,36 +100,45 @@ def _build_scan_payload(results: list[dict], engine=None) -> dict:
     setups = [r for r in results if r["score"] >= 0.4]
     for r in setups[:8]:
         price = r["price"]
-        atr = r.get("atr", price * 0.02)
+        # ATR fallback: if 0 or missing, use 2% of price as proxy
+        atr = r.get("atr", 0) or 0
+        if atr <= 0:
+            atr = price * 0.02
+
         if r["dir"] == "LONG":
-            sl = round(price - atr * 2.5, 6)
-            tp1 = round(price + atr * 3.0, 6)
-            tp2 = round(price + atr * 5.0, 6)
+            sl = round(price - atr * 2.5, 8)
+            tp1 = round(price + atr * 3.0, 8)
+            tp2 = round(price + atr * 5.0, 8)
         else:
-            sl = round(price + atr * 2.5, 6)
-            tp1 = round(price - atr * 3.0, 6)
-            tp2 = round(price - atr * 5.0, 6)
+            sl = round(price + atr * 2.5, 8)
+            tp1 = round(price - atr * 3.0, 8)
+            tp2 = round(price - atr * 5.0, 8)
 
         risk_dist = abs(price - sl)
-        rr = round(abs(tp1 - price) / risk_dist, 2) if risk_dist > 0 else 0
+        reward_dist = abs(tp1 - price)
+        rr = round(reward_dist / risk_dist, 2) if risk_dist > 0 else 0
 
         # Patterns as trigger description
         pat_names = [p["name"] for p in r.get("patterns", [])[:2]]
-        trigger = ", ".join(pat_names) if pat_names else f"RSI {r['rsi']}, Vol {r.get('vol_ratio', 1.0)}x"
+        trigger = ", ".join(pat_names) if pat_names else f"RSI {r['rsi']}, Vol {r.get('vol_ratio', 1.0):.1f}x"
 
+        # Margin: ~5% of a $100 notional position
+        margin = round(100 * 0.05, 2)  # $5 margin per $100 at 20x
+
+        vr = r.get("vol_ratio", 1.0) or 1.0
         entry_cards.append({
             "symbol": r["sym"].replace("/USDT", ""),
             "direction": r["dir"],
             "score": r["score"],
-            "entry": str(price),
+            "entry": str(round(price, 8)),
             "stop_loss": str(sl),
             "tp1": str(tp1),
             "tp2": str(tp2),
-            "margin": str(round(price * 0.01, 2)),  # ~1% margin reference
+            "margin": str(margin),
             "rr": str(rr),
-            "book_ratio": round(r.get("vol_ratio", 1.0) * 10, 2),
+            "book_ratio": round(vr, 2),
             "trigger": trigger,
-            "thesis": f"{r['dir']} bias | RSI {r['rsi']} | Score {r['score']:.0%} | Vol {r.get('vol_ratio', 1.0)}x avg",
+            "thesis": f"{r['dir']} bias | RSI {r['rsi']} | Score {r['score']:.0%} | Vol {vr:.1f}x avg",
         })
 
     # ── Key call narrative ──

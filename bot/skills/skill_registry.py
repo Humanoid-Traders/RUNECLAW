@@ -2482,14 +2482,16 @@ class DeepScanSkill(BaseSkill):
             # Convert hits to scan_skill format
             scan_results = []
             for h in hits:
+                # Approximate ATR from price (2% of price as fallback)
+                approx_atr = h["price"] * 0.02
                 scan_results.append({
                     "sym": h["symbol"],
                     "price": h["price"],
                     "dir": "LONG" if h["rsi"] < 50 or h["chg"] > 0 else "SHORT",
                     "score": min(h["score"] / 10.0, 1.0),  # normalize score
                     "rsi": round(h["rsi"], 1),
-                    "atr": 0,
-                    "vol_ratio": 2.0 if h["vol_spike"] else 1.0,
+                    "atr": approx_atr,
+                    "vol_ratio": 2.5 if h["vol_spike"] else 1.0,
                     "patterns": h.get("chart_patterns", []),
                 })
             payload = _build_scan_payload(scan_results, engine)
