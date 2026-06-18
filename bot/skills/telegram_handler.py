@@ -2306,6 +2306,38 @@ class TelegramHandler:
 
         self.engine.set_close_notify_callback(_on_trade_closed)
 
+        # ── Adoption notification ─────────────────────────────────
+        async def _on_positions_adopted(adopted_symbols: list[str]) -> None:
+            """Notify admin when exchange positions are adopted on startup."""
+            try:
+                lines = [
+                    "\u26a0\ufe0f <b>Adopted Exchange Positions</b>",
+                    "",
+                    f"Found <b>{len(adopted_symbols)}</b> position(s) on the exchange",
+                    "that were not tracked locally:",
+                    "",
+                ]
+                for sym in adopted_symbols:
+                    lines.append(f"  \u2022 <code>{html.escape(sym)}</code>")
+                lines.extend([
+                    "",
+                    "These may have been opened in a previous session",
+                    "or directly on the exchange.",
+                    "",
+                    "Use <b>Positions</b> to review. Close any you didn't intend.",
+                    "<i>SL/TP may not be set \u2014 check and add manually.</i>",
+                ])
+                admin_chat_id = os.environ.get("ADMIN_CHAT_ID") or os.environ.get("TELEGRAM_CHAT_ID", "")
+                if admin_chat_id:
+                    await bot.send_message(
+                        chat_id=int(admin_chat_id),
+                        text="\n".join(lines),
+                        parse_mode="HTML")
+            except Exception as exc:
+                system_log.debug("Adopt notify send failed: %s", exc)
+
+        self.engine.set_adopt_notify_callback(_on_positions_adopted)
+
     async def stop_monitor(self) -> None:
         """Stop the proactive monitor."""
         self.monitor.stop()

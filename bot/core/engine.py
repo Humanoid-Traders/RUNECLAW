@@ -126,6 +126,7 @@ class RuneClawEngine:
         self._running = False
         self._confirm_callback: Optional[Callable] = None
         self._close_notify_callback: Optional[Callable] = None
+        self._adopt_notify_callback: Optional[Callable] = None
         self._pending_ideas: dict[str, TradeIdea] = {}
         self._last_confirmed_idea: Optional[TradeIdea] = None
         self._pending_atr: dict[str, Optional[float]] = {}  # H1: store ATR for re-check
@@ -235,6 +236,10 @@ class RuneClawEngine:
         """Register a callback to notify users when a trade is closed."""
         self._close_notify_callback = cb
 
+    def set_adopt_notify_callback(self, cb: Callable) -> None:
+        """Register a callback to notify users when an exchange position is adopted."""
+        self._adopt_notify_callback = cb
+
     # -- Main loop --
 
     async def run(self) -> None:
@@ -277,6 +282,12 @@ class RuneClawEngine:
                     audit(system_log,
                           f"Startup: adopted {len(adopted)} exchange positions: {adopted}",
                           action="startup_adopt", result="OK")
+                    # Notify via Telegram so user knows about adopted positions
+                    if self._adopt_notify_callback:
+                        try:
+                            await self._adopt_notify_callback(adopted)
+                        except Exception:
+                            pass
             except Exception as exc:
                 audit(system_log, f"Startup reconciliation error: {exc}",
                       action="startup_reconcile", result="ERROR")
