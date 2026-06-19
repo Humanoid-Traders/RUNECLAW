@@ -2443,6 +2443,12 @@ class TelegramHandler:
                 await self._send(update,
                     "\U0001f534 Invalid symbol. Use format: <code>BTC</code> or <code>BTC/USDT</code>")
                 return
+            # Prevent self-referencing pairs like USDT/USDT
+            base = raw.split("/")[0]
+            if base == "USDT":
+                await self._send(update,
+                    "\U0001f534 Cannot analyze USDT against itself. Provide a token symbol, e.g. <code>BTC</code>")
+                return
             symbol = raw if "/" in raw else f"{raw}/USDT"
         else:
             symbol = "BTC/USDT"

@@ -151,9 +151,10 @@ async def fetch_analysis_data(exchange, symbol: str, timeframe: str = "1h",
         candidates.append(symbol.split(":")[0])  # SUSHI/USDT:USDT -> SUSHI/USDT
     elif "/" in symbol and ":USDT" not in symbol:
         candidates.append(f"{symbol}:USDT")  # SUSHI/USDT -> SUSHI/USDT:USDT
-    if "/" not in symbol and "USDT" in symbol:
-        base = symbol.replace("USDT", "")
-        candidates = [f"{base}/USDT", f"{base}/USDT:USDT", symbol]
+    if "/" not in symbol and symbol.endswith("USDT"):
+        base = symbol[:-4]  # Strip trailing "USDT" only (not mid-string)
+        if base:
+            candidates = [f"{base}/USDT", f"{base}/USDT:USDT", symbol]
     try:
         ohlcv, ticker, orderbook = None, None, None
         for sym in candidates:

@@ -89,7 +89,7 @@ def render_signal_card(data: Dict[str, Any]) -> bytes:
 
     # ── Extract data ──
     rank = data.get("rank", 1)
-    symbol = data.get("symbol", "???").replace("/USDT", "").replace("USDT", "")
+    symbol = data.get("symbol", "???").replace(":USDT", "").replace("/USDT", "")
     direction = data.get("direction", "LONG").upper()
     entry = data.get("entry", 0)
     sl = data.get("stop_loss", 0)
