@@ -793,7 +793,12 @@ class LiveExecutor:
                 # Spot exchange may need markets loaded first
                 await active_exchange.load_markets()
                 ticker = await active_exchange.fetch_ticker(symbol)
-            current_price = float(ticker["last"])
+            _last_raw = ticker.get("last") if isinstance(ticker, dict) else None
+            if _last_raw is None:
+                if spot_exchange:
+                    await spot_exchange.close()
+                return f"EXECUTION FAILED: exchange returned no price for {symbol}"
+            current_price = float(_last_raw)
 
             # Calculate quantity
             # For futures with leverage: size_usd is the margin (collateral).
@@ -2289,7 +2294,7 @@ class LiveExecutor:
                 except Exception:
                     # Best-effort: estimate from ticker
                     ticker = await exchange.fetch_ticker(symbol)
-                    fill_price = float(ticker["last"])
+                    fill_price = float(ticker.get("last", 0) or 0)
                     filled_qty = amount_usd / fill_price
 
             live_order = LiveOrder(

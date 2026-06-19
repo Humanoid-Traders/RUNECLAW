@@ -893,7 +893,7 @@ class RuneClawEngine:
             idea_category = _classify_symbol(idea.asset)
             exchange = await self.get_exchange(idea_category)
             ticker = await exchange.fetch_ticker(idea.asset)
-            current_price = float(ticker.get("last", 0))
+            current_price = float(ticker.get("last") or 0)
             if current_price > 0 and idea.entry_price > 0:
                 drift_pct = abs(current_price - idea.entry_price) / idea.entry_price * 100
                 max_drift = 2.0  # reject if price moved more than 2%
