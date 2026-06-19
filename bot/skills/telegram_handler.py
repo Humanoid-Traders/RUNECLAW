@@ -1910,8 +1910,14 @@ class TelegramHandler:
             executor = self.engine.live_executor
             open_pos = executor.open_positions
             closed_pos = executor.closed_positions
-            realized_pnl = sum(p.pnl_usd or 0 for p in closed_pos)
-            total_fees = sum(p.commission or 0 for p in closed_pos)
+            # Filter out adopted orphan trades for consistency with Performance view
+            user_closed = [t for t in closed_pos
+                           if not getattr(t, "trade_id", "").startswith("TI-adopted")]
+            adopted_closed = [t for t in closed_pos
+                              if getattr(t, "trade_id", "").startswith("TI-adopted")]
+            realized_pnl = sum(p.pnl_usd or 0 for p in user_closed)
+            total_fees = sum(p.commission or 0 for p in user_closed)
+            adopted_pnl = sum(p.pnl_usd or 0 for p in adopted_closed)
             exposure = executor.total_exposure_usd
 
             # PnL sign
@@ -1962,13 +1968,19 @@ class TelegramHandler:
             lines.append(SEP)
             lines.append(f"- <b>NET: <code>${total_usd:,.2f}</code></b>")
 
-            # Footer
-            n_trades = len(closed_pos)
+            # Footer — use filtered trade count (consistent with Performance)
+            n_trades = len(user_closed)
             n_open = len(open_pos)
             trade_word = "trade" if n_trades == 1 else "trades"
             pos_word = f"{n_open} open" if n_open > 0 else "no open positions"
             lines.append("")
             lines.append(f"<i>{n_trades} {trade_word} • {pos_word}</i>")
+            if adopted_closed:
+                lines.append(
+                    f"<i>⚠️ Excluded {len(adopted_closed)} adopted orphan"
+                    f"{'s' if len(adopted_closed) != 1 else ''}"
+                    f" ({'+' if adopted_pnl >= 0 else ''}{adopted_pnl:.2f})</i>"
+                )
 
             await self._send(update, "\n".join(lines))
         except Exception as exc:
