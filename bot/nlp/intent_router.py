@@ -330,6 +330,10 @@ _rule(r"\b(pos+i[st]+ions?|posistions?)\b",
 _rule(r"\b(portfolio|balance|equity|pnl|profit|loss|p&l)\b",
       "get_portfolio", explanation="Portfolio keyword")
 
+# --- Orders ---
+_rule(r"\b(open orders?|pending orders?|limit orders?|my orders?|show orders?|active orders?|order book|what.?s pending)\b",
+      "get_orders", explanation="Open/pending orders on exchange")
+
 # --- Risk ---
 # RUNECLAW risk triggers
 _rule(r"\b(risk check|check (my )?risk|am i (over)?exposed)\b",

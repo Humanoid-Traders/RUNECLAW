@@ -207,6 +207,7 @@ class TelegramHandler:
             # War Room commands
             ("latest_signal", self._cmd_latest_signal),
             ("open_positions", self._cmd_open_positions),
+            ("orders", self._cmd_orders),
             ("performance", self._cmd_performance),
             ("pause", self._cmd_pause),
             ("resume", self._cmd_resume),
@@ -861,6 +862,58 @@ class TelegramHandler:
             await update.message.reply_text("\u26a0\ufe0f Rate limit. Wait a moment.")
             return
 
+        # ── Custom limit price input ──────────────────────────
+        # If user is in "set limit" mode, capture the price they type
+        caller_uid = str(uid)
+        if hasattr(self, '_pending_limit_input') and caller_uid in self._pending_limit_input:
+            pending_info = self._pending_limit_input[caller_uid]
+            # Try to parse as a number
+            try:
+                custom_price = float(text.replace("$", "").replace(",", "").strip())
+                if custom_price <= 0:
+                    raise ValueError("Price must be positive")
+
+                trade_id = pending_info["trade_id"]
+                pair = pending_info["pair"]
+                direction = pending_info["direction"]
+
+                # Update the idea's entry price
+                idea = self.engine._pending_ideas.get(trade_id)
+                if not idea:
+                    del self._pending_limit_input[caller_uid]
+                    await self._send(update, "<b>Trade expired.</b> Run a new scan.")
+                    return
+
+                old_price = idea.entry_price
+                idea.entry_price = custom_price
+                # Force limit order type
+                idea.order_type = "limit"
+
+                # Clean up
+                del self._pending_limit_input[caller_uid]
+
+                # Show confirmation and execute
+                await self._send(update,
+                    f"\U0001f4b0 <b>Limit set: {pair} {direction}</b>\n"
+                    f"Entry: <code>${old_price:,.4f}</code> \u2192 <code>${custom_price:,.4f}</code>\n\n"
+                    f"\u2705 <b>Confirmed — executing...</b>")
+
+                result = await self.engine.confirm_trade(trade_id, user_id=caller_uid)
+                await self._send(update, result)
+                return
+
+            except ValueError:
+                # Not a valid number — cancel the limit input mode
+                if text.lower() in ("cancel", "no", "back", "nevermind"):
+                    del self._pending_limit_input[caller_uid]
+                    await self._send(update, "Limit price cancelled. Use the buttons to confirm or skip.")
+                    return
+                # Otherwise try to parse, maybe they typed something weird
+                await self._send(update,
+                    f"\u26a0\ufe0f <b>Invalid price:</b> <code>{html.escape(text[:30])}</code>\n\n"
+                    f"Type a number (e.g. <code>84.07</code>) or <code>cancel</code>.")
+                return
+
         # ── Intent routing (Move 1) ──────────────────────────────
         # Try to map free text to a skill before falling back to chat
         intent = self.intent_router.classify_rules(text)
@@ -892,6 +945,11 @@ class TelegramHandler:
                     result = await self.registry.get("pro_scan").execute(
                         self.engine, mode=mode, user_id=tg_id)
                 await self._send(update, result)
+                return
+
+            # ── Orders intent → direct command ──
+            if intent.skill == "get_orders":
+                await self._cmd_orders(update, ctx)
                 return
 
             # High-confidence match — dispatch to skill
@@ -1091,6 +1149,20 @@ class TelegramHandler:
             display_equity = live_eq if live_eq > 0 else state.equity_usd
             executor = self.engine.live_executor
             open_pos = len(executor.open_positions)
+
+            # Fallback: if no locally-tracked positions, check exchange directly
+            # This catches orphan positions (opened but lost from local state)
+            if open_pos == 0:
+                try:
+                    _ex = await executor._get_exchange()
+                    _ex_pos = await _ex.fetch_positions()
+                    _ex_open = [p for p in (_ex_pos or [])
+                                if isinstance(p, dict) and float(p.get("contracts") or 0) > 0]
+                    if _ex_open:
+                        open_pos = len(_ex_open)
+                except Exception:
+                    pass
+
             live_closed = executor.closed_positions
             # Exclude adopted orphan trades and injected diagnostic artifacts from win rate
             _excl = ("TI-adopted", "TI-injected")
@@ -2727,6 +2799,7 @@ class TelegramHandler:
                 pair = display_symbol(idea.asset)
                 buttons.append([
                     InlineKeyboardButton(f"\u2705 {pair}", callback_data=f"confirm:{idea.id}:{uid}"),
+                    InlineKeyboardButton(f"Limit", callback_data=f"setlimit:{idea.id}:{uid}"),
                     InlineKeyboardButton(f"Skip", callback_data=f"reject:{idea.id}:{uid}"),
                 ])
             kb = InlineKeyboardMarkup(buttons)
@@ -2748,6 +2821,7 @@ class TelegramHandler:
                 uid = update.effective_user.id if update.effective_user else ""
                 kb = InlineKeyboardMarkup([[
                     InlineKeyboardButton("Take it", callback_data=f"confirm:{idea.id}:{uid}"),
+                    InlineKeyboardButton("Limit", callback_data=f"setlimit:{idea.id}:{uid}"),
                     InlineKeyboardButton("Skip", callback_data=f"reject:{idea.id}:{uid}"),
                 ]])
                 if i < len(assets_data) and assets_data:
@@ -3011,9 +3085,15 @@ class TelegramHandler:
             result = await self.registry.get("pro_scan").execute(
                 self.engine, mode="swing", user_id=self._get_tg_id(update))
             await self._send(update, result)
+        except ValueError as ve:
+            # TradeIdea validation errors (SL=entry, etc.) — report but don't crash
+            system_log.warning(f"Swing scan validation error: {ve}")
+            await self._send(update,
+                f"<b>Swing scan:</b> skipped — invalid setup generated "
+                f"(SL too close to entry). Try again or use /scan.")
         except Exception as exc:
             system_log.error(f"Swing scan error: {exc}", exc_info=True)
-            await self._send(update, f"🔴 <b>Swing scan error:</b> <code>{html.escape(str(exc)[:200])}</code>")
+            await self._send(update, f"\U0001f534 <b>Swing scan error:</b> <code>{html.escape(str(exc)[:200])}</code>")
 
     async def _cmd_playbook(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """GetClaw-style full system playbook briefing."""
@@ -3271,6 +3351,107 @@ class TelegramHandler:
                 f"<i>⚠️ Live market data unavailable — approve with caution</i>"
             )
             await self._send(update, msg, reply_markup=kb)
+
+    async def _cmd_orders(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """Show open/pending orders on Bitget exchange."""
+        if not await self._guard(update, "portfolio"):
+            return
+
+        await self._send(update, "<i>Fetching open orders from Bitget...</i>")
+
+        try:
+            exchange = await self.engine.live_executor._get_exchange()
+
+            # Fetch all open orders (limit orders, trigger orders, SL/TP)
+            open_orders = await exchange.fetch_open_orders(
+                params={"productType": "USDT-FUTURES"})
+
+            if not open_orders:
+                await self._send(update,
+                    "<b>Open Orders</b>\n\n"
+                    "No pending orders on Bitget right now.\n\n"
+                    "<i>Tip: Use the \"Limit\" button when confirming a trade to set a custom limit price.</i>")
+                return
+
+            # Group by type
+            limit_orders = []
+            sl_orders = []
+            tp_orders = []
+            other_orders = []
+
+            for o in open_orders:
+                otype = (o.get("type") or "").lower()
+                sym = display_symbol(o.get("symbol", ""))
+                side = (o.get("side") or "").upper()
+                price = float(o.get("price") or 0)
+                amount = float(o.get("amount") or o.get("remaining") or 0)
+                trigger = float(o.get("triggerPrice") or o.get("stopPrice") or 0)
+                filled = float(o.get("filled") or 0)
+                status = o.get("status", "open")
+                oid = o.get("id", "")[:12]
+                created = o.get("datetime", "")[:16] if o.get("datetime") else ""
+
+                entry = {
+                    "sym": sym, "side": side, "price": price,
+                    "trigger": trigger, "amount": amount, "filled": filled,
+                    "status": status, "oid": oid, "created": created, "type": otype,
+                }
+
+                if "stop" in otype or "loss" in otype:
+                    sl_orders.append(entry)
+                elif "take" in otype or "profit" in otype:
+                    tp_orders.append(entry)
+                elif otype == "limit":
+                    limit_orders.append(entry)
+                else:
+                    other_orders.append(entry)
+
+            lines = [f"<b>Open Orders ({len(open_orders)})</b>", ""]
+
+            if limit_orders:
+                lines.append(f"<b>Limit Orders ({len(limit_orders)}):</b>")
+                for o in limit_orders:
+                    d_icon = "\U0001f7e2" if o["side"] == "BUY" else "\U0001f534"
+                    fill_str = f" ({o['filled']:.4f} filled)" if o["filled"] > 0 else ""
+                    lines.append(
+                        f"  {d_icon} <b>{o['sym']}</b> {o['side']} "
+                        f"@ <code>${o['price']:,.4f}</code> "
+                        f"qty {o['amount']:.4f}{fill_str}"
+                    )
+                lines.append("")
+
+            if sl_orders:
+                lines.append(f"<b>Stop-Loss Orders ({len(sl_orders)}):</b>")
+                for o in sl_orders:
+                    trigger_str = f"trigger ${o['trigger']:,.4f}" if o['trigger'] > 0 else ""
+                    lines.append(
+                        f"  \U0001f6d1 <b>{o['sym']}</b> {o['side']} {trigger_str}")
+                lines.append("")
+
+            if tp_orders:
+                lines.append(f"<b>Take-Profit Orders ({len(tp_orders)}):</b>")
+                for o in tp_orders:
+                    trigger_str = f"trigger ${o['trigger']:,.4f}" if o['trigger'] > 0 else ""
+                    lines.append(
+                        f"  \U0001f3af <b>{o['sym']}</b> {o['side']} {trigger_str}")
+                lines.append("")
+
+            if other_orders:
+                lines.append(f"<b>Other ({len(other_orders)}):</b>")
+                for o in other_orders:
+                    lines.append(
+                        f"  <b>{o['sym']}</b> {o['side']} {o['type']} "
+                        f"@ <code>${o['price']:,.4f}</code>")
+                lines.append("")
+
+            lines.append(f"<i>Source: Bitget USDT-M Futures</i>")
+
+            await self._send(update, "\n".join(lines))
+
+        except Exception as exc:
+            logger.error(f"Orders fetch error: {exc}", exc_info=True)
+            await self._send(update,
+                f"\U0001f534 <b>Failed to fetch orders:</b> <code>{html.escape(str(exc)[:200])}</code>")
 
     async def _cmd_open_positions(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """Show open positions in rich format — per-user."""
@@ -4590,6 +4771,46 @@ class TelegramHandler:
             return
 
         # ── Trade confirm/reject ─────────────────────────────
+
+        # ── Set custom limit price ──
+        if data.startswith("setlimit:"):
+            parts = data.split(":")
+            trade_id = parts[1]
+            expected_uid = parts[2] if len(parts) > 2 else None
+            caller_uid = str(update.effective_user.id) if update.effective_user else None
+            if expected_uid and caller_uid != expected_uid:
+                await self._send(update,
+                    "\U0001f512 <b>Access denied</b>", edit=True)
+                return
+
+            # Look up the idea to show current entry
+            idea = self.engine._pending_ideas.get(trade_id)
+            if not idea:
+                await self._send(update,
+                    "<b>Trade expired.</b> Run a new scan.", edit=True)
+                return
+
+            pair = display_symbol(idea.asset)
+            direction = idea.direction.value if hasattr(idea.direction, 'value') else str(idea.direction)
+
+            # Store that this user is waiting to type a limit price
+            if not hasattr(self, '_pending_limit_input'):
+                self._pending_limit_input: dict = {}
+            self._pending_limit_input[caller_uid] = {
+                "trade_id": trade_id,
+                "asset": idea.asset,
+                "pair": pair,
+                "direction": direction,
+                "current_entry": idea.entry_price,
+            }
+
+            await self._send(update,
+                f"\U0001f4b0 <b>Set limit price for {pair} {direction}</b>\n\n"
+                f"Current entry: <code>${idea.entry_price:,.4f}</code>\n"
+                f"SL: <code>${idea.stop_loss:,.4f}</code> | TP: <code>${idea.take_profit:,.4f}</code>\n\n"
+                f"Type your limit price (e.g. <code>84.07</code> or <code>0.0522</code>):",
+                edit=True)
+            return
 
         if data.startswith("confirm:"):
             parts = data.split(":")

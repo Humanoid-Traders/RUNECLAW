@@ -406,8 +406,13 @@ class RuneClawEngine:
                 for msg in reconciled:
                     audit(trade_log, f"Startup reconcile: {msg}",
                           action="startup_reconcile", result="CLOSED")
-                # Orphan adoption disabled — bot only manages positions it opened.
-                # adopted = await self.live_executor.adopt_exchange_positions()
+                # Adopt orphan positions from exchange that have no local record.
+                # This ensures the bot tracks ALL open positions, even if local
+                # state was lost due to crash/restart/file cleanup.
+                adopted = await self.live_executor.adopt_exchange_positions()
+                for sym in adopted:
+                    audit(trade_log, f"Startup adopted orphan: {sym}",
+                          action="startup_adopt", result="ADOPTED")
             except Exception as exc:
                 audit(system_log, f"Startup reconciliation error: {exc}",
                       action="startup_reconcile", result="ERROR")

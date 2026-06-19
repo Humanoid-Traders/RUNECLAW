@@ -159,6 +159,9 @@ class LiveExecutor:
         self._ticker_failure_count: dict[str, int] = {}
         # Callback: invoked after any position is closed (for balance cache invalidation)
         self.on_position_closed: Optional[Callable] = None
+        # Exchange sync: periodically check for untracked positions
+        self._last_exchange_sync: float = 0
+        self._EXCHANGE_SYNC_INTERVAL: float = 300  # 5 minutes
         # F-07 FIX: Load persisted positions on startup
         self._load_positions()
         # F-14 FIX: Load persisted closed trades on startup
@@ -1691,6 +1694,24 @@ class LiveExecutor:
         except Exception as exc:
             logger.warning("Position check error: %s", exc)
 
+        # ── Periodic exchange sync ──
+        # Every 5 minutes, check if the exchange has positions we're not tracking.
+        # This is the definitive fix for "lost positions" — the exchange is always
+        # the source of truth.
+        now_ts = time.time()
+        if now_ts - self._last_exchange_sync > self._EXCHANGE_SYNC_INTERVAL:
+            self._last_exchange_sync = now_ts
+            try:
+                adopted = await self.adopt_exchange_positions()
+                for sym in adopted:
+                    audit(trade_log, f"Periodic sync adopted orphan: {sym}",
+                          action="periodic_sync", result="ADOPTED")
+                    closed_messages.append(
+                        f"SYNC: Adopted untracked position {sym} from exchange"
+                    )
+            except Exception as sync_exc:
+                logger.debug("Periodic exchange sync failed: %s", sync_exc)
+
         return closed_messages
 
     async def _check_pending_limit(self, exchange: "ccxt.Exchange",
@@ -2216,7 +2237,11 @@ class LiveExecutor:
     # ── F-07 FIX: Position persistence ──────────────────────────────
 
     def _save_positions(self) -> None:
-        """Persist open positions to disk so they survive restarts."""
+        """Persist open positions to disk so they survive restarts.
+
+        Safety: uses atomic write (tmp + rename) and keeps a .bak copy
+        to prevent data loss from crashes mid-write.
+        """
         try:
             data: dict[str, Any] = {}
             for tid, pos in self._positions.items():
@@ -2244,6 +2269,18 @@ class LiveExecutor:
                 }
             path = Path(_POSITIONS_FILE)
             path.parent.mkdir(parents=True, exist_ok=True)
+
+            # Keep backup of non-empty file before overwriting
+            if path.exists():
+                try:
+                    existing = path.read_text().strip()
+                    if existing and existing != "{}":
+                        bak = str(path) + ".bak"
+                        import shutil
+                        shutil.copy2(str(path), bak)
+                except Exception:
+                    pass
+
             tmp = str(path) + ".tmp"
             with open(tmp, "w") as f:
                 json.dump(data, f, indent=2, default=str)
@@ -2255,41 +2292,59 @@ class LiveExecutor:
             logger.debug("Failed to save live positions: %s", exc)
 
     def _load_positions(self) -> None:
-        """Load persisted positions on startup."""
+        """Load persisted positions on startup.
+
+        Falls back to .bak file if main file is empty or corrupt.
+        """
         path = Path(_POSITIONS_FILE)
-        if not path.exists():
-            return
-        try:
-            with open(path, "r") as f:
-                data = json.load(f)
-            for tid, pdata in data.items():
-                opened_at = datetime.fromisoformat(pdata["opened_at"]) if pdata.get("opened_at") else datetime.now(UTC)
-                self._positions[tid] = LivePosition(
-                    trade_id=pdata["trade_id"],
-                    symbol=pdata["symbol"],
-                    direction=pdata["direction"],
-                    entry_price=float(pdata["entry_price"]),
-                    quantity=float(pdata["quantity"]),
-                    cost_usd=float(pdata["cost_usd"]),
-                    stop_loss=float(pdata["stop_loss"]),
-                    take_profit=float(pdata["take_profit"]),
-                    leverage=int(pdata.get("leverage", 1)),
-                    is_spot=bool(pdata.get("is_spot", False)),
-                    sl_order_id=pdata.get("sl_order_id"),
-                    tp_order_id=pdata.get("tp_order_id"),
-                    opened_at=opened_at,
-                    status=pdata.get("status", "open"),
-                    trailing_state=pdata.get("trailing_state"),
-                    order_type=pdata.get("order_type", "market"),
-                    limit_order_id=pdata.get("limit_order_id"),
-                    atr_at_entry=float(pdata.get("atr_at_entry", 0)),
-                )
-            if self._positions:
-                audit(trade_log, f"Loaded {len(self._positions)} live positions from disk",
-                      action="load_positions", result="OK")
-        except Exception as exc:
-            audit(trade_log, f"Failed to load live positions: {exc}",
-                  action="load_positions", result="ERROR")
+        bak_path = Path(str(path) + ".bak")
+
+        # Try main file first, fall back to backup
+        for source in [path, bak_path]:
+            if not source.exists():
+                continue
+            try:
+                with open(source, "r") as f:
+                    data = json.load(f)
+                if not data:
+                    # Empty dict — try backup
+                    if source == path and bak_path.exists():
+                        audit(trade_log,
+                              f"Main positions file is empty, trying backup",
+                              action="load_positions", result="FALLBACK_TO_BAK")
+                        continue
+                    return
+                for tid, pdata in data.items():
+                    opened_at = datetime.fromisoformat(pdata["opened_at"]) if pdata.get("opened_at") else datetime.now(UTC)
+                    self._positions[tid] = LivePosition(
+                        trade_id=pdata["trade_id"],
+                        symbol=pdata["symbol"],
+                        direction=pdata["direction"],
+                        entry_price=float(pdata["entry_price"]),
+                        quantity=float(pdata["quantity"]),
+                        cost_usd=float(pdata["cost_usd"]),
+                        stop_loss=float(pdata["stop_loss"]),
+                        take_profit=float(pdata["take_profit"]),
+                        leverage=int(pdata.get("leverage", 1)),
+                        is_spot=bool(pdata.get("is_spot", False)),
+                        sl_order_id=pdata.get("sl_order_id"),
+                        tp_order_id=pdata.get("tp_order_id"),
+                        opened_at=opened_at,
+                        status=pdata.get("status", "open"),
+                        trailing_state=pdata.get("trailing_state"),
+                        order_type=pdata.get("order_type", "market"),
+                        limit_order_id=pdata.get("limit_order_id"),
+                        atr_at_entry=float(pdata.get("atr_at_entry", 0)),
+                    )
+                source_label = "backup" if source == bak_path else "disk"
+                if self._positions:
+                    audit(trade_log, f"Loaded {len(self._positions)} live positions from {source_label}",
+                          action="load_positions", result="OK")
+                return
+            except Exception as exc:
+                audit(trade_log, f"Failed to load positions from {source}: {exc}",
+                      action="load_positions", result="ERROR")
+                continue
 
     # ── F-14 FIX: Closed trades persistence ───────────────────────
 
