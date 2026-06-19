@@ -788,6 +788,26 @@ class LiveExecutor:
                 return f"EXECUTION FAILED: exchange returned no price for {symbol}"
             current_price = float(_last_raw)
 
+            # ── SAFEGUARD 1: Pre-trade price validation ──
+            # Block trades where the market has already moved past the SL level.
+            # This prevents opening a position that will be instantly stopped out.
+            if idea.direction == Direction.LONG and current_price <= idea.stop_loss:
+                audit(trade_log,
+                      f"BLOCKED: {symbol} price ${current_price:.4f} already at/below SL ${idea.stop_loss:.4f}",
+                      action="live_execute", result="BLOCKED_PRICE_PAST_SL",
+                      data={"asset": symbol, "price": current_price,
+                            "sl": idea.stop_loss, "direction": "LONG"})
+                return (f"EXECUTION BLOCKED: {symbol} price ${current_price:.4f} is already "
+                        f"at/below SL ${idea.stop_loss:.4f} — would be instantly stopped out.")
+            elif idea.direction == Direction.SHORT and current_price >= idea.stop_loss:
+                audit(trade_log,
+                      f"BLOCKED: {symbol} price ${current_price:.4f} already at/above SL ${idea.stop_loss:.4f}",
+                      action="live_execute", result="BLOCKED_PRICE_PAST_SL",
+                      data={"asset": symbol, "price": current_price,
+                            "sl": idea.stop_loss, "direction": "SHORT"})
+                return (f"EXECUTION BLOCKED: {symbol} price ${current_price:.4f} is already "
+                        f"at/above SL ${idea.stop_loss:.4f} — would be instantly stopped out.")
+
             # Calculate quantity
             # For futures with leverage: size_usd is the margin (collateral).
             # Notional exposure = margin * leverage, so qty = (size_usd * leverage) / price.
@@ -1469,6 +1489,38 @@ class LiveExecutor:
 
                 if pos.status != "open":
                     continue
+
+                # ── SAFEGUARD 2: Grace period after open ──
+                # Skip local SL/TP monitoring for the first 90 seconds after a
+                # position opens. This gives the exchange SL/TP orders time to be
+                # placed and prevents instant stop-outs from stale price data.
+                age_secs = (datetime.now(UTC) - pos.opened_at).total_seconds() if pos.opened_at else 999
+                if age_secs < 90:
+                    # ── SAFEGUARD 3: Wait for SL/TP confirmation ──
+                    # During the grace period, still attempt to place SL/TP if missing,
+                    # but don't run local SL/TP monitoring until orders are confirmed.
+                    if (not pos.sl_order_id or not pos.tp_order_id) and pos.stop_loss > 0 and pos.take_profit > 0:
+                        try:
+                            direction = Direction.LONG if pos.direction == "LONG" else Direction.SHORT
+                            sl_id, tp_id = await self._place_sl_tp(
+                                exchange, pos.symbol, direction,
+                                pos.quantity, pos.stop_loss, pos.take_profit
+                            )
+                            if sl_id and not pos.sl_order_id:
+                                pos.sl_order_id = sl_id
+                            if tp_id and not pos.tp_order_id:
+                                pos.tp_order_id = tp_id
+                            if sl_id or tp_id:
+                                self._save_positions()
+                                audit(trade_log,
+                                      f"SL/TP placed during grace period: {pos.symbol}",
+                                      action="sltp_grace", result="PLACED",
+                                      data={"trade_id": trade_id, "sl_id": sl_id, "tp_id": tp_id,
+                                            "age_secs": round(age_secs, 1)})
+                        except Exception as exc:
+                            logger.debug("SL/TP grace placement failed for %s: %s", pos.symbol, exc)
+                    continue  # Skip local SL/TP check during grace period
+
                 price = float(tickers.get(pos.symbol, {}).get("last", 0))
                 if price <= 0:
                     continue
