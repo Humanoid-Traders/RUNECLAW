@@ -1319,8 +1319,59 @@ class RuneClawEngine:
     async def _check_open_positions(self) -> None:
         """Monitor open positions for SL/TP hits."""
         positions = self.portfolio.open_positions
-        if not positions:
-            return
+        if positions:
+            await self._check_paper_positions(positions)
+        # Live positions are checked independently below — do NOT return early
+        # when paper portfolio is empty, or live SL/TP monitoring is skipped entirely.
+
+        # Also check live positions if in live mode
+        if CONFIG.is_live():
+            try:
+                live_closed = await self.live_executor.check_positions()
+                for msg in live_closed:
+                    audit(trade_log, f"Live position auto-closed: {msg}",
+                          action="live_auto_close", result="CLOSED")
+                    # C-08 FIX: trigger cooldown on live losses
+                    last_close = getattr(self.live_executor, '_last_close_data', None)
+                    if last_close and last_close.get('pnl_usd', 0) < 0:
+                        self._cooldown_until = (
+                            time.monotonic() + CONFIG.risk.cooldown_after_loss_seconds
+                        )
+                        self._transition(
+                            AgentState.COOLING_DOWN,
+                            f"live loss on {last_close.get('symbol', '?')} "
+                            f"(PnL=${last_close['pnl_usd']}), "
+                            f"cooling down {CONFIG.risk.cooldown_after_loss_seconds}s",
+                        )
+                    if self._close_notify_callback:
+                        try:
+                            await self._close_notify_callback(msg)
+                        except Exception as exc:
+                            logger.debug("Close notify failed: %s", exc)
+            except Exception as exc:
+                audit(system_log, f"Live position monitor error: {exc}",
+                      action="live_monitor", result="ERROR")
+
+            # F-14 FIX: Reconcile tracked positions with exchange
+            # Detects positions closed by exchange-side SL/TP triggers
+            try:
+                reconciled = await self.live_executor.reconcile_positions()
+                for msg in reconciled:
+                    audit(trade_log, f"Position reconciled: {msg}",
+                          action="reconcile", result="CLOSED")
+                    if self._close_notify_callback:
+                        try:
+                            await self._close_notify_callback(msg)
+                        except Exception as exc:
+                            logger.debug("Close notify (reconcile) failed: %s", exc)
+            except Exception as exc:
+                audit(system_log, f"Reconciliation error: {exc}",
+                      action="reconcile", result="ERROR")
+
+            # Orphan adoption disabled — bot only manages positions it opened.
+
+    async def _check_paper_positions(self, positions) -> None:
+        """Monitor paper portfolio positions for SL/TP hits."""
         try:
             # Prefer WebSocket prices (sub-second) over REST (polling)
             if self.ws_feed.is_connected():
@@ -1390,57 +1441,6 @@ class RuneClawEngine:
                 result="ERROR",
             )
             self._transition(AgentState.IDLE, f"monitor error: {exc}")
-
-        # Also check live positions if in live mode
-        if CONFIG.is_live():
-            try:
-                live_closed = await self.live_executor.check_positions()
-                for msg in live_closed:
-                    audit(trade_log, f"Live position auto-closed: {msg}",
-                          action="live_auto_close", result="CLOSED")
-                    # C-08 FIX: trigger cooldown on live losses
-                    last_close = getattr(self.live_executor, '_last_close_data', None)
-                    if last_close and last_close.get('pnl_usd', 0) < 0:
-                        self._cooldown_until = (
-                            time.monotonic() + CONFIG.risk.cooldown_after_loss_seconds
-                        )
-                        self._transition(
-                            AgentState.COOLING_DOWN,
-                            f"live loss on {last_close.get('symbol', '?')} "
-                            f"(PnL=${last_close['pnl_usd']}), "
-                            f"cooling down {CONFIG.risk.cooldown_after_loss_seconds}s",
-                        )
-                    if self._close_notify_callback:
-                        try:
-                            await self._close_notify_callback(msg)
-                        except Exception as exc:
-                            logger.debug("Close notify failed: %s", exc)
-            except Exception as exc:
-                audit(system_log, f"Live position monitor error: {exc}",
-                      action="live_monitor", result="ERROR")
-
-            # F-14 FIX: Reconcile tracked positions with exchange
-            # Detects positions closed by exchange-side SL/TP triggers
-            try:
-                reconciled = await self.live_executor.reconcile_positions()
-                for msg in reconciled:
-                    audit(trade_log, f"Position reconciled: {msg}",
-                          action="reconcile", result="CLOSED")
-                    if self._close_notify_callback:
-                        try:
-                            await self._close_notify_callback(msg)
-                        except Exception as exc:
-                            logger.debug("Close notify (reconcile) failed: %s", exc)
-            except Exception as exc:
-                audit(system_log, f"Reconciliation error: {exc}",
-                      action="reconcile", result="ERROR")
-
-            # Orphan adoption disabled — bot only manages positions it opened.
-            # try:
-            #     adopted = await self.live_executor.adopt_exchange_positions()
-            #     ...
-            # except Exception as exc:
-            #     ...
 
     @property
     def pending_ideas(self) -> list[TradeIdea]:
