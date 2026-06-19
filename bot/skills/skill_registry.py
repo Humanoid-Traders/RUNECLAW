@@ -253,20 +253,32 @@ class AnalyzeAssetSkill(BaseSkill):
     async def execute(self, engine: RuneClawEngine, **kwargs: Any) -> str:
         symbol = kwargs.get("symbol", "BTC/USDT")
         from bot.utils.models import MarketSignal
+        from bot.core.market_scanner import _classify_symbol
 
+        category = _classify_symbol(symbol)
         sig = MarketSignal(symbol=symbol, price=0, change_pct_24h=0,
-                           volume_usd_24h=0, timestamp=datetime.now(UTC))
+                           volume_usd_24h=0, asset_category=category,
+                           timestamp=datetime.now(UTC))
         try:
-            exchange = await engine.scanner._get_exchange()
+            # Use futures exchange for non-Crypto categories
+            if category != "Crypto":
+                exchange = await engine.scanner._get_futures_exchange()
+            else:
+                exchange = await engine.scanner._get_exchange()
             ticker = await exchange.fetch_ticker(symbol)
             sig = MarketSignal(
                 symbol=symbol, price=float(ticker.get("last", 0)),
                 change_pct_24h=float(ticker.get("percentage", 0) or 0),
                 volume_usd_24h=float(ticker.get("quoteVolume", 0) or 0),
+                asset_category=category,
                 timestamp=datetime.now(UTC),
             )
         except Exception:
             return f"{_BAD} <b>ANALYSIS</b>\n\n<i>Could not fetch data for</i> <code>{_esc(symbol)}</code>"
+
+        # C2-21 FIX: Guard against zero/negative price reaching the analyzer
+        if sig.price <= 0:
+            return f"{_BAD} <b>ANALYSIS</b>\n\n<i>Invalid price (0 or negative) for</i> <code>{_esc(symbol)}</code>"
 
         idea = await engine._analyze_signal(sig)
         if idea is None:
@@ -2268,13 +2280,20 @@ class PlaybookSkill(BaseSkill):
         if CONFIG.is_live():
             live_positions = engine.live_executor.open_positions
             if live_positions:
-                # Fetch fresh prices for unrealized PnL
+                # Fetch fresh prices for unrealized PnL (route by asset category)
                 live_prices: dict[str, float] = {}
                 try:
-                    _exchange = await engine.scanner._get_exchange()
-                    _syms = list({p.symbol for p in live_positions})
-                    _tickers = await _exchange.fetch_tickers(_syms)
-                    live_prices = {s: float(t.get("last", 0)) for s, t in _tickers.items() if t.get("last")}
+                    from bot.core.market_scanner import _classify_symbol as _cls
+                    _spot_syms = [p.symbol for p in live_positions if _cls(p.symbol) == "Crypto"]
+                    _futures_syms = [p.symbol for p in live_positions if _cls(p.symbol) != "Crypto"]
+                    if _spot_syms:
+                        _ex = await engine.scanner._get_exchange()
+                        _tickers = await _ex.fetch_tickers(list(set(_spot_syms)))
+                        live_prices.update({s: float(t.get("last", 0)) for s, t in _tickers.items() if t.get("last")})
+                    if _futures_syms:
+                        _fex = await engine.scanner._get_futures_exchange()
+                        _ftickers = await _fex.fetch_tickers(list(set(_futures_syms)))
+                        live_prices.update({s: float(t.get("last", 0)) for s, t in _ftickers.items() if t.get("last")})
                 except Exception:
                     pass
 
@@ -2398,12 +2417,18 @@ class DeepScanSkill(BaseSkill):
 
         now = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
 
+        # Build full universe: crypto spot + TradFi perpetuals
+        from bot.config import TRADFI_PERPETUALS
+        from bot.core.market_scanner import _classify_symbol as _cls_sym
+        full_universe = list(DEEPSCAN_UNIVERSE) + list(TRADFI_PERPETUALS)
+
         lines: list[str] = []
         lines.append(_header("\U0001f52c", f"DEEP SCAN \u2014 {timeframe.upper()}"))
-        lines.append(f"  {len(DEEPSCAN_UNIVERSE)} symbols \u00b7 {timeframe} \u00b7 chart + candle patterns")
+        lines.append(f"  {len(full_universe)} symbols \u00b7 {timeframe} \u00b7 chart + candle patterns")
         lines.append("")
 
-        exchange = await engine.scanner._get_exchange()
+        spot_exchange = await engine.scanner._get_exchange()
+        futures_exchange = await engine.scanner._get_futures_exchange()
 
         hits: list[dict] = []
         errors = 0
@@ -2415,8 +2440,9 @@ class DeepScanSkill(BaseSkill):
         async def _fetch_one(sym):
             async with sem:
                 try:
+                    ex = futures_exchange if _cls_sym(sym) != "Crypto" else spot_exchange
                     ohlcv = await asyncio.wait_for(
-                        exchange.fetch_ohlcv(sym, timeframe, limit=100),
+                        ex.fetch_ohlcv(sym, timeframe, limit=100),
                         timeout=15,  # 15s per symbol max
                     )
                     return sym, ohlcv
@@ -2424,7 +2450,7 @@ class DeepScanSkill(BaseSkill):
                     return sym, None
 
         fetch_results = await asyncio.gather(
-            *[_fetch_one(s) for s in DEEPSCAN_UNIVERSE],
+            *[_fetch_one(s) for s in full_universe],
             return_exceptions=True,
         )
 

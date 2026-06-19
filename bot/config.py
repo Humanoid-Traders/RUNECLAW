@@ -2,6 +2,11 @@
 RUNECLAW Configuration -- AI Trading Command Core
 All settings loaded from environment with safe defaults.
 Simulation mode is ON by default; live trading requires explicit opt-in.
+
+C2-08: CONFIG is a frozen dataclass instantiated at import time from environment
+variables. Changes to env vars after import have NO effect without a full process
+restart. RuntimeState handles hot-reloadable runtime flags (e.g. kill switch,
+simulation override).
 """
 
 from __future__ import annotations
@@ -18,7 +23,27 @@ def _env(key: str, default: str = "") -> str:
 
 
 def _env_bool(key: str, default: bool = False) -> bool:
-    return _env(key, str(default)).lower() in ("true", "1", "yes")
+    raw = _env(key, "").strip().lower()
+    if raw in ("", "false", "0", "no"):
+        # C2-07 FIX: If the env var is SET but empty AND default is True (safety switch),
+        # treat as True to prevent accidental live trading enablement.
+        if key not in os.environ:
+            return default
+        if raw == "" and default is True:
+            import logging as _logging
+            _logging.getLogger(__name__).warning(
+                "Safety switch %s is set to empty string — treating as True (safe default). "
+                "Set explicitly to 'false' to disable.", key,
+            )
+            return True
+        return False
+    if raw in ("true", "1", "yes"):
+        return True
+    import logging as _logging
+    _logging.getLogger(__name__).warning(
+        "Unrecognised boolean env var %s=%r — using default %s", key, raw, default,
+    )
+    return default
 
 
 def _env_float(key: str, default: float = 0.0) -> float:
@@ -28,13 +53,25 @@ def _env_float(key: str, default: float = 0.0) -> float:
         return default
 
 
+def _env_float_bounded(key: str, default: float, min_val: float, max_val: float) -> float:
+    """Read an env-var float and clamp it to [min_val, max_val]."""
+    val = _env_float(key, default)
+    if val < min_val or val > max_val:
+        import logging as _logging
+        _logging.getLogger(__name__).warning(
+            "Env var %s=%.4g is outside [%.4g, %.4g] — clamping", key, val, min_val, max_val,
+        )
+        val = max(min_val, min(max_val, val))
+    return val
+
+
 @dataclass(frozen=True)
 class RiskLimits:
     """Hard risk limits -- breaching any one triggers circuit breaker."""
-    max_position_pct: float = _env_float("MAX_POSITION_PCT", 13.0)
-    max_daily_loss_pct: float = _env_float("MAX_DAILY_LOSS_PCT", 5.0)
+    max_position_pct: float = _env_float_bounded("MAX_POSITION_PCT", 13.0, 1, 100)
+    max_daily_loss_pct: float = _env_float_bounded("MAX_DAILY_LOSS_PCT", 5.0, 0.1, 50)
     max_drawdown_pct: float = _env_float("MAX_DRAWDOWN_PCT", 10.0)
-    max_open_positions: int = int(_env_float("MAX_OPEN_POSITIONS", 5))
+    max_open_positions: int = int(_env_float_bounded("MAX_OPEN_POSITIONS", 5, 1, 100))
     # Note: max_correlation coefficient is reserved for a future pairwise correlation
     # matrix check. Currently, concentration is enforced by max_correlation_per_group
     # (a group-count limit), not by this coefficient value.
@@ -43,8 +80,8 @@ class RiskLimits:
     min_risk_reward: float = _env_float("MIN_RISK_REWARD", 1.2)
     # SIGNAL QUALITY: 0.55 is the tuned threshold -- relaxed from 0.60 to allow
     # more signals through while still filtering weak setups
-    min_confidence: float = _env_float("MIN_CONFIDENCE", 0.55)
-    max_consecutive_losses: int = int(_env_float("MAX_CONSECUTIVE_LOSSES", 5))
+    min_confidence: float = _env_float_bounded("MIN_CONFIDENCE", 0.55, 0.1, 1.0)
+    max_consecutive_losses: int = int(_env_float_bounded("MAX_CONSECUTIVE_LOSSES", 5, 1, 50))
     cooldown_after_loss_seconds: int = int(_env_float("COOLDOWN_AFTER_LOSS_SEC", 120))
     max_portfolio_exposure_pct: float = _env_float("MAX_PORTFOLIO_EXPOSURE_PCT", 80.0)
     max_symbol_exposure_pct: float = _env_float("MAX_SYMBOL_EXPOSURE_PCT", 20.0)
@@ -81,7 +118,22 @@ class ExchangeConfig:
     # Trading mode: "spot" for no leverage, "futures" for USDT-M perpetual
     trade_mode: str = _env("TRADE_MODE", "futures")
     # Default leverage (1x = no leverage, 5x = default for futures)
-    default_leverage: int = int(_env_float("DEFAULT_LEVERAGE", 5))
+    default_leverage: int = int(_env_float_bounded("DEFAULT_LEVERAGE", 5, 1, 125))
+    # Margin mode: "crossed" or "isolated"
+    margin_mode: str = _env("MARGIN_MODE", "crossed")
+    # C2-57: Configurable hold mode probe symbol (used for account mode detection)
+    hold_mode_probe_symbol: str = _env("HOLD_MODE_PROBE_SYMBOL", "BTCUSDT")
+
+
+# C2-61: Warn if leverage is dangerously high
+_leverage_val = _env_float_bounded("DEFAULT_LEVERAGE", 5, 1, 125)
+if _leverage_val > 20:
+    import logging as _logging
+    _logging.getLogger(__name__).warning(
+        "DEFAULT_LEVERAGE=%.0f× is above 20× — high leverage dramatically increases "
+        "liquidation risk. Confirm this is intentional.", _leverage_val,
+    )
+
     # Margin mode: "crossed" or "isolated"
     margin_mode: str = _env("MARGIN_MODE", "crossed")
 
@@ -199,14 +251,30 @@ TRADFI_PERPETUALS: list[str] = (
     + ETF_PERPETUALS + STOCK_PERPETUALS
 )
 
-# US stock market hours (Eastern Time / UTC-4 during EDT)
-# Regular session: 09:30-16:00 ET
-# Pre-market: 04:00-09:30 ET
-# After-hours: 16:00-20:00 ET
-US_MARKET_OPEN_HOUR_UTC = 13   # 09:00 ET in UTC (pre-market starts)
-US_MARKET_CLOSE_HOUR_UTC = 21  # 17:00 ET in UTC (after-hours end)
-US_REGULAR_OPEN_HOUR_UTC = 13  # 09:30 ET = 13:30 UTC
-US_REGULAR_CLOSE_HOUR_UTC = 20  # 16:00 ET = 20:00 UTC
+# US stock market hours — DST-aware via zoneinfo (C2-06 FIX)
+# Previously hardcoded to EDT (UTC-4), off by 1 hour Nov–Mar during EST (UTC-5).
+try:
+    from zoneinfo import ZoneInfo as _ZoneInfo
+    from datetime import datetime as _dt, timezone as _tz
+
+    _NY = _ZoneInfo("America/New_York")
+
+    def _us_market_hour_utc(et_hour: int, et_minute: int = 0) -> int:
+        """Convert an Eastern Time hour to current-day UTC hour, DST-aware."""
+        now_ny = _dt.now(_NY)
+        local_time = now_ny.replace(hour=et_hour, minute=et_minute, second=0, microsecond=0)
+        return local_time.astimezone(_tz.utc).hour
+
+    US_MARKET_OPEN_HOUR_UTC = _us_market_hour_utc(9, 0)    # pre-market ~09:00 ET
+    US_MARKET_CLOSE_HOUR_UTC = _us_market_hour_utc(17, 0)   # after-hours end ~17:00 ET
+    US_REGULAR_OPEN_HOUR_UTC = _us_market_hour_utc(9, 30)   # regular open 09:30 ET
+    US_REGULAR_CLOSE_HOUR_UTC = _us_market_hour_utc(16, 0)  # regular close 16:00 ET
+except Exception:
+    # Fallback to EDT if zoneinfo is unavailable
+    US_MARKET_OPEN_HOUR_UTC = 13
+    US_MARKET_CLOSE_HOUR_UTC = 21
+    US_REGULAR_OPEN_HOUR_UTC = 13
+    US_REGULAR_CLOSE_HOUR_UTC = 20
 
 
 @dataclass(frozen=True)

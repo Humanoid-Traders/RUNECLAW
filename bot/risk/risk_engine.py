@@ -39,9 +39,10 @@ import json
 import os
 import threading
 import time
+from collections import deque
 from datetime import datetime
 from bot.compat import UTC
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from bot.config import CONFIG
 from bot.utils.logger import audit, risk_log
@@ -50,11 +51,21 @@ from bot.utils.models import RiskCheck, RiskVerdict, TradeIdea
 # Persistence file for safety state (circuit breaker, loss streak, daily PnL).
 # Survives restarts so a crash cannot silently clear protective limits.
 # F-15 FIX: validate state dir path to prevent traversal.
+# C2-44 FIX: resolve relative paths and validate containment.
 _state_dir = os.environ.get("RUNECLAW_STATE_DIR", "data")
-if os.path.isabs(_state_dir) and not _state_dir.startswith(os.getcwd()):
+_resolved_state_dir = os.path.realpath(_state_dir)
+if os.path.isabs(_state_dir) and not _resolved_state_dir.startswith(os.getcwd()):
     import warnings
     warnings.warn(
-        f"RUNECLAW_STATE_DIR={_state_dir!r} is an absolute path outside cwd. "
+        f"RUNECLAW_STATE_DIR={_state_dir!r} resolves to {_resolved_state_dir!r} "
+        "which is outside cwd. Using default 'data' instead.",
+        stacklevel=1,
+    )
+    _state_dir = "data"
+elif ".." in os.path.normpath(_state_dir).split(os.sep):
+    import warnings
+    warnings.warn(
+        f"RUNECLAW_STATE_DIR={_state_dir!r} contains '..' traversal. "
         "Using default 'data' instead.",
         stacklevel=1,
     )
@@ -144,7 +155,8 @@ class RiskEngine:
         self._circuit_breaker_trips = 0
         self._total_checks = 0
         self._total_rejections = 0
-        self._rejection_history: list[dict] = []  # recent rejections for /rejected command
+        # C2-45 FIX: deque with maxlen auto-prunes, no manual size checks needed
+        self._rejection_history: deque[dict] = deque(maxlen=50)
         self._lock = threading.RLock()
         self._state_file = state_file or _STATE_FILE
         self._macro_calendar = macro_calendar
@@ -155,8 +167,12 @@ class RiskEngine:
         self._current_vol_state: str = "NORMAL"
         # v2: macro size multiplier from last evaluation
         self._last_macro_size_multiplier: float = 1.0
+        # C2-42: persist last computed daily loss for fail-safe fallback
+        self._last_known_daily_loss_pct: float = 0.0
         # Last order flow signal for gate checks
         self._last_of_signal: Optional[Any] = None
+        # C2-34: combined state saver — when set, _save_state delegates to this
+        self._combined_saver: Optional[Callable] = None
         # F-01: reload persisted safety state so restarts don't clear the breaker
         self._load_state()
 
@@ -170,8 +186,10 @@ class RiskEngine:
 
     @property
     def rejection_history(self) -> list[dict]:
-        """Recent risk rejections for audit/display."""
-        return list(self._rejection_history)
+        """Recent risk rejections for audit/display.
+        C2-43 FIX: deepcopy prevents callers from mutating internal state."""
+        import copy
+        return copy.deepcopy(list(self._rejection_history))
 
     def set_order_flow_signal(self, signal) -> None:
         """Cache the latest OrderFlowSignal for Gate 2 / Rule 20 checks."""
@@ -204,9 +222,15 @@ class RiskEngine:
                 self._trip_circuit_breaker(
                     f"consecutive loss streak: {self._consecutive_losses}"
                 )
-        else:
-            self._consecutive_losses = 0
+        elif pnl > 0:
+            # C-06 FIX: A single small win should not erase a long loss streak.
+            # Decrement by 1 instead of resetting to 0, so recovery from e.g.
+            # 4 consecutive losses requires multiple wins, not just one dust win.
+            self._consecutive_losses = max(0, self._consecutive_losses - 1)
             self._save_state()
+        # C2-09 FIX: pnl == 0.0 (breakeven) — no change to streak.
+        # A breakeven trade is neither a win nor a loss and should not
+        # decrement the loss streak counter.
 
     def evaluate(self, idea: TradeIdea, atr: Optional[float] = None, live_equity: Optional[float] = None, max_position_usd: Optional[float] = None, live_open_count: Optional[int] = None) -> RiskCheck:
         """
@@ -253,6 +277,9 @@ class RiskEngine:
         # This separation gives the check real authority: if a tight stop would
         # produce an oversized position, the check catches it and caps it.
         stop_distance_pct = abs(idea.entry_price - idea.stop_loss) / idea.entry_price if idea.entry_price > 0 else 0
+        # C2-24 FIX: Floor at 0.1% to prevent near-zero stop distances from
+        # producing astronomically large intermediate position values.
+        stop_distance_pct = max(stop_distance_pct, 0.001)
         uncapped_position_usd = position_usd  # fallback: flat notional
         if stop_distance_pct > 0:
             risk_budget = sizing_equity * (CONFIG.risk.max_position_pct / 100.0)
@@ -268,17 +295,50 @@ class RiskEngine:
             position_usd = min(position_usd, max_position_usd)
             uncapped_position_usd = min(uncapped_position_usd, max_position_usd)
 
-        # Auto-cap position at the per-symbol notional limit so tight stops
-        # don't produce oversized positions.  This ensures the POSITION_SIZE
-        # check passes while the MARGIN_RISK check guards the actual risk.
+        # C2-11 FIX: Compute macro size multiplier BEFORE the notional cap and
+        # check #2, so the capped value reflects the macro-adjusted size.
+        # The multiplier is applied defensively: only reductions (<=1.0) are
+        # applied pre-check; any multiplier >1.0 is clamped to 1.0 here.
+        _macro_size_mult = 1.0
+        _macro_ctx = None
+        if self._macro_provider is not None:
+            try:
+                _macro_ctx = self._macro_provider.get_context(symbol=idea.asset)
+                self._last_macro_size_multiplier = _macro_ctx.size_multiplier
+                if _macro_ctx.risk_state == "REDUCE" and _macro_ctx.size_multiplier < 1.0:
+                    _macro_size_mult = _macro_ctx.size_multiplier
+                elif _macro_ctx.size_multiplier > 1.0:
+                    _macro_size_mult = 1.0  # never increase pre-cap
+            except Exception:
+                pass  # macro check #18 below handles errors with fail-closed
+
+        # C2-29 FIX: Apply regime multiplier BEFORE the notional cap, so the cap
+        # always has final authority.  Previously the multiplier was applied after
+        # the cap, allowing STRONG_TREND_UP (1.5x) to push position 50% above it.
+        # ── Apply regime-aware position size adjustment (Feature #3) ──
+        # C2-36: set_regime is called by the scan/analyze pipeline before evaluate().
+        # Here we just read the current regime params without mutating state.
+        regime_params = self.get_regime_adjusted_params(self._current_regime, self._current_vol_state)
+        regime_mult = regime_params.get("position_size_mult", 1.0)
+        if regime_mult != 1.0:
+            position_usd *= regime_mult
+
+        # C2-11: Apply macro reduction pre-cap
+        if _macro_size_mult < 1.0:
+            position_usd *= _macro_size_mult
+
+        # C-03 FIX: Cap position_usd at max_notional BEFORE check #2 runs.
+        # The fixed-fractional formula (risk_budget / stop_distance) routinely
+        # produces notional sizes far exceeding the risk budget itself (e.g.,
+        # 13% budget / 3% stop = 433% of equity).  The cap reduces the actual
+        # position to max_position_pct of equity — meaning the per-trade risk
+        # is smaller than the budget (conservative), but the notional exposure
+        # stays bounded.  Check #2 then verifies the CAPPED value against
+        # max_symbol_exposure_pct (a wider limit), giving it real authority to
+        # reject only when exposure is genuinely dangerous.
         max_notional_usd = sizing_equity * (CONFIG.risk.max_position_pct / 100.0)
         if max_notional_usd > 0 and position_usd > max_notional_usd:
             position_usd = max_notional_usd
-
-        # ── Apply regime-aware position size adjustment (Feature #3) ──
-        regime_params = self.get_regime_adjusted_params(self._current_regime, self._current_vol_state)
-        if regime_params.get("position_size_mult", 1.0) < 1.0:
-            position_usd *= regime_params["position_size_mult"]
 
         # ── Individual checks — each wrapped so a raised exception → REJECTED ──
         # This is the fail-closed contract: if ANY check cannot be evaluated,
@@ -300,7 +360,8 @@ class RiskEngine:
             else:
                 notional_pct = (position_usd / sizing_equity * 100)
                 max_notional_pct = CONFIG.risk.max_symbol_exposure_pct  # 20% default
-                if notional_pct < max_notional_pct + 0.01:  # tiny epsilon for float math
+                # C2-41 FIX: Use floating-point epsilon, not 1% overage tolerance
+                if notional_pct < max_notional_pct + 1e-9:  # floating-point tolerance only
                     passed.append(f"POSITION_SIZE: notional {notional_pct:.1f}% <= {max_notional_pct}%")
                 else:
                     failed.append(f"POSITION_SIZE: notional {notional_pct:.1f}% exceeds {max_notional_pct}% cap")
@@ -311,20 +372,29 @@ class RiskEngine:
         try:
             # 3. Daily loss (realized + unrealized) — measured against equity, not free cash
             daily_loss_pct = abs(state.daily_pnl / sizing_equity * 100) if sizing_equity > 0 else 0
+            self._last_known_daily_loss_pct = daily_loss_pct  # C2-42: persist for fallback
             if state.daily_pnl < 0 and daily_loss_pct >= CONFIG.risk.max_daily_loss_pct:
                 failed.append(f"DAILY_LOSS: {daily_loss_pct:.1f}% >= {CONFIG.risk.max_daily_loss_pct}%")
+                # C-05 FIX: trip circuit breaker AND reject the CURRENT trade
                 self._trip_circuit_breaker("daily loss limit breached")
+                if "CIRCUIT_BREAKER: tripped during evaluation" not in failed:
+                    failed.append("CIRCUIT_BREAKER: tripped during evaluation — current trade rejected")
             else:
                 passed.append(f"DAILY_LOSS: {daily_loss_pct:.1f}% OK")
         except Exception as exc:
             failed.append(f"DAILY_LOSS: evaluation error ({exc})")
-            daily_loss_pct = 0  # safe default for downstream
+            # C2-42 FIX: Use last known value instead of zeroing, so we don't
+            # mask an actual loss that was previously computed.
+            daily_loss_pct = self._last_known_daily_loss_pct
 
         try:
             # 4. Drawdown
             if state.max_drawdown_pct >= CONFIG.risk.max_drawdown_pct:
                 failed.append(f"DRAWDOWN: {state.max_drawdown_pct:.1f}% >= {CONFIG.risk.max_drawdown_pct}%")
+                # C-05 FIX: trip circuit breaker AND reject the CURRENT trade
                 self._trip_circuit_breaker("max drawdown breached")
+                if "CIRCUIT_BREAKER: tripped during evaluation" not in failed:
+                    failed.append("CIRCUIT_BREAKER: tripped during evaluation — current trade rejected")
             else:
                 passed.append(f"DRAWDOWN: {state.max_drawdown_pct:.1f}% OK")
         except Exception as exc:
@@ -388,9 +458,12 @@ class RiskEngine:
             failed.append(f"CORRELATION: evaluation error ({exc})")
 
         try:
-            # 9. Consecutive loss streak (H4 fix: 3+ streak = soft reject, hard stop via circuit breaker at max)
-            if self._consecutive_losses >= 3:
-                failed.append(f"LOSS_STREAK: {self._consecutive_losses} consecutive losses (>= 3)")
+            # 9. Consecutive loss streak
+            # C2-35 FIX: soft limit derived from config, not hardcoded to 3.
+            # Always stays 2 below the hard circuit-breaker limit.
+            soft_limit = max(2, CONFIG.risk.max_consecutive_losses - 2)
+            if self._consecutive_losses >= soft_limit:
+                failed.append(f"LOSS_STREAK: {self._consecutive_losses} consecutive losses (>= {soft_limit})")
             else:
                 passed.append(f"LOSS_STREAK: {self._consecutive_losses} OK")
         except Exception as exc:
@@ -445,9 +518,14 @@ class RiskEngine:
 
         try:
             # 14. Portfolio exposure limit (mark-to-market)
+            # C2-10 FIX: get_position_value() returns margin + unrealized PnL (per C-01),
+            # so we must normalize position_usd to margin-equivalent too.
+            # Otherwise a 5x leveraged new position overstates exposure by 5x.
+            leverage = getattr(CONFIG.exchange, 'default_leverage', 1) or 1
+            margin_equiv_position_usd = position_usd / leverage
             open_value = self._portfolio.get_position_value()
             exposure_pct = (open_value / sizing_equity * 100) if sizing_equity > 0 else 0
-            new_exposure = exposure_pct + (position_usd / sizing_equity * 100 if sizing_equity > 0 else 0)
+            new_exposure = exposure_pct + (margin_equiv_position_usd / sizing_equity * 100 if sizing_equity > 0 else 0)
             if new_exposure > CONFIG.risk.max_portfolio_exposure_pct:
                 failed.append(f"PORTFOLIO_EXPOSURE: {new_exposure:.1f}% > {CONFIG.risk.max_portfolio_exposure_pct}%")
             else:
@@ -458,7 +536,7 @@ class RiskEngine:
         try:
             # 15. Per-symbol exposure limit (mark-to-market)
             symbol_value = self._portfolio.get_position_value(asset=idea.asset)
-            new_symbol_value = symbol_value + position_usd
+            new_symbol_value = symbol_value + margin_equiv_position_usd
             symbol_exposure_pct = (new_symbol_value / sizing_equity * 100) if sizing_equity > 0 else 0
             if symbol_exposure_pct > CONFIG.risk.max_symbol_exposure_pct:
                 failed.append(
@@ -497,16 +575,18 @@ class RiskEngine:
 
         try:
             # 18. Macro event risk state (v2: enhanced macro provider with size throttling)
+            # NOTE: size_multiplier was already applied pre-cap (C2-11 fix).
+            # This check only records pass/fail — no further size modification.
             macro_checked = False
             if self._macro_provider is not None:
                 try:
-                    ctx = self._macro_provider.get_context(symbol=idea.asset)
+                    ctx = _macro_ctx if _macro_ctx is not None else self._macro_provider.get_context(symbol=idea.asset)
                     self._last_macro_size_multiplier = ctx.size_multiplier
                     if ctx.risk_state == "BLOCK_NEW_ENTRIES":
                         failed.append(f"MACRO_EVENT: BLOCK — {ctx.explanation}")
                     elif ctx.risk_state == "REDUCE":
                         passed.append(f"MACRO_EVENT: REDUCE (size×{ctx.size_multiplier}) — {ctx.explanation}")
-                        position_usd = position_usd * ctx.size_multiplier
+                        # C2-11: size reduction already applied pre-cap above
                     else:
                         passed.append(f"MACRO_EVENT: CLEAR")
                     macro_checked = True
@@ -596,6 +676,7 @@ class RiskEngine:
 
         # -- Verdict --
         verdict = RiskVerdict.APPROVED if len(failed) == 0 else RiskVerdict.REJECTED
+
         reason = "; ".join(failed) if failed else f"All {len(passed)} checks passed"
 
         if verdict == RiskVerdict.REJECTED:
@@ -609,9 +690,7 @@ class RiskEngine:
                 "reason": reason,
                 "timestamp": datetime.now(UTC).isoformat(),
             })
-            # Cap rejection history to prevent unbounded growth
-            if len(self._rejection_history) > 50:
-                self._rejection_history = self._rejection_history[-25:]
+            # C2-45: deque(maxlen=50) auto-prunes, no manual check needed
 
         check = RiskCheck(
             trade_id=idea.id,
@@ -785,6 +864,12 @@ class RiskEngine:
         "position_size_mult": 1.0, "cooldown_mult": 1.0, "stop_width_mult": 1.0,
     }
 
+    def set_regime(self, regime: str, volatility_state: str) -> None:
+        """C2-36 FIX: Explicit setter for regime state.
+        Called once per evaluation cycle; subsequent get calls are pure."""
+        self._current_regime = regime
+        self._current_vol_state = volatility_state
+
     def get_regime_adjusted_params(self, regime: str, volatility_state: str) -> dict:
         """Return adjusted risk parameter multipliers based on market regime.
 
@@ -794,11 +879,10 @@ class RiskEngine:
 
         Returns:
             dict with keys: position_size_mult, cooldown_mult, stop_width_mult
-        """
-        # Update instance state
-        self._current_regime = regime
-        self._current_vol_state = volatility_state
 
+        C2-36 FIX: Pure accessor — does NOT mutate _current_regime/_current_vol_state.
+        Use set_regime() to update state explicitly.
+        """
         base = dict(self._REGIME_MULTIPLIERS.get(regime.upper(), self._DEFAULT_MULTIPLIERS))
 
         # Overlay volatility adjustments
@@ -827,6 +911,8 @@ class RiskEngine:
 
         Returns:
             (ok, reason) — ok is False if PC1 explains > 70% of variance.
+
+        Statistical convention: sample variance (ddof=1) throughout this module (C2-46).
         """
         n_assets = len(returns_matrix)
         if n_assets < 2:
@@ -842,10 +928,10 @@ class RiskEngine:
         # Compute means
         means = [sum(r) / n_periods for r in trimmed]
 
-        # Compute std devs
+        # Compute std devs (C2-46 FIX: sample variance, ddof=1)
         stddevs = []
         for i, r in enumerate(trimmed):
-            var = sum((x - means[i]) ** 2 for x in r) / n_periods
+            var = sum((x - means[i]) ** 2 for x in r) / (n_periods - 1)
             stddevs.append(var ** 0.5)
 
         # Build correlation matrix (n x n)
@@ -858,10 +944,11 @@ class RiskEngine:
                 if stddevs[i] < 1e-12 or stddevs[j] < 1e-12:
                     corr[i][j] = 0.0
                     continue
+                # C2-46 FIX: sample covariance (ddof=1)
                 cov = sum(
                     (trimmed[i][k] - means[i]) * (trimmed[j][k] - means[j])
                     for k in range(n_periods)
-                ) / n_periods
+                ) / (n_periods - 1)
                 corr[i][j] = cov / (stddevs[i] * stddevs[j])
 
         # Power iteration to find largest eigenvalue of correlation matrix
@@ -939,6 +1026,15 @@ class RiskEngine:
 
         Returns (-1, -1) when there is insufficient data to compute VaR
         (fewer than 5 closed trades), signalling the caller to skip the check.
+
+        H-05 LIMITATION: This VaR uses per-trade returns (individual trade P&L /
+        notional) as a proxy for portfolio return volatility. This does NOT capture
+        cross-asset correlations, concurrent position overlap, or true portfolio-level
+        return distribution. A proper portfolio VaR would require time-series of
+        daily portfolio mark-to-market returns and a covariance matrix across held
+        assets. The current approach overstates diversification benefit and may
+        understate tail risk for concentrated portfolios. Do not rely on this VaR
+        as a standalone risk metric — it is a rough directional guard only.
         """
         import math
 
@@ -968,10 +1064,19 @@ class RiskEngine:
         variance = sum((r - mean_ret) ** 2 for r in returns) / (len(returns) - 1)
         vol = math.sqrt(variance)
 
-        # z-score for confidence level (95% = 1.645)
-        z_score = 1.645 if confidence_level == 0.95 else abs(
-            math.sqrt(2) * math.erfc(2 * confidence_level - 1)  # rough approx
-        )
+        # C2-28 FIX: z-score lookup table replaces erfc formula that produced
+        # wildly wrong values (~0.007 at 99% instead of correct 2.326).
+        _VAR_Z_SCORES = {0.90: 1.282, 0.95: 1.645, 0.99: 2.326, 0.999: 3.090}
+        if confidence_level in _VAR_Z_SCORES:
+            z_score = _VAR_Z_SCORES[confidence_level]
+        else:
+            # Nearest-key fallback for non-standard confidence levels
+            nearest = min(_VAR_Z_SCORES.keys(), key=lambda k: abs(k - confidence_level))
+            z_score = _VAR_Z_SCORES[nearest]
+            risk_log.warning(
+                "No exact z-score for confidence %.4f — using nearest %.3f (z=%.3f)",
+                confidence_level, nearest, z_score,
+            )
 
         # Holding period: 1 day (sqrt(1) = 1)
         holding_period = 1.0
@@ -1050,16 +1155,23 @@ class RiskEngine:
                   action="state_restore", result="IO_FAIL_CLOSED")
 
     def _save_state(self) -> None:
-        """Persist safety-critical state to disk. Called on every state change."""
+        """Persist safety-critical state to disk. Called on every state change.
+        C2-34: delegates to combined saver when wired, for atomic consistency."""
+        if self._combined_saver is not None:
+            try:
+                self._combined_saver()
+            except Exception as exc:
+                audit(risk_log, f"Combined save failed, falling back to individual: {exc}",
+                      action="save_state", result="FALLBACK")
+                self._save_state_individual()
+        else:
+            self._save_state_individual()
+
+    def _save_state_individual(self) -> None:
+        """Write risk state to its own file (legacy path or fallback)."""
         try:
             os.makedirs(os.path.dirname(self._state_file) or ".", exist_ok=True)
-            data = {
-                "circuit_open": self._circuit_open,
-                "consecutive_losses": self._consecutive_losses,
-                "last_loss_time": self._last_loss_time,
-                "circuit_breaker_trips": self._circuit_breaker_trips,
-                "saved_at": datetime.now(UTC).isoformat(),
-            }
+            data = self._export_state_dict()
             tmp = self._state_file + ".tmp"
             with open(tmp, "w") as f:
                 json.dump(data, f)
@@ -1070,6 +1182,27 @@ class RiskEngine:
             # Log save failure -- circuit breaker state is safety-critical
             audit(risk_log, f"Failed to persist risk state: {exc}",
                   action="save_state", result="ERROR")
+
+    def _export_state_dict(self) -> dict:
+        """C2-34: Extract risk state as a dict without writing to disk."""
+        return {
+            "circuit_open": self._circuit_open,
+            "consecutive_losses": self._consecutive_losses,
+            "last_loss_time": self._last_loss_time,
+            "circuit_breaker_trips": self._circuit_breaker_trips,
+            "saved_at": datetime.now(UTC).isoformat(),
+        }
+
+    def _load_from_state_dict(self, data: dict) -> None:
+        """C2-34: Restore risk state from a dict (no file I/O).
+        Uses fail-closed semantics matching _load_state."""
+        self._circuit_open = data.get("circuit_open", False)
+        self._consecutive_losses = data.get("consecutive_losses", 0)
+        self._last_loss_time = data.get("last_loss_time")
+        self._circuit_breaker_trips = data.get("circuit_breaker_trips", 0)
+        if self._circuit_open:
+            audit(risk_log, "Circuit breaker state restored from combined state: ACTIVE",
+                  action="state_restore", result="LOADED")
 
     def _trip_circuit_breaker(self, reason: str) -> None:
         if not self._circuit_open:

@@ -51,10 +51,11 @@ class AgentState(str, Enum):
 class MarketSignal(BaseModel):
     """A structured signal emitted by the market scanner."""
     symbol: str
-    price: float
+    price: float = Field(..., ge=0)  # C2-60 FIX: non-negative constraint
     change_pct_24h: float
-    volume_usd_24h: float
+    volume_usd_24h: float = Field(..., ge=0)  # C2-60 FIX: non-negative constraint
     volume_spike: bool = False
+    volume_spike_ratio: float = Field(default=0.0, ge=0)  # C2-22 FIX: actual field for spike filter
     momentum_score: float = Field(default=0.0, ge=-1.0, le=1.0)
     timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
     asset_category: str = "Crypto"  # Crypto | Metal | Commodity | ETF | Pre-IPO | Stock
@@ -94,8 +95,9 @@ class TradeIdea(BaseModel):
     @model_validator(mode="after")
     def _validate_directional_sanity(self) -> "TradeIdea":
         """Ensure SL/TP are on the correct side of entry for the given direction."""
+        # C2-59 FIX: Reject non-positive entry price instead of silently skipping
         if self.entry_price <= 0:
-            return self  # entry price validation is handled elsewhere
+            raise ValueError(f"entry_price must be positive, got {self.entry_price}")
         if self.direction == Direction.LONG:
             if self.stop_loss >= self.entry_price:
                 raise ValueError(
@@ -151,6 +153,7 @@ class TradeExecution(BaseModel):
     exit_price: Optional[float] = None
     is_paper: bool = True
     leverage: int = 1          # leverage multiplier (1 = spot / no leverage)
+    entry_atr: float = 0.0     # C2-48: actual ATR at trade entry (0 = legacy/unavailable)
     opened_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     closed_at: Optional[datetime] = None
 
@@ -166,6 +169,25 @@ class TradeExecution(BaseModel):
             raise ValueError(f"stop_loss must be > 0, got {self.stop_loss}")
         if self.take_profit <= 0:
             raise ValueError(f"take_profit must be > 0, got {self.take_profit}")
+        # H-11: Directional SL/TP validation (same logic as TradeIdea)
+        if self.direction == Direction.LONG:
+            if self.stop_loss >= self.entry_price:
+                raise ValueError(
+                    f"LONG stop_loss ({self.stop_loss}) must be below entry ({self.entry_price})"
+                )
+            if self.take_profit <= self.entry_price:
+                raise ValueError(
+                    f"LONG take_profit ({self.take_profit}) must be above entry ({self.entry_price})"
+                )
+        elif self.direction == Direction.SHORT:
+            if self.stop_loss <= self.entry_price:
+                raise ValueError(
+                    f"SHORT stop_loss ({self.stop_loss}) must be above entry ({self.entry_price})"
+                )
+            if self.take_profit >= self.entry_price:
+                raise ValueError(
+                    f"SHORT take_profit ({self.take_profit}) must be below entry ({self.entry_price})"
+                )
         return self
 
 

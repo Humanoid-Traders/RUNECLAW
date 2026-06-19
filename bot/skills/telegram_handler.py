@@ -4692,7 +4692,10 @@ class TelegramHandler:
                 "Trade not found", "not found", "expired", "No pending",
                 "Trade REJECTED", "Trade HALTED", "Execution denied",
             )
-            is_failure = any(result.startswith(p) for p in _fail_prefixes)
+            # Case-insensitive prefix check: catches both "Trade REJECTED" and
+            # "Trade rejected" (post-critique, manual reject, etc.)
+            result_lower = result.lower()
+            is_failure = any(result_lower.startswith(p.lower()) for p in _fail_prefixes)
             if not is_failure:
                 msg = f"\u2705 <b>Trade executed!</b>\n\n{result}"
                 # Forward trade open to marketing channels

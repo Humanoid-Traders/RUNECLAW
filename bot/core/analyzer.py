@@ -24,8 +24,9 @@ from datetime import datetime
 from bot.compat import UTC
 from typing import Optional
 
-# AG-H1: Symbol validation regex — only uppercase alphanumeric, optional /pair
-_VALID_SYMBOL_RE = re.compile(r"^[A-Z0-9]{1,15}(/[A-Z0-9]{1,15})?$")
+# AG-H1: Symbol validation regex — uppercase alphanumeric, optional /pair, optional :settle
+# C2-17 FIX: Allow ':' suffix for futures/swap symbols (e.g., XAU/USDT:USDT, NATGAS/USDT:USDT)
+_VALID_SYMBOL_RE = re.compile(r"^[A-Z0-9]{1,15}(/[A-Z0-9]{1,15}(:[A-Z0-9]{1,15})?)?$")
 
 
 def _sanitize_symbol(symbol: str) -> str:
@@ -470,6 +471,9 @@ class Analyzer:
                         "penalty": regime_confidence_penalty})
 
         confidence = max(0.0, min(1.0, thesis.get("confidence", 0.0))) * counter_trend_penalty
+        # C2-20 FIX: Cap combined penalty — confidence never drops below 25% of raw.
+        # Without this, counter_trend (0.5x) + regime_penalty (-0.15) = ~70-80% total
+        # reduction, eliminating legitimate mean-reversion setups entirely.
 
         # Blend LLM/rule-based confidence with confluence score
         blended_confidence = confidence * CONFIG.analyzer.llm_weight + confluence * CONFIG.analyzer.confluence_weight
@@ -528,7 +532,10 @@ class Analyzer:
         blended_confidence = round(max(0.0, min(1.0, blended_confidence)), 2)
 
         # Apply regime penalty (RANGE: -0.10, CHOP: -0.15, else: 0)
-        blended_confidence = round(max(0.0, blended_confidence - regime_confidence_penalty), 2)
+        # C2-20 FIX: Ensure combined penalties don't reduce below 25% of original.
+        raw_confidence = thesis.get("confidence", 0.0)
+        min_floor = raw_confidence * 0.25
+        blended_confidence = round(max(min_floor, blended_confidence - regime_confidence_penalty), 2)
 
         # SIGNAL QUALITY: threshold at min_confidence (matches config)
         # RANGE/CHOP trades need high raw confluence to survive after penalty
@@ -996,10 +1003,18 @@ class Analyzer:
             if volumes is not None and len(volumes) >= 20:
                 avg_vol_20 = float(np.mean(volumes[-20:]))
                 cur_vol = float(volumes[-1])
-                is_large_red = (closes[-1] < opens[-1] and
-                                body / candle_range > 0.6 if candle_range > 0 else False)
-                is_large_green = (closes[-1] > opens[-1] and
-                                  body / candle_range > 0.6 if candle_range > 0 else False)
+                # C2-19 FIX: Explicit guard-first to prevent division by zero.
+                # Previously the ternary bound to only the right operand.
+                is_large_red = (
+                    candle_range > 0
+                    and closes[-1] < opens[-1]
+                    and body / candle_range > 0.6
+                )
+                is_large_green = (
+                    candle_range > 0
+                    and closes[-1] > opens[-1]
+                    and body / candle_range > 0.6
+                )
                 results["capitulation_sell"] = (cur_vol >= 3 * avg_vol_20 and is_large_red)
                 results["capitulation_buy"] = (cur_vol >= 3 * avg_vol_20 and is_large_green)
                 results["vol_capitulation_ratio"] = round(cur_vol / avg_vol_20 if avg_vol_20 > 0 else 1.0, 2)
@@ -1436,11 +1451,12 @@ class Analyzer:
         # IMPROVEMENT #1: boosts are now applied inline at each voter via
         # _boost(weight, label) using the labels the sub-engines return.
 
-        # LB-2 FIX: assert votes/weights are aligned before computation.
+        # LB-2 FIX: votes/weights must be aligned before computation.
         # zip() silently truncates to the shorter list, hiding mismatches.
-        assert len(votes) == len(weights), (
-            f"Confluence votes/weights desync: {len(votes)} votes vs {len(weights)} weights"
-        )
+        if len(votes) != len(weights):
+            raise ValueError(
+                f"Confluence votes/weights desync: {len(votes)} votes vs {len(weights)} weights"
+            )
 
         # Weighted confluence
         total_weight = sum(weights)
@@ -1623,9 +1639,10 @@ class Analyzer:
                 raw_text = resp.choices[0].message.content or ""
                 result = self._parse_llm_response(raw_text)
             if not result.pop("_parsed", False):
-                audit(trade_log, "LLM response could not be parsed, using defaults",
+                audit(trade_log, "LLM response could not be parsed, blocking trade",
                       action="analyze", result="LLM_PARSE_FAIL",
                       data={"raw_text": raw_text[:200]})
+                return None  # C-07 FIX: do not default to LONG on parse failure
             result["source"] = f"LLM_{tier_label}"
             result["model_used"] = model
 

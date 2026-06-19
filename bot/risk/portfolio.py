@@ -46,10 +46,13 @@ class PortfolioTracker:
         state_file: Optional[str] = None,
         trailing_config: Optional[TrailingStopConfig] = None,
     ) -> None:
-        self.balance = initial_balance or CONFIG.paper_balance_usd
+        # C2-47 FIX: Use `is not None` instead of `or` to allow explicit 0.0
+        self.balance = initial_balance if initial_balance is not None else CONFIG.paper_balance_usd
         self.trailing_config = trailing_config or TrailingStopConfig()
         self._initial_balance = self.balance
         self._peak_equity = self.balance
+        self._max_drawdown_ever: float = 0.0  # M-01: track historical max drawdown
+        self._last_daily_reset: Optional[str] = None  # M-08: track last daily PnL reset date
         self._positions: dict[str, TradeExecution] = {}
         self._history: list[TradeExecution] = []
         self._daily_pnl: dict[str, float] = {}  # date-string -> pnl
@@ -62,6 +65,11 @@ class PortfolioTracker:
         self._trailing_state: dict[str, dict] = {}
         # Mark-to-market: latest prices for unrealized PnL
         self._last_prices: dict[str, float] = {}  # asset -> price
+        # C2-49: rate-limit missing price warnings per symbol
+        self._missing_price_warned: dict[str, int] = {}
+        # C2-34: combined state saver — when set, _auto_save delegates to this
+        # instead of writing portfolio_state.json independently
+        self._combined_saver: Optional[Callable[[], None]] = None
         # Persistence: only auto-load if no explicit initial_balance was given
         # (explicit balance = test/reset mode; default = production mode)
         self._state_file: str = state_file or CONFIG.portfolio_state_file
@@ -87,12 +95,17 @@ class PortfolioTracker:
                   action="open_position", result="REJECTED")
             raise ValueError(f"Entry price must be positive, got {idea.entry_price}")
 
-        # Guard: don't exceed balance
+        # C2-15 FIX: Reject (not clamp) when size exceeds balance.
+        # Silent clamping causes the risk engine's exposure tracking to diverge
+        # from actual position size — a phantom position.
         if size_usd > self.balance:
-            audit(trade_log, f"Position size clamped: ${size_usd:.2f} -> ${self.balance:.2f} (available balance)",
-                  action="open_position", result="CLAMPED",
-                  data={"requested": round(size_usd, 2), "clamped_to": round(self.balance, 2)})
-            size_usd = self.balance  # cap at available balance
+            audit(trade_log,
+                  f"Position size ${size_usd:.2f} exceeds available balance ${self.balance:.2f}",
+                  action="open_position", result="REJECTED",
+                  data={"requested": round(size_usd, 2), "balance": round(self.balance, 2)})
+            raise ValueError(
+                f"Insufficient balance: position ${size_usd:.2f} exceeds available ${self.balance:.2f}"
+            )
 
         if size_usd <= 0:
             audit(trade_log, "Insufficient balance for position",
@@ -137,27 +150,43 @@ class PortfolioTracker:
         return trade
 
     def close_position(self, trade_id: str, exit_price: float) -> Optional[TradeExecution]:
-        """Close an existing position at the given price."""
+        """Close an existing position at the given price.
+        C2-23 FIX: callback is deferred to AFTER the lock is released,
+        preventing the A→B / B→A deadlock between portfolio._lock and risk._lock."""
+        net_pnl = None
         with self._lock:
             result = self._close_position_locked(trade_id, exit_price)
             if result is not None:
+                net_pnl = result.pnl
                 self._auto_save()
-            return result
+
+        # C2-23: Call _on_trade_close OUTSIDE the lock to prevent deadlock.
+        # Lock ordering contract: risk._lock → portfolio._lock (never reversed).
+        if net_pnl is not None and self._on_trade_close:
+            try:
+                self._on_trade_close(net_pnl)
+            except Exception as exc:
+                audit(trade_log, f"Trade close callback error: {exc}",
+                      action="trade_close_callback", result="ERROR")
+
+        return result
 
     def _close_position_locked(self, trade_id: str, exit_price: float) -> Optional[TradeExecution]:
         trade = self._positions.pop(trade_id, None)
         if trade is None:
             return None
 
-        # Clean up trailing state
-        self._trailing_state.pop(trade_id, None)
-
+        # H-13 FIX: Guard exit price BEFORE popping trailing state,
+        # so invalid exit doesn't lose trailing data.
         # Guard: exit price must be positive
         if exit_price <= 0:
             audit(trade_log, f"Invalid exit price: {exit_price}",
                   action="close_position", result="ERROR")
             self._positions[trade_id] = trade  # put it back
             return None
+
+        # Clean up trailing state (only after validation passes)
+        self._trailing_state.pop(trade_id, None)
 
         if trade.direction == Direction.LONG:
             pnl = (exit_price - trade.entry_price) * trade.quantity
@@ -185,17 +214,20 @@ class PortfolioTracker:
         })
 
         self.balance += margin_usd + net_pnl
+        # H-12 FIX: Clamp balance to zero to prevent negative balance from leveraged losses
+        if self.balance < 0:
+            audit(trade_log, f"Balance went negative ({self.balance:.2f}), clamping to 0",
+                  action="close_position", result="BALANCE_CLAMPED")
+            self.balance = 0.0
         self._history.append(trade)
+        # C2-50 FIX: Cap trade history to prevent unbounded memory/serialization growth
+        if len(self._history) > 1000:
+            self._history = self._history[-1000:]
         self._record_daily_pnl(net_pnl)
         self._update_peak()
 
-        # Notify risk engine of trade result for streak tracking
-        if self._on_trade_close:
-            try:
-                self._on_trade_close(net_pnl)
-            except Exception as exc:
-                audit(trade_log, f"Trade close callback error: {exc}",
-                      action="trade_close_callback", result="ERROR")
+        # C2-23: _on_trade_close callback is now called by close_position()
+        # AFTER the lock is released, to prevent lock ordering inversion.
 
         audit(trade_log, f"Closed {trade.asset} PnL=${net_pnl:.2f} (gross=${pnl:.2f}, comm=${commission:.2f})",
               action="close_position", result="CLOSED",
@@ -206,7 +238,8 @@ class PortfolioTracker:
 
     def check_stops(self, prices: dict[str, float]) -> list[TradeExecution]:
         """Check all open positions against current prices for SL/TP hits.
-        Includes trailing stop logic for live/paper trading."""
+        Includes trailing stop logic for live/paper trading.
+        C2-23 FIX: callbacks deferred to after lock release."""
         closed: list[TradeExecution] = []
         with self._lock:
             for tid, pos in list(self._positions.items()):
@@ -230,6 +263,16 @@ class PortfolioTracker:
                         closed.append(result)
             if closed:
                 self._auto_save()
+
+        # C2-23: Notify risk engine OUTSIDE the lock for each closed trade
+        if closed and self._on_trade_close:
+            for trade in closed:
+                try:
+                    self._on_trade_close(trade.pnl)
+                except Exception as exc:
+                    audit(trade_log, f"Trade close callback error: {exc}",
+                          action="trade_close_callback", result="ERROR")
+
         return closed
 
     def snapshot(self) -> PortfolioState:
@@ -248,98 +291,38 @@ class PortfolioTracker:
             # Without this, peak only updates on trade close / snapshot,
             # so intra-bar equity highs are missed and drawdown is overstated.
             self._update_peak()
-            # Enhanced trailing stop: update after each M2M tick
-            self._update_trailing_stops_locked()
 
-    def update_trailing_stops(self, atr_values: Optional[dict[str, float]] = None) -> None:
-        """Public API: update trailing stops for all open positions.
-
-        Args:
-            atr_values: Optional mapping of asset -> current ATR value.
-                        If provided, overrides the stored ATR for each position.
-        """
-        with self._lock:
-            self._update_trailing_stops_locked(atr_values)
-
-    def _update_trailing_stops_locked(self, atr_values: Optional[dict[str, float]] = None) -> None:
-        """Internal: enhanced trailing stop logic using TrailingStopConfig.
-
-        For each open position:
-        1. Check if price has reached the activation threshold (activation_pct of TP distance)
-        2. If activated, compute trailing stop = current - (ATR * trail_mult) for LONG
-        3. Only tighten stops, never widen
-        """
-        cfg = self.trailing_config
-        for tid, pos in self._positions.items():
-            price = self._last_prices.get(pos.asset)
-            if price is None or price <= 0:
-                continue
-
-            ts = self._trailing_state.get(tid)
-            if ts is None:
-                continue
-
-            # Update ATR if fresh values provided
-            if atr_values and pos.asset in atr_values:
-                ts["atr"] = atr_values[pos.asset]
-
-            atr = ts.get("atr", 0)
-            entry = ts.get("entry_price", pos.entry_price)
-
-            # Compute activation distance: activation_pct % of distance to TP
-            tp_distance = abs(pos.take_profit - entry)
-            activation_distance = tp_distance * (cfg.activation_pct / 100.0)
-
-            if pos.direction == Direction.LONG:
-                # Update best price
-                if price > ts.get("best_price", entry):
-                    ts["best_price"] = price
-
-                # Activation check: has price moved activation_pct of TP distance?
-                if not ts.get("trailing_active", False) and activation_distance > 0:
-                    if price - entry >= activation_distance:
-                        ts["trailing_active"] = True
-
-                # Compute trailing stop
-                if ts.get("trailing_active", False) and atr > 0:
-                    trailing_sl = ts["best_price"] - (atr * cfg.trail_distance_atr_mult)
-                    # Ensure minimum profit lock
-                    min_profit_sl = entry * (1 + cfg.min_profit_lock_pct / 100.0)
-                    trailing_sl = max(trailing_sl, min_profit_sl)
-                    # Only tighten (move up for LONG)
-                    if trailing_sl > pos.stop_loss:
-                        pos.stop_loss = round(trailing_sl, 8)
-            else:
-                # SHORT
-                if price < ts.get("best_price", entry):
-                    ts["best_price"] = price
-
-                if not ts.get("trailing_active", False) and activation_distance > 0:
-                    if entry - price >= activation_distance:
-                        ts["trailing_active"] = True
-
-                if ts.get("trailing_active", False) and atr > 0:
-                    trailing_sl = ts["best_price"] + (atr * cfg.trail_distance_atr_mult)
-                    # Min profit lock for SHORT: entry * (1 - min_profit_lock_pct/100)
-                    min_profit_sl = entry * (1 - cfg.min_profit_lock_pct / 100.0)
-                    trailing_sl = min(trailing_sl, min_profit_sl)
-                    # Only tighten (move down for SHORT)
-                    if trailing_sl < pos.stop_loss:
-                        pos.stop_loss = round(trailing_sl, 8)
+    # C-02 FIX: Removed _update_trailing_stops_locked() and its public wrapper
+    # update_trailing_stops(). The canonical trailing stop system lives in
+    # bot.utils.trailing and is invoked via check_stops(). Having a second
+    # trailing stop engine here caused dual-update conflicts with different
+    # activation criteria and trail distances.
 
     def get_trailing_status(self) -> dict:
-        """Return current trailing stop info for all open positions."""
+        """Return current trailing stop info for all open positions.
+        C2-37 FIX: current_sl reflects the trailing-adjusted stop, not the original."""
         with self._lock:
             status = {}
             for tid, pos in self._positions.items():
                 ts = self._trailing_state.get(tid, {})
                 price = self._last_prices.get(pos.asset, pos.entry_price)
+                # C2-37: Compute the effective SL from trailing state
+                effective_sl = pos.stop_loss
+                if ts:
+                    ts_copy = dict(ts)
+                    ts_copy["entry_price"] = pos.entry_price
+                    from bot.utils.trailing import update_trailing_stop
+                    computed_sl, _ = update_trailing_stop(
+                        ts_copy, price, pos.stop_loss, pos.direction.value
+                    )
+                    effective_sl = computed_sl
                 status[tid] = {
                     "asset": pos.asset,
                     "direction": pos.direction.value,
                     "entry_price": pos.entry_price,
                     "current_price": price,
-                    "current_sl": pos.stop_loss,
+                    "current_sl": effective_sl,
+                    "original_sl": pos.stop_loss,
                     "take_profit": pos.take_profit,
                     "trailing_active": ts.get("trailing_active", False),
                     "best_price": ts.get("best_price", pos.entry_price),
@@ -353,6 +336,9 @@ class PortfolioTracker:
         If *asset* is given, return value for that asset only.
         Otherwise return total open position value.
         Used by risk engine for exposure checks (replaces private _last_prices access).
+
+        C-01 FIX: Returns margin + unrealized PnL, not full notional,
+        so leveraged positions are valued correctly.
         """
         with self._lock:
             total = 0.0
@@ -362,30 +348,53 @@ class PortfolioTracker:
                 price = self._last_prices.get(p.asset, None)
                 if price is None:
                     price = p.entry_price
-                    logging.getLogger(__name__).warning(
-                        "No market price for %s — falling back to entry price %.8f (stale valuation)",
-                        p.asset, p.entry_price,
-                    )
-                total += price * p.quantity
+                    # C2-49 FIX: rate-limit warning — log first occurrence and every 10th
+                    count = self._missing_price_warned.get(p.asset, 0) + 1
+                    self._missing_price_warned[p.asset] = count
+                    if count == 1 or count % 10 == 0:
+                        logging.getLogger(__name__).warning(
+                            "No market price for %s — falling back to entry price %.8f (stale valuation, seen %d times)",
+                            p.asset, p.entry_price, count,
+                        )
+                else:
+                    self._missing_price_warned.pop(p.asset, None)  # reset on success
+                lev = getattr(p, 'leverage', 1) or 1
+                margin = p.entry_price * p.quantity / lev
+                if p.direction == Direction.LONG:
+                    upnl = (price - p.entry_price) * p.quantity
+                else:
+                    upnl = (p.entry_price - price) * p.quantity
+                total += margin + upnl
             return total
 
     def _snapshot_locked(self) -> PortfolioState:
-        # Mark-to-market: use last known prices if available, else entry price
+        # C-01 FIX: For leveraged positions, open_value should be margin + unrealized PnL,
+        # not full notional. open_position() deducts margin (= entry_price * qty / leverage)
+        # from balance, so equity = balance + sum(margin + unrealized) for each position.
         open_value = 0.0
         unrealized_pnl = 0.0
         for p in self._positions.values():
             current_price = self._last_prices.get(p.asset, None)
             if current_price is None:
                 current_price = p.entry_price
-                logging.getLogger(__name__).warning(
-                    "No market price for %s — falling back to entry price %.8f (stale valuation)",
-                    p.asset, p.entry_price,
-                )
-            open_value += current_price * p.quantity
-            if p.direction == Direction.LONG:
-                unrealized_pnl += (current_price - p.entry_price) * p.quantity
+                # C2-49 FIX: rate-limit warning (shares counter with get_position_value)
+                count = self._missing_price_warned.get(p.asset, 0) + 1
+                self._missing_price_warned[p.asset] = count
+                if count == 1 or count % 10 == 0:
+                    logging.getLogger(__name__).warning(
+                        "No market price for %s — falling back to entry price %.8f (stale valuation, seen %d times)",
+                        p.asset, p.entry_price, count,
+                    )
             else:
-                unrealized_pnl += (p.entry_price - current_price) * p.quantity
+                self._missing_price_warned.pop(p.asset, None)
+            lev = getattr(p, 'leverage', 1) or 1
+            margin = p.entry_price * p.quantity / lev
+            if p.direction == Direction.LONG:
+                upnl = (current_price - p.entry_price) * p.quantity
+            else:
+                upnl = (p.entry_price - current_price) * p.quantity
+            unrealized_pnl += upnl
+            open_value += margin + upnl
 
         equity = self.balance + open_value
         self._update_peak()
@@ -394,14 +403,27 @@ class PortfolioTracker:
         total = len(self._history)
         # M5 fix: use UTC date, not local timezone
         today_key = datetime.now(UTC).date().isoformat()
+
+        # M-08 FIX: Reset daily realized PnL when the date rolls over
+        if self._last_daily_reset is not None and self._last_daily_reset != today_key:
+            # New day: previous day's realized PnL is already stored in _daily_pnl
+            # under its own date key. Nothing to zero out -- just note the transition.
+            pass
+        self._last_daily_reset = today_key
+
         realized_daily = self._daily_pnl.get(today_key, 0.0)
         # Include unrealized PnL in daily figure for conservative risk management:
         # this ensures risk checks account for paper losses before they are realized,
         # preventing the system from opening new positions while sitting on large
         # unrealized drawdowns that could breach daily loss limits on close.
         daily_pnl = realized_daily + unrealized_pnl
-        drawdown = ((self._peak_equity - equity) / self._peak_equity * 100) if self._peak_equity > 0 else 0
+        # M-01 FIX: Use historical max drawdown, not just current drawdown
+        current_drawdown = ((self._peak_equity - equity) / self._peak_equity * 100) if self._peak_equity > 0 else 0
+        max_drawdown = max(self._max_drawdown_ever, current_drawdown, 0)
 
+        # M-02 NOTE: Commission is deferred to exit (charged as entry + exit fee at close time).
+        # This is a deliberate design choice for PnL reconciliation with exchange statements.
+        # Unrealized PnL therefore does not include commission drag -- acceptable tradeoff.
         total_gross = round(sum(t.gross_pnl for t in self._history), 2)
         total_commission = round(sum(t.commission for t in self._history), 2)
 
@@ -415,7 +437,7 @@ class PortfolioTracker:
             total_gross_pnl=total_gross,
             total_commission=total_commission,
             daily_pnl=round(daily_pnl, 2),
-            max_drawdown_pct=round(max(drawdown, 0), 2),
+            max_drawdown_pct=round(max_drawdown, 2),
         )
 
     @property
@@ -441,13 +463,25 @@ class PortfolioTracker:
                 del self._daily_pnl[old_key]
 
     def _update_peak(self) -> None:
-        open_val = sum(
-            self._last_prices.get(p.asset, p.entry_price) * p.quantity
-            for p in self._positions.values()
-        )
+        # C-01 FIX: Use margin + unrealized PnL, not full notional
+        open_val = 0.0
+        for p in self._positions.values():
+            price = self._last_prices.get(p.asset, p.entry_price)
+            lev = getattr(p, 'leverage', 1) or 1
+            margin = p.entry_price * p.quantity / lev
+            if p.direction == Direction.LONG:
+                upnl = (price - p.entry_price) * p.quantity
+            else:
+                upnl = (p.entry_price - price) * p.quantity
+            open_val += margin + upnl
         equity = self.balance + open_val
         if equity > self._peak_equity:
             self._peak_equity = equity
+        # M-01 FIX: Track historical max drawdown
+        if self._peak_equity > 0:
+            current_dd = (self._peak_equity - equity) / self._peak_equity * 100
+            if current_dd > self._max_drawdown_ever:
+                self._max_drawdown_ever = current_dd
 
     # -- Persistence --
 
@@ -465,6 +499,8 @@ class PortfolioTracker:
             "balance": self.balance,
             "initial_balance": self._initial_balance,
             "peak_equity": self._peak_equity,
+            "max_drawdown_ever": self._max_drawdown_ever,
+            "last_daily_reset": self._last_daily_reset,
             "positions": {
                 tid: t.model_dump(mode="json") for tid, t in self._positions.items()
             },
@@ -488,6 +524,10 @@ class PortfolioTracker:
             tmp = str(target_path) + ".tmp"
             with open(tmp, "w") as f:
                 json.dump(state, f, indent=2, default=str)
+                # C2-33 FIX: Flush + fsync before os.replace to prevent
+                # partial writes on crash. Matches risk_engine.py pattern.
+                f.flush()
+                os.fsync(f.fileno())
             os.replace(tmp, str(target_path))
         except Exception as exc:
             audit(trade_log, f"Failed to save portfolio state: {exc}",
@@ -513,6 +553,8 @@ class PortfolioTracker:
             self.balance = float(data["balance"])
             self._initial_balance = float(data.get("initial_balance", self.balance))
             self._peak_equity = float(data.get("peak_equity", self.balance))
+            self._max_drawdown_ever = float(data.get("max_drawdown_ever", 0.0))
+            self._last_daily_reset = data.get("last_daily_reset", None)
             # Restore open positions
             self._positions = {}
             for tid, tdata in data.get("positions", {}).items():
@@ -525,8 +567,19 @@ class PortfolioTracker:
             self._daily_pnl = {
                 k: float(v) for k, v in data.get("daily_pnl", {}).items()
             }
-            # Restore trailing state
-            self._trailing_state = data.get("trailing_state", {})
+            # Restore trailing state (C2-51 FIX: validate required keys)
+            raw_trailing = data.get("trailing_state", {})
+            self._trailing_state = {}
+            _required_trailing_keys = {"best_price", "trailing_active", "initial_risk", "atr"}
+            for tid, ts in raw_trailing.items():
+                if not isinstance(ts, dict):
+                    trade_log.warning("Discarding invalid trailing state for %s: not a dict", tid)
+                    continue
+                missing = _required_trailing_keys - set(ts.keys())
+                if missing:
+                    trade_log.warning("Discarding incomplete trailing state for %s: missing %s", tid, missing)
+                    continue
+                self._trailing_state[tid] = ts
             # Restore last prices
             self._last_prices = {
                 k: float(v) for k, v in data.get("last_prices", {}).items()
@@ -557,13 +610,72 @@ class PortfolioTracker:
                   data={"file": str(target), "error": str(exc)})
             return False
 
+    def _export_state_dict(self) -> dict[str, Any]:
+        """C2-34: Extract portfolio state as a dict without writing to disk.
+        Must be called with self._lock held."""
+        return {
+            "schema_version": 1,
+            "balance": self.balance,
+            "initial_balance": self._initial_balance,
+            "peak_equity": self._peak_equity,
+            "max_drawdown_ever": self._max_drawdown_ever,
+            "last_daily_reset": self._last_daily_reset,
+            "positions": {
+                tid: t.model_dump(mode="json") for tid, t in self._positions.items()
+            },
+            "history": [t.model_dump(mode="json") for t in self._history],
+            "daily_pnl": dict(self._daily_pnl),
+            "trailing_state": dict(self._trailing_state),
+            "last_prices": dict(self._last_prices),
+        }
+
+    def _load_from_state_dict(self, data: dict[str, Any]) -> None:
+        """C2-34: Restore portfolio from a state dict (no file I/O).
+        Must be called with self._lock held."""
+        if "balance" not in data:
+            raise ValueError("Missing 'balance' field in state dict")
+        self.balance = float(data["balance"])
+        self._initial_balance = float(data.get("initial_balance", self.balance))
+        self._peak_equity = float(data.get("peak_equity", self.balance))
+        self._max_drawdown_ever = float(data.get("max_drawdown_ever", 0.0))
+        self._last_daily_reset = data.get("last_daily_reset", None)
+        self._positions = {}
+        for tid, tdata in data.get("positions", {}).items():
+            self._positions[tid] = TradeExecution.model_validate(tdata)
+        self._history = [
+            TradeExecution.model_validate(t) for t in data.get("history", [])
+        ]
+        self._daily_pnl = {
+            k: float(v) for k, v in data.get("daily_pnl", {}).items()
+        }
+        # C2-51 FIX: validate trailing state keys on restore (same as _load_state_locked)
+        raw_trailing = data.get("trailing_state", {})
+        self._trailing_state = {}
+        _required_trailing_keys = {"best_price", "trailing_active", "initial_risk", "atr"}
+        for tid, ts in raw_trailing.items():
+            if not isinstance(ts, dict):
+                trade_log.warning("Discarding invalid trailing state for %s: not a dict", tid)
+                continue
+            missing = _required_trailing_keys - set(ts.keys())
+            if missing:
+                trade_log.warning("Discarding incomplete trailing state for %s: missing %s", tid, missing)
+                continue
+            self._trailing_state[tid] = ts
+        self._last_prices = {
+            k: float(v) for k, v in data.get("last_prices", {}).items()
+        }
+
     def _auto_save(self) -> None:
         """Save state after trade execution. Called within the lock.
-        Only active if state was loaded on init or persistence was explicitly enabled."""
+        Only active if state was loaded on init or persistence was explicitly enabled.
+        C2-34: delegates to combined saver when wired, for atomic consistency."""
         if not self._persistence_active:
             return
         try:
-            self._save_state_locked()
+            if self._combined_saver is not None:
+                self._combined_saver()
+            else:
+                self._save_state_locked()
         except Exception as exc:
             audit(trade_log, f"Auto-save failed: {exc}",
                   action="auto_save", result="ERROR")

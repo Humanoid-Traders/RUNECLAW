@@ -251,30 +251,41 @@ class BacktestEngine:
             sl = pos.stop_loss
             tp = pos.take_profit
 
-            # STRATEGY: trailing stop via shared utility
-            # For LONG, feed bar.high to track best; for SHORT, feed bar.low
-            check_price = bar.high if direction == Direction.LONG else bar.low
-            sl, trailing_active = update_trailing_stop(bt_meta, check_price, sl, direction.value)
-            # Persist the tightened stop-loss so it carries to the next bar
-            pos.stop_loss = sl
-
-            # Check SL: use bar low for LONG, bar high for SHORT
+            # C2-38 FIX: Check SL against adverse extreme FIRST, before updating
+            # trailing with the favorable extreme.  Previously, trailing was updated
+            # first (e.g. bar.high for LONG), which could tighten the stop, and then
+            # bar.low was checked against the NEW tighter stop — causing phantom
+            # stop-outs on bars where the old stop would not have been hit.
+            # C2-39 NOTE: When both SL and TP are breachable within the same bar,
+            # SL is checked first. This is a conservative (pessimistic) assumption —
+            # in reality, which fires first depends on intrabar price path which is
+            # not available at this resolution.
             if direction == Direction.LONG:
                 if bar.low <= sl:
+                    trailing_active = bt_meta.get("trailing_active", False)
                     reason = "TRAILING_SL" if trailing_active else "SL"
                     self._close_position(tid, sl, bar, reason)
                     continue
                 if bar.high >= tp:
                     self._close_position(tid, tp, bar, "TP")
                     continue
+                # Not stopped out — now update trailing with favorable extreme
+                check_price = bar.high
+                sl, trailing_active = update_trailing_stop(bt_meta, check_price, sl, direction.value)
+                pos.stop_loss = sl
             else:
                 if bar.high >= sl:
+                    trailing_active = bt_meta.get("trailing_active", False)
                     reason = "TRAILING_SL" if trailing_active else "SL"
                     self._close_position(tid, sl, bar, reason)
                     continue
                 if bar.low <= tp:
                     self._close_position(tid, tp, bar, "TP")
                     continue
+                # Not stopped out — now update trailing with favorable extreme
+                check_price = bar.low
+                sl, trailing_active = update_trailing_stop(bt_meta, check_price, sl, direction.value)
+                pos.stop_loss = sl
 
     def _close_position(
         self, trade_id: str, exit_price: float, bar: BacktestBar, reason: str
@@ -401,11 +412,13 @@ class BacktestEngine:
         losers = [t for t in trades if t.net_pnl_usd <= 0]
         win_rate = len(winners) / total if total > 0 else 0
 
-        gross_profit = sum(t.net_pnl_usd for t in winners) if winners else 0
-        gross_loss = abs(sum(t.net_pnl_usd for t in losers)) if losers else 0
+        # C2-40 FIX: Renamed from gross_profit/gross_loss — these values use
+        # net PnL (after commission), not gross PnL. Names now match semantics.
+        net_profit = sum(t.net_pnl_usd for t in winners) if winners else 0
+        net_loss = abs(sum(t.net_pnl_usd for t in losers)) if losers else 0
 
-        avg_win = (gross_profit / len(winners)) if winners else 0
-        avg_loss = (gross_loss / len(losers)) if losers else 0
+        avg_win = (net_profit / len(winners)) if winners else 0
+        avg_loss = (net_loss / len(losers)) if losers else 0
         largest_win = max((t.net_pnl_usd for t in winners), default=0)
         largest_loss = min((t.net_pnl_usd for t in losers), default=0)
 
@@ -436,7 +449,7 @@ class BacktestEngine:
                 max_dd_usd = dd_usd
 
         # Profit factor
-        profit_factor = (gross_profit / gross_loss) if gross_loss > 0 else (999.99 if gross_profit > 0 else 0)
+        profit_factor = (net_profit / net_loss) if net_loss > 0 else (999.99 if net_profit > 0 else 0)
 
         # Sharpe, Sortino, Calmar from equity curve returns
         sharpe = self._compute_sharpe()

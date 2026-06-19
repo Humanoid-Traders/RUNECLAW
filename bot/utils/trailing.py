@@ -31,6 +31,7 @@ def update_trailing_stop(
     current_price: float,
     original_sl: float,
     direction: str,
+    trail_atr_mult: float = 1.5,
 ) -> tuple[float, bool]:
     """
     Update trailing-stop state and return the effective stop-loss.
@@ -40,11 +41,16 @@ def update_trailing_stop(
         current_price: Latest market price.
         original_sl: The original (or previously tightened) stop-loss.
         direction: "LONG" or "SHORT".
+        trail_atr_mult: ATR multiplier for trailing distance (default 1.5).
 
     Returns:
         (effective_sl, trailing_active) — the adjusted SL and whether
         the trailing stop is currently active.
     """
+    # H-07: reject invalid prices — return state unchanged
+    if current_price <= 0:
+        return original_sl, state.get("trailing_active", False)
+
     atr = state.get("atr", 0)
     initial_risk = state.get("initial_risk", 0)
     sl = original_sl
@@ -56,7 +62,7 @@ def update_trailing_stop(
             if state["best_price"] - state.get("entry_price", state["best_price"]) >= initial_risk:
                 state["trailing_active"] = True
         if state["trailing_active"] and atr > 0:
-            trailing_sl = state["best_price"] - 1.5 * atr
+            trailing_sl = state["best_price"] - trail_atr_mult * atr
             if trailing_sl > sl:
                 sl = trailing_sl
     else:
@@ -66,7 +72,7 @@ def update_trailing_stop(
             if state.get("entry_price", state["best_price"]) - state["best_price"] >= initial_risk:
                 state["trailing_active"] = True
         if state["trailing_active"] and atr > 0:
-            trailing_sl = state["best_price"] + 1.5 * atr
+            trailing_sl = state["best_price"] + trail_atr_mult * atr
             if trailing_sl < sl:
                 sl = trailing_sl
 

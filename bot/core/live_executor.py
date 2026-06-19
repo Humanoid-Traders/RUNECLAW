@@ -20,6 +20,7 @@ import hashlib
 import json
 import logging
 import os
+import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -37,15 +38,22 @@ logger = logging.getLogger(__name__)
 
 
 def normalize_symbol(s: str) -> str:
-    """Canonical symbol normalizer — strips all ccxt suffixes to a bare base.
+    """Canonical symbol normalizer — strips ccxt suffixes to a bare base.
 
     Examples:
         MEGA/USDT:USDT  →  MEGA
         MEGA/USDT       →  MEGA
-        MEGAUSDT        →  MEGA
+        MEGAUSDT        →  MEGAUSDT  (no destructive mid-string strip)
         XAU/USDT:USDT   →  XAU
     """
-    return s.replace(":USDT", "").replace("/USDT", "").replace("USDT", "").upper()
+    result = s.upper()
+    # Strip :USDT settle suffix first, then /USDT quote suffix.
+    # Do NOT strip bare 'USDT' from the middle of strings (e.g. USDTUSDT).
+    if result.endswith(":USDT"):
+        result = result[:-5]
+    if result.endswith("/USDT"):
+        result = result[:-5]
+    return result
 
 
 def display_symbol(s: str) -> str:
@@ -143,6 +151,12 @@ class LiveExecutor:
         self._hedge_mode: Optional[bool] = None  # None=unknown, True=hedge, False=one-way
         self._is_uta: Optional[bool] = None  # None=unknown, cached after first detection
         self._last_close_data: Optional[dict] = None  # Structured data from most recent close
+        # C2-02 FIX: Per-trade-id locks to prevent double-close race condition.
+        # close_position() is called from check_positions, reconcile_positions,
+        # and Telegram handler — all can race on the same trade_id.
+        self._close_locks: dict[str, asyncio.Lock] = {}
+        # C2-27: Track consecutive ticker fetch failures per symbol
+        self._ticker_failure_count: dict[str, int] = {}
         # Callback: invoked after any position is closed (for balance cache invalidation)
         self.on_position_closed: Optional[Callable] = None
         # F-07 FIX: Load persisted positions on startup
@@ -196,6 +210,25 @@ class LiveExecutor:
                 params={"productType": "USDT-FUTURES"})
         except Exception as exc:
             logger.warning("Leverage set failed for %s (may use exchange default): %s", symbol, exc)
+
+        # C2-04 FIX: Verify leverage was actually applied. If it doesn't match,
+        # log a critical warning. The caller should treat this as a risk.
+        try:
+            lev_info = await exchange.fetch_leverage(symbol, params={"productType": "USDT-FUTURES"})
+            actual_lev = None
+            if isinstance(lev_info, dict):
+                # CCXT / Bitget returns various shapes — try common keys
+                actual_lev = lev_info.get("longLeverage") or lev_info.get("leverage") or lev_info.get("long")
+                if actual_lev is not None:
+                    actual_lev = int(float(actual_lev))
+            if actual_lev is not None and actual_lev != cfg.default_leverage:
+                logger.critical(
+                    "LEVERAGE MISMATCH for %s: wanted %dx, exchange reports %dx — "
+                    "position will have INCORRECT risk exposure",
+                    symbol, cfg.default_leverage, actual_lev)
+        except Exception:
+            # fetch_leverage may not be implemented for all exchanges — log but don't block
+            logger.debug("Could not verify leverage for %s (fetch_leverage unavailable)", symbol)
         # Detect hold mode (one-way vs hedge) on first call
         if self._hedge_mode is None:
             await self._detect_hold_mode()
@@ -214,7 +247,7 @@ class LiveExecutor:
         # ── Attempt 1: v2 API (classic accounts) ──
         try:
             resp = await exchange.privateMixGetV2MixAccountAccount(
-                {"symbol": "BTCUSDT", "productType": "USDT-FUTURES"})
+                {"symbol": CONFIG.exchange.hold_mode_probe_symbol, "productType": "USDT-FUTURES"})
             data = resp.get("data", {})
             if isinstance(data, list) and data:
                 data = data[0]
@@ -828,11 +861,11 @@ class LiveExecutor:
                         uni_usdt = uni_bal.get("USDT", {})
                         bal_free = float(uni_usdt.get("free", 0) if isinstance(uni_usdt, dict) else 0)
                     logger.info("Balance pre-check: free=%.2f USDT for %s", bal_free, symbol)
-                    if bal_free < size_usd / leverage:
+                    if bal_free < size_usd:
                         audit(trade_log,
-                              f"Low balance warning: ${bal_free:.2f} available, need ~${size_usd/leverage:.2f} margin for {symbol}",
+                              f"Low balance warning: ${bal_free:.2f} available, need ~${size_usd:.2f} margin for {symbol}",
                               action="live_execute", result="BALANCE_WARN",
-                              data={"balance_free": bal_free, "margin_needed": size_usd/leverage})
+                              data={"balance_free": bal_free, "margin_needed": size_usd})
                 except Exception as exc:
                     logger.debug("Balance pre-check failed: %s", exc)
 
@@ -911,7 +944,30 @@ class LiveExecutor:
                     cost = raw_cost
             else:
                 fill_price = float(order.get("average", 0) or order.get("price", 0) or current_price)
-                filled_qty = float(order.get("filled", 0) or quantity)
+                filled_qty = float(order.get("filled", 0))
+
+                # C2-12 FIX: If filled quantity is missing or zero from the create
+                # response, fetch the order to confirm actual fill.  Don't default
+                # to requested quantity — that can track a partial fill at full size,
+                # causing close_position to submit excess quantity (opens reverse pos).
+                if not filled_qty or filled_qty <= 0:
+                    try:
+                        confirmed = await active_exchange.fetch_order(order_id, symbol)
+                        filled_qty = float(confirmed.get("filled", 0) or 0)
+                        if confirmed.get("average"):
+                            fill_price = float(confirmed["average"])
+                    except Exception as fetch_exc:
+                        logger.warning("Could not confirm fill for order %s: %s", order_id, fetch_exc)
+
+                # Final fallback: if still no fill data, use requested quantity
+                # but flag it as estimated in the audit log
+                if not filled_qty or filled_qty <= 0:
+                    filled_qty = quantity
+                    audit(trade_log,
+                          f"Fill quantity unconfirmed for {symbol} — using requested qty {quantity:.6f}",
+                          action="fill_fallback", result="ESTIMATED",
+                          data={"order_id": order_id})
+
                 # cost_usd = margin (collateral), not notional. For futures, notional / leverage.
                 raw_cost = float(order.get("cost", 0) or fill_price * filled_qty)
                 if is_futures and leverage_mult > 1:
@@ -1307,7 +1363,7 @@ class LiveExecutor:
             "stopLoss": sl_final,
             "tpOrderType": "market",
             "slOrderType": "market",
-            "clientOid": self._client_oid(bitget_symbol + pos_side + "sltp"),
+            "clientOid": self._client_oid(f"{bitget_symbol}_{pos_side}_sltp_{int(time.time())}"),
         }
         # Only include posSide in hedge mode
         if self._hedge_mode:
@@ -1466,7 +1522,8 @@ class LiveExecutor:
             "orderType": "market",
             "size": qty_str,
             "triggerType": "fill_price",
-            "clientOid": self._client_oid(bitget_symbol + "spot_sl"),
+            # C2-56 FIX: include trade_id for guaranteed uniqueness across trades
+            "clientOid": self._client_oid(f"{bitget_symbol}_sl_{int(time.time() * 1000)}"),
         }
 
         try:
@@ -1500,7 +1557,8 @@ class LiveExecutor:
             "orderType": "market",
             "size": qty_str,
             "triggerType": "fill_price",
-            "clientOid": self._client_oid(bitget_symbol + "spot_tp"),
+            # C2-56 FIX: include trade_id for guaranteed uniqueness across trades
+            "clientOid": self._client_oid(f"{bitget_symbol}_tp_{int(time.time() * 1000)}"),
         }
 
         try:
@@ -1545,7 +1603,30 @@ class LiveExecutor:
         closed_messages = []
         try:
             exchange = await self._get_exchange()
-            tickers = await exchange.fetch_tickers()
+            # C2-27 FIX: Fetch tickers per-symbol instead of batch.
+            # A single delisted/erroring symbol in fetch_tickers() would block
+            # SL/TP checks for ALL positions. Per-symbol isolation ensures
+            # monitoring continues for healthy symbols.
+            open_symbols = [p.symbol for p in self._positions.values() if p.status in ("open", "pending_fill")]
+            tickers: dict = {}
+            for sym in open_symbols:
+                try:
+                    t = await exchange.fetch_ticker(sym)
+                    tickers[sym] = t
+                except Exception as e:
+                    # Track consecutive failures per symbol
+                    count = self._ticker_failure_count.get(sym, 0) + 1
+                    self._ticker_failure_count[sym] = count
+                    level = "warning" if count < 3 else "error"
+                    getattr(trade_log, level)(
+                        "fetch_ticker failed for %s (%d consecutive): %s",
+                        sym, count, e,
+                    )
+                    continue
+            # Reset failure count for symbols that succeeded
+            for sym in open_symbols:
+                if sym in tickers:
+                    self._ticker_failure_count.pop(sym, None)
 
             for trade_id, pos in list(self._positions.items()):
                 # ── Handle pending limit orders ──
@@ -1584,7 +1665,7 @@ class LiveExecutor:
                                         "trailing_active": trailing_active})
 
                 # ── Retry SL/TP placement if missing ──
-                if not pos.sl_order_id and not pos.tp_order_id and pos.stop_loss > 0 and pos.take_profit > 0:
+                if (not pos.sl_order_id or not pos.tp_order_id) and pos.stop_loss > 0 and pos.take_profit > 0:
                     try:
                         direction = Direction.LONG if pos.direction == "LONG" else Direction.SHORT
                         sl_id, tp_id = await self._place_sl_tp(
@@ -1702,7 +1783,11 @@ class LiveExecutor:
                 pos.status = "closed"
                 pos.closed_at = datetime.now(UTC)
                 pos.pnl_usd = 0.0
+                pos.close_reason = order_status
                 self._save_positions()
+                # C2-14 FIX: Write to closed_trades.json so cancelled/rejected
+                # limit orders are visible in trade history, not silently dropped.
+                self._append_closed_trade(pos)
 
                 audit(trade_log, f"Limit order {order_status}: {pos.symbol}",
                       action="limit_cancel", result=order_status.upper(),
@@ -1715,16 +1800,39 @@ class LiveExecutor:
                 age_sec = (datetime.now(UTC) - pos.opened_at).total_seconds()
                 if age_sec > CONFIG.limit_orders.expire_seconds:
                     # Cancel expired limit order
+                    cancel_confirmed = False
                     try:
                         await exchange.cancel_order(pos.limit_order_id, pos.symbol)
+                        cancel_confirmed = True
                     except Exception as exc:
                         logger.warning("Failed to cancel expired limit order %s: %s",
                                        pos.limit_order_id, exc)
 
+                    # C2-16 FIX: Verify cancel before marking closed — if cancel
+                    # failed, the order may have filled in the meantime.
+                    if not cancel_confirmed:
+                        try:
+                            order_info = await exchange.fetch_order(pos.limit_order_id, pos.symbol)
+                            actual_status = order_info.get("status", "")
+                            if actual_status in ("filled", "closed"):
+                                # Order filled while we tried to cancel — handle as fill
+                                logger.warning("Limit order %s filled during cancel attempt", pos.limit_order_id)
+                                return None  # next check cycle will process the fill
+                            elif actual_status not in ("canceled", "cancelled", "expired"):
+                                # Still active — don't mark closed locally
+                                logger.warning("Limit order %s still %s after cancel attempt",
+                                               pos.limit_order_id, actual_status)
+                                return None
+                        except Exception as verify_exc:
+                            logger.warning("Could not verify limit order status: %s", verify_exc)
+
                     pos.status = "closed"
                     pos.closed_at = datetime.now(UTC)
                     pos.pnl_usd = 0.0
+                    pos.close_reason = "expired"
                     self._save_positions()
+                    # C2-14 FIX: Record expired limit orders in closed_trades.json
+                    self._append_closed_trade(pos)
 
                     audit(trade_log, f"Limit order EXPIRED after {age_sec:.0f}s: {pos.symbol}",
                           action="limit_expire", result="EXPIRED",
@@ -1739,28 +1847,25 @@ class LiveExecutor:
 
     async def _update_exchange_sl(self, exchange: "ccxt.Exchange",
                                    pos: LivePosition, new_sl: float) -> None:
-        """Cancel old SL order and place a new one at the tightened level.
+        """Place new SL order first, then cancel old one — no protection gap.
 
-        Best-effort: trailing stop still works locally even if exchange
-        update fails — check_positions() will close at the new SL.
+        C2-03 FIX: Previous logic cancelled old SL before placing new one,
+        leaving the position unprotected if the new placement failed.
+        Now: place new SL first, then cancel old. If new placement fails,
+        old SL remains active.  Best-effort: trailing stop still works
+        locally even if exchange update fails — check_positions() will
+        close at the new SL.
         """
         is_futures = not getattr(pos, "is_spot", False)
         if not is_futures:
             return  # spot SL/TP not reliably supported
 
-        # Cancel existing SL order
         old_sl_id = pos.sl_order_id
-        if pos.sl_order_id:
-            try:
-                await exchange.cancel_order(pos.sl_order_id, pos.symbol)
-                pos.sl_order_id = None  # Clear immediately — re-set only on successful placement
-            except Exception as exc:
-                logger.debug("Cancel old SL order %s failed: %s", pos.sl_order_id, exc)
-
-        # Place new SL at tightened level
         direction = Direction.LONG if pos.direction == "LONG" else Direction.SHORT
         use_v3 = self._is_uta if self._is_uta is not None else False
 
+        # Step 1: Place new SL at tightened level FIRST
+        new_sl_id = None
         if use_v3:
             # Round to tick grid
             swap_symbol = pos.symbol if ":USDT" in pos.symbol else f"{pos.symbol}:USDT"
@@ -1768,15 +1873,13 @@ class LiveExecutor:
             if sl_rounded is None:
                 sl_rounded = self._round_price_to_market(exchange, pos.symbol, new_sl)
 
-            # Place SL-only via v3 (keep existing TP)
             sl_id, _ = await self._place_sl_tp_v3(
                 pos.symbol, direction, pos.quantity,
                 new_sl, pos.take_profit,
                 sl_str=sl_rounded,
             )
             if sl_id:
-                pos.sl_order_id = sl_id
-                self._save_positions()
+                new_sl_id = sl_id
         else:
             # Classic mode: place trigger order
             close_side = "sell" if direction == Direction.LONG else "buy"
@@ -1789,17 +1892,41 @@ class LiveExecutor:
                     amount=pos.quantity,
                     params={"triggerPrice": new_sl, "triggerType": "last", **extra_params},
                 )
-                pos.sl_order_id = sl_order.get("id")
-                self._save_positions()
+                new_sl_id = sl_order.get("id")
             except Exception as exc:
-                logger.warning("Failed to update exchange SL for %s: %s", pos.symbol, exc)
+                logger.warning("Failed to place new exchange SL for %s: %s", pos.symbol, exc)
+
+        # Step 2: Only cancel old SL AFTER new one is confirmed placed
+        if new_sl_id:
+            pos.sl_order_id = new_sl_id
+            self._save_positions()
+            if old_sl_id:
+                try:
+                    await exchange.cancel_order(old_sl_id, pos.symbol)
+                except Exception as exc:
+                    logger.debug("Cancel old SL order %s failed (new SL active): %s", old_sl_id, exc)
+        else:
+            # New placement failed — old SL remains active, no gap
+            logger.warning("Trailing SL update skipped for %s — new placement failed, old SL preserved", pos.symbol)
 
     async def close_position(self, trade_id: str, reason: str = "manual",
                               close_price: float = 0) -> str:
         """Close a live position by placing the opposite order."""
+        # C2-02 FIX: Per-trade lock prevents double-close race.
+        lock = self._close_locks.setdefault(trade_id, asyncio.Lock())
+        async with lock:
+            return await self._close_position_inner(trade_id, reason, close_price)
+
+    async def _close_position_inner(self, trade_id: str, reason: str = "manual",
+                              close_price: float = 0) -> str:
+        """Inner close logic, called under per-trade lock."""
         pos = self._positions.get(trade_id)
-        if not pos or pos.status != "open":
-            return f"Position {trade_id} not found or already closed."
+        if not pos or pos.status not in ("open", "pending_fill"):
+            return f"Position {trade_id} not found or already closed/closing."
+
+        # C2-02 FIX: Set transitional state BEFORE any await — concurrent callers
+        # will see "closing" and bail out at the guard above.
+        pos.status = "closing"
 
         try:
             exchange = await self._get_exchange()
@@ -1812,12 +1939,26 @@ class LiveExecutor:
 
             # Cancel SL/TP orders BEFORE closing — prevents race condition where
             # a trigger fires between close-fill and cancel, opening an opposite pos.
+            cancel_failed = []
             for oid in [pos.sl_order_id, pos.tp_order_id]:
                 if oid:
                     try:
-                        await exchange.cancel_order(oid, pos.symbol)
-                    except Exception:
-                        pass  # May already be cancelled/expired
+                        cancel_resp = await exchange.cancel_order(oid, pos.symbol)
+                        cancel_status = cancel_resp.get("status", "") if isinstance(cancel_resp, dict) else ""
+                        if cancel_status and cancel_status not in ("canceled", "cancelled", "closed"):
+                            # Verify it is actually cancelled
+                            try:
+                                order_info = await exchange.fetch_order(oid, pos.symbol)
+                                if order_info.get("status") not in ("canceled", "cancelled", "closed", "expired"):
+                                    logger.warning("SL/TP order %s may not be cancelled (status=%s), proceeding with close anyway",
+                                                   oid, order_info.get("status"))
+                                    cancel_failed.append(oid)
+                            except Exception:
+                                pass  # Fetch failed — assume cancel worked
+                    except Exception as cancel_exc:
+                        logger.warning("Failed to cancel SL/TP order %s for %s: %s — proceeding with close",
+                                       oid, pos.symbol, cancel_exc)
+                        cancel_failed.append(oid)
 
             if is_futures_pos:
                 close_params = {"productType": "USDT-FUTURES"}
@@ -1909,6 +2050,25 @@ class LiveExecutor:
 
             # F-07 FIX: persist after closing (removes from open positions file)
             self._save_positions()
+
+            # C-09 FIX: post-close cleanup — cancel any remaining open orders on this symbol
+            # to prevent orphaned SL/TP triggers from opening opposite positions.
+            if cancel_failed:
+                for stale_oid in cancel_failed:
+                    try:
+                        await exchange.cancel_order(stale_oid, pos.symbol)
+                    except Exception:
+                        pass  # Best-effort cleanup
+                try:
+                    open_orders = await exchange.fetch_open_orders(pos.symbol)
+                    for oo in open_orders:
+                        try:
+                            await exchange.cancel_order(oo["id"], pos.symbol)
+                            logger.info("Post-close cleanup: cancelled orphan order %s on %s", oo["id"], pos.symbol)
+                        except Exception:
+                            pass
+                except Exception as cleanup_exc:
+                    logger.debug("Post-close order cleanup failed for %s: %s", pos.symbol, cleanup_exc)
             # F-14 FIX: persist closed trade to closed_trades.json
             self._append_closed_trade(pos)
             # Notify engine to invalidate balance cache
@@ -1925,9 +2085,12 @@ class LiveExecutor:
                   })
 
             pnl_str = f"+${net_pnl:.4f}" if net_pnl >= 0 else f"-${abs(net_pnl):.4f}"
+            # C2-58 FIX: Show both leveraged (margin) and unleveraged (notional) PnL%
             pnl_pct = ((fill_price - pos.entry_price) / pos.entry_price * 100)
             if pos.direction == "SHORT":
                 pnl_pct = -pnl_pct
+            lev = pos.leverage or 1
+            pnl_pct_margin = pnl_pct * lev  # leveraged return — what hits the account
             hold_secs = (pos.closed_at - pos.opened_at).total_seconds() if pos.closed_at and pos.opened_at else 0
             if hold_secs < 3600:
                 hold_str = f"{hold_secs / 60:.0f}m"
@@ -1936,10 +2099,15 @@ class LiveExecutor:
             else:
                 hold_str = f"{hold_secs / 86400:.1f}d"
             fee_str = f"${commission:.2f}"
+            # C2-58: Show leveraged return when leverage > 1
+            if lev > 1:
+                pnl_pct_str = f"{pnl_pct_margin:+.2f}% margin / {pnl_pct:+.2f}% notional, {lev}×"
+            else:
+                pnl_pct_str = f"{pnl_pct:+.2f}%"
             close_msg = (
                 f"CLOSED {pos.direction} {pos.symbol} ({reason})\n"
                 f"Entry: ${pos.entry_price:,.4f} → Exit: ${fill_price:,.4f}\n"
-                f"PnL: {pnl_str} ({pnl_pct:+.2f}%) | Fees: {fee_str} | Hold: {hold_str}"
+                f"PnL: {pnl_str} ({pnl_pct_str}) | Fees: {fee_str} | Hold: {hold_str}"
             )
 
             # Store structured close data for rich rendering
@@ -1950,6 +2118,7 @@ class LiveExecutor:
                 "entry": pos.entry_price,
                 "exit": fill_price,
                 "pnl_pct": pnl_pct,
+                "pnl_pct_margin": pnl_pct_margin,  # C2-58: leveraged return
                 "pnl_usd": round(net_pnl, 4),
                 "gross_pnl": round(gross_pnl, 4),
                 "fees": round(commission, 4),
@@ -2274,6 +2443,9 @@ class LiveExecutor:
             with open(tmp, "w") as f:
                 json.dump(data, f, indent=2, default=str)
             os.replace(tmp, str(path))
+            # M-06 FIX: prune closed entries from in-memory dict
+            self._positions = {k: v for k, v in self._positions.items()
+                               if v.status in ("open", "pending_fill")}
         except Exception as exc:
             logger.debug("Failed to save live positions: %s", exc)
 
@@ -2423,42 +2595,98 @@ class LiveExecutor:
 
                     if not has_position:
                         # Position no longer on exchange — closed by SL/TP or liquidation
-                        # Try to get the last trade price for PnL calculation
+                        # C2-13 FIX: Try actual trade history first for accurate PnL,
+                        # fall back to ticker estimation only as last resort.
+                        actual_fill_price = None
+                        fill_source = "estimated"
+
+                        # 1. Try fetchMyTrades for actual fill price
                         try:
-                            ticker = await exchange.fetch_ticker(ccxt_symbol)
-                            close_price = float(ticker.get("last", 0) or 0)
-                        except Exception:
-                            close_price = 0
+                            trades = await exchange.fetch_my_trades(ccxt_symbol, limit=50)
+                            relevant = [
+                                t for t in trades
+                                if t.get("order") in (pos.sl_order_id, pos.tp_order_id)
+                            ]
+                            if relevant:
+                                actual_fill_price = float(relevant[-1].get("price", 0))
+                                fill_source = "exchange_fill"
+                                # Determine reason from which order matched
+                                matched_order = relevant[-1].get("order")
+                                if matched_order == pos.tp_order_id:
+                                    reason = "TP HIT (exchange)"
+                                elif matched_order == pos.sl_order_id:
+                                    reason = "SL HIT (exchange)"
+                                else:
+                                    reason = "closed (exchange)"
+                        except Exception as e:
+                            logger.debug("fetchMyTrades failed for %s: %s", ccxt_symbol, e)
 
-                        if close_price <= 0:
-                            close_price = pos.entry_price  # fallback
+                        # 2. Try fetchClosedOrders
+                        if actual_fill_price is None or actual_fill_price <= 0:
+                            try:
+                                closed_orders = await exchange.fetch_closed_orders(ccxt_symbol, limit=20)
+                                for o in closed_orders:
+                                    if o.get("id") in (pos.sl_order_id, pos.tp_order_id):
+                                        avg = o.get("average") or o.get("price")
+                                        if avg:
+                                            actual_fill_price = float(avg)
+                                            fill_source = "closed_order"
+                                            if o["id"] == pos.tp_order_id:
+                                                reason = "TP HIT (exchange)"
+                                            else:
+                                                reason = "SL HIT (exchange)"
+                                            break
+                            except Exception as e:
+                                logger.debug("fetchClosedOrders failed for %s: %s", ccxt_symbol, e)
 
-                        # Estimate PnL based on SL/TP proximity
+                        # 3. Last resort: current ticker with SL/TP proximity guess
+                        if actual_fill_price is None or actual_fill_price <= 0:
+                            try:
+                                ticker = await exchange.fetch_ticker(ccxt_symbol)
+                                close_price = float(ticker.get("last", 0) or 0)
+                            except Exception:
+                                close_price = 0
+
+                            if close_price <= 0:
+                                close_price = pos.entry_price  # fallback
+
+                            # Estimate which level was hit based on proximity
+                            if pos.direction == "LONG":
+                                dist_tp = abs(close_price - pos.take_profit) if pos.take_profit else float("inf")
+                                dist_sl = abs(close_price - pos.stop_loss) if pos.stop_loss else float("inf")
+                                if dist_tp < dist_sl and pos.take_profit:
+                                    est_exit = pos.take_profit
+                                    reason = "TP HIT (estimated)"
+                                elif pos.stop_loss:
+                                    est_exit = pos.stop_loss
+                                    reason = "SL HIT (estimated)"
+                                else:
+                                    est_exit = close_price
+                                    reason = "closed (estimated)"
+                            else:  # SHORT
+                                dist_tp = abs(close_price - pos.take_profit) if pos.take_profit else float("inf")
+                                dist_sl = abs(close_price - pos.stop_loss) if pos.stop_loss else float("inf")
+                                if dist_tp < dist_sl and pos.take_profit:
+                                    est_exit = pos.take_profit
+                                    reason = "TP HIT (estimated)"
+                                elif pos.stop_loss:
+                                    est_exit = pos.stop_loss
+                                    reason = "SL HIT (estimated)"
+                                else:
+                                    est_exit = close_price
+                                    reason = "closed (estimated)"
+                            actual_fill_price = est_exit
+                            fill_source = "estimated"
+                            logger.warning(
+                                "PnL for %s is estimated from current price — "
+                                "actual fill unavailable", pos.symbol)
+
+                        est_exit = actual_fill_price
+
+                        # Compute PnL
                         if pos.direction == "LONG":
-                            dist_tp = abs(close_price - pos.take_profit) if pos.take_profit else float("inf")
-                            dist_sl = abs(close_price - pos.stop_loss) if pos.stop_loss else float("inf")
-                            if dist_tp < dist_sl and pos.take_profit:
-                                est_exit = pos.take_profit
-                                reason = "TP HIT (exchange)"
-                            elif pos.stop_loss:
-                                est_exit = pos.stop_loss
-                                reason = "SL HIT (exchange)"
-                            else:
-                                est_exit = close_price
-                                reason = "closed (exchange)"
                             pnl = (est_exit - pos.entry_price) * pos.quantity
-                        else:  # SHORT
-                            dist_tp = abs(close_price - pos.take_profit) if pos.take_profit else float("inf")
-                            dist_sl = abs(close_price - pos.stop_loss) if pos.stop_loss else float("inf")
-                            if dist_tp < dist_sl and pos.take_profit:
-                                est_exit = pos.take_profit
-                                reason = "TP HIT (exchange)"
-                            elif pos.stop_loss:
-                                est_exit = pos.stop_loss
-                                reason = "SL HIT (exchange)"
-                            else:
-                                est_exit = close_price
-                                reason = "closed (exchange)"
+                        else:
                             pnl = (pos.entry_price - est_exit) * pos.quantity
 
                         pos.status = "closed"

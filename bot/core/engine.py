@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
 from datetime import datetime
 from bot.compat import UTC
@@ -23,7 +24,7 @@ from bot.core.system_health import SystemHealthMonitor
 from bot.core.exchange_flow import ExchangeFlowProvider
 from bot.core.macro_events import MacroEventProvider
 from bot.core.live_executor import LiveExecutor, normalize_symbol
-from bot.core.market_scanner import MarketScanner
+from bot.core.market_scanner import MarketScanner, _classify_symbol
 from bot.core.order_flow import OrderFlowAnalyzer
 from bot.core.ws_feed import BitgetWSFeed
 from bot.compliance.compliance_engine import ComplianceEngine, Permission, default_demo_profile
@@ -116,10 +117,19 @@ class RuneClawEngine:
                     positions=list(self.portfolio.open_positions),
                     closed_trades=list(self.portfolio._history[-50:]),
                 )
-            except Exception:
-                pass  # non-critical, don't break trading flow
+            except Exception as exc:
+                # C2-52 FIX: log website sync errors instead of silently swallowing
+                logger.warning("Website sync failed: %s", exc)
         self.portfolio._on_trade_close = _on_trade_close_composite
         self.user_portfolios._on_trade_close = self.risk.record_trade_result
+        # C2-34: Wire combined state saver for atomic portfolio+risk persistence.
+        # Both components delegate their saves to this function, which writes
+        # a single combined_state.json via fsync + os.replace.
+        self._combined_state_file = os.path.join(
+            os.path.dirname(self.portfolio._state_file) or "data",
+            "combined_state.json"
+        )
+        self._wire_combined_state_saver()
         self.state: AgentState = AgentState.IDLE
         self._state_history: list[StateTransition] = []
         self._max_state_history = 1000  # F-13 FIX: cap state history
@@ -139,18 +149,33 @@ class RuneClawEngine:
         self._last_rejections: dict[str, dict] = {}
         self._last_scan_signals: list = []
         self._ohlcv_cache: dict[str, tuple[float, list]] = {}
+        # M-13 FIX: live balance cache as instance attributes (not class-level mutables)
+        self._live_balance_cache: dict = {}
+        self._live_balance_cache_ts: float = 0.0
+        self._LIVE_BALANCE_TTL: float = 30.0  # cache live balance for 30 seconds
+        # H-05 FIX: track last known valid prices for WS sanity checks
+        self._last_known_prices: dict[str, float] = {}
 
     # -- State management --
 
-    async def get_exchange(self):
-        """Public accessor for the exchange instance (for skills that need OHLCV)."""
+    async def get_exchange(self, category: str = "Crypto"):
+        """Public accessor for the exchange instance (for skills that need OHLCV).
+
+        Args:
+            category: Asset category — "Crypto" uses spot, anything else uses futures.
+        """
+        if category != "Crypto":
+            return await self.scanner._get_futures_exchange()
         return await self.scanner._get_exchange()
+
+    async def get_futures_exchange(self):
+        """Public accessor for the futures exchange instance."""
+        return await self.scanner._get_futures_exchange()
 
     # -- Live equity cache --
 
-    _live_balance_cache: dict = {}
-    _live_balance_cache_ts: float = 0.0
-    _LIVE_BALANCE_TTL: float = 30.0  # cache live balance for 30 seconds
+    # _live_balance_cache, _live_balance_cache_ts, and _LIVE_BALANCE_TTL
+    # are initialised in __init__() as instance attributes (M-13 fix).
 
     async def get_live_equity(self) -> Optional[dict]:
         """Fetch real exchange balance in LIVE mode (cached).
@@ -170,7 +195,17 @@ class RuneClawEngine:
                 self._live_balance_cache_ts = now
                 return bal
         except Exception as exc:
-            system_log.debug("Live balance fetch failed: %s", exc)
+            # C2-55 FIX: log staleness so risk calculation accuracy is visible
+            age_s = time.monotonic() - self._live_balance_cache_ts
+            if self._live_balance_cache:
+                system_log.warning(
+                    "Live balance fetch failed (%s) — returning cached value (%.1fs old)",
+                    exc, age_s,
+                )
+                if age_s > 300:
+                    system_log.error("Balance cache is >5m stale — risk calculations may be wrong")
+            else:
+                system_log.debug("Live balance fetch failed (no cache): %s", exc)
         return self._live_balance_cache if self._live_balance_cache else None
 
     def _invalidate_live_balance_cache(self) -> None:
@@ -201,6 +236,101 @@ class RuneClawEngine:
                 return self._live_balance_cache.get("total", 0.0)
         portfolio = self.user_portfolios.get(user_id) if user_id else self.portfolio
         return portfolio.snapshot().equity_usd
+
+    # -- C2-34: Combined State Persistence --
+
+    def _wire_combined_state_saver(self) -> None:
+        """Set up atomic combined state persistence.
+
+        On first boot: if combined_state.json exists, load from it.
+        Otherwise, if portfolio already loaded from legacy files, write combined.
+        Wire both portfolio and risk_engine to use the combined saver.
+
+        Skips loading when persistence is not active (e.g. in tests where
+        portfolio is created fresh with no state file on disk).
+        """
+        import json as _json
+        combined_path = Path(self._combined_state_file)
+
+        # Only load/migrate if persistence is active (production mode) or
+        # a combined state file exists from a prior run.
+        if not self.portfolio._persistence_active and not combined_path.exists():
+            # No persistence — just wire the saver for future use
+            self.portfolio._combined_saver = self._save_combined_state
+            self.risk._combined_saver = self._save_combined_state
+            return
+
+        if combined_path.exists():
+            # Load from combined state file
+            try:
+                with open(combined_path) as f:
+                    raw = f.read()
+                if raw.strip():
+                    combined = _json.loads(raw)
+                    if "portfolio" in combined:
+                        self.portfolio._load_from_state_dict(combined["portfolio"])
+                        self.portfolio._persistence_active = True
+                    if "risk" in combined:
+                        self.risk._load_from_state_dict(combined["risk"])
+                    system_log.info(
+                        "C2-34: Loaded combined state (v%s, saved %s)",
+                        combined.get("version", "?"),
+                        combined.get("written_at", "?"),
+                    )
+            except Exception as exc:
+                # Combined file corrupt — fall back to individual files
+                # (which were already loaded by each component's __init__)
+                system_log.warning(
+                    "C2-34: Combined state corrupt (%s), using individual files",
+                    exc,
+                )
+        else:
+            # Legacy migration: individual files were already loaded by
+            # portfolio.__init__ and risk_engine.__init__. Write the combined
+            # file so subsequent boots use it.
+            if self.portfolio._persistence_active:
+                try:
+                    self._save_combined_state()
+                    system_log.info(
+                        "C2-34: Migrated legacy state files to combined_state.json"
+                    )
+                except Exception as exc:
+                    system_log.warning(
+                        "C2-34: Migration write failed (%s), will retry on next save",
+                        exc,
+                    )
+
+        # Wire both components to use combined saver
+        self.portfolio._combined_saver = self._save_combined_state
+        self.risk._combined_saver = self._save_combined_state
+
+    def _save_combined_state(self) -> None:
+        """Atomically write portfolio + risk state to a single file.
+        Called by either portfolio._auto_save() or risk._save_state()
+        whenever either component's state changes."""
+        import json as _json
+        combined = {
+            "version": 1,
+            "portfolio": self.portfolio._export_state_dict(),
+            "risk": self.risk._export_state_dict(),
+            "written_at": datetime.now(UTC).isoformat(),
+        }
+        combined_path = Path(self._combined_state_file)
+        combined_path.parent.mkdir(parents=True, exist_ok=True)
+        # Keep one backup
+        if combined_path.exists():
+            backup = combined_path.with_suffix(".json.bak")
+            try:
+                import shutil
+                shutil.copy2(str(combined_path), str(backup))
+            except Exception:
+                pass  # best-effort
+        tmp = str(combined_path) + ".tmp"
+        with open(tmp, "w") as f:
+            _json.dump(combined, f, indent=2, default=str)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, str(combined_path))
 
     def _transition(self, new_state: AgentState, reason: str = "") -> None:
         """Transition the FSM to a new state. Every transition is audit-logged."""
@@ -339,6 +469,9 @@ class RuneClawEngine:
         if self._cooldown_until and time.monotonic() < self._cooldown_until:
             if self.state != AgentState.COOLING_DOWN:
                 self._transition(AgentState.COOLING_DOWN, "post-loss cooldown active")
+            # C2-25 FIX: Still monitor open positions during cooldown — they need
+            # SL/TP protection even when new scanning is paused.
+            await self._check_open_positions()
             return
         elif self._cooldown_until and time.monotonic() >= self._cooldown_until:
             self._cooldown_until = 0.0
@@ -353,6 +486,7 @@ class RuneClawEngine:
         for idea_id in expired_ids:
             expired_idea = self._pending_ideas.pop(idea_id, None)
             self._pending_atr.pop(idea_id, None)  # clean up stored ATR
+            self._pending_pyramid.pop(idea_id, None)  # L-02 FIX: clean up pyramid flag
             if expired_idea:
                 audit(
                     trade_log,
@@ -361,6 +495,19 @@ class RuneClawEngine:
                     result="EXPIRED",
                     data={"asset": expired_idea.asset, "age_seconds": (now - expired_idea.timestamp).total_seconds()},
                 )
+
+        # C2-26 FIX: Skip scanning when ideas are awaiting confirmation.
+        # A concurrent confirm_trade call while mid-scan creates a race on
+        # shared _pending_ideas state.
+        if self._pending_ideas:
+            system_log.debug(
+                "Skipping scan tick — %d ideas awaiting confirmation",
+                len(self._pending_ideas),
+            )
+            self._transition(AgentState.MONITORING, "checking positions (scan skipped, pending confirms)")
+            await self._check_open_positions()
+            self._transition(AgentState.IDLE, "tick cycle complete (scan skipped)")
+            return
 
         self._transition(AgentState.SCANNING, "beginning scan cycle")
         signals = await self.scanner.scan()
@@ -394,15 +541,15 @@ class RuneClawEngine:
 
         self._transition(AgentState.ANALYZING, "signals detected")
 
-        # Analyze top 5 signals concurrently
+        # Analyze all scanner-selected signals concurrently (scanner already caps via slot allocation)
         async def _safe_analyze(sig):
             try:
                 return await self._analyze_signal(sig)
             except Exception as e:
-                logger.debug("Signal analysis error: %s", e)
+                logger.debug("Signal analysis error for %s: %s", sig.symbol, e)
                 return None
 
-        tasks = [_safe_analyze(sig) for sig in signals[:5]]
+        tasks = [_safe_analyze(sig) for sig in signals]
         results = await asyncio.gather(*tasks)
         for idea in results:
             if idea:
@@ -416,6 +563,7 @@ class RuneClawEngine:
                 if existing_id:
                     self._pending_ideas.pop(existing_id)
                     self._pending_atr.pop(existing_id, None)
+                    self._pending_pyramid.pop(existing_id, None)  # C2-31 FIX: clean stale pyramid flag
                 self._pending_ideas[idea.id] = idea
 
         self._transition(AgentState.MONITORING, "checking open positions")
@@ -432,10 +580,16 @@ class RuneClawEngine:
                 return cached_data
         data = await exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
         self._ohlcv_cache[key] = (now, data)
-        # Evict old entries
+        # C2-54 FIX: Hard size cap + TTL eviction to prevent unbounded growth.
+        # First try TTL-based eviction; if still over limit, evict oldest entries.
         if len(self._ohlcv_cache) > 200:
             cutoff = now - ttl * 2
             self._ohlcv_cache = {k: v for k, v in self._ohlcv_cache.items() if v[0] > cutoff}
+        if len(self._ohlcv_cache) > 200:
+            # Still over limit — evict oldest entries
+            sorted_keys = sorted(self._ohlcv_cache, key=lambda k: self._ohlcv_cache[k][0])
+            for old_key in sorted_keys[:len(self._ohlcv_cache) - 200]:
+                del self._ohlcv_cache[old_key]
         return data
 
     async def _analyze_signal(self, signal: MarketSignal, *, timeframe: str = "1h") -> Optional[TradeIdea]:
@@ -446,7 +600,12 @@ class RuneClawEngine:
             timeframe: OHLCV timeframe to fetch (e.g. "5m", "15m", "1h", "4h").
         """
         try:
-            exchange = await self.scanner._get_exchange()
+            # Use futures exchange for non-Crypto categories (metals, commodities, etc.)
+            category = getattr(signal, "asset_category", "Crypto") or "Crypto"
+            if category != "Crypto":
+                exchange = await self.scanner._get_futures_exchange()
+            else:
+                exchange = await self.scanner._get_exchange()
             # Parallelize OHLCV fetch and order flow analysis
             ohlcv_task = self._cached_ohlcv(exchange, signal.symbol, timeframe, limit=100)
             of_task = self.order_flow.analyze(exchange, signal.symbol)
@@ -731,7 +890,8 @@ class RuneClawEngine:
         # F-05 FIX: reject if market price has drifted significantly from
         # the idea's entry price. Prevents executing at stale levels.
         try:
-            exchange = await self.scanner._get_exchange()
+            idea_category = _classify_symbol(idea.asset)
+            exchange = await self.get_exchange(idea_category)
             ticker = await exchange.fetch_ticker(idea.asset)
             current_price = float(ticker.get("last", 0))
             if current_price > 0 and idea.entry_price > 0:
@@ -749,10 +909,11 @@ class RuneClawEngine:
                     return (f"Trade REJECTED: price drifted {drift_pct:.1f}% since analysis "
                             f"(${idea.entry_price:,.2f} → ${current_price:,.2f}). Re-analyze.")
         except Exception as exc:
-            # Fail-open on price check: if exchange is unreachable, let
-            # the stale-data guard (#12) handle staleness via timestamp.
-            audit(trade_log, f"Price drift check failed (proceeding): {exc}",
-                  action="price_drift", result="SKIP")
+            # H-08 FIX: fail-closed — reject if exchange is unreachable
+            audit(trade_log, f"Price drift check failed (rejecting): {exc}",
+                  action="price_drift", result="REJECTED")
+            self._transition(AgentState.IDLE, f"price drift check failed for {trade_id}")
+            return "Trade REJECTED: unable to verify current price. Try again."
 
         # Re-check risk (portfolio state may have changed -- new positions, daily PnL, drawdown.
         # HONEST LIMITATION: price drift is now checked above (F-05 fix).
@@ -920,10 +1081,20 @@ class RuneClawEngine:
                           data={"requested": round(size_usd, 2), "available": round(available, 2)})
                     size_usd = available
 
+            # C2-53 FIX: Reject trade when ATR is missing or zero.
+            # A zero ATR produces SL at entry price = immediate stop-out.
+            if not stored_atr or stored_atr <= 0:
+                audit(trade_log,
+                      f"No valid ATR for {idea.asset} — aborting to avoid SL-at-entry",
+                      action="confirm", result="REJECT",
+                      data={"trade_id": trade_id, "stored_atr": stored_atr})
+                self._transition(AgentState.IDLE, f"no ATR for {trade_id}")
+                return f"Trade {trade_id} rejected: no valid ATR available — cannot compute safe SL distance"
+
             result = await self.live_executor.execute(
                 idea, size_usd,
                 order_type=idea.order_type,
-                atr_value=stored_atr or 0.0,
+                atr_value=stored_atr,
             )
 
             # Only record paper trade if live execution succeeded
@@ -975,6 +1146,28 @@ class RuneClawEngine:
         # Paper trade execution
         self._transition(AgentState.EXECUTING, f"executing paper trade {trade_id}")
         size_usd = recheck.position_size_usd
+
+        # C2-32 FIX: Apply pyramid half-sizing in paper mode too.
+        # Previously only the live path applied this, making paper results
+        # non-representative of live behaviour.
+        _paper_pyramid = getattr(self, '_pending_pyramid', {})
+        if _paper_pyramid.pop(trade_id, False):
+            original_size = size_usd
+            size_usd = size_usd * 0.5
+            audit(trade_log,
+                  f"Paper pyramid add: half size ${original_size:.2f} -> ${size_usd:.2f}",
+                  action="pyramid_half_size", result="APPLIED_PAPER")
+            # Move existing paper position's SL to breakeven
+            symbol_key = normalize_symbol(idea.asset)
+            for tid, pos in list(target_portfolio._positions.items()):
+                pos_key = normalize_symbol(pos.asset)
+                if pos_key == symbol_key and tid != trade_id:
+                    old_sl = pos.stop_loss
+                    pos.stop_loss = pos.entry_price  # breakeven
+                    audit(trade_log,
+                          f"Paper pyramid: moved {pos.asset} SL to breakeven ${pos.entry_price:.4f} (was ${old_sl:.4f})",
+                          action="pyramid_sl_breakeven", result="MOVED_PAPER")
+                    break
 
         # Determine target portfolio: per-user if user_id is set, else shared
         target_portfolio = self.portfolio
@@ -1051,6 +1244,7 @@ class RuneClawEngine:
         """Human explicitly rejects a pending idea."""
         idea = self._pending_ideas.pop(trade_id, None)
         self._pending_atr.pop(trade_id, None)  # clean up stored ATR
+        self._pending_pyramid.pop(trade_id, None)  # C2-30 FIX: clean up pyramid flag
         if idea:
             audit(
                 trade_log,
@@ -1060,6 +1254,49 @@ class RuneClawEngine:
             )
             return f"Trade {trade_id} rejected."
         return f"Trade {trade_id} not found."
+
+    async def _fetch_prices_by_category(self, positions) -> dict[str, float]:
+        """Fetch ticker prices using the correct exchange per asset category.
+
+        Splits positions into spot (Crypto) and futures (Metal/Commodity/ETF/etc.)
+        groups and fetches from the appropriate exchange in parallel.
+        """
+        spot_syms = []
+        futures_syms = []
+        for p in positions:
+            sym = p.asset if hasattr(p, "asset") else p.symbol
+            cat = _classify_symbol(sym)
+            if cat != "Crypto":
+                futures_syms.append(sym)
+            else:
+                spot_syms.append(sym)
+
+        prices: dict[str, float] = {}
+
+        async def _fetch_spot():
+            if not spot_syms:
+                return {}
+            ex = await self.scanner._get_exchange()
+            tickers = await ex.fetch_tickers(spot_syms)
+            return {s: float(t.get("last", 0)) for s, t in tickers.items()}
+
+        async def _fetch_futures():
+            if not futures_syms:
+                return {}
+            ex = await self.scanner._get_futures_exchange()
+            tickers = await ex.fetch_tickers(futures_syms)
+            return {s: float(t.get("last", 0)) for s, t in tickers.items()}
+
+        results = await asyncio.gather(
+            _fetch_spot(), _fetch_futures(), return_exceptions=True
+        )
+        for r in results:
+            if isinstance(r, dict):
+                prices.update(r)
+            elif isinstance(r, Exception):
+                logger.debug("Price fetch error: %s", r)
+
+        return prices
 
     async def _check_open_positions(self) -> None:
         """Monitor open positions for SL/TP hits."""
@@ -1073,14 +1310,29 @@ class RuneClawEngine:
                 if ws_prices:
                     prices = ws_prices
                 else:
-                    # WS connected but no prices yet — fallback to REST
-                    exchange = await self.scanner._get_exchange()
-                    tickers = await exchange.fetch_tickers([p.asset for p in positions])
-                    prices = {s: float(t.get("last", 0)) for s, t in tickers.items()}
+                    prices = await self._fetch_prices_by_category(positions)
             else:
-                exchange = await self.scanner._get_exchange()
-                tickers = await exchange.fetch_tickers([p.asset for p in positions])
-                prices = {s: float(t.get("last", 0)) for s, t in tickers.items()}
+                prices = await self._fetch_prices_by_category(positions)
+
+            # H-05 FIX: validate prices before use — reject any price that
+            # deviates more than 50% from the last known good price for that symbol.
+            validated_prices: dict[str, float] = {}
+            for sym, px in prices.items():
+                if px <= 0:
+                    continue
+                last_px = self._last_known_prices.get(sym)
+                if last_px is not None and last_px > 0:
+                    deviation = abs(px - last_px) / last_px
+                    if deviation > 0.50:
+                        logger.warning(
+                            "Price validation: %s price %.6f deviates %.1f%% from last known %.6f — skipped",
+                            sym, px, deviation * 100, last_px,
+                        )
+                        continue
+                # Price is valid — update last known and include in validated set
+                self._last_known_prices[sym] = px
+                validated_prices[sym] = px
+            prices = validated_prices
 
             # Subscribe open position symbols to WS feed for future ticks
             pos_symbols = [p.asset for p in positions]
@@ -1128,6 +1380,18 @@ class RuneClawEngine:
                 for msg in live_closed:
                     audit(trade_log, f"Live position auto-closed: {msg}",
                           action="live_auto_close", result="CLOSED")
+                    # C-08 FIX: trigger cooldown on live losses
+                    last_close = getattr(self.live_executor, '_last_close_data', None)
+                    if last_close and last_close.get('pnl_usd', 0) < 0:
+                        self._cooldown_until = (
+                            time.monotonic() + CONFIG.risk.cooldown_after_loss_seconds
+                        )
+                        self._transition(
+                            AgentState.COOLING_DOWN,
+                            f"live loss on {last_close.get('symbol', '?')} "
+                            f"(PnL=${last_close['pnl_usd']}), "
+                            f"cooling down {CONFIG.risk.cooldown_after_loss_seconds}s",
+                        )
                     if self._close_notify_callback:
                         try:
                             await self._close_notify_callback(msg)
