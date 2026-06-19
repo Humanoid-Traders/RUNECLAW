@@ -546,6 +546,15 @@ class RuneClawEngine:
         results = await asyncio.gather(*tasks)
         for idea in results:
             if idea:
+                # Filter: don't present ideas below min_confidence threshold
+                # Prevents user frustration of confirming a trade that gets rejected
+                if idea.confidence < CONFIG.risk.min_confidence:
+                    audit(scan_log,
+                          f"Filtered sub-threshold idea: {idea.asset} conf={idea.confidence:.2f} < {CONFIG.risk.min_confidence}",
+                          action="filter_idea", result="BELOW_MIN_CONFIDENCE",
+                          data={"asset": idea.asset, "confidence": idea.confidence,
+                                "threshold": CONFIG.risk.min_confidence})
+                    continue
                 # Dedup: if an idea for the same asset already exists, replace it
                 existing_id = None
                 idea_key = normalize_symbol(idea.asset)
