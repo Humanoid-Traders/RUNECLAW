@@ -848,6 +848,42 @@ class LiveExecutor:
             # Limit orders use the idea's entry_price; for spot cost-based buys,
             # limit is placed at entry_price and the exchange fills at that price or better.
             limit_price = idea.entry_price if use_limit else None
+
+            # ── LIMIT ORDER PRICE VALIDATION ──
+            # A limit order that's on the wrong side of the market fills instantly
+            # as a taker (effectively a market order). Recalculate the limit price
+            # using the CURRENT price with an offset to ensure it rests on the book.
+            if use_limit and limit_price and current_price > 0:
+                needs_recalc = False
+                if side == "buy" and limit_price >= current_price:
+                    # LONG limit buy above market = instant fill = market order
+                    needs_recalc = True
+                elif side == "sell" and limit_price <= current_price:
+                    # SHORT limit sell below market = instant fill = market order
+                    needs_recalc = True
+
+                if needs_recalc and atr_value > 0:
+                    # Recalculate: place limit 0.1 ATR away from current price
+                    offset = 0.1 * atr_value
+                    if side == "buy":
+                        limit_price = round(current_price - offset, 8)
+                    else:
+                        limit_price = round(current_price + offset, 8)
+                    audit(trade_log,
+                          f"Limit price recalculated at execution: ${idea.entry_price:,.4f} → ${limit_price:,.4f} "
+                          f"(market=${current_price:,.4f}, would have filled instantly)",
+                          action="limit_recalc_exec", result="RECALCULATED",
+                          data={"old_limit": idea.entry_price, "new_limit": limit_price,
+                                "market_price": current_price, "atr": atr_value})
+                elif needs_recalc and atr_value <= 0:
+                    # No ATR available — fall back to market order
+                    use_limit = False
+                    limit_price = None
+                    audit(trade_log,
+                          f"Limit order downgraded to market: no ATR for offset calculation",
+                          action="limit_downgrade", result="MARKET_FALLBACK",
+                          data={"symbol": symbol})
+
             if use_limit and market:
                 # Round limit price to exchange tick grid
                 _prec_price = active_exchange.price_to_precision(symbol, limit_price)
