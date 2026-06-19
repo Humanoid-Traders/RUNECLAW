@@ -863,8 +863,9 @@ class LiveExecutor:
                     needs_recalc = True
 
                 if needs_recalc and atr_value > 0:
-                    # Recalculate: place limit 0.1 ATR away from current price
-                    offset = 0.1 * atr_value
+                    # Recalculate: place limit 0.5 ATR away from current price
+                    # (0.1 ATR is too small and ends up at market price)
+                    offset = 0.5 * atr_value
                     if side == "buy":
                         limit_price = round(current_price - offset, 8)
                     else:

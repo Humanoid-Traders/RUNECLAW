@@ -947,38 +947,48 @@ class RuneClawEngine:
 
         # ── Limit order price recalculation at confirm time ──
         # When order_type is "limit", the idea.entry_price was set at analysis time.
-        # If the market moved since then, a LONG limit buy above market fills instantly
-        # like a market order. Recalculate the limit price using the current price
-        # with a proper offset so it acts as a true pullback entry.
+        # Only recalculate if the limit price would cause an instant fill:
+        #   - LONG buy limit ABOVE current price fills immediately
+        #   - SHORT sell limit BELOW current price fills immediately
+        # If the limit price is already on the correct side, keep it.
         if idea.order_type == "limit" and current_price > 0 and stored_atr and stored_atr > 0:
-            offset = 0.1 * stored_atr  # same offset used by analyzer
-            if idea.direction.value == "LONG":
-                new_limit = round(current_price - offset, 8)
-                # Also update SL/TP relative to new entry
-                sl_dist = abs(idea.entry_price - idea.stop_loss)
-                tp_dist = abs(idea.take_profit - idea.entry_price)
-                new_sl = round(new_limit - sl_dist, 8)
-                new_tp = round(new_limit + tp_dist, 8)
-            else:
-                new_limit = round(current_price + offset, 8)
-                sl_dist = abs(idea.stop_loss - idea.entry_price)
-                tp_dist = abs(idea.entry_price - idea.take_profit)
-                new_sl = round(new_limit + sl_dist, 8)
-                new_tp = round(new_limit - tp_dist, 8)
+            _needs_recalc = False
+            if idea.direction.value == "LONG" and idea.entry_price >= current_price:
+                _needs_recalc = True
+            elif idea.direction.value != "LONG" and idea.entry_price <= current_price:
+                _needs_recalc = True
 
-            old_entry = idea.entry_price
-            idea = idea.model_copy(update={
-                "entry_price": new_limit,
-                "stop_loss": new_sl,
-                "take_profit": new_tp,
-            })
-            audit(trade_log,
-                  f"Limit price recalculated at confirm: ${old_entry:,.4f} → ${new_limit:,.4f} "
-                  f"(market=${current_price:,.4f}, offset={offset:.4f})",
-                  action="limit_price_update", result="UPDATED",
-                  data={"old_entry": old_entry, "new_entry": new_limit,
-                        "current_price": current_price, "offset": offset,
-                        "new_sl": new_sl, "new_tp": new_tp})
+            if _needs_recalc:
+                # Use 0.5*ATR offset (not 0.1) so the limit is far enough from
+                # current price to actually rest on the book as a maker order.
+                offset = 0.5 * stored_atr
+                if idea.direction.value == "LONG":
+                    new_limit = round(current_price - offset, 8)
+                    # Also update SL/TP relative to new entry
+                    sl_dist = abs(idea.entry_price - idea.stop_loss)
+                    tp_dist = abs(idea.take_profit - idea.entry_price)
+                    new_sl = round(new_limit - sl_dist, 8)
+                    new_tp = round(new_limit + tp_dist, 8)
+                else:
+                    new_limit = round(current_price + offset, 8)
+                    sl_dist = abs(idea.stop_loss - idea.entry_price)
+                    tp_dist = abs(idea.entry_price - idea.take_profit)
+                    new_sl = round(new_limit + sl_dist, 8)
+                    new_tp = round(new_limit - tp_dist, 8)
+
+                old_entry = idea.entry_price
+                idea = idea.model_copy(update={
+                    "entry_price": new_limit,
+                    "stop_loss": new_sl,
+                    "take_profit": new_tp,
+                })
+                audit(trade_log,
+                      f"Limit price recalculated at confirm: ${old_entry:,.4f} → ${new_limit:,.4f} "
+                      f"(market=${current_price:,.4f}, offset={offset:.4f})",
+                      action="limit_price_update", result="UPDATED",
+                      data={"old_entry": old_entry, "new_entry": new_limit,
+                            "current_price": current_price, "offset": offset,
+                            "new_sl": new_sl, "new_tp": new_tp})
 
         # Re-check risk (portfolio state may have changed -- new positions, daily PnL, drawdown.
         # HONEST LIMITATION: price drift is now checked above (F-05 fix).
