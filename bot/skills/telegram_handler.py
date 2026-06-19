@@ -137,8 +137,9 @@ _KB_WARROOM = InlineKeyboardMarkup([
      InlineKeyboardButton("Latest Signal", callback_data="latest_signal")],
     [InlineKeyboardButton("Positions", callback_data="positions"),
      InlineKeyboardButton("Performance", callback_data="performance")],
-    [InlineKeyboardButton("Risk", callback_data="risk_control"),
-     InlineKeyboardButton("Stop Bot", callback_data="risk_emergency_stop")],
+    [InlineKeyboardButton("Orders", callback_data="orders"),
+     InlineKeyboardButton("Risk", callback_data="risk_control")],
+    [InlineKeyboardButton("Stop Bot", callback_data="risk_emergency_stop")],
 ])
 
 # Legacy dashboard keyboard (kept for /dashboard command compatibility)
@@ -4128,6 +4129,10 @@ class TelegramHandler:
 
         if data == "positions":
             await self._cmd_open_positions(update, ctx)
+            return
+
+        if data == "orders":
+            await self._cmd_orders(update, ctx)
             return
 
         # ── Risk panel callbacks ─────────────────────────────
