@@ -1571,8 +1571,8 @@ class LiveExecutor:
             )
         else:
             # Classic mode: use ccxt trigger orders
-            # Always send tradeSide=close for SL/TP to prevent reverse opens
-            extra_params = {"productType": "USDT-FUTURES", "tradeSide": "close"}
+            # Always send tradeSide=close + reduceOnly for SL/TP to prevent reverse opens
+            extra_params = {"productType": "USDT-FUTURES", "tradeSide": "close", "reduceOnly": True}
 
             # Stop-loss
             try:
@@ -2165,8 +2165,8 @@ class LiveExecutor:
         else:
             # Classic mode: place trigger order
             close_side = "sell" if direction == Direction.LONG else "buy"
-            # Always send tradeSide=close for SL/TP to prevent reverse opens
-            extra_params = {"productType": "USDT-FUTURES", "tradeSide": "close"}
+            # Always send tradeSide=close + reduceOnly for SL/TP to prevent reverse opens
+            extra_params = {"productType": "USDT-FUTURES", "tradeSide": "close", "reduceOnly": True}
             try:
                 sl_order = await exchange.create_order(
                     symbol=pos.symbol, type="market", side=close_side,
@@ -2242,7 +2242,13 @@ class LiveExecutor:
             # Futures-only mode: all positions close via swap exchange
             # ALWAYS send tradeSide=close — prevents accidentally opening reverse
             # position when Bitget is in hedge mode but bot doesn't detect it
-            close_params = {"productType": "USDT-FUTURES", "tradeSide": "close"}
+            # reduceOnly=true is a second safety layer — exchange rejects if it
+            # would open a new position instead of reducing
+            close_params = {
+                "productType": "USDT-FUTURES",
+                "tradeSide": "close",
+                "reduceOnly": True,
+            }
             order = await exchange.create_order(
                 symbol=pos.symbol,
                 type="market",
