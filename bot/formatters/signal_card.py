@@ -559,7 +559,7 @@ def render_close_card(data: Dict[str, Any]) -> bytes:
         log.warning("Pillow not installed, cannot render close card")
         return b""
 
-    W, H = 520, 360
+    W, H = 520, 400
     PAD = 20
 
     img = Image.new("RGB", (W, H), _BG)
@@ -670,6 +670,15 @@ def render_close_card(data: Dict[str, Any]) -> bytes:
     full_w = W - PAD * 2
     _cell(c1, y, "NET PnL", f"{net_text}  ({fees_text})", pnl_color, w=full_w)
     y += CELL_H + GAP + 4
+
+    # ── Verification status row ──
+    confirmed = data.get("confirmed", None)
+    if confirmed is not None:
+        verify_color = _GREEN if confirmed else (200, 150, 50)
+        verify_text = "CONFIRMED" if confirmed else "UNCONFIRMED"
+        verify_icon = "\u2705 " if confirmed else "\u26a0\ufe0f "
+        draw.text((PAD, y), f"Verified: {verify_text}", fill=verify_color, font=f_small)
+        y += 18
 
     draw.rectangle([0, H - 4, W, H], fill=stripe_color)
     wm = "RUNECLAW"

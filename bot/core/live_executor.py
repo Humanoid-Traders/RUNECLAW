@@ -501,6 +501,189 @@ class LiveExecutor:
             # Confirmed absent — safe to surface the failure to the caller.
             raise
 
+    # ── Post-trade verification (GetClaw-style) ─────────────────────
+    async def _verify_order_fill(
+        self,
+        exchange: "ccxt.Exchange",
+        order_id: str,
+        symbol: str,
+        expected_qty: float,
+        max_retries: int = 3,
+        delay: float = 1.5,
+    ) -> dict:
+        """Post-check: query the order to confirm actual fill.
+
+        Returns dict with:
+          confirmed: bool — True if order is filled/closed with qty > 0
+          fill_price: float — average fill price (0 if unconfirmed)
+          fill_qty: float — confirmed filled quantity
+          fees: float — exchange-reported fees
+          status: str — order status from exchange
+          failure_stage: str — empty if confirmed, else stage that failed
+          raw: dict — raw order response from exchange
+        """
+        result = {
+            "confirmed": False,
+            "fill_price": 0.0,
+            "fill_qty": 0.0,
+            "fees": 0.0,
+            "status": "unknown",
+            "failure_stage": "",
+            "raw": {},
+        }
+        for attempt in range(max_retries):
+            try:
+                fetched = await exchange.fetch_order(order_id, symbol)
+                result["raw"] = fetched
+                status = str(fetched.get("status", "")).lower()
+                result["status"] = status
+                filled = float(fetched.get("filled", 0) or 0)
+                avg_price = float(fetched.get("average", 0) or 0)
+                fee_info = fetched.get("fee") or {}
+                fee_cost = float(fee_info.get("cost", 0) or 0) if isinstance(fee_info, dict) else 0
+
+                if status in ("closed", "filled") and filled > 0:
+                    result["confirmed"] = True
+                    result["fill_price"] = avg_price if avg_price > 0 else float(fetched.get("price", 0) or 0)
+                    result["fill_qty"] = filled
+                    result["fees"] = abs(fee_cost)
+                    logger.info("Order %s CONFIRMED: filled=%.6f @ %.4f, fees=%.4f",
+                                order_id, filled, result["fill_price"], result["fees"])
+                    return result
+
+                if status in ("canceled", "cancelled", "expired", "rejected"):
+                    result["failure_stage"] = "order_cancelled"
+                    logger.warning("Order %s was %s", order_id, status)
+                    return result
+
+                # Still open/partial — retry after delay
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(delay)
+
+            except Exception as exc:
+                logger.warning("Verify order %s attempt %d failed: %s", order_id, attempt + 1, exc)
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(delay)
+
+        # Exhausted retries — order submitted but not confirmed
+        result["failure_stage"] = "post_check_unconfirmed"
+        return result
+
+    async def _verify_position_exists(
+        self,
+        exchange: "ccxt.Exchange",
+        symbol: str,
+        expected_direction: str,
+    ) -> dict:
+        """Post-check: verify a position exists on the exchange after opening.
+
+        Returns dict with:
+          confirmed: bool — True if position found with contracts > 0
+          exchange_qty: float — actual quantity on exchange
+          exchange_entry: float — exchange-reported entry price
+          mark_price: float — current mark price
+          unrealized_pnl: float — current unrealized PnL
+          margin: float — margin used
+          leverage: int — actual leverage set on exchange
+        """
+        result = {
+            "confirmed": False,
+            "exchange_qty": 0.0,
+            "exchange_entry": 0.0,
+            "mark_price": 0.0,
+            "unrealized_pnl": 0.0,
+            "margin": 0.0,
+            "leverage": 0,
+        }
+        try:
+            positions = await exchange.fetch_positions([symbol])
+            for p in (positions or []):
+                if not isinstance(p, dict):
+                    continue
+                p_symbol = p.get("symbol", "")
+                contracts = float(p.get("contracts", 0) or 0)
+                p_side = str(p.get("side", "")).lower()
+                expected_side = "long" if expected_direction == "LONG" else "short"
+                if p_symbol == symbol and contracts > 0 and p_side == expected_side:
+                    result["confirmed"] = True
+                    result["exchange_qty"] = contracts
+                    result["exchange_entry"] = float(p.get("entryPrice", 0) or 0)
+                    result["mark_price"] = float(p.get("markPrice", 0) or 0)
+                    result["unrealized_pnl"] = float(p.get("unrealizedPnl", 0) or 0)
+                    result["margin"] = float(p.get("initialMargin", 0) or p.get("collateral", 0) or 0)
+                    result["leverage"] = int(float(p.get("leverage", 0) or 0))
+                    logger.info("Position VERIFIED on exchange: %s %s qty=%.6f entry=%.4f",
+                                expected_direction, symbol, contracts, result["exchange_entry"])
+                    return result
+        except Exception as exc:
+            logger.warning("Position verification failed for %s: %s", symbol, exc)
+        return result
+
+    async def _verify_position_closed(
+        self,
+        exchange: "ccxt.Exchange",
+        symbol: str,
+        direction: str,
+        close_order_id: str,
+    ) -> dict:
+        """Post-check: verify a position is fully closed after close order.
+
+        Returns dict with:
+          confirmed: bool — True if position is gone or contracts == 0
+          fill_price: float — actual close fill price from order
+          fill_qty: float — actual closed quantity
+          fees: float — exchange-reported fees on close
+          remaining_qty: float — if partial close, qty still open
+          failure_stage: str — empty if confirmed
+        """
+        result = {
+            "confirmed": False,
+            "fill_price": 0.0,
+            "fill_qty": 0.0,
+            "fees": 0.0,
+            "remaining_qty": 0.0,
+            "failure_stage": "",
+        }
+        # Step 1: Verify the close order filled
+        order_check = await self._verify_order_fill(
+            exchange, close_order_id, symbol, expected_qty=0, max_retries=3, delay=1.5
+        )
+        result["fill_price"] = order_check["fill_price"]
+        result["fill_qty"] = order_check["fill_qty"]
+        result["fees"] = order_check["fees"]
+
+        if not order_check["confirmed"]:
+            result["failure_stage"] = order_check.get("failure_stage", "close_order_unconfirmed")
+            return result
+
+        # Step 2: Verify position is gone/reduced on exchange
+        try:
+            await asyncio.sleep(1.0)  # Brief delay for exchange settlement
+            positions = await exchange.fetch_positions([symbol])
+            expected_side = "long" if direction == "LONG" else "short"
+            for p in (positions or []):
+                if not isinstance(p, dict):
+                    continue
+                p_side = str(p.get("side", "")).lower()
+                contracts = float(p.get("contracts", 0) or 0)
+                if p.get("symbol") == symbol and p_side == expected_side and contracts > 0:
+                    result["remaining_qty"] = contracts
+                    result["confirmed"] = False
+                    result["failure_stage"] = "position_still_open"
+                    logger.warning("Position still open after close: %s %s remaining=%.6f",
+                                   direction, symbol, contracts)
+                    return result
+            # Position not found — fully closed
+            result["confirmed"] = True
+            logger.info("Position CLOSE VERIFIED: %s %s — no remaining position on exchange",
+                        direction, symbol)
+        except Exception as exc:
+            # Close order confirmed but position check failed — trust the order fill
+            logger.warning("Post-close position check failed for %s: %s — trusting order fill",
+                           symbol, exc)
+            result["confirmed"] = True  # Order was confirmed, position check is supplementary
+        return result
+
     async def detect_untracked_positions(self) -> dict:
         """Detect exchange positions that RUNECLAW is NOT tracking locally.
 
@@ -1132,6 +1315,57 @@ class LiveExecutor:
                     f"- Mode: 🔥 Live {mode_label}"
                 )
 
+            # ── POST-TRADE VERIFICATION (GetClaw-style) ────────────────
+            # Step 1: Verify order fill via exchange query
+            verify = await self._verify_order_fill(
+                active_exchange, order_id, symbol, expected_qty=filled_qty,
+                max_retries=3, delay=1.5,
+            )
+            confirmed = verify["confirmed"]
+
+            # Use verified fill data when available (never guess)
+            if confirmed:
+                if verify["fill_price"] > 0:
+                    fill_price = verify["fill_price"]
+                if verify["fill_qty"] > 0:
+                    filled_qty = verify["fill_qty"]
+                    # Update position with actual fill
+                    position.entry_price = fill_price
+                    position.quantity = filled_qty
+                exchange_fees = verify["fees"]
+            else:
+                exchange_fees = 0.0
+
+            # Step 2: Verify position exists on exchange
+            pos_verify = await self._verify_position_exists(
+                active_exchange, symbol,
+                "LONG" if idea.direction == Direction.LONG else "SHORT",
+            )
+            position_confirmed = pos_verify["confirmed"]
+
+            # Update position with exchange-verified data
+            if position_confirmed:
+                if pos_verify["exchange_entry"] > 0:
+                    position.entry_price = pos_verify["exchange_entry"]
+                    fill_price = pos_verify["exchange_entry"]
+                if pos_verify["exchange_qty"] > 0:
+                    position.quantity = pos_verify["exchange_qty"]
+                    filled_qty = pos_verify["exchange_qty"]
+                if pos_verify["leverage"] > 0:
+                    position.leverage = pos_verify["leverage"]
+                    leverage = pos_verify["leverage"]
+
+            # Recalculate cost with verified data
+            raw_cost = fill_price * filled_qty
+            if is_futures and leverage > 1:
+                cost = raw_cost / leverage
+            else:
+                cost = raw_cost
+            position.cost_usd = cost
+
+            # Persist verified position data
+            self._save_positions()
+
             audit(trade_log, f"Live order FILLED: {side} {idea.asset}",
                   action="live_execute", result="FILLED",
                   data={
@@ -1139,6 +1373,10 @@ class LiveExecutor:
                       "side": side, "fill_price": fill_price,
                       "quantity": filled_qty, "cost_usd": cost,
                       "status": order_status,
+                      "confirmed": confirmed,
+                      "position_confirmed": position_confirmed,
+                      "exchange_fees": exchange_fees,
+                      "verify_failure_stage": verify.get("failure_stage", ""),
                   })
 
             # Try to place SL/TP orders (best-effort — not all exchanges support this for spot)
@@ -1160,6 +1398,19 @@ class LiveExecutor:
             trail_info = ""
             if trailing_st:
                 trail_info = "\n- Trailing: ✅ armed (activates at 1R)"
+
+            # Verification status line
+            if confirmed and position_confirmed:
+                verify_line = "- Verified: ✅ CONFIRMED (order + position)"
+            elif confirmed:
+                verify_line = "- Verified: ✅ order confirmed, ⚠️ position check pending"
+            else:
+                verify_line = f"- Verified: ⚠️ UNCONFIRMED ({verify.get('failure_stage', 'pending')})"
+
+            fee_line = ""
+            if exchange_fees > 0:
+                fee_line = f"\n- Fees: <code>${exchange_fees:.4f}</code>"
+
             return (
                 f"{dir_icon} <b>LIVE {side.upper()} {idea.asset}</b> ({mode_label}{lev_info})\n"
                 f"{'─' * 16}\n"
@@ -1170,8 +1421,9 @@ class LiveExecutor:
                 f"- Leverage: <code>{leverage}x</code>\n"
                 f"- SL: <code>${idea.stop_loss:,.4f}</code>{sl_info}\n"
                 f"- TP: <code>${idea.take_profit:,.4f}</code>{tp_info}\n"
-                f"- Order: <code>{order_id}</code>\n"
+                f"- Order: <code>{order_id}</code>{fee_line}\n"
                 f"- Risk: ✅ APPROVED{trail_info}\n"
+                f"- {verify_line}\n"
                 f"- Mode: 🔥 Live {mode_label}"
             )
 
@@ -1998,9 +2250,28 @@ class LiveExecutor:
                 amount=pos.quantity,
                 params=close_params,
             )
+            close_order_id = str(order.get("id", ""))
 
-            # Extract fill price — Bitget spot responses sometimes omit average/price
-            fill_price = float(order.get("average", 0) or order.get("price", 0) or 0)
+            # ── POST-CLOSE VERIFICATION (GetClaw-style) ──────────────
+            close_verify = await self._verify_position_closed(
+                exchange, pos.symbol, pos.direction, close_order_id,
+            )
+            close_confirmed = close_verify["confirmed"]
+
+            # Use verified fill data when available
+            if close_verify["fill_price"] > 0:
+                fill_price = close_verify["fill_price"]
+            else:
+                # Fallback: extract from create_order response
+                fill_price = float(order.get("average", 0) or order.get("price", 0) or 0)
+
+            if close_verify["fill_qty"] > 0:
+                closed_qty = close_verify["fill_qty"]
+            else:
+                closed_qty = pos.quantity
+
+            exchange_close_fees = close_verify["fees"]
+
             if fill_price == 0:
                 # Derive from cost/filled (proceeds / qty sold)
                 cost_val = float(order.get("cost", 0) or 0)
@@ -2076,6 +2347,10 @@ class LiveExecutor:
                       "pnl_usd": round(net_pnl, 4),
                       "gross_pnl": round(gross_pnl, 4),
                       "commission": round(commission, 4),
+                      "confirmed": close_confirmed,
+                      "exchange_fees": exchange_close_fees,
+                      "close_order_id": close_order_id,
+                      "close_failure_stage": close_verify.get("failure_stage", ""),
                   })
 
             pnl_str = f"+${net_pnl:.4f}" if net_pnl >= 0 else f"-${abs(net_pnl):.4f}"
@@ -2098,10 +2373,19 @@ class LiveExecutor:
                 pnl_pct_str = f"{pnl_pct_margin:+.2f}% margin / {pnl_pct:+.2f}% notional, {lev}×"
             else:
                 pnl_pct_str = f"{pnl_pct:+.2f}%"
+
+            # Close verification status
+            if close_confirmed:
+                verify_str = "✅ CONFIRMED"
+            else:
+                stage = close_verify.get("failure_stage", "unconfirmed")
+                verify_str = f"⚠️ {stage}"
+
             close_msg = (
                 f"CLOSED {pos.direction} {pos.symbol} ({reason})\n"
                 f"Entry: ${pos.entry_price:,.4f} → Exit: ${fill_price:,.4f}\n"
-                f"PnL: {pnl_str} ({pnl_pct_str}) | Fees: {fee_str} | Hold: {hold_str}"
+                f"PnL: {pnl_str} ({pnl_pct_str}) | Fees: {fee_str} | Hold: {hold_str}\n"
+                f"Verified: {verify_str}"
             )
 
             # Store structured close data for rich rendering
@@ -2116,9 +2400,12 @@ class LiveExecutor:
                 "pnl_usd": round(net_pnl, 4),
                 "gross_pnl": round(gross_pnl, 4),
                 "fees": round(commission, 4),
+                "exchange_fees": round(exchange_close_fees, 4),
                 "size_usd": round(pos.cost_usd, 2) if pos.cost_usd > 0 else round(pos.entry_price * pos.quantity, 2),
                 "leverage": pos.leverage or 1,
                 "hold_time": hold_str,
+                "confirmed": close_confirmed,
+                "close_order_id": close_order_id,
             }
 
             return close_msg
