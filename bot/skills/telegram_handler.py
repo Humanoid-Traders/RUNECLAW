@@ -2073,7 +2073,42 @@ class TelegramHandler:
         if not await self._guard(update, "portfolio"):
             return
         positions = self.engine.live_executor._positions
-        open_pos = [p for p in positions.values() if p.status == "open"]
+        open_pos = [p for p in positions.values() if p.status in ("open", "pending_fill")]
+
+        # Fallback: check exchange directly if no local positions
+        if not open_pos:
+            try:
+                exchange = await self.engine.live_executor._get_exchange()
+                ex_positions = await exchange.fetch_positions(
+                    params={"productType": "USDT-FUTURES"})
+                ex_open = [p for p in (ex_positions or [])
+                           if isinstance(p, dict) and float(p.get("contracts") or 0) > 0]
+                if ex_open:
+                    SEP = "─" * 16
+                    lines = [f"📊 <b>LIVE POSITIONS</b> (from exchange)\n{SEP}\n"]
+                    for p in ex_open:
+                        sym = p.get("symbol", "???")
+                        side = (p.get("side") or "long").upper()
+                        dir_icon = "🟢" if side == "LONG" else "🔴"
+                        contracts = float(p.get("contracts") or 0)
+                        entry = float(p.get("entryPrice") or 0)
+                        mark = float(p.get("markPrice") or 0)
+                        upnl = float(p.get("unrealizedPnl") or 0)
+                        lev = int(float(p.get("leverage") or 1))
+                        sym_display = sym.replace("/", "").replace(":USDT", "")
+                        lines.append(
+                            f"{dir_icon} <b>{side} {sym_display}</b> {lev}x\n"
+                            f"- Entry: <code>${entry:,.4f}</code>\n"
+                            f"- Mark: <code>${mark:,.4f}</code>\n"
+                            f"- Qty: <code>{contracts:.6f}</code>\n"
+                            f"- uPnL: <code>${upnl:+,.2f}</code>\n"
+                        )
+                    lines.append(f"\n<i>⚠️ Showing exchange data — local tracking out of sync</i>")
+                    await self._send(update, "\n".join(lines))
+                    return
+            except Exception:
+                pass
+
         if not open_pos:
             await self._send(update, "💭 No live positions open.")
             return
