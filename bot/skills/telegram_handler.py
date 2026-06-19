@@ -1091,8 +1091,10 @@ class TelegramHandler:
             executor = self.engine.live_executor
             open_pos = len(executor.open_positions)
             live_closed = executor.closed_positions
-            # Exclude adopted orphan trades from win rate
-            user_closed = [t for t in live_closed if not getattr(t, "trade_id", "").startswith("TI-adopted")]
+            # Exclude adopted orphan trades and injected diagnostic artifacts from win rate
+            _excl = ("TI-adopted", "TI-injected")
+            user_closed = [t for t in live_closed
+                           if not any(getattr(t, "trade_id", "").startswith(p) for p in _excl)]
             if user_closed:
                 wins = sum(1 for t in user_closed if (t.pnl_usd or 0) > 0)
                 win_rate = f"{wins / len(user_closed) * 100:.0f}"
@@ -1910,11 +1912,12 @@ class TelegramHandler:
             executor = self.engine.live_executor
             open_pos = executor.open_positions
             closed_pos = executor.closed_positions
-            # Filter out adopted orphan trades for consistency with Performance view
+            # Filter out adopted/injected trades for consistency with Performance view
+            _excl2 = ("TI-adopted", "TI-injected")
             user_closed = [t for t in closed_pos
-                           if not getattr(t, "trade_id", "").startswith("TI-adopted")]
+                           if not any(getattr(t, "trade_id", "").startswith(p) for p in _excl2)]
             adopted_closed = [t for t in closed_pos
-                              if getattr(t, "trade_id", "").startswith("TI-adopted")]
+                              if any(getattr(t, "trade_id", "").startswith(p) for p in _excl2)]
             realized_pnl = sum(p.pnl_usd or 0 for p in user_closed)
             total_fees = sum(p.commission or 0 for p in user_closed)
             adopted_pnl = sum(p.pnl_usd or 0 for p in adopted_closed)
@@ -3578,9 +3581,13 @@ class TelegramHandler:
                     audit(system_log, f"Performance exchange fallback error: {exc}",
                           action="perf_exchange_fallback", result="ERROR")
 
-            # ── Separate adopted vs user-initiated trades ──
-            user_trades = [t for t in live_closed if not getattr(t, "trade_id", "").startswith("TI-adopted")]
-            adopted_trades = [t for t in live_closed if getattr(t, "trade_id", "").startswith("TI-adopted")]
+            # ── Separate adopted/injected vs user-initiated trades ──
+            # Exclude: TI-adopted (orphan positions), TI-injected (diagnostic artifacts)
+            _exclude_prefixes = ("TI-adopted", "TI-injected")
+            user_trades = [t for t in live_closed
+                           if not any(getattr(t, "trade_id", "").startswith(p) for p in _exclude_prefixes)]
+            adopted_trades = [t for t in live_closed
+                              if any(getattr(t, "trade_id", "").startswith(p) for p in _exclude_prefixes)]
             adopted_pnl = sum((t.pnl_usd or 0) for t in adopted_trades)
 
             total_trades = len(user_trades)
@@ -3705,7 +3712,8 @@ class TelegramHandler:
         if CONFIG.is_live() and hasattr(self.engine, 'live_executor'):
             executor = self.engine.live_executor
             closed = [t for t in executor.closed_positions
-                       if not getattr(t, "trade_id", "").startswith("TI-adopted")]
+                       if not any(getattr(t, "trade_id", "").startswith(p)
+                                  for p in ("TI-adopted", "TI-injected"))]
             today_trades = len(closed)
             wins = sum(1 for t in closed if (t.pnl_usd or 0) > 0)
             losses = today_trades - wins
