@@ -4380,29 +4380,41 @@ class TelegramHandler:
                                 net_pnl = gross_pnl - commission
 
                                 # Record trade in closed_trades.json via executor
+                                # First, check if this position was already closed by reconciliation
+                                # to avoid double-counting with a different trade_id.
                                 from datetime import datetime, timezone
                                 from bot.core.live_executor import LivePosition
-                                ts = ep.get("timestamp")
-                                opened_at = datetime.fromtimestamp(ts / 1000, tz=timezone.utc) if ts else datetime.now(timezone.utc)
-                                closed_pos = LivePosition(
-                                    trade_id=f"TI-manual-{ep_clean}-{int(datetime.now(timezone.utc).timestamp())}",
-                                    symbol=ep_sym,
-                                    direction=side,
-                                    entry_price=entry_price,
-                                    quantity=contracts,
-                                    cost_usd=margin,
-                                    stop_loss=0,
-                                    take_profit=0,
-                                    leverage=leverage,
-                                    status="closed",
-                                    close_price=fill_price,
-                                    gross_pnl=round(gross_pnl, 4),
-                                    commission=round(commission, 4),
-                                    pnl_usd=round(net_pnl, 4),
-                                    opened_at=opened_at,
-                                    closed_at=datetime.now(timezone.utc),
-                                )
-                                self.engine.live_executor._append_closed_trade(closed_pos)
+                                already_recorded = False
+                                for ct in self.engine.live_executor._closed_trades:
+                                    ct_clean = ct.symbol.replace("/", "").replace(":USDT", "")
+                                    if ct_clean == ep_clean and ct.direction == side:
+                                        # Check if closed within the last 5 minutes
+                                        ct_closed = ct.closed_at
+                                        if ct_closed and (datetime.now(timezone.utc) - ct_closed).total_seconds() < 300:
+                                            already_recorded = True
+                                            break
+                                if not already_recorded:
+                                    ts = ep.get("timestamp")
+                                    opened_at = datetime.fromtimestamp(ts / 1000, tz=timezone.utc) if ts else datetime.now(timezone.utc)
+                                    closed_pos = LivePosition(
+                                        trade_id=f"TI-manual-{ep_clean}-{int(datetime.now(timezone.utc).timestamp())}",
+                                        symbol=ep_sym,
+                                        direction=side,
+                                        entry_price=entry_price,
+                                        quantity=contracts,
+                                        cost_usd=margin,
+                                        stop_loss=0,
+                                        take_profit=0,
+                                        leverage=leverage,
+                                        status="closed",
+                                        close_price=fill_price,
+                                        gross_pnl=round(gross_pnl, 4),
+                                        commission=round(commission, 4),
+                                        pnl_usd=round(net_pnl, 4),
+                                        opened_at=opened_at,
+                                        closed_at=datetime.now(timezone.utc),
+                                    )
+                                    self.engine.live_executor._append_closed_trade(closed_pos)
 
                                 pnl_emoji = "\U0001f7e2" if net_pnl >= 0 else "\U0001f534"
                                 lines = [

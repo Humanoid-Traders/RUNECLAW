@@ -2206,8 +2206,25 @@ class LiveExecutor:
     # ── F-14 FIX: Closed trades persistence ───────────────────────
 
     def _append_closed_trade(self, pos: LivePosition) -> None:
-        """Append a closed trade to the persisted closed trades file."""
-        self._closed_trades.append(pos)
+        """Append a closed trade to the persisted closed trades file.
+
+        Deduplicates by trade_id: if a record with the same trade_id already
+        exists, it is replaced (the newer close has more accurate data).
+        This prevents the triple/double-counting bug where reconciliation,
+        manual close, and limit expiry all append independently for the
+        same underlying position.
+        """
+        # ── Dedup: replace existing record with same trade_id ──
+        existing_idx = None
+        for idx, t in enumerate(self._closed_trades):
+            if t.trade_id == pos.trade_id:
+                existing_idx = idx
+                break
+        if existing_idx is not None:
+            self._closed_trades[existing_idx] = pos
+            logger.info("Replaced existing closed trade record: %s", pos.trade_id)
+        else:
+            self._closed_trades.append(pos)
         # Cap to prevent unbounded growth
         if len(self._closed_trades) > _MAX_CLOSED_TRADES:
             self._closed_trades = self._closed_trades[-_MAX_CLOSED_TRADES:]
@@ -2275,6 +2292,21 @@ class LiveExecutor:
                     status="closed",
                 )
                 self._closed_trades.append(pos)
+            # ── Dedup on load: keep last record per trade_id ──
+            if self._closed_trades:
+                seen: dict[str, int] = {}
+                deduped: list[LivePosition] = []
+                for p in self._closed_trades:
+                    if p.trade_id in seen:
+                        # Replace earlier record with this one (later = more accurate)
+                        deduped[seen[p.trade_id]] = p
+                    else:
+                        seen[p.trade_id] = len(deduped)
+                        deduped.append(p)
+                if len(deduped) < len(self._closed_trades):
+                    logger.info("Deduped closed trades on load: %d -> %d",
+                                len(self._closed_trades), len(deduped))
+                self._closed_trades = deduped
             if self._closed_trades:
                 total_pnl = sum(p.pnl_usd or 0 for p in self._closed_trades)
                 audit(trade_log,
@@ -2320,7 +2352,8 @@ class LiveExecutor:
                         actual_fill_price = None
                         fill_source = "estimated"
 
-                        # 1. Try fetchMyTrades for actual fill price
+                        # 1. Try fetchMyTrades for actual fill price + exchange PnL
+                        exchange_reported_pnl = None  # Bitget reports PnL in info.profit
                         try:
                             trades = await exchange.fetch_my_trades(ccxt_symbol, limit=50)
                             relevant = [
@@ -2330,6 +2363,14 @@ class LiveExecutor:
                             if relevant:
                                 actual_fill_price = float(relevant[-1].get("price", 0))
                                 fill_source = "exchange_fill"
+                                # Sum exchange-reported PnL across all fill legs
+                                total_profit = 0.0
+                                for rt in relevant:
+                                    info = rt.get("info", {})
+                                    profit = float(info.get("profit", 0) or 0)
+                                    total_profit += profit
+                                if total_profit != 0:
+                                    exchange_reported_pnl = total_profit
                                 # Determine reason from which order matched
                                 matched_order = relevant[-1].get("order")
                                 if matched_order == pos.tp_order_id:
@@ -2411,13 +2452,31 @@ class LiveExecutor:
 
                         pos.status = "closed"
                         pos.close_price = est_exit
-                        # Deduct commission on reconciled close (same as manual close)
-                        entry_notional = pos.entry_price * pos.quantity
-                        exit_notional = est_exit * pos.quantity
-                        commission_pct = CONFIG.risk.commission_pct
-                        commission = (entry_notional + exit_notional) * (commission_pct / 100.0)
-                        gross_pnl = pnl
-                        net_pnl = gross_pnl - commission
+
+                        # ── Use exchange-reported PnL when available (most accurate) ──
+                        if exchange_reported_pnl is not None:
+                            # Bitget's profit field already accounts for fees
+                            net_pnl = exchange_reported_pnl
+                            # Estimate gross/commission split for display
+                            if pos.direction == "LONG":
+                                gross_pnl = (est_exit - pos.entry_price) * pos.quantity
+                            else:
+                                gross_pnl = (pos.entry_price - est_exit) * pos.quantity
+                            commission = gross_pnl - net_pnl
+                            if commission < 0:
+                                commission = 0
+                                gross_pnl = net_pnl
+                            pnl = gross_pnl
+                            logger.info("Using exchange-reported PnL for %s: $%.4f",
+                                        pos.symbol, net_pnl)
+                        else:
+                            # Deduct commission on reconciled close (same as manual close)
+                            entry_notional = pos.entry_price * pos.quantity
+                            exit_notional = est_exit * pos.quantity
+                            commission_pct = CONFIG.risk.commission_pct
+                            commission = (entry_notional + exit_notional) * (commission_pct / 100.0)
+                            gross_pnl = pnl
+                            net_pnl = gross_pnl - commission
                         pos.gross_pnl = round(gross_pnl, 4)
                         pos.commission = round(commission, 4)
                         pos.pnl_usd = round(net_pnl, 4)
