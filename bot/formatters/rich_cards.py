@@ -21,6 +21,30 @@ log = logging.getLogger("runeclaw.formatters")
 SEP = "\u2500" * 16  # ────────────────
 
 
+def display_symbol(symbol: str) -> str:
+    """Consistent short display name for any symbol format.
+
+    MEGA/USDT:USDT  → MEGA
+    NATGAS/USDT:USDT → NATGAS
+    XLK/USDT        → XLK
+    MEGAUSDT         → MEGA
+    BTC/USDT:USDT   → BTC
+    """
+    s = symbol.upper()
+    # Strip settle suffix :USDT
+    if ":USDT" in s:
+        s = s.split(":")[0]
+    # Strip quote /USDT
+    if "/USDT" in s:
+        s = s.split("/")[0]
+    # Handle raw concatenated form (BTCUSDT → BTC)
+    if s.endswith("USDT") and "/" not in s and ":" not in s:
+        base = s[:-4]
+        if base:
+            s = base
+    return s
+
+
 # ── Market-data helpers ──────────────────────────────────────────
 
 def compute_vwap(highs: np.ndarray, lows: np.ndarray, closes: np.ndarray,
@@ -240,7 +264,7 @@ async def fetch_analysis_data(exchange, symbol: str, timeframe: str = "1h",
 
         return {
             "symbol": symbol,
-            "pair": symbol.replace("/", ""),
+            "pair": display_symbol(symbol),
             "price": price,
             "high_24h": high_24h,
             "low_24h": low_24h,

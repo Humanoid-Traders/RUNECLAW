@@ -926,6 +926,14 @@ class LiveExecutor:
                     futures_params["tradeSide"] = "open"
 
                 otype = "limit" if use_limit else "market"
+                # POST_ONLY: guarantee maker-only for limit orders.
+                # If the limit price would cross the book and fill immediately,
+                # the exchange REJECTS the order instead of filling as taker.
+                # This is the definitive fix for "limit fills as market" —
+                # learned from Getclaw's approach.
+                if use_limit and CONFIG.limit_orders.post_only:
+                    futures_params["timeInForce"] = "post_only"
+
                 create_kwargs: dict[str, Any] = {
                     "symbol": symbol, "type": otype, "side": side,
                     "amount": quantity, "coid": coid, "params": futures_params,
@@ -933,7 +941,40 @@ class LiveExecutor:
                 if use_limit and limit_price:
                     # ccxt requires price as a top-level param for limit orders
                     create_kwargs["price"] = limit_price
-                order = await self._create_order_idempotent(exchange, **create_kwargs)
+
+                # Try to place the order — handle POST_ONLY rejection gracefully
+                try:
+                    order = await self._create_order_idempotent(exchange, **create_kwargs)
+                except Exception as post_only_exc:
+                    exc_str = str(post_only_exc).lower()
+                    # Bitget rejects POST_ONLY orders that would cross the book
+                    # with "post only order failed" or similar. Retry with wider offset.
+                    if use_limit and CONFIG.limit_orders.post_only and (
+                        "post only" in exc_str or "post_only" in exc_str
+                        or "would immediately" in exc_str
+                    ):
+                        audit(trade_log,
+                              f"POST_ONLY rejected for {symbol} @ ${limit_price:,.4f} — "
+                              f"widening offset and retrying",
+                              action="post_only_retry", result="WIDENING",
+                              data={"symbol": symbol, "rejected_price": limit_price})
+                        # Double the offset and retry
+                        wider_offset = 1.0 * atr_value if atr_value > 0 else current_price * 0.005
+                        if side == "buy":
+                            limit_price = round(current_price - wider_offset, 8)
+                        else:
+                            limit_price = round(current_price + wider_offset, 8)
+                        _prec_price = active_exchange.price_to_precision(symbol, limit_price)
+                        limit_price = float(_prec_price) if _prec_price is not None else limit_price
+                        create_kwargs["price"] = limit_price
+                        # Generate new coid for retry
+                        retry_coid = coid + "-r1"
+                        create_kwargs["coid"] = retry_coid
+                        create_kwargs["params"]["clientOid"] = retry_coid
+                        create_kwargs["params"]["clientOrderId"] = retry_coid
+                        order = await self._create_order_idempotent(exchange, **create_kwargs)
+                    else:
+                        raise  # Not a POST_ONLY rejection — propagate
             else:
                 # FUTURES-ONLY MODE: all non-futures order paths are removed.
                 # This branch should never execute when trade_mode="futures".
@@ -1734,17 +1775,47 @@ class LiveExecutor:
                 return f"LIMIT {order_status.upper()}: {pos.direction} {pos.symbol} — order not filled"
 
             else:
-                # Still open — check expiry
+                # Still open — check price drift and time expiry
                 age_sec = (datetime.now(UTC) - pos.opened_at).total_seconds()
-                if age_sec > CONFIG.limit_orders.expire_seconds:
-                    # Cancel expired limit order
+                cancel_reason = None
+
+                # ── PRICE DRIFT CANCEL (from Getclaw) ──
+                # If price has moved >X% away from the limit, the setup is stale.
+                # No point waiting for a fill that's unlikely to come.
+                drift_pct = CONFIG.limit_orders.price_drift_cancel_pct
+                if drift_pct > 0 and pos.entry_price > 0:
+                    try:
+                        ticker = await exchange.fetch_ticker(pos.symbol)
+                        cur_price = float(ticker.get("last", 0) or 0)
+                        if cur_price > 0:
+                            pct_away = abs(cur_price - pos.entry_price) / pos.entry_price * 100
+                            if pct_away > drift_pct:
+                                cancel_reason = "price_drift"
+                                audit(trade_log,
+                                      f"Price drifted {pct_away:.1f}% from limit "
+                                      f"(threshold {drift_pct}%): {pos.symbol} "
+                                      f"limit=${pos.entry_price:,.4f} mkt=${cur_price:,.4f}",
+                                      action="limit_drift_cancel", result="CANCELLING",
+                                      data={"trade_id": trade_id, "pct_away": pct_away,
+                                            "limit_price": pos.entry_price,
+                                            "market_price": cur_price})
+                    except Exception as drift_exc:
+                        logger.debug("Price drift check failed for %s: %s",
+                                     pos.symbol, drift_exc)
+
+                # ── TIME EXPIRY ──
+                if not cancel_reason and age_sec > CONFIG.limit_orders.expire_seconds:
+                    cancel_reason = "expired"
+
+                if cancel_reason:
+                    # Cancel the limit order
                     cancel_confirmed = False
                     try:
                         await exchange.cancel_order(pos.limit_order_id, pos.symbol)
                         cancel_confirmed = True
                     except Exception as exc:
-                        logger.warning("Failed to cancel expired limit order %s: %s",
-                                       pos.limit_order_id, exc)
+                        logger.warning("Failed to cancel %s limit order %s: %s",
+                                       cancel_reason, pos.limit_order_id, exc)
 
                     # C2-16 FIX: Verify cancel before marking closed — if cancel
                     # failed, the order may have filled in the meantime.
@@ -1753,11 +1824,9 @@ class LiveExecutor:
                             order_info = await exchange.fetch_order(pos.limit_order_id, pos.symbol)
                             actual_status = order_info.get("status", "")
                             if actual_status in ("filled", "closed"):
-                                # Order filled while we tried to cancel — handle as fill
                                 logger.warning("Limit order %s filled during cancel attempt", pos.limit_order_id)
                                 return None  # next check cycle will process the fill
                             elif actual_status not in ("canceled", "cancelled", "expired"):
-                                # Still active — don't mark closed locally
                                 logger.warning("Limit order %s still %s after cancel attempt",
                                                pos.limit_order_id, actual_status)
                                 return None
@@ -1767,16 +1836,20 @@ class LiveExecutor:
                     pos.status = "closed"
                     pos.closed_at = datetime.now(UTC)
                     pos.pnl_usd = 0.0
-                    pos.close_reason = "expired"
+                    pos.close_reason = cancel_reason
                     self._save_positions()
-                    # C2-14 FIX: Record expired limit orders in closed_trades.json
                     self._append_closed_trade(pos)
 
-                    audit(trade_log, f"Limit order EXPIRED after {age_sec:.0f}s: {pos.symbol}",
-                          action="limit_expire", result="EXPIRED",
-                          data={"trade_id": trade_id, "age_sec": age_sec})
-
-                    return f"LIMIT EXPIRED: {pos.direction} {pos.symbol} — cancelled after {age_sec/3600:.1f}h"
+                    if cancel_reason == "price_drift":
+                        audit(trade_log, f"Limit order CANCELLED (price drift): {pos.symbol}",
+                              action="limit_drift_cancel", result="CANCELLED",
+                              data={"trade_id": trade_id, "age_sec": age_sec})
+                        return f"LIMIT CANCELLED (price drift): {pos.direction} {pos.symbol} — market moved away"
+                    else:
+                        audit(trade_log, f"Limit order EXPIRED after {age_sec:.0f}s: {pos.symbol}",
+                              action="limit_expire", result="EXPIRED",
+                              data={"trade_id": trade_id, "age_sec": age_sec})
+                        return f"LIMIT EXPIRED: {pos.direction} {pos.symbol} — cancelled after {age_sec/3600:.1f}h"
 
         except Exception as exc:
             logger.warning("Pending limit check failed for %s: %s", trade_id, exc)

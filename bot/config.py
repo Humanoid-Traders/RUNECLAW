@@ -379,6 +379,10 @@ class LimitOrderConfig:
     expire_seconds: int = int(_env_float("LIMIT_ORDER_EXPIRE_SEC", 14400))  # 4 hours
     # Check interval for pending limit orders (seconds)
     check_interval_seconds: int = int(_env_float("LIMIT_CHECK_INTERVAL_SEC", 30))
+    # Use POST_ONLY time-in-force to guarantee maker-only (rejects if would fill)
+    post_only: bool = _env_bool("LIMIT_POST_ONLY", True)
+    # Cancel pending limit if price drifts more than this % away from limit price
+    price_drift_cancel_pct: float = _env_float("LIMIT_DRIFT_CANCEL_PCT", 2.0)
 
 
 @dataclass(frozen=True)

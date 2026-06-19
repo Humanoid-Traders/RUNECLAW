@@ -38,7 +38,10 @@ out/
 !.env.example
 
 # -- Logs --
-logs/
+# logs/ (excluded from gitignore to include trading records)
+!logs/live_trading_log.csv
+!logs/closed_trades.json
+!logs/audit_chain.jsonl
 *.log
 
 # -- IDE --

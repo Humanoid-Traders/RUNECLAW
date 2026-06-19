@@ -22,7 +22,7 @@
   <img src="https://img.shields.io/badge/security%20tests-29%20passing-blueviolet" alt="29 Security Tests">
   <img src="https://img.shields.io/badge/red%20team-28%20scenarios%20%7C%20framework%20included-critical" alt="Red Team 28 Scenarios | Framework Included">
   <img src="https://img.shields.io/badge/risk%20checks-21%20(16%20strict%20%2B%205%20advisory)-red" alt="21 Risk Checks">
-  <img src="https://img.shields.io/badge/mode-paper%20trading-orange" alt="Paper Trading">
+  <img src="https://img.shields.io/badge/mode-live%20trading-green" alt="Live Trading">
   <img src="https://img.shields.io/badge/exchange-Bitget-blue" alt="Bitget">
   <img src="https://img.shields.io/badge/bot-LIVE%20%40HTRUNECLAW__bot-26a5e4?logo=telegram" alt="Live Telegram Bot">
   <img src="https://img.shields.io/badge/hackathon-AI%20Base%20Camp%20S1-purple" alt="AI Base Camp Hackathon S1">
@@ -570,12 +570,43 @@ RUNECLAW is designed with a **fail-closed** philosophy:
 
 ---
 
+## Live Trading Records
+
+RUNECLAW is **live trading on Bitget futures** with micro-size positions. All trades are executed via the Telegram bot interface with human confirmation.
+
+**Trading Period:** June 17-19, 2026  
+**Exchange:** Bitget USDT-M Futures  
+**Position Size:** $10-20 per trade (micro test mode)  
+**Leverage:** 5x  
+**Total Closed Trades:** 38  
+**Win Rate:** 55.3% (21W / 17L)  
+**Total Realized PnL:** +$46.30  
+
+### Files in `logs/`
+
+| File | Description |
+|------|-------------|
+| `live_trading_log.csv` | Complete trade log with timestamp, pair, side, entry/exit price, size, PnL |
+| `closed_trades.json` | Raw closed trade records from the bot's state file |
+| `audit_chain.jsonl` | Immutable audit chain -- every trade decision logged with context |
+
+### Order Execution Features
+
+- **POST_ONLY limit orders** -- guarantees maker-only execution, exchange rejects if would cross the book
+- **Limit order price validation** -- conditional recalculation only when limit price would instant-fill
+- **Price-drift cancellation** -- stale pending limits auto-cancelled when market moves >2% away
+- **4-hour time expiry** -- unfilled limits cancelled after configurable timeout
+- **Exchange-reported PnL** -- uses Bitget's actual `profit` field, not estimated calculations
+- **Trade deduplication** -- prevents double-counting from reconciliation + manual close paths
+
+---
+
 ## Limitations and Maturity
 
 This is a **hackathon prototype** (maturity: early-stage). Known limitations:
 
 - **Solo developer project** -- limited peer review beyond automated audits
-- **No live trading validation** -- all testing uses paper trading and synthetic data
+- **Live trading active** -- RUNECLAW is live on Bitget futures with micro-size positions ($10-20 per trade, 5x leverage). See `logs/` for full trading records.
 - **Backtest methodology caveat** -- backtests use synthetic GBM+GARCH price data with `use_llm=False`. This validates risk gate behavior and position sizing on random walks, but does **not** validate the alpha-generating modules (Smart Money, order flow, sentiment fusion, liquidation cascade) which require real market microstructure data. Backtest results should be interpreted as **engine sanity checks**, not evidence of profitability. Real-data, LLM-enabled, out-of-sample validation is needed to evaluate strategy performance.
 - **API latency and slippage** -- real exchange conditions differ from simulation
 - **Security audit conducted** -- AI-assisted deep audit (v3.0) with all 5 critical issues fixed, 29 security tests added. No independent third-party audit has been performed.

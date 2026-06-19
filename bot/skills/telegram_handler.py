@@ -45,6 +45,7 @@ from bot.nlp.conversation_store import ConversationStore
 from bot.core.proactive_monitor import ProactiveMonitor
 from bot.marketing.channel_forwarder import ChannelForwarder
 from bot.formatters.rich_cards import (
+    display_symbol,
     fetch_analysis_data,
     render_analysis_card,
     render_multi_analysis,
@@ -936,7 +937,7 @@ class TelegramHandler:
                                 from bot.formatters.signal_card import signal_card_from_idea
                                 png = signal_card_from_idea(new_idea, rank=1)
                                 if png:
-                                    pair = new_idea.asset.replace("/USDT", "")
+                                    pair = display_symbol(new_idea.asset)
                                     d = new_idea.direction.value if hasattr(new_idea.direction, "value") else str(new_idea.direction)
                                     cap = f"<b>{pair} {d}</b> | Conf {new_idea.confidence*100:.0f}%"
                                     card_sent = await self._send_photo(update, png, cap, reply_markup=kb)
@@ -2723,7 +2724,7 @@ class TelegramHandler:
             uid = update.effective_user.id if update.effective_user else ""
             buttons = []
             for idea in pending:
-                pair = idea.asset.replace("/USDT", "")
+                pair = display_symbol(idea.asset)
                 buttons.append([
                     InlineKeyboardButton(f"\u2705 {pair}", callback_data=f"confirm:{idea.id}:{uid}"),
                     InlineKeyboardButton(f"Skip", callback_data=f"reject:{idea.id}:{uid}"),
