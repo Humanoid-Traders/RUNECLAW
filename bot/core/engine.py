@@ -406,18 +406,8 @@ class RuneClawEngine:
                 for msg in reconciled:
                     audit(trade_log, f"Startup reconcile: {msg}",
                           action="startup_reconcile", result="CLOSED")
-                # Adopt any exchange positions not tracked locally
-                adopted = await self.live_executor.adopt_exchange_positions()
-                if adopted:
-                    audit(system_log,
-                          f"Startup: adopted {len(adopted)} exchange positions: {adopted}",
-                          action="startup_adopt", result="OK")
-                    # Notify via Telegram so user knows about adopted positions
-                    if self._adopt_notify_callback:
-                        try:
-                            await self._adopt_notify_callback(adopted)
-                        except Exception:
-                            pass
+                # Orphan adoption disabled — bot only manages positions it opened.
+                # adopted = await self.live_executor.adopt_exchange_positions()
             except Exception as exc:
                 audit(system_log, f"Startup reconciliation error: {exc}",
                       action="startup_reconcile", result="ERROR")
@@ -1445,24 +1435,12 @@ class RuneClawEngine:
                 audit(system_log, f"Reconciliation error: {exc}",
                       action="reconcile", result="ERROR")
 
-            # Adopt orphaned exchange positions with no local record
-            # (e.g. from a timed-out-but-filled order, manual trade, or
-            # local state loss). Runs every tick — not just on startup.
-            try:
-                adopted = await self.live_executor.adopt_exchange_positions()
-                if adopted:
-                    audit(system_log,
-                          f"Adopted {len(adopted)} orphan positions: {adopted}",
-                          action="tick_adopt", result="OK",
-                          data={"adopted": adopted})
-                    if self._adopt_notify_callback:
-                        try:
-                            await self._adopt_notify_callback(adopted)
-                        except Exception:
-                            pass
-            except Exception as exc:
-                audit(system_log, f"Orphan adoption error: {exc}",
-                      action="tick_adopt", result="ERROR")
+            # Orphan adoption disabled — bot only manages positions it opened.
+            # try:
+            #     adopted = await self.live_executor.adopt_exchange_positions()
+            #     ...
+            # except Exception as exc:
+            #     ...
 
     @property
     def pending_ideas(self) -> list[TradeIdea]:
