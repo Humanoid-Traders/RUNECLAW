@@ -1110,6 +1110,9 @@ class LiveExecutor:
                 }
                 if self._hedge_mode:
                     futures_params["tradeSide"] = "open"
+                else:
+                    # Even in one-way mode, explicitly set tradeSide for safety
+                    futures_params["tradeSide"] = "open"
 
                 otype = "limit" if use_limit else "market"
                 # POST_ONLY: guarantee maker-only for limit orders.
@@ -1568,9 +1571,8 @@ class LiveExecutor:
             )
         else:
             # Classic mode: use ccxt trigger orders
-            extra_params = {"productType": "USDT-FUTURES"}
-            if self._hedge_mode:
-                extra_params["tradeSide"] = "close"
+            # Always send tradeSide=close for SL/TP to prevent reverse opens
+            extra_params = {"productType": "USDT-FUTURES", "tradeSide": "close"}
 
             # Stop-loss
             try:
@@ -1726,9 +1728,8 @@ class LiveExecutor:
             "slOrderType": "market",
             "clientOid": self._client_oid(f"{bitget_symbol}_{pos_side}_sltp_{int(time.time())}"),
         }
-        # Only include posSide in hedge mode
-        if self._hedge_mode:
-            payload["posSide"] = pos_side
+        # Always include posSide for safety (prevents reverse position on close)
+        payload["posSide"] = pos_side
 
         logger.info("v3 SL/TP request: symbol=%s hedge=%s posSide=%s TP=%s SL=%s (raw TP=%s SL=%s, rounded=%s/%s, precision=%s)",
                      bitget_symbol, self._hedge_mode, pos_side if self._hedge_mode else "omitted",
@@ -2164,9 +2165,8 @@ class LiveExecutor:
         else:
             # Classic mode: place trigger order
             close_side = "sell" if direction == Direction.LONG else "buy"
-            extra_params = {"productType": "USDT-FUTURES"}
-            if self._hedge_mode:
-                extra_params["tradeSide"] = "close"
+            # Always send tradeSide=close for SL/TP to prevent reverse opens
+            extra_params = {"productType": "USDT-FUTURES", "tradeSide": "close"}
             try:
                 sl_order = await exchange.create_order(
                     symbol=pos.symbol, type="market", side=close_side,
@@ -2240,9 +2240,9 @@ class LiveExecutor:
                         cancel_failed.append(oid)
 
             # Futures-only mode: all positions close via swap exchange
-            close_params = {"productType": "USDT-FUTURES"}
-            if self._hedge_mode:
-                close_params["tradeSide"] = "close"
+            # ALWAYS send tradeSide=close — prevents accidentally opening reverse
+            # position when Bitget is in hedge mode but bot doesn't detect it
+            close_params = {"productType": "USDT-FUTURES", "tradeSide": "close"}
             order = await exchange.create_order(
                 symbol=pos.symbol,
                 type="market",
