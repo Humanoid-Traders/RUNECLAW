@@ -568,8 +568,12 @@ class TelegramHandler:
                 eff_equity = self.engine.get_effective_equity(user_id)
                 eq_display = eff_equity if eff_equity > 0 else state.equity_usd
                 # Use live executor stats (actual exchange trades)
-                live_closed = executor.closed_positions if executor else []
+                live_closed_all = executor.closed_positions if executor else []
                 live_open = executor.open_positions if executor else []
+                # Exclude adopted orphan trades from stats
+                _excl = ("TI-adopted", "TI-injected")
+                live_closed = [t for t in live_closed_all
+                               if not any(getattr(t, "trade_id", "").startswith(p) for p in _excl)]
                 total_trades = len(live_closed)
                 wins = sum(1 for t in live_closed if (t.pnl_usd or 0) > 0)
                 win_rate_val = wins / total_trades if total_trades > 0 else 0
@@ -2612,7 +2616,15 @@ class TelegramHandler:
 
             executor = self.engine.live_executor
             live_open = executor.open_positions
-            live_closed = executor.closed_positions
+            all_closed = executor.closed_positions
+
+            # Exclude adopted orphan trades and injected diagnostic artifacts
+            # so Portfolio matches Performance numbers
+            _excl_prefixes = ("TI-adopted", "TI-injected")
+            live_closed = [t for t in all_closed
+                           if not any(getattr(t, "trade_id", "").startswith(p) for p in _excl_prefixes)]
+            adopted_trades = [t for t in all_closed
+                              if any(getattr(t, "trade_id", "").startswith(p) for p in _excl_prefixes)]
 
             # Calculate live PnL from closed positions (net of fees)
             live_total_pnl = sum((p.pnl_usd or 0) for p in live_closed)
@@ -2711,6 +2723,10 @@ class TelegramHandler:
                     f"Net: <code>${live_total_pnl:+,.2f}</code> | "
                     f"Win rate: <code>{wr:.0f}%</code>",
                 ])
+                if adopted_trades:
+                    adopted_pnl = sum((t.pnl_usd or 0) for t in adopted_trades)
+                    lines.append(
+                        f"<i>⚠️ Excluded {len(adopted_trades)} adopted orphans (${adopted_pnl:+,.2f})</i>")
             else:
                 lines.extend(["", "<i>No live trades yet. Say \"scan\" to find signals.</i>"])
 

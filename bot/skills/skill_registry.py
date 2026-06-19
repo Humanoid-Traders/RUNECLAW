@@ -583,7 +583,12 @@ class GetPortfolioSkill(BaseSkill):
         if CONFIG.is_live() and hasattr(engine, 'live_executor'):
             executor = engine.live_executor
             live_open = executor.open_positions
-            live_closed = executor.closed_positions
+            all_closed = executor.closed_positions
+
+            # Exclude adopted orphan trades so numbers match Performance
+            _excl_prefixes = ("TI-adopted", "TI-injected")
+            live_closed = [t for t in all_closed
+                           if not any(getattr(t, "trade_id", "").startswith(p) for p in _excl_prefixes)]
 
             # Get real equity
             user_id = kwargs.get("user_id", "")
