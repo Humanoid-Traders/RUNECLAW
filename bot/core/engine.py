@@ -915,6 +915,41 @@ class RuneClawEngine:
             self._transition(AgentState.IDLE, f"price drift check failed for {trade_id}")
             return "Trade REJECTED: unable to verify current price. Try again."
 
+        # ── Limit order price recalculation at confirm time ──
+        # When order_type is "limit", the idea.entry_price was set at analysis time.
+        # If the market moved since then, a LONG limit buy above market fills instantly
+        # like a market order. Recalculate the limit price using the current price
+        # with a proper offset so it acts as a true pullback entry.
+        if idea.order_type == "limit" and current_price > 0 and stored_atr and stored_atr > 0:
+            offset = 0.1 * stored_atr  # same offset used by analyzer
+            if idea.direction.value == "LONG":
+                new_limit = round(current_price - offset, 8)
+                # Also update SL/TP relative to new entry
+                sl_dist = abs(idea.entry_price - idea.stop_loss)
+                tp_dist = abs(idea.take_profit - idea.entry_price)
+                new_sl = round(new_limit - sl_dist, 8)
+                new_tp = round(new_limit + tp_dist, 8)
+            else:
+                new_limit = round(current_price + offset, 8)
+                sl_dist = abs(idea.stop_loss - idea.entry_price)
+                tp_dist = abs(idea.entry_price - idea.take_profit)
+                new_sl = round(new_limit + sl_dist, 8)
+                new_tp = round(new_limit - tp_dist, 8)
+
+            old_entry = idea.entry_price
+            idea = idea.model_copy(update={
+                "entry_price": new_limit,
+                "stop_loss": new_sl,
+                "take_profit": new_tp,
+            })
+            audit(trade_log,
+                  f"Limit price recalculated at confirm: ${old_entry:,.4f} → ${new_limit:,.4f} "
+                  f"(market=${current_price:,.4f}, offset={offset:.4f})",
+                  action="limit_price_update", result="UPDATED",
+                  data={"old_entry": old_entry, "new_entry": new_limit,
+                        "current_price": current_price, "offset": offset,
+                        "new_sl": new_sl, "new_tp": new_tp})
+
         # Re-check risk (portfolio state may have changed -- new positions, daily PnL, drawdown.
         # HONEST LIMITATION: price drift is now checked above (F-05 fix).
         # Stale-data check #12 guards against time drift (>300s = reject).
@@ -1022,17 +1057,10 @@ class RuneClawEngine:
             return f"Execution denied: {compliance_decision.reasons[-1] if compliance_decision.reasons else 'compliance check failed'}"
 
         # H2 fix: guard is_live() — only proceed to live execution when is_live() is True
-        # Role-based routing: non-admin users get paper execution even in live mode
-        user_can_live = True  # default for backward compat
-        if self._user_store and user_id:
-            user_can_live = self._user_store.can_trade_live(user_id)
-
-        if not CONFIG.is_live() or not user_can_live:
-            # Not live mode OR user doesn't have live permission — execute as paper trade
-            if CONFIG.is_live() and not user_can_live:
-                audit(trade_log,
-                      f"User {user_id} routed to paper: no live trading permission",
-                      action="paper_fallback", result="PAPER")
+        # In live mode, any authorized user who confirms a trade executes live.
+        # The human confirmation step IS the safety gate — no additional role check needed.
+        # Paper fallback only applies when the bot is NOT in live mode.
+        if not CONFIG.is_live():
             pass  # fall through to paper trade below
         else:
             # Live mode — execute via LiveExecutor with micro-test safety limits
