@@ -813,7 +813,12 @@ class LiveExecutor:
             markets = await active_exchange.load_markets()
             market = markets.get(symbol)
             if market:
-                quantity = float(active_exchange.amount_to_precision(symbol, quantity))
+                _rounded = active_exchange.amount_to_precision(symbol, quantity)
+                if _rounded is None:
+                    if spot_exchange:
+                        await spot_exchange.close()
+                    return f"EXECUTION FAILED: exchange returned no precision data for {symbol}"
+                quantity = float(_rounded)
 
             if quantity <= 0:
                 if spot_exchange:
@@ -843,9 +848,8 @@ class LiveExecutor:
             limit_price = idea.entry_price if use_limit else None
             if use_limit and market:
                 # Round limit price to exchange tick grid
-                limit_price = float(
-                    active_exchange.price_to_precision(symbol, limit_price)
-                ) if limit_price else None
+                _prec_price = active_exchange.price_to_precision(symbol, limit_price)
+                limit_price = float(_prec_price) if _prec_price is not None else limit_price
 
             if is_futures:
                 # Futures: use USDT-FUTURES product type
@@ -949,7 +953,7 @@ class LiveExecutor:
                     cost = raw_cost
             else:
                 fill_price = float(order.get("average", 0) or order.get("price", 0) or current_price)
-                filled_qty = float(order.get("filled", 0))
+                filled_qty = float(order.get("filled") or 0)
 
                 # C2-12 FIX: If filled quantity is missing or zero from the create
                 # response, fetch the order to confirm actual fill.  Don't default
@@ -2003,8 +2007,9 @@ class LiveExecutor:
                     # Apply exchange precision
                     mkt = spot_exchange.markets.get(pos.symbol)
                     if mkt:
-                        sell_qty = float(spot_exchange.amount_to_precision(
-                            pos.symbol, sell_qty))
+                        _rnd = spot_exchange.amount_to_precision(pos.symbol, sell_qty)
+                        if _rnd is not None:
+                            sell_qty = float(_rnd)
                     order = await spot_exchange.create_order(
                         symbol=pos.symbol,
                         type="market",
@@ -2357,7 +2362,9 @@ class LiveExecutor:
             markets = await exchange.load_markets()
             market = markets.get(symbol)
             if market:
-                qty = float(exchange.amount_to_precision(symbol, qty))
+                _rnd2 = exchange.amount_to_precision(symbol, qty)
+                if _rnd2 is not None:
+                    qty = float(_rnd2)
 
             if qty <= 0:
                 return {"error": "Quantity too small after precision rounding"}
