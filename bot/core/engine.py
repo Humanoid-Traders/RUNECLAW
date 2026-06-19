@@ -910,6 +910,34 @@ class RuneClawEngine:
                     self._transition(AgentState.IDLE, f"price drift for {trade_id}")
                     return (f"Trade REJECTED: price drifted {drift_pct:.1f}% since analysis "
                             f"(${idea.entry_price:,.2f} → ${current_price:,.2f}). Re-analyze.")
+
+                # ── Validate price hasn't already blown through SL ──
+                # If market price is already past the SL, the trade would be
+                # instantly stopped out. Reject before wasting an execution.
+                if idea.direction.value == "LONG" and current_price <= idea.stop_loss:
+                    self._transition(AgentState.IDLE, f"price past SL for {trade_id}")
+                    return (f"Trade REJECTED: price ${current_price:,.4f} already below "
+                            f"SL ${idea.stop_loss:,.4f} — would be instantly stopped out.")
+                elif idea.direction.value == "SHORT" and current_price >= idea.stop_loss:
+                    self._transition(AgentState.IDLE, f"price past SL for {trade_id}")
+                    return (f"Trade REJECTED: price ${current_price:,.4f} already above "
+                            f"SL ${idea.stop_loss:,.4f} — would be instantly stopped out.")
+
+                # ── Validate remaining R:R hasn't deteriorated ──
+                # If price has eaten more than 50% of the SL distance, the setup
+                # no longer offers a favorable risk:reward. Reject stale signals.
+                sl_dist = abs(idea.entry_price - idea.stop_loss)
+                if sl_dist > 0:
+                    if idea.direction.value == "LONG":
+                        consumed = max(0, idea.entry_price - current_price)
+                    else:
+                        consumed = max(0, current_price - idea.entry_price)
+                    consumed_pct = consumed / sl_dist
+                    if consumed_pct > 0.5:
+                        self._transition(AgentState.IDLE, f"R:R deteriorated for {trade_id}")
+                        return (f"Trade REJECTED: price moved {consumed_pct:.0%} toward SL "
+                                f"(${current_price:,.4f} vs entry ${idea.entry_price:,.4f}). "
+                                f"R:R no longer favorable — re-analyze.")
         except Exception as exc:
             # H-08 FIX: fail-closed — reject if exchange is unreachable
             audit(trade_log, f"Price drift check failed (rejecting): {exc}",
