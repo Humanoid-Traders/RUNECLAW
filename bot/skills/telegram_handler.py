@@ -118,6 +118,10 @@ _INJECTION_PATTERNS = re.compile(
 
 _MAX_CHAT_INPUT_LEN = 500
 
+# Prefixes for orphan-adopted and diagnostic-injected trades.
+# Used throughout handlers to exclude these from user-facing stats.
+_ORPHAN_PREFIXES = ("TI-adopted", "TI-injected")
+
 
 def _sanitize_chat_input(text: str) -> str:
     """Sanitize free-form user text before sending to LLM.
@@ -572,9 +576,8 @@ class TelegramHandler:
                 live_closed_all = executor.closed_positions if executor else []
                 live_open = executor.open_positions if executor else []
                 # Exclude adopted orphan trades from stats
-                _excl = ("TI-adopted", "TI-injected")
                 live_closed = [t for t in live_closed_all
-                               if not any(getattr(t, "trade_id", "").startswith(p) for p in _excl)]
+                               if not any(getattr(t, "trade_id", "").startswith(p) for p in _ORPHAN_PREFIXES)]
                 total_trades = len(live_closed)
                 wins = sum(1 for t in live_closed if (t.pnl_usd or 0) > 0)
                 win_rate_val = wins / total_trades if total_trades > 0 else 0
@@ -870,6 +873,12 @@ class TelegramHandler:
         # ── Custom limit price input ──────────────────────────
         # If user is in "set limit" mode, capture the price they type
         caller_uid = str(uid)
+        if hasattr(self, '_pending_limit_input') and caller_uid in self._pending_limit_input:
+            pending_info = self._pending_limit_input[caller_uid]
+            # Expire stale limit-price requests after 5 minutes
+            if time.time() - pending_info.get("timestamp", 0) > 300:
+                del self._pending_limit_input[caller_uid]
+                pending_info = None
         if hasattr(self, '_pending_limit_input') and caller_uid in self._pending_limit_input:
             pending_info = self._pending_limit_input[caller_uid]
             # Try to parse as a number
@@ -1172,9 +1181,8 @@ class TelegramHandler:
 
             live_closed = executor.closed_positions
             # Exclude adopted orphan trades and injected diagnostic artifacts from win rate
-            _excl = ("TI-adopted", "TI-injected")
             user_closed = [t for t in live_closed
-                           if not any(getattr(t, "trade_id", "").startswith(p) for p in _excl)]
+                           if not any(getattr(t, "trade_id", "").startswith(p) for p in _ORPHAN_PREFIXES)]
             if user_closed:
                 wins = sum(1 for t in user_closed if (t.pnl_usd or 0) > 0)
                 win_rate = f"{wins / len(user_closed) * 100:.0f}"
@@ -1993,11 +2001,10 @@ class TelegramHandler:
             open_pos = executor.open_positions
             closed_pos = executor.closed_positions
             # Filter out adopted/injected trades for consistency with Performance view
-            _excl2 = ("TI-adopted", "TI-injected")
             user_closed = [t for t in closed_pos
-                           if not any(getattr(t, "trade_id", "").startswith(p) for p in _excl2)]
+                           if not any(getattr(t, "trade_id", "").startswith(p) for p in _ORPHAN_PREFIXES)]
             adopted_closed = [t for t in closed_pos
-                              if any(getattr(t, "trade_id", "").startswith(p) for p in _excl2)]
+                              if any(getattr(t, "trade_id", "").startswith(p) for p in _ORPHAN_PREFIXES)]
             realized_pnl = sum(p.pnl_usd or 0 for p in user_closed)
             total_fees = sum(p.commission or 0 for p in user_closed)
             adopted_pnl = sum(p.pnl_usd or 0 for p in adopted_closed)
@@ -2656,11 +2663,10 @@ class TelegramHandler:
 
             # Exclude adopted orphan trades and injected diagnostic artifacts
             # so Portfolio matches Performance numbers
-            _excl_prefixes = ("TI-adopted", "TI-injected")
             live_closed = [t for t in all_closed
-                           if not any(getattr(t, "trade_id", "").startswith(p) for p in _excl_prefixes)]
+                           if not any(getattr(t, "trade_id", "").startswith(p) for p in _ORPHAN_PREFIXES)]
             adopted_trades = [t for t in all_closed
-                              if any(getattr(t, "trade_id", "").startswith(p) for p in _excl_prefixes)]
+                              if any(getattr(t, "trade_id", "").startswith(p) for p in _ORPHAN_PREFIXES)]
 
             # Calculate live PnL from closed positions (net of fees)
             live_total_pnl = sum((p.pnl_usd or 0) for p in live_closed)
@@ -3883,11 +3889,10 @@ class TelegramHandler:
 
             # ── Separate adopted/injected vs user-initiated trades ──
             # Exclude: TI-adopted (orphan positions), TI-injected (diagnostic artifacts)
-            _exclude_prefixes = ("TI-adopted", "TI-injected")
             user_trades = [t for t in live_closed
-                           if not any(getattr(t, "trade_id", "").startswith(p) for p in _exclude_prefixes)]
+                           if not any(getattr(t, "trade_id", "").startswith(p) for p in _ORPHAN_PREFIXES)]
             adopted_trades = [t for t in live_closed
-                              if any(getattr(t, "trade_id", "").startswith(p) for p in _exclude_prefixes)]
+                              if any(getattr(t, "trade_id", "").startswith(p) for p in _ORPHAN_PREFIXES)]
             adopted_pnl = sum((t.pnl_usd or 0) for t in adopted_trades)
 
             total_trades = len(user_trades)
@@ -4013,7 +4018,7 @@ class TelegramHandler:
             executor = self.engine.live_executor
             closed = [t for t in executor.closed_positions
                        if not any(getattr(t, "trade_id", "").startswith(p)
-                                  for p in ("TI-adopted", "TI-injected"))]
+                                  for p in _ORPHAN_PREFIXES)]
             today_trades = len(closed)
             wins = sum(1 for t in closed if (t.pnl_usd or 0) > 0)
             losses = today_trades - wins
@@ -4890,6 +4895,7 @@ class TelegramHandler:
                 "pair": pair,
                 "direction": direction,
                 "current_entry": idea.entry_price,
+                "timestamp": time.time(),
             }
 
             await self._send(update,
@@ -4930,7 +4936,14 @@ class TelegramHandler:
                       f"Callback IDOR blocked: caller={caller_uid} expected={expected_uid}",
                       action="callback_idor_block", result="DENIED")
                 return
-            result = await self.engine.confirm_trade(trade_id, user_id=caller_uid or "")
+            try:
+                result = await self.engine.confirm_trade(trade_id, user_id=caller_uid or "")
+            except Exception as exc:
+                audit(system_log, f"confirm_trade raised: {exc}",
+                      action="confirm_trade", result="ERROR")
+                await self._send(update,
+                    f"\u274c <b>Trade execution failed:</b> {exc}", edit=True)
+                return
 
             # ── Auto re-analyze on price drift ──
             # If price moved since analysis, rebuild the idea at current price and retry once
@@ -5033,7 +5046,14 @@ class TelegramHandler:
                       f"Callback IDOR blocked: caller={caller_uid} expected={expected_uid}",
                       action="callback_idor_block", result="DENIED")
                 return
-            result = self.engine.reject_trade(trade_id)
+            try:
+                result = self.engine.reject_trade(trade_id)
+            except Exception as exc:
+                audit(system_log, f"reject_trade raised: {exc}",
+                      action="reject_trade", result="ERROR")
+                await self._send(update,
+                    f"\u274c <b>Trade execution failed:</b> {exc}", edit=True)
+                return
             msg = f"\u274c Got it, trade skipped.\n\n{result}"
             try:
                 await self._send(update, msg, edit=True)

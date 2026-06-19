@@ -155,6 +155,9 @@ class RuneClawEngine:
         self._LIVE_BALANCE_TTL: float = 30.0  # cache live balance for 30 seconds
         # H-05 FIX: track last known valid prices for WS sanity checks
         self._last_known_prices: dict[str, float] = {}
+        # Watchdog: track when the FSM last changed state so _tick() can
+        # detect and recover from stuck non-IDLE states.
+        self._last_state_change: float = time.time()
 
     # -- State management --
 
@@ -345,6 +348,7 @@ class RuneClawEngine:
         if len(self._state_history) > 1000:
             self._state_history = self._state_history[-500:]
         self.state = new_state
+        self._last_state_change = time.time()
         audit(
             system_log,
             f"State transition: {old_state.value} -> {new_state.value}"
@@ -443,6 +447,14 @@ class RuneClawEngine:
 
     async def _tick(self) -> None:
         """One full scan-analyze cycle."""
+        # ── Watchdog: force-recover if stuck in a non-IDLE state for >2 minutes ──
+        if self.state != AgentState.IDLE and time.time() - self._last_state_change > 120:
+            logger.warning(
+                "State timeout watchdog: stuck in %s for >120s, forcing IDLE",
+                self.state.value,
+            )
+            self._transition(AgentState.IDLE, "state timeout watchdog")
+
         # Refresh live balance cache if in live mode
         if CONFIG.is_live():
             try:

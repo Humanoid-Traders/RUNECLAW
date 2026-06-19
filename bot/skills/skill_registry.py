@@ -17,6 +17,9 @@ from bot.config import CONFIG
 from bot.core.engine import RuneClawEngine
 from bot.utils.logger import audit, system_log
 
+# Total number of pre-trade risk checks in the risk engine.
+# Update this constant when adding or removing checks in risk_engine.py.
+_TOTAL_RISK_CHECKS = 23
 
 def _get_portfolio(engine: RuneClawEngine, **kwargs):
     """Return per-user portfolio if user_id provided, else system portfolio."""
@@ -522,7 +525,7 @@ class CheckRiskSkill(BaseSkill):
             f"\U0001f6e1 <b>Risk Gate</b>\n"
             f"- Breaker: <code>{'TRIPPED' if cb else 'CLEAR'}</code>\n"
             f"- Streak: <code>{streak} / {CONFIG.risk.max_consecutive_losses}</code>\n"
-            f"- Checks: {_traffic_light(18 if not cb else 14, 18)}\n\n"
+            f"- Checks: {_traffic_light(_TOTAL_RISK_CHECKS if not cb else _TOTAL_RISK_CHECKS - streak, _TOTAL_RISK_CHECKS)}\n\n"
             # ── Costs ──
             f"\u26a1 <b>Costs</b>\n"
             f"- LLM: <code>${cost.llm_cost_usd:,.4f}</code>\n"
@@ -564,7 +567,7 @@ class CheckRiskSkill(BaseSkill):
             f"- Max DD: <code>{CONFIG.risk.max_drawdown_pct}%</code>\n"
             f"- Max Daily: <code>{CONFIG.risk.max_daily_loss_pct}%</code>\n"
             f"- Vol Guard: <code>{CONFIG.risk.volatility_guard_atr_pct}% ATR</code>\n"
-            f"- Checks: {_traffic_light(18 if not cb else 14, 18)}"
+            f"- Checks: {_traffic_light(_TOTAL_RISK_CHECKS if not cb else _TOTAL_RISK_CHECKS - streak, _TOTAL_RISK_CHECKS)}"
         )
 
 
@@ -2299,8 +2302,7 @@ class PlaybookSkill(BaseSkill):
         # ── Section 3: Rulebook ──
         lines.append(f"\n\U0001f6e1 <b>RULEBOOK</b>\n{SEP}")
         risk = engine.risk
-        total_checks = 19
-        lines.append(f"- Risk Checks: <code>{total_checks} fail-closed gates</code>")
+        lines.append(f"- Risk Checks: <code>{_TOTAL_RISK_CHECKS} fail-closed gates</code>")
         lines.append(f"- Min Confidence: <code>{CONFIG.risk.min_confidence:.0%}</code>")
         lines.append(f"- Min R:R: <code>{CONFIG.risk.min_risk_reward}x</code>")
         lines.append(f"- Max Drawdown: <code>{CONFIG.risk.max_drawdown_pct:.0f}%</code>")

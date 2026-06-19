@@ -133,6 +133,8 @@ class LivePosition:
     # Fee tracking: commission deducted from PnL
     gross_pnl: Optional[float] = None
     commission: Optional[float] = None
+    # Reason the position was closed (e.g. "SL", "TP", "manual", error status)
+    close_reason: Optional[str] = None
 
 
 class LiveExecutor:
@@ -1420,6 +1422,13 @@ class LiveExecutor:
             # Persist SL/TP order IDs to disk immediately
             self._save_positions()
 
+            if sl_id is None and tp_id is None:
+                audit(trade_log,
+                      f"SL/TP placement FAILED for {idea.asset} — position is UNPROTECTED",
+                      action="sl_tp_failed",
+                      data={"trade_id": idea.id, "symbol": idea.asset,
+                            "stop_loss": idea.stop_loss, "take_profit": idea.take_profit})
+
             sl_info = f" | SL order: {sl_id}" if sl_id else " | SL: pending"
             tp_info = f" | TP order: {tp_id}" if tp_id else " | TP: pending"
 
@@ -1442,6 +1451,10 @@ class LiveExecutor:
             if exchange_fees > 0:
                 fee_line = f"\n- Fees: <code>${exchange_fees:.4f}</code>"
 
+            sl_tp_warn = ""
+            if sl_id is None and tp_id is None:
+                sl_tp_warn = "\n⚠️ SL/TP FAILED — position unprotected!"
+
             return (
                 f"{dir_icon} <b>LIVE {side.upper()} {idea.asset}</b> ({mode_label}{lev_info})\n"
                 f"{'─' * 16}\n"
@@ -1455,7 +1468,7 @@ class LiveExecutor:
                 f"- Order: <code>{order_id}</code>{fee_line}\n"
                 f"- Risk: ✅ APPROVED{trail_info}\n"
                 f"- {verify_line}\n"
-                f"- Mode: 🔥 Live {mode_label}"
+                f"- Mode: 🔥 Live {mode_label}{sl_tp_warn}"
             )
 
         except ccxt.InsufficientFunds as exc:
@@ -2004,6 +2017,49 @@ class LiveExecutor:
         if not pos.limit_order_id:
             return None
 
+        # ── HARD TIMEOUT: stale pending_fill safety net ──
+        # If a pending_fill position has been stuck for 2x the normal expiry
+        # (e.g. 8 hours by default), force-close it regardless of exchange
+        # state.  This prevents positions from being stuck forever when
+        # fetch_order keeps failing or the exchange silently cancelled the
+        # order.
+        hard_timeout = 2 * CONFIG.limit_orders.expire_seconds
+        stale_age = (datetime.now(UTC) - pos.opened_at).total_seconds() if pos.opened_at else 0
+        if stale_age > hard_timeout:
+            # Best-effort cancel on exchange
+            try:
+                await exchange.cancel_order(pos.limit_order_id, pos.symbol)
+            except Exception as cancel_exc:
+                logger.warning(
+                    "Stale pending hard-timeout: cancel attempt failed for %s order %s: %s",
+                    pos.symbol, pos.limit_order_id, cancel_exc,
+                )
+
+            pos.status = "closed"
+            pos.closed_at = datetime.now(UTC)
+            pos.pnl_usd = 0.0
+            pos.close_reason = "stale_pending"
+            self._save_positions()
+            self._append_closed_trade(pos)
+
+            audit(
+                trade_log,
+                f"Stale pending_fill FORCE-CLOSED after {stale_age / 3600:.1f}h: {pos.symbol}",
+                action="stale_pending_close",
+                result="FORCE_CLOSED",
+                data={
+                    "trade_id": trade_id,
+                    "age_sec": stale_age,
+                    "hard_timeout_sec": hard_timeout,
+                    "limit_order_id": pos.limit_order_id,
+                },
+            )
+
+            return (
+                f"STALE PENDING CLOSED: {pos.direction} {pos.symbol} — "
+                f"stuck for {stale_age / 3600:.1f}h (hard timeout {hard_timeout / 3600:.1f}h)"
+            )
+
         try:
             order = await exchange.fetch_order(pos.limit_order_id, pos.symbol)
             order_status = order.get("status", "unknown")
@@ -2046,6 +2102,13 @@ class LiveExecutor:
 
                 self._save_positions()
 
+                if sl_id is None and tp_id is None:
+                    audit(trade_log,
+                          f"SL/TP placement FAILED for {pos.symbol} — position is UNPROTECTED",
+                          action="sl_tp_failed",
+                          data={"trade_id": trade_id, "symbol": pos.symbol,
+                                "stop_loss": pos.stop_loss, "take_profit": pos.take_profit})
+
                 audit(trade_log, f"Limit order FILLED: {pos.symbol} @ ${fill_price:,.4f}",
                       action="limit_fill", result="FILLED",
                       data={"trade_id": trade_id, "fill_price": fill_price,
@@ -2054,9 +2117,12 @@ class LiveExecutor:
                 sl_info = f" | SL: {sl_id}" if sl_id else ""
                 tp_info = f" | TP: {tp_id}" if tp_id else ""
                 trail_info = " | Trailing: armed" if pos.trailing_state else ""
+                sl_tp_warn = ""
+                if sl_id is None and tp_id is None:
+                    sl_tp_warn = "\n⚠️ SL/TP FAILED — position unprotected!"
                 return (
                     f"LIMIT FILLED: {pos.direction} {pos.symbol}\n"
-                    f"Fill: ${fill_price:,.4f} | Qty: {filled_qty:.6f}{sl_info}{tp_info}{trail_info}"
+                    f"Fill: ${fill_price:,.4f} | Qty: {filled_qty:.6f}{sl_info}{tp_info}{trail_info}{sl_tp_warn}"
                 )
 
             elif order_status in ("canceled", "cancelled", "rejected", "expired"):
@@ -2239,6 +2305,7 @@ class LiveExecutor:
         # C2-02 FIX: Set transitional state BEFORE any await — concurrent callers
         # will see "closing" and bail out at the guard above.
         pos.status = "closing"
+        self._save_positions()
 
         try:
             exchange = await self._get_exchange()
@@ -2587,6 +2654,7 @@ class LiveExecutor:
                     "order_type": pos.order_type,
                     "limit_order_id": pos.limit_order_id,
                     "atr_at_entry": pos.atr_at_entry,
+                    "close_reason": pos.close_reason,
                 }
             path = Path(_POSITIONS_FILE)
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -2656,6 +2724,7 @@ class LiveExecutor:
                         order_type=pdata.get("order_type", "market"),
                         limit_order_id=pdata.get("limit_order_id"),
                         atr_at_entry=float(pdata.get("atr_at_entry", 0)),
+                        close_reason=pdata.get("close_reason"),
                     )
                 source_label = "backup" if source == bak_path else "disk"
                 if self._positions:
@@ -2716,6 +2785,7 @@ class LiveExecutor:
                     "opened_at": pos.opened_at.isoformat() if pos.opened_at else None,
                     "closed_at": pos.closed_at.isoformat() if pos.closed_at else None,
                     "status": "closed",
+                    "close_reason": pos.close_reason,
                 })
             path = Path(_CLOSED_TRADES_FILE)
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -2754,6 +2824,7 @@ class LiveExecutor:
                     opened_at=opened_at,
                     closed_at=closed_at,
                     status="closed",
+                    close_reason=item.get("close_reason"),
                 )
                 self._closed_trades.append(pos)
             # ── Dedup on load: keep last record per trade_id ──
@@ -2771,6 +2842,11 @@ class LiveExecutor:
                     logger.info("Deduped closed trades on load: %d -> %d",
                                 len(self._closed_trades), len(deduped))
                 self._closed_trades = deduped
+            # ── Cap to _MAX_CLOSED_TRADES, keeping only the most recent ──
+            if len(self._closed_trades) > _MAX_CLOSED_TRADES:
+                logger.info("Trimming closed trades on load: %d -> %d",
+                            len(self._closed_trades), _MAX_CLOSED_TRADES)
+                self._closed_trades = self._closed_trades[-_MAX_CLOSED_TRADES:]
             if self._closed_trades:
                 total_pnl = sum(p.pnl_usd or 0 for p in self._closed_trades)
                 audit(trade_log,
