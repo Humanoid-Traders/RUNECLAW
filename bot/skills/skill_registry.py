@@ -255,8 +255,39 @@ class AnalyzeAssetSkill(BaseSkill):
         from bot.utils.models import MarketSignal
         from bot.core.market_scanner import _classify_symbol
 
-        category = _classify_symbol(symbol)
-        sig = MarketSignal(symbol=symbol, price=0, change_pct_24h=0,
+        # Build candidate symbol formats to try:
+        # User may pass "ANTHROPICUSDT/USDT" but exchange lists "ANTHROPIC/USDT:USDT"
+        candidates = [symbol]
+        base = symbol.split("/")[0]
+        # If base ends with USDT (e.g. ANTHROPICUSDT), strip it for the real base
+        real_base = base[:-4] if base.endswith("USDT") and len(base) > 4 else base
+        if real_base != base:
+            # Add swap format: ANTHROPIC/USDT:USDT
+            candidates.append(f"{real_base}/USDT:USDT")
+            candidates.append(f"{real_base}/USDT")
+        # Also try swap suffix if not present
+        if ":USDT" not in symbol:
+            candidates.append(f"{symbol}:USDT")
+
+        # Deduplicate while preserving order
+        seen = set()
+        unique_candidates = []
+        for c in candidates:
+            if c not in seen:
+                seen.add(c)
+                unique_candidates.append(c)
+
+        # Try to classify — check all candidates against known TradFi sets
+        category = "Crypto"
+        resolved_symbol = symbol
+        for cand in unique_candidates:
+            cat = _classify_symbol(cand)
+            if cat != "Crypto":
+                category = cat
+                resolved_symbol = cand
+                break
+
+        sig = MarketSignal(symbol=resolved_symbol, price=0, change_pct_24h=0,
                            volume_usd_24h=0, asset_category=category,
                            timestamp=datetime.now(UTC))
         try:
@@ -265,9 +296,43 @@ class AnalyzeAssetSkill(BaseSkill):
                 exchange = await engine.scanner._get_futures_exchange()
             else:
                 exchange = await engine.scanner._get_exchange()
-            ticker = await exchange.fetch_ticker(symbol)
+
+            # Try each candidate format until one works
+            ticker = None
+            working_symbol = resolved_symbol
+            for cand in unique_candidates:
+                try:
+                    ticker = await exchange.fetch_ticker(cand)
+                    if ticker and float(ticker.get("last", 0) or 0) > 0:
+                        working_symbol = cand
+                        break
+                except Exception:
+                    continue
+
+            # If spot exchange failed, try futures exchange too
+            if not ticker and category == "Crypto":
+                try:
+                    fut_exchange = await engine.scanner._get_futures_exchange()
+                    for cand in unique_candidates:
+                        try:
+                            ticker = await fut_exchange.fetch_ticker(cand)
+                            if ticker and float(ticker.get("last", 0) or 0) > 0:
+                                working_symbol = cand
+                                # Re-classify with resolved symbol
+                                category = _classify_symbol(working_symbol)
+                                if category == "Crypto" and ":USDT" in working_symbol:
+                                    category = _classify_symbol(working_symbol)
+                                break
+                        except Exception:
+                            continue
+                except Exception:
+                    pass
+
+            if not ticker:
+                raise ValueError(f"No ticker data for any of: {unique_candidates}")
+
             sig = MarketSignal(
-                symbol=symbol, price=float(ticker.get("last", 0)),
+                symbol=working_symbol, price=float(ticker.get("last", 0)),
                 change_pct_24h=float(ticker.get("percentage", 0) or 0),
                 volume_usd_24h=float(ticker.get("quoteVolume", 0) or 0),
                 asset_category=category,

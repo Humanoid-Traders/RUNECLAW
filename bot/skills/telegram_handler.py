@@ -2438,6 +2438,9 @@ class TelegramHandler:
         args = ctx.args
         if args:
             raw = args[0].upper().strip()
+            # Strip common display suffixes users might copy-paste
+            # e.g. "ANTHROPICUSDT:USDT" -> "ANTHROPICUSDT" -> resolve below
+            raw = raw.replace(":USDT", "")
             # SEC-H3 FIX: strict symbol validation before reaching CCXT/LLM
             if not _SYMBOL_RE.match(raw):
                 await self._send(update,
