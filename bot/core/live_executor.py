@@ -935,11 +935,15 @@ class LiveExecutor:
             if spot_exchange:
                 await spot_exchange.close()
 
-            # Parse result
-            order_status = order.get("status", "unknown")
-            order_id = order.get("id", "unknown")
+            # ── CRITICAL SAFETY NET ──
+            # Everything below runs AFTER the order was submitted to the exchange.
+            # If parsing/tracking crashes, the position is LIVE on the exchange
+            # but untracked locally — creating an orphan with no SL protection.
+            # This except block ensures we always record a minimal position.
 
             # Handle limit orders that haven't filled yet
+            order_status = order.get("status", "unknown")
+            order_id = order.get("id", "unknown")
             is_pending_limit = (use_limit and order_status in ("open", "new", "pending"))
 
             if is_pending_limit:
@@ -1123,10 +1127,59 @@ class LiveExecutor:
             return f"INVALID ORDER: {exc}"
 
         except Exception as exc:
-            audit(trade_log, f"Live execution failed: {exc}",
-                  action="live_execute", result="ERROR",
-                  data={"asset": idea.asset, "size_usd": size_usd, "error": str(exc)})
-            return f"EXECUTION FAILED: {exc}"
+            # Check if the order was already submitted to the exchange.
+            # If 'order' exists, create_order succeeded but post-processing crashed.
+            # The position is LIVE on the exchange — we MUST record it locally.
+            if 'order' in dir() and order and isinstance(order, dict) and order.get("id"):
+                logger.error("Post-order crash for %s: %s — creating emergency position",
+                             idea.asset, exc)
+                _side_upper = ("buy" if idea.direction == Direction.LONG else "sell").upper()
+                emergency_pos = LivePosition(
+                    trade_id=idea.id,
+                    symbol=idea.asset,
+                    direction="LONG" if idea.direction == Direction.LONG else "SHORT",
+                    entry_price=current_price if 'current_price' in dir() else idea.entry_price,
+                    quantity=quantity if 'quantity' in dir() else 0,
+                    cost_usd=size_usd,
+                    stop_loss=idea.stop_loss,
+                    take_profit=idea.take_profit,
+                    leverage=CONFIG.exchange.default_leverage if is_futures else 1,
+                    is_spot=not is_futures if 'is_futures' in dir() else False,
+                    opened_at=datetime.now(UTC),
+                    status="open",
+                    order_id=str(order.get("id", "unknown")),
+                )
+                self._positions[idea.id] = emergency_pos
+                self._save_positions()
+                audit(trade_log,
+                      f"EMERGENCY position created for {idea.asset} after post-order crash: {exc}",
+                      action="emergency_position", result="CREATED",
+                      data={"trade_id": idea.id, "asset": idea.asset,
+                            "order_id": order.get("id"), "error": str(exc)})
+                # Best-effort SL/TP
+                try:
+                    _ex = await self._get_exchange()
+                    sl_id, tp_id = await self._place_sl_tp(
+                        _ex, idea.asset, idea.direction,
+                        quantity if 'quantity' in dir() else 0,
+                        idea.stop_loss, idea.take_profit,
+                    )
+                    if sl_id:
+                        emergency_pos.sl_order_id = sl_id
+                    if tp_id:
+                        emergency_pos.tp_order_id = tp_id
+                    self._save_positions()
+                except Exception:
+                    pass
+                return (f"LIVE {idea.direction.value} {idea.asset} opened "
+                        f"(emergency record — parse error: {exc}). "
+                        f"SL/TP may need manual verification.")
+            else:
+                # Order was never submitted — safe to report as failed
+                audit(trade_log, f"Live execution failed: {exc}",
+                      action="live_execute", result="ERROR",
+                      data={"asset": idea.asset, "size_usd": size_usd, "error": str(exc)})
+                return f"EXECUTION FAILED: {exc}"
 
     async def _place_sl_tp(
         self, exchange: ccxt.Exchange, symbol: str,
