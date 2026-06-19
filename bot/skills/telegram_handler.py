@@ -3437,6 +3437,10 @@ class TelegramHandler:
             tp_orders = []
             other_orders = []
 
+            from bot.config import CONFIG
+            expire_sec = CONFIG.limit_orders.expire_seconds
+            now_utc = datetime.now(UTC)
+
             for o in open_orders:
                 otype = (o.get("type") or "").lower()
                 sym = display_symbol(o.get("symbol", ""))
@@ -3449,10 +3453,32 @@ class TelegramHandler:
                 oid = o.get("id", "")[:12]
                 created = o.get("datetime", "")[:16] if o.get("datetime") else ""
 
+                # Calculate time remaining until expiry
+                ttl_str = ""
+                raw_dt = o.get("datetime") or ""
+                if raw_dt and otype == "limit":
+                    try:
+                        from datetime import datetime as _dt
+                        created_dt = _dt.fromisoformat(raw_dt.replace("Z", "+00:00"))
+                        age_sec = (now_utc - created_dt).total_seconds()
+                        remaining = max(0, expire_sec - age_sec)
+                        if remaining <= 0:
+                            ttl_str = " | \u23f0 expiring..."
+                        else:
+                            hrs = int(remaining // 3600)
+                            mins = int((remaining % 3600) // 60)
+                            if hrs > 0:
+                                ttl_str = f" | \u23f0 {hrs}h {mins}m left"
+                            else:
+                                ttl_str = f" | \u23f0 {mins}m left"
+                    except Exception:
+                        pass
+
                 entry = {
                     "sym": sym, "side": side, "price": price,
                     "trigger": trigger, "amount": amount, "filled": filled,
                     "status": status, "oid": oid, "created": created, "type": otype,
+                    "ttl_str": ttl_str,
                 }
 
                 if "stop" in otype or "loss" in otype:
@@ -3474,7 +3500,7 @@ class TelegramHandler:
                     lines.append(
                         f"  {d_icon} <b>{o['sym']}</b> {o['side']} "
                         f"@ <code>${o['price']:,.4f}</code> "
-                        f"qty {o['amount']:.4f}{fill_str}"
+                        f"qty {o['amount']:.4f}{fill_str}{o['ttl_str']}"
                     )
                 lines.append("")
 
