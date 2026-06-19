@@ -952,7 +952,21 @@ class LiveExecutor:
             # Handle limit orders that haven't filled yet
             order_status = order.get("status", "unknown")
             order_id = order.get("id", "unknown")
-            is_pending_limit = (use_limit and order_status in ("open", "new", "pending"))
+            filled_amount = float(order.get("filled", 0) or 0)
+
+            # A limit order is pending if:
+            # 1. The status says open/new/pending, OR
+            # 2. It's a limit order with zero/negligible fill amount
+            #    (Bitget's create_order response may not include a standard status)
+            is_pending_limit = False
+            if use_limit:
+                if order_status in ("open", "new", "pending", "live", "init"):
+                    is_pending_limit = True
+                elif order_status not in ("closed", "filled") and filled_amount <= 0:
+                    # Status is unknown/missing but no fill → treat as pending
+                    is_pending_limit = True
+                    logger.info("Limit order %s has status=%s, filled=%.6f — treating as pending",
+                                order_id, order_status, filled_amount)
 
             if is_pending_limit:
                 # Limit order placed but not yet filled — track as pending
@@ -2335,6 +2349,13 @@ class LiveExecutor:
             exchange = await self._get_exchange()
 
             for pos in open_pos:
+                # ── Skip pending_fill (unfilled limit orders) ──
+                # A pending_fill position means the limit order was placed but
+                # hasn't filled yet — no exchange position exists. Reconciling
+                # these creates phantom closes with fake PnL.
+                if pos.status == "pending_fill":
+                    continue
+
                 try:
                     # Check if position still exists on exchange
                     ccxt_symbol = pos.symbol if ":USDT" in pos.symbol else f"{pos.symbol}:USDT"
