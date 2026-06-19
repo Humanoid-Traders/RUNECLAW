@@ -516,7 +516,8 @@ class LiveExecutor:
         try:
             exchange = await self._get_exchange()
             try:
-                ex_positions = await exchange.fetch_positions()
+                ex_positions = await exchange.fetch_positions(
+                    params={"productType": "USDT-FUTURES"})
             except Exception as exc:  # noqa: BLE001
                 report["errors"].append(f"fetch_positions failed: {exc}")
                 return report
@@ -561,7 +562,8 @@ class LiveExecutor:
             return adopted
         try:
             exchange = await self._get_exchange()
-            ex_positions = await exchange.fetch_positions()
+            ex_positions = await exchange.fetch_positions(
+                params={"productType": "USDT-FUTURES"})
 
             tracked = {
                 (normalize_symbol(p.symbol), p.direction)
@@ -2653,7 +2655,10 @@ class LiveExecutor:
                 try:
                     # Check if position still exists on exchange
                     ccxt_symbol = pos.symbol if ":USDT" in pos.symbol else f"{pos.symbol}:USDT"
-                    positions = await exchange.fetch_positions([ccxt_symbol])
+                    positions = await exchange.fetch_positions(
+                        [ccxt_symbol],
+                        params={"productType": "USDT-FUTURES"},
+                    )
                     has_position = any(
                         float(p.get("contracts", 0)) > 0 for p in positions
                     )
