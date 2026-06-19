@@ -744,8 +744,12 @@ class LiveExecutor:
             symbol = idea.asset
             if is_futures:
                 markets = await exchange.load_markets()
-                # ccxt uses "SYMBOL:USDT" for swap markets
-                swap_symbol = symbol.replace("/USDT", "/USDT:USDT")
+                # ccxt uses "SYMBOL/USDT:USDT" for swap markets
+                # Don't double-append :USDT if already present
+                if ":USDT" in symbol:
+                    swap_symbol = symbol
+                else:
+                    swap_symbol = symbol.replace("/USDT", "/USDT:USDT")
                 has_futures = swap_symbol in markets or any(
                     m.get("swap") and m.get("symbol") == swap_symbol
                     for m in markets.values()
