@@ -3248,7 +3248,12 @@ class TelegramHandler:
     # ── War Room commands ────────────────────────────────────────
 
     async def _cmd_latest_signal(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-        """Show the latest signal in War Room card format."""
+        """Show the latest signal using the same format as /trade.
+
+        Previously this used a separate War Room renderer with fabricated
+        TP2/entry-zone fields.  Now it delegates to the same rich analysis
+        path so /trade and Latest Signal always look identical.
+        """
         if not await self._guard(update, "scan"):
             return
         pending = self.engine.pending_ideas
@@ -3257,61 +3262,72 @@ class TelegramHandler:
                 "Nothing in the queue right now.\n"
                 "Say \"scan\" or \"analyze\" to look for setups.")
             return
-        idea = pending[-1]  # most recent
-        direction = idea.direction.value
-        confidence = int(idea.confidence * 100)
-        entry = idea.entry_price
-        sl = idea.stop_loss
-        tp = idea.take_profit
 
-        # Dynamic precision based on price magnitude
-        if entry >= 100:
-            prec = 2
-        elif entry >= 1:
-            prec = 4
-        else:
-            prec = 5
-
-        # Entry zone: use 38.2% Fibonacci retracement toward SL
-        # LONG: entry_low = entry - 0.382 * (entry - sl), entry_high = entry
-        # SHORT: entry_low = entry, entry_high = entry + 0.382 * (sl - entry)
-        sl_dist = abs(entry - sl)
-        fib_382 = sl_dist * 0.382
-        if direction == "LONG":
-            entry_low = entry - fib_382
-            entry_high = entry
-        else:
-            entry_low = entry
-            entry_high = entry + fib_382
-
-        # TP2: extend 50% of the TP1-entry distance beyond TP1
-        tp_dist = abs(tp - entry)
-        if direction == "LONG":
-            tp2 = tp + tp_dist * 0.5
-        else:
-            tp2 = tp - tp_dist * 0.5
-
-        data = {
-            "pair": idea.asset.replace("/", ""),
-            "direction": direction,
-            "confidence": confidence,
-            "risk_level": "High" if confidence < 50 else "Medium" if confidence < 70 else "Low",
-            "entry_low": round(entry_low, prec),
-            "entry_high": round(entry_high, prec),
-            "sl": round(sl, prec),
-            "tp1": round(tp, prec),
-            "tp2": round(tp2, prec),
-            "reason": idea.reasoning[:200] if idea.reasoning else "AI analysis",
-        }
-        rendered = wr_signal(data)
-        # Map approve/reject to actual trade IDs
+        # Pick the most recent idea and render it exactly like /trade does
+        idea = pending[-1]
         uid = update.effective_user.id if update.effective_user else ""
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("Take it", callback_data=f"confirm:{idea.id}:{uid}")],
-            [InlineKeyboardButton("Watch", callback_data=f"signal_watch_{idea.asset}")],
-            [InlineKeyboardButton("Skip", callback_data=f"reject:{idea.id}:{uid}")],
-        ])
-        await self._send(update, rendered["text"], reply_markup=kb)
+        kb = InlineKeyboardMarkup([[
+            InlineKeyboardButton("Take it", callback_data=f"confirm:{idea.id}:{uid}"),
+            InlineKeyboardButton("Skip", callback_data=f"reject:{idea.id}:{uid}"),
+        ]])
+
+        # Fetch live market data for the rich analysis card
+        try:
+            exchange = await self.engine.get_exchange()
+            asset_data = await fetch_analysis_data(exchange, idea.asset, timeframe="1h")
+        except Exception:
+            asset_data = None
+
+        if asset_data:
+            card = render_analysis_card(asset_data, idea)
+            chart_png = await self._build_chart_composite(asset_data, idea)
+            if chart_png:
+                pair = idea.asset.replace("/", "")
+                d = idea.direction.value
+                entry = idea.entry_price
+                sl, tp = idea.stop_loss, idea.take_profit
+                sl_pct = abs(entry - sl) / entry * 100 if entry > 0 else 0
+                tp_pct = abs(tp - entry) / entry * 100 if entry > 0 else 0
+                rr = idea.risk_reward_ratio
+                price = asset_data.get("price", entry)
+                rsi = asset_data.get("rsi", 0)
+                _otype = getattr(idea, 'order_type', 'market').upper()
+                _otype_tag = f" | {_otype}" if _otype == "LIMIT" else ""
+                cap = (
+                    f"<b>{html.escape(pair)}</b> — {d} Setup{_otype_tag}\n"
+                    f"Entry: <code>{entry:,.4f}</code> | Now: <code>{price:,.4f}</code>\n"
+                    f"SL: <code>{sl:,.4f}</code> (-{sl_pct:.1f}%) | TP: <code>{tp:,.4f}</code> (+{tp_pct:.1f}%)\n"
+                    f"R:R 1:{rr:.1f} | Conf {idea.confidence:.0%} | RSI {rsi:.0f}\n"
+                    f"{html.escape(idea.reasoning[:200])}"
+                )
+                await self._send(update, card)
+                await self._send_photo(update, chart_png, cap, reply_markup=kb)
+            else:
+                await self._send(update, card, reply_markup=kb)
+        else:
+            # Fallback: same text format as /trade fallback
+            d_icon = "\U0001f7e2" if idea.direction.value == "LONG" else "\U0001f534"
+            entry, sl, tp = idea.entry_price, idea.stop_loss, idea.take_profit
+            sl_pct = abs(entry - sl) / entry * 100 if entry > 0 else 0
+            tp_pct = abs(tp - entry) / entry * 100 if entry > 0 else 0
+            rr = idea.risk_reward_ratio
+            pair = idea.asset.replace("/", "")
+            _otype = getattr(idea, 'order_type', 'market').upper()
+            _otype_tag = f" ({_otype} ORDER)" if _otype == "LIMIT" else ""
+            msg = (
+                f"\U0001f525 <b>{html.escape(pair)}</b> — {idea.direction.value} Setup{_otype_tag}\n"
+                f"{'━' * 28}\n\n"
+                f"<b>Setup — {idea.direction.value}:</b>\n"
+                f"- Entry: <code>{entry:,.4f}</code>{' (limit)' if _otype == 'LIMIT' else ''}\n"
+                f"- SL: <code>{sl:,.4f}</code> (-{sl_pct:.1f}%)\n"
+                f"- TP: <code>{tp:,.4f}</code> (+{tp_pct:.1f}%)\n"
+                f"- Risk/Reward: 1:{rr:.1f}\n"
+                f"- Confidence: {idea.confidence:.0%}\n\n"
+                f"<b>Analysis:</b>\n"
+                f"<i>{html.escape(idea.reasoning[:300])}</i>\n\n"
+                f"<i>⚠️ Live market data unavailable — approve with caution</i>"
+            )
+            await self._send(update, msg, reply_markup=kb)
 
     async def _cmd_open_positions(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """Show open positions in rich format — per-user."""
