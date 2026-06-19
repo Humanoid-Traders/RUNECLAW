@@ -879,7 +879,7 @@ class RuneClawEngine:
         """
         idea = self._pending_ideas.pop(trade_id, None)
         if idea is None:
-            return f"Trade {trade_id} not found or expired."
+            return f"Trade not found or expired."
 
         # Store for marketing forwarder access
         self._last_confirmed_idea = idea
@@ -976,7 +976,7 @@ class RuneClawEngine:
                 data={"trade_id": trade_id, "asset": idea.asset, "error": str(exc)},
             )
             self._transition(AgentState.IDLE, f"re-check error for {trade_id}")
-            return f"Trade {trade_id} re-check failed (error logged): {exc}"
+            return f"Trade REJECTED: re-check failed (error logged): {exc}"
         if recheck.verdict == RiskVerdict.REJECTED:
             self._transition(AgentState.IDLE, f"re-check rejected {trade_id}")
             # Seal rejection to audit chain
@@ -1013,7 +1013,7 @@ class RuneClawEngine:
                       data={"adjustment": critique_result.confidence_adjustment, "new_confidence": idea.confidence})
                 if idea.confidence < CONFIG.risk.min_confidence:
                     audit(system_log, f"Post-critique confidence {idea.confidence:.2f} below min {CONFIG.risk.min_confidence}", action="confirm", result="REJECT")
-                    return f"Trade {trade_id} rejected: post-critique confidence {idea.confidence:.2f} below minimum {CONFIG.risk.min_confidence}"
+                    return f"Trade REJECTED: post-critique confidence {idea.confidence:.2f} below minimum {CONFIG.risk.min_confidence}"
 
             if critique_result.verdict == "WARN":
                 audit(trade_log, f"Critique WARNING for {trade_id}: {critique_result.bear_case}",
@@ -1117,7 +1117,7 @@ class RuneClawEngine:
                       action="confirm", result="REJECT",
                       data={"trade_id": trade_id, "stored_atr": stored_atr})
                 self._transition(AgentState.IDLE, f"no ATR for {trade_id}")
-                return f"Trade {trade_id} rejected: no valid ATR available — cannot compute safe SL distance"
+                return f"Trade REJECTED: no valid ATR available — cannot compute safe SL distance"
 
             result = await self.live_executor.execute(
                 idea, size_usd,
@@ -1216,7 +1216,7 @@ class RuneClawEngine:
                 data={"trade_id": trade_id, "size_usd": size_usd, "error": str(exc)},
             )
             self._transition(AgentState.IDLE, f"execution failed for {trade_id}")
-            return f"Trade {trade_id} confirmed but execution failed: {exc}"
+            return f"EXECUTION FAILED: {exc}"
 
         audit(
             trade_log,
@@ -1280,8 +1280,8 @@ class RuneClawEngine:
                 action="human_reject",
                 result="REJECTED",
             )
-            return f"Trade {trade_id} rejected."
-        return f"Trade {trade_id} not found."
+            return f"Trade REJECTED."
+        return f"Trade not found."
 
     async def _fetch_prices_by_category(self, positions) -> dict[str, float]:
         """Fetch ticker prices using the correct exchange per asset category.

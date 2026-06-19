@@ -1315,7 +1315,7 @@ class TestEngineFSM:
         engine._pending_atr[idea.id] = 500.0
 
         result = engine.reject_trade(idea.id)
-        assert "rejected" in result
+        assert "rejected" in result.lower()
         assert idea.id not in engine._pending_ideas
         assert idea.id not in engine._pending_atr
 
