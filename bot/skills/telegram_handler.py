@@ -2549,12 +2549,19 @@ class TelegramHandler:
             # Live exposure
             live_exposure = sum(lp.cost_usd for lp in live_open)
 
+            # Count filled vs pending for display
+            _filled_count = sum(1 for lp in live_open if lp.status != "pending_fill")
+            _pending_count = sum(1 for lp in live_open if lp.status == "pending_fill")
+            _pos_display = f"{_filled_count}"
+            if _pending_count > 0:
+                _pos_display += f" + {_pending_count} pending"
+
             lines = [
                 f"\U0001f4bc <b>YOUR PORTFOLIO</b> (LIVE)",
                 sep,
                 "",
                 f"- Equity: <code>${display_equity:,.2f}</code>",
-                f"- Open Positions: <code>{len(live_open)}</code>",
+                f"- Open Positions: <code>{_pos_display}</code>",
                 f"- Exposure: <code>${live_exposure:,.2f}</code>",
                 f"- Net PnL: <code>${live_total_pnl:+,.2f}</code> {'🟢' if live_total_pnl >= 0 else '🔴'}",
                 f"- Fees Paid: <code>${live_total_fees:,.2f}</code>",
@@ -2563,9 +2570,13 @@ class TelegramHandler:
                 lines.append(f"- Unrealized PnL: <code>${live_unrealized:+,.2f}</code> {'🟢' if live_unrealized >= 0 else '🔴'}")
 
             # Open positions from LiveExecutor
-            if live_open:
+            # Separate filled positions from pending limit orders
+            filled_positions = [lp for lp in live_open if lp.status != "pending_fill"]
+            pending_limits = [lp for lp in live_open if lp.status == "pending_fill"]
+
+            if filled_positions:
                 lines.extend(["", sep, "", "<b>Open Positions:</b>"])
-                for lp in live_open:
+                for lp in filled_positions:
                     d_icon = "🟢" if lp.direction == "LONG" else "🔴"
                     lev_str = f" {lp.leverage}x" if (lp.leverage or 1) > 1 else ""
                     lines.append(
@@ -2573,6 +2584,29 @@ class TelegramHandler:
                     )
                     lines.append(f"  Entry: <code>${lp.entry_price:,.6f}</code>")
                     lines.append(f"  Size: <code>${lp.cost_usd:,.2f}</code>")
+                    if lp.stop_loss:
+                        lines.append(f"  SL: <code>${lp.stop_loss:,.6f}</code> | TP: <code>${lp.take_profit:,.6f}</code>")
+
+            if pending_limits:
+                lines.extend(["", sep, "", "⏳ <b>Pending Limit Orders:</b>"])
+                for lp in pending_limits:
+                    d_icon = "🟢" if lp.direction == "LONG" else "🔴"
+                    lev_str = f" {lp.leverage}x" if (lp.leverage or 1) > 1 else ""
+                    pair = lp.symbol.replace("/", "").replace(":USDT", "")
+                    # Calculate time since placed
+                    if lp.opened_at:
+                        from datetime import datetime, timezone
+                        age_secs = (datetime.now(timezone.utc) - lp.opened_at).total_seconds()
+                        if age_secs < 3600:
+                            age_str = f"{age_secs / 60:.0f}m ago"
+                        else:
+                            age_str = f"{age_secs / 3600:.1f}h ago"
+                    else:
+                        age_str = "unknown"
+                    lines.append(
+                        f"\n{d_icon} <b>{pair}</b> {lp.direction}{lev_str} — LIMIT"
+                    )
+                    lines.append(f"  Limit: <code>${lp.entry_price:,.6f}</code> | Placed: {age_str}")
                     if lp.stop_loss:
                         lines.append(f"  SL: <code>${lp.stop_loss:,.6f}</code> | TP: <code>${lp.take_profit:,.6f}</code>")
 
