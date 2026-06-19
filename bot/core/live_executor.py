@@ -762,7 +762,9 @@ class LiveExecutor:
 
             # Set leverage for this symbol (futures only)
             if is_futures:
-                await self._ensure_leverage(idea.asset)
+                # AUDIT-FIX: Use swap symbol format for leverage API calls
+                swap_sym = idea.asset if ":USDT" in idea.asset else f"{idea.asset}:USDT"
+                await self._ensure_leverage(swap_sym)
 
             # Convert symbol for futures if needed
             symbol = idea.asset
@@ -871,40 +873,13 @@ class LiveExecutor:
                     # ccxt requires price as a top-level param for limit orders
                     create_kwargs["price"] = limit_price
                 order = await self._create_order_idempotent(exchange, **create_kwargs)
-            elif side == "buy" and not use_limit:
-                # Spot BUY on Bitget UTA: use cost-based ordering (market only)
-                active_exchange.options["createMarketBuyOrderRequiresPrice"] = False
-                order = await self._create_order_idempotent(
-                    active_exchange,
-                    symbol=symbol,
-                    type="market",
-                    side=side,
-                    amount=size_usd,
-                    coid=coid,
-                    params={"cost": size_usd},
-                )
-            elif use_limit:
-                # Limit order (spot or spot-fallback)
-                create_kwargs: dict[str, Any] = {}
-                if limit_price:
-                    create_kwargs["price"] = limit_price
-                order = await self._create_order_idempotent(
-                    active_exchange,
-                    symbol=symbol,
-                    type="limit",
-                    side=side,
-                    amount=quantity,
-                    coid=coid,
-                    price=limit_price if limit_price else None,
-                )
             else:
-                order = await self._create_order_idempotent(
-                    active_exchange,
-                    symbol=symbol,
-                    type="market",
-                    side=side,
-                    amount=quantity,
-                    coid=coid,
+                # FUTURES-ONLY MODE: all non-futures order paths are removed.
+                # This branch should never execute when trade_mode="futures".
+                raise RuntimeError(
+                    f"Unreachable: non-futures order path hit for {symbol} "
+                    f"(side={side}, is_futures={is_futures}). "
+                    f"Check CONFIG.exchange.trade_mode setting."
                 )
 
             # ── CRITICAL SAFETY NET ──
@@ -1119,7 +1094,6 @@ class LiveExecutor:
                     is_spot=False,
                     opened_at=datetime.now(UTC),
                     status="open",
-                    order_id=str(order.get("id", "unknown")),
                 )
                 self._positions[idea.id] = emergency_pos
                 self._save_positions()
@@ -1526,8 +1500,12 @@ class LiveExecutor:
                             pos.quantity, pos.stop_loss, pos.take_profit
                         )
                         if sl_id or tp_id:
-                            pos.sl_order_id = sl_id
-                            pos.tp_order_id = tp_id
+                            # AUDIT-FIX: Only update missing order IDs to avoid
+                            # orphaning existing exchange orders
+                            if sl_id and not pos.sl_order_id:
+                                pos.sl_order_id = sl_id
+                            if tp_id and not pos.tp_order_id:
+                                pos.tp_order_id = tp_id
                             self._save_positions()
                             audit(trade_log,
                                   f"SL/TP retry succeeded: {pos.symbol} SL={pos.stop_loss:.4f} TP={pos.take_profit:.4f}",
@@ -1765,7 +1743,10 @@ class LiveExecutor:
         # C2-02 FIX: Per-trade lock prevents double-close race.
         lock = self._close_locks.setdefault(trade_id, asyncio.Lock())
         async with lock:
-            return await self._close_position_inner(trade_id, reason, close_price)
+            result = await self._close_position_inner(trade_id, reason, close_price)
+        # AUDIT-FIX: Clean up lock after close to prevent unbounded growth
+        self._close_locks.pop(trade_id, None)
+        return result
 
     async def _close_position_inner(self, trade_id: str, reason: str = "manual",
                               close_price: float = 0) -> str:
@@ -1856,6 +1837,12 @@ class LiveExecutor:
             pos.pnl_usd = round(net_pnl, 4)
             pos.closed_at = datetime.now(UTC)
 
+            # AUDIT-FIX: Append to closed trades BEFORE save_positions, because
+            # save_positions prunes closed entries from _positions dict. If a crash
+            # occurs between save_positions and append_closed_trade, the trade
+            # would vanish from both data stores.
+            self._append_closed_trade(pos)
+
             # F-07 FIX: persist after closing (removes from open positions file)
             self._save_positions()
 
@@ -1877,8 +1864,6 @@ class LiveExecutor:
                             pass
                 except Exception as cleanup_exc:
                     logger.debug("Post-close order cleanup failed for %s: %s", pos.symbol, cleanup_exc)
-            # F-14 FIX: persist closed trade to closed_trades.json
-            self._append_closed_trade(pos)
             # Notify engine to invalidate balance cache
             self._fire_position_closed(pos)
 

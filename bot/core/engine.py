@@ -428,6 +428,9 @@ class RuneClawEngine:
         self._running = False
         await self.ws_feed.stop()
         await self.scanner.close()
+        # AUDIT-FIX: Close live executor exchange connection to avoid session leaks
+        if hasattr(self, 'live_executor') and self.live_executor:
+            await self.live_executor.close()
         self._transition(AgentState.IDLE, "engine stopped")
         audit(system_log, "Engine stopped", action="stop")
 
@@ -1165,6 +1168,12 @@ class RuneClawEngine:
         self._transition(AgentState.EXECUTING, f"executing paper trade {trade_id}")
         size_usd = recheck.position_size_usd
 
+        # Determine target portfolio: per-user if user_id is set, else shared
+        # AUDIT-FIX: Moved BEFORE pyramid block which references target_portfolio
+        target_portfolio = self.portfolio
+        if user_id:
+            target_portfolio = self.user_portfolios.get(user_id)
+
         # C2-32 FIX: Apply pyramid half-sizing in paper mode too.
         # Previously only the live path applied this, making paper results
         # non-representative of live behaviour.
@@ -1186,11 +1195,6 @@ class RuneClawEngine:
                           f"Paper pyramid: moved {pos.asset} SL to breakeven ${pos.entry_price:.4f} (was ${old_sl:.4f})",
                           action="pyramid_sl_breakeven", result="MOVED_PAPER")
                     break
-
-        # Determine target portfolio: per-user if user_id is set, else shared
-        target_portfolio = self.portfolio
-        if user_id:
-            target_portfolio = self.user_portfolios.get(user_id)
 
         try:
             lev = CONFIG.exchange.default_leverage if CONFIG.exchange.trade_mode == "futures" else 1
