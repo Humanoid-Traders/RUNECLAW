@@ -752,9 +752,17 @@ class LiveExecutor:
                     if isinstance(m, dict)
                 )
                 if not has_futures:
-                    # Fallback to spot for this symbol
+                    # SHORT trades cannot execute on spot — block immediately
+                    if idea.direction == Direction.SHORT:
+                        audit(trade_log,
+                              f"BLOCKED: {symbol} has no futures market and SHORT cannot execute on spot",
+                              action="live_execute", result="BLOCKED_NO_FUTURES_SHORT",
+                              data={"asset": symbol, "direction": "SHORT"})
+                        return (f"EXECUTION FAILED: {symbol} has no futures market — "
+                                f"SHORT trades require futures. Cannot fall back to spot.")
+                    # LONG trades can fall back to spot (buy tokens)
                     is_futures = False
-                    logger.info("No futures market for %s, falling back to spot", symbol)
+                    logger.info("No futures market for %s, falling back to spot (LONG only)", symbol)
                     audit(trade_log, f"Futures unavailable for {symbol}, using spot",
                           action="live_execute", result="SPOT_FALLBACK",
                           data={"asset": symbol})
