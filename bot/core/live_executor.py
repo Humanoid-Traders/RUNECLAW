@@ -741,11 +741,32 @@ class LiveExecutor:
         every open position on the exchange has a corresponding LivePosition
         so /open_positions, /close, and performance all work correctly.
 
+        Cooldown: positions on symbols recently closed (within 120s) are skipped
+        to prevent re-adopting reverse positions created by hedge mode bugs.
+
         Returns list of adopted symbol names.
         """
         adopted: list[str] = []
         if not CONFIG.is_live():
             return adopted
+
+        # Build cooldown set from recently closed positions
+        _now = time.time()
+        _ADOPT_COOLDOWN = 120  # seconds
+        recently_closed_symbols: set[str] = set()
+        for p in self._closed_trades:
+            closed_at = getattr(p, 'closed_at', None)
+            if closed_at:
+                if isinstance(closed_at, str):
+                    try:
+                        closed_at = datetime.fromisoformat(closed_at)
+                    except (ValueError, TypeError):
+                        continue
+                if closed_at.tzinfo is None:
+                    closed_at = closed_at.replace(tzinfo=UTC)
+                age = _now - closed_at.timestamp()
+                if age < _ADOPT_COOLDOWN:
+                    recently_closed_symbols.add(normalize_symbol(p.symbol))
         try:
             exchange = await self._get_exchange()
             ex_positions = await exchange.fetch_positions(
@@ -771,6 +792,13 @@ class LiveExecutor:
                 sym = normalize_symbol(raw_sym)
                 side = (p.get("side") or "long").upper()
                 if (sym, side) in tracked:
+                    continue
+
+                # Cooldown: skip symbols recently closed to prevent re-adoption
+                # of reverse positions created by hedge mode bugs
+                if sym in recently_closed_symbols:
+                    logger.info("Skipping adoption of %s %s — recently closed (cooldown %ds)",
+                                sym, side, _ADOPT_COOLDOWN)
                     continue
 
                 # Adopt this position
