@@ -114,7 +114,7 @@ class LivePosition:
     stop_loss: float
     take_profit: float
     leverage: int = 1      # leverage multiplier (1 = no leverage)
-    is_spot: bool = False   # True if opened as spot fallback (no futures market)
+    is_spot: bool = False   # DEPRECATED: always False (futures-only mode)
     sl_order_id: Optional[str] = None
     tp_order_id: Optional[str] = None
     opened_at: datetime = field(default_factory=lambda: datetime.now(UTC))
@@ -752,20 +752,13 @@ class LiveExecutor:
                     if isinstance(m, dict)
                 )
                 if not has_futures:
-                    # SHORT trades cannot execute on spot — block immediately
-                    if idea.direction == Direction.SHORT:
-                        audit(trade_log,
-                              f"BLOCKED: {symbol} has no futures market and SHORT cannot execute on spot",
-                              action="live_execute", result="BLOCKED_NO_FUTURES_SHORT",
-                              data={"asset": symbol, "direction": "SHORT"})
-                        return (f"EXECUTION FAILED: {symbol} has no futures market — "
-                                f"SHORT trades require futures. Cannot fall back to spot.")
-                    # LONG trades can fall back to spot (buy tokens)
-                    is_futures = False
-                    logger.info("No futures market for %s, falling back to spot (LONG only)", symbol)
-                    audit(trade_log, f"Futures unavailable for {symbol}, using spot",
-                          action="live_execute", result="SPOT_FALLBACK",
-                          data={"asset": symbol})
+                    # FUTURES ONLY MODE: block trade if no futures market exists
+                    audit(trade_log,
+                          f"BLOCKED: {symbol} has no futures/perpetual market on this exchange",
+                          action="live_execute", result="BLOCKED_NO_FUTURES",
+                          data={"asset": symbol, "direction": idea.direction.value})
+                    return (f"EXECUTION FAILED: {symbol} has no futures market — "
+                            f"only USDT-M perpetual futures are supported.")
 
             # Set leverage for this symbol (futures only)
             if is_futures:
@@ -774,27 +767,8 @@ class LiveExecutor:
             # Convert symbol for futures if needed
             symbol = idea.asset
 
-            # For spot orders on a futures-configured exchange, we need a spot
-            # exchange instance since the swap instance can't find spot markets
-            spot_exchange = None
-            if not is_futures and CONFIG.exchange.trade_mode == "futures":
-                # We're falling back to spot but exchange is swap-mode
-                cfg = CONFIG.exchange
-                spot_exchange = ccxt.bitget({
-                    "apiKey": cfg.api_key,
-                    "secret": cfg.api_secret,
-                    "password": cfg.passphrase,
-                    "sandbox": cfg.sandbox,
-                    "timeout": 30000,
-                    "enableRateLimit": True,
-                    "options": {
-                        "defaultType": "spot",
-                        "uta": True,
-                    },
-                })
-                active_exchange = spot_exchange
-            else:
-                active_exchange = exchange
+            # Futures-only: always use the main swap exchange
+            active_exchange = exchange
 
             # Fetch current price to calculate quantity
             try:
@@ -805,15 +779,13 @@ class LiveExecutor:
                 ticker = await active_exchange.fetch_ticker(symbol)
             _last_raw = ticker.get("last") if isinstance(ticker, dict) else None
             if _last_raw is None:
-                if spot_exchange:
-                    await spot_exchange.close()
                 return f"EXECUTION FAILED: exchange returned no price for {symbol}"
             current_price = float(_last_raw)
 
             # Calculate quantity
             # For futures with leverage: size_usd is the margin (collateral).
             # Notional exposure = margin * leverage, so qty = (size_usd * leverage) / price.
-            leverage_mult = CONFIG.exchange.default_leverage if is_futures else 1
+            leverage_mult = CONFIG.exchange.default_leverage
             quantity = (size_usd * leverage_mult) / current_price
 
             # Determine side
@@ -825,14 +797,10 @@ class LiveExecutor:
             if market:
                 _rounded = active_exchange.amount_to_precision(symbol, quantity)
                 if _rounded is None:
-                    if spot_exchange:
-                        await spot_exchange.close()
                     return f"EXECUTION FAILED: exchange returned no precision data for {symbol}"
                 quantity = float(_rounded)
 
             if quantity <= 0:
-                if spot_exchange:
-                    await spot_exchange.close()
                 audit(trade_log, f"Quantity too small after precision: {symbol} ${size_usd}",
                       action="live_execute", result="QUANTITY_TOO_SMALL",
                       data={"asset": symbol, "size_usd": size_usd, "price": current_price})
@@ -843,8 +811,6 @@ class LiveExecutor:
             # being rejected by Bitget after submission.
             limit_err = self._validate_order_limits(market, quantity, quantity * current_price)
             if limit_err:
-                if spot_exchange:
-                    await spot_exchange.close()
                 audit(trade_log, f"Order below exchange limits: {symbol} — {limit_err}",
                       action="live_execute", result="BELOW_EXCHANGE_MIN",
                       data={"asset": symbol, "size_usd": size_usd,
@@ -941,10 +907,6 @@ class LiveExecutor:
                     coid=coid,
                 )
 
-            # Clean up spot exchange if we created one
-            if spot_exchange:
-                await spot_exchange.close()
-
             # ── CRITICAL SAFETY NET ──
             # Everything below runs AFTER the order was submitted to the exchange.
             # If parsing/tracking crashes, the position is LIVE on the exchange
@@ -1014,7 +976,7 @@ class LiveExecutor:
 
             # Track position
             leverage = CONFIG.exchange.default_leverage if is_futures else 1
-            spot_fallback = not is_futures and CONFIG.exchange.trade_mode == "futures"
+            spot_fallback = False  # Futures-only mode: no spot trading
 
             # Initialize trailing stop state if enabled
             trailing_st = None
@@ -1154,7 +1116,7 @@ class LiveExecutor:
                     stop_loss=idea.stop_loss,
                     take_profit=idea.take_profit,
                     leverage=CONFIG.exchange.default_leverage if is_futures else 1,
-                    is_spot=not is_futures if 'is_futures' in dir() else False,
+                    is_spot=False,
                     opened_at=datetime.now(UTC),
                     status="open",
                     order_id=str(order.get("id", "unknown")),
@@ -1210,25 +1172,7 @@ class LiveExecutor:
         close_side = "sell" if direction == Direction.LONG else "buy"
         is_futures = CONFIG.exchange.trade_mode == "futures"
 
-        if not is_futures:
-            # Spot: use Bitget v2 spot plan orders for SL/TP
-            price_precision = None
-            try:
-                if not exchange.markets:
-                    await exchange.load_markets()
-                mkt = exchange.markets.get(symbol)
-                if mkt and mkt.get("precision", {}).get("price") is not None:
-                    price_precision = mkt["precision"]["price"]
-            except Exception:
-                pass
-            sl_rounded = self._round_price_to_market(exchange, symbol, stop_loss)
-            tp_rounded = self._round_price_to_market(exchange, symbol, take_profit)
-            sl_id, tp_id = await self._place_sl_tp_spot(
-                symbol, direction, quantity, stop_loss, take_profit,
-                price_precision=price_precision,
-                sl_str=sl_rounded, tp_str=tp_rounded,
-            )
-            return sl_id, tp_id
+        # Futures-only mode: spot SL/TP path removed
 
         # Use cached UTA detection result instead of making an extra API call.
         # _detect_hold_mode already ran during _ensure_leverage and set _is_uta.
@@ -1491,169 +1435,6 @@ class LiveExecutor:
             logger.warning("v3 SL/TP placement error for %s: %s", bitget_symbol, exc)
             audit(trade_log, f"v3 SL/TP error: {exc}",
                   action="sl_tp_v3", result="ERROR",
-                  data={"symbol": bitget_symbol, "error": str(exc)[:200]})
-
-        return sl_id, tp_id
-
-    async def _place_sl_tp_spot(
-        self, symbol: str, direction: Direction, quantity: float,
-        stop_loss: float, take_profit: float,
-        price_precision: object = None,
-        sl_str: Optional[str] = None,
-        tp_str: Optional[str] = None,
-    ) -> tuple[Optional[str], Optional[str]]:
-        """Place SL/TP via Bitget v2 spot plan orders.
-
-        Uses /api/v2/spot/trade/place-plan-order to create trigger orders
-        that fire when the market price reaches the SL or TP level.
-
-        For LONG positions: SL sells when price drops, TP sells when price rises.
-        For SHORT positions (rare in spot): SL buys when price rises, TP buys when price drops.
-        """
-        import urllib.request as _urllib_req
-        import hmac as _hmac
-        import hashlib as _hashlib
-        import base64 as _base64
-        import time as _time
-        import json as _json
-        import asyncio as _asyncio
-
-        cfg = CONFIG.exchange
-        sl_id = None
-        tp_id = None
-
-        # Strip "/USDT" from ccxt symbol format to get Bitget symbol
-        bitget_symbol = symbol.replace("/USDT", "USDT").replace(":USDT", "")
-
-        # Close side: sell to close a long, buy to close a short
-        close_side = "sell" if direction == Direction.LONG else "buy"
-
-        def _v2_post(path: str, body_dict: dict) -> dict:
-            body = _json.dumps(body_dict)
-            ts = str(int(_time.time() * 1000))
-            pre_sign = ts + "POST" + path + body
-            sig = _base64.b64encode(
-                _hmac.new(cfg.api_secret.encode(), pre_sign.encode(), _hashlib.sha256).digest()
-            ).decode()
-            url = "https://api.bitget.com" + path
-            req = _urllib_req.Request(url, data=body.encode(), method="POST")
-            req.add_header("ACCESS-KEY", cfg.api_key)
-            req.add_header("ACCESS-SIGN", sig)
-            req.add_header("ACCESS-TIMESTAMP", ts)
-            req.add_header("ACCESS-PASSPHRASE", cfg.passphrase)
-            req.add_header("Content-Type", "application/json")
-            req.add_header("locale", "en-US")
-            try:
-                resp = _urllib_req.urlopen(req, timeout=10)
-                return _json.loads(resp.read())
-            except Exception as e:
-                if hasattr(e, 'read'):
-                    return _json.loads(e.read().decode())
-                return {"code": "ERROR", "msg": str(e)}
-
-        def _round_price(price: float) -> str:
-            """Round price to exchange-allowed precision."""
-            if price_precision is not None:
-                if isinstance(price_precision, int):
-                    dp = price_precision
-                elif isinstance(price_precision, float) and price_precision < 1:
-                    import math
-                    dp = max(0, -int(math.floor(math.log10(price_precision))))
-                else:
-                    dp = int(price_precision)
-                return f"{price:.{dp}f}"
-            if price >= 1000:
-                return f"{price:.1f}"
-            elif price >= 10:
-                return f"{price:.2f}"
-            elif price >= 1:
-                return f"{price:.3f}"
-            elif price >= 0.1:
-                return f"{price:.4f}"
-            elif price >= 0.01:
-                return f"{price:.5f}"
-            elif price >= 0.001:
-                return f"{price:.6f}"
-            else:
-                return f"{price:.8f}"
-
-        tp_final = tp_str if tp_str is not None else _round_price(take_profit)
-        sl_final = sl_str if sl_str is not None else _round_price(stop_loss)
-
-        # Quantity string — use same precision logic
-        qty_str = f"{quantity}"
-
-        logger.info("Spot SL/TP request: symbol=%s side=%s qty=%s SL=%s TP=%s",
-                     bitget_symbol, close_side, qty_str, sl_final, tp_final)
-
-        # ── Place SL (stop-loss) plan order ──
-        sl_payload = {
-            "symbol": bitget_symbol,
-            "side": close_side,
-            "triggerPrice": sl_final,
-            "orderType": "market",
-            "size": qty_str,
-            "triggerType": "fill_price",
-            # C2-56 FIX: include trade_id for guaranteed uniqueness across trades
-            "clientOid": self._client_oid(f"{bitget_symbol}_sl_{int(time.time() * 1000)}"),
-        }
-
-        try:
-            sl_result = await _asyncio.to_thread(
-                _v2_post, "/api/v2/spot/trade/place-plan-order", sl_payload)
-
-            if sl_result.get("code") == "00000":
-                data = sl_result.get("data", {})
-                sl_id = data.get("orderId") or data.get("clientOid") or "spot-sl"
-                audit(trade_log, f"Spot SL plan order placed: {sl_id}",
-                      action="spot_sl_order", result="OK",
-                      data={"symbol": bitget_symbol, "trigger": sl_final, "order_id": sl_id})
-            else:
-                error_msg = sl_result.get("msg", str(sl_result))
-                error_code = sl_result.get("code", "")
-                logger.warning("Spot SL plan order failed (code=%s): %s", error_code, error_msg)
-                audit(trade_log, f"Spot SL plan order failed: {error_msg}",
-                      action="spot_sl_order", result="FAIL",
-                      data={"symbol": bitget_symbol, "response": str(sl_result)[:300]})
-        except Exception as exc:
-            logger.warning("Spot SL plan order error for %s: %s", bitget_symbol, exc)
-            audit(trade_log, f"Spot SL error: {exc}",
-                  action="spot_sl_order", result="ERROR",
-                  data={"symbol": bitget_symbol, "error": str(exc)[:200]})
-
-        # ── Place TP (take-profit) plan order ──
-        tp_payload = {
-            "symbol": bitget_symbol,
-            "side": close_side,
-            "triggerPrice": tp_final,
-            "orderType": "market",
-            "size": qty_str,
-            "triggerType": "fill_price",
-            # C2-56 FIX: include trade_id for guaranteed uniqueness across trades
-            "clientOid": self._client_oid(f"{bitget_symbol}_tp_{int(time.time() * 1000)}"),
-        }
-
-        try:
-            tp_result = await _asyncio.to_thread(
-                _v2_post, "/api/v2/spot/trade/place-plan-order", tp_payload)
-
-            if tp_result.get("code") == "00000":
-                data = tp_result.get("data", {})
-                tp_id = data.get("orderId") or data.get("clientOid") or "spot-tp"
-                audit(trade_log, f"Spot TP plan order placed: {tp_id}",
-                      action="spot_tp_order", result="OK",
-                      data={"symbol": bitget_symbol, "trigger": tp_final, "order_id": tp_id})
-            else:
-                error_msg = tp_result.get("msg", str(tp_result))
-                error_code = tp_result.get("code", "")
-                logger.warning("Spot TP plan order failed (code=%s): %s", error_code, error_msg)
-                audit(trade_log, f"Spot TP plan order failed: {error_msg}",
-                      action="spot_tp_order", result="FAIL",
-                      data={"symbol": bitget_symbol, "response": str(tp_result)[:300]})
-        except Exception as exc:
-            logger.warning("Spot TP plan order error for %s: %s", bitget_symbol, exc)
-            audit(trade_log, f"Spot TP error: {exc}",
-                  action="spot_tp_order", result="ERROR",
                   data={"symbol": bitget_symbol, "error": str(exc)[:200]})
 
         return sl_id, tp_id
@@ -1928,10 +1709,7 @@ class LiveExecutor:
         locally even if exchange update fails — check_positions() will
         close at the new SL.
         """
-        is_futures = not getattr(pos, "is_spot", False)
-        if not is_futures:
-            return  # spot SL/TP not reliably supported
-
+        # Futures-only mode: all positions are futures
         old_sl_id = pos.sl_order_id
         direction = Direction.LONG if pos.direction == "LONG" else Direction.SHORT
         use_v3 = self._is_uta if self._is_uta is not None else False
@@ -2004,11 +1782,6 @@ class LiveExecutor:
             exchange = await self._get_exchange()
             close_side = "sell" if pos.direction == "LONG" else "buy"
 
-            # Determine if this position is futures or spot.
-            # Use is_spot flag as primary discriminator (leverage alone is unreliable:
-            # a 1x futures position would incorrectly be treated as spot).
-            is_futures_pos = not getattr(pos, "is_spot", False)
-
             # Cancel SL/TP orders BEFORE closing — prevents race condition where
             # a trigger fires between close-fill and cancel, opening an opposite pos.
             cancel_failed = []
@@ -2032,55 +1805,17 @@ class LiveExecutor:
                                        oid, pos.symbol, cancel_exc)
                         cancel_failed.append(oid)
 
-            if is_futures_pos:
-                close_params = {"productType": "USDT-FUTURES"}
-                if self._hedge_mode:
-                    close_params["tradeSide"] = "close"
-                order = await exchange.create_order(
-                    symbol=pos.symbol,
-                    type="market",
-                    side=close_side,
-                    amount=pos.quantity,
-                    params=close_params,
-                )
-            else:
-                # Spot close on UTA — use a dedicated spot exchange instance
-                # The main exchange is defaultType=swap and can't route spot
-                # orders reliably on Bitget UTA. Create a one-off spot instance.
-                cfg = CONFIG.exchange
-                spot_exchange = ccxt.bitget({
-                    "apiKey": cfg.api_key,
-                    "secret": cfg.api_secret,
-                    "password": cfg.passphrase,
-                    "sandbox": cfg.sandbox,
-                    "timeout": 30000,
-                    "enableRateLimit": True,
-                    "options": {
-                        "defaultType": "spot",
-                        "uta": True,
-                    },
-                })
-                try:
-                    await spot_exchange.load_markets()
-                    # Use sell_all approach: fetch actual balance for precision
-                    base = pos.symbol.split("/")[0]
-                    balance = await spot_exchange.fetch_balance()
-                    available = float(balance.get(base, {}).get("free", 0))
-                    sell_qty = available if available > 0 else pos.quantity
-                    # Apply exchange precision
-                    mkt = spot_exchange.markets.get(pos.symbol)
-                    if mkt:
-                        _rnd = spot_exchange.amount_to_precision(pos.symbol, sell_qty)
-                        if _rnd is not None:
-                            sell_qty = float(_rnd)
-                    order = await spot_exchange.create_order(
-                        symbol=pos.symbol,
-                        type="market",
-                        side="sell",
-                        amount=sell_qty,
-                    )
-                finally:
-                    await spot_exchange.close()
+            # Futures-only mode: all positions close via swap exchange
+            close_params = {"productType": "USDT-FUTURES"}
+            if self._hedge_mode:
+                close_params["tradeSide"] = "close"
+            order = await exchange.create_order(
+                symbol=pos.symbol,
+                type="market",
+                side=close_side,
+                amount=pos.quantity,
+                params=close_params,
+            )
 
             # Extract fill price — Bitget spot responses sometimes omit average/price
             fill_price = float(order.get("average", 0) or order.get("price", 0) or 0)
@@ -2302,176 +2037,6 @@ class LiveExecutor:
             f"Exposure: ${self.total_exposure_usd:.2f} | "
             f"Realized PnL: ${total_pnl:.4f}"
         )
-
-    # ── Direct Spot Buy / Sell ───────────────────────────────────
-
-    async def buy_spot(self, symbol: str, amount_usd: float) -> dict:
-        """Buy a spot asset with a market order.
-
-        Args:
-            symbol: Trading pair (e.g. "BTC/USDT")
-            amount_usd: How many USDT to spend
-
-        Returns:
-            Dict with order details or error
-        """
-        # Enforce micro-test cap
-        amount_usd = min(amount_usd, MICRO_MAX_POSITION_USD)
-        if amount_usd <= 0:
-            return {"error": "Amount must be > 0"}
-
-        # Exposure check
-        total_exposure = self.total_exposure_usd
-        if total_exposure + amount_usd > MICRO_MAX_TOTAL_EXPOSURE:
-            return {
-                "error": f"Would exceed exposure limit: "
-                         f"${total_exposure + amount_usd:.2f} > ${MICRO_MAX_TOTAL_EXPOSURE}"
-            }
-
-        audit(trade_log, f"Spot BUY starting: {symbol} ${amount_usd:.2f}",
-              action="spot_buy", result="STARTING",
-              data={"symbol": symbol, "amount_usd": amount_usd})
-
-        try:
-            exchange = await self._get_exchange()
-
-            # Use cost-based market buy: tell Bitget to spend $X of USDT
-            # This avoids precision rounding issues with tiny quantities (e.g. BTC at $100K)
-            exchange.options["createMarketBuyOrderRequiresPrice"] = False
-            order = await exchange.create_order(
-                symbol=symbol,
-                type="market",
-                side="buy",
-                amount=amount_usd,  # interpreted as USDT cost when above flag is False
-                params={"cost": amount_usd},
-            )
-
-            # Fetch fill details — Bitget may not return them synchronously
-            order_id = order.get("id", "unknown")
-            fill_price = float(order.get("average", 0) or order.get("price", 0) or 0)
-            filled_qty = float(order.get("filled", 0) or 0)
-            cost = float(order.get("cost", 0) or amount_usd)
-
-            # If fill details missing, fetch the order to get actuals
-            if not fill_price or not filled_qty:
-                try:
-                    fetched = await exchange.fetch_order(order_id, symbol)
-                    fill_price = float(fetched.get("average", 0) or fetched.get("price", 0) or 0)
-                    filled_qty = float(fetched.get("filled", 0) or 0)
-                    cost = float(fetched.get("cost", 0) or amount_usd)
-                except Exception:
-                    # Best-effort: estimate from ticker
-                    ticker = await exchange.fetch_ticker(symbol)
-                    fill_price = float(ticker.get("last", 0) or 0)
-                    filled_qty = amount_usd / fill_price
-
-            live_order = LiveOrder(
-                order_id=order_id, symbol=symbol, side="buy",
-                order_type="market", amount=filled_qty, price=fill_price,
-                cost_usd=cost, status=order.get("status", "filled"), raw=order,
-            )
-            self._order_history.append(live_order)
-            self._prune_order_history()
-
-            audit(trade_log, f"Spot BUY filled: {symbol} {filled_qty} @ ${fill_price:,.4f}",
-                  action="spot_buy", result="FILLED",
-                  data={"order_id": order_id, "symbol": symbol,
-                        "qty": filled_qty, "price": fill_price, "cost": cost})
-
-            return {
-                "status": "filled",
-                "order_id": order_id,
-                "symbol": symbol,
-                "side": "buy",
-                "qty": filled_qty,
-                "price": fill_price,
-                "cost": cost,
-            }
-
-        except Exception as exc:
-            audit(trade_log, f"Spot BUY failed: {symbol} — {exc}",
-                  action="spot_buy", result="ERROR",
-                  data={"symbol": symbol, "amount_usd": amount_usd, "error": str(exc)})
-            return {"error": str(exc)}
-
-    async def sell_spot(self, symbol: str, qty: float = 0, sell_all: bool = False) -> dict:
-        """Sell a spot asset with a market order.
-
-        Args:
-            symbol: Trading pair (e.g. "BTC/USDT")
-            qty: Quantity in base currency to sell (0 = sell_all)
-            sell_all: If True, sell entire balance of the base asset
-
-        Returns:
-            Dict with order details or error
-        """
-        audit(trade_log, f"Spot SELL starting: {symbol} qty={qty} sell_all={sell_all}",
-              action="spot_sell", result="STARTING",
-              data={"symbol": symbol, "qty": qty, "sell_all": sell_all})
-
-        try:
-            exchange = await self._get_exchange()
-
-            if sell_all or qty <= 0:
-                # Fetch balance for the base asset
-                base = symbol.split("/")[0]
-                balance = await exchange.fetch_balance()
-                available = float(balance.get(base, {}).get("free", 0))
-                if available <= 0:
-                    return {"error": f"No {base} balance to sell"}
-                qty = available
-
-            # Precision
-            markets = await exchange.load_markets()
-            market = markets.get(symbol)
-            if market:
-                _rnd2 = exchange.amount_to_precision(symbol, qty)
-                if _rnd2 is not None:
-                    qty = float(_rnd2)
-
-            if qty <= 0:
-                return {"error": "Quantity too small after precision rounding"}
-
-            order = await exchange.create_order(
-                symbol=symbol,
-                type="market",
-                side="sell",
-                amount=qty,
-            )
-
-            fill_price = float(order.get("average", 0) or order.get("price", 0) or 0)
-            filled_qty = float(order.get("filled", 0) or qty)
-            proceeds = float(order.get("cost", 0) or fill_price * filled_qty)
-            order_id = order.get("id", "unknown")
-
-            live_order = LiveOrder(
-                order_id=order_id, symbol=symbol, side="sell",
-                order_type="market", amount=filled_qty, price=fill_price,
-                cost_usd=proceeds, status=order.get("status", "filled"), raw=order,
-            )
-            self._order_history.append(live_order)
-            self._prune_order_history()
-
-            audit(trade_log, f"Spot SELL filled: {symbol} {filled_qty} @ ${fill_price:,.4f}",
-                  action="spot_sell", result="FILLED",
-                  data={"order_id": order_id, "symbol": symbol,
-                        "qty": filled_qty, "price": fill_price, "proceeds": proceeds})
-
-            return {
-                "status": "filled",
-                "order_id": order_id,
-                "symbol": symbol,
-                "side": "sell",
-                "qty": filled_qty,
-                "price": fill_price,
-                "proceeds": proceeds,
-            }
-
-        except Exception as exc:
-            audit(trade_log, f"Spot SELL failed: {symbol} — {exc}",
-                  action="spot_sell", result="ERROR",
-                  data={"symbol": symbol, "qty": qty, "error": str(exc)})
-            return {"error": str(exc)}
 
     # ── Balance cache invalidation callback ────────────────────────
 

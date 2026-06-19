@@ -2025,139 +2025,23 @@ class TelegramHandler:
         await self._send(update, f"\U0001f510 {result}")
 
     async def _cmd_buy(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-        """/buy BTC 5 — buy $5 worth of BTC/USDT on Bitget spot."""
+        """/buy — DISABLED (futures-only mode)."""
         if not await self._guard(update, "admin"):
             return
-
-        args = ctx.args or []
-        if len(args) < 1:
-            await self._send(update,
-                "\U0001f6d2 <b>SPOT BUY</b>\n\n"
-                "<b>Usage:</b>\n"
-                "<code>/buy BTC 5</code>  — buy $5 of BTC\n"
-                "<code>/buy SOL 10</code> — buy $10 of SOL\n"
-                "<code>/buy ETH</code>    — buy $5 of ETH (default)\n\n"
-                "\u26a0\ufe0f Micro-test limits: $10/trade, $50 total.\n"
-                "Requires <code>/golive CONFIRM</code> first.")
-            return
-
-        asset = args[0].upper().replace("/USDT", "")
-        symbol = f"{asset}/USDT"
-
-        # SEC-H3 FIX: validate symbol before it reaches CCXT
-        if not _SYMBOL_RE.match(symbol):
-            await self._send(update, "\u274c Invalid symbol format.")
-            return
-
-        amount_usd = 5.0  # default
-        if len(args) >= 2:
-            try:
-                amount_usd = float(args[1])
-            except ValueError:
-                await self._send(update, "\u274c Invalid amount. Use: <code>/buy BTC 5</code>")
-                return
-
-        if amount_usd <= 0 or amount_usd > 10:
-            await self._send(update,
-                f"\u274c Amount must be $0.01 – $10.00 (micro-test limit).\n"
-                f"You entered: ${amount_usd:.2f}")
-            return
-
-        # Check live mode
-        from bot.config import RUNTIME
-        if not RUNTIME.live_mode:
-            await self._send(update,
-                "\U0001f512 <b>Live trading is OFF</b>\n\n"
-                "Enable with <code>/golive CONFIRM</code> first.")
-            return
-
         await self._send(update,
-            f"\u23f3 Placing market BUY: <b>{symbol}</b> — ${amount_usd:.2f}...")
-
-        result = await self.engine.live_executor.buy_spot(symbol, amount_usd)
-
-        if "error" in result:
-            await self._send(update,
-                f"\u274c <b>BUY FAILED</b>\n\n"
-                f"<code>{result['error']}</code>")
-            return
-
-        # Success
-        SEP = "─" * 16
-        bar = _bar(amount_usd / 10.0, 1.0, 10)  # 10 = micro limit
-        await self._send(update,
-            f"✅ <b>SPOT BUY FILLED</b>\n"
-            f"{SEP}\n"
-            f"🟢 <b>{symbol}</b>\n\n"
-            f"- Qty: <code>{result['qty']:.8f}</code>\n"
-            f"- Price: <code>${result['price']:,.4f}</code>\n"
-            f"- Cost: <code>${result['cost']:.2f}</code>\n"
-            f"- Order: <code>{result['order_id']}</code>\n\n"
-            f"Budget: {bar} <code>${amount_usd:.0f}/$10</code>\n\n"
-            f"💡 Sell with: <code>/sell {asset}</code>")
+            "\u274c <b>Spot trading is disabled</b>\n\n"
+            "RUNECLAW operates in <b>futures-only mode</b> (USDT-M perpetuals at 5x leverage).\n\n"
+            "The bot automatically opens positions via AI analysis. "
+            "Use <code>/livepositions</code> to view open positions.")
 
     async def _cmd_sell(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-        """/sell BTC [qty] — sell spot asset on Bitget."""
+        """/sell — DISABLED (futures-only mode)."""
         if not await self._guard(update, "admin"):
             return
-
-        args = ctx.args or []
-        if len(args) < 1:
-            await self._send(update,
-                "\U0001f4b8 <b>SPOT SELL</b>\n\n"
-                "<b>Usage:</b>\n"
-                "<code>/sell BTC</code>     — sell all BTC\n"
-                "<code>/sell SOL 0.5</code> — sell 0.5 SOL\n\n"
-                "\u26a0\ufe0f Requires <code>/golive CONFIRM</code> first.")
-            return
-
-        asset = args[0].upper().replace("/USDT", "")
-        symbol = f"{asset}/USDT"
-
-        # SEC-H3 FIX: validate symbol before it reaches CCXT
-        if not _SYMBOL_RE.match(symbol):
-            await self._send(update, "\u274c Invalid symbol format.")
-            return
-
-        qty = 0.0
-        sell_all = True
-        if len(args) >= 2:
-            try:
-                qty = float(args[1])
-                sell_all = False
-            except ValueError:
-                await self._send(update, "\u274c Invalid quantity. Use: <code>/sell BTC 0.001</code>")
-                return
-
-        # Check live mode
-        from bot.config import RUNTIME
-        if not RUNTIME.live_mode:
-            await self._send(update,
-                "\U0001f512 <b>Live trading is OFF</b>\n\n"
-                "Enable with <code>/golive CONFIRM</code> first.")
-            return
-
-        action_desc = "all" if sell_all else f"{qty}"
         await self._send(update,
-            f"\u23f3 Placing market SELL: <b>{symbol}</b> — {action_desc}...")
-
-        result = await self.engine.live_executor.sell_spot(symbol, qty=qty, sell_all=sell_all)
-
-        if "error" in result:
-            await self._send(update,
-                f"\u274c <b>SELL FAILED</b>\n\n"
-                f"<code>{result['error']}</code>")
-            return
-
-        SEP = "─" * 16
-        await self._send(update,
-            f"✅ <b>SPOT SELL FILLED</b>\n"
-            f"{SEP}\n"
-            f"🔴 <b>{symbol}</b>\n\n"
-            f"- Qty: <code>{result['qty']:.8f}</code>\n"
-            f"- Price: <code>${result['price']:,.4f}</code>\n"
-            f"- Proceeds: <code>${result['proceeds']:.2f}</code>\n"
-            f"- Order: <code>{result['order_id']}</code>")
+            "\u274c <b>Spot trading is disabled</b>\n\n"
+            "RUNECLAW operates in <b>futures-only mode</b> (USDT-M perpetuals at 5x leverage).\n\n"
+            "Use <code>/liveclose TRADE_ID</code> to close a futures position.")
 
     # ── Proactive Alerts (Move 2) ──────────────────────────────
 
