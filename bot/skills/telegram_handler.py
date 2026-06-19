@@ -986,6 +986,8 @@ class TelegramHandler:
                             kb = InlineKeyboardMarkup([[
                                 InlineKeyboardButton("Take it",
                                     callback_data=f"confirm:{new_idea.id}:{uid}"),
+                                InlineKeyboardButton("Limit",
+                                    callback_data=f"setlimit:{new_idea.id}:{uid}"),
                                 InlineKeyboardButton("Skip",
                                     callback_data=f"reject:{new_idea.id}:{uid}"),
                             ]])
@@ -2215,6 +2217,8 @@ class TelegramHandler:
                     kb = InlineKeyboardMarkup([[
                         InlineKeyboardButton("Take it",
                             callback_data=f"confirm:{idea.id}:{uid}"),
+                        InlineKeyboardButton("Limit",
+                            callback_data=f"setlimit:{idea.id}:{uid}"),
                         InlineKeyboardButton("Skip",
                             callback_data=f"reject:{idea.id}:{uid}"),
                     ]])
@@ -2548,6 +2552,7 @@ class TelegramHandler:
             uid = update.effective_user.id if update.effective_user else ""
             kb = InlineKeyboardMarkup([[
                 InlineKeyboardButton("Take it", callback_data=f"confirm:{new_idea.id}:{uid}"),
+                InlineKeyboardButton("Limit", callback_data=f"setlimit:{new_idea.id}:{uid}"),
                 InlineKeyboardButton("Skip", callback_data=f"reject:{new_idea.id}:{uid}"),
             ]])
             # Send signal card image with confirm/reject buttons
@@ -3291,6 +3296,7 @@ class TelegramHandler:
         uid = update.effective_user.id if update.effective_user else ""
         kb = InlineKeyboardMarkup([[
             InlineKeyboardButton("Take it", callback_data=f"confirm:{idea.id}:{uid}"),
+            InlineKeyboardButton("Limit", callback_data=f"setlimit:{idea.id}:{uid}"),
             InlineKeyboardButton("Skip", callback_data=f"reject:{idea.id}:{uid}"),
         ]])
 
