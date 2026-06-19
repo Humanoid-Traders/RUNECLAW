@@ -741,29 +741,14 @@ class RuneClawEngine:
                       action="pyramid_approved", result="APPROVED",
                       data={"r_achieved": round(r_achieved, 2), "confidence": idea.confidence})
             else:
-                # ── Opposite direction: flip if strong signal ──
-                if idea.confidence < 0.70:
-                    audit(scan_log, f"Flip skipped: confidence {idea.confidence:.0%} < 70% for {idea.asset}",
-                          action="flip_low_conf", result="SKIPPED")
-                    self._transition(AgentState.ANALYZING, "flip confidence too low")
-                    return None
-
-                # Close existing position before opening opposite
-                if is_live and hasattr(self, 'live_executor'):
-                    close_msg = await self.live_executor.close_position(
-                        pos.trade_id, reason="FLIP to " + idea_dir)
-                    audit(trade_log, f"Position flipped: {close_msg}",
-                          action="flip_close", result="CLOSED")
-                    if self._close_notify_callback:
-                        try:
-                            await self._close_notify_callback(close_msg)
-                        except Exception:
-                            pass
-                elif hasattr(self, 'portfolio'):
-                    self.portfolio.close_position(pos.trade_id, current_price)
-
-                audit(scan_log, f"Flip APPROVED: {idea.asset} {pos_dir} -> {idea_dir}, conf {idea.confidence:.0%}",
-                      action="flip_approved", result="APPROVED")
+                # ── Opposite direction: NEVER auto-flip ──
+                # Don't automatically close and reverse positions.
+                # Skip the idea — user must manually close first.
+                audit(scan_log, f"Flip BLOCKED: {idea.asset} {pos_dir} -> {idea_dir} (auto-flip disabled)",
+                      action="flip_blocked", result="SKIPPED",
+                      data={"confidence": idea.confidence, "existing": pos_dir, "proposed": idea_dir})
+                self._transition(AgentState.ANALYZING, "auto-flip disabled — close manually first")
+                return None
 
         # Store pyramid flag for confirm_trade to apply half-size + SL-to-breakeven
         if is_pyramid_add:
