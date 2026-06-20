@@ -792,7 +792,7 @@ class RuneClawEngine:
                 live_count = len(self.live_executor.open_positions)
                 paper_count = self.portfolio.snapshot().open_positions if hasattr(self, 'portfolio') else 0
                 live_open = max(live_count, paper_count)
-        self._transition(AgentState.RISK_CHECK, f"evaluating {signal.symbol}")
+        # N-03 FIX: removed _transition(RISK_CHECK) — runs in parallel, parent manages state
         # Wire order flow signal to risk engine so check #23 (bid dominance) runs
         if of_signal is not None:
             self.risk.set_order_flow_signal(of_signal)
@@ -879,7 +879,7 @@ class RuneClawEngine:
             self.learning.review_rejection(decision)
             return None
 
-        self._transition(AgentState.CONFIRMING, f"awaiting human confirmation for {idea.id}")
+        # N-03 FIX: removed _transition(CONFIRMING) — runs in parallel, parent manages state
         audit(
             trade_log,
             f"Trade idea awaiting human confirmation: {idea.id}",

@@ -57,8 +57,7 @@ def is_market_open(asset_class: str, now: datetime | None = None) -> tuple[bool,
         if weekday >= 5:
             return False, f"Stock perps are closed on weekends"
         # Stock perps: 02:30 – 09:00 UTC (US market hours during EDT)
-        now_utc = datetime.now(timezone.utc)
-        minutes_today = now_utc.hour * 60 + now_utc.minute
+        minutes_today = now.hour * 60 + now.minute
         # Stocks: 02:30 - 09:00 UTC (9:30 AM - 4:00 PM ET during EDT)
         if 150 <= minutes_today < 540:  # 150 = 2*60+30, 540 = 9*60
             return True, ""

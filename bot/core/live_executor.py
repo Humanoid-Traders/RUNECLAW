@@ -1072,6 +1072,8 @@ class LiveExecutor:
               })
 
         order = None  # H-02 FIX: sentinel for emergency position path
+        current_price = idea.entry_price  # N-01 FIX: sentinel for emergency path
+        quantity = 0.0  # N-01 FIX: sentinel for emergency path
         try:
             exchange = await self._get_exchange()
             is_futures = CONFIG.exchange.trade_mode == "futures"
@@ -1708,8 +1710,8 @@ class LiveExecutor:
                     trade_id=idea.id,
                     symbol=idea.asset,
                     direction="LONG" if idea.direction == Direction.LONG else "SHORT",
-                    entry_price=current_price if 'current_price' in dir() else idea.entry_price,
-                    quantity=quantity if 'quantity' in dir() else 0,
+                    entry_price=current_price,
+                    quantity=quantity,
                     cost_usd=size_usd,
                     stop_loss=idea.stop_loss,
                     take_profit=idea.take_profit,
@@ -1730,7 +1732,7 @@ class LiveExecutor:
                     _ex = await self._get_exchange()
                     sl_id, tp_id = await self._place_sl_tp(
                         _ex, idea.asset, idea.direction,
-                        quantity if 'quantity' in dir() else 0,
+                        quantity,
                         idea.stop_loss, idea.take_profit,
                     )
                     if sl_id:

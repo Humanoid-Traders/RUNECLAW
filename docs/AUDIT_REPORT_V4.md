@@ -9,13 +9,15 @@
 
 ## Summary
 
-| Severity | Count | Description |
-|----------|-------|-------------|
-| CRITICAL | 9 | Data loss, wrong trades, money loss, security vulnerabilities |
-| HIGH | 18 | Logic errors degrading safety, race conditions, auth bypasses |
-| MEDIUM | 21 | Correctness issues skewing metrics or behavior |
-| LOW | 14 | Maintenance, hygiene, drift |
-| **Total** | **62** | |
+| Severity | Found | Fixed | Remaining |
+|----------|-------|-------|-----------|
+| CRITICAL | 9 | 9 | 0 |
+| HIGH | 18 | 18 | 0 |
+| MEDIUM | 21 | 21 | 0 |
+| LOW | 14 | 14 | 0 |
+| **Total** | **62** | **62** | **0** |
+
+**Re-audit result:** All 62 findings verified fixed. 5 minor new findings from fix pass resolved in follow-up commit.
 
 ---
 

@@ -660,8 +660,7 @@ class RiskEngine:
                     failed.append(f"TAKER_3BAR: {gate2['reason']}")
             else:
                 if self._order_flow is None or self._last_of_signal is None:
-                    risk_log.warning("Order flow checks #22/#23 skipped — no signal available")
-                    # Still pass (fail-open by design for order flow) but log it
+                    risk_log.warning("Order flow check #22 (taker gate) skipped — no signal")
                 passed.append("TAKER_3BAR: skipped (no order flow analyzer)")
         except Exception as exc:
             failed.append(f"TAKER_3BAR: evaluation error ({exc})")
@@ -677,8 +676,7 @@ class RiskEngine:
                     failed.append(f"BID_DOMINANCE: {gate20['reason']}")
             else:
                 if self._order_flow is None or self._last_of_signal is None:
-                    risk_log.warning("Order flow checks #22/#23 skipped — no signal available")
-                    # Still pass (fail-open by design for order flow) but log it
+                    risk_log.warning("Order flow check #23 (bid dominance) skipped — no signal")
                 passed.append("BID_DOMINANCE: skipped (no order flow data)")
         except Exception as exc:
             failed.append(f"BID_DOMINANCE: evaluation error ({exc})")
