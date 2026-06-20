@@ -2447,6 +2447,11 @@ class TelegramHandler:
         api_key = args[1] if len(args) > 1 else ""
         model = args[2] if len(args) > 2 else ""
 
+        # Warn about key exposure
+        await self._send(update,
+            "⚠️ <b>Security warning:</b> API keys should only be set in private chats with the bot. "
+            "Your message containing the key will be deleted.")
+
         ok, msg = BYOK.set_provider(provider_str, api_key=api_key, model=model)
         if ok:
             # Refresh the analyzer's LLM client to use new provider
@@ -2462,18 +2467,18 @@ class TelegramHandler:
                 f"- Provider: <code>{html.escape(provider_str)}</code>\n"
                 f"- Model: <code>{html.escape(model or 'default')}</code>\n"
                 f"- Status: 🟢 active")
-            try:
-                await update.message.delete()
-            except Exception:
-                pass  # Can't delete in all chat types
         else:
             await self._send(update,
                 f"🔴 <b>LLM UPDATE FAILED</b>\n\n"
                 f"{html.escape(msg)}")
-            try:
-                await update.message.delete()
-            except Exception:
-                pass  # Can't delete in all chat types
+
+        # Always try to delete the original message containing the API key
+        try:
+            await update.message.delete()
+        except Exception as del_exc:
+            system_log.warning(
+                "Failed to delete /setllm message containing API key: %s — "
+                "key may be visible in chat history", del_exc)
 
     async def _cmd_llmstatus(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """/llmstatus — show current LLM provider and key fingerprint."""

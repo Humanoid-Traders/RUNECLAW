@@ -158,6 +158,7 @@ class LiveExecutor:
         self._order_history: list[LiveOrder] = []
         self._hedge_mode: Optional[bool] = None  # None=unknown, True=hedge, False=one-way
         self._is_uta: Optional[bool] = None  # None=unknown, cached after first detection
+        self._persistence_broken: bool = False  # C-02: set True if position save fails
         self._last_close_data: Optional[dict] = None  # Structured data from most recent close
         # C2-02 FIX: Per-trade-id locks to prevent double-close race condition.
         # close_position() is called from check_positions, reconcile_positions,
@@ -932,7 +933,12 @@ class LiveExecutor:
         Returns:
             Human-readable result string
         """
+        # C-04: Work on a copy of the idea to avoid mutating the caller's object
+        import copy as _copy
+        idea = _copy.copy(idea)
         # Resolve order type: explicit > config > default
+        if self._persistence_broken:
+            return "REFUSED: position persistence is broken — cannot open new trades until resolved"
         if not order_type:
             order_type = CONFIG.limit_orders.default_order_type if CONFIG.limit_orders.enabled else "market"
         order_type = order_type.lower()
@@ -1933,7 +1939,13 @@ class LiveExecutor:
                 return _json.loads(resp.read())
             except Exception as e:
                 if hasattr(e, 'read'):
-                    return _json.loads(e.read().decode())
+                    try:
+                        raw_body = e.read().decode()
+                        return _json.loads(raw_body)
+                    except (ValueError, UnicodeDecodeError) as parse_exc:
+                        logger.warning("Non-JSON error response from exchange: %s (parse error: %s)",
+                                       getattr(e, 'code', '?'), parse_exc)
+                        return {"code": str(getattr(e, 'code', 'ERROR')), "msg": raw_body[:500] if raw_body else str(e)}
                 return {"code": "ERROR", "msg": str(e)}
 
         # Round SL/TP prices to the symbol's tick precision.
@@ -2455,6 +2467,13 @@ class LiveExecutor:
                                 return None
                         except Exception as verify_exc:
                             logger.warning("Could not verify limit order status: %s", verify_exc)
+                            # Cannot confirm cancel and cannot verify — leave as pending_fill for retry
+                            return None
+
+                    if not cancel_confirmed:
+                        logger.warning("Cancel NOT confirmed for %s order %s — leaving as pending_fill for retry",
+                                       cancel_reason, pos.limit_order_id)
+                        return None
 
                     pos.status = "closed"
                     pos.closed_at = datetime.now(UTC)
@@ -2964,7 +2983,8 @@ class LiveExecutor:
             self._positions = {k: v for k, v in self._positions.items()
                                if v.status in ("open", "pending_fill")}
         except Exception as exc:
-            logger.debug("Failed to save live positions: %s", exc)
+            logger.error("Failed to save live positions: %s", exc)
+            self._persistence_broken = True
 
     def _load_positions(self) -> None:
         """Load persisted positions on startup.

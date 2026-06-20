@@ -889,7 +889,7 @@ class RuneClawEngine:
         Human confirms a pending trade idea.  This is the ONLY path to execution.
         If user_id is provided, the trade is recorded in that user's isolated portfolio.
         """
-        idea = self._pending_ideas.pop(trade_id, None)
+        idea = self._pending_ideas.get(trade_id, None)
         if idea is None:
             return f"Trade not found or expired."
 
@@ -897,7 +897,7 @@ class RuneClawEngine:
         self._last_confirmed_idea = idea
 
         # H1 fix: re-check with stored ATR so volatility guard runs
-        stored_atr = self._pending_atr.pop(trade_id, None)
+        stored_atr = self._pending_atr.get(trade_id, None)
 
         # F-05 FIX: reject if market price has drifted significantly from
         # the idea's entry price. Prevents executing at stale levels.
@@ -917,6 +917,7 @@ class RuneClawEngine:
                                 "idea_entry": idea.entry_price,
                                 "current_price": current_price,
                                 "drift_pct": round(drift_pct, 2)})
+                    self._pending_pyramid.pop(trade_id, None)
                     self._transition(AgentState.IDLE, f"price drift for {trade_id}")
                     return (f"Trade REJECTED: price drifted {drift_pct:.1f}% since analysis "
                             f"(${idea.entry_price:,.2f} → ${current_price:,.2f}). Re-analyze.")
@@ -925,10 +926,12 @@ class RuneClawEngine:
                 # If market price is already past the SL, the trade would be
                 # instantly stopped out. Reject before wasting an execution.
                 if idea.direction.value == "LONG" and current_price <= idea.stop_loss:
+                    self._pending_pyramid.pop(trade_id, None)
                     self._transition(AgentState.IDLE, f"price past SL for {trade_id}")
                     return (f"Trade REJECTED: price ${current_price:,.4f} already below "
                             f"SL ${idea.stop_loss:,.4f} — would be instantly stopped out.")
                 elif idea.direction.value == "SHORT" and current_price >= idea.stop_loss:
+                    self._pending_pyramid.pop(trade_id, None)
                     self._transition(AgentState.IDLE, f"price past SL for {trade_id}")
                     return (f"Trade REJECTED: price ${current_price:,.4f} already above "
                             f"SL ${idea.stop_loss:,.4f} — would be instantly stopped out.")
@@ -944,6 +947,7 @@ class RuneClawEngine:
                         consumed = max(0, current_price - idea.entry_price)
                     consumed_pct = consumed / sl_dist
                     if consumed_pct > 0.5:
+                        self._pending_pyramid.pop(trade_id, None)
                         self._transition(AgentState.IDLE, f"R:R deteriorated for {trade_id}")
                         return (f"Trade REJECTED: price moved {consumed_pct:.0%} toward SL "
                                 f"(${current_price:,.4f} vs entry ${idea.entry_price:,.4f}). "
@@ -952,6 +956,7 @@ class RuneClawEngine:
             # H-08 FIX: fail-closed — reject if exchange is unreachable
             audit(trade_log, f"Price drift check failed (rejecting): {exc}",
                   action="price_drift", result="REJECTED")
+            self._pending_pyramid.pop(trade_id, None)
             self._transition(AgentState.IDLE, f"price drift check failed for {trade_id}")
             return "Trade REJECTED: unable to verify current price. Try again."
 
@@ -1029,9 +1034,11 @@ class RuneClawEngine:
                 result="ERROR",
                 data={"trade_id": trade_id, "asset": idea.asset, "error": str(exc)},
             )
+            self._pending_pyramid.pop(trade_id, None)
             self._transition(AgentState.IDLE, f"re-check error for {trade_id}")
             return f"Trade REJECTED: re-check failed (error logged): {exc}"
         if recheck.verdict == RiskVerdict.REJECTED:
+            self._pending_pyramid.pop(trade_id, None)
             self._transition(AgentState.IDLE, f"re-check rejected {trade_id}")
             # Seal rejection to audit chain
             self.audit_chain.seal_decision(DecisionRecord(
@@ -1057,6 +1064,7 @@ class RuneClawEngine:
                     "concerns": critique_result.concerns,
                     "confidence_adjustment": critique_result.confidence_adjustment,
                 })
+                self._pending_pyramid.pop(trade_id, None)
                 self._transition(AgentState.IDLE, f"critique halted {trade_id}")
                 return f"Trade HALTED by adversarial review: {critique_result.bear_case}\nConcerns: {'; '.join(critique_result.concerns)}"
             # Apply critique confidence adjustment
@@ -1067,6 +1075,7 @@ class RuneClawEngine:
                       data={"adjustment": critique_result.confidence_adjustment, "new_confidence": idea.confidence})
                 if idea.confidence < CONFIG.risk.min_confidence:
                     audit(system_log, f"Post-critique confidence {idea.confidence:.2f} below min {CONFIG.risk.min_confidence}", action="confirm", result="REJECT")
+                    self._pending_pyramid.pop(trade_id, None)
                     return f"Trade REJECTED: post-critique confidence {idea.confidence:.2f} below minimum {CONFIG.risk.min_confidence}"
 
             if critique_result.verdict == "WARN":
@@ -1107,11 +1116,13 @@ class RuneClawEngine:
                 "reasons": compliance_decision.reasons,
                 "locks_failed": compliance_decision.locks_failed,
             }, actor=self.compliance_profile.subject_id)
+            self._pending_pyramid.pop(trade_id, None)
             self._transition(AgentState.IDLE, f"compliance denied {trade_id}")
             return f"Execution denied: {compliance_decision.reasons[-1] if compliance_decision.reasons else 'compliance check failed'}"
 
         # LIVE-ONLY: this bot only executes live trades. Paper mode is disabled.
         if not CONFIG.is_live():
+            self._pending_pyramid.pop(trade_id, None)
             self._transition(AgentState.IDLE, f"paper mode disabled")
             return "⛔ Paper trading is disabled on this bot. This bot is LIVE-ONLY."
 
@@ -1169,6 +1180,7 @@ class RuneClawEngine:
                       f"No valid ATR for {idea.asset} — aborting to avoid SL-at-entry",
                       action="confirm", result="REJECT",
                       data={"trade_id": trade_id, "stored_atr": stored_atr})
+                self._pending_pyramid.pop(trade_id, None)
                 self._transition(AgentState.IDLE, f"no ATR for {trade_id}")
                 return f"Trade REJECTED: no valid ATR available — cannot compute safe SL distance"
 
@@ -1189,6 +1201,9 @@ class RuneClawEngine:
                 # Exchange is single source of truth — no paper duplicate.
                 # Position count comes from get_exchange_position_count().
                 invalidate_position_count_cache()
+                # C-05 FIX: only remove idea and ATR after successful execution
+                self._pending_ideas.pop(trade_id, None)
+                self._pending_atr.pop(trade_id, None)
 
             # Seal decision to tamper-evident audit chain
             self.audit_chain.seal_decision(DecisionRecord(

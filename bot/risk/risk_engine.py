@@ -516,6 +516,8 @@ class RiskEngine:
         except Exception as exc:
             failed.append(f"COOLDOWN: evaluation error ({exc})")
 
+        margin_equiv_position_usd = 0.0
+
         try:
             # 14. Portfolio exposure limit (mark-to-market)
             # C2-10 FIX: get_position_value() returns margin + unrealized PnL (per C-01),

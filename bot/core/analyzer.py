@@ -621,10 +621,10 @@ class Analyzer:
         # Apply limit entry if a better price was found
         if limit_entry is not None and limit_entry != entry:
             # Shift SL/TP by the same offset so R:R stays the same
-            offset = entry - limit_entry  # positive = limit is below market (better for longs)
+            entry_shift = limit_entry - entry
             entry = limit_entry
-            stop_loss = stop_loss - offset
-            take_profit = take_profit - offset
+            stop_loss = stop_loss + entry_shift
+            take_profit = take_profit + entry_shift
             order_type = "limit"
 
         # Guard against negative SL/TP from extreme ATR values
@@ -1849,7 +1849,7 @@ class Analyzer:
                 "rsi": r.get("rsi", None),
             })
 
-        reverse = direction.lower() != "long"  # ascending for longs, descending for shorts
+        reverse = direction.lower() == "long"  # descending for longs, ascending for shorts
         ranked.sort(key=lambda x: x["vwap_gap_pct"], reverse=reverse)
 
         for i, item in enumerate(ranked):
