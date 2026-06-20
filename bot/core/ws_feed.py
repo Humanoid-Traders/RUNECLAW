@@ -5,7 +5,7 @@ Provides sub-second price updates for position monitoring (SL/TP) and
 fresher data for signal generation. Supplements the REST polling scanner --
 does NOT replace it.
 
-Bitget v2 public WebSocket endpoint: wss://ws.bitget.com/v2/ws/public
+Bitget v3 public WebSocket endpoint: wss://ws.bitget.com/v3/ws/public
 
 Integration hook (in engine._check_open_positions):
     prices = ws_feed.get_prices() if ws_feed.is_connected() else await exchange.fetch_tickers()
@@ -34,7 +34,7 @@ except ImportError:
 # Constants
 # ---------------------------------------------------------------------------
 
-BITGET_WS_URL = "wss://ws.bitget.com/v2/ws/public"
+BITGET_WS_URL = "wss://ws.bitget.com/v3/ws/public"
 PING_INTERVAL_S = 25
 RECONNECT_BASE_S = 1
 RECONNECT_MAX_S = 60
@@ -55,6 +55,12 @@ class PriceTick:
     change_pct_24h: float
     timestamp: datetime
     source: str = "ws"
+    # v3 futures-only fields (0.0 when unavailable or on spot)
+    funding_rate: float = 0.0
+    mark_price: float = 0.0
+    index_price: float = 0.0
+    open_interest: float = 0.0
+    next_funding_time: float = 0.0  # unix ms
 
 
 # ---------------------------------------------------------------------------
@@ -293,7 +299,7 @@ class BitgetWSFeed:
         if self._ws is None:
             return
         args = [
-            {"instType": "SPOT", "channel": "ticker", "instId": inst}
+            {"instType": "usdt-futures", "topic": "ticker", "symbol": inst}
             for inst in symbols_to_bitget(symbols)
         ]
         msg = json.dumps({"op": "subscribe", "args": args})
@@ -317,7 +323,7 @@ class BitgetWSFeed:
         if self._ws is None:
             return
         args = [
-            {"instType": "SPOT", "channel": "ticker", "instId": inst}
+            {"instType": "usdt-futures", "topic": "ticker", "symbol": inst}
             for inst in symbols_to_bitget(symbols)
         ]
         msg = json.dumps({"op": "unsubscribe", "args": args})
@@ -356,16 +362,16 @@ class BitgetWSFeed:
         # Ticker data
         action = data.get("action")
         arg = data.get("arg", {})
-        channel = arg.get("channel")
-        if channel != "ticker":
+        topic = arg.get("topic") or arg.get("channel")  # v3 uses "topic", v2 fallback
+        if topic != "ticker":
             return
 
         for item in data.get("data", []):
             self._process_ticker(item)
 
     def _process_ticker(self, item: dict) -> None:
-        """Convert a Bitget ticker payload to a PriceTick and cache it."""
-        inst_id = item.get("instId", "")
+        """Convert a Bitget v3 ticker payload to a PriceTick and cache it."""
+        inst_id = item.get("instId") or item.get("symbol", "")
         symbol = symbol_from_bitget(inst_id)
 
         ts_ms = item.get("ts")
@@ -376,12 +382,19 @@ class BitgetWSFeed:
 
         tick = PriceTick(
             symbol=symbol,
-            last=_float(item.get("lastPr", item.get("last", 0))),
-            bid=_float(item.get("bidPr", item.get("bestBid", 0))),
-            ask=_float(item.get("askPr", item.get("bestAsk", 0))),
-            volume_24h=_float(item.get("baseVolume", item.get("vol24h", 0))),
-            change_pct_24h=_float(item.get("change24h", item.get("chgUTC24h", 0))),
+            # v3 fields first, v2 fallbacks for transition safety
+            last=_float(item.get("lastPrice", item.get("lastPr", 0))),
+            bid=_float(item.get("bid1Price", item.get("bidPr", 0))),
+            ask=_float(item.get("ask1Price", item.get("askPr", 0))),
+            volume_24h=_float(item.get("volume24h", item.get("baseVolume", 0))),
+            change_pct_24h=_float(item.get("price24hPcnt", item.get("change24h", 0))),
             timestamp=timestamp,
+            # v3 futures-only fields
+            funding_rate=_float(item.get("fundingRate", 0)),
+            mark_price=_float(item.get("markPrice", 0)),
+            index_price=_float(item.get("indexPrice", 0)),
+            open_interest=_float(item.get("openInterest", 0)),
+            next_funding_time=_float(item.get("nextFundingTime", 0)),
         )
         self._ticks[symbol] = tick
 
