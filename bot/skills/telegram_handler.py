@@ -217,6 +217,7 @@ class TelegramHandler:
             ("pause", self._cmd_pause),
             ("resume", self._cmd_resume),
             ("emergency_stop", self._cmd_emergency_stop),
+            ("closeall", self._cmd_close_all),
             ("daily_report", self._cmd_daily_report),
             ("strategy", self._cmd_strategy),
             # Signal stats
@@ -911,6 +912,13 @@ class TelegramHandler:
                     f"\U0001f4b0 <b>Limit set: {pair} {direction}</b>\n"
                     f"Entry: <code>${old_price:,.4f}</code> \u2192 <code>${custom_price:,.4f}</code>\n\n"
                     f"\u2705 <b>Confirmed — executing...</b>")
+
+                # LIVE-ONLY: only admin can confirm/approve live trades
+                if not self._is_admin(update):
+                    await self._send(update,
+                        "\U0001f512 <b>Admin approval required</b>\n\n"
+                        "Only the admin can approve live trades.")
+                    return
 
                 result = await self.engine.confirm_trade(trade_id, user_id=caller_uid)
                 await self._send(update, result)
@@ -3603,6 +3611,7 @@ class TelegramHandler:
                         "sl_order": "exchange" if pos.sl_order_id else "manual",
                         "tp_order": "exchange" if pos.tp_order_id else "manual",
                         "trade_id": pos.trade_id,
+                        "status": getattr(pos, "status", "open"),
                     })
             else:
                 # No locally-tracked positions — fall back to exchange API
@@ -3690,6 +3699,7 @@ class TelegramHandler:
                                 "tp_order": "exchange" if tp_price > 0 else "none",
                                 "trade_id": sym,
                                 "untracked": True,
+                                "status": "open",
                             })
                 except Exception as exc:
                     logger.warning("Exchange position fallback failed: %s", exc)
@@ -3729,22 +3739,29 @@ class TelegramHandler:
                         "hold_hours": round(hold_h, 1),
                     })
 
-        if not positions_data:
+        # ── Split into filled positions vs pending orders ──
+        filled_positions = [p for p in positions_data if p.get("status", "open") != "pending_fill"]
+        pending_orders = [p for p in positions_data if p.get("status") == "pending_fill"]
+
+        if not filled_positions and not pending_orders:
             await self._send(update,
-                "No open positions right now.\n"
+                "No open positions or pending orders right now.\n"
                 "Say \"scan\" or \"analyze BTC\" to find setups.")
             return
 
-        # ── Render each position as a styled PNG card ──
         from bot.formatters.signal_card import render_position_card
 
-        total_pnl = sum(p.get("pnl_pct", 0) for p in positions_data)
-        pnl_icon = "\U0001f7e2" if total_pnl > 0 else "\U0001f534" if total_pnl < 0 else ""
-        header = (f"<b>Open Positions ({len(positions_data)})</b> "
-                  f"{pnl_icon} {total_pnl:+.2f}% total")
-        await self._send(update, header)
+        # ── SECTION 1: Open Positions (filled) ──
+        if filled_positions:
+            total_pnl = sum(p.get("pnl_pct", 0) for p in filled_positions)
+            pnl_icon = "\U0001f7e2" if total_pnl > 0 else "\U0001f534" if total_pnl < 0 else ""
+            header = (f"\U0001f4ca <b>OPEN POSITIONS ({len(filled_positions)})</b> "
+                      f"{pnl_icon} {total_pnl:+.2f}% total")
+            await self._send(update, header)
+        elif not pending_orders:
+            await self._send(update, "No open positions right now.")
 
-        for pos in positions_data:
+        for pos in filled_positions:
             tid = pos.get('trade_id', pos['pair'])
             pair = pos.get("pair", "N/A")
             direction = pos.get("direction", "LONG")
@@ -3828,6 +3845,62 @@ class TelegramHandler:
                 # Fallback to text if PNG render fails
                 msg = render_open_positions([pos])
                 await self._send(update, msg, reply_markup=kb)
+
+        # ── SECTION 2: Pending Orders (unfilled limit orders) ──
+        if pending_orders:
+            from datetime import datetime, timezone
+            pend_header = (f"\u2694\ufe0f <b>PENDING ORDERS ({len(pending_orders)})</b>")
+            await self._send(update, pend_header)
+
+            for po in pending_orders:
+                pair = po.get("pair", "N/A")
+                direction = po.get("direction", "LONG")
+                limit_price = po.get("entry", 0)
+                current = po.get("current", limit_price)
+                sl = po.get("sl", 0)
+                tp = po.get("tp", 0)
+                size_usd = po.get("size_usd", 0)
+                leverage = po.get("leverage", 1)
+                tid = po.get("trade_id", pair)
+                hold_h = po.get("hold_hours", 0)
+
+                # Distance from current price to limit
+                if limit_price > 0 and current > 0:
+                    dist_pct = ((current - limit_price) / current) * 100
+                else:
+                    dist_pct = 0
+
+                d_icon = "\U0001f7e2" if direction == "LONG" else "\U0001f534"
+                dir_label = "Long" if direction == "LONG" else "Short"
+
+                # Age display
+                if hold_h < 1:
+                    age_str = f"{hold_h * 60:.0f}m ago"
+                elif hold_h < 24:
+                    age_str = f"{hold_h:.1f}h ago"
+                else:
+                    age_str = f"{hold_h / 24:.1f}d ago"
+
+                lines = [
+                    f"{d_icon} <b>{html.escape(pair)} {dir_label}</b> \u2014 Limit Order",
+                    f"  Limit: <code>${limit_price:,.4f}</code>",
+                    f"  Current: <code>${current:,.4f}</code> ({dist_pct:+.2f}% away)",
+                    f"  Size: <code>${size_usd:,.2f}</code> | Lev: {leverage:.0f}x",
+                ]
+                if sl > 0:
+                    lines.append(f"  SL: <code>${sl:,.4f}</code>")
+                if tp > 0:
+                    lines.append(f"  TP: <code>${tp:,.4f}</code>")
+                lines.append(f"  Placed: {age_str}")
+
+                kb = InlineKeyboardMarkup([[
+                    InlineKeyboardButton("Cancel", callback_data=f"pos_close_{tid}"),
+                ]])
+
+                await self._send(update, "\n".join(lines), reply_markup=kb)
+
+        elif not filled_positions:
+            await self._send(update, "No pending orders.")
 
     async def _cmd_performance(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """Performance summary — per-user."""
@@ -3995,6 +4068,24 @@ class TelegramHandler:
         rendered = wr_resume()
         await self._send(update, rendered["text"])
         audit(system_log, "Bot resumed via /resume", action="resume", result="OK")
+
+    async def _cmd_close_all(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """Admin only: /closeall — close all open positions on exchange."""
+        if not self._is_admin(update):
+            await self._send(update, "🔒 Admin only.")
+            return
+        if not CONFIG.is_live() or not hasattr(self.engine, 'live_executor'):
+            await self._send(update, "No live executor available.")
+            return
+
+        await self._send(update, "⏳ Closing all positions...")
+        try:
+            results = await self.engine.live_executor.close_all_positions(reason="admin_closeall")
+            msg = "⛔ <b>Close All Results:</b>\n\n" + "\n".join(
+                f"• {r[:120]}" for r in results[:10])
+            await self._send(update, msg)
+        except Exception as exc:
+            await self._send(update, f"❌ Close all failed: {exc}")
 
     async def _cmd_emergency_stop(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """Emergency stop confirmation prompt."""
@@ -4196,10 +4287,27 @@ class TelegramHandler:
             self.engine.risk.emergency_halt("emergency_stop_telegram")
             # Clear pending ideas (must access the underlying dict, not the property copy)
             self.engine._pending_ideas.clear()
+
+            # GETCLAW: Close all open positions on exchange
+            close_msgs = []
+            if CONFIG.is_live() and hasattr(self.engine, 'live_executor'):
+                try:
+                    close_msgs = await self.engine.live_executor.close_all_positions(
+                        reason="emergency_stop")
+                except Exception as exc:
+                    close_msgs = [f"Failed to close positions: {exc}"]
+
+            close_summary = ""
+            if close_msgs:
+                close_summary = "\n\n<b>Position closes:</b>\n" + "\n".join(
+                    f"• {m[:100]}" for m in close_msgs[:10])
+
             await self._send(update,
-                "Bot stopped.\n\n"
-                "All pending orders cancelled, circuit breaker is on.\n"
-                "Say \"resume\" when you're ready to start again.",
+                f"⛔ <b>EMERGENCY STOP</b>\n\n"
+                f"• Circuit breaker: ON\n"
+                f"• Pending ideas: cleared\n"
+                f"• Exchange positions: close attempted{close_summary}\n\n"
+                f"Say \"resume\" when ready to restart.",
                 edit=True)
             audit(system_log, "EMERGENCY STOP executed", action="emergency_stop", result="OK")
             return
@@ -4936,6 +5044,18 @@ class TelegramHandler:
                       f"Callback IDOR blocked: caller={caller_uid} expected={expected_uid}",
                       action="callback_idor_block", result="DENIED")
                 return
+
+            # LIVE-ONLY: only admin can confirm/approve live trades
+            if not self._is_admin(update):
+                await self._send(update,
+                    "\U0001f512 <b>Admin approval required</b>\n\n"
+                    "Only the admin can approve live trades on this bot.",
+                    edit=True)
+                audit(system_log,
+                      f"Non-admin trade confirm blocked: caller={caller_uid}",
+                      action="admin_gate", result="DENIED")
+                return
+
             try:
                 result = await self.engine.confirm_trade(trade_id, user_id=caller_uid or "")
             except Exception as exc:

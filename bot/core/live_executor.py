@@ -33,6 +33,12 @@ from bot.config import CONFIG
 from bot.utils.logger import audit, trade_log, system_log
 from bot.utils.models import Direction, TradeIdea
 from bot.utils.trailing import make_trailing_state, update_trailing_stop
+from bot.core.order_rules import (
+    is_market_open, is_weekend_queued, adjust_sl_for_gap_risk,
+    adjust_size_for_weekend, should_defer_tp_sl, ASSET_RULES,
+)
+from bot.core.limit_entry import calculate_entry, validate_entry_distance, EntryResult
+from bot.core.market_scanner import _classify_symbol
 
 logger = logging.getLogger(__name__)
 
@@ -341,6 +347,20 @@ class LiveExecutor:
                 f"Total exposure ${total_exposure + size_usd:.2f} would exceed "
                 f"micro-test limit ${MICRO_MAX_TOTAL_EXPOSURE:.2f}"
             )
+
+        # GETCLAW: Capital buffer guard — keep minimum reserve after trade.
+        # Deploying too much leaves no buffer for margin calls or new opportunities.
+        # Warn (don't block) if remaining equity drops below 20% of limit.
+        MIN_RESERVE_PCT = 20.0
+        remaining = MICRO_MAX_TOTAL_EXPOSURE - total_exposure - size_usd
+        reserve_needed = MICRO_MAX_TOTAL_EXPOSURE * (MIN_RESERVE_PCT / 100.0)
+        if remaining < reserve_needed and remaining > 0:
+            audit(trade_log,
+                  f"Capital buffer warning: ${remaining:.2f} remaining after trade "
+                  f"(reserve target: ${reserve_needed:.2f})",
+                  action="capital_buffer", result="WARN",
+                  data={"remaining": remaining, "reserve": reserve_needed,
+                        "exposure": total_exposure, "new_size": size_usd})
 
         # Check open positions count
         open_count = sum(1 for p in self._positions.values() if p.status == "open")
@@ -921,6 +941,96 @@ class LiveExecutor:
         # Clamp to micro limit
         size_usd = min(size_usd, MICRO_MAX_POSITION_USD)
 
+        # ── GETCLAW ORDER RULES: market hours + weekend adjustments ──
+        asset_class = _classify_symbol(idea.asset)
+        mkt_open, mkt_reason = is_market_open(asset_class)
+        is_weekend = is_weekend_queued(asset_class)
+
+        # Log market hours status for non-crypto assets
+        if asset_class != "Crypto" and not mkt_open:
+            audit(trade_log,
+                  f"Market closed for {idea.asset} ({asset_class}): {mkt_reason}",
+                  action="market_hours", result="QUEUED",
+                  data={"asset": idea.asset, "class": asset_class, "reason": mkt_reason})
+            # For market orders on closed markets, force to limit
+            if order_type == "market" and asset_class not in ("Crypto", "Pre-IPO"):
+                order_type = "limit"
+                audit(trade_log,
+                      f"Market order → limit: {idea.asset} market is closed",
+                      action="order_type_override", result="LIMIT")
+
+        # Weekend size reduction for metals/commodities (GetClaw: 30-40%)
+        if is_weekend:
+            old_size = size_usd
+            size_usd = adjust_size_for_weekend(size_usd, asset_class, is_weekend)
+            if size_usd != old_size:
+                audit(trade_log,
+                      f"Weekend size reduction: ${old_size:.2f} → ${size_usd:.2f} ({asset_class})",
+                      action="weekend_size_adjust", result="REDUCED",
+                      data={"old_size": old_size, "new_size": size_usd, "class": asset_class})
+
+        # Weekend SL widening for gap-risk assets (GetClaw: widen 25-50%)
+        if is_weekend:
+            old_sl = idea.stop_loss
+            new_sl = adjust_sl_for_gap_risk(
+                idea.stop_loss, idea.entry_price,
+                idea.direction.value, asset_class, is_weekend,
+            )
+            if new_sl != old_sl:
+                idea.stop_loss = new_sl
+                audit(trade_log,
+                      f"Weekend SL widened: ${old_sl:.4f} → ${new_sl:.4f} ({asset_class})",
+                      action="weekend_sl_widen", result="WIDENED",
+                      data={"old_sl": old_sl, "new_sl": new_sl, "class": asset_class})
+
+        # Check if TP/SL should be deferred until after fill (gap-risk limit orders)
+        defer_tp_sl = should_defer_tp_sl(asset_class, is_weekend, order_type)
+
+        # ── GETCLAW: Funding rate awareness ──────────────────────────
+        # Negative funding = longs get paid (favorable for longs)
+        # Positive funding = longs pay (unfavorable, factor into R:R)
+        # 0% funding on metals/stocks = market likely closed
+        try:
+            exchange_pre = await self._get_exchange()
+            funding_info = await exchange_pre.fetch_funding_rate(idea.asset)
+            funding_rate = float(funding_info.get("fundingRate", 0) or 0)
+            if funding_rate != 0:
+                direction_favored = (
+                    (idea.direction == Direction.LONG and funding_rate < 0) or
+                    (idea.direction == Direction.SHORT and funding_rate > 0)
+                )
+                if not direction_favored and abs(funding_rate) > 0.001:
+                    # Funding > 0.1% against us — log warning but don't block
+                    audit(trade_log,
+                          f"Funding rate {funding_rate*100:.3f}% unfavorable for "
+                          f"{idea.direction.value} {idea.asset}",
+                          action="funding_check", result="WARN",
+                          data={"funding_rate": funding_rate, "direction": idea.direction.value})
+        except Exception:
+            pass  # Non-critical — don't block trade on funding fetch failure
+
+        # ── GETCLAW: Funding settlement clock guard ──────────────────
+        # Funding settles at 00:00 / 08:00 / 16:00 UTC.
+        # Opening a position within 5 minutes BEFORE settlement means
+        # you pay funding almost immediately. Warn and log.
+        try:
+            now_utc = datetime.now(UTC)
+            minutes_in_day = now_utc.hour * 60 + now_utc.minute
+            # Settlement times in minutes: 0, 480, 960
+            settlement_times = [0, 480, 960]
+            for st in settlement_times:
+                mins_until = (st - minutes_in_day) % 1440
+                if mins_until <= 5:  # within 5 minutes before settlement
+                    audit(trade_log,
+                          f"Funding settlement in {mins_until}m — entry will incur "
+                          f"immediate funding charge on {idea.asset}",
+                          action="funding_clock", result="WARN",
+                          data={"mins_until_settlement": mins_until,
+                                "direction": idea.direction.value})
+                    break
+        except Exception:
+            pass  # Non-critical timing check
+
         # Pre-flight
         preflight_err = self._preflight_check(size_usd, symbol=idea.asset)
         if preflight_err:
@@ -1079,19 +1189,66 @@ class LiveExecutor:
                     needs_recalc = True
 
                 if needs_recalc and atr_value > 0:
-                    # Recalculate: place limit 0.5 ATR away from current price
-                    # (0.1 ATR is too small and ends up at market price)
-                    offset = 0.5 * atr_value
-                    if side == "buy":
-                        limit_price = round(current_price - offset, 8)
-                    else:
-                        limit_price = round(current_price + offset, 8)
-                    audit(trade_log,
-                          f"Limit price recalculated at execution: ${idea.entry_price:,.4f} → ${limit_price:,.4f} "
-                          f"(market=${current_price:,.4f}, would have filled instantly)",
-                          action="limit_recalc_exec", result="RECALCULATED",
-                          data={"old_limit": idea.entry_price, "new_limit": limit_price,
-                                "market_price": current_price, "atr": atr_value})
+                    # GETCLAW: confluence-based limit entry calculation
+                    # Fetch recent 1H OHLCV for VWAP/EMA computation
+                    ohlcv_data = None
+                    try:
+                        ohlcv_data = await active_exchange.fetch_ohlcv(
+                            symbol, "1h", limit=50)
+                    except Exception as ohlcv_exc:
+                        logger.debug("Could not fetch OHLCV for limit calc: %s", ohlcv_exc)
+
+                    entry_result = calculate_entry(
+                        current_price=current_price,
+                        direction=idea.direction.value,
+                        atr_value=atr_value,
+                        ohlcv=ohlcv_data,
+                    )
+                    limit_price = entry_result.limit_price
+
+                    # Apply entry tier size adjustment
+                    if entry_result.tier == "D":
+                        # Tier D = no confluence — downgrade to market order
+                        use_limit = False
+                        limit_price = None
+                        audit(trade_log,
+                              f"Limit downgraded to market: Tier D (no confluence) for {symbol}",
+                              action="limit_tier_d", result="MARKET_FALLBACK",
+                              data={"symbol": symbol, "tier": "D"})
+                    elif entry_result.size_multiplier < 1.0:
+                        # Tier C = marginal confluence — reduce size
+                        old_sz = size_usd
+                        size_usd = round(size_usd * entry_result.size_multiplier, 2)
+                        # Recalculate quantity with new size
+                        quantity = (size_usd * leverage_mult) / current_price
+                        if market:
+                            _re_rounded = active_exchange.amount_to_precision(symbol, quantity)
+                            if _re_rounded:
+                                quantity = float(_re_rounded)
+
+                    # Apply natural SL if better than current
+                    if entry_result.natural_sl and limit_price:
+                        dir_up = idea.direction.value.upper() == "LONG"
+                        current_sl_dist = abs(idea.entry_price - idea.stop_loss) / idea.entry_price
+                        natural_sl_dist = abs(limit_price - entry_result.natural_sl) / limit_price
+                        # Use natural SL if it provides more room (wider) without exceeding 2x original
+                        if natural_sl_dist > current_sl_dist and natural_sl_dist < current_sl_dist * 2:
+                            old_sl = idea.stop_loss
+                            idea.stop_loss = entry_result.natural_sl
+                            audit(trade_log,
+                                  f"Natural SL applied: ${old_sl:,.4f} → ${idea.stop_loss:,.4f}",
+                                  action="natural_sl", result="APPLIED",
+                                  data={"old_sl": old_sl, "natural_sl": idea.stop_loss})
+
+                    if limit_price:
+                        audit(trade_log,
+                              f"Confluence entry: {entry_result.explanation}",
+                              action="limit_recalc_exec", result="RECALCULATED",
+                              data={"old_limit": idea.entry_price, "new_limit": limit_price,
+                                    "market_price": current_price, "atr": atr_value,
+                                    "tier": entry_result.tier,
+                                    "confluence": entry_result.confluence_count,
+                                    "levels": entry_result.levels_used})
                 elif needs_recalc and atr_value <= 0:
                     # No ATR available — fall back to market order
                     use_limit = False
@@ -1145,13 +1302,17 @@ class LiveExecutor:
                     futures_params["tradeSide"] = "open"
 
                 otype = "limit" if use_limit else "market"
-                # POST_ONLY: guarantee maker-only for limit orders.
-                # If the limit price would cross the book and fill immediately,
-                # the exchange REJECTS the order instead of filling as taker.
-                # This is the definitive fix for "limit fills as market" —
-                # learned from Getclaw's approach.
-                if use_limit and CONFIG.limit_orders.post_only:
-                    futures_params["timeInForce"] = "post_only"
+                # TIME IN FORCE — asset-class aware:
+                # GETCLAW: metals/stocks need GTC (session queue for overnight).
+                # Crypto gets POST_ONLY for maker-only fee savings.
+                if use_limit:
+                    asset_class = _classify_symbol(symbol)
+                    if asset_class in ("Metal", "Commodity", "Stock", "Pre-IPO"):
+                        # GTC: stays live through session close/reopen
+                        futures_params["timeInForce"] = "GTC"
+                    elif CONFIG.limit_orders.post_only:
+                        # POST_ONLY: maker-only, rejects if would fill as taker
+                        futures_params["timeInForce"] = "post_only"
 
                 create_kwargs: dict[str, Any] = {
                     "symbol": symbol, "type": otype, "side": side,
@@ -1241,18 +1402,40 @@ class LiveExecutor:
                 fill_price = float(order.get("average", 0) or order.get("price", 0) or current_price)
                 filled_qty = float(order.get("filled") or 0)
 
-                # C2-12 FIX: If filled quantity is missing or zero from the create
-                # response, fetch the order to confirm actual fill.  Don't default
-                # to requested quantity — that can track a partial fill at full size,
-                # causing close_position to submit excess quantity (opens reverse pos).
+                # GETCLAW: Enhanced fill verification — try fetch_my_trades first
+                # (most accurate), then fetch_order as fallback.
+                # fetch_my_trades returns actual execution data with fees and PnL.
                 if not filled_qty or filled_qty <= 0:
+                    # 1. Try fetch_my_trades (most reliable source)
                     try:
-                        confirmed = await active_exchange.fetch_order(order_id, symbol)
-                        filled_qty = float(confirmed.get("filled", 0) or 0)
-                        if confirmed.get("average"):
-                            fill_price = float(confirmed["average"])
-                    except Exception as fetch_exc:
-                        logger.warning("Could not confirm fill for order %s: %s", order_id, fetch_exc)
+                        my_trades = await active_exchange.fetch_my_trades(symbol, limit=10)
+                        # Match trades by order ID
+                        order_trades = [t for t in my_trades if t.get("order") == order_id]
+                        if order_trades:
+                            filled_qty = sum(float(t.get("amount", 0) or 0) for t in order_trades)
+                            # Weighted average fill price
+                            total_cost = sum(
+                                float(t.get("price", 0) or 0) * float(t.get("amount", 0) or 0)
+                                for t in order_trades
+                            )
+                            if filled_qty > 0 and total_cost > 0:
+                                fill_price = total_cost / filled_qty
+                            audit(trade_log,
+                                  f"Fill verified via trades: {symbol} qty={filled_qty:.6f} @ ${fill_price:,.4f}",
+                                  action="fill_verify", result="TRADES",
+                                  data={"order_id": order_id, "trade_count": len(order_trades)})
+                    except Exception as trades_exc:
+                        logger.debug("fetch_my_trades failed for %s: %s", symbol, trades_exc)
+
+                    # 2. Fallback: fetch_order
+                    if not filled_qty or filled_qty <= 0:
+                        try:
+                            confirmed = await active_exchange.fetch_order(order_id, symbol)
+                            filled_qty = float(confirmed.get("filled", 0) or 0)
+                            if confirmed.get("average"):
+                                fill_price = float(confirmed["average"])
+                        except Exception as fetch_exc:
+                            logger.warning("Could not confirm fill for order %s: %s", order_id, fetch_exc)
 
                 # Final fallback: if still no fill data, use requested quantity
                 # but flag it as estimated in the audit log
@@ -1413,10 +1596,19 @@ class LiveExecutor:
                   })
 
             # Try to place SL/TP orders (best-effort — not all exchanges support this for spot)
-            sl_id, tp_id = await self._place_sl_tp(
-                exchange, idea.asset, idea.direction,
-                filled_qty, idea.stop_loss, idea.take_profit
-            )
+            # GETCLAW: For gap-risk limit orders (weekend metals/stocks),
+            # defer TP/SL until after fill to avoid instant trigger on gap.
+            if defer_tp_sl and is_pending_limit:
+                sl_id, tp_id = None, None
+                audit(trade_log,
+                      f"TP/SL deferred until fill: {idea.asset} (weekend-queued limit)",
+                      action="defer_tp_sl", result="DEFERRED",
+                      data={"symbol": idea.asset, "class": asset_class})
+            else:
+                sl_id, tp_id = await self._place_sl_tp(
+                    exchange, idea.asset, idea.direction,
+                    filled_qty, idea.stop_loss, idea.take_profit
+                )
             position.sl_order_id = sl_id
             position.tp_order_id = tp_id
             # Persist SL/TP order IDs to disk immediately
@@ -1549,6 +1741,9 @@ class LiveExecutor:
     ) -> tuple[Optional[str], Optional[str]]:
         """Attempt to place SL/TP orders. Returns (sl_order_id, tp_order_id).
 
+        GETCLAW: Always checks existing plan orders first to prevent duplicates.
+        Cancels stale SL/TP before placing new ones.
+
         For UTA futures accounts: uses Bitget v3 REST API directly because
         ccxt's triggerPrice param executes immediately as a market order in
         UTA mode instead of creating a pending trigger order.
@@ -1560,6 +1755,29 @@ class LiveExecutor:
         tp_id = None
         close_side = "sell" if direction == Direction.LONG else "buy"
         is_futures = CONFIG.exchange.trade_mode == "futures"
+
+        # GETCLAW: Check and cancel existing plan orders before placing new ones.
+        # Prevents duplicate SL/TP orders that can cause double-closes.
+        ccxt_sym = symbol if ":USDT" in symbol else f"{symbol}:USDT"
+        try:
+            existing_plans = await exchange.fetch_open_orders(
+                ccxt_sym, params={"productType": "USDT-FUTURES", "isPlan": "plan_order"})
+            if existing_plans:
+                cancelled = 0
+                for plan in existing_plans:
+                    try:
+                        await exchange.cancel_order(plan["id"], ccxt_sym)
+                        cancelled += 1
+                    except Exception:
+                        pass
+                if cancelled > 0:
+                    audit(trade_log,
+                          f"Cleared {cancelled} existing plan order(s) for {symbol} before placing new SL/TP",
+                          action="plan_order_cleanup", result="OK",
+                          data={"symbol": symbol, "cancelled": cancelled})
+        except Exception as plan_exc:
+            # Non-critical: some exchanges don't support isPlan filter
+            logger.debug("Plan order check failed for %s: %s", symbol, plan_exc)
 
         # Futures-only mode: spot SL/TP path removed
 
@@ -1959,6 +2177,33 @@ class LiveExecutor:
                     except Exception as exc:
                         logger.debug("SL/TP retry failed for %s: %s", pos.symbol, exc)
 
+                # ── GETCLAW: Time-stop check (Rules 6/17) ──
+                if CONFIG.time_stop.enabled:
+                    hold_hours = (datetime.now(UTC) - pos.opened_at).total_seconds() / 3600
+                    close_threshold = CONFIG.time_stop.intraday_close_hours  # default 4H
+                    if hold_hours >= close_threshold:
+                        # Check if position is in profit
+                        if pos.direction == "LONG":
+                            in_profit = price > pos.entry_price
+                        else:
+                            in_profit = price < pos.entry_price
+                        if not in_profit:
+                            # Time-stop: no profit after threshold → close
+                            msg = await self.close_position(
+                                trade_id, f"TIME_STOP ({hold_hours:.1f}h, no profit)", price)
+                            closed_messages.append(msg)
+                            audit(trade_log,
+                                  f"Time-stop triggered: {pos.symbol} held {hold_hours:.1f}h with no profit",
+                                  action="time_stop", result="CLOSED",
+                                  data={"trade_id": trade_id, "hold_hours": hold_hours,
+                                        "entry": pos.entry_price, "current": price})
+                            continue  # Skip SL/TP check — already closing
+                    elif hold_hours >= CONFIG.time_stop.intraday_warn_hours:
+                        # Approaching time-stop — log warning (once per cycle is fine)
+                        remaining = close_threshold - hold_hours
+                        logger.debug("Time-stop warning: %s held %.1fh, %.1fh until auto-close",
+                                     pos.symbol, hold_hours, remaining)
+
                 # ── Static SL/TP check ──
                 should_close = False
                 reason = ""
@@ -2064,14 +2309,24 @@ class LiveExecutor:
             order = await exchange.fetch_order(pos.limit_order_id, pos.symbol)
             order_status = order.get("status", "unknown")
 
-            if order_status in ("closed", "filled"):
-                # Limit order filled — transition to open position
+            if order_status in ("closed", "filled", "partially_filled"):
+                # Limit order filled (or partially filled) — transition to open position
                 fill_price = float(order.get("average", 0) or order.get("price", 0) or pos.entry_price)
                 filled_qty = float(order.get("filled", 0) or pos.quantity)
+
+                # GETCLAW: partially_filled = some qty matched, rest still open.
+                # Use actual filled qty, not original order size.
+                if order_status == "partially_filled" and filled_qty > 0:
+                    audit(trade_log,
+                          f"Limit PARTIAL FILL: {pos.symbol} filled {filled_qty} of {pos.quantity}",
+                          action="partial_fill", result="PARTIAL",
+                          data={"trade_id": trade_id, "filled": filled_qty,
+                                "original": pos.quantity})
 
                 pos.entry_price = fill_price
                 pos.quantity = filled_qty
                 pos.status = "open"
+                pos.order_type = "limit"  # GETCLAW: limit fill = maker fee rate
                 pos.limit_order_id = None
 
                 # Recalculate cost
@@ -2284,6 +2539,33 @@ class LiveExecutor:
             # New placement failed — old SL remains active, no gap
             logger.warning("Trailing SL update skipped for %s — new placement failed, old SL preserved", pos.symbol)
 
+    async def close_all_positions(self, reason: str = "emergency") -> list[str]:
+        """Emergency close ALL open positions in a single sweep.
+
+        GETCLAW: Uses per-position close with tradeSide=close + reduceOnly
+        for safety. Returns list of result messages.
+        """
+        results = []
+        open_pos = [p for p in self._positions.values()
+                    if p.status in ("open", "pending_fill")]
+
+        if not open_pos:
+            return ["No open positions to close."]
+
+        for pos in open_pos:
+            try:
+                result = await self.close_position(pos.trade_id, reason=reason)
+                results.append(result)
+            except Exception as exc:
+                results.append(f"Failed to close {pos.symbol}: {exc}")
+
+        audit(trade_log,
+              f"Emergency close all: {len(results)} positions processed",
+              action="close_all", result="DONE",
+              data={"count": len(results), "reason": reason})
+
+        return results
+
     async def close_position(self, trade_id: str, reason: str = "manual",
                               close_price: float = 0) -> str:
         """Close a live position by placing the opposite order."""
@@ -2399,8 +2681,11 @@ class LiveExecutor:
             # Exchange commission: entry + exit notional × fee rate
             entry_notional = pos.entry_price * pos.quantity
             exit_notional = fill_price * pos.quantity
-            commission_pct = CONFIG.risk.commission_pct  # default 0.1% per side
-            commission = (entry_notional + exit_notional) * (commission_pct / 100.0)
+            # GETCLAW: use maker rate if limit order (POST_ONLY), taker for market
+            is_limit_entry = getattr(pos, 'order_type', '') == 'limit'
+            entry_fee_pct = CONFIG.risk.maker_fee_pct if is_limit_entry else CONFIG.risk.taker_fee_pct
+            exit_fee_pct = CONFIG.risk.taker_fee_pct  # exits are usually market (SL/TP triggers)
+            commission = (entry_notional * entry_fee_pct / 100.0) + (exit_notional * exit_fee_pct / 100.0)
             net_pnl = gross_pnl - commission
 
             pos.close_reason = reason
@@ -3031,8 +3316,11 @@ class LiveExecutor:
                             # Deduct commission on reconciled close (same as manual close)
                             entry_notional = pos.entry_price * pos.quantity
                             exit_notional = est_exit * pos.quantity
-                            commission_pct = CONFIG.risk.commission_pct
-                            commission = (entry_notional + exit_notional) * (commission_pct / 100.0)
+                            # GETCLAW: maker/taker fee split
+                            is_limit_entry = getattr(pos, 'order_type', '') == 'limit'
+                            entry_fee = CONFIG.risk.maker_fee_pct if is_limit_entry else CONFIG.risk.taker_fee_pct
+                            exit_fee = CONFIG.risk.taker_fee_pct  # SL/TP triggers = market = taker
+                            commission = (entry_notional * entry_fee / 100.0) + (exit_notional * exit_fee / 100.0)
                             gross_pnl = pnl
                             net_pnl = gross_pnl - commission
                         pos.gross_pnl = round(gross_pnl, 4)

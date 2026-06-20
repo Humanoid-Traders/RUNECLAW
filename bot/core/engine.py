@@ -24,6 +24,7 @@ from bot.core.system_health import SystemHealthMonitor
 from bot.core.exchange_flow import ExchangeFlowProvider
 from bot.core.macro_events import MacroEventProvider
 from bot.core.live_executor import LiveExecutor, normalize_symbol
+from bot.core.exchange_sync import sync_portfolio_with_exchange, get_exchange_position_count, invalidate_position_count_cache
 from bot.core.market_scanner import MarketScanner, _classify_symbol
 from bot.core.order_flow import OrderFlowAnalyzer
 from bot.core.ws_feed import BitgetWSFeed
@@ -410,13 +411,12 @@ class RuneClawEngine:
                 for msg in reconciled:
                     audit(trade_log, f"Startup reconcile: {msg}",
                           action="startup_reconcile", result="CLOSED")
-                # Adopt orphan positions from exchange that have no local record.
-                # This ensures the bot tracks ALL open positions, even if local
-                # state was lost due to crash/restart/file cleanup.
-                adopted = await self.live_executor.adopt_exchange_positions()
-                for sym in adopted:
-                    audit(trade_log, f"Startup adopted orphan: {sym}",
-                          action="startup_adopt", result="ADOPTED")
+                # EXCHANGE = SOURCE OF TRUTH: sync portfolio with exchange.
+                # Removes ghost positions from portfolio and adopts orphans.
+                sync_msgs = await sync_portfolio_with_exchange(self)
+                for msg in sync_msgs:
+                    audit(system_log, f"Exchange sync: {msg}",
+                          action="startup_exchange_sync", result="SYNCED")
             except Exception as exc:
                 audit(system_log, f"Startup reconciliation error: {exc}",
                       action="startup_reconcile", result="ERROR")
@@ -774,11 +774,16 @@ class RuneClawEngine:
         exec_cap = MICRO_MAX_POSITION_USD if CONFIG.is_live() else None
         # LIVE FIX: pass live open position count so risk check #5 is accurate
         # Use max of live executor and paper portfolio to be conservative
+        # EXCHANGE = SOURCE OF TRUTH: use real exchange position count
         live_open = None
         if CONFIG.is_live():
-            live_count = len(self.live_executor.open_positions)
-            paper_count = self.portfolio.snapshot().open_positions if hasattr(self, 'portfolio') else 0
-            live_open = max(live_count, paper_count)
+            try:
+                live_open = await get_exchange_position_count(self)
+            except Exception:
+                # Fallback: use local state max if exchange unreachable
+                live_count = len(self.live_executor.open_positions)
+                paper_count = self.portfolio.snapshot().open_positions if hasattr(self, 'portfolio') else 0
+                live_open = max(live_count, paper_count)
         self._transition(AgentState.RISK_CHECK, f"evaluating {signal.symbol}")
         # Wire order flow signal to risk engine so check #23 (bid dominance) runs
         if of_signal is not None:
@@ -1004,11 +1009,15 @@ class RuneClawEngine:
             live_eq_recheck = self._live_balance_cache.get("total", 0.0) if (CONFIG.is_live() and self._live_balance_cache) else None
             from bot.core.live_executor import MICRO_MAX_POSITION_USD
             recheck_cap = MICRO_MAX_POSITION_USD if CONFIG.is_live() else None
+            # EXCHANGE = SOURCE OF TRUTH: use real exchange position count
             live_open_recheck = None
             if CONFIG.is_live():
-                live_ct = len(self.live_executor.open_positions)
-                paper_ct = self.portfolio.snapshot().open_positions if hasattr(self, 'portfolio') else 0
-                live_open_recheck = max(live_ct, paper_ct)
+                try:
+                    live_open_recheck = await get_exchange_position_count(self)
+                except Exception:
+                    live_ct = len(self.live_executor.open_positions)
+                    paper_ct = self.portfolio.snapshot().open_positions if hasattr(self, 'portfolio') else 0
+                    live_open_recheck = max(live_ct, paper_ct)
             recheck = self.risk.evaluate(idea, atr=stored_atr, live_equity=live_eq_recheck, max_position_usd=recheck_cap, live_open_count=live_open_recheck)
         except Exception as exc:
             # Fix 6: if re-check raises, do NOT silently lose the idea.
@@ -1101,13 +1110,12 @@ class RuneClawEngine:
             self._transition(AgentState.IDLE, f"compliance denied {trade_id}")
             return f"Execution denied: {compliance_decision.reasons[-1] if compliance_decision.reasons else 'compliance check failed'}"
 
-        # H2 fix: guard is_live() — only proceed to live execution when is_live() is True
-        # In live mode, any authorized user who confirms a trade executes live.
-        # The human confirmation step IS the safety gate — no additional role check needed.
-        # Paper fallback only applies when the bot is NOT in live mode.
+        # LIVE-ONLY: this bot only executes live trades. Paper mode is disabled.
         if not CONFIG.is_live():
-            pass  # fall through to paper trade below
-        else:
+            self._transition(AgentState.IDLE, f"paper mode disabled")
+            return "⛔ Paper trading is disabled on this bot. This bot is LIVE-ONLY."
+
+        if True:
             # Live mode — execute via LiveExecutor with micro-test safety limits
             self._transition(AgentState.EXECUTING, f"executing LIVE trade {trade_id}")
             size_usd = recheck.position_size_usd
@@ -1178,12 +1186,9 @@ class RuneClawEngine:
             ))
 
             if not live_failed:
-                # Also record as paper trade for portfolio tracking / metrics
-                try:
-                    lev = CONFIG.exchange.default_leverage if CONFIG.exchange.trade_mode == "futures" else 1
-                    paper_trade = self.portfolio.open_position(idea, size_usd, leverage=lev)
-                except Exception:
-                    paper_trade = None  # non-fatal: live order is the source of truth
+                # Exchange is single source of truth — no paper duplicate.
+                # Position count comes from get_exchange_position_count().
+                invalidate_position_count_cache()
 
             # Seal decision to tamper-evident audit chain
             self.audit_chain.seal_decision(DecisionRecord(
@@ -1216,7 +1221,11 @@ class RuneClawEngine:
             self._transition(AgentState.IDLE, "live trade executed")
             return result
 
-        # Paper trade execution
+        # Paper trade execution — DISABLED (live-only bot)
+        # This code path should never be reached due to the guard above.
+        self._transition(AgentState.IDLE, f"paper mode disabled for {trade_id}")
+        return "⛔ Paper trading is disabled. This bot is LIVE-ONLY."
+        # Dead code below kept for reference:
         self._transition(AgentState.EXECUTING, f"executing paper trade {trade_id}")
         size_usd = recheck.position_size_usd
 

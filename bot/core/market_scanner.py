@@ -42,6 +42,18 @@ _STOCK_SET = set(US_STOCK_SYMBOLS)
 _STOCK_PERP_SET = set(STOCK_PERPETUALS)
 
 
+def has_futures_market(scanner_instance, symbol: str) -> bool:
+    """Check if a symbol has a futures market on the exchange.
+    
+    Uses the cached set from the last scan cycle. If cache is empty
+    (first scan not yet completed), returns True (optimistic).
+    """
+    if not scanner_instance._futures_symbols:
+        return True  # no cache yet, assume available
+    spot_fmt = symbol.split(":")[0] if ":" in symbol else symbol
+    return spot_fmt in scanner_instance._futures_symbols
+
+
 def _classify_symbol(symbol: str) -> str:
     """Return the asset category for a given symbol."""
     if symbol in _METAL_SET:
@@ -76,6 +88,11 @@ class MarketScanner:
         self._futures_exchange: Optional[ccxt.Exchange] = None
         self._volume_history: dict[str, list[float]] = {}  # rolling window
         self._lock = threading.RLock()
+        # GETCLAW: cache of symbols with valid futures markets.
+        # Built from fetch_tickers(USDT-FUTURES) response each scan cycle.
+        # Spot symbols not in this set are filtered out before analysis.
+        self._futures_symbols: set[str] = set()
+        self._futures_symbols_raw: set[str] = set()  # raw exchange format
 
     async def _get_exchange(self) -> ccxt.Exchange:
         """Spot exchange for crypto/stock scanning."""
@@ -141,15 +158,35 @@ class MarketScanner:
         signals: list[MarketSignal] = []
         seen_symbols: set[str] = set()
 
-        # Process spot tickers (crypto)
+        # GETCLAW: build futures symbol cache from the futures ticker response.
+        # This lets us reject spot-only tokens BEFORE wasting LLM analysis time.
+        if isinstance(futures_result, dict):
+            self._futures_symbols_raw = set(futures_result.keys())
+            # Build spot-format lookup: "BTC/USDT:USDT" → "BTC/USDT"
+            self._futures_symbols = set()
+            for fs in self._futures_symbols_raw:
+                # Strip :USDT suffix to match spot format
+                spot_fmt = fs.split(":")[0] if ":" in fs else fs
+                self._futures_symbols.add(spot_fmt)
+
+        # Process spot tickers (crypto) — only include symbols with futures markets
         if isinstance(spot_result, dict):
+            filtered_count = 0
             for symbol, tick in spot_result.items():
                 if not symbol.endswith("/USDT"):
+                    continue
+                # GETCLAW: skip spot-only symbols (no futures = can't trade)
+                if self._futures_symbols and symbol not in self._futures_symbols:
+                    filtered_count += 1
                     continue
                 sig = self._process_ticker(symbol, tick, min_vol=50_000)
                 if sig:
                     seen_symbols.add(symbol)
                     signals.append(sig)
+            if filtered_count > 0:
+                audit(system_log,
+                      f"Futures filter: {filtered_count} spot-only symbols skipped",
+                      action="scan_filter", result="OK")
         else:
             audit(system_log, f"Spot fetch error: {spot_result}",
                   action="scan", result="PARTIAL")

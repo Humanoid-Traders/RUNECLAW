@@ -94,8 +94,13 @@ class RiskLimits:
     require_stop_loss: bool = _env_bool("REQUIRE_STOP_LOSS", True)
     # Portfolio VaR: reject trades that would push parametric VaR above this %.
     max_portfolio_var_pct: float = _env_float("MAX_PORTFOLIO_VAR_PCT", 15.0)
-    # Exchange commission per side (taker fee).  0.1% = Bitget taker default.
-    commission_pct: float = _env_float("COMMISSION_PCT", 0.1)
+    # Exchange commission per side.
+    # Bitget USDT perps: taker ~0.060%, maker ~0.020% (standard tier).
+    # commission_pct is the DEFAULT rate used in risk calcs (taker).
+    commission_pct: float = _env_float("COMMISSION_PCT", 0.06)
+    # Split rates for accurate PnL when order type is known.
+    taker_fee_pct: float = _env_float("TAKER_FEE_PCT", 0.06)
+    maker_fee_pct: float = _env_float("MAKER_FEE_PCT", 0.02)
     # Liquidity guard: minimum order-book depth (per side) in USD.
     # Scaled dynamically by position size; this is the absolute floor.
     # Default $2K allows micro-test trades ($10-$50) to pass on smaller pairs.
@@ -119,8 +124,8 @@ class ExchangeConfig:
     trade_mode: str = _env("TRADE_MODE", "futures")
     # Default leverage (1x = no leverage, 5x = default for futures)
     default_leverage: int = int(_env_float_bounded("DEFAULT_LEVERAGE", 5, 1, 125))
-    # Margin mode: "crossed" or "isolated"
-    margin_mode: str = _env("MARGIN_MODE", "crossed")
+    # Margin mode: "isolated" mandatory (GetClaw rule: prevents runaway losses on gap-risk assets)
+    margin_mode: str = _env("MARGIN_MODE", "isolated")
     # C2-57: Configurable hold mode probe symbol (used for account mode detection)
     hold_mode_probe_symbol: str = _env("HOLD_MODE_PROBE_SYMBOL", "BTCUSDT")
 
@@ -134,8 +139,8 @@ if _leverage_val > 20:
         "liquidation risk. Confirm this is intentional.", _leverage_val,
     )
 
-    # Margin mode: "crossed" or "isolated"
-    margin_mode: str = _env("MARGIN_MODE", "crossed")
+    # Margin mode: "isolated" mandatory (GetClaw rule)
+    margin_mode: str = _env("MARGIN_MODE", "isolated")
 
 
 # Solana ecosystem tokens tracked on Bitget (centralized pairs).
