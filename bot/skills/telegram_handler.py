@@ -4628,8 +4628,8 @@ class TelegramHandler:
                     from bot.skills.chart_renderer import build_position_chart
                     chart_png = await build_position_chart(
                         None, symbol, entry=_entry, sl=_sl, tp=_tp)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    system_log.warning("build_position_chart failed for %s: %s", symbol, exc)
 
                 if pos_card_png:
                     # Send the styled position card as a photo with buttons

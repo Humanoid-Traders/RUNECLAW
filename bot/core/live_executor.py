@@ -859,22 +859,38 @@ class LiveExecutor:
                     status="open",
                 )
 
-                # Try to find SL/TP from open trigger orders
-                try:
-                    open_orders = await exchange.fetch_open_orders(raw_sym)
-                    for o in (open_orders or []):
-                        trigger = float(o.get("triggerPrice") or o.get("stopPrice") or 0)
-                        if trigger <= 0:
-                            continue
-                        otype = (o.get("type") or "").lower()
-                        if "stop" in otype or "loss" in otype:
-                            lp.stop_loss = trigger
-                            lp.sl_order_id = o.get("id")
-                        elif "take" in otype or "profit" in otype:
-                            lp.take_profit = trigger
-                            lp.tp_order_id = o.get("id")
-                except Exception:
-                    pass  # Non-critical — position still adopted without SL/TP
+                # Read SL/TP directly from v2 position data (exchange is source of truth)
+                info = p.get("info", {})
+                ex_sl = float(info.get("stopLoss") or 0)
+                ex_tp = float(info.get("takeProfit") or 0)
+                ex_sl_id = info.get("stopLossId") or ""
+                ex_tp_id = info.get("takeProfitId") or ""
+                if ex_sl > 0:
+                    lp.stop_loss = ex_sl
+                    if ex_sl_id:
+                        lp.sl_order_id = ex_sl_id
+                if ex_tp > 0:
+                    lp.take_profit = ex_tp
+                    if ex_tp_id:
+                        lp.tp_order_id = ex_tp_id
+
+                # Fallback: if position data didn't have SL/TP, try open orders
+                if lp.stop_loss <= 0 or lp.take_profit <= 0:
+                    try:
+                        open_orders = await exchange.fetch_open_orders(raw_sym)
+                        for o in (open_orders or []):
+                            trigger = float(o.get("triggerPrice") or o.get("stopPrice") or 0)
+                            if trigger <= 0:
+                                continue
+                            otype = (o.get("type") or "").lower()
+                            if ("stop" in otype or "loss" in otype) and lp.stop_loss <= 0:
+                                lp.stop_loss = trigger
+                                lp.sl_order_id = o.get("id")
+                            elif ("take" in otype or "profit" in otype) and lp.take_profit <= 0:
+                                lp.take_profit = trigger
+                                lp.tp_order_id = o.get("id")
+                    except Exception:
+                        pass  # Non-critical — position still adopted without SL/TP
 
                 # If SL or TP missing, calculate safety defaults (3% SL, 6% TP)
                 need_sl = lp.stop_loss <= 0 and entry_price > 0
@@ -1318,6 +1334,14 @@ class LiveExecutor:
                 else:
                     # Even in one-way mode, explicitly set tradeSide for safety
                     futures_params["tradeSide"] = "open"
+
+                # NOTE: v3 UTA Place Order supports inline takeProfit/stopLoss
+                # params which would place SL/TP atomically with the position.
+                # However, the response doesn't return SL/TP order IDs, and
+                # _place_sl_tp_v3 already cancels existing plans before placing
+                # new ones, so inline SL/TP would just get replaced. Keeping
+                # the two-step flow (entry + separate SL/TP) for now since it
+                # returns usable order IDs for reconciliation tracking.
 
                 otype = "limit" if use_limit else "market"
                 # TIME IN FORCE — asset-class aware:
@@ -1816,6 +1840,10 @@ class LiveExecutor:
 
         if use_v3:
             # UTA mode: place SL/TP via Bitget v3 REST API directly
+            # Brief delay to let position settle on Bitget before placing SL/TP.
+            # Prevents error 31008 ("no position") on fast fills.
+            import asyncio as _aio_delay
+            await _aio_delay.sleep(1.5)
             # Get tick size from exchange markets for proper price precision
             price_precision = None
             # Try both spot and swap symbol formats for market lookup
@@ -1998,8 +2026,10 @@ class LiveExecutor:
         sl_final = sl_str if sl_str is not None else _round_price(stop_loss)
 
         # Build payload:
-        # - ONE-WAY MODE: omit posSide (causes 40019/40020 errors)
-        # - HEDGE MODE: include posSide = "long"/"short"
+        # Bitget v3 UTA requires:
+        # - posSide = "long"/"short" (required even in one-way mode)
+        # - marginMode = "isolated"/"crossed" (CRITICAL: required for isolated positions,
+        #   without it Bitget returns 31008 "no position")
         payload: dict[str, str] = {
             "category": "USDT-FUTURES",
             "symbol": bitget_symbol,
@@ -2009,62 +2039,101 @@ class LiveExecutor:
             "stopLoss": sl_final,
             "tpOrderType": "market",
             "slOrderType": "market",
+            "posSide": pos_side,
+            "marginMode": CONFIG.exchange.margin_mode or "isolated",
             "clientOid": self._client_oid(f"{bitget_symbol}_{pos_side}_sltp_{int(time.time())}"),
         }
-        # Always include posSide for safety (prevents reverse position on close)
-        payload["posSide"] = pos_side
 
-        logger.info("v3 SL/TP request: symbol=%s hedge=%s posSide=%s TP=%s SL=%s (raw TP=%s SL=%s, rounded=%s/%s, precision=%s)",
-                     bitget_symbol, self._hedge_mode, pos_side if self._hedge_mode else "omitted",
+        logger.info("v3 SL/TP request: symbol=%s hedge=%s posSide=%s marginMode=%s TP=%s SL=%s (raw TP=%s SL=%s, rounded=%s/%s, precision=%s)",
+                     bitget_symbol, self._hedge_mode, payload["posSide"], payload["marginMode"],
                      tp_final, sl_final,
                      take_profit, stop_loss, tp_str, sl_str, price_precision)
-        try:
-            result = await _asyncio.to_thread(_v3_post, "/api/v3/trade/place-strategy-order", payload)
 
-            if result.get("code") == "00000":
-                data = result.get("data", {})
-                # Bitget v3 returns orderId for the combined strategy order
-                order_id = data.get("orderId") or data.get("slOrderId") or data.get("tpOrderId") or "v3-strategy"
-                sl_id = order_id
-                tp_id = order_id
-                audit(trade_log, f"v3 SL/TP strategy order placed: order={order_id}",
-                      action="sl_tp_v3", result="OK",
-                      data={"symbol": bitget_symbol, "sl": sl_final, "tp": tp_final,
-                            "order_id": order_id, "hedge_mode": self._hedge_mode})
-            else:
-                error_msg = result.get("msg", str(result))
-                error_code = result.get("code", "")
-                logger.warning("v3 strategy order failed (code=%s): %s", error_code, error_msg)
-                audit(trade_log, f"v3 SL/TP failed: {error_msg}",
-                      action="sl_tp_v3", result="FAIL",
-                      data={"symbol": bitget_symbol, "response": str(result)[:300],
-                            "payload": {k: v for k, v in payload.items() if k != "clientOid"}})
+        # Retry logic for error 31008 ("no position") — position may not be
+        # settled on exchange yet after fill.  Wait and retry up to 4 times
+        # with increasing delays: 2s, 4s, 6s, 8s.
+        _MAX_31008_RETRIES = 4
+        _31008_CODES = ("31008", "31009")  # 31009 = variant on some API versions
 
-                # Retry with posSide if omitting it failed (some UTA configs need it)
-                if not self._hedge_mode and error_code in ("40019", "40020"):
-                    logger.info("Retrying v3 SL/TP with posSide=%s", pos_side)
-                    payload["posSide"] = pos_side
-                    retry_result = await _asyncio.to_thread(
-                        _v3_post, "/api/v3/trade/place-strategy-order", payload)
-                    if retry_result.get("code") == "00000":
-                        data = retry_result.get("data", {})
-                        order_id = data.get("orderId") or data.get("slOrderId") or data.get("tpOrderId") or "v3-strategy"
-                        sl_id = order_id
-                        tp_id = order_id
-                        audit(trade_log, f"v3 SL/TP retry with posSide OK: order={order_id}",
-                              action="sl_tp_v3_retry", result="OK",
-                              data={"symbol": bitget_symbol, "sl": sl_final, "tp": tp_final})
-                    else:
-                        retry_msg = retry_result.get("msg", str(retry_result))
-                        logger.warning("v3 SL/TP retry also failed: %s", retry_msg)
-                        audit(trade_log, f"v3 SL/TP retry failed: {retry_msg}",
-                              action="sl_tp_v3_retry", result="FAIL",
-                              data={"symbol": bitget_symbol, "response": str(retry_result)[:300]})
-        except Exception as exc:
-            logger.warning("v3 SL/TP placement error for %s: %s", bitget_symbol, exc)
-            audit(trade_log, f"v3 SL/TP error: {exc}",
-                  action="sl_tp_v3", result="ERROR",
-                  data={"symbol": bitget_symbol, "error": str(exc)[:200]})
+        for attempt in range(_MAX_31008_RETRIES + 1):
+            try:
+                # Regenerate clientOid on retries to avoid duplicate rejection
+                if attempt > 0:
+                    payload["clientOid"] = self._client_oid(
+                        f"{bitget_symbol}_{pos_side}_sltp_{int(time.time())}_{attempt}")
+
+                result = await _asyncio.to_thread(_v3_post, "/api/v3/trade/place-strategy-order", payload)
+
+                if result.get("code") == "00000":
+                    data = result.get("data", {})
+                    # Bitget v3 returns orderId for the combined strategy order
+                    order_id = data.get("orderId") or data.get("slOrderId") or data.get("tpOrderId") or "v3-strategy"
+                    sl_id = order_id
+                    tp_id = order_id
+                    retry_note = f" (attempt {attempt + 1})" if attempt > 0 else ""
+                    audit(trade_log, f"v3 SL/TP strategy order placed: order={order_id}{retry_note}",
+                          action="sl_tp_v3", result="OK",
+                          data={"symbol": bitget_symbol, "sl": sl_final, "tp": tp_final,
+                                "order_id": order_id, "hedge_mode": self._hedge_mode,
+                                "attempt": attempt + 1})
+                    break  # Success — exit retry loop
+                else:
+                    error_msg = result.get("msg", str(result))
+                    error_code = result.get("code", "")
+
+                    # Error 31008: "There is no position in this position"
+                    # OR 40019: "Parameter posSide cannot be empty"
+                    # 31008 = "no position" — likely marginMode mismatch
+                    # Try toggling marginMode between isolated/crossed
+                    _RETRYABLE_CODES = ("31008", "31009", "40019", "40020")
+                    if error_code in _RETRYABLE_CODES and attempt < _MAX_31008_RETRIES:
+                        delay = (attempt + 1) * 2  # 2s, 4s, 6s, 8s
+                        # Toggle marginMode on 31008 (most common root cause)
+                        if error_code in ("31008", "31009"):
+                            current_mm = payload.get("marginMode", "")
+                            if current_mm == "isolated":
+                                payload["marginMode"] = "crossed"
+                            else:
+                                payload["marginMode"] = "isolated"
+                        # Toggle posSide on 40019/40020
+                        elif error_code in ("40019", "40020"):
+                            current_ps = payload.get("posSide")
+                            if current_ps == pos_side:
+                                payload["posSide"] = "net"
+                            elif current_ps == "net":
+                                payload.pop("posSide", None)
+                            else:
+                                payload["posSide"] = pos_side
+                        logger.warning(
+                            "v3 SL/TP error %s for %s — retry %d/%d in %ds (marginMode=%s, posSide=%s)",
+                            error_code, bitget_symbol, attempt + 1, _MAX_31008_RETRIES, delay,
+                            payload.get("marginMode", "N/A"), payload.get("posSide", "OMITTED"))
+                        audit(trade_log,
+                              f"v3 SL/TP {error_code} retry {attempt + 1}/{_MAX_31008_RETRIES} for {bitget_symbol}",
+                              action="sl_tp_v3_retry_cycle", result="RETRY",
+                              data={"symbol": bitget_symbol, "attempt": attempt + 1, "delay": delay,
+                                    "marginMode": payload.get("marginMode"),
+                                    "posSide": payload.get("posSide", "OMITTED"),
+                                    "error_code": error_code})
+                        await _asyncio.sleep(delay)
+                        continue  # Retry
+
+                    logger.warning("v3 strategy order failed (code=%s): %s", error_code, error_msg)
+                    audit(trade_log, f"v3 SL/TP failed: {error_msg}",
+                          action="sl_tp_v3", result="FAIL",
+                          data={"symbol": bitget_symbol, "response": str(result)[:300],
+                                "payload": {k: v for k, v in payload.items() if k != "clientOid"},
+                                "attempt": attempt + 1})
+                    break  # Non-retryable error — exit loop
+            except Exception as exc:
+                logger.warning("v3 SL/TP placement error for %s (attempt %d): %s",
+                               bitget_symbol, attempt + 1, exc)
+                if attempt < _MAX_31008_RETRIES:
+                    await _asyncio.sleep(2)
+                    continue
+                audit(trade_log, f"v3 SL/TP error: {exc}",
+                      action="sl_tp_v3", result="ERROR",
+                      data={"symbol": bitget_symbol, "error": str(exc)[:200]})
 
         return sl_id, tp_id
 
@@ -2670,6 +2739,7 @@ class LiveExecutor:
                 "productType": "USDT-FUTURES",
                 "tradeSide": "close",
                 "reduceOnly": True,
+                "marginMode": CONFIG.exchange.margin_mode or "isolated",
             }
             order = await exchange.create_order(
                 symbol=pos.symbol,
@@ -2843,13 +2913,379 @@ class LiveExecutor:
             return close_msg
 
         except Exception as exc:
+            exc_str = str(exc)
+
+            # ── CRITICAL FIX: Handle "position already closed on exchange" ──
+            # When exchange returns 25227 ("No position available to close"),
+            # it could mean:
+            #   a) Position was already closed by exchange-side SL/TP trigger
+            #   b) Close order had wrong parameters (missing marginMode etc.)
+            # MUST verify the position is actually gone before recording a close.
+            if "25227" in exc_str or "No position available" in exc_str:
+                try:
+                    verify_exchange = await self._get_exchange()
+                    ccxt_sym = pos.symbol if ":USDT" in pos.symbol else f"{pos.symbol}:USDT"
+                    ex_positions = await verify_exchange.fetch_positions(
+                        [ccxt_sym], params={"productType": "USDT-FUTURES"})
+                    still_open = any(
+                        abs(float(p.get("contracts", 0) or 0)) > 0 for p in ex_positions
+                    )
+                except Exception as verify_exc:
+                    logger.debug("25227 position verification failed: %s", verify_exc)
+                    still_open = True  # Assume still open if we can't verify
+
+                if still_open:
+                    # Position is still on exchange — 25227 was likely wrong params.
+                    # Try v2 Flash Close as fallback (simpler endpoint, no marginMode).
+                    audit(trade_log,
+                          f"25227 but position still on exchange — trying flash close: {pos.symbol}",
+                          action="live_close_25227", result="STILL_OPEN_FLASH_CLOSE")
+                    try:
+                        flash_result = await self._flash_close_position(pos)
+                        if flash_result and flash_result.get("code") == "00000":
+                            # Flash close worked — now look up fill data
+                            await asyncio.sleep(1.0)  # Let fill settle
+                            close_result = await self._handle_already_closed_position(pos)
+                            if close_result:
+                                return close_result
+                    except Exception as flash_exc:
+                        logger.warning("Flash close fallback failed for %s: %s",
+                                       pos.symbol, flash_exc)
+                else:
+                    # Position is truly gone — look up actual fill data
+                    audit(trade_log,
+                          f"Position {pos.symbol} confirmed closed on exchange — looking up fill data",
+                          action="live_close_25227", result="LOOKUP")
+                    try:
+                        close_result = await self._handle_already_closed_position(pos)
+                        if close_result:
+                            return close_result
+                    except Exception as lookup_exc:
+                        logger.debug("Fill lookup after 25227 failed for %s: %s",
+                                     pos.symbol, lookup_exc)
+
             # H-01 FIX: Revert status so position is retried next cycle
             pos.status = "open"
             self._save_positions()
             audit(trade_log, f"Live close failed: {exc}",
                   action="live_close", result="ERROR",
-                  data={"trade_id": trade_id, "error": str(exc)})
+                  data={"trade_id": trade_id, "error": exc_str})
             return f"CLOSE FAILED for {trade_id}: {exc}"
+
+    async def _handle_already_closed_position(self, pos: LivePosition) -> str | None:
+        """Handle a position that was already closed on exchange (25227).
+
+        Looks up actual fill price from exchange trade history and records
+        accurate PnL instead of reverting to "open" with $0.
+
+        Returns close message string if successful, None if lookup fails.
+        """
+        exchange = await self._get_exchange()
+        ccxt_symbol = pos.symbol if ":USDT" in pos.symbol else f"{pos.symbol}:USDT"
+
+        actual_fill_price = None
+        fill_source = "estimated"
+        reason = "closed (exchange)"
+        exchange_reported_pnl = None
+
+        # ── 1. fetchMyTrades — match by SL/TP order IDs ──────────────
+        if pos.sl_order_id or pos.tp_order_id:
+            try:
+                trades = await exchange.fetch_my_trades(ccxt_symbol, limit=50)
+                relevant = [
+                    t for t in trades
+                    if t.get("order") in (pos.sl_order_id, pos.tp_order_id)
+                ]
+                if relevant:
+                    actual_fill_price = float(relevant[-1].get("price", 0) or 0)
+                    fill_source = "exchange_fill"
+                    total_profit = 0.0
+                    for rt in relevant:
+                        info = rt.get("info", {})
+                        profit = float(info.get("profit", 0) or 0)
+                        total_profit += profit
+                    if total_profit != 0:
+                        exchange_reported_pnl = total_profit
+                    matched_order = relevant[-1].get("order")
+                    if matched_order == pos.tp_order_id:
+                        reason = "TP HIT (exchange)"
+                    elif matched_order == pos.sl_order_id:
+                        reason = "SL HIT (exchange)"
+            except Exception as e:
+                logger.debug("25227 fetchMyTrades failed for %s: %s", ccxt_symbol, e)
+
+        # ── 2. fetchClosedOrders ─────────────────────────────────────
+        if (actual_fill_price is None or actual_fill_price <= 0) and (pos.sl_order_id or pos.tp_order_id):
+            try:
+                closed_orders = await exchange.fetch_closed_orders(ccxt_symbol, limit=20)
+                for o in closed_orders:
+                    if o.get("id") in (pos.sl_order_id, pos.tp_order_id):
+                        avg = o.get("average") or o.get("price")
+                        if avg:
+                            actual_fill_price = float(avg)
+                            fill_source = "closed_order"
+                            if o["id"] == pos.tp_order_id:
+                                reason = "TP HIT (exchange)"
+                            else:
+                                reason = "SL HIT (exchange)"
+                            break
+            except Exception as e:
+                logger.debug("25227 fetchClosedOrders failed for %s: %s", ccxt_symbol, e)
+
+        # ── 3. Ticker + SL/TP proximity estimate ─────────────────────
+        if actual_fill_price is None or actual_fill_price <= 0:
+            try:
+                ticker = await exchange.fetch_ticker(ccxt_symbol)
+                current_price = float(ticker.get("last", 0) or 0)
+            except Exception:
+                current_price = 0
+
+            if current_price > 0:
+                sl = pos.stop_loss or 0
+                tp = pos.take_profit or 0
+                if sl > 0 or tp > 0:
+                    dist_tp = abs(current_price - tp) if tp > 0 else float("inf")
+                    dist_sl = abs(current_price - sl) if sl > 0 else float("inf")
+                    if dist_tp < dist_sl and tp > 0:
+                        actual_fill_price = tp
+                        reason = "TP HIT (estimated)"
+                    elif sl > 0:
+                        actual_fill_price = sl
+                        reason = "SL HIT (estimated)"
+                    else:
+                        actual_fill_price = current_price
+                        reason = "closed (estimated)"
+                else:
+                    actual_fill_price = current_price
+                    reason = "closed (ticker)"
+                fill_source = "estimated"
+
+        if actual_fill_price is None or actual_fill_price <= 0:
+            return None  # Can't determine fill — fall back to revert logic
+
+        # ── Record accurate close ────────────────────────────────────
+        est_exit = actual_fill_price
+
+        if pos.direction == "LONG":
+            gross_pnl = (est_exit - pos.entry_price) * pos.quantity
+        else:
+            gross_pnl = (pos.entry_price - est_exit) * pos.quantity
+
+        # Commission calculation
+        if exchange_reported_pnl is not None:
+            net_pnl = exchange_reported_pnl
+            commission = gross_pnl - net_pnl
+            if commission < 0:
+                commission = 0
+                gross_pnl = net_pnl
+        else:
+            entry_notional = pos.entry_price * pos.quantity
+            exit_notional = est_exit * pos.quantity
+            is_limit_entry = getattr(pos, 'order_type', '') == 'limit'
+            entry_fee = CONFIG.risk.maker_fee_pct if is_limit_entry else CONFIG.risk.taker_fee_pct
+            exit_fee = CONFIG.risk.taker_fee_pct
+            commission = (entry_notional * entry_fee / 100.0) + (exit_notional * exit_fee / 100.0)
+            net_pnl = gross_pnl - commission
+
+        pos.close_reason = reason
+        pos.status = "closed"
+        pos.close_price = est_exit
+        pos.gross_pnl = round(gross_pnl, 4)
+        pos.commission = round(commission, 4)
+        pos.pnl_usd = round(net_pnl, 4)
+        pos.closed_at = datetime.now(UTC)
+
+        self._append_closed_trade(pos)
+        self._save_positions()
+        self._fire_position_closed(pos)
+
+        pnl_str = f"+${net_pnl:.4f}" if net_pnl >= 0 else f"-${abs(net_pnl):.4f}"
+        pnl_pct = ((est_exit - pos.entry_price) / pos.entry_price * 100) if pos.entry_price else 0
+        if pos.direction == "SHORT":
+            pnl_pct = -pnl_pct
+        lev = pos.leverage or 1
+        pnl_pct_margin = pnl_pct * lev
+        hold_secs = (pos.closed_at - pos.opened_at).total_seconds() if pos.closed_at and pos.opened_at else 0
+        if hold_secs < 3600:
+            hold_str = f"{hold_secs / 60:.0f}m"
+        elif hold_secs < 86400:
+            hold_str = f"{hold_secs / 3600:.1f}h"
+        else:
+            hold_str = f"{hold_secs / 86400:.1f}d"
+
+        if lev > 1:
+            pnl_pct_str = f"{pnl_pct_margin:+.2f}% margin / {pnl_pct:+.2f}% notional, {lev}×"
+        else:
+            pnl_pct_str = f"{pnl_pct:+.2f}%"
+
+        close_msg = (
+            f"CLOSED {pos.direction} {pos.symbol} ({reason})\n"
+            f"Entry: ${pos.entry_price:,.4f} → Exit: ${est_exit:,.4f}\n"
+            f"PnL: {pnl_str} ({pnl_pct_str}) | Fees: ${commission:.2f} | Hold: {hold_str}\n"
+            f"Fill source: {fill_source}"
+        )
+
+        self._last_close_data = {
+            "symbol": pos.symbol,
+            "direction": pos.direction,
+            "reason": reason,
+            "entry": pos.entry_price,
+            "exit": est_exit,
+            "pnl_pct": pnl_pct,
+            "pnl_pct_margin": pnl_pct_margin,
+            "pnl_usd": round(net_pnl, 4),
+            "gross_pnl": round(gross_pnl, 4),
+            "fees": round(commission, 4),
+            "exchange_fees": 0,
+            "size_usd": round(pos.cost_usd, 2) if pos.cost_usd > 0 else round(pos.entry_price * pos.quantity, 2),
+            "leverage": lev,
+            "hold_time": hold_str,
+            "confirmed": True,
+            "close_order_id": "",
+        }
+
+        audit(trade_log,
+              f"Position already closed on exchange — recorded: {pos.symbol} net=${net_pnl:.4f} ({fill_source})",
+              action="live_close_25227", result="CLOSED",
+              data={
+                  "trade_id": pos.trade_id, "reason": reason,
+                  "entry": pos.entry_price, "exit": est_exit,
+                  "pnl_usd": round(net_pnl, 4),
+                  "gross_pnl": round(gross_pnl, 4),
+                  "commission": round(commission, 4),
+                  "fill_source": fill_source,
+              })
+
+        return close_msg
+
+    # ── v3 Flash Close (UTA endpoint, no marginMode needed) ──
+
+    async def _flash_close_position(self, pos: LivePosition) -> dict | None:
+        """Close a position using Bitget v3 UTA Close All Positions endpoint.
+
+        POST /api/v3/trade/close-positions
+        Uses `category` + `symbol` + `posSide`. No marginMode required.
+        Rate limit: 5 req/sec/UID.
+
+        Returns the exchange response dict on success, None on failure.
+        """
+        import urllib.request as _urllib_req
+        import hmac as _hmac
+        import hashlib as _hashlib
+        import base64 as _base64
+        import time as _time
+        import json as _json
+
+        cfg = CONFIG.exchange
+        bitget_symbol = pos.symbol.replace("/USDT", "USDT").replace(":USDT", "")
+        pos_side = "long" if pos.direction == "LONG" else "short"
+
+        path = "/api/v3/trade/close-positions"
+        body_dict = {
+            "category": "USDT-FUTURES",
+            "symbol": bitget_symbol,
+            "posSide": pos_side,
+        }
+        body = _json.dumps(body_dict)
+        ts = str(int(_time.time() * 1000))
+        pre_sign = ts + "POST" + path + body
+        sig = _base64.b64encode(
+            _hmac.new(cfg.api_secret.encode(), pre_sign.encode(), _hashlib.sha256).digest()
+        ).decode()
+        url = "https://api.bitget.com" + path
+        req = _urllib_req.Request(url, data=body.encode(), method="POST")
+        req.add_header("ACCESS-KEY", cfg.api_key)
+        req.add_header("ACCESS-SIGN", sig)
+        req.add_header("ACCESS-TIMESTAMP", ts)
+        req.add_header("ACCESS-PASSPHRASE", cfg.passphrase)
+        req.add_header("Content-Type", "application/json")
+        req.add_header("locale", "en-US")
+
+        try:
+            import asyncio as _aio
+            result = await _aio.to_thread(
+                lambda: _json.loads(_urllib_req.urlopen(req, timeout=10).read())
+            )
+        except Exception as e:
+            if hasattr(e, 'read'):
+                try:
+                    result = _json.loads(e.read().decode())
+                except Exception:
+                    logger.warning("Flash close failed for %s: %s", pos.symbol, e)
+                    return None
+            else:
+                logger.warning("Flash close failed for %s: %s", pos.symbol, e)
+                return None
+
+        if result.get("code") == "00000":
+            data = result.get("data", {})
+            close_list = data.get("list", [])
+            # v3 returns list items with orderId, clientOid, code, msg
+            success = [item for item in close_list if not item.get("code") or item.get("code") == "00000"]
+            failed = [item for item in close_list if item.get("code") and item.get("code") != "00000"]
+            audit(trade_log,
+                  f"v3 flash close for {pos.symbol}: {len(success)} success, {len(failed)} fail",
+                  action="flash_close_v3", result="OK",
+                  data={"symbol": bitget_symbol, "posSide": pos_side,
+                        "close_list": close_list})
+            return result
+        else:
+            error_code = result.get("code", "")
+            error_msg = result.get("msg", str(result))
+            audit(trade_log,
+                  f"v3 flash close failed for {pos.symbol}: {error_code} — {error_msg}",
+                  action="flash_close_v3", result="FAIL",
+                  data={"symbol": bitget_symbol, "response": str(result)[:300]})
+            return None
+
+    async def _sync_sl_tp_from_exchange(self, pos: LivePosition) -> bool:
+        """Read SL/TP order IDs directly from the exchange position data.
+
+        Uses v2 Get All Positions endpoint which returns:
+          takeProfit, stopLoss, takeProfitId, stopLossId
+
+        Updates the local LivePosition in-place.
+        Returns True if SL/TP info was updated.
+        """
+        try:
+            exchange = await self._get_exchange()
+            ccxt_sym = pos.symbol if ":USDT" in pos.symbol else f"{pos.symbol}:USDT"
+            positions = await exchange.fetch_positions(
+                [ccxt_sym], params={"productType": "USDT-FUTURES"})
+
+            for p in positions:
+                if abs(float(p.get("contracts", 0) or 0)) <= 0:
+                    continue
+                info = p.get("info", {})
+
+                # v2 position data includes SL/TP info directly
+                tp_price = float(info.get("takeProfit") or 0)
+                sl_price = float(info.get("stopLoss") or 0)
+                tp_id = info.get("takeProfitId") or ""
+                sl_id = info.get("stopLossId") or ""
+
+                updated = False
+                if tp_price > 0 and pos.take_profit != tp_price:
+                    pos.take_profit = tp_price
+                    updated = True
+                if sl_price > 0 and pos.stop_loss != sl_price:
+                    pos.stop_loss = sl_price
+                    updated = True
+                if tp_id and pos.tp_order_id != tp_id:
+                    pos.tp_order_id = tp_id
+                    updated = True
+                if sl_id and pos.sl_order_id != sl_id:
+                    pos.sl_order_id = sl_id
+                    updated = True
+
+                if updated:
+                    self._save_positions()
+                    logger.info("Synced SL/TP from exchange for %s: SL=%s TP=%s",
+                                pos.symbol, sl_price or "none", tp_price or "none")
+                return updated
+        except Exception as exc:
+            logger.debug("_sync_sl_tp_from_exchange failed for %s: %s", pos.symbol, exc)
+        return False
 
     # ── Account info ─────────────────────────────────────────────
 
@@ -3165,16 +3601,16 @@ class LiveExecutor:
                     trade_id=item["trade_id"],
                     symbol=item["symbol"],
                     direction=item["direction"],
-                    entry_price=float(item["entry_price"]),
-                    quantity=float(item["quantity"]),
-                    cost_usd=float(item["cost_usd"]),
-                    stop_loss=float(item.get("stop_loss", 0)),
-                    take_profit=float(item.get("take_profit", 0)),
-                    leverage=int(item.get("leverage", 1)),
-                    close_price=float(item.get("close_price", 0)),
-                    pnl_usd=float(item.get("pnl_usd", 0)),
-                    gross_pnl=float(item.get("gross_pnl", 0)) if item.get("gross_pnl") is not None else None,
-                    commission=float(item.get("commission", 0)) if item.get("commission") is not None else None,
+                    entry_price=float(item.get("entry_price") or 0),
+                    quantity=float(item.get("quantity") or 0),
+                    cost_usd=float(item.get("cost_usd") or 0),
+                    stop_loss=float(item.get("stop_loss") or 0),
+                    take_profit=float(item.get("take_profit") or 0),
+                    leverage=int(item.get("leverage") or 1),
+                    close_price=float(item.get("close_price") or 0),
+                    pnl_usd=float(item.get("pnl_usd") or 0),
+                    gross_pnl=float(item.get("gross_pnl") or 0) if item.get("gross_pnl") is not None else None,
+                    commission=float(item.get("commission") or 0) if item.get("commission") is not None else None,
                     opened_at=opened_at,
                     closed_at=closed_at,
                     status="closed",
@@ -3243,13 +3679,11 @@ class LiveExecutor:
                         params={"productType": "USDT-FUTURES"},
                     )
                     has_position = any(
-                        float(p.get("contracts", 0)) > 0 for p in positions
+                        abs(float(p.get("contracts", 0) or 0)) > 0 for p in positions
                     )
 
                     if not has_position:
                         # Position no longer on exchange — closed by SL/TP or liquidation
-                        # C2-13 FIX: Try actual trade history first for accurate PnL,
-                        # fall back to ticker estimation only as last resort.
                         actual_fill_price = None
                         fill_source = "estimated"
 
@@ -3432,6 +3866,32 @@ class LiveExecutor:
                                   "entry": pos.entry_price, "exit": est_exit,
                                   "pnl_usd": round(pnl, 4),
                               })
+
+                    else:
+                        # Position still on exchange — sync SL/TP from exchange data
+                        for ep in positions:
+                            if abs(float(ep.get("contracts", 0) or 0)) > 0:
+                                info = ep.get("info", {})
+                                ex_sl = float(info.get("stopLoss") or 0)
+                                ex_tp = float(info.get("takeProfit") or 0)
+                                ex_sl_id = info.get("stopLossId") or ""
+                                ex_tp_id = info.get("takeProfitId") or ""
+                                synced = False
+                                if ex_sl > 0 and pos.stop_loss != ex_sl:
+                                    pos.stop_loss = ex_sl
+                                    synced = True
+                                if ex_tp > 0 and pos.take_profit != ex_tp:
+                                    pos.take_profit = ex_tp
+                                    synced = True
+                                if ex_sl_id and pos.sl_order_id != ex_sl_id:
+                                    pos.sl_order_id = ex_sl_id
+                                    synced = True
+                                if ex_tp_id and pos.tp_order_id != ex_tp_id:
+                                    pos.tp_order_id = ex_tp_id
+                                    synced = True
+                                if synced:
+                                    self._save_positions()
+                                break
 
                 except Exception as exc:
                     logger.debug("Reconciliation error for %s: %s", pos.trade_id, exc)

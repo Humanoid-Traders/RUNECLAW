@@ -1347,9 +1347,11 @@ async def build_position_chart(bot, symbol: str,
         return None
     try:
         import ccxt.async_support as ccxt
-        exchange = ccxt.bitget({"options": {"defaultType": "spot"}})
+        exchange = ccxt.bitget({"options": {"defaultType": "swap"}})
+        # Ensure swap-format symbol (e.g. CL/USDT → CL/USDT:USDT)
+        _sym = symbol if ":" in symbol else f"{symbol}:USDT"
         try:
-            candles = await exchange.fetch_ohlcv(symbol, "1h", limit=60)
+            candles = await exchange.fetch_ohlcv(_sym, "1h", limit=60)
         finally:
             await exchange.close()
         if not candles or len(candles) < 25:
