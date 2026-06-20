@@ -448,12 +448,24 @@ class RuneClawEngine:
     async def _tick(self) -> None:
         """One full scan-analyze cycle."""
         # ── Watchdog: force-recover if stuck in a non-IDLE state for >2 minutes ──
+        # H-09 FIX: Don't interrupt active trade execution — use longer timeout
         if self.state != AgentState.IDLE and time.time() - self._last_state_change > 120:
-            logger.warning(
-                "State timeout watchdog: stuck in %s for >120s, forcing IDLE",
-                self.state.value,
-            )
-            self._transition(AgentState.IDLE, "state timeout watchdog")
+            if self.state == AgentState.EXECUTING:
+                # Allow up to 300s for active trade execution before forcing IDLE
+                if time.time() - self._last_state_change <= 300:
+                    pass  # Don't interrupt active trade execution
+                else:
+                    logger.warning(
+                        "State timeout watchdog: stuck in %s for >300s, forcing IDLE",
+                        self.state.value,
+                    )
+                    self._transition(AgentState.IDLE, "state timeout watchdog (executing)")
+            else:
+                logger.warning(
+                    "State timeout watchdog: stuck in %s for >120s, forcing IDLE",
+                    self.state.value,
+                )
+                self._transition(AgentState.IDLE, "state timeout watchdog")
 
         # Refresh live balance cache if in live mode
         if CONFIG.is_live():
@@ -710,7 +722,6 @@ class RuneClawEngine:
             if len(existing_positions) >= 2:
                 audit(scan_log, f"Signal skipped: max 2 positions on {idea.asset}",
                       action="pyramid_maxed", result="SKIPPED")
-                self._transition(AgentState.ANALYZING, "max entries reached, skipping")
                 return None
 
             pos, is_live = existing_positions[0]
@@ -725,7 +736,6 @@ class RuneClawEngine:
                 if idea.confidence < 0.70:
                     audit(scan_log, f"Pyramid skipped: confidence {idea.confidence:.0%} < 70% for {idea.asset}",
                           action="pyramid_low_conf", result="SKIPPED")
-                    self._transition(AgentState.ANALYZING, "pyramid confidence too low")
                     return None
 
                 # Condition 2: existing position is at least 1R in profit
@@ -743,7 +753,6 @@ class RuneClawEngine:
                     audit(scan_log,
                           f"Pyramid skipped: {idea.asset} only {r_achieved:.2f}R in profit (need 1R)",
                           action="pyramid_insufficient_profit", result="SKIPPED")
-                    self._transition(AgentState.ANALYZING, "pyramid: not enough profit")
                     return None
 
                 # All conditions met — flag as pyramid add
@@ -759,7 +768,6 @@ class RuneClawEngine:
                 audit(scan_log, f"Flip BLOCKED: {idea.asset} {pos_dir} -> {idea_dir} (auto-flip disabled)",
                       action="flip_blocked", result="SKIPPED",
                       data={"confidence": idea.confidence, "existing": pos_dir, "proposed": idea_dir})
-                self._transition(AgentState.ANALYZING, "auto-flip disabled — close manually first")
                 return None
 
         # Store pyramid flag for confirm_trade to apply half-size + SL-to-breakeven
@@ -823,7 +831,6 @@ class RuneClawEngine:
                           "spread_bps": round(of_signal.spread_bps, 1) if of_signal.spread_bps else 0,
                           "position_size": round(liq_size, 2),
                       })
-                self._transition(AgentState.ANALYZING, "liquidity rejected, continuing")
                 return None
 
         if risk_check.verdict == RiskVerdict.REJECTED:
@@ -870,7 +877,6 @@ class RuneClawEngine:
                 decision="TRADE_REJECTED_FAIL_CLOSED",
             )
             self.learning.review_rejection(decision)
-            self._transition(AgentState.ANALYZING, "risk rejected, continuing analysis")
             return None
 
         self._transition(AgentState.CONFIRMING, f"awaiting human confirmation for {idea.id}")
@@ -1126,175 +1132,84 @@ class RuneClawEngine:
             self._transition(AgentState.IDLE, f"paper mode disabled")
             return "⛔ Paper trading is disabled on this bot. This bot is LIVE-ONLY."
 
-        if True:
-            # Live mode — execute via LiveExecutor with micro-test safety limits
-            self._transition(AgentState.EXECUTING, f"executing LIVE trade {trade_id}")
-            size_usd = recheck.position_size_usd
-
-            # ── Pyramid add: half size + move existing SL to breakeven ──
-            _pending_pyramid = getattr(self, '_pending_pyramid', {})
-            if _pending_pyramid.pop(trade_id, False):
-                original_size = size_usd
-                size_usd = size_usd * 0.5
-                audit(trade_log,
-                      f"Pyramid add: half size ${original_size:.2f} -> ${size_usd:.2f}",
-                      action="pyramid_half_size", result="APPLIED")
-
-                # Move existing position's SL to breakeven
-                symbol_key = normalize_symbol(idea.asset)
-                for lp in self.live_executor.open_positions:
-                    lp_key = normalize_symbol(lp.symbol)
-                    if lp_key == symbol_key and lp.trade_id != trade_id:
-                        old_sl = lp.stop_loss
-                        lp.stop_loss = lp.entry_price  # breakeven
-                        audit(trade_log,
-                              f"Pyramid: moved {lp.symbol} SL to breakeven ${lp.entry_price:.4f} (was ${old_sl:.4f})",
-                              action="pyramid_sl_breakeven", result="MOVED")
-                        # Update exchange SL
-                        try:
-                            exchange = await self.live_executor._get_exchange()
-                            await self.live_executor._update_exchange_sl(
-                                exchange, lp, lp.entry_price)
-                        except Exception as exc:
-                            logger.debug("Failed to update exchange SL to BE: %s", exc)
-                        self.live_executor._save_positions()
-                        break
-
-            # LIVE FIX: Cap position size at actual exchange equity to prevent
-            # InsufficientFunds errors.  The risk engine sizes based on paper
-            # portfolio equity; in LIVE mode the real account may be smaller.
-            live_bal = self._live_balance_cache
-            if live_bal:
-                available = live_bal.get("free", 0.0)
-                if size_usd > available:
-                    audit(trade_log,
-                          f"Live size clamped: ${size_usd:.2f} -> ${available:.2f} (exchange available)",
-                          action="live_size_clamp", result="CLAMPED",
-                          data={"requested": round(size_usd, 2), "available": round(available, 2)})
-                    size_usd = available
-
-            # C2-53 FIX: Reject trade when ATR is missing or zero.
-            # A zero ATR produces SL at entry price = immediate stop-out.
-            if not stored_atr or stored_atr <= 0:
-                audit(trade_log,
-                      f"No valid ATR for {idea.asset} — aborting to avoid SL-at-entry",
-                      action="confirm", result="REJECT",
-                      data={"trade_id": trade_id, "stored_atr": stored_atr})
-                self._pending_pyramid.pop(trade_id, None)
-                self._transition(AgentState.IDLE, f"no ATR for {trade_id}")
-                return f"Trade REJECTED: no valid ATR available — cannot compute safe SL distance"
-
-            result = await self.live_executor.execute(
-                idea, size_usd,
-                order_type=idea.order_type,
-                atr_value=stored_atr,
-            )
-
-            # Only record paper trade if live execution succeeded
-            # (result starts with error prefixes when execution fails)
-            live_failed = any(result.startswith(prefix) for prefix in (
-                "EXECUTION FAILED:", "INSUFFICIENT FUNDS:", "INVALID ORDER:",
-                "BLOCKED:", "PREFLIGHT FAILED:",
-            ))
-
-            if not live_failed:
-                # Exchange is single source of truth — no paper duplicate.
-                # Position count comes from get_exchange_position_count().
-                invalidate_position_count_cache()
-                # C-05 FIX: only remove idea and ATR after successful execution
-                self._pending_ideas.pop(trade_id, None)
-                self._pending_atr.pop(trade_id, None)
-
-            # Seal decision to tamper-evident audit chain
-            self.audit_chain.seal_decision(DecisionRecord(
-                decision_id=trade_id, symbol=idea.asset,
-                idea={"direction": idea.direction.value, "confidence": idea.confidence,
-                      "entry": idea.entry_price, "sl": idea.stop_loss, "tp": idea.take_profit},
-                risk={"verdict": "APPROVED", "passed": len(recheck.checks_passed),
-                      "failed": len(recheck.checks_failed), "size_usd": size_usd},
-                macro={"risk_state": macro_ctx.risk_state, "multiplier": macro_ctx.size_multiplier},
-                compliance={"granted": True, "locks_passed": compliance_decision.locks_passed},
-                outcome="EXECUTED_LIVE", is_paper=False,
-            ))
-            # Learning: log accepted trade decision
-            self.learning.log_decision(
-                symbol=idea.asset,
-                direction=idea.direction.value,
-                confidence=idea.confidence,
-                confluence_score=idea.confidence,
-                entry_price=idea.entry_price,
-                stop_loss=idea.stop_loss,
-                take_profit=idea.take_profit,
-                risk_reward=idea.risk_reward_ratio,
-                position_size_usd=size_usd,
-                risk_engine_result="APPROVED",
-                checks_passed=recheck.checks_passed,
-                checks_failed=[],
-                decision="TRADE_ACCEPTED_LIVE",
-                paper_trade_id=trade_id,
-            )
-            self._transition(AgentState.IDLE, "live trade executed")
-            return result
-
-        # Paper trade execution — DISABLED (live-only bot)
-        # This code path should never be reached due to the guard above.
-        self._transition(AgentState.IDLE, f"paper mode disabled for {trade_id}")
-        return "⛔ Paper trading is disabled. This bot is LIVE-ONLY."
-        # Dead code below kept for reference:
-        self._transition(AgentState.EXECUTING, f"executing paper trade {trade_id}")
+        # Live mode — execute via LiveExecutor with micro-test safety limits
+        self._transition(AgentState.EXECUTING, f"executing LIVE trade {trade_id}")
         size_usd = recheck.position_size_usd
 
-        # Determine target portfolio: per-user if user_id is set, else shared
-        # AUDIT-FIX: Moved BEFORE pyramid block which references target_portfolio
-        target_portfolio = self.portfolio
-        if user_id:
-            target_portfolio = self.user_portfolios.get(user_id)
-
-        # C2-32 FIX: Apply pyramid half-sizing in paper mode too.
-        # Previously only the live path applied this, making paper results
-        # non-representative of live behaviour.
-        _paper_pyramid = getattr(self, '_pending_pyramid', {})
-        if _paper_pyramid.pop(trade_id, False):
+        # ── Pyramid add: half size + move existing SL to breakeven ──
+        _pending_pyramid = getattr(self, '_pending_pyramid', {})
+        if _pending_pyramid.pop(trade_id, False):
             original_size = size_usd
             size_usd = size_usd * 0.5
             audit(trade_log,
-                  f"Paper pyramid add: half size ${original_size:.2f} -> ${size_usd:.2f}",
-                  action="pyramid_half_size", result="APPLIED_PAPER")
-            # Move existing paper position's SL to breakeven
+                  f"Pyramid add: half size ${original_size:.2f} -> ${size_usd:.2f}",
+                  action="pyramid_half_size", result="APPLIED")
+
+            # Move existing position's SL to breakeven
             symbol_key = normalize_symbol(idea.asset)
-            for tid, pos in list(target_portfolio._positions.items()):
-                pos_key = normalize_symbol(pos.asset)
-                if pos_key == symbol_key and tid != trade_id:
-                    old_sl = pos.stop_loss
-                    pos.stop_loss = pos.entry_price  # breakeven
+            for lp in self.live_executor.open_positions:
+                lp_key = normalize_symbol(lp.symbol)
+                if lp_key == symbol_key and lp.trade_id != trade_id:
+                    old_sl = lp.stop_loss
+                    lp.stop_loss = lp.entry_price  # breakeven
                     audit(trade_log,
-                          f"Paper pyramid: moved {pos.asset} SL to breakeven ${pos.entry_price:.4f} (was ${old_sl:.4f})",
-                          action="pyramid_sl_breakeven", result="MOVED_PAPER")
+                          f"Pyramid: moved {lp.symbol} SL to breakeven ${lp.entry_price:.4f} (was ${old_sl:.4f})",
+                          action="pyramid_sl_breakeven", result="MOVED")
+                    # Update exchange SL
+                    try:
+                        exchange = await self.live_executor._get_exchange()
+                        await self.live_executor._update_exchange_sl(
+                            exchange, lp, lp.entry_price)
+                    except Exception as exc:
+                        logger.debug("Failed to update exchange SL to BE: %s", exc)
+                    self.live_executor._save_positions()
                     break
 
-        try:
-            lev = CONFIG.exchange.default_leverage if CONFIG.exchange.trade_mode == "futures" else 1
-            trade = target_portfolio.open_position(idea, size_usd, leverage=lev)
-        except (ValueError, Exception) as exc:
-            # F-04 fix: never silently lose a confirmed trade.
-            # Log the failure as an audited rejection and return a clear message.
-            audit(
-                trade_log,
-                f"Confirmed trade failed to execute: {exc}",
-                action="execute",
-                result="FAILED",
-                data={"trade_id": trade_id, "size_usd": size_usd, "error": str(exc)},
-            )
-            self._transition(AgentState.IDLE, f"execution failed for {trade_id}")
-            return f"EXECUTION FAILED: {exc}"
+        # LIVE FIX: Cap position size at actual exchange equity to prevent
+        # InsufficientFunds errors.  The risk engine sizes based on paper
+        # portfolio equity; in LIVE mode the real account may be smaller.
+        live_bal = self._live_balance_cache
+        if live_bal:
+            available = live_bal.get("free", 0.0)
+            if size_usd > available:
+                audit(trade_log,
+                      f"Live size clamped: ${size_usd:.2f} -> ${available:.2f} (exchange available)",
+                      action="live_size_clamp", result="CLAMPED",
+                      data={"requested": round(size_usd, 2), "available": round(available, 2)})
+                size_usd = available
 
-        audit(
-            trade_log,
-            f"Paper trade executed: {trade.trade_id}",
-            action="execute",
-            result="EXECUTED",
-            data={"asset": trade.asset, "size": size_usd},
+        # C2-53 FIX: Reject trade when ATR is missing or zero.
+        # A zero ATR produces SL at entry price = immediate stop-out.
+        if not stored_atr or stored_atr <= 0:
+            audit(trade_log,
+                  f"No valid ATR for {idea.asset} — aborting to avoid SL-at-entry",
+                  action="confirm", result="REJECT",
+                  data={"trade_id": trade_id, "stored_atr": stored_atr})
+            self._pending_pyramid.pop(trade_id, None)
+            self._transition(AgentState.IDLE, f"no ATR for {trade_id}")
+            return f"Trade REJECTED: no valid ATR available — cannot compute safe SL distance"
+
+        result = await self.live_executor.execute(
+            idea, size_usd,
+            order_type=idea.order_type,
+            atr_value=stored_atr,
         )
+
+        # Only record paper trade if live execution succeeded
+        # (result starts with error prefixes when execution fails)
+        live_failed = any(result.startswith(prefix) for prefix in (
+            "EXECUTION FAILED:", "INSUFFICIENT FUNDS:", "INVALID ORDER:",
+            "BLOCKED:", "PREFLIGHT FAILED:",
+        ))
+
+        if not live_failed:
+            # Exchange is single source of truth — no paper duplicate.
+            # Position count comes from get_exchange_position_count().
+            invalidate_position_count_cache()
+            # C-05 FIX: only remove idea and ATR after successful execution
+            self._pending_ideas.pop(trade_id, None)
+            self._pending_atr.pop(trade_id, None)
+
         # Seal decision to tamper-evident audit chain
         self.audit_chain.seal_decision(DecisionRecord(
             decision_id=trade_id, symbol=idea.asset,
@@ -1304,7 +1219,7 @@ class RuneClawEngine:
                   "failed": len(recheck.checks_failed), "size_usd": size_usd},
             macro={"risk_state": macro_ctx.risk_state, "multiplier": macro_ctx.size_multiplier},
             compliance={"granted": True, "locks_passed": compliance_decision.locks_passed},
-            outcome="EXECUTED_PAPER", is_paper=True,
+            outcome="EXECUTED_LIVE", is_paper=False,
         ))
         # Learning: log accepted trade decision
         self.learning.log_decision(
@@ -1320,23 +1235,11 @@ class RuneClawEngine:
             risk_engine_result="APPROVED",
             checks_passed=recheck.checks_passed,
             checks_failed=[],
-            decision="TRADE_ACCEPTED_PAPER",
-            paper_trade_id=trade.trade_id,
+            decision="TRADE_ACCEPTED_LIVE",
+            paper_trade_id=trade_id,
         )
-        self._transition(AgentState.IDLE, "trade executed")
-        dir_icon = "🟢" if trade.direction.value == "LONG" else "🔴"
-        rr = idea.risk_reward_ratio if idea.risk_reward_ratio else 0
-        return (
-            f"{dir_icon} <b>PAPER {trade.direction.value} {trade.asset}</b>\n"
-            f"{'─' * 16}\n"
-            f"- Entry: <code>${idea.entry_price:,.4f}</code>\n"
-            f"- SL: <code>${idea.stop_loss:,.4f}</code>\n"
-            f"- TP: <code>${idea.take_profit:,.4f}</code>\n"
-            f"- Size: <code>${size_usd:.2f}</code>\n"
-            f"- R:R: <code>{rr:.1f}</code>\n"
-            f"- Risk: ✅ APPROVED ({len(recheck.checks_passed)} checks passed)\n"
-            f"- Mode: 📝 Paper"
-        )
+        self._transition(AgentState.IDLE, "live trade executed")
+        return result
 
     def reject_trade(self, trade_id: str) -> str:
         """Human explicitly rejects a pending idea."""

@@ -393,6 +393,8 @@ class MarketScanner:
 
     def _detect_volume_spike(self, symbol: str, current_vol: float) -> bool:
         """True if current volume is >2x the rolling average."""
+        # Note: rapid rescans may dampen spike detection as recent high volumes
+        # are included in the baseline. This is acceptable for the 5-min scan interval.
         with self._lock:
             history = self._volume_history.setdefault(symbol, [])
             if len(history) >= 3:

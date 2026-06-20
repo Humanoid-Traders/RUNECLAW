@@ -15,7 +15,7 @@ import os
 from dataclasses import dataclass, field
 from dotenv import load_dotenv
 
-load_dotenv(override=True)
+load_dotenv(override=False)
 
 
 def _env(key: str, default: str = "") -> str:
@@ -139,8 +139,6 @@ if _leverage_val > 20:
         "liquidation risk. Confirm this is intentional.", _leverage_val,
     )
 
-    # Margin mode: "isolated" mandatory (GetClaw rule)
-    margin_mode: str = _env("MARGIN_MODE", "isolated")
 
 
 # Solana ecosystem tokens tracked on Bitget (centralized pairs).
@@ -270,16 +268,37 @@ try:
         local_time = now_ny.replace(hour=et_hour, minute=et_minute, second=0, microsecond=0)
         return local_time.astimezone(_tz.utc).hour
 
-    US_MARKET_OPEN_HOUR_UTC = _us_market_hour_utc(9, 0)    # pre-market ~09:00 ET
-    US_MARKET_CLOSE_HOUR_UTC = _us_market_hour_utc(17, 0)   # after-hours end ~17:00 ET
-    US_REGULAR_OPEN_HOUR_UTC = _us_market_hour_utc(9, 30)   # regular open 09:30 ET
-    US_REGULAR_CLOSE_HOUR_UTC = _us_market_hour_utc(16, 0)  # regular close 16:00 ET
+    def us_market_open_hour_utc() -> int:
+        return _us_market_hour_utc(9, 0)
+
+    def us_market_close_hour_utc() -> int:
+        return _us_market_hour_utc(17, 0)
+
+    def us_regular_open_hour_utc() -> int:
+        return _us_market_hour_utc(9, 30)
+
+    def us_regular_close_hour_utc() -> int:
+        return _us_market_hour_utc(16, 0)
+
 except Exception:
-    # Fallback to EDT if zoneinfo is unavailable
-    US_MARKET_OPEN_HOUR_UTC = 13
-    US_MARKET_CLOSE_HOUR_UTC = 21
-    US_REGULAR_OPEN_HOUR_UTC = 13
-    US_REGULAR_CLOSE_HOUR_UTC = 20
+    # Fallback: compute from month-based DST approximation
+    # EDT (UTC-4) Apr–Oct, EST (UTC-5) Nov–Mar
+    def _fallback_offset() -> int:
+        from datetime import datetime as _fdt
+        month = _fdt.now().month
+        return 4 if 3 < month < 11 else 5
+
+    def us_market_open_hour_utc() -> int:
+        return 9 + _fallback_offset()
+
+    def us_market_close_hour_utc() -> int:
+        return 17 + _fallback_offset()
+
+    def us_regular_open_hour_utc() -> int:
+        return 9 + _fallback_offset()
+
+    def us_regular_close_hour_utc() -> int:
+        return 16 + _fallback_offset()
 
 
 @dataclass(frozen=True)
@@ -312,8 +331,8 @@ class LLMConfig:
     api_key: str = _env("LLM_API_KEY")
     base_url: str = _env("LLM_BASE_URL")  # auto-resolved from provider if empty
     model: str = _env("LLM_MODEL", "")     # auto-resolved from provider if empty
-    temperature: float = 0.3
-    max_tokens: int = 1024
+    temperature: float = _env_float("LLM_TEMPERATURE", 0.3)
+    max_tokens: int = int(_env_float("LLM_MAX_TOKENS", 1024))
     timeout_seconds: float = _env_float("LLM_TIMEOUT_SEC", 15.0)
     daily_call_limit: int = int(_env_float("LLM_DAILY_LIMIT", 500))
     daily_budget_usd: float = _env_float("LLM_DAILY_BUDGET_USD", 1.0)  # fail to rules if exceeded

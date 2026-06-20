@@ -152,7 +152,7 @@ class TradeExecution(BaseModel):
     commission: float = 0.0   # exchange commission (entry + exit)
     exit_price: Optional[float] = None
     is_paper: bool = True
-    leverage: int = 1          # leverage multiplier (1 = spot / no leverage)
+    leverage: float = 1.0      # leverage multiplier (1 = spot / no leverage)
     entry_atr: float = 0.0     # C2-48: actual ATR at trade entry (0 = legacy/unavailable)
     opened_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     closed_at: Optional[datetime] = None
@@ -205,6 +205,7 @@ class PortfolioState(BaseModel):
     total_commission: float = 0.0
     daily_pnl: float = 0.0
     max_drawdown_pct: float = 0.0
+    # Reserved — not currently populated by _snapshot_locked()
     portfolio_exposure_pct: float = 0.0
     # Operating costs (LLM + infra) — separate from trade PnL
     operating_cost_usd: float = 0.0

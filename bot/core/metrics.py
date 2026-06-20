@@ -47,7 +47,7 @@ class MetricsEngine:
 
         total = len(closed)
         wins = [t for t in closed if t.pnl > 0]
-        losses = [t for t in closed if t.pnl <= 0]
+        losses = [t for t in closed if t.pnl < 0]
 
         win_pnls = [t.pnl for t in wins]
         loss_pnls = [t.pnl for t in losses]
@@ -104,7 +104,7 @@ class MetricsEngine:
         max_dd = self._compute_max_drawdown()
 
         # Calmar: return % / drawdown % (both must be in same units)
-        total_pnl = sum(t.pnl for t in closed)
+        total_pnl = sum(getattr(t, 'gross_pnl', t.pnl) or t.pnl for t in closed)
         if self._equity_curve and self._equity_curve[0] > 0:
             total_return_pct = (total_pnl / self._equity_curve[0]) * 100
         else:
@@ -133,7 +133,7 @@ class MetricsEngine:
             current_streak=streak,
             total_pnl=round(total_pnl, 2),
             total_commission=sum(getattr(t, "commission", 0.0) or 0.0 for t in closed),
-            net_pnl=round(total_pnl, 2),
+            net_pnl=round(sum(t.pnl for t in closed), 2),
             equity_high=round(equity_high, 2),
             risk_checks_total=self._risk_checks_total,
             risk_checks_rejected=self._risk_checks_rejected,
@@ -141,6 +141,7 @@ class MetricsEngine:
             timestamp=datetime.now(UTC),
         )
 
+    # DEPRECATED: equity-curve based — use _compute_sharpe_from_trades instead
     def _compute_sharpe(self, risk_free_rate: float = 0.0) -> float:
         """Annualized Sharpe from equity curve.
         Computes annualization factor from actual timestamp cadence.
@@ -152,7 +153,7 @@ class MetricsEngine:
         # Filter out flat periods — only keep observations where price moved.
         nonzero_mask = returns != 0.0
         active_returns = returns[nonzero_mask]
-        if len(active_returns) < 2 or np.std(active_returns) == 0:
+        if len(active_returns) < 2 or np.std(active_returns, ddof=1) == 0:
             return 0.0
         # Compute actual periods per year from timestamps
         if len(self._timestamps) >= 2:
@@ -165,8 +166,9 @@ class MetricsEngine:
         else:
             periods_per_year = 2190
         excess = active_returns - risk_free_rate / periods_per_year
-        return float(np.mean(excess) / np.std(excess) * np.sqrt(periods_per_year))
+        return float(np.mean(excess) / np.std(excess, ddof=1) * np.sqrt(periods_per_year))
 
+    # DEPRECATED: equity-curve based — use _compute_sortino_from_trades instead
     def _compute_sortino(self, risk_free_rate: float = 0.0) -> float:
         """Annualized Sortino from equity curve.
         Uses actual timestamp cadence for annualization.
@@ -180,7 +182,7 @@ class MetricsEngine:
         if len(active_returns) < 2:
             return 0.0
         downside = active_returns[active_returns < 0]
-        if len(downside) == 0 or np.std(downside) == 0:
+        if len(downside) == 0 or np.std(downside, ddof=1) == 0:
             return 0.0
         # Compute actual periods per year from timestamps
         if len(self._timestamps) >= 2:
@@ -193,7 +195,7 @@ class MetricsEngine:
         else:
             periods_per_year = 2190
         excess = np.mean(active_returns) - risk_free_rate / periods_per_year
-        return float(excess / np.std(downside) * np.sqrt(periods_per_year))
+        return float(excess / np.std(downside, ddof=1) * np.sqrt(periods_per_year))
 
     def _compute_sharpe_from_trades(self, closed: list[TradeExecution]) -> float:
         """Annualized Sharpe computed from per-trade PnL returns.
@@ -221,11 +223,11 @@ class MetricsEngine:
                 continue
 
         arr = np.array(pct_returns, dtype=float)
-        if len(arr) < 2 or np.std(arr) == 0:
+        if len(arr) < 2 or np.std(arr, ddof=1) == 0:
             return 0.0
 
         trades_per_year = self._trades_per_year(closed)
-        sharpe = float(np.mean(arr) / np.std(arr) * np.sqrt(trades_per_year))
+        sharpe = float(np.mean(arr) / np.std(arr, ddof=1) * np.sqrt(trades_per_year))
         return sharpe
 
     def _compute_sortino_from_trades(self, closed: list[TradeExecution]) -> float:
@@ -250,11 +252,11 @@ class MetricsEngine:
 
         arr = np.array(pct_returns, dtype=float)
         downside = arr[arr < 0]
-        if len(downside) < 2 or np.std(downside) == 0:
+        if len(downside) < 2 or np.std(downside, ddof=1) == 0:
             return 0.0
 
         trades_per_year = self._trades_per_year(closed)
-        sortino = float(np.mean(arr) / np.std(downside) * np.sqrt(trades_per_year))
+        sortino = float(np.mean(arr) / np.std(downside, ddof=1) * np.sqrt(trades_per_year))
         return sortino
 
     def _trades_per_year(self, closed: list[TradeExecution]) -> float:

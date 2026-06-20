@@ -459,6 +459,10 @@ class OrderFlowAnalyzer:
         sig.whale_buy_usd = round(whale_buy, 2)
         sig.whale_sell_usd = round(whale_sell, 2)
         sig.whale_trade_count = count
+        whale_vol = whale_buy + whale_sell
+        # M-15: Log when significant whale volume has undetermined sides
+        if count > 0 and whale_vol == 0 and whale_buy == 0 and whale_sell == 0:
+            system_log.debug("Whale volume had undetermined sides for %s (%d trades above threshold)", sig.symbol, count)
         net = whale_buy + whale_sell
         if net > 0:
             ratio = (whale_buy - whale_sell) / net
@@ -617,7 +621,7 @@ class OrderFlowAnalyzer:
     # -- Integration helpers --
 
     @staticmethod
-    def to_confluence_votes(sig: OrderFlowSignal) -> tuple[list[float], list[float], list[str]]:
+    def to_confluence_votes(sig: OrderFlowSignal, funding_extreme: float = 0.03) -> tuple[list[float], list[float], list[str]]:
         """Return (votes, weights, labels) so order flow drops straight into
         Analyzer._score_confluence. Votes are graded in [-1, 1]; weights are
         scaled by the signal's data-confidence so a half-empty snapshot counts
@@ -641,7 +645,7 @@ class OrderFlowAnalyzer:
             weights.append(0.9 * conf)
             labels.append("of_whale_bias")
         if sig.funding_rate is not None:
-            votes.append(-float(np.clip(sig.funding_rate / OrderFlowConfig().funding_extreme, -1, 1)))
+            votes.append(-float(np.clip(sig.funding_rate / funding_extreme, -1, 1)))
             weights.append(0.5 * conf)
             labels.append("of_funding")
 
@@ -836,6 +840,10 @@ class OrderFlowAnalyzer:
         return price * amount
 
     def _prune(self) -> None:
+        # NOTE: Pruning is FIFO (oldest-inserted symbols evicted first), not LRU.
+        # LRU would require tracking access timestamps per symbol across all stores,
+        # adding complexity and lock contention for negligible benefit — the stores
+        # are bounded by max_tracked_symbols and rarely hit the limit in practice.
         with self._lock:
             for store in (self._cvd_history, self._price_history, self._oi_history,
                           self._taker_bar_ratios, self._spot_vol_history,

@@ -51,13 +51,16 @@ def normalize_symbol(s: str) -> str:
         MEGA/USDT       →  MEGA
         MEGAUSDT        →  MEGAUSDT  (no destructive mid-string strip)
         XAU/USDT:USDT   →  XAU
+        BTC/USDC:USDC   →  BTC
     """
     result = s.upper()
-    # Strip :USDT settle suffix first, then /USDT quote suffix.
-    # Do NOT strip bare 'USDT' from the middle of strings (e.g. USDTUSDT).
-    if result.endswith(":USDT"):
-        result = result[:-5]
+    # L-01 FIX: Strip any :XXX settle suffix (not just :USDT)
+    colon_idx = result.rfind(":")
+    if colon_idx > 0:
+        result = result[:colon_idx]
     if result.endswith("/USDT"):
+        result = result[:-5]
+    elif result.endswith("/USDC"):
         result = result[:-5]
     return result
 
@@ -69,8 +72,14 @@ def display_symbol(s: str) -> str:
         MEGA/USDT:USDT  →  MEGAUSDT
         MEGA/USDT       →  MEGAUSDT
         MEGAUSDT        →  MEGAUSDT
+        BTC/USDC:USDC   →  BTCUSDC
     """
-    return s.replace("/", "").replace(":USDT", "")
+    # L-01 FIX: Strip any :XXX settle suffix, not just :USDT
+    result = s.replace("/", "")
+    colon_idx = result.rfind(":")
+    if colon_idx > 0:
+        result = result[:colon_idx]
+    return result
 
 
 # ── Safety limits ────────────────────────────────────────────────────
@@ -1026,7 +1035,7 @@ class LiveExecutor:
             settlement_times = [0, 480, 960]
             for st in settlement_times:
                 mins_until = (st - minutes_in_day) % 1440
-                if mins_until <= 5:  # within 5 minutes before settlement
+                if 0 < mins_until <= 5:  # within 5 minutes before settlement (exclude exact moment)
                     audit(trade_log,
                           f"Funding settlement in {mins_until}m — entry will incur "
                           f"immediate funding charge on {idea.asset}",
@@ -1062,6 +1071,7 @@ class LiveExecutor:
                   "sl": idea.stop_loss, "tp": idea.take_profit,
               })
 
+        order = None  # H-02 FIX: sentinel for emergency position path
         try:
             exchange = await self._get_exchange()
             is_futures = CONFIG.exchange.trade_mode == "futures"
@@ -1690,7 +1700,7 @@ class LiveExecutor:
             # Check if the order was already submitted to the exchange.
             # If 'order' exists, create_order succeeded but post-processing crashed.
             # The position is LIVE on the exchange — we MUST record it locally.
-            if 'order' in dir() and order and isinstance(order, dict) and order.get("id"):
+            if order is not None and isinstance(order, dict) and order.get("id"):
                 logger.error("Post-order crash for %s: %s — creating emergency position",
                              idea.asset, exc)
                 _side_upper = ("buy" if idea.direction == Direction.LONG else "sell").upper()
@@ -2151,11 +2161,13 @@ class LiveExecutor:
                         pos.trailing_state, price, pos.stop_loss, pos.direction
                     )
                     if new_sl != old_sl:
-                        pos.stop_loss = new_sl
-                        self._save_positions()
                         # Check if the SL moved enough to update on exchange
                         sl_change_pct = abs(new_sl - old_sl) / old_sl * 100 if old_sl > 0 else 100
                         if sl_change_pct >= CONFIG.trailing.min_sl_update_pct:
+                            # M-02 FIX: Only update local SL when exchange update also fires
+                            # to prevent local/exchange SL drift
+                            pos.stop_loss = new_sl
+                            self._save_positions()
                             await self._update_exchange_sl(
                                 exchange, pos, new_sl
                             )
@@ -2339,6 +2351,16 @@ class LiveExecutor:
                 pos.quantity = filled_qty
                 pos.status = "open"
                 pos.order_type = "limit"  # GETCLAW: limit fill = maker fee rate
+
+                # M-01 FIX: Cancel remaining unfilled quantity to prevent untracked fills
+                if order_status == "partially_filled" and pos.limit_order_id:
+                    try:
+                        await exchange.cancel_order(pos.limit_order_id, pos.symbol)
+                        audit(trade_log, f"Cancelled remaining limit order after partial fill: {pos.symbol}",
+                              action="partial_cancel", result="OK")
+                    except Exception as cancel_exc:
+                        logger.warning("Failed to cancel remaining limit after partial fill %s: %s", pos.symbol, cancel_exc)
+
                 pos.limit_order_id = None
 
                 # Recalculate cost
@@ -2592,8 +2614,10 @@ class LiveExecutor:
         lock = self._close_locks.setdefault(trade_id, asyncio.Lock())
         async with lock:
             result = await self._close_position_inner(trade_id, reason, close_price)
-        # AUDIT-FIX: Clean up lock after close to prevent unbounded growth
-        self._close_locks.pop(trade_id, None)
+        # H-04 FIX: Do NOT pop the lock here — a concurrent caller could
+        # create a new Lock() via setdefault() between our release and pop,
+        # defeating the mutual-exclusion guarantee.  Stale locks are pruned
+        # in _save_positions() instead.
         return result
 
     async def _close_position_inner(self, trade_id: str, reason: str = "manual",
@@ -2817,6 +2841,9 @@ class LiveExecutor:
             return close_msg
 
         except Exception as exc:
+            # H-01 FIX: Revert status so position is retried next cycle
+            pos.status = "open"
+            self._save_positions()
             audit(trade_log, f"Live close failed: {exc}",
                   action="live_close", result="ERROR",
                   data={"trade_id": trade_id, "error": str(exc)})
@@ -2978,10 +3005,17 @@ class LiveExecutor:
             tmp = str(path) + ".tmp"
             with open(tmp, "w") as f:
                 json.dump(data, f, indent=2, default=str)
+                # H-05 FIX: fsync before atomic rename to guarantee durability
+                f.flush()
+                os.fsync(f.fileno())
             os.replace(tmp, str(path))
             # M-06 FIX: prune closed entries from in-memory dict
             self._positions = {k: v for k, v in self._positions.items()
                                if v.status in ("open", "pending_fill")}
+            # H-04 FIX: prune close_locks for trade_ids no longer in positions
+            stale_lock_ids = [tid for tid in self._close_locks if tid not in self._positions]
+            for tid in stale_lock_ids:
+                self._close_locks.pop(tid, None)
         except Exception as exc:
             logger.error("Failed to save live positions: %s", exc)
             self._persistence_broken = True
@@ -3107,6 +3141,9 @@ class LiveExecutor:
             tmp = str(path) + ".tmp"
             with open(tmp, "w") as f:
                 json.dump(data, f, indent=2, default=str)
+                # H-05 FIX: fsync before atomic rename to guarantee durability
+                f.flush()
+                os.fsync(f.fileno())
             os.replace(tmp, str(path))
         except Exception as exc:
             logger.debug("Failed to save closed trades: %s", exc)
@@ -3353,7 +3390,7 @@ class LiveExecutor:
                         # Invalidate balance cache on reconciled close
                         self._fire_position_closed(pos)
 
-                        pnl_str = f"+${pnl:.4f}" if pnl >= 0 else f"-${abs(pnl):.4f}"
+                        pnl_str = f"+${net_pnl:.4f}" if net_pnl >= 0 else f"-${abs(net_pnl):.4f}"
                         pnl_pct = ((est_exit - pos.entry_price) / pos.entry_price * 100) if pos.entry_price else 0
                         if pos.direction == "SHORT":
                             pnl_pct = -pnl_pct

@@ -14,7 +14,7 @@ Uses the existing _classify_symbol() from market_scanner.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from bot.compat import UTC
 
 logger = logging.getLogger(__name__)
@@ -27,7 +27,10 @@ logger = logging.getLogger(__name__)
 #   (21:30 – 04:00 CST = 02:30 – 09:00 UTC next day, roughly)
 # Commodities (CL etc.): Similar to metals
 
-_ALWAYS_OPEN = {"Crypto", "Pre-IPO"}
+_ALWAYS_OPEN = {"Crypto"}
+# Note: Pre-IPO tokens may have exchange-specific trading windows.
+# Treated as 24/7 for now; monitor for maintenance-window rejections.
+_PRE_IPO = {"Pre-IPO"}
 _WEEKDAY_ONLY = {"Metal", "Commodity", "ETF"}  # closed weekends
 _SESSION_HOURS = {"Stock"}  # specific daily window
 
@@ -42,7 +45,7 @@ def is_market_open(asset_class: str, now: datetime | None = None) -> tuple[bool,
 
     weekday = now.weekday()  # 0=Mon, 6=Sun
 
-    if asset_class in _ALWAYS_OPEN:
+    if asset_class in _ALWAYS_OPEN or asset_class in _PRE_IPO:
         return True, ""
 
     if asset_class in _WEEKDAY_ONLY:
@@ -53,13 +56,14 @@ def is_market_open(asset_class: str, now: datetime | None = None) -> tuple[bool,
     if asset_class in _SESSION_HOURS:
         if weekday >= 5:
             return False, f"Stock perps are closed on weekends"
-        # Stock perps: roughly 02:30 – 09:00 UTC (US market hours)
-        # Outside these hours, orders queue but won't fill
-        hour = now.hour
-        if 2 <= hour < 9:
+        # Stock perps: 02:30 – 09:00 UTC (US market hours during EDT)
+        now_utc = datetime.now(timezone.utc)
+        minutes_today = now_utc.hour * 60 + now_utc.minute
+        # Stocks: 02:30 - 09:00 UTC (9:30 AM - 4:00 PM ET during EDT)
+        if 150 <= minutes_today < 540:  # 150 = 2*60+30, 540 = 9*60
             return True, ""
         else:
-            return False, f"Stock perps trade ~02:30–09:00 UTC (current: {hour:02d}:{now.minute:02d} UTC) — order will queue"
+            return False, f"Stock perps trade ~02:30–09:00 UTC (current: {now.hour:02d}:{now.minute:02d} UTC) — order will queue"
 
     # Unknown class — assume open
     return True, ""
@@ -70,7 +74,7 @@ def is_weekend_queued(asset_class: str, now: datetime | None = None) -> bool:
     if now is None:
         now = datetime.now(UTC)
 
-    if asset_class in _ALWAYS_OPEN:
+    if asset_class in _ALWAYS_OPEN or asset_class in _PRE_IPO:
         return False
 
     is_open, _ = is_market_open(asset_class, now)
@@ -91,7 +95,7 @@ def adjust_sl_for_gap_risk(
     """
     if not is_weekend:
         return stop_loss
-    if asset_class in _ALWAYS_OPEN:
+    if asset_class in _ALWAYS_OPEN or asset_class in _PRE_IPO:
         return stop_loss
 
     sl_dist_pct = abs(entry_price - stop_loss) / entry_price if entry_price > 0 else 0
@@ -149,7 +153,7 @@ def should_defer_tp_sl(asset_class: str, is_weekend: bool, order_type: str) -> b
         return False
     if not is_weekend:
         return False
-    if asset_class in _ALWAYS_OPEN:
+    if asset_class in _ALWAYS_OPEN or asset_class in _PRE_IPO:
         return False
     return True
 

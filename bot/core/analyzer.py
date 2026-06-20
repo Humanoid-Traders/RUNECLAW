@@ -303,7 +303,7 @@ class Analyzer:
             highs = np.array([c[2] for c in candles], dtype=float)
             lows = np.array([c[3] for c in candles], dtype=float)
             closes = np.array([c[4] for c in candles], dtype=float)
-            volumes = np.array([c[5] for c in candles], dtype=float) if len(candles[0]) > 5 else None
+            volumes = np.array([c[5] if len(c) > 5 else 0 for c in candles], dtype=float)
             # Reject NaN/Inf in OHLCV data
             for name, arr in [("opens", opens), ("highs", highs), ("lows", lows), ("closes", closes)]:
                 if not np.all(np.isfinite(arr)):
@@ -408,8 +408,9 @@ class Analyzer:
         indicators["confluence"] = confluence
 
         # SIGNAL QUALITY: multi-timeframe SMA50 trend alignment
-        sma50 = float(np.mean(closes[-CONFIG.analyzer.sma_period:])) if len(closes) >= CONFIG.analyzer.sma_period else float(np.mean(closes))
-        indicators["sma50"] = round(sma50, 6)
+        sma50 = float(np.mean(closes[-CONFIG.analyzer.sma_period:])) if len(closes) >= CONFIG.analyzer.sma_period else None
+        if sma50 is not None:
+            indicators["sma50"] = round(sma50, 6)
 
         thesis = await self._llm_thesis(signal, indicators, order_flow=order_flow)
 
@@ -481,14 +482,15 @@ class Analyzer:
 
         # SIGNAL QUALITY: multi-timeframe confirmation via SMA50
         # Acts as a proxy for higher-timeframe trend alignment on 1H data
-        if signal.price > sma50 and direction == Direction.LONG:
-            blended_confidence += CONFIG.analyzer.trend_alignment_bonus   # aligned with uptrend
-        elif signal.price < sma50 and direction == Direction.SHORT:
-            blended_confidence += CONFIG.analyzer.trend_alignment_bonus   # aligned with downtrend
-        elif signal.price > sma50 and direction == Direction.SHORT:
-            blended_confidence -= CONFIG.analyzer.trend_misalignment_penalty   # counter-trend SHORT
-        elif signal.price < sma50 and direction == Direction.LONG:
-            blended_confidence -= CONFIG.analyzer.trend_misalignment_penalty   # counter-trend LONG
+        if sma50 is not None:
+            if signal.price > sma50 and direction == Direction.LONG:
+                blended_confidence += CONFIG.analyzer.trend_alignment_bonus   # aligned with uptrend
+            elif signal.price < sma50 and direction == Direction.SHORT:
+                blended_confidence += CONFIG.analyzer.trend_alignment_bonus   # aligned with downtrend
+            elif signal.price > sma50 and direction == Direction.SHORT:
+                blended_confidence -= CONFIG.analyzer.trend_misalignment_penalty   # counter-trend SHORT
+            elif signal.price < sma50 and direction == Direction.LONG:
+                blended_confidence -= CONFIG.analyzer.trend_misalignment_penalty   # counter-trend LONG
 
         # STRATEGY: volume confirmation for direction alignment
         # If volume spike aligns with trade direction, boost confidence;
@@ -534,8 +536,9 @@ class Analyzer:
 
         # Apply regime penalty (RANGE: -0.10, CHOP: -0.15, else: 0)
         # C2-20 FIX: Ensure combined penalties don't reduce below 25% of original.
-        raw_confidence = thesis.get("confidence", 0.0)
-        min_floor = raw_confidence * 0.25
+        # H-14 FIX: Use blended_confidence (after counter-trend but before regime
+        # penalty) as the floor base, not raw_confidence from the LLM.
+        min_floor = blended_confidence * 0.25
         blended_confidence = round(max(min_floor, blended_confidence - regime_confidence_penalty), 2)
 
         # SIGNAL QUALITY: threshold at min_confidence (matches config)
@@ -1924,7 +1927,7 @@ class Analyzer:
         _parsed=False means we fell back to defaults (LLM output was malformed).
         """
         import json as _json
-        result: dict = {"direction": "LONG", "confidence": 0.0, "reasoning": "", "_parsed": False}
+        result: dict = {"direction": None, "confidence": 0.0, "reasoning": "", "_parsed": False}
 
         # Try JSON mode first (structured output from gpt-4o-mini)
         stripped = text.strip()
@@ -1940,8 +1943,11 @@ class Analyzer:
         if stripped.startswith("{"):
             try:
                 data = _json.loads(stripped)
-                d = str(data.get("direction", data.get("DIRECTION", "LONG"))).upper()
-                result["direction"] = "SHORT" if "SHORT" in d else "LONG"
+                d = str(data.get("direction", data.get("DIRECTION", ""))).upper()
+                if "SHORT" in d:
+                    result["direction"] = "SHORT"
+                elif "LONG" in d:
+                    result["direction"] = "LONG"
                 conf = data.get("confidence", data.get("CONFIDENCE", 0.0))
                 result["confidence"] = max(0.0, min(1.0, float(conf)))
                 result["reasoning"] = str(data.get("reasoning", data.get("REASONING", "")))
@@ -1957,7 +1963,10 @@ class Analyzer:
             upper = line_clean.upper()
             if upper.startswith("DIRECTION"):
                 rest = line_clean.split(":", 1)[-1] if ":" in line_clean else line_clean.split("-", 1)[-1]
-                result["direction"] = "SHORT" if "SHORT" in rest.upper() else "LONG"
+                if "SHORT" in rest.upper():
+                    result["direction"] = "SHORT"
+                elif "LONG" in rest.upper():
+                    result["direction"] = "LONG"
                 parsed_fields += 1
             elif upper.startswith("CONFIDENCE"):
                 rest = line_clean.split(":", 1)[-1] if ":" in line_clean else line_clean.split("-", 1)[-1]
@@ -1973,7 +1982,7 @@ class Analyzer:
                 rest = line_clean.split(":", 1)[-1] if ":" in line_clean else line_clean
                 result["reasoning"] = rest.strip()
                 parsed_fields += 1
-        result["_parsed"] = parsed_fields >= 2  # at least direction + confidence
+        result["_parsed"] = parsed_fields >= 2 and result["direction"] is not None
         return result
 
     @staticmethod

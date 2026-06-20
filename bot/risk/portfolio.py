@@ -222,6 +222,7 @@ class PortfolioTracker:
         self._history.append(trade)
         # C2-50 FIX: Cap trade history to prevent unbounded memory/serialization growth
         if len(self._history) > 1000:
+            logging.getLogger(__name__).info("Trade history truncated: %d -> 1000 entries", len(self._history))
             self._history = self._history[-1000:]
         self._record_daily_pnl(net_pnl)
         self._update_peak()

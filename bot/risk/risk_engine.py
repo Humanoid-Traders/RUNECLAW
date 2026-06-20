@@ -371,7 +371,8 @@ class RiskEngine:
         daily_loss_pct = 0.0
         try:
             # 3. Daily loss (realized + unrealized) — measured against equity, not free cash
-            daily_loss_pct = abs(state.daily_pnl / sizing_equity * 100) if sizing_equity > 0 else 0
+            loss_base = min(sizing_equity, state.equity_usd) if sizing_equity > 0 and state.equity_usd > 0 else max(sizing_equity, state.equity_usd)
+            daily_loss_pct = abs(state.daily_pnl / loss_base * 100) if loss_base > 0 else 0
             self._last_known_daily_loss_pct = daily_loss_pct  # C2-42: persist for fallback
             if state.daily_pnl < 0 and daily_loss_pct >= CONFIG.risk.max_daily_loss_pct:
                 failed.append(f"DAILY_LOSS: {daily_loss_pct:.1f}% >= {CONFIG.risk.max_daily_loss_pct}%")
@@ -658,6 +659,9 @@ class RiskEngine:
                 else:
                     failed.append(f"TAKER_3BAR: {gate2['reason']}")
             else:
+                if self._order_flow is None or self._last_of_signal is None:
+                    risk_log.warning("Order flow checks #22/#23 skipped — no signal available")
+                    # Still pass (fail-open by design for order flow) but log it
                 passed.append("TAKER_3BAR: skipped (no order flow analyzer)")
         except Exception as exc:
             failed.append(f"TAKER_3BAR: evaluation error ({exc})")
@@ -672,6 +676,9 @@ class RiskEngine:
                 else:
                     failed.append(f"BID_DOMINANCE: {gate20['reason']}")
             else:
+                if self._order_flow is None or self._last_of_signal is None:
+                    risk_log.warning("Order flow checks #22/#23 skipped — no signal available")
+                    # Still pass (fail-open by design for order flow) but log it
                 passed.append("BID_DOMINANCE: skipped (no order flow data)")
         except Exception as exc:
             failed.append(f"BID_DOMINANCE: evaluation error ({exc})")
@@ -778,7 +785,7 @@ class RiskEngine:
             return equity * (CONFIG.risk.max_position_pct / 100.0)
 
         wins = [t for t in closed if t.pnl > 0]
-        losses = [t for t in closed if t.pnl <= 0]
+        losses = [t for t in closed if t.pnl < 0]
         win_rate = len(wins) / len(closed) if closed else 0.0
         avg_win = (sum(t.pnl for t in wins) / len(wins)) if wins else 0.0
         avg_loss = (abs(sum(t.pnl for t in losses)) / len(losses)) if losses else 0.0

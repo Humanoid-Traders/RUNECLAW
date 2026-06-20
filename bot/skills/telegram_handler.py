@@ -913,12 +913,14 @@ class TelegramHandler:
                     f"Entry: <code>${old_price:,.4f}</code> \u2192 <code>${custom_price:,.4f}</code>\n\n"
                     f"\u2705 <b>Confirmed — executing...</b>")
 
-                # LIVE-ONLY: only admin can confirm/approve live trades
-                if not self._is_admin(update):
-                    await self._send(update,
-                        "\U0001f512 <b>Admin approval required</b>\n\n"
-                        "Only the admin can approve live trades.")
-                    return
+                # H-18 FIX: LIVE mode — check per-user live trading permission
+                if CONFIG.is_live() and not self._is_admin(update):
+                    caller_uid_str = str(update.effective_user.id) if update.effective_user else ""
+                    if not self.users.can_trade_live(caller_uid_str):
+                        await self._send(update,
+                            "\U0001f512 <b>Live trading not enabled</b>\n\n"
+                            "Ask an admin to grant you live trading access with /grant_live.")
+                        return
 
                 result = await self.engine.confirm_trade(trade_id, user_id=caller_uid)
                 await self._send(update, result)
@@ -1135,6 +1137,10 @@ class TelegramHandler:
 
     async def _cmd_start(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """GetClaw welcome — auto-registers new users."""
+        # H-16 FIX: rate limit /start
+        uid = update.effective_user.id if update.effective_user else 0
+        if not self._limiter.allow(uid):
+            return  # rate limited
         now = datetime.now(UTC).strftime("%H:%M UTC")
         user_tg = update.effective_user
         tg_id = self._get_tg_id(update)
@@ -1232,6 +1238,10 @@ class TelegramHandler:
 
     async def _cmd_help(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """GetClaw help — organized command reference."""
+        # H-16 FIX: rate limit /help
+        uid = update.effective_user.id if update.effective_user else 0
+        if not self._limiter.allow(uid):
+            return  # rate limited
         tg_id = self._get_tg_id(update)
         is_auth = self.users.is_authorized(tg_id)
         user = self.users.get(tg_id)
@@ -1443,6 +1453,11 @@ class TelegramHandler:
             return
 
         target_id = args[0].strip()
+
+        # L-13 FIX: validate Telegram ID format
+        if not target_id.isdigit():
+            await self._send(update, "Invalid Telegram ID format.")
+            return
 
         # Don't let admin revoke themselves
         if target_id == self._get_tg_id(update):
@@ -2557,13 +2572,13 @@ class TelegramHandler:
     async def _cmd_dashboard(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._guard(update, "dashboard"):
             return
-        chat_id = update.effective_chat.id
+        # L-14 FIX: key by user_id instead of chat_id to avoid cross-user pane leaks
         user_id = self._get_tg_id(update)
-        pane = self._last_pane.get(chat_id, "status")
+        pane = self._last_pane.get(user_id, "status")
         body = await self._render_pane(pane, user_id=user_id)
         text = body + self._footer()
         await self._send(update, text, reply_markup=_KB_DASH)
-        self._last_pane[chat_id] = pane
+        self._last_pane[user_id] = pane
 
     async def _cmd_scan(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._guard(update, "scan"):
@@ -3032,6 +3047,10 @@ class TelegramHandler:
             return
         args = ctx.args or []
         symbol = args[0].upper().strip() if args else ""
+        # H-17 FIX: validate symbol format before passing to skill
+        if symbol and not _SYMBOL_RE.match(symbol):
+            await self._send(update, "Invalid symbol format.")
+            return
         result = await self.registry.get("whynot").execute(
             self.engine, symbol=symbol)
         await self._send(update, result)
@@ -4211,6 +4230,11 @@ class TelegramHandler:
         query = update.callback_query
         await query.answer()
 
+        # M-18 FIX: rate limit callback buttons
+        uid = update.effective_user.id if update.effective_user else 0
+        if not self._limiter.allow(uid):
+            return  # rate limited
+
         if not self._check_auth(update):
             try:
                 await query.edit_message_text(
@@ -4326,7 +4350,12 @@ class TelegramHandler:
         # ── Strategy mode callbacks ──────────────────────────
 
         if data.startswith("mode_"):
+            # M-21 FIX: validate strategy mode against allowed values
+            VALID_MODES = {"defensive", "balanced", "aggressive", "manual"}
             mode = data.removeprefix("mode_")
+            if mode not in VALID_MODES:
+                await self._send(update, "Invalid strategy mode.", edit=True)
+                return
             from bot.config import RUNTIME
             RUNTIME.strategy_mode = mode
             rendered = wr_strategy_mode(mode)
@@ -4932,8 +4961,8 @@ class TelegramHandler:
         if data.startswith("pane:"):
             pane = data.split(":", 1)[1]
             if pane == "refresh":
-                pane = self._last_pane.get(chat_id, "status")
-            self._last_pane[chat_id] = pane
+                pane = self._last_pane.get(self._get_tg_id(update), "status")
+            self._last_pane[self._get_tg_id(update)] = pane
             body = await self._render_pane(pane, user_id=self._get_tg_id(update))
             text = body + self._footer()
             try:
@@ -4957,7 +4986,7 @@ class TelegramHandler:
                 "backtest": "scan",
             }
             pane = pane_map.get(cmd, "status")
-            self._last_pane[chat_id] = pane
+            self._last_pane[self._get_tg_id(update)] = pane
             body = await self._render_pane(pane, user_id=self._get_tg_id(update))
             text = body + self._footer()
             try:
@@ -5050,16 +5079,18 @@ class TelegramHandler:
                       action="callback_idor_block", result="DENIED")
                 return
 
-            # LIVE-ONLY: only admin can confirm/approve live trades
-            if not self._is_admin(update):
-                await self._send(update,
-                    "\U0001f512 <b>Admin approval required</b>\n\n"
-                    "Only the admin can approve live trades on this bot.",
-                    edit=True)
-                audit(system_log,
-                      f"Non-admin trade confirm blocked: caller={caller_uid}",
-                      action="admin_gate", result="DENIED")
-                return
+            # H-18 FIX: LIVE mode — check per-user live trading permission
+            if CONFIG.is_live() and not self._is_admin(update):
+                caller_uid_str = str(update.effective_user.id) if update.effective_user else ""
+                if not self.users.can_trade_live(caller_uid_str):
+                    await self._send(update,
+                        "\U0001f512 <b>Live trading not enabled</b>\n\n"
+                        "Ask an admin to grant you live trading access with /grant_live.",
+                        edit=True)
+                    audit(system_log,
+                          f"Non-admin trade confirm blocked: caller={caller_uid_str}",
+                          action="admin_gate", result="DENIED")
+                    return
 
             try:
                 result = await self.engine.confirm_trade(trade_id, user_id=caller_uid or "")

@@ -15,6 +15,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import logging.handlers
 import os
 import re
 import sys
@@ -111,8 +112,10 @@ def _build_logger(name: str, filename: str) -> logging.Logger:
     logger.propagate = False
 
     if not logger.handlers:
-        # File handler
-        fh = logging.FileHandler(LOG_DIR / filename)
+        # File handler with rotation (10MB per file, keep 5 backups)
+        fh = logging.handlers.RotatingFileHandler(
+            LOG_DIR / filename, maxBytes=10 * 1024 * 1024, backupCount=5,
+        )
         fh.setFormatter(_JSONFormatter())
         logger.addHandler(fh)
 

@@ -74,6 +74,12 @@ def _round_number_near(price: float, tolerance_pct: float = 0.3) -> Optional[flo
 
     nearest = round(price / step) * step
     dist_pct = abs(price - nearest) / price * 100
+
+    # Guard: on high-priced assets, ensure the round number is actually meaningful
+    # (step must be at least 0.1% of price for the round number to matter)
+    if step / price < 0.001:
+        return None  # step too small relative to price — round numbers are noise
+
     if dist_pct <= tolerance_pct:
         return nearest
     return None
@@ -224,6 +230,15 @@ def calculate_entry(
 
     # ── No levels found → fallback to simple ATR offset ──────
     if not levels:
+        # L-03: guard against atr_value=0 producing a market-price limit
+        if atr_value <= 0:
+            return EntryResult(
+                limit_price=round(current_price, 8),
+                tier="D",
+                confluence_count=0,
+                size_multiplier=0.0,
+                explanation="No confluence data and ATR=0 — cannot calculate meaningful limit offset",
+            )
         fallback = current_price - (0.5 * atr_value) if is_long else current_price + (0.5 * atr_value)
         return EntryResult(
             limit_price=round(fallback, 8),
@@ -238,7 +253,7 @@ def calculate_entry(
     tolerance = current_price * 0.005  # 0.5% clustering tolerance
 
     # Sort levels by price (ascending for longs, descending for shorts)
-    levels.sort(key=lambda l: l.price, reverse=not is_long)
+    levels.sort(key=lambda l: l.price, reverse=is_long)
 
     best_cluster: list[EntryLevel] = []
     best_weight = 0.0
@@ -338,6 +353,7 @@ def validate_entry_distance(
 
     GetClaw rule: warn if >5% from current price.
     Returns (is_valid, warning_message).
+    Note: return value is informational — executor handles recalculation independently.
     """
     if current_price <= 0:
         return True, ""
