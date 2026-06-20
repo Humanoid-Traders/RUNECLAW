@@ -627,7 +627,7 @@ class OrderFlowAnalyzer:
         labels: list[str] = []
         conf = max(0.0, min(1.0, sig.confidence))
         if conf == 0.0:
-            return votes, weights, labels
+            return [0.0], [0.1], ["of_neutral"]
 
         if "book" in sig.components_ok:
             votes.append(float(np.clip(sig.book_imbalance, -1, 1)))

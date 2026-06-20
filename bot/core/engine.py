@@ -780,6 +780,9 @@ class RuneClawEngine:
             paper_count = self.portfolio.snapshot().open_positions if hasattr(self, 'portfolio') else 0
             live_open = max(live_count, paper_count)
         self._transition(AgentState.RISK_CHECK, f"evaluating {signal.symbol}")
+        # Wire order flow signal to risk engine so check #23 (bid dominance) runs
+        if of_signal is not None:
+            self.risk.set_order_flow_signal(of_signal)
         risk_check = self.risk.evaluate(idea, atr=atr_value, live_equity=live_eq, max_position_usd=exec_cap, live_open_count=live_open)
 
         # Log risk evaluation to scan log

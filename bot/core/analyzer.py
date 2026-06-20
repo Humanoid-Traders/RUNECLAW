@@ -18,6 +18,7 @@ Upgraded with:
 from __future__ import annotations
 
 import asyncio
+import math
 import re
 import uuid
 from datetime import datetime
@@ -1051,6 +1052,16 @@ class Analyzer:
         # or use the static method directly in analyze(). Store placeholder here.
         # Actual detection happens in analyze() where we have opens.
 
+        # ── Post-computation NaN/Inf sanitizer ──
+        # Guard against NaN or Inf leaking from any indicator computation
+        # (e.g. division by zero edge cases, empty-window statistics).
+        _RSI_DEFAULT = 50.0
+        for key, val in results.items():
+            if isinstance(val, float) and not math.isfinite(val):
+                results[key] = _RSI_DEFAULT if key == "rsi" else 0.0
+            elif isinstance(val, (np.floating,)) and not np.isfinite(val):
+                results[key] = _RSI_DEFAULT if key == "rsi" else 0.0
+
         return results
 
     # -- Regime Detection --
@@ -1107,10 +1118,14 @@ class Analyzer:
         comps = getattr(order_flow, "components_ok", set()) or set()
         of_dir, n = 0.0, 0
         if "book" in comps:
-            of_dir += float(np.clip(getattr(order_flow, "book_imbalance", 0.0), -1, 1)); n += 1
+            _book_val = float(np.clip(getattr(order_flow, "book_imbalance", 0.0), -1, 1))
+            if math.isfinite(_book_val):
+                of_dir += _book_val; n += 1
         if "trades" in comps:
-            of_dir += {"rising": 1.0, "falling": -1.0, "flat": 0.0}.get(
-                getattr(order_flow, "cvd_trend", "flat"), 0.0); n += 1
+            _cvd_val = {"rising": 1.0, "falling": -1.0, "flat": 0.0}.get(
+                getattr(order_flow, "cvd_trend", "flat"), 0.0)
+            if math.isfinite(_cvd_val):
+                of_dir += _cvd_val; n += 1
         div = getattr(order_flow, "cvd_price_divergence", "none")
         if div == "bullish_div":
             of_dir += 1.0; n += 1
@@ -1351,6 +1366,9 @@ class Analyzer:
             elif w_signal == "bearish":
                 votes.append(-w_conf)
                 weights.append(0.8)
+            else:
+                votes.append(0.0)
+                weights.append(0.4)
 
         # Harmonic pattern voter (weight 0.75 — Gartley/Butterfly/Bat/Crab)
         harmonic = indicators.get("harmonic_pattern")
@@ -1363,6 +1381,9 @@ class Analyzer:
             elif h_signal == "bearish":
                 votes.append(-h_conf)
                 weights.append(0.75)
+            else:
+                votes.append(0.0)
+                weights.append(0.35)
 
         # Elliott Wave voter (weight 0.65 — impulse/corrective wave structure)
         elliott = indicators.get("elliott_pattern")
@@ -1375,6 +1396,9 @@ class Analyzer:
             elif e_signal == "bearish":
                 votes.append(-e_conf)
                 weights.append(0.65)
+            else:
+                votes.append(0.0)
+                weights.append(0.3)
 
         # Order flow votes (if available)
         if order_flow is not None:
@@ -1426,6 +1450,9 @@ class Analyzer:
             elif ema9 < ema21:
                 votes.append(-0.6)
                 weights.append(0.5)
+            else:
+                votes.append(0.0)
+                weights.append(0.5)
 
         # Keltner squeeze voter (volatility compression = breakout imminent)
         squeeze = indicators.get("kc_squeeze", False)
@@ -1437,6 +1464,9 @@ class Analyzer:
                 weights.append(0.7)
             elif macd_hist_val < 0:
                 votes.append(-0.5)
+                weights.append(0.7)
+            else:
+                votes.append(0.0)
                 weights.append(0.7)
 
         # Taker buy/sell imbalance voter

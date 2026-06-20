@@ -320,6 +320,13 @@ class MarketScanner:
         self, symbol: str, tick: dict, min_vol: float = 50_000,
     ) -> Optional[MarketSignal]:
         """Convert a raw ticker dict into a MarketSignal, or None if filtered."""
+        # Skip delisted or suspended tickers
+        if tick.get("active") is False:
+            return None
+        tick_status = tick.get("info", {}).get("status", "").lower()
+        if tick_status in ("delisted", "suspended"):
+            return None
+
         try:
             change = float(tick.get("percentage", 0) or 0)
             volume = float(tick.get("quoteVolume", 0) or 0)

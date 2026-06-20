@@ -93,12 +93,12 @@ class MetricsEngine:
         # Sharpe / Sortino: prefer per-trade returns when trades exist,
         # because the equity-snapshot series is mostly zeros between trade
         # closes and produces badly distorted ratios.
-        if closed:
+        if len(closed) >= 2:
             sharpe = self._compute_sharpe_from_trades(closed)
             sortino = self._compute_sortino_from_trades(closed)
         else:
-            sharpe = self._compute_sharpe()
-            sortino = self._compute_sortino()
+            sharpe = 0.0
+            sortino = 0.0
 
         # Drawdown
         max_dd = self._compute_max_drawdown()
@@ -217,11 +217,11 @@ class MetricsEngine:
             if cost > 0:
                 pct_returns.append(t.pnl / cost)
             else:
-                # Fallback: use raw pnl (dimensionless weight in the series)
-                pct_returns.append(t.pnl)
+                # Skip trades with no cost to avoid mixing dollar and % units
+                continue
 
         arr = np.array(pct_returns, dtype=float)
-        if np.std(arr) == 0:
+        if len(arr) < 2 or np.std(arr) == 0:
             return 0.0
 
         trades_per_year = self._trades_per_year(closed)
@@ -245,11 +245,12 @@ class MetricsEngine:
             if cost > 0:
                 pct_returns.append(t.pnl / cost)
             else:
-                pct_returns.append(t.pnl)
+                # Skip trades with no cost to avoid mixing dollar and % units
+                continue
 
         arr = np.array(pct_returns, dtype=float)
         downside = arr[arr < 0]
-        if len(downside) == 0 or np.std(downside) == 0:
+        if len(downside) < 2 or np.std(downside) == 0:
             return 0.0
 
         trades_per_year = self._trades_per_year(closed)
@@ -278,5 +279,5 @@ class MetricsEngine:
             return 0.0
         curve = np.array(self._equity_curve)
         peak = np.maximum.accumulate(curve)
-        dd = (peak - curve) / peak * 100
+        dd = np.where(peak > 0, (peak - curve) / peak * 100, 0.0)
         return float(np.max(dd))

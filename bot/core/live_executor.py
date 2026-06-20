@@ -2403,6 +2403,7 @@ class LiveExecutor:
             commission = (entry_notional + exit_notional) * (commission_pct / 100.0)
             net_pnl = gross_pnl - commission
 
+            pos.close_reason = reason
             pos.status = "closed"
             pos.close_price = fill_price
             pos.gross_pnl = round(gross_pnl, 4)
@@ -2730,6 +2731,15 @@ class LiveExecutor:
                 if self._positions:
                     audit(trade_log, f"Loaded {len(self._positions)} live positions from {source_label}",
                           action="load_positions", result="OK")
+                    # Startup recovery: reset any positions stuck in "closing" status.
+                    # The close order may or may not have succeeded on the exchange —
+                    # resetting to "open" lets reconcile_positions() re-check and handle.
+                    for tid, p in self._positions.items():
+                        if p.status == "closing":
+                            audit(trade_log,
+                                  f"Startup recovery: position {tid} ({p.symbol}) stuck in 'closing' — resetting to 'open'",
+                                  action="load_positions", result="RECOVERY")
+                            p.status = "open"
                 return
             except Exception as exc:
                 audit(trade_log, f"Failed to load positions from {source}: {exc}",
@@ -2997,6 +3007,7 @@ class LiveExecutor:
                         else:
                             pnl = (pos.entry_price - est_exit) * pos.quantity
 
+                        pos.close_reason = reason
                         pos.status = "closed"
                         pos.close_price = est_exit
 
