@@ -38,11 +38,19 @@ out/
 !.env.example
 
 # -- Logs --
-# logs/ (excluded from gitignore to include trading records)
+logs/*.jsonl
+logs/*.jsonl.*
+*.log
+
+# Keep only structured trading records
 !logs/live_trading_log.csv
 !logs/closed_trades.json
 !logs/audit_chain.jsonl
-*.log
+
+# -- Training data & artifacts --
+ollama/
+v6_data/
+AUDIT_REPORT*.md
 
 # -- IDE --
 .vscode/
