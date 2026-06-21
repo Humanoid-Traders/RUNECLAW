@@ -1,0 +1,96 @@
+name: runeclaw-eth-trend
+display_name: "RUNECLAW ETH Pullback (Backtest)"
+version: "0.1.0"
+description: "Backtestable long-only ETH perpetual pullback strategy: buys limit dips below the day's average price behind a market-regime gate, with risk-based sizing, a defined stop, and a target"
+long_description: |
+  RUNECLAW ETH Pullback is a long-only strategy on Ether perpetual futures that
+  aims to buy strength on a dip while the broader market is supportive. The
+  thesis is that the best intraday longs come when the market leader is in a
+  constructive regime and the traded asset is holding the upper part of its
+  recent range above its average traded price; entering on a controlled
+  retracement rather than chasing avoids paying the high. It is built to stand
+  aside when the backdrop is weak, accepting idle periods as the price of
+  selectivity.
+
+  The strategy first checks the market leader's regime, reading its direction on
+  the day and its location relative to its average price. Only when that backdrop
+  is constructive does it evaluate the traded asset, blending relative strength
+  against the leader, position versus the day's average price, and location
+  within the session range into a single quality reading. When that reading
+  clears a bar, it enters long with a resting limit order placed below the day's
+  average price, waiting for a normal pullback to come to it.
+
+  Exits are rule-based. A protective stop sits beneath the level the market has
+  recently defended, floored at a sensible minimum so the stop is never absurdly
+  tight. Profit is taken at a defined target above the entry. Position size is
+  solved backward from a fixed dollar risk: the distance to the stop determines
+  how large a position can be while keeping the worst-case loss bounded, then
+  capped by the configured margin budget.
+
+  Subscribers can tune the leverage applied, the margin budget that anchors
+  sizing and the displayed return, the dollar risk allowed per trade, and the
+  minimum quality score required to act. Higher leverage or a larger risk
+  allowance enlarges both gains and drawdowns; a higher score bar trades less
+  often but more selectively.
+
+  The strategy underperforms when the leader is choppy or falling, when the asset
+  spends the session below its average price, or when pullbacks slice straight
+  through the stop in fast declines. It can also sit idle for long stretches.
+  Historical results are evidence, not a promise; live trading pays fees and
+  slippage that erode edge, so treat past performance cautiously and size to a
+  drawdown you can tolerate.
+market_type: contract
+trading_symbols: ["ETHUSDT", "BTCUSDT"]
+tags: ["pullback", "vwap", "momentum", "eth", "contract", "runeclaw"]
+
+schedule:
+  cron: "*/15 * * * *"
+  tz: "Asia/Shanghai"
+
+decision_mode: deterministic
+backtest_support: full
+runtime_profile: deterministic
+execution_mode: signal_only
+follow_trade_supported: false
+
+strategy_config:
+  trading_symbols: ["ETHUSDT", "BTCUSDT"]
+  leverage: 10
+  margin_budget: "100"
+  max_loss_usdt: "15"
+  min_score: 70
+  eth_sl_min_pct: "1.5"
+  atr_limit_mult: "0.5"
+  tp1_pct: "3.5"
+  window_bars_24h: 24
+  interval: "1h"
+  kline_limit: 1000
+  data_exchange: "bitget"
+  entry_ttl_bars: 8
+
+user_config_schema:
+  leverage:
+    type: integer
+    default: 10
+    min: 1
+    max: 25
+    aliases:
+      10x: 10
+      20x: 20
+    label: "Leverage"
+  margin_budget:
+    type: string
+    default: "100"
+    pattern: '^[0-9]+(\.[0-9]+)?$'
+    label: "Margin budget USDT (sizing + return % denominator)"
+  max_loss_usdt:
+    type: string
+    default: "15"
+    pattern: '^[0-9]+(\.[0-9]+)?$'
+    label: "Max loss per trade USDT"
+  min_score:
+    type: integer
+    default: 70
+    min: 1
+    max: 100
+    label: "Minimum score to enter"
