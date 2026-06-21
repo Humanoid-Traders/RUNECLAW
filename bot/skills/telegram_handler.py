@@ -1196,6 +1196,10 @@ class TelegramHandler:
             display_equity = live_eq if live_eq > 0 else state.equity_usd
             executor = self.engine.live_executor
             open_pos = len(executor.open_positions)
+            # Count filled vs pending separately
+            _all_tracked = list(executor._positions.values())
+            _filled_count = sum(1 for p in _all_tracked if p.status == "open")
+            _pending_count = sum(1 for p in _all_tracked if p.status == "pending_fill")
 
             # Fallback: if no locally-tracked positions, check exchange directly
             # This catches orphan positions (opened but lost from local state)
@@ -1242,7 +1246,8 @@ class TelegramHandler:
             f"Hey {user_name}, here's where things stand:\n\n"
             f"{status_icon} <b>{status_label}</b> | {mode}\n"
             f"Equity: <code>${equity}</code>\n"
-            f"Open positions: <code>{open_pos}</code>\n"
+            f"Open positions: <code>{_filled_count}</code>"
+            f"{f' | Pending orders: <code>{_pending_count}</code>' if _pending_count > 0 else ''}\n"
             f"Win rate: <code>{win_rate}{'%' if win_rate != 'N/A' else ''}</code>\n"
             f"Tier: {tier_label} | Trading: {trade_mode}\n\n"
             f"<b>Talk to me:</b>\n"
