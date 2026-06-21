@@ -833,10 +833,34 @@ class LiveExecutor:
                                 sym, side, _ADOPT_COOLDOWN)
                     continue
 
-                # Adopt this position
-                entry_price = float(p.get("entryPrice") or p.get("info", {}).get("openPriceAvg") or 0)
-                margin = float(p.get("initialMargin") or p.get("collateral") or 0)
-                leverage = int(float(p.get("leverage") or 1))
+                # Adopt this position — always use raw exchange data (info.openPriceAvg)
+                # as primary source, with ccxt's entryPrice as fallback.
+                # RULE: exchange numbers are the only truth, no exceptions.
+                info = p.get("info", {})
+                entry_price = float(
+                    info.get("openPriceAvg")
+                    or p.get("entryPrice")
+                    or info.get("averageOpenPrice")
+                    or 0
+                )
+                margin = float(
+                    info.get("margin")
+                    or info.get("im")
+                    or p.get("initialMargin")
+                    or p.get("collateral")
+                    or 0
+                )
+                leverage = int(float(
+                    info.get("leverage")
+                    or p.get("leverage")
+                    or 1
+                ))
+                # Quantity: prefer raw exchange totalQty/available over ccxt contracts
+                quantity = float(
+                    info.get("totalQty")
+                    or info.get("available")
+                    or contracts
+                )
                 ts = p.get("timestamp")
                 if ts:
                     opened_at = datetime.fromtimestamp(ts / 1000, tz=UTC)
@@ -849,7 +873,7 @@ class LiveExecutor:
                     symbol=raw_sym,
                     direction=side,
                     entry_price=entry_price,
-                    quantity=contracts,
+                    quantity=quantity,
                     cost_usd=margin,
                     stop_loss=0,
                     take_profit=0,
@@ -1953,9 +1977,10 @@ class LiveExecutor:
         # Strip "/USDT" from ccxt symbol format to get Bitget symbol
         bitget_symbol = symbol.replace("/USDT", "USDT").replace(":USDT", "")
 
-        # v3 strategy order API:
-        # Both hedge mode AND one-way mode require posSide = "long" or "short".
-        # UTA v3 does NOT accept "net" and does NOT allow omitting posSide.
+        # v3 strategy order API posSide:
+        #   Bitget UTA returns posSide="long"/"short" even in one-way mode.
+        #   Always use direction-based posSide; the retry loop handles edge
+        #   cases by cycling through net/omitted if needed.
         pos_side = "long" if direction == Direction.LONG else "short"
 
         def _v3_post(path: str, body_dict: dict) -> dict:
@@ -2082,28 +2107,36 @@ class LiveExecutor:
                     error_code = result.get("code", "")
 
                     # Error 31008: "There is no position in this position"
-                    # OR 40019: "Parameter posSide cannot be empty"
-                    # 31008 = "no position" — likely marginMode mismatch
-                    # Try toggling marginMode between isolated/crossed
+                    # Root cause: posSide or marginMode doesn't match the
+                    # actual position on exchange.  Retry cycle tries all
+                    # combinations: posSide (net/long/short) x marginMode
+                    # (isolated/crossed).
                     _RETRYABLE_CODES = ("31008", "31009", "40019", "40020")
                     if error_code in _RETRYABLE_CODES and attempt < _MAX_31008_RETRIES:
                         delay = (attempt + 1) * 2  # 2s, 4s, 6s, 8s
-                        # Toggle marginMode on 31008 (most common root cause)
-                        if error_code in ("31008", "31009"):
+                        # Cycle through combinations systematically:
+                        #   attempt 0 (initial): pos_side + config marginMode
+                        #   attempt 1: toggle marginMode
+                        #   attempt 2: toggle posSide (net ↔ long/short)
+                        #   attempt 3: toggle marginMode again
+                        #   attempt 4: toggle posSide + remove
+                        if attempt % 2 == 0:
+                            # Even retries: toggle posSide
+                            current_ps = payload.get("posSide", "")
+                            dir_side = "long" if direction == Direction.LONG else "short"
+                            if current_ps == "net":
+                                payload["posSide"] = dir_side
+                            elif current_ps == dir_side:
+                                payload["posSide"] = "net"
+                            else:
+                                payload["posSide"] = "net"
+                        else:
+                            # Odd retries: toggle marginMode
                             current_mm = payload.get("marginMode", "")
                             if current_mm == "isolated":
                                 payload["marginMode"] = "crossed"
                             else:
                                 payload["marginMode"] = "isolated"
-                        # Toggle posSide on 40019/40020
-                        elif error_code in ("40019", "40020"):
-                            current_ps = payload.get("posSide")
-                            if current_ps == pos_side:
-                                payload["posSide"] = "net"
-                            elif current_ps == "net":
-                                payload.pop("posSide", None)
-                            else:
-                                payload["posSide"] = pos_side
                         logger.warning(
                             "v3 SL/TP error %s for %s — retry %d/%d in %ds (marginMode=%s, posSide=%s)",
                             error_code, bitget_symbol, attempt + 1, _MAX_31008_RETRIES, delay,
@@ -2731,16 +2764,18 @@ class LiveExecutor:
                         cancel_failed.append(oid)
 
             # Futures-only mode: all positions close via swap exchange
-            # ALWAYS send tradeSide=close — prevents accidentally opening reverse
-            # position when Bitget is in hedge mode but bot doesn't detect it
-            # reduceOnly=true is a second safety layer — exchange rejects if it
-            # would open a new position instead of reducing
+            # UTA v3 does NOT support tradeSide — use reduceOnly instead.
+            # DO NOT send marginMode on close — the exchange knows the
+            # position's actual margin mode.  Sending the wrong mode
+            # (e.g. "isolated" when position is "crossed") causes the
+            # exchange to miss the position and open a new SHORT instead.
             close_params = {
                 "productType": "USDT-FUTURES",
-                "tradeSide": "close",
                 "reduceOnly": True,
-                "marginMode": CONFIG.exchange.margin_mode or "isolated",
             }
+            # Only add tradeSide for non-UTA (v2 classic) accounts
+            if not self._is_uta:
+                close_params["tradeSide"] = "close"
             order = await exchange.create_order(
                 symbol=pos.symbol,
                 type="market",
@@ -2787,21 +2822,53 @@ class LiveExecutor:
             if fill_price == 0:
                 fill_price = pos.entry_price  # absolute fallback — no phantom PnL
 
-            # Calculate PnL with fee deduction
-            if pos.direction == "LONG":
-                gross_pnl = (fill_price - pos.entry_price) * pos.quantity
-            else:
-                gross_pnl = (pos.entry_price - fill_price) * pos.quantity
+            # Calculate PnL — try exchange-reported profit first (source of truth)
+            exchange_pnl = None
+            try:
+                close_trades = await exchange.fetch_my_trades(
+                    pos.symbol, limit=10)
+                close_fills = [
+                    t for t in close_trades
+                    if t.get("order") == close_order_id
+                ]
+                if close_fills:
+                    total_profit = 0.0
+                    total_fees = 0.0
+                    for cf in close_fills:
+                        cf_info = cf.get("info", {})
+                        profit = float(cf_info.get("profit", 0) or 0)
+                        total_profit += profit
+                        fee_detail = cf_info.get("feeDetail", {})
+                        if isinstance(fee_detail, dict):
+                            total_fees += abs(float(fee_detail.get("totalFee", 0) or 0))
+                    if total_profit != 0 or total_fees != 0:
+                        exchange_pnl = total_profit
+                        if total_fees > 0:
+                            exchange_close_fees = total_fees
+            except Exception:
+                pass  # Fall back to calculated PnL
 
-            # Exchange commission: entry + exit notional × fee rate
-            entry_notional = pos.entry_price * pos.quantity
-            exit_notional = fill_price * pos.quantity
-            # GETCLAW: use maker rate if limit order (POST_ONLY), taker for market
-            is_limit_entry = getattr(pos, 'order_type', '') == 'limit'
-            entry_fee_pct = CONFIG.risk.maker_fee_pct if is_limit_entry else CONFIG.risk.taker_fee_pct
-            exit_fee_pct = CONFIG.risk.taker_fee_pct  # exits are usually market (SL/TP triggers)
-            commission = (entry_notional * entry_fee_pct / 100.0) + (exit_notional * exit_fee_pct / 100.0)
-            net_pnl = gross_pnl - commission
+            if exchange_pnl is not None:
+                # Use exchange numbers directly — no estimation
+                gross_pnl = exchange_pnl + exchange_close_fees  # profit is net of fees
+                commission = exchange_close_fees
+                net_pnl = exchange_pnl
+            else:
+                # Fallback: calculate from entry/exit prices
+                if pos.direction == "LONG":
+                    gross_pnl = (fill_price - pos.entry_price) * pos.quantity
+                else:
+                    gross_pnl = (pos.entry_price - fill_price) * pos.quantity
+
+                # Exchange commission: entry + exit notional x fee rate
+                entry_notional = pos.entry_price * pos.quantity
+                exit_notional = fill_price * pos.quantity
+                # GETCLAW: use maker rate if limit order (POST_ONLY), taker for market
+                is_limit_entry = getattr(pos, 'order_type', '') == 'limit'
+                entry_fee_pct = CONFIG.risk.maker_fee_pct if is_limit_entry else CONFIG.risk.taker_fee_pct
+                exit_fee_pct = CONFIG.risk.taker_fee_pct  # exits are usually market
+                commission = (entry_notional * entry_fee_pct / 100.0) + (exit_notional * exit_fee_pct / 100.0)
+                net_pnl = gross_pnl - commission
 
             pos.close_reason = reason
             pos.status = "closed"
@@ -3779,8 +3846,11 @@ class LiveExecutor:
 
                         est_exit = actual_fill_price
 
-                        # Compute PnL
-                        if pos.direction == "LONG":
+                        # Compute PnL — prefer exchange-reported profit (source of truth)
+                        if exchange_reported_pnl is not None:
+                            pnl = exchange_reported_pnl
+                            fill_source = fill_source + "+exchange_pnl"
+                        elif pos.direction == "LONG":
                             pnl = (est_exit - pos.entry_price) * pos.quantity
                         else:
                             pnl = (pos.entry_price - est_exit) * pos.quantity

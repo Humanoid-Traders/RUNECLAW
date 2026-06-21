@@ -1351,7 +1351,24 @@ class RuneClawEngine:
                 audit(system_log, f"Reconciliation error: {exc}",
                       action="reconcile", result="ERROR")
 
-            # Orphan adoption disabled — bot only manages positions it opened.
+            # Periodic orphan adoption: catch positions opened on exchange
+            # but not tracked locally (e.g., after bot restart, manual trades,
+            # or failed adoption on startup).  Runs every tick alongside
+            # reconciliation to keep local state in sync.
+            try:
+                sync_msgs = await sync_portfolio_with_exchange(self)
+                for msg in sync_msgs:
+                    if "Adopted" in msg or "Ghost" in msg or "Orphan" in msg:
+                        audit(system_log, f"Periodic sync: {msg}",
+                              action="periodic_exchange_sync", result="SYNCED")
+                        if self._adopt_notify_callback and "Adopted" in msg:
+                            try:
+                                await self._adopt_notify_callback(msg)
+                            except Exception as exc:
+                                logger.debug("Adopt notify failed: %s", exc)
+            except Exception as exc:
+                audit(system_log, f"Periodic exchange sync error: {exc}",
+                      action="periodic_exchange_sync", result="ERROR")
 
     async def _check_paper_positions(self, positions) -> None:
         """Monitor paper portfolio positions for SL/TP hits."""

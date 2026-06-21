@@ -17,8 +17,14 @@ Designed to run on every startup and periodically thereafter.
 
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
 import time
+import urllib.request
+import hmac
+import hashlib
+import base64
 from typing import Any
 
 from bot.compat import UTC
@@ -44,13 +50,130 @@ _PRODUCT_TYPE_PARAMS = {"productType": "USDT-FUTURES"}
 
 async def _fetch_exchange_positions(engine) -> list[dict[str, Any]]:
     """Fetch all open futures positions from Bitget and return only those
-    with a non-zero contract count."""
+    with a non-zero contract count.
+
+    For UTA accounts, ccxt's fetch_positions may not return all positions.
+    Falls back to querying the v3 REST API directly and merging results.
+    """
     exchange = await engine.live_executor._get_exchange()
     raw = await exchange.fetch_positions(params=_PRODUCT_TYPE_PARAMS)
-    return [
+    ccxt_positions = [
         p for p in raw
         if abs(float(p.get("contracts", 0) or 0)) > 0
     ]
+
+    # UTA fallback: query v3 position endpoint directly to catch any
+    # positions missed by ccxt (observed with some symbols like INTC).
+    is_uta = getattr(engine.live_executor, "_is_uta", None)
+    if is_uta:
+        try:
+            v3_positions = await asyncio.to_thread(
+                _fetch_v3_positions_direct)
+            if v3_positions:
+                # Merge: add any v3 positions not already in ccxt results
+                ccxt_syms = {
+                    (p.get("symbol", ""), (p.get("side", "")).lower())
+                    for p in ccxt_positions
+                }
+                added = 0
+                for v3p in v3_positions:
+                    key = (v3p.get("symbol", ""), (v3p.get("side", "")).lower())
+                    if key not in ccxt_syms:
+                        ccxt_positions.append(v3p)
+                        added += 1
+                if added > 0:
+                    audit(system_log,
+                          f"v3 position fallback found {added} extra position(s) missed by ccxt",
+                          action="v3_position_fallback", result="OK")
+        except Exception as exc:
+            logger.debug("v3 position fallback failed: %s", exc)
+
+    return ccxt_positions
+
+
+def _fetch_v3_positions_direct() -> list[dict[str, Any]]:
+    """Query Bitget v3 /api/v3/position/current-position directly.
+
+    Returns positions in ccxt-compatible dict format so they can be merged
+    with ccxt's fetch_positions output.
+
+    This is a synchronous call — callers must wrap in asyncio.to_thread.
+    """
+    cfg = CONFIG.exchange
+    if not cfg.api_key or not cfg.api_secret:
+        return []
+
+    ts = str(int(time.time() * 1000))
+    # v3 uses "category" not "productType"
+    query = "category=USDT-FUTURES"
+    path = f"/api/v3/position/current-position?{query}"
+    pre_sign = ts + "GET" + path
+    sig = base64.b64encode(
+        hmac.new(cfg.api_secret.encode(), pre_sign.encode(), hashlib.sha256).digest()
+    ).decode()
+    url = "https://api.bitget.com" + path
+    req = urllib.request.Request(url)
+    req.add_header("ACCESS-KEY", cfg.api_key)
+    req.add_header("ACCESS-SIGN", sig)
+    req.add_header("ACCESS-TIMESTAMP", ts)
+    req.add_header("ACCESS-PASSPHRASE", cfg.passphrase)
+    req.add_header("Content-Type", "application/json")
+    req.add_header("locale", "en-US")
+
+    try:
+        resp = urllib.request.urlopen(req, timeout=10)
+        resp_data = json.loads(resp.read())
+    except Exception:
+        return []
+
+    if resp_data.get("code") != "00000":
+        return []
+
+    data_list = resp_data.get("data", [])
+    if not isinstance(data_list, list):
+        return []
+
+    positions = []
+    for item in data_list:
+        qty = float(item.get("totalQty") or item.get("available") or 0)
+        if qty <= 0:
+            continue
+
+        # Convert Bitget raw symbol to ccxt format
+        raw_sym = item.get("symbol", "")  # e.g. "INTCUSDT"
+        # Build ccxt-style symbol: INTC/USDT:USDT
+        base = raw_sym
+        for quote in ("USDT", "USDC"):
+            if raw_sym.endswith(quote) and len(raw_sym) > len(quote):
+                base = raw_sym[:-len(quote)]
+                break
+        ccxt_symbol = f"{base}/USDT:USDT"
+
+        side = (item.get("holdSide") or item.get("posSide") or "long").lower()
+        if side == "net":
+            side = "long"  # one-way mode defaults to long
+
+        entry_price = float(item.get("openPriceAvg") or 0)
+        margin = float(item.get("margin") or item.get("im") or 0)
+        leverage = int(float(item.get("leverage") or 1))
+        mark_price = float(item.get("markPrice") or 0)
+        unrealized_pnl = float(item.get("unrealizedPL") or 0)
+        ts_val = item.get("ctime") or item.get("utime")
+
+        positions.append({
+            "symbol": ccxt_symbol,
+            "side": side,
+            "contracts": qty,
+            "entryPrice": entry_price,
+            "initialMargin": margin,
+            "leverage": str(leverage),
+            "markPrice": mark_price,
+            "unrealizedPnl": unrealized_pnl,
+            "timestamp": int(ts_val) if ts_val else None,
+            "info": item,  # raw v3 data for adopt_exchange_positions
+        })
+
+    return positions
 
 
 def _exchange_key(pos: dict[str, Any]) -> tuple[str, str]:
@@ -99,16 +222,17 @@ async def _get_actual_close_price(
     tp_price = getattr(trade, "take_profit", 0) or 0
 
     if hasattr(engine.live_executor, "_positions"):
-        # Check both open and all positions for matching trade
-        for pos in engine.live_executor._positions.values():
-            pos_sym = normalize_symbol(getattr(pos, "symbol", "") or "")
-            trade_sym = normalize_symbol(trade.asset)
-            if pos_sym == trade_sym:
-                sl_order_id = getattr(pos, "sl_order_id", None)
-                tp_order_id = getattr(pos, "tp_order_id", None)
-                sl_price = sl_price or getattr(pos, "stop_loss", 0) or 0
-                tp_price = tp_price or getattr(pos, "take_profit", 0) or 0
-                break
+        positions_dict = engine.live_executor._positions
+        if isinstance(positions_dict, dict):
+            for pos in positions_dict.values():
+                pos_sym = normalize_symbol(getattr(pos, "symbol", "") or "")
+                trade_sym = normalize_symbol(trade.asset)
+                if pos_sym == trade_sym:
+                    sl_order_id = getattr(pos, "sl_order_id", None)
+                    tp_order_id = getattr(pos, "tp_order_id", None)
+                    sl_price = sl_price or getattr(pos, "stop_loss", 0) or 0
+                    tp_price = tp_price or getattr(pos, "take_profit", 0) or 0
+                    break
 
     # ── 1. fetchMyTrades — actual fill price + exchange PnL ──────────
     if sl_order_id or tp_order_id:
@@ -235,8 +359,8 @@ async def sync_portfolio_with_exchange(engine) -> list[str]:
     # Build set of keys tracked by EITHER portfolio or live_executor
     tracked_keys: set[tuple[str, str]] = set()
 
-    # Re-read portfolio after ghost cleanup
-    for trade in engine.portfolio._positions.values():
+    # Re-read portfolio after ghost cleanup (use thread-safe property)
+    for trade in engine.portfolio.open_positions:
         tracked_keys.add(_portfolio_key(trade))
 
     # Live executor positions (open_positions is a list of LivePosition objects)
