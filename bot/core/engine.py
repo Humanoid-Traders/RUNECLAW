@@ -1085,9 +1085,21 @@ class RuneClawEngine:
                       action="critique_adjust", result="ADJUSTED",
                       data={"adjustment": critique_result.confidence_adjustment, "new_confidence": idea.confidence})
                 if idea.confidence < CONFIG.risk.min_confidence:
-                    audit(system_log, f"Post-critique confidence {idea.confidence:.2f} below min {CONFIG.risk.min_confidence}", action="confirm", result="REJECT")
-                    self._pending_pyramid.pop(trade_id, None)
-                    return f"Trade REJECTED: post-critique confidence {idea.confidence:.2f} below minimum {CONFIG.risk.min_confidence}"
+                    # User-confirmed trades (scan button click, manual /trade)
+                    # get a warning instead of hard reject — the user made a
+                    # deliberate decision to take this trade.
+                    _src = getattr(idea, 'source', '')
+                    _user_confirmed = _src in ('manual',) or _src.startswith('scan_skill')
+                    if _user_confirmed:
+                        audit(trade_log,
+                              f"Post-critique confidence {idea.confidence:.2f} below min {CONFIG.risk.min_confidence} "
+                              f"— proceeding anyway (user-confirmed {_src} trade)",
+                              action="critique_adjust", result="WARN_OVERRIDE",
+                              data={"confidence": idea.confidence, "min": CONFIG.risk.min_confidence, "source": _src})
+                    else:
+                        audit(system_log, f"Post-critique confidence {idea.confidence:.2f} below min {CONFIG.risk.min_confidence}", action="confirm", result="REJECT")
+                        self._pending_pyramid.pop(trade_id, None)
+                        return f"Trade REJECTED: post-critique confidence {idea.confidence:.2f} below minimum {CONFIG.risk.min_confidence}"
 
             if critique_result.verdict == "WARN":
                 audit(trade_log, f"Critique WARNING for {trade_id}: {critique_result.bear_case}",
