@@ -62,7 +62,10 @@ def run() -> None:
           f"win_rate={getattr(result, 'win_rate', None)}")
 
     starting_balance = _f(summary.get("starting_balance"), 100000.0)
-    net_pnl = _f(summary.get("net_pnl"), 0.0)
+    # Source net PnL from the real per-trade stats, not the engine's mis-scaled
+    # account summary field (which can be denominated inconsistently).
+    stats_pnls = (raw.get("stats") or {}).get("pnls") or {}
+    net_pnl = _f(stats_pnls.get("PnL (total)"), _f(summary.get("net_pnl"), 0.0))
     account_return_pct = (net_pnl / starting_balance * 100.0) if starting_balance else 0.0
 
     raw["net_pnl"] = round(net_pnl, 6)
