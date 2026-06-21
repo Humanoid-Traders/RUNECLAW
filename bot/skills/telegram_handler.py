@@ -2117,14 +2117,31 @@ class TelegramHandler:
             await self._send(update, f"\u274c Balance fetch failed: {exc}")
 
     async def _cmd_livepositions(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-        """/livepositions — show live open positions."""
+        """/livepositions — show live positions and pending orders separately."""
         if not await self._guard(update, "portfolio"):
             return
         positions = self.engine.live_executor._positions
-        open_pos = [p for p in positions.values() if p.status in ("open", "pending_fill")]
+        filled_pos = [p for p in positions.values() if p.status == "open"]
+        pending_pos = [p for p in positions.values() if p.status == "pending_fill"]
 
-        # Fallback: check exchange directly if no local positions
-        if not open_pos:
+        # Fetch current prices for all relevant symbols
+        current_prices: dict = {}
+        all_pos = filled_pos + pending_pos
+        if all_pos:
+            try:
+                exchange = await self.engine.live_executor._get_exchange()
+                for p in all_pos:
+                    if p.symbol not in current_prices:
+                        try:
+                            tk = await exchange.fetch_ticker(p.symbol)
+                            current_prices[p.symbol] = float(tk.get("last") or 0)
+                        except Exception:
+                            current_prices[p.symbol] = 0
+            except Exception:
+                pass
+
+        # Fallback: check exchange directly if no local positions at all
+        if not filled_pos and not pending_pos:
             try:
                 exchange = await self.engine.live_executor._get_exchange()
                 ex_positions = await exchange.fetch_positions(
@@ -2132,12 +2149,12 @@ class TelegramHandler:
                 ex_open = [p for p in (ex_positions or [])
                            if isinstance(p, dict) and float(p.get("contracts") or 0) > 0]
                 if ex_open:
-                    SEP = "─" * 16
-                    lines = [f"📊 <b>LIVE POSITIONS</b> (from exchange)\n{SEP}\n"]
+                    SEP = "\u2500" * 16
+                    lines = [f"\U0001f4ca <b>LIVE POSITIONS</b> (from exchange)\n{SEP}\n"]
                     for p in ex_open:
                         sym = p.get("symbol", "???")
                         side = (p.get("side") or "long").upper()
-                        dir_icon = "🟢" if side == "LONG" else "🔴"
+                        dir_icon = "\U0001f7e2" if side == "LONG" else "\U0001f534"
                         contracts = float(p.get("contracts") or 0)
                         entry = float(p.get("entryPrice") or 0)
                         mark = float(p.get("markPrice") or 0)
@@ -2151,30 +2168,103 @@ class TelegramHandler:
                             f"- Qty: <code>{contracts:.6f}</code>\n"
                             f"- uPnL: <code>${upnl:+,.2f}</code>\n"
                         )
-                    lines.append(f"\n<i>⚠️ Showing exchange data — local tracking out of sync</i>")
+                    lines.append(f"\n<i>\u26a0\ufe0f Showing exchange data \u2014 local tracking out of sync</i>")
                     await self._send(update, "\n".join(lines))
                     return
             except Exception:
                 pass
 
-        if not open_pos:
-            await self._send(update, "💭 No live positions open.")
+        if not filled_pos and not pending_pos:
+            await self._send(update, "\U0001f4ad No live positions or pending orders.")
             return
-        SEP = "─" * 16
-        lines = [f"📊 <b>LIVE POSITIONS</b>\n{SEP}\n"]
-        for p in open_pos:
-            dir_icon = "🟢" if p.direction == "LONG" else "🔴"
-            sym_display = p.symbol.replace("/", "").replace(":USDT", "")
-            sl_str = f"${p.stop_loss:,.4f}" if p.stop_loss > 0 else "⚠️ NOT SET"
-            tp_str = f"${p.take_profit:,.4f}" if p.take_profit > 0 else "⚠️ NOT SET"
-            lines.append(
-                f"{dir_icon} <b>{p.direction} {sym_display}</b>\n"
-                f"- Entry: <code>${p.entry_price:,.4f}</code>\n"
-                f"- Qty: <code>{p.quantity:.6f}</code>\n"
-                f"- SL: <code>{sl_str}</code>\n"
-                f"- TP: <code>{tp_str}</code>\n"
-                f"- ID: <code>{p.trade_id}</code>\n"
-            )
+
+        SEP = "\u2500" * 16
+        lines: list = []
+
+        # ── Section 1: Active (filled) positions ──
+        if filled_pos:
+            lines.append(f"\U0001f4c8 <b>ACTIVE POSITIONS ({len(filled_pos)})</b>\n{SEP}\n")
+            for p in filled_pos:
+                dir_icon = "\U0001f7e2" if p.direction == "LONG" else "\U0001f534"
+                sym_display = p.symbol.replace("/", "").replace(":USDT", "")
+                sl_str = f"${p.stop_loss:,.4f}" if p.stop_loss > 0 else "\u26a0\ufe0f NOT SET"
+                tp_str = f"${p.take_profit:,.4f}" if p.take_profit > 0 else "\u26a0\ufe0f NOT SET"
+                lev = getattr(p, 'leverage', 10)
+                cost = getattr(p, 'cost_usd', 0) or 0
+
+                # Calculate uPnL
+                cur = current_prices.get(p.symbol, 0)
+                upnl_str = ""
+                pnl_pct_str = ""
+                if cur > 0 and p.entry_price > 0:
+                    if p.direction == "LONG":
+                        upnl = (cur - p.entry_price) / p.entry_price * cost
+                        pnl_pct = (cur - p.entry_price) / p.entry_price * 100 * lev
+                    else:
+                        upnl = (p.entry_price - cur) / p.entry_price * cost
+                        pnl_pct = (p.entry_price - cur) / p.entry_price * 100 * lev
+                    sign = "+" if upnl >= 0 else ""
+                    upnl_str = f"- uPnL: <code>{sign}${upnl:,.2f}</code> ({sign}{pnl_pct:.1f}%)\n"
+
+                cur_str = f"- Current: <code>${cur:,.4f}</code>\n" if cur > 0 else ""
+
+                lines.append(
+                    f"{dir_icon} <b>{p.direction} {sym_display}</b> {lev}x\n"
+                    f"- Entry: <code>${p.entry_price:,.4f}</code>\n"
+                    f"{cur_str}"
+                    f"- Size: <code>${cost:,.2f}</code> | Qty: <code>{p.quantity:.6f}</code>\n"
+                    f"- SL: <code>{sl_str}</code>\n"
+                    f"- TP: <code>{tp_str}</code>\n"
+                    f"{upnl_str}"
+                    f"- ID: <code>{p.trade_id}</code>\n"
+                )
+
+        # ── Section 2: Pending limit orders ──
+        if pending_pos:
+            if filled_pos:
+                lines.append("")  # spacer
+            lines.append(f"\u23f3 <b>PENDING ORDERS ({len(pending_pos)})</b>\n{SEP}\n")
+            for p in pending_pos:
+                dir_icon = "\U0001f7e2" if p.direction == "LONG" else "\U0001f534"
+                sym_display = p.symbol.replace("/", "").replace(":USDT", "")
+                sl_str = f"${p.stop_loss:,.4f}" if p.stop_loss > 0 else "\u26a0\ufe0f NOT SET"
+                tp_str = f"${p.take_profit:,.4f}" if p.take_profit > 0 else "\u26a0\ufe0f NOT SET"
+                lev = getattr(p, 'leverage', 10)
+                cost = getattr(p, 'cost_usd', 0) or 0
+
+                # Distance to fill
+                cur = current_prices.get(p.symbol, 0)
+                dist_str = ""
+                if cur > 0 and p.entry_price > 0:
+                    dist_pct = abs(cur - p.entry_price) / p.entry_price * 100
+                    dist_str = f" ({dist_pct:+.2f}% away)"
+
+                # Time waiting
+                age_str = ""
+                if hasattr(p, 'opened_at') and p.opened_at:
+                    from datetime import datetime, timezone
+                    now = datetime.now(timezone.utc)
+                    delta = now - p.opened_at
+                    mins = int(delta.total_seconds() // 60)
+                    if mins < 60:
+                        age_str = f"- Placed: <code>{mins}m ago</code>\n"
+                    else:
+                        hrs = mins // 60
+                        age_str = f"- Placed: <code>{hrs}h {mins % 60}m ago</code>\n"
+
+                cur_line = f"- Current: <code>${cur:,.4f}</code>{dist_str}\n" if cur > 0 else ""
+
+                lines.append(
+                    f"{dir_icon} <b>{p.direction} {sym_display}</b> \u2014 Limit Order\n"
+                    f"- Limit: <code>${p.entry_price:,.4f}</code>\n"
+                    f"{cur_line}"
+                    f"- Size: <code>${cost:,.2f}</code> | Lev: {lev}x\n"
+                    f"- SL: <code>{sl_str}</code>\n"
+                    f"- TP: <code>{tp_str}</code>\n"
+                    f"{age_str}"
+                    f"- ID: <code>{p.trade_id}</code>\n"
+                )
+
         await self._send(update, "\n".join(lines))
 
     async def _cmd_liveclose(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
