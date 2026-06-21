@@ -502,27 +502,98 @@ async def _scan_batch(update: Update, context: ContextTypes.DEFAULT_TYPE,
     results = sorted((r for r in raw if r), key=lambda x: x["score"], reverse=True)[:top_n]
     if not results:
         await msg.edit_text("No scannable symbols found."); return
-    header = (f"\U0001f9ec <b>RUNECLAW Scan</b> -- "
-              f"{len(results)} symbols  |  {datetime.now(UTC).strftime('%H:%M UTC')}\n")
-    if top_n <= 10 and not patterns:
-        body = "\n".join(_fmt_quick(r) for r in results)
-    else:
-        body = "\n\n".join(_fmt_detail(r) for r in results[:20])
-        if len(results) > 20:
-            body += f"\n\n<i>... and {len(results) - 20} more</i>"
+
+    # ── BTC Gate Check ──
+    btc_gate = ""
+    btc_r = next((r for r in raw if r and r["sym"] == "BTC/USDT"), None)
+    if btc_r:
+        btc_price = btc_r["price"]
+        btc_vwap = btc_r["sma20"]  # Use SMA20 as VWAP proxy
+        btc_rsi = btc_r["rsi"]
+        btc_vs_vwap = (btc_price - btc_vwap) / btc_vwap * 100 if btc_vwap > 0 else 0
+        gate_icon = "\u2705" if btc_vs_vwap > -0.5 else "\u26a0\ufe0f" if btc_vs_vwap > -2 else "\u274c"
+        gate_label = "OPEN" if btc_vs_vwap > -0.5 else "CAUTION" if btc_vs_vwap > -2 else "CLOSED"
+        btc_gate = (
+            f"<b>BTC GATE</b>  {gate_icon} {gate_label}\n"
+            f"Price <code>${btc_price:,.0f}</code>  |  SMA20 <code>${btc_vwap:,.0f}</code>  "
+            f"({'+' if btc_vs_vwap >= 0 else ''}{btc_vs_vwap:.1f}%)  RSI {btc_rsi}\n"
+            f"{'━' * 28}\n"
+        )
+
+    # ── Summary header ──
+    now_str = datetime.now(UTC).strftime('%H:%M UTC')
+    header = f"\u2694\ufe0f <b>RUNECLAW Live Scan</b> — {now_str}\n{'━' * 28}\n"
+    header += btc_gate
+
+    # ── Top setups with details ──
+    from bot.config import CONFIG
+    leverage = CONFIG.exchange.default_leverage
+    top_setups = [r for r in results if r["score"] >= 0.4][:6]  # Max 6 setups
+    skipped = [r for r in results if r["score"] < 0.4]
+
+    setup_lines = []
+    for i, r in enumerate(top_setups, 1):
+        sym = r["sym"].replace("/USDT", "")
+        price = r["price"]
+        atr = r["atr"]
+        direction = r["dir"]
+
+        # Calculate entry, SL, TP with ATR-based levels
+        if direction == "LONG":
+            sl = round(price - atr * 2.5, 8)
+            tp = round(price + atr * 3.0, 8)
+            entry = round(price - atr * 0.3, 8)  # Slight pullback entry
+        else:
+            sl = round(price + atr * 2.5, 8)
+            tp = round(price - atr * 3.0, 8)
+            entry = round(price + atr * 0.3, 8)  # Slight pullback entry
+
+        sl_dist = abs(entry - sl) / entry * 100 if entry > 0 else 0
+        tp_dist = abs(tp - entry) / entry * 100 if entry > 0 else 0
+        rr = tp_dist / sl_dist if sl_dist > 0 else 0
+
+        # Score threshold display
+        score_pct = int(r["score"] * 100)
+        score_icon = "\u2705" if score_pct >= 75 else "\u26a0\ufe0f" if score_pct >= 60 else "\u274c"
+
+        setup_lines.append(
+            f"<b>#{i} — {sym}USDT</b>  {_dir_emoji(direction)} {direction}\n"
+            f"  Entry: <code>${entry:,.6g}</code>  ({'+' if direction == 'LONG' else '-'}"
+            f"pullback)\n"
+            f"  TP:    <code>${tp:,.6g}</code>  (+{tp_dist:.1f}%)\n"
+            f"  SL:    <code>${sl:,.6g}</code>  (-{sl_dist:.1f}%)\n"
+            f"  R:R:   <code>{rr:.1f}:1</code>  |  RSI {r['rsi']}  |  Vol {r['vol_ratio']}x\n"
+            f"  Score: {score_icon} {score_pct}/100"
+        )
+
+    body = "\n\n".join(setup_lines) if setup_lines else "No setups above threshold."
+
+    if skipped:
+        body += f"\n\n<i>{len(skipped)} symbols below gate threshold</i>"
+
     text = header + "\n" + body
+
     if ai and results:
         text += "\n\n\u23f3 <i>Generating AI summary...</i>"
         await msg.edit_text(text, parse_mode="HTML")
         summary = await _ai_summary(results[:15])
         text = text.replace("\u23f3 <i>Generating AI summary...</i>",
                             f"\U0001f916 <b>AI Summary:</b>\n{summary}")
-    top = results[0]
-    kb = InlineKeyboardMarkup([[
-        InlineKeyboardButton("\u2705 Confirm " + top["sym"].replace("/USDT", ""),
-                             callback_data=f"scan_confirm:{top['sym']}:{top['dir']}:{top['price']}"),
-        InlineKeyboardButton("\u274c Reject", callback_data=f"scan_reject:{top['sym']}"),
-    ]])
+
+    # ── Build per-setup action buttons (max 6 rows) ──
+    buttons = []
+    for r in top_setups:
+        sym_short = r["sym"].replace("/USDT", "")
+        buttons.append([
+            InlineKeyboardButton(f"\u2705 {sym_short}",
+                                 callback_data=f"scan_confirm:{r['sym']}:{r['dir']}:{r['price']}"),
+            InlineKeyboardButton("Limit",
+                                 callback_data=f"scan_limit:{r['sym']}:{r['dir']}:{r['price']}"),
+            InlineKeyboardButton("Skip",
+                                 callback_data=f"scan_reject:{r['sym']}"),
+        ])
+
+    kb = InlineKeyboardMarkup(buttons) if buttons else None
     await msg.edit_text(text, parse_mode="HTML", reply_markup=kb)
 
     # Push scan data to website dashboard
@@ -643,8 +714,69 @@ async def callback_confirm_reject(update: Update, context: ContextTypes.DEFAULT_
     if data.startswith("scan_reject:"):
         sym = data.split(":")[1]
         await query.edit_message_reply_markup(reply_markup=None)
-        await query.message.reply_text(f"\u274c <b>{sym}</b> rejected by operator.", parse_mode="HTML")
+        await query.message.reply_text(f"\u274c <b>{sym}</b> skipped.", parse_mode="HTML")
         return
+
+    # ── scan_limit: prompt user to set custom limit price ──
+    if data.startswith("scan_limit:"):
+        parts = data.split(":")
+        if len(parts) < 4:
+            await query.message.reply_text("Invalid callback data."); return
+        _, symbol, dir_str, price_str = parts[:4]
+        price = float(price_str)
+        direction = Direction.LONG if dir_str == "LONG" else Direction.SHORT
+        engine = context.bot_data.get("engine")
+        if engine is None:
+            await query.message.reply_text("Engine not available."); return
+
+        # Create idea and register as pending
+        atr_val = price * 0.03  # default 3% ATR estimate
+        try:
+            exchange = await engine.scanner._get_exchange()
+            ohlcv = await exchange.fetch_ohlcv(symbol, "4h", limit=30)
+            h = np.array([c[2] for c in ohlcv], dtype=float)
+            l_arr = np.array([c[3] for c in ohlcv], dtype=float)
+            c_arr = np.array([c[4] for c in ohlcv], dtype=float)
+            atr_val = _compute_atr(h, l_arr, c_arr)
+        except Exception:
+            pass
+        sl = round(price * (0.97 if direction == Direction.LONG else 1.03), 6)
+        tp = round(price * (1.06 if direction == Direction.LONG else 0.94), 6)
+        try:
+            idea = TradeIdea(asset=symbol, direction=direction, entry_price=price,
+                             stop_loss=sl, take_profit=tp, confidence=0.6,
+                             reasoning=f"Scan signal for {symbol} with custom limit",
+                             source="scan_skill", order_type="limit")
+        except ValueError as e:
+            await query.message.reply_text(f"\u26a0\ufe0f Invalid trade: {e}", parse_mode="HTML")
+            return
+
+        engine._pending_ideas[idea.id] = idea
+        engine._pending_atr[idea.id] = atr_val
+
+        # Store limit input state in the telegram handler
+        handler = context.bot_data.get("telegram_handler")
+        caller_uid = str(update.effective_user.id) if update.effective_user else ""
+        if handler and hasattr(handler, '_pending_limit_input'):
+            import time as _time
+            handler._pending_limit_input[caller_uid] = {
+                "trade_id": idea.id,
+                "asset": symbol.replace("/USDT", ""),
+                "pair": symbol,
+                "direction": direction.value,
+                "current_entry": price,
+                "timestamp": _time.time(),
+            }
+
+        sym_short = symbol.replace("/USDT", "")
+        await query.message.reply_text(
+            f"\U0001f4b0 <b>Set limit price for {sym_short} {direction.value}</b>\n\n"
+            f"Current entry: <code>${price:,.6g}</code>\n"
+            f"SL: <code>${sl:,.6g}</code> | TP: <code>${tp:,.6g}</code>\n\n"
+            f"Type your limit price (e.g. <code>{price * 0.99:,.4g}</code> or <code>{price * 0.98:,.4g}</code>):",
+            parse_mode="HTML")
+        return
+
     if not data.startswith("scan_confirm:"):
         return
     parts = data.split(":")

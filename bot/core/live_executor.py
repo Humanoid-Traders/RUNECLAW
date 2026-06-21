@@ -1316,10 +1316,41 @@ class LiveExecutor:
                           action="limit_downgrade", result="MARKET_FALLBACK",
                           data={"symbol": symbol})
 
-            if use_limit and market:
+            if use_limit and limit_price:
                 # Round limit price to exchange tick grid
-                _prec_price = active_exchange.price_to_precision(symbol, limit_price)
-                limit_price = float(_prec_price) if _prec_price is not None else limit_price
+                _prec_price = None
+                if market:
+                    _prec_price = active_exchange.price_to_precision(symbol, limit_price)
+                if _prec_price is not None:
+                    limit_price = float(_prec_price)
+                else:
+                    # Fallback: round to tick size from market info, or safe default
+                    tick_size = None
+                    if market:
+                        tick_size = (market.get("precision", {}).get("price")
+                                     or market.get("info", {}).get("pricePlace"))
+                    if tick_size is not None:
+                        try:
+                            ts = float(tick_size)
+                            if ts >= 1:
+                                # tick_size is decimal places count
+                                limit_price = round(limit_price, int(ts))
+                            else:
+                                # tick_size is actual step (e.g. 0.001)
+                                limit_price = round(limit_price / ts) * ts
+                        except (ValueError, TypeError):
+                            pass
+                    # Ultimate fallback: round based on price magnitude
+                    if _prec_price is None:
+                        if limit_price >= 1000:
+                            limit_price = round(limit_price, 2)
+                        elif limit_price >= 1:
+                            limit_price = round(limit_price, 3)
+                        elif limit_price >= 0.01:
+                            limit_price = round(limit_price, 4)
+                        else:
+                            limit_price = round(limit_price, 6)
+                    logger.debug("Limit price fallback rounding: %s -> %s", _prec_price, limit_price)
 
             if is_futures:
                 # Futures: use USDT-FUTURES product type

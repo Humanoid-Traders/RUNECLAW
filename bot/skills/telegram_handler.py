@@ -190,6 +190,7 @@ class TelegramHandler:
         app = Application.builder().token(CONFIG.telegram.bot_token).build()
         # Store engine in bot_data so standalone skill handlers can access it
         app.bot_data["engine"] = self.engine
+        app.bot_data["telegram_handler"] = self
         for cmd, handler in [
             ("start", self._cmd_start), ("dashboard", self._cmd_dashboard),
             ("scan", self._cmd_scan), ("analyze", self._cmd_analyze),
@@ -937,6 +938,22 @@ class TelegramHandler:
                     f"\u26a0\ufe0f <b>Invalid price:</b> <code>{html.escape(text[:30])}</code>\n\n"
                     f"Type a number (e.g. <code>84.07</code>) or <code>cancel</code>.")
                 return
+
+        # ── Manual trade via natural language ──────────────────────
+        # Intercept "buy SOL 71 sl 70 tp 76" or "trade short ETH 1721 sl 1695 tp 1842"
+        # before the intent router can misroute it
+        _trade_text = text.lower().strip()
+        if _trade_text.startswith("trade "):
+            _trade_text = _trade_text[6:].strip()
+        _trade_prefixes = ("buy ", "long ", "short ", "sell ")
+        if any(_trade_text.startswith(p) for p in _trade_prefixes) and " sl " in _trade_text:
+            # Looks like a manual trade command — delegate to _cmd_trade
+            # Simulate the /trade command by prepending it
+            original_text = update.message.text
+            update.message.text = f"/trade {_trade_text}"
+            await self._cmd_trade(update, ctx)
+            update.message.text = original_text  # restore
+            return
 
         # ── Intent routing (Move 1) ──────────────────────────────
         # Try to map free text to a skill before falling back to chat
@@ -2856,120 +2873,156 @@ class TelegramHandler:
         await self._send(update, "\n".join(lines))
 
     async def _cmd_trade(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-        if not await self._guard(update, "trade"):
+        """Manual trade placement: /trade buy SOL 71.42 sl 70.05 tp 76.42 [margin 250]"""
+        if not update.message:
             return
-        pending = self.engine.pending_ideas
-        if not pending:
+        tg_id = self._get_tg_id(update)
+        user = self.users.get(tg_id)
+        if not user or not user.get("authorized"):
+            await self._send(update, "\U0001f512 Not authorized.")
+            return
+        uid = str(update.effective_user.id) if update.effective_user else ""
+        if not self._limiter.allow(int(uid or 0)):
+            await update.message.reply_text("\u26a0\ufe0f Rate limit.")
+            return
+
+        text = (update.message.text or "").strip()
+        # Remove /trade prefix
+        args = text.split(None, 1)
+        if len(args) < 2:
             await self._send(update,
-                "No trades waiting right now.\n\n"
-                "Say \"scan\" or \"analyze BTC\" to find setups.")
+                "\U0001f4dd <b>Manual Trade</b>\n\n"
+                "Format:\n"
+                "<code>/trade buy SOL 71.42 sl 70.05 tp 76.42</code>\n"
+                "<code>/trade short ETH 1721 sl 1695 tp 1842 margin 250</code>\n\n"
+                "\u2022 <code>buy/long</code> = LONG\n"
+                "\u2022 <code>sell/short</code> = SHORT\n"
+                "\u2022 <code>margin</code> = optional fixed margin in USD")
             return
 
-        # Fetch rich market data for all pending ideas
-        await self._send(update, "<i>Pulling live data...</i>")
+        body = args[1].strip()
+        parsed = self._parse_manual_trade(body)
+        if isinstance(parsed, str):
+            await self._send(update, f"\u26a0\ufe0f {parsed}")
+            return
+
+        direction, symbol, entry, sl, tp, margin_usd = parsed
+        pair = f"{symbol}/USDT:USDT"
+        display_pair = f"{symbol}/USDT"
+
+        # Build TradeIdea
+        from bot.utils.models import TradeIdea, Direction
         try:
-            exchange = await self.engine.get_exchange()
-        except Exception:
-            exchange = None
+            idea = TradeIdea(
+                asset=pair,
+                direction=Direction.LONG if direction == "LONG" else Direction.SHORT,
+                entry_price=entry,
+                stop_loss=sl,
+                take_profit=tp,
+                confidence=1.0,
+                reasoning="Manual trade placed by user",
+                signals_used=["manual"],
+                source="manual",
+                order_type="limit",
+            )
+        except ValueError as e:
+            await self._send(update, f"\u26a0\ufe0f <b>Invalid trade:</b> {html.escape(str(e))}")
+            return
 
-        assets_data = []
-        if exchange and pending:
-            async def _fetch_one(idea):
-                return await fetch_analysis_data(exchange, idea.asset, timeframe="1h")
-            results = await asyncio.gather(*[_fetch_one(idea) for idea in pending], return_exceptions=True)
-            for r in results:
-                if r and not isinstance(r, Exception):
-                    assets_data.append(r)
+        # Register as pending idea in engine
+        self.engine._pending_ideas[idea.id] = idea
+        # Store margin override if specified
+        if margin_usd and margin_usd > 0:
+            if not hasattr(self.engine, '_manual_margin_override'):
+                self.engine._manual_margin_override = {}
+            self.engine._manual_margin_override[idea.id] = margin_usd
 
-        # If we have rich data for multiple ideas, render multi-analysis
-        if len(assets_data) >= 2 and len(pending) >= 2:
-            msg = render_multi_analysis(assets_data, list(pending))
-            uid = update.effective_user.id if update.effective_user else ""
-            buttons = []
-            for idea in pending:
-                pair = display_symbol(idea.asset)
-                buttons.append([
-                    InlineKeyboardButton(f"\u2705 {pair}", callback_data=f"confirm:{idea.id}:{uid}"),
-                    InlineKeyboardButton(f"Limit", callback_data=f"setlimit:{idea.id}:{uid}"),
-                    InlineKeyboardButton(f"Skip", callback_data=f"reject:{idea.id}:{uid}"),
-                ])
-            kb = InlineKeyboardMarkup(buttons)
-            # Try to build composite chart for first idea and send as photo+buttons
-            chart_sent = False
-            if assets_data:
-                chart_png = await self._build_chart_composite(assets_data[0], pending[0])
-                if chart_png:
-                    # Send full analysis as text first, then chart+buttons as photo
-                    await self._send(update, msg)
-                    pair0 = pending[0].asset.replace("/", "")
-                    cap = f"<b>{html.escape(pair0)}</b> — {len(pending)} setups"
-                    chart_sent = await self._send_photo(update, chart_png, cap, reply_markup=kb)
-            if not chart_sent:
-                await self._send(update, msg, reply_markup=kb)
+        # Calculate R:R
+        rr = idea.risk_reward_ratio
+        sl_dist = abs(entry - sl) / entry * 100
+        tp_dist = abs(tp - entry) / entry * 100
+
+        margin_text = f"${margin_usd:,.0f}" if margin_usd else "Auto (risk-based)"
+
+        card = (
+            f"\U0001f4cb <b>Manual Trade \u2014 {html.escape(display_pair)} {direction}</b>\n"
+            f"{'━' * 30}\n"
+            f"Entry:  <code>${entry:,.4f}</code>\n"
+            f"SL:     <code>${sl:,.4f}</code> ({sl_dist:.1f}%)\n"
+            f"TP:     <code>${tp:,.4f}</code> (+{tp_dist:.1f}%)\n"
+            f"R:R:    <code>{rr:.2f}</code>\n"
+            f"Margin: <code>{margin_text}</code>\n"
+            f"Type:   LIMIT\n"
+            f"{'━' * 30}\n"
+            f"<i>Reduced risk checks for manual orders</i>"
+        )
+
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("\u2705 Confirm", callback_data=f"confirm:{idea.id}:{uid}"),
+             InlineKeyboardButton("\u274c Cancel", callback_data=f"reject:{idea.id}:{uid}")],
+        ])
+
+        await self._send(update, card, reply_markup=kb)
+        audit(system_log, f"Manual trade created: {idea.id} {direction} {display_pair} entry={entry} sl={sl} tp={tp}",
+              action="manual_trade_created", result="PENDING")
+
+    def _parse_manual_trade(self, text: str):
+        """Parse manual trade text. Returns (direction, symbol, entry, sl, tp, margin) or error string."""
+        # Normalize
+        text = text.strip().upper()
+        # Pattern: BUY/LONG/SHORT/SELL SYMBOL PRICE SL PRICE TP PRICE [MARGIN AMOUNT]
+        pattern = re.compile(
+            r'^(BUY|LONG|SHORT|SELL)\s+'
+            r'([A-Z0-9]{1,15})\s+'
+            r'(\$?[\d,]+\.?\d*)\s+'
+            r'SL\s+(\$?[\d,]+\.?\d*)\s+'
+            r'TP\s+(\$?[\d,]+\.?\d*)'
+            r'(?:\s+MARGIN\s+(\$?[\d,]+\.?\d*))?',
+            re.IGNORECASE
+        )
+        m = pattern.match(text)
+        if not m:
+            return ("Invalid format. Use:\n"
+                    "<code>buy SOL 71.42 sl 70.05 tp 76.42</code>\n"
+                    "<code>short ETH 1721 sl 1695 tp 1842 margin 250</code>")
+
+        side = m.group(1).upper()
+        direction = "LONG" if side in ("BUY", "LONG") else "SHORT"
+        symbol = m.group(2).upper()
+
+        def parse_price(s):
+            return float(s.replace("$", "").replace(",", ""))
+
+        try:
+            entry = parse_price(m.group(3))
+            sl = parse_price(m.group(4))
+            tp = parse_price(m.group(5))
+            margin = parse_price(m.group(6)) if m.group(6) else None
+        except (ValueError, TypeError):
+            return "Could not parse prices. Use numbers like <code>71.42</code>"
+
+        if entry <= 0 or sl <= 0 or tp <= 0:
+            return "All prices must be positive."
+        if margin is not None and margin <= 0:
+            return "Margin must be positive."
+
+        # Validate direction
+        if direction == "LONG":
+            if sl >= entry:
+                return f"LONG: SL (${sl:,.4f}) must be below entry (${entry:,.4f})"
+            if tp <= entry:
+                return f"LONG: TP (${tp:,.4f}) must be above entry (${entry:,.4f})"
         else:
-            # Single idea or fallback — render per idea
-            for i, idea in enumerate(pending):
-                uid = update.effective_user.id if update.effective_user else ""
-                kb = InlineKeyboardMarkup([[
-                    InlineKeyboardButton("Take it", callback_data=f"confirm:{idea.id}:{uid}"),
-                    InlineKeyboardButton("Limit", callback_data=f"setlimit:{idea.id}:{uid}"),
-                    InlineKeyboardButton("Skip", callback_data=f"reject:{idea.id}:{uid}"),
-                ]])
-                if i < len(assets_data) and assets_data:
-                    # Rich analysis card — try chart+buttons as one message
-                    card = render_analysis_card(assets_data[i], idea)
-                    chart_png = await self._build_chart_composite(assets_data[i], idea)
-                    if chart_png:
-                        # Build concise caption for photo (1024 char limit)
-                        pair = idea.asset.replace("/", "")
-                        d = idea.direction.value
-                        entry = idea.entry_price
-                        sl, tp = idea.stop_loss, idea.take_profit
-                        sl_pct = abs(entry - sl) / entry * 100 if entry > 0 else 0
-                        tp_pct = abs(tp - entry) / entry * 100 if entry > 0 else 0
-                        rr = idea.risk_reward_ratio
-                        price = assets_data[i].get("price", entry)
-                        rsi = assets_data[i].get("rsi", 0)
-                        _otype = getattr(idea, 'order_type', 'market').upper()
-                        _otype_tag = f" | {_otype}" if _otype == "LIMIT" else ""
-                        cap = (
-                            f"<b>{html.escape(pair)}</b> — {d} Setup{_otype_tag}\n"
-                            f"Entry: <code>{entry:,.4f}</code> | Now: <code>{price:,.4f}</code>\n"
-                            f"SL: <code>{sl:,.4f}</code> (-{sl_pct:.1f}%) | TP: <code>{tp:,.4f}</code> (+{tp_pct:.1f}%)\n"
-                            f"R:R 1:{rr:.1f} | Conf {idea.confidence:.0%} | RSI {rsi:.0f}\n"
-                            f"{html.escape(idea.reasoning[:200])}"
-                        )
-                        # Send full card as text, then chart+buttons as photo
-                        await self._send(update, card)
-                        await self._send_photo(update, chart_png, cap, reply_markup=kb)
-                    else:
-                        # No chart available — send text+buttons as before
-                        await self._send(update, card, reply_markup=kb)
-                else:
-                    # Fallback: detailed format without live market data
-                    d = "\U0001f7e2" if idea.direction.value == "LONG" else "\U0001f534"
-                    entry, sl, tp = idea.entry_price, idea.stop_loss, idea.take_profit
-                    sl_pct = abs(entry - sl) / entry * 100 if entry > 0 else 0
-                    tp_pct = abs(tp - entry) / entry * 100 if entry > 0 else 0
-                    rr = idea.risk_reward_ratio
-                    pair = idea.asset.replace("/", "")
+            if sl <= entry:
+                return f"SHORT: SL (${sl:,.4f}) must be above entry (${entry:,.4f})"
+            if tp >= entry:
+                return f"SHORT: TP (${tp:,.4f}) must be below entry (${entry:,.4f})"
 
-                    _otype = getattr(idea, 'order_type', 'market').upper()
-                    _otype_tag = f" ({_otype} ORDER)" if _otype == "LIMIT" else ""
-                    msg = (
-                        f"\U0001f525 <b>{html.escape(pair)}</b> — {idea.direction.value} Setup{_otype_tag}\n"
-                        f"{'━' * 28}\n\n"
-                        f"<b>Setup — {idea.direction.value}:</b>\n"
-                        f"- Entry: <code>{entry:,.4f}</code>{' (limit)' if _otype == 'LIMIT' else ''}\n"
-                        f"- SL: <code>{sl:,.4f}</code> (-{sl_pct:.1f}%)\n"
-                        f"- TP: <code>{tp:,.4f}</code> (+{tp_pct:.1f}%)\n"
-                        f"- Risk/Reward: 1:{rr:.1f}\n"
-                        f"- Confidence: {idea.confidence:.0%}\n\n"
-                        f"<b>Analysis:</b>\n"
-                        f"<i>{html.escape(idea.reasoning[:300])}</i>\n\n"
-                        f"<i>⚠️ Live market data unavailable — approve with caution</i>"
-                    )
-                    await self._send(update, msg, reply_markup=kb)
+        # Symbol sanity
+        if not re.match(r'^[A-Z0-9]{1,15}$', symbol):
+            return f"Invalid symbol: {symbol}"
+
+        return (direction, symbol, entry, sl, tp, margin)
 
     async def _cmd_risk(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._guard(update, "risk"):
@@ -5000,8 +5053,8 @@ class TelegramHandler:
                     pass
             return
 
-        # ── Scan skill callbacks (scan_confirm: / scan_reject:) ──
-        if data.startswith("scan_confirm:") or data.startswith("scan_reject:"):
+        # ── Scan skill callbacks (scan_confirm: / scan_reject: / scan_limit:) ──
+        if data.startswith("scan_confirm:") or data.startswith("scan_reject:") or data.startswith("scan_limit:"):
             await _scan_callback(update, ctx)
             return
 

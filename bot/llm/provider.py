@@ -55,12 +55,12 @@ PROVIDER_CATALOG: dict[LLMProvider, dict] = {
     LLMProvider.ANTHROPIC: {
         "base_url": "https://api.anthropic.com",
         "default_model": "claude-sonnet-4-6",
-        "recommended_models": ["claude-opus-4-6", "claude-sonnet-4-6", "claude-haiku-4-5"],
+        "recommended_models": ["claude-opus-4-8", "claude-opus-4-6", "claude-sonnet-4-6", "claude-haiku-4-5-20251001"],
         "sdk": "anthropic",
         "free_tier": False,
         "speed": "medium",
         "cost": "medium",
-        "notes": "Excellent reasoning, strong safety. Best for risk analysis.",
+        "notes": "Excellent reasoning, strong safety. Opus 4.8 for best trade analysis, Haiku for speed.",
         "get_key_url": "https://console.anthropic.com/",
     },
     LLMProvider.GEMINI: {
@@ -435,14 +435,28 @@ async def llm_complete(
     async def _call():
         if sdk == "anthropic":
             # Anthropic API format — history goes into messages array
+            # Use prompt caching for the system prompt to reduce costs
+            # (cache_control marks the system prompt for reuse across calls)
             messages = []
             if history:
                 messages.extend(history)
             messages.append({"role": "user", "content": user_prompt})
+
+            # Build system with cache_control for prompt caching
+            # System prompt is large and identical across calls — caching
+            # drops input cost from $5/MTok to $0.50/MTok (90% savings)
+            system_content = [
+                {
+                    "type": "text",
+                    "text": system_prompt,
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ]
+
             response = await client.messages.create(
                 model=config.model,
                 max_tokens=config.max_tokens,
-                system=system_prompt,
+                system=system_content,
                 messages=messages,
             )
             return response.content[0].text

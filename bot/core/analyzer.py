@@ -1612,11 +1612,48 @@ class Analyzer:
             # System prompt must mention "json" when using json_object response_format
             # (required by Groq and some other providers)
             use_json_format = not use_full_model and sdk_type != "anthropic"
+
+            # Enhanced system prompt for Opus/Sonnet — structured for best trade analysis
+            _TRADING_SYSTEM_PROMPT = (
+                "You are RUNECLAW, an elite crypto trading analyst operating on Bitget Futures.\n\n"
+                "## Your Role\n"
+                "Analyze market data and produce actionable trade ideas with precise entries, "
+                "stop-losses, and take-profit levels. You are risk-first: capital preservation "
+                "always outweighs potential gains.\n\n"
+                "## Analysis Framework\n"
+                "1. TREND: Identify the dominant trend on the given timeframe using price action, "
+                "SMAs, and momentum indicators\n"
+                "2. STRUCTURE: Find key support/resistance levels, VWAP, and Fibonacci zones\n"
+                "3. CONFLUENCE: Count how many independent signals align (RSI, volume, patterns, "
+                "order flow). Require 3+ for a trade idea.\n"
+                "4. RISK: Calculate R:R ratio. Minimum 1.2:1. SL must be at a logical invalidation "
+                "point, not an arbitrary percentage.\n"
+                "5. CONVICTION: Score 0.0-1.0 based on confluence strength, not gut feeling.\n\n"
+                "## Output Format\n"
+                "Return a JSON object with these exact keys:\n"
+                "- direction: \"LONG\" or \"SHORT\"\n"
+                "- confidence: float 0.0-1.0\n"
+                "- entry_price: float (current market price or limit entry)\n"
+                "- stop_loss: float (below entry for LONG, above for SHORT)\n"
+                "- take_profit: float (above entry for LONG, below for SHORT)\n"
+                "- reasoning: string (2-3 sentences citing specific indicators and levels)\n"
+                "- signals_used: array of strings (indicator names that contributed)\n"
+                "- order_type: \"market\" or \"limit\"\n\n"
+                "If no clear setup exists, return: {\"direction\": null, \"confidence\": 0.0, "
+                "\"reasoning\": \"No actionable setup — [specific reason]\"}\n\n"
+                "## Rules\n"
+                "- Never force a trade. \"No trade\" is a valid and often correct answer.\n"
+                "- Use exact prices from the data provided, not rounded approximations.\n"
+                "- SL distance should be ATR-based (1.5-3x ATR from entry).\n"
+                "- TP distance should be at least 1.2x the SL distance.\n"
+                "- Confidence below 0.55 means skip the trade.\n"
+            )
+
             sys_content = (
                 "You are RUNECLAW, a risk-first crypto analyst. "
                 "Return concise analysis in json format with keys: direction, confidence, reasoning."
                 if use_json_format else
-                "You are RUNECLAW, a risk-first crypto analyst. Return concise analysis."
+                _TRADING_SYSTEM_PROMPT
             )
 
             if sdk_type == "anthropic":
@@ -1624,13 +1661,43 @@ class Analyzer:
                 # Track usage from Anthropic response
                 import anthropic as _anthropic_mod
                 messages = [{"role": "user", "content": prompt}]
-                response = await active_client.messages.create(
-                    model=model,
-                    max_tokens=max_tokens,
-                    system=sys_content,
-                    messages=messages,
-                )
-                raw_text = response.content[0].text if response.content else ""
+
+                # Apply prompt caching to system prompt — saves 90% on input costs
+                # for repeated calls with the same system prompt
+                system_content = [
+                    {
+                        "type": "text",
+                        "text": sys_content,
+                        "cache_control": {"type": "ephemeral"},
+                    }
+                ]
+
+                # Use extended thinking for Opus on thesis-tier calls
+                create_kwargs = {
+                    "model": model,
+                    "max_tokens": max_tokens,
+                    "system": system_content,
+                    "messages": messages,
+                }
+
+                # Enable extended thinking for Opus models (thesis tier)
+                if use_full_model and "opus" in model.lower():
+                    create_kwargs["temperature"] = 1  # Required for extended thinking
+                    create_kwargs["thinking"] = {
+                        "type": "enabled",
+                        "budget_tokens": min(max_tokens * 2, 4096),
+                    }
+
+                response = await active_client.messages.create(**create_kwargs)
+                # Handle extended thinking response — extract text block (skip thinking blocks)
+                raw_text = ""
+                if response.content:
+                    for block in response.content:
+                        if getattr(block, "type", "") == "text":
+                            raw_text = block.text
+                            break
+                    if not raw_text:
+                        raw_text = response.content[0].text if hasattr(response.content[0], "text") else ""
                 self._llm_calls_today += 1
                 # Anthropic returns usage in response.usage
                 _usage = getattr(response, "usage", None)
@@ -1910,6 +1977,19 @@ class Analyzer:
                 f"div={order_flow.cvd_price_divergence} whale={order_flow.whale_bias} "
                 f"funding={funding} smart={order_flow.smart_money_score:.2f}"
             )
+
+        # Add regime-aware instruction to guide the LLM toward trend-aligned trades
+        regime_str = indicators.get('regime', 'UNKNOWN')
+        regime_hint = ""
+        if regime_str == "TREND_UP":
+            regime_hint = "IMPORTANT: Regime is TREND_UP — strongly prefer LONG setups. Only suggest SHORT if overwhelming bearish evidence exists."
+        elif regime_str == "TREND_DOWN":
+            regime_hint = "IMPORTANT: Regime is TREND_DOWN — strongly prefer SHORT setups. Only suggest LONG if overwhelming bullish evidence exists."
+        elif regime_str in ("RANGE", "CHOP"):
+            regime_hint = "Regime is RANGE/CHOP — look for mean-reversion setups at extremes. Avoid trend-following."
+
+        if regime_hint:
+            parts.append(regime_hint)
 
         parts.append(
             'Respond in json: {"direction": "LONG or SHORT", "confidence": 0.0-1.0, "reasoning": "one paragraph"}'

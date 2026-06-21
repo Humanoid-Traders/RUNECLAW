@@ -107,8 +107,8 @@ class RiskLimits:
     min_book_depth_usd: float = _env_float("MIN_BOOK_DEPTH_USD", 2_000.0)
     # Leverage-aware margin risk cap: max % of margin (cost) that can be lost
     # on a single trade.  SL distance × leverage must not exceed this.
-    # With 5x leverage, 25% means SL can be at most 5% from entry.
-    max_margin_risk_pct: float = _env_float("MAX_MARGIN_RISK_PCT", 25.0)
+    # With 10x leverage, 30% means SL can be at most 3% from entry.
+    max_margin_risk_pct: float = _env_float("MAX_MARGIN_RISK_PCT", 30.0)
 
 
 @dataclass(frozen=True)

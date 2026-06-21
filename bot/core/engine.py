@@ -907,6 +907,8 @@ class RuneClawEngine:
 
         # F-05 FIX: reject if market price has drifted significantly from
         # the idea's entry price. Prevents executing at stale levels.
+        # Skip price drift check for manual trades — user specified exact entry
+        is_manual = getattr(idea, 'source', '') == 'manual'
         try:
             idea_category = _classify_symbol(idea.asset)
             exchange = await self.get_exchange(idea_category)
@@ -915,7 +917,8 @@ class RuneClawEngine:
             if current_price > 0 and idea.entry_price > 0:
                 drift_pct = abs(current_price - idea.entry_price) / idea.entry_price * 100
                 max_drift = 2.0  # reject if price moved more than 2%
-                if drift_pct > max_drift:
+                is_limit = getattr(idea, 'order_type', '') == 'limit'
+                if not is_manual and not is_limit and drift_pct > max_drift:
                     audit(trade_log,
                           f"Price drift {drift_pct:.2f}% exceeds {max_drift}% threshold",
                           action="price_drift", result="REJECTED",
@@ -945,19 +948,21 @@ class RuneClawEngine:
                 # ── Validate remaining R:R hasn't deteriorated ──
                 # If price has eaten more than 50% of the SL distance, the setup
                 # no longer offers a favorable risk:reward. Reject stale signals.
-                sl_dist = abs(idea.entry_price - idea.stop_loss)
-                if sl_dist > 0:
-                    if idea.direction.value == "LONG":
-                        consumed = max(0, idea.entry_price - current_price)
-                    else:
-                        consumed = max(0, current_price - idea.entry_price)
-                    consumed_pct = consumed / sl_dist
-                    if consumed_pct > 0.5:
-                        self._pending_pyramid.pop(trade_id, None)
-                        self._transition(AgentState.IDLE, f"R:R deteriorated for {trade_id}")
-                        return (f"Trade REJECTED: price moved {consumed_pct:.0%} toward SL "
-                                f"(${current_price:,.4f} vs entry ${idea.entry_price:,.4f}). "
-                                f"R:R no longer favorable — re-analyze.")
+                # Skip for manual trades and limit orders — user chose these exact levels.
+                if not is_manual and not is_limit:
+                    sl_dist = abs(idea.entry_price - idea.stop_loss)
+                    if sl_dist > 0:
+                        if idea.direction.value == "LONG":
+                            consumed = max(0, idea.entry_price - current_price)
+                        else:
+                            consumed = max(0, current_price - idea.entry_price)
+                        consumed_pct = consumed / sl_dist
+                        if consumed_pct > 0.5:
+                            self._pending_pyramid.pop(trade_id, None)
+                            self._transition(AgentState.IDLE, f"R:R deteriorated for {trade_id}")
+                            return (f"Trade REJECTED: price moved {consumed_pct:.0%} toward SL "
+                                    f"(${current_price:,.4f} vs entry ${idea.entry_price:,.4f}). "
+                                    f"R:R no longer favorable — re-analyze.")
         except Exception as exc:
             # H-08 FIX: fail-closed — reject if exchange is unreachable
             audit(trade_log, f"Price drift check failed (rejecting): {exc}",
@@ -1178,9 +1183,26 @@ class RuneClawEngine:
                       data={"requested": round(size_usd, 2), "available": round(available, 2)})
                 size_usd = available
 
+        # Manual margin override: if user specified a fixed margin via /trade command,
+        # use margin * leverage as the notional position size.
+        if hasattr(self, '_manual_margin_override') and idea.id in self._manual_margin_override:
+            manual_margin = self._manual_margin_override.pop(idea.id)
+            leverage = CONFIG.exchange.default_leverage
+            size_usd = manual_margin * leverage  # margin * leverage = notional
+            audit(system_log, f"Manual margin override: ${manual_margin} x {leverage}x = ${size_usd:.2f} notional",
+                  action="manual_margin_override", result="APPLIED")
+
         # C2-53 FIX: Reject trade when ATR is missing or zero.
         # A zero ATR produces SL at entry price = immediate stop-out.
-        if not stored_atr or stored_atr <= 0:
+        # Skip ATR check for manual trades — user provided explicit SL/TP levels.
+        if getattr(idea, 'source', '') == 'manual':
+            if not stored_atr or stored_atr <= 0:
+                # Use a synthetic ATR based on SL distance so executor can function
+                stored_atr = abs(idea.entry_price - idea.stop_loss)
+                audit(trade_log,
+                      f"Manual trade: synthetic ATR={stored_atr:.4f} from SL distance",
+                      action="manual_atr_synthetic", result="OK")
+        elif not stored_atr or stored_atr <= 0:
             audit(trade_log,
                   f"No valid ATR for {idea.asset} — aborting to avoid SL-at-entry",
                   action="confirm", result="REJECT",
