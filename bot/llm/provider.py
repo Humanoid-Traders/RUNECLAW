@@ -458,8 +458,21 @@ async def llm_complete(
                 max_tokens=config.max_tokens,
                 system=system_content,
                 messages=messages,
+                # Enable adaptive thinking for Opus 4.8+ models
+                **( {"thinking": {"type": "adaptive"}}
+                    if "opus" in config.model.lower() else {}
+                ),
             )
-            return response.content[0].text
+            # Handle thinking blocks — extract text block
+            raw_text = ""
+            if response.content:
+                for block in response.content:
+                    if getattr(block, "type", "") == "text":
+                        raw_text = block.text
+                        break
+                if not raw_text and hasattr(response.content[0], "text"):
+                    raw_text = response.content[0].text
+            return raw_text or ""
 
         else:
             # OpenAI-compatible format (works for OpenAI, Groq, Gemini, etc.)

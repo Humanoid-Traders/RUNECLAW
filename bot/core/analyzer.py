@@ -1680,12 +1680,29 @@ class Analyzer:
                     "messages": messages,
                 }
 
-                # Enable extended thinking for Opus models (thesis tier)
+                # Enable adaptive thinking for Opus 4.8+ (thesis tier)
+                # Opus 4.8 ONLY supports adaptive thinking; manual budget_tokens
+                # returns 400.  Adaptive lets the model decide how much to think.
                 if use_full_model and "opus" in model.lower():
-                    create_kwargs["temperature"] = 1  # Required for extended thinking
-                    create_kwargs["thinking"] = {
-                        "type": "enabled",
-                        "budget_tokens": min(max_tokens * 2, 4096),
+                    create_kwargs["thinking"] = {"type": "adaptive"}
+                    # Structured output: guarantee valid JSON from the LLM
+                    create_kwargs["output_config"] = {
+                        "format": {
+                            "type": "json_schema",
+                            "schema": {
+                                "type": "object",
+                                "properties": {
+                                    "direction": {
+                                        "type": "string",
+                                        "enum": ["LONG", "SHORT"],
+                                    },
+                                    "confidence": {"type": "number"},
+                                    "reasoning": {"type": "string"},
+                                },
+                                "required": ["direction", "confidence", "reasoning"],
+                                "additionalProperties": False,
+                            },
+                        }
                     }
 
                 response = await active_client.messages.create(**create_kwargs)
