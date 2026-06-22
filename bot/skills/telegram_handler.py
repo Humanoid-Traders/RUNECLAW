@@ -1042,7 +1042,9 @@ class TelegramHandler:
                                 if png:
                                     pair = display_symbol(new_idea.asset)
                                     d = new_idea.direction.value if hasattr(new_idea.direction, "value") else str(new_idea.direction)
-                                    cap = f"<b>{pair} {d}</b> | Conf {new_idea.confidence*100:.0f}%"
+                                    st = getattr(new_idea, 'strategy_type', '').upper()
+                                    st_str = f" [{st}]" if st else ""
+                                    cap = f"<b>{pair} {d}</b>{st_str} | Conf {new_idea.confidence*100:.0f}%"
                                     card_sent = await self._send_photo(update, png, cap, reply_markup=kb)
                             except Exception:
                                 pass
@@ -2371,7 +2373,9 @@ class TelegramHandler:
                     ]])
                     pair = idea.asset.replace("/USDT", "")
                     direction = idea.direction.value if hasattr(idea.direction, "value") else str(idea.direction)
-                    cap = f"<b>{pair} {direction}</b> | Conf {idea.confidence*100:.0f}%"
+                    st = getattr(idea, 'strategy_type', '').upper()
+                    st_str = f" [{st}]" if st else ""
+                    cap = f"<b>{pair} {direction}</b>{st_str} | Conf {idea.confidence*100:.0f}%"
                     await _bot_ref.send_photo(
                         chat_id=int(chat_id), photo=buf,
                         caption=cap, parse_mode="HTML",
@@ -3568,8 +3572,10 @@ class TelegramHandler:
             pair = idea.asset.replace("/", "")
             _otype = getattr(idea, 'order_type', 'market').upper()
             _otype_tag = f" ({_otype} ORDER)" if _otype == "LIMIT" else ""
+            _st = getattr(idea, 'strategy_type', '').upper()
+            _st_tag = f" [{_st}]" if _st else ""
             msg = (
-                f"\U0001f525 <b>{html.escape(pair)}</b> — {idea.direction.value} Setup{_otype_tag}\n"
+                f"\U0001f525 <b>{html.escape(pair)}</b> — {idea.direction.value} Setup{_st_tag}{_otype_tag}\n"
                 f"{'━' * 28}\n\n"
                 f"<b>Setup — {idea.direction.value}:</b>\n"
                 f"- Entry: <code>{entry:,.4f}</code>{' (limit)' if _otype == 'LIMIT' else ''}\n"

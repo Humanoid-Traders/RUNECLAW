@@ -104,6 +104,7 @@ def render_signal_card(data: Dict[str, Any]) -> bytes:
         confidence = confidence * 100
     vol_x = data.get("volume_x", 0)
     summary = data.get("summary", "")
+    strategy_type = data.get("strategy_type", "").upper()
 
     is_long = direction == "LONG"
     dir_color = _GREEN if is_long else _RED
@@ -143,6 +144,22 @@ def render_signal_card(data: Dict[str, Any]) -> bytes:
         [badge_x, y + 1, badge_x + badge_tw + 4, y + 1 + badge_h],
         radius=4, fill=dir_color)
     draw.text((badge_x + 2, y + 4), badge_text, fill=(0, 0, 0), font=font_badge)
+
+    # Strategy type badge (after direction)
+    if strategy_type:
+        st_x = badge_x + badge_tw + 10
+        st_text = f" {strategy_type} "
+        st_tw = draw.textlength(st_text, font=font_badge)
+        st_color = {
+            "SCALP": (180, 80, 220),    # purple
+            "INTRADAY": (60, 140, 220),  # blue
+            "SWING": (220, 160, 40),     # amber
+            "POSITION": (40, 180, 120),  # teal
+        }.get(strategy_type, _GRAY)
+        draw.rounded_rectangle(
+            [st_x, y + 1, st_x + st_tw + 4, y + 1 + badge_h],
+            radius=4, fill=st_color)
+        draw.text((st_x + 2, y + 4), st_text, fill=(0, 0, 0), font=font_badge)
 
     # Volume indicator (right side)
     if vol_x > 0:
@@ -330,6 +347,7 @@ def signal_card_from_idea(idea, rank: int = 1, scan_data: Optional[Dict] = None)
         "confidence": idea.confidence,
         "volume_x": vol_x,
         "summary": summary,
+        "strategy_type": getattr(idea, "strategy_type", ""),
     }
     return render_signal_card(data)
 
