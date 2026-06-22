@@ -44,6 +44,7 @@ def _make_idea(
     tp: float = 66560.0,     # 1.2x RR: entry + 1.2 * (entry - sl) = 65000 + 1560
     confidence: float = 0.72,
     idea_id: str = "TI-test001",
+    strategy_type: str = "scalp",  # scalp min R:R = 1.2, matching test fixtures
 ) -> TradeIdea:
     return TradeIdea(
         id=idea_id,
@@ -55,6 +56,7 @@ def _make_idea(
         confidence=confidence,
         reasoning="test idea",
         signals_used=["rsi", "macd"],
+        strategy_type=strategy_type,
     )
 
 
@@ -532,6 +534,7 @@ class TestRiskEngineNewChecks:
             asset="BTC/USDT", direction=Direction.LONG,
             entry_price=50000, stop_loss=49000, take_profit=53000,
             confidence=0.75, reasoning="test", source="TEST",
+            strategy_type="scalp",
         )
         defaults.update(overrides)
         return TradeIdea(**defaults)
@@ -1228,7 +1231,7 @@ class TestEngineFSM:
         # margin_risk = 3% * 1 = 3% (within 25% cap)
         return TradeIdea(
             id=trade_id, asset=asset, direction=Direction.LONG,
-            entry_price=65000, stop_loss=63050, take_profit=67860,
+            entry_price=65000, stop_loss=63050, take_profit=68120,
             confidence=0.75, reasoning="Test idea",
             signals_used=["rsi", "macd"], source="test", timestamp=ts,
         )
@@ -1298,6 +1301,7 @@ class TestEngineFSM:
             mock_cfg.is_live.return_value = False
             mock_cfg.risk = CONFIG.risk
             mock_cfg.exchange = CONFIG.exchange
+            mock_cfg.strategy_types = CONFIG.strategy_types
             result = self._run(engine.confirm_trade(idea.id))
         assert "PAPER" in result
         assert idea.id not in engine._pending_ideas
@@ -2477,6 +2481,7 @@ class TestSafetyGates:
             signals_used=["rsi"],
             timestamp=datetime.now(UTC),
             position_size_usd=200.0,  # small size to pass position-size check
+            strategy_type="scalp",
         )
         engine._pending_ideas[idea.id] = idea
         engine._pending_atr[idea.id] = 500.0
@@ -3637,13 +3642,14 @@ class TestRiskEdgeCases:
             id="TI-EDGE", asset="TEST/USDT", direction=direction,
             entry_price=entry, stop_loss=sl, take_profit=tp,
             confidence=conf, reasoning="edge test", signals_used=["rsi"],
+            strategy_type="scalp",
         )
 
     def test_rr_exactly_at_threshold(self):
-        """R:R of exactly min_risk_reward should PASS."""
+        """R:R of exactly min R:R for scalp type should PASS."""
         port = PortfolioTracker()
         risk = RiskEngine(port)
-        min_rr = CONFIG.risk.min_risk_reward
+        min_rr = CONFIG.strategy_types.get_min_rr("scalp")
         # Set TP so R:R = min_rr exactly + epsilon
         sl_dist = 5.0
         tp_dist = sl_dist * (min_rr + 0.01)

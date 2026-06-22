@@ -485,6 +485,37 @@ class StrategyTypeConfig:
     position_time_close_hours: float = _env_float("POSITION_TIME_CLOSE_H", 168.0)  # 7 days
     position_time_warn_hours: float = _env_float("POSITION_TIME_WARN_H", 72.0)
 
+    # ── Per-type risk parameters ──
+    # Min confidence threshold per type
+    scalp_min_confidence: float = _env_float("SCALP_MIN_CONFIDENCE", 0.65)
+    intraday_min_confidence: float = _env_float("INTRADAY_MIN_CONFIDENCE", 0.55)
+    swing_min_confidence: float = _env_float("SWING_MIN_CONFIDENCE", 0.50)
+    position_min_confidence: float = _env_float("POSITION_MIN_CONFIDENCE", 0.45)
+
+    # Max risk per trade (% of equity)
+    scalp_max_risk_pct: float = _env_float("SCALP_MAX_RISK_PCT", 1.0)
+    intraday_max_risk_pct: float = _env_float("INTRADAY_MAX_RISK_PCT", 1.5)
+    swing_max_risk_pct: float = _env_float("SWING_MAX_RISK_PCT", 2.0)
+    position_max_risk_pct: float = _env_float("POSITION_MAX_RISK_PCT", 2.0)
+
+    # Min risk:reward ratio per type
+    scalp_min_rr: float = _env_float("SCALP_MIN_RR", 1.2)
+    intraday_min_rr: float = _env_float("INTRADAY_MIN_RR", 1.5)
+    swing_min_rr: float = _env_float("SWING_MIN_RR", 1.5)
+    position_min_rr: float = _env_float("POSITION_MIN_RR", 2.0)
+
+    # Smart money weight multiplier per type (applied to SM confluence votes)
+    scalp_smart_money_weight: float = _env_float("SCALP_SM_WEIGHT", 0.5)
+    intraday_smart_money_weight: float = _env_float("INTRADAY_SM_WEIGHT", 1.0)
+    swing_smart_money_weight: float = _env_float("SWING_SM_WEIGHT", 1.5)
+    position_smart_money_weight: float = _env_float("POSITION_SM_WEIGHT", 2.0)
+
+    # Volume spike confidence bonus per type
+    scalp_volume_bonus: float = _env_float("SCALP_VOL_BONUS", 0.10)
+    intraday_volume_bonus: float = _env_float("INTRADAY_VOL_BONUS", 0.05)
+    swing_volume_bonus: float = _env_float("SWING_VOL_BONUS", 0.03)
+    position_volume_bonus: float = _env_float("POSITION_VOL_BONUS", 0.02)
+
     def get_sl_mult(self, strategy_type: str) -> float:
         return getattr(self, f"{strategy_type}_sl_atr_mult", 2.5)
 
@@ -502,6 +533,21 @@ class StrategyTypeConfig:
 
     def get_time_warn_hours(self, strategy_type: str) -> float:
         return getattr(self, f"{strategy_type}_time_warn_hours", 12.0)
+
+    def get_min_confidence(self, strategy_type: str) -> float:
+        return getattr(self, f"{strategy_type}_min_confidence", 0.50)
+
+    def get_max_risk_pct(self, strategy_type: str) -> float:
+        return getattr(self, f"{strategy_type}_max_risk_pct", 2.0)
+
+    def get_min_rr(self, strategy_type: str) -> float:
+        return getattr(self, f"{strategy_type}_min_rr", 1.5)
+
+    def get_smart_money_weight(self, strategy_type: str) -> float:
+        return getattr(self, f"{strategy_type}_smart_money_weight", 1.0)
+
+    def get_volume_bonus(self, strategy_type: str) -> float:
+        return getattr(self, f"{strategy_type}_volume_bonus", 0.05)
 
 
 @dataclass(frozen=True)

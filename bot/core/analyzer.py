@@ -399,6 +399,11 @@ class Analyzer:
         # Needed before SL/TP calculation which uses per-strategy-type multipliers.
         strategy_type = self._classify_strategy_type(
             strategy_mode, regime, strategy_mode.value,
+            indicators=indicators,
+            mtf_result=mtf_result,
+            order_flow=order_flow,
+            smart_money_score=smart_money_score,
+            signal=signal,
         )
 
         confluence = self._score_confluence(
@@ -408,6 +413,7 @@ class Analyzer:
             smart_money_score=smart_money_score,
             mode_config=mode_config,
             sentiment_engine=self._sentiment,
+            strategy_type=strategy_type,
         )
 
         indicators["regime"] = regime.value
@@ -499,15 +505,15 @@ class Analyzer:
                 blended_confidence -= CONFIG.analyzer.trend_misalignment_penalty   # counter-trend LONG
 
         # STRATEGY: volume confirmation for direction alignment
-        # If volume spike aligns with trade direction, boost confidence;
-        # if it conflicts, penalize -- volume should confirm the move.
+        # Per-strategy-type volume bonus (scalps benefit most from volume spikes)
+        vol_bonus = CONFIG.strategy_types.get_volume_bonus(strategy_type)
         if signal.volume_spike:
             price_moving_up = signal.change_pct_24h > 0
             if (price_moving_up and direction == Direction.LONG) or \
                (not price_moving_up and direction == Direction.SHORT):
-                blended_confidence += 0.05  # volume confirms direction
+                blended_confidence += vol_bonus  # volume confirms direction
             else:
-                blended_confidence -= 0.05  # volume contradicts direction
+                blended_confidence -= vol_bonus  # volume contradicts direction
 
         # IMPROVEMENT #2: order-flow opposition guard.
         # Microstructure (book imbalance, CVD trend, CVD-price divergence) is
@@ -549,7 +555,9 @@ class Analyzer:
 
         # SIGNAL QUALITY: threshold at min_confidence (matches config)
         # RANGE/CHOP trades need high raw confluence to survive after penalty
-        if blended_confidence < CONFIG.risk.min_confidence:
+        # Per-strategy-type confidence threshold
+        min_conf = CONFIG.strategy_types.get_min_confidence(strategy_type)
+        if blended_confidence < min_conf:
             thesis_src = thesis.get("source", "unknown")
             self._last_rejection_diag = {
                 "symbol": signal.symbol,
@@ -558,12 +566,14 @@ class Analyzer:
                 "direction": direction.value,
                 "raw_confidence": round(confidence, 3),
                 "blended": round(blended_confidence, 3),
-                "threshold": CONFIG.risk.min_confidence,
+                "threshold": min_conf,
+                "min_confidence_used": min_conf,
+                "strategy_type": strategy_type,
                 "regime_penalty": round(regime_confidence_penalty, 3),
                 "counter_trend_penalty": round(counter_trend_penalty, 3),
                 "source": thesis_src,
                 "reason": (
-                    f"Score {blended_confidence:.0%} < {CONFIG.risk.min_confidence:.0%} threshold"
+                    f"Score {blended_confidence:.0%} < {min_conf:.0%} threshold"
                     + (f" (regime {regime.value} penalty -{regime_confidence_penalty:.0%})" if regime_confidence_penalty > 0 else "")
                     + (f" (counter-trend penalty)" if counter_trend_penalty < 1.0 else "")
                 ),
@@ -749,16 +759,21 @@ class Analyzer:
     # -- Strategy Type Classification --
 
     @staticmethod
-    def _classify_strategy_type(strategy_mode, regime, mode_tag: str) -> str:
-        """Map strategy mode + regime to hold-duration category.
+    def _classify_strategy_type(
+        strategy_mode, regime, mode_tag: str,
+        indicators: dict = None,
+        mtf_result=None,
+        order_flow=None,
+        smart_money_score=None,
+        signal=None,
+    ) -> str:
+        """Scoring-based strategy type classifier.
 
         Returns one of: "scalp", "intraday", "swing", "position"
 
-        Mapping logic:
-        - MEAN_REVERSION / LIQUIDITY_SWEEP → scalp (quick fade, fast exit)
-        - BREAKOUT / CONSERVATIVE in RANGE/CHOP → intraday
-        - TREND_CONTINUATION / BREAKOUT in TREND → swing (ride the trend)
-        - TURTLE_BREAKOUT → swing (multi-day trend following)
+        Uses 9 weighted factors (strategy mode, regime, ADX, RSI, Bollinger
+        squeeze, ATR volatility, MTF alignment, smart money, volume spike)
+        to score each type and pick the winner.
 
         The /scalp, /intraday, /swing, /momentum commands can override this
         by setting strategy_type directly on the TradeIdea.
@@ -766,26 +781,99 @@ class Analyzer:
         from bot.core.strategy_modes import StrategyMode
         from bot.core.ta_utils import Regime
 
-        # Quick fades
-        if strategy_mode in (StrategyMode.MEAN_REVERSION, StrategyMode.LIQUIDITY_SWEEP):
-            return "scalp"
+        scores = {"scalp": 0.0, "intraday": 0.0, "swing": 0.0, "position": 0.0}
 
-        # Breakouts in range/chop = intraday; in trend = swing
-        if strategy_mode == StrategyMode.BREAKOUT:
-            if regime in (Regime.RANGE, Regime.CHOP):
-                return "intraday"
-            return "swing"
+        # ── Factor 1: Strategy mode (strongest signal, weight 3.0) ──
+        mode_map = {
+            StrategyMode.MEAN_REVERSION: {"scalp": 3.0},
+            StrategyMode.LIQUIDITY_SWEEP: {"scalp": 2.5, "intraday": 0.5},
+            StrategyMode.BREAKOUT: {"intraday": 1.5, "swing": 1.5},
+            StrategyMode.TREND_CONTINUATION: {"swing": 3.0},
+            StrategyMode.TURTLE_BREAKOUT: {"swing": 2.0, "position": 1.0},
+            StrategyMode.CONSERVATIVE: {"intraday": 2.0, "swing": 1.0},
+        }
+        for k, v in mode_map.get(strategy_mode, {"intraday": 1.0}).items():
+            scores[k] += v
 
-        # Turtle breakout = always swing (multi-day trend following)
-        if strategy_mode == StrategyMode.TURTLE_BREAKOUT:
-            return "swing"
+        # ── Factor 2: Regime (weight 2.0) ──
+        if regime in (Regime.RANGE, Regime.CHOP):
+            scores["scalp"] += 1.0
+            scores["intraday"] += 1.0
+        elif regime == Regime.EXPANSION:
+            scores["intraday"] += 1.0
+            scores["swing"] += 1.0
+        elif regime in (Regime.TREND_UP, Regime.TREND_DOWN):
+            scores["swing"] += 1.5
+            scores["position"] += 0.5
 
-        # Trend continuation = swing
-        if strategy_mode == StrategyMode.TREND_CONTINUATION:
-            return "swing"
+        # ── Factor 3: ADX trend strength (weight 1.5) ──
+        if indicators:
+            adx = indicators.get("adx", 0)
+            if adx < 20:
+                scores["scalp"] += 1.5  # no trend -> scalp
+            elif adx < 30:
+                scores["intraday"] += 1.0
+                scores["swing"] += 0.5
+            elif adx < 40:
+                scores["swing"] += 1.5
+            else:
+                scores["swing"] += 1.0
+                scores["position"] += 1.5  # strong trend -> position
 
-        # Conservative / fallback = intraday (moderate timeframe)
-        return "intraday"
+            # ── Factor 4: RSI extremes (weight 1.0) ──
+            rsi = indicators.get("rsi", 50)
+            if rsi > 75 or rsi < 25:
+                scores["scalp"] += 1.0  # extreme RSI -> quick fade
+            elif rsi > 65 or rsi < 35:
+                scores["intraday"] += 0.5
+
+            # ── Factor 5: Bollinger squeeze (weight 0.8) ──
+            kc_squeeze = indicators.get("kc_squeeze", False)
+            if kc_squeeze:
+                scores["intraday"] += 0.8  # squeeze = imminent breakout
+
+            # ── Factor 6: ATR-based volatility (weight 1.0) ──
+            atr = indicators.get("atr", 0)
+            price = indicators.get("close", 0) or (signal.price if signal else 0)
+            if price > 0 and atr > 0:
+                atr_pct = (atr / price) * 100
+                if atr_pct > 5:  # high vol
+                    scores["scalp"] += 1.0  # high vol = quick in/out
+                elif atr_pct < 1.5:  # low vol
+                    scores["swing"] += 0.5
+                    scores["position"] += 0.5
+
+        # ── Factor 7: Multi-timeframe alignment (weight 1.5) ──
+        if mtf_result is not None:
+            alignment = getattr(mtf_result, "alignment_score", 0)
+            aligned_count = len(getattr(mtf_result, "aligned_timeframes", []))
+            if abs(alignment) > 0.6 and aligned_count >= 2:
+                scores["swing"] += 1.0
+                scores["position"] += 1.0  # strong MTF = longer hold
+            elif abs(alignment) < 0.3:
+                scores["scalp"] += 0.5  # weak MTF = quick trade
+            # Break of structure or change of character -> swing
+            if getattr(mtf_result, "bos_detected", False):
+                scores["swing"] += 0.5
+            if getattr(mtf_result, "choch_detected", False):
+                scores["intraday"] += 0.5
+
+        # ── Factor 8: Smart money / whale activity (weight 1.5) ──
+        if smart_money_score is not None:
+            composite = abs(getattr(smart_money_score, "composite_score", 0))
+            if composite > 0.6:
+                scores["position"] += 1.5  # strong smart money -> ride it
+                scores["swing"] += 0.5
+            elif composite > 0.3:
+                scores["swing"] += 1.0
+
+        # ── Factor 9: Volume spike (weight 0.5) ──
+        if signal is not None and getattr(signal, "volume_spike", False):
+            scores["scalp"] += 0.5  # volume = liquidity for quick exit
+
+        # ── Pick winner ──
+        best_type = max(scores, key=scores.get)
+        return best_type
 
     # -- Technical Indicators --
 
@@ -1190,7 +1278,8 @@ class Analyzer:
     @staticmethod
     def _score_confluence(indicators: dict, regime: Regime, signal: MarketSignal,
                           order_flow=None, mtf_result=None, smart_money_score=None,
-                          mode_config=None, sentiment_engine=None) -> float:
+                          mode_config=None, sentiment_engine=None,
+                          strategy_type: str = "swing") -> float:
         """
         Score agreement across indicators on a 0-1 scale.
 
@@ -1464,8 +1553,10 @@ class Analyzer:
         # Smart money votes (if available)
         if smart_money_score is not None:
             sm_votes, sm_weights, sm_labels = SmartMoneyEngine.to_confluence_votes(smart_money_score)
+            # Per-strategy-type weight adjustment for smart money signals
+            sm_weight_mult = CONFIG.strategy_types.get_smart_money_weight(strategy_type)
             votes += sm_votes
-            weights += [_boost(w, l) for w, l in zip(sm_weights, sm_labels)]
+            weights += [_boost(w * sm_weight_mult, l) for w, l in zip(sm_weights, sm_labels)]
 
         # Sentiment voter
         if sentiment_engine is not None:

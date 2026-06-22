@@ -2300,8 +2300,11 @@ class LiveExecutor:
                 # ── Trailing stop update ──
                 if CONFIG.trailing.enabled and pos.trailing_state is not None:
                     old_sl = pos.stop_loss
+                    pos_strategy = getattr(pos, 'strategy_type', 'swing')
+                    trail_mult = CONFIG.strategy_types.get_trailing_atr_mult(pos_strategy)
                     new_sl, trailing_active = update_trailing_stop(
-                        pos.trailing_state, price, pos.stop_loss, pos.direction
+                        pos.trailing_state, price, pos.stop_loss, pos.direction,
+                        trail_atr_mult=trail_mult,
                     )
                     if new_sl != old_sl:
                         # Check if the SL moved enough to update on exchange

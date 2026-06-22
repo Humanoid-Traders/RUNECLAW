@@ -66,6 +66,7 @@ def _make_idea(
     source: str = "red_team",
     timestamp: Optional[datetime] = None,
     idea_id: Optional[str] = None,
+    strategy_type: str = "scalp",  # scalp min R:R = 1.2, matching test defaults
 ) -> TradeIdea:
     """Build a TradeIdea with sensible defaults, overridable per-scenario."""
     kwargs: dict = dict(
@@ -77,6 +78,7 @@ def _make_idea(
         confidence=confidence,
         reasoning=reasoning,
         source=source,
+        strategy_type=strategy_type,
     )
     if timestamp is not None:
         kwargs["timestamp"] = timestamp

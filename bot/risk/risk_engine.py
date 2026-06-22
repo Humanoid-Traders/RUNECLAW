@@ -284,6 +284,10 @@ class RiskEngine:
         uncapped_position_usd = position_usd  # fallback: flat notional
         if stop_distance_pct > 0:
             risk_budget = sizing_equity * (CONFIG.risk.max_position_pct / 100.0)
+            # Per-strategy-type risk budget scaling
+            _st = getattr(idea, 'strategy_type', 'swing')
+            st_risk_pct = CONFIG.strategy_types.get_max_risk_pct(_st)
+            risk_budget = sizing_equity * (st_risk_pct / 100.0)
             uncapped_position_usd = risk_budget / stop_distance_pct
             position_usd = uncapped_position_usd
 
@@ -424,10 +428,12 @@ class RiskEngine:
             try:
                 # 6. Risk-reward ratio (0.01 tolerance for float rounding at boundary)
                 rr = idea.risk_reward_ratio
-                if rr < CONFIG.risk.min_risk_reward - 0.01:
-                    failed.append(f"RISK_REWARD: {rr} < {CONFIG.risk.min_risk_reward} minimum")
+                _st = getattr(idea, 'strategy_type', 'swing')
+                min_rr = CONFIG.strategy_types.get_min_rr(_st)
+                if rr < min_rr - 0.01:
+                    failed.append(f"RISK_REWARD: {rr:.2f} < {min_rr:.1f} minimum ({_st})")
                 else:
-                    passed.append(f"RISK_REWARD: {rr} OK")
+                    passed.append(f"RISK_REWARD: {rr:.2f} OK (min {min_rr:.1f} for {_st})")
             except Exception as exc:
                 failed.append(f"RISK_REWARD: evaluation error ({exc})")
 
