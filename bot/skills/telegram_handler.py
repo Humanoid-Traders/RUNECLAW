@@ -1279,12 +1279,14 @@ class TelegramHandler:
         lang = get_user_lang(self.users, tg_id)
 
         _sep = "\u2500" * 20
+        _pending_zh = "等待審核中 \u2014 請使用 /start 註冊"
+        _pending_en = "Status: pending approval \u2014 use /start to register"
 
         if not is_auth:
             await self._send(update,
                 f"\u2694\ufe0f <b>RUNECLAW</b>\n"
                 f"{_sep}\n"
-                f"<i>{'等待審核中 \u2014 請使用 /start 註冊' if lang == 'zh' else 'Status: pending approval \u2014 use /start to register'}</i>")
+                f"<i>{_pending_zh if lang == 'zh' else _pending_en}</i>")
             return
 
         tier_label = self.users.tier_label(tg_id)
@@ -2452,6 +2454,28 @@ class TelegramHandler:
                 pass
 
         self.engine.set_close_notify_callback(_on_trade_closed)
+
+        # Register limit-fill notification callback
+        async def _on_limit_filled(msg: str) -> None:
+            """Send a notification when a limit order is filled (position opened)."""
+            if not admin_chat_id:
+                return
+            try:
+                from datetime import datetime as _dt, timezone as _tz
+                card = "\U0001f4e5 <b>TRADE OPENED</b>\n"
+                card += "\u2500" * 28 + "\n\n"
+                for line in msg.strip().split("\n"):
+                    card += f"{html.escape(line)}\n"
+                card += "\n" + "\u2500" * 28
+                card += f"\n\U0001f43e RUNECLAW | {_dt.now(_tz.utc).strftime('%H:%M')} UTC"
+                card += "\n<a href='#'>#RUNECLAW #LimitFill</a>"
+                await bot.send_message(
+                    chat_id=int(admin_chat_id), text=card.strip(),
+                    parse_mode="HTML")
+            except Exception as exc:
+                system_log.debug("Fill notify send failed: %s", exc)
+
+        self.engine.set_fill_notify_callback(_on_limit_filled)
 
         # ── Adoption notification ─────────────────────────────────
         async def _on_positions_adopted(adopted_symbols: list[str]) -> None:

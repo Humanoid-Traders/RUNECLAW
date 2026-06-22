@@ -137,6 +137,7 @@ class RuneClawEngine:
         self._running = False
         self._confirm_callback: Optional[Callable] = None
         self._close_notify_callback: Optional[Callable] = None
+        self._fill_notify_callback: Optional[Callable] = None
         self._adopt_notify_callback: Optional[Callable] = None
         self._pending_ideas: dict[str, TradeIdea] = {}
         self._last_confirmed_idea: Optional[TradeIdea] = None
@@ -370,6 +371,10 @@ class RuneClawEngine:
     def set_close_notify_callback(self, cb: Callable) -> None:
         """Register a callback to notify users when a trade is closed."""
         self._close_notify_callback = cb
+
+    def set_fill_notify_callback(self, cb: Callable) -> None:
+        """Register a callback to notify users when a limit order is filled (opened)."""
+        self._fill_notify_callback = cb
 
     def set_adopt_notify_callback(self, cb: Callable) -> None:
         """Register a callback to notify users when an exchange position is adopted."""
@@ -1346,6 +1351,18 @@ class RuneClawEngine:
             try:
                 live_closed = await self.live_executor.check_positions()
                 for msg in live_closed:
+                    # Distinguish limit fills from actual closes
+                    is_fill = msg.startswith("LIMIT FILLED:")
+                    if is_fill:
+                        audit(trade_log, f"Limit order filled: {msg}",
+                              action="limit_fill_notify", result="FILLED")
+                        if self._fill_notify_callback:
+                            try:
+                                await self._fill_notify_callback(msg)
+                            except Exception as exc:
+                                logger.debug("Fill notify failed: %s", exc)
+                        continue
+
                     audit(trade_log, f"Live position auto-closed: {msg}",
                           action="live_auto_close", result="CLOSED")
                     # C-08 FIX: trigger cooldown on live losses

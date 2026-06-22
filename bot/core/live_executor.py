@@ -2555,11 +2555,12 @@ class LiveExecutor:
                 sl_info = f" | SL: {sl_id}" if sl_id else ""
                 tp_info = f" | TP: {tp_id}" if tp_id else ""
                 trail_info = " | Trailing: armed" if pos.trailing_state else ""
+                st_label = getattr(pos, 'strategy_type', 'swing').upper()
                 sl_tp_warn = ""
                 if sl_id is None and tp_id is None:
                     sl_tp_warn = "\n⚠️ SL/TP FAILED — position unprotected!"
                 return (
-                    f"LIMIT FILLED: {pos.direction} {pos.symbol}\n"
+                    f"LIMIT FILLED: {pos.direction} {pos.symbol} [{st_label}]\n"
                     f"Fill: ${fill_price:,.4f} | Qty: {filled_qty:.6f}{sl_info}{tp_info}{trail_info}{sl_tp_warn}"
                 )
 
