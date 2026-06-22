@@ -90,7 +90,7 @@ class RiskLimits:
     # BTC hourly ATR is typically 1-4%; 7% allows for elevated-vol periods
     # while blocking extreme conditions.
     volatility_guard_atr_pct: float = _env_float("VOLATILITY_GUARD_ATR_PCT", 7.0)
-    stale_data_max_age_seconds: int = int(_env_float("STALE_DATA_MAX_AGE_SEC", 300))
+    stale_data_max_age_seconds: int = int(_env_float("STALE_DATA_MAX_AGE_SEC", 600))
     require_stop_loss: bool = _env_bool("REQUIRE_STOP_LOSS", True)
     # Portfolio VaR: reject trades that would push parametric VaR above this %.
     max_portfolio_var_pct: float = _env_float("MAX_PORTFOLIO_VAR_PCT", 15.0)
@@ -444,6 +444,67 @@ class TimeStopConfig:
 
 
 @dataclass(frozen=True)
+class StrategyTypeConfig:
+    """Per-strategy-type SL/TP/trailing/time-stop overrides.
+
+    Each strategy type has its own risk parameters:
+    - scalp:     tight stops, fast exit, no trailing, 30 min time-stop
+    - intraday:  moderate stops, trailing after 1R, 4h time-stop
+    - swing:     wide stops, trailing after 1R, 24h time-stop
+    - position:  widest stops, trailing after 1.5R, 72h time-stop
+    """
+    # ── SCALP (hold: 5-30 min) ──
+    scalp_sl_atr_mult: float = _env_float("SCALP_SL_ATR_MULT", 1.5)
+    scalp_tp_atr_mult: float = _env_float("SCALP_TP_ATR_MULT", 2.0)
+    scalp_trailing_enabled: bool = _env_bool("SCALP_TRAILING_ENABLED", False)
+    scalp_trailing_atr_mult: float = _env_float("SCALP_TRAILING_ATR_MULT", 1.0)
+    scalp_time_close_hours: float = _env_float("SCALP_TIME_CLOSE_H", 0.5)
+    scalp_time_warn_hours: float = _env_float("SCALP_TIME_WARN_H", 0.25)
+
+    # ── INTRADAY (hold: 30 min - 4h) ──
+    intraday_sl_atr_mult: float = _env_float("INTRADAY_SL_ATR_MULT", 2.0)
+    intraday_tp_atr_mult: float = _env_float("INTRADAY_TP_ATR_MULT", 2.5)
+    intraday_trailing_enabled: bool = _env_bool("INTRADAY_TRAILING_ENABLED", True)
+    intraday_trailing_atr_mult: float = _env_float("INTRADAY_TRAILING_ATR_MULT", 1.2)
+    intraday_time_close_hours: float = _env_float("INTRADAY_TIME_CLOSE_H", 4.0)
+    intraday_time_warn_hours: float = _env_float("INTRADAY_TIME_WARN_H", 2.0)
+
+    # ── SWING (hold: 4h - 7 days) ──
+    swing_sl_atr_mult: float = _env_float("SWING_SL_ATR_MULT", 2.5)
+    swing_tp_atr_mult: float = _env_float("SWING_TP_ATR_MULT", 3.5)
+    swing_trailing_enabled: bool = _env_bool("SWING_TRAILING_ENABLED", True)
+    swing_trailing_atr_mult: float = _env_float("SWING_TRAILING_ATR_MULT", 1.5)
+    swing_time_close_hours: float = _env_float("SWING_TIME_CLOSE_H", 48.0)
+    swing_time_warn_hours: float = _env_float("SWING_TIME_WARN_H", 12.0)
+
+    # ── POSITION (hold: 1-30 days) ──
+    position_sl_atr_mult: float = _env_float("POSITION_SL_ATR_MULT", 3.0)
+    position_tp_atr_mult: float = _env_float("POSITION_TP_ATR_MULT", 5.0)
+    position_trailing_enabled: bool = _env_bool("POSITION_TRAILING_ENABLED", True)
+    position_trailing_atr_mult: float = _env_float("POSITION_TRAILING_ATR_MULT", 2.0)
+    position_time_close_hours: float = _env_float("POSITION_TIME_CLOSE_H", 168.0)  # 7 days
+    position_time_warn_hours: float = _env_float("POSITION_TIME_WARN_H", 72.0)
+
+    def get_sl_mult(self, strategy_type: str) -> float:
+        return getattr(self, f"{strategy_type}_sl_atr_mult", 2.5)
+
+    def get_tp_mult(self, strategy_type: str) -> float:
+        return getattr(self, f"{strategy_type}_tp_atr_mult", 3.0)
+
+    def get_trailing_enabled(self, strategy_type: str) -> bool:
+        return getattr(self, f"{strategy_type}_trailing_enabled", True)
+
+    def get_trailing_atr_mult(self, strategy_type: str) -> float:
+        return getattr(self, f"{strategy_type}_trailing_atr_mult", 1.5)
+
+    def get_time_close_hours(self, strategy_type: str) -> float:
+        return getattr(self, f"{strategy_type}_time_close_hours", 24.0)
+
+    def get_time_warn_hours(self, strategy_type: str) -> float:
+        return getattr(self, f"{strategy_type}_time_warn_hours", 12.0)
+
+
+@dataclass(frozen=True)
 class StockTradingConfig:
     """US Stock tokenized trading parameters.
 
@@ -500,6 +561,7 @@ class AppConfig:
     trailing: TrailingStopConfig = field(default_factory=TrailingStopConfig)
     limit_orders: LimitOrderConfig = field(default_factory=LimitOrderConfig)
     stocks: StockTradingConfig = field(default_factory=StockTradingConfig)
+    strategy_types: StrategyTypeConfig = field(default_factory=StrategyTypeConfig)
 
     def is_live(self) -> bool:
         """Live trading requires BOTH flags AND a Telegram chat allow-list.

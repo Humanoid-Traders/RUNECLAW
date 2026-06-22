@@ -282,17 +282,20 @@ async def _get_actual_close_price(
         current_price = 0
 
     if current_price > 0 and (sl_price > 0 or tp_price > 0):
+        # Only attribute to SL/TP if price is very close to the level
+        # (within 0.3%). Otherwise it was a manual close — use ticker price.
+        proximity_threshold = trade.entry_price * 0.003  # 0.3%
         dist_tp = abs(current_price - tp_price) if tp_price > 0 else float("inf")
         dist_sl = abs(current_price - sl_price) if sl_price > 0 else float("inf")
-        if dist_tp < dist_sl and tp_price > 0:
+        if dist_tp <= proximity_threshold and tp_price > 0:
             return tp_price, "TP HIT (estimated)", "estimated"
-        elif sl_price > 0:
+        elif dist_sl <= proximity_threshold and sl_price > 0:
             return sl_price, "SL HIT (estimated)", "estimated"
         else:
-            return current_price, "closed (estimated)", "estimated"
+            return current_price, "manually closed", "ticker"
 
     if current_price > 0:
-        return current_price, "closed (ticker)", "ticker"
+        return current_price, "manually closed", "ticker"
 
     # ── 4. Last resort: entry price ──────────────────────────────────
     logger.warning(

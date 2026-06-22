@@ -395,6 +395,12 @@ class Analyzer:
         strategy_mode = mode_selection.selected_mode
         mode_config = mode_selection.config
 
+        # ── Determine strategy_type (hold duration class) early ──
+        # Needed before SL/TP calculation which uses per-strategy-type multipliers.
+        strategy_type = self._classify_strategy_type(
+            strategy_mode, regime, strategy_mode.value,
+        )
+
         confluence = self._score_confluence(
             indicators, regime, signal,
             order_flow=order_flow,
@@ -595,28 +601,26 @@ class Analyzer:
         # Compute normalized volatility: ATR as a percentage of price
         vol_ratio = atr / entry if entry > 0 else 0.02
 
-        # Start with strategy mode defaults
-        sl_mult = mode_config.sl_mult
-        tp_mult = mode_config.tp_mult
+        # Start with per-strategy-type defaults from config
+        # These are the primary SL/TP settings based on trade duration
+        st_cfg = CONFIG.strategy_types
+        sl_mult = st_cfg.get_sl_mult(strategy_type)
+        tp_mult = st_cfg.get_tp_mult(strategy_type)
 
         # REGIME-SPECIFIC SL/TP: volatility overrides take priority
+        # Only widen for high vol or tighten for low vol — don't narrow
+        # a swing trade's stops below the strategy-type minimum
         if vol_ratio > CONFIG.analyzer.high_vol_threshold:
-            # High volatility: widen stops to avoid noise-induced exits
-            sl_mult = CONFIG.analyzer.high_vol_sl_mult
-            tp_mult = CONFIG.analyzer.high_vol_tp_mult
+            # High volatility: use the wider of strategy-type or high-vol setting
+            sl_mult = max(sl_mult, CONFIG.analyzer.high_vol_sl_mult)
+            tp_mult = max(tp_mult, CONFIG.analyzer.high_vol_tp_mult)
         elif vol_ratio < CONFIG.analyzer.low_vol_threshold:
-            # Low volatility: tighten stops to lock in smaller moves
-            sl_mult = CONFIG.analyzer.low_vol_sl_mult
-            tp_mult = CONFIG.analyzer.low_vol_tp_mult
+            # Low volatility: use strategy-type setting (already tuned for duration)
+            pass  # keep strategy_type defaults
         elif regime_sl_override is not None and regime_tp_override is not None:
-            # RANGE/CHOP regime: use tighter SL/TP set by regime filter
-            sl_mult, tp_mult = regime_sl_override, regime_tp_override
-        elif regime == Regime.TREND_UP and direction == Direction.LONG:
-            sl_mult, tp_mult = CONFIG.analyzer.sl_atr_mult_trending, CONFIG.analyzer.tp_atr_mult_trending
-        elif regime == Regime.TREND_DOWN and direction == Direction.SHORT:
-            sl_mult, tp_mult = CONFIG.analyzer.sl_atr_mult_trending, CONFIG.analyzer.tp_atr_mult_trending
-        else:
-            sl_mult, tp_mult = CONFIG.analyzer.sl_atr_mult_default, CONFIG.analyzer.tp_atr_mult_default
+            # RANGE/CHOP regime: only tighten if it's a scalp/intraday trade
+            if strategy_type in ("scalp", "intraday"):
+                sl_mult, tp_mult = regime_sl_override, regime_tp_override
 
         stop_loss = entry - sl_mult * atr if direction == Direction.LONG else entry + sl_mult * atr
         take_profit = entry + tp_mult * atr if direction == Direction.LONG else entry - tp_mult * atr
@@ -706,12 +710,13 @@ class Analyzer:
             take_profit=round(take_profit, price_decimals),
             confidence=blended_confidence,
             reasoning=(
-                f"[{source}|{regime.value}|{mode_tag}|C={confluence:.2f}"
+                f"[{source}|{regime.value}|{mode_tag}|{strategy_type}|C={confluence:.2f}"
                 f"{mtf_tag}{sm_tag}] {thesis.get('reasoning', '')}"
             ),
             signals_used=list(indicators.keys()),
             timestamp=datetime.now(UTC),
             order_type=order_type,
+            strategy_type=strategy_type,
         )
 
         # ── Explainability Report ──
@@ -740,6 +745,47 @@ class Analyzer:
               action="analyze", result="IDEA",
               data=idea.model_dump(mode="json"))
         return idea
+
+    # -- Strategy Type Classification --
+
+    @staticmethod
+    def _classify_strategy_type(strategy_mode, regime, mode_tag: str) -> str:
+        """Map strategy mode + regime to hold-duration category.
+
+        Returns one of: "scalp", "intraday", "swing", "position"
+
+        Mapping logic:
+        - MEAN_REVERSION / LIQUIDITY_SWEEP → scalp (quick fade, fast exit)
+        - BREAKOUT / CONSERVATIVE in RANGE/CHOP → intraday
+        - TREND_CONTINUATION / BREAKOUT in TREND → swing (ride the trend)
+        - TURTLE_BREAKOUT → swing (multi-day trend following)
+
+        The /scalp, /intraday, /swing, /momentum commands can override this
+        by setting strategy_type directly on the TradeIdea.
+        """
+        from bot.core.strategy_modes import StrategyMode
+        from bot.core.ta_utils import Regime
+
+        # Quick fades
+        if strategy_mode in (StrategyMode.MEAN_REVERSION, StrategyMode.LIQUIDITY_SWEEP):
+            return "scalp"
+
+        # Breakouts in range/chop = intraday; in trend = swing
+        if strategy_mode == StrategyMode.BREAKOUT:
+            if regime in (Regime.RANGE, Regime.CHOP):
+                return "intraday"
+            return "swing"
+
+        # Turtle breakout = always swing (multi-day trend following)
+        if strategy_mode == StrategyMode.TURTLE_BREAKOUT:
+            return "swing"
+
+        # Trend continuation = swing
+        if strategy_mode == StrategyMode.TREND_CONTINUATION:
+            return "swing"
+
+        # Conservative / fallback = intraday (moderate timeframe)
+        return "intraday"
 
     # -- Technical Indicators --
 

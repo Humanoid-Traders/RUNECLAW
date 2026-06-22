@@ -128,6 +128,7 @@ class PortfolioTracker:
             status=TradeStatus.EXECUTED,
             is_paper=True,
             leverage=leverage,
+            strategy_type=getattr(idea, 'strategy_type', 'swing'),
             opened_at=datetime.now(UTC),
         )
 

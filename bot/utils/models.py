@@ -85,6 +85,7 @@ class TradeIdea(BaseModel):
     source: str = "unknown"
     timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
     order_type: str = "market"  # "market" or "limit"
+    strategy_type: str = "swing"  # "scalp" | "intraday" | "swing" | "position"
 
     @property
     def risk_reward_ratio(self) -> float:
@@ -154,6 +155,7 @@ class TradeExecution(BaseModel):
     is_paper: bool = True
     leverage: float = 1.0      # leverage multiplier (1 = spot / no leverage)
     entry_atr: float = 0.0     # C2-48: actual ATR at trade entry (0 = legacy/unavailable)
+    strategy_type: str = "swing"  # "scalp" | "intraday" | "swing" | "position"
     opened_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     closed_at: Optional[datetime] = None
 

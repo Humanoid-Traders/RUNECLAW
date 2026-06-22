@@ -145,6 +145,8 @@ class LivePosition:
     limit_order_id: Optional[str] = None
     # ATR at entry time — needed for trailing stop initialization
     atr_at_entry: float = 0.0
+    # Strategy type: "scalp" | "intraday" | "swing" | "position"
+    strategy_type: str = "swing"
     # Fee tracking: commission deducted from PnL
     gross_pnl: Optional[float] = None
     commission: Optional[float] = None
@@ -1568,9 +1570,11 @@ class LiveExecutor:
             leverage = CONFIG.exchange.default_leverage if is_futures else 1
             spot_fallback = False  # Futures-only mode: no spot trading
 
-            # Initialize trailing stop state if enabled
+            # Initialize trailing stop state — strategy-type-aware
             trailing_st = None
-            if CONFIG.trailing.enabled and atr_value > 0:
+            pos_strategy = getattr(idea, 'strategy_type', 'swing')
+            trailing_enabled = CONFIG.strategy_types.get_trailing_enabled(pos_strategy)
+            if trailing_enabled and atr_value > 0:
                 initial_risk = abs(fill_price - idea.stop_loss)
                 trailing_st = make_trailing_state(
                     entry_price=fill_price,
@@ -1594,6 +1598,7 @@ class LiveExecutor:
                 order_type=order_type,
                 limit_order_id=order_id if is_pending_limit else None,
                 atr_at_entry=atr_value,
+                strategy_type=pos_strategy,
                 status="pending_fill" if is_pending_limit else "open",
             )
             self._positions[idea.id] = position
@@ -1614,8 +1619,9 @@ class LiveExecutor:
                 lev_info = f" | {leverage}x" if leverage > 1 else ""
                 mode_label = "FUTURES" if is_futures else "SPOT"
                 dir_icon = "🟢" if side == "buy" else "🔴"
+                st_label = getattr(idea, 'strategy_type', 'swing').upper()
                 return (
-                    f"{dir_icon} <b>LIMIT ORDER {side.upper()} {idea.asset}</b> ({mode_label}{lev_info})\n"
+                    f"{dir_icon} <b>LIMIT ORDER {side.upper()} {idea.asset}</b> ({mode_label}{lev_info}) [{st_label}]\n"
                     f"{'─' * 16}\n"
                     f"- Limit: <code>${fill_price:,.4f}</code>\n"
                     f"- Current: <code>${current_price:,.4f}</code>\n"
@@ -1744,8 +1750,10 @@ class LiveExecutor:
             if sl_id is None and tp_id is None:
                 sl_tp_warn = "\n⚠️ SL/TP FAILED — position unprotected!"
 
+            st_label = getattr(idea, 'strategy_type', 'swing').upper()
+
             return (
-                f"{dir_icon} <b>LIVE {side.upper()} {idea.asset}</b> ({mode_label}{lev_info})\n"
+                f"{dir_icon} <b>LIVE {side.upper()} {idea.asset}</b> ({mode_label}{lev_info}) [{st_label}]\n"
                 f"{'─' * 16}\n"
                 f"- Fill: <code>${fill_price:,.4f}</code>\n"
                 f"- Qty: <code>{filled_qty:.6f}</code>\n"
@@ -2337,9 +2345,13 @@ class LiveExecutor:
                         logger.debug("SL/TP retry failed for %s: %s", pos.symbol, exc)
 
                 # ── GETCLAW: Time-stop check (Rules 6/17) ──
+                # Uses per-strategy-type thresholds from StrategyTypeConfig
                 if CONFIG.time_stop.enabled:
                     hold_hours = (datetime.now(UTC) - pos.opened_at).total_seconds() / 3600
-                    close_threshold = CONFIG.time_stop.intraday_close_hours  # default 4H
+                    # Get strategy-type-aware thresholds
+                    pos_strategy = getattr(pos, 'strategy_type', 'intraday')
+                    close_threshold = CONFIG.strategy_types.get_time_close_hours(pos_strategy)
+                    warn_threshold = CONFIG.strategy_types.get_time_warn_hours(pos_strategy)
                     if hold_hours >= close_threshold:
                         # Check if position is in profit
                         if pos.direction == "LONG":
@@ -2349,19 +2361,21 @@ class LiveExecutor:
                         if not in_profit:
                             # Time-stop: no profit after threshold → close
                             msg = await self.close_position(
-                                trade_id, f"TIME_STOP ({hold_hours:.1f}h, no profit)", price)
+                                trade_id, f"TIME_STOP ({hold_hours:.1f}h/{close_threshold:.0f}h max, {pos_strategy}, no profit)", price)
                             closed_messages.append(msg)
                             audit(trade_log,
-                                  f"Time-stop triggered: {pos.symbol} held {hold_hours:.1f}h with no profit",
+                                  f"Time-stop triggered: {pos.symbol} held {hold_hours:.1f}h ({pos_strategy} max={close_threshold:.0f}h) with no profit",
                                   action="time_stop", result="CLOSED",
                                   data={"trade_id": trade_id, "hold_hours": hold_hours,
+                                        "strategy_type": pos_strategy,
+                                        "close_threshold": close_threshold,
                                         "entry": pos.entry_price, "current": price})
                             continue  # Skip SL/TP check — already closing
-                    elif hold_hours >= CONFIG.time_stop.intraday_warn_hours:
+                    elif hold_hours >= warn_threshold:
                         # Approaching time-stop — log warning (once per cycle is fine)
                         remaining = close_threshold - hold_hours
-                        logger.debug("Time-stop warning: %s held %.1fh, %.1fh until auto-close",
-                                     pos.symbol, hold_hours, remaining)
+                        logger.debug("Time-stop warning: %s (%s) held %.1fh, %.1fh until auto-close",
+                                     pos.symbol, pos_strategy, hold_hours, remaining)
 
                 # ── Static SL/TP check ──
                 should_close = False
@@ -3070,100 +3084,219 @@ class LiveExecutor:
                   data={"trade_id": trade_id, "error": exc_str})
             return f"CLOSE FAILED for {trade_id}: {exc}"
 
+    # ── Bitget Position History — single source of truth for closed PnL ──
+
+    async def _fetch_bitget_close_data(
+        self, pos: LivePosition,
+    ) -> dict | None:
+        """Query Bitget position history API for actual close price and PnL.
+
+        Returns dict with keys: close_price, pnl, fees, reason, source
+        or None if the lookup fails.
+
+        This is the authoritative source — Bitget's own closed-position
+        record with the real fill price, realized PnL, and fees.
+        """
+        exchange = await self._get_exchange()
+        ccxt_symbol = pos.symbol if ":USDT" in pos.symbol else f"{pos.symbol}:USDT"
+        # Bitget raw symbol: strip /USDT:USDT → e.g. "BTCUSDT"
+        raw_symbol = pos.symbol.replace("/", "").replace(":USDT", "")
+
+        # ── 1. Bitget position history endpoint (most accurate) ────────
+        # GET /api/v2/mix/position/history-position
+        # Returns: openPrice, closeAvgPrice, achievedProfits, openFee, closeFee
+        try:
+            since_ms = int(pos.opened_at.timestamp() * 1000) - 60_000 if pos.opened_at else None
+            params = {
+                "productType": "USDT-FUTURES",
+                "symbol": raw_symbol,
+            }
+            if since_ms:
+                params["startTime"] = str(since_ms)
+            resp = await exchange.privateMixGetV2MixPositionHistoryPosition(params)
+            entries = resp.get("data", {}).get("list", []) if isinstance(resp.get("data"), dict) else []
+
+            # Match by symbol and entry price (within 0.01% tolerance)
+            for entry in entries:
+                entry_price_hist = float(entry.get("openPrice", 0) or 0)
+                if entry_price_hist <= 0:
+                    continue
+                # Match: same symbol and entry price within 0.01%
+                price_match = abs(entry_price_hist - pos.entry_price) / pos.entry_price < 0.0001
+                if not price_match:
+                    continue
+
+                close_price = float(entry.get("closeAvgPrice", 0) or 0)
+                pnl = float(entry.get("achievedProfits", 0) or 0)
+                open_fee = abs(float(entry.get("openFee", 0) or 0))
+                close_fee = abs(float(entry.get("closeFee", 0) or 0))
+                total_fees = open_fee + close_fee
+                # netProfit may also be available
+                net_profit = float(entry.get("netProfit", 0) or 0)
+
+                if close_price > 0:
+                    # Determine close reason from the data
+                    close_type = (entry.get("closeType") or "").lower()
+                    if "tp" in close_type or "take" in close_type:
+                        reason = "TP HIT (exchange)"
+                    elif "sl" in close_type or "stop" in close_type:
+                        reason = "SL HIT (exchange)"
+                    elif "liquidat" in close_type:
+                        reason = "LIQUIDATED"
+                    else:
+                        reason = "closed (exchange)"
+
+                    # Use netProfit if available (most accurate), else achievedProfits
+                    final_pnl = net_profit if net_profit != 0 else pnl
+
+                    logger.info(
+                        "Bitget position history for %s: close=%.4f, pnl=%.4f, fees=%.4f",
+                        pos.symbol, close_price, final_pnl, total_fees,
+                    )
+                    return {
+                        "close_price": close_price,
+                        "pnl": final_pnl,
+                        "fees": total_fees,
+                        "reason": reason,
+                        "source": "bitget_position_history",
+                    }
+        except Exception as e:
+            logger.debug("Bitget position history lookup failed for %s: %s", pos.symbol, e)
+
+        # ── 2. fetchMyTrades — match any recent close trade by symbol ──
+        # Not just SL/TP order IDs — also find manual close fills
+        try:
+            since_ms = int(pos.opened_at.timestamp() * 1000) - 60_000 if pos.opened_at else None
+            trades = await exchange.fetch_my_trades(ccxt_symbol, since=since_ms, limit=50)
+
+            # First try matching by SL/TP order IDs
+            if pos.sl_order_id or pos.tp_order_id:
+                relevant = [
+                    t for t in trades
+                    if t.get("order") in (pos.sl_order_id, pos.tp_order_id)
+                ]
+                if relevant:
+                    fill_price = float(relevant[-1].get("price", 0) or 0)
+                    total_profit = 0.0
+                    total_fees = 0.0
+                    for rt in relevant:
+                        info = rt.get("info", {})
+                        profit = float(info.get("profit", 0) or 0)
+                        total_profit += profit
+                        fee_detail = info.get("feeDetail", {})
+                        if isinstance(fee_detail, dict):
+                            total_fees += abs(float(fee_detail.get("totalFee", 0) or 0))
+                    matched_order = relevant[-1].get("order")
+                    if matched_order == pos.tp_order_id:
+                        reason = "TP HIT (exchange)"
+                    elif matched_order == pos.sl_order_id:
+                        reason = "SL HIT (exchange)"
+                    else:
+                        reason = "closed (exchange)"
+                    if fill_price > 0 and total_profit != 0:
+                        return {
+                            "close_price": fill_price,
+                            "pnl": total_profit,
+                            "fees": total_fees,
+                            "reason": reason,
+                            "source": "exchange_fill_sltp",
+                        }
+
+            # Then try matching by reduceOnly / close side trades
+            close_side = "sell" if pos.direction == "LONG" else "buy"
+            close_fills = [
+                t for t in trades
+                if t.get("side") == close_side
+                and t.get("order") not in (getattr(pos, 'limit_order_id', None),)
+            ]
+            if close_fills:
+                # Use the most recent close fill
+                last_fill = close_fills[-1]
+                fill_price = float(last_fill.get("price", 0) or 0)
+                info = last_fill.get("info", {})
+                profit = float(info.get("profit", 0) or 0)
+                total_fees = 0.0
+                fee_detail = info.get("feeDetail", {})
+                if isinstance(fee_detail, dict):
+                    total_fees = abs(float(fee_detail.get("totalFee", 0) or 0))
+                if fill_price > 0 and profit != 0:
+                    return {
+                        "close_price": fill_price,
+                        "pnl": profit,
+                        "fees": total_fees,
+                        "reason": "closed (exchange)",
+                        "source": "exchange_fill_recent",
+                    }
+        except Exception as e:
+            logger.debug("fetchMyTrades lookup failed for %s: %s", pos.symbol, e)
+
+        # ── 3. fetchClosedOrders — only actually filled orders ─────────
+        if pos.sl_order_id or pos.tp_order_id:
+            try:
+                closed_orders = await exchange.fetch_closed_orders(ccxt_symbol, limit=20)
+                for o in closed_orders:
+                    if o.get("id") in (pos.sl_order_id, pos.tp_order_id):
+                        filled = float(o.get("filled", 0) or 0)
+                        status = (o.get("status") or "").lower()
+                        if filled <= 0 or status in ("cancelled", "canceled", "expired"):
+                            continue
+                        avg = o.get("average") or o.get("price")
+                        if avg and float(avg) > 0:
+                            reason = "TP HIT (exchange)" if o["id"] == pos.tp_order_id else "SL HIT (exchange)"
+                            return {
+                                "close_price": float(avg),
+                                "pnl": None,  # Not available from orders
+                                "fees": 0.0,
+                                "reason": reason,
+                                "source": "closed_order",
+                            }
+            except Exception as e:
+                logger.debug("fetchClosedOrders failed for %s: %s", pos.symbol, e)
+
+        # ── 4. No exchange data found — return None (never estimate) ───
+        logger.warning(
+            "No exchange close data found for %s — all lookups failed. "
+            "Will use ticker price as last resort.", pos.symbol,
+        )
+        return None
+
     async def _handle_already_closed_position(self, pos: LivePosition) -> str | None:
         """Handle a position that was already closed on exchange (25227).
 
-        Looks up actual fill price from exchange trade history and records
-        accurate PnL instead of reverting to "open" with $0.
+        Uses Bitget position history API for actual close price and PnL.
+        Never estimates — only uses real exchange data.
 
         Returns close message string if successful, None if lookup fails.
         """
         exchange = await self._get_exchange()
         ccxt_symbol = pos.symbol if ":USDT" in pos.symbol else f"{pos.symbol}:USDT"
 
-        actual_fill_price = None
-        fill_source = "estimated"
-        reason = "closed (exchange)"
-        exchange_reported_pnl = None
+        # ── Get real close data from Bitget ──────────────────────────
+        close_data = await self._fetch_bitget_close_data(pos)
 
-        # ── 1. fetchMyTrades — match by SL/TP order IDs ──────────────
-        if pos.sl_order_id or pos.tp_order_id:
-            try:
-                trades = await exchange.fetch_my_trades(ccxt_symbol, limit=50)
-                relevant = [
-                    t for t in trades
-                    if t.get("order") in (pos.sl_order_id, pos.tp_order_id)
-                ]
-                if relevant:
-                    actual_fill_price = float(relevant[-1].get("price", 0) or 0)
-                    fill_source = "exchange_fill"
-                    total_profit = 0.0
-                    for rt in relevant:
-                        info = rt.get("info", {})
-                        profit = float(info.get("profit", 0) or 0)
-                        total_profit += profit
-                    if total_profit != 0:
-                        exchange_reported_pnl = total_profit
-                    matched_order = relevant[-1].get("order")
-                    if matched_order == pos.tp_order_id:
-                        reason = "TP HIT (exchange)"
-                    elif matched_order == pos.sl_order_id:
-                        reason = "SL HIT (exchange)"
-            except Exception as e:
-                logger.debug("25227 fetchMyTrades failed for %s: %s", ccxt_symbol, e)
-
-        # ── 2. fetchClosedOrders ─────────────────────────────────────
-        if (actual_fill_price is None or actual_fill_price <= 0) and (pos.sl_order_id or pos.tp_order_id):
-            try:
-                closed_orders = await exchange.fetch_closed_orders(ccxt_symbol, limit=20)
-                for o in closed_orders:
-                    if o.get("id") in (pos.sl_order_id, pos.tp_order_id):
-                        avg = o.get("average") or o.get("price")
-                        if avg:
-                            actual_fill_price = float(avg)
-                            fill_source = "closed_order"
-                            if o["id"] == pos.tp_order_id:
-                                reason = "TP HIT (exchange)"
-                            else:
-                                reason = "SL HIT (exchange)"
-                            break
-            except Exception as e:
-                logger.debug("25227 fetchClosedOrders failed for %s: %s", ccxt_symbol, e)
-
-        # ── 3. Ticker + SL/TP proximity estimate ─────────────────────
-        if actual_fill_price is None or actual_fill_price <= 0:
+        if close_data and close_data["close_price"] > 0:
+            est_exit = close_data["close_price"]
+            reason = close_data["reason"]
+            fill_source = close_data["source"]
+            exchange_reported_pnl = close_data["pnl"]  # may be None for closed_order source
+        else:
+            # All exchange lookups failed — use current ticker (real price, not SL/TP)
             try:
                 ticker = await exchange.fetch_ticker(ccxt_symbol)
-                current_price = float(ticker.get("last", 0) or 0)
+                est_exit = float(ticker.get("last", 0) or 0)
             except Exception:
-                current_price = 0
-
-            if current_price > 0:
-                sl = pos.stop_loss or 0
-                tp = pos.take_profit or 0
-                if sl > 0 or tp > 0:
-                    dist_tp = abs(current_price - tp) if tp > 0 else float("inf")
-                    dist_sl = abs(current_price - sl) if sl > 0 else float("inf")
-                    if dist_tp < dist_sl and tp > 0:
-                        actual_fill_price = tp
-                        reason = "TP HIT (estimated)"
-                    elif sl > 0:
-                        actual_fill_price = sl
-                        reason = "SL HIT (estimated)"
-                    else:
-                        actual_fill_price = current_price
-                        reason = "closed (estimated)"
-                else:
-                    actual_fill_price = current_price
-                    reason = "closed (ticker)"
-                fill_source = "estimated"
-
-        if actual_fill_price is None or actual_fill_price <= 0:
-            return None  # Can't determine fill — fall back to revert logic
+                est_exit = 0
+            if est_exit <= 0:
+                return None  # Can't determine anything
+            reason = "closed (ticker)"
+            fill_source = "ticker_fallback"
+            exchange_reported_pnl = None
+            logger.warning(
+                "Using ticker price for %s close — exchange history unavailable",
+                pos.symbol,
+            )
 
         # ── Record accurate close ────────────────────────────────────
-        est_exit = actual_fill_price
-
         if pos.direction == "LONG":
             gross_pnl = (est_exit - pos.entry_price) * pos.quantity
         else:
@@ -3781,101 +3914,29 @@ class LiveExecutor:
                     )
 
                     if not has_position:
-                        # Position no longer on exchange — closed by SL/TP or liquidation
-                        actual_fill_price = None
-                        fill_source = "estimated"
+                        # Position no longer on exchange — get real close data from Bitget
+                        close_data = await self._fetch_bitget_close_data(pos)
 
-                        # 1. Try fetchMyTrades for actual fill price + exchange PnL
-                        exchange_reported_pnl = None  # Bitget reports PnL in info.profit
-                        try:
-                            trades = await exchange.fetch_my_trades(ccxt_symbol, limit=50)
-                            relevant = [
-                                t for t in trades
-                                if t.get("order") in (pos.sl_order_id, pos.tp_order_id)
-                            ]
-                            if relevant:
-                                actual_fill_price = float(relevant[-1].get("price", 0))
-                                fill_source = "exchange_fill"
-                                # Sum exchange-reported PnL across all fill legs
-                                total_profit = 0.0
-                                for rt in relevant:
-                                    info = rt.get("info", {})
-                                    profit = float(info.get("profit", 0) or 0)
-                                    total_profit += profit
-                                if total_profit != 0:
-                                    exchange_reported_pnl = total_profit
-                                # Determine reason from which order matched
-                                matched_order = relevant[-1].get("order")
-                                if matched_order == pos.tp_order_id:
-                                    reason = "TP HIT (exchange)"
-                                elif matched_order == pos.sl_order_id:
-                                    reason = "SL HIT (exchange)"
-                                else:
-                                    reason = "closed (exchange)"
-                        except Exception as e:
-                            logger.debug("fetchMyTrades failed for %s: %s", ccxt_symbol, e)
-
-                        # 2. Try fetchClosedOrders
-                        if actual_fill_price is None or actual_fill_price <= 0:
-                            try:
-                                closed_orders = await exchange.fetch_closed_orders(ccxt_symbol, limit=20)
-                                for o in closed_orders:
-                                    if o.get("id") in (pos.sl_order_id, pos.tp_order_id):
-                                        avg = o.get("average") or o.get("price")
-                                        if avg:
-                                            actual_fill_price = float(avg)
-                                            fill_source = "closed_order"
-                                            if o["id"] == pos.tp_order_id:
-                                                reason = "TP HIT (exchange)"
-                                            else:
-                                                reason = "SL HIT (exchange)"
-                                            break
-                            except Exception as e:
-                                logger.debug("fetchClosedOrders failed for %s: %s", ccxt_symbol, e)
-
-                        # 3. Last resort: current ticker with SL/TP proximity guess
-                        if actual_fill_price is None or actual_fill_price <= 0:
+                        if close_data and close_data["close_price"] > 0:
+                            est_exit = close_data["close_price"]
+                            reason = close_data["reason"]
+                            fill_source = close_data["source"]
+                            exchange_reported_pnl = close_data["pnl"]
+                        else:
+                            # All exchange lookups failed — use ticker (real price, never SL/TP)
                             try:
                                 ticker = await exchange.fetch_ticker(ccxt_symbol)
-                                close_price = float(ticker.get("last", 0) or 0)
+                                est_exit = float(ticker.get("last", 0) or 0)
                             except Exception:
-                                close_price = 0
-
-                            if close_price <= 0:
-                                close_price = pos.entry_price  # fallback
-
-                            # Estimate which level was hit based on proximity
-                            if pos.direction == "LONG":
-                                dist_tp = abs(close_price - pos.take_profit) if pos.take_profit else float("inf")
-                                dist_sl = abs(close_price - pos.stop_loss) if pos.stop_loss else float("inf")
-                                if dist_tp < dist_sl and pos.take_profit:
-                                    est_exit = pos.take_profit
-                                    reason = "TP HIT (estimated)"
-                                elif pos.stop_loss:
-                                    est_exit = pos.stop_loss
-                                    reason = "SL HIT (estimated)"
-                                else:
-                                    est_exit = close_price
-                                    reason = "closed (estimated)"
-                            else:  # SHORT
-                                dist_tp = abs(close_price - pos.take_profit) if pos.take_profit else float("inf")
-                                dist_sl = abs(close_price - pos.stop_loss) if pos.stop_loss else float("inf")
-                                if dist_tp < dist_sl and pos.take_profit:
-                                    est_exit = pos.take_profit
-                                    reason = "TP HIT (estimated)"
-                                elif pos.stop_loss:
-                                    est_exit = pos.stop_loss
-                                    reason = "SL HIT (estimated)"
-                                else:
-                                    est_exit = close_price
-                                    reason = "closed (estimated)"
-                            actual_fill_price = est_exit
-                            fill_source = "estimated"
+                                est_exit = 0
+                            if est_exit <= 0:
+                                est_exit = pos.entry_price  # absolute fallback
+                            reason = "closed (ticker)"
+                            fill_source = "ticker_fallback"
+                            exchange_reported_pnl = None
                             logger.warning(
-                                "PnL for %s is estimated from current price — "
-                                "actual fill unavailable", pos.symbol)
-
-                        est_exit = actual_fill_price
+                                "Reconcile: using ticker price for %s — "
+                                "exchange history unavailable", pos.symbol)
 
                         # Compute PnL — prefer exchange-reported profit (source of truth)
                         if exchange_reported_pnl is not None:

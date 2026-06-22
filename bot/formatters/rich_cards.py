@@ -737,9 +737,11 @@ def render_open_positions(positions: List[Dict[str, Any]]) -> str:
         sl_str = _fmt_price(sl) if sl and sl > 0 else "<i>None</i>"
         tp_str = _fmt_price(tp) if tp and tp > 0 else "<i>None</i>"
         untracked = p.get("untracked", False)
+        strategy_type = p.get("strategy_type", "").upper()
+        st_tag = f" [{strategy_type}]" if strategy_type else ""
 
         lines.extend([
-            f"{d_icon} <b>{pair}</b> {direction} | {pnl_icon} {_pct(pnl)} (${pnl_usd_val:+,.2f})",
+            f"{d_icon} <b>{pair}</b> {direction}{st_tag} | {pnl_icon} {_pct(pnl)} (${pnl_usd_val:+,.2f})",
             f"  {_fmt_price(entry)} -> {_fmt_price(current)} | ${size_usd:.0f}{lev_str}{rr_str} | {hold_str}",
             f"  SL {sl_str} / TP {tp_str}{sl_tag}",
         ])

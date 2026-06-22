@@ -40,6 +40,7 @@ from bot.skills.scan_skill import cmd_scan as _scan_skill_handler, callback_conf
 from bot.skills.user_middleware import cmd_link as _cmd_link, cmd_unlink as _cmd_unlink, cmd_me as _cmd_me, cmd_sync as _cmd_sync
 from bot.utils.logger import audit, system_log
 from bot.utils.user_store import UserStore
+from bot.utils.i18n import t, get_user_lang, set_user_lang, SUPPORTED_LANGS
 from bot.nlp.intent_router import IntentRouter
 from bot.nlp.conversation_store import ConversationStore
 from bot.core.proactive_monitor import ProactiveMonitor
@@ -247,6 +248,7 @@ class TelegramHandler:
             # Multi-user commands
             ("link", _cmd_link), ("unlink", _cmd_unlink), ("me", _cmd_me),
             ("sync", _cmd_sync),
+            ("lang", self._cmd_lang),
         ]:
             app.add_handler(CommandHandler(cmd, handler))
         app.add_handler(CallbackQueryHandler(self._handle_callback))
@@ -1167,15 +1169,8 @@ class TelegramHandler:
         record = self.users.register(tg_id, name=user_name)
 
         if not record.get("authorized", False):
-            msg = (
-                f"<b>Hey {user_name}!</b>\n\n"
-                f"I'm RUNECLAW, your AI trading assistant.\n"
-                f"I scan the market, find setups, and manage risk for you.\n\n"
-                f"Your account is pending approval.\n"
-                f"ID: <code>{tg_id}</code>\n\n"
-                f"An admin will get you set up soon.\n"
-                f"Once approved, just chat with me like normal."
-            )
+            lang = get_user_lang(self.users, tg_id)
+            msg = t("welcome_pending", lang, name=user_name, tg_id=tg_id)
             await self._send(update, msg)
             await self._notify_admins(
                 f"New user: <b>{user_name}</b> (<code>{tg_id}</code>)\n"
@@ -1240,22 +1235,35 @@ class TelegramHandler:
         can_live = self.users.can_trade_live(tg_id)
         trade_mode = "\U0001f525 Live" if can_live else "\U0001f4dd Paper"
 
-        msg = (
-            f"<b>RUNECLAW</b>\n"
-            f"{SEP}\n\n"
-            f"Hey {user_name}, here's where things stand:\n\n"
-            f"{status_icon} <b>{status_label}</b> | {mode}\n"
-            f"Equity: <code>${equity}</code>\n"
-            f"Open positions: <code>{_filled_count}</code>"
-            f"{f' | Pending orders: <code>{_pending_count}</code>' if _pending_count > 0 else ''}\n"
-            f"Win rate: <code>{win_rate}{'%' if win_rate != 'N/A' else ''}</code>\n"
-            f"Tier: {tier_label} | Trading: {trade_mode}\n\n"
-            f"<b>Talk to me:</b>\n"
-            f"<i>\"scan BTC\" - \"show my positions\" - \"what's the risk?\"</i>\n"
-            f"<i>\"analyze SOL\" - \"how's my PnL?\" - \"pause the bot\"</i>\n\n"
-            f"Just type what you need, no commands required.\n\n"
-            f"<i>{time}</i>"
-        )
+        # Get user language preference
+        lang = get_user_lang(self.users, tg_id)
+
+        # Bilingual status labels
+        status_label_zh = t("status_active", "zh") if not cb_active else t("status_paused", "zh")
+        trade_mode_zh = t("mode_live", "zh") if can_live else t("mode_paper", "zh")
+        pending_str = f' | Pending orders: <code>{_pending_count}</code>' if _pending_count > 0 else ''
+        pending_str_zh = f' | 掛單: <code>{_pending_count}</code>' if _pending_count > 0 else ''
+
+        # Format win rate with % sign
+        wr_display = f"{win_rate}%" if win_rate != "N/A" else "N/A"
+
+        body = t('welcome_ready', lang,
+                 name=user_name,
+                 status_icon=status_icon,
+                 status_label=status_label,
+                 status_label_zh=status_label_zh,
+                 mode=mode,
+                 equity=equity,
+                 filled=_filled_count,
+                 pending_str=pending_str,
+                 pending_str_zh=pending_str_zh,
+                 win_rate=wr_display,
+                 tier=tier_label,
+                 trade_mode=trade_mode,
+                 trade_mode_zh=trade_mode_zh,
+                 time=time)
+
+        msg = f"<b>RUNECLAW</b>\n{SEP}\n\n{body}"
         await self._send(update, msg, reply_markup=_KB_WARROOM)
 
     async def _cmd_help(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1268,6 +1276,7 @@ class TelegramHandler:
         is_auth = self.users.is_authorized(tg_id)
         user = self.users.get(tg_id)
         role = user.get("role", "pending") if user else "pending"
+        lang = get_user_lang(self.users, tg_id)
 
         _sep = "\u2500" * 20
 
@@ -1275,7 +1284,7 @@ class TelegramHandler:
             await self._send(update,
                 f"\u2694\ufe0f <b>RUNECLAW</b>\n"
                 f"{_sep}\n"
-                f"<i>Status: pending approval \u2014 use /start to register</i>")
+                f"<i>{'等待審核中 \u2014 請使用 /start 註冊' if lang == 'zh' else 'Status: pending approval \u2014 use /start to register'}</i>")
             return
 
         tier_label = self.users.tier_label(tg_id)
@@ -1283,118 +1292,68 @@ class TelegramHandler:
         trade_mode = "\U0001f525 Live" if can_live else "\U0001f4dd Paper"
 
         msg = (
-            f"\u2694\ufe0f <b>RUNECLAW \u2014 Command Guide</b>\n"
+            f"{t('help_title', lang)}\n"
             f"{_sep}\n"
             f"{tier_label} | {trade_mode}\n\n"
-
-            # Tip
-            f"\U0001f4ac <i>You can also just type naturally:</i>\n"
-            f"<i>\"scan BTC\" \u2014 \"how's my PnL?\" \u2014 \"what's moving?\"</i>\n\n"
-
-            # Market Analysis
-            f"\U0001f50d <b>Market Analysis</b>\n"
-            f"/scan \u2014 quick market scan\n"
-            f"/deepscan \u2014 deep multi-timeframe scan\n"
-            f"/fullscan \u2014 full scan (all pairs)\n"
-            f"/analyze <i>BTC</i> \u2014 detailed coin analysis\n"
-            f"/macro \u2014 macro outlook\n"
-            f"/patterns \u2014 chart pattern detection\n\n"
-
-            # Trading
-            f"\U0001f4b9 <b>Trading</b>\n"
-            f"/trade <i>BTC</i> \u2014 generate trade idea\n"
-            f"/latest_signal \u2014 last signal\n"
-            f"/signals \u2014 signal history & stats\n"
-            f"/proposals \u2014 pending trade proposals\n\n"
-
-            # Portfolio & Risk
-            f"\U0001f4ca <b>Portfolio & Risk</b>\n"
-            f"/portfolio \u2014 holdings & PnL\n"
-            f"/open_positions \u2014 current positions\n"
-            f"/risk \u2014 risk dashboard\n"
-            f"/performance \u2014 performance stats\n"
-            f"/daily_report \u2014 daily summary\n"
-            f"/journal \u2014 trade journal\n"
-            f"/costs \u2014 fee breakdown\n\n"
-
-            # Strategy
-            f"\U0001f3af <b>Strategy Presets</b>\n"
-            f"/momentum \u2014 trend following\n"
-            f"/swing \u2014 swing trades\n"
-            f"/scalp \u2014 quick scalps\n"
-            f"/dip \u2014 dip buying\n"
-            f"/intraday \u2014 intraday setups\n"
-            f"/strategy \u2014 current strategy info\n"
-            f"/mode \u2014 switch strategy mode\n"
-            f"/playbook \u2014 strategy playbook\n\n"
-
-            # Tools
-            f"\U0001f6e0 <b>Tools</b>\n"
-            f"/backtest \u2014 run backtest\n"
-            f"/walkforward \u2014 walk-forward test\n"
-            f"/optimize \u2014 parameter optimization\n"
-            f"/watch <i>BTC 65000</i> \u2014 price alert\n"
-            f"/learn \u2014 trading lessons\n\n"
-
-            # Controls
-            f"\u2699\ufe0f <b>Controls</b>\n"
-            f"/dashboard \u2014 overview panel\n"
-            f"/status \u2014 engine status\n"
-            f"/health \u2014 system health\n"
-            f"/pause \u2014 pause trading\n"
-            f"/resume \u2014 resume trading\n"
-            f"/halt \u2014 halt engine\n"
-            f"/emergency_stop \u2014 kill switch\n"
-            f"/rejected \u2014 rejected trades\n"
-            f"/whynot \u2014 why last trade was rejected\n"
-            f"/reset \u2014 reset engine state\n"
-        )
-
-        # Account
-        msg += (
-            f"\n\U0001f464 <b>Account</b>\n"
-            f"/me \u2014 your profile\n"
-            f"/link \u2014 link exchange account\n"
-            f"/start \u2014 refresh session\n"
-        )
-
-        # LLM settings (show for all authorized users)
-        msg += (
-            f"\n\U0001f916 <b>AI Settings</b>\n"
-            f"/llmstatus \u2014 current AI model\n"
-            f"/llmtiers \u2014 available models\n"
-            f"/setllm \u2014 change AI model\n"
-            f"/llmreset \u2014 reset to default\n"
+            f"{t('help_tip', lang)}\n\n"
+            f"{t('help_market', lang)}\n\n"
+            f"{t('help_trading', lang)}\n\n"
+            f"{t('help_portfolio', lang)}\n\n"
+            f"{t('help_strategy', lang)}\n\n"
+            f"{t('help_tools', lang)}\n\n"
+            f"{t('help_controls', lang)}\n\n"
+            f"{t('help_account', lang)}\n\n"
+            f"{t('help_ai', lang)}\n"
         )
 
         # Live trading (show for users with live access)
         if can_live or role == "admin":
-            msg += (
-                f"\n\U0001f525 <b>Live Trading</b>\n"
-                f"/golive \u2014 enable live execution\n"
-                f"/livebalance \u2014 exchange balance\n"
-                f"/livepositions \u2014 exchange positions\n"
-                f"/liveclose <i>id</i> \u2014 close position\n"
-                f"/buy <i>BTC 5</i> \u2014 spot buy\n"
-                f"/sell <i>BTC</i> \u2014 spot sell\n"
-            )
+            msg += f"\n{t('help_live', lang)}\n"
 
         # Admin section
         if role == "admin":
             msg += (
-                f"\n\U0001f6e1 <b>Admin</b>\n"
-                f"/users \u2014 all users\n"
-                f"/approve <i>ID</i> \u2014 approve user\n"
-                f"/revoke <i>ID</i> \u2014 revoke access\n"
-                f"/set_tier <i>ID tier</i> \u2014 change tier\n"
-                f"/grant_live <i>ID</i> \u2014 enable live trading\n"
-                f"/revoke_live <i>ID</i> \u2014 disable live trading\n"
-                f"/stockscan \u2014 stock market scan\n"
-                f"/channel \u2014 manage auto-posting\n"
-                f"/broadcast \u2014 send message to groups\n"
+                f"\n{t('help_admin', lang)}\n"
+                f"/stockscan \u2014 {'股市掃描' if lang == 'zh' else 'stock market scan'}\n"
+                f"/channel \u2014 {'管理自動發佈' if lang == 'zh' else 'manage auto-posting'}\n"
+                f"/broadcast \u2014 {'群組廣播' if lang == 'zh' else 'send message to groups'}\n"
             )
 
         await self._send(update, msg)
+
+    # ── Language command ──────────────────────────────────────
+
+    async def _cmd_lang(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """Switch between English and Traditional Chinese."""
+        if not await self._guard(update, "lang"):
+            return
+        tg_id = self._get_tg_id(update)
+        current_lang = get_user_lang(self.users, tg_id)
+
+        args = ctx.args or []
+        if args:
+            new_lang = args[0].lower().strip()
+            # Accept various inputs
+            lang_map = {
+                "en": "en", "english": "en", "eng": "en",
+                "zh": "zh", "zh-tw": "zh", "chinese": "zh",
+                "中文": "zh", "繁體": "zh", "繁中": "zh", "繁體中文": "zh",
+            }
+            new_lang = lang_map.get(new_lang, new_lang)
+            if new_lang in SUPPORTED_LANGS:
+                set_user_lang(self.users, tg_id, new_lang)
+                await self._send(update, t("lang_switched", new_lang))
+                return
+
+        # No args or invalid — show buttons
+        buttons = [
+            [InlineKeyboardButton("English", callback_data="lang:en"),
+             InlineKeyboardButton("繁體中文", callback_data="lang:zh")],
+        ]
+        await self._send(update,
+            f"🌐 {t('lang_prompt', current_lang)}\n\n"
+            f"Current / 目前: <b>{SUPPORTED_LANGS.get(current_lang, 'English')}</b>",
+            reply_markup=InlineKeyboardMarkup(buttons))
 
     # ── Admin commands ────────────────────────────────────────
 
@@ -2059,6 +2018,10 @@ class TelegramHandler:
             pnl_sign = "+" if realized_pnl >= 0 else ""
             pnl_icon = "\u26aa" if realized_pnl == 0 else ("\U0001f7e2" if realized_pnl > 0 else "\U0001f534")
 
+            # "Used" from exchange only counts filled positions in cross margin.
+            # Show the higher of exchange-reported or bot-tracked exposure for accuracy.
+            used_display = max(used, exposure)
+
             # Header
             SEP = "─" * 16
             lines = [
@@ -2069,7 +2032,7 @@ class TelegramHandler:
                 "💳 <b>Balance</b>",
                 f"{SEP}",
                 f"- Cash: <code>${free:,.2f}</code>",
-                f"- Used: <code>${used:,.2f}</code>",
+                f"- Used: <code>${used_display:,.2f}</code>",
                 f"- Equity: <code>${total_usd:,.2f}</code>",
                 f"- Exposure: <code>${exposure:,.2f}</code>",
             ]
@@ -3678,17 +3641,44 @@ class TelegramHandler:
 
             lines = [f"<b>Open Orders ({len(open_orders)})</b>", ""]
 
+            # Fetch current prices for distance-to-fill calculation
+            limit_syms = list({o["sym"] for o in limit_orders}) if limit_orders else []
+            limit_prices_map: dict[str, float] = {}
+            if limit_syms:
+                try:
+                    # Map display symbols back to exchange symbols for ticker fetch
+                    _raw_syms = list({
+                        raw_o.get("symbol", "") for raw_o in open_orders
+                        if display_symbol(raw_o.get("symbol", "")) in limit_syms
+                    })
+                    if _raw_syms:
+                        _tickers = await exchange.fetch_tickers(_raw_syms)
+                        for _s, _t in _tickers.items():
+                            limit_prices_map[display_symbol(_s)] = float(_t.get("last") or 0)
+                except Exception:
+                    pass
+
             if limit_orders:
-                lines.append(f"<b>Limit Orders ({len(limit_orders)}):</b>")
+                lines.append(f"<b>\U0001f4cb Limit Orders ({len(limit_orders)}):</b>")
+                lines.append("")
                 for o in limit_orders:
                     d_icon = "\U0001f7e2" if o["side"] == "BUY" else "\U0001f534"
+                    dir_label = "LONG" if o["side"] == "BUY" else "SHORT"
                     fill_str = f" ({o['filled']:.4f} filled)" if o["filled"] > 0 else ""
-                    lines.append(
-                        f"  {d_icon} <b>{o['sym']}</b> {o['side']} "
-                        f"@ <code>${o['price']:,.4f}</code> "
-                        f"qty {o['amount']:.4f}{fill_str}{o['ttl_str']}"
-                    )
-                lines.append("")
+                    cur_price = limit_prices_map.get(o["sym"], 0)
+
+                    lines.append(f"{d_icon} <b>{o['sym']} {dir_label}</b> \u2014 Limit Order")
+                    lines.append(f"  \U0001f4cd Limit: <code>${o['price']:,.4f}</code>{fill_str}")
+                    if cur_price > 0:
+                        dist = ((cur_price - o['price']) / cur_price) * 100
+                        fill_hint = "\u2b07\ufe0f" if (o["side"] == "BUY" and cur_price > o['price']) else (
+                            "\u2b06\ufe0f" if (o["side"] != "BUY" and cur_price < o['price']) else "\u2705")
+                        lines.append(f"  \U0001f4b2 Current: <code>${cur_price:,.4f}</code>  {fill_hint} {dist:+.2f}% to fill")
+                    lines.append(f"  \U0001f4b0 Qty: <code>{o['amount']:.4f}</code>{o['ttl_str']}")
+                    lines.append(f"  ID: <code>{o['oid']}</code>")
+                    if o['created']:
+                        lines.append(f"  \u23f3 Placed: {o['created']}")
+                    lines.append("")
 
             if sl_orders:
                 lines.append(f"<b>Stop-Loss Orders ({len(sl_orders)}):</b>")
@@ -3736,13 +3726,20 @@ class TelegramHandler:
         if CONFIG.is_live():
             live_positions = self.engine.live_executor.open_positions
             if live_positions:
+                prices: dict[str, float] = {}
                 try:
-                    exchange = await self.engine.scanner._get_exchange()
-                    syms = list({p.symbol for p in live_positions})
-                    tickers = await exchange.fetch_tickers(syms)
-                    prices = {s: float(t.get("last", 0)) for s, t in tickers.items() if t.get("last")}
+                    exchange = await self.engine.live_executor._get_exchange()
+                    for p in live_positions:
+                        if p.symbol not in prices:
+                            try:
+                                tk = await exchange.fetch_ticker(p.symbol)
+                                last = float(tk.get("last") or 0)
+                                if last > 0:
+                                    prices[p.symbol] = last
+                            except Exception:
+                                pass
                 except Exception:
-                    prices = {}
+                    pass
 
                 for pos in live_positions:
                     last_price = prices.get(pos.symbol, pos.entry_price)
@@ -3784,6 +3781,7 @@ class TelegramHandler:
                         "tp_order": "exchange" if pos.tp_order_id else "manual",
                         "trade_id": pos.trade_id,
                         "status": getattr(pos, "status", "open"),
+                        "strategy_type": getattr(pos, "strategy_type", "swing"),
                     })
             else:
                 # No locally-tracked positions — fall back to exchange API
@@ -4010,8 +4008,10 @@ class TelegramHandler:
 
             if card_png:
                 mode_tag = "LIVE" if CONFIG.is_live() else "PAPER"
+                st_tag = pos.get("strategy_type", "").upper()
+                st_str = f" [{st_tag}]" if st_tag else ""
                 cap = (f"<b>{html.escape(pair)}</b> {mode_tag}\n"
-                       f"{d_emoji} {direction} | {pnl_emoji} {pnl_pct:+.2f}% (${pnl_usd:+,.2f})")
+                       f"{d_emoji} {direction}{st_str} | {pnl_emoji} {pnl_pct:+.2f}% (${pnl_usd:+,.2f})")
                 await self._send_photo(update, card_png, cap, reply_markup=kb)
             else:
                 # Fallback to text if PNG render fails
@@ -4032,9 +4032,14 @@ class TelegramHandler:
                 sl = po.get("sl", 0)
                 tp = po.get("tp", 0)
                 size_usd = po.get("size_usd", 0)
+                notional_usd = po.get("notional_usd", size_usd)
                 leverage = po.get("leverage", 1)
                 tid = po.get("trade_id", pair)
                 hold_h = po.get("hold_hours", 0)
+                quantity = po.get("quantity", 0)
+                comm_pct = po.get("comm_pct", CONFIG.risk.commission_pct)
+                sl_order = po.get("sl_order", "")
+                tp_order = po.get("tp_order", "")
 
                 # Distance from current price to limit
                 if limit_price > 0 and current > 0:
@@ -4042,28 +4047,73 @@ class TelegramHandler:
                 else:
                     dist_pct = 0
 
+                # SL/TP distances from limit price (where it will fill)
+                if sl > 0 and limit_price > 0:
+                    sl_dist_pct = abs(limit_price - sl) / limit_price * 100
+                else:
+                    sl_dist_pct = 0
+                if tp > 0 and limit_price > 0:
+                    tp_dist_pct = abs(tp - limit_price) / limit_price * 100
+                else:
+                    tp_dist_pct = 0
+
+                # R:R at fill
+                risk_at_fill = abs(limit_price - sl) if sl > 0 else 0
+                reward_at_fill = abs(tp - limit_price) if tp > 0 else 0
+                rr_at_fill = reward_at_fill / risk_at_fill if risk_at_fill > 0 else 0
+
+                # Fee estimate
+                entry_fee = size_usd * (comm_pct / 100.0)
+                exit_notional = notional_usd if notional_usd > 0 else (limit_price * quantity if quantity else size_usd)
+                exit_fee = exit_notional * (comm_pct / 100.0)
+                total_fees = entry_fee + exit_fee
+
                 d_icon = "\U0001f7e2" if direction == "LONG" else "\U0001f534"
-                dir_label = "Long" if direction == "LONG" else "Short"
+                dir_label = "LONG" if direction == "LONG" else "SHORT"
 
                 # Age display
                 if hold_h < 1:
-                    age_str = f"{hold_h * 60:.0f}m ago"
+                    age_str = f"{hold_h * 60:.0f}m"
                 elif hold_h < 24:
-                    age_str = f"{hold_h:.1f}h ago"
+                    age_str = f"{hold_h:.1f}h"
                 else:
-                    age_str = f"{hold_h / 24:.1f}d ago"
+                    age_str = f"{hold_h / 24:.1f}d"
+
+                # Fill direction hint
+                if direction == "LONG":
+                    fill_hint = "\u2b07\ufe0f" if current > limit_price else "\u2705"
+                else:
+                    fill_hint = "\u2b06\ufe0f" if current < limit_price else "\u2705"
+
+                sl_tag = "on exchange" if sl_order == "exchange" else "bot-managed"
+                tp_tag = "on exchange" if tp_order == "exchange" else "bot-managed"
+                strategy_type = po.get("strategy_type", "swing").upper()
 
                 lines = [
-                    f"{d_icon} <b>{html.escape(pair)} {dir_label}</b> \u2014 Limit Order",
-                    f"  Limit: <code>${limit_price:,.4f}</code>",
-                    f"  Current: <code>${current:,.4f}</code> ({dist_pct:+.2f}% away)",
-                    f"  Size: <code>${size_usd:,.2f}</code> | Lev: {leverage:.0f}x",
+                    f"{d_icon} <b>{html.escape(pair)} {dir_label}</b> \u2014 Limit Order \u2022 {strategy_type}",
+                    f"",
+                    f"\U0001f4cd <b>Limit Price:</b> <code>${limit_price:,.4f}</code>",
+                    f"\U0001f4b2 <b>Current:</b>    <code>${current:,.4f}</code>  {fill_hint} {dist_pct:+.2f}% to fill",
+                    f"",
+                    f"\U0001f4b0 <b>Size:</b> <code>${size_usd:,.2f}</code> margin | <b>{leverage:.0f}x</b> leverage",
                 ]
+                if quantity > 0:
+                    lines.append(f"   Qty: <code>{quantity:.4f}</code> contracts")
+
+                lines.append(f"")
+
                 if sl > 0:
-                    lines.append(f"  SL: <code>${sl:,.4f}</code>")
+                    lines.append(
+                        f"\U0001f6d1 <b>SL:</b> <code>${sl:,.4f}</code>  ({sl_dist_pct:.2f}% from entry) [{sl_tag}]")
                 if tp > 0:
-                    lines.append(f"  TP: <code>${tp:,.4f}</code>")
-                lines.append(f"  Placed: {age_str}")
+                    lines.append(
+                        f"\U0001f3af <b>TP:</b> <code>${tp:,.4f}</code>  ({tp_dist_pct:.2f}% from entry) [{tp_tag}]")
+                if rr_at_fill > 0:
+                    lines.append(f"\u2696\ufe0f <b>R:R at fill:</b> 1:{rr_at_fill:.1f}")
+
+                lines.append(f"")
+                lines.append(f"\U0001f4b8 <b>Est. fees:</b> ${total_fees:.4f} (entry + exit)")
+                lines.append(f"\u23f3 <b>Waiting:</b> {age_str}")
 
                 kb = InlineKeyboardMarkup([[
                     InlineKeyboardButton("Cancel", callback_data=f"pos_close_{tid}"),
@@ -4396,6 +4446,20 @@ class TelegramHandler:
 
         data = query.data or ""
         chat_id = update.effective_chat.id
+
+        # ── Language switch callback ─────────────────────────
+        if data.startswith("lang:"):
+            new_lang = data.split(":", 1)[1]
+            tg_id = self._get_tg_id(update)
+            if new_lang in SUPPORTED_LANGS:
+                set_user_lang(self.users, tg_id, new_lang)
+                try:
+                    await query.edit_message_text(
+                        t("lang_switched", new_lang),
+                        parse_mode="HTML")
+                except Exception:
+                    pass
+            return
 
         # ── War Room menu callbacks ──────────────────────────
 

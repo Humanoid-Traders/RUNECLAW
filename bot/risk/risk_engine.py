@@ -413,8 +413,13 @@ class RiskEngine:
         except Exception as exc:
             failed.append(f"MAX_POSITIONS: evaluation error ({exc})")
 
+        is_limit = getattr(idea, 'order_type', '') == 'limit'
         if is_manual:
             passed.append("RISK_REWARD: skipped (manual trade)")
+        elif is_limit:
+            # User explicitly confirmed entry/SL/TP levels — don't re-reject
+            rr = idea.risk_reward_ratio
+            passed.append(f"RISK_REWARD: {rr} OK (limit order, user-confirmed)")
         else:
             try:
                 # 6. Risk-reward ratio (0.01 tolerance for float rounding at boundary)
@@ -508,9 +513,12 @@ class RiskEngine:
 
         try:
             # 12. Stale data guard
+            # Limit orders get 2x timeout — user needs time to review and set price
+            is_limit_order = getattr(idea, 'order_type', '') == 'limit'
+            max_age = CONFIG.risk.stale_data_max_age_seconds * (2 if is_limit_order else 1)
             data_age = (datetime.now(UTC) - idea.timestamp).total_seconds()
-            if data_age > CONFIG.risk.stale_data_max_age_seconds:
-                failed.append(f"STALE_DATA: idea is {data_age:.0f}s old > {CONFIG.risk.stale_data_max_age_seconds}s max")
+            if data_age > max_age:
+                failed.append(f"STALE_DATA: idea is {data_age:.0f}s old > {max_age}s max")
             else:
                 passed.append(f"STALE_DATA: {data_age:.0f}s old OK")
         except Exception as exc:
