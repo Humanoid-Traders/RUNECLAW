@@ -560,6 +560,9 @@ class RuneClawEngine:
 
         # Sync WebSocket status to health monitor
         self.health.set_ws_status(self.ws_feed.is_connected())
+        # Sync WS heartbeat to live executor so degradation check stays current
+        if self.ws_feed.is_connected() and hasattr(self, 'live_executor') and self.live_executor:
+            self.live_executor.record_ws_heartbeat()
 
         # Check circuit breaker — no new scans, but still monitor open positions
         # so SL/TP can fire even while halted (Fix 2: monitoring while halted).

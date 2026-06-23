@@ -1446,11 +1446,22 @@ class LiveExecutor:
             is_futures = CONFIG.exchange.trade_mode == "futures"
 
             # Graceful degradation check
+            # User-confirmed limit orders bypass WS degradation — the user
+            # explicitly chose to trade and limit orders don't need real-time
+            # WS data; the REST API is still functional.
             deg_mode = self.check_degradation()
             if deg_mode == "paused":
-                audit(trade_log, f"Order blocked: system degraded (paused)",
-                      action="execute", result="DEGRADED")
-                return "EXECUTION BLOCKED: system is in degraded mode (paused) — WebSocket disconnected"
+                is_user_limit = getattr(idea, 'order_type', '') == 'limit'
+                if is_user_limit:
+                    audit(trade_log,
+                          "WS degraded but proceeding with user-confirmed limit order",
+                          action="execute", result="DEGRADE_OVERRIDE")
+                    # Reset degraded flag since we're about to hit the REST API
+                    self._ws_last_seen = time.time()
+                else:
+                    audit(trade_log, f"Order blocked: system degraded (paused)",
+                          action="execute", result="DEGRADED")
+                    return "EXECUTION BLOCKED: system is in degraded mode (paused) — WebSocket disconnected"
             if deg_mode == "reduce_only":
                 # Only allow closing positions, not opening new ones
                 audit(trade_log, f"Order blocked: reduce-only mode",
