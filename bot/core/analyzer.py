@@ -695,18 +695,20 @@ class Analyzer:
         # When smart_money_score is strongly directional (+/-), give a small
         # direct bonus to blended_confidence. This gives whale/institutional
         # flow more influence beyond just the confluence voter weights.
-        if smart_money_score is not None and abs(smart_money_score) > 0.3:
-            sm_alignment = 0.0
-            if direction == Direction.LONG and smart_money_score > 0:
-                sm_alignment = smart_money_score
-            elif direction == Direction.SHORT and smart_money_score < 0:
-                sm_alignment = abs(smart_money_score)
-            # Max boost: ~0.05 (at score=1.0), penalty ~0.03 for misalignment
-            if sm_alignment > 0:
-                blended_confidence += 0.05 * sm_alignment
-            elif smart_money_score != 0:
-                # Smart money opposes direction — small penalty
-                blended_confidence -= 0.03 * abs(smart_money_score)
+        if smart_money_score is not None:
+            _sm_val = getattr(smart_money_score, "composite_score", 0.0) or 0.0
+            if abs(_sm_val) > 0.3:
+                sm_alignment = 0.0
+                if direction == Direction.LONG and _sm_val > 0:
+                    sm_alignment = _sm_val
+                elif direction == Direction.SHORT and _sm_val < 0:
+                    sm_alignment = abs(_sm_val)
+                # Max boost: ~0.05 (at score=1.0), penalty ~0.03 for misalignment
+                if sm_alignment > 0:
+                    blended_confidence += 0.05 * sm_alignment
+                elif _sm_val != 0:
+                    # Smart money opposes direction — small penalty
+                    blended_confidence -= 0.03 * abs(_sm_val)
 
         blended_confidence = round(max(0.0, min(1.0, blended_confidence)), 2)
 
