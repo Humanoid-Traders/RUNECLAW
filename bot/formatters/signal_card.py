@@ -353,6 +353,189 @@ def signal_card_from_idea(idea, rank: int = 1, scan_data: Optional[Dict] = None)
 
 
 # ═══════════════════════════════════════════════════════════════════
+# SCAN RESULTS CARD — multi-setup overview for /fullscan & /deepscan
+# ═══════════════════════════════════════════════════════════════════
+
+def render_scan_results_card(
+    setups: list[Dict[str, Any]],
+    btc_gate: Optional[Dict[str, Any]] = None,
+    scan_label: str = "LIVE SCAN",
+    timestamp: str = "",
+) -> bytes:
+    """Render a styled PNG card showing scan results overview."""
+    try:
+        from PIL import Image, ImageDraw, ImageFont
+    except ImportError:
+        log.warning("Pillow not installed, cannot render scan card")
+        return b""
+
+    W = 520
+    PAD = 18
+    ROW_H = 130
+    GATE_H = 70
+    HEADER_H = 50
+    FOOTER_H = 30
+    MAX_SETUPS = 6
+
+    n = min(len(setups), MAX_SETUPS)
+    H = HEADER_H + (GATE_H if btc_gate else 0) + n * ROW_H + FOOTER_H + PAD
+
+    img = Image.new("RGB", (W, H), _BG)
+    draw = ImageDraw.Draw(img)
+
+    def _font(size: int, bold: bool = False):
+        for path in [
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold
+            else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf" if bold
+            else "/usr/share/fonts/TTF/DejaVuSans.ttf",
+        ]:
+            try:
+                return ImageFont.truetype(path, size)
+            except (OSError, IOError):
+                continue
+        return ImageFont.load_default()
+
+    f_header = _font(18, bold=True)
+    f_rank = _font(14, bold=True)
+    f_label = _font(10)
+    f_value = _font(13, bold=True)
+    f_badge = _font(11, bold=True)
+    f_small = _font(10)
+    f_gate_sub = _font(11)
+
+    def _fmt(price: float) -> str:
+        if price == 0:
+            return "\u2014"
+        if price >= 1000:
+            return f"${price:,.2f}"
+        elif price >= 1:
+            return f"${price:.4f}"
+        elif price >= 0.01:
+            return f"${price:.5f}"
+        else:
+            return f"${price:.6f}"
+
+    y = 0
+    draw.rectangle([0, 0, W, 3], fill=_ACCENT_GOLD)
+    y = 8
+
+    title = f"RUNECLAW {scan_label}"
+    draw.text((PAD, y + 4), title, fill=_WHITE, font=f_header)
+    if timestamp:
+        ts_w = draw.textlength(timestamp, font=f_small)
+        draw.text((W - PAD - ts_w, y + 8), timestamp, fill=_GRAY, font=f_small)
+    y += HEADER_H - 10
+
+    if btc_gate:
+        gate_y = y
+        draw.rounded_rectangle(
+            [PAD, gate_y, W - PAD, gate_y + GATE_H - 8],
+            radius=8, fill=_CARD_BG, outline=_BORDER)
+        g_price = btc_gate.get("price", 0)
+        g_sma = btc_gate.get("sma20", 0)
+        g_rsi = btc_gate.get("rsi", 0)
+        g_vwap = btc_gate.get("vs_vwap", 0)
+        g_label = btc_gate.get("label", "OPEN")
+        gate_color = _GREEN if g_label == "OPEN" else _YELLOW if g_label == "CAUTION" else _RED
+        draw.text((PAD + 12, gate_y + 8), "BTC GATE", fill=_GRAY, font=f_label)
+        draw.text((PAD + 80, gate_y + 8), g_label, fill=gate_color, font=f_badge)
+        gate_detail = (
+            f"${g_price:,.0f}  |  SMA20 ${g_sma:,.0f}  "
+            f"({'+' if g_vwap >= 0 else ''}{g_vwap:.1f}%)  RSI {g_rsi:.0f}"
+        )
+        draw.text((PAD + 12, gate_y + 30), gate_detail, fill=_WHITE, font=f_gate_sub)
+        y += GATE_H
+
+    for i, s in enumerate(setups[:MAX_SETUPS]):
+        row_y = y + i * ROW_H
+        sym = s.get("sym", "???").replace("/USDT", "").replace(":USDT", "")
+        direction = s.get("dir", "LONG").upper()
+        entry = s.get("entry", s.get("price", 0))
+        sl = s.get("sl", 0)
+        tp = s.get("tp", 0)
+        rr = s.get("rr", 0)
+        rsi = s.get("rsi", 0)
+        vol_ratio = s.get("vol_ratio", 0)
+        score = s.get("score", 0)
+        score_pct = int(score * 100) if score <= 1 else int(score)
+        dir_color = _GREEN if direction == "LONG" else _RED
+        score_color = _GREEN if score_pct >= 75 else _YELLOW if score_pct >= 60 else _RED
+
+        draw.rounded_rectangle(
+            [PAD, row_y + 4, W - PAD, row_y + ROW_H - 4],
+            radius=8, fill=_CARD_BG, outline=_BORDER)
+
+        rx = PAD + 12
+        ry = row_y + 12
+        rank_text = f"#{i + 1}"
+        draw.text((rx, ry + 2), rank_text, fill=_GRAY, font=f_badge)
+        rx += draw.textlength(rank_text, font=f_badge) + 8
+        draw.text((rx, ry - 2), sym, fill=_WHITE, font=f_rank)
+        rx += draw.textlength(sym, font=f_rank) + 10
+        badge_text = f" {direction} "
+        badge_tw = draw.textlength(badge_text, font=f_badge)
+        draw.rounded_rectangle(
+            [rx, ry, rx + badge_tw + 4, ry + 20], radius=4, fill=dir_color)
+        draw.text((rx + 2, ry + 3), badge_text, fill=(0, 0, 0), font=f_badge)
+
+        score_text = f"{score_pct}%"
+        score_tw = draw.textlength(score_text, font=f_rank)
+        score_x = W - PAD - 12 - score_tw
+        draw.text((score_x, ry - 1), score_text, fill=score_color, font=f_rank)
+        sc_lbl_w = draw.textlength("SCORE", font=f_label)
+        draw.text((score_x + (score_tw - sc_lbl_w) / 2, ry - 14),
+                  "SCORE", fill=_GRAY, font=f_label)
+
+        dy = ry + 26
+        col_w = (W - PAD * 2 - 24) // 3
+        c1 = PAD + 12
+        c2 = c1 + col_w
+        c3 = c2 + col_w
+
+        draw.text((c1, dy), "ENTRY", fill=_GRAY, font=f_label)
+        draw.text((c1, dy + 14), _fmt(entry), fill=_WHITE, font=f_value)
+
+        sl_dist = abs(entry - sl) / entry * 100 if entry > 0 and sl > 0 else 0
+        draw.text((c2, dy), "STOP LOSS", fill=_GRAY, font=f_label)
+        sl_text = _fmt(sl)
+        if sl_dist > 0:
+            sl_text += f" ({sl_dist:.1f}%)"
+        draw.text((c2, dy + 14), sl_text, fill=_RED, font=f_value)
+
+        tp_dist = abs(tp - entry) / entry * 100 if entry > 0 and tp > 0 else 0
+        draw.text((c3, dy), "TAKE PROFIT", fill=_GRAY, font=f_label)
+        tp_text = _fmt(tp)
+        if tp_dist > 0:
+            tp_text += f" ({tp_dist:.1f}%)"
+        draw.text((c3, dy + 14), tp_text, fill=_GREEN, font=f_value)
+
+        dy2 = dy + 36
+        stats_parts = []
+        if rr > 0:
+            stats_parts.append(f"R:R {rr:.1f}:1")
+        if rsi > 0:
+            stats_parts.append(f"RSI {rsi:.0f}")
+        if vol_ratio > 0:
+            stats_parts.append(f"Vol {vol_ratio:.1f}x")
+        draw.text((c1, dy2), "  |  ".join(stats_parts), fill=_DIM, font=f_small)
+
+    footer_y = y + n * ROW_H + 4
+    remaining = len(setups) - n
+    if remaining > 0:
+        draw.text((PAD, footer_y), f"+{remaining} more below threshold",
+                  fill=_DIM, font=f_small)
+
+    draw.rectangle([0, H - 3, W, H], fill=_ACCENT_GOLD)
+    wm_w = draw.textlength("RUNECLAW", font=f_small)
+    draw.text((W - PAD - wm_w, H - 18), "RUNECLAW", fill=_DIM, font=f_small)
+
+    _buf = io.BytesIO()
+    img.save(_buf, format="PNG", optimize=True)
+    return _buf.getvalue()
+
+
+# ═══════════════════════════════════════════════════════════════════
 # POSITION CARD — styled PNG for open/closed position monitoring
 # ═══════════════════════════════════════════════════════════════════
 

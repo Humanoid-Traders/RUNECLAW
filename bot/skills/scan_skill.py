@@ -531,26 +531,64 @@ async def _scan_batch(update: Update, context: ContextTypes.DEFAULT_TYPE,
     top_setups = [r for r in results if r["score"] >= 0.4][:6]  # Max 6 setups
     skipped = [r for r in results if r["score"] < 0.4]
 
-    setup_lines = []
-    for i, r in enumerate(top_setups, 1):
-        sym = r["sym"].replace("/USDT", "")
+    # Compute entry/SL/TP for each setup
+    for r in top_setups:
         price = r["price"]
         atr = r["atr"]
         direction = r["dir"]
-
-        # Calculate entry, SL, TP with ATR-based levels
         if direction == "LONG":
-            sl = round(price - atr * 2.5, 8)
-            tp = round(price + atr * 3.0, 8)
-            entry = round(price - atr * 0.3, 8)  # Slight pullback entry
+            r["sl"] = round(price - atr * 2.5, 8)
+            r["tp"] = round(price + atr * 3.0, 8)
+            r["entry"] = round(price - atr * 0.3, 8)
         else:
-            sl = round(price + atr * 2.5, 8)
-            tp = round(price - atr * 3.0, 8)
-            entry = round(price + atr * 0.3, 8)  # Slight pullback entry
+            r["sl"] = round(price + atr * 2.5, 8)
+            r["tp"] = round(price - atr * 3.0, 8)
+            r["entry"] = round(price + atr * 0.3, 8)
+        sl_dist = abs(r["entry"] - r["sl"]) / r["entry"] * 100 if r["entry"] > 0 else 0
+        tp_dist = abs(r["tp"] - r["entry"]) / r["entry"] * 100 if r["entry"] > 0 else 0
+        r["rr"] = tp_dist / sl_dist if sl_dist > 0 else 0
 
+    # ── Render scan results card image ──
+    card_sent = False
+    try:
+        from bot.formatters.signal_card import render_scan_results_card
+        btc_gate_data = None
+        if btc_r:
+            btc_vs = (btc_r["price"] - btc_r["sma20"]) / btc_r["sma20"] * 100 if btc_r["sma20"] > 0 else 0
+            btc_gate_data = {
+                "price": btc_r["price"],
+                "sma20": btc_r["sma20"],
+                "rsi": btc_r["rsi"],
+                "vs_vwap": btc_vs,
+                "label": "OPEN" if btc_vs > -0.5 else "CAUTION" if btc_vs > -2 else "CLOSED",
+            }
+        card_png = render_scan_results_card(
+            top_setups, btc_gate=btc_gate_data,
+            scan_label="LIVE SCAN", timestamp=now_str)
+        if card_png:
+            import io as _io
+            buf = _io.BytesIO(card_png)
+            buf.name = "scan.png"
+            chat_id = update.effective_chat.id if update.effective_chat else None
+            if chat_id:
+                await context.bot.send_photo(
+                    chat_id=chat_id, photo=buf,
+                    caption=f"\u2694\ufe0f <b>RUNECLAW Live Scan</b> — {now_str}",
+                    parse_mode="HTML")
+                card_sent = True
+    except Exception as exc:
+        log.warning("Scan card render failed: %s", exc, exc_info=True)
+
+    setup_lines = []
+    for i, r in enumerate(top_setups, 1):
+        sym = r["sym"].replace("/USDT", "")
+        entry = r["entry"]
+        sl = r["sl"]
+        tp = r["tp"]
+        rr = r["rr"]
+        direction = r["dir"]
         sl_dist = abs(entry - sl) / entry * 100 if entry > 0 else 0
         tp_dist = abs(tp - entry) / entry * 100 if entry > 0 else 0
-        rr = tp_dist / sl_dist if sl_dist > 0 else 0
 
         # Score threshold display
         score_pct = int(r["score"] * 100)
@@ -573,7 +611,7 @@ async def _scan_batch(update: Update, context: ContextTypes.DEFAULT_TYPE,
 
     text = header + "\n" + body
 
-    if ai and results:
+    if ai and results and not card_sent:
         text += "\n\n\u23f3 <i>Generating AI summary...</i>"
         await msg.edit_text(text, parse_mode="HTML")
         summary = await _ai_summary(results[:15])
@@ -594,7 +632,26 @@ async def _scan_batch(update: Update, context: ContextTypes.DEFAULT_TYPE,
         ])
 
     kb = InlineKeyboardMarkup(buttons) if buttons else None
-    await msg.edit_text(text, parse_mode="HTML", reply_markup=kb)
+
+    if card_sent:
+        # Card image already sent — delete the "Scanning..." message
+        # and send buttons as a compact text follow-up
+        try:
+            await msg.delete()
+        except Exception:
+            pass
+        btn_text = "\u2694\ufe0f <b>Actions</b> — tap to execute"
+        if ai and results:
+            summary = await _ai_summary(results[:15])
+            btn_text += f"\n\n\U0001f916 <b>AI:</b> {summary}"
+        chat_id = update.effective_chat.id if update.effective_chat else None
+        if chat_id and kb:
+            await context.bot.send_message(
+                chat_id=chat_id, text=btn_text,
+                parse_mode="HTML", reply_markup=kb)
+    else:
+        # Fallback: plain text with buttons (no Pillow or card failed)
+        await msg.edit_text(text, parse_mode="HTML", reply_markup=kb)
 
     # Push scan data to website dashboard
     all_results = sorted((r for r in raw if r), key=lambda x: x["score"], reverse=True)

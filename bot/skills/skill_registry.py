@@ -2590,6 +2590,9 @@ class DeepScanSkill(BaseSkill):
         hits.sort(key=lambda h: h["score"], reverse=True)
         top = hits[:max_results]
 
+        # Store structured hits for card rendering
+        engine._last_deepscan_hits = top
+
         # ── Stats card ───────────────────────────────────────
         lines.append("<pre>")
         def _ds_kv(k: str, v: str, w: int = 22) -> str:
