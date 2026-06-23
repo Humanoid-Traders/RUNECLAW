@@ -147,6 +147,8 @@ class LivePosition:
     atr_at_entry: float = 0.0
     # Strategy type: "scalp" | "intraday" | "swing" | "position"
     strategy_type: str = "swing"
+    # Signal type: "momentum_confluence" | "vwap_reversion" | "regime_trend" | "volume_spike" | "funding_arb" | "unknown"
+    signal_type: str = "momentum_confluence"
     # Fee tracking: commission deducted from PnL
     gross_pnl: Optional[float] = None
     commission: Optional[float] = None
@@ -1946,6 +1948,7 @@ class LiveExecutor:
             # Initialize trailing stop state — strategy-type-aware
             trailing_st = None
             pos_strategy = getattr(idea, 'strategy_type', 'swing')
+            pos_signal_type = getattr(idea, 'signal_type', 'momentum_confluence')
             trailing_enabled = CONFIG.strategy_types.get_trailing_enabled(pos_strategy)
             if trailing_enabled and atr_value > 0:
                 initial_risk = abs(fill_price - idea.stop_loss)
@@ -1972,6 +1975,7 @@ class LiveExecutor:
                 limit_order_id=order_id if is_pending_limit else None,
                 atr_at_entry=atr_value,
                 strategy_type=pos_strategy,
+                signal_type=pos_signal_type,
                 status="pending_fill" if is_pending_limit else "open",
             )
             self._positions[idea.id] = position

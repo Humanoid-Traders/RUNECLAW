@@ -205,6 +205,90 @@ def funding_cost_warning(
     return False, ""
 
 
+# ═══════════════════════════════════════════════════════════════════
+# Signal-Type Hold Limits
+# ═══════════════════════════════════════════════════════════════════
+
+# Signal-type-specific hold time limits (hours)
+_SIGNAL_HOLD_LIMITS = {
+    "momentum_confluence": {"min_hours": 2.0, "max_hours": 8.0, "warn_hours": 6.0},
+    "vwap_reversion": {"min_hours": 0.5, "max_hours": 2.0, "warn_hours": 1.5},
+    "regime_trend": {"min_hours": 24.0, "max_hours": 72.0, "warn_hours": 48.0},
+    "volume_spike": {"min_hours": 0.25, "max_hours": 1.5, "warn_hours": 1.0},
+    "funding_arb": {"min_hours": 8.0, "max_hours": 48.0, "warn_hours": 24.0},
+}
+
+
+def check_signal_hold_limit(
+    signal_type: str,
+    holding_hours: float,
+    current_r_multiple: float,
+) -> tuple[bool, str]:
+    """Check if a trade has exceeded its signal-type hold limit.
+
+    Different signal types have different time-value decay profiles.
+    A volume spike signal held for 4 hours is stale regardless of
+    whether the strategy_type says "intraday" with a 4h limit.
+
+    Returns:
+        (should_exit, reason)
+    """
+    limits = _SIGNAL_HOLD_LIMITS.get(signal_type)
+    if not limits:
+        return False, ""
+
+    max_hours = limits["max_hours"]
+
+    # If past max hold time and trade isn't profitable, exit
+    if holding_hours >= max_hours and current_r_multiple < 1.0:
+        return True, (
+            f"Signal hold limit: {signal_type} max {max_hours}h, "
+            f"held {holding_hours:.1f}h with R={current_r_multiple:.2f}"
+        )
+
+    # Extended grace: if > 2x max hold but profitable, still flag it
+    if holding_hours >= max_hours * 2:
+        return True, (
+            f"Signal hold hard limit: {signal_type} held {holding_hours:.1f}h "
+            f"(2x max {max_hours}h), R={current_r_multiple:.2f}"
+        )
+
+    return False, ""
+
+
+def check_vwap_reversion_exit(
+    signal_type: str,
+    current_price: float,
+    vwap: float,
+    direction: str,
+) -> tuple[bool, str]:
+    """For VWAP reversion trades, check if the thesis is complete or invalidated.
+
+    Exit conditions:
+    - Price recaptured VWAP from the other side (thesis complete)
+    - Price breached VWAP by >0.3% on the wrong side (thesis invalid)
+    """
+    if signal_type != "vwap_reversion" or vwap <= 0:
+        return False, ""
+
+    dist_pct = (current_price - vwap) / vwap * 100
+
+    if direction == "LONG":
+        # LONG near VWAP: target is price moving above VWAP
+        if dist_pct > 0.3:
+            return True, f"VWAP reversion complete: price {dist_pct:+.2f}% above VWAP (target reached)"
+        elif dist_pct < -0.3:
+            return True, f"VWAP reversion failed: price {dist_pct:+.2f}% below VWAP (invalidated)"
+    else:
+        # SHORT near VWAP: target is price moving below VWAP
+        if dist_pct < -0.3:
+            return True, f"VWAP reversion complete: price {dist_pct:+.2f}% below VWAP (target reached)"
+        elif dist_pct > 0.3:
+            return True, f"VWAP reversion failed: price {dist_pct:+.2f}% above VWAP (invalidated)"
+
+    return False, ""
+
+
 class HoldTimeAnalytics:
     """Track hold duration vs outcome for signal quality diagnostics.
 

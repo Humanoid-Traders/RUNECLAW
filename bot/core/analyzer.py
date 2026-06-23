@@ -880,6 +880,11 @@ class Analyzer:
         elif entry < 100.0:
             price_decimals = 6
 
+        # ── Classify signal type for hold-time profiling ──
+        signal_type = self._classify_signal_type(
+            indicators, signal, regime, thesis.get("source", "")
+        )
+
         idea = TradeIdea(
             id=f"TI-{uuid.uuid4().hex[:8]}",
             asset=signal.symbol,
@@ -896,7 +901,12 @@ class Analyzer:
             timestamp=datetime.now(UTC),
             order_type=order_type,
             strategy_type=strategy_type,
+            signal_type=signal_type,
         )
+
+        # Store VWAP at entry for reversion exit tracking
+        if signal_type == "vwap_reversion" and indicators.get("vwap"):
+            idea._entry_vwap = indicators["vwap"]
 
         # ── Explainability Report ──
         try:
@@ -1043,6 +1053,40 @@ class Analyzer:
         # ── Pick winner ──
         best_type = max(scores, key=scores.get)
         return best_type
+
+    @staticmethod
+    def _classify_signal_type(indicators: dict, signal: MarketSignal, regime, thesis_source: str) -> str:
+        """Classify the primary signal type that drove this trade idea.
+
+        Maps to optimal hold-time profiles:
+        - momentum_confluence: core LLM + 10-voter signal (2-8h)
+        - vwap_reversion: mean-reversion near VWAP (30min-2h)
+        - regime_trend: strong trend regime play (1-3 days)
+        - volume_spike: OBV/taker volume breakout (15-90min)
+        - funding_arb: funding rate driven (avoid unless swing)
+        """
+        from bot.core.ta_utils import Regime
+
+        # Volume spike is highest priority — it time-decays fastest
+        if signal.volume_spike:
+            vol_osc = indicators.get("vol_oscillator", 0)
+            if vol_osc > 20 or indicators.get("capitulation_sell") or indicators.get("capitulation_buy"):
+                return "volume_spike"
+
+        # VWAP reversion: price near VWAP in RANGE/CHOP regime
+        vwap = indicators.get("vwap")
+        if vwap and vwap > 0:
+            vwap_dist_pct = abs(signal.price - vwap) / vwap * 100
+            if vwap_dist_pct < 0.5 and regime in (Regime.RANGE, Regime.CHOP):
+                return "vwap_reversion"
+
+        # Regime trend: strong trend with ADX > 30
+        adx = indicators.get("adx", 0)
+        if regime in (Regime.TREND_UP, Regime.TREND_DOWN) and adx > 30:
+            return "regime_trend"
+
+        # Default: momentum confluence (the core LLM signal)
+        return "momentum_confluence"
 
     # -- Technical Indicators --
 

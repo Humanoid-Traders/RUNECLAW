@@ -185,6 +185,9 @@ class RuneClawEngine:
         from bot.core.smart_exits import HoldTimeAnalytics
         self.hold_analytics = HoldTimeAnalytics()
 
+        # VWAP cache for VWAP reversion exits
+        self._last_vwap: dict[str, float] = {}
+
         # Smart scan scheduling
         self._last_scan_time: float = 0.0
         self._current_scan_interval: float = CONFIG.scan_interval_seconds
@@ -1538,6 +1541,11 @@ class RuneClawEngine:
             # C-05 FIX: only remove idea and ATR after successful execution
             self._pending_ideas.pop(trade_id, None)
             self._pending_atr.pop(trade_id, None)
+            # Cache VWAP at entry for VWAP reversion exit monitoring
+            if hasattr(idea, 'signal_type') and idea.signal_type == "vwap_reversion":
+                # Extract VWAP from the idea's signals_used/indicators (stored at analysis time)
+                entry_vwap = getattr(idea, '_entry_vwap', None) or idea.entry_price
+                self._last_vwap[idea.asset] = entry_vwap
 
         # Seal decision to tamper-evident audit chain
         self.audit_chain.seal_decision(DecisionRecord(
@@ -1885,6 +1893,56 @@ class RuneClawEngine:
                             )
             except Exception as exc:
                 system_log.debug("Time-based exit check failed: %s", exc)
+
+            # ── Signal-type hold limit check ──
+            try:
+                from bot.core.smart_exits import check_signal_hold_limit, check_vwap_reversion_exit
+                for pos in list(self.portfolio.open_positions):
+                    current_price = prices.get(pos.asset)
+                    if not current_price or current_price <= 0:
+                        continue
+
+                    hold_secs = (datetime.now(UTC) - pos.opened_at).total_seconds()
+                    holding_hours = hold_secs / 3600
+
+                    # R-multiple calculation
+                    if pos.direction.value == "LONG":
+                        risk = pos.entry_price - pos.stop_loss
+                        pnl_raw = current_price - pos.entry_price
+                    else:
+                        risk = pos.stop_loss - pos.entry_price
+                        pnl_raw = pos.entry_price - current_price
+                    r_multiple = pnl_raw / risk if risk > 0 else 0.0
+
+                    signal_type = getattr(pos, 'signal_type', 'momentum_confluence')
+
+                    # Signal hold limit
+                    should_exit, reason = check_signal_hold_limit(
+                        signal_type=signal_type,
+                        holding_hours=holding_hours,
+                        current_r_multiple=r_multiple,
+                    )
+                    if should_exit:
+                        audit(trade_log, f"Signal hold exit: {pos.asset} — {reason}",
+                              action="signal_hold_exit", result="CLOSED")
+                        self.portfolio.close_position(pos.trade_id, current_price)
+                        continue
+
+                    # VWAP reversion exit (best-effort: skip if no VWAP available)
+                    vwap = self._last_vwap.get(pos.asset, 0)
+                    if vwap > 0:
+                        should_exit, reason = check_vwap_reversion_exit(
+                            signal_type=signal_type,
+                            current_price=current_price,
+                            vwap=vwap,
+                            direction=pos.direction.value,
+                        )
+                        if should_exit:
+                            audit(trade_log, f"VWAP exit: {pos.asset} — {reason}",
+                                  action="vwap_exit", result="CLOSED")
+                            self.portfolio.close_position(pos.trade_id, current_price)
+            except Exception as exc:
+                system_log.debug("Signal hold check failed: %s", exc)
 
             closed = self.portfolio.check_stops(prices)
             # Check stops for per-user portfolios too
