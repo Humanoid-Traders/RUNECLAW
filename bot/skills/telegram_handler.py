@@ -1123,6 +1123,20 @@ class TelegramHandler:
             return str(update.effective_chat.id)
         return ""
 
+    @staticmethod
+    def _uid_matches(caller_uid: str | None, expected_uid: str | None) -> bool:
+        """Check if caller matches expected UID(s).
+
+        expected_uid may be a single ID or comma-separated list (from auto-scan
+        where CONFIG.telegram.chat_id contains multiple IDs).  Returns True if
+        caller is in the list, or if expected_uid is empty/None (allow all).
+        """
+        if not expected_uid:
+            return True
+        if not caller_uid:
+            return False
+        return caller_uid in {s.strip() for s in expected_uid.split(",") if s.strip()}
+
     def _is_admin(self, update: Update) -> bool:
         """Check if the user is an admin (user-store role OR ADMIN_TELEGRAM_IDS)."""
         tg_id = self._get_tg_id(update)
@@ -5939,7 +5953,7 @@ class TelegramHandler:
             trade_id = parts[1]
             expected_uid = parts[2] if len(parts) > 2 else None
             caller_uid = str(update.effective_user.id) if update.effective_user else None
-            if expected_uid and caller_uid != expected_uid:
+            if expected_uid and not self._uid_matches(caller_uid, expected_uid):
                 await self._send(update,
                     "\U0001f512 <b>Access denied</b>", edit=True)
                 return
@@ -5995,7 +6009,7 @@ class TelegramHandler:
             # M3 FIX: validate callback belongs to requesting user
             expected_uid = parts[2] if len(parts) > 2 else None
             caller_uid = str(update.effective_user.id) if update.effective_user else None
-            if expected_uid and caller_uid != expected_uid:
+            if expected_uid and not self._uid_matches(caller_uid, expected_uid):
                 await self._send(update,
                     "\U0001f512 <b>Access denied</b>\n\n"
                     "Only the user who requested this trade can approve it.",
@@ -6119,7 +6133,7 @@ class TelegramHandler:
             # M3 FIX: validate callback belongs to requesting user
             expected_uid = parts[2] if len(parts) > 2 else None
             caller_uid = str(update.effective_user.id) if update.effective_user else None
-            if expected_uid and caller_uid != expected_uid:
+            if expected_uid and not self._uid_matches(caller_uid, expected_uid):
                 await self._send(update,
                     "\U0001f512 <b>Access denied</b>\n\n"
                     "Only the user who requested this trade can reject it.",
