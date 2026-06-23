@@ -5645,7 +5645,7 @@ class TelegramHandler:
                     if matched:
                         pair = lp.symbol.replace("/", "").replace(":USDT", "")
                         try:
-                            result = await executor.close_position(lp.trade_id)
+                            result = await executor.close_position(lp.trade_id, "manual_nlp")
                             live_closed = True
                             # Render styled PNG close card
                             close_data = getattr(executor, '_last_close_data', None)

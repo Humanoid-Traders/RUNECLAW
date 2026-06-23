@@ -3385,7 +3385,7 @@ class LiveExecutor:
 
         return results
 
-    async def close_position(self, trade_id: str, reason: str = "manual",
+    async def close_position(self, trade_id: str, reason: str = "bot_auto",
                               close_price: float = 0) -> str:
         """Close a live position by placing the opposite order."""
         # C2-02 FIX: Per-trade lock prevents double-close race.
@@ -3398,7 +3398,7 @@ class LiveExecutor:
         # in _save_positions() instead.
         return result
 
-    async def _close_position_inner(self, trade_id: str, reason: str = "manual",
+    async def _close_position_inner(self, trade_id: str, reason: str = "bot_auto",
                               close_price: float = 0) -> str:
         """Inner close logic, called under per-trade lock."""
         pos = self._positions.get(trade_id)
