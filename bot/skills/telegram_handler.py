@@ -4467,7 +4467,53 @@ class TelegramHandler:
 
             lines.append(f"<i>Source: Bitget USDT-M Futures</i>")
 
-            await self._send(update, "\n".join(lines))
+            # ── Render orders card image ──
+            card_sent = False
+            try:
+                from bot.formatters.signal_card import render_orders_card
+                all_display_orders = limit_orders + sl_orders + tp_orders + other_orders
+                card_data = []
+                for o in all_display_orders[:6]:
+                    cur_price = limit_prices_map.get(o["sym"], 0)
+                    dist = ((cur_price - o['price']) / cur_price * 100) if cur_price > 0 and o['price'] > 0 else 0
+                    card_data.append({
+                        "sym": o["sym"],
+                        "side": o["side"],
+                        "price": o["price"],
+                        "current_price": cur_price,
+                        "amount": o["amount"],
+                        "ttl_str": o.get("ttl_str", ""),
+                        "oid": o["oid"],
+                        "created": o.get("created", ""),
+                        "type": o["type"],
+                        "dist_pct": dist,
+                    })
+                now_str = datetime.now(UTC).strftime('%H:%M UTC')
+                card_png = render_orders_card(card_data, timestamp=now_str)
+                if card_png:
+                    import io as _io
+                    buf = _io.BytesIO(card_png)
+                    buf.name = "orders.png"
+                    chat_id = str(update.effective_chat.id) if update.effective_chat else ""
+                    if chat_id:
+                        await update.get_bot().send_photo(
+                            chat_id=int(chat_id), photo=buf,
+                            caption=f"\U0001f4cb <b>Open Orders</b> — {now_str}",
+                            parse_mode="HTML")
+                        card_sent = True
+            except Exception as exc:
+                system_log.warning("Orders card render failed: %s", exc)
+
+            if not card_sent:
+                await self._send(update, "\n".join(lines))
+            # Always send text as well for copy-paste of IDs
+            if card_sent:
+                # Send compact text with order IDs only
+                id_lines = [f"<b>Order IDs</b> (for cancel):"]
+                for o in all_display_orders[:6]:
+                    dir_l = "LONG" if o["side"] == "BUY" else "SHORT"
+                    id_lines.append(f"  {o['sym']} {dir_l} — <code>{o['oid']}</code>")
+                await self._send(update, "\n".join(id_lines))
 
         except Exception as exc:
             logger.error(f"Orders fetch error: {exc}", exc_info=True)

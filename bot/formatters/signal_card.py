@@ -889,3 +889,188 @@ def render_close_card(data: Dict[str, Any]) -> bytes:
     buf = io.BytesIO()
     img.save(buf, format="PNG", optimize=True)
     return buf.getvalue()
+
+
+# ═══════════════════════════════════════════════════════════════════
+# ORDERS CARD — styled PNG for open/pending orders display
+# ═══════════════════════════════════════════════════════════════════
+
+def render_orders_card(orders: list[Dict[str, Any]], timestamp: str = "") -> bytes:
+    """Render open orders as a styled PNG card.
+
+    Args:
+        orders: List of dicts with keys:
+            sym, side, price, current_price, amount, ttl_str, oid, created,
+            type ("limit"|"stop"|"take_profit"), dist_pct
+        timestamp: UTC time string
+
+    Returns:
+        PNG bytes
+    """
+    try:
+        from PIL import Image, ImageDraw, ImageFont
+    except ImportError:
+        log.warning("Pillow not installed, cannot render orders card")
+        return b""
+
+    W = 520
+    PAD = 18
+    HEADER_H = 50
+    ROW_H = 110
+    FOOTER_H = 30
+    MAX_ORDERS = 6
+
+    n = min(len(orders), MAX_ORDERS)
+    if n == 0:
+        return b""
+
+    H = HEADER_H + n * ROW_H + FOOTER_H + PAD
+
+    img = Image.new("RGB", (W, H), _BG)
+    draw = ImageDraw.Draw(img)
+
+    def _font(size: int, bold: bool = False):
+        for path in [
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold
+            else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf" if bold
+            else "/usr/share/fonts/TTF/DejaVuSans.ttf",
+        ]:
+            try:
+                return ImageFont.truetype(path, size)
+            except (OSError, IOError):
+                continue
+        return ImageFont.load_default()
+
+    f_header = _font(18, bold=True)
+    f_rank = _font(14, bold=True)
+    f_label = _font(10)
+    f_value = _font(13, bold=True)
+    f_badge = _font(11, bold=True)
+    f_small = _font(10)
+
+    def _fmt(price: float) -> str:
+        if price == 0:
+            return "\u2014"
+        if price >= 1000:
+            return f"${price:,.4f}"
+        elif price >= 1:
+            return f"${price:.4f}"
+        elif price >= 0.01:
+            return f"${price:.5f}"
+        else:
+            return f"${price:.6f}"
+
+    y = 0
+    # Purple accent for orders (different from gold for scans)
+    _PURPLE = (140, 80, 220)
+    draw.rectangle([0, 0, W, 3], fill=_PURPLE)
+    y = 8
+
+    title = f"OPEN ORDERS ({n})"
+    draw.text((PAD, y + 4), title, fill=_WHITE, font=f_header)
+    if timestamp:
+        ts_w = draw.textlength(timestamp, font=f_small)
+        draw.text((W - PAD - ts_w, y + 8), timestamp, fill=_GRAY, font=f_small)
+    y += HEADER_H - 10
+
+    for i, o in enumerate(orders[:MAX_ORDERS]):
+        row_y = y + i * ROW_H
+        sym = o.get("sym", "???").replace("/USDT", "").replace(":USDT", "")
+        side = o.get("side", "BUY").upper()
+        price = o.get("price", 0)
+        cur_price = o.get("current_price", 0)
+        amount = o.get("amount", 0)
+        ttl = o.get("ttl_str", "")
+        oid = o.get("oid", "")
+        created = o.get("created", "")
+        otype = o.get("type", "limit")
+        dist_pct = o.get("dist_pct", 0)
+
+        is_buy = side == "BUY"
+        dir_label = "LONG" if is_buy else "SHORT"
+        dir_color = _GREEN if is_buy else _RED
+
+        # Type label
+        if "stop" in otype or "loss" in otype:
+            type_label = "STOP LOSS"
+            type_color = _RED
+        elif "take" in otype or "profit" in otype:
+            type_label = "TAKE PROFIT"
+            type_color = _GREEN
+        else:
+            type_label = "LIMIT"
+            type_color = _CYAN
+
+        # Row background
+        draw.rounded_rectangle(
+            [PAD, row_y + 4, W - PAD, row_y + ROW_H - 4],
+            radius=8, fill=_CARD_BG, outline=_BORDER)
+
+        # Header: SYM  [SHORT]  LIMIT
+        rx = PAD + 12
+        ry = row_y + 12
+        draw.text((rx, ry - 2), sym, fill=_WHITE, font=f_rank)
+        rx += draw.textlength(sym, font=f_rank) + 10
+
+        badge_text = f" {dir_label} "
+        badge_tw = draw.textlength(badge_text, font=f_badge)
+        draw.rounded_rectangle(
+            [rx, ry, rx + badge_tw + 4, ry + 20], radius=4, fill=dir_color)
+        draw.text((rx + 2, ry + 3), badge_text, fill=(0, 0, 0), font=f_badge)
+        rx += badge_tw + 12
+
+        type_text = f" {type_label} "
+        type_tw = draw.textlength(type_text, font=f_badge)
+        draw.rounded_rectangle(
+            [rx, ry, rx + type_tw + 4, ry + 20], radius=4,
+            fill=(30, 35, 50), outline=type_color)
+        draw.text((rx + 2, ry + 3), type_text, fill=type_color, font=f_badge)
+
+        # Data row: Limit | Current | Distance
+        dy = ry + 26
+        col_w = (W - PAD * 2 - 24) // 3
+        c1 = PAD + 12
+        c2 = c1 + col_w
+        c3 = c2 + col_w
+
+        draw.text((c1, dy), "LIMIT PRICE", fill=_GRAY, font=f_label)
+        draw.text((c1, dy + 14), _fmt(price), fill=_WHITE, font=f_value)
+
+        if cur_price > 0:
+            draw.text((c2, dy), "CURRENT", fill=_GRAY, font=f_label)
+            draw.text((c2, dy + 14), _fmt(cur_price), fill=_CYAN, font=f_value)
+
+            draw.text((c3, dy), "TO FILL", fill=_GRAY, font=f_label)
+            dist_color = _GREEN if abs(dist_pct) < 0.5 else _YELLOW if abs(dist_pct) < 2 else _WHITE
+            draw.text((c3, dy + 14), f"{dist_pct:+.2f}%", fill=dist_color, font=f_value)
+
+        # Bottom: Qty | TTL | ID
+        dy2 = dy + 36
+        info_parts = [f"Qty: {amount:.4f}"]
+        if ttl:
+            # Strip emoji from ttl_str
+            clean_ttl = ttl.replace(" | ", "").replace("\u23f0 ", "").strip()
+            if clean_ttl:
+                info_parts.append(clean_ttl)
+        if oid:
+            info_parts.append(f"ID: {oid}")
+        draw.text((c1, dy2), "  |  ".join(info_parts), fill=_DIM, font=f_small)
+
+        # Separator
+        if i < n - 1:
+            sep_y = row_y + ROW_H - 2
+            draw.line([(PAD + 10, sep_y), (W - PAD - 10, sep_y)],
+                      fill=_BORDER, width=1)
+
+    # Footer
+    footer_y = y + n * ROW_H + 4
+    draw.text((PAD, footer_y), "Bitget USDT-M Futures", fill=_DIM, font=f_small)
+
+    draw.rectangle([0, H - 3, W, H], fill=_PURPLE)
+    wm_w = draw.textlength("RUNECLAW", font=f_small)
+    draw.text((W - PAD - wm_w, H - 18), "RUNECLAW", fill=_DIM, font=f_small)
+
+    _buf = io.BytesIO()
+    img.save(_buf, format="PNG", optimize=True)
+    return _buf.getvalue()
