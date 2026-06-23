@@ -44,6 +44,7 @@ from bot.utils.models import (
     StateTransition,
     TradeIdea,
 )
+from bot.core.smart_exits import TimeOfDayEdge, AdaptiveLimitDistance
 
 logger = logging.getLogger(__name__)
 
@@ -173,6 +174,12 @@ class RuneClawEngine:
         # Trade journal
         from bot.core.trade_journal import TradeJournal
         self.journal = TradeJournal()
+
+        # Time-of-day edge filter
+        self.time_of_day = TimeOfDayEdge()
+
+        # Adaptive limit distance learner
+        self.adaptive_limits = AdaptiveLimitDistance()
 
         # Smart scan scheduling
         self._last_scan_time: float = 0.0
@@ -1876,6 +1883,14 @@ class RuneClawEngine:
                         regime=getattr(self.risk, '_current_regime', ''),
                         holding_hours=((c.closed_at - c.opened_at).total_seconds() / 3600) if getattr(c, 'closed_at', None) and getattr(c, 'opened_at', None) else 0,
                     )
+                except Exception:
+                    pass
+                # Record time-of-day outcome
+                try:
+                    from datetime import datetime as _dt
+                    hour_utc = _dt.now(UTC).hour
+                    is_win = c.pnl > 0
+                    self.time_of_day.record(c.asset, hour_utc, is_win)
                 except Exception:
                     pass
         except Exception as exc:

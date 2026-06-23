@@ -182,6 +182,9 @@ _STRINGS: dict[str, dict[str, str]] = {
             "/equitycurve \u2014 equity curve health status\n"
             "/crossasset \u2014 cross-asset market context\n"
             "/slippage \u2014 execution slippage report\n"
+            "/sweep \u2014 liquidity sweep detection\n"
+            "/zones \u2014 supply/demand zones\n"
+            "/squeeze \u2014 volatility squeeze detector\n"
             "/journal \u2014 weekly trade review\n"
             "/strategy \u2014 active strategy & regime routing"
         ),
@@ -197,6 +200,9 @@ _STRINGS: dict[str, dict[str, str]] = {
             "/equitycurve \u2014 權益曲線健康狀態\n"
             "/crossasset \u2014 跨資產市場背景\n"
             "/slippage \u2014 執行滑點報告\n"
+            "/sweep \u2014 流動性掃蕩偵測\n"
+            "/zones \u2014 供需區間\n"
+            "/squeeze \u2014 波動性壓縮偵測\n"
             "/journal \u2014 每週交易回顧\n"
             "/strategy \u2014 當前策略與市場狀態路由"
         ),

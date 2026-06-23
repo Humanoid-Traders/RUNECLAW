@@ -257,6 +257,9 @@ class TelegramHandler:
             ("equitycurve", self._cmd_equitycurve),
             ("crossasset", self._cmd_crossasset),
             ("slippage", self._cmd_slippage),
+            ("sweep", self._cmd_sweep),
+            ("zones", self._cmd_zones),
+            ("squeeze", self._cmd_squeeze),
         ]:
             app.add_handler(CommandHandler(cmd, handler))
         app.add_handler(CallbackQueryHandler(self._handle_callback))
@@ -2143,8 +2146,10 @@ class TelegramHandler:
         chat_id = update.effective_chat.id
 
         try:
+            from bot.core.metrics import MetricsEngine
             trades = self.engine.portfolio._history
-            attribution = self.engine.metrics.compute_attribution(trades)
+            _me = MetricsEngine()
+            attribution = _me.compute_attribution(trades)
 
             if not attribution:
                 await context.bot.send_message(
@@ -2292,6 +2297,146 @@ class TelegramHandler:
             await context.bot.send_message(chat_id=chat_id, text="\n".join(lines), parse_mode="HTML")
         except Exception as exc:
             await context.bot.send_message(chat_id=chat_id, text=f"\u274c Error: {exc}")
+
+    async def _cmd_sweep(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Show liquidity sweep detection for a symbol."""
+        args = context.args if context.args else []
+        symbol = args[0].upper() + "/USDT" if args else "BTC/USDT"
+
+        try:
+            exchange = await self.engine.get_exchange()
+            ohlcv = await exchange.fetch_ohlcv(symbol, "1h", limit=100)
+            if not ohlcv or len(ohlcv) < 20:
+                await update.message.reply_text(f"Not enough data for {symbol}")
+                return
+
+            import numpy as np
+            opens = np.array([c[1] for c in ohlcv])
+            highs = np.array([c[2] for c in ohlcv])
+            lows = np.array([c[3] for c in ohlcv])
+            closes = np.array([c[4] for c in ohlcv])
+            volumes = np.array([c[5] for c in ohlcv])
+
+            from bot.core.liquidity_sweep import detect_sweeps
+            signals = detect_sweeps(opens, highs, lows, closes, volumes)
+
+            if not signals:
+                await update.message.reply_text(f"No liquidity sweeps detected for {symbol}")
+                return
+
+            lines = [f"LIQUIDITY SWEEPS -- {symbol}", ""]
+            for s in signals[:5]:
+                emoji = "UP" if "bullish" in s.sweep_type else "DOWN"
+                depth_pct = f"{s.depth_pct:.2f}"
+                rev_str = f"{s.reversal_strength:.0%}"
+                vol_str = f"{s.volume_ratio:.1f}"
+                conf_str = f"{s.confidence:.0%}"
+                lines.append(
+                    f"[{emoji}] {s.sweep_type.upper()}\n"
+                    f"  Level: ${s.level_price:,.4f}\n"
+                    f"  Depth: {depth_pct}%  Rev: {rev_str}\n"
+                    f"  Vol: {vol_str}x  Conf: {conf_str}\n"
+                    f"  Entry: ${s.suggested_entry:,.4f}  SL: ${s.suggested_sl:,.4f}\n"
+                )
+
+            await update.message.reply_text("\n".join(lines))
+        except Exception as exc:
+            await update.message.reply_text(f"Sweep scan error: {exc}")
+
+    async def _cmd_zones(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Show supply/demand zones for a symbol."""
+        args = context.args if context.args else []
+        symbol = args[0].upper() + "/USDT" if args else "BTC/USDT"
+
+        try:
+            exchange = await self.engine.get_exchange()
+            ohlcv = await exchange.fetch_ohlcv(symbol, "1h", limit=200)
+            if not ohlcv or len(ohlcv) < 20:
+                await update.message.reply_text(f"Not enough data for {symbol}")
+                return
+
+            import numpy as np
+            opens = np.array([c[1] for c in ohlcv])
+            highs = np.array([c[2] for c in ohlcv])
+            lows = np.array([c[3] for c in ohlcv])
+            closes = np.array([c[4] for c in ohlcv])
+            volumes = np.array([c[5] for c in ohlcv])
+
+            # Compute ATR
+            tr = np.maximum(highs[1:] - lows[1:], np.maximum(
+                np.abs(highs[1:] - closes[:-1]), np.abs(lows[1:] - closes[:-1])))
+            atr = float(np.mean(tr[-14:])) if len(tr) >= 14 else float(np.mean(tr))
+
+            from bot.core.supply_demand import detect_zones
+            zones = detect_zones(opens, highs, lows, closes, volumes, atr=atr)
+
+            if not zones:
+                await update.message.reply_text(f"No active S/D zones for {symbol}")
+                return
+
+            lines = [f"SUPPLY/DEMAND ZONES -- {symbol}", ""]
+            price = float(closes[-1])
+            for z in zones[:8]:
+                tag = "DEMAND" if z.zone_type == "demand" else "SUPPLY"
+                fresh_label = " [FRESH]" if z.status == "fresh" else f" [{z.status}, {z.retests}x]"
+                dist = abs(price - z.midpoint) / price * 100
+                lines.append(
+                    f"[{tag}]{fresh_label}\n"
+                    f"  Range: ${z.zone_low:,.4f} - ${z.zone_high:,.4f}\n"
+                    f"  Strength: {z.strength:.0%}  Dist: {dist:.1f}%\n"
+                    f"  Departure: {z.departure_pct:.1f}%  Vol: {z.volume_ratio:.1f}x\n"
+                )
+
+            await update.message.reply_text("\n".join(lines))
+        except Exception as exc:
+            await update.message.reply_text(f"Zone scan error: {exc}")
+
+    async def _cmd_squeeze(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Show volatility squeeze status for a symbol."""
+        args = context.args if context.args else []
+        symbol = args[0].upper() + "/USDT" if args else "BTC/USDT"
+
+        try:
+            exchange = await self.engine.get_exchange()
+            ohlcv = await exchange.fetch_ohlcv(symbol, "1h", limit=200)
+            if not ohlcv or len(ohlcv) < 30:
+                await update.message.reply_text(f"Not enough data for {symbol}")
+                return
+
+            import numpy as np
+            highs = np.array([c[2] for c in ohlcv])
+            lows = np.array([c[3] for c in ohlcv])
+            closes = np.array([c[4] for c in ohlcv])
+
+            from bot.core.smart_exits import detect_squeeze
+            sig = detect_squeeze(closes, highs, lows)
+
+            if sig is None:
+                await update.message.reply_text(f"Cannot compute squeeze for {symbol}")
+                return
+
+            if sig.squeeze_fired:
+                status = "SQUEEZE FIRED!"
+            elif sig.is_squeezing:
+                status = f"SQUEEZING ({sig.squeeze_bars} bars)"
+            else:
+                status = "No squeeze"
+            direction = sig.fire_direction.upper() if sig.squeeze_fired else ""
+
+            lines = [
+                f"VOLATILITY SQUEEZE -- {symbol}",
+                "",
+                f"Status: {status} {direction}",
+                f"BB Width: {sig.bb_width_pct:.2f}% (P{sig.bb_width_percentile:.0f})",
+                f"Momentum: {sig.momentum:+.2f}%",
+                f"Confidence: {sig.confidence:.0%}",
+                "",
+                sig.description,
+            ]
+
+            await update.message.reply_text("\n".join(lines))
+        except Exception as exc:
+            await update.message.reply_text(f"Squeeze error: {exc}")
 
     async def _cmd_golive(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """/golive — enable live trading with double confirmation."""

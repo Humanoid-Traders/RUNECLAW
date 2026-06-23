@@ -58,6 +58,9 @@ from bot.core.smart_money import SmartMoneyEngine
 from bot.core.strategy_modes import StrategySelector, MODE_CONFIGS
 from bot.llm.provider import BYOK, LLMProvider, LLMTier, PROVIDER_CATALOG, create_llm_client, llm_complete, LLMConfig, resolve_tier_config
 from bot.core.volume_profile import compute_volume_profile, poc_magnet_signal
+from bot.core.liquidity_sweep import detect_sweeps, sweep_to_confluence_votes
+from bot.core.supply_demand import detect_zones, zones_to_confluence, find_nearest_zone
+from bot.core.smart_exits import detect_squeeze, TimeOfDayEdge, AdaptiveLimitDistance
 from bot.core.chart_patterns import scan_all_chart_patterns
 from bot.core.order_flow import OrderFlowAnalyzer
 from bot.utils.logger import audit, system_log, trade_log, scan_log
@@ -124,6 +127,31 @@ def _compute_limit_entry(
         else:
             recent_high = float(np.max(closes[-20:]))
             candidates.append(recent_high)
+
+    # 6. Fibonacci retracement levels
+    fib_levels = {}
+    for key in ("fib_236", "fib_382", "fib_500", "fib_618", "fib_786"):
+        val = indicators.get(key)
+        if val is not None and val > 0:
+            candidates.append(float(val))
+            fib_levels[key] = float(val)
+
+    # 7. Supply/Demand zone boundaries
+    sd_zones = indicators.get("_sd_zones")
+    if sd_zones:
+        for zone in sd_zones[:3]:  # top 3 zones
+            if direction == Direction.LONG and zone.zone_type == "demand":
+                candidates.append(zone.zone_high)  # buy at top of demand zone
+            elif direction == Direction.SHORT and zone.zone_type == "supply":
+                candidates.append(zone.zone_low)  # sell at bottom of supply zone
+
+    # 8. Liquidity sweep suggested entries
+    sweeps = indicators.get("liquidity_sweeps", [])
+    for sw in sweeps[:2]:
+        if isinstance(sw, dict):
+            entry = sw.get("level")
+            if entry and entry > 0:
+                candidates.append(float(entry))
 
     # Filter candidates: must be a better price within the allowed range
     best_limit = None
@@ -404,6 +432,52 @@ class Analyzer:
                 indicators["_vp_result"] = vp
         except Exception as exc:
             system_log.debug("Volume profile failed: %s", exc)
+
+        # ── Liquidity Sweep Detection ──
+        try:
+            if opens is not None and len(opens) >= 20:
+                sweep_signals = detect_sweeps(opens, highs, lows, closes, volumes)
+                if sweep_signals:
+                    sweep_v, sweep_w = sweep_to_confluence_votes(sweep_signals)
+                    indicators["_sweep_votes"] = sweep_v
+                    indicators["_sweep_weights"] = sweep_w
+                    indicators["liquidity_sweeps"] = [
+                        {"type": s.sweep_type, "level": s.level_price,
+                         "confidence": s.confidence, "description": s.description}
+                        for s in sweep_signals[:3]
+                    ]
+        except Exception as exc:
+            system_log.debug("Liquidity sweep detection failed: %s", exc)
+
+        # ── Supply/Demand Zones ──
+        try:
+            atr_val = indicators.get("atr", 0)
+            if opens is not None and len(opens) >= 20 and atr_val > 0:
+                sd_zones = detect_zones(opens, highs, lows, closes, volumes, atr=atr_val)
+                if sd_zones:
+                    indicators["_sd_zones"] = sd_zones
+                    indicators["supply_demand_zones"] = [
+                        {"type": z.zone_type, "high": z.zone_high, "low": z.zone_low,
+                         "strength": z.strength, "status": z.status}
+                        for z in sd_zones[:5]
+                    ]
+        except Exception as exc:
+            system_log.debug("Supply/demand zone detection failed: %s", exc)
+
+        # ── Volatility Squeeze (detailed) ──
+        try:
+            squeeze_sig = detect_squeeze(closes, highs, lows)
+            if squeeze_sig is not None:
+                indicators["_squeeze_signal"] = squeeze_sig
+                indicators["squeeze_detail"] = {
+                    "is_squeezing": squeeze_sig.is_squeezing,
+                    "squeeze_bars": squeeze_sig.squeeze_bars,
+                    "fired": squeeze_sig.squeeze_fired,
+                    "direction": squeeze_sig.fire_direction,
+                    "confidence": squeeze_sig.confidence,
+                }
+        except Exception as exc:
+            system_log.debug("Squeeze detection failed: %s", exc)
 
         regime = self._detect_regime(indicators, signal.symbol)
 
@@ -1750,6 +1824,39 @@ class Analyzer:
                 poc_vote *= magnet.get("strength", 0.5)
                 votes.append(poc_vote)
                 weights.append(0.6)
+
+        # Liquidity Sweep voter (weight up to 1.2 — high-probability reversal)
+        sweep_v = indicators.get("_sweep_votes")
+        sweep_w = indicators.get("_sweep_weights")
+        if sweep_v and sweep_w:
+            votes.extend(sweep_v)
+            weights.extend(sweep_w)
+
+        # Supply/Demand Zone voter
+        sd_zones = indicators.get("_sd_zones")
+        if sd_zones:
+            try:
+                # Need to determine trade direction from current votes
+                pre_sum = sum(v * w for v, w in zip(votes, weights))
+                approx_dir = "LONG" if pre_sum >= 0 else "SHORT"
+                sd_v, sd_w = zones_to_confluence(sd_zones, signal.price, approx_dir)
+                votes.extend(sd_v)
+                weights.extend(sd_w)
+            except Exception:
+                pass
+
+        # Volatility Squeeze voter (boost for fired squeeze)
+        squeeze_sig = indicators.get("_squeeze_signal")
+        if squeeze_sig is not None and hasattr(squeeze_sig, 'squeeze_fired') and squeeze_sig.squeeze_fired:
+            sq_vote = 0.8 if squeeze_sig.fire_direction == "bullish" else -0.8
+            votes.append(sq_vote)
+            weights.append(0.9)
+        elif squeeze_sig is not None and hasattr(squeeze_sig, 'is_squeezing') and squeeze_sig.is_squeezing:
+            # Currently squeezing — breakout imminent, mild directional bias from momentum
+            if hasattr(squeeze_sig, 'momentum'):
+                sq_vote = 0.3 if squeeze_sig.momentum > 0 else -0.3
+                votes.append(sq_vote)
+                weights.append(0.5)
 
         # EMA ribbon voter
         ema9 = indicators.get("ema_9")
