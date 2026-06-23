@@ -255,6 +255,8 @@ class TelegramHandler:
             ("montecarlo", self._cmd_montecarlo),
             ("attribution", self._cmd_attribution),
             ("equitycurve", self._cmd_equitycurve),
+            ("crossasset", self._cmd_crossasset),
+            ("slippage", self._cmd_slippage),
         ]:
             app.add_handler(CommandHandler(cmd, handler))
         app.add_handler(CallbackQueryHandler(self._handle_callback))
@@ -2225,6 +2227,72 @@ class TelegramHandler:
         except Exception as exc:
             await context.bot.send_message(chat_id=chat_id, text=f"\u274c Error: {exc}")
 
+    async def _cmd_crossasset(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Show cross-asset correlation context."""
+        if not self._is_admin(update):
+            return
+        chat_id = update.effective_chat.id
+        try:
+            ctx = self.engine.cross_asset.get_context(force=True)
+            lines = [
+                "\U0001f310 <b>Cross-Asset Context</b>",
+                "\u2500" * 28,
+                "",
+                f"BTC Dominance: <b>{ctx.btc_dominance_trend}</b> ({ctx.btc_dominance_change_1h:+.2f}%)",
+                f"ETH/BTC: <b>{ctx.eth_btc_trend}</b> (ratio: {ctx.eth_btc_ratio:.6f})",
+                f"Alt-BTC Correlation: <code>{ctx.alt_correlation:.2f}</code>",
+                f"Market Regime: <b>{ctx.market_regime.upper()}</b>",
+                "",
+                f"Confidence adj: <code>{ctx.confidence_adjustment:+.3f}</code>",
+                f"Size multiplier: <code>{ctx.size_multiplier:.0%}</code>",
+                "",
+                f"\U0001f4dd {ctx.description}",
+                "",
+                "\u2500" * 28,
+                "\U0001f43e RUNECLAW Cross-Asset Engine",
+            ]
+            await context.bot.send_message(chat_id=chat_id, text="\n".join(lines), parse_mode="HTML")
+        except Exception as exc:
+            await context.bot.send_message(chat_id=chat_id, text=f"\u274c Error: {exc}")
+
+    async def _cmd_slippage(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Show slippage statistics."""
+        if not self._is_admin(update):
+            return
+        chat_id = update.effective_chat.id
+        try:
+            all_stats = self.engine.slippage.get_all_stats()
+            if not all_stats:
+                await context.bot.send_message(chat_id=chat_id, text="\u26a0\ufe0f No slippage data recorded yet.")
+                return
+
+            lines = [
+                "\U0001f4ca <b>Slippage Report</b>",
+                "\u2500" * 28,
+                "",
+            ]
+
+            total_lost = 0
+            for symbol, stats in sorted(all_stats.items(), key=lambda x: x[1].total_slippage_usd, reverse=True)[:10]:
+                lines.append(
+                    f"<b>{symbol}</b>: mean={stats.mean_slippage_pct:.3f}% "
+                    f"p95={stats.p95_slippage_pct:.3f}% "
+                    f"({stats.total_trades} fills, ${stats.total_slippage_usd:.2f} lost)"
+                )
+                total_lost += stats.total_slippage_usd
+
+            lines.extend([
+                "",
+                f"\U0001f4b8 Total slippage cost: <b>${total_lost:.2f}</b>",
+                "",
+                "\u2500" * 28,
+                "\U0001f43e RUNECLAW Execution Quality",
+            ])
+
+            await context.bot.send_message(chat_id=chat_id, text="\n".join(lines), parse_mode="HTML")
+        except Exception as exc:
+            await context.bot.send_message(chat_id=chat_id, text=f"\u274c Error: {exc}")
+
     async def _cmd_golive(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """/golive — enable live trading with double confirmation."""
         if not await self._guard(update, "admin"):
@@ -3633,10 +3701,43 @@ class TelegramHandler:
         await self._send(update, result)
 
     async def _cmd_journal(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-        if not await self._guard(update, "journal"):
+        """Show weekly trade journal review."""
+        if not self._is_admin(update):
             return
-        result = await self.registry.get("trade_journal").execute(self.engine, user_id=self._get_tg_id(update))
-        await self._send(update, result)
+        chat_id = update.effective_chat.id
+        try:
+            review = self.engine.journal.get_weekly_review()
+
+            if review.get("trades", 0) == 0:
+                await context.bot.send_message(chat_id=chat_id, text="\u26a0\ufe0f No trades in the last 7 days.")
+                return
+
+            lines = [
+                "\U0001f4d3 <b>Weekly Trade Review</b>",
+                "\u2500" * 28,
+                "",
+                f"Period: {review['period']}",
+                f"Trades: <b>{review['trades']}</b> ({review['wins']}W / {review['losses']}L)",
+                f"Win Rate: <b>{review['win_rate']:.0f}%</b>",
+                f"Total PnL: <b>${review['total_pnl']:+.2f}</b>",
+                f"Avg R-Multiple: <code>{review['avg_r_multiple']:+.2f}</code>",
+                f"Avg Hold: <code>{review['avg_holding_hours']:.1f}h</code>",
+                "",
+                f"\U0001f3c6 Best: {review['best_trade']['symbol']} ${review['best_trade']['pnl']:+.2f} ({review['best_trade']['r']:.1f}R)",
+                f"\U0001f4a9 Worst: {review['worst_trade']['symbol']} ${review['worst_trade']['pnl']:+.2f} ({review['worst_trade']['r']:.1f}R)",
+            ]
+
+            # Top lessons
+            if review.get("top_lessons"):
+                lines.extend(["", "<b>Recurring Lessons:</b>"])
+                for lesson, count in review["top_lessons"][:3]:
+                    lines.append(f"  \u2022 {lesson} ({count}x)")
+
+            lines.extend(["", "\u2500" * 28, "\U0001f43e RUNECLAW Trade Journal"])
+
+            await ctx.bot.send_message(chat_id=chat_id, text="\n".join(lines), parse_mode="HTML")
+        except Exception as exc:
+            await ctx.bot.send_message(chat_id=chat_id, text=f"\u274c Error: {exc}")
 
     async def _cmd_costs(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._guard(update, "costs"):
@@ -4820,19 +4921,39 @@ class TelegramHandler:
             pass
 
     async def _cmd_strategy(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-        """Strategy mode selector."""
-        if not await self._guard(update, "run"):
+        """Show active strategy and regime-based routing."""
+        if not self._is_admin(update):
             return
-        from bot.config import RUNTIME
-        current = RUNTIME.strategy_mode
-        rendered = wr_strategy_mode(current)
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("Defensive", callback_data="mode_defensive"),
-             InlineKeyboardButton("Balanced", callback_data="mode_balanced")],
-            [InlineKeyboardButton("Aggressive", callback_data="mode_aggressive"),
-             InlineKeyboardButton("Manual", callback_data="mode_manual")],
-        ])
-        await self._send(update, rendered["text"], reply_markup=kb)
+        chat_id = update.effective_chat.id
+        try:
+            from bot.core.strategy_router import select_strategy, strategy_summary
+            regime = self.engine.risk._current_regime
+            vol_state = self.engine.risk._current_vol_state
+            profile = select_strategy(regime, vol_state)
+
+            lines = [
+                "\U0001f3af <b>Strategy Router</b>",
+                "\u2500" * 28,
+                "",
+                f"Current Regime: <b>{regime}</b>",
+                f"Volatility: <b>{vol_state}</b>",
+                "",
+                f"Active Strategy: <b>{profile.name}</b>",
+                f"Type: <code>{profile.strategy_type}</code>",
+                f"SL: <code>{profile.sl_atr_mult}x ATR</code>",
+                f"TP: <code>{profile.tp_atr_mult}x ATR</code>",
+                f"Size: <code>{profile.size_multiplier:.0%}</code>",
+                f"Min Confidence: <code>{profile.min_confidence:.0%}</code>",
+                "",
+                f"\U0001f4dd {profile.description}",
+                "",
+                "\u2500" * 28,
+                "\U0001f43e RUNECLAW Strategy Engine",
+            ]
+
+            await ctx.bot.send_message(chat_id=chat_id, text="\n".join(lines), parse_mode="HTML")
+        except Exception as exc:
+            await ctx.bot.send_message(chat_id=chat_id, text=f"\u274c Error: {exc}")
 
     # ── Signal stats command ─────────────────────────────────────
 

@@ -130,6 +130,10 @@ class ExchangeConfig:
     trade_mode: str = _env("TRADE_MODE", "futures")
     # Default leverage (1x = no leverage, 5x = default for futures)
     default_leverage: int = int(_env_float_bounded("DEFAULT_LEVERAGE", 5, 1, 125))
+    # Dynamic leverage scaling
+    dynamic_leverage_enabled: bool = _env_bool("DYNAMIC_LEVERAGE_ENABLED", True)
+    min_leverage: int = int(_env_float_bounded("MIN_LEVERAGE", 2, 1, 125))
+    max_leverage: int = int(_env_float_bounded("MAX_LEVERAGE", 10, 1, 125))
     # Margin mode: "isolated" mandatory (GetClaw rule: prevents runaway losses on gap-risk assets)
     margin_mode: str = _env("MARGIN_MODE", "isolated")
     # C2-57: Configurable hold mode probe symbol (used for account mode detection)
@@ -437,6 +441,24 @@ class AdaptiveConfig:
 
 
 @dataclass(frozen=True)
+class ExecutionConfig:
+    """Execution quality and order management settings."""
+    # Slippage guard
+    slippage_guard_enabled: bool = _env_bool("SLIPPAGE_GUARD_ENABLED", True)
+    max_slippage_edge_ratio: float = _env_float("MAX_SLIPPAGE_EDGE_RATIO", 0.30)
+    # Order splitting
+    order_split_enabled: bool = _env_bool("ORDER_SPLIT_ENABLED", True)
+    order_split_threshold_usd: float = _env_float("ORDER_SPLIT_THRESHOLD_USD", 500.0)
+    order_split_tranches: int = int(_env_float("ORDER_SPLIT_TRANCHES", 3))
+    order_split_delay_sec: float = _env_float("ORDER_SPLIT_DELAY_SEC", 30.0)
+    # OCO bracket orders
+    oco_enabled: bool = _env_bool("OCO_BRACKET_ENABLED", True)
+    # Graceful degradation
+    ws_disconnect_pause_sec: float = _env_float("WS_DISCONNECT_PAUSE_SEC", 60.0)
+    api_degrade_reduce_only: bool = _env_bool("API_DEGRADE_REDUCE_ONLY", True)
+
+
+@dataclass(frozen=True)
 class CacheConfig:
     """LLM semantic cache settings."""
     ttl_seconds: float = _env_float("CACHE_TTL_SECONDS", 300.0)
@@ -688,6 +710,7 @@ class AppConfig:
     strategy_types: StrategyTypeConfig = field(default_factory=StrategyTypeConfig)
     partial_tp: PartialTPConfig = field(default_factory=PartialTPConfig)
     adaptive: AdaptiveConfig = field(default_factory=AdaptiveConfig)
+    execution: ExecutionConfig = field(default_factory=ExecutionConfig)
 
     def is_live(self) -> bool:
         """Live trading requires BOTH flags AND a Telegram chat allow-list.

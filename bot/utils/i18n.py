@@ -179,7 +179,11 @@ _STRINGS: dict[str, dict[str, str]] = {
             "/learn \u2014 trading lessons\n"
             "/montecarlo \u2014 Monte Carlo risk simulation\n"
             "/attribution \u2014 signal performance attribution\n"
-            "/equitycurve \u2014 equity curve health status"
+            "/equitycurve \u2014 equity curve health status\n"
+            "/crossasset \u2014 cross-asset market context\n"
+            "/slippage \u2014 execution slippage report\n"
+            "/journal \u2014 weekly trade review\n"
+            "/strategy \u2014 active strategy & regime routing"
         ),
         "zh": (
             "\U0001f6e0 <b>工具</b>\n"
@@ -190,7 +194,11 @@ _STRINGS: dict[str, dict[str, str]] = {
             "/learn \u2014 交易課程\n"
             "/montecarlo \u2014 蒙地卡羅風險模擬\n"
             "/attribution \u2014 訊號績效歸因\n"
-            "/equitycurve \u2014 權益曲線健康狀態"
+            "/equitycurve \u2014 權益曲線健康狀態\n"
+            "/crossasset \u2014 跨資產市場背景\n"
+            "/slippage \u2014 執行滑點報告\n"
+            "/journal \u2014 每週交易回顧\n"
+            "/strategy \u2014 當前策略與市場狀態路由"
         ),
     },
     "help_controls": {

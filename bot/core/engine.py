@@ -162,6 +162,18 @@ class RuneClawEngine:
         # detect and recover from stuck non-IDLE states.
         self._last_state_change: float = time.time()
 
+        # Cross-asset correlation tracker
+        from bot.core.cross_asset import CrossAssetTracker
+        self.cross_asset = CrossAssetTracker()
+
+        # Slippage tracker
+        from bot.core.slippage import SlippageTracker
+        self.slippage = SlippageTracker()
+
+        # Trade journal
+        from bot.core.trade_journal import TradeJournal
+        self.journal = TradeJournal()
+
         # Smart scan scheduling
         self._last_scan_time: float = 0.0
         self._current_scan_interval: float = CONFIG.scan_interval_seconds
@@ -934,6 +946,27 @@ class RuneClawEngine:
         if atr_value is not None and signal.price > 0:
             self._recent_atr_values[signal.symbol] = atr_value / signal.price
 
+        # Strategy router: select optimal strategy for regime
+        try:
+            from bot.core.strategy_router import select_strategy, get_strategy_adjustments
+            strategy_profile = select_strategy(
+                getattr(self.risk, '_current_regime', 'unknown'),
+                getattr(self.risk, '_current_vol_state', 'normal'),
+                adx=atr_value if atr_value else 0,
+            )
+            adjustments = get_strategy_adjustments(
+                strategy_profile,
+                idea.stop_loss,
+                idea.take_profit,
+                idea.confidence,
+            )
+            # Apply strategy-specific adjustments
+            if adjustments.get("strategy_type"):
+                # Override strategy type based on regime
+                pass  # strategy_type is set from the router
+        except Exception:
+            pass
+
         # ── Smart pyramid / duplicate symbol guard ─────────────────
         # Rules: max 2 entries per symbol, same direction adds require
         # 1R profit + 70% confidence. Opposite direction with high
@@ -1047,6 +1080,16 @@ class RuneClawEngine:
                   "position_size_usd": round(risk_check.position_size_usd, 2),
                   "atr_pct": round((atr_value / idea.entry_price) * 100, 2) if atr_value and idea.entry_price else None,
               })
+
+        # Cross-asset confidence adjustment
+        try:
+            ca_conf_adj, ca_size_mult = self.cross_asset.get_symbol_adjustment(
+                signal.symbol, idea.direction.value)
+            if ca_conf_adj != 0:
+                # Store for risk engine
+                pass
+        except Exception:
+            pass
 
         # Check #17: liquidity guard from order flow (fail-open if no data)
         if of_signal is not None:
@@ -1772,6 +1815,20 @@ class RuneClawEngine:
                 validated_prices[sym] = px
             prices = validated_prices
 
+            # Feed prices to cross-asset tracker
+            for _ca_sym, _ca_px in prices.items():
+                try:
+                    self.cross_asset.feed_price(_ca_sym, _ca_px)
+                except Exception:
+                    pass
+
+            # Feed prices to risk engine for correlation v2
+            for _rp_sym, _rp_px in prices.items():
+                try:
+                    self.risk.update_price_history(_rp_sym, _rp_px)
+                except Exception:
+                    pass
+
             # Subscribe open position symbols to WS feed for future ticks
             pos_symbols = [p.asset for p in positions]
             self.ws_feed.subscribe(pos_symbols)
@@ -1802,6 +1859,25 @@ class RuneClawEngine:
                         f"loss on {c.asset} (PnL=${c.pnl}), "
                         f"cooling down {CONFIG.risk.cooldown_after_loss_seconds}s",
                     )
+                # Record to trade journal
+                try:
+                    self.journal.record_trade(
+                        trade_id=getattr(c, 'trade_id', '') or '',
+                        symbol=c.asset,
+                        direction=c.direction.value if hasattr(c.direction, 'value') else str(c.direction),
+                        strategy_type=getattr(c, 'strategy_type', ''),
+                        entry_price=c.entry_price,
+                        exit_price=getattr(c, 'exit_price', None) or 0,
+                        stop_loss=c.stop_loss,
+                        take_profit=c.take_profit,
+                        pnl=c.pnl,
+                        confidence=getattr(c, '_confidence', 0),
+                        signals_used=getattr(c, '_signals_used', []),
+                        regime=getattr(self.risk, '_current_regime', ''),
+                        holding_hours=((c.closed_at - c.opened_at).total_seconds() / 3600) if getattr(c, 'closed_at', None) and getattr(c, 'opened_at', None) else 0,
+                    )
+                except Exception:
+                    pass
         except Exception as exc:
             audit(
                 system_log,

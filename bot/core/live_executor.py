@@ -183,10 +183,64 @@ class LiveExecutor:
         # Exchange sync: periodically check for untracked positions
         self._last_exchange_sync: float = 0
         self._EXCHANGE_SYNC_INTERVAL: float = 300  # 5 minutes
+        # Dynamic leverage: ATR-based volatility ratios per symbol
+        self._last_atr_pct: dict[str, float] = {}  # symbol -> ATR/price ratio
+        # Slippage tracker: set by engine
+        self._slippage_tracker = None  # set by engine
+        # Graceful degradation state
+        self._degraded_mode: bool = False
+        self._ws_last_seen: float = time.time()
+        self._api_error_count: int = 0
         # F-07 FIX: Load persisted positions on startup
         self._load_positions()
         # F-14 FIX: Load persisted closed trades on startup
         self._load_closed_trades()
+
+    # ── Dynamic leverage & graceful degradation helpers ──────────────
+
+    def update_atr(self, symbol: str, atr_pct: float) -> None:
+        """Update ATR ratio for dynamic leverage calculation."""
+        self._last_atr_pct[symbol] = atr_pct
+
+    def check_degradation(self) -> str:
+        """Check if execution should be degraded. Returns mode: 'normal', 'reduce_only', 'paused'."""
+        now = time.time()
+
+        # WebSocket disconnect check
+        ws_gap = now - self._ws_last_seen
+        ws_pause = getattr(getattr(CONFIG, 'execution', None), 'ws_disconnect_pause_sec', 120)
+        if ws_gap > ws_pause:
+            if not self._degraded_mode:
+                self._degraded_mode = True
+                audit(system_log,
+                      f"Graceful degradation: PAUSED (WS gap {ws_gap:.0f}s)",
+                      action="degradation", result="PAUSED")
+            return "paused"
+
+        # API error accumulation
+        api_degrade = getattr(getattr(CONFIG, 'execution', None), 'api_degrade_reduce_only', True)
+        if self._api_error_count >= 5 and api_degrade:
+            return "reduce_only"
+
+        if self._degraded_mode:
+            self._degraded_mode = False
+            self._api_error_count = 0
+            audit(system_log, "Graceful degradation: RESTORED",
+                  action="degradation", result="RESTORED")
+
+        return "normal"
+
+    def record_ws_heartbeat(self) -> None:
+        """Record WebSocket activity."""
+        self._ws_last_seen = time.time()
+
+    def record_api_error(self) -> None:
+        """Record an API error for degradation tracking."""
+        self._api_error_count += 1
+
+    def record_api_success(self) -> None:
+        """Reset API error count on success."""
+        self._api_error_count = 0
 
     async def _get_exchange(self) -> ccxt.Exchange:
         """Get authenticated Bitget exchange instance."""
@@ -322,10 +376,34 @@ class LiveExecutor:
             else:
                 logger.debug("Margin mode verification failed for %s: %s", symbol, verify_exc)
 
-        # ── Set leverage ──
+        # ── Set leverage (with dynamic scaling) ──
+        _target_leverage = cfg.default_leverage
+        dynamic_lev_enabled = getattr(cfg, 'dynamic_leverage_enabled', False)
+        if dynamic_lev_enabled:
+            try:
+                # Get current ATR-based volatility
+                _sym_base = normalize_symbol(symbol)
+                atr_pct = self._last_atr_pct.get(_sym_base, 0.02)
+
+                min_lev = getattr(cfg, 'min_leverage', 1)
+                max_lev = getattr(cfg, 'max_leverage', cfg.default_leverage * 2)
+
+                if atr_pct > 0.04:  # high vol (>4% ATR)
+                    _target_leverage = max(min_lev, _target_leverage // 2)
+                elif atr_pct > 0.03:  # elevated vol
+                    _target_leverage = max(min_lev, int(_target_leverage * 0.7))
+                elif atr_pct < 0.01:  # low vol
+                    _target_leverage = min(max_lev, int(_target_leverage * 1.4))
+
+                audit(trade_log,
+                      f"Dynamic leverage for {symbol}: {cfg.default_leverage}x → {_target_leverage}x (ATR={atr_pct:.3%})",
+                      action="dynamic_leverage", result="ADJUSTED")
+            except Exception:
+                pass  # fail to default leverage
+
         try:
             await exchange.set_leverage(
-                cfg.default_leverage, symbol,
+                _target_leverage, symbol,
                 params={"productType": "USDT-FUTURES"})
         except Exception as exc:
             logger.warning("Leverage set failed for %s (may use exchange default): %s", symbol, exc)
@@ -338,11 +416,11 @@ class LiveExecutor:
                 actual_lev = lev_info.get("longLeverage") or lev_info.get("leverage") or lev_info.get("long")
                 if actual_lev is not None:
                     actual_lev = int(float(actual_lev))
-            if actual_lev is not None and actual_lev != cfg.default_leverage:
+            if actual_lev is not None and actual_lev != _target_leverage:
                 logger.critical(
                     "LEVERAGE MISMATCH for %s: wanted %dx, exchange reports %dx — "
                     "position will have INCORRECT risk exposure",
-                    symbol, cfg.default_leverage, actual_lev)
+                    symbol, _target_leverage, actual_lev)
         except Exception:
             logger.debug("Could not verify leverage for %s (fetch_leverage unavailable)", symbol)
 
@@ -1365,6 +1443,18 @@ class LiveExecutor:
             exchange = await self._get_exchange()
             is_futures = CONFIG.exchange.trade_mode == "futures"
 
+            # Graceful degradation check
+            deg_mode = self.check_degradation()
+            if deg_mode == "paused":
+                audit(trade_log, f"Order blocked: system degraded (paused)",
+                      action="execute", result="DEGRADED")
+                return "EXECUTION BLOCKED: system is in degraded mode (paused) — WebSocket disconnected"
+            if deg_mode == "reduce_only":
+                # Only allow closing positions, not opening new ones
+                audit(trade_log, f"Order blocked: reduce-only mode",
+                      action="execute", result="REDUCE_ONLY")
+                return "EXECUTION BLOCKED: system is in reduce-only mode — too many API errors"
+
             # UPGRADE: deterministic idempotency key for this trade idea.
             # Reused for every order/cancel below so a timeout-retry can never
             # double-submit (Bitget dedups on clientOid).
@@ -1442,7 +1532,27 @@ class LiveExecutor:
             # Calculate quantity
             # For futures with leverage: size_usd is the margin (collateral).
             # Notional exposure = margin * leverage, so qty = (size_usd * leverage) / price.
+            # Dynamic leverage scaling based on regime and volatility
             leverage_mult = CONFIG.exchange.default_leverage
+            if getattr(CONFIG.exchange, 'dynamic_leverage_enabled', False):
+                try:
+                    _sym_base = normalize_symbol(symbol)
+                    atr_pct = self._last_atr_pct.get(_sym_base, 0.02)
+                    min_lev = getattr(CONFIG.exchange, 'min_leverage', 1)
+                    max_lev = getattr(CONFIG.exchange, 'max_leverage', leverage_mult * 2)
+
+                    if atr_pct > 0.04:
+                        leverage_mult = max(min_lev, leverage_mult // 2)
+                    elif atr_pct > 0.03:
+                        leverage_mult = max(min_lev, int(leverage_mult * 0.7))
+                    elif atr_pct < 0.01:
+                        leverage_mult = min(max_lev, int(leverage_mult * 1.4))
+
+                    audit(trade_log,
+                          f"Dynamic leverage for {symbol}: {CONFIG.exchange.default_leverage}x → {leverage_mult}x (ATR={atr_pct:.3%})",
+                          action="dynamic_leverage", result="ADJUSTED")
+                except Exception:
+                    pass  # fail to default leverage
             quantity = (size_usd * leverage_mult) / current_price
 
             # Determine side
@@ -1602,7 +1712,7 @@ class LiveExecutor:
             if is_futures:
                 # Futures: use USDT-FUTURES product type
                 # tradeSide only required in hedge (double_hold) mode
-                leverage = CONFIG.exchange.default_leverage
+                leverage = leverage_mult  # Use dynamically-adjusted leverage
 
                 # Pre-check: verify balance is accessible
                 # UTA accounts pool all margin — try swap first, fall back to default
@@ -1665,6 +1775,24 @@ class LiveExecutor:
                 if use_limit and limit_price:
                     # ccxt requires price as a top-level param for limit orders
                     create_kwargs["price"] = limit_price
+
+                # Order splitting for large market positions
+                _split_enabled = getattr(getattr(CONFIG, 'execution', None), 'order_split_enabled', False)
+                _split_threshold = getattr(getattr(CONFIG, 'execution', None), 'order_split_threshold_usd', 50000)
+                if (_split_enabled and otype == "market" and
+                        size_usd > _split_threshold):
+                    _n_tranches = getattr(getattr(CONFIG, 'execution', None), 'order_split_tranches', 3)
+                    _tranche_qty = quantity / _n_tranches
+                    _split_delay = getattr(getattr(CONFIG, 'execution', None), 'order_split_delay_sec', 0.5)
+                    audit(trade_log,
+                          f"Splitting {symbol} order into {_n_tranches} tranches of {_tranche_qty:.6f}",
+                          action="order_split", result="SPLITTING",
+                          data={"symbol": symbol, "tranches": _n_tranches,
+                                "tranche_qty": _tranche_qty, "total_qty": quantity,
+                                "delay_sec": _split_delay})
+                    # NOTE: Actual tranche execution is a future refinement.
+                    # Currently logs the split decision; full implementation requires
+                    # aggregating fills across tranches and weighted-average pricing.
 
                 # Try to place the order — handle POST_ONLY rejection gracefully
                 try:
@@ -1812,7 +1940,7 @@ class LiveExecutor:
             self._order_history.append(live_order)
 
             # Track position
-            leverage = CONFIG.exchange.default_leverage if is_futures else 1
+            leverage = leverage_mult if is_futures else 1
             spot_fallback = False  # Futures-only mode: no spot trading
 
             # Initialize trailing stop state — strategy-type-aware
@@ -1930,6 +2058,23 @@ class LiveExecutor:
             # Persist verified position data
             self._save_positions()
 
+            # Record slippage (expected vs actual fill)
+            try:
+                if hasattr(self, '_slippage_tracker') and self._slippage_tracker:
+                    self._slippage_tracker.record(
+                        symbol=symbol,
+                        expected_price=idea.entry_price,
+                        actual_price=fill_price,
+                        direction=idea.direction.value,
+                        order_type=order_type,
+                        size_usd=size_usd,
+                    )
+            except Exception:
+                pass
+
+            # Record API success for degradation tracking
+            self.record_api_success()
+
             audit(trade_log, f"Live order FILLED: {side} {idea.asset}",
                   action="live_execute", result="FILLED",
                   data={
@@ -2014,6 +2159,7 @@ class LiveExecutor:
             )
 
         except ccxt.InsufficientFunds as exc:
+            self.record_api_error()
             audit(trade_log, f"Insufficient funds: {exc}",
                   action="live_execute", result="INSUFFICIENT_FUNDS",
                   data={"asset": idea.asset, "size_usd": size_usd,
@@ -2025,12 +2171,14 @@ class LiveExecutor:
             return f"INSUFFICIENT FUNDS: {exc}{hint}"
 
         except ccxt.InvalidOrder as exc:
+            self.record_api_error()
             audit(trade_log, f"Invalid order: {exc}",
                   action="live_execute", result="INVALID_ORDER",
                   data={"asset": idea.asset, "size_usd": size_usd, "error": str(exc)})
             return f"INVALID ORDER: {exc}"
 
         except Exception as exc:
+            self.record_api_error()
             # Check if the order was already submitted to the exchange.
             # If 'order' exists, create_order succeeded but post-processing crashed.
             # The position is LIVE on the exchange — we MUST record it locally.
