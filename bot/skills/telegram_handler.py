@@ -721,7 +721,8 @@ class TelegramHandler:
         return base + f"\n{time_note}" + positions_detail + context_block
 
     async def _llm_chat(self, question: str, user_id: str = "",
-                        user_name: str = "") -> str:
+                        user_name: str = "",
+                        is_admin: bool = False) -> str:
         """Send a free-text question to the LLM with multi-turn context.
 
         Uses CHAT tier routing with automatic fallback chain:
@@ -755,7 +756,7 @@ class TelegramHandler:
         configs_to_try = []
 
         # 1. Primary chat tier config
-        chat_cfg = resolve_tier_config(LLMTier.CHAT, active_cfg)
+        chat_cfg = resolve_tier_config(LLMTier.CHAT, active_cfg, is_admin=is_admin)
         if chat_cfg.is_configured():
             configs_to_try.append(("chat_tier", chat_cfg))
 
@@ -1091,7 +1092,8 @@ class TelegramHandler:
         await self._send(update, thinking)
 
         answer = await self._llm_chat(
-            _sanitize_chat_input(text), user_id=tg_id, user_name=user_name)
+            _sanitize_chat_input(text), user_id=tg_id, user_name=user_name,
+            is_admin=self._is_admin(update))
 
         # Store assistant response in conversation memory
         self.conversations.append(tg_id, "assistant", answer)
@@ -1122,10 +1124,19 @@ class TelegramHandler:
         return ""
 
     def _is_admin(self, update: Update) -> bool:
-        """Check if the user is an admin."""
+        """Check if the user is an admin (user-store role OR ADMIN_TELEGRAM_IDS)."""
         tg_id = self._get_tg_id(update)
+        # Primary: user store role
         user = self.users.get(tg_id)
-        return user is not None and user.get("role") == "admin"
+        if user is not None and user.get("role") == "admin":
+            return True
+        # Fallback: explicit ADMIN_TELEGRAM_IDS env var
+        admin_ids_raw = CONFIG.telegram.admin_ids
+        if admin_ids_raw:
+            admin_ids = {s.strip() for s in admin_ids_raw.split(",") if s.strip()}
+            if tg_id in admin_ids:
+                return True
+        return False
 
     def _check_auth(self, update: Update) -> bool:
         """Check if user is authorized (any role except pending)."""
@@ -3326,10 +3337,17 @@ class TelegramHandler:
             symbol = "BTC/USDT"
 
         ids_before = set(idea.id for idea in self.engine.pending_ideas)
+        admin = self._is_admin(update)
         await self._send(update, f"\u23f3 <i>Analyzing {html.escape(symbol)}...</i>")
 
-        result = await self.registry.get("analyze_asset").execute(
-            self.engine, symbol=symbol)
+        try:
+            result = await self.registry.get("analyze_asset").execute(
+                self.engine, symbol=symbol, is_admin=admin)
+        except Exception as exc:
+            system_log.error("analyze_asset failed for %s: %s", symbol, exc, exc_info=True)
+            await self._send(update,
+                f"\U0001f534 Analysis failed for <code>{html.escape(symbol)}</code>: {html.escape(str(exc)[:200])}")
+            return
 
         new_idea = None
         for idea in self.engine.pending_ideas:

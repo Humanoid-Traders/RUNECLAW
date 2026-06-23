@@ -217,61 +217,93 @@ DEFAULT_TIER_ROUTING: dict[LLMTier, dict] = {
 }
 
 
+# Admin tier routing — premium models for all tasks.
+# Used when the requesting user is in ADMIN_TELEGRAM_IDS.
+ADMIN_TIER_ROUTING: dict[LLMTier, dict] = {
+    LLMTier.SCAN: {
+        "provider": LLMProvider.ANTHROPIC,
+        "model": "claude-sonnet-4-6",
+        "reason": "Admin premium: full Sonnet reasoning for scan analysis",
+    },
+    LLMTier.THESIS: {
+        "provider": LLMProvider.ANTHROPIC,
+        "model": "claude-sonnet-4-6",
+        "reason": "Admin premium: Sonnet for trade thesis generation",
+    },
+    LLMTier.LEARNING: {
+        "provider": LLMProvider.ANTHROPIC,
+        "model": "claude-sonnet-4-6",
+        "reason": "Admin premium: Sonnet for deep reflection and learning",
+    },
+    LLMTier.CHAT: {
+        "provider": LLMProvider.ANTHROPIC,
+        "model": "claude-sonnet-4-6",
+        "reason": "Admin premium: Sonnet for user Q&A — best quality responses",
+    },
+}
+
+
 def resolve_tier_config(
     tier: LLMTier,
     primary_config: "LLMConfig",
+    is_admin: bool = False,
 ) -> "LLMConfig":
     """Resolve LLM config for a specific task tier.
 
     Priority order:
-      1. Env override: LLM_TIER_{SCAN|THESIS|LEARNING|CHAT}_PROVIDER + _KEY + _MODEL
-      2. If GEMINI_API_KEY is set and tier default wants Gemini → use Gemini
-      3. Fall back to primary_config (the global LLM_PROVIDER)
+      1. Admin routing: if is_admin, use ADMIN_TIER_ROUTING (premium models)
+      2. Env override: LLM_TIER_{SCAN|THESIS|LEARNING|CHAT}_PROVIDER + _KEY + _MODEL
+      3. Default tier routing (cheap models for non-admin)
+      4. Fall back to primary_config (the global LLM_PROVIDER)
 
-    This lets operators run a multi-tier setup (e.g. Groq for scans,
-    Gemini for thesis) while keeping backward compat with single-provider setups.
+    This lets operators run per-user quality tiers: admin gets Sonnet,
+    everyone else gets the cheapest route.
     """
+    # Admin override — use premium routing, skip env tier overrides
+    routing = ADMIN_TIER_ROUTING if is_admin else DEFAULT_TIER_ROUTING
+
     tier_upper = tier.value.upper()
 
-    # 1. Explicit tier env override
-    tier_provider_str = os.getenv(f"LLM_TIER_{tier_upper}_PROVIDER", "")
-    if tier_provider_str:
-        try:
-            tier_provider = LLMProvider(tier_provider_str.lower())
-        except ValueError:
-            tier_provider = None
+    # For non-admin: check explicit tier env override
+    if not is_admin:
+        tier_provider_str = os.getenv(f"LLM_TIER_{tier_upper}_PROVIDER", "")
+        if tier_provider_str:
+            try:
+                tier_provider = LLMProvider(tier_provider_str.lower())
+            except ValueError:
+                tier_provider = None
 
-        if tier_provider:
-            tier_key = os.getenv(f"LLM_TIER_{tier_upper}_KEY", "")
-            tier_model = os.getenv(f"LLM_TIER_{tier_upper}_MODEL", "")
+            if tier_provider:
+                tier_key = os.getenv(f"LLM_TIER_{tier_upper}_KEY", "")
+                tier_model = os.getenv(f"LLM_TIER_{tier_upper}_MODEL", "")
 
             # If no tier-specific key, try provider-specific env fallbacks
-            if not tier_key:
-                key_env_map = {
-                    LLMProvider.GEMINI: "GEMINI_API_KEY",
-                    LLMProvider.ANTHROPIC: "ANTHROPIC_API_KEY",
-                    LLMProvider.GROQ: "GROQ_API_KEY",
-                    LLMProvider.DEEPSEEK: "DEEPSEEK_API_KEY",
-                    LLMProvider.OPENAI: "OPENAI_API_KEY",
-                    LLMProvider.ALIBABA: "ALIBABA_API_KEY",
-                }
-                fallback_env = key_env_map.get(tier_provider, "")
-                tier_key = os.getenv(fallback_env, "") if fallback_env else ""
+                if not tier_key:
+                    key_env_map = {
+                        LLMProvider.GEMINI: "GEMINI_API_KEY",
+                        LLMProvider.ANTHROPIC: "ANTHROPIC_API_KEY",
+                        LLMProvider.GROQ: "GROQ_API_KEY",
+                        LLMProvider.DEEPSEEK: "DEEPSEEK_API_KEY",
+                        LLMProvider.OPENAI: "OPENAI_API_KEY",
+                        LLMProvider.ALIBABA: "ALIBABA_API_KEY",
+                    }
+                    fallback_env = key_env_map.get(tier_provider, "")
+                    tier_key = os.getenv(fallback_env, "") if fallback_env else ""
 
-            # Still no key? If the tier provider matches primary, use primary key
-            if not tier_key and tier_provider == primary_config.provider:
-                tier_key = primary_config.api_key
+                # Still no key? If the tier provider matches primary, use primary key
+                if not tier_key and tier_provider == primary_config.provider:
+                    tier_key = primary_config.api_key
 
-            catalog = PROVIDER_CATALOG.get(tier_provider, {})
-            return LLMConfig(
-                provider=tier_provider,
-                api_key=tier_key,
-                model=tier_model or catalog.get("default_model", ""),
-                base_url=catalog.get("base_url", ""),
-            )
+                catalog = PROVIDER_CATALOG.get(tier_provider, {})
+                return LLMConfig(
+                    provider=tier_provider,
+                    api_key=tier_key,
+                    model=tier_model or catalog.get("default_model", ""),
+                    base_url=catalog.get("base_url", ""),
+                )
 
-    # 2. Check if the default tier routing has a different provider with a key available
-    default_route = DEFAULT_TIER_ROUTING.get(tier, {})
+    # 2. Check if the selected routing has a different provider with a key available
+    default_route = routing.get(tier, {})
     default_provider = default_route.get("provider")
     if default_provider and default_provider != primary_config.provider:
         # Try to find a key for the default tier provider

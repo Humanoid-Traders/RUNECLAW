@@ -209,6 +209,12 @@ class Analyzer:
         self._scan_client = self._build_client_for_config(self._scan_config)
         self._thesis_client = self._build_client_for_config(self._thesis_config)
 
+        # Admin tier routing: premium models for admin users
+        self._admin_scan_config = resolve_tier_config(LLMTier.SCAN, self._llm_config, is_admin=True) if self._llm_config else None
+        self._admin_thesis_config = resolve_tier_config(LLMTier.THESIS, self._llm_config, is_admin=True) if self._llm_config else None
+        self._admin_scan_client = self._build_client_for_config(self._admin_scan_config)
+        self._admin_thesis_client = self._build_client_for_config(self._admin_thesis_config)
+
         # When a non-OpenAI provider is used, use the configured model
         # for both tiers instead of OpenAI-specific model names
         resolved_model = self._llm_config.model if self._llm_config else ""
@@ -307,7 +313,7 @@ class Analyzer:
             self.THESIS_MODEL = self._thesis_config.model
 
     async def analyze(self, signal: MarketSignal, candles: list[list[float]], order_flow=None,
-                       candles_4h=None, candles_1d=None) -> Optional[TradeIdea]:
+                       candles_4h=None, candles_1d=None, is_admin: bool = False) -> Optional[TradeIdea]:
         """
         Full analysis pipeline:
         1. Compute technical indicators from OHLCV candles.
@@ -2042,22 +2048,38 @@ class Analyzer:
         prompt = self._build_prompt(signal, indicators, order_flow)
 
         # Tier-based model routing:
-        #   Tier 2 → scan model (cheap/fast — e.g. Groq)
-        #   Tier 3 → thesis model (strong reasoning — e.g. Gemini 3.1 Pro)
+        #   Tier 2 → scan model (cheap/fast — e.g. Qwen for non-admin, Sonnet for admin)
+        #   Tier 3 → thesis model (strong reasoning — e.g. Sonnet for all)
         use_full_model = tier == 3
-        # Multi-tier routing: use tier-specific client/config if available
-        if use_full_model and self._thesis_client is not None:
-            active_client = self._thesis_client
-            active_cfg = self._thesis_config
-            model = self._thesis_config.model
-        elif not use_full_model and self._scan_client is not None:
-            active_client = self._scan_client
-            active_cfg = self._scan_config
-            model = self._scan_config.model
+        # Multi-tier routing: select client based on admin status
+        if is_admin:
+            # Admin: use premium clients for all tiers
+            if use_full_model and self._admin_thesis_client is not None:
+                active_client = self._admin_thesis_client
+                active_cfg = self._admin_thesis_config
+                model = self._admin_thesis_config.model
+            elif not use_full_model and self._admin_scan_client is not None:
+                active_client = self._admin_scan_client
+                active_cfg = self._admin_scan_config
+                model = self._admin_scan_config.model
+            else:
+                active_client = self._llm
+                active_cfg = self._resolve_llm_config()
+                model = self.THESIS_MODEL if use_full_model else self.SCAN_MODEL
         else:
-            active_client = self._llm
-            active_cfg = self._resolve_llm_config()
-            model = self.THESIS_MODEL if use_full_model else self.SCAN_MODEL
+            # Non-admin: use cheap tier-specific clients
+            if use_full_model and self._thesis_client is not None:
+                active_client = self._thesis_client
+                active_cfg = self._thesis_config
+                model = self._thesis_config.model
+            elif not use_full_model and self._scan_client is not None:
+                active_client = self._scan_client
+                active_cfg = self._scan_config
+                model = self._scan_config.model
+            else:
+                active_client = self._llm
+                active_cfg = self._resolve_llm_config()
+                model = self.THESIS_MODEL if use_full_model else self.SCAN_MODEL
         category = "thesis" if use_full_model else "analyze"
         max_tokens = CONFIG.llm.max_tokens if use_full_model else 512
         tier_label = TieredPipeline.tier_label(tier)

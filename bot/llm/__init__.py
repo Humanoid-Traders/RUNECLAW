@@ -1,6 +1,7 @@
 """RUNECLAW LLM subsystem — multi-provider BYOK + multi-tier routing."""
 
 from bot.llm.provider import (
+    ADMIN_TIER_ROUTING,
     BYOKManager,
     BYOK,
     DEFAULT_TIER_ROUTING,
@@ -14,6 +15,7 @@ from bot.llm.provider import (
 )
 
 __all__ = [
+    "ADMIN_TIER_ROUTING",
     "BYOKManager",
     "BYOK",
     "DEFAULT_TIER_ROUTING",

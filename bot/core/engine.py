@@ -882,7 +882,7 @@ class RuneClawEngine:
 
         return idea
 
-    async def _analyze_signal(self, signal: MarketSignal, *, timeframe: str = "1h") -> Optional[TradeIdea]:
+    async def _analyze_signal(self, signal: MarketSignal, *, timeframe: str = "1h", is_admin: bool = False) -> Optional[TradeIdea]:
         """Run full analysis pipeline on a single signal.
 
         Args:
@@ -922,7 +922,7 @@ class RuneClawEngine:
             )
             return None
 
-        idea = await self.analyzer.analyze(signal, ohlcv, order_flow=of_signal)
+        idea = await self.analyzer.analyze(signal, ohlcv, order_flow=of_signal, is_admin=is_admin)
         if idea is None:
             audit(scan_log, f"Analysis produced no idea for {signal.symbol}",
                   action="analyze_signal", result="NO_IDEA",

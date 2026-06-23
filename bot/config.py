@@ -338,6 +338,7 @@ class TelegramConfig:
     """Telegram bot settings."""
     bot_token: str = _env("TELEGRAM_BOT_TOKEN")
     chat_id: str = _env("TELEGRAM_CHAT_ID")
+    admin_ids: str = _env("ADMIN_TELEGRAM_IDS", "")  # Comma-separated admin user IDs — get premium LLM routing
     rate_limit_per_minute: int = 20
     # Opt-in: attach a rendered price/EMA/RSI chart to analysis cards.
     # Off by default — requires the optional `charts` extra (mplfinance).
