@@ -181,6 +181,10 @@ class RuneClawEngine:
         # Adaptive limit distance learner
         self.adaptive_limits = AdaptiveLimitDistance()
 
+        # Hold-time analytics tracker
+        from bot.core.smart_exits import HoldTimeAnalytics
+        self.hold_analytics = HoldTimeAnalytics()
+
         # Smart scan scheduling
         self._last_scan_time: float = 0.0
         self._current_scan_interval: float = CONFIG.scan_interval_seconds
@@ -1843,6 +1847,45 @@ class RuneClawEngine:
             self.portfolio.mark_to_market(prices)
             # Also update all per-user portfolios
             self.user_portfolios.mark_to_market_all(prices)
+
+            # ── Time-based exit: close dead trades with no R progress ──
+            try:
+                from bot.core.smart_exits import should_time_exit
+                for pos in list(positions):
+                    # Calculate candles held (1H candles)
+                    hold_secs = (datetime.now(UTC) - pos.opened_at).total_seconds()
+                    candles_held = int(hold_secs / 3600)  # 1H candles
+
+                    # Calculate current R-multiple
+                    current_price = prices.get(pos.asset)
+                    if current_price and pos.entry_price > 0:
+                        if pos.direction.value == "LONG":
+                            risk = pos.entry_price - pos.stop_loss
+                            pnl_raw = current_price - pos.entry_price
+                        else:
+                            risk = pos.stop_loss - pos.entry_price
+                            pnl_raw = pos.entry_price - current_price
+                        r_multiple = pnl_raw / risk if risk > 0 else 0.0
+
+                        should_exit, reason = should_time_exit(
+                            strategy_type=pos.strategy_type,
+                            candles_held=candles_held,
+                            current_r_multiple=r_multiple,
+                        )
+
+                        if should_exit:
+                            audit(trade_log, f"Time exit triggered: {pos.asset} — {reason}",
+                                  action="time_exit", result="CLOSED",
+                                  data={"symbol": pos.asset, "candles": candles_held,
+                                        "r_multiple": round(r_multiple, 2),
+                                        "strategy_type": pos.strategy_type})
+                            # Close the position at current price
+                            self.portfolio.close_position(
+                                pos.trade_id, current_price
+                            )
+            except Exception as exc:
+                system_log.debug("Time-based exit check failed: %s", exc)
+
             closed = self.portfolio.check_stops(prices)
             # Check stops for per-user portfolios too
             user_closed = self.user_portfolios.check_stops_all(prices)
@@ -1891,6 +1934,23 @@ class RuneClawEngine:
                     hour_utc = _dt.now(UTC).hour
                     is_win = c.pnl > 0
                     self.time_of_day.record(c.asset, hour_utc, is_win)
+                except Exception:
+                    pass
+                # Record hold-time analytics
+                try:
+                    hold_h = ((c.closed_at - c.opened_at).total_seconds() / 3600) if getattr(c, 'closed_at', None) and getattr(c, 'opened_at', None) else 0
+                    if hold_h > 0 and c.entry_price > 0:
+                        if c.direction.value == "LONG":
+                            risk = c.entry_price - c.stop_loss
+                        else:
+                            risk = c.stop_loss - c.entry_price
+                        final_r = c.pnl / (risk * c.quantity) if risk > 0 and c.quantity > 0 else 0
+                        self.hold_analytics.record(
+                            strategy_type=c.strategy_type,
+                            holding_hours=hold_h,
+                            r_multiple=final_r,
+                            is_win=c.pnl > 0,
+                        )
                 except Exception:
                     pass
         except Exception as exc:

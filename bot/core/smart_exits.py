@@ -56,6 +56,10 @@ def should_time_exit(
     """
     cfg = config or TimeExitConfig()
 
+    # No-touch period: don't evaluate exits too early
+    if is_in_no_touch_period(strategy_type, candles_held):
+        return False, ""
+
     thresholds = {
         "scalp": cfg.scalp_candles,
         "intraday": cfg.intraday_candles,
@@ -73,6 +77,226 @@ def should_time_exit(
         )
 
     return False, ""
+
+
+# Minimum hold periods: don't evaluate exits until enough candles pass
+_MIN_HOLD_CANDLES = {
+    "scalp": 1,       # at least 1 candle before evaluating
+    "intraday": 2,    # 2 candles (2H on 1H chart)
+    "swing": 3,       # 3 candles before touching
+    "position": 6,    # 6 candles minimum
+}
+
+
+def is_in_no_touch_period(
+    strategy_type: str,
+    candles_held: int,
+) -> bool:
+    """Check if position is still in the no-touch period.
+
+    Positions should not be interfered with during the first 1-2 candles
+    of the setup timeframe. Acting on first-candle noise leads to
+    premature exits and whipsaw losses.
+
+    Returns True if the position should NOT be touched yet.
+    """
+    min_candles = _MIN_HOLD_CANDLES.get(strategy_type, 2)
+    return candles_held < min_candles
+
+
+def should_volume_decay_exit(
+    signal_source: str,
+    candles_held: int,
+    current_r_multiple: float,
+    entry_volume_ratio: float = 1.0,
+) -> tuple[bool, str]:
+    """Check if a volume-spike-driven trade should exit due to signal decay.
+
+    Volume breakout signals have a short shelf life. If price hasn't
+    followed through within 2 candles, the signal is dead — exit regardless
+    of the preset hold window.
+
+    Args:
+        signal_source: signal type identifier
+        candles_held: candles since entry
+        current_r_multiple: current unrealized R
+        entry_volume_ratio: volume spike magnitude at entry
+
+    Returns:
+        (should_exit, reason)
+    """
+    # Only applies to volume-spike-driven entries
+    volume_signals = {"volume_spike", "vol_breakout", "capitulation_buy",
+                      "capitulation_sell", "vol_expansion"}
+
+    if signal_source not in volume_signals:
+        return False, ""
+
+    # Volume signals decay after 2 candles with no follow-through
+    if candles_held >= 2 and current_r_multiple < 0.3:
+        return True, (
+            f"Volume signal decay: {signal_source} had {candles_held} candles "
+            f"with only {current_r_multiple:.2f}R progress (need 0.3R by candle 2)"
+        )
+
+    # By candle 4 with sub-1R, the setup is stale
+    if candles_held >= 4 and current_r_multiple < 1.0:
+        return True, (
+            f"Volume signal stale: {candles_held} candles, "
+            f"R={current_r_multiple:.2f} (expected 1R+ by candle 4)"
+        )
+
+    return False, ""
+
+
+def funding_cost_warning(
+    holding_hours: float,
+    funding_rate_8h: float,
+    leverage: float,
+    current_r_multiple: float,
+    strategy_type: str,
+) -> tuple[bool, str]:
+    """Check if accumulated funding cost is eating into position profit.
+
+    For swing and position trades, funding drag is a real cost.
+    If cumulative funding > 50% of current unrealized PnL, warn/exit.
+
+    Args:
+        holding_hours: hours since entry
+        funding_rate_8h: current 8H funding rate (e.g., 0.01 = 1%)
+        leverage: position leverage
+        current_r_multiple: current unrealized R
+        strategy_type: trade type
+
+    Returns:
+        (should_warn, message) — True if funding is concerning
+    """
+    if strategy_type in ("scalp", "intraday"):
+        return False, ""  # too short for funding to matter
+
+    if funding_rate_8h == 0 or holding_hours < 8:
+        return False, ""
+
+    # Funding periods elapsed
+    periods = holding_hours / 8.0
+    # Cumulative funding cost as % of notional
+    cumulative_funding_pct = abs(funding_rate_8h) * periods * leverage * 100
+
+    # If position is profitable, check if funding is eating too much
+    if current_r_multiple > 0:
+        # Rough: 1R ~ 1-3% depending on SL. Use 2% as midpoint.
+        approx_pnl_pct = current_r_multiple * 2.0
+        funding_ratio = cumulative_funding_pct / approx_pnl_pct if approx_pnl_pct > 0 else 999
+
+        if funding_ratio > 0.5:
+            return True, (
+                f"Funding drag warning: {cumulative_funding_pct:.2f}% cost "
+                f"vs {approx_pnl_pct:.1f}% profit ({funding_ratio:.0%} of gains). "
+                f"Rate: {funding_rate_8h:.4%}/8h, {periods:.1f} periods, {leverage}x leverage"
+            )
+    elif current_r_multiple <= 0 and cumulative_funding_pct > 0.5:
+        # Underwater AND paying funding — strong exit signal
+        return True, (
+            f"Funding + underwater: {cumulative_funding_pct:.2f}% funding cost "
+            f"on losing position (R={current_r_multiple:.2f}). "
+            f"Rate: {funding_rate_8h:.4%}/8h, {periods:.1f} periods"
+        )
+
+    return False, ""
+
+
+class HoldTimeAnalytics:
+    """Track hold duration vs outcome for signal quality diagnostics.
+
+    Collects hold-time distribution for wins vs losses to identify:
+    - Whether momentum signals are exited too early (leaving R on table)
+    - Whether swing signals are held too long (giving back gains)
+    - Optimal hold time per strategy type
+    """
+
+    def __init__(self) -> None:
+        # strategy_type -> list of (holding_hours, r_multiple, is_win)
+        self._records: dict[str, list[tuple[float, float, bool]]] = defaultdict(list)
+        self._max_records = 500
+
+    def record(self, strategy_type: str, holding_hours: float,
+               r_multiple: float, is_win: bool) -> None:
+        """Record a closed trade's hold time and outcome."""
+        self._records[strategy_type].append((holding_hours, r_multiple, is_win))
+        if len(self._records[strategy_type]) > self._max_records:
+            self._records[strategy_type] = self._records[strategy_type][-self._max_records:]
+
+    def get_analysis(self, strategy_type: str) -> Optional[dict]:
+        """Analyze hold-time distribution for a strategy type.
+
+        Returns dict with:
+        - avg_hold_win: average hold time for winners
+        - avg_hold_loss: average hold time for losers
+        - avg_r_win: average R on winners
+        - avg_r_loss: average R on losers
+        - optimal_hold_range: suggested hold time range
+        - recommendation: text advice
+        """
+        records = self._records.get(strategy_type, [])
+        if len(records) < 10:
+            return None
+
+        wins = [(h, r) for h, r, w in records if w]
+        losses = [(h, r) for h, r, w in records if not w]
+
+        if not wins or not losses:
+            return None
+
+        avg_hold_win = sum(h for h, r in wins) / len(wins)
+        avg_hold_loss = sum(h for h, r in losses) / len(losses)
+        avg_r_win = sum(r for h, r in wins) / len(wins)
+        avg_r_loss = sum(r for h, r in losses) / len(losses)
+
+        # Optimal range: 80th percentile of winners
+        sorted_win_hours = sorted(h for h, r in wins)
+        p20 = sorted_win_hours[max(0, int(len(sorted_win_hours) * 0.2))]
+        p80 = sorted_win_hours[min(len(sorted_win_hours) - 1, int(len(sorted_win_hours) * 0.8))]
+
+        # Recommendation
+        rec = ""
+        if avg_hold_loss > avg_hold_win * 1.5:
+            rec = "Losers held too long — tighten time exits"
+        elif avg_hold_win < avg_hold_loss * 0.5:
+            rec = "Winners cut too early — consider wider trailing"
+        elif avg_r_win < 1.5:
+            rec = "Average win is small — hold winners longer or widen TP"
+        else:
+            rec = "Hold-time distribution looks healthy"
+
+        return {
+            "total_trades": len(records),
+            "win_rate": round(len(wins) / len(records) * 100, 1),
+            "avg_hold_win_hours": round(avg_hold_win, 1),
+            "avg_hold_loss_hours": round(avg_hold_loss, 1),
+            "avg_r_win": round(avg_r_win, 2),
+            "avg_r_loss": round(avg_r_loss, 2),
+            "optimal_hold_range_hours": (round(p20, 1), round(p80, 1)),
+            "recommendation": rec,
+        }
+
+    def summary(self) -> str:
+        """Human-readable summary across all strategy types."""
+        lines = ["HOLD-TIME ANALYTICS", ""]
+        for st in ["scalp", "intraday", "swing", "position"]:
+            analysis = self.get_analysis(st)
+            if analysis is None:
+                lines.append(f"{st.upper()}: insufficient data")
+                continue
+            lines.append(
+                f"{st.upper()} ({analysis['total_trades']} trades, {analysis['win_rate']}% WR)\n"
+                f"  Win hold: {analysis['avg_hold_win_hours']}h avg | "
+                f"Loss hold: {analysis['avg_hold_loss_hours']}h avg\n"
+                f"  Win R: {analysis['avg_r_win']} | Loss R: {analysis['avg_r_loss']}\n"
+                f"  Optimal: {analysis['optimal_hold_range_hours'][0]}-"
+                f"{analysis['optimal_hold_range_hours'][1]}h\n"
+                f"  >> {analysis['recommendation']}"
+            )
+        return "\n".join(lines)
 
 
 # ═══════════════════════════════════════════════════════════════════

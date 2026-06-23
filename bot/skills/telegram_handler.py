@@ -260,6 +260,7 @@ class TelegramHandler:
             ("sweep", self._cmd_sweep),
             ("zones", self._cmd_zones),
             ("squeeze", self._cmd_squeeze),
+            ("holdtime", self._cmd_holdtime),
         ]:
             app.add_handler(CommandHandler(cmd, handler))
         app.add_handler(CallbackQueryHandler(self._handle_callback))
@@ -2437,6 +2438,14 @@ class TelegramHandler:
             await update.message.reply_text("\n".join(lines))
         except Exception as exc:
             await update.message.reply_text(f"Squeeze error: {exc}")
+
+    async def _cmd_holdtime(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Show hold-time analytics by strategy type."""
+        try:
+            text = self.engine.hold_analytics.summary()
+            await update.message.reply_text(text)
+        except Exception as exc:
+            await update.message.reply_text(f"Hold-time analysis error: {exc}")
 
     async def _cmd_golive(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """/golive — enable live trading with double confirmation."""
