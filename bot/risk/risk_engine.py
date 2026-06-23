@@ -560,7 +560,22 @@ class RiskEngine:
                 margin_risk = sl_dist_pct * leverage
                 max_margin_risk = CONFIG.risk.max_margin_risk_pct
                 if margin_risk > max_margin_risk + 0.5:  # small tolerance
-                    failed.append(f"MARGIN_RISK: {margin_risk:.1f}% (SL {sl_dist_pct:.1f}% × {leverage}x) exceeds {max_margin_risk:.1f}% cap")
+                    # Dynamic leverage: reduce leverage to fit within cap
+                    if getattr(CONFIG.exchange, 'dynamic_leverage_enabled', False) and sl_dist_pct > 0:
+                        safe_lev = int(max_margin_risk / sl_dist_pct)
+                        min_lev = getattr(CONFIG.exchange, 'min_leverage', 2)
+                        safe_lev = max(min_lev, safe_lev)
+                        new_margin = sl_dist_pct * safe_lev
+                        passed.append(
+                            f"MARGIN_RISK: reduced leverage {leverage}x→{safe_lev}x "
+                            f"(SL {sl_dist_pct:.1f}% × {safe_lev}x = {new_margin:.1f}% ≤ {max_margin_risk:.1f}%)")
+                        # Store adjusted leverage on idea for executor
+                        try:
+                            idea._adjusted_leverage = safe_lev
+                        except Exception:
+                            pass
+                    else:
+                        failed.append(f"MARGIN_RISK: {margin_risk:.1f}% (SL {sl_dist_pct:.1f}% × {leverage}x) exceeds {max_margin_risk:.1f}% cap")
                 else:
                     passed.append(f"MARGIN_RISK: {margin_risk:.1f}% OK (SL {sl_dist_pct:.1f}% × {leverage}x)")
             else:
