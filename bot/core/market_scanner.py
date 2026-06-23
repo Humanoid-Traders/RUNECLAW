@@ -27,6 +27,7 @@ from bot.config import (
     CONFIG, SOLANA_ECOSYSTEM_SYMBOLS, US_STOCK_SYMBOLS,
     METAL_PERPETUALS, COMMODITY_PERPETUALS, PRE_IPO_PERPETUALS,
     ETF_PERPETUALS, TRADFI_PERPETUALS, STOCK_PERPETUALS,
+    PRIORITY_SYMBOLS,
 )
 from bot.utils.logger import audit, system_log
 from bot.utils.models import MarketSignal
@@ -39,6 +40,7 @@ _PRE_IPO_SET = set(PRE_IPO_PERPETUALS)
 _ETF_SET = set(ETF_PERPETUALS)
 _TRADFI_SET = set(TRADFI_PERPETUALS)
 _STOCK_SET = set(US_STOCK_SYMBOLS)
+_PRIORITY_SET = set(PRIORITY_SYMBOLS)
 _STOCK_PERP_SET = set(STOCK_PERPETUALS)
 
 
@@ -226,43 +228,51 @@ class MarketScanner:
 
     def _allocate_slots(self, signals: list[MarketSignal]) -> list[MarketSignal]:
         """
-        Smart slot allocation: ensure each category gets representation,
-        then fill remaining slots with top movers overall.
+        Smart slot allocation with priority symbol guarantee.
 
-        Allocation:
-          - Each category with signals gets at least 2 slots (or all if fewer)
-          - Remaining slots filled by strongest movers across all categories
+        Allocation order:
+          1. Priority symbols (from PRIORITY_SYMBOLS) always included first
+          2. Each remaining category gets at least 2 slots
+          3. Remaining slots filled by strongest movers overall
         """
         max_total = CONFIG.top_movers_count
 
-        # Group by category
+        result: list[MarketSignal] = []
+        used: set[str] = set()
+
+        # 1. Priority symbols first — always included regardless of momentum
+        for s in signals:
+            if s.symbol in _PRIORITY_SET and s.symbol not in used:
+                result.append(s)
+                used.add(s.symbol)
+
+        # 2. Category minimums for non-priority symbols
         by_cat: dict[str, list[MarketSignal]] = {}
         for s in signals:
             by_cat.setdefault(s.asset_category, []).append(s)
 
-        # Guarantee slots per category
-        guaranteed: list[MarketSignal] = []
-        used: set[str] = set()  # symbol dedup
         min_per_cat = 2
-
         for cat in sorted(by_cat, key=lambda c: CATEGORY_META.get(c, ("", 99))[1]):
             cat_signals = by_cat[cat]
-            for s in cat_signals[:min_per_cat]:
+            count = 0
+            for s in cat_signals:
                 if s.symbol not in used:
-                    guaranteed.append(s)
+                    result.append(s)
                     used.add(s.symbol)
-
-        # Fill remaining from overall top movers
-        remaining = max_total - len(guaranteed)
-        if remaining > 0:
-            for s in signals:
-                if s.symbol not in used:
-                    guaranteed.append(s)
-                    used.add(s.symbol)
-                    if len(guaranteed) >= max_total:
+                    count += 1
+                    if count >= min_per_cat:
                         break
 
-        return guaranteed[:max_total]
+        # 3. Fill remaining from overall top movers
+        if len(result) < max_total:
+            for s in signals:
+                if s.symbol not in used:
+                    result.append(s)
+                    used.add(s.symbol)
+                    if len(result) >= max_total:
+                        break
+
+        return result[:max_total]
 
     # ── Spot-only scan ───────────────────────────────────────────
 

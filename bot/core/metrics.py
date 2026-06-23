@@ -11,6 +11,8 @@ from typing import Optional
 
 import numpy as np
 
+from collections import defaultdict
+
 from bot.utils.models import MetricsSnapshot, TradeExecution
 
 
@@ -113,6 +115,13 @@ class MetricsEngine:
 
         equity_high = max(self._equity_curve) if self._equity_curve else 0.0
 
+        # Per-symbol and per-strategy summary stats
+        per_symbol_stats = self._compute_group_stats(closed, key_fn=lambda t: t.asset)
+        per_strategy_stats = self._compute_group_stats(closed, key_fn=lambda t: t.strategy_type)
+
+        # Signal attribution
+        attribution = self.compute_attribution(trades)
+
         return MetricsSnapshot(
             total_trades=total,
             winning_trades=len(wins),
@@ -138,8 +147,59 @@ class MetricsEngine:
             risk_checks_total=self._risk_checks_total,
             risk_checks_rejected=self._risk_checks_rejected,
             circuit_breaker_trips=self._circuit_breaker_trips,
+            per_symbol_stats=per_symbol_stats,
+            per_strategy_stats=per_strategy_stats,
+            signals_attribution=attribution,
             timestamp=datetime.now(UTC),
         )
+
+    def compute_attribution(self, trades: list[TradeExecution]) -> dict[str, dict]:
+        """Compute signal attribution — which indicators contribute to wins vs losses.
+
+        For each trade, looks at signals_used field and tallies wins/losses per signal.
+        Returns accuracy stats per signal for auto-weighting.
+        """
+        attribution: dict[str, dict] = {}
+
+        closed = [t for t in trades if t.closed_at is not None]
+        if not closed:
+            return attribution
+
+        for trade in closed:
+            # Get signals_used from the trade's metadata
+            signals = getattr(trade, '_signals_used', None)
+            if signals is None:
+                # Try to get from trade idea linkage
+                continue
+
+            is_win = trade.pnl > 0
+            for signal_name in signals:
+                if signal_name not in attribution:
+                    attribution[signal_name] = {
+                        "total": 0, "wins": 0, "losses": 0,
+                        "total_pnl": 0.0, "win_pnl": 0.0, "loss_pnl": 0.0,
+                    }
+                attr = attribution[signal_name]
+                attr["total"] += 1
+                attr["total_pnl"] += trade.pnl
+                if is_win:
+                    attr["wins"] += 1
+                    attr["win_pnl"] += trade.pnl
+                else:
+                    attr["losses"] += 1
+                    attr["loss_pnl"] += trade.pnl
+
+        # Compute derived stats
+        for name, attr in attribution.items():
+            if attr["total"] > 0:
+                attr["win_rate"] = round(attr["wins"] / attr["total"], 3)
+                attr["avg_pnl"] = round(attr["total_pnl"] / attr["total"], 2)
+                attr["edge_score"] = round(
+                    attr["win_rate"] * abs(attr.get("avg_pnl", 0)) if attr["win_rate"] > 0.5
+                    else -((1 - attr["win_rate"]) * abs(attr.get("avg_pnl", 0))), 2
+                )
+
+        return attribution
 
     # DEPRECATED: equity-curve based — use _compute_sharpe_from_trades instead
     def _compute_sharpe(self, risk_free_rate: float = 0.0) -> float:
@@ -283,3 +343,120 @@ class MetricsEngine:
         peak = np.maximum.accumulate(curve)
         dd = np.where(peak > 0, (peak - curve) / peak * 100, 0.0)
         return float(np.max(dd))
+
+    # -- Per-group stats helper ---------------------------------------------------
+
+    @staticmethod
+    def _build_group_dict(group_trades: list[TradeExecution]) -> dict:
+        """Compute stats dict for a list of closed trades belonging to one group."""
+        total = len(group_trades)
+        wins = [t for t in group_trades if t.pnl > 0]
+        losses = [t for t in group_trades if t.pnl < 0]
+        win_pnls = [t.pnl for t in wins]
+        loss_pnls = [t.pnl for t in losses]
+        gross_profit = sum(win_pnls) if win_pnls else 0.0
+        gross_loss = abs(sum(loss_pnls)) if loss_pnls else 0.0
+        if gross_loss > 0:
+            profit_factor = round(gross_profit / gross_loss, 2)
+        elif gross_profit > 0:
+            profit_factor = 999.99
+        else:
+            profit_factor = 0.0
+        all_pnls = [t.pnl for t in group_trades]
+        return {
+            "trades": total,
+            "wins": len(wins),
+            "losses": len(losses),
+            "win_rate": round(len(wins) / total, 4) if total > 0 else 0.0,
+            "avg_pnl": round(float(np.mean(all_pnls)), 2) if all_pnls else 0.0,
+            "total_pnl": round(sum(all_pnls), 2),
+            "profit_factor": profit_factor,
+        }
+
+    def _compute_group_stats(
+        self,
+        closed: list[TradeExecution],
+        key_fn,
+    ) -> dict[str, dict]:
+        """Group closed trades by *key_fn* and return per-group stats."""
+        buckets: dict[str, list[TradeExecution]] = defaultdict(list)
+        for t in closed:
+            buckets[key_fn(t)].append(t)
+        return {k: self._build_group_dict(v) for k, v in buckets.items()}
+
+    # -- Public breakdown / skip methods ------------------------------------------
+
+    def compute_breakdown(self, trades: list[TradeExecution]) -> dict:
+        """Return a full performance breakdown by symbol, strategy, and direction.
+
+        Parameters
+        ----------
+        trades : list[TradeExecution]
+            Full trade list (open + closed). Only closed trades are analysed.
+
+        Returns
+        -------
+        dict with keys:
+            by_symbol, by_strategy, by_direction,
+            best_symbols, worst_symbols, losing_combos
+        """
+        closed = [t for t in trades if t.closed_at is not None]
+
+        by_symbol = self._compute_group_stats(closed, key_fn=lambda t: t.asset)
+        by_strategy = self._compute_group_stats(closed, key_fn=lambda t: t.strategy_type)
+        by_direction = self._compute_group_stats(
+            closed, key_fn=lambda t: t.direction.value if hasattr(t.direction, "value") else str(t.direction),
+        )
+
+        # Best / worst symbols (min 3 trades)
+        qualified = {s: v for s, v in by_symbol.items() if v["trades"] >= 3}
+        sorted_by_wr = sorted(qualified.items(), key=lambda kv: kv[1]["win_rate"], reverse=True)
+        best_symbols = [{"symbol": s, **v} for s, v in sorted_by_wr[:5]]
+        worst_symbols = [{"symbol": s, **v} for s, v in sorted_by_wr[-5:]] if sorted_by_wr else []
+
+        # Losing combos: (symbol, strategy) with win_rate < 30% and >= 3 trades
+        combo_buckets: dict[tuple[str, str], list[TradeExecution]] = defaultdict(list)
+        for t in closed:
+            combo_buckets[(t.asset, t.strategy_type)].append(t)
+
+        losing_combos: list[dict] = []
+        for (sym, strat), combo_trades in combo_buckets.items():
+            stats = self._build_group_dict(combo_trades)
+            if stats["trades"] >= 3 and stats["win_rate"] < 0.30:
+                losing_combos.append({
+                    "symbol": sym,
+                    "strategy": strat,
+                    **stats,
+                    "flag": "AUTO_SKIP",
+                })
+
+        return {
+            "by_symbol": by_symbol,
+            "by_strategy": by_strategy,
+            "by_direction": by_direction,
+            "best_symbols": best_symbols,
+            "worst_symbols": worst_symbols,
+            "losing_combos": losing_combos,
+        }
+
+    def should_skip_symbol(
+        self,
+        symbol: str,
+        strategy_type: str,
+        trades: list[TradeExecution],
+        min_trades: int = 5,
+        min_win_rate: float = 0.25,
+    ) -> bool:
+        """Return True if *symbol* + *strategy_type* has been consistently losing.
+
+        A combo is considered losing when there are at least *min_trades* closed
+        trades and the win rate is strictly below *min_win_rate*.
+        """
+        closed = [
+            t for t in trades
+            if t.closed_at is not None and t.asset == symbol and t.strategy_type == strategy_type
+        ]
+        if len(closed) < min_trades:
+            return False
+        wins = sum(1 for t in closed if t.pnl > 0)
+        return (wins / len(closed)) < min_win_rate

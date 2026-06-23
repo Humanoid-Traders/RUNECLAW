@@ -176,7 +176,10 @@ _STRINGS: dict[str, dict[str, str]] = {
             "/walkforward \u2014 walk-forward test\n"
             "/optimize \u2014 parameter optimization\n"
             "/watch <i>BTC 65000</i> \u2014 price alert\n"
-            "/learn \u2014 trading lessons"
+            "/learn \u2014 trading lessons\n"
+            "/montecarlo \u2014 Monte Carlo risk simulation\n"
+            "/attribution \u2014 signal performance attribution\n"
+            "/equitycurve \u2014 equity curve health status"
         ),
         "zh": (
             "\U0001f6e0 <b>工具</b>\n"
@@ -184,7 +187,10 @@ _STRINGS: dict[str, dict[str, str]] = {
             "/walkforward \u2014 前推測試\n"
             "/optimize \u2014 參數優化\n"
             "/watch <i>BTC 65000</i> \u2014 價格提醒\n"
-            "/learn \u2014 交易課程"
+            "/learn \u2014 交易課程\n"
+            "/montecarlo \u2014 蒙地卡羅風險模擬\n"
+            "/attribution \u2014 訊號績效歸因\n"
+            "/equitycurve \u2014 權益曲線健康狀態"
         ),
     },
     "help_controls": {

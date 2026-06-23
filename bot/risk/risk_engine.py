@@ -175,6 +175,15 @@ class RiskEngine:
         self._combined_saver: Optional[Callable] = None
         # F-01: reload persisted safety state so restarts don't clear the breaker
         self._load_state()
+        # Feature: Equity curve circuit breaker
+        self._equity_history: list[float] = []
+        self._equity_curve_halved: bool = False
+        self._equity_curve_paused: bool = False
+        # Feature: Drawdown recovery mode
+        self._in_drawdown_recovery: bool = False
+        self._recovery_start_dd: float = 0.0
+        # Feature: Rolling return correlation (V2)
+        self._price_history: dict[str, list[float]] = {}
 
     @property
     def circuit_breaker_active(self) -> bool:
@@ -231,6 +240,86 @@ class RiskEngine:
         # C2-09 FIX: pnl == 0.0 (breakeven) — no change to streak.
         # A breakeven trade is neither a win nor a loss and should not
         # decrement the loss streak counter.
+
+    def record_equity_snapshot(self, equity: float) -> None:
+        """Record equity for equity curve circuit breaker analysis."""
+        self._equity_history.append(equity)
+        # Cap history
+        max_len = CONFIG.risk.equity_curve_ma_period * 3
+        if len(self._equity_history) > max_len:
+            self._equity_history = self._equity_history[-max_len:]
+
+        # Check equity curve health
+        ma_period = CONFIG.risk.equity_curve_ma_period
+        if len(self._equity_history) >= ma_period:
+            ma = sum(self._equity_history[-ma_period:]) / ma_period
+            std = (sum((x - ma) ** 2 for x in self._equity_history[-ma_period:]) / ma_period) ** 0.5
+
+            pause_threshold = ma - std * CONFIG.risk.equity_curve_pause_stddev
+
+            if equity < pause_threshold:
+                if not self._equity_curve_paused:
+                    self._equity_curve_paused = True
+                    audit(risk_log,
+                          f"Equity curve circuit breaker: PAUSED (equity ${equity:.0f} < {pause_threshold:.0f})",
+                          action="equity_curve_cb", result="PAUSED")
+            elif equity < ma:
+                if not self._equity_curve_halved:
+                    self._equity_curve_halved = True
+                    audit(risk_log,
+                          f"Equity curve: HALVED sizing (equity ${equity:.0f} < MA ${ma:.0f})",
+                          action="equity_curve_cb", result="HALVED")
+                # Reset pause if we're above pause threshold
+                if self._equity_curve_paused:
+                    self._equity_curve_paused = False
+                    audit(risk_log, "Equity curve: un-paused (above pause threshold)",
+                          action="equity_curve_cb", result="UNPAUSED")
+            else:
+                # Above MA = healthy
+                if self._equity_curve_halved or self._equity_curve_paused:
+                    self._equity_curve_halved = False
+                    self._equity_curve_paused = False
+                    audit(risk_log, "Equity curve: restored to full sizing",
+                          action="equity_curve_cb", result="RESTORED")
+
+    def check_drawdown_recovery(self, current_dd_pct: float) -> None:
+        """Check if we should enter/exit drawdown recovery mode."""
+        max_dd = CONFIG.risk.max_drawdown_pct
+        recovery_threshold = max_dd * 0.7  # enter recovery at 70% of max DD
+        exit_threshold = max_dd * 0.3       # exit when DD drops to 30% of max
+
+        if not self._in_drawdown_recovery and current_dd_pct >= recovery_threshold:
+            self._in_drawdown_recovery = True
+            self._recovery_start_dd = current_dd_pct
+            audit(risk_log,
+                  f"Drawdown recovery mode ACTIVATED (DD={current_dd_pct:.1f}%)",
+                  action="dd_recovery", result="ACTIVATED")
+        elif self._in_drawdown_recovery and current_dd_pct <= exit_threshold:
+            self._in_drawdown_recovery = False
+            audit(risk_log,
+                  f"Drawdown recovery mode DEACTIVATED (DD={current_dd_pct:.1f}%)",
+                  action="dd_recovery", result="DEACTIVATED")
+
+    @property
+    def equity_curve_size_multiplier(self) -> float:
+        """Get current equity curve sizing multiplier."""
+        if self._equity_curve_paused:
+            return 0.0  # no trading
+        if self._equity_curve_halved:
+            return 0.5
+        return 1.0
+
+    @property
+    def in_drawdown_recovery(self) -> bool:
+        return self._in_drawdown_recovery
+
+    def update_price_history(self, symbol: str, price: float) -> None:
+        """Record a price point for rolling correlation calculation."""
+        if symbol not in self._price_history:
+            self._price_history[symbol] = []
+        self._price_history[symbol].append(price)
+        if len(self._price_history[symbol]) > 100:
+            self._price_history[symbol] = self._price_history[symbol][-100:]
 
     def evaluate(self, idea: TradeIdea, atr: Optional[float] = None, live_equity: Optional[float] = None, max_position_usd: Optional[float] = None, live_open_count: Optional[int] = None) -> RiskCheck:
         """
@@ -327,6 +416,31 @@ class RiskEngine:
         regime_mult = regime_params.get("position_size_mult", 1.0)
         if regime_mult != 1.0:
             position_usd *= regime_mult
+
+        # Session-aware position sizing: reduce size in low-liquidity sessions.
+        # Only reductions (mult < 1.0) applied pre-cap; never increases.
+        try:
+            from bot.core.session_aware import get_current_session
+            _session = get_current_session()
+            _session_mult = _session.size_multiplier
+            if _session_mult < 1.0:
+                position_usd *= _session_mult
+        except Exception:
+            pass  # fail-open: session check must never block risk evaluation
+
+        # Equity curve circuit breaker sizing
+        _eq_mult = self.equity_curve_size_multiplier
+        if _eq_mult < 1.0:
+            if _eq_mult <= 0:
+                failed.append("EQUITY_CURVE: trading paused — equity below 2σ of MA")
+            else:
+                position_usd *= _eq_mult
+
+        # Drawdown recovery mode: require higher confidence, reduce size
+        if self._in_drawdown_recovery:
+            if idea.confidence < CONFIG.risk.drawdown_recovery_conf_min:
+                failed.append(f"DD_RECOVERY: confidence {idea.confidence:.2f} < {CONFIG.risk.drawdown_recovery_conf_min} (recovery mode)")
+            position_usd *= CONFIG.risk.drawdown_recovery_size_mult
 
         # C2-11: Apply macro reduction pre-cap
         if _macro_size_mult < 1.0:
@@ -1151,6 +1265,31 @@ class RiskEngine:
                 f"CORRELATION: already {group_count} positions in group '{new_group}' "
                 f"(max {max_per_group} per group)"
             )
+
+        # V2: Rolling return correlation check
+        # If we have price history, compute actual pairwise correlation
+        # with existing open positions
+        try:
+            if hasattr(self, '_price_history') and idea.asset in self._price_history:
+                for tid, pos in self._portfolio._positions.items():
+                    if pos.asset == idea.asset:
+                        continue
+                    if pos.asset in self._price_history:
+                        prices_new = self._price_history[idea.asset]
+                        prices_existing = self._price_history[pos.asset]
+                        min_len = min(len(prices_new), len(prices_existing), 30)
+                        if min_len >= 10:
+                            import numpy as np
+                            r1 = np.diff(prices_new[-min_len:]) / prices_new[-min_len:-1]
+                            r2 = np.diff(prices_existing[-min_len:]) / prices_existing[-min_len:-1]
+                            corr = float(np.corrcoef(r1, r2)[0, 1])
+                            if abs(corr) > CONFIG.risk.max_correlation:
+                                # Same direction + high correlation = reject
+                                if (idea.direction.value == pos.direction.value and corr > CONFIG.risk.max_correlation):
+                                    return f"CORRELATION_V2: {idea.asset} corr={corr:.2f} with {pos.asset} (>{CONFIG.risk.max_correlation})"
+        except Exception:
+            pass  # fail-open for v2 correlation
+
         return None
 
     # -- Persistence (F-01) --

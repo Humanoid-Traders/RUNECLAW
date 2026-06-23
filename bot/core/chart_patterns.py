@@ -10,8 +10,15 @@ Detects classic chart patterns from OHLCV data using swing point analysis:
   - Rectangle (Range)
   - Cup and Handle
   - Support/Resistance Flip
-  - Basic Elliott Wave impulse counting
-  - Elliott ABC Corrective Waves (Zigzag / Flat)
+  - Elliott Wave Complete Suite:
+    · 5-Wave Impulse (bullish/bearish) with Fibonacci validation
+    · Extended Wave 3 detection (most common extension)
+    · Truncated 5th (wave 5 fails to exceed wave 3)
+    · ABC Corrective: Zigzag, Flat, Expanded Flat, Running Flat
+    · Leading Diagonal (wave 1/A position — new trend starting)
+    · Ending Diagonal (wave 5/C position — trend exhaustion)
+    · WXY Double Combination (complex correction)
+    · WXYXZ Triple Combination (extended complex correction)
   - Wyckoff Accumulation / Distribution phases
   - Harmonic Patterns (Gartley, Butterfly, Bat, Crab)
   - Fibonacci Extensions
@@ -500,30 +507,36 @@ def detect_sr_flip(
     return None
 
 
-# ── Elliott Wave (Basic) ─────────────────────────────────────────
+# ── Elliott Wave (Complete) ─────────────────────────────────────────
+
+def _fib_ratio(a: float, b: float) -> float:
+    """Return b as a ratio of a (both positive magnitudes)."""
+    return b / a if a > 0 else 0.0
+
 
 def detect_elliott_impulse(
     highs: np.ndarray, lows: np.ndarray, closes: np.ndarray,
     lookback: int = 5,
 ) -> Optional[PatternResult]:
-    """Basic Elliott Wave 5-wave impulse detection.
+    """Elliott Wave 5-wave impulse detection with Fibonacci validation.
 
     Rules:
       - Wave 2 cannot retrace beyond the start of wave 1
       - Wave 3 cannot be the shortest wave
       - Wave 4 cannot overlap wave 1 territory
+      - Wave 3 is typically 1.618x or 2.618x wave 1
+      - Wave 5 is typically 1.0x or 0.618x wave 1
 
-    This is a simplified heuristic — true Elliott counting is subjective.
+    Also detects:
+      - Extended wave 3 (most common extension)
+      - Truncated 5th (wave 5 fails to exceed wave 3)
     """
     swings = _find_swings(highs, lows, lookback)
     sh = swings["swing_highs"]
     sl = swings["swing_lows"]
 
-    # Need alternating swing points to form 5 waves
-    # Bullish impulse: low → high → low → high → low → high (5 up waves)
+    # ── Bullish impulse ──
     if len(sh) >= 3 and len(sl) >= 2:
-        # Try bullish: start from a swing low, alternate up-down
-        # Wave structure: SL0 → SH0 → SL1 → SH1 → SL2 → SH2
         if (sl[0][0] < sh[0][0] < sl[1][0] < sh[1][0]):
             w1_start = sl[0][1]  # wave 1 bottom
             w1_end = sh[0][1]    # wave 1 top
@@ -545,38 +558,99 @@ def detect_elliott_impulse(
             w1_len = w1_end - w1_start
             w3_len = w3_end - w2_end
 
-            # Rule 2: Wave 3 is not the shortest
             if w4_end is not None and w5_end is not None:
                 w5_len = w5_end - w4_end
+
+                # Rule 2: Wave 3 is not the shortest
                 if w3_len < w1_len and w3_len < w5_len:
                     return None
                 # Rule 3: Wave 4 does not overlap wave 1 territory
                 if w4_end < w1_end:
                     return None
 
+                # Fibonacci analysis
+                w3_fib = _fib_ratio(w1_len, w3_len)  # ideal: 1.618 or 2.618
+                w5_fib = _fib_ratio(w1_len, w5_len)  # ideal: 1.0 or 0.618
+
+                # Confidence scaling based on Fibonacci adherence
                 conf = 0.65
+                fib_detail = ""
+
+                # Extended wave 3 (>1.5x wave 1)
+                is_extended_w3 = w3_fib >= 1.5
+                if is_extended_w3:
+                    conf += 0.05  # extended w3 is the most reliable pattern
+                    fib_detail = f"W3 ext {w3_fib:.2f}x"
+
+                # Check for golden ratio adherence
+                for ideal in (1.618, 2.618):
+                    if abs(w3_fib - ideal) < 0.15:
+                        conf += 0.03
+                        fib_detail = f"W3={w3_fib:.3f}x (near {ideal})"
+                        break
+
+                # Truncated 5th: wave 5 fails to exceed wave 3
+                truncated = w5_end < w3_end
+                if truncated:
+                    conf -= 0.05
+                    fib_detail += " | W5 truncated"
+
+                conf = min(0.85, max(0.50, conf))
                 current_wave = "5" if float(closes[-1]) > w4_end else "4"
+
+                name = "Elliott 5-Wave Impulse"
+                if is_extended_w3:
+                    name = "Elliott Extended W3 Impulse"
+                if truncated:
+                    name = "Elliott Truncated 5th"
+
                 return {
-                    "name": "Elliott 5-Wave Impulse",
+                    "name": name,
                     "signal": "bullish",
-                    "confidence": conf,
-                    "description": f"Bullish impulse: currently in wave {current_wave}",
-                    "key_levels": {"w1_start": w1_start, "w3_top": w3_end,
-                                   "w4_low": w4_end, "w5_top": w5_end},
+                    "confidence": round(conf, 2),
+                    "description": (
+                        f"Bullish impulse: wave {current_wave}"
+                        + (f" | {fib_detail}" if fib_detail else "")
+                        + f" | W2 retrace {_fib_ratio(w1_len, w1_len - (w2_end - w1_start)):.0%}"
+                    ),
+                    "key_levels": {
+                        "w1_start": w1_start, "w1_top": w1_end,
+                        "w2_low": w2_end, "w3_top": w3_end,
+                        "w4_low": w4_end, "w5_top": w5_end,
+                        "w3_fib": round(w3_fib, 3),
+                        "w5_fib": round(w5_fib, 3),
+                        "truncated": truncated,
+                        "extended_w3": is_extended_w3,
+                    },
                 }
             else:
                 # Partial count — waves 1-3 visible
                 if w3_len > w1_len:  # wave 3 extending — classic
+                    w3_fib = _fib_ratio(w1_len, w3_len)
+                    # W2 retracement depth
+                    w2_retrace = _fib_ratio(w1_len, w1_end - w2_end)
+                    fib_info = f"W3={w3_fib:.2f}x W1"
+                    # Better confidence if W2 retraces to 0.382 or 0.618
+                    conf = 0.50
+                    for ideal in (0.382, 0.5, 0.618):
+                        if abs(w2_retrace - ideal) < 0.08:
+                            conf += 0.05
+                            fib_info += f", W2={w2_retrace:.3f} (near {ideal})"
+                            break
                     return {
                         "name": "Elliott Impulse (Partial)",
                         "signal": "bullish",
-                        "confidence": 0.50,
-                        "description": "Bullish impulse forming: waves 1-3 visible, wave 3 extending",
-                        "key_levels": {"w1_start": w1_start, "w1_top": w1_end,
-                                       "w2_low": w2_end, "w3_top": w3_end},
+                        "confidence": round(min(0.65, conf), 2),
+                        "description": f"Bullish impulse forming: waves 1-3 visible | {fib_info}",
+                        "key_levels": {
+                            "w1_start": w1_start, "w1_top": w1_end,
+                            "w2_low": w2_end, "w3_top": w3_end,
+                            "w3_fib": round(w3_fib, 3),
+                            "w2_retrace": round(w2_retrace, 3),
+                        },
                     }
 
-    # Bearish impulse: mirror logic
+    # ── Bearish impulse ──
     if len(sl) >= 3 and len(sh) >= 2:
         if (sh[0][0] < sl[0][0] < sh[1][0] < sl[1][0]):
             w1_start = sh[0][1]
@@ -584,26 +658,79 @@ def detect_elliott_impulse(
             w2_end = sh[1][1]
             w3_end = sl[1][1]
 
+            # Rule 1: Wave 2 does not retrace above wave 1 start
             if w2_end > w1_start:
                 return None
 
             w1_len = w1_start - w1_end
             w3_len = w2_end - w3_end
 
+            # Full 5-wave bearish
+            if len(sh) >= 3 and len(sl) >= 3 and sh[2][0] > sl[1][0]:
+                w4_end = sh[2][1]
+                w5_end = sl[2][1]
+                w5_len = w4_end - w5_end
+
+                # Rule 2: Wave 3 is not the shortest
+                if w3_len < w1_len and w3_len < w5_len:
+                    return None
+                # Rule 3: Wave 4 does not overlap wave 1
+                if w4_end > w1_end:
+                    return None
+
+                w3_fib = _fib_ratio(w1_len, w3_len)
+                w5_fib = _fib_ratio(w1_len, w5_len)
+                conf = 0.65
+                is_extended_w3 = w3_fib >= 1.5
+                if is_extended_w3:
+                    conf += 0.05
+                truncated = w5_end > w3_end
+                if truncated:
+                    conf -= 0.05
+                conf = min(0.85, max(0.50, conf))
+
+                current_wave = "5" if float(closes[-1]) < w4_end else "4"
+                name = "Elliott 5-Wave Impulse"
+                if is_extended_w3:
+                    name = "Elliott Extended W3 Impulse"
+                if truncated:
+                    name = "Elliott Truncated 5th"
+
+                return {
+                    "name": name,
+                    "signal": "bearish",
+                    "confidence": round(conf, 2),
+                    "description": f"Bearish impulse: wave {current_wave} | W3={w3_fib:.2f}x",
+                    "key_levels": {
+                        "w1_start": w1_start, "w1_low": w1_end,
+                        "w2_high": w2_end, "w3_low": w3_end,
+                        "w4_high": w4_end, "w5_low": w5_end,
+                        "w3_fib": round(w3_fib, 3),
+                        "w5_fib": round(w5_fib, 3),
+                        "truncated": truncated,
+                        "extended_w3": is_extended_w3,
+                    },
+                }
+
+            # Partial bearish (waves 1-3)
             if w3_len > w1_len:
+                w3_fib = _fib_ratio(w1_len, w3_len)
                 return {
                     "name": "Elliott Impulse (Bearish)",
                     "signal": "bearish",
                     "confidence": 0.50,
-                    "description": "Bearish impulse forming: waves 1-3 visible",
-                    "key_levels": {"w1_start": w1_start, "w1_low": w1_end,
-                                   "w2_high": w2_end, "w3_low": w3_end},
+                    "description": f"Bearish impulse forming: waves 1-3 visible | W3={w3_fib:.2f}x",
+                    "key_levels": {
+                        "w1_start": w1_start, "w1_low": w1_end,
+                        "w2_high": w2_end, "w3_low": w3_end,
+                        "w3_fib": round(w3_fib, 3),
+                    },
                 }
 
     return None
 
 
-# ── Elliott Wave Corrective (ABC) ──────────────────────────────
+# ── Elliott Wave Corrective (ABC + Complex) ──────────────────────
 
 def detect_elliott_corrective(
     highs: np.ndarray, lows: np.ndarray, closes: np.ndarray,
@@ -614,33 +741,49 @@ def detect_elliott_corrective(
     Correction types detected:
       - Zigzag (5-3-5): sharp A, B retraces 50-78.6% of A, C extends 100-161.8% of A
       - Flat (3-3-5): B retraces ~100% of A, C extends slightly past A
+      - Expanded Flat: B exceeds impulse start, C extends 1.27-1.618x A
+      - Running Flat: B exceeds impulse start, C doesn't reach A's end
 
     Wave B must not exceed the start of the prior impulse.
-    Confidence: 0.55 for partial (A-B visible), 0.65 for complete ABC.
+    Confidence: 0.55 for partial (A-B visible), 0.65-0.75 for complete ABC.
     """
     swings = _find_swings(highs, lows, lookback)
     sh = swings["swing_highs"]
     sl = swings["swing_lows"]
 
     def _classify_abc(a_wave: float, b_retrace: float,
-                      c_ext: float, c_complete: bool) -> Optional[str]:
-        """Return correction type or None."""
-        # Zigzag: B retraces 50-78.6%, C extends 100-161.8% of A
-        if 0.45 <= b_retrace <= 0.83:
-            if c_complete and 0.90 <= c_ext <= 1.72:
-                return "Zigzag"
+                      c_ext: float, c_complete: bool,
+                      b_exceeds_origin: bool = False) -> Optional[tuple[str, float]]:
+        """Return (correction_type, confidence_bonus) or None."""
+        # Expanded Flat: B exceeds origin, C is 1.27-1.618x A
+        if b_exceeds_origin and b_retrace > 1.0:
+            if c_complete and 1.20 <= c_ext <= 1.72:
+                return ("Expanded Flat", 0.05)
             if not c_complete:
-                return "Zigzag (partial)"
-        # Flat: B retraces ~100% of A, C extends slightly past A
+                return ("Expanded Flat (partial)", 0.0)
+
+        # Running Flat: B exceeds origin but C doesn't reach A end
+        if b_exceeds_origin and b_retrace > 1.0:
+            if c_complete and c_ext < 0.90:
+                return ("Running Flat", -0.05)  # lower confidence — tricky pattern
+
+        # Zigzag: B retraces 38.2-78.6%, C extends 100-161.8% of A
+        if 0.35 <= b_retrace <= 0.83:
+            if c_complete and 0.90 <= c_ext <= 1.72:
+                return ("Zigzag", 0.0)
+            if not c_complete:
+                return ("Zigzag (partial)", 0.0)
+
+        # Regular Flat: B retraces ~85-100% of A, C extends slightly past A
         if 0.85 <= b_retrace <= 1.10:
             if c_complete and 0.90 <= c_ext <= 1.30:
-                return "Flat"
+                return ("Flat", 0.0)
             if not c_complete:
-                return "Flat (partial)"
+                return ("Flat (partial)", 0.0)
+
         return None
 
     # ── Bearish correction (after bullish impulse) ──
-    # Impulse top -> swing low (A end) -> swing high (B end) -> swing low (C end)
     if len(sh) >= 2 and len(sl) >= 2:
         impulse_top = sh[-2]
         a_end = sl[-2]
@@ -648,40 +791,48 @@ def detect_elliott_corrective(
         c_end = sl[-1]
 
         if (impulse_top[0] < a_end[0] < b_end[0]
-                and impulse_top[1] > a_end[1]
-                and b_end[1] < impulse_top[1]):
+                and impulse_top[1] > a_end[1]):
             a_start = impulse_top[1]
             a_wave = a_start - a_end[1]
             if a_wave > 0:
                 b_retrace = (b_end[1] - a_end[1]) / a_wave
+                b_exceeds = b_end[1] > impulse_top[1]
 
                 c_complete = (c_end[0] > b_end[0] and c_end[1] < b_end[1])
                 c_ext = (b_end[1] - c_end[1]) / a_wave if c_complete else 0
 
-                pattern_type = _classify_abc(a_wave, b_retrace, c_ext, c_complete)
-                if pattern_type is not None:
-                    conf = 0.65 if c_complete else 0.55
+                result = _classify_abc(a_wave, b_retrace, c_ext, c_complete, b_exceeds)
+                if result is not None:
+                    pattern_type, conf_bonus = result
+                    conf = (0.65 if c_complete else 0.55) + conf_bonus
+
+                    # Fibonacci detail
+                    fib_detail = f"B={b_retrace:.0%}"
+                    if c_complete:
+                        fib_detail += f", C={c_ext:.0%}"
+
                     levels: dict = {
                         "a_start": a_start,
                         "a_end": a_end[1],
                         "b_end": b_end[1],
+                        "b_retrace_fib": round(b_retrace, 3),
                     }
                     if c_complete:
                         levels["c_end"] = c_end[1]
+                        levels["c_extension_fib"] = round(c_ext, 3)
+
                     return {
                         "name": f"Elliott ABC {pattern_type}",
                         "signal": "bearish",
-                        "confidence": conf,
+                        "confidence": round(min(0.80, max(0.45, conf)), 2),
                         "description": (
                             f"ABC correction ({pattern_type}) after impulse top"
-                            f" ${a_start:,.2f}: B retrace {b_retrace:.0%}"
-                            + (f", C extension {c_ext:.0%}" if c_complete else "")
+                            f" ${a_start:,.2f} | {fib_detail}"
                         ),
                         "key_levels": levels,
                     }
 
     # ── Bullish correction (after bearish impulse) ──
-    # Impulse bottom -> swing high (A end) -> swing low (B end) -> swing high (C end)
     if len(sl) >= 2 and len(sh) >= 2:
         impulse_bottom = sl[-2]
         a_end_h = sh[-2]
@@ -689,37 +840,306 @@ def detect_elliott_corrective(
         c_end_h = sh[-1]
 
         if (impulse_bottom[0] < a_end_h[0] < b_end_l[0]
-                and impulse_bottom[1] < a_end_h[1]
-                and b_end_l[1] > impulse_bottom[1]):
+                and impulse_bottom[1] < a_end_h[1]):
             a_start = impulse_bottom[1]
             a_wave = a_end_h[1] - a_start
             if a_wave > 0:
                 b_retrace = (a_end_h[1] - b_end_l[1]) / a_wave
+                b_exceeds = b_end_l[1] < impulse_bottom[1]
 
                 c_complete = (c_end_h[0] > b_end_l[0] and c_end_h[1] > b_end_l[1])
                 c_ext = (c_end_h[1] - b_end_l[1]) / a_wave if c_complete else 0
 
-                pattern_type = _classify_abc(a_wave, b_retrace, c_ext, c_complete)
-                if pattern_type is not None:
-                    conf = 0.65 if c_complete else 0.55
+                result = _classify_abc(a_wave, b_retrace, c_ext, c_complete, b_exceeds)
+                if result is not None:
+                    pattern_type, conf_bonus = result
+                    conf = (0.65 if c_complete else 0.55) + conf_bonus
+
+                    fib_detail = f"B={b_retrace:.0%}"
+                    if c_complete:
+                        fib_detail += f", C={c_ext:.0%}"
+
                     levels = {
                         "a_start": a_start,
                         "a_end": a_end_h[1],
                         "b_end": b_end_l[1],
+                        "b_retrace_fib": round(b_retrace, 3),
                     }
                     if c_complete:
                         levels["c_end"] = c_end_h[1]
+                        levels["c_extension_fib"] = round(c_ext, 3)
+
                     return {
                         "name": f"Elliott ABC {pattern_type}",
                         "signal": "bullish",
-                        "confidence": conf,
+                        "confidence": round(min(0.80, max(0.45, conf)), 2),
                         "description": (
                             f"ABC correction ({pattern_type}) after impulse bottom"
-                            f" ${a_start:,.2f}: B retrace {b_retrace:.0%}"
-                            + (f", C extension {c_ext:.0%}" if c_complete else "")
+                            f" ${a_start:,.2f} | {fib_detail}"
                         ),
                         "key_levels": levels,
                     }
+
+    return None
+
+
+# ── Elliott Wave Diagonal ──────────────────────────────────────────
+
+def detect_elliott_diagonal(
+    highs: np.ndarray, lows: np.ndarray, closes: np.ndarray,
+    lookback: int = 5,
+) -> Optional[PatternResult]:
+    """Detect leading and ending diagonal patterns.
+
+    Leading diagonal: appears in wave 1 or wave A position.
+      - 5 waves with converging trendlines
+      - Wave 4 can overlap wave 1 (unlike impulse)
+
+    Ending diagonal: appears in wave 5 or wave C position.
+      - 5 waves with converging trendlines
+      - All sub-waves are 3-wave structures
+      - Signals exhaustion of the prior trend
+
+    Both types: waves get progressively shorter and trendlines converge.
+    """
+    swings = _find_swings(highs, lows, lookback)
+    sh = swings["swing_highs"]
+    sl = swings["swing_lows"]
+
+    # Need at least 3 highs and 3 lows for a 5-wave structure
+    if len(sh) < 3 or len(sl) < 3:
+        return None
+
+    # ── Bullish diagonal (rising wedge-like within Elliott context) ──
+    # Structure: SL0 → SH0 → SL1 → SH1 → SL2 → SH2 with converging lines
+    if (sl[0][0] < sh[0][0] < sl[1][0] < sh[1][0] < sl[2][0]):
+        # Check if highs and lows are both rising (overall uptrend)
+        highs_rising = sh[0][1] < sh[1][1]
+        lows_rising = sl[0][1] < sl[1][1] < sl[2][1]
+
+        if highs_rising and lows_rising:
+            # Check converging trendlines (waves getting shorter)
+            w1 = sh[0][1] - sl[0][1]
+            w3 = sh[1][1] - sl[1][1]
+
+            if len(sh) >= 3 and sh[2][0] > sl[2][0]:
+                w5 = sh[2][1] - sl[2][1]
+                waves_shortening = w3 < w1 and w5 < w3
+
+                if waves_shortening:
+                    # Ending diagonal: exhaustion signal (bearish reversal coming)
+                    # Wave 4 overlaps wave 1 territory (allowed in diagonals)
+                    w4_overlaps_w1 = sl[2][1] < sh[0][1]
+
+                    conf = 0.60
+                    if w4_overlaps_w1:
+                        conf += 0.05  # confirms diagonal structure
+
+                    # Calculate convergence angle
+                    upper_slope = (sh[1][1] - sh[0][1]) / max(sh[1][0] - sh[0][0], 1)
+                    lower_slope = (sl[1][1] - sl[0][1]) / max(sl[1][0] - sl[0][0], 1)
+                    convergence = upper_slope > 0 and lower_slope > 0 and lower_slope > upper_slope * 0.5
+
+                    if convergence:
+                        conf += 0.03
+
+                    return {
+                        "name": "Elliott Ending Diagonal",
+                        "signal": "bearish",  # ending diagonal = reversal
+                        "confidence": round(min(0.75, conf), 2),
+                        "description": (
+                            f"Ending diagonal (wave 5 exhaustion): waves shortening, "
+                            f"converging trendlines → bearish reversal expected"
+                        ),
+                        "key_levels": {
+                            "w1_start": sl[0][1], "w1_top": sh[0][1],
+                            "w3_top": sh[1][1], "w5_top": sh[2][1],
+                            "convergence_point": round(
+                                sh[2][1] + (sh[2][1] - sh[1][1]) * 0.5, 2),
+                        },
+                    }
+
+            elif w3 < w1:
+                # Partial diagonal — only 3 waves visible but already shortening
+                return {
+                    "name": "Elliott Diagonal (Partial)",
+                    "signal": "bearish",
+                    "confidence": 0.45,
+                    "description": "Possible ending diagonal forming: W3 shorter than W1",
+                    "key_levels": {
+                        "w1_start": sl[0][1], "w1_top": sh[0][1],
+                        "w3_top": sh[1][1],
+                    },
+                }
+
+    # ── Bearish diagonal (falling wedge-like within Elliott context) ──
+    if (sh[0][0] < sl[0][0] < sh[1][0] < sl[1][0] < sh[2][0]):
+        highs_falling = sh[0][1] > sh[1][1] > sh[2][1]
+        lows_falling = sl[0][1] > sl[1][1]
+
+        if highs_falling and lows_falling:
+            w1 = sh[0][1] - sl[0][1]
+            w3 = sh[1][1] - sl[1][1]
+
+            if len(sl) >= 3 and sl[2][0] > sh[2][0]:
+                w5 = sh[2][1] - sl[2][1]
+                waves_shortening = w3 < w1 and w5 < w3
+
+                if waves_shortening:
+                    conf = 0.60
+                    w4_overlaps_w1 = sh[2][1] > sl[0][1]
+                    if w4_overlaps_w1:
+                        conf += 0.05
+
+                    return {
+                        "name": "Elliott Ending Diagonal",
+                        "signal": "bullish",  # bearish ending diagonal = bullish reversal
+                        "confidence": round(min(0.75, conf), 2),
+                        "description": (
+                            f"Ending diagonal (wave 5 exhaustion): waves shortening, "
+                            f"converging trendlines → bullish reversal expected"
+                        ),
+                        "key_levels": {
+                            "w1_start": sh[0][1], "w1_low": sl[0][1],
+                            "w3_low": sl[1][1],
+                            "w5_low": sl[2][1] if len(sl) >= 3 else None,
+                        },
+                    }
+
+    # ── Leading diagonal (wave 1 position) ──
+    # Similar structure but appears at the START of a new trend
+    # Detected by: 5 waves with overlap + converging, but preceded by
+    # a move in the opposite direction (prior trend reversal)
+    if len(closes) >= 30:
+        # Check if price was falling before the current structure
+        pre_trend = closes[0] - closes[min(10, len(closes) - 1)]
+        if pre_trend > 0 and len(sl) >= 2 and len(sh) >= 2:
+            # Was falling, now we see a rising 5-wave structure with overlap
+            if sl[0][1] < sh[0][1] and sl[1][1] > sl[0][1]:
+                w1 = sh[0][1] - sl[0][1]
+                w3 = sh[1][1] - sl[1][1] if len(sh) >= 2 else 0
+                if w3 > 0 and w3 < w1:
+                    # Wave 4 overlaps wave 1
+                    if len(sl) >= 3 and sl[2][1] < sh[0][1]:
+                        return {
+                            "name": "Elliott Leading Diagonal",
+                            "signal": "bullish",
+                            "confidence": 0.55,
+                            "description": (
+                                "Leading diagonal (wave 1): overlap allowed, "
+                                "waves converging → new bullish trend starting"
+                            ),
+                            "key_levels": {
+                                "w1_start": sl[0][1], "w1_top": sh[0][1],
+                                "w3_top": sh[1][1],
+                            },
+                        }
+
+    return None
+
+
+# ── Elliott Wave WXY (Complex Correction) ──────────────────────────
+
+def detect_elliott_wxy(
+    highs: np.ndarray, lows: np.ndarray, closes: np.ndarray,
+    lookback: int = 5,
+) -> Optional[PatternResult]:
+    """Detect WXY double-combination corrective pattern.
+
+    Structure: W (first correction) - X (connecting wave) - Y (second correction)
+    Each of W and Y is typically an ABC or flat.
+    X is a connecting wave that retraces a portion of W.
+
+    This forms when a simple ABC correction is insufficient.
+    Appears as an extended sideways consolidation.
+    """
+    swings = _find_swings(highs, lows, lookback)
+    sh = swings["swing_highs"]
+    sl = swings["swing_lows"]
+
+    # WXY needs at least 5 swing points: W-abc + X + Y-abc
+    # Simplified detection: look for 2 ABC-like structures connected by X
+    if len(sh) < 3 or len(sl) < 3:
+        return None
+
+    # ── Bearish WXY (after bullish move, price consolidating/dropping) ──
+    if len(sh) >= 3 and len(sl) >= 3:
+        # W: first down move (sh[0] → sl[0])
+        # X: recovery (sl[0] → sh[1])
+        # Y: second down move (sh[1] → sl[1]) that extends past W
+        if (sh[0][0] < sl[0][0] < sh[1][0] < sl[1][0]):
+            w_drop = sh[0][1] - sl[0][1]
+            x_recovery = sh[1][1] - sl[0][1]
+            y_drop = sh[1][1] - sl[1][1]
+
+            if w_drop > 0 and y_drop > 0:
+                x_retrace = x_recovery / w_drop if w_drop > 0 else 0
+
+                # X typically retraces 38.2-78.6% of W
+                if 0.30 <= x_retrace <= 0.85:
+                    # Y should be roughly similar magnitude to W
+                    y_ratio = _fib_ratio(w_drop, y_drop)
+                    if 0.618 <= y_ratio <= 1.618:
+                        # Check if there's a third move (WXYXZ triple combo)
+                        has_z = (len(sh) >= 4 and len(sl) >= 4
+                                 and sh[2][0] > sl[1][0])
+
+                        conf = 0.55
+                        if abs(y_ratio - 1.0) < 0.15:
+                            conf += 0.05  # Y ≈ W in size = classic WXY
+                        if has_z:
+                            conf += 0.03
+
+                        name = "Elliott WXYXZ Triple" if has_z else "Elliott WXY Double"
+                        return {
+                            "name": name,
+                            "signal": "bearish",
+                            "confidence": round(min(0.70, conf), 2),
+                            "description": (
+                                f"Complex correction: W={w_drop:.2f}, "
+                                f"X retrace {x_retrace:.0%}, Y={y_ratio:.2f}x W"
+                                + (" + Z forming" if has_z else "")
+                            ),
+                            "key_levels": {
+                                "w_start": sh[0][1], "w_end": sl[0][1],
+                                "x_end": sh[1][1], "y_end": sl[1][1],
+                                "x_retrace_fib": round(x_retrace, 3),
+                                "y_ratio": round(y_ratio, 3),
+                            },
+                        }
+
+    # ── Bullish WXY (after bearish move, price consolidating/rising) ──
+    if len(sl) >= 3 and len(sh) >= 3:
+        if (sl[0][0] < sh[0][0] < sl[1][0] < sh[1][0]):
+            w_rise = sh[0][1] - sl[0][1]
+            x_retrace_drop = sh[0][1] - sl[1][1]
+            y_rise = sh[1][1] - sl[1][1]
+
+            if w_rise > 0 and y_rise > 0:
+                x_retrace = x_retrace_drop / w_rise if w_rise > 0 else 0
+
+                if 0.30 <= x_retrace <= 0.85:
+                    y_ratio = _fib_ratio(w_rise, y_rise)
+                    if 0.618 <= y_ratio <= 1.618:
+                        conf = 0.55
+                        if abs(y_ratio - 1.0) < 0.15:
+                            conf += 0.05
+
+                        return {
+                            "name": "Elliott WXY Double",
+                            "signal": "bullish",
+                            "confidence": round(min(0.70, conf), 2),
+                            "description": (
+                                f"Complex correction: W={w_rise:.2f}, "
+                                f"X retrace {x_retrace:.0%}, Y={y_ratio:.2f}x W"
+                            ),
+                            "key_levels": {
+                                "w_start": sl[0][1], "w_end": sh[0][1],
+                                "x_end": sl[1][1], "y_end": sh[1][1],
+                                "x_retrace_fib": round(x_retrace, 3),
+                                "y_ratio": round(y_ratio, 3),
+                            },
+                        }
 
     return None
 
@@ -1167,6 +1587,8 @@ def scan_all_chart_patterns(
         detect_sr_flip,
         detect_elliott_impulse,
         detect_elliott_corrective,
+        detect_elliott_diagonal,
+        detect_elliott_wxy,
         detect_liquidity_sweep,
         detect_wyckoff_phases,
         detect_harmonic_pattern,

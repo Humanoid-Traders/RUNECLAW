@@ -392,10 +392,14 @@ class TestAnalyzerIndicators:
         assert result["adx"] < 30
 
     def test_regime_detection(self):
-        assert Analyzer._detect_regime({"adx": 35, "plus_di": 30, "minus_di": 15}) == Regime.TREND_UP
-        assert Analyzer._detect_regime({"adx": 35, "plus_di": 10, "minus_di": 30}) == Regime.TREND_DOWN
-        assert Analyzer._detect_regime({"adx": 15, "plus_di": 10, "minus_di": 10}) == Regime.RANGE
-        assert Analyzer._detect_regime({"adx": 22, "plus_di": 15, "minus_di": 15}) == Regime.CHOP
+        # _detect_regime is now an instance method with a symbol parameter
+        analyzer = Analyzer.__new__(Analyzer)
+        analyzer._regime_history = []
+        analyzer._current_regimes = {}
+        assert analyzer._detect_regime({"adx": 35, "plus_di": 30, "minus_di": 15}, "TEST") == Regime.TREND_UP
+        assert analyzer._detect_regime({"adx": 35, "plus_di": 10, "minus_di": 30}, "TEST2") == Regime.TREND_DOWN
+        assert analyzer._detect_regime({"adx": 15, "plus_di": 10, "minus_di": 10}, "TEST3") == Regime.RANGE
+        assert analyzer._detect_regime({"adx": 22, "plus_di": 15, "minus_di": 15}, "TEST4") == Regime.CHOP
 
     def test_confluence_scoring(self):
         signal = MarketSignal(
@@ -3123,8 +3127,9 @@ class TestTrailingStop:
         # Price moves to exactly 1R profit (100 + 5 = 105)
         sl, active = update_trailing_stop(state, 105.0, 95.0, "LONG")
         assert active is True
-        # Trailing SL = best_price - 1.5 * ATR = 105 - 3 = 102
-        assert sl == 102.0
+        # Stage 1: SL floor = entry (100), trail = best - 2.0*ATR = 105 - 4 = 101
+        # SL = max(original=95, floor=100, trail=101) = 101
+        assert sl == 101.0
 
     def test_long_trailing_only_tightens(self):
         from bot.utils.trailing import make_trailing_state, update_trailing_stop
@@ -3145,8 +3150,9 @@ class TestTrailingStop:
         # Price drops 1R (100 - 5 = 95)
         sl, active = update_trailing_stop(state, 95.0, 105.0, "SHORT")
         assert active is True
-        # Trailing SL = best_price + 1.5 * ATR = 95 + 3 = 98
-        assert sl == 98.0
+        # Stage 1: SL floor = entry (100), trail = best + 2.0*ATR = 95 + 4 = 99
+        # SL = min(original=105, floor=100, trail=99) = 99
+        assert sl == 99.0
 
     def test_short_trailing_only_tightens(self):
         from bot.utils.trailing import make_trailing_state, update_trailing_stop
@@ -3169,8 +3175,9 @@ class TestTrailingStop:
         state = make_trailing_state(100.0, "LONG", 5.0, 0.0)
         sl, active = update_trailing_stop(state, 106.0, 95.0, "LONG")
         assert active is True
-        # But SL doesn't change because ATR is 0
-        assert sl == 95.0
+        # ATR is 0, so no ATR trail, but Stage 1 floor = entry (100)
+        # SL = max(original=95, floor=100) = 100
+        assert sl == 100.0
 
 
 class TestTradeExecutionValidators:

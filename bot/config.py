@@ -109,6 +109,12 @@ class RiskLimits:
     # on a single trade.  SL distance × leverage must not exceed this.
     # With 10x leverage, 30% means SL can be at most 3% from entry.
     max_margin_risk_pct: float = _env_float("MAX_MARGIN_RISK_PCT", 30.0)
+    # Equity curve circuit breaker: if equity drops below its N-period MA, halve sizes
+    equity_curve_ma_period: int = int(_env_float("EQUITY_CURVE_MA_PERIOD", 20))
+    equity_curve_pause_stddev: float = _env_float("EQUITY_CURVE_PAUSE_STDDEV", 2.0)
+    # Drawdown recovery mode: after hitting max DD, enter conservative mode
+    drawdown_recovery_conf_min: float = _env_float("DRAWDOWN_RECOVERY_CONF_MIN", 0.85)
+    drawdown_recovery_size_mult: float = _env_float("DRAWDOWN_RECOVERY_SIZE_MULT", 0.5)
 
 
 @dataclass(frozen=True)
@@ -140,6 +146,28 @@ if _leverage_val > 20:
     )
 
 
+
+# ── Priority Trading Symbols ────────────────────────────────────
+# These symbols ALWAYS get included in the scan output regardless
+# of momentum ranking. Ensures core trading universe is never
+# filtered out by the top-movers limit.
+# Format: spot "BTC/USDT" (scanner normalizes to futures automatically)
+PRIORITY_SYMBOLS: list[str] = [
+    "BTC/USDT", "ETH/USDT", "SOL/USDT", "LAB/USDT", "ZEC/USDT",
+    "XRP/USDT", "DOGE/USDT", "TAO/USDT", "HYPE/USDT", "JTO/USDT",
+    "BNB/USDT", "SUI/USDT", "FIL/USDT", "ADA/USDT", "LINK/USDT",
+    "ENA/USDT", "ONDO/USDT", "SKYAI/USDT", "BCH/USDT", "AVAX/USDT",
+    "PENGU/USDT", "SIREN/USDT", "DOT/USDT", "ICP/USDT", "NEAR/USDT",
+    "LTC/USDT", "VIRTUAL/USDT", "PUMP/USDT", "DYDX/USDT", "WLFI/USDT",
+    "FARTCOIN/USDT", "AAVE/USDT", "UNI/USDT", "OP/USDT", "ASTER/USDT",
+    "DASH/USDT", "WLD/USDT", "WIF/USDT", "ORDI/USDT", "ARB/USDT",
+    "TRX/USDT", "XPL/USDT", "RAVE/USDT", "XLM/USDT", "ETC/USDT",
+    "TRUMP/USDT", "APT/USDT", "HBAR/USDT", "1000BONK/USDT", "VVV/USDT",
+    "BIO/USDT", "M/USDT", "CHIP/USDT", "PENDLE/USDT", "XMR/USDT",
+    "ALGO/USDT", "CRV/USDT", "TIA/USDT", "RENDER/USDT", "INJ/USDT",
+    "JUP/USDT", "FET/USDT", "APE/USDT", "SEI/USDT", "ATOM/USDT",
+    "LDO/USDT",
+]
 
 # Solana ecosystem tokens tracked on Bitget (centralized pairs).
 # Updated 2026-05. Used when ASSET_UNIVERSE=solana to prioritize
@@ -369,6 +397,43 @@ class AnalyzerConfig:
     # RSI hard block: reject LONG when RSI >= this, reject SHORT when RSI <= inverse
     rsi_overbought_block: float = _env_float("RSI_OVERBOUGHT_BLOCK", 72.0)
     rsi_oversold_block: float = _env_float("RSI_OVERSOLD_BLOCK", 28.0)
+    # Divergence scanner: lookback periods
+    divergence_lookback: int = int(_env_float("DIVERGENCE_LOOKBACK", 50))
+    divergence_min_swings: int = int(_env_float("DIVERGENCE_MIN_SWINGS", 2))
+    # Volume profile: lookback for POC/VAH/VAL
+    volume_profile_lookback: int = int(_env_float("VOLUME_PROFILE_LOOKBACK", 100))
+    volume_profile_bins: int = int(_env_float("VOLUME_PROFILE_BINS", 50))
+
+
+@dataclass(frozen=True)
+class PartialTPConfig:
+    """Partial take-profit ladder configuration."""
+    enabled: bool = _env_bool("PARTIAL_TP_ENABLED", True)
+    # TP1: close 50% at 1.5R, move SL to breakeven
+    tp1_r_multiple: float = _env_float("PARTIAL_TP1_R", 1.5)
+    tp1_close_pct: float = _env_float("PARTIAL_TP1_CLOSE_PCT", 50.0)
+    # TP2: close 30% at 2.5R, tighten trail
+    tp2_r_multiple: float = _env_float("PARTIAL_TP2_R", 2.5)
+    tp2_close_pct: float = _env_float("PARTIAL_TP2_CLOSE_PCT", 30.0)
+    # Runner: remaining 20% rides with aggressive trailing stop
+    runner_trail_atr_mult: float = _env_float("PARTIAL_RUNNER_TRAIL_ATR", 0.8)
+
+
+@dataclass(frozen=True)
+class AdaptiveConfig:
+    """Adaptive threshold and smart scan settings."""
+    # Adaptive confidence threshold
+    adaptive_threshold_enabled: bool = _env_bool("ADAPTIVE_THRESHOLD_ENABLED", True)
+    adaptive_threshold_lookback: int = int(_env_float("ADAPTIVE_THRESHOLD_LOOKBACK", 10))
+    adaptive_threshold_high_wr: float = _env_float("ADAPTIVE_THRESHOLD_HIGH_WR", 0.70)
+    adaptive_threshold_low_wr: float = _env_float("ADAPTIVE_THRESHOLD_LOW_WR", 0.40)
+    adaptive_threshold_min: float = _env_float("ADAPTIVE_THRESHOLD_MIN", 0.60)
+    adaptive_threshold_max: float = _env_float("ADAPTIVE_THRESHOLD_MAX", 0.90)
+    # Smart scan scheduling: scan interval adjustment
+    smart_scan_enabled: bool = _env_bool("SMART_SCAN_ENABLED", True)
+    smart_scan_min_interval: int = int(_env_float("SMART_SCAN_MIN_INTERVAL", 60))   # seconds
+    smart_scan_max_interval: int = int(_env_float("SMART_SCAN_MAX_INTERVAL", 600))  # seconds
+    smart_scan_vol_threshold: float = _env_float("SMART_SCAN_VOL_THRESHOLD", 2.0)   # ATR multiplier for urgency
 
 
 @dataclass(frozen=True)
@@ -407,6 +472,11 @@ class LimitOrderConfig:
     post_only: bool = _env_bool("LIMIT_POST_ONLY", True)
     # Cancel pending limit if price drifts more than this % away from limit price
     price_drift_cancel_pct: float = _env_float("LIMIT_DRIFT_CANCEL_PCT", 2.0)
+    # Market order fallback: if price drifts AND momentum is strong,
+    # convert to market order instead of just cancelling the limit.
+    drift_market_fallback: bool = _env_bool("LIMIT_DRIFT_MARKET_FALLBACK", True)
+    # Minimum ADX to consider momentum "strong enough" for market fallback
+    drift_market_min_adx: float = _env_float("LIMIT_DRIFT_MARKET_MIN_ADX", 20.0)
 
 
 @dataclass(frozen=True)
@@ -586,13 +656,21 @@ class AppConfig:
     simulation_mode: bool = _env_bool("SIMULATION_MODE", True)
     live_trading_enabled: bool = _env_bool("LIVE_TRADING_ENABLED", False)
 
+    # -- Auto-confirmation --
+    # Signals with blended confidence >= this threshold auto-execute without
+    # waiting for human button press. Set to 1.0 to disable (require manual
+    # confirm for all trades). Range: 0.0–1.0.
+    auto_confirm_threshold: float = _env_float("AUTO_CONFIRM_THRESHOLD", 0.75)
+    # TTL for pending ideas in seconds (default 300 = 5 min)
+    pending_idea_ttl: int = int(_env_float("PENDING_IDEA_TTL", 300))
+
     # -- Paper trading --
     paper_balance_usd: float = _env_float("PAPER_BALANCE_USD", 10_000.0)
     portfolio_state_file: str = _env("PORTFOLIO_STATE_FILE", "data/portfolio_state.json")
 
     # -- Scan settings --
     scan_interval_seconds: int = int(_env_float("SCAN_INTERVAL", 60))
-    top_movers_count: int = 15
+    top_movers_count: int = int(_env_float("TOP_MOVERS_COUNT", 80))
 
     # -- Sub-configs --
     risk: RiskLimits = field(default_factory=RiskLimits)
@@ -608,6 +686,8 @@ class AppConfig:
     limit_orders: LimitOrderConfig = field(default_factory=LimitOrderConfig)
     stocks: StockTradingConfig = field(default_factory=StockTradingConfig)
     strategy_types: StrategyTypeConfig = field(default_factory=StrategyTypeConfig)
+    partial_tp: PartialTPConfig = field(default_factory=PartialTPConfig)
+    adaptive: AdaptiveConfig = field(default_factory=AdaptiveConfig)
 
     def is_live(self) -> bool:
         """Live trading requires BOTH flags AND a Telegram chat allow-list.
@@ -660,6 +740,7 @@ class RuntimeState:
         self._asset_universe: str = CONFIG.exchange.asset_universe
         self._strategy_mode: str = "balanced"
         self._live_mode: bool = False  # toggled by /golive CONFIRM
+        self._auto_confirm_threshold: float = CONFIG.auto_confirm_threshold
 
     @property
     def live_mode(self) -> bool:
@@ -696,6 +777,16 @@ class RuntimeState:
             raise ValueError(f"Invalid strategy mode: {value!r}")
         with self._lock:
             self._strategy_mode = value
+
+    @property
+    def auto_confirm_threshold(self) -> float:
+        with self._lock:
+            return self._auto_confirm_threshold
+
+    @auto_confirm_threshold.setter
+    def auto_confirm_threshold(self, value: float) -> None:
+        with self._lock:
+            self._auto_confirm_threshold = max(0.0, min(1.0, value))
 
 
 RUNTIME = RuntimeState()

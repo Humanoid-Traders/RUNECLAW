@@ -249,6 +249,12 @@ class TelegramHandler:
             ("link", _cmd_link), ("unlink", _cmd_unlink), ("me", _cmd_me),
             ("sync", _cmd_sync),
             ("lang", self._cmd_lang),
+            ("autoconfirm", self._cmd_autoconfirm),
+            ("forcescan", self._cmd_forcescan),
+            ("session", self._cmd_session),
+            ("montecarlo", self._cmd_montecarlo),
+            ("attribution", self._cmd_attribution),
+            ("equitycurve", self._cmd_equitycurve),
         ]:
             app.add_handler(CommandHandler(cmd, handler))
         app.add_handler(CallbackQueryHandler(self._handle_callback))
@@ -1198,6 +1204,23 @@ class TelegramHandler:
             _filled_count = sum(1 for p in _all_tracked if p.status == "open")
             _pending_count = sum(1 for p in _all_tracked if p.status == "pending_fill")
 
+            # Cross-check with exchange for accurate pending order count
+            # The bot's internal count can be stale after restarts
+            try:
+                _ex = _ex if '_ex' in dir() else await executor._get_exchange()
+                _ex_orders = await _ex.fetch_open_orders(
+                    params={"productType": "USDT-FUTURES"})
+                # Only count limit orders (not SL/TP trigger orders)
+                _ex_limit_orders = [
+                    o for o in (_ex_orders or [])
+                    if (o.get("type") or "").lower() == "limit"
+                ]
+                _exchange_pending = len(_ex_limit_orders)
+                if _exchange_pending != _pending_count:
+                    _pending_count = _exchange_pending
+            except Exception:
+                pass  # Fall back to internal count
+
             # Fallback: if no locally-tracked positions, check exchange directly
             # This catches orphan positions (opened but lost from local state)
             if open_pos == 0:
@@ -1915,6 +1938,293 @@ class TelegramHandler:
 
     # ── Live Trading Commands ─────────────────────────────────
 
+    async def _cmd_autoconfirm(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """/autoconfirm — view or set auto-confirm threshold.
+
+        Usage:
+          /autoconfirm         — show current threshold
+          /autoconfirm 0.75    — set to 75% confidence
+          /autoconfirm off     — disable (set to 1.0)
+        """
+        if not await self._guard(update, "admin"):
+            return
+
+        from bot.config import RUNTIME
+        args = ctx.args or []
+
+        if not args:
+            # Show current state
+            threshold = CONFIG.auto_confirm_threshold
+            if threshold >= 1.0:
+                status = "\U0001f534 <b>OFF</b> — all trades require manual confirmation"
+            else:
+                status = f"\U0001f7e2 <b>ON</b> — trades with confidence \u2265 <b>{threshold*100:.0f}%</b> auto-execute"
+            await self._send(update,
+                f"\U0001f916 <b>Auto-Confirm Status</b>\n\n"
+                f"{status}\n\n"
+                f"<b>Commands:</b>\n"
+                f"\u2022 <code>/autoconfirm 0.75</code> — auto-confirm \u2265 75%\n"
+                f"\u2022 <code>/autoconfirm off</code> — disable\n"
+                f"\u2022 <code>/autoconfirm 0.60</code> — aggressive (60%+)")
+            return
+
+        arg = args[0].lower()
+        if arg in ("off", "disable", "manual"):
+            # Use RUNTIME to override the frozen CONFIG value
+            RUNTIME.auto_confirm_threshold = 1.0
+            audit(system_log, "Auto-confirm DISABLED via /autoconfirm off",
+                  action="autoconfirm", result="DISABLED",
+                  data={"user": self._get_tg_id(update)})
+            await self._send(update,
+                "\U0001f534 <b>Auto-Confirm DISABLED</b>\n\n"
+                "All trades now require manual confirmation.")
+            return
+
+        try:
+            new_threshold = float(arg)
+            if new_threshold < 0.5 or new_threshold > 1.0:
+                await self._send(update,
+                    "\u274c Threshold must be between 0.50 and 1.00\n"
+                    "Example: <code>/autoconfirm 0.75</code>")
+                return
+            RUNTIME.auto_confirm_threshold = new_threshold
+            audit(system_log, f"Auto-confirm threshold set to {new_threshold}",
+                  action="autoconfirm", result="SET",
+                  data={"user": self._get_tg_id(update), "threshold": new_threshold})
+            await self._send(update,
+                f"\U0001f916 <b>Auto-Confirm Updated</b>\n\n"
+                f"Threshold: <b>{new_threshold*100:.0f}%</b>\n"
+                f"Trades with confidence \u2265 {new_threshold*100:.0f}% will auto-execute.\n"
+                f"Lower confidence trades still require manual confirmation.")
+        except ValueError:
+            await self._send(update,
+                "\u274c Invalid value. Use a number (0.50-1.00) or 'off'.\n"
+                "Example: <code>/autoconfirm 0.75</code>")
+
+    async def _cmd_forcescan(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """/forcescan — force immediate scan bypassing cooldown and pending gates."""
+        if not await self._guard(update, "admin"):
+            return
+
+        await self._send(update,
+            "\U0001f50d <b>Force scan starting...</b>\n"
+            "Clearing pending ideas, bypassing cooldown.")
+
+        try:
+            result = await self.engine.force_scan()
+        except Exception as exc:
+            await self._send(update,
+                f"\u274c <b>Force scan failed:</b> {exc}")
+            return
+
+        if result.get("error"):
+            await self._send(update,
+                f"\u274c <b>Scan error:</b> {result['error']}")
+            return
+
+        lines = [
+            "\u2705 <b>Force Scan Complete</b>",
+            "",
+            f"\U0001f4e1 Signals found: <b>{result.get('signals', 0)}</b>",
+            f"\U0001f4a1 Ideas generated: <b>{result.get('ideas', 0)}</b>",
+            f"\U0001f916 Auto-confirmed: <b>{result.get('auto_confirmed', 0)}</b>",
+            f"\u23f3 Pending confirmation: <b>{result.get('pending', 0)}</b>",
+        ]
+        if result.get('cleared_pending', 0) > 0:
+            lines.append(f"\U0001f9f9 Cleared old pending: <b>{result['cleared_pending']}</b>")
+
+        await self._send(update, "\n".join(lines))
+
+    async def _cmd_session(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """/session — show current trading session and its risk adjustments."""
+        try:
+            from bot.core.session_aware import get_current_session
+            session = get_current_session()
+        except Exception as exc:
+            await self._send(update, f"\u274c Session check failed: {exc}")
+            return
+
+        # Session name styling
+        session_icons = {
+            "asian": "\U0001f30f",
+            "london": "\U0001f1ec\U0001f1e7",
+            "london_ny_overlap": "\U0001f525",
+            "new_york": "\U0001f1fa\U0001f1f8",
+            "late_ny": "\U0001f319",
+        }
+        icon = session_icons.get(session.session_name, "\U0001f554")
+
+        lines = [
+            f"{icon} <b>Current Session: {session.session_name.replace('_', ' ').title()}</b>",
+            "",
+            f"\U0001f4ca {session.description}",
+            "",
+            f"Position size: <b>{session.size_multiplier:.0%}</b> of normal",
+            f"SL width: <b>{session.sl_width_multiplier:.0%}</b> of normal",
+            f"Confidence adj: <b>{session.confidence_adjustment:+.1%}</b>",
+            f"Peak liquidity: <b>{'Yes' if session.is_peak_liquidity else 'No'}</b>",
+        ]
+        if session.is_weekend_risk:
+            lines.extend([
+                "",
+                "\u26a0\ufe0f <b>WEEKEND RISK ACTIVE</b>",
+                "Position sizes reduced, SL widened for gap protection.",
+            ])
+
+        await self._send(update, "\n".join(lines))
+
+    async def _cmd_montecarlo(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Run Monte Carlo risk simulation on trade history."""
+        if not self._is_admin(update):
+            return
+        chat_id = update.effective_chat.id
+
+        try:
+            from bot.core.monte_carlo import run_monte_carlo
+            trades = self.engine.portfolio._history
+            closed_pnls = [t.pnl for t in trades if t.closed_at is not None]
+
+            if len(closed_pnls) < 5:
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text="\u26a0\ufe0f Need at least 5 closed trades for Monte Carlo simulation.",
+                )
+                return
+
+            equity = self.engine.portfolio.balance
+            result = run_monte_carlo(closed_pnls, starting_equity=equity, num_simulations=5000)
+
+            if result is None:
+                await context.bot.send_message(chat_id=chat_id, text="\u274c Monte Carlo simulation failed.")
+                return
+
+            lines = [
+                "\U0001f3b2 <b>Monte Carlo Risk Simulation</b>",
+                "\u2500" * 28,
+                "",
+                f"\U0001f4ca <b>{result.num_simulations:,} simulations</b> on <b>{result.num_trades}</b> trades",
+                "",
+                "<b>Max Drawdown Distribution:</b>",
+                f"  50th: <code>{result.dd_50th:.1f}%</code>",
+                f"  75th: <code>{result.dd_75th:.1f}%</code>",
+                f"  90th: <code>{result.dd_90th:.1f}%</code>",
+                f"  95th: <code>{result.dd_95th:.1f}%</code> \u2190 key metric",
+                f"  99th: <code>{result.dd_99th:.1f}%</code>",
+                "",
+                "<b>Return Distribution:</b>",
+                f"  Worst 5%:  <code>{result.return_5th:+.1f}%</code>",
+                f"  Median:    <code>{result.return_median:+.1f}%</code>",
+                f"  Best 5%:   <code>{result.return_95th:+.1f}%</code>",
+                "",
+                f"\U0001f480 Probability of ruin: <code>{result.probability_of_ruin:.1%}</code>",
+                f"\u26a0\ufe0f Risk rating: <b>{result.risk_rating}</b>",
+            ]
+            if result.recommended_size_mult < 1.0:
+                lines.append(f"\U0001f4c9 Suggested size reduction: <b>{result.recommended_size_mult:.0%}</b>")
+            else:
+                lines.append("\u2705 Current sizing is within acceptable risk bounds")
+
+            lines.extend(["", "\u2500" * 28, "\U0001f43e RUNECLAW Monte Carlo Engine"])
+
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text="\n".join(lines),
+                parse_mode="HTML",
+            )
+        except Exception as exc:
+            await context.bot.send_message(chat_id=chat_id, text=f"\u274c Monte Carlo error: {exc}")
+
+    async def _cmd_attribution(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Show trade signal attribution — which indicators contribute to wins."""
+        if not self._is_admin(update):
+            return
+        chat_id = update.effective_chat.id
+
+        try:
+            trades = self.engine.portfolio._history
+            attribution = self.engine.metrics.compute_attribution(trades)
+
+            if not attribution:
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text="\u26a0\ufe0f No signal attribution data yet. Need closed trades with signal tracking.",
+                )
+                return
+
+            lines = [
+                "\U0001f4ca <b>Signal Attribution Report</b>",
+                "\u2500" * 28,
+                "",
+            ]
+
+            # Sort by edge score
+            sorted_signals = sorted(attribution.items(), key=lambda x: x[1].get("edge_score", 0), reverse=True)
+
+            for name, stats in sorted_signals[:15]:
+                wr = stats.get("win_rate", 0) * 100
+                total = stats.get("total", 0)
+                avg = stats.get("avg_pnl", 0)
+                edge = stats.get("edge_score", 0)
+                emoji = "\u2705" if wr >= 55 else "\u26a0\ufe0f" if wr >= 45 else "\u274c"
+                lines.append(f"{emoji} <b>{name}</b>: {wr:.0f}% WR ({total} trades) avg=${avg:.2f} edge={edge:.1f}")
+
+            lines.extend(["", "\u2500" * 28, "\U0001f43e RUNECLAW Attribution Engine"])
+
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text="\n".join(lines),
+                parse_mode="HTML",
+            )
+        except Exception as exc:
+            await context.bot.send_message(chat_id=chat_id, text=f"\u274c Attribution error: {exc}")
+
+    async def _cmd_equitycurve(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Show equity curve circuit breaker status."""
+        if not self._is_admin(update):
+            return
+        chat_id = update.effective_chat.id
+
+        try:
+            risk = self.engine.risk
+            eq_mult = risk.equity_curve_size_multiplier
+            in_recovery = risk.in_drawdown_recovery
+
+            if eq_mult <= 0:
+                status = "\U0001f6d1 PAUSED — equity below 2\u03c3 of MA"
+                status_emoji = "\U0001f6d1"
+            elif eq_mult < 1.0:
+                status = f"\u26a0\ufe0f HALVED — equity below MA (sizing at {eq_mult:.0%})"
+                status_emoji = "\u26a0\ufe0f"
+            else:
+                status = "\u2705 HEALTHY — equity above MA"
+                status_emoji = "\u2705"
+
+            lines = [
+                "\U0001f4c8 <b>Equity Curve Health</b>",
+                "\u2500" * 28,
+                "",
+                f"Status: {status}",
+                f"Size multiplier: <code>{eq_mult:.0%}</code>",
+                f"Equity snapshots: <code>{len(risk._equity_history)}</code>",
+                f"MA period: <code>{CONFIG.risk.equity_curve_ma_period}</code>",
+                "",
+                f"Drawdown recovery: {'<b>ACTIVE</b> \u26a0\ufe0f' if in_recovery else 'Inactive \u2705'}",
+            ]
+
+            if in_recovery:
+                lines.append(f"  Min confidence: <code>{CONFIG.risk.drawdown_recovery_conf_min}</code>")
+                lines.append(f"  Size multiplier: <code>{CONFIG.risk.drawdown_recovery_size_mult:.0%}</code>")
+
+            lines.extend(["", "\u2500" * 28, "\U0001f43e RUNECLAW Risk Management"])
+
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text="\n".join(lines),
+                parse_mode="HTML",
+            )
+        except Exception as exc:
+            await context.bot.send_message(chat_id=chat_id, text=f"\u274c Error: {exc}")
+
     async def _cmd_golive(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """/golive — enable live trading with double confirmation."""
         if not await self._guard(update, "admin"):
@@ -2430,19 +2740,60 @@ class TelegramHandler:
                     direction = close_data.get("direction", "")
                     pnl_usd = close_data.get("pnl_usd", 0)
                     reason = close_data.get("reason", "closed")
-                    pnl_emoji = "\u2705" if pnl_usd >= 0 else "\u274c"
+                    # Show specific close reason with appropriate emoji
+                    if "TP" in reason.upper():
+                        pnl_emoji = "\U0001f3af"  # target emoji for TP
+                        reason_short = "TP HIT"
+                    elif "SL" in reason.upper() or "STOP" in reason.upper():
+                        pnl_emoji = "\U0001f6d1"  # stop sign for SL
+                        reason_short = "SL HIT"
+                    elif "TRAILING" in reason.upper():
+                        pnl_emoji = "\U0001f6d1"
+                        reason_short = "TRAILING SL"
+                    elif "TIME" in reason.upper():
+                        pnl_emoji = "\u23f0"  # alarm clock for time stop
+                        reason_short = "TIME STOP"
+                    elif pnl_usd >= 0:
+                        pnl_emoji = "\u2705"
+                        reason_short = reason
+                    else:
+                        pnl_emoji = "\u274c"
+                        reason_short = reason
                     cap = (f"{pnl_emoji} <b>{html.escape(sym)}</b> {direction} CLOSED\n"
-                           f"PnL: ${pnl_usd:+,.2f} | {html.escape(reason)}")
+                           f"PnL: ${pnl_usd:+,.2f} | {html.escape(reason_short)}")
                     await bot.send_photo(
                         chat_id=int(admin_chat_id),
                         photo=close_png,
                         caption=cap,
                         parse_mode="HTML")
                 else:
-                    # Fallback to text
+                    # Fallback to text — use reason-specific heading
+                    reason = close_data.get("reason", "") if close_data else ""
                     is_win = "+$" in msg
-                    emoji = "\u2705" if is_win else "\u274c"
-                    card = f"{emoji} <b>Trade Closed</b>\n\n"
+                    if "TP" in reason.upper():
+                        emoji = "\U0001f3af"  # 🎯
+                        heading = "TP HIT"
+                    elif "SL" in reason.upper() or "STOP" in reason.upper():
+                        emoji = "\U0001f6d1"  # 🛑
+                        heading = "SL HIT"
+                    elif "TRAILING" in reason.upper():
+                        emoji = "\U0001f6d1"
+                        heading = "TRAILING SL"
+                    elif "TIME" in reason.upper():
+                        emoji = "\u23f0"  # ⏰
+                        heading = "TIME STOP"
+                    elif is_win:
+                        emoji = "\u2705"
+                        heading = "Trade Closed"
+                    else:
+                        emoji = "\u274c"
+                        heading = "Trade Closed"
+                    sym = close_data.get("symbol", "") if close_data else ""
+                    direction = close_data.get("direction", "") if close_data else ""
+                    if sym and direction:
+                        card = f"{emoji} <b>{html.escape(sym)}</b> {direction} {heading}\n\n"
+                    else:
+                        card = f"{emoji} <b>{heading}</b>\n\n"
                     for line in msg.strip().split("\n"):
                         card += f"{html.escape(line)}\n"
                     await bot.send_message(
@@ -2512,6 +2863,44 @@ class TelegramHandler:
                 system_log.debug("Adopt notify send failed: %s", exc)
 
         self.engine.set_adopt_notify_callback(_on_positions_adopted)
+
+        # ── Auto-confirm notification ──────────────────────────────
+        async def _on_auto_confirmed(idea, result_msg: str) -> None:
+            """Notify admin when a trade is auto-confirmed (high confidence)."""
+            try:
+                pair = idea.asset.replace("/USDT", "")
+                direction = idea.direction.value if hasattr(idea.direction, "value") else str(idea.direction)
+                conf = idea.confidence * 100
+                from datetime import datetime as _dt, timezone as _tz
+                card_lines = [
+                    "\U0001f916 <b>AUTO-CONFIRMED TRADE</b>",
+                    "\u2500" * 28,
+                    "",
+                    f"\U0001f4b0 <b>{pair}</b> {direction} | Conf <b>{conf:.0f}%</b>",
+                    f"Entry: <code>${idea.entry_price:,.4f}</code>",
+                    f"SL: <code>${idea.stop_loss:,.4f}</code> | TP: <code>${idea.take_profit:,.4f}</code>",
+                    "",
+                ]
+                # Add result preview
+                first_line = result_msg.strip().split("\n")[0] if result_msg else ""
+                if first_line:
+                    card_lines.append(f"\u2192 {html.escape(first_line)}")
+                card_lines.extend([
+                    "",
+                    "\u2500" * 28,
+                    f"\U0001f43e RUNECLAW | {_dt.now(_tz.utc).strftime('%H:%M')} UTC",
+                    "<i>Confidence exceeded auto-confirm threshold</i>",
+                ])
+                a_chat = os.environ.get("ADMIN_CHAT_ID") or os.environ.get("TELEGRAM_CHAT_ID", "")
+                if a_chat:
+                    await bot.send_message(
+                        chat_id=int(a_chat),
+                        text="\n".join(card_lines),
+                        parse_mode="HTML")
+            except Exception as exc:
+                system_log.debug("Auto-confirm notify send failed: %s", exc)
+
+        self.engine.set_auto_confirm_notify_callback(_on_auto_confirmed)
 
     async def stop_monitor(self) -> None:
         """Stop the proactive monitor."""
@@ -3505,89 +3894,90 @@ class TelegramHandler:
     # ── War Room commands ────────────────────────────────────────
 
     async def _cmd_latest_signal(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-        """Show the latest signal using the same format as /trade.
+        """Show all pending trade signals with action buttons.
 
-        Previously this used a separate War Room renderer with fabricated
-        TP2/entry-zone fields.  Now it delegates to the same rich analysis
-        path so /trade and Latest Signal always look identical.
+        If no signals are pending, auto-triggers a fresh scan cycle
+        so the user always sees current opportunities.
         """
         if not await self._guard(update, "scan"):
             return
+
         pending = self.engine.pending_ideas
+
+        # If nothing pending, auto-trigger a scan first
         if not pending:
             await self._send(update,
-                "Nothing in the queue right now.\n"
-                "Say \"scan\" or \"analyze\" to look for setups.")
-            return
+                "\U0001f50d <b>No signals queued — running fresh scan...</b>")
+            try:
+                result = await self.engine.force_scan()
+                pending = self.engine.pending_ideas
+                if not pending:
+                    sig_count = result.get("signals", 0)
+                    auto_count = result.get("auto_confirmed", 0)
+                    msg = "No trade setups found in current market conditions."
+                    if sig_count > 0:
+                        msg += f"\n\n\U0001f4e1 Scanned {sig_count} pairs"
+                        if auto_count > 0:
+                            msg += f" — {auto_count} were auto-confirmed"
+                        msg += " but none passed confidence threshold."
+                    msg += "\n\nTry <code>/fullscan</code> for deep multi-symbol analysis."
+                    await self._send(update, msg)
+                    return
+            except Exception as exc:
+                await self._send(update,
+                    f"Scan failed: {exc}\nTry <code>/fullscan</code> instead.")
+                return
 
-        # Pick the most recent idea and render it exactly like /trade does
-        idea = pending[-1]
         uid = update.effective_user.id if update.effective_user else ""
-        kb = InlineKeyboardMarkup([[
-            InlineKeyboardButton("Take it", callback_data=f"confirm:{idea.id}:{uid}"),
-            InlineKeyboardButton("Limit", callback_data=f"setlimit:{idea.id}:{uid}"),
-            InlineKeyboardButton("Skip", callback_data=f"reject:{idea.id}:{uid}"),
-        ]])
 
-        # Fetch live market data for the rich analysis card
-        try:
-            exchange = await self.engine.get_exchange()
-            asset_data = await fetch_analysis_data(exchange, idea.asset, timeframe="1h")
-        except Exception:
-            asset_data = None
+        # Show ALL pending ideas, not just the last one
+        await self._send(update,
+            f"\U0001f4a1 <b>{len(pending)} Trade Setup{'s' if len(pending) > 1 else ''} Found</b>\n"
+            f"{'━' * 28}")
 
-        if asset_data:
-            card = render_analysis_card(asset_data, idea)
-            chart_png = await self._build_chart_composite(asset_data, idea)
-            if chart_png:
-                pair = idea.asset.replace("/", "")
-                d = idea.direction.value
-                entry = idea.entry_price
-                sl, tp = idea.stop_loss, idea.take_profit
-                sl_pct = abs(entry - sl) / entry * 100 if entry > 0 else 0
-                tp_pct = abs(tp - entry) / entry * 100 if entry > 0 else 0
-                rr = idea.risk_reward_ratio
-                price = asset_data.get("price", entry)
-                rsi = asset_data.get("rsi", 0)
-                _otype = getattr(idea, 'order_type', 'market').upper()
-                _otype_tag = f" | {_otype}" if _otype == "LIMIT" else ""
-                cap = (
-                    f"<b>{html.escape(pair)}</b> — {d} Setup{_otype_tag}\n"
-                    f"Entry: <code>{entry:,.4f}</code> | Now: <code>{price:,.4f}</code>\n"
-                    f"SL: <code>{sl:,.4f}</code> (-{sl_pct:.1f}%) | TP: <code>{tp:,.4f}</code> (+{tp_pct:.1f}%)\n"
-                    f"R:R 1:{rr:.1f} | Conf {idea.confidence:.0%} | RSI {rsi:.0f}\n"
-                    f"{html.escape(idea.reasoning[:200])}"
-                )
-                await self._send(update, card)
-                await self._send_photo(update, chart_png, cap, reply_markup=kb)
-            else:
-                await self._send(update, card, reply_markup=kb)
-        else:
-            # Fallback: same text format as /trade fallback
+        for i, idea in enumerate(pending, 1):
+            kb = InlineKeyboardMarkup([[
+                InlineKeyboardButton("Take it", callback_data=f"confirm:{idea.id}:{uid}"),
+                InlineKeyboardButton("Limit", callback_data=f"setlimit:{idea.id}:{uid}"),
+                InlineKeyboardButton("Skip", callback_data=f"reject:{idea.id}:{uid}"),
+            ]])
+
             d_icon = "\U0001f7e2" if idea.direction.value == "LONG" else "\U0001f534"
             entry, sl, tp = idea.entry_price, idea.stop_loss, idea.take_profit
             sl_pct = abs(entry - sl) / entry * 100 if entry > 0 else 0
             tp_pct = abs(tp - entry) / entry * 100 if entry > 0 else 0
             rr = idea.risk_reward_ratio
-            pair = idea.asset.replace("/", "")
+            pair = idea.asset.replace("/USDT", "")
             _otype = getattr(idea, 'order_type', 'market').upper()
-            _otype_tag = f" ({_otype} ORDER)" if _otype == "LIMIT" else ""
+            _otype_tag = f" {_otype}" if _otype == "LIMIT" else ""
             _st = getattr(idea, 'strategy_type', '').upper()
             _st_tag = f" [{_st}]" if _st else ""
-            msg = (
-                f"\U0001f525 <b>{html.escape(pair)}</b> — {idea.direction.value} Setup{_st_tag}{_otype_tag}\n"
-                f"{'━' * 28}\n\n"
-                f"<b>Setup — {idea.direction.value}:</b>\n"
-                f"- Entry: <code>{entry:,.4f}</code>{' (limit)' if _otype == 'LIMIT' else ''}\n"
-                f"- SL: <code>{sl:,.4f}</code> (-{sl_pct:.1f}%)\n"
-                f"- TP: <code>{tp:,.4f}</code> (+{tp_pct:.1f}%)\n"
-                f"- Risk/Reward: 1:{rr:.1f}\n"
-                f"- Confidence: {idea.confidence:.0%}\n\n"
-                f"<b>Analysis:</b>\n"
-                f"<i>{html.escape(idea.reasoning[:300])}</i>\n\n"
-                f"<i>⚠️ Live market data unavailable — approve with caution</i>"
-            )
-            await self._send(update, msg, reply_markup=kb)
+
+            # Try to send signal card image if available
+            card_sent = False
+            if hasattr(self, '_signal_card_fn') and self._signal_card_fn:
+                try:
+                    chat_id = str(update.effective_chat.id) if update.effective_chat else ""
+                    if chat_id:
+                        await self._signal_card_fn(chat_id, idea, rank=i)
+                        card_sent = True
+                except Exception:
+                    pass
+
+            if not card_sent:
+                # Text fallback
+                msg = (
+                    f"{d_icon} <b>#{i} {html.escape(pair)}</b> — {idea.direction.value}{_st_tag}{_otype_tag}\n"
+                    f"Entry: <code>${entry:,.4f}</code> | SL: <code>${sl:,.4f}</code> (-{sl_pct:.1f}%) | TP: <code>${tp:,.4f}</code> (+{tp_pct:.1f}%)\n"
+                    f"R:R 1:{rr:.1f} | Conf <b>{idea.confidence:.0%}</b>\n"
+                    f"<i>{html.escape(idea.reasoning[:150])}</i>"
+                )
+                await self._send(update, msg, reply_markup=kb)
+
+            # Rate limit: avoid flooding Telegram
+            if i < len(pending):
+                import asyncio
+                await asyncio.sleep(0.3)
 
     async def _cmd_orders(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """Show open/pending orders on Bitget exchange."""
@@ -4092,9 +4482,10 @@ class TelegramHandler:
                 reward_at_fill = abs(tp - limit_price) if tp > 0 else 0
                 rr_at_fill = reward_at_fill / risk_at_fill if risk_at_fill > 0 else 0
 
-                # Fee estimate
-                entry_fee = size_usd * (comm_pct / 100.0)
-                exit_notional = notional_usd if notional_usd > 0 else (limit_price * quantity if quantity else size_usd)
+                # Fee estimate — fees are charged on notional, not margin
+                entry_notional = notional_usd if notional_usd > 0 else (limit_price * quantity if quantity else size_usd * leverage)
+                entry_fee = entry_notional * (comm_pct / 100.0)
+                exit_notional = entry_notional  # assume same notional on exit
                 exit_fee = exit_notional * (comm_pct / 100.0)
                 total_fees = entry_fee + exit_fee
 

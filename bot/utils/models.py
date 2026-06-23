@@ -240,4 +240,7 @@ class MetricsSnapshot(BaseModel):
     risk_checks_total: int = 0
     risk_checks_rejected: int = 0
     circuit_breaker_trips: int = 0
+    per_symbol_stats: dict[str, dict] = Field(default_factory=dict)
+    per_strategy_stats: dict[str, dict] = Field(default_factory=dict)
+    signals_attribution: dict[str, dict] = Field(default_factory=dict)
     timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))

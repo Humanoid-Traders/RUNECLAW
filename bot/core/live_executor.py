@@ -169,6 +169,7 @@ class LiveExecutor:
         self._order_history: list[LiveOrder] = []
         self._hedge_mode: Optional[bool] = None  # None=unknown, True=hedge, False=one-way
         self._is_uta: Optional[bool] = None  # None=unknown, cached after first detection
+        self._actual_margin_mode: Optional[str] = None  # Actual margin mode reported by exchange
         self._persistence_broken: bool = False  # C-02: set True if position save fails
         self._last_close_data: Optional[dict] = None  # Structured data from most recent close
         # C2-02 FIX: Per-trade-id locks to prevent double-close race condition.
@@ -216,17 +217,112 @@ class LiveExecutor:
         return self._exchange
 
     async def _ensure_leverage(self, symbol: str) -> None:
-        """Set leverage and margin mode for a symbol (futures only)."""
+        """Set leverage and margin mode for a symbol (futures only).
+
+        For Bitget UTA accounts, ccxt's set_margin_mode may silently succeed
+        without actually changing the mode. We verify by fetching the account
+        info and log a CRITICAL warning if the mode doesn't match config.
+        """
         cfg = CONFIG.exchange
         if cfg.trade_mode != "futures":
             return
         exchange = await self._get_exchange()
+
+        # ── Set margin mode ──
+        margin_mode_set = False
         try:
             await exchange.set_margin_mode(
                 cfg.margin_mode, symbol,
                 params={"productType": "USDT-FUTURES"})
+            margin_mode_set = True
         except Exception as exc:
-            logger.warning("Margin mode set failed for %s: %s", symbol, exc)
+            exc_str = str(exc)
+            # Some errors are expected (e.g., already in the desired mode)
+            if "already" in exc_str.lower() or "same" in exc_str.lower():
+                margin_mode_set = True
+            else:
+                logger.warning("Margin mode set failed for %s: %s", symbol, exc)
+
+        # ── Verify margin mode actually applied ──
+        # Bitget UTA may silently ignore set_margin_mode
+        try:
+            raw_symbol = symbol.replace("/USDT", "USDT").replace(":USDT", "")
+            resp = await exchange.privateMixGetV2MixAccountAccount(
+                {"symbol": raw_symbol, "productType": "USDT-FUTURES"})
+            data = resp.get("data", {})
+            if isinstance(data, list) and data:
+                data = data[0]
+            if isinstance(data, dict):
+                actual_margin = (data.get("marginMode") or "").lower()
+                if actual_margin:
+                    self._actual_margin_mode = actual_margin
+                expected = cfg.margin_mode.lower()
+                # Bitget uses "crossed" not "cross"
+                expected_normalized = "crossed" if expected == "cross" else expected
+                if actual_margin and actual_margin != expected_normalized:
+                    # Try Bitget v2 endpoint to force margin mode
+                    try:
+                        await exchange.privateMixPostV2MixAccountSetMarginMode({
+                            "symbol": raw_symbol,
+                            "productType": "USDT-FUTURES",
+                            "marginMode": expected_normalized,
+                        })
+                        audit(trade_log,
+                              f"Margin mode forced via v2 API: {symbol} -> {expected_normalized}",
+                              action="margin_mode_force", result="OK",
+                              data={"symbol": symbol, "from": actual_margin,
+                                    "to": expected_normalized})
+                    except Exception as force_exc:
+                        force_str = str(force_exc)
+                        # If the position already exists with different margin mode,
+                        # we can't change it — log critical warning
+                        audit(trade_log,
+                              f"MARGIN MODE MISMATCH: {symbol} is {actual_margin}, "
+                              f"wanted {expected_normalized}. Cannot change with open position. "
+                              f"Force attempt: {force_str}",
+                              action="margin_mode_mismatch", result="CRITICAL",
+                              data={"symbol": symbol, "actual": actual_margin,
+                                    "expected": expected_normalized,
+                                    "error": force_str})
+                        logger.critical(
+                            "MARGIN MODE MISMATCH for %s: actual=%s, config=%s — "
+                            "CROSS margin exposes entire account balance to liquidation risk. "
+                            "Change margin mode on Bitget web UI or close all positions first.",
+                            symbol, actual_margin, expected_normalized)
+        except Exception as verify_exc:
+            err_str = str(verify_exc)
+            if "40085" in err_str:
+                # UTA account — v2 account endpoint not available
+                # Try fetching position info to check margin mode
+                try:
+                    ccxt_sym = symbol if ":USDT" in symbol else f"{symbol}:USDT"
+                    positions = await exchange.fetch_positions(
+                        [ccxt_sym], params={"productType": "USDT-FUTURES"})
+                    for p in positions:
+                        info = p.get("info", {})
+                        actual_margin = (info.get("marginMode") or p.get("marginMode") or "").lower()
+                        if actual_margin:
+                            self._actual_margin_mode = actual_margin
+                            expected = cfg.margin_mode.lower()
+                            expected_normalized = "crossed" if expected == "cross" else expected
+                            if actual_margin != expected_normalized:
+                                logger.critical(
+                                    "MARGIN MODE MISMATCH (UTA) for %s: actual=%s, config=%s — "
+                                    "CROSS margin exposes entire account to liquidation",
+                                    symbol, actual_margin, expected_normalized)
+                                audit(trade_log,
+                                      f"MARGIN MODE MISMATCH (UTA): {symbol} is {actual_margin}, "
+                                      f"config says {expected_normalized}",
+                                      action="margin_mode_mismatch", result="CRITICAL",
+                                      data={"symbol": symbol, "actual": actual_margin,
+                                            "expected": expected_normalized})
+                            break
+                except Exception:
+                    logger.debug("Could not verify margin mode for %s via positions", symbol)
+            else:
+                logger.debug("Margin mode verification failed for %s: %s", symbol, verify_exc)
+
+        # ── Set leverage ──
         try:
             await exchange.set_leverage(
                 cfg.default_leverage, symbol,
@@ -234,13 +330,11 @@ class LiveExecutor:
         except Exception as exc:
             logger.warning("Leverage set failed for %s (may use exchange default): %s", symbol, exc)
 
-        # C2-04 FIX: Verify leverage was actually applied. If it doesn't match,
-        # log a critical warning. The caller should treat this as a risk.
+        # C2-04 FIX: Verify leverage was actually applied
         try:
             lev_info = await exchange.fetch_leverage(symbol, params={"productType": "USDT-FUTURES"})
             actual_lev = None
             if isinstance(lev_info, dict):
-                # CCXT / Bitget returns various shapes — try common keys
                 actual_lev = lev_info.get("longLeverage") or lev_info.get("leverage") or lev_info.get("long")
                 if actual_lev is not None:
                     actual_lev = int(float(actual_lev))
@@ -250,8 +344,8 @@ class LiveExecutor:
                     "position will have INCORRECT risk exposure",
                     symbol, cfg.default_leverage, actual_lev)
         except Exception:
-            # fetch_leverage may not be implemented for all exchanges — log but don't block
             logger.debug("Could not verify leverage for %s (fetch_leverage unavailable)", symbol)
+
         # Detect hold mode (one-way vs hedge) on first call
         if self._hedge_mode is None:
             await self._detect_hold_mode()
@@ -969,7 +1063,158 @@ class LiveExecutor:
             logger.warning("adopt_exchange_positions() failed: %s", exc)
         return adopted
 
-    # ── Execute trade ────────────────────────────────────────────
+    async def adopt_exchange_limit_orders(self) -> list[str]:
+        """Adopt orphaned limit orders from exchange that aren't tracked locally.
+
+        On restart, the bot may lose track of limit orders that were placed
+        but not saved to live_positions.json. This method detects those
+        orphaned limit orders and creates local pending_fill records so
+        the status card, /positions, and expiry logic all work correctly.
+
+        Uses real exchange data only — leverage from the exchange's clientOid
+        mapping or the bot's own config (since Bitget UTA has no GET leverage
+        API for unfilled orders). Margin mode comes from the order's own
+        marginMode field.
+
+        Returns list of adopted symbol names.
+        """
+        adopted: list[str] = []
+        if not CONFIG.is_live():
+            return adopted
+        try:
+            exchange = await self._get_exchange()
+            ex_orders = await exchange.fetch_open_orders(
+                params={"productType": "USDT-FUTURES"})
+
+            # Only consider limit orders (not SL/TP trigger orders)
+            limit_orders = [
+                o for o in (ex_orders or [])
+                if isinstance(o, dict) and (o.get("type") or "").lower() == "limit"
+            ]
+
+            # Build set of exchange order IDs we already track
+            tracked_order_ids: set[str] = set()
+            # Also track symbol+direction+price combos to avoid duplicates
+            tracked_combos: set[tuple[str, str, float]] = set()
+            # Map clientOid prefix to trade_id for matching
+            tracked_trade_ids: set[str] = set()
+            for p in self._positions.values():
+                if p.limit_order_id:
+                    tracked_order_ids.add(p.limit_order_id)
+                if p.status in ("open", "pending_fill"):
+                    tracked_combos.add((
+                        normalize_symbol(p.symbol),
+                        p.direction,
+                        round(p.entry_price, 4),
+                    ))
+                    tracked_trade_ids.add(p.trade_id)
+
+            for o in limit_orders:
+                oid = o.get("id", "")
+                if not oid or oid in tracked_order_ids:
+                    continue
+
+                # Check clientOid — the bot prefixes with "rc" + trade_id
+                # e.g. clientOid="rcTIf6798581" → trade_id="TI-f6798581"
+                raw_info = o.get("info", {})
+                client_oid = raw_info.get("clientOid", "") or o.get("clientOrderId", "")
+                if client_oid.startswith("rc"):
+                    # Reconstruct trade_id: "rcTIf6798581" → "TI-f6798581"
+                    possible_tid = client_oid[2:]  # strip "rc"
+                    # Insert hyphen after "TI" if missing: "TIf6798581" → "TI-f6798581"
+                    if possible_tid.startswith("TI") and not possible_tid.startswith("TI-"):
+                        possible_tid = "TI-" + possible_tid[2:]
+                    if possible_tid in tracked_trade_ids:
+                        # Already tracked — just link the order ID
+                        for p in self._positions.values():
+                            if p.trade_id == possible_tid and not p.limit_order_id:
+                                p.limit_order_id = oid
+                                self._save_positions()
+                        continue
+
+                # This is an orphaned limit order — adopt it
+                raw_sym = o.get("symbol") or ""
+                side = (o.get("side") or "").upper()
+                price = float(o.get("price") or 0)
+                amount = float(o.get("amount") or o.get("remaining") or 0)
+                created = o.get("datetime", "")
+
+                if not raw_sym or price <= 0 or amount <= 0:
+                    continue
+
+                direction = "LONG" if side == "BUY" else "SHORT"
+                trade_id = f"ORPHAN-{oid[:8]}"
+
+                # Skip if we already have a position for this trade_id
+                if trade_id in self._positions:
+                    continue
+
+                # Skip if we already track a position with same symbol/direction/price
+                # Prevents duplicate adoption of orders the bot placed
+                combo = (normalize_symbol(raw_sym), direction, round(price, 4))
+                if combo in tracked_combos:
+                    logger.debug(
+                        "Skipping duplicate limit order %s for %s %s @ %.4f — already tracked",
+                        oid, raw_sym, direction, price)
+                    continue
+
+                # ── Get real data from exchange order info ──
+                # marginMode comes from the order itself
+                margin_mode = raw_info.get("marginMode", "crossed")
+
+                # Leverage: Bitget UTA has no GET leverage API for unfilled orders.
+                # The order response doesn't include leverage.
+                # Use the exchange config leverage as the source of truth —
+                # this is what was set via set_leverage before the order was placed.
+                leverage = CONFIG.exchange.leverage or 10
+
+                notional = price * amount
+                margin = round(notional / leverage, 2)
+
+                # Parse creation time from exchange data
+                opened_at = datetime.now(UTC)
+                if created:
+                    try:
+                        opened_at = datetime.fromisoformat(
+                            created.replace("Z", "+00:00"))
+                    except (ValueError, TypeError):
+                        pass
+
+                pos = LivePosition(
+                    trade_id=trade_id,
+                    symbol=raw_sym,
+                    direction=direction,
+                    entry_price=price,
+                    quantity=amount,
+                    cost_usd=margin,
+                    stop_loss=0,
+                    take_profit=0,
+                    leverage=leverage,
+                    opened_at=opened_at,
+                    status="pending_fill",
+                    order_type="limit",
+                    limit_order_id=oid,
+                )
+                self._positions[trade_id] = pos
+                adopted.append(raw_sym)
+
+                audit(trade_log,
+                      f"Adopted orphan limit order: {raw_sym} {direction} "
+                      f"@ ${price:.4f} qty={amount} lev={leverage}x "
+                      f"margin=${margin:.2f} marginMode={margin_mode} (order {oid})",
+                      action="adopt_limit_order", result="OK",
+                      data={"trade_id": trade_id, "symbol": raw_sym,
+                            "order_id": oid, "price": price, "amount": amount,
+                            "leverage": leverage, "margin": margin,
+                            "margin_mode": margin_mode,
+                            "client_oid": client_oid})
+
+            if adopted:
+                self._save_positions()
+
+        except Exception as exc:
+            logger.warning("adopt_exchange_limit_orders() failed: %s", exc)
+        return adopted
 
     async def execute(self, idea: TradeIdea, size_usd: float,
                       order_type: str = "", atr_value: float = 0.0) -> str:
@@ -2104,7 +2349,7 @@ class LiveExecutor:
             "tpOrderType": "market",
             "slOrderType": "market",
             "posSide": pos_side,
-            "marginMode": CONFIG.exchange.margin_mode or "isolated",
+            "marginMode": self._actual_margin_mode or CONFIG.exchange.margin_mode or "isolated",
             "clientOid": self._client_oid(f"{bitget_symbol}_{pos_side}_sltp_{int(time.time())}"),
         }
 
@@ -2424,6 +2669,14 @@ class LiveExecutor:
                     closed_messages.append(
                         f"SYNC: Adopted untracked position {sym} from exchange"
                     )
+                # Also adopt orphaned limit orders
+                adopted_orders = await self.adopt_exchange_limit_orders()
+                for sym in adopted_orders:
+                    audit(trade_log, f"Periodic sync adopted orphan limit order: {sym}",
+                          action="periodic_sync", result="ADOPTED_LIMIT")
+                    closed_messages.append(
+                        f"SYNC: Adopted untracked limit order {sym} from exchange"
+                    )
             except Exception as sync_exc:
                 logger.debug("Periodic exchange sync failed: %s", sync_exc)
 
@@ -2592,6 +2845,9 @@ class LiveExecutor:
                 # ── PRICE DRIFT CANCEL (from Getclaw) ──
                 # If price has moved >X% away from the limit, the setup is stale.
                 # No point waiting for a fill that's unlikely to come.
+                # MARKET FALLBACK: if drift is detected but momentum is strong
+                # and in the trade's direction, convert to market order instead
+                # of cancelling (catches momentum breakouts that moved past limit).
                 drift_pct = CONFIG.limit_orders.price_drift_cancel_pct
                 if drift_pct > 0 and pos.entry_price > 0:
                     try:
@@ -2600,15 +2856,37 @@ class LiveExecutor:
                         if cur_price > 0:
                             pct_away = abs(cur_price - pos.entry_price) / pos.entry_price * 100
                             if pct_away > drift_pct:
-                                cancel_reason = "price_drift"
-                                audit(trade_log,
-                                      f"Price drifted {pct_away:.1f}% from limit "
-                                      f"(threshold {drift_pct}%): {pos.symbol} "
-                                      f"limit=${pos.entry_price:,.4f} mkt=${cur_price:,.4f}",
-                                      action="limit_drift_cancel", result="CANCELLING",
-                                      data={"trade_id": trade_id, "pct_away": pct_away,
-                                            "limit_price": pos.entry_price,
-                                            "market_price": cur_price})
+                                # Check if we should convert to market instead of cancelling
+                                should_market_fallback = False
+                                if CONFIG.limit_orders.drift_market_fallback:
+                                    should_market_fallback = await self._check_drift_market_fallback(
+                                        exchange, pos, cur_price)
+
+                                if should_market_fallback:
+                                    # Convert to market order
+                                    audit(trade_log,
+                                          f"Limit drift → MARKET FALLBACK: {pos.symbol} "
+                                          f"drifted {pct_away:.1f}% but momentum is strong and aligned",
+                                          action="limit_drift_market_fallback", result="CONVERTING",
+                                          data={"trade_id": trade_id, "pct_away": pct_away,
+                                                "limit_price": pos.entry_price,
+                                                "market_price": cur_price})
+                                    fallback_msg = await self._execute_drift_market_fallback(
+                                        exchange, trade_id, pos, cur_price)
+                                    if fallback_msg:
+                                        return fallback_msg
+                                    # If fallback failed, fall through to normal cancel
+                                    cancel_reason = "price_drift"
+                                else:
+                                    cancel_reason = "price_drift"
+                                    audit(trade_log,
+                                          f"Price drifted {pct_away:.1f}% from limit "
+                                          f"(threshold {drift_pct}%): {pos.symbol} "
+                                          f"limit=${pos.entry_price:,.4f} mkt=${cur_price:,.4f}",
+                                          action="limit_drift_cancel", result="CANCELLING",
+                                          data={"trade_id": trade_id, "pct_away": pct_away,
+                                                "limit_price": pos.entry_price,
+                                                "market_price": cur_price})
                     except Exception as drift_exc:
                         logger.debug("Price drift check failed for %s: %s",
                                      pos.symbol, drift_exc)
@@ -2672,6 +2950,201 @@ class LiveExecutor:
             logger.warning("Pending limit check failed for %s: %s", trade_id, exc)
 
         return None
+
+    async def _check_drift_market_fallback(
+        self, exchange: "ccxt.Exchange", pos: "LivePosition", cur_price: float,
+    ) -> bool:
+        """Check if price drift should trigger a market order fallback.
+
+        Returns True if:
+          1. Momentum is strong (ADX > threshold)
+          2. Price moved in the TRADE's direction (not against it)
+             - LONG: price drifted UP past limit (breakout above our buy)
+             - SHORT: price drifted DOWN past limit (breakdown below our sell)
+        """
+        try:
+            min_adx = CONFIG.limit_orders.drift_market_min_adx
+
+            # Check direction alignment: only fallback if price moved
+            # favorably (we're chasing a breakout, not averaging into a loser)
+            if pos.direction == "LONG":
+                # Price moved UP past our buy limit → breakout
+                if cur_price <= pos.entry_price:
+                    return False  # price is below limit, that's normal for a buy
+            else:
+                # SHORT: price moved DOWN past our sell limit → breakdown
+                if cur_price >= pos.entry_price:
+                    return False
+
+            # Fetch recent candles for ADX
+            ohlcv = await exchange.fetch_ohlcv(pos.symbol, "15m", limit=30)
+            if not ohlcv or len(ohlcv) < 14:
+                return False
+
+            import numpy as np
+            closes = np.array([c[4] for c in ohlcv])
+            highs = np.array([c[2] for c in ohlcv])
+            lows = np.array([c[3] for c in ohlcv])
+
+            # Simple ADX calculation
+            period = 14
+            tr = np.maximum(highs[1:] - lows[1:],
+                            np.maximum(np.abs(highs[1:] - closes[:-1]),
+                                       np.abs(lows[1:] - closes[:-1])))
+            plus_dm = np.maximum(highs[1:] - highs[:-1], 0)
+            minus_dm = np.maximum(lows[:-1] - lows[1:], 0)
+
+            # Zero out when other DM is larger
+            mask = plus_dm > minus_dm
+            minus_dm[mask & (plus_dm > minus_dm)] = 0
+            plus_dm[~mask & (minus_dm > plus_dm)] = 0
+
+            # Smoothed averages (simple rolling for efficiency)
+            if len(tr) < period:
+                return False
+            atr_vals = np.convolve(tr, np.ones(period)/period, mode='valid')
+            plus_di = np.convolve(plus_dm, np.ones(period)/period, mode='valid')
+            minus_di = np.convolve(minus_dm, np.ones(period)/period, mode='valid')
+
+            if len(atr_vals) == 0 or atr_vals[-1] == 0:
+                return False
+
+            plus_di_pct = (plus_di[-1] / atr_vals[-1]) * 100
+            minus_di_pct = (minus_di[-1] / atr_vals[-1]) * 100
+
+            dx = abs(plus_di_pct - minus_di_pct) / max(plus_di_pct + minus_di_pct, 1e-10) * 100
+            # Use current DX as ADX proxy (simplified)
+            adx_value = dx
+
+            # Direction alignment check via DI
+            if pos.direction == "LONG" and plus_di_pct <= minus_di_pct:
+                return False  # momentum is bearish, don't chase
+            elif pos.direction == "SHORT" and minus_di_pct <= plus_di_pct:
+                return False  # momentum is bullish, don't chase
+
+            if adx_value >= min_adx:
+                audit(trade_log,
+                      f"Drift market fallback: ADX={adx_value:.1f} >= {min_adx}, "
+                      f"+DI={plus_di_pct:.1f}, -DI={minus_di_pct:.1f} → converting {pos.symbol}",
+                      action="drift_market_check", result="ELIGIBLE",
+                      data={"adx": round(adx_value, 1), "plus_di": round(plus_di_pct, 1),
+                            "minus_di": round(minus_di_pct, 1)})
+                return True
+
+            return False
+        except Exception as exc:
+            logger.debug("Drift market fallback check failed for %s: %s", pos.symbol, exc)
+            return False
+
+    async def _execute_drift_market_fallback(
+        self, exchange: "ccxt.Exchange", trade_id: str,
+        pos: "LivePosition", cur_price: float,
+    ) -> Optional[str]:
+        """Cancel the pending limit and place a market order at current price.
+
+        Updates the position entry price, recalculates cost, places SL/TP.
+        Returns a status message or None if failed.
+        """
+        try:
+            # 1. Cancel the existing limit order
+            try:
+                await exchange.cancel_order(pos.limit_order_id, pos.symbol)
+            except Exception as cancel_exc:
+                # Check if it filled during cancellation
+                try:
+                    check = await exchange.fetch_order(pos.limit_order_id, pos.symbol)
+                    if check.get("status") in ("filled", "closed"):
+                        return None  # filled — next cycle will handle
+                except Exception:
+                    pass
+                logger.warning("Market fallback: cancel failed for %s: %s",
+                               pos.symbol, cancel_exc)
+                return None
+
+            # 2. Place market order
+            side = "buy" if pos.direction == "LONG" else "sell"
+            qty = pos.quantity
+            if qty <= 0:
+                return None
+
+            order = await exchange.create_order(
+                pos.symbol, "market", side, qty,
+                params={"productType": "USDT-FUTURES"})
+
+            fill_price = float(order.get("average", 0) or order.get("price", 0) or cur_price)
+            filled_qty = float(order.get("filled", 0) or qty)
+
+            # 3. Update position
+            old_entry = pos.entry_price
+            pos.entry_price = fill_price
+            pos.quantity = filled_qty
+            pos.status = "open"
+            pos.order_type = "market"
+            pos.limit_order_id = None
+
+            # Recalculate cost
+            raw_cost = fill_price * filled_qty
+            pos.cost_usd = raw_cost / pos.leverage if pos.leverage > 1 else raw_cost
+
+            # Recalculate SL/TP relative to new entry, maintaining the same distances
+            if pos.stop_loss and old_entry > 0:
+                sl_dist_pct = abs(old_entry - pos.stop_loss) / old_entry
+                if pos.direction == "LONG":
+                    pos.stop_loss = round(fill_price * (1 - sl_dist_pct), 8)
+                else:
+                    pos.stop_loss = round(fill_price * (1 + sl_dist_pct), 8)
+
+            if pos.take_profit and old_entry > 0:
+                tp_dist_pct = abs(pos.take_profit - old_entry) / old_entry
+                if pos.direction == "LONG":
+                    pos.take_profit = round(fill_price * (1 + tp_dist_pct), 8)
+                else:
+                    pos.take_profit = round(fill_price * (1 - tp_dist_pct), 8)
+
+            # Initialize trailing state
+            if CONFIG.trailing.enabled and pos.atr_at_entry > 0:
+                from bot.utils.trailing import make_trailing_state
+                initial_risk = abs(fill_price - pos.stop_loss) if pos.stop_loss else pos.atr_at_entry
+                pos.trailing_state = make_trailing_state(
+                    entry_price=fill_price,
+                    direction=pos.direction,
+                    initial_risk=initial_risk,
+                    atr_value=pos.atr_at_entry,
+                )
+
+            # Place SL/TP on exchange
+            from bot.utils.models import Direction
+            direction = Direction.LONG if pos.direction == "LONG" else Direction.SHORT
+            sl_id, tp_id = await self._place_sl_tp(
+                exchange, pos.symbol, direction,
+                filled_qty, pos.stop_loss, pos.take_profit)
+            pos.sl_order_id = sl_id
+            pos.tp_order_id = tp_id
+
+            self._save_positions()
+
+            audit(trade_log,
+                  f"Limit → Market FALLBACK executed: {pos.symbol} @ ${fill_price:,.4f} "
+                  f"(was limit @ ${old_entry:,.4f})",
+                  action="limit_drift_market_fallback", result="EXECUTED",
+                  data={"trade_id": trade_id, "old_entry": old_entry,
+                        "fill_price": fill_price, "quantity": filled_qty,
+                        "sl": pos.stop_loss, "tp": pos.take_profit})
+
+            sl_info = f" | SL: {sl_id}" if sl_id else ""
+            tp_info = f" | TP: {tp_id}" if tp_id else ""
+            return (
+                f"LIMIT → MARKET FALLBACK: {pos.direction} {pos.symbol}\n"
+                f"Original limit: ${old_entry:,.4f} → Market fill: ${fill_price:,.4f}\n"
+                f"Qty: {filled_qty:.6f}{sl_info}{tp_info}\n"
+                f"Reason: momentum breakout past limit price"
+            )
+        except Exception as exc:
+            audit(trade_log,
+                  f"Market fallback execution failed for {pos.symbol}: {exc}",
+                  action="limit_drift_market_fallback", result="ERROR",
+                  data={"trade_id": trade_id, "error": str(exc)})
+            return None
 
     async def _update_exchange_sl(self, exchange: "ccxt.Exchange",
                                    pos: LivePosition, new_sl: float) -> None:
@@ -2780,6 +3253,99 @@ class LiveExecutor:
         if not pos or pos.status not in ("open", "pending_fill"):
             return f"Position {trade_id} not found or already closed/closing."
 
+        # ── PENDING_FILL: cancel the limit order, don't try to close a position ──
+        # A pending_fill position has no open position on exchange — only an
+        # unfilled limit order. We must cancel that order, not place a market close.
+        if pos.status == "pending_fill" and pos.limit_order_id:
+            pos.status = "closing"
+            self._save_positions()
+            try:
+                exchange = await self._get_exchange()
+                await exchange.cancel_order(pos.limit_order_id, pos.symbol)
+
+                # Verify the order is actually cancelled
+                cancelled = False
+                try:
+                    order_info = await exchange.fetch_order(
+                        pos.limit_order_id, pos.symbol,
+                        params={"productType": "USDT-FUTURES"})
+                    status = (order_info.get("status") or "").lower()
+                    filled = float(order_info.get("filled") or 0)
+                    if status in ("canceled", "cancelled", "expired", "closed"):
+                        cancelled = True
+                    elif filled > 0:
+                        # It filled while we were cancelling — handle as a fill
+                        audit(trade_log,
+                              f"Limit order {pos.limit_order_id} filled during cancel for {pos.symbol}",
+                              action="cancel_pending", result="FILLED_DURING_CANCEL")
+                        pos.status = "open"
+                        self._save_positions()
+                        return (f"Limit order for {pos.symbol} filled while cancelling. "
+                                f"Position is now open — use Close to exit.")
+                except Exception:
+                    # fetch_order failed — assume cancel worked if cancel_order didn't throw
+                    cancelled = True
+
+                if cancelled:
+                    pos.status = "closed"
+                    pos.close_reason = reason
+                    pos.closed_at = datetime.now(UTC)
+                    pos.pnl_usd = 0
+                    pos.gross_pnl = 0
+                    pos.commission = 0
+                    pos.close_price = 0
+                    del self._positions[trade_id]
+                    self._save_positions()
+
+                    audit(trade_log,
+                          f"Cancelled pending limit order for {pos.symbol} (order {pos.limit_order_id})",
+                          action="cancel_pending", result="CANCELLED",
+                          data={"trade_id": trade_id, "order_id": pos.limit_order_id,
+                                "symbol": pos.symbol, "reason": reason})
+                    return f"CANCELLED pending {pos.direction} {pos.symbol} limit order"
+                else:
+                    # Cancel didn't work — revert status
+                    pos.status = "pending_fill"
+                    self._save_positions()
+                    return (f"Failed to cancel limit order for {pos.symbol} — "
+                            f"order may still be active on exchange. Please cancel manually on Bitget.")
+
+            except Exception as exc:
+                exc_str = str(exc)
+                # 25204 = order doesn't exist (already cancelled or filled)
+                if "25204" in exc_str or "Order does not exist" in exc_str:
+                    # Check if it filled
+                    try:
+                        exchange = await self._get_exchange()
+                        ccxt_sym = pos.symbol if ":USDT" in pos.symbol else f"{pos.symbol}:USDT"
+                        ex_positions = await exchange.fetch_positions(
+                            [ccxt_sym], params={"productType": "USDT-FUTURES"})
+                        has_pos = any(
+                            abs(float(p.get("contracts", 0) or 0)) > 0 for p in ex_positions
+                        )
+                        if has_pos:
+                            pos.status = "open"
+                            self._save_positions()
+                            return (f"Limit order for {pos.symbol} already filled. "
+                                    f"Position is now open — use Close to exit.")
+                    except Exception:
+                        pass
+
+                    # Order doesn't exist and no position — already cancelled
+                    del self._positions[trade_id]
+                    self._save_positions()
+                    audit(trade_log,
+                          f"Pending limit order already gone for {pos.symbol}: {exc_str}",
+                          action="cancel_pending", result="ALREADY_GONE")
+                    return f"CANCELLED pending {pos.direction} {pos.symbol} (order already gone)"
+                else:
+                    pos.status = "pending_fill"
+                    self._save_positions()
+                    logger.warning("Failed to cancel limit order %s for %s: %s",
+                                   pos.limit_order_id, pos.symbol, exc)
+                    return (f"Failed to cancel limit order for {pos.symbol}: {str(exc)[:100]}. "
+                            f"Please cancel manually on Bitget.")
+
         # C2-02 FIX: Set transitional state BEFORE any await — concurrent callers
         # will see "closing" and bail out at the guard above.
         pos.status = "closing"
@@ -2792,8 +3358,11 @@ class LiveExecutor:
             # Cancel SL/TP orders BEFORE closing — prevents race condition where
             # a trigger fires between close-fill and cancel, opening an opposite pos.
             cancel_failed = []
+            sltp_triggered = False  # True if exchange already executed SL/TP
             for oid in [pos.sl_order_id, pos.tp_order_id]:
                 if oid:
+                    is_sl = (oid == pos.sl_order_id)
+                    order_label = "SL" if is_sl else "TP"
                     try:
                         cancel_resp = await exchange.cancel_order(oid, pos.symbol)
                         cancel_status = cancel_resp.get("status", "") if isinstance(cancel_resp, dict) else ""
@@ -2808,8 +3377,22 @@ class LiveExecutor:
                             except Exception:
                                 pass  # Fetch failed — assume cancel worked
                     except Exception as cancel_exc:
-                        logger.warning("Failed to cancel SL/TP order %s for %s: %s — proceeding with close",
-                                       oid, pos.symbol, cancel_exc)
+                        exc_str = str(cancel_exc)
+                        # 25204 = "Order does not exist" — exchange already executed it
+                        if "25204" in exc_str or "Order does not exist" in exc_str:
+                            sltp_triggered = True
+                            audit(trade_log,
+                                  f"{order_label} order already executed by exchange: {pos.symbol} (order {oid})",
+                                  action="sltp_exchange_trigger", result="TRIGGERED",
+                                  data={"trade_id": trade_id, "order_id": oid,
+                                        "order_type": order_label, "symbol": pos.symbol})
+                        else:
+                            audit(trade_log,
+                                  f"Failed to cancel {order_label} order {oid} for {pos.symbol}: {exc_str}",
+                                  action="sltp_cancel_fail", result="ERROR",
+                                  data={"trade_id": trade_id, "order_id": oid,
+                                        "order_type": order_label, "symbol": pos.symbol,
+                                        "error": exc_str})
                         cancel_failed.append(oid)
 
             # Futures-only mode: all positions close via swap exchange
@@ -3104,140 +3687,181 @@ class LiveExecutor:
         exchange = await self._get_exchange()
         ccxt_symbol = pos.symbol if ":USDT" in pos.symbol else f"{pos.symbol}:USDT"
         # Bitget raw symbol: strip /USDT:USDT → e.g. "BTCUSDT"
-        raw_symbol = pos.symbol.replace("/", "").replace(":USDT", "")
+        # Handle all possible formats: "BZ/USDT:USDT" → "BZUSDT", "BZUSDT" stays
+        raw_symbol = pos.symbol.split(":")[0].replace("/", "")
+        if not raw_symbol.endswith("USDT"):
+            raw_symbol = raw_symbol + "USDT"
 
         # ── 1. Bitget position history endpoint (most accurate) ────────
         # GET /api/v2/mix/position/history-position
         # Returns: openPrice, closeAvgPrice, achievedProfits, openFee, closeFee
-        try:
-            since_ms = int(pos.opened_at.timestamp() * 1000) - 60_000 if pos.opened_at else None
-            params = {
-                "productType": "USDT-FUTURES",
-                "symbol": raw_symbol,
-            }
-            if since_ms:
-                params["startTime"] = str(since_ms)
-            resp = await exchange.privateMixGetV2MixPositionHistoryPosition(params)
-            entries = resp.get("data", {}).get("list", []) if isinstance(resp.get("data"), dict) else []
+        #
+        # Try with progressively wider time windows:
+        #   Pass 1: from 5 min before position opened (tight)
+        #   Pass 2: from 1 hour before position opened (wider)
+        #   Pass 3: no startTime filter at all (widest — gets last 20 positions)
+        time_windows = []
+        if pos.opened_at:
+            ts_ms = int(pos.opened_at.timestamp() * 1000)
+            time_windows.append(ts_ms - 300_000)    # 5 min before open
+            time_windows.append(ts_ms - 3_600_000)  # 1 hour before open
+        time_windows.append(None)  # no filter
 
-            # Match by symbol and entry price (within 0.01% tolerance)
-            for entry in entries:
-                entry_price_hist = float(entry.get("openPrice", 0) or 0)
-                if entry_price_hist <= 0:
-                    continue
-                # Match: same symbol and entry price within 0.01%
-                price_match = abs(entry_price_hist - pos.entry_price) / pos.entry_price < 0.0001
-                if not price_match:
-                    continue
+        for since_ms in time_windows:
+            try:
+                params: dict = {
+                    "productType": "USDT-FUTURES",
+                    "symbol": raw_symbol,
+                }
+                if since_ms is not None:
+                    params["startTime"] = str(since_ms)
+                resp = await exchange.privateMixGetV2MixPositionHistoryPosition(params)
+                entries = resp.get("data", {}).get("list", []) if isinstance(resp.get("data"), dict) else []
 
-                close_price = float(entry.get("closeAvgPrice", 0) or 0)
-                pnl = float(entry.get("achievedProfits", 0) or 0)
-                open_fee = abs(float(entry.get("openFee", 0) or 0))
-                close_fee = abs(float(entry.get("closeFee", 0) or 0))
-                total_fees = open_fee + close_fee
-                # netProfit may also be available
-                net_profit = float(entry.get("netProfit", 0) or 0)
+                logger.debug(
+                    "Position history for %s (window=%s): %d entries returned",
+                    raw_symbol, since_ms, len(entries),
+                )
 
-                if close_price > 0:
-                    # Determine close reason from the data
-                    close_type = (entry.get("closeType") or "").lower()
-                    if "tp" in close_type or "take" in close_type:
-                        reason = "TP HIT (exchange)"
-                    elif "sl" in close_type or "stop" in close_type:
-                        reason = "SL HIT (exchange)"
-                    elif "liquidat" in close_type:
-                        reason = "LIQUIDATED"
-                    else:
-                        reason = "closed (exchange)"
+                # Match by entry price — use 0.5% tolerance (partial fills shift avg)
+                best_match = None
+                best_price_diff = float("inf")
+                for entry in entries:
+                    entry_price_hist = float(entry.get("openPrice", 0) or 0)
+                    if entry_price_hist <= 0:
+                        continue
+                    price_diff = abs(entry_price_hist - pos.entry_price) / pos.entry_price
+                    if price_diff < 0.005 and price_diff < best_price_diff:  # within 0.5%
+                        best_match = entry
+                        best_price_diff = price_diff
 
-                    # Use netProfit if available (most accurate), else achievedProfits
-                    final_pnl = net_profit if net_profit != 0 else pnl
+                if best_match:
+                    entry = best_match
+                    close_price = float(entry.get("closeAvgPrice", 0) or 0)
+                    pnl = float(entry.get("achievedProfits", 0) or 0)
+                    open_fee = abs(float(entry.get("openFee", 0) or 0))
+                    close_fee = abs(float(entry.get("closeFee", 0) or 0))
+                    total_fees = open_fee + close_fee
+                    net_profit = float(entry.get("netProfit", 0) or 0)
 
-                    logger.info(
-                        "Bitget position history for %s: close=%.4f, pnl=%.4f, fees=%.4f",
-                        pos.symbol, close_price, final_pnl, total_fees,
-                    )
-                    return {
-                        "close_price": close_price,
-                        "pnl": final_pnl,
-                        "fees": total_fees,
-                        "reason": reason,
-                        "source": "bitget_position_history",
-                    }
-        except Exception as e:
-            logger.debug("Bitget position history lookup failed for %s: %s", pos.symbol, e)
+                    if close_price > 0:
+                        close_type = (entry.get("closeType") or "").lower()
+                        if "tp" in close_type or "take" in close_type:
+                            reason = "TP HIT (exchange)"
+                        elif "sl" in close_type or "stop" in close_type:
+                            reason = "SL HIT (exchange)"
+                        elif "liquidat" in close_type:
+                            reason = "LIQUIDATED"
+                        else:
+                            reason = "closed (exchange)"
+
+                        final_pnl = net_profit if net_profit != 0 else pnl
+
+                        logger.info(
+                            "Bitget position history for %s: close=%.4f, pnl=%.4f, fees=%.4f (price_diff=%.4f%%)",
+                            pos.symbol, close_price, final_pnl, total_fees, best_price_diff * 100,
+                        )
+                        return {
+                            "close_price": close_price,
+                            "pnl": final_pnl,
+                            "fees": total_fees,
+                            "reason": reason,
+                            "source": "bitget_position_history",
+                        }
+            except Exception as e:
+                logger.debug("Bitget position history lookup failed for %s (window=%s): %s",
+                             pos.symbol, since_ms, e)
 
         # ── 2. fetchMyTrades — match any recent close trade by symbol ──
         # Not just SL/TP order IDs — also find manual close fills
-        try:
-            since_ms = int(pos.opened_at.timestamp() * 1000) - 60_000 if pos.opened_at else None
-            trades = await exchange.fetch_my_trades(ccxt_symbol, since=since_ms, limit=50)
+        # Try without since filter if first attempt returns nothing useful
+        for attempt, use_since in enumerate([(True,), (False,)]):
+            try:
+                if use_since[0] and pos.opened_at:
+                    since_ms_trades = int(pos.opened_at.timestamp() * 1000) - 300_000
+                else:
+                    since_ms_trades = None
+                trades = await exchange.fetch_my_trades(
+                    ccxt_symbol, since=since_ms_trades, limit=50,
+                    params={"productType": "USDT-FUTURES"},
+                )
 
-            # First try matching by SL/TP order IDs
-            if pos.sl_order_id or pos.tp_order_id:
-                relevant = [
+                # First try matching by SL/TP order IDs
+                if pos.sl_order_id or pos.tp_order_id:
+                    relevant = [
+                        t for t in trades
+                        if t.get("order") in (pos.sl_order_id, pos.tp_order_id)
+                    ]
+                    if relevant:
+                        fill_price = float(relevant[-1].get("price", 0) or 0)
+                        total_profit = 0.0
+                        total_fees = 0.0
+                        for rt in relevant:
+                            info = rt.get("info", {})
+                            profit = float(info.get("profit", 0) or 0)
+                            total_profit += profit
+                            fee_detail = info.get("feeDetail", {})
+                            if isinstance(fee_detail, dict):
+                                total_fees += abs(float(fee_detail.get("totalFee", 0) or 0))
+                        matched_order = relevant[-1].get("order")
+                        if matched_order == pos.tp_order_id:
+                            reason = "TP HIT (exchange)"
+                        elif matched_order == pos.sl_order_id:
+                            reason = "SL HIT (exchange)"
+                        else:
+                            reason = "closed (exchange)"
+                        if fill_price > 0 and total_profit != 0:
+                            return {
+                                "close_price": fill_price,
+                                "pnl": total_profit,
+                                "fees": total_fees,
+                                "reason": reason,
+                                "source": "exchange_fill_sltp",
+                            }
+
+                # Then try matching by reduceOnly / close side trades
+                close_side = "sell" if pos.direction == "LONG" else "buy"
+                close_fills = [
                     t for t in trades
-                    if t.get("order") in (pos.sl_order_id, pos.tp_order_id)
+                    if t.get("side") == close_side
+                    and t.get("order") not in (getattr(pos, 'limit_order_id', None),)
                 ]
-                if relevant:
-                    fill_price = float(relevant[-1].get("price", 0) or 0)
-                    total_profit = 0.0
+                if close_fills:
+                    last_fill = close_fills[-1]
+                    fill_price = float(last_fill.get("price", 0) or 0)
+                    info = last_fill.get("info", {})
+                    profit = float(info.get("profit", 0) or 0)
                     total_fees = 0.0
-                    for rt in relevant:
-                        info = rt.get("info", {})
-                        profit = float(info.get("profit", 0) or 0)
-                        total_profit += profit
-                        fee_detail = info.get("feeDetail", {})
-                        if isinstance(fee_detail, dict):
-                            total_fees += abs(float(fee_detail.get("totalFee", 0) or 0))
-                    matched_order = relevant[-1].get("order")
-                    if matched_order == pos.tp_order_id:
-                        reason = "TP HIT (exchange)"
-                    elif matched_order == pos.sl_order_id:
-                        reason = "SL HIT (exchange)"
-                    else:
-                        reason = "closed (exchange)"
-                    if fill_price > 0 and total_profit != 0:
+                    fee_detail = info.get("feeDetail", {})
+                    if isinstance(fee_detail, dict):
+                        total_fees = abs(float(fee_detail.get("totalFee", 0) or 0))
+                    if fill_price > 0 and profit != 0:
                         return {
                             "close_price": fill_price,
-                            "pnl": total_profit,
+                            "pnl": profit,
                             "fees": total_fees,
-                            "reason": reason,
-                            "source": "exchange_fill_sltp",
+                            "reason": "closed (exchange)",
+                            "source": "exchange_fill_recent",
                         }
 
-            # Then try matching by reduceOnly / close side trades
-            close_side = "sell" if pos.direction == "LONG" else "buy"
-            close_fills = [
-                t for t in trades
-                if t.get("side") == close_side
-                and t.get("order") not in (getattr(pos, 'limit_order_id', None),)
-            ]
-            if close_fills:
-                # Use the most recent close fill
-                last_fill = close_fills[-1]
-                fill_price = float(last_fill.get("price", 0) or 0)
-                info = last_fill.get("info", {})
-                profit = float(info.get("profit", 0) or 0)
-                total_fees = 0.0
-                fee_detail = info.get("feeDetail", {})
-                if isinstance(fee_detail, dict):
-                    total_fees = abs(float(fee_detail.get("totalFee", 0) or 0))
-                if fill_price > 0 and profit != 0:
-                    return {
-                        "close_price": fill_price,
-                        "pnl": profit,
-                        "fees": total_fees,
-                        "reason": "closed (exchange)",
-                        "source": "exchange_fill_recent",
-                    }
-        except Exception as e:
-            logger.debug("fetchMyTrades lookup failed for %s: %s", pos.symbol, e)
+                # If we got trades but none matched, try without since filter
+                if trades and use_since[0]:
+                    continue
+                break
+            except Exception as e:
+                logger.debug("fetchMyTrades lookup failed for %s (attempt %d): %s",
+                             pos.symbol, attempt, e)
+                if attempt == 0:
+                    continue
+                break
 
         # ── 3. fetchClosedOrders — only actually filled orders ─────────
         if pos.sl_order_id or pos.tp_order_id:
             try:
-                closed_orders = await exchange.fetch_closed_orders(ccxt_symbol, limit=20)
+                closed_orders = await exchange.fetch_closed_orders(
+                    ccxt_symbol, limit=20,
+                    params={"productType": "USDT-FUTURES"},
+                )
                 for o in closed_orders:
                     if o.get("id") in (pos.sl_order_id, pos.tp_order_id):
                         filled = float(o.get("filled", 0) or 0)
@@ -3259,10 +3883,42 @@ class LiveExecutor:
 
         # ── 4. No exchange data found — return None (never estimate) ───
         logger.warning(
-            "No exchange close data found for %s — all lookups failed. "
-            "Will use ticker price as last resort.", pos.symbol,
+            "No exchange close data found for %s — all lookups failed "
+            "(raw_symbol=%s). Will use ticker price as last resort.",
+            pos.symbol, raw_symbol,
         )
         return None
+
+    def _infer_close_reason(self, pos: "LivePosition", exit_price: float) -> str:
+        """Infer whether TP or SL was hit based on exit price proximity.
+
+        When exchange history is unavailable, we compare the exit price
+        to the stored TP and SL levels to determine the most likely trigger.
+        """
+        if pos.stop_loss <= 0 or pos.take_profit <= 0 or exit_price <= 0:
+            return "closed (ticker)"
+
+        dist_to_sl = abs(exit_price - pos.stop_loss)
+        dist_to_tp = abs(exit_price - pos.take_profit)
+
+        # Check if exit price is at or beyond TP/SL level
+        if pos.direction == "LONG":
+            tp_hit = exit_price >= pos.take_profit * 0.998  # within 0.2%
+            sl_hit = exit_price <= pos.stop_loss * 1.002
+        else:  # SHORT
+            tp_hit = exit_price <= pos.take_profit * 1.002
+            sl_hit = exit_price >= pos.stop_loss * 0.998
+
+        if tp_hit and not sl_hit:
+            return "TP HIT (inferred)"
+        elif sl_hit and not tp_hit:
+            return "SL HIT (inferred)"
+        elif dist_to_tp < dist_to_sl:
+            return "TP HIT (inferred)"
+        elif dist_to_sl < dist_to_tp:
+            return "SL HIT (inferred)"
+        else:
+            return "closed (ticker)"
 
     async def _handle_already_closed_position(self, pos: LivePosition) -> str | None:
         """Handle a position that was already closed on exchange (25227).
@@ -3292,12 +3948,13 @@ class LiveExecutor:
                 est_exit = 0
             if est_exit <= 0:
                 return None  # Can't determine anything
-            reason = "closed (ticker)"
+            # Infer whether TP or SL was hit based on exit price proximity
+            reason = self._infer_close_reason(pos, est_exit)
             fill_source = "ticker_fallback"
             exchange_reported_pnl = None
             logger.warning(
-                "Using ticker price for %s close — exchange history unavailable",
-                pos.symbol,
+                "Using ticker price for %s close — exchange history unavailable (inferred: %s)",
+                pos.symbol, reason,
             )
 
         # ── Record accurate close ────────────────────────────────────
@@ -3918,6 +4575,22 @@ class LiveExecutor:
                     )
 
                     if not has_position:
+                        # ── Double-counting guard ──
+                        # If this trade_id is already in closed_trades (e.g., from a
+                        # previous bot instance that closed it), skip re-reconciling.
+                        # This prevents stale-ticker PnL from overwriting the real close.
+                        already_closed = any(
+                            ct.trade_id == pos.trade_id for ct in self._closed_trades
+                        )
+                        if already_closed:
+                            audit(trade_log,
+                                  f"Reconcile skip: {pos.symbol} (trade {pos.trade_id}) already in closed_trades",
+                                  action="reconcile_skip", result="ALREADY_CLOSED")
+                            # Remove from open positions — it's already tracked as closed
+                            pos.status = "closed"
+                            self._save_positions()
+                            continue
+
                         # Position no longer on exchange — get real close data from Bitget
                         close_data = await self._fetch_bitget_close_data(pos)
 
@@ -3935,12 +4608,13 @@ class LiveExecutor:
                                 est_exit = 0
                             if est_exit <= 0:
                                 est_exit = pos.entry_price  # absolute fallback
-                            reason = "closed (ticker)"
+                            reason = self._infer_close_reason(pos, est_exit)
                             fill_source = "ticker_fallback"
                             exchange_reported_pnl = None
                             logger.warning(
                                 "Reconcile: using ticker price for %s — "
-                                "exchange history unavailable", pos.symbol)
+                                "exchange history unavailable (inferred: %s)",
+                                pos.symbol, reason)
 
                         # Compute PnL — prefer exchange-reported profit (source of truth)
                         if exchange_reported_pnl is not None:

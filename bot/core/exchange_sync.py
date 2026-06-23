@@ -401,6 +401,19 @@ async def sync_portfolio_with_exchange(engine) -> list[str]:
             audit(system_log, msg, action="exchange_sync_adopt", result="ERROR")
             messages.append(msg)
 
+    # Also adopt orphaned limit orders not tracked locally
+    try:
+        adopted_orders = await engine.live_executor.adopt_exchange_limit_orders()
+        for a in adopted_orders:
+            msg = f"Adopted orphan limit order: {a}"
+            messages.append(msg)
+        if adopted_orders:
+            audit(system_log,
+                  f"Adopted {len(adopted_orders)} orphaned limit order(s)",
+                  action="exchange_sync_adopt_limit", result="OK")
+    except Exception as exc:
+        logger.debug("Failed to adopt orphaned limit orders: %s", exc)
+
     if not messages:
         messages.append("Exchange sync complete — all positions in sync")
         audit(system_log, messages[0], action="exchange_sync", result="OK")

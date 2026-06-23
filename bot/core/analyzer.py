@@ -220,6 +220,9 @@ class Analyzer:
         self._explainability = ExplainabilityEngine()
         # Diagnostic info for the last rejected analysis
         self._last_rejection_diag: Optional[dict] = None
+        # Regime persistence: smooth out single-bar whipsaw changes
+        self._regime_history: list[tuple[str, str]] = []  # (symbol, regime_value)
+        self._current_regimes: dict[str, Regime] = {}  # per-symbol smoothed regime
 
     def _resolve_llm_config(self) -> Optional[LLMConfig]:
         """Build LLMConfig from BYOK runtime or .env config."""
@@ -354,11 +357,55 @@ class Analyzer:
                 elif "Harmonic" in name or any(h in name for h in ("Gartley", "Butterfly", "Bat", "Crab")):
                     indicators["harmonic_pattern"] = p
                 elif "Elliott" in name:
+                    # Store ALL Elliott patterns (impulse + corrective + diagonal + WXY)
+                    # keyed by type to avoid overwrite when multiple are detected.
+                    if "Impulse" in name or "Truncated" in name or "Extended" in name:
+                        indicators["elliott_impulse"] = p
+                    elif "ABC" in name:
+                        indicators["elliott_corrective"] = p
+                    elif "Diagonal" in name:
+                        indicators["elliott_diagonal"] = p
+                    elif "WXY" in name or "WXYXZ" in name:
+                        indicators["elliott_wxy"] = p
+                    # Keep legacy key for backward compatibility
                     indicators["elliott_pattern"] = p
                 elif "Fibonacci" in name and "ext" in name.lower():
                     indicators["fib_extensions"] = p
 
-        regime = self._detect_regime(indicators)
+        # ── Divergence Scanner ──
+        try:
+            from bot.core.divergence import scan_divergences, divergence_to_confluence_votes
+            div_signals = scan_divergences(closes, volumes, lookback=CONFIG.analyzer.divergence_lookback)
+            if div_signals:
+                div_votes, div_weights = divergence_to_confluence_votes(div_signals)
+                indicators["_div_votes"] = div_votes
+                indicators["_div_weights"] = div_weights
+                indicators["divergences"] = [
+                    {"type": s.div_type, "indicator": s.indicator, "confidence": s.confidence, "description": s.description}
+                    for s in div_signals[:3]  # top 3
+                ]
+        except Exception as exc:
+            system_log.debug("Divergence scan failed: %s", exc)
+
+        # ── Volume Profile ──
+        try:
+            vp = compute_volume_profile(
+                highs, lows, closes, volumes,
+                num_bins=CONFIG.analyzer.volume_profile_bins,
+                current_price=signal.price,
+            )
+            if vp is not None:
+                indicators["volume_profile"] = {
+                    "poc": vp.poc, "vah": vp.vah, "val": vp.val,
+                    "price_vs_poc": vp.price_vs_poc,
+                    "in_value_area": vp.price_in_value_area,
+                    "skew": vp.profile_skew,
+                }
+                indicators["_vp_result"] = vp
+        except Exception as exc:
+            system_log.debug("Volume profile failed: %s", exc)
+
+        regime = self._detect_regime(indicators, signal.symbol)
 
         # ── Multi-Timeframe Analysis ──
         mtf_result = None
@@ -544,6 +591,43 @@ class Analyzer:
         except Exception:
             pass  # guard must never raise
 
+        # ── Funding Rate Arbitrage Filter ──
+        try:
+            if order_flow is not None and hasattr(order_flow, 'funding_rate'):
+                fr = order_flow.funding_rate
+                if fr is not None and abs(fr) > 0.0005:  # extreme funding (> 0.05%)
+                    if fr < -0.0005 and direction == Direction.LONG:
+                        blended_confidence += 0.03
+                        indicators["funding_arb"] = f"Extreme negative funding ({fr:.4%}) favors LONG"
+                    elif fr > 0.0005 and direction == Direction.SHORT:
+                        blended_confidence += 0.03
+                        indicators["funding_arb"] = f"Extreme positive funding ({fr:.4%}) favors SHORT"
+                    elif fr < -0.0005 and direction == Direction.SHORT:
+                        blended_confidence -= 0.02
+                        indicators["funding_arb"] = f"Extreme negative funding ({fr:.4%}) opposes SHORT"
+                    elif fr > 0.0005 and direction == Direction.LONG:
+                        blended_confidence -= 0.02
+                        indicators["funding_arb"] = f"Extreme positive funding ({fr:.4%}) opposes LONG"
+        except Exception:
+            pass
+
+        # IMPROVEMENT #3: Smart-money direct confidence boost.
+        # When smart_money_score is strongly directional (+/-), give a small
+        # direct bonus to blended_confidence. This gives whale/institutional
+        # flow more influence beyond just the confluence voter weights.
+        if smart_money_score is not None and abs(smart_money_score) > 0.3:
+            sm_alignment = 0.0
+            if direction == Direction.LONG and smart_money_score > 0:
+                sm_alignment = smart_money_score
+            elif direction == Direction.SHORT and smart_money_score < 0:
+                sm_alignment = abs(smart_money_score)
+            # Max boost: ~0.05 (at score=1.0), penalty ~0.03 for misalignment
+            if sm_alignment > 0:
+                blended_confidence += 0.05 * sm_alignment
+            elif smart_money_score != 0:
+                # Smart money opposes direction — small penalty
+                blended_confidence -= 0.03 * abs(smart_money_score)
+
         blended_confidence = round(max(0.0, min(1.0, blended_confidence)), 2)
 
         # Apply regime penalty (RANGE: -0.10, CHOP: -0.15, else: 0)
@@ -552,6 +636,17 @@ class Analyzer:
         # penalty) as the floor base, not raw_confidence from the LLM.
         min_floor = blended_confidence * 0.25
         blended_confidence = round(max(min_floor, blended_confidence - regime_confidence_penalty), 2)
+
+        # Session-aware confidence adjustment: reduce confidence in
+        # low-liquidity sessions (Asian, late NY), boost during peak overlap.
+        try:
+            from bot.core.session_aware import get_current_session
+            session = get_current_session()
+            if session.confidence_adjustment != 0:
+                blended_confidence = round(
+                    max(min_floor, blended_confidence + session.confidence_adjustment), 2)
+        except Exception:
+            pass  # fail-open: session check must never block analysis
 
         # SIGNAL QUALITY: threshold at min_confidence (matches config)
         # RANGE/CHOP trades need high raw confluence to survive after penalty
@@ -1001,13 +1096,14 @@ class Analyzer:
 
         # ── Volume Profile (POC + Value Area) ──
         if volumes is not None and len(volumes) >= 10:
-            vp = compute_volume_profile(closes, highs, lows, volumes)
+            vp = compute_volume_profile(highs, lows, closes, volumes)
             if vp is not None:
-                results["poc_price"] = vp.poc_price
-                results["value_area_high"] = vp.value_area_high
-                results["value_area_low"] = vp.value_area_low
+                results["poc_price"] = vp.poc
+                results["value_area_high"] = vp.vah
+                results["value_area_low"] = vp.val
                 results["price_vs_poc"] = vp.price_vs_poc
-                results["poc_distance_pct"] = vp.poc_distance_pct
+                poc_dist = abs(closes[-1] - vp.poc) / closes[-1] * 100 if closes[-1] > 0 else 0
+                results["poc_distance_pct"] = round(poc_dist, 2)
 
         # ── Volume Oscillator (5/20 EMA ratio) ──
         if volumes is not None and len(volumes) >= 20:
@@ -1203,38 +1299,59 @@ class Analyzer:
 
     # -- Regime Detection --
 
-    @staticmethod
-    def _detect_regime(indicators: dict) -> Regime:
+    def _detect_regime(self, indicators: dict, symbol: str) -> Regime:
         """
-        Classify market regime using ADX + directional indicators + squeeze.
+        Classify market regime using ADX + directional indicators + squeeze,
+        with a 3-reading confirmation window to prevent whipsaw flips.
 
+        Raw classification logic (unchanged):
         ADX > 25 + DI+ > DI- → TREND_UP
         ADX > 25 + DI- > DI+ → TREND_DOWN
         ADX 20-30 + squeeze releasing → EXPANSION (breakout from compression)
         ADX < 20             → RANGE (mean-reversion favorable)
         ADX 20-25            → CHOP (no clear structure)
+
+        Smoothing: requires 2/3 of the last readings for a symbol to agree
+        before switching regime. If no consensus, keep the previous regime.
         """
         adx = indicators.get("adx", 0)
         plus_di = indicators.get("plus_di", 0)
         minus_di = indicators.get("minus_di", 0)
         squeeze = indicators.get("kc_squeeze", False)
 
-        # EXPANSION: ADX is rising through the 20-30 zone AND Keltner squeeze
-        # is active (BB inside KC = volatility compressed, about to expand).
-        # This identifies the exact moment capital is about to expand into
-        # a new directional move — the highest-probability entry window.
+        # -- Raw regime classification (same logic as before) --
         if squeeze and 18 <= adx <= 35:
-            return Regime.EXPANSION
-
-        if adx > 25:
-            if plus_di > minus_di:
-                return Regime.TREND_UP
-            else:
-                return Regime.TREND_DOWN
+            raw = Regime.EXPANSION
+        elif adx > 25:
+            raw = Regime.TREND_UP if plus_di > minus_di else Regime.TREND_DOWN
         elif adx < 20:
-            return Regime.RANGE
+            raw = Regime.RANGE
         else:
-            return Regime.CHOP
+            raw = Regime.CHOP
+
+        # -- Persistence / smoothing --
+        self._regime_history.append((symbol, raw.value))
+        # Keep history bounded (max 3 entries per symbol is enough;
+        # cap total list at 300 to avoid unbounded growth across symbols)
+        if len(self._regime_history) > 300:
+            self._regime_history = self._regime_history[-200:]
+
+        # Gather last 3 readings for this symbol
+        recent = [v for s, v in self._regime_history if s == symbol][-3:]
+
+        # Check for consensus: 2 out of last 3 readings must agree
+        from collections import Counter
+        counts = Counter(recent)
+        consensus_value, consensus_count = counts.most_common(1)[0]
+
+        if consensus_count >= 2:
+            smoothed = Regime(consensus_value)
+        else:
+            # No consensus — keep previous regime if we have one
+            smoothed = self._current_regimes.get(symbol, raw)
+
+        self._current_regimes[symbol] = smoothed
+        return smoothed
 
     # -- Confluence Scoring --
 
@@ -1425,6 +1542,34 @@ class Analyzer:
             scaled_weight = min(1.0, 0.7 * min(geo_count, 3))  # cap at 3 patterns
             weights.append(scaled_weight)
 
+        # ── Divergence Scanner voter ──
+        div_votes = indicators.get("_div_votes")
+        div_weights = indicators.get("_div_weights")
+        if div_votes and div_weights:
+            votes.extend(div_votes)
+            weights.extend(div_weights)
+
+        # ── Volume Profile voter ──
+        vp = indicators.get("_vp_result")
+        if vp is not None:
+            try:
+                from bot.core.volume_profile import volume_profile_to_confluence
+                # Use net bullish/bearish vote based on price vs POC
+                vp_vote = 0.0
+                if hasattr(vp, 'price_vs_poc'):
+                    if vp.price_vs_poc == "above":
+                        vp_vote = 0.5   # price above POC → bullish bias
+                    elif vp.price_vs_poc == "below":
+                        vp_vote = -0.5  # price below POC → bearish bias
+                if hasattr(vp, 'price_in_value_area') and vp.price_in_value_area:
+                    # Inside value area = mean-reversion zone, dampen signal
+                    vp_vote *= 0.5
+                if abs(vp_vote) > 0:
+                    votes.append(vp_vote)
+                    weights.append(0.6)
+            except Exception:
+                pass
+
         # Stochastic voter (weight 1.2 — momentum + mean-reversion)
         stoch_k = indicators.get("stoch_k")
         stoch_d = indicators.get("stoch_d")
@@ -1523,20 +1668,46 @@ class Analyzer:
                 votes.append(0.0)
                 weights.append(0.35)
 
-        # Elliott Wave voter (weight 0.65 — impulse/corrective wave structure)
-        elliott = indicators.get("elliott_pattern")
-        if elliott:
-            e_signal = elliott.get("signal", "neutral")
-            e_conf = elliott.get("confidence", 0.5)
-            if e_signal == "bullish":
-                votes.append(e_conf)
-                weights.append(0.65)
-            elif e_signal == "bearish":
-                votes.append(-e_conf)
-                weights.append(0.65)
-            else:
-                votes.append(0.0)
-                weights.append(0.3)
+        # Elliott Wave voters — separate votes for each wave type detected.
+        # Impulse (strongest trend signal), Corrective (context), Diagonal (reversal),
+        # WXY (extended consolidation). Each gets its own weight so multiple wave
+        # structures reinforce rather than overwrite each other.
+        _elliott_types = [
+            ("elliott_impulse", 0.75, "ew_impulse"),      # 5-wave impulse = strong trend
+            ("elliott_corrective", 0.60, "ew_corrective"), # ABC correction = context
+            ("elliott_diagonal", 0.65, "ew_diagonal"),     # diagonal = reversal warning
+            ("elliott_wxy", 0.55, "ew_wxy"),               # complex correction = consolidation
+        ]
+        for ew_key, ew_weight, ew_label in _elliott_types:
+            ew = indicators.get(ew_key)
+            if ew:
+                e_signal = ew.get("signal", "neutral")
+                e_conf = ew.get("confidence", 0.5)
+                if e_signal == "bullish":
+                    votes.append(e_conf)
+                    weights.append(_boost(ew_weight, ew_label))
+                elif e_signal == "bearish":
+                    votes.append(-e_conf)
+                    weights.append(_boost(ew_weight, ew_label))
+                else:
+                    votes.append(0.0)
+                    weights.append(0.25)
+
+        # Legacy fallback: if no typed Elliott found, use generic key
+        if not any(indicators.get(k) for k, _, _ in _elliott_types):
+            elliott = indicators.get("elliott_pattern")
+            if elliott:
+                e_signal = elliott.get("signal", "neutral")
+                e_conf = elliott.get("confidence", 0.5)
+                if e_signal == "bullish":
+                    votes.append(e_conf)
+                    weights.append(0.65)
+                elif e_signal == "bearish":
+                    votes.append(-e_conf)
+                    weights.append(0.65)
+                else:
+                    votes.append(0.0)
+                    weights.append(0.3)
 
         # Order flow votes (if available)
         if order_flow is not None:

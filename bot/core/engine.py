@@ -139,6 +139,7 @@ class RuneClawEngine:
         self._close_notify_callback: Optional[Callable] = None
         self._fill_notify_callback: Optional[Callable] = None
         self._adopt_notify_callback: Optional[Callable] = None
+        self._auto_confirm_notify_callback: Optional[Callable] = None
         self._pending_ideas: dict[str, TradeIdea] = {}
         self._last_confirmed_idea: Optional[TradeIdea] = None
         self._pending_atr: dict[str, Optional[float]] = {}  # H1: store ATR for re-check
@@ -161,7 +162,55 @@ class RuneClawEngine:
         # detect and recover from stuck non-IDLE states.
         self._last_state_change: float = time.time()
 
+        # Smart scan scheduling
+        self._last_scan_time: float = 0.0
+        self._current_scan_interval: float = CONFIG.scan_interval_seconds
+        self._recent_atr_values: dict[str, float] = {}  # symbol -> latest ATR
+
     # -- State management --
+
+    def _compute_smart_scan_interval(self) -> float:
+        """Dynamically adjust scan interval based on market volatility.
+
+        High volatility → scan more frequently (min interval)
+        Low volatility → scan less frequently (max interval)
+        """
+        if not CONFIG.adaptive.smart_scan_enabled:
+            return CONFIG.scan_interval_seconds
+
+        if not self._recent_atr_values:
+            return CONFIG.scan_interval_seconds
+
+        min_interval = CONFIG.adaptive.smart_scan_min_interval
+        max_interval = CONFIG.adaptive.smart_scan_max_interval
+        base = CONFIG.scan_interval_seconds
+
+        # Count how many symbols have "hot" ATR (above their recent average)
+        hot_symbols = 0
+        for symbol, atr_pct in self._recent_atr_values.items():
+            if atr_pct > 0.03:  # ATR > 3% of price = high vol
+                hot_symbols += 1
+
+        if hot_symbols >= 3:
+            # Multiple volatile symbols = market-wide event, scan fast
+            interval = min_interval
+        elif hot_symbols >= 1:
+            # Some volatility, moderate speed
+            interval = base * 0.5
+        else:
+            # Quiet market, slow down
+            interval = min(max_interval, base * 1.5)
+
+        interval = max(min_interval, min(max_interval, interval))
+
+        if abs(interval - self._current_scan_interval) > 10:
+            audit(system_log,
+                  f"Smart scan interval: {self._current_scan_interval:.0f}s \u2192 {interval:.0f}s "
+                  f"(hot_symbols={hot_symbols})",
+                  action="smart_scan", result="ADJUSTED")
+
+        self._current_scan_interval = interval
+        return interval
 
     async def get_exchange(self, category: str = "Crypto"):
         """Public accessor for the exchange instance (for skills that need OHLCV).
@@ -380,6 +429,10 @@ class RuneClawEngine:
         """Register a callback to notify users when an exchange position is adopted."""
         self._adopt_notify_callback = cb
 
+    def set_auto_confirm_notify_callback(self, cb: Callable) -> None:
+        """Register a callback to notify when a trade is auto-confirmed."""
+        self._auto_confirm_notify_callback = cb
+
     # -- Main loop --
 
     async def run(self) -> None:
@@ -436,7 +489,7 @@ class RuneClawEngine:
                     action="tick",
                     result="ERROR",
                 )
-            await asyncio.sleep(CONFIG.scan_interval_seconds)
+            await asyncio.sleep(self._compute_smart_scan_interval())
 
     async def stop(self) -> None:
         self._running = False
@@ -505,10 +558,11 @@ class RuneClawEngine:
 
         # TTL: expire stale pending ideas
         now = datetime.now(UTC)
+        idea_ttl = CONFIG.pending_idea_ttl
         expired_ids = [
             idea_id
             for idea_id, idea in self._pending_ideas.items()
-            if (now - idea.timestamp).total_seconds() > 300
+            if (now - idea.timestamp).total_seconds() > idea_ttl
         ]
         for idea_id in expired_ids:
             expired_idea = self._pending_ideas.pop(idea_id, None)
@@ -602,6 +656,71 @@ class RuneClawEngine:
                     self._pending_pyramid.pop(existing_id, None)  # C2-31 FIX: clean stale pyramid flag
                 self._pending_ideas[idea.id] = idea
 
+        # ── Adaptive Confidence Threshold ──
+        # Auto-adjust threshold based on recent win rate
+        from bot.config import RUNTIME
+        if CONFIG.adaptive.adaptive_threshold_enabled:
+            try:
+                recent_trades = self.portfolio._history[-CONFIG.adaptive.adaptive_threshold_lookback:]
+                if len(recent_trades) >= 5:
+                    recent_closed = [t for t in recent_trades if t.closed_at is not None]
+                    if len(recent_closed) >= 5:
+                        recent_wins = sum(1 for t in recent_closed if t.pnl > 0)
+                        recent_wr = recent_wins / len(recent_closed)
+
+                        if recent_wr >= CONFIG.adaptive.adaptive_threshold_high_wr:
+                            # Winning streak: lower threshold to capture more
+                            new_thresh = max(CONFIG.adaptive.adaptive_threshold_min,
+                                           RUNTIME.auto_confirm_threshold - 0.05)
+                        elif recent_wr <= CONFIG.adaptive.adaptive_threshold_low_wr:
+                            # Losing streak: raise threshold to be selective
+                            new_thresh = min(CONFIG.adaptive.adaptive_threshold_max,
+                                           RUNTIME.auto_confirm_threshold + 0.05)
+                        else:
+                            new_thresh = RUNTIME.auto_confirm_threshold
+
+                        if new_thresh != RUNTIME.auto_confirm_threshold:
+                            audit(system_log,
+                                  f"Adaptive threshold: {RUNTIME.auto_confirm_threshold:.2f} → {new_thresh:.2f} "
+                                  f"(WR={recent_wr:.0%} over last {len(recent_closed)} trades)",
+                                  action="adaptive_threshold", result="ADJUSTED")
+                            RUNTIME.auto_confirm_threshold = new_thresh
+            except Exception:
+                pass  # fail-open
+
+        # ── Auto-confirmation for high-confidence signals ──
+        # If confidence exceeds threshold, bypass human confirmation gate
+        # and auto-execute. Notifications still go to Telegram with
+        # "[AUTO]" tag so the operator can see what happened.
+        auto_threshold = RUNTIME.auto_confirm_threshold
+        auto_ideas = [
+            (tid, tidea) for tid, tidea in list(self._pending_ideas.items())
+            if tidea.confidence >= auto_threshold
+        ]
+        for tid, tidea in auto_ideas:
+            audit(trade_log,
+                  f"Auto-confirming {tidea.asset} (conf={tidea.confidence:.2f} >= {auto_threshold})",
+                  action="auto_confirm", result="TRIGGERING",
+                  data={"trade_id": tid, "confidence": tidea.confidence,
+                        "threshold": auto_threshold})
+            try:
+                result = await self.confirm_trade(tid, user_id="auto")
+                audit(trade_log,
+                      f"Auto-confirm result for {tidea.asset}: {result[:120]}",
+                      action="auto_confirm", result="DONE",
+                      data={"trade_id": tid, "result_preview": result[:200]})
+                # Notify via Telegram if callback is set
+                if self._auto_confirm_notify_callback:
+                    try:
+                        await self._auto_confirm_notify_callback(tidea, result)
+                    except Exception:
+                        pass
+            except Exception as exc:
+                audit(trade_log,
+                      f"Auto-confirm failed for {tidea.asset}: {exc}",
+                      action="auto_confirm", result="ERROR",
+                      data={"trade_id": tid, "error": str(exc)})
+
         self._transition(AgentState.MONITORING, "checking open positions")
         await self._check_open_positions()
         self._transition(AgentState.IDLE, "tick cycle complete")
@@ -627,6 +746,115 @@ class RuneClawEngine:
             for old_key in sorted_keys[:len(self._ohlcv_cache) - 200]:
                 del self._ohlcv_cache[old_key]
         return data
+
+    async def _refine_entry_mtf(self, idea: TradeIdea, exchange) -> TradeIdea:
+        """Zoom into lower timeframe to find optimal entry within the setup zone.
+
+        After identifying a setup on 1H/4H, check 15m candles for:
+        - Better entry near support/resistance within the zone
+        - Momentum confirmation on lower timeframe
+        - Tighter stop placement based on lower-TF structure
+
+        Returns refined TradeIdea (or original if refinement fails/not applicable).
+        """
+        try:
+            # Only refine for swing/intraday strategies (not scalps)
+            if idea.strategy_type == "scalp":
+                return idea
+
+            symbol = idea.asset
+
+            # Fetch 15m candles for the last ~12 hours (48 candles)
+            candles_15m = await self._cached_ohlcv(exchange, symbol, "15m", limit=48, ttl=60)
+            if not candles_15m or len(candles_15m) < 20:
+                return idea
+
+            import numpy as np
+            closes = np.array([c[4] for c in candles_15m])
+            highs = np.array([c[2] for c in candles_15m])
+            lows = np.array([c[3] for c in candles_15m])
+
+            current_price = float(closes[-1])
+
+            # Find recent support/resistance on 15m
+            recent_lows = lows[-20:]
+            recent_highs = highs[-20:]
+
+            is_long = idea.direction.value == "LONG"
+
+            if is_long:
+                # For longs, look for nearest support level below current price
+                # as a better entry point
+                support_candidates = []
+                for i in range(2, len(recent_lows) - 2):
+                    if recent_lows[i] <= recent_lows[i-1] and recent_lows[i] <= recent_lows[i-2] and \
+                       recent_lows[i] <= recent_lows[i+1] and recent_lows[i] <= recent_lows[i+2]:
+                        support_candidates.append(float(recent_lows[i]))
+
+                if support_candidates:
+                    # Find the nearest support below current price
+                    supports_below = [s for s in support_candidates if s < current_price]
+                    if supports_below:
+                        best_support = max(supports_below)  # closest support below
+                        # Only refine if support is within 1% of current price
+                        pct_diff = (current_price - best_support) / current_price
+                        if 0.001 < pct_diff < 0.01:
+                            # Refined entry is at support + small buffer
+                            refined_entry = best_support + (current_price - best_support) * 0.2
+                            # Tighter SL based on 15m structure
+                            min_low = float(np.min(recent_lows[-10:]))
+                            refined_sl = min(idea.stop_loss, min_low * 0.998)
+                            # Preserve R:R ratio for TP
+                            original_rr = abs(idea.take_profit - idea.entry_price) / abs(idea.entry_price - idea.stop_loss)
+                            new_risk = abs(refined_entry - refined_sl)
+                            refined_tp = refined_entry + new_risk * original_rr
+
+                            audit(system_log,
+                                  f"MTF entry refined for {symbol}: {idea.entry_price:.4f} -> {refined_entry:.4f} "
+                                  f"(SL: {idea.stop_loss:.4f} -> {refined_sl:.4f})",
+                                  action="mtf_refine", result="REFINED")
+
+                            idea = idea.model_copy(update={
+                                "entry_price": round(refined_entry, 8),
+                                "stop_loss": round(refined_sl, 8),
+                                "take_profit": round(refined_tp, 8),
+                            })
+            else:
+                # For shorts, look for nearest resistance level above current price
+                resistance_candidates = []
+                for i in range(2, len(recent_highs) - 2):
+                    if recent_highs[i] >= recent_highs[i-1] and recent_highs[i] >= recent_highs[i-2] and \
+                       recent_highs[i] >= recent_highs[i+1] and recent_highs[i] >= recent_highs[i+2]:
+                        resistance_candidates.append(float(recent_highs[i]))
+
+                if resistance_candidates:
+                    resistances_above = [r for r in resistance_candidates if r > current_price]
+                    if resistances_above:
+                        best_resistance = min(resistances_above)  # closest resistance above
+                        pct_diff = (best_resistance - current_price) / current_price
+                        if 0.001 < pct_diff < 0.01:
+                            refined_entry = best_resistance - (best_resistance - current_price) * 0.2
+                            max_high = float(np.max(recent_highs[-10:]))
+                            refined_sl = max(idea.stop_loss, max_high * 1.002)
+                            original_rr = abs(idea.take_profit - idea.entry_price) / abs(idea.entry_price - idea.stop_loss)
+                            new_risk = abs(refined_entry - refined_sl)
+                            refined_tp = refined_entry - new_risk * original_rr
+
+                            audit(system_log,
+                                  f"MTF entry refined for {symbol}: {idea.entry_price:.4f} -> {refined_entry:.4f} "
+                                  f"(SL: {idea.stop_loss:.4f} -> {refined_sl:.4f})",
+                                  action="mtf_refine", result="REFINED")
+
+                            idea = idea.model_copy(update={
+                                "entry_price": round(refined_entry, 8),
+                                "stop_loss": round(refined_sl, 8),
+                                "take_profit": round(refined_tp, 8),
+                            })
+        except Exception as exc:
+            # Fail-open: return original idea if refinement fails
+            logger.debug("MTF refinement failed for %s: %s", idea.asset, exc)
+
+        return idea
 
     async def _analyze_signal(self, signal: MarketSignal, *, timeframe: str = "1h") -> Optional[TradeIdea]:
         """Run full analysis pipeline on a single signal.
@@ -701,6 +929,10 @@ class RuneClawEngine:
                 tr = max(h - l, abs(h - pc), abs(l - pc))
                 true_ranges.append(tr)
             atr_value = sum(true_ranges) / len(true_ranges)
+
+        # Smart scan: track ATR for interval adjustment
+        if atr_value is not None and signal.price > 0:
+            self._recent_atr_values[signal.symbol] = atr_value / signal.price
 
         # ── Smart pyramid / duplicate symbol guard ─────────────────
         # Rules: max 2 entries per symbol, same direction adds require
@@ -893,6 +1125,10 @@ class RuneClawEngine:
         )
         # H1: store ATR alongside idea for re-check in confirm_trade
         self._pending_atr[idea.id] = atr_value
+
+        # MTF entry refinement: zoom into 15m for better entry within zone
+        idea = await self._refine_entry_mtf(idea, exchange)
+
         return idea
 
     async def confirm_trade(self, trade_id: str, user_id: str = "") -> str:
@@ -1294,6 +1530,88 @@ class RuneClawEngine:
             )
             return f"Trade REJECTED."
         return f"Trade not found."
+
+    async def force_scan(self) -> dict:
+        """Force an immediate scan cycle, bypassing cooldown and pending gates.
+
+        Called by /forcescan command. Clears pending ideas, resets cooldown,
+        and runs a full scan-analyze cycle. Returns a summary dict.
+        """
+        audit(system_log, "Force scan triggered", action="force_scan", result="START")
+
+        # Clear gates that would block a normal tick
+        old_pending = len(self._pending_ideas)
+        self._pending_ideas.clear()
+        self._pending_atr.clear()
+        self._pending_pyramid.clear()
+        self._cooldown_until = 0.0
+
+        # Run scan
+        self._transition(AgentState.SCANNING, "force scan")
+        try:
+            signals = await self.scanner.scan()
+            self._last_scan_signals = signals or []
+        except Exception as exc:
+            self._transition(AgentState.IDLE, "force scan error")
+            return {"error": str(exc), "signals": 0, "ideas": 0}
+
+        if not signals:
+            self._transition(AgentState.IDLE, "force scan: no signals")
+            return {"signals": 0, "ideas": 0, "cleared_pending": old_pending}
+
+        # Analyze
+        self._transition(AgentState.ANALYZING, "force scan analyzing")
+
+        async def _safe_analyze(sig):
+            try:
+                return await self._analyze_signal(sig)
+            except Exception:
+                return None
+
+        tasks = [_safe_analyze(sig) for sig in signals]
+        results = await asyncio.gather(*tasks)
+
+        ideas_found = 0
+        for idea in results:
+            if idea and idea.confidence >= CONFIG.risk.min_confidence:
+                idea_key = normalize_symbol(idea.asset)
+                for eid, eidea in list(self._pending_ideas.items()):
+                    if normalize_symbol(eidea.asset) == idea_key:
+                        self._pending_ideas.pop(eid)
+                        self._pending_atr.pop(eid, None)
+                        break
+                self._pending_ideas[idea.id] = idea
+                ideas_found += 1
+
+        # Auto-confirm high-confidence ideas (same as normal tick)
+        from bot.config import RUNTIME
+        auto_threshold = RUNTIME.auto_confirm_threshold
+        auto_confirmed = 0
+        for tid, tidea in list(self._pending_ideas.items()):
+            if tidea.confidence >= auto_threshold:
+                try:
+                    result = await self.confirm_trade(tid, user_id="auto")
+                    auto_confirmed += 1
+                    if self._auto_confirm_notify_callback:
+                        try:
+                            await self._auto_confirm_notify_callback(tidea, result)
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+
+        self._transition(AgentState.IDLE, "force scan complete")
+
+        summary = {
+            "signals": len(signals),
+            "ideas": ideas_found,
+            "auto_confirmed": auto_confirmed,
+            "pending": len(self._pending_ideas),
+            "cleared_pending": old_pending,
+        }
+        audit(system_log, f"Force scan complete: {summary}",
+              action="force_scan", result="OK", data=summary)
+        return summary
 
     async def _fetch_prices_by_category(self, positions) -> dict[str, float]:
         """Fetch ticker prices using the correct exchange per asset category.

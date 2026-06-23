@@ -635,18 +635,21 @@ class OrderFlowAnalyzer:
 
         if "book" in sig.components_ok:
             votes.append(float(np.clip(sig.book_imbalance, -1, 1)))
-            weights.append(0.6 * conf)
+            weights.append(0.8 * conf)
             labels.append("of_book_imbalance")
         if "trades" in sig.components_ok:
             votes.append({"rising": 1.0, "falling": -1.0, "flat": 0.0}.get(sig.cvd_trend, 0.0))
-            weights.append(0.7 * conf)
+            weights.append(0.9 * conf)
             labels.append("of_cvd_trend")
             votes.append({"accumulation": 1.0, "distribution": -1.0, "neutral": 0.0}.get(sig.whale_bias, 0.0))
-            weights.append(0.9 * conf)
+            weights.append(1.2 * conf)
             labels.append("of_whale_bias")
         if sig.funding_rate is not None:
+            # Extreme funding (>0.05% or <-0.05%) is a stronger contrarian signal
+            funding_extreme_threshold = 0.0005
+            funding_weight = 0.7 if abs(sig.funding_rate) > funding_extreme_threshold else 0.5
             votes.append(-float(np.clip(sig.funding_rate / funding_extreme, -1, 1)))
-            weights.append(0.5 * conf)
+            weights.append(funding_weight * conf)
             labels.append("of_funding")
 
         # CVD-price divergence: strongest microstructure signal
@@ -655,7 +658,7 @@ class OrderFlowAnalyzer:
                 votes.append(1.0)
             elif sig.cvd_price_divergence == "bearish_div":
                 votes.append(-1.0)
-            weights.append(0.8 * conf)  # high weight — divergence is meaningful
+            weights.append(1.0 * conf)  # high weight — divergence is meaningful
             labels.append("of_cvd_divergence")
 
         # Spot vs Futures divergence: structural flow signal
@@ -664,7 +667,7 @@ class OrderFlowAnalyzer:
                 votes.append(1.0)
             elif sig.spot_futures_divergence == "spec_led_bearish":
                 votes.append(-1.0)
-            weights.append(0.9 * conf)  # high weight — capital flow divergence
+            weights.append(1.1 * conf)  # high weight — capital flow divergence
             labels.append("of_spot_futures_div")
 
         # OI-Price divergence: squeeze and demand detection
