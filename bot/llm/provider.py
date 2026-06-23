@@ -195,24 +195,24 @@ class LLMTier(str, Enum):
 # When a tier env is not set, falls back to the primary LLM_PROVIDER.
 DEFAULT_TIER_ROUTING: dict[LLMTier, dict] = {
     LLMTier.SCAN: {
-        "provider": LLMProvider.GROQ,
-        "model": "llama-3.3-70b-versatile",
-        "reason": "Fastest inference — sub-second latency for /scan",
+        "provider": LLMProvider.ALIBABA,
+        "model": "qwen3.6-flash",
+        "reason": "Fast and cheap — handles high-frequency scans without burning Anthropic/Gemini quota",
     },
     LLMTier.THESIS: {
-        "provider": LLMProvider.GEMINI,
-        "model": "gemini-2.5-flash",
-        "reason": "Strong reasoning + highest free-tier quota — reliable for thesis generation",
+        "provider": LLMProvider.ANTHROPIC,
+        "model": "claude-sonnet-4-6",
+        "reason": "Best reasoning-to-cost ratio for trade thesis — 80% cheaper than Opus, near-equal structured output",
     },
     LLMTier.LEARNING: {
         "provider": LLMProvider.GEMINI,
         "model": "gemini-2.5-flash",
-        "reason": "1M+ context, good at reflection/analysis, generous free tier",
+        "reason": "1M+ context, good at reflection/analysis, free tier for occasional use",
     },
     LLMTier.CHAT: {
-        "provider": LLMProvider.GROQ,
-        "model": "llama-3.3-70b-versatile",
-        "reason": "Fast user-facing responses",
+        "provider": LLMProvider.ALIBABA,
+        "model": "qwen3.6-flash",
+        "reason": "Fast user-facing responses, preserves Anthropic credits for thesis generation",
     },
 }
 

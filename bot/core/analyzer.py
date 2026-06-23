@@ -2230,7 +2230,16 @@ class Analyzer:
             audit(trade_log, f"LLM error on primary provider, trying fallback: {exc}",
                   action="analyze", result="LLM_FAIL")
             # ── Cascading fallback: try alternate providers before rules ──
-            fallback_result = await self._try_llm_fallback(prompt, signal, use_full_model)
+            # Pass the actual provider that failed (may differ from global primary
+            # when tier routing is active, e.g. SCAN tier → Gemini, not Anthropic)
+            failed_provider = None
+            if active_cfg and hasattr(active_cfg, 'provider'):
+                failed_provider = (
+                    active_cfg.provider.value
+                    if isinstance(active_cfg.provider, LLMProvider)
+                    else str(active_cfg.provider)
+                )
+            fallback_result = await self._try_llm_fallback(prompt, signal, use_full_model, failed_provider=failed_provider)
             if fallback_result is not None:
                 fallback_result["source"] = f"LLM_FALLBACK_{fallback_result.get('_fallback_provider', 'UNKNOWN')}"
                 fallback_result.pop("_fallback_provider", None)
@@ -2247,6 +2256,7 @@ class Analyzer:
         prompt: str,
         signal: MarketSignal,
         use_full_model: bool,
+        failed_provider: Optional[str] = None,
     ) -> Optional[dict]:
         """Try alternate LLM providers when the primary fails (rate limit, error).
 
@@ -2256,29 +2266,34 @@ class Analyzer:
           3. Anthropic (paid, high quality)
           4. DeepSeek (cheap, good quality)
 
-        Skips the provider that just failed (the current primary).
+        Skips the provider that actually failed (which may differ from the global
+        primary when tier routing is active — e.g. SCAN tier uses Gemini while
+        global primary is Anthropic).
         Returns parsed result dict or None if all fallbacks fail.
         """
         import os as _os
 
-        primary_provider = None
-        if self._llm_config:
-            primary_provider = (
+        # Use the explicitly-passed failed provider if available,
+        # otherwise fall back to global primary (backward compat)
+        skip_provider = failed_provider
+        if not skip_provider and self._llm_config:
+            skip_provider = (
                 self._llm_config.provider.value
                 if isinstance(self._llm_config.provider, LLMProvider)
                 else str(self._llm_config.provider)
             )
 
-        # Build fallback chain — skip the primary that just failed
+        # Build fallback chain — skip the provider that actually failed
         fallback_chain = [
-            (LLMProvider.GEMINI, "GEMINI_API_KEY", "gemini-2.5-flash"),
+            (LLMProvider.ALIBABA, "ALIBABA_API_KEY", "qwen3.6-flash"),
+            (LLMProvider.GEMINI, "GEMINI_API_KEY", "gemini-2.0-flash"),
             (LLMProvider.GROQ, "GROQ_API_KEY", "llama-3.3-70b-versatile"),
             (LLMProvider.ANTHROPIC, "ANTHROPIC_API_KEY", "claude-sonnet-4-6"),
             (LLMProvider.DEEPSEEK, "DEEPSEEK_API_KEY", "deepseek-chat"),
         ]
 
         for provider, key_env, default_model in fallback_chain:
-            if provider.value == primary_provider:
+            if provider.value == skip_provider:
                 continue  # Skip the one that just failed
 
             api_key = _os.getenv(key_env, "")
