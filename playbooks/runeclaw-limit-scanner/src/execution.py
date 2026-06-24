@@ -300,7 +300,7 @@ def manage_open_state(cfg: dict) -> dict:
         return status
 
     _best_effort_position_controls(cfg, owned_position_records, status, actions)
-    _best_effort_limit_expiry(cfg, owned_pending_records, actions)
+    _best_effort_limit_expiry(cfg, owned_pending_records, actions, status)
     return status
 
 
@@ -385,7 +385,7 @@ def _move_stop_to_breakeven(symbol: str, entry: float, actions: list, status: di
         pass
 
 
-def _best_effort_limit_expiry(cfg: dict, owned_pending_records: list, actions: list) -> None:
+def _best_effort_limit_expiry(cfg: dict, owned_pending_records: list, actions: list, status: dict) -> None:
     """Cancel ONLY RUNECLAW-sized stale resting limits -- either past the time
     budget (``limit_expiry_hours``) OR left behind when price ran more than
     ``limit_chase_pct`` past the entry in the direction the limit can never fill
@@ -406,12 +406,20 @@ def _best_effort_limit_expiry(cfg: dict, owned_pending_records: list, actions: l
         if created and created > 0:
             age_h = (now_ms - created) / 3_600_000.0
             if max_age_h <= age_h <= 240:
+                # v0.1.19: the create_time read works (v0.1.18 verified live), but
+                # the cancel itself was failing silently -> act0 on an aged order.
+                # Capture WHY -- thrown exception OR a rejected envelope -- into
+                # status so the readable DBG surfaces it instead of a blank act0.
                 try:
-                    trade.contract.cancel_order(symbol=symbol, order_id=order_id)
-                    actions.append({"limit_expiry_cancel": symbol, "age_h": round(age_h, 2)})
+                    res = trade.contract.cancel_order(symbol=symbol, order_id=order_id)
+                    if trade.is_success(res):
+                        actions.append({"limit_expiry_cancel": symbol, "age_h": round(age_h, 2)})
+                    else:
+                        status["expiry_err"] = ("rej:" + _result_reason(res))[:36]
                     continue
-                except Exception:
-                    pass
+                except Exception as exc:
+                    status["expiry_err"] = ("exc:" + _exc_brief(exc))[:36]
+                    continue
 
         # 2) Price-distance "left behind" cancel: the market has run past the
         # entry by more than limit_chase_pct in the un-fillable direction, so the

@@ -276,7 +276,15 @@ def run() -> None:
     pshape = str(mgmt.get("pending_shape", ""))[:30]
     # When pT is still 0, show the pending-result shape (its top-level keys) so a
     # remaining parse miss vs a genuinely empty unfiltered result is visible.
-    tail = ("shp." + pshape) if (str(pT) == "0" and pshape) else rshort
+    # v0.1.19: if the limit-expiry cancel threw/rejected, surface that first --
+    # it's the exact failure we're hunting (act0 on an aged order hid it before).
+    xerr = str(mgmt.get("expiry_err") or "")
+    if xerr:
+        tail = "xp_" + xerr.replace(" ", "_")
+    elif str(pT) == "0" and pshape:
+        tail = "shp." + pshape
+    else:
+        tail = rshort
     dbg = ("DBG-f{f}{em}-own{own}-pT{pt}-oP{op}-act{a}-c{c}p{p}-{t}"
            .format(f=int(follow), em=emc, own=own, pt=pT, op=oP, a=acts,
                    c=int(called), p=pcode, t=tail))[:63]
