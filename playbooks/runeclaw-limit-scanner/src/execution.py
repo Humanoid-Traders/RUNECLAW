@@ -34,8 +34,8 @@ _STATE_FILE = _STATE_DIR / "runeclaw_scanner.json"
 _OPEN_TIME_KEYS = ("cTime", "ctime", "c_time", "create_time", "created_time", "createTime",
                    "createdTime", "openTime", "open_time", "uTime", "u_time", "update_time",
                    "updateTime")
-_ENTRY_PRICE_KEYS = ("openPriceAvg", "averageOpenPrice", "average_open_price",
-                     "avgPrice", "openAvgPrice", "entryPrice", "open_price")
+_ENTRY_PRICE_KEYS = ("openPriceAvg", "open_price_avg", "averageOpenPrice", "average_open_price",
+                     "avgPrice", "avg_price", "openAvgPrice", "entryPrice", "open_price")
 _UPNL_KEYS = ("unrealizedPL", "unrealized_pnl", "unrealizedPnl", "upl", "uplValue")
 _SIZE_KEYS = ("total", "size", "holdSize", "available", "openDelegateSize")
 _HOLD_SIDE_KEYS = ("holdSide", "hold_side", "side")
@@ -178,7 +178,9 @@ def _record_notional(record: dict) -> Optional[float]:
     """USDT notional (qty * price) of a live order or position record."""
     qty = _find_number(record, _SIZE_KEYS + ("qty", "baseVolume"))
     price = _find_number(record, ("price", "orderPrice", "limitPrice", "executePrice",
-                                  "openPriceAvg", "averageOpenPrice", "avgPrice", "markPrice"))
+                                  "openPriceAvg", "open_price_avg", "averageOpenPrice",
+                                  "average_open_price", "avgPrice", "avg_price",
+                                  "markPrice", "mark_price"))
     if qty is None or price is None or qty <= 0 or price <= 0:
         return None
     return qty * price
