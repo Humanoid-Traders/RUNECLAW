@@ -128,7 +128,17 @@ class ComplianceEngine:
     def issue_approval_token(
         self, trade_id: str, subject_id: str
     ) -> ApprovalToken:
-        """Create a one-time human approval token valid for 5 minutes."""
+        """Create a one-time human approval token valid for 5 minutes.
+
+        RC-AUD-018 (clarification, no behavioral change): this token represents
+        Lock 5 ("human approval"). The compliance engine only mints and validates
+        it — it does NOT verify that an actual human pressed Confirm. When the
+        caller (the trading engine) is in env-armed live mode it mints this token
+        itself, so Lock 5 provides per-trade single-use/expiry binding but not an
+        independent proof of human action. The engine emits a startup/audit
+        WARNING in that case; the independent SIMULATION_MODE hard veto remains
+        the fail-closed backstop on the execution path.
+        """
         return ApprovalToken(
             token_id=str(uuid.uuid4()),
             trade_id=trade_id,

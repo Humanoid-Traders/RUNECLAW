@@ -129,10 +129,34 @@ def _sanitize_chat_input(text: str) -> str:
 
     - Strips prompt-injection patterns FIRST
     - Then truncates to 500 characters
+
+    DEFENSE-IN-DEPTH ONLY (RC-AUD-014): this denylist is thin and trivially
+    bypassable. It is NOT a security boundary. The real boundary is the
+    execution gate — LLM chat output has no execution authority; trades still
+    require confirm_trade -> compliance -> executor with numeric re-validation.
+    Keep it light so it never blocks legitimate trading commands.
     """
     sanitized = _INJECTION_PATTERNS.sub("[filtered]", text)
     truncated = sanitized[:_MAX_CHAT_INPUT_LEN]
     return truncated.strip()
+
+
+def _sanitize_history_for_llm(history: list[dict]) -> list[dict]:
+    """Sanitize replayed USER turns before they reach the LLM.
+
+    RC-AUD-014: conversation-memory replay (``get_recent_as_llm_messages``)
+    returns raw user text that was stored unsanitized. This closes that path by
+    applying the same sanitizer to ``role == "user"`` turns on read; assistant
+    turns are left intact. Defense-in-depth only — see ``_sanitize_chat_input``;
+    the real boundary remains the execution gate.
+    """
+    out: list[dict] = []
+    for m in history:
+        if isinstance(m, dict) and m.get("role") == "user":
+            out.append({**m, "content": _sanitize_chat_input(m.get("content", ""))})
+        else:
+            out.append(m)
+    return out
 
 
 # ── War Room main menu keyboard ─────────────────────────────
@@ -741,15 +765,25 @@ class TelegramHandler:
         )
         active_cfg = BYOK.get_active_config(env_config)
 
-        # Build personalized system prompt
+        # Build personalized system prompt.
+        # RC-AUD-014: the display name is user-influenced (Telegram first_name)
+        # and reaches the system prompt via build_context_prompt — sanitize it
+        # (defense-in-depth; the real boundary is the execution gate).
         system_prompt = self._build_chat_system_prompt(
-            user_id, user_name=user_name)
+            user_id,
+            user_name=_sanitize_chat_input(user_name) if user_name else user_name)
 
         # Get conversation history for multi-turn context
         history = []
         if user_id:
             history = self.conversations.get_recent_as_llm_messages(
                 user_id, limit=8)
+            # RC-AUD-014: sanitize replayed user turns. The stored history holds
+            # raw user text (stored unsanitized), so without this the
+            # conversation-memory replay path bypasses the call-site
+            # sanitization of the live question. Defense-in-depth only — the
+            # real boundary is the execution gate.
+            history = _sanitize_history_for_llm(history)
 
         # Build fallback chain: chat tier → fallback providers → primary
         import os

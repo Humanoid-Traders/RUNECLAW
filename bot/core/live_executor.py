@@ -1128,24 +1128,75 @@ class LiveExecutor:
                         else:
                             lp.take_profit = round(entry_price * (1 - default_tp_pct), 8)
 
-                    # Place exchange-side SL/TP for safety
+                    # Place exchange-side SL/TP for safety.
+                    # RC-AUD-022: the same class as RC-AUD-001 — when the safety
+                    # STOP-LOSS for an adopted position cannot be placed, the
+                    # position is otherwise adopted WITHOUT protection and WITHOUT
+                    # any alert. Gate the "unprotected" condition on the SL id alone
+                    # (not on both SL and TP), retry the placement once, and if the
+                    # stop still cannot be placed emit a LOUD operator alert and
+                    # record the unprotected state on the position. We do NOT
+                    # auto-close adopted positions — they may be pre-existing /
+                    # intentional — so this only alerts; it never places a closing
+                    # order.
+                    direction = Direction.LONG if side == "LONG" else Direction.SHORT
+                    sl_id: Optional[str] = None
+                    tp_id: Optional[str] = None
+                    _place_exc: Optional[Exception] = None
                     try:
-                        direction = Direction.LONG if side == "LONG" else Direction.SHORT
                         sl_id, tp_id = await self._place_sl_tp(
                             exchange, raw_sym, direction, contracts,
                             lp.stop_loss, lp.take_profit,
                         )
-                        if sl_id:
-                            lp.sl_order_id = sl_id
-                        if tp_id:
-                            lp.tp_order_id = tp_id
+                    except Exception as exc:
+                        _place_exc = exc
+                        logger.warning(
+                            "ADOPTED position: safety SL/TP placement raised for %s: %s",
+                            raw_sym, exc)
+
+                    # Retry the SL once if it did not land (transient venue errors).
+                    if sl_id is None:
+                        try:
+                            retry_sl, retry_tp = await self._place_sl_tp(
+                                exchange, raw_sym, direction, contracts,
+                                lp.stop_loss, lp.take_profit,
+                            )
+                            sl_id = retry_sl
+                            if tp_id is None:
+                                tp_id = retry_tp
+                        except Exception as exc:
+                            _place_exc = exc
+                            logger.warning(
+                                "ADOPTED position: safety SL retry raised for %s: %s",
+                                raw_sym, exc)
+
+                    if sl_id:
+                        lp.sl_order_id = sl_id
+                    if tp_id:
+                        lp.tp_order_id = tp_id
+
+                    if sl_id is None:
+                        # UNPROTECTED adopted position — alert loudly, do NOT close.
+                        lp.unprotected = True  # runtime marker (not persisted schema)
+                        _err_suffix = f": {_place_exc}" if _place_exc is not None else ""
+                        logger.critical(
+                            "UNPROTECTED ADOPTED POSITION (%s %s): safety stop-loss "
+                            "could not be placed%s — position adopted with NO stop. "
+                            "Manual intervention required: place a stop on Bitget.",
+                            sym, side, _err_suffix)
+                        audit(trade_log,
+                              f"ADOPTED position UNPROTECTED: stop-loss could not be placed "
+                              f"for {raw_sym} (SL=${lp.stop_loss:.4f}) — manual intervention required",
+                              action="adopt_safety_sltp", result="UNPROTECTED",
+                              data={"trade_id": trade_id, "symbol": raw_sym,
+                                    "stop_loss": lp.stop_loss, "take_profit": lp.take_profit,
+                                    "tp_order_id": tp_id,
+                                    "error": (str(_place_exc)[:200] if _place_exc is not None else None)})
+                        self._record_warning("adopt_unprotected")
+                    else:
                         audit(trade_log,
                               f"ADOPTED position safety SL/TP placed: {raw_sym} SL=${lp.stop_loss:.4f} TP=${lp.take_profit:.4f}",
                               action="adopt_safety_sltp", result="OK")
-                    except Exception as exc:
-                        audit(trade_log,
-                              f"ADOPTED position: failed to place safety SL/TP for {raw_sym}: {exc}",
-                              action="adopt_safety_sltp", result="ERROR")
 
                 self._positions[trade_id] = lp
                 adopted.append(sym)
@@ -1977,7 +2028,18 @@ class LiveExecutor:
                             self._record_warning("order_fill_confirm")
 
                 # Final fallback: if still no fill data, use requested quantity
-                # but flag it as estimated in the audit log
+                # but flag it as estimated in the audit log.
+                # RC-AUD-023a: the exchange-confirmed filled qty is already
+                # preferred above (fetch_my_trades, then fetch_order) and only
+                # this last-resort path books the REQUESTED quantity. On a partial
+                # fill whose confirmation also fails, that over-states size, so the
+                # SL/TP below are sized to an inflated quantity. This is bounded
+                # because SL/TP go out reduceOnly (the venue clamps to the real
+                # position, so it cannot reverse-open), and the close path's
+                # RC-AUD-023b residual check reconciles any leftover. We keep this
+                # fallback unchanged to avoid breaking the happy path (a full fill
+                # of `quantity` whose confirmation merely lagged is correctly
+                # booked as `quantity`).
                 if not filled_qty or filled_qty <= 0:
                     filled_qty = quantity
                     audit(trade_log,
@@ -3883,6 +3945,62 @@ class LiveExecutor:
                 closed_qty = pos.quantity
 
             exchange_close_fees = close_verify["fees"]
+
+            # ── RC-AUD-023b: residual-close reconciliation ──────────────
+            # A partial market close can leave residual exchange exposure while
+            # the local record would otherwise be marked fully closed — a silent,
+            # unmonitored, money-losing state. `_verify_position_closed` already
+            # detects this (confirmed=False + remaining_qty>0 when the exchange
+            # still shows contracts on this symbol/side). When that happens, do
+            # NOT mark the position fully closed and do NOT remove it from
+            # tracking. Instead, re-open local tracking for the remaining
+            # quantity (so price-based SL/TP monitoring re-protects it and the
+            # next adoption/reconcile sweep can finish the job) and warn LOUDLY.
+            # No new order is placed here — the close order already sent is
+            # untouched. This guard fires only when BOTH the close is unconfirmed
+            # AND a positive residual is reported; a mere verification hiccup
+            # leaves confirmed=True/remaining_qty=0 (see _verify_position_closed),
+            # so a genuinely-closed position is never spuriously re-opened.
+            remaining_qty = float(close_verify.get("remaining_qty", 0) or 0)
+            if (not close_confirmed) and remaining_qty > 0:
+                logger.critical(
+                    "RESIDUAL EXPOSURE after close of %s %s: exchange still shows "
+                    "%.8f contracts — keeping position OPEN (tracking the remainder) "
+                    "instead of marking closed. Stop is best-effort / price-monitored; "
+                    "manual review recommended.",
+                    pos.direction, pos.symbol, remaining_qty)
+                audit(trade_log,
+                      f"RESIDUAL after close: {pos.symbol} {pos.direction} remaining="
+                      f"{remaining_qty:.8f} — re-opening tracking for remainder (NOT marked closed)",
+                      action="close_residual", result="RESIDUAL",
+                      data={"trade_id": trade_id, "symbol": pos.symbol,
+                            "direction": pos.direction, "remaining_qty": remaining_qty,
+                            "closed_qty": closed_qty, "close_order_id": close_order_id})
+                self._record_warning("close_residual")
+                # Track the real remainder so monitoring/sizing reflect it. The
+                # exchange SL/TP orders were cancelled pre-close, so leave the
+                # order ids cleared — check_positions() closes on price for a
+                # position with sl_order_id=None.
+                pos.quantity = remaining_qty
+                pos.sl_order_id = None
+                pos.tp_order_id = None
+                pos.status = "open"
+                # The "closing" transition above triggered a _save_positions()
+                # which prunes non-(open|pending_fill) records out of the
+                # in-memory dict — so re-insert this position before saving the
+                # re-opened remainder, otherwise it would be dropped.
+                self._positions[trade_id] = pos
+                self._save_positions()
+                # TODO(RC-AUD-023b): re-place exchange-side SL/TP on the remainder
+                # here to fully restore protection. Deferred to avoid placing
+                # orders inside the close path; price-based monitoring + the next
+                # adoption sweep cover the remainder in the meantime.
+                return (
+                    f"⚠️ PARTIAL CLOSE — RESIDUAL REMAINS: {pos.direction} {pos.symbol}\n"
+                    f"Exchange still shows {remaining_qty:.6f} open after the close order.\n"
+                    f"Position kept OPEN (tracking the remainder); it will be "
+                    f"re-protected/closed by monitoring. Review on Bitget."
+                )
 
             if fill_price == 0:
                 # Derive from cost/filled (proceeds / qty sold)

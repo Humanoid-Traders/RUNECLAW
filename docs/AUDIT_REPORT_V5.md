@@ -427,3 +427,44 @@ environment for the same reason. Updating that mock (stub `markets`/`load_market
 **Note on the live code:** this audit was re-based onto current `origin/main`, which now ships a 24th
 risk check (the "warning rate breaker", `18e3ab4`) on top of the 23 documented above. Line numbers in
 this report are as of the merged HEAD; `live_executor.py` grew ~330 lines vs. the V4 baseline.
+
+---
+
+## V5.1 Follow-up — documented findings now fixed
+
+The Medium/Low findings the V5 report documented (but did not patch) were subsequently implemented in
+a follow-up PR, each with a regression test (`tests/test_audit_v5_followup_*.py`) and verified against
+the `origin/main` baseline (zero new regressions):
+
+- **RC-AUD-007** — VaR now returns an explicit `VarResult{status,current,proposed}` instead of magic
+  tuples; check #21 branches on `status`.
+- **RC-AUD-011** — macro/session size-reduction provider errors now fail toward a conservative 0.5×
+  (audited) instead of silently full-size; order-flow gate #22/#23 skips are now explicit + audited.
+- **RC-AUD-010** — limit-confirm re-validates the recalculated SL (reject if price already through it
+  or SL==entry).
+- **RC-AUD-025** — auto-confirmed trades can no longer override a post-critique sub-min confidence
+  (only a real human can proceed).
+- **RC-AUD-018** — `SIMULATION_MODE=true` is now a hard veto immediately before live execution; env
+  live-arming + token auto-mint emit prominent warnings.
+- **RC-AUD-019** — startup warning when a safety switch is inherited from the process env (overrides
+  `.env`).
+- **RC-AUD-017** — dashboard bind host configurable via `DASHBOARD_BIND_HOST` (default `0.0.0.0` to
+  preserve the Docker/nginx topology), with `/api/*` documented as token-gated aggregate state.
+- **RC-AUD-020** — in-process JWT revocation (per-user epoch + `/auth/logout`) and refresh-reuse
+  detection (Redis recommended for multi-worker).
+- **RC-AUD-026** — per-account login lockout (Python + Node) in addition to per-IP.
+- **RC-AUD-012** — `TRUSTED_PROXY`-gated `X-Forwarded-For` client-IP derivation for the rate limiter.
+- **RC-AUD-021** — verified already implemented (`_load_positions` reverts stuck `"closing"` → `"open"`).
+- **RC-AUD-022** — orphan-adoption SL failure now alerts loudly (gated on SL id) + retries once; never
+  auto-closes.
+- **RC-AUD-023** — partial-close residual is detected and the position is kept open/tracked (not
+  silently marked closed); entry over-statement documented + bounded by reduceOnly.
+- **RC-AUD-014** — prompt-injection sanitizer extended to conversation-memory replay + display name.
+- **RC-AUD-028** — Node market-proxy per-IP rate limit; `proxy.js` gated behind `ENABLE_LEGACY_PROXY`
+  with `unsafe-inline` dropped.
+- **Bonus** — fixed a pre-existing latent `logger` NameError in the risk-engine v2-correlation
+  fail-open path (`risk_engine.py`), which had been turning that fail-open into a rejection.
+
+New env flags (all default to current behavior): `AUTO_CONFIRM_LIVE_ENABLED`, `DASHBOARD_BIND_HOST`,
+`TRUSTED_PROXY`, `ENABLE_LEGACY_PROXY`. Deferred (documented): true multi-worker JWT revocation (Redis),
+full per-user dashboard scoping, and full partial-fill position reconstruction (detection + alert only).
