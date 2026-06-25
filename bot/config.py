@@ -139,6 +139,9 @@ class RiskLimits:
     # SIGNAL QUALITY: 0.55 is the tuned threshold -- relaxed from 0.60 to allow
     # more signals through while still filtering weak setups
     min_confidence: float = _env_float_bounded("MIN_CONFIDENCE", 0.55, 0.1, 1.0)
+    # Minimum confidence shown in "Latest Signal" display (filters UI noise)
+    signal_display_min_confidence: float = _env_float_bounded(
+        "SIGNAL_DISPLAY_MIN_CONFIDENCE", 0.70, 0.1, 1.0)
     max_consecutive_losses: int = int(_env_float_bounded("MAX_CONSECUTIVE_LOSSES", 5, 1, 50))
     cooldown_after_loss_seconds: int = int(_env_float("COOLDOWN_AFTER_LOSS_SEC", 120))
     max_portfolio_exposure_pct: float = _env_float("MAX_PORTFOLIO_EXPOSURE_PCT", 80.0)

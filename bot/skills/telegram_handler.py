@@ -4309,19 +4309,22 @@ class TelegramHandler:
         if not await self._guard(update, "scan"):
             return
 
-        pending = self.engine.pending_ideas
+        # Filter to only show ideas above the display threshold (default 70%)
+        from bot.config import CONFIG
+        _display_min = CONFIG.signal_display_min_confidence
+        pending = [i for i in self.engine.pending_ideas if i.confidence >= _display_min]
 
-        # If nothing pending, auto-trigger a scan first
+        # If nothing pending above threshold, auto-trigger a scan first
         if not pending:
             await self._send(update,
                 "\U0001f50d <b>No signals queued — running fresh scan...</b>")
             try:
                 result = await self.engine.force_scan()
-                pending = self.engine.pending_ideas
+                pending = [i for i in self.engine.pending_ideas if i.confidence >= _display_min]
                 if not pending:
                     sig_count = result.get("signals", 0)
                     auto_count = result.get("auto_confirmed", 0)
-                    msg = "No trade setups found in current market conditions."
+                    msg = f"No trade setups above {_display_min:.0%} confidence found."
                     if sig_count > 0:
                         msg += f"\n\n\U0001f4e1 Scanned {sig_count} pairs"
                         if auto_count > 0:
