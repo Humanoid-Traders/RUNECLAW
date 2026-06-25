@@ -420,7 +420,7 @@ class LiveExecutor:
         except Exception as exc:
             logger.warning("Leverage set failed for %s (may use exchange default): %s", symbol, exc)
 
-        # C2-04 FIX: Verify leverage was actually applied
+        # C2-04 FIX: Verify leverage was actually applied — retry once if mismatch
         try:
             lev_info = await exchange.fetch_leverage(symbol, params={"productType": "USDT-FUTURES"})
             actual_lev = None
@@ -429,10 +429,40 @@ class LiveExecutor:
                 if actual_lev is not None:
                     actual_lev = int(float(actual_lev))
             if actual_lev is not None and actual_lev != _target_leverage:
-                logger.critical(
-                    "LEVERAGE MISMATCH for %s: wanted %dx, exchange reports %dx — "
-                    "position will have INCORRECT risk exposure",
+                # Retry: set both long and short leverage explicitly
+                logger.warning(
+                    "LEVERAGE MISMATCH for %s: wanted %dx, exchange reports %dx — retrying",
                     symbol, _target_leverage, actual_lev)
+                try:
+                    await exchange.set_leverage(
+                        _target_leverage, symbol,
+                        params={"productType": "USDT-FUTURES", "holdSide": "long"})
+                    await exchange.set_leverage(
+                        _target_leverage, symbol,
+                        params={"productType": "USDT-FUTURES", "holdSide": "short"})
+                except Exception:
+                    pass
+                # Re-verify after retry
+                try:
+                    lev_info2 = await exchange.fetch_leverage(symbol, params={"productType": "USDT-FUTURES"})
+                    if isinstance(lev_info2, dict):
+                        actual_lev2 = lev_info2.get("longLeverage") or lev_info2.get("leverage") or lev_info2.get("long")
+                        if actual_lev2 is not None:
+                            actual_lev2 = int(float(actual_lev2))
+                        if actual_lev2 is not None and actual_lev2 != _target_leverage:
+                            logger.critical(
+                                "LEVERAGE STILL MISMATCHED for %s after retry: wanted %dx, exchange reports %dx — "
+                                "ABORTING order to prevent incorrect risk exposure",
+                                symbol, _target_leverage, actual_lev2)
+                            raise RuntimeError(
+                                f"Cannot set leverage to {_target_leverage}x for {symbol} "
+                                f"(exchange stuck at {actual_lev2}x). Aborting order.")
+                except RuntimeError:
+                    raise  # propagate abort
+                except Exception:
+                    pass  # fetch_leverage failed — proceed with caution
+        except RuntimeError:
+            raise  # propagate leverage abort
         except Exception:
             logger.debug("Could not verify leverage for %s (fetch_leverage unavailable)", symbol)
 
