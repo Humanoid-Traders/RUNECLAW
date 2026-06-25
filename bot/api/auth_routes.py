@@ -156,20 +156,18 @@ JWT_REFRESH_TTL = 60 * 60 * 24 * 7  # 7 days
 #      exchanged we record its `jti` as consumed; a replayed refresh token whose
 #      jti is already consumed is rejected.
 #
-# IMPORTANT (multi-worker caveat): `_user_token_epoch` and `_consumed_refresh_jti`
-# are IN-PROCESS only. They do NOT span multiple uvicorn workers / replicas and
-# do NOT survive a restart. In production these MUST be backed by a shared store
-# -- Redis is already provisioned in docker-compose.yml -- e.g. a per-user epoch
-# key and a consumed-jti set whose entries expire at the refresh token's TTL.
-_user_token_epoch: dict[int, int] = defaultdict(int)
-_consumed_refresh_jti: set[str] = set()
+# RC-AUD-020 (V5.2): the per-user epoch + consumed-jti state now lives in
+# bot/api/token_store.py, which is Redis-backed when a Redis endpoint is
+# configured (durable across uvicorn workers / replicas / restarts) and falls
+# back to in-process dicts otherwise. The helpers below delegate to it; their
+# signatures/semantics are unchanged.
+from bot.api.token_store import get_token_store, ttl_from_exp
 
 
 def _revoke_user_tokens(user_id: int) -> int:
     """Bump the user's token epoch, invalidating every previously-issued token
     for that user (used by /auth/logout). Returns the new epoch."""
-    _user_token_epoch[user_id] += 1
-    return _user_token_epoch[user_id]
+    return get_token_store().bump_epoch(user_id)
 
 
 def _check_and_record_refresh(payload: dict) -> bool:
@@ -182,10 +180,7 @@ def _check_and_record_refresh(payload: dict) -> bool:
     jti = payload.get("jti")
     if not jti:
         return True
-    if jti in _consumed_refresh_jti:
-        return False
-    _consumed_refresh_jti.add(jti)
-    return True
+    return get_token_store().try_consume_jti(jti, ttl_from_exp(payload))
 
 
 def _b64(data: bytes) -> str:
@@ -218,7 +213,7 @@ def _verify(token: str) -> Optional[dict]:
         # legacy/untouched token still verifies until its user's epoch is bumped
         # -- this keeps existing token behavior intact until an explicit revoke.
         sub = payload.get("sub")
-        if sub is not None and payload.get("ver", 0) < _user_token_epoch.get(sub, 0):
+        if sub is not None and payload.get("ver", 0) < get_token_store().get_epoch(sub):
             return None
         return payload
     except Exception:
@@ -235,7 +230,7 @@ def create_jwt(user_id: int, *, token_type: str = "access") -> str:
         # RC-AUD-020: unique token id (for refresh-reuse detection) + the user's
         # current token epoch/version (for bulk revocation via /auth/logout).
         "jti": secrets.token_urlsafe(16),
-        "ver": _user_token_epoch.get(user_id, 0),
+        "ver": get_token_store().get_epoch(user_id),
     })
 
 

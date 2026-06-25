@@ -9,3 +9,5 @@ aiohttp==3.13.4
 websockets==16.0
 cryptography>=43.0.1
 Pillow>=10.3.0
+# RC-AUD-020: optional — durable JWT revocation store (token_store.py import-guards it).
+redis>=5.0.0

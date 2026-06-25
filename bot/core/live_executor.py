@@ -3991,10 +3991,45 @@ class LiveExecutor:
                 # re-opened remainder, otherwise it would be dropped.
                 self._positions[trade_id] = pos
                 self._save_positions()
-                # TODO(RC-AUD-023b): re-place exchange-side SL/TP on the remainder
-                # here to fully restore protection. Deferred to avoid placing
-                # orders inside the close path; price-based monitoring + the next
-                # adoption sweep cover the remainder in the meantime.
+                # RC-AUD-023b (V5.2): actively re-place exchange-side SL/TP on the
+                # remainder so protection isn't left to price-monitoring alone.
+                # Best-effort: on failure, flag UNPROTECTED (RC-AUD-022 style) so the
+                # operator is warned and price-monitoring still covers the remainder.
+                # No closing order is placed — only a protective stop/target.
+                try:
+                    _ex = await self._get_exchange()
+                    _dir = Direction.LONG if pos.direction == "LONG" else Direction.SHORT
+                    re_sl, re_tp = await self._place_sl_tp(
+                        _ex, pos.symbol, _dir, remaining_qty,
+                        pos.stop_loss, pos.take_profit,
+                    )
+                except Exception as _resl_exc:
+                    re_sl, re_tp = None, None
+                    logger.warning("Residual SL/TP re-placement raised for %s: %s",
+                                   pos.symbol, _resl_exc)
+                pos.sl_order_id = re_sl
+                pos.tp_order_id = re_tp
+                if re_sl is None:
+                    pos.unprotected = True
+                    logger.critical(
+                        "RESIDUAL UNPROTECTED (%s %s): could not re-place stop-loss on "
+                        "the %.8f remainder — price-monitoring only. Review on Bitget.",
+                        pos.symbol, pos.direction, remaining_qty)
+                    audit(trade_log,
+                          f"RESIDUAL stop-loss re-placement FAILED for {pos.symbol} "
+                          f"remainder={remaining_qty:.8f} — UNPROTECTED (price-monitored)",
+                          action="close_residual", result="UNPROTECTED",
+                          data={"trade_id": trade_id, "symbol": pos.symbol,
+                                "remaining_qty": remaining_qty})
+                    self._record_warning("residual_unprotected")
+                else:
+                    audit(trade_log,
+                          f"RESIDUAL re-protected: {pos.symbol} SL re-placed on "
+                          f"remainder={remaining_qty:.8f} (sl={re_sl})",
+                          action="close_residual", result="REPROTECTED",
+                          data={"trade_id": trade_id, "symbol": pos.symbol,
+                                "remaining_qty": remaining_qty, "sl_order_id": re_sl})
+                self._save_positions()
                 return (
                     f"⚠️ PARTIAL CLOSE — RESIDUAL REMAINS: {pos.direction} {pos.symbol}\n"
                     f"Exchange still shows {remaining_qty:.6f} open after the close order.\n"

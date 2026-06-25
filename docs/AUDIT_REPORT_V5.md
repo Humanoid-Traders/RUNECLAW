@@ -468,3 +468,24 @@ the `origin/main` baseline (zero new regressions):
 New env flags (all default to current behavior): `AUTO_CONFIRM_LIVE_ENABLED`, `DASHBOARD_BIND_HOST`,
 `TRUSTED_PROXY`, `ENABLE_LEGACY_PROXY`. Deferred (documented): true multi-worker JWT revocation (Redis),
 full per-user dashboard scoping, and full partial-fill position reconstruction (detection + alert only).
+
+---
+
+## V5.2 Follow-up — the deferred items
+
+- **RC-AUD-020 (durable revocation) — DONE.** New `bot/api/token_store.py` backs the per-user token
+  epoch + consumed-refresh-jti with Redis (already in docker-compose) when a Redis endpoint is
+  configured, and falls back to the in-process dicts otherwise. **Fail toward availability**: a Redis
+  error falls back to in-process for that call (auth never hard-breaks on a Redis blip); durability is
+  best-effort. `auth_routes.py` delegates through it with identical semantics. `redis>=5.0.0` added
+  (import-guarded, optional). Tests cover the Redis path + the error fallback.
+- **RC-AUD-023b (close-residual re-protection) — DONE.** After a partial close leaves a residual, the
+  executor now actively re-places exchange-side SL/TP on the remainder (`_place_sl_tp`); best-effort —
+  on failure it keeps the loud UNPROTECTED alert + marker so price-monitoring still covers it. No
+  closing order is placed in the close path.
+- **RC-AUD-017 (per-user dashboard scoping) — INTENTIONALLY NOT BUILT.** The aiohttp dashboard is a
+  single-operator oversight tool by design (one `DASHBOARD_TOKEN`, no per-user identity, JWT not wired
+  in; handlers intentionally aggregate every user's paper-wallet state). Per-user scoping would require
+  building a login on the dashboard AND would break the operator's all-accounts oversight. The leak
+  risk is already mitigated (mandatory token + fail-closed + `DASHBOARD_BIND_HOST`). Left as-is; a
+  genuine multi-operator dashboard is a separate feature to spec deliberately.

@@ -190,3 +190,74 @@ def test_email_normalization_shares_one_bucket():
     with pytest.raises(Exception) as ei:
         ar._check_account_lockout(base.upper())
     assert getattr(ei.value, "status_code", None) == 429
+
+
+# ── RC-AUD-020 (V5.2): durable TokenStore — Redis path + fallback ────
+
+class _FakeRedis:
+    """Minimal in-memory stand-in for the sync redis.Redis surface we use."""
+
+    def __init__(self):
+        self.kv: dict = {}
+
+    def get(self, k):
+        return self.kv.get(k)
+
+    def incr(self, k):
+        self.kv[k] = int(self.kv.get(k, 0)) + 1
+        return self.kv[k]
+
+    def set(self, k, v, nx=False, ex=None):
+        if nx and k in self.kv:
+            return None
+        self.kv[k] = v
+        return True
+
+    def ping(self):
+        return True
+
+
+def _store_with_redis(redis_client):
+    """Build a TokenStore with an injected redis client (bypass env connect)."""
+    import collections
+
+    from bot.api.token_store import TokenStore
+    store = TokenStore.__new__(TokenStore)
+    store._epoch = collections.defaultdict(int)
+    store._consumed_jti = set()
+    store._redis = redis_client
+    return store
+
+
+def test_token_store_uses_redis_when_present():
+    fake = _FakeRedis()
+    store = _store_with_redis(fake)
+    assert store.backend == "redis"
+    assert store.get_epoch(123) == 0
+    assert store.bump_epoch(123) == 1
+    assert store.get_epoch(123) == 1
+    assert store.try_consume_jti("jti-x", 60) is True
+    assert store.try_consume_jti("jti-x", 60) is False
+    # State actually lives in the (fake) redis — proves the redis path was taken.
+    assert fake.kv.get("rc:jwt:epoch:123") == 1
+    assert fake.kv.get("rc:jwt:jti:jti-x") == "1"
+
+
+def test_token_store_falls_back_when_redis_errors():
+    class _BrokenRedis:
+        def get(self, k):
+            raise RuntimeError("redis down")
+
+        def incr(self, k):
+            raise RuntimeError("redis down")
+
+        def set(self, k, v, nx=False, ex=None):
+            raise RuntimeError("redis down")
+
+    store = _store_with_redis(_BrokenRedis())
+    # Every op falls back to in-process WITHOUT raising (fail toward availability).
+    assert store.get_epoch(7) == 0
+    assert store.bump_epoch(7) == 1
+    assert store.get_epoch(7) == 1
+    assert store.try_consume_jti("j", 60) is True
+    assert store.try_consume_jti("j", 60) is False
