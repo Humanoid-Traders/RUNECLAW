@@ -595,33 +595,32 @@ class RiskEngine:
             except Exception as exc:
                 failed.append(f"CONFIDENCE: evaluation error ({exc})")
 
-        if is_manual:
-            passed.append("CORRELATION: skipped (manual trade)")
-        else:
-            try:
-                # 8. Correlation / concentration check
-                corr_result = self._check_correlation(idea)
-                if corr_result:
-                    failed.append(corr_result)
-                else:
-                    passed.append("CORRELATION: no concentrated exposure")
-            except Exception as exc:
-                failed.append(f"CORRELATION: evaluation error ({exc})")
+        # RC-AUD-008: correlation is a portfolio-safety check, not a signal-opinion
+        # check — it binds for manual trades too (a manual entry can still
+        # over-concentrate a correlation group).
+        try:
+            # 8. Correlation / concentration check
+            corr_result = self._check_correlation(idea)
+            if corr_result:
+                failed.append(corr_result)
+            else:
+                passed.append("CORRELATION: no concentrated exposure")
+        except Exception as exc:
+            failed.append(f"CORRELATION: evaluation error ({exc})")
 
-        if is_manual:
-            passed.append("LOSS_STREAK: skipped (manual trade)")
-        else:
-            try:
-                # 9. Consecutive loss streak
-                # C2-35 FIX: soft limit derived from config, not hardcoded to 3.
-                # Always stays 2 below the hard circuit-breaker limit.
-                soft_limit = max(2, CONFIG.risk.max_consecutive_losses - 2)
-                if self._consecutive_losses >= soft_limit:
-                    failed.append(f"LOSS_STREAK: {self._consecutive_losses} consecutive losses (>= {soft_limit})")
-                else:
-                    passed.append(f"LOSS_STREAK: {self._consecutive_losses} OK")
-            except Exception as exc:
-                failed.append(f"LOSS_STREAK: evaluation error ({exc})")
+        # RC-AUD-008: the loss-streak guard exists to stop revenge trading, which
+        # manifests most in manual entries — so it must bind for manual trades too.
+        try:
+            # 9. Consecutive loss streak
+            # C2-35 FIX: soft limit derived from config, not hardcoded to 3.
+            # Always stays 2 below the hard circuit-breaker limit.
+            soft_limit = max(2, CONFIG.risk.max_consecutive_losses - 2)
+            if self._consecutive_losses >= soft_limit:
+                failed.append(f"LOSS_STREAK: {self._consecutive_losses} consecutive losses (>= {soft_limit})")
+            else:
+                passed.append(f"LOSS_STREAK: {self._consecutive_losses} OK")
+        except Exception as exc:
+            failed.append(f"LOSS_STREAK: evaluation error ({exc})")
 
         try:
             # 10. Entry price sanity
@@ -659,22 +658,20 @@ class RiskEngine:
         except Exception as exc:
             failed.append(f"STALE_DATA: evaluation error ({exc})")
 
-        if is_manual:
-            passed.append("COOLDOWN: skipped (manual trade)")
-        else:
-            try:
-                # 13. Cooldown after loss
-                if self._last_loss_time is not None:
-                    elapsed = time.time() - self._last_loss_time
-                    if elapsed < CONFIG.risk.cooldown_after_loss_seconds:
-                        remaining = CONFIG.risk.cooldown_after_loss_seconds - elapsed
-                        failed.append(f"COOLDOWN: {remaining:.0f}s remaining after last loss")
-                    else:
-                        passed.append("COOLDOWN: cooldown period elapsed")
+        # RC-AUD-008: cooldown-after-loss also binds for manual trades (anti-revenge).
+        try:
+            # 13. Cooldown after loss
+            if self._last_loss_time is not None:
+                elapsed = time.time() - self._last_loss_time
+                if elapsed < CONFIG.risk.cooldown_after_loss_seconds:
+                    remaining = CONFIG.risk.cooldown_after_loss_seconds - elapsed
+                    failed.append(f"COOLDOWN: {remaining:.0f}s remaining after last loss")
                 else:
-                    passed.append("COOLDOWN: no recent losses")
-            except Exception as exc:
-                failed.append(f"COOLDOWN: evaluation error ({exc})")
+                    passed.append("COOLDOWN: cooldown period elapsed")
+            else:
+                passed.append("COOLDOWN: no recent losses")
+        except Exception as exc:
+            failed.append(f"COOLDOWN: evaluation error ({exc})")
 
         margin_equiv_position_usd = 0.0
 

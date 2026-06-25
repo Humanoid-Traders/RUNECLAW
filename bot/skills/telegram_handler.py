@@ -6106,10 +6106,13 @@ class TelegramHandler:
             if len(self._confirmed_ids) > 100:
                 self._confirmed_ids = set(list(self._confirmed_ids)[-50:])
 
-            # M3 FIX: validate callback belongs to requesting user
+            # M3 FIX: validate callback belongs to requesting user.
+            # RC-AUD-004: fail-closed. Every legitimate confirm button is built as
+            # "confirm:<id>:<uid>" (see button construction sites), so a missing
+            # owner tag means a crafted/replayed callback — deny rather than allow.
             expected_uid = parts[2] if len(parts) > 2 else None
             caller_uid = str(update.effective_user.id) if update.effective_user else None
-            if expected_uid and not self._uid_matches(caller_uid, expected_uid):
+            if not expected_uid or not self._uid_matches(caller_uid, expected_uid):
                 await self._send(update,
                     "\U0001f512 <b>Access denied</b>\n\n"
                     "Only the user who requested this trade can approve it.",
@@ -6230,10 +6233,12 @@ class TelegramHandler:
                 return
             self._confirmed_ids.add(trade_id)
 
-            # M3 FIX: validate callback belongs to requesting user
+            # M3 FIX: validate callback belongs to requesting user.
+            # RC-AUD-004: fail-closed — a missing owner tag means a crafted
+            # callback (legitimate buttons are always "reject:<id>:<uid>").
             expected_uid = parts[2] if len(parts) > 2 else None
             caller_uid = str(update.effective_user.id) if update.effective_user else None
-            if expected_uid and not self._uid_matches(caller_uid, expected_uid):
+            if not expected_uid or not self._uid_matches(caller_uid, expected_uid):
                 await self._send(update,
                     "\U0001f512 <b>Access denied</b>\n\n"
                     "Only the user who requested this trade can reject it.",
