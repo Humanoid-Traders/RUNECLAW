@@ -92,8 +92,46 @@ _EXCHANGE_SEMAPHORE = asyncio.Semaphore(5)
 _SCAN_BATCH_SIZE = 10
 
 # SEC-H4: In-memory rate limiter for API endpoints
+#
+# NOTE: this limiter is in-process and per-worker — it is best-effort only. For
+# multi-worker / multi-replica deployments, rate limiting should move to the
+# reverse proxy or a shared store (Redis is already provisioned in
+# docker-compose.yml) so a single budget is enforced across all workers.
 _rate_limits: dict[str, list[float]] = defaultdict(list)
 _RATE_LIMIT = 30  # requests per minute per client IP
+
+# RC-AUD-012: trusted-proxy handling for client-IP derivation.
+# By default we key the limiter on request.client.host. X-Forwarded-For is
+# client-SPOOFABLE, so we only consult it when TRUSTED_PROXY is configured
+# (comma-separated list of the proxy IPs that sit in front of us). When set, we
+# take the right-most XFF entry that is NOT itself a trusted proxy — i.e. the
+# closest hop our trusted edge actually observed. Attacker-prepended entries are
+# to the LEFT and are skipped, so the key cannot be spoofed past a real proxy.
+_TRUSTED_PROXY_RAW = os.getenv("TRUSTED_PROXY", "").strip()
+_TRUSTED_PROXIES: set[str] = {
+    p.strip() for p in _TRUSTED_PROXY_RAW.split(",") if p.strip()
+}
+
+
+def _client_ip(request: Request) -> str:
+    """Derive the client IP for rate limiting.
+
+    Default (TRUSTED_PROXY unset): return request.client.host — unchanged
+    behavior. When TRUSTED_PROXY is set, derive the IP from the right-most
+    untrusted X-Forwarded-For entry, falling back to request.client.host when
+    the header is missing/empty or every entry is a trusted proxy.
+    """
+    direct = request.client.host if request.client else "unknown"
+    if not _TRUSTED_PROXIES:
+        return direct
+    xff = request.headers.get("x-forwarded-for", "")
+    if not xff:
+        return direct
+    # Right-to-left: first entry that is not a known trusted proxy is the client.
+    for hop in reversed([h.strip() for h in xff.split(",") if h.strip()]):
+        if hop not in _TRUSTED_PROXIES:
+            return hop
+    return direct
 
 
 def _check_rate_limit(client_ip: str) -> bool:
@@ -114,7 +152,7 @@ def _check_rate_limit(client_ip: str) -> bool:
 
 async def _require_rate_limit(request: Request) -> None:
     """FastAPI dependency that enforces per-IP rate limiting."""
-    client_ip = request.client.host if request.client else "unknown"
+    client_ip = _client_ip(request)  # RC-AUD-012: trusted-proxy-aware
     if not _check_rate_limit(client_ip):
         raise HTTPException(
             status_code=429,

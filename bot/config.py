@@ -15,7 +15,65 @@ import os
 from dataclasses import dataclass, field
 from dotenv import load_dotenv
 
+# ── Env precedence (RC-AUD-019) ───────────────────────────────────────────
+# We call load_dotenv(override=False), which means a variable already present
+# in the PROCESS/OS environment WINS over the value in .env. Precedence is:
+#     process/OS env  >  .env file  >  in-code default
+# For the safety switches (SIMULATION_MODE / LIVE_TRADING_ENABLED /
+# BITGET_SANDBOX) this is a footgun: an inherited SIMULATION_MODE=false or
+# LIVE_TRADING_ENABLED=true silently overrides what the operator wrote in .env.
+# We do NOT change the precedence (keep override=False for backward compat),
+# but we surface a clear WARNING when a safety switch comes from the inherited
+# environment. To tell "inherited from the process env" apart from "loaded from
+# .env", we must snapshot os.environ BEFORE load_dotenv — afterwards the two
+# sources are indistinguishable because load_dotenv injects .env keys into
+# os.environ.
+_PRE_DOTENV_ENV_KEYS: frozenset[str] = frozenset(os.environ.keys())
+
 load_dotenv(override=False)
+
+# Safety switches whose accidental inheritance from the process environment is
+# dangerous enough to warn about at import time.
+_SAFETY_SWITCH_KEYS: tuple[str, ...] = (
+    "SIMULATION_MODE",
+    "LIVE_TRADING_ENABLED",
+    "BITGET_SANDBOX",
+)
+
+
+def _detect_inherited_safety_switches(pre_keys: frozenset[str] | set[str]) -> list[str]:
+    """Return the safety-switch keys that were present in the process env
+    *before* load_dotenv (i.e. inherited, not sourced from .env).
+
+    Pure function (operates only on the passed-in key set) so it is
+    deterministic and testable independent of the ambient environment.
+    """
+    return [k for k in _SAFETY_SWITCH_KEYS if k in pre_keys]
+
+
+# Keys that were inherited from the process/OS environment and therefore
+# override .env for the safety switches (RC-AUD-019).
+_INHERITED_SAFETY_SWITCHES: list[str] = _detect_inherited_safety_switches(_PRE_DOTENV_ENV_KEYS)
+
+
+def _warn_inherited_safety_switches() -> None:
+    """RC-AUD-019: warn when a safety switch was inherited from the process
+    environment and thus overrides .env (load_dotenv(override=False))."""
+    if not _INHERITED_SAFETY_SWITCHES:
+        return
+    import logging as _logging
+    _log = _logging.getLogger(__name__)
+    for _key in _INHERITED_SAFETY_SWITCHES:
+        _log.warning(
+            "Safety switch %s=%r came from the INHERITED process environment and "
+            "OVERRIDES any value in .env (precedence: process env > .env because "
+            "load_dotenv(override=False)). If this was not intended, unset it in the "
+            "process/container environment so the .env value takes effect.",
+            _key, os.environ.get(_key, ""),
+        )
+
+
+_warn_inherited_safety_switches()
 
 
 def _env(key: str, default: str = "") -> str:

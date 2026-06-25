@@ -45,9 +45,42 @@ from datetime import datetime
 from bot.compat import UTC
 from typing import Any, Callable, Optional
 
+from dataclasses import dataclass
+
 from bot.config import CONFIG
 from bot.utils.logger import audit, risk_log
 from bot.utils.models import RiskCheck, RiskVerdict, TradeIdea
+
+
+# RC-AUD-007: explicit VaR result type, replacing the former magic-tuple
+# sentinels ((-1,-1) = skip / (0.0,100.0) = zero-equity reject).  The dual-meaning
+# tuple was correct but fragile: a future edit treating current_var==0.0 as "no
+# data" could silently disable the VaR check.  An explicit status makes the
+# skip-vs-evaluate decision unambiguous at the call site.
+class VarStatus:
+    """Explicit VaR evaluation status."""
+    SKIP = "SKIP"   # insufficient data (<5 closed trades) — caller passes the check
+    OK = "OK"       # VaR computed — caller compares proposed_var_pct against the limit
+
+
+@dataclass(frozen=True)
+class VarResult:
+    """Result of a portfolio-VaR computation.
+
+    status is one of VarStatus.{SKIP, OK}.  The zero-equity "max risk = reject"
+    case is encoded as status=OK with proposed_var_pct=100.0 so the call site's
+    single ``proposed_var_pct > max_var`` comparison stays authoritative (a 100%
+    VaR always exceeds the configured limit and therefore rejects).
+    """
+    status: str
+    current_var_pct: float
+    proposed_var_pct: float
+
+
+# RC-AUD-011: conservative default size-reduction multiplier applied when a
+# size-reduction provider (macro / session) raises.  Failing toward SAFETY means
+# we shrink the position rather than silently leaving it full-size.
+_PROVIDER_FALLBACK_SIZE_MULT = 0.5
 
 # Persistence file for safety state (circuit breaker, loss streak, daily PnL).
 # Survives restarts so a crash cannot silently clear protective limits.
@@ -466,8 +499,19 @@ class RiskEngine:
                     _macro_size_mult = _macro_ctx.size_multiplier
                 elif _macro_ctx.size_multiplier > 1.0:
                     _macro_size_mult = 1.0  # never increase pre-cap
-            except Exception:
-                pass  # macro check #18 below handles errors with fail-closed
+            except Exception as _macro_exc:
+                # RC-AUD-011: fail toward SAFETY — a provider hiccup must not
+                # silently drop the protective size reduction (leaving full size).
+                # Apply a conservative default reduction and audit it.  Macro
+                # check #18 below still runs fail-closed and may reject outright.
+                _macro_size_mult = _PROVIDER_FALLBACK_SIZE_MULT
+                audit(risk_log,
+                      f"Macro provider error — applying conservative size×"
+                      f"{_PROVIDER_FALLBACK_SIZE_MULT} fallback ({_macro_exc})",
+                      action="macro_size_reduction", result="PROVIDER_ERROR_FALLBACK",
+                      data={"multiplier": _PROVIDER_FALLBACK_SIZE_MULT,
+                            "error": str(_macro_exc)},
+                      level=logging.WARNING)
 
         # C2-29 FIX: Apply regime multiplier BEFORE the notional cap, so the cap
         # always has final authority.  Previously the multiplier was applied after
@@ -488,8 +532,19 @@ class RiskEngine:
             _session_mult = _session.size_multiplier
             if _session_mult < 1.0:
                 position_usd *= _session_mult
-        except Exception:
-            pass  # fail-open: session check must never block risk evaluation
+        except Exception as _session_exc:
+            # RC-AUD-011: fail toward SAFETY.  The session sizer must never *block*
+            # risk evaluation (it reduces, never rejects), but a provider error
+            # must not silently leave the position full-size — apply a conservative
+            # default reduction and audit it.
+            position_usd *= _PROVIDER_FALLBACK_SIZE_MULT
+            audit(risk_log,
+                  f"Session provider error — applying conservative size×"
+                  f"{_PROVIDER_FALLBACK_SIZE_MULT} fallback ({_session_exc})",
+                  action="session_size_reduction", result="PROVIDER_ERROR_FALLBACK",
+                  data={"multiplier": _PROVIDER_FALLBACK_SIZE_MULT,
+                        "error": str(_session_exc)},
+                  level=logging.WARNING)
 
         # Equity curve circuit breaker sizing
         _eq_mult = self.equity_curve_size_multiplier
@@ -863,23 +918,37 @@ class RiskEngine:
             failed.append(f"CONCENTRATION_PCA: evaluation error ({exc})")
 
         # 21. Portfolio VaR (parametric Value at Risk)
+        # RC-AUD-007: branch on the explicit VarResult.status instead of a magic
+        # negative-value sentinel, so a future change can't silently turn a
+        # reject (zero-equity → 100%) into a skip.
         try:
-            current_var, proposed_var = self._compute_portfolio_var(position_usd)
+            var_result = self._compute_portfolio_var(position_usd)
             max_var = CONFIG.risk.max_portfolio_var_pct
-            if proposed_var < 0:
+            if var_result.status == VarStatus.SKIP:
                 # Not enough data — skip (fewer than 5 closed trades)
                 passed.append("PORTFOLIO_VAR: skipped (insufficient trade history)")
-            elif proposed_var > max_var:
+            elif var_result.proposed_var_pct > max_var:
                 failed.append(
-                    f"PORTFOLIO_VAR: proposed {proposed_var:.2f}% > {max_var}% limit "
-                    f"(current {current_var:.2f}%)"
+                    f"PORTFOLIO_VAR: proposed {var_result.proposed_var_pct:.2f}% > {max_var}% limit "
+                    f"(current {var_result.current_var_pct:.2f}%)"
                 )
             else:
-                passed.append(f"PORTFOLIO_VAR: {proposed_var:.2f}% <= {max_var}% limit")
+                passed.append(f"PORTFOLIO_VAR: {var_result.proposed_var_pct:.2f}% <= {max_var}% limit")
         except Exception as exc:
             failed.append(f"PORTFOLIO_VAR: evaluation error ({exc})")
 
-        # 22. Taker 3-bar gate (Gate 2) — fail-open if no order flow analyzer
+        # RC-AUD-011: Checks #22 and #23 are DELIBERATE fail-open exceptions to
+        # this module's otherwise fail-closed contract (the same posture as the
+        # #17 liquidity guard noted in the module header).  When no order-flow
+        # analyzer / signal is wired, the order-flow gates cannot be evaluated and
+        # must PASS — hard-failing here would block every trade whenever order flow
+        # is simply absent (the common case outside live order-flow streaming).
+        # The skip is now made EXPLICIT and AUDITED (rather than a bare warning),
+        # so a missing analyzer is visible in the audit trail.  If a future
+        # deployment wants these to fail-closed, gate them behind a config flag
+        # that defaults to the current fail-open behavior.
+
+        # 22. Taker 3-bar gate (Gate 2) — fail-open (audited) if no order flow analyzer
         try:
             if self._order_flow is not None:
                 direction_str = idea.direction.value if hasattr(idea.direction, 'value') else str(idea.direction)
@@ -889,13 +958,17 @@ class RiskEngine:
                 else:
                     failed.append(f"TAKER_3BAR: {gate2['reason']}")
             else:
-                if self._order_flow is None or self._last_of_signal is None:
-                    risk_log.warning("Order flow check #22 (taker gate) skipped — no signal")
+                # Deliberate fail-open: no analyzer wired → pass, but audit it.
+                audit(risk_log,
+                      "Order flow check #22 (taker 3-bar gate) skipped — no analyzer wired "
+                      "(deliberate fail-open)",
+                      action="order_flow_gate", result="SKIPPED_NO_ANALYZER",
+                      data={"check": "TAKER_3BAR"})
                 passed.append("TAKER_3BAR: skipped (no order flow analyzer)")
         except Exception as exc:
             failed.append(f"TAKER_3BAR: evaluation error ({exc})")
 
-        # 23. Bid dominance gate (Rule 20) — bid:ask >= 2:1 for LONG
+        # 23. Bid dominance gate (Rule 20) — bid:ask >= 2:1 for LONG; fail-open (audited)
         try:
             if self._order_flow is not None and self._last_of_signal is not None:
                 direction_str = idea.direction.value if hasattr(idea.direction, 'value') else str(idea.direction)
@@ -905,8 +978,12 @@ class RiskEngine:
                 else:
                     failed.append(f"BID_DOMINANCE: {gate20['reason']}")
             else:
-                if self._order_flow is None or self._last_of_signal is None:
-                    risk_log.warning("Order flow check #23 (bid dominance) skipped — no signal")
+                # Deliberate fail-open: no analyzer/signal → pass, but audit it.
+                audit(risk_log,
+                      "Order flow check #23 (bid dominance) skipped — no analyzer/signal wired "
+                      "(deliberate fail-open)",
+                      action="order_flow_gate", result="SKIPPED_NO_ANALYZER",
+                      data={"check": "BID_DOMINANCE"})
                 passed.append("BID_DOMINANCE: skipped (no order flow data)")
         except Exception as exc:
             failed.append(f"BID_DOMINANCE: evaluation error ({exc})")
@@ -1255,14 +1332,17 @@ class RiskEngine:
             return f"CONCENTRATION_PCA: {reason}"
         return None
 
-    def _compute_portfolio_var(self, position_usd: float, confidence_level: float = 0.95) -> tuple[float, float]:
+    def _compute_portfolio_var(self, position_usd: float, confidence_level: float = 0.95) -> VarResult:
         """Compute parametric VaR for portfolio including proposed position.
 
-        Returns (current_var_pct, proposed_var_pct) as percentage of equity.
-        Uses historical per-trade returns to estimate volatility.
+        Returns a VarResult (RC-AUD-007) carrying current/proposed VaR as a
+        percentage of equity, plus an explicit status:
+          - VarStatus.SKIP  → insufficient data (<5 closed trades); caller passes.
+          - VarStatus.OK    → VaR computed; caller compares proposed vs the limit.
+        Zero/negative equity with a pending position is returned as
+        VarStatus.OK with proposed_var_pct=100.0 (max risk) so the caller rejects.
 
-        Returns (-1, -1) when there is insufficient data to compute VaR
-        (fewer than 5 closed trades), signalling the caller to skip the check.
+        Uses historical per-trade returns to estimate volatility.
 
         H-05 LIMITATION: This VaR uses per-trade returns (individual trade P&L /
         notional) as a proxy for portfolio return volatility. This does NOT capture
@@ -1279,12 +1359,14 @@ class RiskEngine:
         closed = [t for t in history if t.exit_price is not None and t.entry_price > 0]
 
         if len(closed) < 5:
-            return (-1.0, -1.0)
+            return VarResult(VarStatus.SKIP, -1.0, -1.0)
 
         state = self._portfolio.snapshot()
         equity = state.equity_usd
         if equity <= 0:
-            return (0.0, 100.0)  # Zero equity with pending position = max risk
+            # Zero equity with a pending position = max risk → reject (encoded as
+            # OK + 100% so the caller's proposed>max comparison rejects it).
+            return VarResult(VarStatus.OK, 0.0, 100.0)
 
         # Compute per-trade return percentages
         returns = []
@@ -1294,7 +1376,7 @@ class RiskEngine:
                 returns.append(t.pnl / notional)
 
         if len(returns) < 5:
-            return (-1.0, -1.0)
+            return VarResult(VarStatus.SKIP, -1.0, -1.0)
 
         # Portfolio volatility from trade returns
         mean_ret = sum(returns) / len(returns)
@@ -1329,7 +1411,7 @@ class RiskEngine:
         proposed_exposure = current_exposure + position_usd
         proposed_var_pct = (z_score * vol * sqrt_t * proposed_exposure / equity * 100) if equity > 0 else 0.0
 
-        return (round(current_var_pct, 4), round(proposed_var_pct, 4))
+        return VarResult(VarStatus.OK, round(current_var_pct, 4), round(proposed_var_pct, 4))
 
     def _check_correlation(self, idea: TradeIdea) -> Optional[str]:
         """Prevent concentrated bets in the same correlation group."""
@@ -1374,7 +1456,12 @@ class RiskEngine:
                                 if (idea.direction.value == pos.direction.value and corr > CONFIG.risk.max_correlation):
                                     return f"CORRELATION_V2: {idea.asset} corr={corr:.2f} with {pos.asset} (>{CONFIG.risk.max_correlation})"
         except Exception as _corr_exc:
-            logger.warning("Correlation v2 check failed (fail-open): %s", _corr_exc)
+            # Pre-existing latent bug: `logger` is undefined in this module
+            # (only `risk_log`/`audit` are imported), so this fail-open path
+            # actually raised NameError → caught upstream as a CORRELATION
+            # evaluation error → reject. Use risk_log so v2 correlation truly
+            # fails open as intended.
+            risk_log.warning("Correlation v2 check failed (fail-open): %s", _corr_exc)
 
         return None
 

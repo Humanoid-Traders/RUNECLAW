@@ -5199,9 +5199,11 @@ class TestSprint5Fixes:
             port.close_position(f"TI-var-{i}", 50500 if i % 2 == 0 else 49500)
 
         # Call with 0.99 confidence
-        current_var, proposed_var = risk._compute_portfolio_var(1000.0, confidence_level=0.99)
+        _vr99 = risk._compute_portfolio_var(1000.0, confidence_level=0.99)
+        current_var, proposed_var = _vr99.current_var_pct, _vr99.proposed_var_pct
         # At 99%, z=2.326 vs 95% z=1.645 — VaR should be higher
-        current_var_95, proposed_var_95 = risk._compute_portfolio_var(1000.0, confidence_level=0.95)
+        _vr95 = risk._compute_portfolio_var(1000.0, confidence_level=0.95)
+        current_var_95, proposed_var_95 = _vr95.current_var_pct, _vr95.proposed_var_pct
         # 99% VaR must be substantially higher than 95% (ratio should be ~1.41)
         if proposed_var_95 > 0:
             ratio = proposed_var / proposed_var_95

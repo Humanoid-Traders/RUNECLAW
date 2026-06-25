@@ -85,9 +85,15 @@ class RuneClawEngine:
         if CONFIG.is_live():
             from bot.compliance.compliance_engine import Permission as _Perm
             self.compliance_profile.permissions.add(_Perm.LIVE_TRADE)
-            system_log.info(
-                "LIVE_TRADE permission auto-granted from env config "
-                "(SIMULATION_MODE=false, LIVE_TRADING_ENABLED=true)"
+            # RC-AUD-018: live mode armed from environment with NO per-session
+            # human action. Emit a prominent one-time startup WARNING (not just
+            # info) so the operator/audit trail records that Lock 1 (LIVE_TRADE)
+            # was granted for the whole process lifetime by env config alone.
+            system_log.warning(
+                "LIVE ARMED FROM ENV (RC-AUD-018): LIVE_TRADE permission "
+                "auto-granted from env config (SIMULATION_MODE=false, "
+                "LIVE_TRADING_ENABLED=true) with no per-session human arming. "
+                "Lock 1 is satisfied for the entire process lifetime."
             )
         self.audit_chain = AuditChain("logs/audit_chain.jsonl")
         self.learning = LearningOrchestrator()
@@ -1231,6 +1237,28 @@ class RuneClawEngine:
 
         return idea
 
+    @staticmethod
+    def _human_confirmed(user_id: str) -> bool:
+        """RC-AUD-025: True only when the confirmation came from a real human.
+
+        Auto-confirm passes ``user_id="auto"`` and some unattended paths pass
+        ``""`` — neither represents a deliberate human button press, so the
+        "user already confirmed, proceed anyway" rationale must NOT apply to
+        them. A real human confirmation carries a non-empty, non-"auto" id.
+        """
+        return user_id not in ("", "auto")
+
+    @staticmethod
+    def _live_execution_vetoed_by_simulation() -> bool:
+        """RC-AUD-018: hard veto on live execution when SIMULATION_MODE is True.
+
+        ``CONFIG.simulation_mode`` is an independent, fail-closed kill switch:
+        if it is set, the engine must NEVER place a real order, regardless of
+        any runtime flag (e.g. ``RUNTIME.live_mode``) that might otherwise arm
+        live mode. Returns True when live execution must be vetoed.
+        """
+        return bool(CONFIG.simulation_mode)
+
     async def confirm_trade(self, trade_id: str, user_id: str = "") -> str:
         """
         Human confirms a pending trade idea.  This is the ONLY path to execution.
@@ -1357,6 +1385,29 @@ class RuneClawEngine:
                             "current_price": current_price, "offset": offset,
                             "new_sl": new_sl, "new_tp": new_tp})
 
+                # ── RC-AUD-010: re-validate the NEW levels after recalc ──
+                # The drift / past-SL / R:R guards above ran against the OLD
+                # levels and are skipped for limit orders. Now that the entry
+                # was repriced to current ± 0.5*ATR (with SL/TP rederived from
+                # the original distances), re-affirm the new SL is sane and
+                # that current price has not already blown through the new SL,
+                # mirroring the "price past SL" check earlier in this function.
+                if idea.stop_loss == idea.entry_price:
+                    self._pending_pyramid.pop(trade_id, None)
+                    self._transition(AgentState.IDLE, f"recalc SL==entry for {trade_id}")
+                    return (f"Trade REJECTED: recalculated SL ${idea.stop_loss:,.4f} equals "
+                            f"entry — cannot compute safe stop distance.")
+                if idea.direction.value == "LONG" and current_price <= idea.stop_loss:
+                    self._pending_pyramid.pop(trade_id, None)
+                    self._transition(AgentState.IDLE, f"price past new SL for {trade_id}")
+                    return (f"Trade REJECTED: price ${current_price:,.4f} already below "
+                            f"recalculated SL ${idea.stop_loss:,.4f} — would be instantly stopped out.")
+                elif idea.direction.value == "SHORT" and current_price >= idea.stop_loss:
+                    self._pending_pyramid.pop(trade_id, None)
+                    self._transition(AgentState.IDLE, f"price past new SL for {trade_id}")
+                    return (f"Trade REJECTED: price ${current_price:,.4f} already above "
+                            f"recalculated SL ${idea.stop_loss:,.4f} — would be instantly stopped out.")
+
         # Re-check risk (portfolio state may have changed -- new positions, daily PnL, drawdown.
         # HONEST LIMITATION: price drift is now checked above (F-05 fix).
         # Stale-data check #12 guards against time drift (>300s = reject).
@@ -1429,14 +1480,35 @@ class RuneClawEngine:
                       action="critique_adjust", result="ADJUSTED",
                       data={"adjustment": critique_result.confidence_adjustment, "new_confidence": idea.confidence})
                 if idea.confidence < CONFIG.risk.min_confidence:
-                    # confirm_trade is ALWAYS a user-confirmed action (button press).
-                    # User made a deliberate decision — warn but proceed.
-                    audit(trade_log,
-                          f"Post-critique confidence {idea.confidence:.2f} below min {CONFIG.risk.min_confidence} "
-                          f"— proceeding anyway (user-confirmed trade via confirm_trade)",
-                          action="critique_adjust", result="WARN_OVERRIDE",
-                          data={"confidence": idea.confidence, "min": CONFIG.risk.min_confidence,
-                                "source": getattr(idea, 'source', 'unknown')})
+                    # RC-AUD-025: the "user already confirmed, proceed anyway"
+                    # rationale only holds when a REAL human pressed Confirm.
+                    # Auto-confirm (user_id="auto") and unattended ("") paths
+                    # have no deliberate human decision, so a post-critique
+                    # sub-min-confidence result must REJECT for them instead of
+                    # proceeding.
+                    if self._human_confirmed(user_id):
+                        # Human made a deliberate decision — warn but proceed.
+                        audit(trade_log,
+                              f"Post-critique confidence {idea.confidence:.2f} below min {CONFIG.risk.min_confidence} "
+                              f"— proceeding anyway (human-confirmed trade via confirm_trade)",
+                              action="critique_adjust", result="WARN_OVERRIDE",
+                              data={"confidence": idea.confidence, "min": CONFIG.risk.min_confidence,
+                                    "user_id": user_id,
+                                    "source": getattr(idea, 'source', 'unknown')})
+                    else:
+                        audit(trade_log,
+                              f"Post-critique confidence {idea.confidence:.2f} below min {CONFIG.risk.min_confidence} "
+                              f"— REJECTING (not human-confirmed; user_id={user_id!r})",
+                              action="critique_adjust", result="REJECT",
+                              data={"confidence": idea.confidence, "min": CONFIG.risk.min_confidence,
+                                    "user_id": user_id,
+                                    "source": getattr(idea, 'source', 'unknown')})
+                        self._pending_pyramid.pop(trade_id, None)
+                        self._transition(AgentState.IDLE, f"critique sub-min (auto) {trade_id}")
+                        return (f"Trade REJECTED: post-critique confidence "
+                                f"{idea.confidence:.2f} below minimum "
+                                f"{CONFIG.risk.min_confidence} (auto-confirm not permitted "
+                                f"to override).")
 
             if critique_result.verdict == "WARN":
                 audit(trade_log, f"Critique WARNING for {trade_id}: {critique_result.bear_case}",
@@ -1458,6 +1530,16 @@ class RuneClawEngine:
         if CONFIG.is_live():
             approval_token = self.compliance.issue_approval_token(
                 trade_id, self.compliance_profile.subject_id,
+            )
+            # RC-AUD-018: the engine mints Lock 5 (human approval) itself rather
+            # than sourcing it from a real Telegram button callback. Emit a
+            # prominent audit WARNING so it is visible that, for env-armed live
+            # mode (and especially non-human confirmations), Lock 5 is satisfied
+            # with no per-session human action.
+            system_log.warning(
+                "AUTO-MINT APPROVAL TOKEN (RC-AUD-018): engine minted the Lock 5 "
+                "human-approval token for trade %s (user_id=%r) — no per-session "
+                "human callback was required.", trade_id, user_id,
             )
 
         compliance_decision = self.compliance.authorize(
@@ -1559,6 +1641,21 @@ class RuneClawEngine:
             self._pending_pyramid.pop(trade_id, None)
             self._transition(AgentState.IDLE, f"no ATR for {trade_id}")
             return f"Trade REJECTED: no valid ATR available — cannot compute safe SL distance"
+
+        # ── RC-AUD-018: SIMULATION_MODE hard veto ──
+        # Final, independent fail-closed gate immediately before the real order.
+        # If SIMULATION_MODE is set, the engine must NEVER execute live even if a
+        # runtime flag armed live mode upstream. This guard never enables
+        # execution — it only ever blocks it.
+        if self._live_execution_vetoed_by_simulation():
+            self._pending_pyramid.pop(trade_id, None)
+            audit(trade_log,
+                  f"Live execution VETOED by SIMULATION_MODE for {trade_id}",
+                  action="confirm", result="VETO_SIMULATION",
+                  data={"trade_id": trade_id, "asset": idea.asset})
+            self._transition(AgentState.IDLE, f"simulation hard veto {trade_id}")
+            return ("Trade REJECTED: SIMULATION_MODE=true — live execution "
+                    "vetoed (hard safety switch).")
 
         result = await self.live_executor.execute(
             idea, size_usd,

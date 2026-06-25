@@ -21,18 +21,31 @@ const RATE_LIMIT_WINDOW = 15 * 60 * 1000; // 15 min
 const RATE_LIMIT_MAX = 10;
 const LOCKOUT_DURATION = 5 * 60 * 1000; // 5 min lockout after max attempts
 
-function pruneRateLimits() {
+// RC-AUD-026: per-account (per-email) failed-login throttle. The per-IP limiter
+// above does not stop distributed / rotating-IP credential stuffing against a
+// single account. This in-process counter mirrors the per-IP one, keyed by the
+// normalized email, so repeated failures against one account lock it out
+// regardless of source IP.
+const accountAttempts = new Map(); // email -> { count, firstAttempt, lockedUntil }
+const ACCOUNT_RATE_LIMIT_MAX = 8;
+
+function _pruneAttemptMap(map) {
   const now = Date.now();
-  for (const [ip, entry] of loginAttempts) {
+  for (const [key, entry] of map) {
     if (now - entry.firstAttempt > RATE_LIMIT_WINDOW && (!entry.lockedUntil || now > entry.lockedUntil)) {
-      loginAttempts.delete(ip);
+      map.delete(key);
     }
   }
   // Cap map size to prevent unbounded growth
-  if (loginAttempts.size > 10000) {
-    const entries = [...loginAttempts.entries()].sort((a, b) => a[1].firstAttempt - b[1].firstAttempt);
-    for (let i = 0; i < entries.length - 5000; i++) loginAttempts.delete(entries[i][0]);
+  if (map.size > 10000) {
+    const entries = [...map.entries()].sort((a, b) => a[1].firstAttempt - b[1].firstAttempt);
+    for (let i = 0; i < entries.length - 5000; i++) map.delete(entries[i][0]);
   }
+}
+
+function pruneRateLimits() {
+  _pruneAttemptMap(loginAttempts);
+  _pruneAttemptMap(accountAttempts);
 }
 setInterval(pruneRateLimits, 60000);
 
@@ -51,6 +64,28 @@ function recordAttempt(ip) {
   entry.count++;
   if (entry.count >= RATE_LIMIT_MAX) entry.lockedUntil = now + LOCKOUT_DURATION;
   loginAttempts.set(ip, entry);
+}
+
+// RC-AUD-026: per-account counterparts to the per-IP helpers above.
+function checkAccountLockout(email) {
+  const now = Date.now();
+  const entry = accountAttempts.get(email);
+  if (!entry) return true;
+  if (entry.lockedUntil && now < entry.lockedUntil) return false;
+  if (now - entry.firstAttempt > RATE_LIMIT_WINDOW) { accountAttempts.delete(email); return true; }
+  return entry.count < ACCOUNT_RATE_LIMIT_MAX;
+}
+
+function recordAccountFailure(email) {
+  const now = Date.now();
+  const entry = accountAttempts.get(email) || { count: 0, firstAttempt: now };
+  entry.count++;
+  if (entry.count >= ACCOUNT_RATE_LIMIT_MAX) entry.lockedUntil = now + LOCKOUT_DURATION;
+  accountAttempts.set(email, entry);
+}
+
+function clearAccountFailures(email) {
+  accountAttempts.delete(email);
 }
 
 // -- Middleware --
@@ -135,9 +170,15 @@ router.post('/login', async (req, res) => {
     if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
 
     const normalizedEmail = email.trim().toLowerCase();
+    // RC-AUD-026: per-account lockout, in addition to the per-IP check above.
+    if (!checkAccountLockout(normalizedEmail)) {
+      return res.status(429).json({ error: 'Too many login attempts. Try again later.' });
+    }
+
     const [rows] = await pool.execute('SELECT * FROM users WHERE email = ?', [normalizedEmail]);
     if (rows.length === 0) {
       recordAttempt(clientIp);
+      recordAccountFailure(normalizedEmail);
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
@@ -145,9 +186,12 @@ router.post('/login', async (req, res) => {
     const valid = await bcrypt.compare(password, user.password_hash);
     if (!valid) {
       recordAttempt(clientIp);
+      recordAccountFailure(normalizedEmail);
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
+    // Successful login — clear this account's failure counter.
+    clearAccountFailures(normalizedEmail);
     const token = signToken(user);
     const equity = await getUserEquity(user.id);
     res.json({ token, user_id: user.id, email: user.email, plan: user.plan, telegram_linked: !!user.telegram_linked, equity });

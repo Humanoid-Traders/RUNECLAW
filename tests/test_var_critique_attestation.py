@@ -117,7 +117,8 @@ class TestPortfolioVaR:
             _make_closed_trade(100, 110, 1.0, 10.0),
         ]
         engine = self._make_engine(trades, equity=10_000.0)
-        current, proposed = engine._compute_portfolio_var(1000.0)
+        _vr = engine._compute_portfolio_var(1000.0)
+        current, proposed = _vr.current_var_pct, _vr.proposed_var_pct
         assert current >= 0
         assert proposed >= 0
 
@@ -125,7 +126,8 @@ class TestPortfolioVaR:
         """VaR with <5 closed trades returns (-1, -1) sentinel."""
         trades = [_make_closed_trade(100, 105, 1.0, 5.0)] * 3
         engine = self._make_engine(trades)
-        current, proposed = engine._compute_portfolio_var(1000.0)
+        _vr = engine._compute_portfolio_var(1000.0)
+        current, proposed = _vr.current_var_pct, _vr.proposed_var_pct
         assert current == -1.0
         assert proposed == -1.0
 
@@ -140,7 +142,8 @@ class TestPortfolioVaR:
             _make_closed_trade(100, 102, 0.01, 0.02),
         ]
         engine = self._make_engine(trades, equity=100_000.0)
-        current, proposed = engine._compute_portfolio_var(100.0)
+        _vr = engine._compute_portfolio_var(100.0)
+        current, proposed = _vr.current_var_pct, _vr.proposed_var_pct
         # Small position relative to large equity => low VaR
         assert proposed >= 0
         from bot.config import CONFIG
@@ -150,7 +153,8 @@ class TestPortfolioVaR:
         """VaR check gracefully skips (passes) when insufficient data."""
         trades = [_make_closed_trade(100, 105, 1.0, 5.0)] * 2
         engine = self._make_engine(trades)
-        current, proposed = engine._compute_portfolio_var(1000.0)
+        _vr = engine._compute_portfolio_var(1000.0)
+        current, proposed = _vr.current_var_pct, _vr.proposed_var_pct
         assert current == -1.0
         assert proposed == -1.0
 
@@ -164,7 +168,8 @@ class TestPortfolioVaR:
             _make_closed_trade(100, 110, 1.0, 10.0),
         ]
         engine = self._make_engine(trades, equity=0.0)
-        current, proposed = engine._compute_portfolio_var(1000.0)
+        _vr = engine._compute_portfolio_var(1000.0)
+        current, proposed = _vr.current_var_pct, _vr.proposed_var_pct
         assert current == 0.0
         assert proposed == 100.0
 
@@ -178,7 +183,7 @@ class TestPortfolioVaR:
             _make_closed_trade(100, 100.8, 1.0, 0.8),
         ]
         engine = self._make_engine(trades, equity=50_000.0)
-        _, proposed = engine._compute_portfolio_var(500.0)
+        proposed = engine._compute_portfolio_var(500.0).proposed_var_pct
         # All positive returns with small variance => low VaR
         assert proposed >= 0
         assert proposed < 10  # should be quite small
@@ -194,7 +199,7 @@ class TestPortfolioVaR:
             _make_closed_trade(100, 80, 1.0, -20.0),
         ]
         engine = self._make_engine(trades, equity=10_000.0)
-        _, proposed = engine._compute_portfolio_var(5000.0)
+        proposed = engine._compute_portfolio_var(5000.0).proposed_var_pct
         assert proposed > 0, "Mixed trades should produce non-zero VaR"
 
     def test_var_check_appears_in_risk_output(self):

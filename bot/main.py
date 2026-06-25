@@ -104,9 +104,19 @@ def run_telegram() -> None:
             dashboard_app = _create_dash(engine)
             dashboard_runner = _web.AppRunner(dashboard_app)
             await dashboard_runner.setup()
-            _site = _web.TCPSite(dashboard_runner, "0.0.0.0", 8080)
+            # RC-AUD-017: the dashboard /api/* surface exposes AGGREGATE
+            # multi-user state, so the bind host is configurable. Default is
+            # "0.0.0.0" because the production deployment runs the bot in Docker
+            # behind an nginx proxy in a SEPARATE container that reaches the
+            # dashboard over the docker network — a 127.0.0.1 default would break
+            # that. The real protection is the mandatory DASHBOARD_TOKEN gate on
+            # /api/* (fail-closed: 403 when the token is unset). Operators who run
+            # the bot directly on a host can set DASHBOARD_BIND_HOST=127.0.0.1 to
+            # restrict the dashboard to localhost.
+            _dash_host = os.environ.get("DASHBOARD_BIND_HOST", "0.0.0.0")
+            _site = _web.TCPSite(dashboard_runner, _dash_host, 8080)
             await _site.start()
-            print("  Live Dashboard: http://0.0.0.0:8080\n")
+            print(f"  Live Dashboard: http://{_dash_host}:8080\n")
         except Exception as exc:
             print(f"  Dashboard server skipped: {exc}\n")
 

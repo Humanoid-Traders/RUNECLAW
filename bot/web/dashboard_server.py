@@ -184,9 +184,23 @@ async def auth_middleware(request: web.Request, handler):
     F-02 FIX: All API endpoints now require DASHBOARD_TOKEN to be set
     and provided via Authorization header.  The index page (/) is
     served without auth so the dashboard HTML can load.
+
+    RC-AUD-017: the /api/* handlers return AGGREGATE multi-user state —
+    every user's positions, equity, rejection history, LLM routing, and
+    cost (see handle_state/handle_positions/handle_signals). There is no
+    per-request auth-identity plumbing to scope responses to a single
+    operator, so this surface MUST stay (a) token-gated and (b) bound to a
+    trusted network. The "no DASHBOARD_TOKEN configured" branch below is
+    therefore fail-closed (returns 403, never serves data), and bot/main.py
+    binds the dashboard to a configurable host (DASHBOARD_BIND_HOST) that
+    should be localhost or a private/docker network, never the public
+    internet. Do NOT relax either control without adding real per-user
+    request scoping first.
     """
     if request.path.startswith("/api/"):
         if not _DASHBOARD_TOKEN:
+            # Fail-closed: with no token there is no way to authenticate the
+            # caller, so refuse rather than expose aggregate multi-user state.
             return web.json_response(
                 {"error": "DASHBOARD_TOKEN not configured. Set it in .env to enable the API."},
                 status=403,
