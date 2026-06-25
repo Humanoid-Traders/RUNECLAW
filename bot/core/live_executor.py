@@ -640,12 +640,18 @@ class LiveExecutor:
 
     async def _find_order_by_client_oid(
         self, exchange: "ccxt.Exchange", symbol: str, coid: str
-    ) -> Optional[dict]:
+    ) -> tuple[Optional[dict], bool]:
         """Best-effort lookup of an order by its clientOid.
 
         Used after a network failure/timeout to determine whether an order
         actually landed on the exchange before deciding to treat it as failed.
-        Returns the order dict if found, else None.
+
+        Returns (order, verified):
+          order    — the matching order dict, or None if not found.
+          verified — True only if at least one venue query succeeded, so a None
+                     order can be trusted as "confirmed absent". False means
+                     every query failed (e.g. outage) and absence is UNVERIFIED;
+                     callers must then fail-closed (RC-AUD-006).
         """
         def _matches(o: dict) -> bool:
             if not isinstance(o, dict):
@@ -656,18 +662,20 @@ class LiveExecutor:
             return isinstance(info, dict) and info.get("clientOid") == coid
 
         # 1) ccxt unified fetch by clientOrderId (params), if the venue supports it
+        verified = False
         for fetcher in ("fetch_open_orders", "fetch_closed_orders"):
             fn = getattr(exchange, fetcher, None)
             if fn is None:
                 continue
             try:
                 orders = await fn(symbol)
+                verified = True
                 for o in orders or []:
                     if _matches(o):
-                        return o
+                        return o, True
             except Exception as exc:  # noqa: BLE001 — best effort, never fatal
                 logger.debug("clientOid lookup via %s failed: %s", fetcher, exc)
-        return None
+        return None, verified
 
     async def _create_order_idempotent(
         self,
@@ -707,7 +715,7 @@ class LiveExecutor:
             audit(trade_log, f"Order submit error for {symbol}; reconciling by clientOid",
                   action="live_execute", result="SUBMIT_ERROR_RECONCILE",
                   data={"symbol": symbol, "coid": coid, "error": str(exc)[:200]})
-            found = await self._find_order_by_client_oid(exchange, symbol, coid)
+            found, _coid_verified = await self._find_order_by_client_oid(exchange, symbol, coid)
             if found is not None:
                 logger.warning("Recovered order for %s via clientOid %s — NOT resubmitting",
                                symbol, coid)
@@ -1839,26 +1847,46 @@ class LiveExecutor:
                         "post only" in exc_str or "post_only" in exc_str
                         or "would immediately" in exc_str
                     ):
-                        audit(trade_log,
-                              f"POST_ONLY rejected for {symbol} @ ${limit_price:,.4f} — "
-                              f"widening offset and retrying",
-                              action="post_only_retry", result="WIDENING",
-                              data={"symbol": symbol, "rejected_price": limit_price})
-                        # Double the offset and retry
-                        wider_offset = 1.0 * atr_value if atr_value > 0 else current_price * 0.005
-                        if side == "buy":
-                            limit_price = round(current_price - wider_offset, 8)
+                        # RC-AUD-005/006: the retry below regenerates the clientOid,
+                        # which bypasses the venue's dedup. Before resubmitting, make
+                        # sure the ORIGINAL order did not actually land. If it did,
+                        # use it; if its status cannot be verified, fail-closed
+                        # rather than risk a double-fill.
+                        _orig, _orig_verified = await self._find_order_by_client_oid(
+                            exchange, symbol, coid)
+                        if _orig is not None:
+                            logger.warning(
+                                "POST_ONLY: original order for %s actually landed — "
+                                "using it instead of resubmitting", symbol)
+                            order = _orig
+                        elif not _orig_verified:
+                            audit(trade_log,
+                                  f"POST_ONLY retry ABORTED for {symbol}: original order "
+                                  f"status unverifiable — not resubmitting (double-fill guard)",
+                                  action="post_only_retry", result="ABORT_UNVERIFIED",
+                                  data={"symbol": symbol, "coid": coid})
+                            raise
                         else:
-                            limit_price = round(current_price + wider_offset, 8)
-                        _prec_price = active_exchange.price_to_precision(symbol, limit_price)
-                        limit_price = float(_prec_price) if _prec_price is not None else limit_price
-                        create_kwargs["price"] = limit_price
-                        # Generate new coid for retry
-                        retry_coid = coid + "-r1"
-                        create_kwargs["coid"] = retry_coid
-                        create_kwargs["params"]["clientOid"] = retry_coid
-                        create_kwargs["params"]["clientOrderId"] = retry_coid
-                        order = await self._create_order_idempotent(exchange, **create_kwargs)
+                            audit(trade_log,
+                                  f"POST_ONLY rejected for {symbol} @ ${limit_price:,.4f} — "
+                                  f"widening offset and retrying",
+                                  action="post_only_retry", result="WIDENING",
+                                  data={"symbol": symbol, "rejected_price": limit_price})
+                            # Double the offset and retry
+                            wider_offset = 1.0 * atr_value if atr_value > 0 else current_price * 0.005
+                            if side == "buy":
+                                limit_price = round(current_price - wider_offset, 8)
+                            else:
+                                limit_price = round(current_price + wider_offset, 8)
+                            _prec_price = active_exchange.price_to_precision(symbol, limit_price)
+                            limit_price = float(_prec_price) if _prec_price is not None else limit_price
+                            create_kwargs["price"] = limit_price
+                            # Generate new coid for retry
+                            retry_coid = coid + "-r1"
+                            create_kwargs["coid"] = retry_coid
+                            create_kwargs["params"]["clientOid"] = retry_coid
+                            create_kwargs["params"]["clientOrderId"] = retry_coid
+                            order = await self._create_order_idempotent(exchange, **create_kwargs)
                     else:
                         raise  # Not a POST_ONLY rejection — propagate
             else:
@@ -2143,11 +2171,59 @@ class LiveExecutor:
                     exchange, idea.asset, idea.direction,
                     filled_qty, idea.stop_loss, idea.take_profit
                 )
+                # RC-AUD-001: a missing STOP-LOSS (not merely a missing TP) leaves a
+                # live, leveraged position with no downside protection. Retry once;
+                # if the stop still cannot be placed, FLATTEN the just-opened
+                # position rather than reporting success with no stop.
+                if sl_id is None:
+                    audit(trade_log,
+                          f"SL placement failed for {idea.asset} — retrying once",
+                          action="sl_retry", result="RETRY",
+                          data={"trade_id": idea.id, "symbol": idea.asset})
+                    try:
+                        retry_sl, retry_tp = await self._place_sl_tp(
+                            exchange, idea.asset, idea.direction,
+                            filled_qty, idea.stop_loss, idea.take_profit
+                        )
+                        sl_id = retry_sl
+                        if tp_id is None:
+                            tp_id = retry_tp
+                    except Exception as _sl_exc:
+                        logger.warning("SL retry raised for %s: %s", idea.asset, _sl_exc)
+                    if sl_id is None:
+                        position.sl_order_id = None
+                        position.tp_order_id = tp_id
+                        self._save_positions()
+                        audit(trade_log,
+                              f"UNPROTECTED position {idea.asset}: stop-loss could not be "
+                              f"placed — flattening for safety",
+                              action="sl_tp_failed", result="FLATTEN",
+                              data={"trade_id": idea.id, "symbol": idea.asset,
+                                    "stop_loss": idea.stop_loss})
+                        try:
+                            close_msg = await self.close_position(
+                                idea.id, reason="sl_placement_failed")
+                            return (
+                                f"⚠️ <b>EXECUTION ABORTED — {idea.asset}</b>\n"
+                                f"Position opened but the stop-loss could not be placed, "
+                                f"so it was CLOSED for safety.\n{close_msg}"
+                            )
+                        except Exception as _close_exc:
+                            logger.error("Emergency flatten FAILED for %s: %s",
+                                         idea.asset, _close_exc)
+                            return (
+                                f"🚨 <b>URGENT — {idea.asset} is LIVE with NO stop-loss</b>\n"
+                                f"Automatic close also FAILED ({_close_exc}). "
+                                f"Close this position MANUALLY on Bitget immediately."
+                            )
             position.sl_order_id = sl_id
             position.tp_order_id = tp_id
             # Persist SL/TP order IDs to disk immediately
             self._save_positions()
 
+            # RC-AUD-001: for non-deferred orders, a None sl_id has already been
+            # handled (retried + flattened) above, so reaching here means the stop
+            # is in place. This warning now only covers the deferred/edge cases.
             if sl_id is None and tp_id is None:
                 audit(trade_log,
                       f"SL/TP placement FAILED for {idea.asset} — position is UNPROTECTED",
