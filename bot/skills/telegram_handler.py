@@ -4316,7 +4316,7 @@ class TelegramHandler:
 
         # Filter to only show ideas above the display threshold (default 70%)
         from bot.config import CONFIG
-        _display_min = CONFIG.signal_display_min_confidence
+        _display_min = CONFIG.risk.signal_display_min_confidence
         pending = [i for i in self.engine.pending_ideas if i.confidence >= _display_min]
 
         # If nothing pending above threshold, auto-trigger a scan first
