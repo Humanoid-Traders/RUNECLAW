@@ -2966,9 +2966,16 @@ class TelegramHandler:
 
         # Register trade-close notification callback
         admin_chat_id = CONFIG.telegram.chat_id
+        # Parse comma-separated admin chat IDs into list of ints
+        _notify_chat_ids: list[int] = []
+        if admin_chat_id:
+            for cid in admin_chat_id.split(","):
+                cid = cid.strip()
+                if cid.isdigit():
+                    _notify_chat_ids.append(int(cid))
         async def _on_trade_closed(msg: str) -> None:
             """Send a rich close confirmation to admin when a trade is closed."""
-            if not admin_chat_id:
+            if not _notify_chat_ids:
                 return
             try:
                 # Try to render a styled PNG close card
@@ -3008,11 +3015,15 @@ class TelegramHandler:
                         reason_short = reason
                     cap = (f"{pnl_emoji} <b>{html.escape(sym)}</b> {direction} CLOSED\n"
                            f"PnL: ${pnl_usd:+,.2f} | {html.escape(reason_short)}")
-                    await bot.send_photo(
-                        chat_id=int(admin_chat_id),
-                        photo=close_png,
-                        caption=cap,
-                        parse_mode="HTML")
+                    for _cid in _notify_chat_ids:
+                        try:
+                            await bot.send_photo(
+                                chat_id=_cid,
+                                photo=close_png,
+                                caption=cap,
+                                parse_mode="HTML")
+                        except Exception:
+                            pass
                 else:
                     # Fallback to text — use reason-specific heading
                     reason = close_data.get("reason", "") if close_data else ""
@@ -3043,9 +3054,13 @@ class TelegramHandler:
                         card = f"{emoji} <b>{heading}</b>\n\n"
                     for line in msg.strip().split("\n"):
                         card += f"{html.escape(line)}\n"
-                    await bot.send_message(
-                        chat_id=int(admin_chat_id), text=card.strip(),
-                        parse_mode="HTML")
+                    for _cid in _notify_chat_ids:
+                        try:
+                            await bot.send_message(
+                                chat_id=_cid, text=card.strip(),
+                                parse_mode="HTML")
+                        except Exception:
+                            pass
             except Exception as exc:
                 system_log.debug("Close notify send failed: %s", exc)
 
@@ -3060,7 +3075,7 @@ class TelegramHandler:
         # Register limit-fill notification callback
         async def _on_limit_filled(msg: str) -> None:
             """Send a notification when a limit order is filled (position opened)."""
-            if not admin_chat_id:
+            if not _notify_chat_ids:
                 return
             try:
                 from datetime import datetime as _dt, timezone as _tz
@@ -3071,9 +3086,13 @@ class TelegramHandler:
                 card += "\n" + "\u2500" * 28
                 card += f"\n\U0001f43e RUNECLAW | {_dt.now(_tz.utc).strftime('%H:%M')} UTC"
                 card += "\n<a href='#'>#RUNECLAW #LimitFill</a>"
-                await bot.send_message(
-                    chat_id=int(admin_chat_id), text=card.strip(),
-                    parse_mode="HTML")
+                for _cid in _notify_chat_ids:
+                    try:
+                        await bot.send_message(
+                            chat_id=_cid, text=card.strip(),
+                            parse_mode="HTML")
+                    except Exception:
+                        pass
             except Exception as exc:
                 system_log.debug("Fill notify send failed: %s", exc)
 
@@ -3102,10 +3121,16 @@ class TelegramHandler:
                 ])
                 admin_chat_id = os.environ.get("ADMIN_CHAT_ID") or os.environ.get("TELEGRAM_CHAT_ID", "")
                 if admin_chat_id:
-                    await bot.send_message(
-                        chat_id=int(admin_chat_id),
-                        text="\n".join(lines),
-                        parse_mode="HTML")
+                    for _cid_str in admin_chat_id.split(","):
+                        _cid_str = _cid_str.strip()
+                        if _cid_str.isdigit():
+                            try:
+                                await bot.send_message(
+                                    chat_id=int(_cid_str),
+                                    text="\n".join(lines),
+                                    parse_mode="HTML")
+                            except Exception:
+                                pass
             except Exception as exc:
                 system_log.debug("Adopt notify send failed: %s", exc)
 
@@ -3140,10 +3165,16 @@ class TelegramHandler:
                 ])
                 a_chat = os.environ.get("ADMIN_CHAT_ID") or os.environ.get("TELEGRAM_CHAT_ID", "")
                 if a_chat:
-                    await bot.send_message(
-                        chat_id=int(a_chat),
-                        text="\n".join(card_lines),
-                        parse_mode="HTML")
+                    for _cid_str in a_chat.split(","):
+                        _cid_str = _cid_str.strip()
+                        if _cid_str.isdigit():
+                            try:
+                                await bot.send_message(
+                                    chat_id=int(_cid_str),
+                                    text="\n".join(card_lines),
+                                    parse_mode="HTML")
+                            except Exception:
+                                pass
             except Exception as exc:
                 system_log.debug("Auto-confirm notify send failed: %s", exc)
 
@@ -4551,16 +4582,17 @@ class TelegramHandler:
                 for pos in live_positions:
                     last_price = prices.get(pos.symbol, pos.entry_price)
                     if pos.direction == "LONG":
-                        pnl_pct = ((last_price - pos.entry_price) / pos.entry_price) * 100
+                        pnl_pct_raw = ((last_price - pos.entry_price) / pos.entry_price) * 100
                         upnl_usd = (last_price - pos.entry_price) * pos.quantity
                     else:
-                        pnl_pct = ((pos.entry_price - last_price) / pos.entry_price) * 100
+                        pnl_pct_raw = ((pos.entry_price - last_price) / pos.entry_price) * 100
                         upnl_usd = (pos.entry_price - last_price) * pos.quantity
                     from datetime import datetime, timezone
                     hold_h = (datetime.now(timezone.utc) - pos.opened_at).total_seconds() / 3600
                     cost = pos.cost_usd if pos.cost_usd > 0 else pos.entry_price * pos.quantity
                     notional = last_price * pos.quantity
                     leverage = getattr(pos, 'leverage', 0) or (notional / cost if cost > 0 else 1.0)
+                    pnl_pct = pnl_pct_raw * leverage
                     sl_dist = abs(last_price - pos.stop_loss) / last_price * 100 if last_price else 0
                     tp_dist = abs(pos.take_profit - last_price) / last_price * 100 if last_price else 0
                     risk_left = abs(last_price - pos.stop_loss) if pos.stop_loss else 0
@@ -4698,9 +4730,11 @@ class TelegramHandler:
                 for tid, pos in portfolio._positions.items():
                     last_price = portfolio._last_prices.get(pos.asset, pos.entry_price)
                     if pos.direction.value == "LONG":
-                        pnl_pct = ((last_price - pos.entry_price) / pos.entry_price) * 100
+                        pnl_pct_raw = ((last_price - pos.entry_price) / pos.entry_price) * 100
                     else:
-                        pnl_pct = ((pos.entry_price - last_price) / pos.entry_price) * 100
+                        pnl_pct_raw = ((pos.entry_price - last_price) / pos.entry_price) * 100
+                    pos_lev = getattr(pos, 'leverage', 1) or 1
+                    pnl_pct = pnl_pct_raw * pos_lev
                     from datetime import datetime, timezone
                     hold_h = (datetime.now(timezone.utc) - pos.opened_at).total_seconds() / 3600
                     positions_data.append({
