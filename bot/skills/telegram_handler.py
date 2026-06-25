@@ -691,7 +691,10 @@ class TelegramHandler:
             # Inject recent closed trades
             if is_live and executor:
                 # Use live executor closed trades (actual exchange fills)
-                live_closed = executor.closed_positions
+                # Filter out canceled/expired limit orders (never-filled, $0 PnL)
+                _ntr = {"canceled", "cancelled", "expired", "price_drift", "rejected"}
+                live_closed = [t for t in executor.closed_positions
+                               if getattr(t, "close_reason", "") not in _ntr]
                 recent_trades_live = live_closed[-5:] if live_closed else []
                 if recent_trades_live:
                     trade_lines = []
@@ -3503,8 +3506,10 @@ class TelegramHandler:
 
             # Exclude adopted orphan trades and injected diagnostic artifacts
             # so Portfolio matches Performance numbers
+            _NON_TRADE_REASONS = {"canceled", "cancelled", "expired", "price_drift", "rejected"}
             live_closed = [t for t in all_closed
-                           if not any(getattr(t, "trade_id", "").startswith(p) for p in _ORPHAN_PREFIXES)]
+                           if not any(getattr(t, "trade_id", "").startswith(p) for p in _ORPHAN_PREFIXES)
+                           and getattr(t, "close_reason", "") not in _NON_TRADE_REASONS]
             adopted_trades = [t for t in all_closed
                               if any(getattr(t, "trade_id", "").startswith(p) for p in _ORPHAN_PREFIXES)]
 
@@ -5063,9 +5068,12 @@ class TelegramHandler:
                           action="perf_exchange_fallback", result="ERROR")
 
             # ── Separate adopted/injected vs user-initiated trades ──
-            # Exclude: TI-adopted (orphan positions), TI-injected (diagnostic artifacts)
+            # Exclude: TI-adopted (orphan positions), TI-injected (diagnostic artifacts),
+            # canceled/expired/price_drift (never-filled limit orders with $0 PnL)
+            _NON_TRADE_REASONS_PERF = {"canceled", "cancelled", "expired", "price_drift", "rejected"}
             user_trades = [t for t in live_closed
-                           if not any(getattr(t, "trade_id", "").startswith(p) for p in _ORPHAN_PREFIXES)]
+                           if not any(getattr(t, "trade_id", "").startswith(p) for p in _ORPHAN_PREFIXES)
+                           and getattr(t, "close_reason", "") not in _NON_TRADE_REASONS_PERF]
             adopted_trades = [t for t in live_closed
                               if any(getattr(t, "trade_id", "").startswith(p) for p in _ORPHAN_PREFIXES)]
             adopted_pnl = sum((t.pnl_usd or 0) for t in adopted_trades)

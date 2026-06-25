@@ -4056,42 +4056,63 @@ class LiveExecutor:
                 fill_price = pos.entry_price  # absolute fallback — no phantom PnL
 
             # Calculate PnL — try exchange-reported profit first (source of truth)
+            # Priority: 1) Bitget position history (netProfit, most accurate)
+            #           2) fetch_my_trades (profit, excludes funding)
+            #           3) entry/exit price calculation (fallback)
             exchange_pnl = None
+
+            # Try position history first (includes funding fees — most accurate)
             try:
-                close_trades = await exchange.fetch_my_trades(
-                    pos.symbol, limit=10)
-                close_fills = [
-                    t for t in close_trades
-                    if t.get("order") == close_order_id
-                ]
-                if close_fills:
-                    total_profit = 0.0
-                    total_fees = 0.0
-                    for cf in close_fills:
-                        cf_info = cf.get("info", {})
-                        profit = float(cf_info.get("profit", 0) or 0)
-                        total_profit += profit
-                        fee_detail = cf_info.get("feeDetail", {})
-                        if isinstance(fee_detail, dict):
-                            total_fees += abs(float(fee_detail.get("totalFee", 0) or 0))
-                    if total_profit != 0 or total_fees != 0:
-                        exchange_pnl = total_profit
-                        if total_fees > 0:
-                            exchange_close_fees = total_fees
-            except Exception as _fee_exc:
-                # CRITICAL FIX: use pessimistic fee assumption (20bp round-trip)
-                # instead of 0 when exchange data unavailable
-                _notional = fill_price * pos.quantity if fill_price > 0 else pos.entry_price * pos.quantity
-                exchange_close_fees = _notional * 0.002  # 20bp pessimistic
-                logger.warning(
-                    "Exchange fee fetch failed for %s — using pessimistic 20bp (%.4f): %s",
-                    pos.symbol, exchange_close_fees, _fee_exc)
-                audit(trade_log,
-                      f"Fee fetch FAILED for {pos.symbol}: using pessimistic 20bp estimate",
-                      action="fee_fetch", result="EXCEPTION",
-                      data={"error": str(_fee_exc)[:200],
-                            "pessimistic_fee": round(exchange_close_fees, 6)})
-                self._record_warning("fee_fetch")
+                import asyncio as _aio_pnl
+                await _aio_pnl.sleep(2)  # brief delay for Bitget to finalize
+                pos_hist_data = await self._fetch_bitget_close_data(pos)
+                if pos_hist_data and pos_hist_data.get("pnl") is not None:
+                    exchange_pnl = pos_hist_data["pnl"]
+                    exchange_close_fees = pos_hist_data.get("fees", 0) or 0
+                    if pos_hist_data.get("close_price", 0) > 0:
+                        fill_price = pos_hist_data["close_price"]
+                    logger.info("Using Bitget position history PnL for %s: $%.4f (fees $%.4f)",
+                                pos.symbol, exchange_pnl, exchange_close_fees)
+            except Exception as _hist_exc:
+                logger.debug("Position history lookup failed for %s: %s", pos.symbol, _hist_exc)
+
+            # Fallback to fetch_my_trades if position history didn't work
+            if exchange_pnl is None:
+                try:
+                    close_trades = await exchange.fetch_my_trades(
+                        pos.symbol, limit=10)
+                    close_fills = [
+                        t for t in close_trades
+                        if t.get("order") == close_order_id
+                    ]
+                    if close_fills:
+                        total_profit = 0.0
+                        total_fees = 0.0
+                        for cf in close_fills:
+                            cf_info = cf.get("info", {})
+                            profit = float(cf_info.get("profit", 0) or 0)
+                            total_profit += profit
+                            fee_detail = cf_info.get("feeDetail", {})
+                            if isinstance(fee_detail, dict):
+                                total_fees += abs(float(fee_detail.get("totalFee", 0) or 0))
+                        if total_profit != 0 or total_fees != 0:
+                            exchange_pnl = total_profit
+                            if total_fees > 0:
+                                exchange_close_fees = total_fees
+                except Exception as _fee_exc:
+                    # CRITICAL FIX: use pessimistic fee assumption (20bp round-trip)
+                    # instead of 0 when exchange data unavailable
+                    _notional = fill_price * pos.quantity if fill_price > 0 else pos.entry_price * pos.quantity
+                    exchange_close_fees = _notional * 0.002  # 20bp pessimistic
+                    logger.warning(
+                        "Exchange fee fetch failed for %s — using pessimistic 20bp (%.4f): %s",
+                        pos.symbol, exchange_close_fees, _fee_exc)
+                    audit(trade_log,
+                          f"Fee fetch FAILED for {pos.symbol}: using pessimistic 20bp estimate",
+                          action="fee_fetch", result="EXCEPTION",
+                          data={"error": str(_fee_exc)[:200],
+                                "pessimistic_fee": round(exchange_close_fees, 6)})
+                    self._record_warning("fee_fetch")
 
             if exchange_pnl is not None:
                 # Use exchange numbers directly — no estimation
