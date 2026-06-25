@@ -296,7 +296,10 @@ app = FastAPI(
     openapi_url=None,     # Disable OpenAPI schema (F-09)
 )
 
-_allowed_origins = os.getenv("DASHBOARD_CORS_ORIGIN", os.getenv("CORS_ORIGINS", "*")).split(",")
+# RC-AUD-003: default to same-origin (no cross-origin) instead of "*".
+# Operators who need cross-origin access set DASHBOARD_CORS_ORIGIN explicitly.
+_cors_env = os.getenv("DASHBOARD_CORS_ORIGIN", os.getenv("CORS_ORIGINS", "")).strip()
+_allowed_origins = [o.strip() for o in _cors_env.split(",") if o.strip()]
 
 app.add_middleware(
     CORSMiddleware,
@@ -474,7 +477,11 @@ async def analyze(req: AnalyzeRequest, _token: str = Depends(require_dashboard_t
             signal, ohlcv, order_flow=of_signal
         )
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Analyzer error: {exc}")
+        # RC-AUD-013: log full error server-side; return a generic message so
+        # exchange/library internals are not echoed to the client.
+        import logging
+        logging.getLogger("api_bridge").error("Analyzer error for %s: %s", req.symbol, exc)
+        raise HTTPException(status_code=500, detail="Analyzer error (logged server-side)")
 
     if idea is None:
         return {"symbol": req.symbol, "idea": None, "reason": "Analyzer returned no trade idea"}
@@ -554,7 +561,10 @@ async def confirm_trade(req: ConfirmRequest, _token: str = Depends(require_dashb
     try:
         execution = engine.portfolio.open_position(idea, risk_result.position_size_usd)
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=f"Position open failed: {exc}")
+        # RC-AUD-013: do not echo raw exception text to the client.
+        import logging
+        logging.getLogger("api_bridge").error("Position open failed: %s", exc)
+        raise HTTPException(status_code=400, detail="Position open failed (logged server-side)")
 
     return {
         "status": "confirmed",

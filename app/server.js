@@ -11,10 +11,13 @@ if (!process.env.JWT_SECRET) {
   }
   // If production without EPHEMERAL=true, let auth.js enforce the fatal exit.
 }
-if (!process.env.BOT_SYNC_SECRET) {
-  // Deterministic sync secret so the bot can match it across cold starts.
-  // Override with BOT_SYNC_SECRET env var in production.
-  process.env.BOT_SYNC_SECRET = 'nAJuMDCeT-lpoPsmyNCig47DcIbNZ_UnyRpfIirDiGB_CgrHhJmw5NIYq3PYupbg';
+// RC-AUD-015: never ship a hardcoded sync secret — it grants write access to the
+// /api/bot/sync endpoints (which overwrite trade/equity data). Require it to be
+// provided via env in all modes; the bot and web app must share the same value.
+// The previously committed default must be rotated — it is exposed in git history.
+if (!process.env.BOT_SYNC_SECRET || process.env.BOT_SYNC_SECRET.length < 32) {
+  console.error('FATAL: BOT_SYNC_SECRET must be set to a shared secret of >=32 chars (see .env.example).');
+  process.exit(1);
 }
 
 const express = require('express');

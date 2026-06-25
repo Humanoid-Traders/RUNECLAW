@@ -741,11 +741,24 @@ class RuneClawEngine:
         # If confidence exceeds threshold, bypass human confirmation gate
         # and auto-execute. Notifications still go to Telegram with
         # "[AUTO]" tag so the operator can see what happened.
+        # RC-AUD-002: auto-confirm bypasses the human-decision gate. It is
+        # disabled by default (threshold 1.0) and, in LIVE mode, refuses to place
+        # real-money orders unless AUTO_CONFIRM_LIVE_ENABLED is explicitly set.
         auto_threshold = RUNTIME.auto_confirm_threshold
         auto_ideas = [
             (tid, tidea) for tid, tidea in list(self._pending_ideas.items())
             if tidea.confidence >= auto_threshold
         ]
+        if auto_ideas and CONFIG.is_live() and not CONFIG.auto_confirm_live_enabled:
+            for tid, tidea in auto_ideas:
+                audit(trade_log,
+                      f"Auto-confirm SUPPRESSED in live mode for {tidea.asset} "
+                      f"(conf={tidea.confidence:.2f}) — human confirmation required. "
+                      f"Set AUTO_CONFIRM_LIVE_ENABLED=true to allow live auto-execution.",
+                      action="auto_confirm", result="SUPPRESSED_LIVE",
+                      data={"trade_id": tid, "confidence": tidea.confidence,
+                            "threshold": auto_threshold})
+            auto_ideas = []
         for tid, tidea in auto_ideas:
             audit(trade_log,
                   f"Auto-confirming {tidea.asset} (conf={tidea.confidence:.2f} >= {auto_threshold})",

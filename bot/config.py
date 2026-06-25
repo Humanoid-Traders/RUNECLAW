@@ -681,9 +681,16 @@ class AppConfig:
 
     # -- Auto-confirmation --
     # Signals with blended confidence >= this threshold auto-execute without
-    # waiting for human button press. Set to 1.0 to disable (require manual
+    # waiting for a human button press. Default 1.0 = DISABLED (require manual
     # confirm for all trades). Range: 0.0–1.0.
-    auto_confirm_threshold: float = _env_float("AUTO_CONFIRM_THRESHOLD", 0.75)
+    # SECURITY (RC-AUD-002): auto-confirm bypasses the human-decision gate, so it
+    # is OFF by default. Lowering the threshold permits PAPER auto-execution only;
+    # placing LIVE orders with no human press additionally requires the explicit
+    # AUTO_CONFIRM_LIVE_ENABLED opt-in below (fail-closed).
+    auto_confirm_threshold: float = _env_float("AUTO_CONFIRM_THRESHOLD", 1.0)
+    # Allow auto-confirm to place LIVE (real-money) orders with no human press.
+    # Even with a low threshold, auto-confirm cannot trade live unless this is set.
+    auto_confirm_live_enabled: bool = _env_bool("AUTO_CONFIRM_LIVE_ENABLED", False)
     # TTL for pending ideas in seconds (default 300 = 5 min)
     pending_idea_ttl: int = int(_env_float("PENDING_IDEA_TTL", 300))
 

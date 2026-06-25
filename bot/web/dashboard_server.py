@@ -80,11 +80,19 @@ async def handle_state(request: web.Request) -> web.Response:
                 "to": t.to_state.value if hasattr(t.to_state, "value") else str(t.to_state),
                 "reason": getattr(t, "reason", ""),
             })
+        # RC-AUD-016: report the REAL trading mode, not a hardcoded True.
+        # A hardcoded "simulation_mode": True made the dashboard show paper mode
+        # even while trading live with real capital.
+        try:
+            from bot.config import CONFIG as _engine_cfg
+            _sim_mode = not _engine_cfg.is_live()
+        except Exception:
+            _sim_mode = True  # fail safe: default to showing simulation
         data["engine"] = {
             "state": state_name,
             "scan_interval": getattr(engine, "_scan_interval", 60),
             "pending_ideas": len(getattr(engine, "pending_ideas", [])),
-            "simulation_mode": True,
+            "simulation_mode": _sim_mode,
             "state_history": history,
         }
     except Exception:
