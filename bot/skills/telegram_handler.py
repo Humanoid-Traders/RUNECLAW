@@ -2241,8 +2241,9 @@ class TelegramHandler:
                 f"Equity snapshots: <code>{len(risk._equity_history)}</code>",
                 f"MA period: <code>{CONFIG.risk.equity_curve_ma_period}</code>",
                 "",
-                f"Drawdown recovery: {'<b>ACTIVE</b> \u26a0\ufe0f' if in_recovery else 'Inactive \u2705'}",
             ]
+            _dr_str = "<b>ACTIVE</b> ⚠️" if in_recovery else "Inactive ✅"
+            lines.append(f"Drawdown recovery: {_dr_str}")
 
             if in_recovery:
                 lines.append(f"  Min confidence: <code>{CONFIG.risk.drawdown_recovery_conf_min}</code>")
