@@ -97,6 +97,8 @@ class RuneClawEngine:
         self.live_executor = LiveExecutor()
         # Wire balance cache invalidation: when a live position closes, clear cached equity
         self.live_executor.on_position_closed = lambda pos: self._invalidate_live_balance_cache()
+        # Wire risk engine for warning rate circuit breaker
+        self.live_executor._risk_engine = self.risk
         self.health = SystemHealthMonitor()
         # Multi-user portfolio manager: per-user isolated paper wallets
         self.user_portfolios = MultiUserPortfolio(
@@ -504,6 +506,24 @@ class RuneClawEngine:
             except Exception as exc:
                 audit(system_log, f"Startup reconciliation error: {exc}",
                       action="startup_reconcile", result="ERROR")
+
+            # Startup position sync: ensure tracked leverage and margin mode
+            # match exchange reality. Catches manual changes on exchange or
+            # mismatches from dynamic leverage not applying.
+            try:
+                await self.live_executor.sync_positions_from_exchange()
+            except Exception as exc:
+                audit(system_log, f"Startup position sync error: {exc}",
+                      action="startup_position_sync", result="ERROR")
+
+            # Startup SL/TP verification: ensure all open positions have
+            # SL/TP orders on exchange. Catches cases where SL/TP placement
+            # failed silently (margin mode mismatch, precision errors, etc.)
+            try:
+                await self.live_executor.verify_and_fix_sltp()
+            except Exception as exc:
+                audit(system_log, f"Startup SL/TP verification error: {exc}",
+                      action="startup_sltp_verify", result="ERROR")
 
         while self._running:
             try:
@@ -994,8 +1014,8 @@ class RuneClawEngine:
             if adjustments.get("strategy_type"):
                 # Override strategy type based on regime
                 pass  # strategy_type is set from the router
-        except Exception:
-            pass
+        except Exception as _strat_exc:
+            logger.warning("Strategy router selection failed for %s: %s", idea.asset, _strat_exc)
 
         # ── Smart pyramid / duplicate symbol guard ─────────────────
         # Rules: max 2 entries per symbol, same direction adds require
@@ -1081,17 +1101,24 @@ class RuneClawEngine:
         from bot.core.live_executor import MICRO_MAX_POSITION_USD
         exec_cap = MICRO_MAX_POSITION_USD if CONFIG.is_live() else None
         # LIVE FIX: pass live open position count so risk check #5 is accurate
-        # Use max of live executor and paper portfolio to be conservative
-        # EXCHANGE = SOURCE OF TRUTH: use real exchange position count
+        # CRITICAL: count BOTH filled positions AND pending limit orders.
+        # Pending limit orders can fill at any time, so they must count
+        # toward the max_open_positions limit. Otherwise auto-confirm can
+        # place 20+ limit orders that all fill simultaneously.
         live_open = None
         if CONFIG.is_live():
             try:
-                live_open = await get_exchange_position_count(self)
+                exchange_count = await get_exchange_position_count(self)
+                # Add pending (unfilled) limit orders — they occupy margin and
+                # will become positions when filled
+                pending_count = sum(
+                    1 for p in self.live_executor.open_positions
+                    if p.status == "pending_fill"
+                )
+                live_open = exchange_count + pending_count
             except Exception:
-                # Fallback: use local state max if exchange unreachable
-                live_count = len(self.live_executor.open_positions)
-                paper_count = self.portfolio.snapshot().open_positions if hasattr(self, 'portfolio') else 0
-                live_open = max(live_count, paper_count)
+                # Fallback: use local state (includes both open + pending_fill)
+                live_open = len(self.live_executor.open_positions)
         # N-03 FIX: removed _transition(RISK_CHECK) — runs in parallel, parent manages state
         # Wire order flow signal to risk engine so check #23 (bid dominance) runs
         if of_signal is not None:
@@ -1339,15 +1366,18 @@ class RuneClawEngine:
             live_eq_recheck = self._live_balance_cache.get("total", 0.0) if (CONFIG.is_live() and self._live_balance_cache) else None
             from bot.core.live_executor import MICRO_MAX_POSITION_USD
             recheck_cap = MICRO_MAX_POSITION_USD if CONFIG.is_live() else None
-            # EXCHANGE = SOURCE OF TRUTH: use real exchange position count
+            # CRITICAL: count filled + pending positions (same as scan path)
             live_open_recheck = None
             if CONFIG.is_live():
                 try:
-                    live_open_recheck = await get_exchange_position_count(self)
+                    exchange_ct = await get_exchange_position_count(self)
+                    pending_ct = sum(
+                        1 for p in self.live_executor.open_positions
+                        if p.status == "pending_fill"
+                    )
+                    live_open_recheck = exchange_ct + pending_ct
                 except Exception:
-                    live_ct = len(self.live_executor.open_positions)
-                    paper_ct = self.portfolio.snapshot().open_positions if hasattr(self, 'portfolio') else 0
-                    live_open_recheck = max(live_ct, paper_ct)
+                    live_open_recheck = len(self.live_executor.open_positions)
             recheck = self.risk.evaluate(idea, atr=stored_atr, live_equity=live_eq_recheck, max_position_usd=recheck_cap, live_open_count=live_open_recheck)
         except Exception as exc:
             # Fix 6: if re-check raises, do NOT silently lose the idea.

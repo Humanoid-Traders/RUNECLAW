@@ -36,6 +36,7 @@ Checks:
 from __future__ import annotations
 
 import json
+import logging
 import os
 import threading
 import time
@@ -184,6 +185,15 @@ class RiskEngine:
         self._recovery_start_dd: float = 0.0
         # Feature: Rolling return correlation (V2)
         self._price_history: dict[str, list[float]] = {}
+        # Feature: Warning rate circuit breaker
+        # Tracks infrastructure warnings (EXCEPTION/CRITICAL_FAIL audit events).
+        # If any single warning key fires > threshold times in the sliding window,
+        # signal generation is paused until the rate drops.
+        self._warning_events: deque[tuple[float, str]] = deque(maxlen=500)
+        self._warning_rate_window: float = 3600.0   # 1 hour sliding window
+        self._warning_rate_threshold: int = 5        # >5 of same key per hour = trip
+        self._warning_rate_tripped: bool = False
+        self._warning_rate_trip_key: str = ""
 
     @property
     def circuit_breaker_active(self) -> bool:
@@ -199,6 +209,59 @@ class RiskEngine:
         C2-43 FIX: deepcopy prevents callers from mutating internal state."""
         import copy
         return copy.deepcopy(list(self._rejection_history))
+
+    # ── Warning rate circuit breaker ──────────────────────────────────────
+    @property
+    def warning_rate_breaker_active(self) -> bool:
+        """True if infrastructure warnings are firing too frequently."""
+        return self._warning_rate_tripped
+
+    def record_warning(self, key: str) -> None:
+        """Record an infrastructure warning event (EXCEPTION, CRITICAL_FAIL, etc).
+
+        Called from audit sites in live_executor/analyzer when a catch block
+        fires.  If the same ``key`` fires more than ``_warning_rate_threshold``
+        times within ``_warning_rate_window`` seconds, the warning rate breaker
+        trips and blocks new trades until the rate subsides.
+        """
+        now = time.time()
+        self._warning_events.append((now, key))
+        # Prune stale events
+        cutoff = now - self._warning_rate_window
+        while self._warning_events and self._warning_events[0][0] < cutoff:
+            self._warning_events.popleft()
+        # Count occurrences of this key in the window
+        count = sum(1 for _, k in self._warning_events if k == key)
+        if count > self._warning_rate_threshold:
+            if not self._warning_rate_tripped:
+                self._warning_rate_tripped = True
+                self._warning_rate_trip_key = key
+                audit(risk_log,
+                      f"WARNING RATE BREAKER TRIPPED: '{key}' fired {count}x "
+                      f"in last {self._warning_rate_window:.0f}s "
+                      f"(threshold: {self._warning_rate_threshold})",
+                      action="warning_rate_breaker", result="TRIPPED",
+                      data={"key": key, "count": count,
+                            "threshold": self._warning_rate_threshold},
+                      level=logging.CRITICAL)
+        else:
+            # Auto-recover when rate drops below threshold
+            if self._warning_rate_tripped and self._warning_rate_trip_key == key:
+                self._warning_rate_tripped = False
+                audit(risk_log,
+                      f"Warning rate breaker cleared: '{key}' rate back to {count}",
+                      action="warning_rate_breaker", result="CLEARED",
+                      data={"key": key, "count": count})
+
+    def warning_rate_summary(self) -> dict[str, int]:
+        """Return counts of each warning key in the current window."""
+        now = time.time()
+        cutoff = now - self._warning_rate_window
+        counts: dict[str, int] = {}
+        for ts, key in self._warning_events:
+            if ts >= cutoff:
+                counts[key] = counts.get(key, 0) + 1
+        return counts
 
     def set_order_flow_signal(self, signal) -> None:
         """Cache the latest OrderFlowSignal for Gate 2 / Rule 20 checks."""
@@ -471,6 +534,17 @@ class RiskEngine:
                 passed.append("CIRCUIT_BREAKER: OK")
         except Exception as exc:
             failed.append(f"CIRCUIT_BREAKER: evaluation error ({exc})")
+
+        try:
+            # 1b. Warning rate circuit breaker — infrastructure health
+            if self._warning_rate_tripped:
+                failed.append(
+                    f"WARNING_RATE_BREAKER: infrastructure warnings firing too "
+                    f"frequently (key={self._warning_rate_trip_key!r})")
+            else:
+                passed.append("WARNING_RATE_BREAKER: OK")
+        except Exception as exc:
+            failed.append(f"WARNING_RATE_BREAKER: evaluation error ({exc})")
 
         try:
             # 2. Position size — enforces notional cap (the check has real authority)
@@ -1299,8 +1373,8 @@ class RiskEngine:
                                 # Same direction + high correlation = reject
                                 if (idea.direction.value == pos.direction.value and corr > CONFIG.risk.max_correlation):
                                     return f"CORRELATION_V2: {idea.asset} corr={corr:.2f} with {pos.asset} (>{CONFIG.risk.max_correlation})"
-        except Exception:
-            pass  # fail-open for v2 correlation
+        except Exception as _corr_exc:
+            logger.warning("Correlation v2 check failed (fail-open): %s", _corr_exc)
 
         return None
 

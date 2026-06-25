@@ -22,6 +22,7 @@ import math
 import re
 import uuid
 from datetime import datetime
+from pathlib import Path
 from bot.compat import UTC
 from typing import Optional
 
@@ -551,7 +552,7 @@ class Analyzer:
         if sma50 is not None:
             indicators["sma50"] = round(sma50, 6)
 
-        thesis = await self._llm_thesis(signal, indicators, order_flow=order_flow)
+        thesis = await self._llm_thesis(signal, indicators, order_flow=order_flow, is_admin=is_admin)
 
         if thesis is None:
             self._last_rejection_diag = {
@@ -563,6 +564,15 @@ class Analyzer:
                 ),
                 "source": "no_thesis",
             }
+            return None
+
+        # C-07 SAFETY: reject if LLM/rule thesis returned without a valid direction.
+        # This guards against any path that returns a thesis dict with direction=None.
+        if thesis.get("direction") not in ("LONG", "SHORT"):
+            audit(trade_log,
+                  f"Thesis has invalid direction={thesis.get('direction')!r}, blocking trade",
+                  action="analyze", result="INVALID_DIRECTION",
+                  data={"symbol": signal.symbol})
             return None
 
         direction = Direction.LONG if thesis["direction"] == "LONG" else Direction.SHORT
@@ -619,6 +629,35 @@ class Analyzer:
         # Blend LLM/rule-based confidence with confluence score
         blended_confidence = confidence * CONFIG.analyzer.llm_weight + confluence * CONFIG.analyzer.confluence_weight
 
+        # ── LLM Calibration Log ──────────────────────────────────────
+        # Captures raw LLM confidence vs confluence BEFORE any post-blend
+        # adjustments.  Enables offline calibration study: correlation,
+        # direction agreement, precision/recall at thresholds per model.
+        try:
+            _raw_llm_conf = max(0.0, min(1.0, thesis.get("confidence", 0.0)))
+            _cal_entry = {
+                "ts": datetime.now(UTC).isoformat(),
+                "symbol": signal.symbol,
+                "llm_model": thesis.get("model_used", "rule_engine"),
+                "llm_source": thesis.get("source", "unknown"),
+                "llm_direction": thesis.get("direction"),
+                "llm_confidence_raw": round(_raw_llm_conf, 4),
+                "confluence_score": round(confluence, 4),
+                "confluence_direction": "LONG" if confluence > 0.55 else ("SHORT" if confluence < 0.45 else "NEUTRAL"),
+                "blended_confidence": round(blended_confidence, 4),
+                "regime": regime.value,
+                "strategy_type": strategy_type,
+                "counter_trend_penalty": counter_trend_penalty,
+                "prompt_hash": thesis.get("prompt_hash", ""),
+            }
+            import json as _json_cal
+            _cal_path = Path(__file__).resolve().parent.parent.parent / "data" / "learning" / "llm_calibration.jsonl"
+            _cal_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(_cal_path, "a") as _f:
+                _f.write(_json_cal.dumps(_cal_entry) + "\n")
+        except Exception as _cal_exc:
+            logger.debug("LLM calibration log error: %s", _cal_exc)
+
         # SIGNAL QUALITY: multi-timeframe confirmation via SMA50
         # Acts as a proxy for higher-timeframe trend alignment on 1H data
         if sma50 is not None:
@@ -668,8 +707,8 @@ class Analyzer:
                     }
                     return None
                 blended_confidence -= 0.15 * opposition * of_conf
-        except Exception:
-            pass  # guard must never raise
+        except Exception as _of_exc:
+            logger.warning("Order-flow opposition calc failed for %s: %s", signal.symbol, _of_exc)
 
         # ── Funding Rate Arbitrage Filter ──
         try:
@@ -688,8 +727,8 @@ class Analyzer:
                     elif fr > 0.0005 and direction == Direction.LONG:
                         blended_confidence -= 0.02
                         indicators["funding_arb"] = f"Extreme positive funding ({fr:.4%}) opposes LONG"
-        except Exception:
-            pass
+        except Exception as _fr_exc:
+            logger.warning("Funding rate arb filter failed for %s: %s", signal.symbol, _fr_exc)
 
         # IMPROVEMENT #3: Smart-money direct confidence boost.
         # When smart_money_score is strongly directional (+/-), give a small
@@ -1693,8 +1732,8 @@ class Analyzer:
                 if abs(vp_vote) > 0:
                     votes.append(vp_vote)
                     weights.append(0.6)
-            except Exception:
-                pass
+            except Exception as _vp_exc:
+                logger.warning("Volume profile confluence vote failed: %s", _vp_exc)
 
         # Stochastic voter (weight 1.2 — momentum + mean-reversion)
         stoch_k = indicators.get("stoch_k")
@@ -1862,8 +1901,8 @@ class Analyzer:
                 for _name, vote_val, vote_weight in sentiment_votes:
                     votes.append(vote_val)
                     weights.append(vote_weight)
-            except Exception:
-                pass
+            except Exception as _sent_exc:
+                logger.warning("Sentiment engine vote failed: %s", _sent_exc)
 
         # Volume Profile POC-magnet voter
         poc_price = indicators.get("poc_price", 0)
@@ -1894,8 +1933,8 @@ class Analyzer:
                 sd_v, sd_w = zones_to_confluence(sd_zones, signal.price, approx_dir)
                 votes.extend(sd_v)
                 weights.extend(sd_w)
-            except Exception:
-                pass
+            except Exception as _sd_exc:
+                logger.warning("Supply/demand zone confluence vote failed: %s", _sd_exc)
 
         # Volatility Squeeze voter (boost for fired squeeze)
         squeeze_sig = indicators.get("_squeeze_signal")
@@ -1970,7 +2009,7 @@ class Analyzer:
 
     # -- LLM Reasoning --
 
-    async def _llm_thesis(self, signal: MarketSignal, indicators: dict, order_flow=None) -> Optional[dict]:
+    async def _llm_thesis(self, signal: MarketSignal, indicators: dict, order_flow=None, is_admin: bool = False) -> Optional[dict]:
         """Ask the LLM for a directional call with reasoning.
 
         Token optimization pipeline:
@@ -2048,6 +2087,10 @@ class Analyzer:
                 return result
 
         prompt = self._build_prompt(signal, indicators, order_flow)
+
+        # Hash prompt for calibration replay (cheap — ~0.01ms)
+        import hashlib as _hl
+        _prompt_hash = _hl.sha256(prompt.encode()).hexdigest()[:16]
 
         # Tier-based model routing:
         #   Tier 2 → scan model (cheap/fast — e.g. Qwen for non-admin, Sonnet for admin)
@@ -2245,6 +2288,7 @@ class Analyzer:
                 return None  # C-07 FIX: do not default to LONG on parse failure
             result["source"] = f"LLM_{tier_label}"
             result["model_used"] = model
+            result["prompt_hash"] = _prompt_hash
 
             # ── Cache the LLM response ──
             self._llm_cache.put(cache_key, result, signal.symbol)
@@ -2360,6 +2404,16 @@ class Analyzer:
                     raw_text = resp.choices[0].message.content or ""
 
                 result = self._parse_llm_response(raw_text or "")
+                # C-07 FIX (fallback path): block trade on parse failure,
+                # same as the primary provider path.  Without this check,
+                # direction=None slips through and implicitly becomes SHORT.
+                if not result.pop("_parsed", False):
+                    audit(trade_log,
+                          f"LLM fallback {provider.value} returned unparseable response, blocking trade",
+                          action="llm_fallback", result="LLM_PARSE_FAIL",
+                          data={"provider": provider.value, "model": default_model,
+                                "raw_text": (raw_text or "")[:200]})
+                    continue  # try next fallback provider
                 result["_fallback_provider"] = provider.value.upper()
                 result["model_used"] = default_model
                 audit(scan_log,
