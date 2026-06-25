@@ -193,12 +193,22 @@ class LiveExecutor:
         self._degraded_mode: bool = False
         self._ws_last_seen: float = time.time()
         self._api_error_count: int = 0
+        # Warning rate circuit breaker: reference to risk engine (set by engine.py)
+        self._risk_engine: Optional[Any] = None
         # F-07 FIX: Load persisted positions on startup
         self._load_positions()
         # F-14 FIX: Load persisted closed trades on startup
         self._load_closed_trades()
 
     # ── Dynamic leverage & graceful degradation helpers ──────────────
+
+    def _record_warning(self, key: str) -> None:
+        """Forward infrastructure warning to risk engine for rate tracking."""
+        if self._risk_engine is not None:
+            try:
+                self._risk_engine.record_warning(key)
+            except Exception:
+                pass  # risk engine itself is broken — don't recurse
 
     def update_atr(self, symbol: str, atr_pct: float) -> None:
         """Update ATR ratio for dynamic leverage calculation."""
@@ -1089,8 +1099,9 @@ class LiveExecutor:
                             elif ("take" in otype or "profit" in otype) and lp.take_profit <= 0:
                                 lp.take_profit = trigger
                                 lp.tp_order_id = o.get("id")
-                    except Exception:
-                        pass  # Non-critical — position still adopted without SL/TP
+                    except Exception as _sltp_adopt_exc:
+                        logger.warning("SL/TP extraction failed during adoption of %s: %s",
+                                       raw_sym, _sltp_adopt_exc)  # position adopted without SL/TP
 
                 # If SL or TP missing, calculate safety defaults (3% SL, 6% TP)
                 need_sl = lp.stop_loss <= 0 and entry_price > 0
@@ -1564,8 +1575,17 @@ class LiveExecutor:
                     audit(trade_log,
                           f"Dynamic leverage for {symbol}: {CONFIG.exchange.default_leverage}x → {leverage_mult}x (ATR={atr_pct:.3%})",
                           action="dynamic_leverage", result="ADJUSTED")
-                except Exception:
-                    pass  # fail to default leverage
+                except Exception as _lev_exc:
+                    # CRITICAL FIX: log + use 1x (safest) instead of silent default
+                    leverage_mult = 1
+                    logger.warning(
+                        "Dynamic leverage calc failed for %s — using 1x (safe default): %s",
+                        symbol, _lev_exc)
+                    audit(trade_log,
+                          f"Dynamic leverage FAILED for {symbol}: using 1x safe default",
+                          action="dynamic_leverage", result="EXCEPTION",
+                          data={"error": str(_lev_exc)[:200]})
+                    self._record_warning("dynamic_leverage")
             quantity = (size_usd * leverage_mult) / current_price
 
             # Determine side
@@ -1708,8 +1728,9 @@ class LiveExecutor:
                             else:
                                 # tick_size is actual step (e.g. 0.001)
                                 limit_price = round(limit_price / ts) * ts
-                        except (ValueError, TypeError):
-                            pass
+                        except (ValueError, TypeError) as _tick_exc:
+                            logger.warning("Tick size rounding failed for %s: %s", symbol, _tick_exc)
+                            self._record_warning("tick_size_rounding")
                     # Ultimate fallback: round based on price magnitude
                     if _prec_price is None:
                         if limit_price >= 1000:
@@ -1876,7 +1897,11 @@ class LiveExecutor:
 
             if is_pending_limit:
                 # Limit order placed but not yet filled — track as pending
-                fill_price = idea.entry_price  # expected fill
+                # CRITICAL FIX: use the ACTUAL limit_price sent to exchange,
+                # not idea.entry_price (which may differ after confluence
+                # recalculation). The exchange fills at limit_price, not
+                # the original signal price.
+                fill_price = limit_price if (use_limit and limit_price) else idea.entry_price
                 filled_qty = quantity  # expected quantity
                 raw_cost = fill_price * filled_qty
                 if is_futures and leverage_mult > 1:
@@ -1921,6 +1946,7 @@ class LiveExecutor:
                                 fill_price = float(confirmed["average"])
                         except Exception as fetch_exc:
                             logger.warning("Could not confirm fill for order %s: %s", order_id, fetch_exc)
+                            self._record_warning("order_fill_confirm")
 
                 # Final fallback: if still no fill data, use requested quantity
                 # but flag it as estimated in the audit log
@@ -2235,8 +2261,24 @@ class LiveExecutor:
                     if tp_id:
                         emergency_pos.tp_order_id = tp_id
                     self._save_positions()
-                except Exception:
-                    pass
+                except Exception as _sltp_exc:
+                    # CRITICAL FIX: SL/TP failed on emergency position — log loudly
+                    # Determine position state from order data
+                    _order_status = (order.get("status") or "unknown").lower()
+                    _filled_qty = float(order.get("filled", 0) or 0)
+                    _pos_state = "filled" if (_order_status in ("closed", "filled") or _filled_qty > 0) else "pending"
+                    logger.critical(
+                        "UNPROTECTED POSITION (%s): SL/TP placement failed for %s: %s — "
+                        "position has NO stop-loss. Manual intervention required: %s.",
+                        _pos_state.upper(), idea.asset, _sltp_exc,
+                        "place stops manually" if _pos_state == "filled" else "consider cancelling order")
+                    audit(trade_log,
+                          f"SL/TP FAILED on emergency position {idea.asset} — UNPROTECTED ({_pos_state})",
+                          action="sltp_emergency", result="CRITICAL_FAIL",
+                          data={"error": str(_sltp_exc)[:200], "trade_id": emergency_pos.trade_id,
+                                "position_state": _pos_state, "order_status": _order_status,
+                                "filled_qty": _filled_qty})
+                    self._record_warning("sltp_emergency")
                 return (f"LIVE {idea.direction.value} {idea.asset} opened "
                         f"(emergency record — parse error: {exc}). "
                         f"SL/TP may need manual verification.")
@@ -2398,6 +2440,130 @@ class LiveExecutor:
 
         return sl_id, tp_id
 
+    @staticmethod
+    def _fetch_v3_positions_raw() -> list[dict]:
+        """Fetch all open positions from Bitget v3 API.
+
+        Returns list of raw position dicts.  Handles both response shapes:
+        ``{"data": [...]}`` and ``{"data": {"list": [...]}}``.
+        Synchronous — callers must wrap in ``asyncio.to_thread``.
+        """
+        import urllib.request as _ur
+        import hmac as _hm, hashlib as _hs, base64 as _b64, time as _t, json as _j
+        cfg = CONFIG.exchange
+        if not cfg.api_key or not cfg.api_secret:
+            return []
+        ts = str(int(_t.time() * 1000))
+        path = "/api/v3/position/current-position?category=USDT-FUTURES"
+        pre_sign = ts + "GET" + path
+        sig = _b64.b64encode(_hm.new(cfg.api_secret.encode(), pre_sign.encode(), _hs.sha256).digest()).decode()
+        url = "https://api.bitget.com" + path
+        req = _ur.Request(url)
+        req.add_header("ACCESS-KEY", cfg.api_key)
+        req.add_header("ACCESS-SIGN", sig)
+        req.add_header("ACCESS-TIMESTAMP", ts)
+        req.add_header("ACCESS-PASSPHRASE", cfg.passphrase)
+        req.add_header("Content-Type", "application/json")
+        req.add_header("locale", "en-US")
+        try:
+            resp = _ur.urlopen(req, timeout=10)
+            data = _j.loads(resp.read())
+            if data.get("code") != "00000":
+                return []
+            payload = data.get("data", [])
+            # Handle both {"data": [...]} and {"data": {"list": [...]}}
+            if isinstance(payload, dict):
+                payload = payload.get("list", [])
+            return [item for item in payload if isinstance(item, dict)]
+        except Exception:
+            return []
+
+    @staticmethod
+    def _fetch_position_margin_mode_v3(bitget_symbol: str) -> Optional[str]:
+        """Query v3 position API to get the actual marginMode for a specific symbol.
+
+        Returns 'crossed' or 'isolated', or None if lookup fails.
+        Synchronous — callers must wrap in asyncio.to_thread.
+        """
+        positions = LiveExecutor._fetch_v3_positions_raw()
+        for item in positions:
+            if item.get("symbol") == bitget_symbol:
+                mm = (item.get("marginMode") or "").lower()
+                if mm in ("crossed", "isolated"):
+                    return mm
+        return None
+
+    async def sync_positions_from_exchange(self) -> None:
+        """Sync tracked position metadata (leverage, margin mode) with exchange.
+
+        Called on startup after position loading. Queries v3 position API and
+        updates any tracked positions whose leverage or margin mode differs
+        from what the exchange reports. This prevents risk calculation errors
+        from stale data (e.g., leverage changed manually on exchange).
+        """
+        import asyncio as _aio_sync
+        open_pos = [p for p in self._positions.values() if p.status == "open"]
+        if not open_pos:
+            return
+
+        try:
+            v3_positions = await _aio_sync.get_event_loop().run_in_executor(
+                None, LiveExecutor._fetch_v3_positions_raw
+            )
+        except Exception as exc:
+            logger.warning("sync_positions_from_exchange: v3 fetch failed: %s", exc)
+            return
+
+        if not v3_positions:
+            return
+
+        # Build lookup: Bitget symbol → position data
+        exchange_map: dict[str, dict] = {}
+        for ep in v3_positions:
+            sym = ep.get("symbol", "")
+            if sym:
+                exchange_map[sym] = ep
+
+        synced = 0
+        for pos in open_pos:
+            bitget_sym = pos.symbol.replace("/USDT", "USDT").replace(":USDT", "")
+            ex_data = exchange_map.get(bitget_sym)
+            if not ex_data:
+                continue
+
+            changed = False
+
+            # Sync leverage
+            ex_lev_raw = ex_data.get("leverage")
+            if ex_lev_raw is not None:
+                try:
+                    ex_lev = int(float(ex_lev_raw))
+                except (ValueError, TypeError):
+                    ex_lev = 0
+                if ex_lev > 0 and ex_lev != pos.leverage:
+                    logger.warning(
+                        "LEVERAGE SYNC %s: tracked=%dx, exchange=%dx — updating to exchange value",
+                        pos.symbol, pos.leverage, ex_lev)
+                    audit(trade_log,
+                          f"Leverage sync: {pos.symbol} {pos.leverage}x → {ex_lev}x",
+                          action="leverage_sync", result="UPDATED",
+                          data={"trade_id": pos.trade_id, "old": pos.leverage, "new": ex_lev})
+                    pos.leverage = ex_lev
+                    # Recalculate cost_usd with correct leverage
+                    if pos.entry_price > 0 and pos.quantity > 0:
+                        raw_notional = pos.entry_price * pos.quantity
+                        pos.cost_usd = raw_notional / ex_lev
+                    changed = True
+
+            if changed:
+                synced += 1
+
+        if synced > 0:
+            self._save_positions()
+            logger.info("Position sync: updated %d/%d positions from exchange", synced, len(open_pos))
+        else:
+            logger.info("Position sync: all %d positions match exchange", len(open_pos))
+
     async def _place_sl_tp_v3(
         self, symbol: str, direction: Direction, quantity: float,
         stop_loss: float, take_profit: float,
@@ -2476,6 +2642,7 @@ class LiveExecutor:
                     dp = int(price_precision)
                 return f"{price:.{dp}f}"
             # Fallback: conservative rounding by magnitude
+            # Use fewer decimals to avoid precision rejection (25606)
             if price >= 1000:
                 return f"{price:.1f}"
             elif price >= 10:
@@ -2487,9 +2654,9 @@ class LiveExecutor:
             elif price >= 0.01:
                 return f"{price:.5f}"
             elif price >= 0.001:
-                return f"{price:.6f}"
+                return f"{price:.5f}"
             else:
-                return f"{price:.8f}"
+                return f"{price:.6f}"
 
         # Place combined TP/SL strategy order
         # AUDIT FIX: offload blocking _v3_post to thread pool
@@ -2502,6 +2669,20 @@ class LiveExecutor:
         # - posSide = "long"/"short" (required even in one-way mode)
         # - marginMode = "isolated"/"crossed" (CRITICAL: required for isolated positions,
         #   without it Bitget returns 31008 "no position")
+        # Determine the ACTUAL margin mode for this specific position.
+        # Different positions can have different margin modes (e.g., AAVE=isolated,
+        # BIO=crossed). Using a single global `_actual_margin_mode` fails for
+        # mixed-margin accounts. Query v3 position data to get the truth.
+        position_margin_mode = self._actual_margin_mode or CONFIG.exchange.margin_mode or "crossed"
+        try:
+            import asyncio as _aio_mm
+            v3_pos_data = await _aio_mm.to_thread(
+                LiveExecutor._fetch_position_margin_mode_v3, bitget_symbol)
+            if v3_pos_data:
+                position_margin_mode = v3_pos_data
+        except Exception:
+            pass  # Fall back to global/config value
+
         payload: dict[str, str] = {
             "category": "USDT-FUTURES",
             "symbol": bitget_symbol,
@@ -2512,7 +2693,7 @@ class LiveExecutor:
             "tpOrderType": "market",
             "slOrderType": "market",
             "posSide": pos_side,
-            "marginMode": self._actual_margin_mode or CONFIG.exchange.margin_mode or "isolated",
+            "marginMode": position_margin_mode,
             "clientOid": self._client_oid(f"{bitget_symbol}_{pos_side}_sltp_{int(time.time())}"),
         }
 
@@ -2524,8 +2705,9 @@ class LiveExecutor:
         # Retry logic for error 31008 ("no position") — position may not be
         # settled on exchange yet after fill.  Wait and retry up to 4 times
         # with increasing delays: 2s, 4s, 6s, 8s.
-        _MAX_31008_RETRIES = 4
+        _MAX_31008_RETRIES = 5
         _31008_CODES = ("31008", "31009")  # 31009 = variant on some API versions
+        _PRECISION_CODES = ("25606", "25607")  # precision mismatch errors
 
         for attempt in range(_MAX_31008_RETRIES + 1):
             try:
@@ -2558,32 +2740,56 @@ class LiveExecutor:
                     # actual position on exchange.  Retry cycle tries all
                     # combinations: posSide (net/long/short) x marginMode
                     # (isolated/crossed).
-                    _RETRYABLE_CODES = ("31008", "31009", "40019", "40020")
+                    # Error 25606: "trigger price does not meet precision requirements"
+                    # Root cause: ccxt precision doesn't match Bitget strategy order API.
+                    # Retry with reduced decimal places.
+                    _RETRYABLE_CODES = ("31008", "31009", "40019", "40020", "25606", "25607")
                     if error_code in _RETRYABLE_CODES and attempt < _MAX_31008_RETRIES:
-                        delay = (attempt + 1) * 2  # 2s, 4s, 6s, 8s
-                        # Cycle through combinations systematically:
-                        #   attempt 0 (initial): pos_side + config marginMode
-                        #   attempt 1: toggle marginMode
-                        #   attempt 2: toggle posSide (net ↔ long/short)
-                        #   attempt 3: toggle marginMode again
-                        #   attempt 4: toggle posSide + remove
-                        if attempt % 2 == 0:
-                            # Even retries: toggle posSide
-                            current_ps = payload.get("posSide", "")
-                            dir_side = "long" if direction == Direction.LONG else "short"
-                            if current_ps == "net":
-                                payload["posSide"] = dir_side
-                            elif current_ps == dir_side:
-                                payload["posSide"] = "net"
-                            else:
-                                payload["posSide"] = "net"
+                        delay = (attempt + 1) * 2  # 2s, 4s, 6s, 8s, 10s
+
+                        # Precision error: reduce decimal places on TP/SL
+                        if error_code in _PRECISION_CODES:
+                            def _reduce_precision(price_str: str) -> str:
+                                """Remove one trailing decimal digit."""
+                                if "." in price_str:
+                                    # Strip trailing zeros first, then remove last digit
+                                    stripped = price_str.rstrip("0")
+                                    if stripped.endswith("."):
+                                        return stripped + "0"  # keep at least X.0
+                                    return stripped[:-1] if len(stripped.split(".")[1]) > 1 else stripped
+                                return price_str
+                            payload["takeProfit"] = _reduce_precision(payload["takeProfit"])
+                            payload["stopLoss"] = _reduce_precision(payload["stopLoss"])
+                            tp_final = payload["takeProfit"]
+                            sl_final = payload["stopLoss"]
+                            logger.warning(
+                                "v3 SL/TP precision error %s for %s — retry %d/%d with reduced precision TP=%s SL=%s",
+                                error_code, bitget_symbol, attempt + 1, _MAX_31008_RETRIES,
+                                tp_final, sl_final)
                         else:
-                            # Odd retries: toggle marginMode
-                            current_mm = payload.get("marginMode", "")
-                            if current_mm == "isolated":
-                                payload["marginMode"] = "crossed"
+                            # Cycle through combinations systematically:
+                            #   attempt 0 (initial): pos_side + config marginMode
+                            #   attempt 1: toggle marginMode
+                            #   attempt 2: toggle posSide (net ↔ long/short)
+                            #   attempt 3: toggle marginMode again
+                            #   attempt 4: toggle posSide + remove
+                            if attempt % 2 == 0:
+                                # Even retries: toggle posSide
+                                current_ps = payload.get("posSide", "")
+                                dir_side = "long" if direction == Direction.LONG else "short"
+                                if current_ps == "net":
+                                    payload["posSide"] = dir_side
+                                elif current_ps == dir_side:
+                                    payload["posSide"] = "net"
+                                else:
+                                    payload["posSide"] = "net"
                             else:
-                                payload["marginMode"] = "isolated"
+                                # Odd retries: toggle marginMode
+                                current_mm = payload.get("marginMode", "")
+                                if current_mm == "isolated":
+                                    payload["marginMode"] = "crossed"
+                                else:
+                                    payload["marginMode"] = "isolated"
                         logger.warning(
                             "v3 SL/TP error %s for %s — retry %d/%d in %ds (marginMode=%s, posSide=%s)",
                             error_code, bitget_symbol, attempt + 1, _MAX_31008_RETRIES, delay,
@@ -3218,8 +3424,9 @@ class LiveExecutor:
                     check = await exchange.fetch_order(pos.limit_order_id, pos.symbol)
                     if check.get("status") in ("filled", "closed"):
                         return None  # filled — next cycle will handle
-                except Exception:
-                    pass
+                except Exception as _check_exc:
+                    logger.warning("Order fill check during cancel failed for %s: %s",
+                                   pos.symbol, _check_exc)
                 logger.warning("Market fallback: cancel failed for %s: %s",
                                pos.symbol, cancel_exc)
                 return None
@@ -3491,8 +3698,9 @@ class LiveExecutor:
                             self._save_positions()
                             return (f"Limit order for {pos.symbol} already filled. "
                                     f"Position is now open — use Close to exit.")
-                    except Exception:
-                        pass
+                    except Exception as _pos_chk_exc:
+                        logger.warning("Position check during pending cancel failed for %s: %s",
+                                       pos.symbol, _pos_chk_exc)
 
                     # Order doesn't exist and no position — already cancelled
                     del self._positions[trade_id]
@@ -3612,8 +3820,9 @@ class LiveExecutor:
                     main_exchange = await self._get_exchange()
                     ticker = await main_exchange.fetch_ticker(pos.symbol)
                     fill_price = float(ticker.get("last", 0) or 0)
-                except Exception:
-                    pass
+                except Exception as _tick_exc:
+                    logger.warning("Close price ticker fallback failed for %s: %s",
+                                   pos.symbol, _tick_exc)
             if fill_price == 0:
                 fill_price = pos.entry_price  # absolute fallback — no phantom PnL
 
@@ -3640,8 +3849,20 @@ class LiveExecutor:
                         exchange_pnl = total_profit
                         if total_fees > 0:
                             exchange_close_fees = total_fees
-            except Exception:
-                pass  # Fall back to calculated PnL
+            except Exception as _fee_exc:
+                # CRITICAL FIX: use pessimistic fee assumption (20bp round-trip)
+                # instead of 0 when exchange data unavailable
+                _notional = fill_price * pos.quantity if fill_price > 0 else pos.entry_price * pos.quantity
+                exchange_close_fees = _notional * 0.002  # 20bp pessimistic
+                logger.warning(
+                    "Exchange fee fetch failed for %s — using pessimistic 20bp (%.4f): %s",
+                    pos.symbol, exchange_close_fees, _fee_exc)
+                audit(trade_log,
+                      f"Fee fetch FAILED for {pos.symbol}: using pessimistic 20bp estimate",
+                      action="fee_fetch", result="EXCEPTION",
+                      data={"error": str(_fee_exc)[:200],
+                            "pessimistic_fee": round(exchange_close_fees, 6)})
+                self._record_warning("fee_fetch")
 
             if exchange_pnl is not None:
                 # Use exchange numbers directly — no estimation
@@ -3916,7 +4137,7 @@ class LiveExecutor:
                         elif "liquidat" in close_type:
                             reason = "LIQUIDATED"
                         else:
-                            reason = "closed (exchange)"
+                            reason = "MANUAL CLOSE"
 
                         final_pnl = net_profit if net_profit != 0 else pnl
 
@@ -3972,7 +4193,7 @@ class LiveExecutor:
                         elif matched_order == pos.sl_order_id:
                             reason = "SL HIT (exchange)"
                         else:
-                            reason = "closed (exchange)"
+                            reason = "MANUAL CLOSE"
                         if fill_price > 0 and total_profit != 0:
                             return {
                                 "close_price": fill_price,
@@ -4003,7 +4224,7 @@ class LiveExecutor:
                             "close_price": fill_price,
                             "pnl": profit,
                             "fees": total_fees,
-                            "reason": "closed (exchange)",
+                            "reason": "MANUAL CLOSE",
                             "source": "exchange_fill_recent",
                         }
 
@@ -4057,12 +4278,17 @@ class LiveExecutor:
 
         When exchange history is unavailable, we compare the exit price
         to the stored TP and SL levels to determine the most likely trigger.
+        If exit price is not close to either TP or SL, assume manual close.
         """
         if pos.stop_loss <= 0 or pos.take_profit <= 0 or exit_price <= 0:
-            return "closed (ticker)"
+            return "MANUAL CLOSE"
 
         dist_to_sl = abs(exit_price - pos.stop_loss)
         dist_to_tp = abs(exit_price - pos.take_profit)
+        sl_tp_range = abs(pos.take_profit - pos.stop_loss)
+
+        # Proximity threshold: within 0.5% of SL/TP range counts as "near"
+        proximity_threshold = sl_tp_range * 0.05 if sl_tp_range > 0 else 0
 
         # Check if exit price is at or beyond TP/SL level
         if pos.direction == "LONG":
@@ -4076,12 +4302,21 @@ class LiveExecutor:
             return "TP HIT (inferred)"
         elif sl_hit and not tp_hit:
             return "SL HIT (inferred)"
-        elif dist_to_tp < dist_to_sl:
+        elif tp_hit and sl_hit:
+            # Both triggered (very tight range) — pick closer
+            if dist_to_tp < dist_to_sl:
+                return "TP HIT (inferred)"
+            else:
+                return "SL HIT (inferred)"
+
+        # Exit price is between SL and TP — check if it's close to either
+        if dist_to_tp <= proximity_threshold:
             return "TP HIT (inferred)"
-        elif dist_to_sl < dist_to_tp:
+        elif dist_to_sl <= proximity_threshold:
             return "SL HIT (inferred)"
-        else:
-            return "closed (ticker)"
+
+        # Not near TP or SL — this was a manual close
+        return "MANUAL CLOSE"
 
     async def _handle_already_closed_position(self, pos: LivePosition) -> str | None:
         """Handle a position that was already closed on exchange (25227).
@@ -4439,6 +4674,62 @@ class LiveExecutor:
 
     # ── Balance cache invalidation callback ────────────────────────
 
+    async def verify_and_fix_sltp(self) -> None:
+        """Verify all open positions have SL/TP on exchange and re-place if missing.
+
+        Called on startup and periodically. For each open position, attempts
+        to place SL/TP if the stored order IDs look invalid (same ID for both,
+        or empty). The v3 place-strategy-order is idempotent — placing over
+        an existing order just returns the existing order ID.
+        """
+        open_pos = [p for p in self._positions.values() if p.status == "open"]
+        if not open_pos:
+            return
+
+        exchange = await self._get_exchange()
+        fixed = 0
+        for pos in open_pos:
+            # Check if SL/TP IDs look valid
+            needs_fix = False
+            if not pos.sl_order_id and not pos.tp_order_id:
+                needs_fix = True
+            elif pos.stop_loss <= 0 or pos.take_profit <= 0:
+                continue  # No SL/TP levels to place
+            elif pos.sl_order_id == pos.tp_order_id:
+                # Same ID for both is normal for v3 combined orders — but re-place
+                # to ensure they're actually on exchange (could be stale from a
+                # restart). The v3 API is idempotent so this is safe.
+                needs_fix = True
+
+            if needs_fix and pos.stop_loss > 0 and pos.take_profit > 0:
+                direction = Direction.LONG if pos.direction == "LONG" else Direction.SHORT
+                try:
+                    sl_id, tp_id = await self._place_sl_tp(
+                        exchange, pos.symbol, direction,
+                        pos.quantity, pos.stop_loss, pos.take_profit
+                    )
+                    if sl_id:
+                        pos.sl_order_id = sl_id
+                    if tp_id:
+                        pos.tp_order_id = tp_id
+                    if sl_id or tp_id:
+                        fixed += 1
+                        audit(trade_log,
+                              f"Startup SL/TP fix: {pos.symbol} sl={sl_id} tp={tp_id}",
+                              action="startup_sltp_fix", result="FIXED",
+                              data={"trade_id": pos.trade_id, "symbol": pos.symbol,
+                                    "sl": pos.stop_loss, "tp": pos.take_profit})
+                    else:
+                        logger.warning(
+                            "SL/TP placement returned no IDs for %s — position may be UNPROTECTED",
+                            pos.symbol)
+                except Exception as exc:
+                    logger.warning("Startup SL/TP fix failed for %s: %s", pos.symbol, exc)
+
+        if fixed > 0:
+            self._save_positions()
+            logger.info("Startup SL/TP verification: fixed %d/%d positions", fixed, len(open_pos))
+
     def _fire_position_closed(self, pos: LivePosition) -> None:
         """Notify listeners (engine) that a position was closed so balance cache refreshes."""
         if self.on_position_closed:
@@ -4726,6 +5017,18 @@ class LiveExecutor:
                 if pos.status == "pending_fill":
                     continue
 
+                # ── RACE FIX: Skip positions being closed by another path ──
+                # If close_position() is actively closing this position (status
+                # "closing"), reconciliation must NOT also process it — that
+                # causes duplicate notifications and conflicting PnL writes.
+                if pos.status == "closing":
+                    logger.debug("Reconcile: skipping %s — status is 'closing' (another close in progress)", pos.symbol)
+                    continue
+
+                # Also skip if position was already closed/removed concurrently
+                if pos.status == "closed" or pos.trade_id not in self._positions:
+                    continue
+
                 try:
                     # Check if position still exists on exchange
                     ccxt_symbol = pos.symbol if ":USDT" in pos.symbol else f"{pos.symbol}:USDT"
@@ -4738,6 +5041,12 @@ class LiveExecutor:
                     )
 
                     if not has_position:
+                        # ── RACE RE-CHECK: status may have changed during await ──
+                        if pos.status in ("closing", "closed") or pos.trade_id not in self._positions:
+                            logger.debug("Reconcile: %s status changed to '%s' during fetch — skipping",
+                                         pos.symbol, pos.status)
+                            continue
+
                         # ── Double-counting guard ──
                         # If this trade_id is already in closed_trades (e.g., from a
                         # previous bot instance that closed it), skip re-reconciling.
@@ -4755,7 +5064,15 @@ class LiveExecutor:
                             continue
 
                         # Position no longer on exchange — get real close data from Bitget
-                        close_data = await self._fetch_bitget_close_data(pos)
+                        # SAFETY: retry up to 3 times before giving up
+                        close_data = None
+                        for _retry in range(3):
+                            close_data = await self._fetch_bitget_close_data(pos)
+                            if close_data and close_data["close_price"] > 0:
+                                break
+                            if _retry < 2:
+                                import asyncio as _aio
+                                await _aio.sleep(2)  # brief pause before retry
 
                         if close_data and close_data["close_price"] > 0:
                             est_exit = close_data["close_price"]
@@ -4763,7 +5080,21 @@ class LiveExecutor:
                             fill_source = close_data["source"]
                             exchange_reported_pnl = close_data["pnl"]
                         else:
-                            # All exchange lookups failed — use ticker (real price, never SL/TP)
+                            # SAFETY: do NOT close with ticker fallback.
+                            # Mark for retry on next tick — exchange data will
+                            # become available once Bitget history propagates.
+                            _retries = getattr(pos, '_reconcile_retries', 0) + 1
+                            pos._reconcile_retries = _retries
+                            if _retries <= 10:
+                                logger.warning(
+                                    "Reconcile: %s not on exchange but no close data yet "
+                                    "(retry %d/10). Will retry next tick.",
+                                    pos.symbol, _retries)
+                                continue  # skip closing — try again next cycle
+                            # After 10 retries, use ticker as absolute last resort
+                            logger.warning(
+                                "Reconcile: %s — exhausted %d retries, falling back to ticker",
+                                pos.symbol, _retries)
                             try:
                                 ticker = await exchange.fetch_ticker(ccxt_symbol)
                                 est_exit = float(ticker.get("last", 0) or 0)
@@ -4772,12 +5103,8 @@ class LiveExecutor:
                             if est_exit <= 0:
                                 est_exit = pos.entry_price  # absolute fallback
                             reason = self._infer_close_reason(pos, est_exit)
-                            fill_source = "ticker_fallback"
+                            fill_source = f"ticker_fallback_after_{_retries}_retries"
                             exchange_reported_pnl = None
-                            logger.warning(
-                                "Reconcile: using ticker price for %s — "
-                                "exchange history unavailable (inferred: %s)",
-                                pos.symbol, reason)
 
                         # Compute PnL — prefer exchange-reported profit (source of truth)
                         if exchange_reported_pnl is not None:
