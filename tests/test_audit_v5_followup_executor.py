@@ -303,6 +303,8 @@ class TestResidualCloseReconciliation:
         quantity becomes the remainder, NOT appended to closed trades."""
         executor, mock_ex = _executor_with_mock()
         tid = self._seed_open(executor, qty=0.0002)
+        # RC-AUD-023b (V5.2): the residual remainder is re-protected via _place_sl_tp.
+        executor._place_sl_tp = AsyncMock(return_value=("SL-RES", "TP-RES"))
         # The close order is "placed" (market reduceOnly) but only partially fills.
         mock_ex.create_order = AsyncMock(return_value={
             "id": "CLOSE-RES", "average": 97_000.0, "filled": 0.0001,
@@ -326,9 +328,36 @@ class TestResidualCloseReconciliation:
         pos = executor._positions[tid]
         assert pos.status == "open"
         assert pos.quantity == residual
+        # RC-AUD-023b (V5.2): the remainder was actively re-protected with a fresh stop.
+        assert pos.sl_order_id == "SL-RES"
+        assert getattr(pos, "unprotected", False) is False
         # It must NOT have been recorded as a closed trade.
         assert all(t.trade_id != tid for t in executor._closed_trades)
         # The operator-facing message flags the residual.
+        assert "RESIDUAL" in result
+
+    @pytest.mark.asyncio
+    async def test_residual_reprotect_failure_flags_unprotected(self):
+        """RC-AUD-023b: if re-placing SL/TP on the remainder fails, the residual
+        is kept OPEN but flagged UNPROTECTED (price-monitoring still covers it)."""
+        executor, mock_ex = _executor_with_mock()
+        tid = self._seed_open(executor, qty=0.0002)
+        executor._place_sl_tp = AsyncMock(return_value=(None, None))  # re-protect fails
+        mock_ex.create_order = AsyncMock(return_value={
+            "id": "CLOSE-RES2", "average": 97_000.0, "filled": 0.0001,
+            "cost": 9.7, "status": "filled",
+        })
+        executor._verify_position_closed = AsyncMock(return_value={
+            "confirmed": False, "fill_price": 97_000.0, "fill_qty": 0.0001,
+            "fees": 0.0, "remaining_qty": 0.0001, "failure_stage": "position_still_open",
+        })
+
+        result = await executor.close_position(tid, reason="manual")
+
+        pos = executor._positions[tid]
+        assert pos.status == "open"
+        assert pos.sl_order_id is None
+        assert getattr(pos, "unprotected", False) is True
         assert "RESIDUAL" in result
 
     @pytest.mark.asyncio
