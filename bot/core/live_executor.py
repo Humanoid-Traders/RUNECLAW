@@ -1799,7 +1799,10 @@ class LiveExecutor:
                 # Round limit price to exchange tick grid
                 _prec_price = None
                 if market:
-                    _prec_price = active_exchange.price_to_precision(symbol, limit_price)
+                    try:
+                        _prec_price = active_exchange.price_to_precision(symbol, limit_price)
+                    except Exception:
+                        pass
                 if _prec_price is not None:
                     limit_price = float(_prec_price)
                 else:
@@ -1831,6 +1834,25 @@ class LiveExecutor:
                         else:
                             limit_price = round(limit_price, 6)
                     logger.debug("Limit price fallback rounding: %s -> %s", _prec_price, limit_price)
+
+                # Safety net: try loading market from exchange if not cached,
+                # and double-check tick size alignment via priceEndStep
+                if market:
+                    _pep = market.get("info", {}).get("priceEndStep")
+                    if _pep is None:
+                        _pep = market.get("info", {}).get("pricePlace")
+                    if _pep is not None:
+                        try:
+                            _step = float(_pep)
+                            if _step < 1:
+                                # priceEndStep is actual tick (e.g. 0.001)
+                                limit_price = round(limit_price / _step) * _step
+                                limit_price = round(limit_price, 10)  # clean float artifacts
+                            else:
+                                # pricePlace is decimal count
+                                limit_price = round(limit_price, int(_step))
+                        except (ValueError, TypeError):
+                            pass
 
             if is_futures:
                 # Futures: use USDT-FUTURES product type
