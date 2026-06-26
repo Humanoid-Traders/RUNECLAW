@@ -57,8 +57,13 @@ class MultiUserPortfolio:
             # Extract user_id from "portfolio_{user_id}.json"
             if not filename.startswith("portfolio_") or not filename.endswith(".json"):
                 continue
-            user_id = filename[len("portfolio_"):-len(".json")]
-            if not user_id:
+            raw_user_id = filename[len("portfolio_"):-len(".json")]
+            if not raw_user_id:
+                continue
+            # Register under the same canonical key get() will look up by.
+            try:
+                user_id = self._sanitize(raw_user_id)
+            except ValueError:
                 continue
             try:
                 portfolio = PortfolioTracker(
@@ -79,17 +84,28 @@ class MultiUserPortfolio:
                 log.error("Failed to load portfolio for user %s from %s: %s",
                           user_id, path, e)
 
+    @staticmethod
+    def _sanitize(user_id: str) -> str:
+        """Canonical key for a user_id.  Must be applied consistently across
+        get()/has_user()/_load_existing() so the in-memory dict key, the on-disk
+        filename, and every lookup agree.  Previously get() sanitized only on the
+        slow path while has_user()/the fast path used the raw id, so any id that
+        changed under sanitization could never be found and would be recreated
+        (wiping balance/positions) on every access."""
+        cleaned = re.sub(r'[^a-zA-Z0-9_-]', '', str(user_id))
+        if not cleaned:
+            raise ValueError("Invalid user_id: empty after sanitization")
+        return cleaned
+
     def get(self, user_id: str) -> PortfolioTracker:
         """Get or create a portfolio for the given user."""
+        user_id = self._sanitize(user_id)
         if user_id in self._portfolios:
             return self._portfolios[user_id]
 
         with self._lock:
             # Double-check after acquiring lock
             if user_id not in self._portfolios:
-                user_id = re.sub(r'[^a-zA-Z0-9_-]', '', str(user_id))
-                if not user_id:
-                    raise ValueError("Invalid user_id: empty after sanitization")
                 state_file = f"data/portfolio_{user_id}.json"
                 portfolio = PortfolioTracker(
                     initial_balance=self._default_balance,
@@ -104,7 +120,10 @@ class MultiUserPortfolio:
 
     def has_user(self, user_id: str) -> bool:
         """Check if a user has an active portfolio."""
-        return user_id in self._portfolios
+        try:
+            return self._sanitize(user_id) in self._portfolios
+        except ValueError:
+            return False
 
     def all_user_ids(self) -> list[str]:
         """Return all user IDs with active portfolios."""

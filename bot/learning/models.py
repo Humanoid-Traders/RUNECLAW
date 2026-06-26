@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 # ── Enums ──────────────────────────────────────────────────────────────
@@ -173,6 +173,11 @@ class StrategyScorecard(BaseModel):
 
 class PatternRecord(BaseModel):
     """Detected recurring market pattern."""
+    # validate_assignment makes the may_override_risk validator fire on
+    # post-construction assignment too — without it, `p.may_override_risk = True`
+    # silently bypassed the safety invariant the docs claim is unbreakable.
+    model_config = ConfigDict(validate_assignment=True)
+
     audit_id: str = Field(default_factory=_audit_id)
     timestamp_utc: datetime = Field(default_factory=_utc_now)
     pattern_type: str = ""

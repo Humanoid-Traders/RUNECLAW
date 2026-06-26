@@ -307,9 +307,12 @@ class RuneClawEngine:
     def _on_live_position_closed(self, pos) -> None:
         """Handle live position close: invalidate cache + set SL cooldown."""
         self._invalidate_live_balance_cache()
-        # If closed by SL, set a per-symbol cooldown to prevent immediate re-entry
+        # If closed adversely (SL / stop / liquidation), set a per-symbol cooldown
+        # to prevent immediate re-entry.  A liquidation ("LIQUIDATED") is the most
+        # adverse close of all, so it must arm the cooldown too.
         close_reason = getattr(pos, "close_reason", "") or ""
-        if "SL" in close_reason.upper() or "STOP" in close_reason.upper():
+        _cr = close_reason.upper()
+        if "SL" in _cr or "STOP" in _cr or "LIQUID" in _cr:
             sym_key = normalize_symbol(getattr(pos, "symbol", ""))
             if sym_key:
                 self._symbol_cooldowns[sym_key] = (
