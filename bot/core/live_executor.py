@@ -1825,7 +1825,9 @@ class LiveExecutor:
                             self._record_warning("tick_size_rounding")
                     # Ultimate fallback: round based on price magnitude
                     if _prec_price is None:
-                        if limit_price >= 1000:
+                        if limit_price >= 10000:
+                            limit_price = round(limit_price, 1)
+                        elif limit_price >= 1000:
                             limit_price = round(limit_price, 2)
                         elif limit_price >= 1:
                             limit_price = round(limit_price, 3)
@@ -1835,17 +1837,19 @@ class LiveExecutor:
                             limit_price = round(limit_price, 6)
                     logger.debug("Limit price fallback rounding: %s -> %s", _prec_price, limit_price)
 
-                # Safety net: try loading market from exchange if not cached,
-                # and double-check tick size alignment via priceEndStep
+                # Safety net: double-check tick alignment via market info fields
                 if market:
-                    _pep = market.get("info", {}).get("priceEndStep")
-                    if _pep is None:
-                        _pep = market.get("info", {}).get("pricePlace")
-                    if _pep is not None:
+                    _tick_step = None
+                    for _field in ("priceEndStep", "pricePlace", "priceTick"):
+                        _val = market.get("info", {}).get(_field)
+                        if _val is not None:
+                            _tick_step = _val
+                            break
+                    if _tick_step is not None:
                         try:
-                            _step = float(_pep)
+                            _step = float(_tick_step)
                             if _step < 1:
-                                # priceEndStep is actual tick (e.g. 0.001)
+                                # priceEndStep is actual tick (e.g. 0.1)
                                 limit_price = round(limit_price / _step) * _step
                                 limit_price = round(limit_price, 10)  # clean float artifacts
                             else:
