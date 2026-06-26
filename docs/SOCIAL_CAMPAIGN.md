@@ -73,7 +73,7 @@ AI proposes. Humans decide.
 RUNECLAW is open for review.
 
 GitHub: https://github.com/Humanoid-Traders/RUNECLAW
-Website: https://lgl3crf9.mule.page/
+Website: https://y9z5438h.mule.page/
 Docs: https://humanoid-traders-1.gitbook.io/humanoid-traders-ai
 Telegram: https://t.me/+VRNgsmkR5pszZTdk
 X: https://x.com/BaurPatric70363
@@ -114,7 +114,7 @@ RUNECLAW scans markets for volume anomalies and momentum shifts, generates expla
 
 **Links:**
 - GitHub: https://github.com/Humanoid-Traders/RUNECLAW
-- Website: https://lgl3crf9.mule.page/
+- Website: https://y9z5438h.mule.page/
 - Docs: https://humanoid-traders-1.gitbook.io/humanoid-traders-ai
 - Telegram: https://t.me/+VRNgsmkR5pszZTdk
 - X: https://x.com/BaurPatric70363
