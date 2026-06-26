@@ -101,8 +101,8 @@ class RuneClawEngine:
         self.ws_feed = BitgetWSFeed()
         # Live executor for real Bitget orders (micro-test mode)
         self.live_executor = LiveExecutor()
-        # Wire balance cache invalidation: when a live position closes, clear cached equity
-        self.live_executor.on_position_closed = lambda pos: self._invalidate_live_balance_cache()
+        # Wire balance cache invalidation + per-symbol SL cooldown
+        self.live_executor.on_position_closed = lambda pos: self._on_live_position_closed(pos)
         # Wire risk engine for warning rate circuit breaker
         self.live_executor._risk_engine = self.risk
         self.health = SystemHealthMonitor()
@@ -155,6 +155,9 @@ class RuneClawEngine:
         self._pending_pyramid: dict[str, bool] = {}  # Track pyramid add flags
         self._user_store = None  # Set by TelegramHandler for role-based execution
         self._cooldown_until: float = 0.0
+        # Per-symbol cooldown after SL hit — prevents immediate re-entry
+        self._symbol_cooldowns: dict[str, float] = {}  # symbol_key -> monotonic expiry
+        self._symbol_cooldown_seconds: float = float(os.environ.get("SYMBOL_SL_COOLDOWN_SEC", "1800"))  # 30 min default
         self._last_rebalance_check: float = 0.0  # monotonic timestamp
         self._rebalance_interval: float = 4 * 3600  # 4 hours minimum between checks
         # /whynot: store last RiskCheck per symbol when risk rejects a trade
@@ -300,6 +303,21 @@ class RuneClawEngine:
         """Force a fresh balance fetch on the next equity check."""
         self._live_balance_cache = {}
         self._live_balance_cache_ts = 0.0
+
+    def _on_live_position_closed(self, pos) -> None:
+        """Handle live position close: invalidate cache + set SL cooldown."""
+        self._invalidate_live_balance_cache()
+        # If closed by SL, set a per-symbol cooldown to prevent immediate re-entry
+        close_reason = getattr(pos, "close_reason", "") or ""
+        if "SL" in close_reason.upper() or "STOP" in close_reason.upper():
+            sym_key = normalize_symbol(getattr(pos, "symbol", ""))
+            if sym_key:
+                self._symbol_cooldowns[sym_key] = (
+                    time.monotonic() + self._symbol_cooldown_seconds
+                )
+                logger.info(
+                    "Symbol cooldown set: %s blocked for %ds after SL hit",
+                    sym_key, int(self._symbol_cooldown_seconds))
 
     def get_effective_equity(self, user_id: str = "") -> float:
         """Return the equity figure to display/use for sizing.
@@ -1023,11 +1041,23 @@ class RuneClawEngine:
         except Exception as _strat_exc:
             logger.warning("Strategy router selection failed for %s: %s", idea.asset, _strat_exc)
 
+        # ── Per-symbol cooldown after SL hit ─────────────────────────
+        # Prevents immediate re-entry into a symbol that just stopped out
+        symbol_key = normalize_symbol(idea.asset)
+        _sym_cd = self._symbol_cooldowns.get(symbol_key, 0)
+        if _sym_cd and time.monotonic() < _sym_cd:
+            _remaining = int(_sym_cd - time.monotonic())
+            audit(scan_log,
+                  f"Signal skipped: {idea.asset} on post-SL cooldown ({_remaining}s remaining)",
+                  action="symbol_cooldown", result="SKIPPED")
+            return None
+        elif _sym_cd and time.monotonic() >= _sym_cd:
+            self._symbol_cooldowns.pop(symbol_key, None)
+
         # ── Smart pyramid / duplicate symbol guard ─────────────────
         # Rules: max 2 entries per symbol, same direction adds require
         # 1R profit + 70% confidence. Opposite direction with high
         # confidence triggers a flip (close existing + open new).
-        symbol_key = normalize_symbol(idea.asset)
         existing_positions = []  # list of (position, is_live, current_price)
 
         if CONFIG.is_live() and hasattr(self, 'live_executor'):
