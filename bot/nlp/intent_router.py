@@ -382,8 +382,12 @@ _rule(r"\b(detected patterns?|recurring patterns?|learned patterns?|pattern (ana
       "patterns", explanation="Pattern recognition request")
 
 # --- Help ---
-# Only match explicit help requests, not "how to" in general questions
-_rule(r"\b(show (me )?help|list (of )?commands?|what commands?|how (do i|to) use (this|the bot|runeclaw))\b",
+# Match explicit help requests AND the bare "help"/"commands"/"menu" tokens
+# (anchored so longer trading queries like "help me set a stop" are NOT caught).
+# Without the anchored alternative, "help" and "commands" fell through to the
+# social-chat path and never reached the help skill.
+_rule(r"\b(show (me )?help|list (of )?commands?|what commands?|how (do i|to) use (this|the bot|runeclaw))\b"
+      r"|^\s*(help|commands?|menu)(\s+me)?\s*$",
       "help", explanation="Help request")
 
 # --- Learning ---

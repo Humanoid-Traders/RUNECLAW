@@ -341,12 +341,22 @@ class RuneClawMCPServer:
             ).to_dict()
 
         # --- apply defaults for optional params ---------------------------
+        # Coercion runs before the execute try/except below; a bad numeric
+        # argument (e.g. bars="abc") would otherwise raise an unhandled
+        # ValueError that bypasses the structured error envelope + redaction.
         kwargs: dict[str, Any] = {}
-        for p in tdef.params:
-            if p.name in arguments:
-                kwargs[p.name] = self._coerce(arguments[p.name], p.type)
-            elif p.default is not None:
-                kwargs[p.name] = p.default
+        try:
+            for p in tdef.params:
+                if p.name in arguments:
+                    kwargs[p.name] = self._coerce(arguments[p.name], p.type)
+                elif p.default is not None:
+                    kwargs[p.name] = p.default
+        except (ValueError, TypeError) as exc:
+            return MCPResponse(
+                status="error",
+                tool=name,
+                result=f"Invalid argument type: {exc}",
+            ).to_dict()
 
         # --- SEC-H3 FIX: validate symbol parameters ----------------------
         if "symbol" in kwargs and isinstance(kwargs["symbol"], str):

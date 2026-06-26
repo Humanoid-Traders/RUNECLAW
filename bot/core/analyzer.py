@@ -18,6 +18,7 @@ Upgraded with:
 from __future__ import annotations
 
 import asyncio
+import logging
 import math
 import re
 import uuid
@@ -66,6 +67,13 @@ from bot.core.chart_patterns import scan_all_chart_patterns
 from bot.core.order_flow import OrderFlowAnalyzer
 from bot.utils.logger import audit, system_log, trade_log, scan_log
 from bot.utils.models import Direction, MarketSignal, TradeIdea
+
+# Module logger. Several exception handlers below (LLM-calibration writer,
+# order-flow / funding / volume-profile / sentiment / supply-demand vote
+# guards) call ``logger.*``; without this definition those handlers raised
+# NameError and aborted trade-idea generation whenever their inner try block
+# threw.
+logger = logging.getLogger(__name__)
 
 
 # ── Limit entry helper ───────────────────────────────────────────

@@ -190,7 +190,7 @@ async def main():
                     pct = completed / total_runs * 100
                     print(f"  [{completed:3d}/{total_runs}] {pct:5.1f}% | {sym['symbol']:12s} | {regime['label']:16s} | seed={seed:4d} | "
                           f"trades={r['total_trades']:3d} | ret={r['total_return_pct']:+7.2f}% | DD={r['max_drawdown_pct']:5.2f}% | "
-                          f"WR={r['win_rate']:5.1f}% | sharpe={r['sharpe_ratio']:+6.2f}")
+                          f"WR={r['win_rate'] * 100:5.1f}% | sharpe={r['sharpe_ratio']:+6.2f}")
                 except Exception as e:
                     completed += 1
                     error_count += 1
@@ -244,7 +244,7 @@ async def main():
         avg_pf = sum(r["profit_factor"] for r in runs) / n
         avg_sortino = sum(r["sortino_ratio"] for r in runs) / n
         worst_dd = max(r["max_drawdown_pct"] for r in runs)
-        print(f"{s:12s} {n:5d} {avg_trades:7.0f} {avg_ret:+9.2f} {avg_dd:8.2f} {avg_wr:8.1f} {avg_sharpe:+11.2f} {avg_pf:8.2f} {worst_dd:10.2f} {avg_sortino:+12.2f}")
+        print(f"{s:12s} {n:5d} {avg_trades:7.0f} {avg_ret:+9.2f} {avg_dd:8.2f} {avg_wr * 100:8.1f} {avg_sharpe:+11.2f} {avg_pf:8.2f} {worst_dd:10.2f} {avg_sortino:+12.2f}")
 
     # Per-regime aggregates
     print("\n" + "=" * 100)
@@ -265,7 +265,7 @@ async def main():
         avg_sharpe = sum(r["sharpe_ratio"] for r in runs) / n
         avg_pf = sum(r["profit_factor"] for r in runs) / n
         avg_sortino = sum(r["sortino_ratio"] for r in runs) / n
-        print(f"{regime['label']:16s} {n:5d} {avg_trades:7.0f} {avg_ret:+9.2f} {avg_dd:8.2f} {avg_wr:8.1f} {avg_sharpe:+11.2f} {avg_pf:8.2f} {avg_sortino:+12.2f}")
+        print(f"{regime['label']:16s} {n:5d} {avg_trades:7.0f} {avg_ret:+9.2f} {avg_dd:8.2f} {avg_wr * 100:8.1f} {avg_sharpe:+11.2f} {avg_pf:8.2f} {avg_sortino:+12.2f}")
 
     # Global summary
     total_trades = sum(r["total_trades"] for r in valid)
@@ -292,7 +292,7 @@ async def main():
     print(f"  Worst return:          {worst_ret:+.2f}%")
     print(f"  Avg max drawdown:      {avg_dd:.2f}%")
     print(f"  Worst drawdown:        {worst_dd:.2f}%")
-    print(f"  Avg win rate:          {avg_wr:.1f}%")
+    print(f"  Avg win rate:          {avg_wr * 100:.1f}%")
     print(f"  Avg Sharpe:            {avg_sharpe:+.2f}")
     print(f"  Avg Sortino:           {avg_sortino:+.2f}")
     print(f"  Avg profit factor:     {avg_pf:.2f}")

@@ -518,7 +518,10 @@ async def llm_complete(
                 max_tokens=config.max_tokens,
                 messages=messages,
             )
-            return response.choices[0].message.content
+            # content can be None (content-filter finish, tool-call-only, or
+            # empty completion); normalize to "" so callers that .strip() it
+            # don't hit AttributeError — mirrors the Anthropic branch above.
+            return response.choices[0].message.content or ""
 
     # Apply timeout — prevents hanging scan cycle
     return await asyncio.wait_for(_call(), timeout=config.timeout_seconds)
