@@ -143,10 +143,15 @@ class DataLoader:
             else:
                 ret = rng.normal(trend, current_vol)
 
-            # Mean reversion overlay: pull back toward start_price band
+            # Mean reversion overlay: pull back toward start_price band.
+            # Guard start_price == 0: a long downtrend on a very-low-priced asset
+            # (e.g. PEPE at 1.3e-5) can underflow the price to 0.0, and when that
+            # 0.0 is fed back as the next segment's start_price the division blew
+            # up with ZeroDivisionError. With no reference band, skip the pull-back.
             mean_rev_strength = 0.001
-            deviation = (price - start_price) / start_price
-            ret -= deviation * mean_rev_strength
+            if start_price:
+                deviation = (price - start_price) / start_price
+                ret -= deviation * mean_rev_strength
 
             # --- Build the candle ---
             open_price = price

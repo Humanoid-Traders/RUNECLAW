@@ -106,9 +106,20 @@ def _env_bool(key: str, default: bool = False) -> bool:
 
 def _env_float(key: str, default: float = 0.0) -> float:
     try:
-        return float(_env(key, str(default)))
+        val = float(_env(key, str(default)))
     except ValueError:
         return default
+    # Reject inf/nan: float() parses them without error, but a non-finite risk
+    # limit silently disables guards (every `x > nan` / `x < nan` is False), so
+    # fail back to the safe default instead.
+    import math as _math
+    if not _math.isfinite(val):
+        import logging as _logging
+        _logging.getLogger(__name__).warning(
+            "Env var %s=%r is not finite — using default %r", key, val, default,
+        )
+        return default
+    return val
 
 
 def _env_float_bounded(key: str, default: float, min_val: float, max_val: float) -> float:
