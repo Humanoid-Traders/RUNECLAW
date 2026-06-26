@@ -18,9 +18,12 @@ each finding re-verified at exact `file:line`, plus a 500-run deep backtest
 | Severity | Found | Fixed (this PR) | Documented |
 |----------|-------|-----------------|------------|
 | HIGH | 3 | 1 | 2 |
-| MEDIUM | 6 | 3 | 3 |
+| MEDIUM | 8 | 5 | 3 |
 | LOW | 8 | 2 | 6 |
-| **Total** | **17** | **6** | **11** |
+| **Total** | **19** | **8** | **11** |
+
+Two of the MEDIUM fixes (BT-CRASH-1/2) are crashes the **deep backtest run itself
+surfaced** — all 6 of its hard errors — and are now fixed (see "Deep backtest run").
 
 Two V6 open questions are now **resolved**:
 - The *"intent router returns `''` for `help`"* observation was a **genuine product
@@ -80,6 +83,29 @@ the execute `try/except`, so a call like `runeclaw_backtest {"bars":"abc"}` rais
 an unhandled `ValueError` out of `call_tool`, bypassing the `MCPResponse` error
 envelope and the secret-redaction path. **Fix:** wrapped coercion in
 `try/except (ValueError, TypeError)` returning a structured error.
+
+### BT-CRASH-1 — `generate_synthetic` divides by zero on underflowed price (MEDIUM)
+**`bot/backtest/data_loader.py:148`** — the mean-reversion overlay computes
+`(price - start_price) / start_price`. On a very-low-priced asset (PEPE at
+1.3e-5) under a sustained downtrend, the −10%/bar cap geometrically decays the
+price until it **underflows to 0.0**; that 0.0 becomes the next segment's
+`start_price`, so the division raises `ZeroDivisionError` and aborts the run. This
+caused **5 of the 6** deep-backtest errors (all PEPE "Crash Recovery" seeds).
+**Fix:** skip the pull-back when `start_price` is zero (no reference band exists).
+Verified PEPE Crash Recovery now completes (0 trades, degenerate candles correctly
+rejected by the analyzer).
+
+### BT-CRASH-2 — analyzer emits an invalid `TradeIdea` on collapsed SL/TP (MEDIUM)
+**`bot/core/analyzer.py:943`** — for a low-priced/high-vol asset the ATR-derived
+stop/target distance can fall below tick precision, so rounding collapses
+`stop_loss`/`take_profit` onto `entry`. The `TradeIdea` directional-sanity
+validator then raises (`stop_loss must be below entry`), and the exception
+propagates out of `analyze()` → aborts the whole run. This caused the 6th
+deep-backtest error (DOGE "High Volatility"). **Fix:** validate the rounded
+levels before constructing the `TradeIdea` and skip the degenerate idea (no-trade
+is the safe outcome) instead of raising. Verified DOGE High-Vol now completes
+(3 trades; degenerate ideas skipped, valid ones proceed). Regression tests in
+`tests/test_backtest_edge_cases.py`.
 
 ### BT-DISP — deep-backtest printed win rate 100× too low (LOW, reporting)
 **`run_deep_backtest.py:193,247,268,295`** — `win_rate` is a fraction in `[0,1]`
@@ -160,14 +186,31 @@ correct with proper zero/empty-series guards and **no look-ahead bias**.
 ## Deep backtest run
 
 The 500-run deep backtest harness (`run_deep_backtest.py`) was executed on this
-branch (20 symbols × 5 regimes × 5 seeds, 1500 1H bars each). Results written to
-`backtest_deep_results.json`. The harness exercises the full analyze → risk →
-portfolio pipeline per bar; the run completed without crashes, confirming the
-AN-1 logger fix and exercising the risk engine's fail-closed gates (cooldown,
-loss-streak, regime filter, VaR) across all regimes. **Caveat:** the headline
-metrics are subject to BT-H1 (understated commission) and BT-H2 (wall-clock
-session leak) above — treat absolute returns as optimistic and not bit-for-bit
-reproducible until those are addressed.
+branch (20 symbols × 5 regimes × 5 seeds, 1500 1H bars each, ~28 min). It
+exercises the full analyze → risk → portfolio pipeline per bar across all regimes,
+and surfaced two crash bugs (BT-CRASH-1/2 above), now fixed.
+
+**Global summary (this run):**
+
+| Metric | Value |
+|--------|-------|
+| Valid runs | 494 / 500 (6 errors — all now fixed by BT-CRASH-1/2) |
+| Total trades | 3,239 |
+| Avg return | +3.86% (best +32.93%, worst −1.46%) |
+| Avg max drawdown | 1.12% (worst 2.87%) |
+| Crashed runs (DD>20%) | 0 |
+| Avg win rate | ~70% |
+| Avg Sharpe / Sortino | +2.34 / +2.86 |
+| Avg profit factor | 29.35 |
+
+**Read these numbers with strong caveats.** The avg profit factor (~29) and Sharpe
+(~2.3) are implausibly high for a real strategy and are artifacts of: (a) synthetic
+data the rule engine can exploit, (b) BT-H1 — commission understated ~40% (the
+config knob is non-functional), and (c) BT-H2 — wall-clock session leakage makes
+the run non-reproducible. The results validate that the **pipeline runs end-to-end
+without crashing** and that the **risk gates fire** (cooldown, loss-streak, regime
+filter, VaR, confidence), but they are **not** evidence of live edge. With the two
+crash fixes, a re-run should produce 500/500 valid runs.
 
 ---
 

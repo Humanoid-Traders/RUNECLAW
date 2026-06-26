@@ -940,13 +940,31 @@ class Analyzer:
             indicators, signal, regime, thesis.get("source", "")
         )
 
+        # Guard: on very-low-priced assets the ATR-derived stop/target distance
+        # can fall below tick precision, so rounding collapses SL/TP onto the
+        # entry. That produces a TradeIdea the directional-sanity validator
+        # rejects (raising and aborting the whole analysis/backtest run). Skip
+        # the degenerate idea instead — no trade is the safe outcome.
+        _r_entry = round(entry, price_decimals)
+        _r_sl = round(stop_loss, price_decimals)
+        _r_tp = round(take_profit, price_decimals)
+        _valid_long = direction == Direction.LONG and _r_sl < _r_entry < _r_tp
+        _valid_short = direction == Direction.SHORT and _r_tp < _r_entry < _r_sl
+        if _r_entry <= 0 or not (_valid_long or _valid_short):
+            audit(trade_log,
+                  f"Idea skipped: degenerate levels after rounding "
+                  f"(entry={_r_entry}, sl={_r_sl}, tp={_r_tp}, {direction.value})",
+                  action="analyze", result="SKIP",
+                  data={"symbol": signal.symbol})
+            return None
+
         idea = TradeIdea(
             id=f"TI-{uuid.uuid4().hex[:8]}",
             asset=signal.symbol,
             direction=direction,
-            entry_price=round(entry, price_decimals),
-            stop_loss=round(stop_loss, price_decimals),
-            take_profit=round(take_profit, price_decimals),
+            entry_price=_r_entry,
+            stop_loss=_r_sl,
+            take_profit=_r_tp,
             confidence=blended_confidence,
             reasoning=(
                 f"[{source}|{regime.value}|{mode_tag}|{strategy_type}|C={confluence:.2f}"
