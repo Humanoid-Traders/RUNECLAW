@@ -23,7 +23,7 @@ from bot.db.models import User as DBUser
 
 log = logging.getLogger(__name__)
 
-WEBSITE_URL = os.getenv("WEBSITE_URL", "https://deryrgeb.mule.page")
+WEBSITE_URL = os.getenv("WEBSITE_URL", "https://y9z5438h.mule.page")
 REGISTER_URL = WEBSITE_URL
 
 

@@ -17,7 +17,7 @@ from typing import Optional
 
 log = logging.getLogger(__name__)
 
-WEBSITE_URL = os.getenv("WEBSITE_URL", "https://deryrgeb.mule.page")
+WEBSITE_URL = os.getenv("WEBSITE_URL", "https://y9z5438h.mule.page")
 SYNC_SECRET = os.getenv("BOT_SYNC_SECRET", "")
 
 if not SYNC_SECRET:

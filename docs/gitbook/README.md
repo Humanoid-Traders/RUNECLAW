@@ -63,7 +63,7 @@ Structured Audit Log
 
 - **Try the Bot:** [@HTRUNECLAW_bot](https://t.me/HTRUNECLAW_bot) -- live on Telegram, try it now
 - **GitHub:** [RUNECLAW](https://github.com/Humanoid-Traders/RUNECLAW)
-- **Website:** [xbf5gmte.mule.page](https://xbf5gmte.mule.page/)
+- **Website:** [y9z5438h.mule.page](https://y9z5438h.mule.page/)
 - **Telegram:** [Join Community](https://t.me/+VRNgsmkR5pszZTdk)
 - **X / Twitter:** [@BaurPatric70363](https://x.com/BaurPatric70363)
 - **Team:** Patrick Baur (Lead Developer) & Daan (Co-Founder & Strategy)
