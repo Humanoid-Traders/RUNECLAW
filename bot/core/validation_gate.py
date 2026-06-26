@@ -112,11 +112,13 @@ class BacktestValidationGate:
 
     def get_all_validations(self) -> dict[str, dict]:
         """All strategies' validation status."""
+        # Snapshot keys under the lock, then resolve each status WITHOUT holding
+        # the lock.  get_validation_status() re-acquires self._lock, and
+        # threading.Lock is non-reentrant, so calling it from inside the lock
+        # here deadlocked the calling thread permanently.
         with self._lock:
-            return {
-                name: self.get_validation_status(name)
-                for name in self._validations
-            }
+            names = list(self._validations)
+        return {name: self.get_validation_status(name) for name in names}
 
     # ── Formatting ───────────────────────────────────────────
 

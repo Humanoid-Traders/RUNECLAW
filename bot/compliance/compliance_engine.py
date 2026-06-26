@@ -41,6 +41,12 @@ class SubjectProfile:
     kyc_verified: bool = False
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
+    def __post_init__(self) -> None:
+        # Normalize jurisdiction so the restricted-jurisdiction hard block can
+        # never be bypassed by casing/whitespace (e.g. "ru", " RU", "Ru" all
+        # collapse to "RU").  The restricted set is upper-cased ISO codes.
+        self.jurisdiction = str(self.jurisdiction or "").strip().upper()
+
 
 @dataclass
 class ApprovalToken:
@@ -79,11 +85,15 @@ class ComplianceEngine:
     _DEFAULT_RESTRICTED: Set[str] = {"KP", "IR", "SY", "CU", "RU"}
 
     def __init__(self, restricted_jurisdictions: Optional[Set[str]] = None) -> None:
-        self._restricted: Set[str] = (
+        # Normalize the restricted set to upper-cased/stripped codes so the
+        # membership test in _authorize is casing/whitespace insensitive on
+        # both sides (SubjectProfile.__post_init__ normalizes the input side).
+        _src = (
             restricted_jurisdictions
             if restricted_jurisdictions is not None
-            else set(self._DEFAULT_RESTRICTED)
+            else self._DEFAULT_RESTRICTED
         )
+        self._restricted: Set[str] = {str(j or "").strip().upper() for j in _src}
         self._consent_ledger: List[AuthorizationDecision] = []
 
     # ------------------------------------------------------------------
