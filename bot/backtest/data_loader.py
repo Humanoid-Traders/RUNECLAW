@@ -156,8 +156,13 @@ class DataLoader:
             # --- Build the candle ---
             open_price = price
             close_price = open_price * (1 + ret)
-            close_price = max(close_price, open_price * 0.9)  # cap single-bar at -10%
-            close_price = min(close_price, open_price * 1.1)
+            # Roadmap: allow realistic fat-tail / gap bars through. The old ±10%
+            # clamp neutered exactly the flash-crash / gap events the 5% tail-event
+            # branch above is meant to generate (and that stops must survive). Keep
+            # a wide but bounded band so a single bar can't underflow the price to
+            # <= 0, while permitting up to a -40% gap-down / +60% spike.
+            close_price = max(close_price, open_price * 0.6)
+            close_price = min(close_price, open_price * 1.6)
 
             # Intrabar high/low
             intra_vol = abs(ret) + current_vol * 0.5

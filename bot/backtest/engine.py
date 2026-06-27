@@ -266,11 +266,18 @@ class BacktestEngine:
             # SL is checked first. This is a conservative (pessimistic) assumption —
             # in reality, which fires first depends on intrabar price path which is
             # not available at this resolution.
+            # Gap-aware stop fills (roadmap): a stop-loss is a stop/market order.
+            # If the bar GAPS through the stop at the open, it fills at the open
+            # (worse than the stop level), not magically at the stop price. Filling
+            # stops exactly at `sl` understates loss tails and overstates win rate
+            # on gap-throughs. A take-profit is a limit order, so it fills at its
+            # level even on a favorable gap (you don't get better than the limit).
             if direction == Direction.LONG:
                 if bar.low <= sl:
                     trailing_active = bt_meta.get("trailing_active", False)
                     reason = "TRAILING_SL" if trailing_active else "SL"
-                    self._close_position(tid, sl, bar, reason)
+                    sl_fill = min(sl, bar.open)  # gap-down through the stop
+                    self._close_position(tid, sl_fill, bar, reason)
                     continue
                 if bar.high >= tp:
                     self._close_position(tid, tp, bar, "TP")
@@ -283,7 +290,8 @@ class BacktestEngine:
                 if bar.high >= sl:
                     trailing_active = bt_meta.get("trailing_active", False)
                     reason = "TRAILING_SL" if trailing_active else "SL"
-                    self._close_position(tid, sl, bar, reason)
+                    sl_fill = max(sl, bar.open)  # gap-up through the stop
+                    self._close_position(tid, sl_fill, bar, reason)
                     continue
                 if bar.low <= tp:
                     self._close_position(tid, tp, bar, "TP")
