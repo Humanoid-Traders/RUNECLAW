@@ -294,13 +294,19 @@ def resolve_tier_config(
                 if not tier_key and tier_provider == primary_config.provider:
                     tier_key = primary_config.api_key
 
-                catalog = PROVIDER_CATALOG.get(tier_provider, {})
-                return LLMConfig(
-                    provider=tier_provider,
-                    api_key=tier_key,
-                    model=tier_model or catalog.get("default_model", ""),
-                    base_url=catalog.get("base_url", ""),
-                )
+                # LLM-2: only honor the override when a key is actually
+                # available; otherwise fall through to default routing / primary
+                # config rather than returning a keyless config that silently
+                # runs the tier with no LLM (the default-routing branch below
+                # already guards this way with `if alt_key:`).
+                if tier_key:
+                    catalog = PROVIDER_CATALOG.get(tier_provider, {})
+                    return LLMConfig(
+                        provider=tier_provider,
+                        api_key=tier_key,
+                        model=tier_model or catalog.get("default_model", ""),
+                        base_url=catalog.get("base_url", ""),
+                    )
 
     # 2. Check if the selected routing has a different provider with a key available
     default_route = routing.get(tier, {})

@@ -18,18 +18,21 @@ each finding re-verified at exact `file:line`, plus a 500-run deep backtest
 | Severity | Found | Fixed | Documented |
 |----------|-------|-------|------------|
 | HIGH | 3 | 3 | 0 |
-| MEDIUM | 8 | 5 | 3 |
-| LOW | 8 | 2 | 6 |
-| **Total** | **19** | **10** | **9** |
+| MEDIUM | 8 | 8 | 0 |
+| LOW | 8 | 3 | 5 |
+| **Total** | **19** | **14** | **5** |
 
 Two of the MEDIUM fixes (BT-CRASH-1/2) are crashes the **deep backtest run itself
 surfaced** — all 6 of its hard errors — and are now fixed (see "Deep backtest run").
 
-**Update:** the two HIGH backtest-validity findings (BT-H1 commission, BT-H2
-wall-clock determinism) — originally documented — are now **also fixed** (see
-"Fixed in this PR"), with regression tests in `tests/test_backtest_validity.py`.
-The backtest is now reproducible (same seed → identical results, proven
-independent of wall-clock hour) and charges the commission it reports.
+**Update (follow-up):** all HIGH and MEDIUM findings are now fixed. Beyond the
+original batch, this includes the two HIGH backtest-validity items (BT-H1
+commission, BT-H2 wall-clock determinism — `tests/test_backtest_validity.py`), the
+MEDIUM config bounds-clamping (CFG-2 — `tests/test_config_hardening.py`) and LLM
+tier-fallback (LLM-2 — `tests/test_llm_tier_fallback.py`), and the LOW backtest
+metric conventions (BT-L — Calmar/Sharpe/breakeven). The backtest is now
+reproducible and accurately costed. The remaining **5 documented items are all
+LOW** (AN-2, AN-3, LLM-3, MCP-2, NLP-2) — minor hardening / cosmetic.
 
 Two V6 open questions are now **resolved**:
 - The *"intent router returns `''` for `help`"* observation was a **genuine product
@@ -152,14 +155,16 @@ live passes nothing → `datetime.now()` as before. Verified: the same seed now
 yields **identical** results across runs and is **independent of the wall-clock
 hour** (Asian vs London/NY-overlap launch → identical trades/PnL/commission).
 
-### BT-L — metric conventions (LOW)
-- **Calmar not annualized** (`engine.py:459`): `total_return / max_dd_pct` should
-  annualize the numerator for comparability across run lengths.
-- **Sharpe/Sortino use population stddev** (`engine.py:553-585`, `ddof=0`): slight
-  upward bias; use `ddof=1` (guard `len < 2`).
-- **Breakeven trades counted as losses** (`engine.py:411`): `net_pnl <= 0` treats
-  exact-0 as a loss, depressing win rate / inflating max-consecutive-losses
-  (conservative bias; the risk engine treats breakeven as neutral).
+### BT-L — metric conventions (LOW) — ✅ FIXED
+All three now fixed (`tests/test_backtest_validity.py`):
+- **Calmar now annualized** (`engine.py`): annualizes the return over the
+  equity-curve span before dividing by max DD, so it's comparable across run
+  lengths.
+- **Sharpe/Sortino use sample stddev** (`ddof=1`, guarded for <2 observations) —
+  was population stddev (`ddof=0`), which overstated the ratios.
+- **Breakeven trades are neutral** (`net_pnl == 0`): no longer counted among
+  losers nor extending the consecutive-loss streak, matching the risk engine's
+  `pnl == 0` handling.
 
 **Verified clean in backtest:** no same-bar SL/TP look-ahead (stops checked on
 `i+1`), SHORT PnL signs, slippage applied in the adverse direction both sides,
@@ -171,12 +176,15 @@ leak.
 
 ---
 
-## Documented — config / LLM / analyzer / MCP / NLP (not fixed here)
+## Config / LLM / analyzer / MCP / NLP
+
+CFG-2 and LLM-2 (MEDIUM) are now **fixed** (struck through below). The remaining
+**5 items are all LOW** — minor hardening / cosmetic, documented for follow-up.
 
 | ID | Sev | Location | Issue |
 |----|-----|----------|-------|
-| **CFG-2** | Med | `config.py:131,138,147-178` | Many risk limits use raw `_env_float` (no clamp): `max_drawdown_pct`, `min_risk_reward`, `max_portfolio_exposure_pct`, `max_symbol_exposure_pct`, `max_margin_risk_pct`, `max_portfolio_var_pct`, `volatility_guard_atr_pct`. A typo'd `MAX_PORTFOLIO_EXPOSURE_PCT=500` loads verbatim and widens risk. Route every risk-limit field through `_env_float_bounded` with sane ranges. (CFG-1 already blocks the inf/nan case.) |
-| **LLM-2** | Med | `provider.py:267-303` | Non-admin tier override returns a **keyless** `LLMConfig` when `LLM_TIER_*_PROVIDER` is set but no key is discoverable, instead of falling back to the primary config — silently runs that tier with no LLM. Guard the override return with `if tier_key:` (the default-routing branch already does). Fails safe (→ rules), but surprising. |
+| ~~**CFG-2**~~ | Med | `config.py` | ✅ **FIXED** — the seven risk-gate limits (`max_drawdown_pct`, `min_risk_reward`, `max_portfolio_exposure_pct`, `max_symbol_exposure_pct`, `max_margin_risk_pct`, `max_portfolio_var_pct`, `volatility_guard_atr_pct`) now route through `_env_float_bounded` with generous-but-sane bounds, so a negative value (which inverts the comparison) or absurd typo can't load. Tests in `tests/test_config_hardening.py`. |
+| ~~**LLM-2**~~ | Med | `provider.py` | ✅ **FIXED** — the non-admin tier-override return is now guarded by `if tier_key:`, so a key-less override falls through to default routing / primary config instead of running the tier with no LLM. Tests in `tests/test_llm_tier_fallback.py`. |
 | **LLM-3** | Low | `provider.py:494` | Adaptive-thinking gated on substring `"opus"` in model name — brittle; effectively dead under current tier routing. |
 | **AN-2** | Low | `divergence.py:164,192,220,248` | Divergence strength `Δ/(abs(i1)+1e-10)` saturates to the cap when the pivot value is near zero (OBV cumulative, MACD-hist zero-crossings), over-stating OBV/MACD divergence confidence. Normalize by the indicator's recent range instead. |
 | **AN-3** | Low | `analyzer.py:1063` | `_classify_strategy_type` reads `indicators["close"]` which is never populated → always 0, relies on the `signal.price` fallback; the ATR factor silently disables if `signal is None`. Store `close` or use `signal.price` directly. |
