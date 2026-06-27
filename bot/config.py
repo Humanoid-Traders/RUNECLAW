@@ -165,7 +165,12 @@ class RiskLimits:
     # BTC hourly ATR is typically 1-4%; 7% allows for elevated-vol periods
     # while blocking extreme conditions.
     volatility_guard_atr_pct: float = _env_float_bounded("VOLATILITY_GUARD_ATR_PCT", 7.0, 0.1, 100.0)
-    stale_data_max_age_seconds: int = int(_env_float("STALE_DATA_MAX_AGE_SEC", 600))
+    # Reject trade ideas whose market data is older than this. Restored to the
+    # conservative 5 minutes (300s): it had been doubled to 600s in an unrelated
+    # commit (226858e) with no rationale, and acting on up-to-10-minute-old data
+    # is the wrong direction for a risk-first bot. Bounded so a typo/negative
+    # can't disable the staleness guard.
+    stale_data_max_age_seconds: int = int(_env_float_bounded("STALE_DATA_MAX_AGE_SEC", 300, 1, 86400))
     require_stop_loss: bool = _env_bool("REQUIRE_STOP_LOSS", True)
     # Portfolio VaR: reject trades that would push parametric VaR above this %.
     max_portfolio_var_pct: float = _env_float_bounded("MAX_PORTFOLIO_VAR_PCT", 15.0, 0.1, 100.0)

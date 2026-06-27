@@ -364,7 +364,7 @@ defaults:
     description: "Max ATR as % of price; trades above this are rejected (meme coins capped at 4%)"
 
   stale_data_max_age_seconds:
-    value: 600
+    value: 300
     env_var: STALE_DATA_MAX_AGE_SEC
     description: "Max age of trade idea in seconds before it is considered stale"
 
