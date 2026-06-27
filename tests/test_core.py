@@ -3823,11 +3823,12 @@ class TestQwenIntegration:
             assert isinstance(model, str)
             assert len(model) > 0
 
-    def test_llm_config_default_model_is_gpt4o(self):
-        """Default model should be gpt-4o unless overridden."""
+    def test_llm_config_default_model_empty_then_autoresolved(self):
+        """Default model is empty unless overridden via LLM_MODEL; it is
+        auto-resolved from the provider catalog at use-time (not at config init)."""
         from bot.config import LLMConfig
         cfg = LLMConfig()
-        assert cfg.model == os.environ.get("LLM_MODEL", "gpt-4o")
+        assert cfg.model == os.environ.get("LLM_MODEL", "")
 
 
 class TestSolanaEcosystem:
