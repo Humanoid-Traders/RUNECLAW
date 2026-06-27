@@ -1743,6 +1743,39 @@ class LiveExecutor:
                       data={"asset": symbol, "size_usd": size_usd, "price": current_price})
                 return f"BLOCKED: quantity too small after precision rounding for {symbol}"
 
+            # ── Audit F-3: notional vs margin boundary check ──
+            # size_usd is MARGIN; the real exchange exposure is notional =
+            # quantity * price = size_usd * leverage. The risk engine's %-caps are
+            # margin-based, so they validate size_usd, not this notional. Make the
+            # relationship explicit in the audit trail, and HARD-BLOCK only when
+            # notional exceeds the design envelope (the configured margin cap times
+            # the max allowed leverage, with a small rounding tolerance) — this
+            # catches a sizing/leverage misconfiguration without touching the
+            # legitimate per-trade range. Manual-margin trades intentionally exceed
+            # the micro cap, so the ceiling scales with the actual margin used.
+            _notional = quantity * current_price
+            _margin_basis = max(size_usd, MICRO_MAX_POSITION_USD)
+            _max_lev = max(int(getattr(CONFIG.exchange, "max_leverage", leverage_mult) or 1),
+                           int(leverage_mult or 1))
+            _notional_ceiling = _margin_basis * _max_lev * 1.05  # 5% rounding headroom
+            audit(trade_log,
+                  f"Notional check {symbol}: notional=${_notional:.2f} "
+                  f"(margin=${size_usd:.2f} x {leverage_mult}x), ceiling=${_notional_ceiling:.2f}",
+                  action="notional_boundary", result="OK",
+                  data={"symbol": symbol, "notional": round(_notional, 2),
+                        "margin": round(size_usd, 2), "leverage": leverage_mult,
+                        "ceiling": round(_notional_ceiling, 2)})
+            if _notional > _notional_ceiling:
+                audit(trade_log,
+                      f"Notional ${_notional:.2f} exceeds design ceiling "
+                      f"${_notional_ceiling:.2f} for {symbol} — BLOCKED (audit F-3)",
+                      action="notional_boundary", result="EXCEEDS_CEILING",
+                      data={"symbol": symbol, "notional": round(_notional, 2),
+                            "ceiling": round(_notional_ceiling, 2),
+                            "margin": round(size_usd, 2), "leverage": leverage_mult})
+                return (f"BLOCKED: order notional ${_notional:,.2f} exceeds the design "
+                        f"ceiling ${_notional_ceiling:,.2f} (margin x max-leverage)")
+
             # UPGRADE: validate against the venue's min-amount / min-notional
             # filters so a sub-minimum order is BLOCKED cleanly here instead of
             # being rejected by Bitget after submission.

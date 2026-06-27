@@ -605,7 +605,13 @@ class RiskEngine:
             failed.append(f"WARNING_RATE_BREAKER: evaluation error ({exc})")
 
         try:
-            # 2. Position size — enforces notional cap (the check has real authority)
+            # 2. Position size — enforces the per-symbol cap (real authority).
+            # NOTE (audit F-3): position_usd here is the MARGIN committed; the live
+            # executor multiplies it by leverage to get exchange notional. So this
+            # %-cap is effectively a margin/equity cap (margin <= max_symbol_exposure
+            # _pct of equity), and the executor enforces a separate hard notional
+            # ceiling (margin x max-leverage). The "notional" label below is retained
+            # for backward compatibility but refers to this margin basis.
             if sizing_equity <= 0:
                 failed.append("EQUITY: zero or negative equity")
             else:

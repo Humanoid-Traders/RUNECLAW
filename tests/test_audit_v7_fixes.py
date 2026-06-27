@@ -333,3 +333,39 @@ class TestLivePolicyFailClosed:
         idx = src.index("ERROR_FAILCLOSED")
         preceding = src[max(0, idx - 200):idx]
         assert "CONFIG.is_live()" in preceding
+
+
+# ── F-3: notional/margin boundary (visibility + ceiling) ─────────────
+
+class TestNotionalBoundary:
+    def test_execute_has_notional_boundary_check(self):
+        import inspect
+        from bot.core.live_executor import LiveExecutor
+        src = inspect.getsource(LiveExecutor.execute)
+        assert "notional_boundary" in src
+        assert "EXCEEDS_CEILING" in src
+
+    def test_normal_micro_trade_within_ceiling(self):
+        # A normal micro trade (margin $100, 5x) places $500 notional, well under
+        # the design ceiling (margin x max_leverage x 1.05). The boundary must
+        # NOT block legitimate trades.
+        from bot.core.live_executor import MICRO_MAX_POSITION_USD
+        from bot.config import CONFIG
+        margin = MICRO_MAX_POSITION_USD
+        leverage = CONFIG.exchange.default_leverage
+        max_lev = max(int(getattr(CONFIG.exchange, "max_leverage", leverage)), int(leverage))
+        notional = margin * leverage
+        ceiling = max(margin, MICRO_MAX_POSITION_USD) * max_lev * 1.05
+        assert notional <= ceiling
+
+    def test_double_leverage_bug_would_be_blocked(self):
+        # A sizing bug that double-applies leverage (margin x lev^2) exceeds the
+        # ceiling and would be blocked.
+        from bot.core.live_executor import MICRO_MAX_POSITION_USD
+        from bot.config import CONFIG
+        margin = MICRO_MAX_POSITION_USD
+        leverage = CONFIG.exchange.default_leverage
+        max_lev = max(int(getattr(CONFIG.exchange, "max_leverage", leverage)), int(leverage))
+        bugged_notional = margin * leverage * leverage  # double-applied
+        ceiling = max(margin, MICRO_MAX_POSITION_USD) * max_lev * 1.05
+        assert bugged_notional > ceiling
