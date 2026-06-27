@@ -125,22 +125,16 @@ class TestMCPAuth(unittest.TestCase):
         finally:
             mcp_mod._MCP_AUTH_TOKEN = original_token
 
-    def test_call_tool_allows_no_auth_when_unset(self):
-        import asyncio
+    def test_server_refuses_to_start_without_auth_token(self):
+        """C5 HARDENED (fail-closed): the MCP server must REFUSE to start when no
+        MCP_AUTH_TOKEN is set, rather than silently allowing unauthenticated calls."""
         from bot.mcp import server as mcp_mod
 
         original_token = mcp_mod._MCP_AUTH_TOKEN
         try:
-            mcp_mod._MCP_AUTH_TOKEN = ""  # No auth required
-            srv = mcp_mod.RuneClawMCPServer()
-
-            async def _run():
-                return await srv.call_tool("nonexistent_tool", {})
-
-            result = asyncio.run(_run())
-            # Should get "unknown tool" not "auth required"
-            self.assertEqual(result["status"], "error")
-            self.assertIn("Unknown tool", result["result"])
+            mcp_mod._MCP_AUTH_TOKEN = ""  # no auth configured
+            with self.assertRaises(RuntimeError):
+                mcp_mod.RuneClawMCPServer()
         finally:
             mcp_mod._MCP_AUTH_TOKEN = original_token
 
@@ -154,8 +148,10 @@ class TestRuntimeState(unittest.TestCase):
 
     def test_runtime_state_default(self):
         from bot.config import RUNTIME
-        # Should match CONFIG default
-        self.assertIn(RUNTIME.asset_universe, ("all", "solana"))
+        # Should be a valid asset-universe mode (default is now "all_markets").
+        self.assertIn(RUNTIME.asset_universe,
+                      ("all_markets", "all", "solana", "stocks", "hybrid", "metals",
+                       "commodities", "etfs", "pre_ipo", "tradfi"))
 
     def test_runtime_state_set_valid(self):
         from bot.config import RuntimeState

@@ -179,11 +179,15 @@ class TestRuleBasedConfidence(unittest.TestCase):
             "fib_zone": "", "candle_patterns": {},
         }
         result = Analyzer._rule_based_thesis(sig, indicators)
-        # With neutral confluence (0.5), confidence should be below 0.50
-        # conf_base = abs(0.5 - 0.5) * 2 = 0.0
-        # confidence = 0.0 * 0.5 + 0.20 + 0 + 0 + 0 + 0 + 0 + 0 = 0.20
-        self.assertLess(result["confidence"], 0.50,
-                        f"Neutral confluence confidence {result['confidence']} should be < 0.50")
+        # Neutral confluence (0.5) with neutral RSI/MACD must not produce a
+        # tradeable signal. The rule engine now returns None (no signal) for this
+        # ambiguous case rather than a low-confidence thesis — either outcome
+        # satisfies "below the filter threshold".
+        if result is None:
+            self.assertIsNone(result)  # no signal — correctly filtered out
+        else:
+            self.assertLess(result["confidence"], 0.50,
+                            f"Neutral confluence confidence {result['confidence']} should be < 0.50")
 
 
 # ---------------------------------------------------------------------------

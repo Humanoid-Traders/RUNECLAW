@@ -277,28 +277,32 @@ class TestTradeCritique:
         result = self.critic.evaluate(idea, risk_check, snapshot)
         assert any("r:r" in c.lower() or "R:R" in c for c in result.concerns)
 
-    def test_concentration_same_direction(self):
-        """3+ same-direction positions triggers concentration concern."""
+    def test_same_direction_check_delegated_to_risk_engine(self):
+        """Per-direction concentration is no longer flagged by the critique from a
+        position COUNT alone — PortfolioState exposes a count, not position objects,
+        so direction/crowding enforcement lives in the risk engine. A few
+        same-direction positions (below the heat threshold) must not fabricate a
+        critique 'direction'/'crowded' concern."""
         idea = _make_idea(direction_value="LONG")
-        positions = [_make_position("LONG") for _ in range(3)]
-        # Fix direction equality: make position directions equal to idea direction
-        for p in positions:
-            p.direction = idea.direction
+        positions = [_make_position("LONG") for _ in range(3)]  # < 4, no heat
         snapshot = _make_snapshot(open_positions=positions)
         risk_check = MagicMock()
 
         result = self.critic.evaluate(idea, risk_check, snapshot)
-        assert any("direction" in c.lower() or "crowded" in c.lower() for c in result.concerns)
+        assert not any("direction" in c.lower() or "crowded" in c.lower()
+                       for c in result.concerns)
 
-    def test_same_asset_double_down(self):
-        """Having an open position in same asset triggers double-down warning."""
+    def test_same_asset_check_delegated_to_risk_engine(self):
+        """Same-asset double-down is likewise delegated to the risk engine: a
+        single same-asset position must not, by itself, raise a critique
+        'doubling down' concern (the critique only sees a position count)."""
         idea = _make_idea(asset="ETH/USDT")
         pos = _make_position(asset="ETH/USDT")
         snapshot = _make_snapshot(open_positions=[pos])
         risk_check = MagicMock()
 
         result = self.critic.evaluate(idea, risk_check, snapshot)
-        assert any("doubling down" in c.lower() or idea.asset in c for c in result.concerns)
+        assert not any("doubling down" in c.lower() for c in result.concerns)
 
     def test_portfolio_heat_many_positions(self):
         """4+ open positions triggers portfolio heat concern."""
@@ -335,26 +339,24 @@ class TestTradeCritique:
         result = self.critic.evaluate(idea, risk_check, snapshot)
         assert any("stop" in c.lower() and "hunt" in c.lower() for c in result.concerns)
 
-    def test_three_concerns_produces_halt(self):
-        """3+ concerns produces HALT verdict."""
-        # Combine: high confidence + tight stop + same-asset double-down + portfolio heat
+    def test_four_concerns_produces_halt(self):
+        """4+ concerns produces HALT verdict (MAX_CONCERNS_FOR_HALT = 4)."""
+        # Stack 4 concerns: overconfidence + marginal R:R + portfolio heat + tight stop.
         idea = _make_idea(
-            confidence=0.95,
+            confidence=0.95,            # > HIGH_CONFIDENCE_WARN (0.90)
             entry_price=100_000.0,
-            stop_loss=99_800.0,  # tight stop (0.2%)
+            stop_loss=99_800.0,         # tight stop (0.2% < 1.0%)
             take_profit=106_000.0,
         )
-        idea.risk_reward_ratio = 2.0
+        idea.risk_reward_ratio = 1.3    # < LOW_RR_WARN (1.5)
 
-        pos_same_asset = _make_position(asset="BTC/USDT")
-        other_positions = [_make_position(asset=f"ALT{i}/USDT") for i in range(4)]
-        all_positions = [pos_same_asset] + other_positions
-
+        # 5 open positions → portfolio-heat concern (open_count >= 4)
+        all_positions = [_make_position(asset=f"ALT{i}/USDT") for i in range(5)]
         snapshot = _make_snapshot(open_positions=all_positions)
         risk_check = MagicMock()
 
         result = self.critic.evaluate(idea, risk_check, snapshot)
-        assert len(result.concerns) >= 3
+        assert len(result.concerns) >= 4
         assert result.verdict == "HALT"
 
 

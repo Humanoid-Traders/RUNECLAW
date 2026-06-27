@@ -2083,8 +2083,10 @@ class TestAuditV3Fixes:
         # Should return error message, not raise or silently vanish
         assert "re-check failed" in result.lower() or "error" in result.lower(), \
             f"Expected re-check error message, got: {result}"
-        # Idea should be gone from pending (it was popped)
-        assert idea.id not in engine._pending_ideas
+        # The idea must NOT vanish silently: on a re-check exception it is kept in
+        # pending (so the user can retry) rather than being popped before success
+        # (matches the "don't pop pending idea before success" fix).
+        assert idea.id in engine._pending_ideas
 
     # -- F-06: sandbox flag from env --
 
@@ -3823,11 +3825,12 @@ class TestQwenIntegration:
             assert isinstance(model, str)
             assert len(model) > 0
 
-    def test_llm_config_default_model_is_gpt4o(self):
-        """Default model should be gpt-4o unless overridden."""
+    def test_llm_config_default_model_empty_then_autoresolved(self):
+        """Default model is empty unless overridden via LLM_MODEL; it is
+        auto-resolved from the provider catalog at use-time (not at config init)."""
         from bot.config import LLMConfig
         cfg = LLMConfig()
-        assert cfg.model == os.environ.get("LLM_MODEL", "gpt-4o")
+        assert cfg.model == os.environ.get("LLM_MODEL", "")
 
 
 class TestSolanaEcosystem:

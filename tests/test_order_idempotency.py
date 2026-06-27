@@ -84,7 +84,7 @@ async def test_orphan_detection_flags_untracked_positions(monkeypatch):
     monkeypatch.setattr(type(CONFIG), "is_live", lambda self: True)
 
     class _Fx:
-        async def fetch_positions(self):
+        async def fetch_positions(self, params=None):  # current code passes params=
             return [
                 {"symbol": "ETH/USDT:USDT", "contracts": 2.0},  # untracked -> orphan
                 {"symbol": "BTC/USDT:USDT", "contracts": 0},    # flat -> ignored
@@ -98,7 +98,8 @@ async def test_orphan_detection_flags_untracked_positions(monkeypatch):
     monkeypatch.setattr(ex, "_get_exchange", _get)
 
     report = await ex.detect_untracked_positions()
-    assert report["untracked"] == ["ETH/USDT"]
+    # normalize_symbol() returns the base ("ETH") for "ETH/USDT:USDT".
+    assert report["untracked"] == ["ETH"]
 
 
 def test_exchange_min_amount_and_notional_validation():

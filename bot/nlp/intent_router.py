@@ -251,7 +251,10 @@ def _extract_symbol(text: str) -> Optional[str]:
                 _SKIP = {"the", "at", "is", "in", "on", "up", "my", "me", "it",
                          "do", "to", "for", "what", "how", "and", "or", "not",
                          "this", "that", "with", "from", "into", "like", "want",
-                         "good", "bad", "now", "can", "will", "set", "get"}
+                         "good", "bad", "now", "can", "will", "set", "get",
+                         # generic market words that are not tickers
+                         "charts", "chart", "market", "markets", "price",
+                         "prices", "everything", "all", "stuff", "things"}
                 if word not in _SKIP and len(word) <= 10:
                     candidate = f"{word.upper()}/USDT"
                     return _validate_symbol(candidate)
@@ -361,12 +364,12 @@ _rule(r"\b(run (a )?backtest|backtest (it|this|btc|eth|sol|\w+/usdt)|replay|test
       "run_backtest", explanation="Backtest request")
 
 # --- Costs ---
-_rule(r"\b(show costs?|llm (cost|spending|budget)|api (cost|spending)|how much .{0,10}(cost|spend))\b",
+_rule(r"\b(show costs?|llm (cost|spending|budget)|api (cost|spending)|how much .{0,12}(cost|spending|spend))\b",
       "costs", explanation="Cost breakdown request")
 
 # --- Halt/emergency ---
 # Only match explicit halt/stop commands, not casual "stop"
-_rule(r"\b(halt (the )?bot|stop (the )?(bot|trading|engine)|emergency (stop|halt)|kill (the )?bot|pause (the )?(bot|trading))\b",
+_rule(r"\b(halt (the )?bot|stop (the )?(bot|trading|engine|everything|all)|emergency (stop|halt)|kill (the )?bot|pause (the )?(bot|trading))\b",
       "halt", explanation="Emergency halt request")
 
 # --- RUNECLAW playbook ---

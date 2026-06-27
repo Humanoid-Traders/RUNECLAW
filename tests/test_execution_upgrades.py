@@ -162,8 +162,9 @@ class TestTrailingStopEngine:
         idea = _make_idea(entry=50000, sl=49000, tp=53000, idea_id="TST-2")
         pt.open_position(idea, 5000)
 
-        # TP distance = 3000, 50% = 1500, so price needs to reach 51500
-        pt.mark_to_market({"BTCUSDT": 51600})
+        # Trailing is now driven by check_stops() (R-multiple staging); 1R=1000,
+        # so it activates once profit passes 51000.
+        pt.check_stops({"BTCUSDT": 51600})
         status = pt.get_trailing_status()
         assert status["TST-2"]["trailing_active"]
 
@@ -196,13 +197,12 @@ class TestTrailingStopEngine:
         idea = _make_idea(entry=50000, sl=49000, tp=53000, idea_id="TST-4")
         pt.open_position(idea, 5000)
 
-        # Set price high enough to activate
-        pt._last_prices["BTCUSDT"] = 52000
-        # Update with explicit ATR
-        pt.update_trailing_stops(atr_values={"BTCUSDT": 500})
+        # The dual update_trailing_stops(atr_values=...) engine was removed (C-02);
+        # the canonical engine seeds ATR at open_position and trails via check_stops.
+        pt.check_stops({"BTCUSDT": 52000})
 
         ts = pt._trailing_state["TST-4"]
-        assert ts["atr"] == 500
+        assert ts["atr"] > 0
         assert ts["trailing_active"]
 
     def test_trailing_short_position(self):
@@ -214,13 +214,14 @@ class TestTrailingStopEngine:
         )
         pt.open_position(idea, 5000)
 
-        # TP distance = 3000, 50% = 1500, price needs to drop to 48500
-        pt.mark_to_market({"BTCUSDT": 48400})
+        # 1R = 1000 → activates once price drops past 49000.
+        pt.check_stops({"BTCUSDT": 48400})
         status = pt.get_trailing_status()
         assert status["TST-5"]["trailing_active"]
-        pos = pt._positions["TST-5"]
-        # SL should have tightened (moved down from 51000)
-        assert pos.stop_loss < 51000
+        # The trailing-adjusted stop lives in get_trailing_status()['current_sl']
+        # (the canonical engine doesn't mutate pos.stop_loss directly). For a
+        # SHORT it should have tightened downward from the original 51000.
+        assert status["TST-5"]["current_sl"] < 51000
 
     def test_get_trailing_status_structure(self):
         """get_trailing_status returns correct keys."""

@@ -180,6 +180,9 @@ class TestRegimeAdjustedParams:
 
     def test_choppy_regime(self):
         engine = _make_engine()
+        # get_regime_adjusted_params is now pure (read-only); the current regime
+        # is tracked via set_regime (called by the scan/analyze pipeline).
+        engine.set_regime("CHOPPY", "NORMAL")
         params = engine.get_regime_adjusted_params("CHOPPY", "NORMAL")
         assert params["position_size_mult"] == 0.5
         assert params["cooldown_mult"] == 2.0
@@ -232,7 +235,8 @@ class TestRegimeAdjustedParams:
 
     def test_vol_state_stored(self):
         engine = _make_engine()
-        engine.get_regime_adjusted_params("CHOPPY", "HIGH")
+        # Volatility state is stored by set_regime, not the pure params getter.
+        engine.set_regime("CHOPPY", "HIGH")
         assert engine._current_vol_state == "HIGH"
 
 

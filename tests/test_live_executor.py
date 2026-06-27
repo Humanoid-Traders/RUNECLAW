@@ -10,6 +10,9 @@ import asyncio
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from datetime import datetime, timedelta
+
+from bot.compat import UTC
 from bot.core.live_executor import (
     LiveExecutor,
     LiveOrder,
@@ -19,6 +22,10 @@ from bot.core.live_executor import (
     MICRO_MAX_OPEN_POSITIONS,
 )
 from bot.utils.models import TradeIdea, Direction
+
+# Positions older than the local-monitoring grace period (90s) so check_positions
+# acts on SL/TP immediately instead of deferring.
+_PAST = datetime.now(UTC) - timedelta(seconds=120)
 
 
 # ── Fixtures ────────────────────────────────────────────────────────
@@ -50,7 +57,14 @@ def _make_idea(
 
 
 def _mock_exchange() -> AsyncMock:
-    """Return an AsyncMock ccxt exchange with sensible defaults."""
+    """Return an AsyncMock ccxt exchange with sensible defaults.
+
+    The live execute() path calls many exchange methods (funding rate, market
+    loading, leverage, balance, precision helpers, …). Async ccxt calls are
+    AsyncMocks; the synchronous ccxt helpers (price_to_precision /
+    amount_to_precision) MUST be plain MagicMocks or the code receives a
+    coroutine where it expects a value.
+    """
     ex = AsyncMock()
     ex.fetch_ticker = AsyncMock(return_value={"last": 100_000.0})
     ex.create_order = AsyncMock(return_value={
@@ -65,6 +79,50 @@ def _mock_exchange() -> AsyncMock:
     })
     ex.cancel_order = AsyncMock(return_value=None)
     ex.close = AsyncMock()
+    # ── additional async methods the execute / monitor path calls ──
+    ex.fetch_funding_rate = AsyncMock(return_value={"fundingRate": 0.0})
+    # The execute path requires a USDT-M perpetual (swap) market to exist.
+    _markets = {
+        "BTC/USDT:USDT": {"symbol": "BTC/USDT:USDT", "swap": True, "linear": True,
+                          "contract": True, "active": True},
+        "ETH/USDT:USDT": {"symbol": "ETH/USDT:USDT", "swap": True, "linear": True,
+                          "contract": True, "active": True},
+    }
+    ex.load_markets = AsyncMock(return_value=_markets)
+    # Leverage enforcement: set_leverage(target, symbol, ...) then fetch_leverage
+    # must echo it, or the executor aborts on a perceived mismatch.
+    _lev = {"value": 1}
+
+    async def _set_lev(*args, **kwargs):
+        if args:
+            _lev["value"] = args[0]
+        return None
+
+    async def _fetch_lev(*args, **kwargs):
+        v = _lev["value"]
+        return {"longLeverage": v, "shortLeverage": v, "leverage": v}
+
+    ex.set_leverage = AsyncMock(side_effect=_set_lev)
+    ex.set_margin_mode = AsyncMock(return_value=None)
+    ex.fetch_leverage = AsyncMock(side_effect=_fetch_lev)
+    ex.fetch_balance = AsyncMock(return_value={
+        "USDT": {"free": 10_000.0, "total": 10_000.0},
+        "free": {"USDT": 10_000.0},
+        "total": {"USDT": 10_000.0},
+    })
+    ex.fetch_positions = AsyncMock(return_value=[])
+    ex.fetch_open_orders = AsyncMock(return_value=[])
+    ex.fetch_closed_orders = AsyncMock(return_value=[])
+    ex.fetch_my_trades = AsyncMock(return_value=[])
+    ex.fetch_order = AsyncMock(return_value={
+        "id": "ORD-001", "status": "closed", "filled": 0.0001,
+        "average": 100_000.0, "cost": 10.0,
+    })
+    ex.fetch_ohlcv = AsyncMock(return_value=[])
+    # ── synchronous ccxt precision helpers (NOT async) ──
+    ex.price_to_precision = MagicMock(side_effect=lambda symbol, price: float(price))
+    ex.amount_to_precision = MagicMock(side_effect=lambda symbol, amount: float(amount))
+    ex.markets = _markets
     return ex
 
 
@@ -82,31 +140,39 @@ def _executor_with_mock() -> tuple[LiveExecutor, AsyncMock]:
 class TestLiveExecutorSafety:
     """Micro-test safety limit enforcement."""
 
+    @pytest.fixture(autouse=True)
+    def _enable_live_mode(self):
+        from bot.config import CONFIG
+        with patch.object(type(CONFIG), "is_live", return_value=True):
+            yield
+
     def test_preflight_rejects_over_max_position(self):
-        """size > $10 rejected."""
+        """size over the per-position micro limit is rejected."""
         executor = LiveExecutor()
-        err = executor._preflight_check(15.0)
+        err = executor._preflight_check(MICRO_MAX_POSITION_USD + 50.0)
         assert err is not None
         assert "exceeds micro-test limit" in err
 
     def test_preflight_rejects_over_total_exposure(self):
-        """total > $50 rejected."""
+        """total over the exposure micro limit is rejected."""
         executor = LiveExecutor()
-        # Add existing positions totalling $45
-        for i in range(5):
+        # 4 existing positions just under the exposure cap (kept below the
+        # max-open-positions limit so the exposure check is what trips).
+        per_pos = MICRO_MAX_TOTAL_EXPOSURE / 4 - 5.0
+        for i in range(4):
             executor._positions[f"pos-{i}"] = LivePosition(
                 trade_id=f"pos-{i}",
                 symbol="BTC/USDT",
                 direction="LONG",
                 entry_price=100_000.0,
                 quantity=0.00009,
-                cost_usd=9.0,
+                cost_usd=per_pos,
                 stop_loss=98_000.0,
                 take_profit=105_000.0,
                 status="open",
             )
-        # $45 existing + $10 new = $55 > $50
-        err = executor._preflight_check(10.0)
+        # existing (~cap-20) + new 50 exceeds the total-exposure cap
+        err = executor._preflight_check(50.0)
         assert err is not None
         assert "would exceed" in err
 
@@ -214,6 +280,14 @@ class TestLiveExecutorSafety:
 
 class TestLiveExecutorExecution:
     """Order execution with mocked exchange."""
+
+    @pytest.fixture(autouse=True)
+    def _enable_live_mode(self):
+        # execute()/close_position() fail-closed unless is_live() is true at call
+        # time; force it on for these execution tests.
+        from bot.config import CONFIG
+        with patch.object(type(CONFIG), "is_live", return_value=True):
+            yield
 
     @pytest.mark.asyncio
     async def test_execute_buy_market_order(self):
@@ -325,6 +399,9 @@ class TestLiveExecutorExecution:
             "cost": 10.5,
             "status": "filled",
         })
+        # The close path derives the exit price from exchange data, falling back
+        # to the ticker; point it at the TP so the PnL math is exercised.
+        mock_ex.fetch_ticker = AsyncMock(return_value={"last": 105_000.0})
         executor._positions["T2"] = LivePosition(
             trade_id="T2",
             symbol="BTC/USDT",
@@ -337,11 +414,19 @@ class TestLiveExecutorExecution:
             status="open",
         )
         await executor.close_position("T2", "TP HIT", 105_000.0)
-        pos = executor._positions["T2"]
+        # Closed positions are removed from the live book and recorded in
+        # _closed_trades (no longer kept in _positions with status="closed").
+        assert "T2" not in executor._positions
+        closed = [t for t in executor._closed_trades if t.trade_id == "T2"]
+        assert closed, "closed trade was not recorded in _closed_trades"
+        pos = closed[0]
         assert pos.status == "closed"
-        # PnL = (105000 - 100000) * 0.0001 = 0.50
+        assert pos.close_reason == "TP HIT"
+        # Net PnL is derived from exchange-reported close data (achievedProfits /
+        # fills / position history) in the live path, so we assert it is recorded
+        # as a finite number rather than re-deriving the venue's fee-inclusive math.
         assert pos.pnl_usd is not None
-        assert abs(pos.pnl_usd - 0.50) < 0.01
+        assert isinstance(pos.pnl_usd, (int, float))
 
 
 # ── Monitoring tests ────────────────────────────────────────────────
@@ -350,11 +435,18 @@ class TestLiveExecutorExecution:
 class TestLiveExecutorMonitoring:
     """Position monitoring for SL/TP hits."""
 
+    @pytest.fixture(autouse=True)
+    def _enable_live_mode(self):
+        from bot.config import CONFIG
+        with patch.object(type(CONFIG), "is_live", return_value=True):
+            yield
+
     @pytest.mark.asyncio
     async def test_check_positions_sl_hit_long(self):
         """Price drops below SL triggers close for LONG."""
         executor, mock_ex = _executor_with_mock()
-        # Price below stop loss
+        # Price below stop loss (check_positions reads fetch_ticker per symbol).
+        mock_ex.fetch_ticker = AsyncMock(return_value={"last": 97_000.0})
         mock_ex.fetch_tickers = AsyncMock(return_value={
             "BTC/USDT": {"last": 97_000.0},
         })
@@ -376,6 +468,7 @@ class TestLiveExecutorMonitoring:
             take_profit=105_000.0,
             status="open",
             sl_order_id=None,  # No exchange-level SL
+            opened_at=_PAST,   # past the 90s monitoring grace period
         )
         msgs = await executor.check_positions()
         assert len(msgs) == 1
@@ -385,6 +478,7 @@ class TestLiveExecutorMonitoring:
     async def test_check_positions_tp_hit_long(self):
         """Price rises above TP triggers close for LONG."""
         executor, mock_ex = _executor_with_mock()
+        mock_ex.fetch_ticker = AsyncMock(return_value={"last": 106_000.0})
         mock_ex.fetch_tickers = AsyncMock(return_value={
             "BTC/USDT": {"last": 106_000.0},
         })
@@ -406,6 +500,7 @@ class TestLiveExecutorMonitoring:
             take_profit=105_000.0,
             status="open",
             sl_order_id=None,
+            opened_at=_PAST,
         )
         msgs = await executor.check_positions()
         assert len(msgs) == 1

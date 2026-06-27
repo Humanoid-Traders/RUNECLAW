@@ -18,9 +18,26 @@ import logging
 import os
 import tempfile
 
+import pytest
+
 from bot.utils.models import Direction, PortfolioState, TradeIdea
 from bot.risk.portfolio import PortfolioTracker
 from bot.risk.risk_engine import RiskEngine, VarResult, VarStatus
+
+
+@pytest.fixture(autouse=True)
+def _propagate_audit_loggers():
+    """The audit loggers (bot/utils/logger.py) set propagate=False, so pytest's
+    caplog — which attaches at the root logger — cannot see their structured
+    records. Enable propagation for the duration of each test so the audit-event
+    assertions below can inspect record.action / .result / .data."""
+    names = ("runeclaw.risk", "runeclaw.trade", "runeclaw.system")
+    saved = {n: logging.getLogger(n).propagate for n in names}
+    for n in names:
+        logging.getLogger(n).propagate = True
+    yield
+    for n, v in saved.items():
+        logging.getLogger(n).propagate = v
 
 
 # ── Fixtures ─────────────────────────────────────────────────────

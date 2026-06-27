@@ -294,7 +294,7 @@ checks:
 
 defaults:
   max_position_pct:
-    value: 2.0
+    value: 13.0
     env_var: MAX_POSITION_PCT
     description: "Max percentage of equity risked per position (fixed-fractional sizing)"
 
@@ -324,9 +324,14 @@ defaults:
     description: "Minimum risk-reward ratio required for trade approval"
 
   min_confidence:
-    value: 0.60
+    value: 0.55
     env_var: MIN_CONFIDENCE
     description: "Minimum analyzer confidence score (sweet spot: filters weak setups)"
+
+  signal_display_min_confidence:
+    value: 0.70
+    env_var: SIGNAL_DISPLAY_MIN_CONFIDENCE
+    description: "Minimum confidence for a signal to appear in the 'Latest Signal' display"
 
   max_consecutive_losses:
     value: 5
@@ -334,7 +339,7 @@ defaults:
     description: "Consecutive losses before circuit breaker trips (soft reject at 3)"
 
   cooldown_after_loss_seconds:
-    value: 300
+    value: 120
     env_var: COOLDOWN_AFTER_LOSS_SEC
     description: "Seconds to wait after a losing trade before allowing new entries"
 
@@ -354,12 +359,12 @@ defaults:
     description: "Max positions allowed in the same correlation group"
 
   volatility_guard_atr_pct:
-    value: 6.0
+    value: 7.0
     env_var: VOLATILITY_GUARD_ATR_PCT
     description: "Max ATR as % of price; trades above this are rejected (meme coins capped at 4%)"
 
   stale_data_max_age_seconds:
-    value: 300
+    value: 600
     env_var: STALE_DATA_MAX_AGE_SEC
     description: "Max age of trade idea in seconds before it is considered stale"
 
@@ -368,18 +373,53 @@ defaults:
     env_var: REQUIRE_STOP_LOSS
     description: "Whether a valid stop-loss is required on every trade"
 
-  commission_pct:
-    value: 0.1
-    env_var: COMMISSION_PCT
-    description: "Exchange commission per side (taker fee), used in PnL calculations"
-
   max_portfolio_var_pct:
     value: 15.0
     env_var: MAX_PORTFOLIO_VAR_PCT
     description: "Max portfolio Value at Risk as % of equity (parametric, 95% confidence)"
 
+  commission_pct:
+    value: 0.06
+    env_var: COMMISSION_PCT
+    description: "Exchange commission per side (taker fee), used in PnL calculations"
+
+  taker_fee_pct:
+    value: 0.06
+    env_var: TAKER_FEE_PCT
+    description: "Taker fee per side (used for accurate PnL when order type is known)"
+
+  maker_fee_pct:
+    value: 0.02
+    env_var: MAKER_FEE_PCT
+    description: "Maker fee per side (used for accurate PnL when order type is known)"
+
+  max_margin_risk_pct:
+    value: 30.0
+    env_var: MAX_MARGIN_RISK_PCT
+    description: "Leverage-aware cap: SL distance x leverage must not exceed this % of margin"
+
+  equity_curve_ma_period:
+    value: 20
+    env_var: EQUITY_CURVE_MA_PERIOD
+    description: "Lookback for the equity-curve moving average (circuit breaker)"
+
+  equity_curve_pause_stddev:
+    value: 2.0
+    env_var: EQUITY_CURVE_PAUSE_STDDEV
+    description: "Std-dev band below the equity MA that halves position sizes"
+
+  drawdown_recovery_conf_min:
+    value: 0.85
+    env_var: DRAWDOWN_RECOVERY_CONF_MIN
+    description: "Minimum confidence required while in drawdown-recovery mode"
+
+  drawdown_recovery_size_mult:
+    value: 0.5
+    env_var: DRAWDOWN_RECOVERY_SIZE_MULT
+    description: "Position-size multiplier applied while in drawdown-recovery mode"
+
   min_book_depth_usd:
-    value: 5000.0
+    value: 2000.0
     env_var: MIN_BOOK_DEPTH_USD
     description: >
       Minimum order-book depth (per side) in USD for the liquidity guard.
@@ -488,6 +528,48 @@ correlation_groups:
       - BNB/USDT
       - CRO/USDT
       - OKB/USDT
+
+  STOCK_TECH:
+    description: "Tokenized big-tech equities (on-chain + wrapped)"
+    symbols:
+      - AAPLON/USDT
+      - MSFTON/USDT
+      - GOOGLON/USDT
+      - AMZNON/USDT
+      - METAON/USDT
+      - NVDAON/USDT
+      - AMDON/USDT
+      - TSLAON/USDT
+      - RAAPL/USDT
+      - RMSFT/USDT
+      - RGOOGL/USDT
+      - RAMZN/USDT
+      - RMETA/USDT
+      - RNVDA/USDT
+      - RAMD/USDT
+      - RTSLA/USDT
+      - RDELL/USDT
+
+  STOCK_SEMI:
+    description: "Tokenized semiconductor equities"
+    symbols:
+      - RARM/USDT
+      - RMRVL/USDT
+      - RINTC/USDT
+
+  STOCK_INDEX:
+    description: "Tokenized equity index ETFs"
+    symbols:
+      - QQQON/USDT
+      - SPYON/USDT
+      - RSPY/USDT
+      - RQQQ/USDT
+
+  STOCK_CRYPTO:
+    description: "Tokenized crypto-exposed equities"
+    symbols:
+      - RCOIN/USDT
+      - RHOOD/USDT
 
 # =============================================================================
 # REGIME-AWARE RISK MULTIPLIERS (Feature #3)

@@ -154,7 +154,8 @@ class TestIntentRouterAsync:
         async def mock_llm(prompt):
             return "scan_market"
 
-        result = await self.router.classify("yo what coins are popping", llm_fn=mock_llm)
+        # Message reaches the LLM fallback (no rule match, not greeting/social).
+        result = await self.router.classify("what coins are popping", llm_fn=mock_llm)
         assert result.skill == "scan_market"
         assert result.source == "llm"
         assert result.confidence == 0.7
@@ -309,7 +310,9 @@ class TestProactiveMonitor:
             alert_type="TEST", severity="INFO",
             title="Test", body="test")
         self.monitor._mark_sent(alert)
-        assert len(self.monitor._alerted_signals) == 0  # cleared at 500+
+        # Pruning now evicts the oldest ~250 entries when the set exceeds 500
+        # (keeps recent ones) instead of clearing the whole set.
+        assert 0 < len(self.monitor._alerted_signals) < 510
 
     def test_stop(self):
         self.monitor._running = True
