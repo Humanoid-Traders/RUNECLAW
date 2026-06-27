@@ -475,8 +475,14 @@ class ProactiveMonitor:
         if not self._enabled_chats:
             return False
         if alert.dedup_key:
-            last_sent = self._dedup_cache.get(alert.dedup_key, 0)
-            if time.monotonic() - last_sent < self.DEDUP_COOLDOWN:
+            # Roadmap P0-1: the sentinel must be None, not 0. time.monotonic()'s
+            # epoch is arbitrary (process uptime, often < DEDUP_COOLDOWN seconds),
+            # so a 0 sentinel made `monotonic() - 0 < COOLDOWN` true on a fresh
+            # process — silently suppressing the FIRST alert for any key during
+            # the first ~5 minutes of uptime, exactly when a freshly-deployed bot
+            # is most fragile (circuit-breaker trips, SL proximity).
+            last_sent = self._dedup_cache.get(alert.dedup_key)
+            if last_sent is not None and time.monotonic() - last_sent < self.DEDUP_COOLDOWN:
                 return False
         return True
 

@@ -2,10 +2,8 @@
 # (scripts/ci_test_gate.py). NEW failures outside this list fail CI. Regenerate
 # with: python scripts/ci_test_gate.py --update
 #
-# Down from 42 to a single flaky timing test after the drift-reconciliation
-# sweep. test_confirm_trade_success was rewritten for the LIVE-ONLY path and
-# test_all_28_scenarios_pass now derives its thresholds from live CONFIG, so
-# both pass and were removed from this baseline. Remaining:
-#  - test_dedup_prevents_repeat: flaky (time-based ProactiveMonitor dedup).
-
-tests/test_intent_and_monitor.py::TestProactiveMonitor::test_dedup_prevents_repeat
+# Baseline is now EMPTY. The last entry, test_dedup_prevents_repeat, was not
+# actually flaky — it masked a real bug (the dedup sentinel was 0 vs
+# time.monotonic()'s arbitrary epoch, suppressing the first alert for ~5 min
+# after startup). Fixed in proactive_monitor._should_send (roadmap P0-1), so the
+# test passes deterministically and was removed from the baseline.
