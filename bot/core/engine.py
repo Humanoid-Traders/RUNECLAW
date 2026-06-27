@@ -1688,14 +1688,24 @@ class RuneClawEngine:
                       data={"requested": round(size_usd, 2), "available": round(available, 2)})
                 size_usd = available
 
-        # Manual margin override: if user specified a fixed margin via /trade command,
-        # use margin * leverage as the notional position size.
+        # Manual margin override: if user specified a fixed margin via /trade command.
+        # Audit V7 follow-up (double-leverage fix): size_usd is MARGIN everywhere —
+        # the live executor multiplies it by leverage to get notional
+        # (quantity = size_usd * leverage / price). The old code pre-multiplied
+        # here (size_usd = margin * leverage) and the executor multiplied AGAIN,
+        # placing margin * leverage**2 notional (e.g. /trade margin 250 at 5x put
+        # on $6,250 instead of $1,250). Pass the margin itself so manual trades
+        # match the auto path and the user's stated margin.
         if hasattr(self, '_manual_margin_override') and idea.id in self._manual_margin_override:
             manual_margin = self._manual_margin_override.pop(idea.id)
             leverage = CONFIG.exchange.default_leverage
-            size_usd = manual_margin * leverage  # margin * leverage = notional
-            audit(system_log, f"Manual margin override: ${manual_margin} x {leverage}x = ${size_usd:.2f} notional",
-                  action="manual_margin_override", result="APPLIED")
+            size_usd = manual_margin  # margin; executor applies leverage for notional
+            audit(system_log,
+                  f"Manual margin override: ${manual_margin:.2f} margin "
+                  f"(≈${manual_margin * leverage:.2f} notional at {leverage}x)",
+                  action="manual_margin_override", result="APPLIED",
+                  data={"margin": round(manual_margin, 2), "leverage": leverage,
+                        "approx_notional": round(manual_margin * leverage, 2)})
 
         # C2-53 FIX: Reject trade when ATR is missing or zero.
         # A zero ATR produces SL at entry price = immediate stop-out.

@@ -7,6 +7,22 @@ Design: if a check cannot be evaluated, the trade is REJECTED (fail-closed).
 Note: Check #17 (liquidity guard) lives in engine.py via OrderFlowAnalyzer,
 not in this module.  It is fail-open (no data = pass) by design.
 
+Units (audit V7, F-3) — IMPORTANT:
+  * ``position_size_usd`` produced here is the engine's sizing figure. Internally
+    this module's checks model it as the position's *notional* value (the
+    fixed-fractional formula risk_budget / stop_distance yields a notional, and
+    exposure checks #14/#15 divide by leverage to compare margin-to-margin).
+  * The LIVE executor, however, commits ``size_usd`` as MARGIN and multiplies by
+    leverage to derive the exchange notional (notional = margin * leverage).
+  * In LIVE micro-test mode the ``MICRO_MAX_POSITION_USD`` cap binds and keeps
+    the resulting position sane regardless of this notional-vs-margin framing,
+    and the executor enforces a hard notional ceiling (margin * max_leverage) as
+    a backstop. Every evaluation now logs ``leverage`` and ``approx_notional_usd``
+    so the relationship is explicit in the audit trail. Reconciling the two
+    models into a single unit outside micro mode is a risk-posture decision
+    (it changes live position size by ~leverage) and is intentionally left to
+    the operator rather than silently changed here.
+
 Checks:
   1.  Circuit breaker status
   2.  Position size limit (fixed-fractional, capped at 20% notional)
@@ -1045,9 +1061,19 @@ class RiskEngine:
             timestamp=datetime.now(UTC),
         )
 
+        # Audit V7 follow-up: make the margin/notional/leverage relationship
+        # explicit in every evaluation. position_size_usd is the engine's sizing
+        # figure; the live executor commits it as MARGIN and applies leverage, so
+        # the real exchange notional is position_size_usd * leverage. The micro
+        # caps and the executor's hard notional ceiling are the binding live
+        # safeguards. This is visibility only — it changes no pass/fail logic.
+        _lev = getattr(CONFIG.exchange, "default_leverage", 1) or 1
+        _audit_data = check.model_dump(mode="json")
+        _audit_data["leverage"] = _lev
+        _audit_data["approx_notional_usd"] = round(position_usd * _lev, 2)
         audit(risk_log, f"Risk {verdict.value} for {idea.asset} [{len(passed)}P/{len(failed)}F]",
               action="risk_check", result=verdict.value,
-              data=check.model_dump(mode="json"))
+              data=_audit_data)
         return check
 
     # ── Feature #1: Adaptive Position Sizing (Kelly Criterion) ────────
