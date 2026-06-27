@@ -161,6 +161,12 @@ class RiskLimits:
     max_portfolio_exposure_pct: float = _env_float_bounded("MAX_PORTFOLIO_EXPOSURE_PCT", 80.0, 0.0, 1000.0)
     max_symbol_exposure_pct: float = _env_float_bounded("MAX_SYMBOL_EXPOSURE_PCT", 20.0, 0.0, 1000.0)
     max_correlation_per_group: int = int(_env_float("MAX_CORRELATION_PER_GROUP", 2))
+    # Symbols not in the known correlation map were each treated as their OWN
+    # group, so a basket of unmapped alts could collectively dodge the per-group
+    # cap (the live report's many-correlated-alts exposure). They are now pooled
+    # into ONE shared "unmapped alt" bucket with its own, more generous cap
+    # (unmapped symbols aren't all mutually correlated). Set high to disable.
+    max_unmapped_correlated: int = int(_env_float_bounded("MAX_UNMAPPED_CORRELATED", 3, 1, 100))
     # Volatility guard: reject trades when ATR exceeds this % of price.
     # BTC hourly ATR is typically 1-4%; 7% allows for elevated-vol periods
     # while blocking extreme conditions.

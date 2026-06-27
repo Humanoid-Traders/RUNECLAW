@@ -358,6 +358,11 @@ defaults:
     env_var: MAX_CORRELATION_PER_GROUP
     description: "Max positions allowed in the same correlation group"
 
+  max_unmapped_correlated:
+    value: 3
+    env_var: MAX_UNMAPPED_CORRELATED
+    description: "Max concurrent positions in the shared unmapped-alt bucket (symbols not in the correlation map). Set high to disable."
+
   volatility_guard_atr_pct:
     value: 7.0
     env_var: VOLATILITY_GUARD_ATR_PCT
@@ -431,7 +436,9 @@ defaults:
 # CORRELATION GROUPS
 # =============================================================================
 # Assets in the same group are subject to max_correlation_per_group limit.
-# Assets NOT in this map are treated as their own group (group = symbol).
+# Assets NOT in this map are pooled into one shared "unmapped alt" bucket
+# subject to max_unmapped_correlated (so a basket of alts cannot each be its
+# own group and collectively dodge the cap).
 
 correlation_groups:
   BTC:
