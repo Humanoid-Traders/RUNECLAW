@@ -4,48 +4,51 @@
 **Harness:** `run_deep_backtest_full.py`
 **Scope:** the entire 67-symbol scan universe (`bot/skills/scan_skill.py`) ×
 5 market regimes × 5 seeds = **1,675 runs**, 1,500 1H bars each (~62 days/run).
-**Runtime:** 2,070 s across 3 worker processes (1.24 s/run), per-bar audit logging
-suppressed for speed.
+**Runtime:** ~2,080 s across 3 worker processes, per-bar audit logging suppressed.
 
-> **Read with caveats.** The backtest runs on *synthetic* data, and two documented
-> validity bugs still apply (see `docs/AUDIT_REPORT_V6.1.md`): **BT-H1** — the
-> commission knob is non-functional (charges 0.06%, not the reported 0.1%), and
-> **BT-H2** — session sizing uses wall-clock time, so runs are not bit-reproducible.
-> These results demonstrate that the pipeline runs end-to-end and the risk gates
-> fire across the whole universe — **not** live trading edge.
+> **Now reproducible and accurately costed.** This run uses the BT-H1 and BT-H2
+> fixes (`docs/AUDIT_REPORT_V6.1.md`): the backtest charges the commission it
+> reports (0.10% taker/side, previously a silently-ignored 0.06%), and session
+> adjustments use the simulated bar time rather than the wall clock — so the same
+> seed now yields identical results regardless of when it is launched. Numbers
+> here differ from the first (pre-fix) run, which had been launched during a
+> low-liquidity "session" that uniformly penalised every bar; that artifact is
+> gone. Results still run on *synthetic* data and are **not** evidence of live
+> edge — they show the pipeline runs and the risk gates fire across the universe.
 
 ## Headline
 
 | Metric | Value |
 |--------|-------|
 | Valid runs | **1,675 / 1,675 (0 errors)** |
-| Total trades | 4,727 |
-| Profitable runs | 786 / 1,675 (46.9%) |
-| Symbols with >0 avg return | 55 / 67 (median per-symbol +0.66%) |
-| Avg return | **+1.13%** (best +18.20%, worst −1.58%) |
-| Avg max drawdown | 0.61% (worst 2.39%) |
+| Total trades | 6,905 |
+| Profitable runs | 987 / 1,675 (58.9%) |
+| Symbols with >0 avg return | 59 / 67 (median per-symbol +1.64%) |
+| Avg return | **+2.20%** (best +32.72%, worst −1.64%) |
+| Avg max drawdown | 0.82% (worst 2.78%) |
 | Crashed runs (DD>20%) | **0** |
-| Avg win rate | 42.1% |
-| Avg Sharpe / Sortino | +0.35 / +0.83 |
-| Avg profit factor | 142.6 *(metric artifact — see below)* |
+| Avg win rate | 50.1% |
+| Avg Sharpe / Sortino | +1.21 / +1.06 |
+| Avg profit factor | 127.0 *(metric artifact — see below)* |
+| Total commission (0.10%) | $18,239 |
 
-**Zero errors across all 67 symbols** validates the BT-CRASH-1/2 fixes at scale —
-the memecoins/low-priced assets (BONK, PEPE, PUMP, FARTCOIN, …) that previously
-crashed the 20-symbol run now degrade gracefully.
+**Zero errors across all 67 symbols** confirms the BT-CRASH-1/2 fixes hold at
+scale; **same-seed determinism** is enforced by `tests/test_backtest_validity.py`
+(proven independent of the wall-clock hour).
 
 ## By regime
 
 | Regime | Runs | Avg Ret% | Avg DD% | WR% | Sharpe | PF |
 |--------|-----:|---------:|--------:|----:|-------:|----:|
-| Bull Trend | 335 | +1.20 | 0.70 | 47.1 | +0.31 | 157.1 |
-| Bear Trend | 335 | +1.54 | 0.79 | 50.5 | +0.54 | 122.1 |
-| Range/Chop | 335 | +1.22 | 0.71 | 50.7 | +0.36 | 157.1 |
-| High Volatility | 335 | +0.31 | 0.21 | 18.4 | −0.12 | 113.8 |
-| Crash Recovery | 335 | +1.37 | 0.63 | 43.6 | +0.66 | 162.8 |
+| Bull Trend | 335 | +2.30 | 0.91 | 52.5 | +1.20 | 128.3 |
+| Bear Trend | 335 | +2.88 | 0.98 | 57.2 | +1.68 | 93.4 |
+| Range/Chop | 335 | +2.75 | 0.95 | 59.1 | +1.65 | 128.9 |
+| High Volatility | 335 | +0.64 | 0.37 | 24.2 | +0.07 | 147.0 |
+| Crash Recovery | 335 | +2.42 | 0.87 | 57.6 | +1.46 | 137.2 |
 
-**High Volatility is the clear weak spot** (18% win rate, negative Sharpe) — the
-strategy struggles when noise dominates, which is the expected and honest result.
-It performs best in Bear/Range/Crash-Recovery.
+**High Volatility remains the clear weak spot** (24% win rate, ~flat Sharpe) — the
+strategy struggles when noise dominates, the expected honest result. It performs
+best in Bear/Range/Crash-Recovery.
 
 ## Where it trades vs. abstains
 
@@ -53,45 +56,41 @@ The most informative finding is *selectivity*: the engine concentrates trading i
 liquid majors and **largely abstains on illiquid/obscure assets** — good risk
 discipline, not a bug.
 
-**Top 8 by avg return** (high trade counts, healthy win rates):
+**Top 6 by avg return** (high trade counts, healthy win rates):
 
 | Symbol | Avg Ret% | WR% | Trades | Sharpe |
 |--------|---------:|----:|-------:|-------:|
-| ADA/USDT | +3.65 | 66.9 | 170 | +2.61 |
-| DOGE/USDT | +3.59 | 59.3 | 162 | +1.73 |
-| AAVE/USDT | +3.11 | 73.7 | 157 | +2.19 |
-| LINK/USDT | +2.88 | 62.3 | 150 | +1.66 |
-| ATOM/USDT | +2.82 | 70.5 | 157 | +1.78 |
-| LTC/USDT | +2.82 | 71.4 | 167 | +1.70 |
-| BNB/USDT | +2.80 | 73.3 | 168 | +1.75 |
-| DASH/USDT | +2.78 | 61.9 | 144 | +1.68 |
+| ADA/USDT | +6.91 | 65.6 | 241 | +3.85 |
+| AAVE/USDT | +5.23 | 74.6 | 205 | +3.35 |
+| XRP/USDT | +5.16 | 79.1 | 213 | +3.57 |
+| LINK/USDT | +4.98 | 70.1 | 201 | +3.14 |
+| ETC/USDT | +4.89 | 68.1 | 204 | +2.68 |
+| BTC/USDT | +4.88 | 76.9 | 215 | +3.20 |
 
-**Bottom 8 by avg return** (note the tiny trade counts — near-total abstention,
-returns are just commission drag from a handful of trades):
+**Bottom 6 by avg return** (tiny trade counts — near-total abstention; returns are
+just commission drag from a handful of trades over 25 runs):
 
 | Symbol | Avg Ret% | WR% | Trades (25 runs) | Sharpe |
 |--------|---------:|----:|-----------------:|-------:|
-| B/USDT | −0.02 | 10.0 | 10 | −0.54 |
-| CHIP/USDT | −0.02 | 8.0 | 5 | −0.26 |
-| SEI/USDT | −0.03 | 20.0 | 19 | −1.04 |
-| JUP/USDT | −0.04 | 30.7 | 21 | −1.10 |
-| SKYAI/USDT | −0.05 | 8.0 | 8 | −0.39 |
-| SIREN/USDT | −0.05 | 8.0 | 6 | −0.39 |
-| RAVE/USDT | −0.05 | 4.0 | 6 | −0.44 |
-| XPL/USDT | −0.09 | 4.0 | 4 | −0.44 |
+| SIREN/USDT | −0.06 | 16.7 | 14 | −0.44 |
+| RAVE/USDT | −0.06 | 16.7 | 14 | −0.44 |
+| M/USDT | −0.06 | 20.7 | 19 | −0.80 |
+| B/USDT | −0.06 | 20.7 | 19 | −0.80 |
+| XPL/USDT | −0.07 | 10.0 | 12 | −0.72 |
+| PENGU/USDT | −0.09 | 18.7 | 19 | −0.63 |
 
-The bottom symbols average well under 1 trade per run — the confidence threshold,
+The bottom symbols average under 1 trade per run — the confidence threshold,
 regime filter, and per-symbol cooldown keep the engine out of thin/noisy markets.
 
 ## On the profit factor
 
-The reported **avg profit factor of 142.6 is a metric artifact, not edge.** It is
+The reported **avg profit factor of 127 is a metric artifact, not edge.** It is
 the *mean of per-run profit factors*, and runs with very few trades and zero
-losers produce an enormous (effectively unbounded) PF that dominates the mean.
-This is the same class of issue as the V6.1 metric notes (`ddof=0` Sharpe,
-un-annualized Calmar). A median PF or a pooled gross-profit / gross-loss across all
-trades would be the honest aggregate. Treat the per-regime PF column as
-directional only.
+losers produce an enormous (effectively unbounded) PF that dominates the mean. A
+median PF, or a pooled gross-profit / gross-loss across all trades, would be the
+honest aggregate. Treat the per-regime PF column as directional only. (This is the
+same class of issue as the remaining V6.1 metric notes: `ddof=0` Sharpe,
+un-annualized Calmar, breakeven-as-loss — all still documented, not yet fixed.)
 
 ## Reproducing
 
@@ -99,5 +98,24 @@ directional only.
 python3 run_deep_backtest_full.py   # writes backtest_deep_full_results.json (gitignored)
 ```
 
-The raw 1.6 MB results JSON is intentionally not committed (regenerable and
-non-reproducible per BT-H2). This summary is the durable record.
+With the BT-H2 fix, a given seed produces identical results on every run. The raw
+1.6 MB results JSON is intentionally not committed (regenerable); this summary is
+the durable record.
+
+## Pre-fix vs post-fix (why the numbers moved)
+
+| Metric | Pre-fix run | Post-fix run |
+|--------|------------:|-------------:|
+| Avg return | +1.13% | +2.20% |
+| Avg win rate | 42.1% | 50.1% |
+| Avg Sharpe | +0.35 | +1.21 |
+| Total trades | 4,727 | 6,905 |
+| Commission | $6,557 (0.06%) | $18,239 (0.10%) |
+| Reproducible | no (wall-clock) | **yes** |
+
+The pre-fix run was launched during a low-liquidity session window, so the
+wall-clock session penalty (size ×0.75, confidence −0.03) was applied uniformly to
+every bar, suppressing trades and confidence. The post-fix run lets each simulated
+bar carry its own session, so the effect averages out — more trades clear the
+confidence gate, and the higher (honest) commission is more than offset. The
+post-fix numbers are the reproducible reference.
