@@ -44,7 +44,7 @@ from bot.llm.provider import BYOK, LLMConfig, LLMProvider, LLMTier, PROVIDER_CAT
 from bot.skills.skill_registry import SkillRegistry, build_default_registry
 from bot.skills.scan_skill import cmd_scan as _scan_skill_handler, callback_confirm_reject as _scan_callback
 from bot.skills.user_middleware import cmd_link as _cmd_link, cmd_unlink as _cmd_unlink, cmd_me as _cmd_me, cmd_sync as _cmd_sync
-from bot.utils.logger import audit, system_log
+from bot.utils.logger import audit, system_log, _redact_string
 from bot.utils.user_store import UserStore
 from bot.utils.i18n import t, get_user_lang, set_user_lang, SUPPORTED_LANGS
 from bot.nlp.intent_router import IntentRouter
@@ -303,6 +303,16 @@ class TelegramHandler:
 
     async def _send(self, update: Update, text: str,
                     reply_markup=None, edit: bool = False) -> None:
+        # Audit F-15: scrub secrets from every outgoing message. Many handlers
+        # interpolate raw str(exc) into replies; the logger redacts its own
+        # output but the Telegram send path did not, so a credential-bearing
+        # ccxt/auth error could reach the chat unredacted. This is the single
+        # chokepoint for all outbound text.
+        if text:
+            try:
+                text = _redact_string(text)
+            except Exception:
+                pass
         # Determine the right send method based on context
         if edit and update.callback_query:
             method = update.callback_query.edit_message_text

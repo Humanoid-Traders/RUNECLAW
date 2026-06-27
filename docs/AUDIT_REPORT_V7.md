@@ -162,3 +162,34 @@ Fail-closed by default (threshold `1.0`, flags off) → HIGH not CRITICAL. **Fix
 7. **F-9 / F-10** (executor robustness) and **F-15** (LOW hygiene) — schedule.
 
 Each fix should land with a regression test and pass the CI baseline gate.
+
+---
+
+## Remediation status (implemented on `claude/audit-v7-remediation`)
+
+All findings were addressed. Each fix landed with regression tests
+(`tests/test_audit_v7_fixes.py`, 31 tests) and the CI baseline gate stays green.
+
+| # | Finding | What changed | Type |
+|---|---------|--------------|------|
+| F-1 | Phantom-fill recording | Single `execution_indicates_failure()` classifier in live_executor (token match, emoji-safe); engine uses it. | Fixed |
+| F-2 | Open self-registration | Hard `TELEGRAM_CHAT_ID`/`ADMIN_TELEGRAM_IDS` allowlist gate in `_guard` + `_check_auth`; open only when unconfigured. | Fixed |
+| F-3 | Notional vs margin | **Reframed:** the %-caps are margin-based, so the reported 5× is a labeling defect, not oversizing. Added a hard executor notional ceiling + explicit audit; clarified the check comment. Full cap re-tuning left as a decision (below). | Mitigated + flagged |
+| F-4 | Grace-window exposure | Grace skip now applies only when an exchange stop exists; unprotected positions are monitored locally immediately. | Fixed |
+| F-5 | `CONFIG.exchange.leverage` typo | → `default_leverage`. | Fixed |
+| F-6 | NaN/inf prices | Rejected at `TradeIdea` construction + defensively in risk checks #10/#11. | Fixed |
+| F-7 | Future-dated timestamp | Stale-data guard rejects negative age beyond a 30 s skew tolerance. | Fixed |
+| F-8 | Self-minted Lock 5 | Token minted only for a real human, or a non-human caller under explicit `AUTO_CONFIRM_LIVE_ENABLED`; else fails closed. | Fixed |
+| F-9 | v3 SL/TP sentinel id | Missing order id → failure (no `"v3-strategy"` placeholder). | Fixed |
+| F-10 | POST_ONLY dedup race | Re-verify the original isn't resting (after a settle) before resubmitting with a fresh clientOid. | Fixed |
+| F-11 | Destructive callbacks | Role-permission gate on pause / emergency-stop / safe-mode / mode callbacks. | Fixed |
+| F-12 | `/trade`, `/setllm` authz | `/trade` routes through `_guard("trade")`; `/setllm`+`/llmreset` admin-only. | Fixed |
+| F-13 | Critique fail-open | Critique exception fails **closed** (rejects) in LIVE mode. | Fixed |
+| F-14 | Sim-veto ordering | SIMULATION veto moved above the EXECUTING transition + pyramid exchange mutation. | Fixed |
+| F-15 | Hygiene | Central secret redaction in `_send`; bounded consent ledger (`deque(maxlen)`); red-team NaN/future-ts scenarios; "23-check" docstring. | Fixed |
+
+### Open decisions / follow-ups (not changed in code)
+
+1. **F-3 cap semantics.** The risk engine's `max_position_pct` / `max_symbol_exposure_pct` currently bound **margin** (≤ ~13–20 % of equity), giving ~65–100 % notional at 5×. If you want the caps to bound **notional** instead, the cap values need re-tuning (e.g. 20 % notional ⇒ 4 % margin at 5×) — a risk-posture choice, not a mechanical change. The new executor notional ceiling already blocks gross misconfiguration in the meantime.
+2. **Manual-margin double-leverage (new observation).** `engine.confirm_trade` sets `size_usd = manual_margin * leverage` (a notional), then the executor multiplies by leverage again (`quantity = size_usd * leverage / price`) — so a `/trade … margin 250` appears to place `250 × leverage²` notional. This wasn't in the original four-agent sweep; it needs confirmation of intent before changing, since it touches the manual-trade UX. Flagged here for a decision.
+3. **Tracked runtime log.** `logs/audit_chain.jsonl` is force-tracked in `.gitignore` and rewritten by every run/test, causing churn. Left tracked to avoid breaking a possible genesis-chain assumption; recommend untracking it and seeding an empty chain at runtime, or redirecting the log dir under test.

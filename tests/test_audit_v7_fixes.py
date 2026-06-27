@@ -369,3 +369,52 @@ class TestNotionalBoundary:
         bugged_notional = margin * leverage * leverage  # double-applied
         ceiling = max(margin, MICRO_MAX_POSITION_USD) * max_lev * 1.05
         assert bugged_notional > ceiling
+
+
+# ── F-15: hygiene (redaction + bounded ledger) ───────────────────────
+
+class TestHygiene:
+    @pytest.mark.asyncio
+    async def test_send_redacts_secrets(self):
+        handler = _make_handler()
+        update, _ = _make_update()
+        # A realistic ccxt/auth error string that carries a labeled secret.
+        secret = "ABCDEF1234567890abcdef1234567890SECRETKEY"
+        await handler._send(update, f"Auth failed: api_key={secret} rejected")
+        sent = []
+        for call in update.message.reply_text.call_args_list:
+            sent.append(call[0][0] if call[0] else call.kwargs.get("text", ""))
+        joined = " ".join(sent)
+        assert secret not in joined, "raw secret leaked to chat"
+        assert "REDACTED" in joined
+
+    def test_consent_ledger_is_bounded(self):
+        from bot.compliance.compliance_engine import ComplianceEngine
+        eng = ComplianceEngine()
+        # The ledger is a bounded ring buffer; pushing past its cap must not grow
+        # unbounded.
+        from collections import deque
+        assert isinstance(eng._consent_ledger, deque)
+        assert eng._consent_ledger.maxlen is not None
+        for i in range(eng._consent_ledger.maxlen + 100):
+            eng._consent_ledger.append(i)
+        assert len(eng._consent_ledger) == eng._consent_ledger.maxlen
+
+
+class TestRedTeamCoverage:
+    def test_malformed_input_scenarios_present_and_pass(self):
+        from bot.core.red_team import RedTeamEngine
+        from bot.risk.risk_engine import RiskEngine
+        from bot.risk.portfolio import PortfolioTracker
+        import os, tempfile
+        eng = RiskEngine(PortfolioTracker(initial_balance=10_000.0),
+                         state_file=os.path.join(tempfile.mkdtemp(), "s.json"))
+        rt = RedTeamEngine(eng, PortfolioTracker(initial_balance=10_000.0))
+        report = rt.run_stress_test()
+        names = {s.name for s in report.scenarios}
+        assert "nan_entry_price" in names
+        assert "future_dated_timestamp" in names
+        # Both must be handled (rejected) — they were fail-open before V7.
+        for s in report.scenarios:
+            if s.name in ("nan_entry_price", "future_dated_timestamp"):
+                assert s.passed, f"{s.name} not handled: {s.actual_verdict}"

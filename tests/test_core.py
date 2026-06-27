@@ -3957,14 +3957,22 @@ class TestRedTeam:
     def test_full_stress_test_runs(self):
         rt, _, _ = self._make_engine()
         report = rt.run_stress_test()
-        assert report.total_scenarios == 28
+        # V7 added malformed-input scenarios, so the count is no longer a fixed
+        # 28. Assert a sane lower bound and internal consistency instead.
+        assert report.total_scenarios >= 28
         assert report.passed + report.failed == report.total_scenarios
 
-    def test_all_28_scenarios_pass(self):
+    def test_all_scenarios_pass(self):
+        # Count-agnostic: every adversarial scenario must be handled correctly.
+        # (V7 added malformed-input scenarios — NaN price, future timestamp — so
+        # the total is no longer a fixed 28; assert all pass instead of a magic
+        # number that drifts whenever a scenario is added.)
         rt, _, _ = self._make_engine()
         report = rt.run_stress_test()
         failed = [s.name for s in report.scenarios if not s.passed]
-        assert report.passed == 28, f"Expected 28/28, failures: {failed}"
+        assert report.passed == report.total_scenarios, (
+            f"Expected {report.total_scenarios}/{report.total_scenarios}, "
+            f"failures: {failed}")
 
     def test_flash_crash_detected(self):
         rt, _, _ = self._make_engine()
