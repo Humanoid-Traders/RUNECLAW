@@ -1606,6 +1606,14 @@ class Analyzer:
         """
         votes: list[float] = []
         weights: list[float] = []
+        # Indices (into votes/weights) of the mean-reversion OSCILLATOR family:
+        # RSI, Bollinger %B, Stochastic, Fibonacci. They all read "price is
+        # low/high in its recent range", so they co-fire and over-count one
+        # signal. CONFIG.confluence can cap their combined weight (see below).
+        mr_osc_idx: list[int] = []
+
+        def _mark_mr_osc() -> None:
+            mr_osc_idx.append(len(votes) - 1)
 
         # IMPROVEMENT #1: activate strategy-mode confluence boosts.
         # Each mode amplifies the weight of the factors that matter for it
@@ -1634,6 +1642,7 @@ class Analyzer:
         else:
             votes.append(0.0)
         weights.append(_boost(1.5, "rsi"))
+        _mark_mr_osc()
 
         # MACD vote (weight 1.0)
         macd_hist = indicators.get("macd_histogram", 0)
@@ -1654,6 +1663,7 @@ class Analyzer:
         else:
             votes.append(0.0)
         weights.append(_boost(1.0, "bb_pct_b"))
+        _mark_mr_osc()
 
         # Volume spike vote (weight 0.8 — confirms directional moves)
         if signal.volume_spike:
@@ -1711,6 +1721,7 @@ class Analyzer:
 
         # Fibonacci zone vote (weight 0.5 — mean-reversion near key levels)
         fib_zone = indicators.get("fib_zone")
+        _fib_before = len(votes)
         if fib_zone in ("618_786", "below_786"):
             votes.append(1.0)   # deep retracement → bullish bounce potential
             weights.append(0.5)
@@ -1723,6 +1734,8 @@ class Analyzer:
         elif fib_zone is not None:
             votes.append(0.0)
             weights.append(0.3)
+        if len(votes) > _fib_before:
+            _mark_mr_osc()
 
         # Chart patterns voter (weight 0.7 — geometric patterns from chart_patterns.py)
         # Votes based on bullish vs bearish pattern count, scaled by confidence
@@ -1790,6 +1803,7 @@ class Analyzer:
                 stoch_vote = -0.3
             votes.append(stoch_vote)
             weights.append(_boost(1.2, "stoch"))
+            _mark_mr_osc()
 
         # Donchian Channel voter (weight 1.0 — Turtle Breakout)
         dc_breakout_high = indicators.get("dc_breakout_high", False)
@@ -2028,6 +2042,24 @@ class Analyzer:
             raise ValueError(
                 f"Confluence votes/weights desync: {len(votes)} votes vs {len(weights)} weights"
             )
+
+        # ── Mean-reversion oscillator de-correlation (CONFIG.confluence) ──
+        # RSI/%B/Stoch/Fib co-fire on the same "price low/high in range" signal.
+        # Cap the COMBINED weight of the ones that ACTUALLY cast a directional
+        # vote so a cluster of correlated oscillators counts as ~one strong voter
+        # instead of inflating confluence as four independent confirmations.
+        # Only the actively-voting members are considered (a lone signalling
+        # oscillator over-counts nothing, so it is never penalised), and the cap
+        # only ever REDUCES weight.
+        if CONFIG.confluence.family_cap_enabled:
+            active = [i for i in mr_osc_idx if abs(votes[i]) > 1e-9]
+            if len(active) > 1:
+                fam_weight = sum(weights[i] for i in active)
+                cap = CONFIG.confluence.mr_oscillator_weight_cap
+                if fam_weight > cap > 0:
+                    scale = cap / fam_weight
+                    for i in active:
+                        weights[i] *= scale
 
         # Weighted confluence
         total_weight = sum(weights)
