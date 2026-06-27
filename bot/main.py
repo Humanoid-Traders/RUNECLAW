@@ -210,7 +210,7 @@ async def run_scan() -> None:
     engine = RuneClawEngine()
     registry = build_default_registry()
     print(_banner())
-    result = await registry.get("scan_market").execute(engine)  # type: ignore
+    result = await registry.dispatch("scan_market", engine)  # type: ignore
     print(result)
     await engine.stop()
 

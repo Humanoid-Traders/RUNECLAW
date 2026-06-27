@@ -179,6 +179,23 @@ class SkillRegistry:
         audit(system_log, f"Skill registered: {skill.name}", action="register")
     def get(self, name: str) -> BaseSkill | None:
         return self._skills.get(name)
+
+    async def dispatch(self, name: str, engine: "RuneClawEngine", **kwargs: Any) -> str:
+        """Look up `name` and run it, returning its result string.
+
+        The codebase called ``registry.get(name).execute(...)`` in ~30 places
+        with no ``Optional`` check — a mistyped or unregistered skill name would
+        raise ``AttributeError: 'NoneType' has no attribute 'execute'`` and crash
+        the command. This resolves the skill first and returns a clean,
+        user-facing error (and an audit record) when it is missing, instead.
+        """
+        skill = self._skills.get(name)
+        if skill is None:
+            audit(system_log, f"Skill dispatch failed: '{name}' not registered",
+                  action="dispatch", result="MISSING")
+            return f"{_BAD} Internal error: command '{name}' is unavailable."
+        return await skill.execute(engine, **kwargs)
+
     def list_skills(self) -> list[str]:
         return [f"{s.name} -- {s.description}" for s in self._skills.values()]
 

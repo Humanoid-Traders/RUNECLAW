@@ -521,17 +521,17 @@ class TelegramHandler:
     async def _render_pane(self, pane: str, user_id: str = None) -> str:
         kw = {"user_id": user_id} if user_id else {}
         if pane == "status":
-            return await self.registry.get("check_risk").execute(self.engine, mode="status", **kw)
+            return await self.registry.dispatch("check_risk", self.engine, mode="status", **kw)
         elif pane == "risk":
-            return await self.registry.get("check_risk").execute(self.engine, mode="risk", **kw)
+            return await self.registry.dispatch("check_risk", self.engine, mode="risk", **kw)
         elif pane == "portfolio":
-            return await self.registry.get("get_portfolio").execute(self.engine, **kw)
+            return await self.registry.dispatch("get_portfolio", self.engine, **kw)
         elif pane == "macro":
-            return await self.registry.get("macro_calendar").execute(self.engine, **kw)
+            return await self.registry.dispatch("macro_calendar", self.engine, **kw)
         elif pane == "learning":
-            return await self.registry.get("learning").execute(self.engine, **kw)
+            return await self.registry.dispatch("learning", self.engine, **kw)
         elif pane == "scan":
-            return await self.registry.get("scan_market").execute(self.engine, **kw)
+            return await self.registry.dispatch("scan_market", self.engine, **kw)
         return ""
 
     # ── Free-text AI chat ─────────────────────────────────────
@@ -1045,13 +1045,13 @@ class TelegramHandler:
                 mode, thinking_msg = scan_modes[intent.skill]
                 await self._send(update, thinking_msg)
                 if intent.skill == "scan_deep":
-                    result = await self.registry.get("deepscan").execute(
+                    result = await self.registry.dispatch("deepscan",
                         self.engine, timeframe="4h")
                 elif intent.skill == "scan_full":
-                    result = await self.registry.get("deepscan").execute(
+                    result = await self.registry.dispatch("deepscan",
                         self.engine, timeframe="4h")
                 else:
-                    result = await self.registry.get("pro_scan").execute(
+                    result = await self.registry.dispatch("pro_scan",
                         self.engine, mode=mode, user_id=tg_id)
                 await self._send(update, result)
                 return
@@ -3463,7 +3463,7 @@ class TelegramHandler:
         if not await self._guard(update, "scan"):
             return
         user_id = self._get_tg_id(update)
-        result = await self.registry.get("scan_market").execute(self.engine, user_id=user_id)
+        result = await self.registry.dispatch("scan_market", self.engine, user_id=user_id)
         await self._send(update, result)
 
     async def _cmd_analyze(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -3495,7 +3495,7 @@ class TelegramHandler:
         await self._send(update, f"\u23f3 <i>Analyzing {html.escape(symbol)}...</i>")
 
         try:
-            result = await self.registry.get("analyze_asset").execute(
+            result = await self.registry.dispatch("analyze_asset",
                 self.engine, symbol=symbol, is_admin=admin)
         except Exception as exc:
             system_log.error("analyze_asset failed for %s: %s", symbol, exc, exc_info=True)
@@ -3961,7 +3961,7 @@ class TelegramHandler:
     async def _cmd_rejected(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._guard(update, "rejected"):
             return
-        result = await self.registry.get("rejected_trades").execute(self.engine, user_id=self._get_tg_id(update))
+        result = await self.registry.dispatch("rejected_trades", self.engine, user_id=self._get_tg_id(update))
         await self._send(update, result)
 
     async def _cmd_whynot(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -3974,14 +3974,14 @@ class TelegramHandler:
         if symbol and not _SYMBOL_RE.match(symbol):
             await self._send(update, "Invalid symbol format.")
             return
-        result = await self.registry.get("whynot").execute(
+        result = await self.registry.dispatch("whynot",
             self.engine, symbol=symbol)
         await self._send(update, result)
 
     async def _cmd_halt(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._guard(update, "halt"):
             return
-        result = await self.registry.get("halt").execute(self.engine)
+        result = await self.registry.dispatch("halt", self.engine)
         await self._send(update, result)
 
     async def _cmd_reset(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -4001,7 +4001,7 @@ class TelegramHandler:
     async def _cmd_macro(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._guard(update, "macro"):
             return
-        result = await self.registry.get("macro_calendar").execute(self.engine)
+        result = await self.registry.dispatch("macro_calendar", self.engine)
         await self._send(update, result)
 
     async def _cmd_backtest(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -4012,7 +4012,7 @@ class TelegramHandler:
         seed = args[1] if len(args) > 1 else "42"
         await self._send(update,
             f"\u23f3 <i>Backtest running  \u2022  {bars} bars  \u2022  seed {seed}</i>")
-        result = await self.registry.get("run_backtest").execute(
+        result = await self.registry.dispatch("run_backtest",
             self.engine, bars=bars, seed=seed)
         await self._send(update, result)
 
@@ -4023,7 +4023,7 @@ class TelegramHandler:
         bars = args[0] if args else "1440"
         folds = args[1] if len(args) > 1 else "3"
         await self._send(update, "\u23f3 <i>Walk-forward running...</i>")
-        result = await self.registry.get("walk_forward").execute(
+        result = await self.registry.dispatch("walk_forward",
             self.engine, bars=bars, folds=folds)
         await self._send(update, result)
 
@@ -4069,7 +4069,7 @@ class TelegramHandler:
     async def _cmd_costs(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._guard(update, "costs"):
             return
-        result = await self.registry.get("costs").execute(self.engine, user_id=self._get_tg_id(update))
+        result = await self.registry.dispatch("costs", self.engine, user_id=self._get_tg_id(update))
         await self._send(update, result)
 
     async def _cmd_run(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -4079,7 +4079,7 @@ class TelegramHandler:
         if strategy:
             await self._send(update,
                 f"\u23f3 <i>Running {html.escape(strategy)}...</i>")
-        result = await self.registry.get("run_strategy").execute(
+        result = await self.registry.dispatch("run_strategy",
             self.engine, strategy=strategy)
         await self._send(update, result)
 
@@ -4088,7 +4088,7 @@ class TelegramHandler:
         if not await self._guard(update, "run"):
             return
         await self._send(update, "\u23f3 <i>Running Momentum Hunter...</i>")
-        result = await self.registry.get("run_strategy").execute(
+        result = await self.registry.dispatch("run_strategy",
             self.engine, strategy="momentum")
         await self._send(update, result)
 
@@ -4097,7 +4097,7 @@ class TelegramHandler:
         if not await self._guard(update, "run"):
             return
         await self._send(update, "\u23f3 <i>Running Dip Sniper (all symbols)...</i>")
-        result = await self.registry.get("run_strategy").execute(
+        result = await self.registry.dispatch("run_strategy",
             self.engine, strategy="dip")
         await self._send(update, result)
 
@@ -4107,7 +4107,7 @@ class TelegramHandler:
             return
         await self._send(update, "\u26a1 <i>Scalp scan — 5M candles, tight zones...</i>")
         try:
-            result = await self.registry.get("pro_scan").execute(
+            result = await self.registry.dispatch("pro_scan",
                 self.engine, mode="scalp", user_id=self._get_tg_id(update))
             await self._send(update, result)
         except Exception as exc:
@@ -4120,7 +4120,7 @@ class TelegramHandler:
             return
         await self._send(update, "\U0001f4ca <i>Intraday scan — 15M structure...</i>")
         try:
-            result = await self.registry.get("pro_scan").execute(
+            result = await self.registry.dispatch("pro_scan",
                 self.engine, mode="intraday", user_id=self._get_tg_id(update))
             await self._send(update, result)
         except Exception as exc:
@@ -4133,7 +4133,7 @@ class TelegramHandler:
             return
         await self._send(update, "<i>Checking the 4H chart...</i>")
         try:
-            result = await self.registry.get("pro_scan").execute(
+            result = await self.registry.dispatch("pro_scan",
                 self.engine, mode="swing", user_id=self._get_tg_id(update))
             await self._send(update, result)
         except ValueError as ve:
@@ -4152,7 +4152,7 @@ class TelegramHandler:
             return
         await self._send(update, "📋 <i>Assembling playbook...</i>")
         try:
-            result = await self.registry.get("playbook").execute(self.engine, user_id=self._get_tg_id(update))
+            result = await self.registry.dispatch("playbook", self.engine, user_id=self._get_tg_id(update))
             await self._send(update, result)
         except Exception as exc:
             system_log.error(f"Playbook error: {exc}")
@@ -4171,7 +4171,7 @@ class TelegramHandler:
         await self._send(update, f"🔬 <i>Deep scanning {tf.upper()} — this may take a minute...</i>")
         try:
             result = await asyncio.wait_for(
-                self.registry.get("deepscan").execute(
+                self.registry.dispatch("deepscan",
                     self.engine, timeframe=tf),
                 timeout=120,  # 2 minute max
             )
@@ -4352,25 +4352,25 @@ class TelegramHandler:
     async def _cmd_learn(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._guard(update, "learn"):
             return
-        result = await self.registry.get("learning").execute(self.engine)
+        result = await self.registry.dispatch("learning", self.engine)
         await self._send(update, result)
 
     async def _cmd_patterns(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._guard(update, "patterns"):
             return
-        result = await self.registry.get("patterns").execute(self.engine)
+        result = await self.registry.dispatch("patterns", self.engine)
         await self._send(update, result)
 
     async def _cmd_proposals(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._guard(update, "proposals"):
             return
-        result = await self.registry.get("proposals").execute(self.engine)
+        result = await self.registry.dispatch("proposals", self.engine)
         await self._send(update, result)
 
     async def _cmd_optimize(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._guard(update, "optimize"):
             return
-        result = await self.registry.get("optimize").execute(self.engine)
+        result = await self.registry.dispatch("optimize", self.engine)
         await self._send(update, result)
 
     # ── War Room commands ────────────────────────────────────────
