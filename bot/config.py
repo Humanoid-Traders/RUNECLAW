@@ -577,6 +577,19 @@ class ExecutionConfig:
     # Seconds between sub-loop iterations.
     unprotected_guard_interval_s: float = _env_float_bounded(
         "UNPROTECTED_GUARD_INTERVAL_S", 1.0, 0.1, 10.0)
+    # Persistently-unprotected position escalation.
+    # An adopted/emergency position whose exchange stop still cannot be placed
+    # is retried every scan tick and price-monitored locally, but the operator
+    # was only alerted ONCE (at adoption). When True, re-alert on the throttle
+    # below until the stop lands, and clear the stale "unprotected" marker the
+    # moment it does. This only ALERTS — it never force-closes an adopted
+    # position (which may be pre-existing / intentional); the local static SL
+    # check remains the close-on-breach backstop.
+    unprotected_escalation_enabled: bool = _env_bool("UNPROTECTED_ESCALATION_ENABLED", True)
+    # Minimum seconds between repeat operator alerts for the same still-
+    # unprotected position (throttle so it never spams).
+    unprotected_alert_interval_s: float = _env_float_bounded(
+        "UNPROTECTED_ALERT_INTERVAL_S", 300.0, 10.0, 86400.0)
 
 
 @dataclass(frozen=True)
