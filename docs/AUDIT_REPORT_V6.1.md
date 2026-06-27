@@ -19,8 +19,13 @@ each finding re-verified at exact `file:line`, plus a 500-run deep backtest
 |----------|-------|-------|------------|
 | HIGH | 3 | 3 | 0 |
 | MEDIUM | 8 | 8 | 0 |
-| LOW | 8 | 3 | 5 |
-| **Total** | **19** | **14** | **5** |
+| LOW | 8 | 7 | 1* |
+| **Total** | **19** | **18** | **1*** |
+
+*The single remaining item (LLM-3) is **assessed as not-a-bug** — the `"opus"`
+adaptive-thinking gate sits inside the Anthropic-SDK branch and is correct and
+conservative; broadening it would risk enabling thinking on unsupported models.
+No actionable findings remain.
 
 Two of the MEDIUM fixes (BT-CRASH-1/2) are crashes the **deep backtest run itself
 surfaced** — all 6 of its hard errors — and are now fixed (see "Deep backtest run").
@@ -178,18 +183,18 @@ leak.
 
 ## Config / LLM / analyzer / MCP / NLP
 
-CFG-2 and LLM-2 (MEDIUM) are now **fixed** (struck through below). The remaining
-**5 items are all LOW** — minor hardening / cosmetic, documented for follow-up.
+All MEDIUM items (CFG-2, LLM-2) and all but one LOW item are now **fixed** (struck
+through below). The only remaining item, LLM-3, is **assessed as not-a-bug**.
 
 | ID | Sev | Location | Issue |
 |----|-----|----------|-------|
 | ~~**CFG-2**~~ | Med | `config.py` | ✅ **FIXED** — the seven risk-gate limits (`max_drawdown_pct`, `min_risk_reward`, `max_portfolio_exposure_pct`, `max_symbol_exposure_pct`, `max_margin_risk_pct`, `max_portfolio_var_pct`, `volatility_guard_atr_pct`) now route through `_env_float_bounded` with generous-but-sane bounds, so a negative value (which inverts the comparison) or absurd typo can't load. Tests in `tests/test_config_hardening.py`. |
 | ~~**LLM-2**~~ | Med | `provider.py` | ✅ **FIXED** — the non-admin tier-override return is now guarded by `if tier_key:`, so a key-less override falls through to default routing / primary config instead of running the tier with no LLM. Tests in `tests/test_llm_tier_fallback.py`. |
-| **LLM-3** | Low | `provider.py:494` | Adaptive-thinking gated on substring `"opus"` in model name — brittle; effectively dead under current tier routing. |
-| **AN-2** | Low | `divergence.py:164,192,220,248` | Divergence strength `Δ/(abs(i1)+1e-10)` saturates to the cap when the pivot value is near zero (OBV cumulative, MACD-hist zero-crossings), over-stating OBV/MACD divergence confidence. Normalize by the indicator's recent range instead. |
-| **AN-3** | Low | `analyzer.py:1063` | `_classify_strategy_type` reads `indicators["close"]` which is never populated → always 0, relies on the `signal.price` fallback; the ATR factor silently disables if `signal is None`. Store `close` or use `signal.price` directly. |
-| **MCP-2** | Low | `server.py:185,440` | `runeclaw_backtest` documents "max 5000" bars but never enforces it; `runeclaw_fullscan` treats any non-`quick` mode as a full 67-symbol scan. Authenticated resource-amplification hardening: clamp `bars`, validate `mode`. |
-| **NLP-2** | Low | `intent_router.py:529` | `whynot` is an accepted LLM intent with no rule/registered skill; `trade_journal` is listed twice in `valid_skills`. Confirm/register `whynot` or drop it. |
+| **LLM-3** | Low | `provider.py` | ⚖️ **Assessed — no change.** The `"opus"` adaptive-thinking gate sits inside the `sdk == "anthropic"` branch and is correct/conservative; broadening it would risk enabling thinking on models that don't support it. Left as-is by design. |
+| ~~**AN-2**~~ | Low | `divergence.py` | ✅ **FIXED** — divergence strength now normalizes by the indicator's recent range (`_div_scale`) instead of `abs(i1)+1e-10`, so near-zero pivots (OBV/MACD) no longer saturate. Verified graduated strength (0.85 vs 0.90 for small vs large). Test in `tests/test_low_findings_v6_1.py`. |
+| ~~**AN-3**~~ | Low | `analyzer.py` | ✅ **FIXED** — `_classify_strategy_type` now uses `signal.price` directly instead of the always-0 `indicators["close"]` lookup. |
+| ~~**MCP-2**~~ | Low | `server.py` | ✅ **FIXED** — `call_tool` now clamps `bars` to `[1, 5000]` and rejects any `mode` outside `{quick, deep, swing, scalp}` with a structured error (resource-amplification guard). Test in `tests/test_low_findings_v6_1.py`. |
+| ~~**NLP-2**~~ | Low | `intent_router.py` | ✅ **FIXED (corrected)** — the duplicate `trade_journal` entry in `valid_skills` was removed. Note: `whynot` **is** a registered skill (`WhyNotSkill` in `skill_registry.py`), so the original "no skill" claim was wrong — it is correctly kept. |
 
 **Verified clean:** MCP auth is fail-closed (refuses to start without
 `MCP_AUTH_TOKEN`; `hmac.compare_digest` on every call), `runeclaw_execute` is not
