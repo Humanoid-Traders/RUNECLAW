@@ -3477,6 +3477,21 @@ class LiveExecutor:
                 if pos.status != "open":
                     continue
 
+                # ── Clear a stale "unprotected" alarm ──
+                # `unprotected` is a runtime marker set when an exchange stop
+                # could not be placed (adoption / emergency / residual). It was
+                # never cleared, so a position stayed flagged forever even after
+                # a later retry (grace, grace-guard, or the per-tick retry below)
+                # got the stop on. Clear it the moment an exchange stop exists,
+                # on whichever path placed it.
+                if getattr(pos, "unprotected", False) and pos.sl_order_id:
+                    pos.unprotected = False
+                    audit(trade_log,
+                          f"Position {pos.symbol} now protected — clearing unprotected marker",
+                          action="unprotected_cleared", result="PROTECTED",
+                          data={"trade_id": trade_id, "symbol": pos.symbol,
+                                "sl_id": pos.sl_order_id})
+
                 # ── SAFEGUARD 2: Grace period after open ──
                 # Skip local SL/TP monitoring for the first 90 seconds after a
                 # position opens. This gives the exchange SL/TP orders time to be
@@ -3604,6 +3619,39 @@ class LiveExecutor:
                                   data={"trade_id": trade_id, "sl_id": sl_id, "tp_id": tp_id})
                     except Exception as exc:
                         logger.debug("SL/TP retry failed for %s: %s", pos.symbol, exc)
+
+                # ── Escalate a persistently-unprotected position ──
+                # If the per-tick retry above STILL could not place an exchange
+                # stop, the position is live with no venue-side protection (it is
+                # only price-monitored locally by the static check below). The
+                # operator was alerted once at adoption and then went silent —
+                # re-alert on a throttle until the stop lands. Alert only; an
+                # adopted position is never force-closed (it may be intentional).
+                if (CONFIG.execution.unprotected_escalation_enabled
+                        and not pos.sl_order_id and pos.stop_loss > 0):
+                    _now_ts = time.time()
+                    _last_alert = getattr(pos, "_unprotected_alert_at", 0.0) or 0.0
+                    if _now_ts - _last_alert >= CONFIG.execution.unprotected_alert_interval_s:
+                        pos._unprotected_alert_at = _now_ts
+                        pos.unprotected = True
+                        logger.critical(
+                            "UNPROTECTED POSITION (%s %s): no exchange stop-loss after "
+                            "retry — live with NO venue stop (price-monitored locally). "
+                            "Place a stop on Bitget manually.", pos.symbol, pos.direction)
+                        audit(trade_log,
+                              f"UNPROTECTED position {pos.symbol} still has no exchange stop "
+                              f"after retry — operator re-alerted",
+                              action="unprotected_escalation", result="UNPROTECTED",
+                              data={"trade_id": trade_id, "symbol": pos.symbol,
+                                    "stop_loss": pos.stop_loss, "price": price})
+                        self._record_warning("unprotected_persist")
+                        closed_messages.append(
+                            f"🚨 <b>UNPROTECTED POSITION — {pos.symbol} {pos.direction}</b>\n"
+                            f"No exchange stop-loss could be placed (still retrying each "
+                            f"scan; price-monitored locally as a backstop).\n"
+                            f"Stop level: <code>${pos.stop_loss:.4f}</code> — place a stop "
+                            f"on Bitget manually."
+                        )
 
                 # ── GETCLAW: Time-stop check (Rules 6/17) ──
                 # Uses per-strategy-type thresholds from StrategyTypeConfig
