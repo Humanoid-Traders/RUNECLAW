@@ -31,5 +31,11 @@ jobs:
       - name: Lint — syntax errors + undefined names (ruff E9, F821)
         run: ruff check --select E9,F821 bot/
 
-      - name: Tests — baseline-diff regression gate
+      - name: SAST — bandit (high severity, high confidence)
+        run: bandit -r bot/ --severity-level high --confidence-level high -q
+
+      - name: SCA — dependency vulnerability audit (pip-audit)
+        run: pip-audit -r requirements.lock
+
+      - name: Tests — baseline-diff regression gate (+ coverage floor)
         run: python scripts/ci_test_gate.py

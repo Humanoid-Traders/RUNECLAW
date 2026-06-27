@@ -32,6 +32,13 @@ out/
 .nuxt/
 .cache/
 
+# -- Coverage / test artifacts (produced by the CI gate) --
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+.pytest_cache/
+
 # -- Environment & secrets --
 .env
 .env.*
