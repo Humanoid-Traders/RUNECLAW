@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import asyncio
 import html
+import logging
+import os
 import re
 import threading
 import time
@@ -16,6 +18,10 @@ from collections import defaultdict
 from datetime import datetime
 from bot.compat import UTC
 from typing import Optional
+
+# Module logger. Several exception/admin paths referenced bare `os`/`logger`
+# without these being in scope — latent NameErrors (flagged by ruff F821).
+logger = logging.getLogger(__name__)
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
@@ -1275,7 +1281,7 @@ class TelegramHandler:
             # Cross-check with exchange for accurate pending order count
             # The bot's internal count can be stale after restarts
             try:
-                _ex = _ex if '_ex' in dir() else await executor._get_exchange()
+                _ex = await executor._get_exchange()
                 _ex_orders = await _ex.fetch_open_orders(
                     params={"productType": "USDT-FUTURES"})
                 # Only count limit orders (not SL/TP trigger orders)
@@ -3966,7 +3972,7 @@ class TelegramHandler:
             review = self.engine.journal.get_weekly_review()
 
             if review.get("trades", 0) == 0:
-                await context.bot.send_message(chat_id=chat_id, text="\u26a0\ufe0f No trades in the last 7 days.")
+                await ctx.bot.send_message(chat_id=chat_id, text="\u26a0\ufe0f No trades in the last 7 days.")
                 return
 
             lines = [
