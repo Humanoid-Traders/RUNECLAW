@@ -2083,8 +2083,10 @@ class TestAuditV3Fixes:
         # Should return error message, not raise or silently vanish
         assert "re-check failed" in result.lower() or "error" in result.lower(), \
             f"Expected re-check error message, got: {result}"
-        # Idea should be gone from pending (it was popped)
-        assert idea.id not in engine._pending_ideas
+        # The idea must NOT vanish silently: on a re-check exception it is kept in
+        # pending (so the user can retry) rather than being popped before success
+        # (matches the "don't pop pending idea before success" fix).
+        assert idea.id in engine._pending_ideas
 
     # -- F-06: sandbox flag from env --
 
