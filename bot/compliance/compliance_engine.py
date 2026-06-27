@@ -8,6 +8,7 @@ Missing any lock results in DENIED with the failing lock named.
 from __future__ import annotations
 
 import uuid
+from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from enum import Enum
@@ -94,7 +95,11 @@ class ComplianceEngine:
             else self._DEFAULT_RESTRICTED
         )
         self._restricted: Set[str] = {str(j or "").strip().upper() for j in _src}
-        self._consent_ledger: List[AuthorizationDecision] = []
+        # Audit F-15: bounded ring buffer. This is an append-on-every-authorize
+        # ledger; an unbounded list grows without limit over a long-running live
+        # process. The audit chain on disk remains the durable record; this
+        # in-memory ledger only needs recent decisions for stats/inspection.
+        self._consent_ledger: deque[AuthorizationDecision] = deque(maxlen=5000)
 
     # ------------------------------------------------------------------
     # Public API

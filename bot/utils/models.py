@@ -7,6 +7,7 @@ add `model_config = ConfigDict(frozen=True)` explicitly.
 
 from __future__ import annotations
 
+import math
 from datetime import datetime
 from uuid import uuid4
 from bot.compat import UTC
@@ -97,6 +98,14 @@ class TradeIdea(BaseModel):
     @model_validator(mode="after")
     def _validate_directional_sanity(self) -> "TradeIdea":
         """Ensure SL/TP are on the correct side of entry for the given direction."""
+        # Audit F-6: reject non-finite prices first. NaN defeats every
+        # subsequent comparison (`nan <= 0`, `nan >= entry` are all False), so a
+        # NaN/inf entry/SL/TP would otherwise pass directional sanity and most
+        # risk checks, leaving only the volatility guard as an incidental catch.
+        for _name in ("entry_price", "stop_loss", "take_profit"):
+            _val = getattr(self, _name)
+            if not math.isfinite(_val):
+                raise ValueError(f"{_name} must be a finite number, got {_val}")
         # C2-59 FIX: Reject non-positive entry price instead of silently skipping
         if self.entry_price <= 0:
             raise ValueError(f"entry_price must be positive, got {self.entry_price}")

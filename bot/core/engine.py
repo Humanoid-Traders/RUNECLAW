@@ -1548,6 +1548,18 @@ class RuneClawEngine:
                       action="critique", result="WARN",
                       data={"concerns": critique_result.concerns})
         except Exception as exc:
+            # Audit F-13: the critique is the strongest discretionary brake. In
+            # paper mode a crash can fail-open (advisory). In LIVE mode a crash
+            # must fail CLOSED — a malformed idea/snapshot that crashes the
+            # bear-case review should not silently disable it before a real order.
+            if CONFIG.is_live():
+                audit(trade_log, f"Critique gate error (fail-CLOSED in LIVE): {exc}",
+                      action="critique", result="ERROR_FAILCLOSED",
+                      data={"trade_id": trade_id, "error": str(exc)[:200]})
+                self._pending_pyramid.pop(trade_id, None)
+                self._transition(AgentState.IDLE, f"critique error (live) {trade_id}")
+                return ("Trade REJECTED: adversarial critique could not complete "
+                        "and live mode fails closed on critique errors.")
             audit(trade_log, f"Critique gate error (fail-open): {exc}",
                   action="critique", result="ERROR")
 
@@ -1561,19 +1573,31 @@ class RuneClawEngine:
         # this point means the operator already tapped "Confirm".
         approval_token = None
         if CONFIG.is_live():
-            approval_token = self.compliance.issue_approval_token(
-                trade_id, self.compliance_profile.subject_id,
-            )
-            # RC-AUD-018: the engine mints Lock 5 (human approval) itself rather
-            # than sourcing it from a real Telegram button callback. Emit a
-            # prominent audit WARNING so it is visible that, for env-armed live
-            # mode (and especially non-human confirmations), Lock 5 is satisfied
-            # with no per-session human action.
-            system_log.warning(
-                "AUTO-MINT APPROVAL TOKEN (RC-AUD-018): engine minted the Lock 5 "
-                "human-approval token for trade %s (user_id=%r) — no per-session "
-                "human callback was required.", trade_id, user_id,
-            )
+            human = self._human_confirmed(user_id)
+            # Audit F-8: only mint the Lock 5 human-approval token for a REAL
+            # human confirmation. For non-human callers (user_id "" / "auto" —
+            # e.g. auto-confirm or a skill dispatch) require the explicit
+            # AUTO_CONFIRM_LIVE_ENABLED opt-in; otherwise leave the token
+            # unminted so compliance Lock 5 fails CLOSED and the live trade is
+            # denied rather than executed with no human approval at all.
+            if human or CONFIG.auto_confirm_live_enabled:
+                approval_token = self.compliance.issue_approval_token(
+                    trade_id, self.compliance_profile.subject_id,
+                )
+                if not human:
+                    # RC-AUD-018: unattended live execution explicitly opted in.
+                    system_log.warning(
+                        "AUTO-MINT APPROVAL TOKEN (RC-AUD-018): engine minted the "
+                        "Lock 5 token for UNATTENDED trade %s (user_id=%r) under "
+                        "AUTO_CONFIRM_LIVE_ENABLED — no human callback occurred.",
+                        trade_id, user_id,
+                    )
+            else:
+                system_log.warning(
+                    "Lock 5 NOT minted for non-human confirm of %s (user_id=%r) "
+                    "and AUTO_CONFIRM_LIVE_ENABLED is off — live execution will be "
+                    "denied (audit F-8).", trade_id, user_id,
+                )
 
         compliance_decision = self.compliance.authorize(
             action=action,
@@ -1600,6 +1624,23 @@ class RuneClawEngine:
             self._pending_pyramid.pop(trade_id, None)
             self._transition(AgentState.IDLE, f"paper mode disabled")
             return "⛔ Paper trading is disabled on this bot. This bot is LIVE-ONLY."
+
+        # ── RC-AUD-018 / Audit F-14: SIMULATION_MODE hard veto ──
+        # Final, independent fail-closed gate. It must run BEFORE the EXECUTING
+        # transition and before any exchange-mutating side-effect (the pyramid
+        # SL→breakeven below calls _update_exchange_sl on a *different* live
+        # position). Previously the veto sat just before execute(), so a vetoed
+        # confirm could still have modified another position's stop on the
+        # exchange. This guard never enables execution — it only ever blocks it.
+        if self._live_execution_vetoed_by_simulation():
+            self._pending_pyramid.pop(trade_id, None)
+            audit(trade_log,
+                  f"Live execution VETOED by SIMULATION_MODE for {trade_id}",
+                  action="confirm", result="VETO_SIMULATION",
+                  data={"trade_id": trade_id, "asset": idea.asset})
+            self._transition(AgentState.IDLE, f"simulation hard veto {trade_id}")
+            return ("Trade REJECTED: SIMULATION_MODE=true — live execution "
+                    "vetoed (hard safety switch).")
 
         # Live mode — execute via LiveExecutor with micro-test safety limits
         self._transition(AgentState.EXECUTING, f"executing LIVE trade {trade_id}")
@@ -1675,33 +1716,20 @@ class RuneClawEngine:
             self._transition(AgentState.IDLE, f"no ATR for {trade_id}")
             return f"Trade REJECTED: no valid ATR available — cannot compute safe SL distance"
 
-        # ── RC-AUD-018: SIMULATION_MODE hard veto ──
-        # Final, independent fail-closed gate immediately before the real order.
-        # If SIMULATION_MODE is set, the engine must NEVER execute live even if a
-        # runtime flag armed live mode upstream. This guard never enables
-        # execution — it only ever blocks it.
-        if self._live_execution_vetoed_by_simulation():
-            self._pending_pyramid.pop(trade_id, None)
-            audit(trade_log,
-                  f"Live execution VETOED by SIMULATION_MODE for {trade_id}",
-                  action="confirm", result="VETO_SIMULATION",
-                  data={"trade_id": trade_id, "asset": idea.asset})
-            self._transition(AgentState.IDLE, f"simulation hard veto {trade_id}")
-            return ("Trade REJECTED: SIMULATION_MODE=true — live execution "
-                    "vetoed (hard safety switch).")
-
         result = await self.live_executor.execute(
             idea, size_usd,
             order_type=idea.order_type,
             atr_value=stored_atr,
         )
 
-        # Only record paper trade if live execution succeeded
-        # (result starts with error prefixes when execution fails)
-        live_failed = any(result.startswith(prefix) for prefix in (
-            "EXECUTION FAILED:", "INSUFFICIENT FUNDS:", "INVALID ORDER:",
-            "BLOCKED:", "PREFLIGHT FAILED:",
-        ))
+        # Only record the trade if a LIVE position actually resulted.
+        # Audit F-1: classification is centralized in live_executor next to the
+        # return strings so the two cannot drift. The old prefix list here
+        # missed "REFUSED:" / "EXECUTION BLOCKED:" / "Live execution blocked:"
+        # and could not match emoji/HTML-prefixed strings, so blocked trades
+        # were sealed to the audit chain as phantom live fills.
+        from bot.core.live_executor import execution_indicates_failure
+        live_failed = execution_indicates_failure(result)
 
         if not live_failed:
             # Exchange is single source of truth — no paper duplicate.

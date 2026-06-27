@@ -2,7 +2,7 @@
 RUNECLAW Red Team Engine -- adversarial stress testing for the risk engine.
 
 Generates adversarial TradeIdea scenarios designed to bypass or confuse
-the 18-check risk engine, runs each through the real engine, and produces
+the 23-check risk engine, runs each through the real engine, and produces
 a structured report of what was caught and what slipped through.
 """
 
@@ -202,6 +202,7 @@ class RedTeamEngine:
         scenarios.extend(self._zero_negative_scenarios())
         scenarios.extend(self._direction_inversion_scenarios())
         scenarios.extend(self._max_position_flood_scenarios())
+        scenarios.extend(self._input_validation_scenarios())
         return scenarios
 
     # -- Flash Crash --
@@ -633,3 +634,46 @@ class RedTeamEngine:
             }
             scenarios.append(scenario)
         return scenarios
+
+    # -- Malformed input (audit F-6 / F-7) --
+
+    def _input_validation_scenarios(self) -> list[dict]:
+        """Adversarial malformed-input vectors added in audit V7.
+
+        These pin two fail-open regressions the harness previously did not
+        cover: a NaN price (defeats every <=0 / directional comparison) and a
+        future-dated timestamp (negative age silently passed the stale guard).
+        """
+        def _reset() -> None:
+            self._engine.reset_circuit_breaker()
+            for pos in list(self._portfolio.open_positions):
+                self._portfolio.close_position(pos.trade_id, pos.entry_price)
+
+        return [
+            {
+                "name": "nan_entry_price",
+                "category": "malformed_input",
+                "description": (
+                    "Entry price is NaN. NaN defeats <=0 and directional checks; "
+                    "must be rejected at model validation (audit F-6)."
+                ),
+                "expected_verdict": "REJECTED",
+                "atr": "auto",
+                "pre_setup": _reset,
+                "build_idea": lambda: _make_idea(entry=float("nan")),
+            },
+            {
+                "name": "future_dated_timestamp",
+                "category": "malformed_input",
+                "description": (
+                    "Idea timestamped 2 hours in the FUTURE. Negative age must not "
+                    "pass the stale-data guard (audit F-7)."
+                ),
+                "expected_verdict": "REJECTED",
+                "atr": "auto",
+                "pre_setup": _reset,
+                "build_idea": lambda: _make_idea(
+                    timestamp=datetime.now(UTC) + timedelta(hours=2),
+                ),
+            },
+        ]
