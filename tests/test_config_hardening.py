@@ -7,6 +7,8 @@ CFG-1 — `_env_float` rejects non-finite values (inf/nan parse without error an
 CFG-2 — risk-gate limits are clamped, so a negative value (which inverts the
         comparison) or an absurd typo cannot load.
 """
+import os
+import pathlib
 import subprocess
 import sys
 
@@ -47,14 +49,17 @@ def test_risk_limits_clamp_negative_and_absurd():
         "import bot.config as c; rl = c.RiskLimits(); "
         "print(rl.max_drawdown_pct, rl.max_portfolio_exposure_pct, rl.max_margin_risk_pct)"
     )
+    # Run from the repo root (computed from this file's location, not hardcoded)
+    # so it works on any machine / CI runner. Inherit the real env + overrides.
+    repo_root = pathlib.Path(__file__).resolve().parent.parent
     env = {
+        **os.environ,
         "MAX_DRAWDOWN_PCT": "-5",
         "MAX_PORTFOLIO_EXPOSURE_PCT": "99999",
         "MAX_MARGIN_RISK_PCT": "-1",
-        "PATH": "/usr/bin:/bin",
     }
     out = subprocess.check_output([sys.executable, "-c", code], env=env,
-                                  stderr=subprocess.DEVNULL, cwd="/home/user/RUNECLAW")
+                                  stderr=subprocess.DEVNULL, cwd=str(repo_root))
     dd, expo, margin = (float(x) for x in out.decode().split())
     assert dd >= 0.1            # not negative
     assert expo == 1000.0       # clamped to ceiling
