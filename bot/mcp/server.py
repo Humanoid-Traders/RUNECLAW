@@ -367,6 +367,20 @@ class RuneClawMCPServer:
                     result="Invalid symbol format. Expected e.g. 'BTC/USDT'.",
                 ).to_dict()
 
+        # --- MCP-2: enforce documented bounds (resource-amplification guard) --
+        # An authenticated caller could otherwise pass an unbounded `bars` count
+        # or an unrecognized `mode` that silently triggers the full 67-symbol scan.
+        if "bars" in kwargs and isinstance(kwargs["bars"], int):
+            kwargs["bars"] = max(1, min(kwargs["bars"], 5000))
+        if "mode" in kwargs and isinstance(kwargs["mode"], str):
+            if kwargs["mode"].lower() not in {"quick", "deep", "swing", "scalp"}:
+                return MCPResponse(
+                    status="error",
+                    tool=name,
+                    result="Invalid mode. Expected one of: quick, deep, swing, scalp.",
+                ).to_dict()
+            kwargs["mode"] = kwargs["mode"].lower()
+
         # --- execute -------------------------------------------------------
         try:
             # Special built-in tools that bypass the skill registry

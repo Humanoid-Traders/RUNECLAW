@@ -143,6 +143,13 @@ def _check_divergence(
     price = price_data[-lookback:]
     ind = indicator_data[-lookback:]
 
+    # AN-2: normalize divergence strength by the indicator's recent RANGE rather
+    # than abs(i1_val). For indicators that cross or sit near zero (OBV cumulative,
+    # MACD histogram) the old abs(i1_val)+1e-10 denominator collapsed to ~1e-10,
+    # so any tiny divergence saturated strength to the cap. The window range is a
+    # stable scale that can't approach zero unless the indicator is flat.
+    _div_scale = max(float(np.max(ind) - np.min(ind)), 1e-9)
+
     order = max(3, min(7, lookback // 10))
     price_mins, price_maxs = _find_local_extrema(price, order)
     ind_mins, ind_maxs = _find_local_extrema(ind, order)
@@ -161,7 +168,7 @@ def _check_divergence(
                 i2_val = ind[p2_idx]
 
                 if i2_val > i1_val:  # indicator made higher low
-                    strength = min(1.0, (i2_val - i1_val) / (abs(i1_val) + 1e-10) * 5)
+                    strength = min(1.0, (i2_val - i1_val) / _div_scale * 5)
                     conf = min(0.90, 0.50 + strength * 0.30 + min(bars / 30, 0.10))
                     signals.append(DivergenceSignal(
                         div_type="regular_bullish",
@@ -189,7 +196,7 @@ def _check_divergence(
                 i2_val = ind[p2_idx]
 
                 if i2_val < i1_val:  # indicator made lower high
-                    strength = min(1.0, (i1_val - i2_val) / (abs(i1_val) + 1e-10) * 5)
+                    strength = min(1.0, (i1_val - i2_val) / _div_scale * 5)
                     conf = min(0.90, 0.50 + strength * 0.30 + min(bars / 30, 0.10))
                     signals.append(DivergenceSignal(
                         div_type="regular_bearish",
@@ -217,7 +224,7 @@ def _check_divergence(
                 i2_val = ind[p2_idx]
 
                 if i2_val < i1_val:  # indicator made lower low
-                    strength = min(1.0, (i1_val - i2_val) / (abs(i1_val) + 1e-10) * 5)
+                    strength = min(1.0, (i1_val - i2_val) / _div_scale * 5)
                     conf = min(0.85, 0.45 + strength * 0.25 + min(bars / 30, 0.10))
                     signals.append(DivergenceSignal(
                         div_type="hidden_bullish",
@@ -245,7 +252,7 @@ def _check_divergence(
                 i2_val = ind[p2_idx]
 
                 if i2_val > i1_val:  # indicator made higher high
-                    strength = min(1.0, (i2_val - i1_val) / (abs(i1_val) + 1e-10) * 5)
+                    strength = min(1.0, (i2_val - i1_val) / _div_scale * 5)
                     conf = min(0.85, 0.45 + strength * 0.25 + min(bars / 30, 0.10))
                     signals.append(DivergenceSignal(
                         div_type="hidden_bearish",

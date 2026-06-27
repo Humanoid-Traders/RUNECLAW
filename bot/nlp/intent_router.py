@@ -526,11 +526,13 @@ class IntentRouter:
         skill_name = raw.strip().lower().replace('"', '').replace("'", "")
 
         # Validate the response is a known skill
+        # NLP-2: 'whynot' is a real registered skill (WhyNotSkill); kept.
+        # Removed the duplicate 'trade_journal' entry (cosmetic — it's a set).
         valid_skills = {
             "scan_market", "analyze_asset", "get_portfolio", "check_risk",
             "trade_journal", "macro_calendar", "costs", "help",
             "run_backtest", "halt", "playbook", "patterns", "learning",
-            "status", "trade_journal", "whynot",
+            "status", "whynot",
         }
         if skill_name in valid_skills:
             kwargs = {}

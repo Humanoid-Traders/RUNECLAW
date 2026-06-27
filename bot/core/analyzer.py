@@ -1089,7 +1089,10 @@ class Analyzer:
 
             # ── Factor 6: ATR-based volatility (weight 1.0) ──
             atr = indicators.get("atr", 0)
-            price = indicators.get("close", 0) or (signal.price if signal else 0)
+            # AN-3: indicators never carries "close" (not stored by
+            # _compute_indicators), so the old lookup was always 0 and fell
+            # through to signal.price. Use signal.price directly.
+            price = signal.price if signal else 0
             if price > 0 and atr > 0:
                 atr_pct = (atr / price) * 100
                 if atr_pct > 5:  # high vol
