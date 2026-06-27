@@ -178,8 +178,8 @@ class RiskEngine:
     If RUNECLAW is ever made multi-threaded, the lock ordering must be resolved first.
     """
 
-    def __init__(self, portfolio: "PortfolioTracker", state_file: Optional[str] = None,
-                 macro_calendar: Optional["MacroCalendar"] = None,
+    def __init__(self, portfolio: "PortfolioTracker", state_file: Optional[str] = None,  # noqa: F821
+                 macro_calendar: Optional["MacroCalendar"] = None,  # noqa: F821
                  macro_provider: Optional[Any] = None,
                  order_flow_analyzer: Optional[Any] = None) -> None:  # noqa: F821
         self._portfolio = portfolio
@@ -427,9 +427,9 @@ class RiskEngine:
         Pass live_open_count= to override paper open position count in LIVE mode.
         """
         with self._lock:
-            return self._evaluate_locked(idea, atr, live_equity=live_equity, max_position_usd=max_position_usd, live_open_count=live_open_count)
+            return self._evaluate_locked(idea, atr, live_equity=live_equity, max_position_usd=max_position_usd, live_open_count=live_open_count, as_of=as_of)
 
-    def _evaluate_locked(self, idea: TradeIdea, atr: Optional[float] = None, live_equity: Optional[float] = None, max_position_usd: Optional[float] = None, live_open_count: Optional[int] = None) -> RiskCheck:
+    def _evaluate_locked(self, idea: TradeIdea, atr: Optional[float] = None, live_equity: Optional[float] = None, max_position_usd: Optional[float] = None, live_open_count: Optional[int] = None, as_of: Optional[datetime] = None) -> RiskCheck:
         self._total_checks += 1
         passed: list[str] = []
         failed: list[str] = []
