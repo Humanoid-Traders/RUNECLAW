@@ -1601,6 +1601,23 @@ class RuneClawEngine:
             self._transition(AgentState.IDLE, f"paper mode disabled")
             return "⛔ Paper trading is disabled on this bot. This bot is LIVE-ONLY."
 
+        # ── RC-AUD-018 / Audit F-14: SIMULATION_MODE hard veto ──
+        # Final, independent fail-closed gate. It must run BEFORE the EXECUTING
+        # transition and before any exchange-mutating side-effect (the pyramid
+        # SL→breakeven below calls _update_exchange_sl on a *different* live
+        # position). Previously the veto sat just before execute(), so a vetoed
+        # confirm could still have modified another position's stop on the
+        # exchange. This guard never enables execution — it only ever blocks it.
+        if self._live_execution_vetoed_by_simulation():
+            self._pending_pyramid.pop(trade_id, None)
+            audit(trade_log,
+                  f"Live execution VETOED by SIMULATION_MODE for {trade_id}",
+                  action="confirm", result="VETO_SIMULATION",
+                  data={"trade_id": trade_id, "asset": idea.asset})
+            self._transition(AgentState.IDLE, f"simulation hard veto {trade_id}")
+            return ("Trade REJECTED: SIMULATION_MODE=true — live execution "
+                    "vetoed (hard safety switch).")
+
         # Live mode — execute via LiveExecutor with micro-test safety limits
         self._transition(AgentState.EXECUTING, f"executing LIVE trade {trade_id}")
         size_usd = recheck.position_size_usd
@@ -1675,33 +1692,20 @@ class RuneClawEngine:
             self._transition(AgentState.IDLE, f"no ATR for {trade_id}")
             return f"Trade REJECTED: no valid ATR available — cannot compute safe SL distance"
 
-        # ── RC-AUD-018: SIMULATION_MODE hard veto ──
-        # Final, independent fail-closed gate immediately before the real order.
-        # If SIMULATION_MODE is set, the engine must NEVER execute live even if a
-        # runtime flag armed live mode upstream. This guard never enables
-        # execution — it only ever blocks it.
-        if self._live_execution_vetoed_by_simulation():
-            self._pending_pyramid.pop(trade_id, None)
-            audit(trade_log,
-                  f"Live execution VETOED by SIMULATION_MODE for {trade_id}",
-                  action="confirm", result="VETO_SIMULATION",
-                  data={"trade_id": trade_id, "asset": idea.asset})
-            self._transition(AgentState.IDLE, f"simulation hard veto {trade_id}")
-            return ("Trade REJECTED: SIMULATION_MODE=true — live execution "
-                    "vetoed (hard safety switch).")
-
         result = await self.live_executor.execute(
             idea, size_usd,
             order_type=idea.order_type,
             atr_value=stored_atr,
         )
 
-        # Only record paper trade if live execution succeeded
-        # (result starts with error prefixes when execution fails)
-        live_failed = any(result.startswith(prefix) for prefix in (
-            "EXECUTION FAILED:", "INSUFFICIENT FUNDS:", "INVALID ORDER:",
-            "BLOCKED:", "PREFLIGHT FAILED:",
-        ))
+        # Only record the trade if a LIVE position actually resulted.
+        # Audit F-1: classification is centralized in live_executor next to the
+        # return strings so the two cannot drift. The old prefix list here
+        # missed "REFUSED:" / "EXECUTION BLOCKED:" / "Live execution blocked:"
+        # and could not match emoji/HTML-prefixed strings, so blocked trades
+        # were sealed to the audit chain as phantom live fills.
+        from bot.core.live_executor import execution_indicates_failure
+        live_failed = execution_indicates_failure(result)
 
         if not live_failed:
             # Exchange is single source of truth — no paper duplicate.

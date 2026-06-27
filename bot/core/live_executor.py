@@ -88,6 +88,49 @@ MICRO_MAX_POSITION_USD = 100.0    # Max $100 margin per trade
 MICRO_MAX_TOTAL_EXPOSURE = 500.0  # Max $500 total margin exposure
 MICRO_MAX_OPEN_POSITIONS = 5      # Max 5 concurrent positions
 
+
+# ── Execution result classification (audit F-1) ──────────────────────
+# execute() and the limit-order path return a human-readable string. The
+# engine must decide from that string whether a LIVE position actually
+# resulted — if not, the pending idea is retried and nothing is recorded.
+#
+# This classifier lives next to the return statements so the producer and
+# the consumer (engine.confirm_trade) cannot drift. The prior engine-side
+# prefix list missed several block strings ("REFUSED:", "EXECUTION BLOCKED:",
+# "Live execution blocked:") AND could never match the emoji/HTML-prefixed
+# strings ("⚠️ <b>EXECUTION ABORTED…", "🚨 <b>URGENT…"), so blocked trades
+# were recorded as phantom live fills. We use distinctive substring TOKENS
+# (not startswith) so the leading icon/markup does not defeat the match.
+#
+# A position-was-CLOSED outcome (EXECUTION ABORTED) counts as a failure: no
+# live position remains. The "URGENT — LIVE with NO stop-loss" outcome does
+# NOT count as a failure, because a real position exists and retrying would
+# open a second one — that case must be recorded so it is tracked.
+_EXECUTION_FAILURE_TOKENS = (
+    "EXECUTION FAILED",
+    "EXECUTION BLOCKED",
+    "EXECUTION ABORTED",   # position opened then closed for safety — none remains
+    "INSUFFICIENT FUNDS",
+    "INVALID ORDER",
+    "BLOCKED:",
+    "PREFLIGHT FAILED",
+    "REFUSED:",
+    "Live execution blocked",
+)
+
+
+def execution_indicates_failure(result: str) -> bool:
+    """True when execute()'s result string means NO live position resulted.
+
+    Fail-closed: anything that is not a recognized success is treated as a
+    failure by the caller is NOT the contract here — this returns True only
+    for known no-position outcomes. The caller treats the inverse (a real
+    fill, including the unprotected-but-live emergency case) as executed.
+    """
+    if not isinstance(result, str):
+        return True
+    return any(token in result for token in _EXECUTION_FAILURE_TOKENS)
+
 # F-07 FIX: Persistence file for live positions
 _POSITIONS_FILE = os.path.join(
     os.environ.get("RUNECLAW_STATE_DIR", "data"), "live_positions.json"
@@ -1346,7 +1389,12 @@ class LiveExecutor:
                 # The order response doesn't include leverage.
                 # Use the exchange config leverage as the source of truth —
                 # this is what was set via set_leverage before the order was placed.
-                leverage = CONFIG.exchange.leverage or 10
+                # Audit F-5: ExchangeConfig has no `leverage` attribute (only
+                # `default_leverage`); the old reference raised AttributeError,
+                # which the broad except below swallowed at debug level — so
+                # limit-order adoption silently never ran. Orphaned limit orders
+                # were left untracked on the exchange.
+                leverage = CONFIG.exchange.default_leverage or 10
 
                 notional = price * amount
                 margin = round(notional / leverage, 2)
@@ -1974,26 +2022,48 @@ class LiveExecutor:
                                   data={"symbol": symbol, "coid": coid})
                             raise
                         else:
-                            audit(trade_log,
-                                  f"POST_ONLY rejected for {symbol} @ ${limit_price:,.4f} — "
-                                  f"widening offset and retrying",
-                                  action="post_only_retry", result="WIDENING",
-                                  data={"symbol": symbol, "rejected_price": limit_price})
-                            # Double the offset and retry
-                            wider_offset = 1.0 * atr_value if atr_value > 0 else current_price * 0.005
-                            if side == "buy":
-                                limit_price = round(current_price - wider_offset, 8)
+                            # Audit F-10: the resubmit below uses a fresh clientOid
+                            # (coid+"-r1"), so the venue will NOT dedup it against
+                            # the original. The check above can miss an order that
+                            # landed in the few ms before the lookup (fetch_open_orders
+                            # index lag). Settle briefly and re-verify once more so a
+                            # just-landed original is caught before we risk a second fill.
+                            await asyncio.sleep(0.5)
+                            _orig2, _orig2_verified = await self._find_order_by_client_oid(
+                                exchange, symbol, coid)
+                            if _orig2 is not None:
+                                logger.warning(
+                                    "POST_ONLY: original order for %s found on re-check — "
+                                    "using it instead of resubmitting (audit F-10)", symbol)
+                                order = _orig2
+                            elif not _orig2_verified:
+                                audit(trade_log,
+                                      f"POST_ONLY retry ABORTED for {symbol}: original status "
+                                      f"unverifiable on re-check — not resubmitting (double-fill guard)",
+                                      action="post_only_retry", result="ABORT_UNVERIFIED_RECHECK",
+                                      data={"symbol": symbol, "coid": coid})
+                                raise
                             else:
-                                limit_price = round(current_price + wider_offset, 8)
-                            _prec_price = active_exchange.price_to_precision(symbol, limit_price)
-                            limit_price = float(_prec_price) if _prec_price is not None else limit_price
-                            create_kwargs["price"] = limit_price
-                            # Generate new coid for retry
-                            retry_coid = coid + "-r1"
-                            create_kwargs["coid"] = retry_coid
-                            create_kwargs["params"]["clientOid"] = retry_coid
-                            create_kwargs["params"]["clientOrderId"] = retry_coid
-                            order = await self._create_order_idempotent(exchange, **create_kwargs)
+                                audit(trade_log,
+                                      f"POST_ONLY rejected for {symbol} @ ${limit_price:,.4f} — "
+                                      f"widening offset and retrying",
+                                      action="post_only_retry", result="WIDENING",
+                                      data={"symbol": symbol, "rejected_price": limit_price})
+                                # Double the offset and retry
+                                wider_offset = 1.0 * atr_value if atr_value > 0 else current_price * 0.005
+                                if side == "buy":
+                                    limit_price = round(current_price - wider_offset, 8)
+                                else:
+                                    limit_price = round(current_price + wider_offset, 8)
+                                _prec_price = active_exchange.price_to_precision(symbol, limit_price)
+                                limit_price = float(_prec_price) if _prec_price is not None else limit_price
+                                create_kwargs["price"] = limit_price
+                                # Generate new coid for retry
+                                retry_coid = coid + "-r1"
+                                create_kwargs["coid"] = retry_coid
+                                create_kwargs["params"]["clientOid"] = retry_coid
+                                create_kwargs["params"]["clientOrderId"] = retry_coid
+                                order = await self._create_order_idempotent(exchange, **create_kwargs)
                     else:
                         raise  # Not a POST_ONLY rejection — propagate
             else:
@@ -2915,7 +2985,25 @@ class LiveExecutor:
                 if result.get("code") == "00000":
                     data = result.get("data", {})
                     # Bitget v3 returns orderId for the combined strategy order
-                    order_id = data.get("orderId") or data.get("slOrderId") or data.get("tpOrderId") or "v3-strategy"
+                    order_id = data.get("orderId") or data.get("slOrderId") or data.get("tpOrderId")
+                    # Audit F-9: a "success" code with no usable order id must NOT
+                    # be treated as a placed stop. The old code substituted the
+                    # literal "v3-strategy" sentinel and set sl_id/tp_id to it, so
+                    # the position looked protected (truthy sl_id ⇒ the RC-AUD-001
+                    # flatten and grace retries skip it) while no cancellable
+                    # trigger order existed, and cancel_order("v3-strategy") would
+                    # fail on close. Leave sl_id/tp_id = None ⇒ caller retries/flattens.
+                    if not order_id:
+                        logger.warning(
+                            "v3 SL/TP returned success code but NO order id for %s "
+                            "— treating as failure (audit F-9): %s",
+                            bitget_symbol, str(data)[:200])
+                        audit(trade_log,
+                              f"v3 SL/TP success code with no order id for {bitget_symbol}",
+                              action="sl_tp_v3", result="NO_ORDER_ID",
+                              data={"symbol": bitget_symbol, "data": str(data)[:200],
+                                    "attempt": attempt + 1})
+                        break  # no usable stop — exit with sl_id/tp_id = None
                     sl_id = order_id
                     tp_id = order_id
                     retry_note = f" (attempt {attempt + 1})" if attempt > 0 else ""
@@ -3074,6 +3162,14 @@ class LiveExecutor:
                 # Skip local SL/TP monitoring for the first 90 seconds after a
                 # position opens. This gives the exchange SL/TP orders time to be
                 # placed and prevents instant stop-outs from stale price data.
+                #
+                # Audit F-4: the grace skip must apply ONLY to positions that
+                # actually have an exchange stop in place. Emergency positions
+                # (post-order-crash) and adopted orphans can be `open` with
+                # sl_order_id=None and a fresh opened_at — for those, skipping
+                # local monitoring left them with NO protection at all for the
+                # full 90s on a leveraged perp. If no exchange SL exists after we
+                # attempt placement below, we fall through to local monitoring.
                 age_secs = (datetime.now(UTC) - pos.opened_at).total_seconds() if pos.opened_at else 999
                 if age_secs < 90:
                     # ── SAFEGUARD 3: Wait for SL/TP confirmation ──
@@ -3099,7 +3195,20 @@ class LiveExecutor:
                                             "age_secs": round(age_secs, 1)})
                         except Exception as exc:
                             logger.debug("SL/TP grace placement failed for %s: %s", pos.symbol, exc)
-                    continue  # Skip local SL/TP check during grace period
+                    # Audit F-4: only skip local monitoring when an exchange stop
+                    # is actually in place. A still-unprotected position (no
+                    # sl_order_id) must be monitored locally NOW rather than left
+                    # exposed for the rest of the grace window.
+                    if pos.sl_order_id:
+                        continue  # protected by exchange SL — skip local check
+                    logger.warning(
+                        "Position %s still has NO exchange stop at %.0fs into grace "
+                        "— running local SL monitoring immediately (audit F-4)",
+                        pos.symbol, age_secs)
+                    audit(trade_log,
+                          f"Unprotected position {pos.symbol} monitored locally during grace",
+                          action="grace_unprotected_monitor", result="LOCAL_SL_ACTIVE",
+                          data={"trade_id": trade_id, "age_secs": round(age_secs, 1)})
 
                 price = float(tickers.get(pos.symbol, {}).get("last", 0))
                 if price <= 0:

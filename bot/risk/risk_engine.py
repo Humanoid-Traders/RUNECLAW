@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import threading
 import time
@@ -755,7 +756,11 @@ class RiskEngine:
 
         try:
             # 10. Entry price sanity
-            if idea.entry_price <= 0:
+            # Audit F-6: reject non-finite (NaN/inf) explicitly — `nan <= 0` is
+            # False, so a NaN entry would otherwise report "valid". The model
+            # validator already blocks this at construction; this is
+            # defense-in-depth for ideas built via model_construct / other paths.
+            if not math.isfinite(idea.entry_price) or idea.entry_price <= 0:
                 failed.append(f"ENTRY_PRICE: invalid ({idea.entry_price})")
             else:
                 passed.append("ENTRY_PRICE: valid")
@@ -765,7 +770,8 @@ class RiskEngine:
         try:
             # 11. Stop-loss required
             if CONFIG.risk.require_stop_loss:
-                if idea.stop_loss <= 0:
+                # Audit F-6: non-finite SL is invalid (NaN defeats the <= 0 test).
+                if not math.isfinite(idea.stop_loss) or idea.stop_loss <= 0:
                     failed.append("STOP_LOSS: required but missing or invalid")
                 elif idea.stop_loss == idea.entry_price:
                     failed.append("STOP_LOSS: cannot equal entry price")
@@ -782,7 +788,17 @@ class RiskEngine:
             is_limit_order = getattr(idea, 'order_type', '') == 'limit'
             max_age = CONFIG.risk.stale_data_max_age_seconds * (2 if is_limit_order else 1)
             data_age = (datetime.now(UTC) - idea.timestamp).total_seconds()
-            if data_age > max_age:
+            # Audit F-7: a future-dated timestamp yields a negative age, which is
+            # never > max_age, so the staleness guard would silently pass on
+            # clock-skewed or replayed/forward-dated ideas. Reject ages more than
+            # a small skew tolerance into the future.
+            _CLOCK_SKEW_TOLERANCE_S = 30
+            if data_age < -_CLOCK_SKEW_TOLERANCE_S:
+                failed.append(
+                    f"STALE_DATA: idea timestamp is {-data_age:.0f}s in the FUTURE "
+                    f"(> {_CLOCK_SKEW_TOLERANCE_S}s skew tolerance)"
+                )
+            elif data_age > max_age:
                 failed.append(f"STALE_DATA: idea is {data_age:.0f}s old > {max_age}s max")
             else:
                 passed.append(f"STALE_DATA: {data_age:.0f}s old OK")
