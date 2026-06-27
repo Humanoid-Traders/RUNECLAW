@@ -175,6 +175,101 @@ async def handle_index(request: web.Request) -> web.Response:
     return web.Response(text="Dashboard HTML not found", status=404)
 
 
+# ── Operational endpoints (liveness / readiness / metrics) ───────────
+# Unauthenticated by design: auth_middleware only guards /api/*, and these are
+# standard probe/scrape endpoints. /metrics exposes ONLY non-financial
+# operational counters (uptime, connectivity, latency, counts) — never equity,
+# PnL or any per-user data — so it is safe to expose to a scraper.
+
+def _is_ready(snap) -> bool:
+    """Readiness = exchange reachable and health not CRITICAL."""
+    return bool(getattr(snap, "exchange_connected", False)) and \
+        getattr(snap, "status", "CRITICAL") != "CRITICAL"
+
+
+async def handle_health(request: web.Request) -> web.Response:
+    """Liveness: the web server is up and serving. Always 200 (it answered)."""
+    return web.json_response({"status": "ok", "timestamp": _ts()})
+
+
+async def handle_ready(request: web.Request) -> web.Response:
+    """Readiness: 200 when the engine can trade, 503 otherwise.
+
+    Fails CLOSED — if health can't be determined the bot is reported NOT ready,
+    so a load balancer / orchestrator never routes to a half-up instance.
+    """
+    engine = request.app["engine"]
+    try:
+        snap = engine.health.snapshot()
+        ready = _is_ready(snap)
+        body = {
+            "ready": ready,
+            "status": getattr(snap, "status", "UNKNOWN"),
+            "exchange_connected": bool(getattr(snap, "exchange_connected", False)),
+            "uptime_seconds": getattr(snap, "uptime_seconds", 0.0),
+        }
+        return web.json_response(body, status=200 if ready else 503)
+    except Exception as exc:
+        return web.json_response(
+            {"ready": False, "error": str(exc)[:120]}, status=503)
+
+
+def _render_prometheus(engine) -> str:
+    """Hand-rolled Prometheus text exposition (no prometheus_client dependency).
+
+    Only non-financial operational signals — safe for an unauthenticated scrape.
+    """
+    lines: list[str] = []
+
+    def metric(name: str, value, help_text: str, mtype: str = "gauge") -> None:
+        lines.append(f"# HELP {name} {help_text}")
+        lines.append(f"# TYPE {name} {mtype}")
+        lines.append(f"{name} {value}")
+
+    metric("runeclaw_up", 1, "1 if the bot web server is serving.")
+    try:
+        s = engine.health.snapshot()
+        metric("runeclaw_ready", int(_is_ready(s)), "1 if the bot is ready to trade.")
+        metric("runeclaw_uptime_seconds", s.uptime_seconds, "Process uptime in seconds.", "counter")
+        metric("runeclaw_exchange_connected", int(bool(s.exchange_connected)), "1 if the exchange is connected.")
+        metric("runeclaw_ws_connected", int(bool(s.ws_connected)), "1 if the market-data websocket is connected.")
+        metric("runeclaw_api_latency_ms", s.api_latency_ms, "Rolling average API latency (ms).")
+        metric("runeclaw_api_latency_p99_ms", s.api_latency_p99_ms, "p99 API latency (ms).")
+        metric("runeclaw_api_error_rate_pct", s.error_rate_pct, "API error rate over the window (percent).")
+        metric("runeclaw_api_calls_total", s.total_api_calls, "Total API calls observed.", "counter")
+        metric("runeclaw_api_errors_total", s.total_errors, "Total API errors observed.", "counter")
+    except Exception:
+        pass
+    try:
+        metric("runeclaw_open_positions", len(list(engine.portfolio.open_positions)),
+               "Number of currently open positions.")
+    except Exception:
+        pass
+    try:
+        metric("runeclaw_circuit_breaker_active", int(bool(engine.risk.circuit_breaker_active)),
+               "1 if the risk circuit breaker is tripped.")
+        metric("runeclaw_consecutive_losses", engine.risk.consecutive_losses,
+               "Consecutive losing trades.")
+        rstats = engine.risk.stats
+        if isinstance(rstats, dict):
+            if "total_checks" in rstats:
+                metric("runeclaw_risk_checks_total", rstats["total_checks"],
+                       "Total risk evaluations.", "counter")
+            if "total_rejections" in rstats:
+                metric("runeclaw_risk_rejections_total", rstats["total_rejections"],
+                       "Total risk rejections.", "counter")
+    except Exception:
+        pass
+
+    return "\n".join(lines) + "\n"
+
+
+async def handle_metrics(request: web.Request) -> web.Response:
+    """Prometheus exposition of operational metrics (text/plain)."""
+    engine = request.app["engine"]
+    return web.Response(text=_render_prometheus(engine), content_type="text/plain")
+
+
 # ── Auth Middleware (F-02 FIX) ────────────────────────────────
 
 @web.middleware
@@ -248,4 +343,8 @@ def create_app(engine) -> web.Application:
     app.router.add_get("/api/state", handle_state)
     app.router.add_get("/api/positions", handle_positions)
     app.router.add_get("/api/signals", handle_signals)
+    # Operational probes / scrape (unauthenticated; non-sensitive).
+    app.router.add_get("/health", handle_health)
+    app.router.add_get("/ready", handle_ready)
+    app.router.add_get("/metrics", handle_metrics)
     return app
