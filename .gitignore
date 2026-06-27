@@ -71,6 +71,7 @@ docker-compose.override.yml
 *.db
 *.sqlite3
 data/
-.github/
+# .github/ is intentionally tracked now (CI workflows live here). Only the
+# private CI backup dir stays ignored.
 .github_ci_backup/
 .playwright-cli/
