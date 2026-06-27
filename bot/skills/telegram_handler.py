@@ -1180,6 +1180,31 @@ class TelegramHandler:
             return False
         return caller_uid in {s.strip() for s in expected_uid.split(",") if s.strip()}
 
+    def _allowlist_ids(self) -> set[str]:
+        """Telegram IDs permitted to use the bot (audit F-2).
+
+        Sourced from TELEGRAM_CHAT_ID (the operator; may be comma-separated for
+        multi-channel auto-scan) plus ADMIN_TELEGRAM_IDS. An EMPTY set means no
+        allowlist is configured (e.g. an unconfigured demo / paper setup), in
+        which case the allowlist is NOT enforced and the prior open-registration
+        behavior is preserved — live mode already requires TELEGRAM_CHAT_ID via
+        is_live(), so a live bot always has a non-empty allowlist.
+        """
+        ids: set[str] = set()
+        for raw in (CONFIG.telegram.chat_id, CONFIG.telegram.admin_ids):
+            if raw:
+                ids |= {s.strip() for s in str(raw).split(",") if s.strip()}
+        return ids
+
+    def _is_allowlisted(self, update: Update) -> bool:
+        """True if the caller may use the bot. Audit F-2: closes the
+        open-self-registration hole where any /start made a stranger an
+        authorized trader (able to /halt, /reset, /mode, emergency-stop)."""
+        allow = self._allowlist_ids()
+        if not allow:
+            return True  # no allowlist configured -> preserve open/demo behavior
+        return self._get_tg_id(update) in allow
+
     def _is_admin(self, update: Update) -> bool:
         """Check if the user is an admin (user-store role OR ADMIN_TELEGRAM_IDS)."""
         tg_id = self._get_tg_id(update)
@@ -1196,7 +1221,14 @@ class TelegramHandler:
         return False
 
     def _check_auth(self, update: Update) -> bool:
-        """Check if user is authorized (any role except pending)."""
+        """Check if user is authorized (any role except pending).
+
+        Audit F-2: a non-allowlisted caller is never authorized, regardless of
+        user-store state. This is the gate for inline-keyboard callbacks
+        (emergency-stop / pause / mode) which do not go through _guard.
+        """
+        if not self._is_allowlisted(update):
+            return False
         tg_id = self._get_tg_id(update)
         return self.users.is_authorized(tg_id)
 
@@ -1204,6 +1236,16 @@ class TelegramHandler:
         """Auth + rate limit + role permission check."""
         tg_id = self._get_tg_id(update)
         user = self.users.get(tg_id)
+
+        # Audit F-2: hard allowlist gate. Only TELEGRAM_CHAT_ID / ADMIN_TELEGRAM_IDS
+        # may reach any privileged command; the user store's auto-approval can no
+        # longer grant a stranger access to a live bot.
+        if not self._is_allowlisted(update):
+            await self._send(update,
+                "\U0001f512 <b>Access restricted</b>\n\n"
+                "This bot is locked to its configured operator.\n"
+                f"Your Telegram ID: <code>{tg_id}</code>")
+            return False
 
         if not user or not user.get("authorized", False):
             await self._send(update,
@@ -3253,6 +3295,13 @@ class TelegramHandler:
         """/setllm <provider> [api_key] [model] — switch LLM provider at runtime."""
         if not await self._guard(update, "mode"):
             return
+        # Audit F-12: swapping the analysis LLM / injecting a key affects every
+        # trade decision — restrict to admins, not the broad `mode` permission.
+        if not self._is_admin(update):
+            await self._send(update,
+                "\U0001f512 <b>Admin only</b>\n\n"
+                "Changing the LLM provider/key is restricted to admins.")
+            return
 
         args = ctx.args or []
         if not args:
@@ -3330,6 +3379,12 @@ class TelegramHandler:
     async def _cmd_llmreset(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """/llmreset — clear runtime LLM key, revert to .env settings."""
         if not await self._guard(update, "mode"):
+            return
+        # Audit F-12: admin-only, mirroring /setllm.
+        if not self._is_admin(update):
+            await self._send(update,
+                "\U0001f512 <b>Admin only</b>\n\n"
+                "Resetting the LLM provider/key is restricted to admins.")
             return
 
         msg = BYOK.reset()
@@ -3682,15 +3737,14 @@ class TelegramHandler:
         """Manual trade placement: /trade buy SOL 71.42 sl 70.05 tp 76.42 [margin 250]"""
         if not update.message:
             return
+        # Audit F-12: route through the standard guard so /trade enforces the
+        # allowlist (F-2), the `trade` role permission, and the 24h session
+        # staleness check \u2014 the prior inline `authorized`-only check skipped all
+        # three, letting any authorized user (incl. a viewer role) queue trades.
+        if not await self._guard(update, "trade"):
+            return
         tg_id = self._get_tg_id(update)
-        user = self.users.get(tg_id)
-        if not user or not user.get("authorized"):
-            await self._send(update, "\U0001f512 Not authorized.")
-            return
         uid = str(update.effective_user.id) if update.effective_user else ""
-        if not self._limiter.allow(int(uid or 0)):
-            await update.message.reply_text("\u26a0\ufe0f Rate limit.")
-            return
 
         text = (update.message.text or "").strip()
         # Remove /trade prefix
@@ -5360,6 +5414,27 @@ class TelegramHandler:
 
         data = query.data or ""
         chat_id = update.effective_chat.id
+
+        # ── Audit F-11: destructive callbacks require role permission ──
+        # _check_auth (allowlist-gated) above stops strangers; this stops an
+        # authorized non-privileged user from pausing, emergency-stopping, or
+        # switching strategy mode via an inline button.
+        _DESTRUCTIVE_CB_PERM = {
+            "risk_safe_mode": "halt", "risk_pause": "halt",
+            "risk_emergency_stop": "halt", "emergency_confirm": "halt",
+        }
+        _required_perm = _DESTRUCTIVE_CB_PERM.get(data)
+        if _required_perm is None and data.startswith("mode_"):
+            _required_perm = "mode"
+        if _required_perm and not self.users.has_permission(self._get_tg_id(update), _required_perm):
+            role = (self.users.get(self._get_tg_id(update)) or {}).get("role", "pending")
+            await self._send(update,
+                f"\U0001f512 Your role (<code>{role}</code>) cannot perform this action.",
+                edit=True)
+            audit(system_log, f"Destructive callback denied: {data}",
+                  action="callback_denied", result="DENIED",
+                  data={"data": data, "role": role})
+            return
 
         # ── Language switch callback ─────────────────────────
         if data.startswith("lang:"):

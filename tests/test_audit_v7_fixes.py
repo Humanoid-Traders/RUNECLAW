@@ -17,11 +17,41 @@ Wave 1 — safe, fail-closed fixes:
 
 import math
 from datetime import datetime, timedelta
+from unittest.mock import patch
 
 import pytest
 
 from bot.compat import UTC
 from bot.utils.models import TradeIdea, Direction
+
+
+# ── Shared Telegram-handler test scaffolding (Wave 3) ────────────────
+
+def _make_update(user_id=6307156912):
+    from unittest.mock import AsyncMock, MagicMock
+    update = MagicMock()
+    update.effective_user = MagicMock()
+    update.effective_user.id = user_id
+    update.effective_user.first_name = "TestUser"
+    update.effective_chat = MagicMock()
+    update.effective_chat.id = user_id
+    update.message = MagicMock()
+    update.message.reply_text = AsyncMock()
+    update.message.text = "/x"
+    update.callback_query = None
+    ctx = MagicMock()
+    ctx.args = []
+    ctx.bot = MagicMock()
+    ctx.bot.send_message = AsyncMock()
+    return update, ctx
+
+
+def _make_handler(admin_id=6307156912):
+    from bot.core.engine import RuneClawEngine
+    from bot.skills.telegram_handler import TelegramHandler
+    handler = TelegramHandler(RuneClawEngine())
+    handler.users.seed_admin(str(admin_id))
+    return handler
 
 
 # ── F-1: execution result classification ─────────────────────────────
@@ -201,3 +231,105 @@ class TestSimVetoOrdering:
         mutate_idx = src.index("live_executor._update_exchange_sl(")
         assert veto_idx < exec_idx, "sim veto must run before EXECUTING transition"
         assert veto_idx < mutate_idx, "sim veto must run before exchange SL mutation"
+
+
+# ── F-2 / F-11 / F-12: authz lockdown ────────────────────────────────
+
+class TestAllowlist:
+    def test_allowlist_blocks_non_operator(self):
+        # F-2: with TELEGRAM_CHAT_ID configured, a stranger is not allowlisted.
+        handler = _make_handler(admin_id=111)
+        operator, _ = _make_update(user_id=111)
+        stranger, _ = _make_update(user_id=999)
+        with patch("bot.skills.telegram_handler.CONFIG") as mc:
+            mc.telegram.chat_id = "111"
+            mc.telegram.admin_ids = ""
+            assert handler._is_allowlisted(operator) is True
+            assert handler._is_allowlisted(stranger) is False
+
+    def test_allowlist_open_when_unconfigured(self):
+        # No allowlist configured (demo/paper) -> open behavior preserved.
+        handler = _make_handler(admin_id=111)
+        stranger, _ = _make_update(user_id=999)
+        with patch("bot.skills.telegram_handler.CONFIG") as mc:
+            mc.telegram.chat_id = ""
+            mc.telegram.admin_ids = ""
+            assert handler._is_allowlisted(stranger) is True
+
+    def test_admin_ids_are_allowlisted(self):
+        handler = _make_handler(admin_id=111)
+        admin, _ = _make_update(user_id=222)
+        with patch("bot.skills.telegram_handler.CONFIG") as mc:
+            mc.telegram.chat_id = "111"
+            mc.telegram.admin_ids = "222"
+            assert handler._is_allowlisted(admin) is True
+
+    @pytest.mark.asyncio
+    async def test_guard_denies_non_allowlisted(self):
+        handler = _make_handler(admin_id=111)
+        stranger, _ = _make_update(user_id=999)
+        with patch("bot.skills.telegram_handler.CONFIG") as mc:
+            mc.telegram.chat_id = "111"
+            mc.telegram.admin_ids = ""
+            ok = await handler._guard(stranger, "trade")
+            assert ok is False
+
+
+class TestCallbackAndCommandGuards:
+    def test_trade_routes_through_guard(self):
+        # F-12: /trade must call _guard (allowlist + role + session), not an
+        # inline authorized-only check.
+        import inspect
+        from bot.skills.telegram_handler import TelegramHandler
+        src = inspect.getsource(TelegramHandler._cmd_trade)
+        assert 'self._guard(update, "trade")' in src
+
+    def test_destructive_callbacks_require_permission(self):
+        # F-11: the callback dispatcher must permission-gate destructive actions.
+        import inspect
+        from bot.skills.telegram_handler import TelegramHandler
+        src = inspect.getsource(TelegramHandler._handle_callback)
+        assert "_DESTRUCTIVE_CB_PERM" in src
+        assert "callback_denied" in src
+
+    @pytest.mark.asyncio
+    async def test_setllm_admin_only(self):
+        # F-12: a non-admin (but allowlisted) user cannot swap the LLM.
+        handler = _make_handler(admin_id=111)
+        # A different, non-admin user who is allowlisted via chat_id.
+        non_admin, ctx = _make_update(user_id=222)
+        handler.users.register("222", name="trader")  # authorized trader, not admin
+        sent = []
+        async def _capture(update, text, **kw):
+            sent.append(text)
+        handler._send = _capture
+        with patch("bot.skills.telegram_handler.CONFIG") as mc:
+            mc.telegram.chat_id = "111,222"
+            mc.telegram.admin_ids = "111"
+            mc.simulation_mode = True
+            await handler._cmd_setllm(non_admin, ctx)
+        assert any("Admin only" in s for s in sent), sent
+
+
+# ── F-8 / F-13: policy (live fail-closed) ────────────────────────────
+
+class TestLivePolicyFailClosed:
+    def test_lock5_not_minted_for_nonhuman_without_optin(self):
+        # F-8: the mint is gated on a human confirmation OR the explicit
+        # auto-confirm-live opt-in; otherwise the token is left unminted.
+        import inspect
+        from bot.core.engine import RuneClawEngine
+        src = inspect.getsource(RuneClawEngine.confirm_trade)
+        assert "if human or CONFIG.auto_confirm_live_enabled:" in src
+        assert "Lock 5 NOT minted" in src
+
+    def test_critique_fails_closed_in_live(self):
+        # F-13: a critique exception in LIVE mode rejects rather than proceeding.
+        import inspect
+        from bot.core.engine import RuneClawEngine
+        src = inspect.getsource(RuneClawEngine.confirm_trade)
+        assert "ERROR_FAILCLOSED" in src
+        # The fail-closed branch is guarded by live mode.
+        idx = src.index("ERROR_FAILCLOSED")
+        preceding = src[max(0, idx - 200):idx]
+        assert "CONFIG.is_live()" in preceding

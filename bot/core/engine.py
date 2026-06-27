@@ -1548,6 +1548,18 @@ class RuneClawEngine:
                       action="critique", result="WARN",
                       data={"concerns": critique_result.concerns})
         except Exception as exc:
+            # Audit F-13: the critique is the strongest discretionary brake. In
+            # paper mode a crash can fail-open (advisory). In LIVE mode a crash
+            # must fail CLOSED — a malformed idea/snapshot that crashes the
+            # bear-case review should not silently disable it before a real order.
+            if CONFIG.is_live():
+                audit(trade_log, f"Critique gate error (fail-CLOSED in LIVE): {exc}",
+                      action="critique", result="ERROR_FAILCLOSED",
+                      data={"trade_id": trade_id, "error": str(exc)[:200]})
+                self._pending_pyramid.pop(trade_id, None)
+                self._transition(AgentState.IDLE, f"critique error (live) {trade_id}")
+                return ("Trade REJECTED: adversarial critique could not complete "
+                        "and live mode fails closed on critique errors.")
             audit(trade_log, f"Critique gate error (fail-open): {exc}",
                   action="critique", result="ERROR")
 
@@ -1561,19 +1573,31 @@ class RuneClawEngine:
         # this point means the operator already tapped "Confirm".
         approval_token = None
         if CONFIG.is_live():
-            approval_token = self.compliance.issue_approval_token(
-                trade_id, self.compliance_profile.subject_id,
-            )
-            # RC-AUD-018: the engine mints Lock 5 (human approval) itself rather
-            # than sourcing it from a real Telegram button callback. Emit a
-            # prominent audit WARNING so it is visible that, for env-armed live
-            # mode (and especially non-human confirmations), Lock 5 is satisfied
-            # with no per-session human action.
-            system_log.warning(
-                "AUTO-MINT APPROVAL TOKEN (RC-AUD-018): engine minted the Lock 5 "
-                "human-approval token for trade %s (user_id=%r) — no per-session "
-                "human callback was required.", trade_id, user_id,
-            )
+            human = self._human_confirmed(user_id)
+            # Audit F-8: only mint the Lock 5 human-approval token for a REAL
+            # human confirmation. For non-human callers (user_id "" / "auto" —
+            # e.g. auto-confirm or a skill dispatch) require the explicit
+            # AUTO_CONFIRM_LIVE_ENABLED opt-in; otherwise leave the token
+            # unminted so compliance Lock 5 fails CLOSED and the live trade is
+            # denied rather than executed with no human approval at all.
+            if human or CONFIG.auto_confirm_live_enabled:
+                approval_token = self.compliance.issue_approval_token(
+                    trade_id, self.compliance_profile.subject_id,
+                )
+                if not human:
+                    # RC-AUD-018: unattended live execution explicitly opted in.
+                    system_log.warning(
+                        "AUTO-MINT APPROVAL TOKEN (RC-AUD-018): engine minted the "
+                        "Lock 5 token for UNATTENDED trade %s (user_id=%r) under "
+                        "AUTO_CONFIRM_LIVE_ENABLED — no human callback occurred.",
+                        trade_id, user_id,
+                    )
+            else:
+                system_log.warning(
+                    "Lock 5 NOT minted for non-human confirm of %s (user_id=%r) "
+                    "and AUTO_CONFIRM_LIVE_ENABLED is off — live execution will be "
+                    "denied (audit F-8).", trade_id, user_id,
+                )
 
         compliance_decision = self.compliance.authorize(
             action=action,
