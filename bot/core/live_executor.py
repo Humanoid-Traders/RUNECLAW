@@ -549,34 +549,11 @@ class LiveExecutor:
 
         # ── Attempt 2: v3 /api/v3/account/settings (UTA accounts) ──
         try:
-            import urllib.request as _urllib_req
-            import urllib.parse as _urllib_parse
-            import hmac as _hmac
-            import hashlib as _hashlib
-            import base64 as _base64
-            import time as _time
-            import json as _json
-
-            cfg = CONFIG.exchange
-            ts = str(int(_time.time() * 1000))
-            path = "/api/v3/account/settings"
-            pre_sign = ts + "GET" + path
-            sig = _base64.b64encode(
-                _hmac.new(cfg.api_secret.encode(), pre_sign.encode(), _hashlib.sha256).digest()
-            ).decode()
-            url = "https://api.bitget.com" + path
-            req = _urllib_req.Request(url)
-            req.add_header("ACCESS-KEY", cfg.api_key)
-            req.add_header("ACCESS-SIGN", sig)
-            req.add_header("ACCESS-TIMESTAMP", ts)
-            req.add_header("ACCESS-PASSPHRASE", cfg.passphrase)
-            req.add_header("Content-Type", "application/json")
-            req.add_header("locale", "en-US")
+            from bot.core.bitget_v3_client import BitgetV3Client
             # AUDIT FIX: offload blocking urlopen to thread to avoid
             # freezing the event loop (dashboard, WS feeds, Telegram).
-            import asyncio as _asyncio
-            resp_raw = await _asyncio.to_thread(_urllib_req.urlopen, req, None, 10)
-            resp_data = _json.loads(resp_raw.read())
+            resp_data = await asyncio.to_thread(
+                BitgetV3Client.from_config().request, "GET", "/api/v3/account/settings")
 
             if resp_data.get("code") == "00000":
                 hold_mode = resp_data.get("data", {}).get("holdMode", "")
@@ -2815,26 +2792,13 @@ class LiveExecutor:
         ``{"data": [...]}`` and ``{"data": {"list": [...]}}``.
         Synchronous — callers must wrap in ``asyncio.to_thread``.
         """
-        import urllib.request as _ur
-        import hmac as _hm, hashlib as _hs, base64 as _b64, time as _t, json as _j
-        cfg = CONFIG.exchange
-        if not cfg.api_key or not cfg.api_secret:
+        from bot.core.bitget_v3_client import BitgetV3Client
+        client = BitgetV3Client.from_config()
+        if not client.has_credentials:
             return []
-        ts = str(int(_t.time() * 1000))
         path = "/api/v3/position/current-position?category=USDT-FUTURES"
-        pre_sign = ts + "GET" + path
-        sig = _b64.b64encode(_hm.new(cfg.api_secret.encode(), pre_sign.encode(), _hs.sha256).digest()).decode()
-        url = "https://api.bitget.com" + path
-        req = _ur.Request(url)
-        req.add_header("ACCESS-KEY", cfg.api_key)
-        req.add_header("ACCESS-SIGN", sig)
-        req.add_header("ACCESS-TIMESTAMP", ts)
-        req.add_header("ACCESS-PASSPHRASE", cfg.passphrase)
-        req.add_header("Content-Type", "application/json")
-        req.add_header("locale", "en-US")
         try:
-            resp = _ur.urlopen(req, timeout=10)
-            data = _j.loads(resp.read())
+            data = client.get(path)
             if data.get("code") != "00000":
                 return []
             payload = data.get("data", [])
@@ -2943,14 +2907,10 @@ class LiveExecutor:
         Uses /api/v3/trade/place-strategy-order which creates pending
         TP/SL orders attached to the position (not immediate market orders).
         """
-        import urllib.request as _urllib_req
-        import hmac as _hmac
-        import hashlib as _hashlib
-        import base64 as _base64
-        import time as _time
         import json as _json
 
-        cfg = CONFIG.exchange
+        from bot.core.bitget_v3_client import BitgetV3Client
+
         sl_id = None
         tp_id = None
 
@@ -2964,24 +2924,12 @@ class LiveExecutor:
         pos_side = "long" if direction == Direction.LONG else "short"
 
         def _v3_post(path: str, body_dict: dict) -> dict:
-            body = _json.dumps(body_dict)
-            ts = str(int(_time.time() * 1000))
-            pre_sign = ts + "POST" + path + body
-            sig = _base64.b64encode(
-                _hmac.new(cfg.api_secret.encode(), pre_sign.encode(), _hashlib.sha256).digest()
-            ).decode()
-            url = "https://api.bitget.com" + path
-            req = _urllib_req.Request(url, data=body.encode(), method="POST")
-            req.add_header("ACCESS-KEY", cfg.api_key)
-            req.add_header("ACCESS-SIGN", sig)
-            req.add_header("ACCESS-TIMESTAMP", ts)
-            req.add_header("ACCESS-PASSPHRASE", cfg.passphrase)
-            req.add_header("Content-Type", "application/json")
-            req.add_header("locale", "en-US")
+            # Signing/transport via BitgetV3Client. Preserves the original
+            # contract: RETURN an error-shaped dict (never raise) so the retry
+            # loop below branches on the response code, and recover the JSON
+            # error body off an HTTPError exactly as before.
             try:
-                # AUDIT FIX: kept sync here — callers use asyncio.to_thread
-                resp = _urllib_req.urlopen(req, timeout=10)
-                return _json.loads(resp.read())
+                return BitgetV3Client.from_config().request("POST", path, body_dict)
             except Exception as e:
                 if hasattr(e, 'read'):
                     try:
@@ -5263,14 +5211,10 @@ class LiveExecutor:
 
         Returns the exchange response dict on success, None on failure.
         """
-        import urllib.request as _urllib_req
-        import hmac as _hmac
-        import hashlib as _hashlib
-        import base64 as _base64
-        import time as _time
         import json as _json
 
-        cfg = CONFIG.exchange
+        from bot.core.bitget_v3_client import BitgetV3Client
+
         bitget_symbol = pos.symbol.replace("/USDT", "USDT").replace(":USDT", "")
         pos_side = "long" if pos.direction == "LONG" else "short"
 
@@ -5280,26 +5224,13 @@ class LiveExecutor:
             "symbol": bitget_symbol,
             "posSide": pos_side,
         }
-        body = _json.dumps(body_dict)
-        ts = str(int(_time.time() * 1000))
-        pre_sign = ts + "POST" + path + body
-        sig = _base64.b64encode(
-            _hmac.new(cfg.api_secret.encode(), pre_sign.encode(), _hashlib.sha256).digest()
-        ).decode()
-        url = "https://api.bitget.com" + path
-        req = _urllib_req.Request(url, data=body.encode(), method="POST")
-        req.add_header("ACCESS-KEY", cfg.api_key)
-        req.add_header("ACCESS-SIGN", sig)
-        req.add_header("ACCESS-TIMESTAMP", ts)
-        req.add_header("ACCESS-PASSPHRASE", cfg.passphrase)
-        req.add_header("Content-Type", "application/json")
-        req.add_header("locale", "en-US")
 
         try:
-            import asyncio as _aio
-            result = await _aio.to_thread(
-                lambda: _json.loads(_urllib_req.urlopen(req, timeout=10).read())
-            )
+            # Signing/transport via BitgetV3Client (offloaded to a thread; raises
+            # on error so the except below recovers the JSON error body off the
+            # HTTPError exactly as before).
+            result = await asyncio.to_thread(
+                BitgetV3Client.from_config().request, "POST", path, body_dict)
         except Exception as e:
             if hasattr(e, 'read'):
                 try:
