@@ -45,9 +45,15 @@ class PortfolioTracker:
         on_trade_close: Optional[Callable[[float], None]] = None,
         state_file: Optional[str] = None,
         trailing_config: Optional[TrailingStopConfig] = None,
+        commission_pct: Optional[float] = None,
     ) -> None:
         # C2-47 FIX: Use `is not None` instead of `or` to allow explicit 0.0
         self.balance = initial_balance if initial_balance is not None else CONFIG.paper_balance_usd
+        # BT-H1: optional per-portfolio commission override. When None, fall back
+        # to the live CONFIG.risk.commission_pct. The backtest passes its
+        # BacktestConfig.commission_pct here so the fee actually charged matches
+        # the fee reported (previously the config knob was silently ignored).
+        self._commission_pct = commission_pct
         self.trailing_config = trailing_config or TrailingStopConfig()
         self._initial_balance = self.balance
         self._peak_equity = self.balance
@@ -200,8 +206,9 @@ class PortfolioTracker:
         lev = getattr(trade, 'leverage', 1) or 1
         margin_usd = size_usd / lev
 
-        # Exchange commission: 0.1% taker fee each side (entry + exit)
-        commission_pct = CONFIG.risk.commission_pct
+        # Exchange commission: taker fee each side (entry + exit).
+        # BT-H1: honor the per-portfolio override when set (backtest), else live config.
+        commission_pct = self._commission_pct if self._commission_pct is not None else CONFIG.risk.commission_pct
         commission = (size_usd + exit_notional) * (commission_pct / 100.0)
         net_pnl = pnl - commission
 

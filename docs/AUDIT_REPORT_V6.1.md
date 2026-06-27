@@ -15,15 +15,21 @@ each finding re-verified at exact `file:line`, plus a 500-run deep backtest
 
 ## Summary
 
-| Severity | Found | Fixed (this PR) | Documented |
-|----------|-------|-----------------|------------|
-| HIGH | 3 | 1 | 2 |
+| Severity | Found | Fixed | Documented |
+|----------|-------|-------|------------|
+| HIGH | 3 | 3 | 0 |
 | MEDIUM | 8 | 5 | 3 |
 | LOW | 8 | 2 | 6 |
-| **Total** | **19** | **8** | **11** |
+| **Total** | **19** | **10** | **9** |
 
 Two of the MEDIUM fixes (BT-CRASH-1/2) are crashes the **deep backtest run itself
 surfaced** — all 6 of its hard errors — and are now fixed (see "Deep backtest run").
+
+**Update:** the two HIGH backtest-validity findings (BT-H1 commission, BT-H2
+wall-clock determinism) — originally documented — are now **also fixed** (see
+"Fixed in this PR"), with regression tests in `tests/test_backtest_validity.py`.
+The backtest is now reproducible (same seed → identical results, proven
+independent of wall-clock hour) and charges the commission it reports.
 
 Two V6 open questions are now **resolved**:
 - The *"intent router returns `''` for `help`"* observation was a **genuine product
@@ -117,29 +123,34 @@ four display sites only; stored fields left unchanged so downstream consumers
 
 ---
 
-## Documented — backtest validity (need plumbing changes; not fixed here)
+## Backtest validity — BT-H1 & BT-H2 now FIXED
 
-### BT-H1 — configured commission is silently ignored (HIGH)
+### BT-H1 — configured commission is silently ignored (HIGH) — ✅ FIXED
 **`bot/backtest/engine.py:227,478` + `bot/risk/portfolio.py:204` + `bot/config.py:161`** —
 `BacktestConfig.commission_pct` (default 0.1), the `--commission` CLI flag, and
 `run_deep_backtest.py`'s `commission_pct=0.1` are **never applied to PnL**. The
 only commission charged is `CONFIG.risk.commission_pct` (0.06%) inside
 `PortfolioTracker`, while the result header *reports* 0.1%. Net: every published
 backtest understates costs ~40% vs what it claims, and the cost knob is
-non-functional (cost-sensitivity analysis is invalid). **Fix:** thread
-`config.commission_pct` into the portfolio/risk engine (or recompute commission in
-the engine), and stop reporting a `commission_pct` that isn't the one charged.
+non-functional (cost-sensitivity analysis is invalid). **Fixed:** added an
+optional `commission_pct` override to `PortfolioTracker` (falls back to
+`CONFIG.risk.commission_pct` when unset for live); `BacktestEngine` now passes
+`config.commission_pct`, so the fee charged matches the fee reported. Verified
+the 0.10% knob charges 2.0 on a 1000+1000 notional round-trip.
 
-### BT-H2 — wall-clock "session" adjustments leak into backtest decisions (HIGH)
+### BT-H2 — wall-clock "session" adjustments leak into backtest decisions (HIGH) — ✅ FIXED
 **`bot/core/analyzer.py:763` + `bot/risk/risk_engine.py:529` → `session_aware.py`** —
 both confidence (±0.02–0.03) and position sizing (×0.75–1.10) call
 `get_current_session()`, which defaults to `datetime.now(UTC)` — the **real
 wall-clock hour the backtest is launched**, not the simulated `bar.timestamp`.
 This (a) breaks reproducibility (same seed → different trades depending on the
 hour you run it) and (b) is non-causal (adjusts by a factor unrelated to the
-simulated market). **Fix:** thread `bar.timestamp` through analysis/sizing so
-`get_current_session(now=bar.timestamp)` is used in backtest (the function already
-accepts a `now` arg).
+simulated market). **Fixed:** added an optional `as_of` parameter to
+`Analyzer.analyze()` and `RiskEngine.evaluate()`, threaded from the backtest's
+`bar.timestamp`, so `get_current_session(now=as_of)` uses the simulated time;
+live passes nothing → `datetime.now()` as before. Verified: the same seed now
+yields **identical** results across runs and is **independent of the wall-clock
+hour** (Asian vs London/NY-overlap launch → identical trades/PnL/commission).
 
 ### BT-L — metric conventions (LOW)
 - **Calmar not annualized** (`engine.py:459`): `total_return / max_dd_pct` should
