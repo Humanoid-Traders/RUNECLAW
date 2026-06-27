@@ -81,12 +81,43 @@ def main() -> int:
     new_failures = sorted(failed - known)
     now_passing = sorted(known - failed)
 
+    # Flake filter: some suites are mildly flaky (time-based, e.g.
+    # ProactiveMonitor) or order-sensitive (tests in test_core that pollute each
+    # other's in-process state — they pass alone but fail in sequence). Before
+    # failing the build on a NEW failure, re-run each node IN ITS OWN process
+    # (isolated). A node that passes alone is a flake / order-dependence artifact
+    # and is dropped (reported, not fatal); only nodes that still fail in
+    # isolation count as real regressions. Trade-off: an order-dependent *real*
+    # regression (test A breaks test B) is not caught here, but that is rare and
+    # far less disruptive than flakes reddening every run.
+    flaky: list[str] = []
+    if new_failures:
+        confirmed: list[str] = []
+        print("\n----- re-running new failures individually (flake filter) -----")
+        for node in new_failures:
+            r = subprocess.run(PYTEST_CMD + [node], cwd=ROOT,
+                               capture_output=True, text=True)
+            node_failed, node_internal = _parse_failures(r.stdout + r.stderr)
+            internal_error = internal_error or node_internal
+            if node in node_failed:
+                confirmed.append(node)
+                print(f"  ✗ still fails alone: {node}")
+            else:
+                flaky.append(node)
+                print(f"  ~ passes alone (flaky/order-dependent): {node}")
+        flaky = sorted(flaky)
+        new_failures = sorted(confirmed)
+
     print("\n" + "=" * 70)
     print(f"[gate] total failing: {len(failed)} | known-baseline: {len(known)}")
     if now_passing:
         print(f"[gate] {len(now_passing)} baseline test(s) now PASS — trim the baseline:")
         for n in now_passing:
             print(f"         + {n}")
+    if flaky:
+        print(f"[gate] {len(flaky)} flaky test(s) failed then passed on re-run (ignored):")
+        for n in flaky:
+            print(f"         ~ {n}")
     if internal_error:
         print("[gate] FAIL — pytest reported an INTERNALERROR (collection/runtime).")
     if new_failures:

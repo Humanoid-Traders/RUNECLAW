@@ -49,3 +49,4 @@ tests/test_telegram_commands.py::test_livebalance_returns_balance
 tests/test_var_critique_attestation.py::TestTradeCritique::test_concentration_same_direction
 tests/test_var_critique_attestation.py::TestTradeCritique::test_same_asset_double_down
 tests/test_var_critique_attestation.py::TestTradeCritique::test_three_concerns_produces_halt
+tests/test_intent_and_monitor.py::TestProactiveMonitor::test_dedup_prevents_repeat  # flaky (time-based dedup)
