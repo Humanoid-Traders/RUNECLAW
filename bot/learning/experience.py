@@ -87,6 +87,35 @@ class ExperienceMemory:
         self._store.record_decision(record)
         return record
 
+    def record_closed_outcome(
+        self,
+        *,
+        symbol: str,
+        direction: str,
+        pnl_result: float,
+        market_regime: str = "",
+        trade_id: str = "",
+    ) -> DecisionMemory:
+        """Record a CLOSED-trade outcome as a COMPLETE, queryable record.
+
+        The legacy ``record_trade_result`` appended a result-only record with no
+        symbol/direction, which ``get_similar_setups`` (which filters by
+        symbol + direction + non-null pnl) could never match — leaving the
+        learning loop open. This writes the symbol, direction, regime AND the
+        realized pnl together so similar-setup lookups actually find it.
+        """
+        record = DecisionMemory(
+            source="live_outcome",
+            symbol=symbol,
+            direction=direction,
+            market_regime=market_regime or "",
+            pnl_result=pnl_result,
+            decision=f"OUTCOME:{trade_id}" if trade_id else "OUTCOME",
+            paper_trade_id=trade_id,
+        )
+        self._store.record_decision(record)
+        return record
+
     def record_trade_result(
         self,
         decision_audit_id: str,
@@ -126,7 +155,11 @@ class ExperienceMemory:
         decisions = self._store.get_decisions(symbol=symbol, limit=500)
         similar = [
             d for d in decisions
-            if d.market_regime == market_regime
+            # Regime/direction are optional filters (empty = match any). With the
+            # sparse data a live bot accumulates, scoping by symbol+direction
+            # already isolates the dominant signal (e.g. longs-on-X losing);
+            # requiring an exact regime match would starve the sample.
+            if (not market_regime or d.market_regime == market_regime)
             and (not direction or d.direction == direction)
             and d.pnl_result is not None  # only completed trades
         ]

@@ -491,6 +491,30 @@ class AnalyzerConfig:
 
 
 @dataclass(frozen=True)
+class LearningConfig:
+    """Closed-loop learning adjustments.
+
+    The orchestrator already LOGS every decision + outcome; this controls whether
+    that accumulated experience is read back to nudge new-trade confidence.
+    Default OFF: it changes live entry behavior, so it is opt-in. The nudge is
+    small, capped, asymmetric (penalize historically-losing setups more than it
+    rewards winners), additive only, and never overrides the 23 risk checks.
+    """
+    adaptive_confidence_enabled: bool = _env_bool("ADAPTIVE_CONFIDENCE_ENABLED", False)
+    # Require at least this many similar (same symbol+direction+regime) closed
+    # setups before any adjustment — avoids reacting to noise.
+    adaptive_confidence_min_samples: int = int(
+        _env_float_bounded("ADAPTIVE_CONFIDENCE_MIN_SAMPLES", 5, 1, 1000))
+    # Max downward nudge for a historically-losing setup (penalty).
+    adaptive_confidence_max_penalty: float = _env_float_bounded(
+        "ADAPTIVE_CONFIDENCE_MAX_PENALTY", 0.05, 0.0, 0.5)
+    # Max upward nudge for a historically-winning setup (smaller — risk-first
+    # asymmetry: we trust losses to teach more than wins).
+    adaptive_confidence_max_boost: float = _env_float_bounded(
+        "ADAPTIVE_CONFIDENCE_MAX_BOOST", 0.02, 0.0, 0.5)
+
+
+@dataclass(frozen=True)
 class PartialTPConfig:
     """Partial take-profit ladder configuration."""
     enabled: bool = _env_bool("PARTIAL_TP_ENABLED", True)
@@ -788,6 +812,7 @@ class AppConfig:
     telegram: TelegramConfig = field(default_factory=TelegramConfig)
     llm: LLMConfig = field(default_factory=LLMConfig)
     analyzer: AnalyzerConfig = field(default_factory=AnalyzerConfig)
+    learning: LearningConfig = field(default_factory=LearningConfig)
     cache: CacheConfig = field(default_factory=CacheConfig)
     scale_out: ScaleOutConfig = field(default_factory=ScaleOutConfig)
     two_tranche: TwoTrancheConfig = field(default_factory=TwoTrancheConfig)

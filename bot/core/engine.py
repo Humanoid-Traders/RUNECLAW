@@ -307,6 +307,24 @@ class RuneClawEngine:
     def _on_live_position_closed(self, pos) -> None:
         """Handle live position close: invalidate cache + set SL cooldown."""
         self._invalidate_live_balance_cache()
+
+        # ── Close the learning loop's WRITE side ──────────────────────────
+        # Record the realized outcome as a complete, queryable experience record
+        # (symbol + direction + regime + pnl). Done ALWAYS (not gated by the
+        # adaptive-confidence flag) so history accumulates and is ready the moment
+        # an operator opts in. Cheap append; fail-open.
+        try:
+            _pnl = getattr(pos, "pnl_usd", None)
+            if _pnl is not None:
+                self.learning.record_closed_outcome(
+                    symbol=getattr(pos, "symbol", ""),
+                    direction=str(getattr(pos, "direction", "") or ""),
+                    pnl_result=float(_pnl),
+                    market_regime=str(getattr(self.risk, "_current_regime", "") or ""),
+                    trade_id=getattr(pos, "trade_id", ""),
+                )
+        except Exception as _lo_exc:
+            logger.debug("Learning outcome record skipped: %s", _lo_exc)
         # If closed adversely (SL / stop / liquidation), set a per-symbol cooldown
         # to prevent immediate re-entry.  A liquidation ("LIQUIDATED") is the most
         # adverse close of all, so it must arm the cooldown too.
@@ -1033,6 +1051,49 @@ class RuneClawEngine:
                   "rr": round(idea.risk_reward_ratio, 2),
                   "timeframe": timeframe,
               })
+
+        # ── Closed-loop learning nudge (opt-in, default OFF) ──────────────
+        # The orchestrator already logs every decision + outcome; here we read
+        # that experience back. Down-weight setups (same symbol + direction +
+        # regime) that have historically LOST, slightly up-weight winners. The
+        # nudge is small, capped, asymmetric, additive — it never overrides the
+        # risk engine (every check still runs below); it only shifts confidence,
+        # which can push a chronically-losing setup under the entry threshold.
+        if CONFIG.learning.adaptive_confidence_enabled:
+            try:
+                _regime = str(getattr(self.risk, "_current_regime", "") or "")
+                # Query on symbol + direction across ALL regimes (empty regime =
+                # match any): a live bot accumulates too few same-symbol+direction
+                # +regime samples to be useful, and direction already carries the
+                # dominant signal (e.g. longs on a symbol chronically losing).
+                _lctx = self.learning.get_learning_context(
+                    symbol=idea.asset, market_regime="",
+                    macro_state="", direction=idea.direction.value)
+                _n = _lctx.get("similar_past_setups", 0) or 0
+                _avg = _lctx.get("avg_past_pnl")
+                if _n >= CONFIG.learning.adaptive_confidence_min_samples and _avg is not None:
+                    if _avg < 0:
+                        _delta = -CONFIG.learning.adaptive_confidence_max_penalty
+                    elif _avg > 0:
+                        _delta = CONFIG.learning.adaptive_confidence_max_boost
+                    else:
+                        _delta = 0.0
+                    if _delta:
+                        _old = idea.confidence
+                        idea.confidence = round(max(0.0, min(1.0, _old + _delta)), 4)
+                        audit(scan_log,
+                              f"Learning nudge {idea.asset} {idea.direction.value}: "
+                              f"conf {_old:.2f} -> {idea.confidence:.2f} "
+                              f"(avg_past_pnl=${_avg:.2f} over {_n} setups)",
+                              action="learning_confidence_nudge",
+                              result="PENALIZED" if _delta < 0 else "BOOSTED",
+                              data={"symbol": idea.asset, "direction": idea.direction.value,
+                                    "regime": _regime, "delta": _delta,
+                                    "avg_past_pnl": round(_avg, 4), "samples": _n,
+                                    "old_conf": round(_old, 4), "new_conf": idea.confidence})
+            except Exception as _learn_exc:
+                # Fail-open: learning must never block or crash trade evaluation.
+                logger.debug("Learning nudge skipped for %s: %s", idea.asset, _learn_exc)
 
         # Compute ATR from candles for the volatility guard (check #16)
         atr_value = None

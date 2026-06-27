@@ -71,6 +71,12 @@ class LearningOrchestrator:
         """Record a trading decision to experience memory."""
         return self.experience.record_trade_decision(**kwargs)
 
+    def record_closed_outcome(self, **kwargs) -> DecisionMemory:
+        """Record a closed-trade outcome (symbol+direction+regime+pnl) so future
+        similar-setup lookups can score against it. Closes the learning loop's
+        write side. Always safe to call; cheap append."""
+        return self.experience.record_closed_outcome(**kwargs)
+
     # ── Step 5: Review (post-trade reflection) ────────────────────
 
     def review_trade(
@@ -129,16 +135,20 @@ class LearningOrchestrator:
         symbol: str = "",
         market_regime: str = "",
         macro_state: str = "",
+        direction: str = "",
     ) -> dict:
         """Get AI learning context for a trade decision.
 
         This context enriches the decision but does NOT override
-        risk engine or create trade signals.
+        risk engine or create trade signals. When ``direction`` is provided,
+        similar-setup stats are scoped to that side — long and short outcomes on
+        the same symbol/regime can diverge sharply, so conflating them would
+        muddy the signal.
         """
         similar = self.experience.get_similar_setups(
             symbol=symbol,
             market_regime=market_regime,
-            direction="",
+            direction=direction,
         )
         patterns = self.patterns.get_relevant_patterns(
             symbol=symbol,
