@@ -18,13 +18,8 @@ Designed to run on every startup and periodically thereafter.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import time
-import urllib.request
-import hmac
-import hashlib
-import base64
 from typing import Any
 
 from bot.compat import UTC
@@ -103,26 +98,13 @@ def _fetch_v3_positions_direct() -> list[dict[str, Any]]:
     if not cfg.api_key or not cfg.api_secret:
         return []
 
-    ts = str(int(time.time() * 1000))
     # v3 uses "category" not "productType"
     query = "category=USDT-FUTURES"
     path = f"/api/v3/position/current-position?{query}"
-    pre_sign = ts + "GET" + path
-    sig = base64.b64encode(
-        hmac.new(cfg.api_secret.encode(), pre_sign.encode(), hashlib.sha256).digest()
-    ).decode()
-    url = "https://api.bitget.com" + path
-    req = urllib.request.Request(url)
-    req.add_header("ACCESS-KEY", cfg.api_key)
-    req.add_header("ACCESS-SIGN", sig)
-    req.add_header("ACCESS-TIMESTAMP", ts)
-    req.add_header("ACCESS-PASSPHRASE", cfg.passphrase)
-    req.add_header("Content-Type", "application/json")
-    req.add_header("locale", "en-US")
 
+    from bot.core.bitget_v3_client import BitgetV3Client
     try:
-        resp = urllib.request.urlopen(req, timeout=10)
-        resp_data = json.loads(resp.read())
+        resp_data = BitgetV3Client.from_config().get(path)
     except Exception:
         return []
 
