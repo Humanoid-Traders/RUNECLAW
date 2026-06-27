@@ -139,14 +139,17 @@ class RiskLimits:
     """Hard risk limits -- breaching any one triggers circuit breaker."""
     max_position_pct: float = _env_float_bounded("MAX_POSITION_PCT", 13.0, 1, 100)
     max_daily_loss_pct: float = _env_float_bounded("MAX_DAILY_LOSS_PCT", 5.0, 0.1, 50)
-    max_drawdown_pct: float = _env_float("MAX_DRAWDOWN_PCT", 10.0)
+    # CFG-2: clamp risk-gate limits so an operator typo or a negative value
+    # (which would invert the `>`/`<` comparisons and silently disable the guard)
+    # cannot load. Bounds are generous enough to never reject a legitimate value.
+    max_drawdown_pct: float = _env_float_bounded("MAX_DRAWDOWN_PCT", 10.0, 0.1, 100.0)
     max_open_positions: int = int(_env_float_bounded("MAX_OPEN_POSITIONS", 5, 1, 100))
     # Note: max_correlation coefficient is reserved for a future pairwise correlation
     # matrix check. Currently, concentration is enforced by max_correlation_per_group
     # (a group-count limit), not by this coefficient value.
     max_correlation: float = _env_float("MAX_CORRELATION", 0.85)
     # Extended risk checks (checks 6-16)
-    min_risk_reward: float = _env_float("MIN_RISK_REWARD", 1.2)
+    min_risk_reward: float = _env_float_bounded("MIN_RISK_REWARD", 1.2, 0.0, 100.0)
     # SIGNAL QUALITY: 0.55 is the tuned threshold -- relaxed from 0.60 to allow
     # more signals through while still filtering weak setups
     min_confidence: float = _env_float_bounded("MIN_CONFIDENCE", 0.55, 0.1, 1.0)
@@ -155,17 +158,17 @@ class RiskLimits:
         "SIGNAL_DISPLAY_MIN_CONFIDENCE", 0.70, 0.1, 1.0)
     max_consecutive_losses: int = int(_env_float_bounded("MAX_CONSECUTIVE_LOSSES", 5, 1, 50))
     cooldown_after_loss_seconds: int = int(_env_float("COOLDOWN_AFTER_LOSS_SEC", 120))
-    max_portfolio_exposure_pct: float = _env_float("MAX_PORTFOLIO_EXPOSURE_PCT", 80.0)
-    max_symbol_exposure_pct: float = _env_float("MAX_SYMBOL_EXPOSURE_PCT", 20.0)
+    max_portfolio_exposure_pct: float = _env_float_bounded("MAX_PORTFOLIO_EXPOSURE_PCT", 80.0, 0.0, 1000.0)
+    max_symbol_exposure_pct: float = _env_float_bounded("MAX_SYMBOL_EXPOSURE_PCT", 20.0, 0.0, 1000.0)
     max_correlation_per_group: int = int(_env_float("MAX_CORRELATION_PER_GROUP", 2))
     # Volatility guard: reject trades when ATR exceeds this % of price.
     # BTC hourly ATR is typically 1-4%; 7% allows for elevated-vol periods
     # while blocking extreme conditions.
-    volatility_guard_atr_pct: float = _env_float("VOLATILITY_GUARD_ATR_PCT", 7.0)
+    volatility_guard_atr_pct: float = _env_float_bounded("VOLATILITY_GUARD_ATR_PCT", 7.0, 0.1, 100.0)
     stale_data_max_age_seconds: int = int(_env_float("STALE_DATA_MAX_AGE_SEC", 600))
     require_stop_loss: bool = _env_bool("REQUIRE_STOP_LOSS", True)
     # Portfolio VaR: reject trades that would push parametric VaR above this %.
-    max_portfolio_var_pct: float = _env_float("MAX_PORTFOLIO_VAR_PCT", 15.0)
+    max_portfolio_var_pct: float = _env_float_bounded("MAX_PORTFOLIO_VAR_PCT", 15.0, 0.1, 100.0)
     # Exchange commission per side.
     # Bitget USDT perps: taker ~0.060%, maker ~0.020% (standard tier).
     # commission_pct is the DEFAULT rate used in risk calcs (taker).
@@ -180,7 +183,7 @@ class RiskLimits:
     # Leverage-aware margin risk cap: max % of margin (cost) that can be lost
     # on a single trade.  SL distance × leverage must not exceed this.
     # With 10x leverage, 30% means SL can be at most 3% from entry.
-    max_margin_risk_pct: float = _env_float("MAX_MARGIN_RISK_PCT", 30.0)
+    max_margin_risk_pct: float = _env_float_bounded("MAX_MARGIN_RISK_PCT", 30.0, 0.1, 1000.0)
     # Equity curve circuit breaker: if equity drops below its N-period MA, halve sizes
     equity_curve_ma_period: int = int(_env_float("EQUITY_CURVE_MA_PERIOD", 20))
     equity_curve_pause_stddev: float = _env_float("EQUITY_CURVE_PAUSE_STDDEV", 2.0)
