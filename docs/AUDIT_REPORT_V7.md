@@ -195,3 +195,17 @@ All findings were addressed. Each fix landed with regression tests
 2. **F-3 cap semantics — RECONCILED (documented + visibility), sizing intentionally unchanged.** Deeper tracing showed the risk engine is internally *notional*-coherent (the fixed-fractional formula yields a notional, and exposure checks #14/#15 divide by leverage to compare margin-to-margin), while the live executor treats `size_usd` as *margin* and multiplies by leverage. The two models differ by exactly `leverage`, so unifying them changes live position size by ~5×. Because the bot is LIVE micro-only, the `MICRO_MAX_POSITION_USD` cap binds and keeps positions sane, and the executor's hard notional ceiling (V7) backstops gross error — so a unilateral sizing flip on a real-money bot is **not** the right call. Instead: every evaluation now logs `leverage` + `approx_notional_usd`, the module header documents the canonical units, and the residual "pick a single unit if you ever leave micro mode" is left explicitly to the operator (it is a risk-posture decision, not a mechanical bug). **No live sizing was changed.**
 
 3. **Tracked runtime log.** `logs/audit_chain.jsonl` is force-tracked in `.gitignore` and rewritten by every run/test, causing churn. Left tracked to avoid breaking a possible genesis-chain assumption; recommend untracking it and seeding an empty chain at runtime, or redirecting the log dir under test. (Still open — low priority.)
+
+---
+
+## F-3 unit reconciliation — completed (`claude/f3-unit-reconciliation`)
+
+Followed the units end-to-end and found `position_size_usd` is **margin** by consensus: `portfolio.open_position` commits it as collateral (`portfolio.py:121-123`), `get_position_value()` returns margin (`:371`), and the live executor derives `notional = margin × leverage`. Only the risk engine dissented. Two concrete unit bugs fixed:
+
+1. **Exposure checks #14/#15 were ~5× too lenient.** They divided `position_usd` by `default_leverage` (treating it as notional) before comparing against `get_position_value()` (margin) — so a $100 micro margin counted as only $20 of exposure. Now they add the **full margin**, margin-to-margin. Tightens portfolio/symbol exposure to reflect actual committed collateral; verified micro still passes (62.5% < 80% cap).
+
+2. **Portfolio VaR (#21) mixed units.** `current_exposure` sums open-position **notionals** (`entry × qty`), but the proposed position was added as **margin** — understating its risk by leverage. Now adds `margin × leverage` (notional), consistent.
+
+Also relabeled check #2 `POSITION_SIZE: notional …` → `margin …` (the value is a margin/equity fraction), and updated the module docstring to state the canonical margin unit.
+
+**Why caps stay margin-denominated (not flipped to notional):** the micro design commits $100 margin → $500 notional/trade and runs up to ~312% portfolio notional on an $800 account; any notional-denominated cap tight enough to be meaningful would break it. So margin caps are the correct, intended semantics. No live position sizing changed — only the exposure/VaR guards became unit-accurate (stricter, fail-closed direction).
