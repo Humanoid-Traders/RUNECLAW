@@ -22,6 +22,16 @@ from bot.macro.models import (
 # Helpers
 # ---------------------------------------------------------------------------
 
+def _isolated_state_file() -> str:
+    """Unique temp path for a RiskEngine's state. Never "/dev/null":
+    RiskEngine._save_state does os.replace(tmp, state_file), which as root
+    clobbers the /dev/null device with a regular file and leaks circuit-breaker
+    state into later tests (env-dependent flake)."""
+    import os
+    import tempfile
+    return os.path.join(tempfile.mkdtemp(prefix="rc-risk-"), "risk_state.json")
+
+
 def _make_event(
     dt: datetime,
     event_type: MacroEventType = MacroEventType.FOMC_DECISION,
@@ -241,7 +251,7 @@ class TestMacroRiskIntegration:
             now_fn=lambda: now,
         )
         portfolio = PortfolioTracker()
-        risk = RiskEngine(portfolio, macro_calendar=cal, state_file="/dev/null")
+        risk = RiskEngine(portfolio, macro_calendar=cal, state_file=_isolated_state_file())
 
         idea = TradeIdea(
             asset="BTC/USDT",
@@ -269,7 +279,7 @@ class TestMacroRiskIntegration:
             now_fn=lambda: now,
         )
         portfolio = PortfolioTracker()
-        risk = RiskEngine(portfolio, macro_calendar=cal, state_file="/dev/null")
+        risk = RiskEngine(portfolio, macro_calendar=cal, state_file=_isolated_state_file())
 
         idea = TradeIdea(
             asset="BTC/USDT",
@@ -292,7 +302,7 @@ class TestMacroRiskIntegration:
         cal = MacroCalendar(events=[])
         cal._now_fn = lambda: (_ for _ in ()).throw(RuntimeError("broken"))
         portfolio = PortfolioTracker()
-        risk = RiskEngine(portfolio, macro_calendar=cal, state_file="/dev/null")
+        risk = RiskEngine(portfolio, macro_calendar=cal, state_file=_isolated_state_file())
 
         idea = TradeIdea(
             asset="BTC/USDT",
@@ -314,7 +324,7 @@ class TestMacroRiskIntegration:
         from bot.utils.models import Direction, TradeIdea
 
         portfolio = PortfolioTracker()
-        risk = RiskEngine(portfolio, macro_calendar=None, state_file="/dev/null")
+        risk = RiskEngine(portfolio, macro_calendar=None, state_file=_isolated_state_file())
 
         idea = TradeIdea(
             asset="BTC/USDT",

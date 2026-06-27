@@ -50,8 +50,15 @@ def _make_portfolio(balance=10000.0):
 
 
 def _make_risk(portfolio):
+    import tempfile
+
     from bot.risk.risk_engine import RiskEngine
-    return RiskEngine(portfolio, state_file="/dev/null")
+
+    # Isolated temp state file (never "/dev/null": RiskEngine._save_state does
+    # os.replace(tmp, state_file), which as root clobbers the /dev/null device
+    # and leaks circuit-breaker state into later tests).
+    state = os.path.join(tempfile.mkdtemp(prefix="rc-risk-"), "risk_state.json")
+    return RiskEngine(portfolio, state_file=state)
 
 
 # ══════════════════════════════════════════════════════════════════
