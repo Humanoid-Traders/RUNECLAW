@@ -414,8 +414,12 @@ class BacktestEngine:
 
         # Basic stats
         total = len(trades)
+        # BT-L: treat exact-breakeven (net_pnl == 0) as neither win nor loss,
+        # matching the risk engine's neutral handling. Previously net_pnl <= 0
+        # counted breakeven as a loss, depressing win rate / inflating the
+        # consecutive-loss streak.
         winners = [t for t in trades if t.net_pnl_usd > 0]
-        losers = [t for t in trades if t.net_pnl_usd <= 0]
+        losers = [t for t in trades if t.net_pnl_usd < 0]
         win_rate = len(winners) / total if total > 0 else 0
 
         # C2-40 FIX: Renamed from gross_profit/gross_loss — these values use
@@ -436,11 +440,12 @@ class BacktestEngine:
         max_consec = 0
         current_consec = 0
         for t in trades:
-            if t.net_pnl_usd <= 0:
+            if t.net_pnl_usd < 0:  # BT-L: breakeven does not extend a loss streak
                 current_consec += 1
                 max_consec = max(max_consec, current_consec)
-            else:
+            elif t.net_pnl_usd > 0:
                 current_consec = 0
+            # net_pnl == 0: neutral — neither extends nor resets the streak
 
         # Risk metrics from equity curve
         max_dd_pct = max((p.drawdown_pct for p in self._equity_curve), default=0)
@@ -462,7 +467,17 @@ class BacktestEngine:
         sortino = self._compute_sortino()
         total_return = ((snap.equity_usd - self.config.initial_balance) /
                         self.config.initial_balance * 100)
-        calmar = (total_return / max_dd_pct) if max_dd_pct > 0 else 0
+        # BT-L: Calmar conventionally uses the ANNUALIZED return, not the raw
+        # period return — otherwise it isn't comparable across different backtest
+        # lengths. Annualize linearly over the equity-curve span (consistent with
+        # the Sharpe annualization style above).
+        annualized_return = total_return
+        if len(self._equity_curve) >= 2:
+            span_seconds = (self._equity_curve[-1].timestamp
+                            - self._equity_curve[0].timestamp).total_seconds()
+            if span_seconds > 0:
+                annualized_return = total_return * (365.25 * 24 * 3600) / span_seconds
+        calmar = (annualized_return / max_dd_pct) if max_dd_pct > 0 else 0
 
         # Commission and slippage totals
         total_comm = sum(t.commission_usd for t in trades)
@@ -556,7 +571,13 @@ class BacktestEngine:
             return 0.0
         equities = [p.equity for p in self._equity_curve]
         returns = np.diff(equities) / equities[:-1]
-        if len(returns) == 0 or np.std(returns) == 0:
+        # BT-L: sample stddev (ddof=1) is the unbiased estimator for a sample of
+        # period returns; population stddev (ddof=0) understates variance and
+        # overstates Sharpe. Needs >= 2 observations.
+        if len(returns) < 2:
+            return 0.0
+        std = np.std(returns, ddof=1)
+        if std == 0:
             return 0.0
         # Compute actual periods per year from timestamps
         ts = [p.timestamp for p in self._equity_curve]
@@ -567,7 +588,7 @@ class BacktestEngine:
         seconds_per_obs = total_seconds / observations
         periods_per_year = (365.25 * 24 * 3600) / seconds_per_obs if seconds_per_obs > 0 else 2190
         excess = np.mean(returns) - risk_free_rate / periods_per_year
-        return float(excess / np.std(returns) * np.sqrt(periods_per_year))
+        return float(excess / std * np.sqrt(periods_per_year))
 
     def _compute_sortino(self, risk_free_rate: float = 0.04) -> float:
         """Annualized Sortino ratio (downside deviation only).
@@ -576,8 +597,14 @@ class BacktestEngine:
             return 0.0
         equities = [p.equity for p in self._equity_curve]
         returns = np.diff(equities) / equities[:-1]
+        if len(returns) < 2:
+            return 0.0
         downside = returns[returns < 0]
-        if len(downside) == 0 or np.std(downside) == 0:
+        # BT-L: sample stddev (ddof=1); needs >= 2 downside observations.
+        if len(downside) < 2:
+            return 0.0
+        dstd = np.std(downside, ddof=1)
+        if dstd == 0:
             return 0.0
         # Compute actual periods per year from timestamps
         ts = [p.timestamp for p in self._equity_curve]
@@ -588,7 +615,7 @@ class BacktestEngine:
         seconds_per_obs = total_seconds / observations
         periods_per_year = (365.25 * 24 * 3600) / seconds_per_obs if seconds_per_obs > 0 else 2190
         excess = np.mean(returns) - risk_free_rate / periods_per_year
-        return float(excess / np.std(downside) * np.sqrt(periods_per_year))
+        return float(excess / dstd * np.sqrt(periods_per_year))
 
 
 # ── Walk-Forward Backtest ──────────────────────────────────────────
