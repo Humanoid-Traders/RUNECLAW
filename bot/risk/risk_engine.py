@@ -7,21 +7,22 @@ Design: if a check cannot be evaluated, the trade is REJECTED (fail-closed).
 Note: Check #17 (liquidity guard) lives in engine.py via OrderFlowAnalyzer,
 not in this module.  It is fail-open (no data = pass) by design.
 
-Units (audit V7, F-3) — IMPORTANT:
-  * ``position_size_usd`` produced here is the engine's sizing figure. Internally
-    this module's checks model it as the position's *notional* value (the
-    fixed-fractional formula risk_budget / stop_distance yields a notional, and
-    exposure checks #14/#15 divide by leverage to compare margin-to-margin).
-  * The LIVE executor, however, commits ``size_usd`` as MARGIN and multiplies by
-    leverage to derive the exchange notional (notional = margin * leverage).
-  * In LIVE micro-test mode the ``MICRO_MAX_POSITION_USD`` cap binds and keeps
-    the resulting position sane regardless of this notional-vs-margin framing,
-    and the executor enforces a hard notional ceiling (margin * max_leverage) as
-    a backstop. Every evaluation now logs ``leverage`` and ``approx_notional_usd``
-    so the relationship is explicit in the audit trail. Reconciling the two
-    models into a single unit outside micro mode is a risk-posture decision
-    (it changes live position size by ~leverage) and is intentionally left to
-    the operator rather than silently changed here.
+Units (audit V7, F-3) — RECONCILED:
+  * Canonical unit: ``position_size_usd`` is MARGIN. The portfolio
+    (``open_position``) and the LIVE executor both commit it as collateral and
+    derive exchange notional = margin * leverage; ``get_position_value()`` also
+    returns margin. The exposure checks (#2/#14/#15) therefore compare margin to
+    margin directly — they no longer divide by leverage (that earlier
+    normalization treated ``position_usd`` as a notional and understated each new
+    position's committed margin by the leverage factor, i.e. the guards were ~5x
+    too lenient). So these caps are margin/equity caps, which is also what makes
+    the micro design viable ($100 margin -> $500 notional at 5x).
+  * Loss-risk checks reason about NOTIONAL: the Portfolio VaR (#21) sums open
+    position notionals and now adds the proposed position's notional
+    (margin * leverage), not its margin, so it no longer mixes units.
+  * The executor enforces a hard notional ceiling (margin * max_leverage) as a
+    backstop, and every evaluation logs ``leverage`` + ``approx_notional_usd`` so
+    the margin->notional relationship is explicit in the audit trail.
 
 Checks:
   1.  Circuit breaker status
@@ -622,22 +623,22 @@ class RiskEngine:
 
         try:
             # 2. Position size — enforces the per-symbol cap (real authority).
-            # NOTE (audit F-3): position_usd here is the MARGIN committed; the live
-            # executor multiplies it by leverage to get exchange notional. So this
-            # %-cap is effectively a margin/equity cap (margin <= max_symbol_exposure
-            # _pct of equity), and the executor enforces a separate hard notional
-            # ceiling (margin x max-leverage). The "notional" label below is retained
-            # for backward compatibility but refers to this margin basis.
+            # Audit F-3: position_usd is the MARGIN committed; the live executor
+            # multiplies it by leverage to derive exchange notional. This %-cap is
+            # therefore a margin/equity cap (margin <= max_symbol_exposure_pct of
+            # equity); the executor enforces a separate hard notional ceiling
+            # (margin x max-leverage). Labeled "margin" so the audit trail is
+            # honest about the unit (was misleadingly "notional").
             if sizing_equity <= 0:
                 failed.append("EQUITY: zero or negative equity")
             else:
-                notional_pct = (position_usd / sizing_equity * 100)
-                max_notional_pct = CONFIG.risk.max_symbol_exposure_pct  # 20% default
+                margin_pct = (position_usd / sizing_equity * 100)
+                max_margin_pct = CONFIG.risk.max_symbol_exposure_pct  # 20% default
                 # C2-41 FIX: Use floating-point epsilon, not 1% overage tolerance
-                if notional_pct < max_notional_pct + 1e-9:  # floating-point tolerance only
-                    passed.append(f"POSITION_SIZE: notional {notional_pct:.1f}% <= {max_notional_pct}%")
+                if margin_pct < max_margin_pct + 1e-9:  # floating-point tolerance only
+                    passed.append(f"POSITION_SIZE: margin {margin_pct:.1f}% <= {max_margin_pct}%")
                 else:
-                    failed.append(f"POSITION_SIZE: notional {notional_pct:.1f}% exceeds {max_notional_pct}% cap")
+                    failed.append(f"POSITION_SIZE: margin {margin_pct:.1f}% exceeds {max_margin_pct}% cap")
         except Exception as exc:
             failed.append(f"POSITION_SIZE: evaluation error ({exc})")
 
@@ -846,11 +847,16 @@ class RiskEngine:
 
         try:
             # 14. Portfolio exposure limit (mark-to-market)
-            # C2-10 FIX: get_position_value() returns margin + unrealized PnL (per C-01),
-            # so we must normalize position_usd to margin-equivalent too.
-            # Otherwise a 5x leveraged new position overstates exposure by 5x.
-            leverage = getattr(CONFIG.exchange, 'default_leverage', 1) or 1
-            margin_equiv_position_usd = position_usd / leverage
+            # Audit F-3: position_usd is MARGIN — the portfolio (open_position) and
+            # the live executor both commit it as collateral and derive
+            # notional = margin * leverage. get_position_value() likewise returns
+            # MARGIN (+ unrealized PnL), so position_usd is already the right unit
+            # to add; it must NOT be divided by leverage. The previous
+            # `position_usd / default_leverage` treated it as a notional and
+            # understated each new position's committed margin by the leverage
+            # factor (e.g. a $100 micro margin counted as only $20), making the
+            # portfolio/symbol exposure guards ~5x too lenient.
+            margin_equiv_position_usd = position_usd
             open_value = self._portfolio.get_position_value()
             exposure_pct = (open_value / sizing_equity * 100) if sizing_equity > 0 else 0
             new_exposure = exposure_pct + (margin_equiv_position_usd / sizing_equity * 100 if sizing_equity > 0 else 0)
@@ -1456,9 +1462,15 @@ class RiskEngine:
             current_exposure += pos.entry_price * pos.quantity
 
         # VaR = z * vol * sqrt(T) * exposure / equity * 100
+        # Audit F-3: current_exposure above is NOTIONAL (entry * qty). The
+        # proposed position_usd is MARGIN, so it must be converted to notional
+        # (margin * leverage) before being added — otherwise VaR mixes units and
+        # understates the new position's risk contribution by the leverage factor.
+        _lev = getattr(CONFIG.exchange, "default_leverage", 1) or 1
+        proposed_notional = position_usd * _lev
         sqrt_t = math.sqrt(holding_period)
         current_var_pct = (z_score * vol * sqrt_t * current_exposure / equity * 100) if equity > 0 else 0.0
-        proposed_exposure = current_exposure + position_usd
+        proposed_exposure = current_exposure + proposed_notional
         proposed_var_pct = (z_score * vol * sqrt_t * proposed_exposure / equity * 100) if equity > 0 else 0.0
 
         return VarResult(VarStatus.OK, round(current_var_pct, 4), round(proposed_var_pct, 4))
