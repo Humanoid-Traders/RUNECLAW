@@ -182,6 +182,8 @@ class LivePosition:
     status: str = "open"   # "open", "closed", "error", "pending_fill"
     # Trailing stop state (managed by bot/utils/trailing.py)
     trailing_state: Optional[dict] = None
+    # Partial take-profit ladder state (bot/core/partial_tp.py), serialized dict.
+    partial_tp_state: Optional[dict] = None
     # Order type: "market" (filled immediately) or "limit" (pending fill)
     order_type: str = "market"
     # For limit orders: the exchange order ID to poll for fills
@@ -3208,6 +3210,112 @@ class LiveExecutor:
 
     # ── Position management ──────────────────────────────────────
 
+    async def _partial_close(self, exchange, pos, qty: float, stage: str) -> float:
+        """Close `qty` of a position with a reduceOnly market order. Returns the
+        quantity actually submitted (0.0 on failure). Used by the partial-TP
+        ladder; reduceOnly means the venue clamps to the live position size, so
+        it can never flip or over-close."""
+        try:
+            _q = exchange.amount_to_precision(pos.symbol, qty)
+            qty = float(_q) if _q is not None else qty
+        except Exception:
+            pass
+        if qty <= 0:
+            return 0.0
+        close_side = "sell" if pos.direction == "LONG" else "buy"
+        params = {"productType": "USDT-FUTURES", "reduceOnly": True}
+        if not getattr(self, "_is_uta", False):
+            params["tradeSide"] = "close"
+        await exchange.create_order(
+            symbol=pos.symbol, type="market", side=close_side,
+            amount=qty, params=params,
+        )
+        return qty
+
+    async def _run_partial_tp(self, exchange, pos, price: float) -> None:
+        """Partial take-profit ladder (bot/core/partial_tp.py), applied as an
+        additive overlay on the exchange SL/TP backstops:
+          - TP1 (1.5R): close 50%, move SL to breakeven
+          - TP2 (2.5R): close 30%, lock 1R of profit
+          - Runner (20%): SL ratchets via the trail; the EXISTING static SL check
+            closes it when hit (we never lower the SL, and we don't double-close).
+        Banks profit early to fix the realized R:R asymmetry without removing the
+        exchange-side safety net."""
+        import dataclasses as _dc
+        from bot.core.partial_tp import (
+            create_partial_tp_state, check_partial_tp, PartialTPState,
+        )
+
+        is_long = pos.direction == "LONG"
+
+        if not pos.partial_tp_state:
+            st = create_partial_tp_state(
+                trade_id=pos.trade_id, direction=pos.direction,
+                entry_price=pos.entry_price, stop_loss=pos.stop_loss,
+                take_profit=pos.take_profit, quantity=pos.quantity,
+                atr=getattr(pos, "atr_at_entry", 0.0) or pos.entry_price * 0.02,
+            )
+            st.current_sl = pos.stop_loss
+            st.remaining_qty = pos.quantity
+        else:
+            try:
+                st = PartialTPState(**pos.partial_tp_state)
+            except Exception:
+                # Schema drift — rebuild from the live position.
+                st = create_partial_tp_state(
+                    trade_id=pos.trade_id, direction=pos.direction,
+                    entry_price=pos.entry_price, stop_loss=pos.stop_loss,
+                    take_profit=pos.take_profit, quantity=pos.quantity,
+                    atr=getattr(pos, "atr_at_entry", 0.0) or pos.entry_price * 0.02,
+                )
+
+        def _ratchet_sl(new_sl: float) -> bool:
+            """Raise (LONG) / lower (SHORT) the stop only — never loosen it."""
+            better = new_sl > pos.stop_loss if is_long else new_sl < pos.stop_loss
+            if better:
+                pos.stop_loss = new_sl
+                st.current_sl = new_sl
+                return True
+            return False
+
+        changed = False
+        for act in check_partial_tp(st, price):
+            if act.action == "close_partial":
+                qty = min(act.qty_to_close, pos.quantity)
+                if qty > 0:
+                    submitted = await self._partial_close(exchange, pos, qty, act.stage)
+                    if submitted > 0:
+                        pos.quantity = max(0.0, pos.quantity - submitted)
+                        changed = True
+                        audit(trade_log,
+                              f"Partial TP {act.stage} for {pos.symbol}: closed {submitted} "
+                              f"@ ${price:.4f} ({act.reason})",
+                              action="partial_tp", result=act.stage.upper(),
+                              data={"trade_id": pos.trade_id, "symbol": pos.symbol,
+                                    "stage": act.stage, "qty_closed": submitted,
+                                    "remaining": pos.quantity, "price": price})
+                if act.new_sl and _ratchet_sl(act.new_sl):
+                    changed = True
+                    try:
+                        await self._update_exchange_sl(exchange, pos, pos.stop_loss)
+                    except Exception as exc:
+                        logger.debug("Partial-TP SL update failed for %s: %s", pos.symbol, exc)
+            elif act.action == "move_sl" and act.new_sl:
+                if _ratchet_sl(act.new_sl):
+                    changed = True
+                    try:
+                        await self._update_exchange_sl(exchange, pos, pos.stop_loss)
+                    except Exception as exc:
+                        logger.debug("Partial-TP runner SL update failed for %s: %s", pos.symbol, exc)
+            # act.action == "close_runner" is intentionally NOT executed here:
+            # the runner exits through the existing static SL check, which uses
+            # the ratcheted pos.stop_loss — keeping a single, locked close path.
+
+        # Persist the ladder state (and any qty/SL change) onto the position.
+        pos.partial_tp_state = _dc.asdict(st)
+        if changed:
+            self._save_positions()
+
     async def check_positions(self) -> list[str]:
         """Check open positions against current prices. Returns list of close/update messages.
 
@@ -3341,6 +3449,18 @@ class LiveExecutor:
                                   data={"trade_id": trade_id, "old_sl": old_sl,
                                         "new_sl": new_sl, "price": price,
                                         "trailing_active": trailing_active})
+
+                # ── Partial take-profit ladder ──
+                # Banks 50% at 1.5R (SL→breakeven), 30% at 2.5R (lock 1R), runner
+                # rides the ratcheted stop. Additive overlay on the exchange SL/TP
+                # (reduceOnly backstops clamp to the shrinking position). The
+                # runner's exit is the existing static SL/TP check below.
+                if CONFIG.partial_tp.enabled and pos.status == "open" and pos.quantity > 0:
+                    try:
+                        await self._run_partial_tp(exchange, pos, price)
+                    except Exception as _ptp_exc:
+                        logger.warning("Partial-TP check failed for %s: %s",
+                                       pos.symbol, _ptp_exc)
 
                 # ── Retry SL/TP placement if missing ──
                 if (not pos.sl_order_id or not pos.tp_order_id) and pos.stop_loss > 0 and pos.take_profit > 0:
