@@ -45,7 +45,8 @@ logs/*.jsonl.*
 # Keep only structured trading records
 !logs/live_trading_log.csv
 !logs/closed_trades.json
-!logs/audit_chain.jsonl
+# audit_chain.jsonl is a runtime artifact rewritten on every run/test (and seeded
+# fresh from GENESIS when absent), so it is intentionally NOT tracked.
 
 # -- Training data & artifacts --
 ollama/
