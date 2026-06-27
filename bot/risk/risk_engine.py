@@ -417,7 +417,7 @@ class RiskEngine:
         if len(self._price_history[symbol]) > 100:
             self._price_history[symbol] = self._price_history[symbol][-100:]
 
-    def evaluate(self, idea: TradeIdea, atr: Optional[float] = None, live_equity: Optional[float] = None, max_position_usd: Optional[float] = None, live_open_count: Optional[int] = None) -> RiskCheck:
+    def evaluate(self, idea: TradeIdea, atr: Optional[float] = None, live_equity: Optional[float] = None, max_position_usd: Optional[float] = None, live_open_count: Optional[int] = None, as_of: Optional[datetime] = None) -> RiskCheck:
         """
         Run all 23 pre-trade checks (16 in-engine + #17 liquidity + #18 macro + #19 MTF + #20 PCA + #21 VaR + #22 taker 3-bar + #23 bid dominance).
         Returns RiskCheck with APPROVED or REJECTED.
@@ -528,7 +528,9 @@ class RiskEngine:
         # Only reductions (mult < 1.0) applied pre-cap; never increases.
         try:
             from bot.core.session_aware import get_current_session
-            _session = get_current_session()
+            # as_of lets the backtest pass the simulated bar time so session
+            # sizing is causal and reproducible; live passes None → now.
+            _session = get_current_session(now=as_of)
             _session_mult = _session.size_multiplier
             if _session_mult < 1.0:
                 position_usd *= _session_mult

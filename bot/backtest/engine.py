@@ -51,7 +51,12 @@ class BacktestEngine:
 
     def __init__(self, config: BacktestConfig) -> None:
         self.config = config
-        self.portfolio = PortfolioTracker(initial_balance=config.initial_balance)
+        # BT-H1: pass the backtest's commission_pct so the charged fee matches the
+        # reported fee (the knob was previously ignored — live CONFIG was used).
+        self.portfolio = PortfolioTracker(
+            initial_balance=config.initial_balance,
+            commission_pct=config.commission_pct,
+        )
         # N1 fix: isolate backtest risk state so backtests don't pollute the
         # production circuit breaker / loss streak.  Each backtest gets its own
         # throwaway state file that is cleaned up when the engine is garbage-collected.
@@ -171,8 +176,9 @@ class BacktestEngine:
         if len(candles) < 30:
             return
 
-        # 3. Run analyzer (same as live)
-        idea = await self.analyzer.analyze(signal, candles)
+        # 3. Run analyzer (same as live). BT-H2: pass the simulated bar time so
+        # session-aware confidence is causal/reproducible (not wall-clock).
+        idea = await self.analyzer.analyze(signal, candles, as_of=bar.timestamp)
         if idea is None:
             self._ideas_rejected_confidence += 1
             return
@@ -191,8 +197,8 @@ class BacktestEngine:
                 true_ranges.append(tr)
             atr_value = sum(true_ranges) / len(true_ranges)
 
-        # 4b. Risk gate (same as live)
-        risk_check = self.risk.evaluate(idea, atr=atr_value)
+        # 4b. Risk gate (same as live). BT-H2: pass bar time for session sizing.
+        risk_check = self.risk.evaluate(idea, atr=atr_value, as_of=bar.timestamp)
         if risk_check.verdict == RiskVerdict.REJECTED:
             self._ideas_rejected_risk += 1
             audit(trade_log, f"[BT] Trade REJECTED: {risk_check.reason}",

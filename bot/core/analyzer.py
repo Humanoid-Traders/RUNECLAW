@@ -322,7 +322,8 @@ class Analyzer:
             self.THESIS_MODEL = self._thesis_config.model
 
     async def analyze(self, signal: MarketSignal, candles: list[list[float]], order_flow=None,
-                       candles_4h=None, candles_1d=None, is_admin: bool = False) -> Optional[TradeIdea]:
+                       candles_4h=None, candles_1d=None, is_admin: bool = False,
+                       as_of: Optional[datetime] = None) -> Optional[TradeIdea]:
         """
         Full analysis pipeline:
         1. Compute technical indicators from OHLCV candles.
@@ -770,7 +771,9 @@ class Analyzer:
         # low-liquidity sessions (Asian, late NY), boost during peak overlap.
         try:
             from bot.core.session_aware import get_current_session
-            session = get_current_session()
+            # as_of lets the backtest pass the simulated bar time so session
+            # adjustments are causal and reproducible; live passes None → now.
+            session = get_current_session(now=as_of)
             if session.confidence_adjustment != 0:
                 blended_confidence = round(
                     max(min_floor, blended_confidence + session.confidence_adjustment), 2)
