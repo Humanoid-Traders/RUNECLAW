@@ -78,7 +78,7 @@ async def test_golive_shows_warning_without_confirm():
     update, ctx = _make_update(text="/golive", args=[])
     await handler._cmd_golive(update, ctx)
     assert _any_reply_contains(update, "LIVE TRADING ACTIVATION")
-    assert _any_reply_contains(update, "Max $10 per position")
+    assert _any_reply_contains(update, "concurrent positions")
 
 
 @pytest.mark.asyncio
@@ -105,9 +105,14 @@ async def test_livebalance_returns_balance():
     handler.engine.live_executor.fetch_balance = AsyncMock(
         return_value={"total": 123.45, "free": 100.00, "used": 23.45}
     )
+    # The spot-holdings section calls _get_exchange(); mock it so it doesn't try
+    # to init a real Bitget client (which errors on missing API keys).
+    _ex = AsyncMock()
+    _ex.fetch_ticker = AsyncMock(return_value={"last": 1.0})
+    handler.engine.live_executor._get_exchange = AsyncMock(return_value=_ex)
 
     await handler._cmd_livebalance(update, ctx)
-    assert _any_reply_contains(update, "BITGET BALANCE")
+    assert _any_reply_contains(update, "BITGET PORTFOLIO")
     assert _any_reply_contains(update, "123.45")
 
 

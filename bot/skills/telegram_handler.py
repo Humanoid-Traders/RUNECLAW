@@ -2545,7 +2545,7 @@ class TelegramHandler:
                 f"\u2022 Max {CONFIG.risk.max_open_positions} concurrent positions\n"
                 f"\u2022 Max {CONFIG.risk.max_symbol_exposure_pct:.0f}% per symbol\n"
                 f"\u2022 USDT-M perpetual futures\n"
-                f"\u2022 Default {CONFIG.trading.default_leverage}x leverage\n\n"
+                f"\u2022 Default {CONFIG.exchange.default_leverage}x leverage\n\n"
                 "To confirm, type:\n<code>/golive CONFIRM</code>")
             return
 
@@ -2565,7 +2565,7 @@ class TelegramHandler:
             "\U0001f7e2 <b>LIVE TRADING ENABLED</b>\n\n"
             "Real orders will execute on Bitget (USDT-M futures).\n"
             f"Limits: {CONFIG.risk.max_open_positions} positions, "
-            f"{CONFIG.trading.default_leverage}x leverage.\n\n"
+            f"{CONFIG.exchange.default_leverage}x leverage.\n\n"
             "\u2022 <code>/livebalance</code> — check USDT balance\n"
             "\u2022 <code>/livepositions</code> — view open positions\n"
             "\u2022 <code>/liveclose &lt;id&gt;</code> — close a position\n"
