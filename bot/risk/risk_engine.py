@@ -180,6 +180,11 @@ _CORRELATION_GROUPS: dict[str, str] = {
     "RDELL/USDT": "STOCK_TECH", "RINTC/USDT": "STOCK_SEMI",
 }
 
+# Shared bucket for any symbol NOT in _CORRELATION_GROUPS. Pooling unmapped
+# symbols here (instead of treating each as its own group) stops a basket of
+# alts from collectively dodging the per-group correlation cap.
+_UNMAPPED_GROUP = "UNMAPPED_ALT"
+
 
 class RiskEngine:
     """
@@ -1475,25 +1480,39 @@ class RiskEngine:
 
         return VarResult(VarStatus.OK, round(current_var_pct, 4), round(proposed_var_pct, 4))
 
+    def _correlation_group(self, asset: str) -> str:
+        """Map an asset to its correlation group.
+
+        W-P2-2: normalize to "BASE/USDT" (the _CORRELATION_GROUPS key format)
+        before lookup. Symbols not in the map are pooled into ONE shared bucket
+        (_UNMAPPED_GROUP) instead of each becoming its own singleton group — so
+        a basket of unmapped alts cannot collectively dodge the per-group cap.
+        """
+        key = asset if "/" in asset else f"{asset}/USDT"
+        return _CORRELATION_GROUPS.get(key, _UNMAPPED_GROUP)
+
     def _check_correlation(self, idea: TradeIdea) -> Optional[str]:
         """Prevent concentrated bets in the same correlation group."""
-        # W-P2-2 FIX: Normalize asset to /USDT format for consistent lookup.
-        # _CORRELATION_GROUPS keys use "BTC/USDT" format.
-        asset_key = idea.asset if "/" in idea.asset else f"{idea.asset}/USDT"
-        new_group = _CORRELATION_GROUPS.get(asset_key, idea.asset)
-        open_groups: list[str] = []
-
-        for pos in self._portfolio.open_positions:
-            pos_key = pos.asset if "/" in pos.asset else f"{pos.asset}/USDT"
-            group = _CORRELATION_GROUPS.get(pos_key, pos.asset)
-            open_groups.append(group)
+        new_group = self._correlation_group(idea.asset)
+        open_groups: list[str] = [
+            self._correlation_group(pos.asset)
+            for pos in self._portfolio.open_positions
+        ]
 
         group_count = open_groups.count(new_group)
-        max_per_group = CONFIG.risk.max_correlation_per_group
+        # The shared unmapped-alt bucket gets its own, more generous cap (its
+        # members aren't all mutually correlated); mapped groups keep the
+        # tighter per-group cap.
+        if new_group == _UNMAPPED_GROUP:
+            max_per_group = CONFIG.risk.max_unmapped_correlated
+            where = f"unmapped-alt bucket '{_UNMAPPED_GROUP}'"
+        else:
+            max_per_group = CONFIG.risk.max_correlation_per_group
+            where = f"group '{new_group}'"
         if group_count >= max_per_group:
             return (
-                f"CORRELATION: already {group_count} positions in group '{new_group}' "
-                f"(max {max_per_group} per group)"
+                f"CORRELATION: already {group_count} positions in {where} "
+                f"(max {max_per_group})"
             )
 
         # V2: Rolling return correlation check
