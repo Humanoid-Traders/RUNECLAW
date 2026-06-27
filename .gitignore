@@ -51,6 +51,9 @@ logs/*.jsonl.*
 ollama/
 v6_data/
 AUDIT_REPORT*.md
+# Full-universe deep backtest raw results (1.6 MB, regenerable, non-reproducible
+# per the wall-clock session finding). The committed summary lives in docs/.
+backtest_deep_full_results.json
 
 # -- IDE --
 .vscode/
