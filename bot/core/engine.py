@@ -552,16 +552,43 @@ class RuneClawEngine:
                 audit(system_log, f"Startup SL/TP verification error: {exc}",
                       action="startup_sltp_verify", result="ERROR")
 
+        # Roadmap P0: exponential backoff on repeated tick failures. Previously a
+        # persistent error (exchange outage, auth failure) retried every scan
+        # interval forever, hammering the API (ban risk) and masking a degraded
+        # state where positions may be unmonitored. Now we back off and escalate.
+        _consecutive_failures = 0
+        _BACKOFF_CAP_S = 300.0
         while self._running:
             try:
                 await self._tick()
+                _consecutive_failures = 0
             except Exception as exc:
+                _consecutive_failures += 1
                 audit(
                     system_log,
-                    f"Engine tick error: {exc}",
+                    f"Engine tick error (#{_consecutive_failures}): {exc}",
                     action="tick",
                     result="ERROR",
+                    data={"consecutive_failures": _consecutive_failures},
                 )
+                # Feed the warning-rate breaker so sustained failures can trip it.
+                try:
+                    self.risk.record_warning("engine_tick_failure")
+                except Exception:
+                    pass
+                if _consecutive_failures >= 3:
+                    audit(
+                        system_log,
+                        f"Engine tick has failed {_consecutive_failures} times in a row "
+                        f"— trading may be degraded/unmonitored",
+                        action="tick", result="CRITICAL_CONSECUTIVE_FAILURES",
+                        data={"consecutive_failures": _consecutive_failures},
+                    )
+                # Exponential backoff (2x per failure, capped) instead of a tight retry loop.
+                base = self._compute_smart_scan_interval()
+                backoff = min(base * (2 ** _consecutive_failures), _BACKOFF_CAP_S)
+                await asyncio.sleep(backoff)
+                continue
             await asyncio.sleep(self._compute_smart_scan_interval())
 
     async def stop(self) -> None:

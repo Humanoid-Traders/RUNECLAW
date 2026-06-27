@@ -24,6 +24,15 @@ _STATE_FILES = (
     "data/risk_state.json",
     "data/risk_state.json.bak",
     "data/risk_state.json.tmp",
+    # Roadmap P0: the persisted user store leaked across tests. A stale
+    # last_seen on a seeded admin tripped the 24h sensitive-command staleness
+    # check (user_store.has_permission), so /pause, /resume, emergency-stop and
+    # /llmreset tests passed only in suite order (an earlier test refreshed
+    # last_seen) and failed in isolation. Cleaning it makes the user store
+    # fresh and order-independent.
+    "data/users.json",
+    "data/users.json.bak",
+    "data/users.json.tmp",
 )
 _STATE_GLOBS = (
     "data/portfolio_*.json",

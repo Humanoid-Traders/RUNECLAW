@@ -2006,23 +2006,30 @@ class LiveExecutor:
                     # ccxt requires price as a top-level param for limit orders
                     create_kwargs["price"] = limit_price
 
-                # Order splitting for large market positions
+                # Order splitting for large market positions.
+                # Roadmap P0-3: tranching is NOT implemented — the old code logged
+                # "SPLITTING" and then placed the FULL order as a single market
+                # fill, so the audit trail claimed market-impact protection that
+                # never happened. Until real tranche execution (fill aggregation +
+                # weighted-average pricing) lands, BLOCK the oversized order rather
+                # than silently take full market impact while pretending otherwise.
                 _split_enabled = getattr(getattr(CONFIG, 'execution', None), 'order_split_enabled', False)
                 _split_threshold = getattr(getattr(CONFIG, 'execution', None), 'order_split_threshold_usd', 50000)
                 if (_split_enabled and otype == "market" and
                         size_usd > _split_threshold):
-                    _n_tranches = getattr(getattr(CONFIG, 'execution', None), 'order_split_tranches', 3)
-                    _tranche_qty = quantity / _n_tranches
-                    _split_delay = getattr(getattr(CONFIG, 'execution', None), 'order_split_delay_sec', 0.5)
                     audit(trade_log,
-                          f"Splitting {symbol} order into {_n_tranches} tranches of {_tranche_qty:.6f}",
-                          action="order_split", result="SPLITTING",
-                          data={"symbol": symbol, "tranches": _n_tranches,
-                                "tranche_qty": _tranche_qty, "total_qty": quantity,
-                                "delay_sec": _split_delay})
-                    # NOTE: Actual tranche execution is a future refinement.
-                    # Currently logs the split decision; full implementation requires
-                    # aggregating fills across tranches and weighted-average pricing.
+                          f"Order ${size_usd:.2f} exceeds split threshold "
+                          f"${_split_threshold:.2f} but tranching is not implemented "
+                          f"— BLOCKING to avoid full market impact",
+                          action="order_split", result="BLOCKED_NOT_IMPLEMENTED",
+                          data={"symbol": symbol, "size_usd": round(size_usd, 2),
+                                "threshold": _split_threshold})
+                    return (
+                        f"BLOCKED: order ${size_usd:,.2f} exceeds the split threshold "
+                        f"${_split_threshold:,.2f} and order-splitting is not yet "
+                        f"implemented — refusing to send it as a single market order. "
+                        f"Lower the size or raise ORDER_SPLIT_THRESHOLD_USD."
+                    )
 
                 # Try to place the order — handle POST_ONLY rejection gracefully
                 try:
@@ -2361,6 +2368,60 @@ class LiveExecutor:
                     )
             except Exception:
                 pass
+
+            # ── Roadmap P0-2: slippage guard ──
+            # The risk engine approved this trade against idea.entry_price and the
+            # resulting stop distance / R:R. If a market fill lands far enough from
+            # the expected entry to consume a large fraction of the planned stop
+            # buffer, that approval no longer holds. CONFIG.execution.slippage_
+            # guard_enabled defaulted ON but was never enforced — only recorded.
+            # Now: flatten an adverse over-slipped fill instead of holding a
+            # position whose risk:reward is broken.
+            try:
+                _exec_cfg = getattr(CONFIG, "execution", None)
+                if (_exec_cfg is not None
+                        and getattr(_exec_cfg, "slippage_guard_enabled", False)
+                        and idea.entry_price > 0 and fill_price > 0):
+                    _stop_dist = abs(idea.entry_price - idea.stop_loss) / idea.entry_price
+                    _slip = abs(fill_price - idea.entry_price) / idea.entry_price
+                    _max_slip = _exec_cfg.max_slippage_edge_ratio * _stop_dist
+                    _adverse = (
+                        (idea.direction == Direction.LONG and fill_price > idea.entry_price)
+                        or (idea.direction == Direction.SHORT and fill_price < idea.entry_price)
+                    )
+                    if _adverse and _stop_dist > 0 and _slip > _max_slip:
+                        audit(trade_log,
+                              f"Slippage guard tripped for {idea.asset}: fill "
+                              f"${fill_price:.4f} vs entry ${idea.entry_price:.4f} "
+                              f"({_slip:.2%}) exceeds {_exec_cfg.max_slippage_edge_ratio:.0%} "
+                              f"of stop distance ({_stop_dist:.2%}) — flattening",
+                              action="slippage_guard", result="FLATTEN",
+                              data={"trade_id": idea.id, "symbol": idea.asset,
+                                    "fill_price": fill_price, "entry": idea.entry_price,
+                                    "slippage_pct": round(_slip, 5),
+                                    "stop_dist_pct": round(_stop_dist, 5),
+                                    "limit_pct": round(_max_slip, 5)})
+                        try:
+                            close_msg = await self.close_position(
+                                idea.id, reason="slippage_guard")
+                            return (
+                                f"⚠️ <b>EXECUTION ABORTED — {idea.asset}</b>\n"
+                                f"Fill slipped {_slip:.2%} from the planned entry "
+                                f"(> {_exec_cfg.max_slippage_edge_ratio:.0%} of the stop "
+                                f"buffer), so the position was CLOSED for safety.\n{close_msg}"
+                            )
+                        except Exception as _sl_close_exc:
+                            logger.error("Slippage-guard flatten FAILED for %s: %s",
+                                         idea.asset, _sl_close_exc)
+                            return (
+                                f"🚨 <b>URGENT — {idea.asset} filled with excessive slippage</b>\n"
+                                f"Automatic close also FAILED ({_sl_close_exc}). "
+                                f"Close this position MANUALLY on Bitget immediately."
+                            )
+            except Exception as _slip_guard_exc:
+                # Fail open: the SL placement below still protects the position.
+                logger.warning("Slippage guard error for %s (continuing): %s",
+                               idea.asset, _slip_guard_exc)
 
             # Record API success for degradation tracking
             self.record_api_success()

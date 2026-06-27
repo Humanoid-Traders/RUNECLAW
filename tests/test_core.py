@@ -1673,11 +1673,14 @@ class TestAuditFixes:
     # -- Position sizing cap (Audit #1) --
 
     def test_position_sizing_caps_instead_of_rejecting(self):
-        """Fixed-fractional sizing that exceeds 20% notional should be clamped by check #2, not rejected."""
+        """Fixed-fractional sizing that would exceed the position cap should be
+        CAPPED (in the sizing step) and pass check #2, not be rejected."""
+        from bot.config import CONFIG
         portfolio = PortfolioTracker(initial_balance=10000.0)
         risk = RiskEngine(portfolio, state_file="/dev/null")
-        # 2.5% stop distance -> uncapped = 2% equity / 2.5% = 80% of equity = $8000
-        # Check #2 should clamp to 20% = $2000, NOT reject
+        # Tight 2.5% stop -> uncapped fixed-fractional size far exceeds the cap;
+        # the sizing step caps it at max_position_pct of equity rather than the
+        # risk engine rejecting the trade.
         idea = self._make_idea(
             entry_price=50000.0,
             stop_loss=48750.0,  # 2.5% stop
@@ -1685,14 +1688,14 @@ class TestAuditFixes:
         )
         result = risk.evaluate(idea, atr=500.0)
         assert result.verdict != RiskVerdict.REJECTED, \
-            f"Position sizing should clamp, not reject. Got: {result.reason}"
-        # Position size should be clamped at ~20% of equity
-        assert result.position_size_usd <= 10000 * 0.201  # 20% + epsilon
-        # Verify clamping was logged in passed checks
-        sizing_msgs = [c for c in result.checks_passed if "POSITION_SIZE" in c]
-        assert len(sizing_msgs) == 1
-        assert "clamped" in sizing_msgs[0].lower(), \
-            f"Expected 'clamped' in sizing check msg, got: {sizing_msgs[0]}"
+            f"Position sizing should cap, not reject. Got: {result.reason}"
+        # Capped at max_position_pct of equity (+ epsilon for rounding).
+        cap = 10000 * (CONFIG.risk.max_position_pct / 100.0)
+        assert result.position_size_usd <= cap * 1.01, \
+            f"Expected size capped at ~${cap:.0f}, got ${result.position_size_usd:.0f}"
+        # The POSITION_SIZE check is present and passed (not in failed).
+        assert any("POSITION_SIZE" in c for c in result.checks_passed)
+        assert not any("POSITION_SIZE" in c for c in result.checks_failed)
 
     def test_position_sizing_cap_allows_tight_stops(self):
         """Tight stops (1% distance) should produce capped positions, not rejections."""
@@ -2565,11 +2568,6 @@ class TestTelegramAuth:
         handler.users._users = {}
         handler.users._save()
         return handler, tmp.name
-        from unittest.mock import MagicMock
-        update = MagicMock()
-        update.effective_chat.id = chat_id
-        update.effective_user.id = chat_id
-        return update
 
     def test_auth_rejects_when_unconfigured(self):
         """Unregistered user should be rejected."""
@@ -4295,8 +4293,13 @@ class TestSwarmProtocol:
         assert bus.message_count <= 1000
 
 
-class TestAuditFixes:
-    """Tests for audit findings F-03, F-04, F-08."""
+class TestAuditFixesSecurity:
+    """Tests for audit findings F-03, F-04, F-08 (MCP auth, etc.).
+
+    Roadmap P0-5: renamed from TestAuditFixes — a second class of the same name
+    silently shadowed the one at line ~1654 (position-sizing/mark-to-market),
+    so pytest only ran this one and the first class's tests never executed.
+    """
 
     def test_mcp_server_requires_auth_token(self, monkeypatch):
         """F-03: MCP server must refuse to start without MCP_AUTH_TOKEN."""
