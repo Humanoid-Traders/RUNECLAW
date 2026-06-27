@@ -372,39 +372,44 @@ class RedTeamEngine:
     # -- Confidence Manipulation --
 
     def _confidence_manipulation_scenarios(self) -> list[dict]:
+        # Derive the test points from the live config threshold so these
+        # scenarios stay correct if min_confidence is retuned (currently 0.55).
+        threshold = CONFIG.risk.min_confidence
+        below = round(threshold - 0.01, 4)
+        above = round(threshold + 0.01, 4)
         return [
             {
-                "name": "confidence_below_threshold_0.59",
+                "name": f"confidence_below_threshold_{below}",
                 "category": "confidence_manipulation",
                 "description": (
-                    "Confidence 0.59, just below the 0.60 threshold. "
+                    f"Confidence {below}, just below the {threshold} threshold. "
                     "Should be rejected."
                 ),
                 "expected_verdict": "REJECTED",
                 "atr": "auto",
-                "build_idea": lambda: _make_idea(confidence=0.59),
+                "build_idea": lambda: _make_idea(confidence=below),
             },
             {
-                "name": "confidence_at_threshold_0.60",
+                "name": f"confidence_at_threshold_{threshold}",
                 "category": "confidence_manipulation",
                 "description": (
-                    "Confidence exactly 0.60 -- at the minimum threshold. "
-                    "Should be approved (>= 0.60)."
+                    f"Confidence exactly {threshold} -- at the minimum threshold. "
+                    f"Should be approved (>= {threshold})."
                 ),
                 "expected_verdict": "APPROVED",
                 "atr": "auto",
-                "build_idea": lambda: _make_idea(confidence=0.60),
+                "build_idea": lambda: _make_idea(confidence=threshold),
             },
             {
-                "name": "confidence_above_threshold_0.61",
+                "name": f"confidence_above_threshold_{above}",
                 "category": "confidence_manipulation",
                 "description": (
-                    "Confidence 0.61, just above threshold. "
+                    f"Confidence {above}, just above threshold. "
                     "Should be approved."
                 ),
                 "expected_verdict": "APPROVED",
                 "atr": "auto",
-                "build_idea": lambda: _make_idea(confidence=0.61),
+                "build_idea": lambda: _make_idea(confidence=above),
             },
         ]
 

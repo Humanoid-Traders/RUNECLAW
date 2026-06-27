@@ -2,14 +2,10 @@
 # (scripts/ci_test_gate.py). NEW failures outside this list fail CI. Regenerate
 # with: python scripts/ci_test_gate.py --update
 #
-# Down from 42 to these few after the drift-reconciliation sweep. Remaining:
-#  - test_confirm_trade_success: needs a live-path integration rewrite (the bot is
-#    now LIVE-ONLY; paper confirm returns a disabled message).
-#  - test_all_28_scenarios_pass: 2 red-team scenarios encode pre-change risk
-#    thresholds (stale-data 5->10min, min-confidence 0.60->0.55). Left failing on
-#    purpose to surface the loosening for review rather than rubber-stamp it.
+# Down from 42 to a single flaky timing test after the drift-reconciliation
+# sweep. test_confirm_trade_success was rewritten for the LIVE-ONLY path and
+# test_all_28_scenarios_pass now derives its thresholds from live CONFIG, so
+# both pass and were removed from this baseline. Remaining:
 #  - test_dedup_prevents_repeat: flaky (time-based ProactiveMonitor dedup).
 
-tests/test_core.py::TestEngineFSM::test_confirm_trade_success
-tests/test_core.py::TestRedTeam::test_all_28_scenarios_pass
 tests/test_intent_and_monitor.py::TestProactiveMonitor::test_dedup_prevents_repeat

@@ -1282,6 +1282,12 @@ class TestEngineFSM:
     # -- Confirm / Reject --
 
     def test_confirm_trade_success(self):
+        """This bot is LIVE-ONLY (paper trading is disabled), so a successful
+        /confirm must drive the LIVE execution path: re-check passes, compliance
+        grants, the simulation veto is clear, and the engine returns the
+        LiveExecutor result while clearing the pending idea + ATR."""
+        from types import SimpleNamespace
+
         engine = self._make_engine()
         idea = self._make_pending_idea()
         engine._pending_ideas[idea.id] = idea
@@ -1293,6 +1299,8 @@ class TestEngineFSM:
         # Increase portfolio so position size stays within 20% cap
         engine.portfolio.balance = 50000.0
         engine.portfolio._peak_equity = 50000.0
+        # No live-balance cache → size-clamp branch is skipped.
+        engine._live_balance_cache = {}
 
         # Mock exchange so price drift check passes (return price near entry)
         mock_exchange = AsyncMock()
@@ -1300,15 +1308,30 @@ class TestEngineFSM:
         engine.scanner._get_exchange = AsyncMock(return_value=mock_exchange)
         engine.scanner._get_futures_exchange = AsyncMock(return_value=mock_exchange)
 
-        # Ensure paper mode so compliance doesn't require LIVE_TRADE permission
-        with patch("bot.core.engine.CONFIG") as mock_cfg:
-            mock_cfg.is_live.return_value = False
-            mock_cfg.risk = CONFIG.risk
-            mock_cfg.exchange = CONFIG.exchange
-            mock_cfg.strategy_types = CONFIG.strategy_types
+        # Stub the live-execution collaborators: the LiveExecutor itself, the
+        # exchange position count, the compliance authorize gate, and the
+        # SIMULATION_MODE veto. We are testing the engine's orchestration of a
+        # successful live confirm, not the executor/exchange internals.
+        engine.live_executor._positions = {}
+        engine.live_executor.execute = AsyncMock(
+            return_value="✅ LIVE order placed: BTC/USDT LONG"
+        )
+        engine.compliance.issue_approval_token = MagicMock(return_value="tok-123")
+        engine.compliance.authorize = MagicMock(return_value=SimpleNamespace(
+            granted=True, reasons=[], locks_failed=[], locks_passed=["L1", "L5"],
+        ))
+        engine._live_execution_vetoed_by_simulation = lambda: False
+
+        with patch.object(type(CONFIG), "is_live", return_value=True), \
+             patch("bot.core.engine.get_exchange_position_count",
+                   new=AsyncMock(return_value=0)), \
+             patch("bot.core.engine.invalidate_position_count_cache"):
             result = self._run(engine.confirm_trade(idea.id))
-        assert "PAPER" in result
+
+        assert result == "✅ LIVE order placed: BTC/USDT LONG"
+        engine.live_executor.execute.assert_awaited_once()
         assert idea.id not in engine._pending_ideas
+        assert idea.id not in engine._pending_atr
         assert engine.state == AgentState.IDLE
 
     def test_confirm_trade_not_found(self):
