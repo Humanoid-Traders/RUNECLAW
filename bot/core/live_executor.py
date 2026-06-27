@@ -3316,6 +3316,116 @@ class LiveExecutor:
         if changed:
             self._save_positions()
 
+    def _local_stop_breached(self, pos, price: float) -> tuple[bool, str]:
+        """Whether `price` has hit `pos`'s local stop or target.
+
+        Pure mirror of the per-tick static SL/TP check (kept in lock-step with
+        it) so the grace sub-loop and the monitor agree on what "breached"
+        means. Guards stop_loss/take_profit > 0 so an unset level (0.0) can
+        never be read as an instant TP/SL hit.
+        """
+        if price <= 0:
+            return False, ""
+        trailing = bool(pos.trailing_state and pos.trailing_state.get("trailing_active"))
+        sl, tp = pos.stop_loss, pos.take_profit
+        if pos.direction == "LONG":
+            if sl > 0 and price <= sl:
+                return True, "TRAILING SL HIT" if trailing else "SL HIT"
+            if tp > 0 and price >= tp:
+                return True, "TP HIT"
+        else:  # SHORT
+            if sl > 0 and price >= sl:
+                return True, "TRAILING SL HIT" if trailing else "SL HIT"
+            if tp > 0 and price <= tp:
+                return True, "TP HIT"
+        return False, ""
+
+    async def _guard_unprotected_grace(self, exchange, pos) -> Optional[str]:
+        """Tight, BOUNDED sub-loop for a just-opened position that still has no
+        exchange stop.
+
+        The per-tick monitor only revisits a position once per scan interval
+        (~10-60s). A freshly-opened, stop-less position on a leveraged perp is
+        therefore blind for a full interval — exactly the window in which an
+        adverse move would have hit its (un-placed) stop. Rather than wait, run
+        a short local loop NOW: each pass re-attempts the exchange stop and, if
+        price has already breached the intended stop, closes the position.
+
+        Safe by construction:
+          * Inline on the single monitor task that already owns position
+            mutation — no background task, so no double-close race.
+          * Bounded by ``unprotected_guard_max_iterations`` so it can never
+            wedge monitoring of the other positions.
+          * Purely protective — only places a stop or closes; never opens.
+
+        Returns a close message if it had to flatten locally, else None
+        (stop placed, price never breached, or the bound was reached and the
+        per-tick monitor takes over).
+        """
+        if not CONFIG.execution.unprotected_guard_enabled:
+            return None
+        max_iter = max(1, CONFIG.execution.unprotected_guard_max_iterations)
+        interval = max(0.1, CONFIG.execution.unprotected_guard_interval_s)
+        direction = Direction.LONG if pos.direction == "LONG" else Direction.SHORT
+
+        for i in range(max_iter):
+            # 1. The real fix: get the exchange stop on so the venue protects it.
+            if not pos.sl_order_id and pos.stop_loss > 0:
+                try:
+                    sl_id, tp_id = await self._place_sl_tp(
+                        exchange, pos.symbol, direction,
+                        pos.quantity, pos.stop_loss, pos.take_profit,
+                    )
+                    if sl_id and not pos.sl_order_id:
+                        pos.sl_order_id = sl_id
+                    if tp_id and not pos.tp_order_id:
+                        pos.tp_order_id = tp_id
+                    if pos.sl_order_id:
+                        self._save_positions()
+                        audit(trade_log,
+                              f"Grace sub-loop placed exchange stop for {pos.symbol} "
+                              f"after {i + 1} attempt(s)",
+                              action="grace_guard", result="PLACED",
+                              data={"trade_id": pos.trade_id, "symbol": pos.symbol,
+                                    "sl_id": pos.sl_order_id, "iterations": i + 1})
+                        return None  # protected — done
+                except Exception as exc:
+                    logger.debug("Grace sub-loop SL placement failed for %s: %s",
+                                 pos.symbol, exc)
+
+            # 2. Still no exchange stop — close locally if price has breached it.
+            price = 0.0
+            try:
+                t = await exchange.fetch_ticker(pos.symbol)
+                price = float(t.get("last", 0) or 0)
+            except Exception as exc:
+                logger.debug("Grace sub-loop ticker fetch failed for %s: %s",
+                             pos.symbol, exc)
+            breached, reason = self._local_stop_breached(pos, price)
+            if breached:
+                msg = await self.close_position(
+                    pos.trade_id, f"{reason} (grace sub-loop)", price)
+                audit(trade_log,
+                      f"Grace sub-loop closed UNPROTECTED {pos.symbol} on {reason} "
+                      f"@ ${price:.6f}",
+                      action="grace_guard", result="CLOSED_LOCAL",
+                      data={"trade_id": pos.trade_id, "symbol": pos.symbol,
+                            "reason": reason, "price": price, "iterations": i + 1})
+                return msg
+
+            # 3. Unprotected but not breached — wait a beat, then retry.
+            if i < max_iter - 1:
+                await asyncio.sleep(interval)
+
+        # Bound reached without resolution — hand back to the per-tick monitor.
+        audit(trade_log,
+              f"Grace sub-loop exhausted for {pos.symbol} — still unprotected, "
+              f"per-tick monitor continues",
+              action="grace_guard", result="EXHAUSTED",
+              data={"trade_id": pos.trade_id, "symbol": pos.symbol,
+                    "iterations": max_iter})
+        return None
+
     async def check_positions(self) -> list[str]:
         """Check open positions against current prices. Returns list of close/update messages.
 
@@ -3410,6 +3520,16 @@ class LiveExecutor:
                     # exposed for the rest of the grace window.
                     if pos.sl_order_id:
                         continue  # protected by exchange SL — skip local check
+                    # Still unprotected within grace. Don't wait for the next scan
+                    # tick (~10-60s of blind exposure on a leveraged perp): run a
+                    # tight, bounded local sub-loop NOW to place the stop or close
+                    # on breach (audit F-4 / roadmap risk-depth #1).
+                    guard_msg = await self._guard_unprotected_grace(exchange, pos)
+                    if guard_msg:
+                        closed_messages.append(guard_msg)
+                        continue  # sub-loop flattened it
+                    if pos.sl_order_id:
+                        continue  # sub-loop got the exchange stop on — protected
                     logger.warning(
                         "Position %s still has NO exchange stop at %.0fs into grace "
                         "— running local SL monitoring immediately (audit F-4)",

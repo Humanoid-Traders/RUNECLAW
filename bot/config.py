@@ -561,6 +561,22 @@ class ExecutionConfig:
     # Graceful degradation
     ws_disconnect_pause_sec: float = _env_float("WS_DISCONNECT_PAUSE_SEC", 60.0)
     api_degrade_reduce_only: bool = _env_bool("API_DEGRADE_REDUCE_ONLY", True)
+    # Unprotected-position grace guard.
+    # A just-opened position whose exchange stop has not yet been placed is
+    # only monitored on the next scan tick (~10-60s away) — a real blind window
+    # on a leveraged perp. When True, the monitor runs a tight, BOUNDED inline
+    # sub-loop the moment it sees such a position: each iteration re-attempts the
+    # exchange stop and, if price has already breached the local stop, closes the
+    # position — instead of waiting for the next tick. Purely protective (it
+    # never opens or rejects a trade), so it defaults ON.
+    unprotected_guard_enabled: bool = _env_bool("UNPROTECTED_GUARD_ENABLED", True)
+    # Max sub-loop iterations (bounds worst-case time it can delay the rest of
+    # the monitor: max_iterations * interval). Clamped to keep it from wedging.
+    unprotected_guard_max_iterations: int = int(
+        _env_float_bounded("UNPROTECTED_GUARD_MAX_ITER", 8, 1, 60))
+    # Seconds between sub-loop iterations.
+    unprotected_guard_interval_s: float = _env_float_bounded(
+        "UNPROTECTED_GUARD_INTERVAL_S", 1.0, 0.1, 10.0)
 
 
 @dataclass(frozen=True)
