@@ -13,12 +13,8 @@ tests/test_audit_v5_followup_risk.py::TestProviderFallbackReducesSize::test_macr
 tests/test_audit_v5_followup_risk.py::TestProviderFallbackReducesSize::test_session_provider_exception_reduces_size
 tests/test_core.py::TestAuditV3Fixes::test_confirm_trade_recheck_exception_logged
 tests/test_core.py::TestEngineFSM::test_confirm_trade_success
-tests/test_core.py::TestIntegration::test_circuit_breaker_cascade
-tests/test_core.py::TestIntegration::test_full_pipeline_idea_to_execution
-tests/test_core.py::TestIntegration::test_portfolio_callback_updates_risk
 tests/test_core.py::TestQwenIntegration::test_llm_config_default_model_is_gpt4o
 tests/test_core.py::TestRedTeam::test_all_28_scenarios_pass
-tests/test_core.py::TestRiskEngine::test_approve_clean_trade
 tests/test_execution_upgrades.py::TestTrailingStopEngine::test_trailing_activates_at_50pct_tp
 tests/test_execution_upgrades.py::TestTrailingStopEngine::test_trailing_short_position
 tests/test_execution_upgrades.py::TestTrailingStopEngine::test_trailing_stop_with_atr_values
