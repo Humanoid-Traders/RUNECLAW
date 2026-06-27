@@ -64,9 +64,24 @@ def _make_portfolio(balance: float = 10000.0) -> PortfolioTracker:
     return PortfolioTracker(initial_balance=balance)
 
 
+def _isolated_state_file() -> str:
+    """A unique, writable temp path for a RiskEngine's persisted state.
+
+    Do NOT use "/dev/null": RiskEngine._save_state writes a tmp file then
+    os.replace(tmp, state_file). Running as root that atomically REPLACES the
+    /dev/null device with a regular file holding the circuit-breaker/loss state,
+    which the next RiskEngine then restores — leaking state across tests (an
+    env-dependent flake that only bites as root, e.g. in CI). A unique temp file
+    per engine keeps each one isolated.
+    """
+    import os
+    import tempfile
+    return os.path.join(tempfile.mkdtemp(prefix="rc-risk-"), "risk_state.json")
+
+
 def _make_risk(portfolio: PortfolioTracker) -> RiskEngine:
-    # Use /dev/null so tests never persist or load stale state
-    return RiskEngine(portfolio, state_file="/dev/null")
+    # Isolated temp state file so tests never persist or load stale state.
+    return RiskEngine(portfolio, state_file=_isolated_state_file())
 
 
 # Default ATR for tests: 2600 (4% of 65000 entry — passes the 6% volatility guard)
@@ -1677,7 +1692,7 @@ class TestAuditFixes:
         CAPPED (in the sizing step) and pass check #2, not be rejected."""
         from bot.config import CONFIG
         portfolio = PortfolioTracker(initial_balance=10000.0)
-        risk = RiskEngine(portfolio, state_file="/dev/null")
+        risk = RiskEngine(portfolio, state_file=_isolated_state_file())
         # Tight 2.5% stop -> uncapped fixed-fractional size far exceeds the cap;
         # the sizing step caps it at max_position_pct of equity rather than the
         # risk engine rejecting the trade.
@@ -1700,7 +1715,7 @@ class TestAuditFixes:
     def test_position_sizing_cap_allows_tight_stops(self):
         """Tight stops (1% distance) should produce capped positions, not rejections."""
         portfolio = PortfolioTracker(initial_balance=10000.0)
-        risk = RiskEngine(portfolio, state_file="/dev/null")
+        risk = RiskEngine(portfolio, state_file=_isolated_state_file())
         idea = self._make_idea(
             entry_price=50000.0,
             stop_loss=49500.0,  # 1% stop distance
@@ -1863,7 +1878,7 @@ class TestAuditFixes:
     def test_rr_boundary_not_rejected(self):
         """R:R at exactly the minimum threshold should pass (float tolerance)."""
         portfolio = PortfolioTracker(initial_balance=10000.0)
-        risk = RiskEngine(portfolio, state_file="/dev/null")
+        risk = RiskEngine(portfolio, state_file=_isolated_state_file())
         # R:R of exactly 1.2 (default min_risk_reward)
         # SL = 2.5 ATR, TP = 3.0 ATR -> R:R = 3.0/2.5 = 1.2
         idea = self._make_idea(
@@ -2152,7 +2167,7 @@ class TestFailClosedFaultInjection:
         """If _check_correlation raises, the trade must be REJECTED (not silently approved)."""
         from unittest.mock import patch
         portfolio = PortfolioTracker(initial_balance=10000.0)
-        risk = RiskEngine(portfolio, state_file="/dev/null")
+        risk = RiskEngine(portfolio, state_file=_isolated_state_file())
         idea = self._make_idea()
 
         with patch.object(risk, "_check_correlation", side_effect=RuntimeError("injected fault")):
@@ -2169,7 +2184,7 @@ class TestFailClosedFaultInjection:
         """If portfolio.snapshot() raises, the trade must be REJECTED."""
         from unittest.mock import patch
         portfolio = PortfolioTracker(initial_balance=10000.0)
-        risk = RiskEngine(portfolio, state_file="/dev/null")
+        risk = RiskEngine(portfolio, state_file=_isolated_state_file())
         idea = self._make_idea()
 
         with patch.object(portfolio, "snapshot", side_effect=RuntimeError("snapshot crash")):
@@ -2182,7 +2197,7 @@ class TestFailClosedFaultInjection:
         """Multiple faulted checks should all appear in checks_failed."""
         from unittest.mock import patch, PropertyMock
         portfolio = PortfolioTracker(initial_balance=10000.0)
-        risk = RiskEngine(portfolio, state_file="/dev/null")
+        risk = RiskEngine(portfolio, state_file=_isolated_state_file())
         idea = self._make_idea()
 
         # Fault both correlation and the volatility guard by making atr produce an error
