@@ -1700,14 +1700,21 @@ class LiveExecutor:
                     _sym_base = normalize_symbol(symbol)
                     atr_pct = self._last_atr_pct.get(_sym_base, 0.02)
                     min_lev = getattr(CONFIG.exchange, 'min_leverage', 1)
-                    max_lev = getattr(CONFIG.exchange, 'max_leverage', leverage_mult * 2)
 
+                    # Risk-discipline (from live-trade analysis): dynamic leverage
+                    # only ever REDUCES vs the configured default — it must never
+                    # *increase* it. Low realized volatility does not justify more
+                    # leverage; the old code scaled UP ×1.4 in low vol, amplifying
+                    # losses on the full-stop hits that drove the live drawdown.
+                    # High vol still de-leverages (the protective direction).
                     if atr_pct > 0.04:
                         leverage_mult = max(min_lev, leverage_mult // 2)
                     elif atr_pct > 0.03:
                         leverage_mult = max(min_lev, int(leverage_mult * 0.7))
-                    elif atr_pct < 0.01:
-                        leverage_mult = min(max_lev, int(leverage_mult * 1.4))
+                    # low/normal vol: keep the default (no up-scaling).
+
+                    # Defensive cap: never exceed the configured default leverage.
+                    leverage_mult = min(leverage_mult, CONFIG.exchange.default_leverage)
 
                     audit(trade_log,
                           f"Dynamic leverage for {symbol}: {CONFIG.exchange.default_leverage}x → {leverage_mult}x (ATR={atr_pct:.3%})",
