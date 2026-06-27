@@ -780,6 +780,15 @@ class Analyzer:
         except Exception:
             pass  # fail-open: session check must never block analysis
 
+        # Definitive final clamp. The line-761 clamp is undone by later additive
+        # adjustments — notably the session boost above (+confidence_adjustment),
+        # which is floored at min_floor but NOT capped at 1.0. An un-capped value
+        # (e.g. 1.01) trips TradeIdea's `confidence <= 1` pydantic validator and
+        # aborts the whole analysis. Clamp once here so every downstream use (the
+        # min_conf gate and both TradeIdea constructions) sees a valid [0,1]
+        # confidence. The lower bound never binds (the floors keep it ≥ 0).
+        blended_confidence = max(0.0, min(1.0, blended_confidence))
+
         # SIGNAL QUALITY: threshold at min_confidence (matches config)
         # RANGE/CHOP trades need high raw confluence to survive after penalty
         # Per-strategy-type confidence threshold
