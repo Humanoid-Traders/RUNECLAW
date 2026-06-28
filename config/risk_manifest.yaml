@@ -432,6 +432,22 @@ defaults:
       Large-cap pairs (BTC/ETH/SOL) always enforce a $50K floor regardless.
       Lowered from $50K default so small-cap and micro-test trades can pass.
 
+  kelly_sizing_enabled:
+    value: false
+    env_var: KELLY_SIZING_ENABLED
+    description: >
+      Opt-in half-Kelly sizing (default OFF). When enabled, evaluate() takes the
+      SMALLER of the fixed-fractional size and the half-Kelly size from realized
+      history — tighten-only, never grows size; the notional/margin caps stay
+      authoritative.
+
+  kelly_min_trades:
+    value: 20
+    env_var: KELLY_MIN_TRADES
+    description: >
+      Minimum closed trades before Kelly sizing has an edge estimate. Below this
+      it is a no-op (fixed-fractional size is left unchanged).
+
 # =============================================================================
 # CORRELATION GROUPS
 # =============================================================================
