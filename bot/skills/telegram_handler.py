@@ -4404,6 +4404,18 @@ class TelegramHandler:
         # Sort by absolute change
         stock_signals.sort(key=lambda s: abs(s["change_pct"]), reverse=True)
 
+        # Summary counts (shared by card + text paths)
+        gainers = sum(1 for s in stock_signals if s["change_pct"] > 0)
+        losers = sum(1 for s in stock_signals if s["change_pct"] < 0)
+        total_vol = sum(s["volume"] for s in stock_signals)
+
+        # ── Visual card path (grid + sparklines + top setups). Best-effort:
+        #    any failure falls through to the text list below. ──
+        if await self._render_stockscan_card(
+                update, exchange, stock_signals, session,
+                gainers, losers, total_vol):
+            return
+
         # Build output
         lines = [
             f"\U0001f4c8 <b>US STOCK SCAN</b> \u2014 {len(stock_signals)} symbols  |  "
@@ -4427,14 +4439,77 @@ class TelegramHandler:
             )
             lines.append(line)
 
-        # Summary
-        gainers = sum(1 for s in stock_signals if s["change_pct"] > 0)
-        losers = sum(1 for s in stock_signals if s["change_pct"] < 0)
-        total_vol = sum(s["volume"] for s in stock_signals)
+        # Summary (counts computed above)
         lines.append(f"\n\U0001f7e2 {gainers} up  \U0001f534 {losers} down  |  Vol: ${total_vol/1e6:.1f}M")
         lines.append("\n<code>/mode stocks</code> to auto-scan stocks  |  <code>/mode hybrid</code> for both")
 
         await self._send(update, "\n".join(lines))
+
+    async def _render_stockscan_card(self, update, exchange, stock_signals,
+                                     session, gainers, losers, total_vol) -> bool:
+        """Render the stock scan as a grid+setups+sparkline PNG card.
+
+        Best-effort and display-only: enriches the top symbols with 1h closes
+        (sparkline + RSI) and renders via render_scan_grid_card. Returns True if a
+        card was sent; False (or on any error) lets the caller fall back to text.
+        """
+        try:
+            import asyncio as _asyncio
+
+            import numpy as _np
+
+            from bot.formatters.rich_cards import compute_rsi
+            from bot.formatters.signal_card import render_scan_grid_card
+
+            # Enrich only the top symbols shown in the grid (bounded fan-out).
+            top = stock_signals[:18]
+
+            async def _spark_rsi(sym: str):
+                try:
+                    ohlcv = await exchange.fetch_ohlcv(sym, "1h", limit=30)
+                    closes = [float(c[4]) for c in (ohlcv or []) if c and len(c) > 4]
+                    if len(closes) < 5:
+                        return None, None
+                    rsi = float(compute_rsi(_np.array(closes, dtype=float)))
+                    return closes, rsi
+                except Exception:
+                    return None, None
+
+            enriched = await _asyncio.gather(*[_spark_rsi(s["symbol"]) for s in top])
+
+            grid = []
+            for s, (closes, rsi) in zip(top, enriched):
+                row = {
+                    "sym": s["symbol"],
+                    "price": s["price"],
+                    "change_pct": s["change_pct"],
+                    "spark": closes,
+                    "rsi": rsi,
+                }
+                grid.append(row)
+
+            banner = ""
+            if session.is_weekend:
+                banner = "⚠ Weekend: reduced liquidity, wider spreads"
+            elif session.session_name in ("closed", "pre_market", "after_hours"):
+                banner = (f"⚠ {session.session_name.replace('_', ' ').title()}: "
+                          f"size reduced to {session.size_multiplier:.0%}")
+
+            png = render_scan_grid_card({
+                "title": "US STOCK SCAN",
+                "timestamp": f"{datetime.now(UTC).strftime('%H:%M')} UTC",
+                "banner": banner,
+                "grid": grid,
+                "summary": {"up": gainers, "down": losers, "vol_usd": total_vol},
+            })
+            if not png:
+                return False
+            cap = (f"\U0001f4c8 <b>US STOCK SCAN</b> — {len(stock_signals)} symbols\n"
+                   f"<code>/mode stocks</code> to auto-scan  |  <code>/mode hybrid</code> for both")
+            return await self._send_photo(update, png, cap)
+        except Exception as exc:
+            system_log.debug("stockscan card render failed: %s", exc)
+            return False
 
     async def _cmd_learn(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._guard(update, "learn"):

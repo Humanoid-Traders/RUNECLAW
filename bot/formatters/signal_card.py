@@ -1074,3 +1074,235 @@ def render_orders_card(orders: list[Dict[str, Any]], timestamp: str = "") -> byt
     _buf = io.BytesIO()
     img.save(_buf, format="PNG", optimize=True)
     return _buf.getvalue()
+
+
+# ═══════════════════════════════════════════════════════════════════
+# SCAN GRID CARD — breadth grid (all symbols + sparklines) + top setups
+# ═══════════════════════════════════════════════════════════════════
+
+def render_scan_grid_card(data: Dict[str, Any]) -> bytes:
+    """Render a market scan as a PNG card: a compact breadth GRID (every scanned
+    symbol with a price sparkline) followed by an optional detailed SETUPS section.
+
+    Args:
+        data: dict with keys
+            - title: str          (e.g. "US STOCK SCAN")
+            - timestamp: str      (e.g. "08:20 UTC")
+            - banner: str         (optional warning line, e.g. weekend liquidity)
+            - grid: list of dicts, each:
+                sym: str, price: float, change_pct: float,
+                rsi: float | None, score: float | None (0-1),
+                spark: list[float] | None   (recent closes for the sparkline)
+            - setups: list of dicts (optional), each:
+                sym, direction ("LONG"/"SHORT"), entry, stop_loss,
+                take_profit, rr (optional), score (optional 0-1)
+            - summary: dict (optional): up:int, down:int, vol_usd:float
+
+    Returns:
+        PNG bytes (b"" if Pillow unavailable or grid empty).
+    """
+    try:
+        from PIL import Image, ImageDraw, ImageFont
+    except ImportError:
+        log.warning("Pillow not installed, cannot render scan grid card")
+        return b""
+
+    grid = data.get("grid") or []
+    if not grid:
+        return b""
+
+    setups = data.get("setups") or []
+    title = str(data.get("title", "MARKET SCAN"))
+    timestamp = str(data.get("timestamp", ""))
+    banner = str(data.get("banner", "") or "")
+    summary = data.get("summary") or {}
+
+    W = 560
+    PAD = 18
+    HEADER_H = 46
+    BANNER_H = 22 if banner else 0
+    GRID_ROW_H = 30
+    SETUP_ROW_H = 64
+    SECTION_H = 24
+    FOOTER_H = 30
+
+    MAX_GRID = 20
+    MAX_SETUPS = 6
+    g_rows = grid[:MAX_GRID]
+    s_rows = setups[:MAX_SETUPS]
+
+    setups_block = (SECTION_H + len(s_rows) * SETUP_ROW_H) if s_rows else 0
+    H = (HEADER_H + BANNER_H + SECTION_H + len(g_rows) * GRID_ROW_H
+         + setups_block + FOOTER_H + PAD)
+
+    img = Image.new("RGB", (W, H), _BG)
+    draw = ImageDraw.Draw(img)
+
+    def _font(size: int, bold: bool = False):
+        for path in [
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold
+            else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf" if bold
+            else "/usr/share/fonts/TTF/DejaVuSans.ttf",
+        ]:
+            try:
+                return ImageFont.truetype(path, size)
+            except (OSError, IOError):
+                continue
+        return ImageFont.load_default()
+
+    f_header = _font(18, bold=True)
+    f_section = _font(11, bold=True)
+    f_sym = _font(13, bold=True)
+    f_value = _font(12, bold=True)
+    f_label = _font(9)
+    f_small = _font(10)
+
+    def _fmt(price: float) -> str:
+        if not price:
+            return "—"
+        if price >= 1000:
+            return f"${price:,.2f}"
+        if price >= 1:
+            return f"${price:.2f}"
+        if price >= 0.01:
+            return f"${price:.4f}"
+        return f"${price:.6f}"
+
+    def _spark(vals, x, y, w, h, color):
+        """Draw a tiny price polyline scaled into the (x,y,w,h) box."""
+        pts = [float(v) for v in (vals or []) if isinstance(v, (int, float))]
+        if len(pts) < 2:
+            return
+        lo, hi = min(pts), max(pts)
+        rng = (hi - lo) or 1.0
+        n = len(pts)
+        coords = [
+            (x + (i / (n - 1)) * w, y + h - ((v - lo) / rng) * h)
+            for i, v in enumerate(pts)
+        ]
+        draw.line(coords, fill=color, width=1)
+
+    _GOLD = _ACCENT_GOLD
+    # ── Header ──
+    draw.rectangle([0, 0, W, 3], fill=_GOLD)
+    draw.text((PAD, 12), title, fill=_WHITE, font=f_header)
+    if timestamp:
+        tw = draw.textlength(timestamp, font=f_small)
+        draw.text((W - PAD - tw, 16), timestamp, fill=_GRAY, font=f_small)
+    y = HEADER_H
+
+    # ── Optional banner ──
+    if banner:
+        draw.text((PAD, y), banner, fill=_YELLOW, font=f_small)
+        y += BANNER_H
+
+    # ── GRID section ──
+    draw.text((PAD, y + 6), f"BREADTH — {len(grid)} symbols", fill=_GRAY, font=f_section)
+    y += SECTION_H
+
+    # Columns: dot | SYM | price | %chg | sparkline | RSI | score bar
+    c_dot = PAD + 2
+    c_sym = PAD + 16
+    c_price = PAD + 92
+    c_chg = PAD + 168
+    c_spark = PAD + 238
+    spark_w = 60
+    c_rsi = c_spark + spark_w + 14
+    c_score = c_rsi + 56
+
+    for i, g in enumerate(g_rows):
+        ry = y + i * GRID_ROW_H
+        if i % 2 == 0:
+            draw.rectangle([PAD, ry, W - PAD, ry + GRID_ROW_H], fill=_CARD_BG)
+        sym = str(g.get("sym", "?")).replace("/USDT", "").replace(":USDT", "")
+        price = float(g.get("price", 0) or 0)
+        chg = float(g.get("change_pct", 0) or 0)
+        up = chg >= 0
+        col = _GREEN if up else _RED
+        mid = ry + GRID_ROW_H // 2
+
+        draw.ellipse([c_dot, mid - 4, c_dot + 8, mid + 4], fill=col)
+        draw.text((c_sym, mid - 7), sym[:7], fill=_WHITE, font=f_sym)
+        draw.text((c_price, mid - 6), _fmt(price), fill=_WHITE, font=f_value)
+        draw.text((c_chg, mid - 6), f"{chg:+.1f}%", fill=col, font=f_value)
+
+        _spark(g.get("spark"), c_spark, mid - 8, spark_w, 16, col)
+
+        rsi = g.get("rsi")
+        if isinstance(rsi, (int, float)) and rsi > 0:
+            rsi_col = _RED if rsi >= 70 else _GREEN if rsi <= 30 else _GRAY
+            draw.text((c_rsi, mid - 6), f"{rsi:.0f}", fill=rsi_col, font=f_value)
+
+        score = g.get("score")
+        if isinstance(score, (int, float)) and score > 0:
+            bar_w = 44
+            fill_w = int(max(0.0, min(1.0, score)) * bar_w)
+            by = mid - 4
+            draw.rectangle([c_score, by, c_score + bar_w, by + 8], fill=_DIM)
+            sc_col = _GREEN if score >= 0.75 else _YELLOW if score >= 0.6 else _GRAY
+            if fill_w > 0:
+                draw.rectangle([c_score, by, c_score + fill_w, by + 8], fill=sc_col)
+
+    y += len(g_rows) * GRID_ROW_H
+
+    # ── SETUPS section ──
+    if s_rows:
+        draw.text((PAD, y + 6), f"TOP SETUPS ({len(s_rows)})", fill=_GRAY, font=f_section)
+        y += SECTION_H
+        for i, s in enumerate(s_rows):
+            ry = y + i * SETUP_ROW_H
+            draw.rounded_rectangle(
+                [PAD, ry + 3, W - PAD, ry + SETUP_ROW_H - 3],
+                radius=8, fill=_CARD_BG, outline=_BORDER)
+            sym = str(s.get("sym", "?")).replace("/USDT", "").replace(":USDT", "")
+            direction = str(s.get("direction", "LONG")).upper()
+            is_long = direction == "LONG"
+            col = _GREEN if is_long else _RED
+            rx = PAD + 12
+            ty = ry + 10
+            draw.text((rx, ty), sym, fill=_WHITE, font=f_sym)
+            rx += draw.textlength(sym, font=f_sym) + 10
+            bt = f" {direction} "
+            btw = draw.textlength(bt, font=f_section)
+            draw.rounded_rectangle([rx, ty, rx + btw + 4, ty + 18], radius=4, fill=col)
+            draw.text((rx + 2, ty + 2), bt, fill=(0, 0, 0), font=f_section)
+            rr = s.get("rr")
+            if isinstance(rr, (int, float)) and rr > 0:
+                rr_txt = f"R:R {rr:.1f}"
+                rrw = draw.textlength(rr_txt, font=f_small)
+                draw.text((W - PAD - 12 - rrw, ty + 2), rr_txt, fill=_CYAN, font=f_small)
+
+            dy = ty + 26
+            col_w = (W - PAD * 2 - 24) // 3
+            for j, (lbl, val, vc) in enumerate([
+                ("ENTRY", _fmt(float(s.get("entry", 0) or 0)), _WHITE),
+                ("STOP", _fmt(float(s.get("stop_loss", 0) or 0)), _RED),
+                ("TARGET", _fmt(float(s.get("take_profit", 0) or 0)), _GREEN),
+            ]):
+                cx = PAD + 12 + j * col_w
+                draw.text((cx, dy), lbl, fill=_GRAY, font=f_label)
+                draw.text((cx, dy + 12), val, fill=vc, font=f_value)
+        y += len(s_rows) * SETUP_ROW_H
+
+    # ── Footer ──
+    fy = y + 6
+    if summary:
+        up_n = int(summary.get("up", 0) or 0)
+        dn_n = int(summary.get("down", 0) or 0)
+        vol = float(summary.get("vol_usd", 0) or 0)
+        draw.text((PAD, fy), f"▲ {up_n} up", fill=_GREEN, font=f_small)
+        ux = PAD + draw.textlength(f"▲ {up_n} up", font=f_small) + 12
+        draw.text((ux, fy), f"▼ {dn_n} down", fill=_RED, font=f_small)
+        if vol > 0:
+            vtxt = f"Vol ${vol / 1e6:.1f}M"
+            vw = draw.textlength(vtxt, font=f_small)
+            draw.text((W - PAD - vw, fy), vtxt, fill=_GRAY, font=f_small)
+
+    draw.rectangle([0, H - 3, W, H], fill=_GOLD)
+    wm_w = draw.textlength("RUNECLAW", font=f_small)
+    draw.text((W - PAD - wm_w, H - 18), "RUNECLAW", fill=_DIM, font=f_small)
+
+    _buf = io.BytesIO()
+    img.save(_buf, format="PNG", optimize=True)
+    return _buf.getvalue()
