@@ -1486,6 +1486,7 @@ class RuneClawEngine:
                 checks_failed=risk_check.checks_failed,
                 rejected_reason=risk_check.reason,
                 decision="TRADE_REJECTED_FAIL_CLOSED",
+                confluence_votes=getattr(idea, "_confluence_votes", []),
             )
             self.learning.review_rejection(decision)
             return None
@@ -2094,6 +2095,7 @@ class RuneClawEngine:
             checks_failed=[],
             decision="TRADE_ACCEPTED_LIVE",
             paper_trade_id=trade_id,
+            confluence_votes=getattr(idea, "_confluence_votes", []),
         )
         self._transition(AgentState.IDLE, "live trade executed")
         return result

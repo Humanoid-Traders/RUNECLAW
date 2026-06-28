@@ -105,6 +105,10 @@ class DecisionMemory(BaseModel):
     rejected_reason: str = ""
     decision: str = ""  # TRADE_ACCEPTED_PAPER / TRADE_REJECTED_FAIL_CLOSED / NO_TRADE_UNCERTAIN / ALERT_ONLY
     paper_trade_id: str = ""
+    # Phase B: per-voter confluence breakdown [(name, vote, weight), ...] captured
+    # at decision time, joined to outcome (by paper_trade_id) for voter-weight
+    # learning. Empty by default — backward-compatible with existing records.
+    confluence_votes: list = Field(default_factory=list)
     pnl_result: Optional[float] = None
     gross_pnl: Optional[float] = None
     commission: Optional[float] = None
