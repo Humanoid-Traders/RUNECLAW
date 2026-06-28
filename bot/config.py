@@ -201,6 +201,13 @@ class RiskLimits:
     # Drawdown recovery mode: after hitting max DD, enter conservative mode
     drawdown_recovery_conf_min: float = _env_float("DRAWDOWN_RECOVERY_CONF_MIN", 0.85)
     drawdown_recovery_size_mult: float = _env_float("DRAWDOWN_RECOVERY_SIZE_MULT", 0.5)
+    # Kelly-criterion sizing (opt-in, default OFF). When enabled, evaluate() also
+    # derives a half-Kelly size from realized trade history and takes the SMALLER
+    # of {fixed-fractional, Kelly}: Kelly can only TIGHTEN size, never grow it, and
+    # the notional/margin caps below stay authoritative. Below kelly_min_trades
+    # closed trades there is no edge estimate, so it is a no-op (size unchanged).
+    kelly_sizing_enabled: bool = _env_bool("KELLY_SIZING_ENABLED", False)
+    kelly_min_trades: int = int(_env_float_bounded("KELLY_MIN_TRADES", 20, 1, 100000))
 
 
 @dataclass(frozen=True)

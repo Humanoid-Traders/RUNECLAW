@@ -598,6 +598,17 @@ class RiskEngine:
         # stays bounded.  Check #2 then verifies the CAPPED value against
         # max_symbol_exposure_pct (a wider limit), giving it real authority to
         # reject only when exposure is genuinely dangerous.
+        # Kelly sizing (opt-in, default OFF; tighten-only). Take the SMALLER of
+        # the fixed-fractional size and the half-Kelly size from realized history.
+        # Kelly can only shrink the position, never grow it — a no-edge or
+        # no-history Kelly returns 0.0, which is treated as "leave size as-is"
+        # (it never forces the size to zero). The hard cap + check #2 below remain
+        # authoritative. Default OFF makes this byte-identical to prior behaviour.
+        if CONFIG.risk.kelly_sizing_enabled:
+            kelly_usd = self._kelly_size_usd(idea, sizing_equity)
+            if kelly_usd > 0:
+                position_usd = min(position_usd, kelly_usd)
+
         max_notional_usd = sizing_equity * (CONFIG.risk.max_position_pct / 100.0)
         if max_notional_usd > 0 and position_usd > max_notional_usd:
             position_usd = max_notional_usd
@@ -1158,6 +1169,30 @@ class RiskEngine:
 
         fraction = self.kelly_position_size(idea.confidence, win_rate, avg_win, avg_loss)
         return round(equity * fraction, 2)
+
+    def _kelly_size_usd(self, idea: TradeIdea, sizing_equity: float) -> float:
+        """Half-Kelly size in USD from realized history for the opt-in tighten-only
+        path in evaluate(). Returns 0.0 (a NO-OP signal — caller leaves size as-is)
+        when there is not yet enough history to estimate an edge, or when the
+        estimate has no positive edge. Never used to GROW size: the caller takes
+        ``min(fixed_fractional, this)`` only when this is > 0.
+        """
+        if sizing_equity <= 0:
+            return 0.0
+        try:
+            closed = [t for t in self._portfolio.trade_history if t.exit_price is not None]
+        except Exception as exc:
+            risk_log.debug("Kelly history unavailable: %s", exc)
+            return 0.0
+        if len(closed) < CONFIG.risk.kelly_min_trades:
+            return 0.0  # no edge estimate yet → leave fixed-fractional size intact
+        wins = [t for t in closed if t.pnl > 0]
+        losses = [t for t in closed if t.pnl < 0]
+        win_rate = len(wins) / len(closed)
+        avg_win = (sum(t.pnl for t in wins) / len(wins)) if wins else 0.0
+        avg_loss = (abs(sum(t.pnl for t in losses)) / len(losses)) if losses else 0.0
+        fraction = self.kelly_position_size(idea.confidence, win_rate, avg_win, avg_loss)
+        return round(sizing_equity * fraction, 2)
 
     # ── Feature #2: Multi-Timeframe Confirmation ─────────────────────
 
