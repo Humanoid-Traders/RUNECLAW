@@ -675,7 +675,6 @@ class TestAgentStateModel:
         assert t.to_state == AgentState.SCANNING
 
     def test_metrics_snapshot(self):
-        from bot.utils.models import MetricsSnapshot
         m = MetricsSnapshot(total_trades=10, winning_trades=7, win_rate=0.7)
         assert m.total_trades == 10
         assert m.win_rate == 0.7
@@ -3043,7 +3042,7 @@ class TestExplainability:
 
     def test_risk_verdict_integration(self):
         from bot.core.explainability import ExplainabilityEngine
-        from bot.utils.models import RiskCheck, RiskVerdict
+        from bot.utils.models import RiskVerdict
 
         # ACM-4 FIX: Use actual RiskCheck model instead of mock with wrong fields
         mock_verdict = RiskCheck(
@@ -5305,7 +5304,7 @@ class TestSprint6Fixes:
         If trailing is updated first with the favorable extreme, it can tighten the stop
         and cause a phantom stop-out on a bar where the old stop wouldn't have triggered."""
         from bot.backtest.engine import BacktestEngine
-        from bot.backtest.models import BacktestConfig, BacktestBar
+        from bot.backtest.models import BacktestConfig
         from datetime import datetime, timedelta
 
         config = BacktestConfig(
