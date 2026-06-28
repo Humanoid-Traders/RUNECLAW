@@ -3646,7 +3646,70 @@ class TelegramHandler:
             return
         user_id = self._get_tg_id(update)
         result = await self.registry.dispatch("scan_market", self.engine, user_id=user_id)
+        # Visual grid card from the structured signals the skill stashed; falls
+        # back to the text result on any failure.
+        signals = getattr(self.engine, "_last_scan_signals", None)
+        if signals and await self._render_scan_signals_card(update, signals, "MARKET SCAN"):
+            return
         await self._send(update, result)
+
+    async def _render_scan_signals_card(self, update, signals, title: str) -> bool:
+        """Render a list of MarketSignal objects as the breadth grid card
+        (with sparklines + RSI). Best-effort; returns True if a card was sent."""
+        try:
+            import asyncio as _asyncio
+
+            import numpy as _np
+
+            from bot.formatters.rich_cards import compute_rsi
+            from bot.formatters.signal_card import render_scan_grid_card
+
+            top = list(signals)[:18]
+            exchange = None
+            try:
+                exchange = await self.engine.live_executor._get_exchange()
+            except Exception:
+                try:
+                    exchange = await self.engine.get_exchange()
+                except Exception:
+                    exchange = None
+
+            async def _spark_rsi(sym):
+                if not exchange:
+                    return None, None
+                try:
+                    ohlcv = await exchange.fetch_ohlcv(sym, "1h", limit=30)
+                    closes = [float(c[4]) for c in (ohlcv or []) if c and len(c) > 4]
+                    if len(closes) < 5:
+                        return None, None
+                    return closes, float(compute_rsi(_np.array(closes, dtype=float)))
+                except Exception:
+                    return None, None
+
+            enriched = await _asyncio.gather(*[_spark_rsi(s.symbol) for s in top])
+            grid = []
+            for s, (closes, rsi) in zip(top, enriched):
+                grid.append({
+                    "sym": s.symbol, "price": getattr(s, "price", 0) or 0,
+                    "change_pct": getattr(s, "change_pct_24h", 0) or 0,
+                    "spark": closes, "rsi": rsi,
+                })
+            up = sum(1 for s in signals if (getattr(s, "change_pct_24h", 0) or 0) > 0)
+            dn = sum(1 for s in signals if (getattr(s, "change_pct_24h", 0) or 0) < 0)
+            vol = sum((getattr(s, "volume_usd_24h", 0) or 0) for s in signals)
+            png = render_scan_grid_card({
+                "title": title,
+                "timestamp": f"{datetime.now(UTC).strftime('%H:%M')} UTC",
+                "grid": grid,
+                "summary": {"up": up, "down": dn, "vol_usd": vol},
+            })
+            if not png:
+                return False
+            return await self._send_photo(
+                update, png, f"\U0001f50e <b>{title}</b> — {len(signals)} pairs")
+        except Exception as exc:
+            system_log.debug("scan signals card render failed: %s", exc)
+            return False
 
     async def _cmd_analyze(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._guard(update, "analyze"):

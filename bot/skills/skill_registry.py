@@ -210,6 +210,12 @@ class ScanMarketSkill(BaseSkill):
 
     async def execute(self, engine: RuneClawEngine, **kwargs: Any) -> str:
         signals = await engine.scanner.scan()
+        # Stash structured results so the Telegram handler can render the grid
+        # card from them (non-breaking: this method still returns its text).
+        try:
+            engine._last_scan_signals = signals or []
+        except Exception:
+            pass
         if not signals:
             return f"{_NEU} <b>SCANNER</b>\n\n<i>No signals detected.</i>"
 
