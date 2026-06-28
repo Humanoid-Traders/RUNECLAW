@@ -284,6 +284,8 @@ class TelegramHandler:
             # Per-user exchange BYOK (link your own Bitget account)
             ("connect", self._cmd_connect), ("disconnect", self._cmd_disconnect),
             ("exchange", self._cmd_exchange),
+            # Confidence calibration (admin)
+            ("calibration", self._cmd_calibration),
             # Deep scan & playbook
             ("playbook", self._cmd_playbook), ("deepscan", self._cmd_deepscan),
             ("fullscan", self._cmd_fullscan),
@@ -2750,6 +2752,36 @@ class TelegramHandler:
             f"Per-user live trading: <code>{live_state}</code>\n\n"
             "Use <code>/disconnect</code> to remove your keys.")
 
+    @guard("admin")
+    async def _cmd_calibration(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """/calibration [refit] — show the confidence-calibration curve, or refit
+        it from closed-trade history. Calibration remaps model confidence to
+        realized win rate; it is applied only when CONFIDENCE_CALIBRATION_ENABLED."""
+        args = ctx.args or []
+        do_refit = bool(args) and args[0].lower() in ("refit", "fit", "rebuild")
+        try:
+            from bot.learning.confidence_calibration import refit_and_save, ConfidenceCalibrator
+            if do_refit:
+                cal = refit_and_save()
+                # Make the live analyzer pick up the new curve immediately.
+                if hasattr(self.engine, "analyzer") and hasattr(self.engine.analyzer, "refresh_calibrator"):
+                    self.engine.analyzer.refresh_calibrator()
+                action = "Refit complete.\n"
+            else:
+                cal = ConfidenceCalibrator.load() or ConfidenceCalibrator()
+                action = ""
+        except Exception as exc:
+            await self._send(update, f"🔴 Calibration error: {html.escape(str(exc))}")
+            return
+
+        enabled = getattr(CONFIG.analyzer, "confidence_calibration_enabled", False)
+        mode = "APPLIED (live)" if enabled else "SHADOW (logged, not applied)"
+        await self._send(update,
+            "<b>Confidence calibration</b>\n\n"
+            f"Mode: <code>{mode}</code>\n"
+            f"{action}"
+            f"<code>{html.escape(cal.summary())}</code>\n\n"
+            "<i>Refit from closed-trade history: </i><code>/calibration refit</code>")
 
     @guard("portfolio")
     async def _cmd_livebalance(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:

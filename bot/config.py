@@ -480,6 +480,12 @@ class AnalyzerConfig:
     """Tunable parameters for the AI analyzer / confluence engine."""
     llm_weight: float = 0.6
     confluence_weight: float = 0.4
+    # Confidence calibration (Phase A): when ON, the final blended confidence is
+    # remapped through a monotonic reliability curve fitted from the bot's own
+    # closed-trade history, so a confidence value reflects realized win rate.
+    # Default OFF — the curve is computed in shadow-mode (logged, not applied)
+    # until deliberately enabled. See bot/learning/confidence_calibration.py.
+    confidence_calibration_enabled: bool = _env_bool("CONFIDENCE_CALIBRATION_ENABLED", False)
     sma_period: int = 50
     trend_alignment_bonus: float = 0.10
     trend_misalignment_penalty: float = 0.08
