@@ -139,6 +139,12 @@ class ExchangeCredentialStore:
         with self._lock:
             return str(telegram_id) in self._enc
 
+    def user_ids(self) -> list:
+        """All Telegram ids with stored credentials. Used at startup to rehydrate
+        per-user executors so their open positions resume being monitored."""
+        with self._lock:
+            return list(self._enc.keys())
+
     def get(self, telegram_id) -> Optional[dict]:
         """Decrypt and return ``{api_key, api_secret, passphrase}`` or None.
 

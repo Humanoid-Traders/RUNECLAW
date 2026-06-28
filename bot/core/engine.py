@@ -391,6 +391,42 @@ class RuneClawEngine:
         call when none exists. Never touches the shared operator executor."""
         self._user_executors.pop(str(user_id), None)
 
+    def _all_live_executors(self) -> list:
+        """The shared operator executor plus every active per-user executor.
+
+        Monitoring/reconciliation loops iterate this so every account's open
+        positions get SL/TP enforcement and reconciliation. With per-user live
+        trading off (default) ``_user_executors`` is empty, so this is just
+        ``[operator]`` and every loop runs exactly as it did before.
+        """
+        return [self.live_executor, *self._user_executors.values()]
+
+    def _rehydrate_user_executors(self) -> None:
+        """Rebuild per-user executors for all linked users at startup so their
+        PERSISTED live positions resume being monitored after a restart (per-user
+        executors are otherwise created lazily on the next trade). No-op when
+        per-user live trading is off, so the operator path is unchanged.
+        """
+        if not getattr(CONFIG, "per_user_live_enabled", False):
+            return
+        try:
+            from bot.core.exchange_credentials import get_credential_store
+            ids = get_credential_store().user_ids()
+        except Exception as exc:
+            logger.warning("Per-user executor rehydrate skipped: %s", exc)
+            return
+        for uid in ids:
+            try:
+                # _executor_for builds, caches, and (via __init__) loads that
+                # user's persisted positions; skips users with no usable keys.
+                self._executor_for(uid)
+            except Exception as exc:
+                logger.warning("Rehydrate executor for %s failed: %s", uid, exc)
+        if self._user_executors:
+            audit(system_log,
+                  f"Rehydrated {len(self._user_executors)} per-user executor(s) at startup",
+                  action="per_user_rehydrate", result="OK")
+
     def get_effective_equity(self, user_id: str = "") -> float:
         """Return the equity figure to display/use for sizing.
 
@@ -588,38 +624,50 @@ class RuneClawEngine:
         # accepting any new signals. Catches positions closed/opened
         # during downtime or crashes.
         if CONFIG.is_live():
+            # Rebuild per-user executors so their persisted positions are
+            # reconciled/monitored from startup (no-op while per-user is off).
+            self._rehydrate_user_executors()
+            # Reconcile every account (operator + any per-user). With per-user
+            # off this loops once over the operator — identical to before.
+            for _ex in self._all_live_executors():
+                try:
+                    reconciled = await _ex.reconcile_positions()
+                    for msg in reconciled:
+                        audit(trade_log, f"Startup reconcile: {msg}",
+                              action="startup_reconcile", result="CLOSED")
+                except Exception as exc:
+                    audit(system_log, f"Startup reconciliation error: {exc}",
+                          action="startup_reconcile", result="ERROR")
+
+                # Startup position sync: ensure tracked leverage and margin mode
+                # match exchange reality. Catches manual changes on exchange or
+                # mismatches from dynamic leverage not applying.
+                try:
+                    await _ex.sync_positions_from_exchange()
+                except Exception as exc:
+                    audit(system_log, f"Startup position sync error: {exc}",
+                          action="startup_position_sync", result="ERROR")
+
+                # Startup SL/TP verification: ensure all open positions have
+                # SL/TP orders on exchange. Catches cases where SL/TP placement
+                # failed silently (margin mode mismatch, precision errors, etc.)
+                try:
+                    await _ex.verify_and_fix_sltp()
+                except Exception as exc:
+                    audit(system_log, f"Startup SL/TP verification error: {exc}",
+                          action="startup_sltp_verify", result="ERROR")
+
+            # EXCHANGE = SOURCE OF TRUTH: sync the OPERATOR portfolio with the
+            # exchange (per-user portfolios are isolated and not part of this
+            # operator-level ghost/orphan sweep).
             try:
-                reconciled = await self.live_executor.reconcile_positions()
-                for msg in reconciled:
-                    audit(trade_log, f"Startup reconcile: {msg}",
-                          action="startup_reconcile", result="CLOSED")
-                # EXCHANGE = SOURCE OF TRUTH: sync portfolio with exchange.
-                # Removes ghost positions from portfolio and adopts orphans.
                 sync_msgs = await sync_portfolio_with_exchange(self)
                 for msg in sync_msgs:
                     audit(system_log, f"Exchange sync: {msg}",
                           action="startup_exchange_sync", result="SYNCED")
             except Exception as exc:
-                audit(system_log, f"Startup reconciliation error: {exc}",
-                      action="startup_reconcile", result="ERROR")
-
-            # Startup position sync: ensure tracked leverage and margin mode
-            # match exchange reality. Catches manual changes on exchange or
-            # mismatches from dynamic leverage not applying.
-            try:
-                await self.live_executor.sync_positions_from_exchange()
-            except Exception as exc:
-                audit(system_log, f"Startup position sync error: {exc}",
-                      action="startup_position_sync", result="ERROR")
-
-            # Startup SL/TP verification: ensure all open positions have
-            # SL/TP orders on exchange. Catches cases where SL/TP placement
-            # failed silently (margin mode mismatch, precision errors, etc.)
-            try:
-                await self.live_executor.verify_and_fix_sltp()
-            except Exception as exc:
-                audit(system_log, f"Startup SL/TP verification error: {exc}",
-                      action="startup_sltp_verify", result="ERROR")
+                audit(system_log, f"Startup exchange sync error: {exc}",
+                      action="startup_exchange_sync", result="ERROR")
 
         # Roadmap P0: exponential backoff on repeated tick failures. Previously a
         # persistent error (exchange outage, auth failure) retried every scan
@@ -2146,59 +2194,62 @@ class RuneClawEngine:
 
         # Also check live positions if in live mode
         if CONFIG.is_live():
-            try:
-                live_closed = await self.live_executor.check_positions()
-                for msg in live_closed:
-                    # Distinguish limit fills from actual closes
-                    is_fill = msg.startswith("LIMIT FILLED:")
-                    if is_fill:
-                        audit(trade_log, f"Limit order filled: {msg}",
-                              action="limit_fill_notify", result="FILLED")
-                        if self._fill_notify_callback:
+            # Monitor every account (operator + any per-user). With per-user off
+            # this loops once over the operator — identical to before.
+            for _ex in self._all_live_executors():
+                try:
+                    live_closed = await _ex.check_positions()
+                    for msg in live_closed:
+                        # Distinguish limit fills from actual closes
+                        is_fill = msg.startswith("LIMIT FILLED:")
+                        if is_fill:
+                            audit(trade_log, f"Limit order filled: {msg}",
+                                  action="limit_fill_notify", result="FILLED")
+                            if self._fill_notify_callback:
+                                try:
+                                    await self._fill_notify_callback(msg)
+                                except Exception as exc:
+                                    logger.debug("Fill notify failed: %s", exc)
+                            continue
+
+                        audit(trade_log, f"Live position auto-closed: {msg}",
+                              action="live_auto_close", result="CLOSED")
+                        # C-08 FIX: trigger cooldown on live losses
+                        last_close = getattr(_ex, '_last_close_data', None)
+                        if last_close and last_close.get('pnl_usd', 0) < 0:
+                            self._cooldown_until = (
+                                time.monotonic() + CONFIG.risk.cooldown_after_loss_seconds
+                            )
+                            self._transition(
+                                AgentState.COOLING_DOWN,
+                                f"live loss on {last_close.get('symbol', '?')} "
+                                f"(PnL=${last_close['pnl_usd']}), "
+                                f"cooling down {CONFIG.risk.cooldown_after_loss_seconds}s",
+                            )
+                        if self._close_notify_callback:
                             try:
-                                await self._fill_notify_callback(msg)
+                                await self._close_notify_callback(msg)
                             except Exception as exc:
-                                logger.debug("Fill notify failed: %s", exc)
-                        continue
+                                logger.debug("Close notify failed: %s", exc)
+                except Exception as exc:
+                    audit(system_log, f"Live position monitor error: {exc}",
+                          action="live_monitor", result="ERROR")
 
-                    audit(trade_log, f"Live position auto-closed: {msg}",
-                          action="live_auto_close", result="CLOSED")
-                    # C-08 FIX: trigger cooldown on live losses
-                    last_close = getattr(self.live_executor, '_last_close_data', None)
-                    if last_close and last_close.get('pnl_usd', 0) < 0:
-                        self._cooldown_until = (
-                            time.monotonic() + CONFIG.risk.cooldown_after_loss_seconds
-                        )
-                        self._transition(
-                            AgentState.COOLING_DOWN,
-                            f"live loss on {last_close.get('symbol', '?')} "
-                            f"(PnL=${last_close['pnl_usd']}), "
-                            f"cooling down {CONFIG.risk.cooldown_after_loss_seconds}s",
-                        )
-                    if self._close_notify_callback:
-                        try:
-                            await self._close_notify_callback(msg)
-                        except Exception as exc:
-                            logger.debug("Close notify failed: %s", exc)
-            except Exception as exc:
-                audit(system_log, f"Live position monitor error: {exc}",
-                      action="live_monitor", result="ERROR")
-
-            # F-14 FIX: Reconcile tracked positions with exchange
-            # Detects positions closed by exchange-side SL/TP triggers
-            try:
-                reconciled = await self.live_executor.reconcile_positions()
-                for msg in reconciled:
-                    audit(trade_log, f"Position reconciled: {msg}",
-                          action="reconcile", result="CLOSED")
-                    if self._close_notify_callback:
-                        try:
-                            await self._close_notify_callback(msg)
-                        except Exception as exc:
-                            logger.debug("Close notify (reconcile) failed: %s", exc)
-            except Exception as exc:
-                audit(system_log, f"Reconciliation error: {exc}",
-                      action="reconcile", result="ERROR")
+                # F-14 FIX: Reconcile tracked positions with exchange
+                # Detects positions closed by exchange-side SL/TP triggers
+                try:
+                    reconciled = await _ex.reconcile_positions()
+                    for msg in reconciled:
+                        audit(trade_log, f"Position reconciled: {msg}",
+                              action="reconcile", result="CLOSED")
+                        if self._close_notify_callback:
+                            try:
+                                await self._close_notify_callback(msg)
+                            except Exception as exc:
+                                logger.debug("Close notify (reconcile) failed: %s", exc)
+                except Exception as exc:
+                    audit(system_log, f"Reconciliation error: {exc}",
+                          action="reconcile", result="ERROR")
 
             # Periodic orphan adoption: catch positions opened on exchange
             # but not tracked locally (e.g., after bot restart, manual trades,
