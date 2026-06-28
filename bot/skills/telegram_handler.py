@@ -4533,7 +4533,9 @@ class TelegramHandler:
                         setups = []
                         for h in hits[:6]:
                             price = h["price"]
-                            atr = price * 0.02  # approximate ATR
+                            # Real ATR from the scan; fall back to 2% only if
+                            # the scan couldn't compute one.
+                            atr = h.get("atr") or price * 0.02
                             direction = "LONG" if h.get("rsi", 50) < 50 or h.get("chg", 0) > 0 else "SHORT"
                             if direction == "LONG":
                                 entry = round(price - atr * 0.3, 8)
@@ -4576,8 +4578,38 @@ class TelegramHandler:
                 except Exception as exc:
                     system_log.warning("Deepscan card render failed: %s", exc)
 
-                # Send text result (full details + patterns)
-                await self._send(update, result)
+                # Render the pattern observations as a card too (mirrors the
+                # text patterns readout). Text is still sent below as a fallback.
+                patterns_card_sent = False
+                try:
+                    p_hits = getattr(self.engine, '_last_deepscan_hits', None)
+                    if p_hits:
+                        from bot.formatters.signal_card import render_patterns_card
+                        now_str = datetime.now(UTC).strftime('%H:%M UTC')
+                        p_png = render_patterns_card(
+                            p_hits,
+                            scan_label=f"DEEP SCAN {tf.upper()}",
+                            timestamp=now_str,
+                            subtitle=f"{len(p_hits)} hits · {tf} · chart + candle patterns",
+                        )
+                        if p_png:
+                            import io as _io
+                            p_buf = _io.BytesIO(p_png)
+                            p_buf.name = "deepscan_patterns.png"
+                            chat_id = str(update.effective_chat.id) if update.effective_chat else ""
+                            if chat_id:
+                                await update.get_bot().send_photo(
+                                    chat_id=int(chat_id), photo=p_buf,
+                                    caption=f"🔍 <b>Patterns</b> — {tf.upper()} — {now_str}",
+                                    parse_mode="HTML")
+                                patterns_card_sent = True
+                except Exception as exc:
+                    system_log.warning("Deepscan patterns card render failed: %s", exc)
+
+                # Send text result (full details + patterns). When the patterns
+                # card rendered, the text is redundant noise — skip it.
+                if not patterns_card_sent:
+                    await self._send(update, result)
             else:
                 await self._send(update, "🔴 <b>Deepscan returned empty result.</b>")
         except asyncio.TimeoutError:
