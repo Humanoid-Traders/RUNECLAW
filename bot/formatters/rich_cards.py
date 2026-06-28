@@ -15,6 +15,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
+from bot.utils.i18n import t
+
 log = logging.getLogger("runeclaw.formatters")
 
 # ── Visual constants ─────────────────────────────────────────────
@@ -689,17 +691,16 @@ def render_multi_analysis(
 
 # ── Open positions card ──────────────────────────────────────────
 
-def render_open_positions(positions: List[Dict[str, Any]]) -> str:
-    """Render open positions — compact card format."""
+def render_open_positions(positions: List[Dict[str, Any]], lang: str = "en") -> str:
+    """Render open positions — compact card format. Telegram HTML (CJK-safe)."""
     if not positions:
-        return ("No open positions right now.\n"
-                "Say \"scan\" or \"analyze BTC\" to find setups.")
+        return t("open_pos_empty", lang)
 
     total_pnl = sum(p.get("pnl_pct", 0) for p in positions)
     pnl_icon = "\U0001f7e2" if total_pnl > 0 else "\U0001f534" if total_pnl < 0 else ""
 
     lines = [
-        f"<b>Open Positions ({len(positions)})</b> {pnl_icon} {_pct(total_pnl)} total",
+        f"<b>{t('open_positions_n', lang, n=len(positions))}</b> {pnl_icon} {_pct(total_pnl)} {t('lbl_total', lang)}",
         "",
     ]
 
@@ -732,10 +733,11 @@ def render_open_positions(positions: List[Dict[str, Any]]) -> str:
 
         lev_str = f" | {leverage:.0f}x" if leverage and leverage > 1 else ""
         rr_str = f" | R:R {rr_live:.1f}" if rr_live else ""
-        sl_tag = " on exchange" if sl_order == "exchange" else ""
+        sl_tag = f" {t('lbl_on_exchange', lang)}" if sl_order == "exchange" else ""
         # Show "None" for missing SL/TP (untracked exchange positions)
-        sl_str = _fmt_price(sl) if sl and sl > 0 else "<i>None</i>"
-        tp_str = _fmt_price(tp) if tp and tp > 0 else "<i>None</i>"
+        _none = f"<i>{t('val_none', lang)}</i>"
+        sl_str = _fmt_price(sl) if sl and sl > 0 else _none
+        tp_str = _fmt_price(tp) if tp and tp > 0 else _none
         untracked = p.get("untracked", False)
         strategy_type = p.get("strategy_type", "").upper()
         st_tag = f" [{strategy_type}]" if strategy_type else ""
@@ -743,10 +745,10 @@ def render_open_positions(positions: List[Dict[str, Any]]) -> str:
         lines.extend([
             f"{d_icon} <b>{pair}</b> {direction}{st_tag} | {pnl_icon} {_pct(pnl)} (${pnl_usd_val:+,.2f})",
             f"  {_fmt_price(entry)} -> {_fmt_price(current)} | ${size_usd:.0f}{lev_str}{rr_str} | {hold_str}",
-            f"  SL {sl_str} / TP {tp_str}{sl_tag}",
+            f"  {t('lbl_sl', lang)} {sl_str} / {t('lbl_tp', lang)} {tp_str}{sl_tag}",
         ])
         if untracked:
-            lines.append("  \u26a0\ufe0f <i>Untracked — opened outside bot</i>")
+            lines.append(f"  \u26a0\ufe0f <i>{t('untracked_outside', lang)}</i>")
         lines.append("")
 
     return "\n".join(lines)
@@ -764,34 +766,35 @@ def render_status_card(
     max_drawdown: float,
     market_bias: str,
     pending_ideas: int = 0,
+    lang: str = "en",
 ) -> str:
-    """Render a compact status dashboard."""
-    status = "\U0001f7e2 ACTIVE" if active else "\U0001f534 HALTED"
-    mode_label = "\U0001f534 LIVE" if mode == "LIVE" else "\U0001f7e1 PAPER"
+    """Render a compact status dashboard. Returns Telegram HTML (CJK-safe)."""
+    status = f"\U0001f7e2 {t('val_active', lang)}" if active else f"\U0001f534 {t('val_halted', lang)}"
+    mode_label = f"\U0001f534 {t('val_live', lang)}" if mode == "LIVE" else f"\U0001f7e1 {t('val_paper', lang)}"
     pnl_icon = "\U0001f7e2\u25b2" if daily_pnl > 0 else "\U0001f534\u25bc" if daily_pnl < 0 else "\u26aa"
 
     now = datetime.now(timezone.utc).strftime("%H:%M UTC")
 
     lines = [
-        f"\U0001f43e <b>RUNECLAW STATUS</b> \u2014 {now}",
+        f"\U0001f43e <b>{t('status_title', lang)}</b> \u2014 {now}",
         "",
         f"{status} | {mode_label} | Bitget",
         "",
         SEP,
         "",
-        "<b>Engine</b>",
-        f"- State: {'Active' if active else 'Halted (circuit breaker)'}",
-        f"- Mode: {mode}",
-        f"- Market Bias: {market_bias}",
-        f"- Pending Ideas: {pending_ideas}",
+        f"<b>{t('hdr_engine', lang)}</b>",
+        f"- {t('lbl_state', lang)}: {t('val_state_active', lang) if active else t('val_state_halted', lang)}",
+        f"- {t('lbl_mode', lang)}: {mode}",
+        f"- {t('lbl_market_bias', lang)}: {market_bias}",
+        f"- {t('lbl_pending_ideas', lang)}: {pending_ideas}",
         "",
-        "<b>Capital</b>",
-        f"- Equity: {_fmt_price(equity)}",
-        f"- Open Positions: {open_positions}",
-        f"- Daily PnL: {pnl_icon} {_pct(daily_pnl)}",
+        f"<b>{t('hdr_capital', lang)}</b>",
+        f"- {t('lbl_equity', lang)}: {_fmt_price(equity)}",
+        f"- {t('lbl_open_positions', lang)}: {open_positions}",
+        f"- {t('lbl_daily_pnl', lang)}: {pnl_icon} {_pct(daily_pnl)}",
         "",
-        "<b>Risk</b>",
-        f"- Drawdown: {_pct(drawdown)} / {_pct(max_drawdown)} limit",
+        f"<b>{t('hdr_risk', lang)}</b>",
+        f"- {t('lbl_drawdown', lang)}: {_pct(drawdown)} / {_pct(max_drawdown)} {t('lbl_limit_word', lang)}",
     ]
 
     # Drawdown gauge

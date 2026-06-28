@@ -671,6 +671,31 @@ _STRINGS: dict[str, dict[str, str]] = {
     },
     "llm_tiers_title": {"en": "<b>Multi-Tier LLM Routing</b>", "zh": "<b>多層級 LLM 路由</b>"},
     "rate_limit": {"en": "Rate limit. Wait a moment.", "zh": "請求過於頻繁，請稍候。"},
+
+    # ── /status dashboard text card + /open_positions text fallback ──
+    "status_title": {"en": "RUNECLAW STATUS", "zh": "RUNECLAW 狀態"},
+    "val_active": {"en": "ACTIVE", "zh": "運作中"},
+    "val_halted": {"en": "HALTED", "zh": "已停止"},
+    "val_live": {"en": "LIVE", "zh": "實盤"},
+    "val_paper": {"en": "PAPER", "zh": "模擬"},
+    "hdr_engine": {"en": "Engine", "zh": "引擎"},
+    "hdr_capital": {"en": "Capital", "zh": "資金"},
+    "hdr_risk": {"en": "Risk", "zh": "風險"},
+    "lbl_state": {"en": "State", "zh": "狀態"},
+    "val_state_active": {"en": "Active", "zh": "運作中"},
+    "val_state_halted": {"en": "Halted (circuit breaker)", "zh": "已停止（熔斷）"},
+    "lbl_mode": {"en": "Mode", "zh": "模式"},
+    "lbl_market_bias": {"en": "Market Bias", "zh": "市場偏向"},
+    "lbl_pending_ideas": {"en": "Pending Ideas", "zh": "待處理建議"},
+    "lbl_limit_word": {"en": "limit", "zh": "上限"},
+    "open_positions_n": {"en": "Open Positions ({n})", "zh": "持倉 ({n})"},
+    "val_none": {"en": "None", "zh": "無"},
+    "lbl_on_exchange": {"en": "on exchange", "zh": "於交易所"},
+    "untracked_outside": {"en": "Untracked — opened outside bot", "zh": "未追蹤 — 在機器人外開倉"},
+    "open_pos_empty": {
+        "en": "No open positions right now.\nSay \"scan\" or \"analyze BTC\" to find setups.",
+        "zh": "目前沒有持倉。\n輸入「掃描」或「分析 BTC」來尋找機會。",
+    },
 }
 
 
