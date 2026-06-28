@@ -1,10 +1,10 @@
 """
-Position telemetry (read-only): trail-read geometry, ATR%, liq distance,
-limit-expiry countdown, and the SL-uTime trail-fired check — the signals the
-external Playbook surfaces. Pure functions, so they're verified directly.
+Position telemetry (read-only): the Playbook-aligned trail read, ATR%, liq
+distance, limit-expiry countdown, and the engine's authoritative trail-fired
+flag. Pure functions, verified directly.
 
-The headline case is the Playbook's live WLD short, to confirm the bot's trail
-geometry lines up with what that readout showed.
+The trail threshold uses the Playbook's exact formula — SL / (1 ± 2·ATR_pct),
+ATR_pct as a fraction of the live mark — confirmed against the live WLD short.
 """
 
 import pytest
@@ -12,67 +12,93 @@ import pytest
 from bot.core import position_telemetry as pt
 
 
-class TestWldShortFromPlaybook:
-    # WLD SHORT: entry 0.4413, initial SL 0.4521, mark 0.4385.
-    E, SL, MARK = 0.4413, 0.4521, 0.4385
+class TestPlaybookThreshold:
+    def test_short_formula_matches_playbook(self):
+        # WLD short: SL 0.4521, ATR_pct 0.0178 → threshold 0.4521 / 1.0356.
+        thr = pt.playbook_trail_threshold("SHORT", 0.4521, 0.0178)
+        assert thr == pytest.approx(0.4521 / 1.0356, abs=1e-6)
+        assert thr == pytest.approx(0.4366, abs=0.0003)  # the Playbook's ~0.4367
 
-    def test_initial_risk_and_profit(self):
-        r = pt.initial_risk(self.E, self.SL)
-        assert r == pytest.approx(0.0108, abs=1e-6)
-        pr = pt.profit_in_r("SHORT", self.E, self.MARK, r)
-        assert pr == pytest.approx(0.259, abs=0.01)  # ~0.26R in profit
+    def test_long_formula(self):
+        # LONG: threshold = SL / (1 − 2·ATR_pct).
+        thr = pt.playbook_trail_threshold("LONG", 100.0, 0.02)
+        assert thr == pytest.approx(100.0 / 0.96, abs=1e-6)
 
-    def test_trail_read_is_not_yet_demanded(self):
-        read = pt.trail_read("SHORT", self.E, self.SL, self.MARK, atr=0.0078)
-        assert read["stage"] == 0  # below 1R → trail inactive
-        assert read["active"] is False
-        # Next trigger = 1R below entry for a short.
-        assert read["next_threshold"] == pytest.approx(0.4305, abs=1e-4)
-        # Mark is above the (lower) short trigger → gap positive → not demanded.
-        assert read["gap"] > 0
-        assert "NOT DEMANDED" in read["verdict"]
-        assert read["atr_pct"] == pytest.approx(0.0078 / 0.4385 * 100, abs=0.01)
+    def test_degenerate_long_atr_returns_none(self):
+        # 2·ATR_pct ≥ 1 → denominator ≤ 0 → undefined.
+        assert pt.playbook_trail_threshold("LONG", 100.0, 0.6) is None
+
+    def test_none_atr_returns_none(self):
+        assert pt.playbook_trail_threshold("SHORT", 0.4521, None) is None
 
 
-class TestStages:
-    def test_stage_boundaries(self):
-        assert pt.current_stage(0.0) == 0
-        assert pt.current_stage(0.99) == 0
-        assert pt.current_stage(1.0) == 1
-        assert pt.current_stage(2.5) == 2
-        assert pt.current_stage(3.1) == 3
+class TestPlaybookGap:
+    def test_short_gap_positive_when_mark_above_threshold(self):
+        # mark 0.4385 above threshold 0.4366 → not demanded → gap positive.
+        assert pt.playbook_gap("SHORT", 0.4385, 0.4366) == pytest.approx(0.0019, abs=1e-4)
 
-    def test_long_next_threshold_is_above_entry(self):
-        # entry 100, SL 98 → 1R=2 → stage-1 trigger at 102.
-        thr = pt.next_stage_threshold("LONG", 100.0, 2.0, 0)
-        assert thr == pytest.approx(102.0)
-
-    def test_short_next_threshold_is_below_entry(self):
-        thr = pt.next_stage_threshold("SHORT", 100.0, 2.0, 0)
-        assert thr == pytest.approx(98.0)
-
-    def test_no_threshold_at_max_stage(self):
-        assert pt.next_stage_threshold("LONG", 100.0, 2.0, 3) is None
-
-    def test_active_trail_verdict(self):
-        # LONG, entry 100, SL 98, mark 103 → +1.5R → stage 1, trailing active.
-        read = pt.trail_read("LONG", 100.0, 98.0, 103.0, atr=1.0)
-        assert read["stage"] == 1
-        assert read["active"] is True
-        assert "TRAILING ACTIVE" in read["verdict"]
-
-
-class TestGapSign:
-    def test_long_gap_is_distance_up_to_threshold(self):
-        # threshold 102, mark 101 → need +1 → gap +1.
-        assert pt.threshold_gap("LONG", 101.0, 102.0) == pytest.approx(1.0)
-
-    def test_short_gap_is_distance_down_to_threshold(self):
-        # threshold 98, mark 99 → need −1 → gap +1 (still above the short trigger).
-        assert pt.threshold_gap("SHORT", 99.0, 98.0) == pytest.approx(1.0)
+    def test_long_gap_positive_when_mark_below_threshold(self):
+        assert pt.playbook_gap("LONG", 100.0, 104.0) == pytest.approx(4.0)
 
     def test_none_threshold(self):
-        assert pt.threshold_gap("LONG", 100.0, None) is None
+        assert pt.playbook_gap("SHORT", 0.4385, None) is None
+
+
+class TestWldShortFromPlaybook:
+    # WLD SHORT: entry 0.4413, SL 0.4521, mark 0.4385, ATR ≈ 0.0078 abs (~1.78%).
+    E, SL, MARK, ATR = 0.4413, 0.4521, 0.4385, 0.0078
+
+    def test_trail_read_matches_playbook_geometry(self):
+        read = pt.trail_read("SHORT", self.E, self.SL, self.MARK, atr=self.ATR)
+        assert read["atr_pct"] == pytest.approx(1.78, abs=0.05)
+        # Threshold per the Playbook formula (~0.4366), gap positive ≈ Playbook's +0.0017.
+        assert read["threshold"] == pytest.approx(0.4366, abs=0.0005)
+        assert read["gap"] > 0
+        assert read["gap"] == pytest.approx(0.0019, abs=0.0006)
+        assert read["demanded"] is False
+        assert "GEOMETRY NOT DEMANDED" in read["verdict"]
+
+    def test_profit_in_r_context(self):
+        read = pt.trail_read("SHORT", self.E, self.SL, self.MARK, atr=self.ATR)
+        assert read["profit_r"] == pytest.approx(0.259, abs=0.01)
+
+
+class TestRatchetDemandedAndFired:
+    def test_demanded_but_not_fired(self):
+        # Push the mark below the short threshold → demanded; engine flag False.
+        read = pt.trail_read("SHORT", 0.4413, 0.4521, 0.4300, atr=0.0078,
+                             trailing_active=False)
+        assert read["demanded"] is True
+        assert read["fired"] is False
+        assert "NOT fired" in read["verdict"]
+
+    def test_demanded_and_fired(self):
+        read = pt.trail_read("SHORT", 0.4413, 0.4521, 0.4300, atr=0.0078,
+                             trailing_active=True)
+        assert read["demanded"] is True
+        assert read["fired"] is True
+        assert "trail fired" in read["verdict"]
+
+    def test_atr_unavailable(self):
+        read = pt.trail_read("SHORT", 0.4413, 0.4521, 0.4385, atr=0.0)
+        assert read["threshold"] is None
+        assert "ATR unavailable" in read["verdict"]
+
+
+class TestTrailEngineRead:
+    def test_no_state(self):
+        r = pt.trail_engine_read(None)
+        assert r["fired"] is None
+
+    def test_active_state(self):
+        r = pt.trail_engine_read({"trailing_active": True, "stage": 2, "best_price": 0.41})
+        assert r["fired"] is True
+        assert r["stage"] == 2
+        assert r["best_price"] == 0.41
+
+    def test_armed_not_fired(self):
+        r = pt.trail_engine_read({"trailing_active": False, "stage": 0})
+        assert r["fired"] is False
 
 
 class TestScalars:
@@ -86,28 +112,26 @@ class TestScalars:
         assert pt.liq_distance_pct(0.4385, 0.0) is None
 
     def test_expiry_remaining_and_format(self):
-        # opened at t=0, 4h expiry, now at 3h26m → ~34m left.
         rem = pt.expiry_remaining_seconds(0.0, 14400.0, 3 * 3600 + 26 * 60)
         assert rem == pytest.approx(34 * 60, abs=1)
         assert "34m to expiry" in pt.format_expiry(rem)
         assert "EXPIRED" in pt.format_expiry(-5)
 
     def test_sl_trail_fired(self):
-        # SL updated 60s after creation → fired.
         assert pt.sl_trail_fired(1_000_060_000, 1_000_000_000) is True
-        # SL updated 4ms after creation → NOT fired (placed at open).
         assert pt.sl_trail_fired(1_000_000_004, 1_000_000_000) is False
         assert pt.sl_trail_fired(None, 1_000_000_000) is None
 
 
 class TestFormatters:
     def test_trail_read_lines(self):
-        read = pt.trail_read("SHORT", 0.4413, 0.4521, 0.4385, atr=0.0078)
-        lines = pt.format_trail_read(read)
-        text = "\n".join(lines)
+        read = pt.trail_read("SHORT", 0.4413, 0.4521, 0.4385, atr=0.0078,
+                             trailing_active=False)
+        text = "\n".join(pt.format_trail_read(read))
         assert "TRAIL READ" in text
-        assert "Next trigger" in text
+        assert "Est. threshold" in text
         assert "Gap:" in text
+        assert "ABOVE threshold" in text
         assert "VERDICT" in text
 
     def test_trail_fired_format(self):
