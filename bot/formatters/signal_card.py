@@ -26,6 +26,21 @@ _CYAN = (80, 200, 220)       # Accent highlights
 _YELLOW = (230, 190, 50)     # Warning / pattern badge
 _DIM = (60, 70, 90)          # Dimmed elements
 
+# CJK-capable fonts (cover Latin too) for cards whose labels are translated to
+# Chinese. Tried in order; if none are present the renderer falls back to the
+# Latin font (Chinese would show as tofu, but English cards are never affected).
+_CJK_FONT_PATHS = [
+    "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/opentype/noto/NotoSansCJKtc-Regular.otf",
+    "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+]
+
+
+def _has_cjk(s: str) -> bool:
+    """True if the string contains any CJK ideograph (needs a CJK font)."""
+    return any("㐀" <= ch <= "鿿" or "豈" <= ch <= "﫿" for ch in s)
+
 
 def render_signal_card(data: Dict[str, Any]) -> bytes:
     """Render a trading signal as a PNG image.
@@ -1547,6 +1562,16 @@ def render_stats_card(data: Dict[str, Any]) -> bytes:
     tiles = data.get("tiles") or []
     footer = str(data.get("footer", "") or "")
 
+    # Does any label/value need CJK glyphs? (e.g. zh-localized labels.) If so,
+    # render the whole card with a CJK-capable font so Chinese doesn't tofu.
+    # English cards never trip this, so their rendering is unchanged.
+    _texts = [title, subtitle, footer]
+    if hero:
+        _texts += [str(hero.get("label", "")), str(hero.get("value", ""))]
+    for _t in tiles:
+        _texts += [str(_t.get("label", "")), str(_t.get("value", ""))]
+    use_cjk = any(_has_cjk(s) for s in _texts)
+
     W = 520
     PAD = 18
     HEADER_H = 56
@@ -1562,12 +1587,16 @@ def render_stats_card(data: Dict[str, Any]) -> bytes:
     draw = ImageDraw.Draw(img)
 
     def _font(size: int, bold: bool = False):
-        for path in [
+        latin = [
             "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold
             else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
             "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf" if bold
             else "/usr/share/fonts/TTF/DejaVuSans.ttf",
-        ]:
+        ]
+        # When the card has CJK text, try a CJK-capable font first (it also
+        # covers Latin, so numbers/$ still render); fall back to DejaVu.
+        paths = (_CJK_FONT_PATHS + latin) if use_cjk else latin
+        for path in paths:
             try:
                 return ImageFont.truetype(path, size)
             except (OSError, IOError):
