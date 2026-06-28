@@ -235,6 +235,7 @@ class TelegramHandler:
             ("start", self._cmd_start), ("dashboard", self._cmd_dashboard),
             ("scan", self._cmd_scan), ("analyze", self._cmd_analyze),
             ("portfolio", self._cmd_portfolio), ("trade", self._cmd_trade),
+            ("paper", self._cmd_paper),
             ("risk", self._cmd_risk), ("status", self._cmd_status),
             ("rejected", self._cmd_rejected), ("halt", self._cmd_halt),
             ("reset", self._cmd_reset), ("macro", self._cmd_macro),
@@ -3768,6 +3769,43 @@ class TelegramHandler:
                 await self._send(update, result, reply_markup=kb)
         else:
             await self._send(update, result)
+
+    @guard("portfolio")
+    async def _cmd_paper(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """/paper [on|off] — toggle risk-free PAPER practice mode for YOUR trades.
+
+        When ON, your confirmed trades are simulated into your paper portfolio
+        (full SL/TP monitoring, no real orders). Other users are unaffected.
+        """
+        if not CONFIG.paper_sim_opt_in_enabled:
+            await self._send(update,
+                "📝 Paper practice mode is not enabled on this bot "
+                "(<code>PAPER_SIM_OPT_IN_ENABLED</code> is off).")
+            return
+        tg_id = self._get_tg_id(update)
+        action = (ctx.args[0].lower() if ctx.args else "status")
+        if action in ("on", "enable", "start", "sim"):
+            if self.users.set_sim_opt_in(tg_id, True):
+                await self._send(update,
+                    "📝 <b>PAPER mode ON</b> — your confirmed trades will be "
+                    "<b>SIMULATED</b> (no real orders). Risk-free practice.\n"
+                    "Switch back with <code>/paper off</code>.")
+            else:
+                await self._send(update, "⚠️ Could not enable paper mode (unknown user — use /start first).")
+        elif action in ("off", "disable", "stop", "live"):
+            if self.users.set_sim_opt_in(tg_id, False):
+                await self._send(update,
+                    "🔴 <b>PAPER mode OFF</b> — your confirmed trades will execute "
+                    "<b>LIVE</b> (real orders), subject to your live-trading permission.")
+            else:
+                await self._send(update, "⚠️ Could not change paper mode (unknown user — use /start first).")
+        else:
+            on = self.users.sim_opt_in(tg_id)
+            state = "🟢 ON — trades simulated" if on else "🔴 OFF — trades live"
+            await self._send(update,
+                f"📝 <b>PAPER practice mode: {state}</b>\n"
+                f"<code>/paper on</code> — risk-free simulation  •  "
+                f"<code>/paper off</code> — live trading")
 
     @guard("portfolio")
     async def _cmd_portfolio(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
