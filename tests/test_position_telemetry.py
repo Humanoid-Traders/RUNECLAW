@@ -101,6 +101,34 @@ class TestTrailEngineRead:
         assert r["fired"] is False
 
 
+class TestRollingAtr:
+    def test_atr_from_candles_constant_range(self):
+        # Each bar has a true range of exactly 2.0 → ATR = 2.0.
+        n = 30
+        highs = [101.0] * n
+        lows = [99.0] * n
+        closes = [100.0] * n
+        assert pt.atr_from_candles(highs, lows, closes) == pytest.approx(2.0, abs=1e-9)
+
+    def test_short_series_falls_back_to_mean(self):
+        # Fewer than `period` TRs → simple mean of available TRs (non-zero).
+        highs = [10.0, 11.0, 12.0]
+        lows = [9.0, 9.5, 10.0]
+        closes = [9.5, 10.5, 11.5]
+        assert pt.atr_from_candles(highs, lows, closes, period=14) > 0
+
+    def test_degenerate_input(self):
+        assert pt.atr_from_candles([], [], []) == 0.0
+        assert pt.atr_from_candles([1.0], [1.0], [1.0]) == 0.0
+
+    def test_feeds_trail_read_threshold(self):
+        # A rolling ATR drives the same Playbook threshold formula.
+        atr = pt.atr_from_candles([0.45] * 30, [0.43] * 30, [0.44] * 30)
+        read = pt.trail_read("SHORT", 0.4413, 0.4521, 0.4385, atr=atr)
+        assert read["threshold"] is not None
+        assert read["atr_pct"] is not None
+
+
 class TestScalars:
     def test_atr_pct(self):
         assert pt.atr_pct(1.0, 50.0) == pytest.approx(2.0)

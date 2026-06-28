@@ -76,6 +76,30 @@ def atr_pct(atr: float, mark: float) -> Optional[float]:
     return atr / mark * 100.0
 
 
+def atr_from_candles(highs: list, lows: list, closes: list, period: int = 14) -> float:
+    """Wilder ATR (last value) from OHLC arrays — pure.
+
+    Lets /livepositions feed a ROLLING ATR (recomputed off live candles) into
+    trail_read so the threshold drifts tick-for-tick like the Playbook, instead
+    of the static atr_at_entry. Matches the analyzer's Wilder smoothing.
+    """
+    n = len(closes)
+    if n < 2:
+        return 0.0
+    trs = []
+    for i in range(1, n):
+        high, low, prev_close = highs[i], lows[i], closes[i - 1]
+        trs.append(max(high - low, abs(high - prev_close), abs(low - prev_close)))
+    if not trs:
+        return 0.0
+    if len(trs) < period:
+        return sum(trs) / len(trs)
+    atr = sum(trs[:period]) / period
+    for tr in trs[period:]:
+        atr = (atr * (period - 1) + tr) / period
+    return atr
+
+
 def playbook_trail_threshold(direction: str, sl_trigger: float,
                              atr_pct_frac: Optional[float]) -> Optional[float]:
     """The mark price at which the trail ratchet is DEMANDED, per the Playbook's
