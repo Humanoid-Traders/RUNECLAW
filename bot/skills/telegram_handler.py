@@ -5999,8 +5999,15 @@ class TelegramHandler:
                 chart_png = None
                 try:
                     from bot.skills.chart_renderer import build_position_chart
+                    # C4: pass direction + entry ATR so the chart can draw the
+                    # Playbook ratchet threshold (the "Trig" line) alongside the
+                    # static entry/SL/TP. liq/trail are left to the renderer's
+                    # defaults (drawn only when a caller supplies them).
+                    _pos_atr = (getattr(pos_match, "atr_at_entry", 0.0) or 0.0) \
+                        if is_live_pos else 0.0
                     chart_png = await build_position_chart(
-                        None, symbol, entry=_entry, sl=_sl, tp=_tp)
+                        None, symbol, entry=_entry, sl=_sl, tp=_tp,
+                        direction=_dir, atr=_pos_atr)
                 except Exception as exc:
                     system_log.warning("build_position_chart failed for %s: %s", symbol, exc)
 

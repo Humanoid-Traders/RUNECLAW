@@ -59,6 +59,19 @@ def test_default_canvas_is_large_for_legibility():
 
 
 @needs_charts
+def test_live_position_overlays_render():
+    # C4: trail SL / liquidation / Playbook threshold levels render alongside
+    # entry/SL/TP without raising (each gets a distinct right-edge tag).
+    df = cr.compute_chart_indicators(_candles(80))
+    last = float(df["Close"].iloc[-1])
+    png = cr.render_chart_png(df, title="WLD 1h", levels={
+        "entry": last, "stop_loss": last * 1.02, "take_profit": last * 0.94,
+        "trail": last * 1.01, "liq": last * 1.18, "threshold": last * 0.99,
+    })
+    assert png[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+@needs_charts
 def test_many_patterns_render_without_crashing():
     # C1: a long, choppy series triggers many overlapping pattern detections;
     # the declutter cap + label de-collision must never raise.
