@@ -180,6 +180,16 @@ class RiskLimits:
     require_stop_loss: bool = _env_bool("REQUIRE_STOP_LOSS", True)
     # Portfolio VaR: reject trades that would push parametric VaR above this %.
     max_portfolio_var_pct: float = _env_float_bounded("MAX_PORTFOLIO_VAR_PCT", 15.0, 0.1, 100.0)
+    # Covariance-based portfolio VaR (roadmap H-05). Default OFF: the live guard
+    # keeps using the per-trade-return proxy until an operator opts in. When ON
+    # AND every held + proposed asset has at least var_covariance_min_points of
+    # aligned price history, VaR is computed from a real covariance matrix across
+    # held assets (signed by position direction, so an opposing hedge correctly
+    # lowers portfolio variance). If the data is insufficient it falls back to the
+    # per-trade VaR — it never silently downgrades the check to a skip.
+    var_covariance_enabled: bool = _env_bool("VAR_COVARIANCE_ENABLED", False)
+    var_covariance_min_points: int = int(
+        _env_float_bounded("VAR_COVARIANCE_MIN_POINTS", 20, 5, 1000))
     # Exchange commission per side.
     # Bitget USDT perps: taker ~0.060%, maker ~0.020% (standard tier).
     # commission_pct is the DEFAULT rate used in risk calcs (taker).

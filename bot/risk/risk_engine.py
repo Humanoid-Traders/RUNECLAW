@@ -993,7 +993,7 @@ class RiskEngine:
         # negative-value sentinel, so a future change can't silently turn a
         # reject (zero-equity → 100%) into a skip.
         try:
-            var_result = self._compute_portfolio_var(position_usd)
+            var_result = self._compute_portfolio_var(position_usd, idea=idea)
             max_var = CONFIG.risk.max_portfolio_var_pct
             if var_result.status == VarStatus.SKIP:
                 # Not enough data — skip (fewer than 5 closed trades)
@@ -1437,7 +1437,8 @@ class RiskEngine:
             return f"CONCENTRATION_PCA: {reason}"
         return None
 
-    def _compute_portfolio_var(self, position_usd: float, confidence_level: float = 0.95) -> VarResult:
+    def _compute_portfolio_var(self, position_usd: float, confidence_level: float = 0.95,
+                               idea: Optional[TradeIdea] = None) -> VarResult:
         """Compute parametric VaR for portfolio including proposed position.
 
         Returns a VarResult (RC-AUD-007) carrying current/proposed VaR as a
@@ -1457,8 +1458,23 @@ class RiskEngine:
         assets. The current approach overstates diversification benefit and may
         understate tail risk for concentrated portfolios. Do not rely on this VaR
         as a standalone risk metric — it is a rough directional guard only.
+
+        ROADMAP H-05: when ``var_covariance_enabled`` is set AND every held +
+        proposed asset has enough aligned price history, the covariance-based
+        path below supersedes this proxy (it models cross-asset correlation and
+        nets opposing hedges). If that path can't compute, we fall through to the
+        per-trade proxy unchanged — the check is never silently downgraded.
         """
         import math
+
+        # Opt-in covariance VaR (roadmap H-05). Default OFF → this is a no-op and
+        # the per-trade proxy below runs byte-for-byte as before. Returns None
+        # (fall through) whenever it lacks the data to compute a real matrix.
+        if CONFIG.risk.var_covariance_enabled and idea is not None:
+            cov_result = self._compute_portfolio_var_covariance(
+                position_usd, confidence_level, idea)
+            if cov_result is not None:
+                return cov_result
 
         history = self._portfolio.trade_history
         closed = [t for t in history if t.exit_price is not None and t.entry_price > 0]
@@ -1490,17 +1506,7 @@ class RiskEngine:
 
         # C2-28 FIX: z-score lookup table replaces erfc formula that produced
         # wildly wrong values (~0.007 at 99% instead of correct 2.326).
-        _VAR_Z_SCORES = {0.90: 1.282, 0.95: 1.645, 0.99: 2.326, 0.999: 3.090}
-        if confidence_level in _VAR_Z_SCORES:
-            z_score = _VAR_Z_SCORES[confidence_level]
-        else:
-            # Nearest-key fallback for non-standard confidence levels
-            nearest = min(_VAR_Z_SCORES.keys(), key=lambda k: abs(k - confidence_level))
-            z_score = _VAR_Z_SCORES[nearest]
-            risk_log.warning(
-                "No exact z-score for confidence %.4f — using nearest %.3f (z=%.3f)",
-                confidence_level, nearest, z_score,
-            )
+        z_score = self._var_z_score(confidence_level)
 
         # Holding period: 1 day (sqrt(1) = 1)
         holding_period = 1.0
@@ -1523,6 +1529,126 @@ class RiskEngine:
         proposed_var_pct = (z_score * vol * sqrt_t * proposed_exposure / equity * 100) if equity > 0 else 0.0
 
         return VarResult(VarStatus.OK, round(current_var_pct, 4), round(proposed_var_pct, 4))
+
+    @staticmethod
+    def _returns_from_prices(prices: list[float]) -> list[float]:
+        """Simple per-step returns from a price series (skips non-positive prices)."""
+        out: list[float] = []
+        for i in range(1, len(prices)):
+            prev = prices[i - 1]
+            if prev > 0:
+                out.append((prices[i] - prev) / prev)
+        return out
+
+    def _compute_portfolio_var_covariance(
+        self, position_usd: float, confidence_level: float, idea: TradeIdea
+    ) -> Optional[VarResult]:
+        """Covariance-matrix portfolio VaR (roadmap H-05).
+
+        Models the portfolio as a vector of equity-fraction weights w (signed by
+        position direction: long = +, short = −) over the held + proposed assets,
+        with a covariance matrix Σ estimated from each asset's recent price
+        returns. Portfolio variance is wᵀΣw, so two correlated longs ADD risk
+        while a long+short hedge NETS it — exactly the cross-asset structure the
+        per-trade proxy is blind to. VaR% = z·√(wᵀΣw)·100.
+
+        Returns None (caller falls back to the per-trade proxy) whenever it can't
+        compute a trustworthy matrix: equity ≤ 0, or any required asset lacks at
+        least ``var_covariance_min_points`` aligned return observations. It never
+        returns a SKIP — fall-back, not downgrade.
+        """
+        import math
+
+        state = self._portfolio.snapshot()
+        equity = state.equity_usd
+        if equity <= 0:
+            return None
+
+        min_points = CONFIG.risk.var_covariance_min_points
+
+        def _signed_notional(asset: str, direction_val: str, notional: float,
+                             acc: dict[str, float]) -> None:
+            sign = -1.0 if str(direction_val).upper() == "SHORT" else 1.0
+            acc[asset] = acc.get(asset, 0.0) + sign * notional
+
+        # Current portfolio weights (open positions only).
+        current_notional: dict[str, float] = {}
+        for pos in self._portfolio.open_positions:
+            notional = pos.entry_price * pos.quantity
+            dir_val = pos.direction.value if hasattr(pos.direction, "value") else str(pos.direction)
+            _signed_notional(pos.asset, dir_val, notional, current_notional)
+
+        # Proposed adds margin→notional (margin × leverage, matching the F-3 unit
+        # fix in the per-trade path) to the proposed asset, signed by its side.
+        _lev = getattr(CONFIG.exchange, "default_leverage", 1) or 1
+        proposed_notional_usd = position_usd * _lev
+        idea_dir = idea.direction.value if hasattr(idea.direction, "value") else str(idea.direction)
+        proposed_notional = dict(current_notional)
+        _signed_notional(idea.asset, idea_dir, proposed_notional_usd, proposed_notional)
+
+        z_score = self._var_z_score(confidence_level)
+
+        def _var_pct(weights_usd: dict[str, float]) -> Optional[float]:
+            """VaR% for a signed-notional book, or None if history is insufficient."""
+            assets = [a for a, n in weights_usd.items() if n != 0.0]
+            if not assets:
+                return 0.0
+            # Build per-asset return series; require every asset to have history.
+            series: dict[str, list[float]] = {}
+            for a in assets:
+                prices = self._price_history.get(a) if hasattr(self, "_price_history") else None
+                rets = self._returns_from_prices(prices) if prices else []
+                if len(rets) < min_points:
+                    return None
+                series[a] = rets
+            # Align on the trailing common window (price buffers are appended per
+            # scan tick and aren't timestamped, so the last L points are the best
+            # available alignment).
+            window = min(len(series[a]) for a in assets)
+            if window < min_points:
+                return None
+            aligned = {a: series[a][-window:] for a in assets}
+            means = {a: sum(aligned[a]) / window for a in assets}
+            w = {a: weights_usd[a] / equity for a in assets}
+            # Portfolio variance = Σ_i Σ_j w_i w_j cov(i, j), sample cov (ddof=1).
+            denom = window - 1
+            if denom <= 0:
+                return None
+            variance = 0.0
+            for ai in assets:
+                wi = w[ai]
+                ri = aligned[ai]
+                mi = means[ai]
+                for aj in assets:
+                    rj = aligned[aj]
+                    mj = means[aj]
+                    cov_ij = sum((ri[k] - mi) * (rj[k] - mj) for k in range(window)) / denom
+                    variance += wi * w[aj] * cov_ij
+            vol = math.sqrt(variance) if variance > 0 else 0.0
+            return z_score * vol * 100.0
+
+        proposed_var = _var_pct(proposed_notional)
+        if proposed_var is None:
+            return None
+        current_var = _var_pct(current_notional)
+        if current_var is None:
+            current_var = 0.0
+
+        return VarResult(VarStatus.OK, round(current_var, 4), round(proposed_var, 4))
+
+    @staticmethod
+    def _var_z_score(confidence_level: float) -> float:
+        """Z-score for a VaR confidence level (shared by both VaR paths)."""
+        _VAR_Z_SCORES = {0.90: 1.282, 0.95: 1.645, 0.99: 2.326, 0.999: 3.090}
+        if confidence_level in _VAR_Z_SCORES:
+            return _VAR_Z_SCORES[confidence_level]
+        nearest = min(_VAR_Z_SCORES.keys(), key=lambda k: abs(k - confidence_level))
+        z = _VAR_Z_SCORES[nearest]
+        risk_log.warning(
+            "No exact z-score for confidence %.4f — using nearest %.3f (z=%.3f)",
+            confidence_level, nearest, z,
+        )
+        return z
 
     def _correlation_group(self, asset: str) -> str:
         """Map an asset to its correlation group.
