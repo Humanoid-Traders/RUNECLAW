@@ -536,6 +536,208 @@ def render_scan_results_card(
 
 
 # ═══════════════════════════════════════════════════════════════════
+# PATTERNS CARD — styled PNG mirroring the deep-scan patterns readout
+# ═══════════════════════════════════════════════════════════════════
+
+def render_patterns_card(
+    hits: list[Dict[str, Any]],
+    scan_label: str = "DEEP SCAN",
+    timestamp: str = "",
+    subtitle: str = "",
+    max_symbols: int = 8,
+) -> bytes:
+    """Render the deep-scan pattern observations as a PNG card.
+
+    Mirrors the text readout: one block per symbol with a header
+    (direction arrow, symbol, price, change %, RSI), the top chart patterns
+    each with a confidence bar, and a row of candlestick badges.
+
+    Args:
+        hits: list of dicts with keys ``symbol``, ``price``, ``chg``, ``rsi``,
+            ``vol_spike``, ``chart_patterns`` (list of {name, signal,
+            confidence}), ``candle_patterns`` (dict name->signal).
+        scan_label: e.g. "DEEP SCAN 4H".
+        timestamp: right-aligned header timestamp.
+        subtitle: small line under the title (e.g. "100 symbols · 4h").
+        max_symbols: cap the number of symbol blocks drawn.
+
+    Returns:
+        PNG bytes (empty bytes if Pillow is unavailable).
+    """
+    try:
+        from PIL import Image, ImageDraw, ImageFont
+    except ImportError:
+        log.warning("Pillow not installed, cannot render patterns card")
+        return b""
+
+    W = 560
+    PAD = 18
+    HEADER_H = 64
+    FOOTER_H = 26
+    HDR_ROW = 26       # per-symbol header line
+    PAT_ROW = 22       # per chart-pattern row
+    CANDLE_ROW = 22    # candle badge line
+    BLOCK_PAD = 22     # top+bottom padding inside a block panel
+    GAP = 10           # gap between blocks
+
+    shown = [h for h in (hits or [])][:max_symbols]
+
+    def _block_h(h: Dict[str, Any]) -> int:
+        n_pat = min(len(h.get("chart_patterns") or []), 3)
+        has_candle = bool(h.get("candle_patterns"))
+        return BLOCK_PAD + HDR_ROW + n_pat * PAT_ROW + (CANDLE_ROW if has_candle else 0)
+
+    body_h = sum(_block_h(h) + GAP for h in shown) if shown else 60
+    H = HEADER_H + body_h + FOOTER_H
+
+    img = Image.new("RGB", (W, H), _BG)
+    draw = ImageDraw.Draw(img)
+
+    def _font(size: int, bold: bool = False):
+        for path in [
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold
+            else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf" if bold
+            else "/usr/share/fonts/TTF/DejaVuSans.ttf",
+        ]:
+            try:
+                return ImageFont.truetype(path, size)
+            except (OSError, IOError):
+                continue
+        return ImageFont.load_default()
+
+    f_header = _font(18, bold=True)
+    f_sub = _font(10)
+    f_sym = _font(14, bold=True)
+    f_price = _font(12, bold=True)
+    f_label = _font(10)
+    f_pat = _font(11)
+    f_small = _font(10)
+
+    def _fmt(price: float) -> str:
+        if price >= 1000:
+            return f"${price:,.2f}"
+        elif price >= 1:
+            return f"${price:.4f}"
+        elif price >= 0.01:
+            return f"${price:.5f}"
+        return f"${price:.6f}"
+
+    def _sig_color(sig: str):
+        return _GREEN if sig == "bullish" else _RED if sig == "bearish" else _GRAY
+
+    # ── Header ──
+    draw.rectangle([0, 0, W, 3], fill=_ACCENT_GOLD)
+    title = f"RUNECLAW {scan_label}"
+    draw.text((PAD, 12), title, fill=_WHITE, font=f_header)
+    if timestamp:
+        ts_w = draw.textlength(timestamp, font=f_small)
+        draw.text((W - PAD - ts_w, 16), timestamp, fill=_GRAY, font=f_small)
+    if subtitle:
+        draw.text((PAD, 38), subtitle, fill=_GRAY, font=f_sub)
+
+    y = HEADER_H
+
+    if not shown:
+        draw.text((PAD, y + 8), "No actionable patterns detected.",
+                  fill=_GRAY, font=f_pat)
+    for h in shown:
+        bh = _block_h(h)
+        draw.rounded_rectangle(
+            [PAD, y, W - PAD, y + bh], radius=8, fill=_CARD_BG, outline=_BORDER)
+
+        sym = str(h.get("symbol", "?")).replace("/USDT", "").replace(":USDT", "")
+        price = float(h.get("price", 0) or 0)
+        chg = float(h.get("chg", 0) or 0)
+        rsi = float(h.get("rsi", 0) or 0)
+
+        # Direction arrow from change.
+        if chg > 0:
+            arrow, arrow_c = "▲", _GREEN     # ▲
+        elif chg < 0:
+            arrow, arrow_c = "▼", _RED       # ▼
+        else:
+            arrow, arrow_c = "●", _GRAY      # ●
+
+        hx = PAD + 14
+        hy = y + 12
+        draw.text((hx, hy + 1), arrow, fill=arrow_c, font=f_price)
+        hx += draw.textlength(arrow, font=f_price) + 8
+        draw.text((hx, hy - 1), sym, fill=_WHITE, font=f_sym)
+        hx += draw.textlength(sym, font=f_sym) + 12
+        draw.text((hx, hy + 1), _fmt(price), fill=_CYAN, font=f_price)
+        hx += draw.textlength(_fmt(price), font=f_price) + 12
+        chg_c = _GREEN if chg > 0 else _RED if chg < 0 else _GRAY
+        chg_txt = f"{chg:+.1f}%"
+        draw.text((hx, hy + 1), chg_txt, fill=chg_c, font=f_price)
+
+        # RSI badge, right aligned.
+        rsi_tag = " OB" if rsi > 70 else " OS" if rsi < 30 else ""
+        rsi_c = _RED if rsi > 70 else _GREEN if rsi < 30 else _GRAY
+        rsi_txt = f"RSI {rsi:.0f}{rsi_tag}"
+        if h.get("vol_spike"):
+            rsi_txt += "  VOL"
+        rsi_w = draw.textlength(rsi_txt, font=f_price)
+        draw.text((W - PAD - 14 - rsi_w, hy + 1), rsi_txt, fill=rsi_c, font=f_price)
+
+        ry = hy + HDR_ROW
+        # ── Chart patterns with confidence bars ──
+        bar_w = 96
+        bar_x = W - PAD - 14 - 44 - bar_w  # leave room for the "NN%" after the bar
+        for cp in (h.get("chart_patterns") or [])[:3]:
+            sig = str(cp.get("signal", "neutral"))
+            sc = _sig_color(sig)
+            conf = float(cp.get("confidence", 0) or 0)
+            # signal dot
+            draw.ellipse([PAD + 16, ry + 4, PAD + 24, ry + 12], fill=sc)
+            name = str(cp.get("name", ""))
+            # truncate long names so they don't collide with the bar
+            while name and draw.textlength(name, font=f_pat) > (bar_x - (PAD + 30) - 8):
+                name = name[:-1]
+            draw.text((PAD + 30, ry + 1), name, fill=_WHITE, font=f_pat)
+            # bar track + fill
+            draw.rounded_rectangle([bar_x, ry + 3, bar_x + bar_w, ry + 12],
+                                   radius=4, fill=_DIM)
+            fill_w = int(max(0.0, min(1.0, conf)) * bar_w)
+            if fill_w > 0:
+                draw.rounded_rectangle([bar_x, ry + 3, bar_x + fill_w, ry + 12],
+                                       radius=4, fill=sc)
+            draw.text((bar_x + bar_w + 8, ry), f"{conf:.0%}", fill=_GRAY, font=f_small)
+            ry += PAT_ROW
+
+        # ── Candlestick badges ──
+        candles = h.get("candle_patterns") or {}
+        if candles:
+            cx = PAD + 16
+            # Small drawn candlestick icon (DejaVu has no emoji glyph): a wick
+            # line through a filled body.
+            draw.line([cx + 4, ry + 1, cx + 4, ry + 15], fill=_YELLOW, width=1)
+            draw.rectangle([cx + 1, ry + 4, cx + 7, ry + 12], fill=_YELLOW)
+            cx += 14
+            for k, v in list(candles.items())[:4]:
+                cc = _sig_color(str(v))
+                # colored dot + name
+                draw.ellipse([cx, ry + 5, cx + 7, ry + 12], fill=cc)
+                cx += 11
+                label = str(k)
+                draw.text((cx, ry + 1), label, fill=_GRAY, font=f_small)
+                cx += draw.textlength(label, font=f_small) + 12
+
+        y += bh + GAP
+
+    # ── Footer ──
+    draw.rectangle([0, H - 3, W, H], fill=_ACCENT_GOLD)
+    foot = "Patterns are observations, not signals"
+    draw.text((PAD, H - 20), foot, fill=_DIM, font=f_small)
+    wm_w = draw.textlength("RUNECLAW", font=f_small)
+    draw.text((W - PAD - wm_w, H - 20), "RUNECLAW", fill=_DIM, font=f_small)
+
+    _buf = io.BytesIO()
+    img.save(_buf, format="PNG", optimize=True)
+    return _buf.getvalue()
+
+
+# ═══════════════════════════════════════════════════════════════════
 # POSITION CARD — styled PNG for open/closed position monitoring
 # ═══════════════════════════════════════════════════════════════════
 

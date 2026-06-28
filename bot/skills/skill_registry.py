@@ -164,6 +164,32 @@ def _pnl_arrow(v: float) -> str:
     return "\u26aa\u25c7"
 
 
+def _true_range_atr(highs, lows, closes, period: int = 14) -> float:
+    """Average True Range from OHLC arrays.
+
+    TR_t = max(high-low, |high-prev_close|, |low-prev_close|); ATR is the mean
+    of the last *period* true ranges. Returns 0.0 when there is too little data
+    or the result is not finite, so callers can apply their own fallback.
+    """
+    import numpy as _np
+
+    highs = _np.asarray(highs, dtype=float)
+    lows = _np.asarray(lows, dtype=float)
+    closes = _np.asarray(closes, dtype=float)
+    if len(closes) < 2:
+        return 0.0
+    tr = _np.maximum(
+        highs[1:] - lows[1:],
+        _np.maximum(_np.abs(highs[1:] - closes[:-1]),
+                    _np.abs(lows[1:] - closes[:-1])),
+    )
+    n = min(period, len(tr))
+    if n <= 0:
+        return 0.0
+    atr = float(_np.mean(tr[-n:]))
+    return atr if _np.isfinite(atr) and atr > 0 else 0.0
+
+
 class BaseSkill(ABC):
     name: str = "unnamed"
     description: str = ""
@@ -2617,6 +2643,12 @@ class DeepScanSkill(BaseSkill):
             vol_avg = float(np.mean(volumes[-20:])) if len(volumes) >= 20 else float(np.mean(volumes))
             vol_spike = float(volumes[-1]) > vol_avg * 2.0
 
+            # True-range ATR(14) from the OHLCV we already fetched. Real
+            # per-symbol volatility so downstream SL/TP reflect the actual
+            # range instead of a flat price*0.02 placeholder (which made every
+            # setup show an identical ~4.4%/6.6% stop/target).
+            atr = _true_range_atr(highs, lows, closes) or price * 0.02
+
             # Score: more patterns + extreme RSI + volume spike = higher score
             score = len(chart_patterns) * 2 + len(candle_patterns) * 1
             if rsi < 30 or rsi > 70:
@@ -2630,6 +2662,7 @@ class DeepScanSkill(BaseSkill):
                     "price": price,
                     "chg": float(chg),
                     "rsi": rsi,
+                    "atr": atr,
                     "vol_spike": vol_spike,
                     "chart_patterns": chart_patterns,
                     "candle_patterns": candle_patterns,
@@ -2705,15 +2738,15 @@ class DeepScanSkill(BaseSkill):
             # Convert hits to scan_skill format
             scan_results = []
             for h in hits:
-                # Approximate ATR from price (2% of price as fallback)
-                approx_atr = h["price"] * 0.02
+                # Real ATR from the scan (falls back to 2% only if unavailable).
+                atr_val = h.get("atr") or h["price"] * 0.02
                 scan_results.append({
                     "sym": h["symbol"],
                     "price": h["price"],
                     "dir": "LONG" if h["rsi"] < 50 or h["chg"] > 0 else "SHORT",
                     "score": min(h["score"] / 10.0, 1.0),  # normalize score
                     "rsi": round(h["rsi"], 1),
-                    "atr": approx_atr,
+                    "atr": atr_val,
                     "vol_ratio": 2.5 if h["vol_spike"] else 1.0,
                     "patterns": h.get("chart_patterns", []),
                 })
