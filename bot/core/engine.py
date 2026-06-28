@@ -391,6 +391,48 @@ class RuneClawEngine:
         call when none exists. Never touches the shared operator executor."""
         self._user_executors.pop(str(user_id), None)
 
+    def _is_operator_user(self, user_id) -> bool:
+        """True if this user trades on the OPERATOR account — i.e. an admin or a
+        member of the operator/admin env allowlist. A regular user is NOT an
+        operator and, under per-user live trading, must link their own keys.
+        """
+        uid = str(user_id)
+        for raw in (CONFIG.telegram.chat_id, CONFIG.telegram.admin_ids):
+            if raw and uid in {s.strip() for s in str(raw).split(",") if s.strip()}:
+                return True
+        store = getattr(self, "_user_store", None)
+        if store is not None:
+            try:
+                u = store.get(uid)
+                if u and u.get("role") == "admin":
+                    return True
+            except Exception:
+                pass
+        return False
+
+    def per_user_live_eligibility(self, user_id) -> tuple:
+        """Whether THIS human user's confirmed live trade may execute, and why.
+
+        Returns ``(ok, reason)``. Only meaningful while PER_USER_LIVE_ENABLED is
+        on and for a real human confirm (not 'auto'/''). The rule: an operator/
+        admin trades on the operator account (always ok); a regular user must
+        have their OWN linked, decryptable keys — otherwise their trade is
+        REJECTED rather than silently placed on the operator's account.
+        """
+        if not getattr(CONFIG, "per_user_live_enabled", False):
+            return True, "per-user live trading disabled (operator account)"
+        if not self._human_confirmed(user_id):
+            return True, "operator/auto path"
+        if self._is_operator_user(user_id):
+            return True, "operator/admin user"
+        try:
+            from bot.core.exchange_credentials import get_credential_store
+            if get_credential_store().get(user_id):
+                return True, "user has linked keys"
+        except Exception as exc:
+            return False, f"credential lookup failed: {exc}"
+        return False, "no linked Bitget account — use /connect to link one"
+
     def _all_live_executors(self) -> list:
         """The shared operator executor plus every active per-user executor.
 
@@ -1888,6 +1930,23 @@ class RuneClawEngine:
             self._transition(AgentState.IDLE, f"simulation hard veto {trade_id}")
             return ("Trade REJECTED: SIMULATION_MODE=true — live execution "
                     "vetoed (hard safety switch).")
+
+        # ── Per-user eligibility gate ────────────────────────────────────────
+        # When per-user live trading is ON, a regular (non-operator) human user
+        # may only place a live order on THEIR OWN linked account. If they have
+        # not linked keys, REJECT here — never silently route their trade to the
+        # operator account. No-op while the flag is off, and operator/admin/auto
+        # paths always pass, so the operator path is unchanged.
+        _elig_ok, _elig_reason = self.per_user_live_eligibility(user_id)
+        if not _elig_ok:
+            self._pending_pyramid.pop(trade_id, None)
+            audit(trade_log,
+                  f"Live execution blocked — per-user eligibility: {_elig_reason}",
+                  action="confirm", result="REJECT_NOT_ELIGIBLE",
+                  data={"trade_id": trade_id, "user_id": user_id, "reason": _elig_reason})
+            self._transition(AgentState.IDLE, f"not eligible {trade_id}")
+            return (f"Trade REJECTED: {_elig_reason}. Your live trades execute on "
+                    "your OWN Bitget account — link it with /connect first.")
 
         # Live mode — execute via LiveExecutor with micro-test safety limits
         self._transition(AgentState.EXECUTING, f"executing LIVE trade {trade_id}")

@@ -1,10 +1,12 @@
 # Live Trading Enablement — Per-User Accounts (Preparation)
 
-> **Status: PREPARATION. Nothing in this document is live yet.**
+> **Status: BUILT & INERT. All five phases merged; the feature is OFF.**
 > Every switch described here defaults **OFF**. With the defaults unchanged the
 > bot behaves exactly as it does today: a single shared operator account, paper
-> mode unless explicitly taken live. This file is the design + runbook for
-> turning on **per-user** live trading later, *the right way*, when we choose to.
+> mode unless explicitly taken live. The full per-user capability is now
+> implemented and gated behind `PER_USER_LIVE_ENABLED=false`; this file is the
+> design + runbook for turning it on, *the right way*, when we choose to. See
+> `docs/PER_USER_LIVE_READINESS.md` for the readiness report.
 
 ## Goal
 
@@ -53,22 +55,28 @@ inert until the flag flips. **Phase 1 is this PR.**
   - **No execution wiring.** Storing keys changes nothing about how orders are
     placed today.
 
-- **Phase 2 — parameterize `LiveExecutor`.** Accept `(user_id, credentials,
-  state_dir)`; per-user position / closed-trade files. The shared-operator code
-  path stays byte-identical (same defaults, same files) — verified by the
-  existing `test_live_executor.py` continuing to pass unchanged.
+- **Phase 2 — parameterize `LiveExecutor` (DONE).** Accepts `(user_id,
+  credentials, state_dir)`; per-user position / closed-trade files. The
+  shared-operator code path stays byte-identical (same defaults, same files) —
+  verified by the existing `test_live_executor.py` continuing to pass unchanged.
 
-- **Phase 3 — engine per-user executor registry.** `engine` holds
+- **Phase 3 — engine per-user executor registry (DONE).** `engine` holds
   `dict[user_id -> LiveExecutor]`; `confirm_trade(user_id)` routes to *that
   user's* executor. **Entirely gated by `PER_USER_LIVE_ENABLED`** — OFF means
-  the single-operator path runs exactly as before.
+  the single-operator path runs exactly as before. `'auto'`/`''` (admin
+  auto-trade, unattended) stay on the operator account.
 
-- **Phase 4 — monitoring / reconciliation.** Position monitoring, SL/TP, and
-  reconciliation iterate across all per-user executors instead of one.
+- **Phase 4 — monitoring / reconciliation (DONE).** Position monitoring, SL/TP,
+  and reconciliation iterate across all per-user executors; linked users are
+  rehydrated at startup so their positions resume being monitored after a
+  restart.
 
-- **Phase 5 — enablement gating + access policy.** Eligibility = *linked +
-  validated keys*. Admin auto-trade `0.85` documented and wired. `.env.example`
-  updated. Final runbook + readiness report.
+- **Phase 5 — enablement gating + access policy (DONE).** Eligibility gate in
+  `confirm_trade`: when `PER_USER_LIVE_ENABLED` is on, a regular (non-operator)
+  user must have linked, decryptable keys — otherwise their live trade is
+  REJECTED rather than placed on the operator account. Admin auto-trade `0.85`
+  documented (`.env.example`). Final runbook + readiness report
+  (`docs/PER_USER_LIVE_READINESS.md`).
 
 ## Security guarantees (Phase 1)
 
@@ -86,7 +94,10 @@ inert until the flag flips. **Phase 1 is this PR.**
 - **Validation before storage.** Keys are functionally checked with a read-only
   balance fetch before they are persisted; a bad key stores nothing.
 
-## Operator runbook (when we enable — NOT YET)
+## Operator runbook (all phases landed — flip the switch when ready)
+
+All five phases are merged and inert behind `PER_USER_LIVE_ENABLED=false`. To
+turn the feature on:
 
 1. **Pin the encryption key.** Set `RUNECLAW_SECRETS_KEY` in the environment (a
    urlsafe-base64 Fernet key) so ciphertext survives a wiped `data/` dir and the
@@ -94,21 +105,42 @@ inert until the flag flips. **Phase 1 is this PR.**
    logged.
 2. **Have users link.** Each user runs `/connect <api_key> <api_secret>
    <passphrase>` in private chat with a Bitget **USDT-M futures (read+trade)**
-   key. `/exchange` confirms status; `/disconnect` removes it.
-3. **Keep everything paper** until Phases 2–4 land and are reviewed.
+   key. `/exchange` confirms status; `/disconnect` removes it. Validation is a
+   read-only balance fetch — a bad key stores nothing.
+3. **Keep `PER_USER_LIVE_ENABLED=false`** while users link and rehearse. Linking
+   keys changes nothing about execution until the flag flips.
 4. **Enable per-user routing** by setting `PER_USER_LIVE_ENABLED=true` (plus the
    existing `LIVE_TRADING_ENABLED=true`, `SIMULATION_MODE=false`,
-   `TELEGRAM_CHAT_ID`, and a per-session `/golive CONFIRM`).
-5. **Regular users stay manual-confirm.** Leave `auto_confirm_threshold=1.0` for
-   them. For **admin** auto-trade, set the threshold to `0.85` and enable
-   `auto_confirm_live_enabled` per the operator policy (Phase 5).
+   `TELEGRAM_CHAT_ID`, and a per-session `/golive CONFIRM`). Once on, the
+   eligibility gate REJECTS any regular user's live confirm unless they have
+   linked keys — their trade never touches the operator account.
+5. **Regular users stay manual-confirm.** Leave `AUTO_CONFIRM_THRESHOLD=1.0` for
+   them. For **admin** auto-trade, set `AUTO_CONFIRM_THRESHOLD=0.85` and
+   `AUTO_CONFIRM_LIVE_ENABLED=true`; auto-confirmed trades run on the operator
+   account (`user_id="auto"`) — a regular user's trade is never auto-confirmed.
 
-## What is intentionally NOT done yet
+## Eligibility gate (Phase 5)
 
-- No order ever routes to a per-user account (Phases 2–3 not wired).
+`engine.per_user_live_eligibility(user_id)` is consulted in `confirm_trade`
+right after the `SIMULATION_MODE` veto:
+
+- Flag **off** → everyone eligible (operator account; unchanged).
+- `'auto'`/`''` (admin auto-trade, unattended) → eligible (operator account).
+- Operator/admin human user → eligible (operator account; no own keys needed).
+- Regular user **with** linked, decryptable keys → eligible (their own account).
+- Regular user **without** keys → **REJECTED** (never the operator account).
+
+## Current state (default config)
+
+- `PER_USER_LIVE_ENABLED=false` → no order ever routes to a per-user account;
+  the bot trades only the operator account, exactly as before.
 - No auto-trade for regular users (threshold stays `1.0`).
-- `PER_USER_LIVE_ENABLED` stays `false`. Flipping it does nothing until Phase 3.
+- All capability is **built and tested** but **inert**. The whole feature is
+  **capability, not activation**: users *can* link accounts and we *can*
+  validate + encrypt them, with zero change to how the bot trades today.
 
-The deliverable of this PR is **capability, not activation**: users *can* link
-their accounts and we *can* validate + encrypt them, with zero change to how the
-bot trades today.
+## Follow-ups (after enable)
+
+- **Per-user live-balance size-clamp.** The size clamp in `confirm_trade` still
+  reads the operator's cached balance; per-user balance caching is a refinement
+  for when the feature is turned on with real volume.
