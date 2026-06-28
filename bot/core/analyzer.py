@@ -210,6 +210,9 @@ class Analyzer:
         # Resolve provider config (runtime BYOK overrides .env)
         self._llm_config = self._resolve_llm_config()
         self._llm = self._build_llm_client()
+        # Confidence calibrator (Phase A): lazily loaded from disk. ``False`` is
+        # the "looked, none on disk" sentinel so we don't re-stat every analyze().
+        self._calibrator = None
 
         # Multi-tier routing: resolve separate configs for scan vs thesis
         self._scan_config = resolve_tier_config(LLMTier.SCAN, self._llm_config) if self._llm_config else None
@@ -319,6 +322,22 @@ class Analyzer:
             self.SCAN_MODEL = self._scan_config.model
         if self._thesis_config and self._thesis_config != self._llm_config:
             self.THESIS_MODEL = self._thesis_config.model
+
+    def _get_calibrator(self):
+        """Lazily load the confidence calibrator from disk (once). Returns the
+        calibrator or None. Cached so repeated analyze() calls don't re-read."""
+        if self._calibrator is None:
+            try:
+                from bot.learning.confidence_calibration import ConfidenceCalibrator
+                self._calibrator = ConfidenceCalibrator.load() or False
+            except Exception as exc:
+                logger.debug("Calibrator load failed: %s", exc)
+                self._calibrator = False
+        return self._calibrator or None
+
+    def refresh_calibrator(self) -> None:
+        """Force a reload of the calibrator on the next analyze() (after a refit)."""
+        self._calibrator = None
 
     async def analyze(self, signal: MarketSignal, candles: list[list[float]], order_flow=None,
                        candles_4h=None, candles_1d=None, is_admin: bool = False,
@@ -787,6 +806,30 @@ class Analyzer:
         # min_conf gate and both TradeIdea constructions) sees a valid [0,1]
         # confidence. The lower bound never binds (the floors keep it ≥ 0).
         blended_confidence = max(0.0, min(1.0, blended_confidence))
+
+        # ── Confidence calibration (Phase A) ─────────────────────────────────
+        # Remap the final confidence through a reliability curve fitted from the
+        # bot's own closed-trade history, so the number reflects realized win
+        # rate. Fail-open: any error leaves confidence untouched. When the flag
+        # is OFF we still compute the would-be value and log the delta (shadow
+        # mode) so its effect can be observed before it is ever applied.
+        try:
+            _cal = self._get_calibrator()
+            if _cal is not None and _cal.is_ready():
+                _calibrated = round(_cal.calibrate(blended_confidence), 2)
+                if CONFIG.analyzer.confidence_calibration_enabled:
+                    if _calibrated != blended_confidence:
+                        audit(trade_log,
+                              f"Confidence calibrated {blended_confidence:.2f} -> {_calibrated:.2f}",
+                              action="confidence_calibration", result="APPLIED",
+                              data={"symbol": signal.symbol, "raw": blended_confidence,
+                                    "calibrated": _calibrated})
+                    blended_confidence = _calibrated
+                else:
+                    logger.debug("Calibration shadow: %s raw=%.2f -> would=%.2f",
+                                 signal.symbol, blended_confidence, _calibrated)
+        except Exception as _cal_exc:
+            logger.debug("Confidence calibration skipped: %s", _cal_exc)
 
         # SIGNAL QUALITY: threshold at min_confidence (matches config)
         # RANGE/CHOP trades need high raw confluence to survive after penalty
