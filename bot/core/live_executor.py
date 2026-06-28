@@ -144,6 +144,27 @@ _MAX_CLOSED_TRADES = 500  # Cap closed trade history
 _MAX_ORDER_HISTORY = 200
 
 
+def _user_state_path(base_file: str, state_dir: Optional[str], user_id) -> str:
+    """Resolve a per-user state file path.
+
+    Per-user live trading (PER_USER_LIVE_ENABLED, default OFF) runs one
+    LiveExecutor per user, each bound to its own position/closed-trade files so
+    accounts never share state. For the **shared operator executor**
+    (``user_id is None`` and ``state_dir is None``) this returns the original
+    module-level path UNCHANGED — the operator's on-disk layout is byte-identical
+    to before this refactor. When a ``user_id`` is given, the filename is suffixed
+    with it (e.g. ``live_positions_12345.json``).
+    """
+    if user_id is None and state_dir is None:
+        return base_file
+    d: str = state_dir or os.environ.get("RUNECLAW_STATE_DIR") or "data"
+    name = os.path.basename(base_file)
+    if user_id is not None:
+        stem, ext = os.path.splitext(name)
+        name = f"{stem}_{user_id}{ext}"
+    return os.path.join(d, name)
+
+
 @dataclass
 class LiveOrder:
     """Record of a live order placed on the exchange."""
@@ -209,7 +230,19 @@ class LiveExecutor:
         result = await executor.execute(idea, size_usd=100.0)
     """
 
-    def __init__(self) -> None:
+    def __init__(self, user_id=None, credentials: Optional[dict] = None,
+                 state_dir: Optional[str] = None) -> None:
+        # Per-user live trading (PER_USER_LIVE_ENABLED, default OFF): when a
+        # user_id + credentials are supplied, this executor trades THAT user's
+        # own Bitget account and persists to per-user state files. The default
+        # (all None) is the shared operator executor — credentials come from
+        # CONFIG.exchange and the state files are the original module paths, so
+        # the operator path is byte-identical to before. credentials, when set,
+        # is {"api_key", "api_secret", "passphrase"} (from the encrypted store).
+        self.user_id = user_id
+        self._credentials = credentials
+        self._positions_file = _user_state_path(_POSITIONS_FILE, state_dir, user_id)
+        self._closed_trades_file = _user_state_path(_CLOSED_TRADES_FILE, state_dir, user_id)
         self._exchange: Optional[ccxt.Exchange] = None
         self._positions: dict[str, LivePosition] = {}
         self._closed_trades: list[LivePosition] = []  # F-14: persisted closed trades
@@ -303,16 +336,29 @@ class LiveExecutor:
         """Get authenticated Bitget exchange instance."""
         if self._exchange is None:
             cfg = CONFIG.exchange
-            if not cfg.api_key or not cfg.api_secret:
+            # Per-user executors authenticate with the user's OWN linked keys
+            # (decrypted from the credential store); the shared operator executor
+            # uses CONFIG.exchange exactly as before. Non-credential settings
+            # (trade_mode, sandbox, leverage, margin) remain operator-configured.
+            if self._credentials:
+                api_key = self._credentials.get("api_key") or ""
+                api_secret = self._credentials.get("api_secret") or ""
+                passphrase = self._credentials.get("passphrase") or ""
+            else:
+                api_key, api_secret, passphrase = cfg.api_key, cfg.api_secret, cfg.passphrase
+            if not api_key or not api_secret:
                 raise RuntimeError(
                     "BITGET_API_KEY and BITGET_API_SECRET required for live trading. "
                     "Set them in .env and restart."
+                    if not self._credentials else
+                    "This user has no linked Bitget credentials. Use /connect to "
+                    "link an account before trading live."
                 )
             is_futures = cfg.trade_mode == "futures"
             self._exchange = ccxt.bitget({
-                "apiKey": cfg.api_key,
-                "secret": cfg.api_secret,
-                "password": cfg.passphrase,
+                "apiKey": api_key,
+                "secret": api_secret,
+                "password": passphrase,
                 "sandbox": cfg.sandbox,
                 "timeout": 30000,
                 "enableRateLimit": True,
@@ -5530,7 +5576,7 @@ class LiveExecutor:
                     "atr_at_entry": pos.atr_at_entry,
                     "close_reason": pos.close_reason,
                 }
-            path = Path(_POSITIONS_FILE)
+            path = Path(self._positions_file)
             path.parent.mkdir(parents=True, exist_ok=True)
 
             # Keep backup of non-empty file before overwriting
@@ -5567,7 +5613,7 @@ class LiveExecutor:
 
         Falls back to .bak file if main file is empty or corrupt.
         """
-        path = Path(_POSITIONS_FILE)
+        path = Path(self._positions_file)
         bak_path = Path(str(path) + ".bak")
 
         # Try main file first, fall back to backup
@@ -5678,7 +5724,7 @@ class LiveExecutor:
                     "status": "closed",
                     "close_reason": pos.close_reason,
                 })
-            path = Path(_CLOSED_TRADES_FILE)
+            path = Path(self._closed_trades_file)
             path.parent.mkdir(parents=True, exist_ok=True)
             tmp = str(path) + ".tmp"
             with open(tmp, "w") as f:
@@ -5692,7 +5738,7 @@ class LiveExecutor:
 
     def _load_closed_trades(self) -> None:
         """Load persisted closed trades on startup."""
-        path = Path(_CLOSED_TRADES_FILE)
+        path = Path(self._closed_trades_file)
         if not path.exists():
             return
         try:
