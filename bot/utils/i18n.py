@@ -203,7 +203,7 @@ _STRINGS: dict[str, dict[str, str]] = {
             "/sweep \u2014 流動性掃蕩偵測\n"
             "/zones \u2014 供需區間\n"
             "/squeeze \u2014 波動性壓縮偵測\n"
-            "/holdtime \u2014 持仓时间与胜率分析\n"
+            "/holdtime \u2014 持倉時間與勝率分析\n"
             "/journal \u2014 每週交易回顧\n"
             "/strategy \u2014 當前策略與市場狀態路由"
         ),
