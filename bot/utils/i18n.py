@@ -512,6 +512,34 @@ _STRINGS: dict[str, dict[str, str]] = {
         "zh": "手動下單採用簡化風險檢查",
     },
     "trade_margin_auto": {"en": "Auto (risk-based)", "zh": "自動（依風險）"},
+
+    # ── /risk (stats card + buttons; en byte-identical) ──
+    "lbl_risk_title": {"en": "RISK", "zh": "風險"},
+    "lbl_daily_loss_limit": {"en": "Daily Loss Limit", "zh": "每日虧損上限"},
+    "lbl_current_drawdown": {"en": "Current Drawdown", "zh": "目前回撤"},
+    "lbl_open_trades": {"en": "Open Trades", "zh": "未平倉交易"},
+    "lbl_leverage_cap": {"en": "Leverage Cap", "zh": "槓桿上限"},
+    "lbl_circuit_breaker": {"en": "Circuit Breaker", "zh": "熔斷機制"},
+    "val_tripped": {"en": "TRIPPED", "zh": "已觸發"},
+    "val_ok": {"en": "OK", "zh": "正常"},
+    "btn_safe_mode": {"en": "Safe Mode", "zh": "安全模式"},
+    "btn_pause": {"en": "Pause", "zh": "暫停"},
+    "btn_stop_bot": {"en": "Stop Bot", "zh": "停止機器人"},
+
+    # ── /whynot + /reset (control messages; en byte-identical) ──
+    "invalid_symbol_format": {"en": "Invalid symbol format.", "zh": "代號格式無效。"},
+    "reset_cb_done": {
+        "en": "<b>Circuit breaker reset</b>\n\nTrading resumed.",
+        "zh": "<b>熔斷已重設</b>\n\n交易已恢復。",
+    },
+    "reset_streak_cleared": {
+        "en": "<b>Streak cleared</b>  {n} → 0",
+        "zh": "<b>連敗已清除</b>  {n} → 0",
+    },
+    "reset_nothing": {
+        "en": "<b>Nothing to reset</b>\n\nCB: off  •  Streak: {n}",
+        "zh": "<b>無需重設</b>\n\nCB: 關閉  •  連敗: {n}",
+    },
 }
 
 
