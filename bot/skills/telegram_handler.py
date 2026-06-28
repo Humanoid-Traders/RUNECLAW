@@ -4354,7 +4354,10 @@ class TelegramHandler:
         try:
             result = await self.registry.dispatch("pro_scan",
                 self.engine, mode="scalp", user_id=self._get_tg_id(update))
-            await self._send(update, result)
+            signals = getattr(self.engine, "_last_scan_signals", None)
+            if not (signals and await self._render_scan_signals_card(
+                    update, signals, "SCALP SCAN")):
+                await self._send(update, result)
         except Exception as exc:
             system_log.error(f"Scalp scan error: {exc}", exc_info=True)
             await self._send(update, f"🔴 <b>Scalp scan error:</b> <code>{html.escape(str(exc)[:200])}</code>")
@@ -4367,7 +4370,10 @@ class TelegramHandler:
         try:
             result = await self.registry.dispatch("pro_scan",
                 self.engine, mode="intraday", user_id=self._get_tg_id(update))
-            await self._send(update, result)
+            signals = getattr(self.engine, "_last_scan_signals", None)
+            if not (signals and await self._render_scan_signals_card(
+                    update, signals, "INTRADAY SCAN")):
+                await self._send(update, result)
         except Exception as exc:
             system_log.error(f"Intraday scan error: {exc}", exc_info=True)
             await self._send(update, f"🔴 <b>Intraday scan error:</b> <code>{html.escape(str(exc)[:200])}</code>")
@@ -4380,7 +4386,10 @@ class TelegramHandler:
         try:
             result = await self.registry.dispatch("pro_scan",
                 self.engine, mode="swing", user_id=self._get_tg_id(update))
-            await self._send(update, result)
+            signals = getattr(self.engine, "_last_scan_signals", None)
+            if not (signals and await self._render_scan_signals_card(
+                    update, signals, "SWING SCAN")):
+                await self._send(update, result)
         except ValueError as ve:
             # TradeIdea validation errors (SL=entry, etc.) — report but don't crash
             system_log.warning(f"Swing scan validation error: {ve}")

@@ -1746,6 +1746,13 @@ class ProScanSkill(BaseSkill):
         else:
             signals.sort(key=lambda s: abs(s.change_pct_24h), reverse=True)
 
+        # Stash structured signals so the handler can render the grid card
+        # (non-breaking: this method still returns its rich text).
+        try:
+            engine._last_scan_signals = signals
+        except Exception:
+            pass
+
         top = signals[:cfg["top_n"]]
 
         # ── Categorized Live Tickers ──
