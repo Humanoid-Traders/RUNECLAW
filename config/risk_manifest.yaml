@@ -383,6 +383,16 @@ defaults:
     env_var: MAX_PORTFOLIO_VAR_PCT
     description: "Max portfolio Value at Risk as % of equity (parametric, 95% confidence)"
 
+  var_covariance_enabled:
+    value: false
+    env_var: VAR_COVARIANCE_ENABLED
+    description: "Opt-in (default off): compute portfolio VaR from a real covariance matrix across held assets instead of the per-trade-return proxy; falls back to the proxy when price history is insufficient"
+
+  var_covariance_min_points:
+    value: 20
+    env_var: VAR_COVARIANCE_MIN_POINTS
+    description: "Minimum aligned price-return observations per asset required before the covariance VaR path is used (otherwise it falls back to the per-trade proxy)"
+
   commission_pct:
     value: 0.06
     env_var: COMMISSION_PCT
