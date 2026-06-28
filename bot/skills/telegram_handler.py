@@ -2765,6 +2765,20 @@ class TelegramHandler:
             except Exception:
                 pass
 
+        # Best-effort: liquidation price + margin mode per symbol (read-only,
+        # one guarded fetch — never blocks the card if it fails).
+        ex_pos_map: dict = {}
+        if filled_pos:
+            try:
+                exchange = await self.engine.live_executor._get_exchange()
+                _ex_positions = await exchange.fetch_positions(
+                    params={"productType": "USDT-FUTURES"})
+                for _ep in (_ex_positions or []):
+                    if isinstance(_ep, dict) and _ep.get("symbol"):
+                        ex_pos_map[_ep["symbol"]] = _ep
+            except Exception:
+                pass
+
         # Fallback: check exchange directly if no local positions at all
         if not filled_pos and not pending_pos:
             try:
@@ -2833,6 +2847,31 @@ class TelegramHandler:
 
                 cur_str = f"- Current: <code>${cur:,.4f}</code>\n" if cur > 0 else ""
 
+                # ── Read-only telemetry (matches the external Playbook readout) ──
+                from bot.core import position_telemetry as _pt
+                # Liquidation + margin mode (best-effort, from the exchange map).
+                liq_line = ""
+                _ep = ex_pos_map.get(p.symbol)
+                if _ep and cur > 0:
+                    _liq = _ep.get("liquidationPrice")
+                    _mm = (_ep.get("marginMode") or _ep.get("marginType") or "").upper()
+                    try:
+                        _liqf = float(_liq) if _liq else None
+                    except (TypeError, ValueError):
+                        _liqf = None
+                    if _liqf:
+                        _ld = _pt.liq_distance_pct(cur, _liqf)
+                        liq_line = (f"- Liq: <code>${_liqf:,.4f}</code>"
+                                    + (f" ({_ld:.1f}% away)" if _ld is not None else "")
+                                    + (f" | {_mm}" if _mm else "") + "\n")
+                # Trail read (local — entry/SL/ATR + mark; never demands an order).
+                trail_block = ""
+                if cur > 0 and p.stop_loss > 0 and p.entry_price > 0:
+                    _read = _pt.trail_read(
+                        p.direction, p.entry_price, p.stop_loss, cur,
+                        atr=getattr(p, "atr_at_entry", 0.0) or 0.0)
+                    trail_block = "\n".join(_pt.format_trail_read(_read)) + "\n"
+
                 lines.append(
                     f"{dir_icon} <b>{p.direction} {sym_display}</b> {lev}x\n"
                     f"- Entry: <code>${p.entry_price:,.4f}</code>\n"
@@ -2840,7 +2879,9 @@ class TelegramHandler:
                     f"- Size: <code>${cost:,.2f}</code> | Qty: <code>{p.quantity:.6f}</code>\n"
                     f"- SL: <code>{sl_str}</code>\n"
                     f"- TP: <code>{tp_str}</code>\n"
+                    f"{liq_line}"
                     f"{upnl_str}"
+                    f"{trail_block}"
                     f"- ID: <code>{p.trade_id}</code>\n"
                 )
 
@@ -2864,10 +2905,15 @@ class TelegramHandler:
                     dist_pct = abs(cur - p.entry_price) / p.entry_price * 100
                     dist_str = f" ({dist_pct:+.2f}% away)"
 
-                # Time waiting
+                # Time waiting + expiry countdown (the limit auto-cancels at the
+                # 4h expiry \u2014 surface the countdown like the Playbook does).
                 age_str = ""
+                expiry_str = ""
                 if hasattr(p, 'opened_at') and p.opened_at:
                     from datetime import datetime, timezone
+
+                    from bot.config import CONFIG as _CFG
+                    from bot.core import position_telemetry as _pt
                     now = datetime.now(timezone.utc)
                     delta = now - p.opened_at
                     mins = int(delta.total_seconds() // 60)
@@ -2876,6 +2922,10 @@ class TelegramHandler:
                     else:
                         hrs = mins // 60
                         age_str = f"- Placed: <code>{hrs}h {mins % 60}m ago</code>\n"
+                    _rem = _pt.expiry_remaining_seconds(
+                        p.opened_at.timestamp(),
+                        _CFG.limit_orders.expire_seconds, now.timestamp())
+                    expiry_str = f"- {_pt.format_expiry(_rem)}\n"
 
                 cur_line = f"- Current: <code>${cur:,.4f}</code>{dist_str}\n" if cur > 0 else ""
 
@@ -2887,6 +2937,7 @@ class TelegramHandler:
                     f"- SL: <code>{sl_str}</code>\n"
                     f"- TP: <code>{tp_str}</code>\n"
                     f"{age_str}"
+                    f"{expiry_str}"
                     f"- ID: <code>{p.trade_id}</code>\n"
                 )
 
