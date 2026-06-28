@@ -158,6 +158,48 @@ def _ascii_equity_curve(equity_points, width: int = 70, height: int = 12) -> str
     return "\n".join(lines)
 
 
+async def _load_bars(args: argparse.Namespace, config) -> tuple[list, bool]:
+    """Load OHLCV bars for a backtest. Returns (bars, used_synthetic).
+
+    REAL market data is the DEFAULT — synthetic GBM is the single biggest
+    backtest-vs-live divergence risk (no microstructure, no fat tails, no gaps),
+    so it is demoted to an explicit --synthetic smoke test. Precedence:
+    --csv > --synthetic > real Bitget fetch (default). If the real fetch fails
+    (offline / no exchange) the runner falls back to a clearly-labelled synthetic
+    smoke test rather than aborting.
+    """
+    def _synthetic():
+        return DataLoader.generate_synthetic(
+            bars=args.bars, start_price=args.start_price,
+            volatility=args.volatility, trend=args.trend, seed=args.seed)
+
+    if args.csv:
+        bars = DataLoader.from_csv(args.csv)
+        print(f"  Loaded {len(bars)} bars from {args.csv}")
+        return bars, False
+
+    if args.synthetic:
+        bars = _synthetic()
+        print(f"  ⚠️  SMOKE TEST: {len(bars)} SYNTHETIC bars "
+              f"(seed={args.seed}) — NOT a real backtest")
+        return bars, True
+
+    # Default: real Bitget klines (--fetch is accepted but redundant now).
+    try:
+        bars = await DataLoader.from_bitget(
+            symbol=config.symbol, timeframe=config.timeframe, limit=args.limit)
+        if not bars:
+            raise RuntimeError("no bars returned")
+        print(f"  Fetched {len(bars)} REAL bars from Bitget")
+        return bars, False
+    except Exception as exc:
+        print(f"  ⚠️  Real-data fetch failed ({exc}); "
+              f"falling back to a SYNTHETIC smoke test")
+        bars = _synthetic()
+        print(f"  ⚠️  SMOKE TEST: {len(bars)} synthetic bars — NOT a real backtest")
+        return bars, True
+
+
 async def _run_backtest(args: argparse.Namespace) -> None:
     """Execute a backtest with the given CLI arguments."""
     config = BacktestConfig(
@@ -169,34 +211,16 @@ async def _run_backtest(args: argparse.Namespace) -> None:
         use_llm=args.use_llm,
     )
 
-    # Load data
+    # Load data (real-data-first; see _load_bars).
     print(f"\n  Loading data for {config.symbol}...")
-    if args.csv:
-        bars = DataLoader.from_csv(args.csv)
-        print(f"  Loaded {len(bars)} bars from {args.csv}")
-    elif args.fetch:
-        bars = await DataLoader.from_bitget(
-            symbol=config.symbol,
-            timeframe=config.timeframe,
-            limit=args.limit,
-        )
-        print(f"  Fetched {len(bars)} bars from Bitget")
-    else:
-        bars = DataLoader.generate_synthetic(
-            bars=args.bars,
-            start_price=args.start_price,
-            volatility=args.volatility,
-            trend=args.trend,
-            seed=args.seed,
-        )
-        print(f"  Generated {len(bars)} synthetic bars (seed={args.seed})")
+    bars, used_synthetic = await _load_bars(args, config)
 
     if len(bars) < 110:
         print(f"  ERROR: Need at least 110 bars, got {len(bars)}. Aborting.")
         sys.exit(1)
 
     # Save synthetic data for reproducibility
-    if not args.csv and not args.fetch and args.save_data:
+    if used_synthetic and args.save_data:
         data_path = f"data/{config.symbol.replace('/', '_')}_{config.timeframe}_{args.seed}.csv"
         DataLoader.save_csv(bars, data_path)
         print(f"  Saved data to {data_path}")
@@ -228,19 +252,27 @@ def main() -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python -m bot.backtest.runner                              # synthetic, defaults
-  python -m bot.backtest.runner --bars 2160 --seed 99        # 90 days synthetic
+  python -m bot.backtest.runner                              # REAL Bitget data (default)
+  python -m bot.backtest.runner --limit 720                  # 720 real 1h bars
   python -m bot.backtest.runner --csv data/btc_1h.csv        # from CSV file
-  python -m bot.backtest.runner --fetch --limit 720          # from Bitget API
+  python -m bot.backtest.runner --synthetic --bars 2160      # synthetic SMOKE TEST
   python -m bot.backtest.runner --output results/bt.json     # save results
+
+  Real market data is the default. Synthetic GBM (--synthetic) is a smoke test
+  only — no microstructure / fat tails / gaps — never trust its numbers as a
+  real backtest. If the real-data fetch fails, the runner falls back to a
+  clearly-labelled synthetic smoke test.
         """,
     )
 
     # Data source
     data_group = parser.add_argument_group("data source")
     data_group.add_argument("--csv", type=str, help="Path to OHLCV CSV file")
-    data_group.add_argument("--fetch", action="store_true", help="Fetch from Bitget API")
-    data_group.add_argument("--limit", type=int, default=720, help="Bars to fetch (default: 720)")
+    data_group.add_argument("--fetch", action="store_true",
+                            help="(deprecated: real data is the default) Fetch from Bitget API")
+    data_group.add_argument("--synthetic", action="store_true",
+                            help="Use a SYNTHETIC smoke test instead of real data (not a real backtest)")
+    data_group.add_argument("--limit", type=int, default=720, help="Real bars to fetch (default: 720)")
     data_group.add_argument("--bars", type=int, default=720, help="Synthetic bars to generate (default: 720)")
     data_group.add_argument("--save-data", action="store_true", help="Save synthetic data to CSV")
 
