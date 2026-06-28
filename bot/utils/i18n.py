@@ -569,6 +569,79 @@ _STRINGS: dict[str, dict[str, str]] = {
     "btn_skip": {"en": "Skip", "zh": "略過"},
     "trade_executed_ok": {"en": "<b>Trade executed!</b>", "zh": "<b>交易已執行！</b>"},
     "trade_executed_fail": {"en": "<b>Trade didn't go through</b>", "zh": "<b>交易未成功</b>"},
+
+    # ── Admin commands (en byte-identical; emoji/separators stay in code) ──
+    "admin_only": {"en": "Admin only.", "zh": "僅限管理員。"},
+    "invalid_tg_id": {"en": "Invalid Telegram ID.", "zh": "無效的 Telegram ID。"},
+    "invalid_tg_id_numeric": {"en": "Invalid Telegram ID. Must be numeric.", "zh": "無效的 Telegram ID，必須為數字。"},
+    "invalid_tg_id_format": {"en": "Invalid Telegram ID format.", "zh": "Telegram ID 格式無效。"},
+    "approve_usage": {
+        "en": "<b>Usage</b>\n\n<code>/approve &lt;telegram_id&gt; [role]</code>\n\nRoles: <code>trader</code> (default), <code>viewer</code>, <code>admin</code>",
+        "zh": "<b>用法</b>\n\n<code>/approve &lt;telegram_id&gt; [role]</code>\n\n角色: <code>trader</code>（預設）、<code>viewer</code>、<code>admin</code>",
+    },
+    "invalid_role": {
+        "en": "Invalid role: <code>{role}</code>\nValid: <code>trader</code>, <code>viewer</code>, <code>admin</code>",
+        "zh": "無效的角色: <code>{role}</code>\n有效值: <code>trader</code>、<code>viewer</code>、<code>admin</code>",
+    },
+    "approve_result": {
+        "en": "<b>USER APPROVED</b>\n{sep}\n- Name: <b>{name}</b>\n- ID: <code>{id}</code>\n- Role: <code>{role}</code>\n- Trading: {trade_mode}\n- Status: \U0001f7e2 authorized\n\n<i>Use /grant_live or /revoke_live to change trading mode</i>",
+        "zh": "<b>用戶已核准</b>\n{sep}\n- 名稱: <b>{name}</b>\n- ID: <code>{id}</code>\n- 角色: <code>{role}</code>\n- 交易: {trade_mode}\n- 狀態: \U0001f7e2 已授權\n\n<i>使用 /grant_live 或 /revoke_live 變更交易模式</i>",
+    },
+    "access_granted": {
+        "en": "<b>Access Granted</b>\n{sep}\nYour RUNECLAW account has been approved.\n- Role: <code>{role}</code>\n\nUse /start to begin trading.",
+        "zh": "<b>已授予存取權</b>\n{sep}\n你的 RUNECLAW 帳號已通過審核。\n- 角色: <code>{role}</code>\n\n使用 /start 開始交易。",
+    },
+    "approve_failed": {"en": "Failed to approve <code>{id}</code>", "zh": "核准 <code>{id}</code> 失敗"},
+    "revoke_usage": {"en": "<code>/revoke &lt;telegram_id&gt;</code>", "zh": "<code>/revoke &lt;telegram_id&gt;</code>"},
+    "cannot_revoke_self": {"en": "Cannot revoke yourself.", "zh": "無法撤銷自己的權限。"},
+    "revoke_result": {
+        "en": "<b>ACCESS REVOKED</b>\n{sep}\n- ID: <code>{id}</code>\n- Status: 🔴 <code>pending</code>",
+        "zh": "<b>已撤銷存取權</b>\n{sep}\n- ID: <code>{id}</code>\n- 狀態: 🔴 <code>pending</code>",
+    },
+    "user_not_found_id": {"en": "User <code>{id}</code> not found", "zh": "找不到用戶 <code>{id}</code>"},
+    "user_not_found_id_period": {"en": "User <code>{id}</code> not found.", "zh": "找不到用戶 <code>{id}</code>。"},
+    "user_not_found": {"en": "User not found.", "zh": "找不到用戶。"},
+    "grant_live_usage": {
+        "en": "<b>Usage</b>\n\n<code>/grant_live &lt;telegram_id&gt;</code>\n\nGrants live trading permission to a user.\nWithout this, users trade paper only.",
+        "zh": "<b>用法</b>\n\n<code>/grant_live &lt;telegram_id&gt;</code>\n\n授予用戶實盤交易權限。\n未授予時，用戶僅能模擬交易。",
+    },
+    "grant_live_not_approved": {
+        "en": "User <code>{id}</code> not found or not approved.\nUse /approve first.",
+        "zh": "找不到用戶 <code>{id}</code> 或尚未核准。\n請先使用 /approve。",
+    },
+    "grant_live_result": {
+        "en": "<b>LIVE TRADING GRANTED</b>\n\n- User: <b>{name}</b> (<code>{id}</code>)\n- Role: <code>{role}</code>\n- Trading: \U0001f525 Live\n\n<i>This user can now execute live trades on the exchange.</i>",
+        "zh": "<b>已授予實盤交易</b>\n\n- 用戶: <b>{name}</b> (<code>{id}</code>)\n- 角色: <code>{role}</code>\n- 交易: \U0001f525 實盤\n\n<i>此用戶現在可在交易所執行實盤交易。</i>",
+    },
+    "grant_live_failed": {"en": "Failed to grant live trading.", "zh": "授予實盤交易失敗。"},
+    "revoke_live_usage": {
+        "en": "<code>/revoke_live &lt;telegram_id&gt;</code>\n\nRestricts user to paper trading only.",
+        "zh": "<code>/revoke_live &lt;telegram_id&gt;</code>\n\n限制用戶僅能模擬交易。",
+    },
+    "revoke_live_result": {
+        "en": "<b>LIVE TRADING REVOKED</b>\n\n- User: <b>{name}</b> (<code>{id}</code>)\n- Trading: \U0001f4dd Paper only",
+        "zh": "<b>已撤銷實盤交易</b>\n\n- 用戶: <b>{name}</b> (<code>{id}</code>)\n- 交易: \U0001f4dd 僅模擬",
+    },
+    "set_tier_usage": {
+        "en": "<b>Usage</b>\n\n<code>/set_tier &lt;telegram_id&gt; &lt;tier&gt;</code>\n\nTiers: {tiers}\n\n\U0001f7e2 <b>basic</b> — Paper trading, basic analysis\n\U0001f535 <b>pro</b> — + Backtesting, patterns, strategies\n\U0001f7e1 <b>elite</b> — + Live eligible, priority signals, early access\n\U0001f534 <b>admin</b> — Full access",
+        "zh": "<b>用法</b>\n\n<code>/set_tier &lt;telegram_id&gt; &lt;tier&gt;</code>\n\n等級: {tiers}\n\n\U0001f7e2 <b>basic</b> — 模擬交易、基礎分析\n\U0001f535 <b>pro</b> — ＋回測、形態、策略\n\U0001f7e1 <b>elite</b> — ＋可實盤、優先信號、搶先體驗\n\U0001f534 <b>admin</b> — 完整存取",
+    },
+    "invalid_tier": {
+        "en": "Invalid tier: <code>{tier}</code>\nValid: {valid}",
+        "zh": "無效的等級: <code>{tier}</code>\n有效值: {valid}",
+    },
+    "set_tier_result": {
+        "en": "<b>TIER UPDATED</b>\n\n- User: <b>{name}</b> (<code>{id}</code>)\n- Tier: {tier_label}\n- Role: <code>{role}</code>",
+        "zh": "<b>等級已更新</b>\n\n- 用戶: <b>{name}</b> (<code>{id}</code>)\n- 等級: {tier_label}\n- 角色: <code>{role}</code>",
+    },
+    "account_upgraded": {
+        "en": "<b>Account Upgraded</b>\n\nYour tier has been updated to: {tier_label}\nUse /start to see your new features.",
+        "zh": "<b>帳號已升級</b>\n\n你的等級已更新為: {tier_label}\n使用 /start 查看新功能。",
+    },
+    "set_tier_failed": {"en": "Failed to update tier.", "zh": "更新等級失敗。"},
+    "no_registered_users": {"en": "<b>No registered users</b>", "zh": "<b>沒有已註冊的用戶</b>"},
+    "users_header": {"en": "<b>REGISTERED USERS</b>  ({n} total)", "zh": "<b>已註冊用戶</b>  (共 {n} 位)"},
+    "users_more": {"en": "Showing last 15 of {n}", "zh": "顯示最近 15 筆，共 {n} 筆"},
 }
 
 
