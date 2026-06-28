@@ -198,6 +198,7 @@ class UserStore:
                 "tier": DEFAULT_TIER,
                 "authorized": True,  # auto-approved
                 "can_trade_live": False,  # paper only by default
+                "sim_opt_in": False,  # per-user PAPER (sim) practice mode opt-in
                 "created_at": datetime.now(UTC).isoformat(),
                 "last_seen": datetime.now(UTC).isoformat(),
             }
@@ -287,6 +288,28 @@ class UserStore:
             audit(system_log,
                   f"Live trading {'enabled' if enabled else 'disabled'} for user {key}",
                   action="live_trading_permission", result="OK")
+            return True
+
+    def sim_opt_in(self, telegram_id: int | str) -> bool:
+        """Whether this user has opted into PAPER (sim) practice mode. When True
+        (and PAPER_SIM_OPT_IN_ENABLED), their confirmed trades are simulated into
+        their paper portfolio instead of sent to the exchange."""
+        user = self.get(telegram_id)
+        if not user or not user.get("authorized", False):
+            return False
+        return bool(user.get("sim_opt_in", False))
+
+    def set_sim_opt_in(self, telegram_id: int | str, enabled: bool) -> bool:
+        """Opt a user into or out of PAPER (sim) practice mode."""
+        key = str(telegram_id)
+        with self._lock:
+            if key not in self._users:
+                return False
+            self._users[key]["sim_opt_in"] = enabled
+            self._save()
+            audit(system_log,
+                  f"Paper sim mode {'enabled' if enabled else 'disabled'} for user {key}",
+                  action="sim_opt_in", result="OK")
             return True
 
     # ── Tier management ────────────────────────────────────────

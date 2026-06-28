@@ -874,6 +874,12 @@ class AppConfig:
     # -- Paper trading --
     paper_balance_usd: float = _env_float("PAPER_BALANCE_USD", 10_000.0)
     portfolio_state_file: str = _env("PORTFOLIO_STATE_FILE", "data/portfolio_state.json")
+    # Per-user PAPER (sim) opt-in. When enabled (default OFF), a user who has
+    # opted in via /paper has THEIR confirmed trades SIMULATED into their paper
+    # portfolio instead of sent to the exchange — risk-free practice on a live
+    # bot. This NEVER affects other users or the live execution path: the opt-in
+    # branch runs before any exchange call. Default OFF = byte-identical to today.
+    paper_sim_opt_in_enabled: bool = _env_bool("PAPER_SIM_OPT_IN_ENABLED", False)
 
     # -- Scan settings --
     scan_interval_seconds: int = int(_env_float("SCAN_INTERVAL", 60))

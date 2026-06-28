@@ -1380,6 +1380,47 @@ class RuneClawEngine:
         """
         return bool(CONFIG.simulation_mode)
 
+    async def _simulate_paper_fill(
+        self, idea, recheck, user_id: str, trade_id: str
+    ) -> str:
+        """Open a SIMULATED position in the user's paper portfolio. Pure in-memory
+        (no exchange interaction whatsoever) — the per-user sim opt-in path. The
+        position is then monitored for SL/TP by the existing paper loop
+        (``check_stops_all``). Never calls ``live_executor``.
+        """
+        size_usd = recheck.position_size_usd
+        try:
+            leverage = int(CONFIG.exchange.default_leverage)
+        except (TypeError, ValueError):
+            leverage = 1
+        portfolio = self.user_portfolios.get(user_id)
+        try:
+            trade = portfolio.open_position(idea, size_usd, leverage=leverage)
+        except Exception as exc:
+            self._pending_ideas.pop(trade_id, None)
+            self._transition(AgentState.IDLE, f"paper fill error {trade_id}")
+            return f"⚠️ [PAPER] Simulated fill failed: {str(exc)[:160]}"
+
+        self._pending_ideas.pop(trade_id, None)
+        audit(trade_log,
+              f"PAPER fill: {idea.direction.value} {idea.asset} @ {idea.entry_price} "
+              f"size ${size_usd:.2f} (user {user_id})",
+              action="paper_fill", result="FILLED",
+              data={"trade_id": trade_id, "asset": idea.asset,
+                    "direction": idea.direction.value, "size_usd": round(size_usd, 2),
+                    "user_id": user_id, "is_paper": True})
+        self._transition(AgentState.IDLE, f"paper filled {trade_id}")
+        _dir = idea.direction.value
+        return (
+            f"📝 <b>[PAPER]</b> Simulated {_dir} <b>{idea.asset}</b>\n"
+            f"Entry <code>${idea.entry_price:,.4f}</code> | "
+            f"SL <code>${idea.stop_loss:,.4f}</code> | "
+            f"TP <code>${idea.take_profit:,.4f}</code>\n"
+            f"Size <code>${size_usd:,.2f}</code> @ {leverage}x  •  "
+            f"<i>practice mode — no real order placed</i>\n"
+            f"Trade ID: <code>{trade.trade_id}</code>"
+        )
+
     async def confirm_trade(self, trade_id: str, user_id: str = "") -> str:
         """
         Human confirms a pending trade idea.  This is the ONLY path to execution.
@@ -1707,6 +1748,19 @@ class RuneClawEngine:
             self._transition(AgentState.IDLE, f"compliance denied {trade_id}")
             return f"Execution denied: {compliance_decision.reasons[-1] if compliance_decision.reasons else 'compliance check failed'}"
 
+        # ── Per-user PAPER (sim) opt-in ──────────────────────────────────────
+        # A user who has opted into practice mode (and the feature is enabled)
+        # has THEIR confirmed trade SIMULATED into their paper portfolio instead
+        # of sent to the exchange. This branch runs BEFORE the EXECUTING
+        # transition, the pyramid SL move (which mutates an exchange stop), and
+        # live_executor.execute() — so a paper trade can NEVER place or modify a
+        # real order. Default OFF and per-user, so live users are unaffected.
+        if (CONFIG.paper_sim_opt_in_enabled and user_id
+                and self._user_store is not None
+                and self._user_store.sim_opt_in(user_id)):
+            self._pending_pyramid.pop(trade_id, None)
+            return await self._simulate_paper_fill(idea, recheck, user_id, trade_id)
+
         # LIVE-ONLY: this bot only executes live trades. Paper mode is disabled.
         if not CONFIG.is_live():
             self._pending_pyramid.pop(trade_id, None)
@@ -2016,7 +2070,12 @@ class RuneClawEngine:
     async def _check_open_positions(self) -> None:
         """Monitor open positions for SL/TP hits."""
         positions = self.portfolio.open_positions
-        if positions:
+        # Run paper monitoring when the shared portfolio OR any per-user (sim
+        # opt-in) portfolio has open positions, so opted-in paper trades get
+        # SL/TP monitoring even when the shared paper portfolio is empty.
+        _user_paper_open = any(
+            pf.open_positions for pf in self.user_portfolios.all_portfolios().values())
+        if positions or _user_paper_open:
             await self._check_paper_positions(positions)
         # Live positions are checked independently below — do NOT return early
         # when paper portfolio is empty, or live SL/TP monitoring is skipped entirely.
@@ -2099,15 +2158,25 @@ class RuneClawEngine:
     async def _check_paper_positions(self, positions) -> None:
         """Monitor paper portfolio positions for SL/TP hits."""
         try:
+            # Price every paper symbol: the shared portfolio's positions PLUS all
+            # per-user (sim opt-in) portfolios, so opted-in paper positions are
+            # priced and SL/TP-monitored (via check_stops_all below) even when the
+            # shared portfolio is empty. The exit loops below still iterate only
+            # the shared portfolio, so this never closes a user position in the
+            # wrong book.
+            _priced_positions = list(positions) + [
+                p for pf in self.user_portfolios.all_portfolios().values()
+                for p in pf.open_positions]
+
             # Prefer WebSocket prices (sub-second) over REST (polling)
             if self.ws_feed.is_connected():
                 ws_prices = self.ws_feed.get_prices()
                 if ws_prices:
                     prices = ws_prices
                 else:
-                    prices = await self._fetch_prices_by_category(positions)
+                    prices = await self._fetch_prices_by_category(_priced_positions)
             else:
-                prices = await self._fetch_prices_by_category(positions)
+                prices = await self._fetch_prices_by_category(_priced_positions)
 
             # H-05 FIX: validate prices before use — reject any price that
             # deviates more than 50% from the last known good price for that symbol.
@@ -2144,7 +2213,7 @@ class RuneClawEngine:
                     pass
 
             # Subscribe open position symbols to WS feed for future ticks
-            pos_symbols = [p.asset for p in positions]
+            pos_symbols = [p.asset for p in _priced_positions]
             self.ws_feed.subscribe(pos_symbols)
             # Mark-to-market: feed current prices so snapshot() reflects unrealized PnL
             self.portfolio.mark_to_market(prices)
