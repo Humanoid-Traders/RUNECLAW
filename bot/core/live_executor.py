@@ -339,22 +339,22 @@ class LiveExecutor:
             return
         exchange = await self._get_exchange()
 
-        # ── Set margin mode ──
-        margin_mode_set = False
+        # ── Set margin mode (best-effort; the verification read below is the
+        #    authority on whether it actually applied) ──
         try:
             await exchange.set_margin_mode(
                 cfg.margin_mode, symbol,
                 params={"productType": "USDT-FUTURES"})
-            margin_mode_set = True
         except Exception as exc:
             exc_str = str(exc)
-            # Some errors are expected (e.g., already in the desired mode)
+            # Some errors are expected (e.g., already in the desired mode).
             if "already" in exc_str.lower() or "same" in exc_str.lower():
-                margin_mode_set = True
+                pass  # already in the desired mode — nothing to do
             else:
                 logger.warning("Margin mode set failed for %s: %s", symbol, exc)
 
-        # ── Verify margin mode actually applied ──
+        # ── Verify margin mode actually applied (the authority — the set call
+        #    above is best-effort; this read is what gates the result) ──
         # Bitget UTA may silently ignore set_margin_mode
         try:
             raw_symbol = symbol.replace("/USDT", "USDT").replace(":USDT", "")
@@ -1823,6 +1823,13 @@ class LiveExecutor:
                         # Tier C = marginal confluence — reduce size
                         old_sz = size_usd
                         size_usd = round(size_usd * entry_result.size_multiplier, 2)
+                        audit(trade_log,
+                              f"Tier C size reduced: ${old_sz:,.2f} → ${size_usd:,.2f} "
+                              f"(×{entry_result.size_multiplier:.2f}) for {symbol}",
+                              action="limit_tier_c", result="SIZE_REDUCED",
+                              data={"symbol": symbol, "old_size": old_sz,
+                                    "new_size": size_usd,
+                                    "multiplier": entry_result.size_multiplier})
                         # Recalculate quantity with new size
                         quantity = (size_usd * leverage_mult) / current_price
                         if market:
@@ -1830,9 +1837,11 @@ class LiveExecutor:
                             if _re_rounded:
                                 quantity = float(_re_rounded)
 
-                    # Apply natural SL if better than current
+                    # Apply natural SL if better than current. natural_sl is
+                    # already computed on the correct side of entry (see
+                    # limit_entry: below entry for LONG, above for SHORT), so no
+                    # direction check is needed here — only the distance gate.
                     if entry_result.natural_sl and limit_price:
-                        dir_up = idea.direction.value.upper() == "LONG"
                         current_sl_dist = abs(idea.entry_price - idea.stop_loss) / idea.entry_price
                         natural_sl_dist = abs(limit_price - entry_result.natural_sl) / limit_price
                         # Use natural SL if it provides more room (wider) without exceeding 2x original
@@ -2653,7 +2662,6 @@ class LiveExecutor:
         sl_id = None
         tp_id = None
         close_side = "sell" if direction == Direction.LONG else "buy"
-        is_futures = CONFIG.exchange.trade_mode == "futures"
 
         # GETCLAW: Check and cancel existing plan orders before placing new ones.
         # Prevents duplicate SL/TP orders that can cause double-closes.
@@ -4371,7 +4379,6 @@ class LiveExecutor:
             # Cancel SL/TP orders BEFORE closing — prevents race condition where
             # a trigger fires between close-fill and cancel, opening an opposite pos.
             cancel_failed = []
-            sltp_triggered = False  # True if exchange already executed SL/TP
             for oid in [pos.sl_order_id, pos.tp_order_id]:
                 if oid:
                     is_sl = (oid == pos.sl_order_id)
@@ -4391,9 +4398,12 @@ class LiveExecutor:
                                 pass  # Fetch failed — assume cancel worked
                     except Exception as cancel_exc:
                         exc_str = str(cancel_exc)
-                        # 25204 = "Order does not exist" — exchange already executed it
+                        # 25204 = "Order does not exist" — exchange already executed
+                        # it (SL/TP fired). We still send the reduceOnly market close
+                        # below: it no-ops if the position is already flat, but
+                        # guarantees closure if the 25204 was a stale/expired order
+                        # rather than a real trigger. The audit records the event.
                         if "25204" in exc_str or "Order does not exist" in exc_str:
-                            sltp_triggered = True
                             audit(trade_log,
                                   f"{order_label} order already executed by exchange: {pos.symbol} (order {oid})",
                                   action="sltp_exchange_trigger", result="TRIGGERED",
