@@ -99,12 +99,18 @@ class RuneClawEngine:
         self.learning = LearningOrchestrator()
         # WebSocket feed for real-time price monitoring (supplements REST polling)
         self.ws_feed = BitgetWSFeed()
-        # Live executor for real Bitget orders (micro-test mode)
+        # Live executor for real Bitget orders (micro-test mode). This is the
+        # SHARED OPERATOR executor (CONFIG.exchange keys) — the only one used
+        # unless per-user live trading is enabled.
         self.live_executor = LiveExecutor()
         # Wire balance cache invalidation + per-symbol SL cooldown
         self.live_executor.on_position_closed = lambda pos: self._on_live_position_closed(pos)
         # Wire risk engine for warning rate circuit breaker
         self.live_executor._risk_engine = self.risk
+        # Per-user live executors (PER_USER_LIVE_ENABLED, default OFF): keyed by
+        # telegram user_id, each bound to that user's OWN linked Bitget account.
+        # Empty + unused while the flag is off, so the operator path is unchanged.
+        self._user_executors: dict[str, LiveExecutor] = {}
         self.health = SystemHealthMonitor()
         # Multi-user portfolio manager: per-user isolated paper wallets
         self.user_portfolios = MultiUserPortfolio(
@@ -339,6 +345,51 @@ class RuneClawEngine:
                 logger.info(
                     "Symbol cooldown set: %s blocked for %ds after SL hit",
                     sym_key, int(self._symbol_cooldown_seconds))
+
+    def _executor_for(self, user_id: str = ""):
+        """Return the LiveExecutor that should place THIS caller's live order.
+
+        Default (PER_USER_LIVE_ENABLED off): ALWAYS the shared operator executor
+        — byte-identical to before. When per-user live trading is enabled AND the
+        caller is a real human user (not '' / 'auto') who has linked + decryptable
+        keys, returns that user's OWN executor (created lazily, cached, rebuilt if
+        the user's key changes). If per-user is on but the user has no usable
+        credentials, falls back to the operator executor so behaviour never
+        silently breaks — eligibility enforcement is a Phase 5 access-policy
+        concern layered on top, not here.
+        """
+        if not getattr(CONFIG, "per_user_live_enabled", False):
+            return self.live_executor
+        # Auto-trade ('auto') and unattended ('') paths run on the operator
+        # account, not an individual user's.
+        if not user_id or user_id in ("auto", ""):
+            return self.live_executor
+        try:
+            from bot.core.exchange_credentials import get_credential_store
+            creds = get_credential_store().get(user_id)
+        except Exception as exc:
+            logger.warning("Per-user executor: credential lookup failed for %s: %s "
+                           "— using operator executor", user_id, exc)
+            creds = None
+        if not creds:
+            return self.live_executor
+        key = str(user_id)
+        ex = self._user_executors.get(key)
+        # Rebuild if absent or the user's api_key changed (e.g. re-/connect).
+        if ex is None or (ex._credentials or {}).get("api_key") != creds.get("api_key"):
+            ex = LiveExecutor(user_id=user_id, credentials=creds)
+            ex.on_position_closed = lambda pos: self._on_live_position_closed(pos)
+            ex._risk_engine = self.risk
+            self._user_executors[key] = ex
+            audit(system_log, f"Per-user live executor bound for user {user_id}",
+                  action="per_user_executor", result="BOUND", data={"user": key})
+        return ex
+
+    def invalidate_user_executor(self, user_id: str) -> None:
+        """Drop any cached per-user executor (e.g. after /connect or /disconnect)
+        so the next trade rebuilds it from the current stored credentials. Safe to
+        call when none exists. Never touches the shared operator executor."""
+        self._user_executors.pop(str(user_id), None)
 
     def get_effective_equity(self, user_id: str = "") -> float:
         """Return the equity figure to display/use for sizing.
@@ -616,6 +667,12 @@ class RuneClawEngine:
         # AUDIT-FIX: Close live executor exchange connection to avoid session leaks
         if hasattr(self, 'live_executor') and self.live_executor:
             await self.live_executor.close()
+        # Close any per-user executors' exchange connections too.
+        for _ex in list(getattr(self, "_user_executors", {}).values()):
+            try:
+                await _ex.close()
+            except Exception as _close_exc:
+                logger.debug("Per-user executor close failed: %s", _close_exc)
         self._transition(AgentState.IDLE, "engine stopped")
         audit(system_log, "Engine stopped", action="stop")
 
@@ -1788,6 +1845,12 @@ class RuneClawEngine:
         self._transition(AgentState.EXECUTING, f"executing LIVE trade {trade_id}")
         size_usd = recheck.position_size_usd
 
+        # Resolve WHICH executor places this order. With PER_USER_LIVE_ENABLED off
+        # (default) this is always the shared operator executor, so everything
+        # below is byte-identical to before. With it on, a human user's confirmed
+        # trade routes to THEIR own linked account.
+        executor = self._executor_for(user_id)
+
         # ── Pyramid add: half size + move existing SL to breakeven ──
         _pending_pyramid = getattr(self, '_pending_pyramid', {})
         if _pending_pyramid.pop(trade_id, False):
@@ -1797,9 +1860,10 @@ class RuneClawEngine:
                   f"Pyramid add: half size ${original_size:.2f} -> ${size_usd:.2f}",
                   action="pyramid_half_size", result="APPLIED")
 
-            # Move existing position's SL to breakeven
+            # Move existing position's SL to breakeven (within the SAME executor's
+            # account — a user only ever pyramids onto their own positions).
             symbol_key = normalize_symbol(idea.asset)
-            for lp in self.live_executor.open_positions:
+            for lp in executor.open_positions:
                 lp_key = normalize_symbol(lp.symbol)
                 if lp_key == symbol_key and lp.trade_id != trade_id:
                     old_sl = lp.stop_loss
@@ -1809,12 +1873,12 @@ class RuneClawEngine:
                           action="pyramid_sl_breakeven", result="MOVED")
                     # Update exchange SL
                     try:
-                        exchange = await self.live_executor._get_exchange()
-                        await self.live_executor._update_exchange_sl(
+                        exchange = await executor._get_exchange()
+                        await executor._update_exchange_sl(
                             exchange, lp, lp.entry_price)
                     except Exception as exc:
                         logger.debug("Failed to update exchange SL to BE: %s", exc)
-                    self.live_executor._save_positions()
+                    executor._save_positions()
                     break
 
         # LIVE FIX: Cap position size at actual exchange equity to prevent
@@ -1868,7 +1932,7 @@ class RuneClawEngine:
             self._transition(AgentState.IDLE, f"no ATR for {trade_id}")
             return "Trade REJECTED: no valid ATR available — cannot compute safe SL distance"
 
-        result = await self.live_executor.execute(
+        result = await executor.execute(
             idea, size_usd,
             order_type=idea.order_type,
             atr_value=stored_atr,

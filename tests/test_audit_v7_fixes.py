@@ -228,7 +228,9 @@ class TestSimVetoOrdering:
         veto_idx = src.index("_live_execution_vetoed_by_simulation")
         exec_idx = src.index('AgentState.EXECUTING, f"executing LIVE trade')
         # Match the actual call (not the explanatory comment that mentions it).
-        mutate_idx = src.index("live_executor._update_exchange_sl(")
+        # Phase 3 routes the SL mutation through the resolved per-user/operator
+        # executor, so the call reads `executor._update_exchange_sl(` now.
+        mutate_idx = src.index("executor._update_exchange_sl(")
         assert veto_idx < exec_idx, "sim veto must run before EXECUTING transition"
         assert veto_idx < mutate_idx, "sim veto must run before exchange SL mutation"
 
