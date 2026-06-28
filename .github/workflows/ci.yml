@@ -28,8 +28,12 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements-ci.txt
 
-      - name: Lint — syntax errors + undefined names (ruff E9, F821)
-        run: ruff check --select E9,F821 bot/
+      - name: Lint — syntax errors + undefined names + redefinitions (ruff E9, F821, F811)
+        # Lint tests/ too, not just bot/: real errors (duplicate imports/classes
+        # that silently shadow earlier definitions, undefined names in dead code)
+        # were hiding in the test suite — a third of the codebase — because CI
+        # only ever linted bot/. F811 catches the shadowing class specifically.
+        run: ruff check --select E9,F821,F811 bot/ tests/
 
       - name: SAST — bandit (high severity, high confidence)
         run: bandit -r bot/ --severity-level high --confidence-level high -q
