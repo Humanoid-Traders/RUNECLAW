@@ -20,10 +20,27 @@ from bot.db.models import (
 )
 from bot.db.models import User as DBUser
 
+from bot.utils.i18n import t
+
 log = logging.getLogger(__name__)
 
 WEBSITE_URL = os.getenv("WEBSITE_URL", "https://y9z5438h.mule.page")
 REGISTER_URL = WEBSITE_URL
+
+
+def _user_lang(chat_id) -> str:
+    """Resolve the user's UI language for i18n. Fails safe to English.
+
+    The language preference lives in the JSON UserStore (keyed by Telegram id),
+    a separate store from the SQLite records this middleware uses — so we read
+    it directly here (read-only; UserStore() just loads data/users.json).
+    """
+    try:
+        from bot.utils.i18n import get_user_lang
+        from bot.utils.user_store import UserStore
+        return get_user_lang(UserStore(), str(chat_id))
+    except Exception:
+        return "en"
 
 
 def _ensure_local_user(user_id: int, email: str, plan: str) -> None:
@@ -137,20 +154,12 @@ async def cmd_link(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # Already linked?
     existing = get_user_by_chat_id(chat_id)
     if existing:
-        await update.message.reply_text(
-            "This Telegram is already linked to a RUNECLAW account.\n"
-            "Use /unlink to disconnect first.",
-        )
+        await update.message.reply_text(t("link_already_linked", _user_lang(chat_id)))
         return
 
     # Need token
     if not context.args:
-        await update.message.reply_text(
-            "Link your RUNECLAW account\n\n"
-            f"1. Register / log in at {REGISTER_URL}\n"
-            "2. Go to Dashboard and copy your link token\n"
-            "3. Send: /link <token>",
-        )
+        await update.message.reply_text(t("link_prompt", _user_lang(chat_id), url=REGISTER_URL))
         return
 
     token = context.args[0].strip()
@@ -173,22 +182,14 @@ async def cmd_link(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             result = json.loads(resp.read().decode())
     except urllib.error.HTTPError as e:
         if e.code == 404:
-            await update.message.reply_text(
-                "Token invalid or expired (tokens last 10 minutes).\n"
-                f"Generate a new one at {REGISTER_URL}",
-            )
+            await update.message.reply_text(t("link_token_invalid", _user_lang(chat_id), url=REGISTER_URL))
             return
         log.error(f"Token validation HTTP error: {e.code}")
-        await update.message.reply_text(
-            "Could not validate token. Please try again in a moment.",
-        )
+        await update.message.reply_text(t("link_validate_failed", _user_lang(chat_id)))
         return
     except Exception as exc:
         log.error(f"Token validation error: {exc}")
-        await update.message.reply_text(
-            "Could not reach the website to validate your token.\n"
-            "Please try again in a moment.",
-        )
+        await update.message.reply_text(t("link_unreachable", _user_lang(chat_id)))
         return
 
     user_id = result["user_id"]
@@ -202,10 +203,7 @@ async def cmd_link(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # Link in local SQLite so bot commands work
     success = link_telegram(user_id, chat_id, username)
     if not success:
-        await update.message.reply_text(
-            "This Telegram account is already linked to another RUNECLAW account.\n"
-            "Use /unlink first, then link the correct account.",
-        )
+        await update.message.reply_text(t("link_other_account", _user_lang(chat_id)))
         return
 
     # Initial sync: push current portfolio state to website
@@ -216,13 +214,7 @@ async def cmd_link(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     except Exception as exc:
         log.warning(f"Initial sync failed: {exc}")
 
-    await update.message.reply_text(
-        f"Linked successfully!\n\n"
-        f"Account: {email}\n"
-        f"Plan: {plan}\n\n"
-        "You now have full access to RUNECLAW.\n"
-        "Try: /scan /portfolio /fullscan",
-    )
+    await update.message.reply_text(t("link_success", _user_lang(chat_id), email=email, plan=plan))
 
 
 # -- /unlink command ---------------------------------------------------------
@@ -232,16 +224,11 @@ async def cmd_unlink(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     chat_id = str(update.effective_chat.id)
     user = get_user_by_chat_id(chat_id)
     if not user:
-        await update.message.reply_text(
-            "This Telegram is not linked to any account."
-        )
+        await update.message.reply_text(t("unlink_not_linked", _user_lang(chat_id)))
         return
 
     unlink_telegram(user.id)
-    await update.message.reply_text(
-        f"Unlinked from {user.email}.\n"
-        "Your data is preserved. Use /link to reconnect.",
-    )
+    await update.message.reply_text(t("unlink_success", _user_lang(chat_id), email=user.email))
 
 
 # -- /me command -------------------------------------------------------------
@@ -253,14 +240,11 @@ async def cmd_me(update: Update, context: ContextTypes.DEFAULT_TYPE,
     pf = uc.portfolio
     s = uc.settings
     await update.message.reply_text(
-        f"<b>Your RUNECLAW Account</b>\n\n"
-        f"Email:    <code>{uc.user.email}</code>\n"
-        f"Plan:     <code>{uc.user.plan}</code>\n"
-        f"Equity:   <code>${pf['equity']:.2f}</code>\n"
-        f"Open P&amp;L: <code>${pf['daily_pnl']:.2f}</code>\n"
-        f"Trades:   <code>{len(pf['trade_history'])}</code>\n\n"
-        f"LLM: <code>{s.llm_provider}</code> | "
-        f"Notifications: <code>{'on' if s.notifications_on else 'off'}</code>",
+        t("me_account", _user_lang(str(update.effective_chat.id)),
+          email=uc.user.email, plan=uc.user.plan,
+          equity=f"{pf['equity']:.2f}", pnl=f"{pf['daily_pnl']:.2f}",
+          trades=len(pf['trade_history']), llm=s.llm_provider,
+          notif=('on' if s.notifications_on else 'off')),
         parse_mode="HTML",
     )
 
@@ -279,19 +263,12 @@ async def cmd_sync(update: Update, context: ContextTypes.DEFAULT_TYPE,
         success = sync_portfolio(uc.user_id, pf["equity"], positions, history)
         if success:
             await update.message.reply_text(
-                "Dashboard synced.\n"
-                f"Equity: ${pf['equity']:.2f}\n"
-                f"Open positions: {len(positions)}\n"
-                f"Closed trades: {len(history)}\n\n"
-                f"View at: {REGISTER_URL}/dashboard",
-            )
+                t("sync_success", _user_lang(str(update.effective_chat.id)),
+                  equity=f"{pf['equity']:.2f}", positions=len(positions),
+                  trades=len(history), url=REGISTER_URL))
         else:
-            await update.message.reply_text(
-                "Sync failed. Please try again in a moment.",
-            )
+            await update.message.reply_text(t("sync_failed", _user_lang(str(update.effective_chat.id))))
     except Exception as exc:
         log.error(f"Sync command error: {exc}")
-        await update.message.reply_text(
-            "Sync failed. Please try again in a moment.",
-        )
+        await update.message.reply_text(t("sync_failed", _user_lang(str(update.effective_chat.id))))
 

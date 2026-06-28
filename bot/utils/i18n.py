@@ -696,6 +696,56 @@ _STRINGS: dict[str, dict[str, str]] = {
         "en": "No open positions right now.\nSay \"scan\" or \"analyze BTC\" to find setups.",
         "zh": "目前沒有持倉。\n輸入「掃描」或「分析 BTC」來尋找機會。",
     },
+
+    # ── Account commands (/link, /unlink, /me, /sync) ──
+    "link_already_linked": {
+        "en": "This Telegram is already linked to a RUNECLAW account.\nUse /unlink to disconnect first.",
+        "zh": "此 Telegram 已連結到一個 RUNECLAW 帳號。\n請先使用 /unlink 解除連結。",
+    },
+    "link_prompt": {
+        "en": "Link your RUNECLAW account\n\n1. Register / log in at {url}\n2. Go to Dashboard and copy your link token\n3. Send: /link <token>",
+        "zh": "連結你的 RUNECLAW 帳號\n\n1. 於 {url} 註冊／登入\n2. 前往儀表板複製你的連結權杖\n3. 傳送: /link <token>",
+    },
+    "link_token_invalid": {
+        "en": "Token invalid or expired (tokens last 10 minutes).\nGenerate a new one at {url}",
+        "zh": "權杖無效或已過期（權杖有效 10 分鐘）。\n請於 {url} 重新產生",
+    },
+    "link_validate_failed": {
+        "en": "Could not validate token. Please try again in a moment.",
+        "zh": "無法驗證權杖，請稍後再試。",
+    },
+    "link_unreachable": {
+        "en": "Could not reach the website to validate your token.\nPlease try again in a moment.",
+        "zh": "無法連線到網站以驗證權杖。\n請稍後再試。",
+    },
+    "link_other_account": {
+        "en": "This Telegram account is already linked to another RUNECLAW account.\nUse /unlink first, then link the correct account.",
+        "zh": "此 Telegram 帳號已連結到另一個 RUNECLAW 帳號。\n請先使用 /unlink，再連結正確的帳號。",
+    },
+    "link_success": {
+        "en": "Linked successfully!\n\nAccount: {email}\nPlan: {plan}\n\nYou now have full access to RUNECLAW.\nTry: /scan /portfolio /fullscan",
+        "zh": "連結成功！\n\n帳號: {email}\n方案: {plan}\n\n你現在擁有 RUNECLAW 的完整存取權。\n試試: /scan /portfolio /fullscan",
+    },
+    "unlink_not_linked": {
+        "en": "This Telegram is not linked to any account.",
+        "zh": "此 Telegram 未連結任何帳號。",
+    },
+    "unlink_success": {
+        "en": "Unlinked from {email}.\nYour data is preserved. Use /link to reconnect.",
+        "zh": "已與 {email} 解除連結。\n你的資料已保留。使用 /link 重新連結。",
+    },
+    "me_account": {
+        "en": "<b>Your RUNECLAW Account</b>\n\nEmail:    <code>{email}</code>\nPlan:     <code>{plan}</code>\nEquity:   <code>${equity}</code>\nOpen P&amp;L: <code>${pnl}</code>\nTrades:   <code>{trades}</code>\n\nLLM: <code>{llm}</code> | Notifications: <code>{notif}</code>",
+        "zh": "<b>你的 RUNECLAW 帳號</b>\n\n電郵:    <code>{email}</code>\n方案:     <code>{plan}</code>\n權益:   <code>${equity}</code>\n未實現損益: <code>${pnl}</code>\n交易數:   <code>{trades}</code>\n\nLLM: <code>{llm}</code> | 通知: <code>{notif}</code>",
+    },
+    "sync_success": {
+        "en": "Dashboard synced.\nEquity: ${equity}\nOpen positions: {positions}\nClosed trades: {trades}\n\nView at: {url}/dashboard",
+        "zh": "儀表板已同步。\n權益: ${equity}\n持倉數: {positions}\n已平倉交易: {trades}\n\n檢視: {url}/dashboard",
+    },
+    "sync_failed": {
+        "en": "Sync failed. Please try again in a moment.",
+        "zh": "同步失敗，請稍後再試。",
+    },
 }
 
 
