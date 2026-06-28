@@ -975,7 +975,7 @@ class TelegramHandler:
                 idea = self.engine._pending_ideas.get(trade_id)
                 if not idea:
                     del self._pending_limit_input[caller_uid]
-                    await self._send(update, "<b>Trade expired.</b> Run a new scan.")
+                    await self._send(update, t('trade_expired_rescan', self._lang(update)))
                     return
 
                 old_price = idea.entry_price
@@ -987,18 +987,17 @@ class TelegramHandler:
                 del self._pending_limit_input[caller_uid]
 
                 # Show confirmation and execute
+                lang = self._lang(update)
                 await self._send(update,
-                    f"\U0001f4b0 <b>Limit set: {pair} {direction}</b>\n"
-                    f"Entry: <code>${old_price:,.4f}</code> \u2192 <code>${custom_price:,.4f}</code>\n\n"
-                    f"\u2705 <b>Confirmed — executing...</b>")
+                    f"\U0001f4b0 {t('limit_set_line', lang, pair=pair, direction=direction, old=f'${old_price:,.4f}', new=f'${custom_price:,.4f}')}\n\n"
+                    f"\u2705 {t('confirmed_executing', lang)}")
 
                 # H-18 FIX: LIVE mode — check per-user live trading permission
                 if CONFIG.is_live() and not self._is_admin(update):
                     caller_uid_str = str(update.effective_user.id) if update.effective_user else ""
                     if not self._can_trade_live(caller_uid_str):
                         await self._send(update,
-                            "\U0001f512 <b>Live trading not enabled</b>\n\n"
-                            "Ask an admin to grant you live trading access with /grant_live.")
+                            f"\U0001f512 {t('live_not_enabled', self._lang(update))}")
                         return
 
                 result = await self.engine.confirm_trade(trade_id, user_id=caller_uid)
@@ -1009,7 +1008,7 @@ class TelegramHandler:
                 # Not a valid number — cancel the limit input mode
                 if text.lower() in ("cancel", "no", "back", "nevermind"):
                     del self._pending_limit_input[caller_uid]
-                    await self._send(update, "Limit price cancelled. Use the buttons to confirm or skip.")
+                    await self._send(update, t("limit_input_cancelled", self._lang(update)))
                     return
                 # Otherwise try to parse, maybe they typed something weird
                 await self._send(update,
@@ -6802,7 +6801,7 @@ class TelegramHandler:
             idea = self.engine._pending_ideas.get(trade_id)
             if not idea:
                 await self._send(update,
-                    "<b>Trade expired.</b> Run a new scan.", edit=True)
+                    t('trade_expired_rescan', self._lang(update)), edit=True)
                 return
 
             pair = display_symbol(idea.asset)
@@ -6867,8 +6866,7 @@ class TelegramHandler:
                 caller_uid_str = str(update.effective_user.id) if update.effective_user else ""
                 if not self._can_trade_live(caller_uid_str):
                     await self._send(update,
-                        "\U0001f512 <b>Live trading not enabled</b>\n\n"
-                        "Ask an admin to grant you live trading access with /grant_live.",
+                        f"\U0001f512 {t('live_not_enabled', self._lang(update))}",
                         edit=True)
                     audit(system_log,
                           f"Non-admin trade confirm blocked: caller={caller_uid_str}",

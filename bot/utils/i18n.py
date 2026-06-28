@@ -540,6 +540,28 @@ _STRINGS: dict[str, dict[str, str]] = {
         "en": "<b>Nothing to reset</b>\n\nCB: off  •  Streak: {n}",
         "zh": "<b>無需重設</b>\n\nCB: 關閉  •  連敗: {n}",
     },
+
+    # ── Trade-confirmation flow (en byte-identical) ──
+    "trade_expired_rescan": {
+        "en": "<b>Trade expired.</b> Run a new scan.",
+        "zh": "<b>交易已過期。</b>請重新掃描。",
+    },
+    "limit_set_line": {
+        "en": "<b>Limit set: {pair} {direction}</b>\nEntry: <code>{old}</code> → <code>{new}</code>",
+        "zh": "<b>限價已設定: {pair} {direction}</b>\n入場價: <code>{old}</code> → <code>{new}</code>",
+    },
+    "confirmed_executing": {
+        "en": "<b>Confirmed — executing...</b>",
+        "zh": "<b>已確認 — 執行中...</b>",
+    },
+    "live_not_enabled": {
+        "en": "<b>Live trading not enabled</b>\n\nAsk an admin to grant you live trading access with /grant_live.",
+        "zh": "<b>尚未啟用實盤交易</b>\n\n請管理員以 /grant_live 授予你實盤交易權限。",
+    },
+    "limit_input_cancelled": {
+        "en": "Limit price cancelled. Use the buttons to confirm or skip.",
+        "zh": "已取消限價輸入。請使用按鈕確認或略過。",
+    },
 }
 
 
