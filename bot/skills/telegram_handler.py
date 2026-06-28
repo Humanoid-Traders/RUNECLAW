@@ -4249,6 +4249,7 @@ class TelegramHandler:
             max_drawdown=CONFIG.risk.max_daily_loss_pct,
             market_bias=macro.state.value.replace("_", " ").title(),
             pending_ideas=len(self.engine.pending_ideas) if hasattr(self.engine, "pending_ideas") else 0,
+            lang=self._lang(update),
         )
         await self._send(update, msg, reply_markup=_KB_WARROOM)
 
@@ -5461,7 +5462,7 @@ class TelegramHandler:
                 await self._send_photo(update, card_png, cap, reply_markup=kb)
             else:
                 # Fallback to text if PNG render fails
-                msg = render_open_positions([pos])
+                msg = render_open_positions([pos], lang=self._lang(update))
                 await self._send(update, msg, reply_markup=kb)
 
         # ── SECTION 2: Pending Orders (unfilled limit orders) ──
