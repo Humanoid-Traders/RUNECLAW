@@ -3986,6 +3986,30 @@ class TelegramHandler:
             else:
                 lines.extend(["", "<i>No trades yet. Say \"scan\" to find signals.</i>"])
 
+        # Visual stats card (guarded — any error falls back to the text above).
+        try:
+            from bot.formatters.signal_card import render_stats_card
+            _pnl = state.total_pnl
+            _png = render_stats_card({
+                "title": "PORTFOLIO",
+                "subtitle": f"{mode_str} · {datetime.now(UTC).strftime('%H:%M')} UTC",
+                "hero": {"label": "Equity", "value": f"${display_equity:,.2f}", "color": "white"},
+                "tiles": [
+                    {"label": "Realized PnL", "value": f"${_pnl:+,.2f}",
+                     "color": "green" if _pnl >= 0 else "red"},
+                    {"label": "Win Rate", "value": f"{state.win_rate:.0%}", "color": "cyan"},
+                    {"label": "Open Positions", "value": str(state.open_positions), "color": "white"},
+                    {"label": "Total Trades", "value": str(state.total_trades), "color": "white"},
+                    {"label": "Exposure", "value": f"{state.portfolio_exposure_pct:.0f}%", "color": "yellow"},
+                    {"label": "Max Drawdown", "value": f"{state.max_drawdown_pct:.1f}%",
+                     "color": "red" if state.max_drawdown_pct > 0 else "gray"},
+                ],
+            })
+            if _png and await self._send_photo(update, _png, "\U0001f4ca <b>PORTFOLIO</b>"):
+                return
+        except Exception as exc:
+            system_log.debug("portfolio card render failed: %s", exc)
+
         await self._send(update, "\n".join(lines))
 
     async def _cmd_trade(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:

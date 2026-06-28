@@ -1306,3 +1306,118 @@ def render_scan_grid_card(data: Dict[str, Any]) -> bytes:
     _buf = io.BytesIO()
     img.save(_buf, format="PNG", optimize=True)
     return _buf.getvalue()
+
+
+# ═══════════════════════════════════════════════════════════════════
+# STATS CARD — hero number + tile grid for /portfolio /performance /risk
+# ═══════════════════════════════════════════════════════════════════
+
+_STAT_COLORS = {
+    "green": _GREEN, "red": _RED, "white": _WHITE, "gray": _GRAY,
+    "cyan": _CYAN, "yellow": _YELLOW, "gold": _ACCENT_GOLD,
+}
+
+
+def render_stats_card(data: Dict[str, Any]) -> bytes:
+    """Render a status readout as a PNG card: an optional hero number plus a
+    2-column grid of labelled stat tiles. Used by /portfolio, /performance, /risk.
+
+    Args:
+        data: dict with keys
+            - title: str
+            - subtitle: str (optional, e.g. "LIVE · 08:20 UTC")
+            - hero: {label, value, color} (optional big number)
+            - tiles: list of {label, value, color} (color is a key in _STAT_COLORS)
+            - footer: str (optional)
+
+    Returns:
+        PNG bytes (b"" if Pillow unavailable).
+    """
+    try:
+        from PIL import Image, ImageDraw, ImageFont
+    except ImportError:
+        log.warning("Pillow not installed, cannot render stats card")
+        return b""
+
+    title = str(data.get("title", "STATS"))
+    subtitle = str(data.get("subtitle", "") or "")
+    hero = data.get("hero") or None
+    tiles = data.get("tiles") or []
+    footer = str(data.get("footer", "") or "")
+
+    W = 520
+    PAD = 18
+    HEADER_H = 56
+    HERO_H = 60 if hero else 0
+    TILE_W = (W - PAD * 3) // 2
+    TILE_H = 58
+    GAP = 10
+    rows = (len(tiles) + 1) // 2
+    FOOTER_H = 28 if footer else 12
+    H = HEADER_H + HERO_H + rows * (TILE_H + GAP) + FOOTER_H + PAD
+
+    img = Image.new("RGB", (W, H), _BG)
+    draw = ImageDraw.Draw(img)
+
+    def _font(size: int, bold: bool = False):
+        for path in [
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold
+            else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf" if bold
+            else "/usr/share/fonts/TTF/DejaVuSans.ttf",
+        ]:
+            try:
+                return ImageFont.truetype(path, size)
+            except (OSError, IOError):
+                continue
+        return ImageFont.load_default()
+
+    f_title = _font(19, bold=True)
+    f_sub = _font(10)
+    f_hero = _font(30, bold=True)
+    f_hlabel = _font(10)
+    f_label = _font(10)
+    f_value = _font(17, bold=True)
+
+    def _col(key):
+        return _STAT_COLORS.get(str(key or "white"), _WHITE)
+
+    # ── Header ──
+    draw.rectangle([0, 0, W, 3], fill=_ACCENT_GOLD)
+    draw.text((PAD, 12), title, fill=_WHITE, font=f_title)
+    if subtitle:
+        sw = draw.textlength(subtitle, font=f_sub)
+        draw.text((W - PAD - sw, 18), subtitle, fill=_GRAY, font=f_sub)
+    y = HEADER_H
+
+    # ── Hero number ──
+    if hero:
+        draw.text((PAD, y), str(hero.get("label", "")).upper(), fill=_GRAY, font=f_hlabel)
+        draw.text((PAD, y + 14), str(hero.get("value", "")),
+                  fill=_col(hero.get("color")), font=f_hero)
+        y += HERO_H
+
+    # ── Tile grid ──
+    for i, tile in enumerate(tiles):
+        r, c = divmod(i, 2)
+        tx = PAD + c * (TILE_W + PAD)
+        ty = y + r * (TILE_H + GAP)
+        draw.rounded_rectangle([tx, ty, tx + TILE_W, ty + TILE_H],
+                               radius=8, fill=_CARD_BG, outline=_BORDER)
+        draw.text((tx + 12, ty + 10), str(tile.get("label", "")).upper(),
+                  fill=_GRAY, font=f_label)
+        draw.text((tx + 12, ty + 26), str(tile.get("value", "")),
+                  fill=_col(tile.get("color")), font=f_value)
+    y += rows * (TILE_H + GAP)
+
+    # ── Footer ──
+    if footer:
+        draw.text((PAD, y + 2), footer, fill=_DIM, font=f_sub)
+
+    draw.rectangle([0, H - 3, W, H], fill=_ACCENT_GOLD)
+    wm_w = draw.textlength("RUNECLAW", font=f_sub)
+    draw.text((W - PAD - wm_w, H - 16), "RUNECLAW", fill=_DIM, font=f_sub)
+
+    _buf = io.BytesIO()
+    img.save(_buf, format="PNG", optimize=True)
+    return _buf.getvalue()
