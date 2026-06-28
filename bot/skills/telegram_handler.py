@@ -2779,6 +2779,31 @@ class TelegramHandler:
             except Exception:
                 pass
 
+        # Best-effort: ROLLING ATR per active symbol (Wilder, 1h candles) so the
+        # trail-read threshold drifts tick-for-tick like the Playbook instead of
+        # using the static atr_at_entry. Guarded — falls back to atr_at_entry.
+        rolling_atr: dict = {}
+        if filled_pos:
+            try:
+                exchange = await self.engine.live_executor._get_exchange()
+                from bot.core import position_telemetry as _pt
+                for _p in filled_pos:
+                    if _p.symbol in rolling_atr:
+                        continue
+                    try:
+                        _ohlcv = await exchange.fetch_ohlcv(_p.symbol, timeframe="1h", limit=50)
+                        if _ohlcv and len(_ohlcv) > 2:
+                            _h = [float(c[2]) for c in _ohlcv]
+                            _lo = [float(c[3]) for c in _ohlcv]
+                            _cl = [float(c[4]) for c in _ohlcv]
+                            _a = _pt.atr_from_candles(_h, _lo, _cl)
+                            if _a > 0:
+                                rolling_atr[_p.symbol] = _a
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
         # Fallback: check exchange directly if no local positions at all
         if not filled_pos and not pending_pos:
             try:
@@ -2865,12 +2890,15 @@ class TelegramHandler:
                                     + (f" ({_ld:.1f}% away)" if _ld is not None else "")
                                     + (f" | {_mm}" if _mm else "") + "\n")
                 # Trail read (local — entry/SL/ATR + mark; never demands an order).
+                # Prefer the rolling ATR (Playbook-style, drifts each tick); fall
+                # back to atr_at_entry if the candle fetch was unavailable.
                 trail_block = ""
                 if cur > 0 and p.stop_loss > 0 and p.entry_price > 0:
                     _ts = getattr(p, "trailing_state", None)
+                    _atr_val = rolling_atr.get(p.symbol) or (getattr(p, "atr_at_entry", 0.0) or 0.0)
                     _read = _pt.trail_read(
                         p.direction, p.entry_price, p.stop_loss, cur,
-                        atr=getattr(p, "atr_at_entry", 0.0) or 0.0,
+                        atr=_atr_val,
                         trailing_active=(_ts.get("trailing_active") if _ts else None))
                     trail_block = "\n".join(_pt.format_trail_read(_read)) + "\n"
 
