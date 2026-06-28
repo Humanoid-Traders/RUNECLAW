@@ -1102,11 +1102,11 @@ class TelegramHandler:
                         if new_idea:
                             uid = update.effective_user.id if update.effective_user else ""
                             kb = InlineKeyboardMarkup([[
-                                InlineKeyboardButton("Take it",
+                                InlineKeyboardButton(t("btn_take_it", self._lang(update)),
                                     callback_data=f"confirm:{new_idea.id}:{uid}"),
-                                InlineKeyboardButton("Limit",
+                                InlineKeyboardButton(t("lbl_limit", self._lang(update)),
                                     callback_data=f"setlimit:{new_idea.id}:{uid}"),
-                                InlineKeyboardButton("Skip",
+                                InlineKeyboardButton(t("btn_skip", self._lang(update)),
                                     callback_data=f"reject:{new_idea.id}:{uid}"),
                             ]])
                             # Try to send signal card image
@@ -3222,13 +3222,15 @@ class TelegramHandler:
                     buf = _io.BytesIO(png)
                     buf.name = "signal.png"
                     uid = CONFIG.telegram.chat_id or chat_id
-                    # Build confirm/reject buttons on the card image
+                    # Build confirm/reject buttons on the card image. This is an
+                    # engine→user push path (no `update`); resolve lang from chat_id.
+                    _sc_lang = get_user_lang(self.users, chat_id)
                     kb = InlineKeyboardMarkup([[
-                        InlineKeyboardButton("Take it",
+                        InlineKeyboardButton(t("btn_take_it", _sc_lang),
                             callback_data=f"confirm:{idea.id}:{uid}"),
-                        InlineKeyboardButton("Limit",
+                        InlineKeyboardButton(t("lbl_limit", _sc_lang),
                             callback_data=f"setlimit:{idea.id}:{uid}"),
-                        InlineKeyboardButton("Skip",
+                        InlineKeyboardButton(t("btn_skip", _sc_lang),
                             callback_data=f"reject:{idea.id}:{uid}"),
                     ]])
                     pair = idea.asset.replace("/USDT", "")
@@ -3779,9 +3781,9 @@ class TelegramHandler:
         if new_idea is not None:
             uid = update.effective_user.id if update.effective_user else ""
             kb = InlineKeyboardMarkup([[
-                InlineKeyboardButton("Take it", callback_data=f"confirm:{new_idea.id}:{uid}"),
-                InlineKeyboardButton("Limit", callback_data=f"setlimit:{new_idea.id}:{uid}"),
-                InlineKeyboardButton("Skip", callback_data=f"reject:{new_idea.id}:{uid}"),
+                InlineKeyboardButton(t("btn_take_it", self._lang(update)), callback_data=f"confirm:{new_idea.id}:{uid}"),
+                InlineKeyboardButton(t("lbl_limit", self._lang(update)), callback_data=f"setlimit:{new_idea.id}:{uid}"),
+                InlineKeyboardButton(t("btn_skip", self._lang(update)), callback_data=f"reject:{new_idea.id}:{uid}"),
             ]])
             # Send signal card image with confirm/reject buttons
             card_sent = False
@@ -4880,9 +4882,9 @@ class TelegramHandler:
 
         for i, idea in enumerate(pending, 1):
             kb = InlineKeyboardMarkup([[
-                InlineKeyboardButton("Take it", callback_data=f"confirm:{idea.id}:{uid}"),
-                InlineKeyboardButton("Limit", callback_data=f"setlimit:{idea.id}:{uid}"),
-                InlineKeyboardButton("Skip", callback_data=f"reject:{idea.id}:{uid}"),
+                InlineKeyboardButton(t("btn_take_it", self._lang(update)), callback_data=f"confirm:{idea.id}:{uid}"),
+                InlineKeyboardButton(t("lbl_limit", self._lang(update)), callback_data=f"setlimit:{idea.id}:{uid}"),
+                InlineKeyboardButton(t("btn_skip", self._lang(update)), callback_data=f"reject:{idea.id}:{uid}"),
             ]])
 
             d_icon = "\U0001f7e2" if idea.direction.value == "LONG" else "\U0001f534"
@@ -6932,7 +6934,7 @@ class TelegramHandler:
             result_lower = result.lower()
             is_failure = any(result_lower.startswith(p.lower()) for p in _fail_prefixes)
             if not is_failure:
-                msg = f"\u2705 <b>Trade executed!</b>\n\n{result}"
+                msg = f"\u2705 {t('trade_executed_ok', self._lang(update))}\n\n{result}"
                 # Forward trade open to marketing channels
                 idea = self.engine._pending_ideas.get(trade_id) or self.engine._last_confirmed_idea
                 if idea:
@@ -6943,7 +6945,7 @@ class TelegramHandler:
                     except Exception:
                         pass
             else:
-                msg = f"\u274c <b>Trade didn't go through</b>\n\n{result}"
+                msg = f"\u274c {t('trade_executed_fail', self._lang(update))}\n\n{result}"
             # Try edit first (works for text messages), fall back to new message
             # (needed when buttons are on a photo message from chart flow)
             try:

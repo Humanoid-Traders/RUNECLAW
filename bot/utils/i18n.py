@@ -562,6 +562,13 @@ _STRINGS: dict[str, dict[str, str]] = {
         "en": "Limit price cancelled. Use the buttons to confirm or skip.",
         "zh": "已取消限價輸入。請使用按鈕確認或略過。",
     },
+
+    # ── Trade-proposal buttons + execution result (en byte-identical) ──
+    # (the "Limit" button reuses the existing lbl_limit key)
+    "btn_take_it": {"en": "Take it", "zh": "接受"},
+    "btn_skip": {"en": "Skip", "zh": "略過"},
+    "trade_executed_ok": {"en": "<b>Trade executed!</b>", "zh": "<b>交易已執行！</b>"},
+    "trade_executed_fail": {"en": "<b>Trade didn't go through</b>", "zh": "<b>交易未成功</b>"},
 }
 
 
