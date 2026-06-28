@@ -58,6 +58,7 @@ def _round_number_near(price: float, tolerance_pct: float = 0.3) -> Optional[flo
         return None
 
     # Determine the round number granularity based on price magnitude
+    step: float
     if price > 10000:
         step = 100      # $105,000, $105,100
     elif price > 1000:
