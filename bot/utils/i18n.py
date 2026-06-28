@@ -451,6 +451,32 @@ _STRINGS: dict[str, dict[str, str]] = {
         "en": "No live trades yet. Say \"scan\" to find signals.",
         "zh": "尚無實盤交易。輸入「掃描」來尋找信號。",
     },
+
+    # ── /analyze (validation + error messages; en byte-identical) ──
+    "analyze_invalid_symbol": {
+        "en": "Invalid symbol. Use format: <code>BTC</code> or <code>BTC/USDT</code>",
+        "zh": "無效的代號。請使用格式: <code>BTC</code> 或 <code>BTC/USDT</code>",
+    },
+    "analyze_usdt_self": {
+        "en": "Cannot analyze USDT against itself. Provide a token symbol, e.g. <code>BTC</code>",
+        "zh": "無法分析 USDT 對自身。請提供代幣代號，例如 <code>BTC</code>",
+    },
+    "analyze_failed": {
+        "en": "Analysis failed for <code>{symbol}</code>: {detail}",
+        "zh": "分析 <code>{symbol}</code> 失敗: {detail}",
+    },
+
+    # ── /open_positions (empty-states + header; en byte-identical) ──
+    "positions_none": {
+        "en": "No open positions or pending orders right now.\nSay \"scan\" or \"analyze BTC\" to find setups.",
+        "zh": "目前沒有持倉或掛單。\n輸入「掃描」或「分析 BTC」來尋找機會。",
+    },
+    "positions_none_short": {
+        "en": "No open positions right now.",
+        "zh": "目前沒有持倉。",
+    },
+    "hdr_open_positions_title": {"en": "OPEN POSITIONS", "zh": "持倉"},
+    "lbl_total": {"en": "total", "zh": "總計"},
 }
 
 

@@ -3742,13 +3742,13 @@ class TelegramHandler:
             # SEC-H3 FIX: strict symbol validation before reaching CCXT/LLM
             if not _SYMBOL_RE.match(raw):
                 await self._send(update,
-                    "\U0001f534 Invalid symbol. Use format: <code>BTC</code> or <code>BTC/USDT</code>")
+                    f"\U0001f534 {t('analyze_invalid_symbol', self._lang(update))}")
                 return
             # Prevent self-referencing pairs like USDT/USDT
             base = raw.split("/")[0]
             if base == "USDT":
                 await self._send(update,
-                    "\U0001f534 Cannot analyze USDT against itself. Provide a token symbol, e.g. <code>BTC</code>")
+                    f"\U0001f534 {t('analyze_usdt_self', self._lang(update))}")
                 return
             symbol = raw if "/" in raw else f"{raw}/USDT"
         else:
@@ -3768,7 +3768,7 @@ class TelegramHandler:
         except Exception as exc:
             system_log.error("analyze_asset failed for %s: %s", symbol, exc, exc_info=True)
             await self._send(update,
-                f"\U0001f534 Analysis failed for <code>{html.escape(symbol)}</code>: {html.escape(str(exc)[:200])}")
+                f"\U0001f534 {t('analyze_failed', self._lang(update), symbol=html.escape(symbol), detail=html.escape(str(exc)[:200]))}")
             return
 
         new_idea = None
@@ -5329,22 +5329,21 @@ class TelegramHandler:
         pending_orders = [p for p in positions_data if p.get("status") == "pending_fill"]
 
         if not filled_positions and not pending_orders:
-            await self._send(update,
-                "No open positions or pending orders right now.\n"
-                "Say \"scan\" or \"analyze BTC\" to find setups.")
+            await self._send(update, t("positions_none", self._lang(update)))
             return
 
         from bot.formatters.signal_card import render_position_card
 
         # ── SECTION 1: Open Positions (filled) ──
+        _pos_lang = self._lang(update)
         if filled_positions:
             total_pnl = sum(p.get("pnl_pct", 0) for p in filled_positions)
             pnl_icon = "\U0001f7e2" if total_pnl > 0 else "\U0001f534" if total_pnl < 0 else ""
-            header = (f"\U0001f4ca <b>OPEN POSITIONS ({len(filled_positions)})</b> "
-                      f"{pnl_icon} {total_pnl:+.2f}% total")
+            header = (f"\U0001f4ca <b>{t('hdr_open_positions_title', _pos_lang)} ({len(filled_positions)})</b> "
+                      f"{pnl_icon} {total_pnl:+.2f}% {t('lbl_total', _pos_lang)}")
             await self._send(update, header)
         elif not pending_orders:
-            await self._send(update, "No open positions right now.")
+            await self._send(update, t("positions_none_short", _pos_lang))
 
         for pos in filled_positions:
             tid = pos.get('trade_id', pos['pair'])
