@@ -3842,6 +3842,7 @@ class TelegramHandler:
     @guard("portfolio")
     async def _cmd_portfolio(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         user_id = self._get_tg_id(update)
+        lang = self._lang(update)  # i18n: resolve once for this render
         # Use per-user portfolio if it exists, otherwise show shared
         if self.engine.user_portfolios.has_user(user_id):
             portfolio = self.engine.user_portfolios.get(user_id)
@@ -3909,17 +3910,17 @@ class TelegramHandler:
                 _pos_display += f" + {_pending_count} pending"
 
             lines = [
-                "\U0001f4bc <b>YOUR PORTFOLIO</b> (LIVE)",
+                f"\U0001f4bc <b>{t('portfolio_title', lang)}</b> (LIVE)",
                 sep,
                 "",
-                f"- Equity: <code>${display_equity:,.2f}</code>",
-                f"- Open Positions: <code>{_pos_display}</code>",
-                f"- Exposure: <code>${live_exposure:,.2f}</code>",
-                f"- Net PnL: <code>${live_total_pnl:+,.2f}</code> {'🟢' if live_total_pnl >= 0 else '🔴'}",
-                f"- Fees Paid: <code>${live_total_fees:,.2f}</code>",
+                f"- {t('lbl_equity', lang)}: <code>${display_equity:,.2f}</code>",
+                f"- {t('lbl_open_positions', lang)}: <code>{_pos_display}</code>",
+                f"- {t('lbl_exposure', lang)}: <code>${live_exposure:,.2f}</code>",
+                f"- {t('lbl_net_pnl', lang)}: <code>${live_total_pnl:+,.2f}</code> {'🟢' if live_total_pnl >= 0 else '🔴'}",
+                f"- {t('lbl_fees_paid', lang)}: <code>${live_total_fees:,.2f}</code>",
             ]
             if live_unrealized != 0:
-                lines.append(f"- Unrealized PnL: <code>${live_unrealized:+,.2f}</code> {'🟢' if live_unrealized >= 0 else '🔴'}")
+                lines.append(f"- {t('lbl_unrealized_pnl', lang)}: <code>${live_unrealized:+,.2f}</code> {'🟢' if live_unrealized >= 0 else '🔴'}")
 
             # Open positions from LiveExecutor
             # Separate filled positions from pending limit orders
@@ -3927,20 +3928,20 @@ class TelegramHandler:
             pending_limits = [lp for lp in live_open if lp.status == "pending_fill"]
 
             if filled_positions:
-                lines.extend(["", sep, "", "<b>Open Positions:</b>"])
+                lines.extend(["", sep, "", f"<b>{t('hdr_open_positions', lang)}</b>"])
                 for lp in filled_positions:
                     d_icon = "🟢" if lp.direction == "LONG" else "🔴"
                     lev_str = f" {lp.leverage}x" if (lp.leverage or 1) > 1 else ""
                     lines.append(
                         f"\n{d_icon} <b>{lp.symbol}</b> {lp.direction}{lev_str}"
                     )
-                    lines.append(f"  Entry: <code>${lp.entry_price:,.6f}</code>")
-                    lines.append(f"  Size: <code>${lp.cost_usd:,.2f}</code>")
+                    lines.append(f"  {t('entry', lang)}: <code>${lp.entry_price:,.6f}</code>")
+                    lines.append(f"  {t('lbl_size', lang)}: <code>${lp.cost_usd:,.2f}</code>")
                     if lp.stop_loss:
-                        lines.append(f"  SL: <code>${lp.stop_loss:,.6f}</code> | TP: <code>${lp.take_profit:,.6f}</code>")
+                        lines.append(f"  {t('lbl_sl', lang)}: <code>${lp.stop_loss:,.6f}</code> | {t('lbl_tp', lang)}: <code>${lp.take_profit:,.6f}</code>")
 
             if pending_limits:
-                lines.extend(["", sep, "", "⏳ <b>Pending Limit Orders:</b>"])
+                lines.extend(["", sep, "", f"⏳ <b>{t('hdr_pending_limits', lang)}</b>"])
                 for lp in pending_limits:
                     d_icon = "🟢" if lp.direction == "LONG" else "🔴"
                     lev_str = f" {lp.leverage}x" if (lp.leverage or 1) > 1 else ""
@@ -3958,14 +3959,14 @@ class TelegramHandler:
                     lines.append(
                         f"\n{d_icon} <b>{pair}</b> {lp.direction}{lev_str} — LIMIT"
                     )
-                    lines.append(f"  Limit: <code>${lp.entry_price:,.6f}</code> | Placed: {age_str}")
+                    lines.append(f"  {t('lbl_limit', lang)}: <code>${lp.entry_price:,.6f}</code> | {t('lbl_placed', lang)}: {age_str}")
                     if lp.stop_loss:
-                        lines.append(f"  SL: <code>${lp.stop_loss:,.6f}</code> | TP: <code>${lp.take_profit:,.6f}</code>")
+                        lines.append(f"  {t('lbl_sl', lang)}: <code>${lp.stop_loss:,.6f}</code> | {t('lbl_tp', lang)}: <code>${lp.take_profit:,.6f}</code>")
 
             # Recent closed trades from LiveExecutor
             if live_closed:
                 recent = live_closed[-5:]
-                lines.extend(["", sep, "", "<b>Recent Trades (net of fees):</b>"])
+                lines.extend(["", sep, "", f"<b>{t('hdr_recent_trades_net', lang)}</b>"])
                 for t in recent:
                     pnl_val = t.pnl_usd or 0
                     fee_val = t.commission or 0
@@ -3981,33 +3982,33 @@ class TelegramHandler:
                 wr = wins / len(live_closed) * 100 if live_closed else 0
                 lines.extend([
                     "", sep, "",
-                    f"<b>Session:</b> {wins}W/{losses}L | "
-                    f"Net: <code>${live_total_pnl:+,.2f}</code> | "
-                    f"Win rate: <code>{wr:.0f}%</code>",
+                    f"<b>{t('lbl_session', lang)}</b> {wins}W/{losses}L | "
+                    f"{t('lbl_net', lang)}: <code>${live_total_pnl:+,.2f}</code> | "
+                    f"{t('lbl_win_rate_lc', lang)}: <code>{wr:.0f}%</code>",
                 ])
                 if adopted_trades:
                     adopted_pnl = sum((t.pnl_usd or 0) for t in adopted_trades)
                     lines.append(
                         f"<i>⚠️ Excluded {len(adopted_trades)} adopted orphans (${adopted_pnl:+,.2f})</i>")
             else:
-                lines.extend(["", "<i>No live trades yet. Say \"scan\" to find signals.</i>"])
+                lines.extend(["", f"<i>{t('portfolio_no_live_trades', lang)}</i>"])
 
         else:
             # ── PAPER MODE: show paper portfolio data ──
             display_equity = state.equity_usd
             lines = [
-                "\U0001f4bc <b>YOUR PORTFOLIO</b> (PAPER)",
+                f"\U0001f4bc <b>{t('portfolio_title', lang)}</b> (PAPER)",
                 sep,
                 "",
-                f"- Equity: <code>${display_equity:,.2f}</code>",
-                f"- Cash: <code>${state.balance_usd:,.2f}</code>",
-                f"- Open Positions: <code>{state.open_positions}</code>",
-                f"- Daily PnL: <code>{'+' if state.daily_pnl >= 0 else ''}{state.daily_pnl:.2f}%</code> {'🟢' if state.daily_pnl >= 0 else '🔴'}",
-                f"- Drawdown: <code>{state.max_drawdown_pct:.2f}%</code>",
+                f"- {t('lbl_equity', lang)}: <code>${display_equity:,.2f}</code>",
+                f"- {t('lbl_cash', lang)}: <code>${state.balance_usd:,.2f}</code>",
+                f"- {t('lbl_open_positions', lang)}: <code>{state.open_positions}</code>",
+                f"- {t('lbl_daily_pnl', lang)}: <code>{'+' if state.daily_pnl >= 0 else ''}{state.daily_pnl:.2f}%</code> {'🟢' if state.daily_pnl >= 0 else '🔴'}",
+                f"- {t('lbl_drawdown', lang)}: <code>{state.max_drawdown_pct:.2f}%</code>",
             ]
 
             if positions:
-                lines.extend(["", sep, "", "<b>Open Positions:</b>"])
+                lines.extend(["", sep, "", f"<b>{t('hdr_open_positions', lang)}</b>"])
                 for pos in positions:
                     d_icon = "🟢" if pos.direction.value == "LONG" else "🔴"
                     last = portfolio._last_prices.get(pos.asset, pos.entry_price)
@@ -4023,12 +4024,12 @@ class TelegramHandler:
                         f"\n{pnl_icon}{arrow} <b>{pos.asset}</b> {pos.direction.value} | "
                         f"{pnl_icon} {'+' if pnl_pct >= 0 else ''}{pnl_pct:.2f}%"
                     )
-                    lines.append(f"  Entry: <code>${pos.entry_price:,.4f}</code> → Current: <code>${last:,.4f}</code>")
-                    lines.append(f"  SL: <code>${pos.stop_loss:,.4f}</code> | TP: <code>${pos.take_profit:,.4f}</code>")
-                    lines.append(f"  Size: <code>${size_usd:,.2f}</code> | PNL: <code>${pnl_usd:+,.2f}</code>")
+                    lines.append(f"  {t('entry', lang)}: <code>${pos.entry_price:,.4f}</code> → {t('lbl_current', lang)}: <code>${last:,.4f}</code>")
+                    lines.append(f"  {t('lbl_sl', lang)}: <code>${pos.stop_loss:,.4f}</code> | {t('lbl_tp', lang)}: <code>${pos.take_profit:,.4f}</code>")
+                    lines.append(f"  {t('lbl_size', lang)}: <code>${size_usd:,.2f}</code> | {t('lbl_pnl', lang)}: <code>${pnl_usd:+,.2f}</code>")
 
             if history:
-                lines.extend(["", sep, "", "<b>Recent Trades:</b>"])
+                lines.extend(["", sep, "", f"<b>{t('hdr_recent_trades', lang)}</b>"])
                 for t in history[-5:]:
                     pnl_icon = "✅" if t.pnl > 0 else "❌"
                     lines.append(f"  {pnl_icon} {t.asset} {t.direction.value} → <code>${t.pnl:+.2f}</code>")
@@ -4038,33 +4039,33 @@ class TelegramHandler:
                 wins = sum(1 for t in history if t.pnl > 0)
                 lines.extend([
                     "", sep, "",
-                    f"<b>Session:</b> {wins}W/{state.total_trades - wins}L | "
-                    f"Net: <code>${state.total_pnl:+.2f}</code> | "
-                    f"Win rate: <code>{state.win_rate:.0%}</code>",
+                    f"<b>{t('lbl_session', lang)}</b> {wins}W/{state.total_trades - wins}L | "
+                    f"{t('lbl_net', lang)}: <code>${state.total_pnl:+.2f}</code> | "
+                    f"{t('lbl_win_rate_lc', lang)}: <code>{state.win_rate:.0%}</code>",
                 ])
             else:
-                lines.extend(["", "<i>No trades yet. Say \"scan\" to find signals.</i>"])
+                lines.extend(["", f"<i>{t('portfolio_no_trades', lang)}</i>"])
 
         # Visual stats card (guarded — any error falls back to the text above).
         try:
             from bot.formatters.signal_card import render_stats_card
             _pnl = state.total_pnl
             _png = render_stats_card({
-                "title": "PORTFOLIO",
+                "title": t("portfolio_card_title", lang),
                 "subtitle": f"{mode_str} · {datetime.now(UTC).strftime('%H:%M')} UTC",
-                "hero": {"label": "Equity", "value": f"${display_equity:,.2f}", "color": "white"},
+                "hero": {"label": t("lbl_equity", lang), "value": f"${display_equity:,.2f}", "color": "white"},
                 "tiles": [
-                    {"label": "Realized PnL", "value": f"${_pnl:+,.2f}",
+                    {"label": t("lbl_realized_pnl", lang), "value": f"${_pnl:+,.2f}",
                      "color": "green" if _pnl >= 0 else "red"},
-                    {"label": "Win Rate", "value": f"{state.win_rate:.0%}", "color": "cyan"},
-                    {"label": "Open Positions", "value": str(state.open_positions), "color": "white"},
-                    {"label": "Total Trades", "value": str(state.total_trades), "color": "white"},
-                    {"label": "Exposure", "value": f"{state.portfolio_exposure_pct:.0f}%", "color": "yellow"},
-                    {"label": "Max Drawdown", "value": f"{state.max_drawdown_pct:.1f}%",
+                    {"label": t("lbl_win_rate", lang), "value": f"{state.win_rate:.0%}", "color": "cyan"},
+                    {"label": t("lbl_open_positions", lang), "value": str(state.open_positions), "color": "white"},
+                    {"label": t("lbl_total_trades", lang), "value": str(state.total_trades), "color": "white"},
+                    {"label": t("lbl_exposure", lang), "value": f"{state.portfolio_exposure_pct:.0f}%", "color": "yellow"},
+                    {"label": t("lbl_max_drawdown", lang), "value": f"{state.max_drawdown_pct:.1f}%",
                      "color": "red" if state.max_drawdown_pct > 0 else "gray"},
                 ],
             })
-            if _png and await self._send_photo(update, _png, "\U0001f4ca <b>PORTFOLIO</b>"):
+            if _png and await self._send_photo(update, _png, f"\U0001f4ca <b>{t('portfolio_card_title', lang)}</b>"):
                 return
         except Exception as exc:
             system_log.debug("portfolio card render failed: %s", exc)
