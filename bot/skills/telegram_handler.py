@@ -2689,6 +2689,11 @@ class TelegramHandler:
         tg_id = self._get_tg_id(update)
         store = get_credential_store()
         store.set(tg_id, api_key, api_secret, passphrase)
+        # Drop any cached executor so the next trade rebuilds with the new keys.
+        try:
+            self.engine.invalidate_user_executor(tg_id)
+        except Exception:
+            pass
         audit(system_log, "User linked own Bitget account via /connect",
               action="connect", result="OK",
               data={"user": tg_id, "fingerprint": store.fingerprint(tg_id)})
@@ -2707,6 +2712,11 @@ class TelegramHandler:
         from bot.core.exchange_credentials import get_credential_store
         tg_id = self._get_tg_id(update)
         existed = get_credential_store().delete(tg_id)
+        # Drop any cached executor bound to the now-deleted credentials.
+        try:
+            self.engine.invalidate_user_executor(tg_id)
+        except Exception:
+            pass
         if existed:
             audit(system_log, "User removed own Bitget account via /disconnect",
                   action="disconnect", result="OK", data={"user": tg_id})
