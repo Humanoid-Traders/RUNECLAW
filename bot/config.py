@@ -599,6 +599,27 @@ class ExecutionConfig:
 
 
 @dataclass(frozen=True)
+class ConfluenceConfig:
+    """Confluence-scoring controls."""
+    # De-correlate the co-firing mean-reversion OSCILLATOR family — RSI,
+    # Bollinger %B, Stochastic and Fibonacci all measure "price is low/high in
+    # its recent range", so on an oversold bar they all vote bullish together
+    # and inflate the confluence score with what is really ONE piece of
+    # information. When enabled, their COMBINED weight is scaled down to
+    # mr_oscillator_weight_cap so the family counts as ~one strong voter rather
+    # than four independent confirmations.
+    #
+    # Default OFF: this changes which signals clear min_confidence, so enable it
+    # only after validating the trade-set delta on the backtest harness.
+    family_cap_enabled: bool = _env_bool("CONFLUENCE_FAMILY_CAP_ENABLED", False)
+    # Max COMBINED weight the mean-reversion oscillator family may contribute.
+    # The default (2.0) is ~the single largest member (RSI at 1.5) plus a little,
+    # vs. an uncapped ~4.2 when all four co-fire.
+    mr_oscillator_weight_cap: float = _env_float_bounded(
+        "CONFLUENCE_MR_OSC_WEIGHT_CAP", 2.0, 0.1, 100.0)
+
+
+@dataclass(frozen=True)
 class CacheConfig:
     """LLM semantic cache settings."""
     ttl_seconds: float = _env_float("CACHE_TTL_SECONDS", 300.0)
@@ -859,6 +880,7 @@ class AppConfig:
     partial_tp: PartialTPConfig = field(default_factory=PartialTPConfig)
     adaptive: AdaptiveConfig = field(default_factory=AdaptiveConfig)
     execution: ExecutionConfig = field(default_factory=ExecutionConfig)
+    confluence: ConfluenceConfig = field(default_factory=ConfluenceConfig)
 
     def is_live(self) -> bool:
         """Live trading requires BOTH flags AND a Telegram chat allow-list.
