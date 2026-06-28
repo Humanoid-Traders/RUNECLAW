@@ -4084,19 +4084,13 @@ class TelegramHandler:
             return
         tg_id = self._get_tg_id(update)
         uid = str(update.effective_user.id) if update.effective_user else ""
+        lang = self._lang(update)  # i18n: resolve once for this command
 
         text = (update.message.text or "").strip()
         # Remove /trade prefix
         args = text.split(None, 1)
         if len(args) < 2:
-            await self._send(update,
-                "\U0001f4dd <b>Manual Trade</b>\n\n"
-                "Format:\n"
-                "<code>/trade buy SOL 71.42 sl 70.05 tp 76.42</code>\n"
-                "<code>/trade short ETH 1721 sl 1695 tp 1842 margin 250</code>\n\n"
-                "\u2022 <code>buy/long</code> = LONG\n"
-                "\u2022 <code>sell/short</code> = SHORT\n"
-                "\u2022 <code>margin</code> = optional fixed margin in USD")
+            await self._send(update, f"\U0001f4dd {t('trade_help', lang)}")
             return
 
         body = args[1].strip()
@@ -4125,7 +4119,7 @@ class TelegramHandler:
                 order_type="limit",
             )
         except ValueError as e:
-            await self._send(update, f"\u26a0\ufe0f <b>Invalid trade:</b> {html.escape(str(e))}")
+            await self._send(update, f"\u26a0\ufe0f {t('trade_invalid', lang, detail=html.escape(str(e)))}")
             return
 
         # Register as pending idea in engine
@@ -4141,24 +4135,24 @@ class TelegramHandler:
         sl_dist = abs(entry - sl) / entry * 100
         tp_dist = abs(tp - entry) / entry * 100
 
-        margin_text = f"${margin_usd:,.0f}" if margin_usd else "Auto (risk-based)"
+        margin_text = f"${margin_usd:,.0f}" if margin_usd else t("trade_margin_auto", lang)
 
         card = (
-            f"\U0001f4cb <b>Manual Trade \u2014 {html.escape(display_pair)} {direction}</b>\n"
+            f"\U0001f4cb <b>{t('lbl_manual_trade', lang)} \u2014 {html.escape(display_pair)} {direction}</b>\n"
             f"{'━' * 30}\n"
-            f"Entry:  <code>${entry:,.4f}</code>\n"
-            f"SL:     <code>${sl:,.4f}</code> ({sl_dist:.1f}%)\n"
-            f"TP:     <code>${tp:,.4f}</code> (+{tp_dist:.1f}%)\n"
-            f"R:R:    <code>{rr:.2f}</code>\n"
-            f"Margin: <code>{margin_text}</code>\n"
-            f"Type:   LIMIT\n"
+            f"{t('entry', lang)}:  <code>${entry:,.4f}</code>\n"
+            f"{t('lbl_sl', lang)}:     <code>${sl:,.4f}</code> ({sl_dist:.1f}%)\n"
+            f"{t('lbl_tp', lang)}:     <code>${tp:,.4f}</code> (+{tp_dist:.1f}%)\n"
+            f"{t('lbl_rr', lang)}:    <code>{rr:.2f}</code>\n"
+            f"{t('lbl_margin', lang)}: <code>{margin_text}</code>\n"
+            f"{t('lbl_type', lang)}:   LIMIT\n"
             f"{'━' * 30}\n"
-            f"<i>Reduced risk checks for manual orders</i>"
+            f"<i>{t('trade_reduced_checks', lang)}</i>"
         )
 
         kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("\u2705 Confirm", callback_data=f"confirm:{idea.id}:{uid}"),
-             InlineKeyboardButton("\u274c Cancel", callback_data=f"reject:{idea.id}:{uid}")],
+            [InlineKeyboardButton("\u2705 " + t('confirm', lang), callback_data=f"confirm:{idea.id}:{uid}"),
+             InlineKeyboardButton("\u274c " + t('cancel', lang), callback_data=f"reject:{idea.id}:{uid}")],
         ])
 
         await self._send(update, card, reply_markup=kb)

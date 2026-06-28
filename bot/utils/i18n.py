@@ -477,6 +477,41 @@ _STRINGS: dict[str, dict[str, str]] = {
     },
     "hdr_open_positions_title": {"en": "OPEN POSITIONS", "zh": "持倉"},
     "lbl_total": {"en": "total", "zh": "總計"},
+
+    # ── /trade (manual trade; en byte-identical, command examples kept literal) ──
+    "trade_help": {
+        "en": (
+            "<b>Manual Trade</b>\n\n"
+            "Format:\n"
+            "<code>/trade buy SOL 71.42 sl 70.05 tp 76.42</code>\n"
+            "<code>/trade short ETH 1721 sl 1695 tp 1842 margin 250</code>\n\n"
+            "• <code>buy/long</code> = LONG\n"
+            "• <code>sell/short</code> = SHORT\n"
+            "• <code>margin</code> = optional fixed margin in USD"
+        ),
+        "zh": (
+            "<b>手動交易</b>\n\n"
+            "格式:\n"
+            "<code>/trade buy SOL 71.42 sl 70.05 tp 76.42</code>\n"
+            "<code>/trade short ETH 1721 sl 1695 tp 1842 margin 250</code>\n\n"
+            "• <code>buy/long</code> = 做多\n"
+            "• <code>sell/short</code> = 做空\n"
+            "• <code>margin</code> = 選填，固定保證金（USD）"
+        ),
+    },
+    "trade_invalid": {
+        "en": "<b>Invalid trade:</b> {detail}",
+        "zh": "<b>無效交易:</b> {detail}",
+    },
+    "lbl_manual_trade": {"en": "Manual Trade", "zh": "手動交易"},
+    "lbl_margin": {"en": "Margin", "zh": "保證金"},
+    "lbl_type": {"en": "Type", "zh": "類型"},
+    "lbl_rr": {"en": "R:R", "zh": "風報比"},
+    "trade_reduced_checks": {
+        "en": "Reduced risk checks for manual orders",
+        "zh": "手動下單採用簡化風險檢查",
+    },
+    "trade_margin_auto": {"en": "Auto (risk-based)", "zh": "自動（依風險）"},
 }
 
 
