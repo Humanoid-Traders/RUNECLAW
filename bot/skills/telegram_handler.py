@@ -281,6 +281,9 @@ class TelegramHandler:
             ("livepositions", self._cmd_livepositions), ("liveclose", self._cmd_liveclose),
             ("buy", self._cmd_buy), ("sell", self._cmd_sell),
             ("health", self._cmd_health),
+            # Per-user exchange BYOK (link your own Bitget account)
+            ("connect", self._cmd_connect), ("disconnect", self._cmd_disconnect),
+            ("exchange", self._cmd_exchange),
             # Deep scan & playbook
             ("playbook", self._cmd_playbook), ("deepscan", self._cmd_deepscan),
             ("fullscan", self._cmd_fullscan),
@@ -2614,6 +2617,129 @@ class TelegramHandler:
             "\u2022 <code>/livepositions</code> — view open positions\n"
             "\u2022 <code>/liveclose &lt;id&gt;</code> — close a position\n"
             "\u2022 <code>/golive OFF</code> — disable live mode")
+
+    # -- per-user exchange linking (BYOK) --------------------------------------
+    # Each user links THEIR OWN Bitget account. Keys are encrypted at rest by
+    # bot.core.exchange_credentials and only handed to the execution layer at
+    # trade time. Per-user live execution stays gated by PER_USER_LIVE_ENABLED
+    # (default OFF) — these commands only store/validate keys; they place no
+    # orders. See docs/LIVE_TRADING_ENABLEMENT.md.
+
+    async def _cmd_connect(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """/connect <api_key> <api_secret> <passphrase> — link YOUR OWN Bitget
+        account. The message carrying the keys is deleted immediately and the
+        keys are encrypted at rest. Places no orders."""
+        # Delete the secret-bearing message FIRST — before any gate can return
+        # — so keys never linger in chat history even on a denied/rate-limited call.
+        try:
+            if update.message:
+                await update.message.delete()
+        except Exception as del_exc:
+            system_log.warning(
+                "Failed to delete /connect message containing API keys: %s — "
+                "keys may be visible in chat history", del_exc)
+
+        # Private chat only: never accept secrets in a group.
+        if update.effective_chat and update.effective_chat.type != "private":
+            await self._send(update,
+                "⚠️ Send <code>/connect</code> in a <b>private chat</b> only "
+                "— never in a group.")
+            return
+
+        if not await self._guard(update, "status"):
+            return
+
+        args = ctx.args or []
+        if len(args) != 3:
+            await self._send(update,
+                "<b>Link your own Bitget account</b>\n\n"
+                "Create API keys at Bitget with <b>USDT-M futures (read + trade)</b> "
+                "permission, then send:\n"
+                "<code>/connect &lt;api_key&gt; &lt;api_secret&gt; &lt;passphrase&gt;</code>\n\n"
+                "• Keys are <b>encrypted at rest</b> and never logged.\n"
+                "• This message is deleted immediately after you send it.\n"
+                "• Use <code>/exchange</code> to check status, "
+                "<code>/disconnect</code> to remove.")
+            return
+
+        api_key, api_secret, passphrase = (
+            args[0].strip(), args[1].strip(), args[2].strip())
+
+        from bot.core.exchange_credentials import (
+            get_credential_store, validate_bitget_credentials, basic_key_format_ok,
+        )
+        if not basic_key_format_ok(api_key, api_secret, passphrase):
+            await self._send(update,
+                "🔴 Those don't look like valid Bitget keys "
+                "(empty, contain spaces, or too short). Nothing was stored.")
+            return
+
+        await self._send(update,
+            "⏳ Validating your Bitget keys (read-only balance check)…")
+        ok, detail = await validate_bitget_credentials(
+            api_key, api_secret, passphrase, sandbox=CONFIG.exchange.sandbox)
+        if not ok:
+            await self._send(update,
+                "🔴 Could not authenticate with Bitget. Nothing was stored.\n"
+                f"<code>{html.escape(detail)}</code>\n\n"
+                "Check the key / secret / passphrase and that the key has "
+                "USDT-M futures permission.")
+            return
+
+        tg_id = self._get_tg_id(update)
+        store = get_credential_store()
+        store.set(tg_id, api_key, api_secret, passphrase)
+        audit(system_log, "User linked own Bitget account via /connect",
+              action="connect", result="OK",
+              data={"user": tg_id, "fingerprint": store.fingerprint(tg_id)})
+        await self._send(update,
+            "🟢 <b>Bitget account linked</b>\n\n"
+            f"Key: <code>{store.fingerprint(tg_id)}</code>\n"
+            f"Balance: {html.escape(detail)}\n\n"
+            "Your keys are encrypted at rest. Per-user live trading is not yet "
+            "enabled — you'll be notified when it goes live. Use "
+            "<code>/exchange</code> to review or <code>/disconnect</code> to remove.")
+
+    async def _cmd_disconnect(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """/disconnect — remove YOUR linked Bitget account credentials."""
+        if not await self._guard(update, "status"):
+            return
+        from bot.core.exchange_credentials import get_credential_store
+        tg_id = self._get_tg_id(update)
+        existed = get_credential_store().delete(tg_id)
+        if existed:
+            audit(system_log, "User removed own Bitget account via /disconnect",
+                  action="disconnect", result="OK", data={"user": tg_id})
+            await self._send(update,
+                "🔴 <b>Bitget account unlinked</b>\n"
+                "Your encrypted keys were deleted. Use <code>/connect</code> to relink.")
+        else:
+            await self._send(update,
+                "No Bitget account is linked. Use <code>/connect</code> to link one.")
+
+    async def _cmd_exchange(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """/exchange — show YOUR linked-account status (never reveals keys)."""
+        if not await self._guard(update, "status"):
+            return
+        from bot.core.exchange_credentials import get_credential_store
+        tg_id = self._get_tg_id(update)
+        store = get_credential_store()
+        if not store.has(tg_id):
+            await self._send(update,
+                "<b>Your exchange link</b>\n\n"
+                "Status: <code>not connected</code>\n\n"
+                "Link your own Bitget account with\n"
+                "<code>/connect &lt;api_key&gt; &lt;api_secret&gt; &lt;passphrase&gt;</code>")
+            return
+        per_user = getattr(CONFIG, "per_user_live_enabled", False)
+        live_state = "enabled" if per_user else "preparing (not yet live)"
+        await self._send(update,
+            "<b>Your exchange link</b>\n\n"
+            "Status: <code>connected</code>\n"
+            f"Key: <code>{store.fingerprint(tg_id)}</code>\n"
+            f"Per-user live trading: <code>{live_state}</code>\n\n"
+            "Use <code>/disconnect</code> to remove your keys.")
+
 
     @guard("portfolio")
     async def _cmd_livebalance(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:

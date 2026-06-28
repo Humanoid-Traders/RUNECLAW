@@ -866,6 +866,13 @@ class AppConfig:
     simulation_mode: bool = _env_bool("SIMULATION_MODE", True)
     live_trading_enabled: bool = _env_bool("LIVE_TRADING_ENABLED", False)
 
+    # Per-user live trading: when enabled, a user's confirmed live trades execute
+    # on THEIR OWN linked Bitget account (via /connect, encrypted at rest) instead
+    # of the shared operator account. Default OFF — until set, the bot behaves
+    # exactly as before (single operator account). This is the master switch for
+    # the per-user-accounts feature; see docs/LIVE_TRADING_ENABLEMENT.md.
+    per_user_live_enabled: bool = _env_bool("PER_USER_LIVE_ENABLED", False)
+
     # -- Auto-confirmation --
     # Signals with blended confidence >= this threshold auto-execute without
     # waiting for a human button press. Default 1.0 = DISABLED (require manual
