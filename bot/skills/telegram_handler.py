@@ -2867,9 +2867,11 @@ class TelegramHandler:
                 # Trail read (local — entry/SL/ATR + mark; never demands an order).
                 trail_block = ""
                 if cur > 0 and p.stop_loss > 0 and p.entry_price > 0:
+                    _ts = getattr(p, "trailing_state", None)
                     _read = _pt.trail_read(
                         p.direction, p.entry_price, p.stop_loss, cur,
-                        atr=getattr(p, "atr_at_entry", 0.0) or 0.0)
+                        atr=getattr(p, "atr_at_entry", 0.0) or 0.0,
+                        trailing_active=(_ts.get("trailing_active") if _ts else None))
                     trail_block = "\n".join(_pt.format_trail_read(_read)) + "\n"
 
                 lines.append(
