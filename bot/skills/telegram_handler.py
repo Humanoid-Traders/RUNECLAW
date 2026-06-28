@@ -2749,6 +2749,11 @@ class TelegramHandler:
         filled_pos = [p for p in positions.values() if p.status == "open"]
         pending_pos = [p for p in positions.values() if p.status == "pending_fill"]
 
+        # ── Visual card path (position cards + pending-orders card). Best-effort:
+        #    any failure falls through to the rich text readout below. ──
+        if await self._render_livepositions_cards(update, filled_pos, pending_pos):
+            return
+
         # Fetch current prices for all relevant symbols
         current_prices: dict = {}
         all_pos = filled_pos + pending_pos
@@ -2978,6 +2983,96 @@ class TelegramHandler:
                 )
 
         await self._send(update, "\n".join(lines))
+
+    async def _render_livepositions_cards(self, update, filled_pos, pending_pos) -> bool:
+        """Render /livepositions as PNG cards: one position card per open position
+        (composited into a single image) plus the pending-orders card.
+
+        Best-effort and display-only: returns True if at least one card was sent;
+        False (or on any error) lets the caller fall back to the text readout.
+        """
+        if not filled_pos and not pending_pos:
+            return False
+        try:
+            from datetime import datetime, timezone
+
+            from bot.formatters.signal_card import render_orders_card, render_position_card
+            from bot.skills.chart_renderer import _composite_pngs
+
+            exchange = None
+            try:
+                exchange = await self.engine.live_executor._get_exchange()
+            except Exception:
+                pass
+
+            async def _last(sym):
+                try:
+                    tk = await exchange.fetch_ticker(sym)
+                    return float(tk.get("last") or 0)
+                except Exception:
+                    return 0.0
+
+            now = datetime.now(timezone.utc)
+            sent_any = False
+
+            # ── Position cards (one per open position, composited) ──
+            pos_pngs: list = []
+            for p in filled_pos:
+                cur = await _last(p.symbol) if exchange else 0.0
+                lev = getattr(p, "leverage", 10) or 1
+                cost = getattr(p, "cost_usd", 0) or 0
+                pnl_usd = pnl_pct = 0.0
+                if cur > 0 and p.entry_price > 0:
+                    raw = ((cur - p.entry_price) if p.direction == "LONG"
+                           else (p.entry_price - cur)) / p.entry_price
+                    pnl_usd = raw * cost
+                    pnl_pct = raw * 100 * lev
+                hold = ""
+                if getattr(p, "opened_at", None):
+                    mins = int((now - p.opened_at).total_seconds() // 60)
+                    hold = f"{mins}m" if mins < 60 else f"{mins // 60}h {mins % 60}m"
+                sl_pct = (abs(cur - p.stop_loss) / cur * 100) if (cur > 0 and p.stop_loss > 0) else 0
+                tp_pct = (abs(p.take_profit - cur) / cur * 100) if (cur > 0 and p.take_profit > 0) else 0
+                png = render_position_card({
+                    "symbol": p.symbol, "direction": p.direction, "is_live": True,
+                    "entry": p.entry_price, "now": cur,
+                    "pnl_pct": pnl_pct, "pnl_usd": pnl_usd, "net_pnl": pnl_usd,
+                    "fees": 0.0, "size_usd": cost, "leverage": lev, "hold_time": hold,
+                    "rr": getattr(p, "rr", 0) or 0,
+                    "sl": p.stop_loss, "tp": p.take_profit,
+                    "sl_pct": sl_pct, "tp_pct": tp_pct,
+                    "sl_status": "on exchange" if getattr(p, "sl_order_id", None) else "bot-managed",
+                    "tp_status": "on exchange" if getattr(p, "tp_order_id", None) else "bot-managed",
+                })
+                if png:
+                    pos_pngs.append(png)
+            if pos_pngs:
+                combined = _composite_pngs(pos_pngs) if len(pos_pngs) > 1 else pos_pngs[0]
+                if combined and await self._send_photo(
+                        update, combined, f"\U0001f4c8 <b>ACTIVE POSITIONS ({len(pos_pngs)})</b>"):
+                    sent_any = True
+
+            # ── Pending limit orders card ──
+            if pending_pos:
+                order_rows = []
+                for p in pending_pos:
+                    cur = await _last(p.symbol) if exchange else 0.0
+                    dist = (abs(cur - p.entry_price) / p.entry_price * 100) if (cur > 0 and p.entry_price > 0) else 0
+                    order_rows.append({
+                        "sym": p.symbol, "side": "BUY" if p.direction == "LONG" else "SELL",
+                        "price": p.entry_price, "current_price": cur,
+                        "amount": getattr(p, "quantity", 0) or 0, "type": "limit",
+                        "dist_pct": dist, "oid": str(getattr(p, "trade_id", "")),
+                    })
+                opng = render_orders_card(order_rows, timestamp=f"{now.strftime('%H:%M')} UTC")
+                if opng and await self._send_photo(
+                        update, opng, f"⏳ <b>PENDING ORDERS ({len(order_rows)})</b>"):
+                    sent_any = True
+
+            return sent_any
+        except Exception as exc:
+            system_log.debug("livepositions card render failed: %s", exc)
+            return False
 
     async def _cmd_liveclose(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """/liveclose <trade_id> — manually close a live position."""
