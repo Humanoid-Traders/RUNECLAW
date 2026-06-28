@@ -61,7 +61,14 @@ import time
 from collections import deque
 from datetime import datetime
 from bot.compat import UTC
-from typing import Any, Callable, Optional
+from typing import TYPE_CHECKING, Any, Callable, Optional
+
+if TYPE_CHECKING:
+    # Import only for type-checking so the forward-ref annotations on __init__
+    # resolve (no runtime import cycle). These are the real types behind the
+    # "PortfolioTracker"/"MacroCalendar" string annotations below.
+    from bot.macro.calendar import MacroCalendar
+    from bot.risk.portfolio import PortfolioTracker
 
 from dataclasses import dataclass
 

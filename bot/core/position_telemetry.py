@@ -93,11 +93,11 @@ def atr_from_candles(highs: list, lows: list, closes: list, period: int = 14) ->
     if not trs:
         return 0.0
     if len(trs) < period:
-        return sum(trs) / len(trs)
+        return float(sum(trs) / len(trs))
     atr = sum(trs[:period]) / period
     for tr in trs[period:]:
         atr = (atr * (period - 1) + tr) / period
-    return atr
+    return float(atr)
 
 
 def playbook_trail_threshold(direction: str, sl_trigger: float,

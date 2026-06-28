@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from bot.compat import UTC
 from pathlib import Path
-from typing import Any, Optional, Callable
+from typing import Any, Optional, Callable, cast
 
 from bot.config import CONFIG
 from bot.utils.logger import audit, trade_log
@@ -212,14 +212,14 @@ class PortfolioTracker:
         commission = (size_usd + exit_notional) * (commission_pct / 100.0)
         net_pnl = pnl - commission
 
-        trade = trade.model_copy(update={
+        trade = cast(TradeExecution, trade.model_copy(update={
             "status": TradeStatus.EXECUTED,
             "exit_price": exit_price,
             "pnl": round(net_pnl, 2),
             "gross_pnl": round(pnl, 2),
             "commission": round(commission, 2),
             "closed_at": datetime.now(UTC),
-        })
+        }))
 
         self.balance += margin_usd + net_pnl
         # H-12 FIX: Clamp balance to zero to prevent negative balance from leveraged losses

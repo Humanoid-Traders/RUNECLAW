@@ -42,6 +42,15 @@ jobs:
         # needing manual triage.)
         run: ruff check --select F401,F541 bot/
 
+      - name: Types — mypy on the money modules (ratchet)
+        # Gated on the modules that are fully clean today. live_executor (~31
+        # errors) and the rest of bot/core are intentionally NOT included yet —
+        # they get added to this list as they're cleaned, so the type-safety
+        # floor only ever ratchets up, never regresses.
+        run: >
+          mypy bot/risk bot/compliance bot/utils/trailing.py
+          bot/core/bitget_v3_client.py bot/core/position_telemetry.py
+
       - name: SAST — bandit (high severity, high confidence)
         run: bandit -r bot/ --severity-level high --confidence-level high -q
 
