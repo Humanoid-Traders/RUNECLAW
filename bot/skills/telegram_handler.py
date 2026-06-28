@@ -947,7 +947,7 @@ class TelegramHandler:
         # Rate limit check
         uid = update.effective_user.id if update.effective_user else 0
         if not self._limiter.allow(uid):
-            await update.message.reply_text("\u26a0\ufe0f Rate limit. Wait a moment.")
+            await update.message.reply_text(f"\u26a0\ufe0f {t('rate_limit', self._lang(update))}")
             return
 
         # ── Custom limit price input ──────────────────────────
@@ -1313,7 +1313,7 @@ class TelegramHandler:
 
         uid = update.effective_user.id if update.effective_user else 0
         if not self._limiter.allow(uid):
-            await self._send(update, "\u26a0\ufe0f Rate limit. Wait a moment.")
+            await self._send(update, f"\u26a0\ufe0f {t('rate_limit', self._lang(update))}")
             return False
 
         # Refresh last_seen for session timeout
@@ -3477,8 +3477,7 @@ class TelegramHandler:
         # trade decision — restrict to admins, not the broad `mode` permission.
         if not self._is_admin(update):
             await self._send(update,
-                "\U0001f512 <b>Admin only</b>\n\n"
-                "Changing the LLM provider/key is restricted to admins.")
+                f"\U0001f512 {t('admin_only_llm_set', self._lang(update))}")
             return
 
         args = ctx.args or []
@@ -3505,8 +3504,7 @@ class TelegramHandler:
 
         # Warn about key exposure
         await self._send(update,
-            "⚠️ <b>Security warning:</b> API keys should only be set in private chats with the bot. "
-            "Your message containing the key will be deleted.")
+            f"⚠️ {t('llm_security_warning', self._lang(update))}")
 
         ok, msg = BYOK.set_provider(provider_str, api_key=api_key, model=model)
         if ok:
@@ -3518,15 +3516,10 @@ class TelegramHandler:
                   data={"provider": provider_str, "model": model or "default"})
             SEP = "─" * 16
             await self._send(update,
-                f"✅ <b>LLM PROVIDER UPDATED</b>\n"
-                f"{SEP}\n"
-                f"- Provider: <code>{html.escape(provider_str)}</code>\n"
-                f"- Model: <code>{html.escape(model or 'default')}</code>\n"
-                f"- Status: 🟢 active")
+                f"✅ {t('llm_provider_updated', self._lang(update), sep=SEP, provider=html.escape(provider_str), model=html.escape(model or 'default'))}")
         else:
             await self._send(update,
-                f"🔴 <b>LLM UPDATE FAILED</b>\n\n"
-                f"{html.escape(msg)}")
+                f"🔴 {t('llm_update_failed', self._lang(update), msg=html.escape(msg))}")
 
         # Always try to delete the original message containing the API key
         try:
@@ -3549,7 +3542,7 @@ class TelegramHandler:
         status = BYOK.status(env_config)
         SEP = "─" * 16
         await self._send(update,
-            f"🤖 <b>LLM STATUS</b>\n"
+            f"🤖 {t('llm_status_title', self._lang(update))}\n"
             f"{SEP}\n"
             f"<pre>{html.escape(status)}</pre>")
 
@@ -3559,8 +3552,7 @@ class TelegramHandler:
         # Audit F-12: admin-only, mirroring /setllm.
         if not self._is_admin(update):
             await self._send(update,
-                "\U0001f512 <b>Admin only</b>\n\n"
-                "Resetting the LLM provider/key is restricted to admins.")
+                f"\U0001f512 {t('admin_only_llm_reset', self._lang(update))}")
             return
 
         msg = BYOK.reset()
@@ -3570,10 +3562,7 @@ class TelegramHandler:
         audit(system_log, "LLM config reset to .env", action="llmreset", result="OK")
         SEP = "─" * 16
         await self._send(update,
-            f"🔄 <b>LLM CONFIG RESET</b>\n"
-            f"{SEP}\n"
-            f"- {html.escape(msg)}\n"
-            f"- Status: 🟢 using .env defaults")
+            f"🔄 {t('llm_config_reset', self._lang(update), sep=SEP, msg=html.escape(msg))}")
 
     @guard("status")
     async def _cmd_llmtiers(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -3588,7 +3577,7 @@ class TelegramHandler:
         active_cfg = BYOK.get_active_config(env_config)
 
         SEP = "─" * 16
-        lines = [f"🎯 <b>Multi-Tier LLM Routing</b>\n{SEP}\n"]
+        lines = [f"🎯 {t('llm_tiers_title', self._lang(update))}\n{SEP}\n"]
         for tier in LLMTier:
             tier_cfg = resolve_tier_config(tier, active_cfg)
             provider_name = tier_cfg.provider.value if isinstance(tier_cfg.provider, LLMProvider) else str(tier_cfg.provider)

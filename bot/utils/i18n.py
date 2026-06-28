@@ -642,6 +642,35 @@ _STRINGS: dict[str, dict[str, str]] = {
     "no_registered_users": {"en": "<b>No registered users</b>", "zh": "<b>沒有已註冊的用戶</b>"},
     "users_header": {"en": "<b>REGISTERED USERS</b>  ({n} total)", "zh": "<b>已註冊用戶</b>  (共 {n} 位)"},
     "users_more": {"en": "Showing last 15 of {n}", "zh": "顯示最近 15 筆，共 {n} 筆"},
+
+    # ── LLM commands (prose only; code/config blocks stay English) + misc ──
+    "admin_only_llm_set": {
+        "en": "<b>Admin only</b>\n\nChanging the LLM provider/key is restricted to admins.",
+        "zh": "<b>僅限管理員</b>\n\n變更 LLM 供應商／金鑰僅限管理員。",
+    },
+    "admin_only_llm_reset": {
+        "en": "<b>Admin only</b>\n\nResetting the LLM provider/key is restricted to admins.",
+        "zh": "<b>僅限管理員</b>\n\n重設 LLM 供應商／金鑰僅限管理員。",
+    },
+    "llm_security_warning": {
+        "en": "<b>Security warning:</b> API keys should only be set in private chats with the bot. Your message containing the key will be deleted.",
+        "zh": "<b>安全警告：</b>API 金鑰只應在與機器人的私訊中設定。包含金鑰的訊息將被刪除。",
+    },
+    "llm_provider_updated": {
+        "en": "<b>LLM PROVIDER UPDATED</b>\n{sep}\n- Provider: <code>{provider}</code>\n- Model: <code>{model}</code>\n- Status: 🟢 active",
+        "zh": "<b>LLM 供應商已更新</b>\n{sep}\n- 供應商: <code>{provider}</code>\n- 模型: <code>{model}</code>\n- 狀態: 🟢 運作中",
+    },
+    "llm_update_failed": {
+        "en": "<b>LLM UPDATE FAILED</b>\n\n{msg}",
+        "zh": "<b>LLM 更新失敗</b>\n\n{msg}",
+    },
+    "llm_status_title": {"en": "<b>LLM STATUS</b>", "zh": "<b>LLM 狀態</b>"},
+    "llm_config_reset": {
+        "en": "<b>LLM CONFIG RESET</b>\n{sep}\n- {msg}\n- Status: 🟢 using .env defaults",
+        "zh": "<b>LLM 設定已重設</b>\n{sep}\n- {msg}\n- 狀態: 🟢 使用 .env 預設值",
+    },
+    "llm_tiers_title": {"en": "<b>Multi-Tier LLM Routing</b>", "zh": "<b>多層級 LLM 路由</b>"},
+    "rate_limit": {"en": "Rate limit. Wait a moment.", "zh": "請求過於頻繁，請稍候。"},
 }
 
 
