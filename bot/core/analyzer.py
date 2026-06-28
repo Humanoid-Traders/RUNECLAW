@@ -561,6 +561,10 @@ class Analyzer:
             signal=signal,
         )
 
+        # Phase B: capture the named per-voter breakdown alongside the score so
+        # downstream recording can persist it for voter-weight learning. The
+        # breakdown out-param does not affect the returned confluence value.
+        _confluence_votes: list = []
         confluence = self._score_confluence(
             indicators, regime, signal,
             order_flow=order_flow,
@@ -569,6 +573,7 @@ class Analyzer:
             mode_config=mode_config,
             sentiment_engine=self._sentiment,
             strategy_type=strategy_type,
+            breakdown=_confluence_votes,
         )
 
         indicators["regime"] = regime.value
@@ -1056,6 +1061,13 @@ class Analyzer:
             strategy_type=strategy_type,
             signal_type=signal_type,
         )
+
+        # Phase B: attach the per-voter breakdown so the decision recorder can
+        # persist it (joined to outcome for voter-weight learning later).
+        try:
+            idea._confluence_votes = _confluence_votes
+        except Exception:
+            pass
 
         # Store VWAP at entry for reversion exit tracking
         if signal_type == "vwap_reversion" and indicators.get("vwap"):
@@ -1670,7 +1682,8 @@ class Analyzer:
     def _score_confluence(indicators: dict, regime: Regime, signal: MarketSignal,
                           order_flow=None, mtf_result=None, smart_money_score=None,
                           mode_config=None, sentiment_engine=None,
-                          strategy_type: str = "swing") -> float:
+                          strategy_type: str = "swing",
+                          breakdown: "Optional[list]" = None) -> float:
         """
         Score agreement across indicators on a 0-1 scale.
 
@@ -1691,6 +1704,15 @@ class Analyzer:
 
         def _mark_mr_osc() -> None:
             mr_osc_idx.append(len(votes) - 1)
+
+        # Phase B: named per-voter capture. `aw` appends the SAME weight as
+        # before plus a parallel name, so votes/weights/confluence are
+        # byte-identical; `names` lets a learner attribute outcomes to voters.
+        names: list[str] = []
+
+        def aw(weight: float, name: str) -> None:
+            weights.append(weight)
+            names.append(name)
 
         # IMPROVEMENT #1: activate strategy-mode confluence boosts.
         # Each mode amplifies the weight of the factors that matter for it
@@ -1718,7 +1740,7 @@ class Analyzer:
             votes.append(-0.3)
         else:
             votes.append(0.0)
-        weights.append(_boost(1.5, "rsi"))
+        aw(_boost(1.5, "rsi"), "rsi")
         _mark_mr_osc()
 
         # MACD vote (weight 1.0)
@@ -1729,7 +1751,7 @@ class Analyzer:
             votes.append(-1.0)
         else:
             votes.append(0.0)
-        weights.append(1.0)
+        aw(1.0, "macd")
 
         # Bollinger %B vote (weight 1.0)
         pct_b = indicators.get("bb_pct_b", 0.5)
@@ -1739,7 +1761,7 @@ class Analyzer:
             votes.append(-1.0)  # near upper band → bearish
         else:
             votes.append(0.0)
-        weights.append(_boost(1.0, "bb_pct_b"))
+        aw(_boost(1.0, "bb_pct_b"), "bb_pct_b")
         _mark_mr_osc()
 
         # Volume spike vote (weight 0.8 — confirms directional moves)
@@ -1748,7 +1770,7 @@ class Analyzer:
             votes.append(1.0 if signal.change_pct_24h > 0 else -1.0)
         else:
             votes.append(0.0)
-        weights.append(0.8)
+        aw(0.8, "volume_spike")
 
         # ADX trend strength vote (weight 0.7)
         adx = indicators.get("adx", 0)
@@ -1758,7 +1780,7 @@ class Analyzer:
             votes.append(0.3 if indicators.get("plus_di", 0) > indicators.get("minus_di", 0) else -0.3)
         else:
             votes.append(0.0)
-        weights.append(0.7)
+        aw(0.7, "adx")
 
         # VWAP vote (weight 0.5 — institutional bias)
         vwap = indicators.get("vwap")
@@ -1769,7 +1791,7 @@ class Analyzer:
                 votes.append(-1.0)  # below VWAP → bearish
             else:
                 votes.append(0.0)
-            weights.append(0.5)
+            aw(0.5, "vwap")
 
         # OBV trend vote (weight 0.6 — volume confirms price trend)
         # Guard: only vote when obv_trend is present to keep votes/weights aligned
@@ -1781,36 +1803,36 @@ class Analyzer:
                 votes.append(-1.0)
             else:
                 votes.append(0.0)
-            weights.append(0.6)
+            aw(0.6, "obv")
 
         # Candlestick pattern vote (weight 0.8 — price action signal)
         bull_count = indicators.get("candle_bullish_count", 0)
         bear_count = indicators.get("candle_bearish_count", 0)
         if bull_count > bear_count:
             votes.append(1.0)
-            weights.append(0.8)
+            aw(0.8, "candlestick")
         elif bear_count > bull_count:
             votes.append(-1.0)
-            weights.append(0.8)
+            aw(0.8, "candlestick")
         elif bull_count > 0 or bear_count > 0:
             votes.append(0.0)
-            weights.append(0.4)
+            aw(0.4, "candlestick")
 
         # Fibonacci zone vote (weight 0.5 — mean-reversion near key levels)
         fib_zone = indicators.get("fib_zone")
         _fib_before = len(votes)
         if fib_zone in ("618_786", "below_786"):
             votes.append(1.0)   # deep retracement → bullish bounce potential
-            weights.append(0.5)
+            aw(0.5, "fibonacci")
         elif fib_zone == "500_618":
             votes.append(0.5)   # moderate retracement → mildly bullish
-            weights.append(0.5)
+            aw(0.5, "fibonacci")
         elif fib_zone == "above_236":
             votes.append(-0.3)  # near swing high → mildly bearish
-            weights.append(0.5)
+            aw(0.5, "fibonacci")
         elif fib_zone is not None:
             votes.append(0.0)
-            weights.append(0.3)
+            aw(0.3, "fibonacci")
         if len(votes) > _fib_before:
             _mark_mr_osc()
 
@@ -1827,7 +1849,7 @@ class Analyzer:
             geo_count = indicators.get("chart_patterns_bullish_count", 0) + \
                         indicators.get("chart_patterns_bearish_count", 0)
             scaled_weight = min(1.0, 0.7 * min(geo_count, 3))  # cap at 3 patterns
-            weights.append(scaled_weight)
+            aw(scaled_weight, "chart_patterns")
 
         # ── Divergence Scanner voter ──
         div_votes = indicators.get("_div_votes")
@@ -1835,6 +1857,7 @@ class Analyzer:
         if div_votes and div_weights:
             votes.extend(div_votes)
             weights.extend(div_weights)
+            names.extend(["divergence"] * len(div_weights))
 
         # ── Volume Profile voter ──
         vp = indicators.get("_vp_result")
@@ -1852,7 +1875,7 @@ class Analyzer:
                     vp_vote *= 0.5
                 if abs(vp_vote) > 0:
                     votes.append(vp_vote)
-                    weights.append(0.6)
+                    aw(0.6, "volume_profile")
             except Exception as _vp_exc:
                 logger.warning("Volume profile confluence vote failed: %s", _vp_exc)
 
@@ -1878,7 +1901,7 @@ class Analyzer:
             elif stoch_k > 60:
                 stoch_vote = -0.3
             votes.append(stoch_vote)
-            weights.append(_boost(1.2, "stoch"))
+            aw(_boost(1.2, "stoch"), "stoch")
             _mark_mr_osc()
 
         # Donchian Channel voter (weight 1.0 — Turtle Breakout)
@@ -1901,7 +1924,7 @@ class Analyzer:
             elif indicators.get("dc55_breakout_low"):
                 dc_vote = max(-1.0, dc_vote - 0.3)
             votes.append(dc_vote)
-            weights.append(_boost(1.0, "donchian"))
+            aw(_boost(1.0, "donchian"), "donchian")
 
         # Reversal signal voter (weight 0.9 — pin bars, inside bars, capitulation)
         rev_vote = 0.0
@@ -1923,7 +1946,7 @@ class Analyzer:
             rev_has_signal = True
         if rev_has_signal:
             votes.append(max(-1.0, min(1.0, rev_vote)))
-            weights.append(_boost(0.9, "reversal"))
+            aw(_boost(0.9, "reversal"), "reversal")
 
         # Wyckoff phase voter (weight 0.8 — accumulation/distribution cycle)
         wyckoff = indicators.get("wyckoff_pattern")
@@ -1932,13 +1955,13 @@ class Analyzer:
             w_conf = wyckoff.get("confidence", 0.5)
             if w_signal == "bullish":
                 votes.append(w_conf)
-                weights.append(0.8)
+                aw(0.8, "wyckoff")
             elif w_signal == "bearish":
                 votes.append(-w_conf)
-                weights.append(0.8)
+                aw(0.8, "wyckoff")
             else:
                 votes.append(0.0)
-                weights.append(0.4)
+                aw(0.4, "wyckoff")
 
         # Harmonic pattern voter (weight 0.75 — Gartley/Butterfly/Bat/Crab)
         harmonic = indicators.get("harmonic_pattern")
@@ -1947,13 +1970,13 @@ class Analyzer:
             h_conf = harmonic.get("confidence", 0.5)
             if h_signal == "bullish":
                 votes.append(h_conf)
-                weights.append(0.75)
+                aw(0.75, "harmonic")
             elif h_signal == "bearish":
                 votes.append(-h_conf)
-                weights.append(0.75)
+                aw(0.75, "harmonic")
             else:
                 votes.append(0.0)
-                weights.append(0.35)
+                aw(0.35, "harmonic")
 
         # Elliott Wave voters — separate votes for each wave type detected.
         # Impulse (strongest trend signal), Corrective (context), Diagonal (reversal),
@@ -1972,13 +1995,13 @@ class Analyzer:
                 e_conf = ew.get("confidence", 0.5)
                 if e_signal == "bullish":
                     votes.append(e_conf)
-                    weights.append(_boost(ew_weight, ew_label))
+                    aw(_boost(ew_weight, ew_label), ew_label)
                 elif e_signal == "bearish":
                     votes.append(-e_conf)
-                    weights.append(_boost(ew_weight, ew_label))
+                    aw(_boost(ew_weight, ew_label), ew_label)
                 else:
                     votes.append(0.0)
-                    weights.append(0.25)
+                    aw(0.25, ew_label)
 
         # Legacy fallback: if no typed Elliott found, use generic key
         if not any(indicators.get(k) for k, _, _ in _elliott_types):
@@ -1988,25 +2011,27 @@ class Analyzer:
                 e_conf = elliott.get("confidence", 0.5)
                 if e_signal == "bullish":
                     votes.append(e_conf)
-                    weights.append(0.65)
+                    aw(0.65, "elliott")
                 elif e_signal == "bearish":
                     votes.append(-e_conf)
-                    weights.append(0.65)
+                    aw(0.65, "elliott")
                 else:
                     votes.append(0.0)
-                    weights.append(0.3)
+                    aw(0.3, "elliott")
 
         # Order flow votes (if available)
         if order_flow is not None:
             of_votes, of_weights, of_labels = OrderFlowAnalyzer.to_confluence_votes(order_flow)
             votes += of_votes
             weights += [_boost(w, l) for w, l in zip(of_weights, of_labels)]
+            names.extend(of_labels)
 
         # Multi-timeframe votes (if available)
         if mtf_result is not None:
             mtf_votes, mtf_weights, mtf_labels = MTFConfluence.to_confluence_votes(mtf_result)
             votes += mtf_votes
             weights += [_boost(w, l) for w, l in zip(mtf_weights, mtf_labels)]
+            names.extend(mtf_labels)
 
         # Smart money votes (if available)
         if smart_money_score is not None:
@@ -2015,6 +2040,7 @@ class Analyzer:
             sm_weight_mult = CONFIG.strategy_types.get_smart_money_weight(strategy_type)
             votes += sm_votes
             weights += [_boost(w * sm_weight_mult, l) for w, l in zip(sm_weights, sm_labels)]
+            names.extend(sm_labels)
 
         # Sentiment voter
         if sentiment_engine is not None:
@@ -2022,7 +2048,7 @@ class Analyzer:
                 sentiment_votes = sentiment_engine.to_confluence_votes()
                 for _name, vote_val, vote_weight in sentiment_votes:
                     votes.append(vote_val)
-                    weights.append(vote_weight)
+                    aw(vote_weight, "sentiment")
             except Exception as _sent_exc:
                 logger.warning("Sentiment engine vote failed: %s", _sent_exc)
 
@@ -2036,7 +2062,7 @@ class Analyzer:
                 poc_vote = 0.5 if magnet["direction"] == "pull_up" else -0.5
                 poc_vote *= magnet.get("strength", 0.5)
                 votes.append(poc_vote)
-                weights.append(0.6)
+                aw(0.6, "poc_magnet")
 
         # Liquidity Sweep voter (weight up to 1.2 — high-probability reversal)
         sweep_v = indicators.get("_sweep_votes")
@@ -2044,6 +2070,7 @@ class Analyzer:
         if sweep_v and sweep_w:
             votes.extend(sweep_v)
             weights.extend(sweep_w)
+            names.extend(["liquidity_sweep"] * len(sweep_w))
 
         # Supply/Demand Zone voter
         sd_zones = indicators.get("_sd_zones")
@@ -2055,6 +2082,7 @@ class Analyzer:
                 sd_v, sd_w = zones_to_confluence(sd_zones, signal.price, approx_dir)
                 votes.extend(sd_v)
                 weights.extend(sd_w)
+                names.extend(["supply_demand"] * len(sd_w))
             except Exception as _sd_exc:
                 logger.warning("Supply/demand zone confluence vote failed: %s", _sd_exc)
 
@@ -2063,13 +2091,13 @@ class Analyzer:
         if squeeze_sig is not None and hasattr(squeeze_sig, 'squeeze_fired') and squeeze_sig.squeeze_fired:
             sq_vote = 0.8 if squeeze_sig.fire_direction == "bullish" else -0.8
             votes.append(sq_vote)
-            weights.append(0.9)
+            aw(0.9, "squeeze")
         elif squeeze_sig is not None and hasattr(squeeze_sig, 'is_squeezing') and squeeze_sig.is_squeezing:
             # Currently squeezing — breakout imminent, mild directional bias from momentum
             if hasattr(squeeze_sig, 'momentum'):
                 sq_vote = 0.3 if squeeze_sig.momentum > 0 else -0.3
                 votes.append(sq_vote)
-                weights.append(0.5)
+                aw(0.5, "squeeze")
 
         # EMA ribbon voter
         ema9 = indicators.get("ema_9")
@@ -2077,13 +2105,13 @@ class Analyzer:
         if ema9 is not None and ema21 is not None:
             if ema9 > ema21:
                 votes.append(0.6)
-                weights.append(0.5)
+                aw(0.5, "ema_ribbon")
             elif ema9 < ema21:
                 votes.append(-0.6)
-                weights.append(0.5)
+                aw(0.5, "ema_ribbon")
             else:
                 votes.append(0.0)
-                weights.append(0.5)
+                aw(0.5, "ema_ribbon")
 
         # Keltner squeeze voter (volatility compression = breakout imminent)
         squeeze = indicators.get("kc_squeeze", False)
@@ -2092,22 +2120,22 @@ class Analyzer:
             macd_hist_val = indicators.get("macd_histogram", 0)
             if macd_hist_val > 0:
                 votes.append(0.5)
-                weights.append(0.7)
+                aw(0.7, "keltner")
             elif macd_hist_val < 0:
                 votes.append(-0.5)
-                weights.append(0.7)
+                aw(0.7, "keltner")
             else:
                 votes.append(0.0)
-                weights.append(0.7)
+                aw(0.7, "keltner")
 
         # Taker buy/sell imbalance voter
         taker_buy_ratio = indicators.get("taker_buy_ratio", 0.5)
         if taker_buy_ratio > 0.55:
             votes.append(0.5)
-            weights.append(0.5)
+            aw(0.5, "taker")
         elif taker_buy_ratio < 0.45:
             votes.append(-0.5)
-            weights.append(0.5)
+            aw(0.5, "taker")
 
         # IMPROVEMENT #1: boosts are now applied inline at each voter via
         # _boost(weight, label) using the labels the sub-engines return.
@@ -2136,6 +2164,11 @@ class Analyzer:
                     scale = cap / fam_weight
                     for i in active:
                         weights[i] *= scale
+
+        # Phase B: emit the named per-voter breakdown (best-effort; only when
+        # fully aligned). Does not affect the confluence value.
+        if breakdown is not None and len(names) == len(votes) == len(weights):
+            breakdown.extend((names[i], votes[i], weights[i]) for i in range(len(votes)))
 
         # Weighted confluence
         total_weight = sum(weights)

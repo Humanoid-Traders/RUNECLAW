@@ -54,6 +54,7 @@ class ExperienceMemory:
         strategy_version: str = "v1",
         risk_engine_version: str = "v1",
         mode: str = "paper",
+        confluence_votes: Optional[list] = None,
     ) -> DecisionMemory:
         """Record a complete trading decision."""
         record = DecisionMemory(
@@ -61,6 +62,7 @@ class ExperienceMemory:
             direction=direction,
             confidence=confidence,
             confluence_score=confluence_score,
+            confluence_votes=confluence_votes or [],
             entry_price=entry_price,
             stop_loss=stop_loss,
             take_profit=take_profit,

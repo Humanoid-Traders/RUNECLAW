@@ -2762,15 +2762,18 @@ class TelegramHandler:
         try:
             from bot.learning.confidence_calibration import refit_and_save, ConfidenceCalibrator
             from bot.learning.setup_expectancy import get_setup_expectancy
+            from bot.learning import voter_weights as _vw
             if do_refit:
                 cal = refit_and_save()
                 if hasattr(self.engine, "analyzer") and hasattr(self.engine.analyzer, "refresh_calibrator"):
                     self.engine.analyzer.refresh_calibrator()
                 exp = get_setup_expectancy(reload=True)
+                vw = _vw.refit_and_save()
                 action = "Refit/reload complete.\n\n"
             else:
                 cal = ConfidenceCalibrator.load() or ConfidenceCalibrator()
                 exp = get_setup_expectancy()
+                vw = _vw.VoterWeightLearner.load() or _vw.VoterWeightLearner()
                 action = ""
         except Exception as exc:
             await self._send(update, f"🔴 Learning overlay error: {html.escape(str(exc))}")
@@ -2786,6 +2789,8 @@ class TelegramHandler:
             f"<code>{html.escape(cal.summary())}</code>\n\n"
             f"<b>Per-setup expectancy</b> — <code>{_mode(exp_on)}</code>\n"
             f"<code>{html.escape(exp.summary())}</code>\n\n"
+            f"<b>Voter-weight learning</b> — <code>instrument-only (not yet applied)</code>\n"
+            f"<code>{html.escape(vw.summary())}</code>\n\n"
             "<i>Refit/reload from history: </i><code>/calibration refit</code>")
 
     @guard("portfolio")
