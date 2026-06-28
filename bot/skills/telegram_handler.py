@@ -4921,6 +4921,52 @@ class TelegramHandler:
                 import asyncio
                 await asyncio.sleep(0.3)
 
+    @staticmethod
+    def _synth_order_from_tracked(p) -> dict:
+        """Build a ccxt-order-shaped dict from a bot-tracked pending_fill position.
+
+        Lets a bot-tracked pending limit flow through the same rendering path as
+        a real exchange order when the exchange query can't see it.
+        """
+        side = "buy" if getattr(p, "direction", "") == "LONG" else "sell"
+        opened = getattr(p, "opened_at", None)
+        return {
+            "id": getattr(p, "trade_id", "") or "",
+            "symbol": getattr(p, "symbol", "") or "",
+            "type": "limit",
+            "side": side,
+            "price": getattr(p, "entry_price", 0) or 0,
+            "amount": getattr(p, "quantity", 0) or 0,
+            "remaining": getattr(p, "quantity", 0) or 0,
+            "filled": 0,
+            "status": "open",
+            "triggerPrice": 0,
+            "datetime": opened.isoformat() if opened is not None else "",
+        }
+
+    @staticmethod
+    def _reconcile_open_orders(exchange_orders, tracked_pending, per_symbol_orders):
+        """Decide what /openorders should display, reconciling the live exchange
+        query with the bot's own tracked pending_fill orders.
+
+        Returns ``(orders, desync)`` where ``desync`` is True when the exchange
+        reports nothing but the bot is still tracking pending limit(s) — i.e. the
+        bot-tracked records are being surfaced and should carry a warning.
+
+        Priority:
+          1. account-wide exchange result, if non-empty (source of truth);
+          2. else, if the bot tracks nothing pending, genuinely empty;
+          3. else, the per-symbol re-fetch result, if it found anything;
+          4. else, the bot-tracked records, flagged as a possible desync.
+        """
+        if exchange_orders:
+            return list(exchange_orders), False
+        if not tracked_pending:
+            return [], False
+        if per_symbol_orders:
+            return list(per_symbol_orders), False
+        return [TelegramHandler._synth_order_from_tracked(p) for p in tracked_pending], True
+
     @guard("portfolio")
     async def _cmd_orders(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """Show open/pending orders on Bitget exchange."""
@@ -4933,6 +4979,46 @@ class TelegramHandler:
             # Fetch all open orders (limit orders, trigger orders, SL/TP)
             open_orders = await exchange.fetch_open_orders(
                 params={"productType": "USDT-FUTURES"})
+
+            # Reconcile with the bot's own tracked pending limit orders.
+            # /livepositions reads these from live_executor._positions; the
+            # account-wide query above can miss them (Bitget's no-symbol futures
+            # order query is unreliable), which makes the two commands disagree.
+            # When that happens, retry per-symbol, and if the exchange still
+            # shows nothing, surface the bot-tracked orders with a desync warning
+            # instead of flatly reporting "none".
+            try:
+                tracked_pending = [
+                    p for p in self.engine.live_executor._positions.values()
+                    if getattr(p, "status", "") == "pending_fill"
+                ]
+            except Exception:
+                tracked_pending = []
+
+            per_symbol_orders: list = []
+            if not open_orders and tracked_pending:
+                seen_ids: set = set()
+                for _p in tracked_pending:
+                    try:
+                        _per = await exchange.fetch_open_orders(_p.symbol)
+                    except Exception:
+                        _per = []
+                    for _o in (_per or []):
+                        _oid = _o.get("id", "")
+                        if _oid not in seen_ids:
+                            seen_ids.add(_oid)
+                            per_symbol_orders.append(_o)
+
+            open_orders, _desync = self._reconcile_open_orders(
+                open_orders, tracked_pending, per_symbol_orders)
+
+            if _desync:
+                await self._send(update,
+                    "⚠️ <b>Possible desync</b>\n\n"
+                    "Bitget returned no resting orders, but the bot is still "
+                    "tracking the pending limit order(s) below. They may have "
+                    "just filled or been cancelled — verify on Bitget (the "
+                    "bot reconciles on its next tick).")
 
             if not open_orders:
                 await self._send(update,
