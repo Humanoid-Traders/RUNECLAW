@@ -166,6 +166,111 @@ async def handle_signals(request: web.Request) -> web.Response:
     return web.json_response({"signals": signals, "trades": trades})
 
 
+# ── Analytics (equity curve / performance) ───────────────────
+# The engine keeps no persistent equity time-series (MetricsEngine is built on
+# demand), so the curve is RECONSTRUCTED from realized closed-trade PnL: start
+# at the summed initial balance and step by each trade's net PnL in close-time
+# order. Read-only and aggregate (operator-level), matching the existing /api/*
+# surface — so it is gated by the same fail-closed Bearer auth.
+
+def _portfolios_for_analytics(engine) -> list:
+    """Operator-level view: every user portfolio, or the base one if none exist.
+
+    Mirrors handle_state/handle_signals, which aggregate across
+    engine.user_portfolios and fall back to engine.portfolio.
+    """
+    try:
+        ups = engine.user_portfolios.all_portfolios()
+    except Exception:
+        ups = None
+    if ups:
+        return list(ups.values())
+    return [engine.portfolio]
+
+
+def _reconstruct_equity_curve(portfolios: list) -> tuple[float, list[tuple[datetime, float]], list]:
+    """Aggregate realized-equity series across portfolios.
+
+    Returns ``(initial_balance, points, closed_trades)`` where ``points`` is a
+    list of ``(timestamp, equity)`` in close-time order (seeded with the opening
+    balance) and ``closed_trades`` is the merged closed-trade set for metrics.
+    """
+    initial = 0.0
+    closed: list = []
+    for p in portfolios:
+        initial += float(getattr(p, "_initial_balance", 0.0) or 0.0)
+        try:
+            history = p.trade_history
+        except Exception:
+            history = []
+        for t in history:
+            if getattr(t, "closed_at", None) is not None:
+                closed.append(t)
+    closed.sort(key=lambda t: t.closed_at)
+
+    points: list[tuple[datetime, float]] = []
+    equity = initial
+    if closed:
+        seed_ts = closed[0].opened_at or closed[0].closed_at
+        points.append((seed_ts, initial))
+    for t in closed:
+        equity += t.pnl
+        points.append((t.closed_at, equity))
+    return initial, points, closed
+
+
+async def handle_performance(request: web.Request) -> web.Response:
+    """Aggregate performance metrics + breakdown (read-only)."""
+    engine = request.app["engine"]
+    try:
+        from bot.core.metrics import MetricsEngine
+        portfolios = _portfolios_for_analytics(engine)
+        initial, points, closed = _reconstruct_equity_curve(portfolios)
+        me = MetricsEngine()
+        # Feed the reconstructed curve so drawdown / Calmar / equity_high are
+        # populated (compute() reads MetricsEngine._equity_curve internally).
+        for ts, eq in points:
+            me.record_equity(eq, ts)
+        snap = me.compute(closed)
+        breakdown = me.compute_breakdown(closed)
+        current_equity = points[-1][1] if points else initial
+        return web.json_response({
+            "timestamp": _ts(),
+            "initial_balance": round(initial, 2),
+            "current_equity": round(current_equity, 2),
+            "metrics": _safe_dict(snap),
+            "breakdown": breakdown,
+        })
+    except Exception as exc:
+        return web.json_response({"error": str(exc)[:200]}, status=500)
+
+
+async def handle_equitycurve(request: web.Request) -> web.Response:
+    """Reconstructed equity curve with running drawdown (read-only)."""
+    engine = request.app["engine"]
+    try:
+        portfolios = _portfolios_for_analytics(engine)
+        initial, points, _ = _reconstruct_equity_curve(portfolios)
+        series = []
+        peak = initial
+        for ts, eq in points:
+            peak = max(peak, eq)
+            dd = ((peak - eq) / peak * 100.0) if peak > 0 else 0.0
+            series.append({
+                "timestamp": ts.isoformat() if hasattr(ts, "isoformat") else str(ts),
+                "equity": round(eq, 2),
+                "drawdown_pct": round(dd, 4),
+            })
+        return web.json_response({
+            "timestamp": _ts(),
+            "initial_balance": round(initial, 2),
+            "count": len(series),
+            "points": series,
+        })
+    except Exception as exc:
+        return web.json_response({"error": str(exc)[:200]}, status=500)
+
+
 async def handle_index(request: web.Request) -> web.Response:
     """Serve the dashboard HTML."""
     html_path = pathlib.Path(__file__).parent / "dashboard.html"
@@ -342,6 +447,8 @@ def create_app(engine) -> web.Application:
     app.router.add_get("/api/state", handle_state)
     app.router.add_get("/api/positions", handle_positions)
     app.router.add_get("/api/signals", handle_signals)
+    app.router.add_get("/api/performance", handle_performance)
+    app.router.add_get("/api/equitycurve", handle_equitycurve)
     # Operational probes / scrape (unauthenticated; non-sensitive).
     app.router.add_get("/health", handle_health)
     app.router.add_get("/ready", handle_ready)
