@@ -1256,6 +1256,12 @@ class RunStrategySkill(BaseSkill):
 
         cfg = self.PRESETS[key]
         audit(system_log, f"Strategy: {cfg['label']}", action="run_strategy", data=cfg)
+        # Reset the stash up-front so an early "no signals" return can't surface a
+        # stale setups card from a previous run.
+        try:
+            engine._last_strategy_setups = []
+        except Exception:
+            pass
 
         signals = await engine.scanner.scan()
         if not signals:
@@ -1275,6 +1281,7 @@ class RunStrategySkill(BaseSkill):
             return f"{cfg['icon']} <b>{cfg['label']}</b>\n\n<i>No signals matched filters</i>"
 
         results = []
+        setups: list = []
         ideas = 0
         for sig in signals[:5]:
             idea = await engine._analyze_signal(sig)
@@ -1290,6 +1297,19 @@ class RunStrategySkill(BaseSkill):
                 f"  {d_icon} <b>{_esc(idea.asset)}</b>  "
                 f"<code>{idea.confidence:.0%}</code>  R:R <code>{idea.risk_reward_ratio}</code>"
             )
+            setups.append({
+                "sym": idea.asset, "dir": idea.direction.value,
+                "price": idea.entry_price, "entry": idea.entry_price,
+                "sl": idea.stop_loss, "tp": idea.take_profit,
+                "rr": idea.risk_reward_ratio, "score": idea.confidence,
+                "rsi": 0, "vol_ratio": getattr(sig, "volume_spike_ratio", 0) or 0,
+            })
+        # Stash structured setups so the handler can render the setups card
+        # (non-breaking: this method still returns its text).
+        try:
+            engine._last_strategy_setups = setups
+        except Exception:
+            pass
 
         lines = [
             f"{cfg['icon']} <b>{cfg['label']}</b>",

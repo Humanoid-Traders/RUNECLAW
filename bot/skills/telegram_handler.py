@@ -4335,7 +4335,8 @@ class TelegramHandler:
         await self._send(update, "\u23f3 <i>Running Momentum Hunter...</i>")
         result = await self.registry.dispatch("run_strategy",
             self.engine, strategy="momentum")
-        await self._send(update, result)
+        if not await self._render_strategy_setups_card(update, "MOMENTUM HUNTER"):
+            await self._send(update, result)
 
     async def _cmd_dip(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """Shortcut for /run dip."""
@@ -4344,7 +4345,27 @@ class TelegramHandler:
         await self._send(update, "\u23f3 <i>Running Dip Sniper (all symbols)...</i>")
         result = await self.registry.dispatch("run_strategy",
             self.engine, strategy="dip")
-        await self._send(update, result)
+        if not await self._render_strategy_setups_card(update, "DIP SNIPER"):
+            await self._send(update, result)
+
+    async def _render_strategy_setups_card(self, update, label: str) -> bool:
+        """Render the stashed strategy setups (entry/SL/TP/R:R per idea) as the
+        setups card. Best-effort; returns True if a card was sent."""
+        try:
+            setups = getattr(self.engine, "_last_strategy_setups", None)
+            if not setups:
+                return False
+            from bot.formatters.signal_card import render_scan_results_card
+            png = render_scan_results_card(
+                setups, scan_label=label,
+                timestamp=f"{datetime.now(UTC).strftime('%H:%M')} UTC")
+            if not png:
+                return False
+            return await self._send_photo(
+                update, png, f"\U0001f3af <b>{label}</b> \u2014 {len(setups)} setup(s)")
+        except Exception as exc:
+            system_log.debug("strategy setups card render failed: %s", exc)
+            return False
 
     async def _cmd_scalp(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """Scalp scan: 5m candles, tight SL, top-3 by volume."""
