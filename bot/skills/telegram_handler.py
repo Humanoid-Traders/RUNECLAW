@@ -1186,6 +1186,17 @@ class TelegramHandler:
             return str(update.effective_chat.id)
         return ""
 
+    def _lang(self, update: Update) -> str:
+        """Resolve the caller's UI language ('en'/'zh') for i18n t() calls.
+
+        Single source so any handler can localize a string in one line:
+        ``t("some_key", self._lang(update), ...)``. Fails safe to English.
+        """
+        try:
+            return get_user_lang(self.users, self._get_tg_id(update))
+        except Exception:
+            return "en"
+
     @staticmethod
     def _uid_matches(caller_uid: str | None, expected_uid: str | None) -> bool:
         """Check if caller matches expected UID(s).
@@ -3745,7 +3756,11 @@ class TelegramHandler:
 
         ids_before = set(idea.id for idea in self.engine.pending_ideas)
         admin = self._is_admin(update)
-        await self._send(update, f"\u23f3 <i>Analyzing {html.escape(symbol)}...</i>")
+        # i18n: translate the inner sentence only; the \u23f3 + italics wrapper is
+        # kept here so the English output is byte-identical to before.
+        await self._send(
+            update,
+            f"\u23f3 <i>{t('analyzing', self._lang(update), asset=html.escape(symbol))}</i>")
 
         try:
             result = await self.registry.dispatch("analyze_asset",
