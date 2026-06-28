@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RUNECLAW — Performance</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700&family=Rajdhani:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+:root {
+  --bg: #0a0c10;
+  --panel: #111520;
+  --border: #1e2535;
+  --gold: #d4a849;
+  --green: #22c55e;
+  --red: #ef4444;
+  --amber: #f59e0b;
+  --text: #e2e8f0;
+  --text-dim: #64748b;
+  --steel: #94a3b8;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Rajdhani', sans-serif;
+  font-size: 14px;
+  padding: 18px;
+}
+header {
+  display: flex; align-items: baseline; justify-content: space-between;
+  border-bottom: 1px solid var(--border); padding-bottom: 10px; margin-bottom: 16px;
+}
+h1 { font-family: 'Cinzel', serif; color: var(--gold); font-size: 22px; letter-spacing: 1px; }
+.sub { color: var(--text-dim); font-family: 'JetBrains Mono', monospace; font-size: 12px; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 16px; }
+.tile {
+  background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+  padding: 12px 14px;
+}
+.tile .label { color: var(--text-dim); font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
+.tile .value { font-family: 'JetBrains Mono', monospace; font-size: 20px; font-weight: 500; margin-top: 4px; }
+.value.gold { color: var(--gold); } .value.green { color: var(--green); }
+.value.red { color: var(--red); } .value.steel { color: var(--steel); }
+.panel {
+  background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+  padding: 14px; margin-bottom: 16px;
+}
+.panel h2 { font-family: 'Cinzel', serif; color: var(--gold); font-size: 15px; margin-bottom: 10px; }
+canvas { max-height: 320px; }
+table { width: 100%; border-collapse: collapse; font-family: 'JetBrains Mono', monospace; font-size: 12px; }
+th, td { text-align: right; padding: 6px 10px; border-bottom: 1px solid var(--border); }
+th:first-child, td:first-child { text-align: left; }
+th { color: var(--text-dim); text-transform: uppercase; font-size: 10px; letter-spacing: 0.5px; }
+.pos { color: var(--green); } .neg { color: var(--red); }
+#err { color: var(--red); font-family: 'JetBrains Mono', monospace; margin: 12px 0; display: none; }
+.muted { color: var(--text-dim); }
+footer { color: var(--text-dim); font-family: 'JetBrains Mono', monospace; font-size: 11px; text-align: right; margin-top: 8px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>RUNECLAW — PERFORMANCE</h1>
+  <span class="sub" id="updated">—</span>
+</header>
+
+<div id="err"></div>
+
+<div class="tiles" id="tiles"></div>
+
+<div class="panel">
+  <h2>Equity Curve</h2>
+  <canvas id="equityChart"></canvas>
+</div>
+
+<div class="panel">
+  <h2>Drawdown</h2>
+  <canvas id="ddChart"></canvas>
+</div>
+
+<div class="panel">
+  <h2>By Symbol</h2>
+  <table id="symTable">
+    <thead><tr><th>Symbol</th><th>Trades</th><th>Win %</th><th>Avg PnL</th><th>Total PnL</th><th>PF</th></tr></thead>
+    <tbody></tbody>
+  </table>
+  <p class="muted" id="symEmpty" style="display:none">No closed trades yet.</p>
+</div>
+
+<footer>RUNECLAW · operator analytics · auto-refresh 30s</footer>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script>
+// Auth token — read from URL hash or prompt (same pattern as the dashboard).
+const _token = (new URLSearchParams(window.location.hash.slice(1))).get('token')
+  || localStorage.getItem('dashboard_token')
+  || prompt('Enter dashboard token:');
+if (_token) localStorage.setItem('dashboard_token', _token);
+const AUTH_HEADERS = _token ? {'Authorization': 'Bearer ' + _token} : {};
+const API = '';
+
+const COL = { gold:'#d4a849', green:'#22c55e', red:'#ef4444', dim:'#64748b', grid:'#1e2535' };
+let equityChart = null, ddChart = null;
+
+function fmtMoney(v) {
+  if (v === null || v === undefined || isNaN(v)) return '—';
+  const n = Number(v);
+  return (n < 0 ? '-$' : '$') + Math.abs(n).toLocaleString(undefined, {maximumFractionDigits: 2});
+}
+function pct(v) { return (v === null || v === undefined || isNaN(v)) ? '—' : (Number(v)).toFixed(1) + '%'; }
+
+function showErr(msg) {
+  const e = document.getElementById('err');
+  e.textContent = msg; e.style.display = 'block';
+}
+
+function tile(label, value, cls) {
+  return `<div class="tile"><div class="label">${label}</div>`
+       + `<div class="value ${cls||''}">${value}</div></div>`;
+}
+
+function renderTiles(perf) {
+  const m = perf.metrics || {};
+  const pnl = m.net_pnl || 0;
+  const pnlCls = pnl > 0 ? 'green' : pnl < 0 ? 'red' : 'steel';
+  const eqRet = perf.initial_balance > 0
+    ? ((perf.current_equity - perf.initial_balance) / perf.initial_balance * 100) : 0;
+  document.getElementById('tiles').innerHTML = [
+    tile('Equity', fmtMoney(perf.current_equity), 'gold'),
+    tile('Return', pct(eqRet), eqRet >= 0 ? 'green' : 'red'),
+    tile('Net PnL', fmtMoney(pnl), pnlCls),
+    tile('Trades', (m.total_trades||0), 'steel'),
+    tile('Win Rate', pct((m.win_rate||0)*100), 'steel'),
+    tile('Profit Factor', (m.profit_factor!=null ? Number(m.profit_factor).toFixed(2) : '—'), 'steel'),
+    tile('Sharpe', (m.sharpe_ratio!=null ? Number(m.sharpe_ratio).toFixed(2) : '—'), 'steel'),
+    tile('Sortino', (m.sortino_ratio!=null ? Number(m.sortino_ratio).toFixed(2) : '—'), 'steel'),
+    tile('Calmar', (m.calmar_ratio!=null ? Number(m.calmar_ratio).toFixed(2) : '—'), 'steel'),
+    tile('Max Drawdown', pct(m.max_drawdown_pct||0), 'red'),
+  ].join('');
+}
+
+function renderSymbols(perf) {
+  const by = (perf.breakdown && perf.breakdown.by_symbol) || {};
+  const rows = Object.entries(by).sort((a,b) => (b[1].total_pnl||0) - (a[1].total_pnl||0));
+  const tbody = document.querySelector('#symTable tbody');
+  document.getElementById('symEmpty').style.display = rows.length ? 'none' : 'block';
+  tbody.innerHTML = rows.map(([sym, s]) => {
+    const tp = s.total_pnl || 0, ap = s.avg_pnl || 0;
+    return `<tr><td>${sym.replace('/USDT','')}</td><td>${s.trades||0}</td>`
+      + `<td>${pct((s.win_rate||0)*100)}</td>`
+      + `<td class="${ap>=0?'pos':'neg'}">${fmtMoney(ap)}</td>`
+      + `<td class="${tp>=0?'pos':'neg'}">${fmtMoney(tp)}</td>`
+      + `<td>${s.profit_factor!=null?Number(s.profit_factor).toFixed(2):'—'}</td></tr>`;
+  }).join('');
+}
+
+function baseOpts(yFmt) {
+  return {
+    responsive: true, animation: false,
+    interaction: { mode: 'index', intersect: false },
+    plugins: { legend: { display: false } },
+    scales: {
+      x: { ticks: { color: COL.dim, maxTicksLimit: 8 }, grid: { color: COL.grid } },
+      y: { ticks: { color: COL.dim, callback: yFmt }, grid: { color: COL.grid } },
+    },
+  };
+}
+
+function chartNote(canvasId, msg) {
+  const c = document.getElementById(canvasId);
+  if (!c) return;  // already replaced on a prior (degraded) refresh
+  const note = document.createElement('p');
+  note.className = 'muted';
+  note.textContent = msg;
+  c.replaceWith(note);
+}
+
+function renderCharts(curve) {
+  // Degrade gracefully if the Chart.js CDN is unreachable — the stat tiles and
+  // the by-symbol table above have already rendered, so don't fail the page.
+  if (typeof Chart === 'undefined') {
+    chartNote('equityChart', 'Chart library unavailable (offline?) — equity data loaded but not plotted.');
+    chartNote('ddChart', 'Chart library unavailable.');
+    return;
+  }
+  const pts = curve.points || [];
+  const labels = pts.map(p => (p.timestamp||'').slice(0, 16).replace('T', ' '));
+  const equity = pts.map(p => p.equity);
+  const dd = pts.map(p => p.drawdown_pct);
+
+  if (equityChart) equityChart.destroy();
+  equityChart = new Chart(document.getElementById('equityChart'), {
+    type: 'line',
+    data: { labels, datasets: [{
+      data: equity, borderColor: COL.gold, backgroundColor: 'rgba(212,168,73,0.08)',
+      fill: true, tension: 0.15, pointRadius: 0, borderWidth: 2,
+    }]},
+    options: baseOpts(v => '$' + Number(v).toLocaleString()),
+  });
+
+  if (ddChart) ddChart.destroy();
+  ddChart = new Chart(document.getElementById('ddChart'), {
+    type: 'line',
+    data: { labels, datasets: [{
+      data: dd, borderColor: COL.red, backgroundColor: 'rgba(239,68,68,0.10)',
+      fill: true, tension: 0.15, pointRadius: 0, borderWidth: 1.5,
+    }]},
+    options: baseOpts(v => Number(v).toFixed(1) + '%'),
+  });
+}
+
+async function load() {
+  try {
+    const [pRes, cRes] = await Promise.all([
+      fetch(API + '/api/performance', { headers: AUTH_HEADERS }),
+      fetch(API + '/api/equitycurve', { headers: AUTH_HEADERS }),
+    ]);
+    if (pRes.status === 401 || pRes.status === 403) {
+      showErr('Auth failed (' + pRes.status + '). Clear the saved token and reload to re-enter it.');
+      localStorage.removeItem('dashboard_token');
+      return;
+    }
+    const perf = await pRes.json();
+    const curve = await cRes.json();
+    if (perf.error) { showErr('API error: ' + perf.error); return; }
+    document.getElementById('err').style.display = 'none';
+    renderTiles(perf);
+    renderSymbols(perf);
+    try { renderCharts(curve); } catch (e) { chartNote('equityChart', 'Chart render failed: ' + e); }
+    document.getElementById('updated').textContent =
+      'updated ' + new Date().toLocaleTimeString();
+  } catch (e) {
+    showErr('Failed to load analytics: ' + e);
+  }
+}
+
+load();
+setInterval(load, 30000);
+</script>
+</body>
+</html>

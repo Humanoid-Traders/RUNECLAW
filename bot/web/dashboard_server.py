@@ -279,6 +279,20 @@ async def handle_index(request: web.Request) -> web.Response:
     return web.Response(text="Dashboard HTML not found", status=404)
 
 
+async def handle_performance_chart(request: web.Request) -> web.Response:
+    """Serve the performance charting page.
+
+    Like the dashboard index, the PAGE itself is unauthenticated (it carries no
+    data) — it fetches /api/performance and /api/equitycurve client-side with the
+    operator's Bearer token, and those endpoints stay gated by auth_middleware.
+    """
+    html_path = pathlib.Path(__file__).parent / "performance_chart.html"
+    if html_path.exists():
+        # FileResponse infers text/html from the .html suffix.
+        return web.FileResponse(html_path)
+    return web.Response(text="Performance chart HTML not found", status=404)
+
+
 # ── Operational endpoints (liveness / readiness / metrics) ───────────
 # Unauthenticated by design: auth_middleware only guards /api/*, and these are
 # standard probe/scrape endpoints. /metrics exposes ONLY non-financial
@@ -444,6 +458,7 @@ def create_app(engine) -> web.Application:
     app = web.Application(middlewares=[cors_middleware, auth_middleware])
     app["engine"] = engine
     app.router.add_get("/", handle_index)
+    app.router.add_get("/chart", handle_performance_chart)
     app.router.add_get("/api/state", handle_state)
     app.router.add_get("/api/positions", handle_positions)
     app.router.add_get("/api/signals", handle_signals)
