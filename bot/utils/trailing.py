@@ -17,8 +17,6 @@ The trail only tightens, never widens.
 
 from __future__ import annotations
 
-from typing import Optional
-
 # Stage definitions: (R-threshold to enter, SL floor in R-units, ATR trail multiplier)
 _STAGES = {
     0: {"r_threshold": 0.0, "floor_r": None, "atr_mult": None},
@@ -111,6 +109,8 @@ def update_trailing_stop(
     original_sl: float,
     direction: str,
     trail_atr_mult: float = 1.5,
+    rule: str = "multistage",
+    playbook_atr_mult: float = 2.0,
 ) -> tuple[float, bool]:
     """Update trailing-stop state and return the effective stop-loss.
 
@@ -138,6 +138,11 @@ def update_trailing_stop(
     # Reject invalid prices -- return state unchanged.
     if current_price <= 0:
         return original_sl, state.get("trailing_active", False)
+
+    # --- Playbook rule (opt-in): trail playbook_atr_mult·ATR behind the MARK,
+    #     tighten-only, no 1R activation gate. Matches the external Playbook. ---
+    if rule == "playbook":
+        return _playbook_update(state, current_price, original_sl, direction, playbook_atr_mult)
 
     # --- Legacy fallback (no "stage" key) ---
     if "stage" not in state:
@@ -187,6 +192,52 @@ def update_trailing_stop(
         sl = _apply_atr_trail(state["best_price"], atr, stage_def["atr_mult"], direction, sl)
 
     return sl, True
+
+
+def _playbook_update(
+    state: dict,
+    current_price: float,
+    original_sl: float,
+    direction: str,
+    atr_mult: float,
+) -> tuple[float, bool]:
+    """Playbook trail rule: keep the SL exactly atr_mult·ATR behind the mark,
+    tighten-only, with NO 1R activation gate.
+
+        LONG:  candidate = mark − atr_mult·ATR ; ratchet UP   if candidate > SL
+        SHORT: candidate = mark + atr_mult·ATR ; ratchet DOWN if candidate < SL
+
+    The ratchet "fires" (and trailing_active flips True) the moment the mark has
+    moved atr_mult·ATR past the SL — exactly the Playbook's
+    ``mark ± atr_mult·ATR vs SL`` geometry. The SL never widens.
+    """
+    atr = state.get("atr", 0)
+    sl = original_sl
+    state.setdefault("best_price", state.get("entry_price", current_price))
+
+    # Track the favorable extreme (informational / display parity).
+    if direction == "LONG":
+        if current_price > state["best_price"]:
+            state["best_price"] = current_price
+    else:
+        if current_price < state["best_price"]:
+            state["best_price"] = current_price
+
+    if atr <= 0:
+        return sl, state.get("trailing_active", False)
+
+    if direction == "LONG":
+        candidate = current_price - atr_mult * atr
+        if candidate > sl:
+            sl = candidate
+            state["trailing_active"] = True
+    else:  # SHORT
+        candidate = current_price + atr_mult * atr
+        if candidate < sl:
+            sl = candidate
+            state["trailing_active"] = True
+
+    return sl, state.get("trailing_active", False)
 
 
 def _legacy_update(

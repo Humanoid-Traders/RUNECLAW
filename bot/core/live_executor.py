@@ -3514,6 +3514,8 @@ class LiveExecutor:
                     new_sl, trailing_active = update_trailing_stop(
                         pos.trailing_state, price, pos.stop_loss, pos.direction,
                         trail_atr_mult=trail_mult,
+                        rule=CONFIG.trailing.trail_rule,
+                        playbook_atr_mult=CONFIG.trailing.playbook_atr_mult,
                     )
                     if new_sl != old_sl:
                         # Check if the SL moved enough to update on exchange

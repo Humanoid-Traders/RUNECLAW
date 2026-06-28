@@ -639,6 +639,16 @@ class TrailingStopConfig:
     # Minimum price move (%) before updating exchange SL order.
     # Avoids spamming the exchange with tiny SL adjustments.
     min_sl_update_pct: float = _env_float("TRAILING_MIN_SL_UPDATE_PCT", 0.3)
+    # Trail rule (LIVE stop management):
+    #   "multistage" (default) — 1R-activation 4-stage trail behind best price.
+    #   "playbook"             — trail the SL playbook_atr_mult·ATR behind the
+    #                            MARK, tighten-only, NO 1R activation gate (matches
+    #                            the external Playbook geometry). This FIRES EARLIER
+    #                            and tightens sooner, so it changes realized P&L —
+    #                            validate before enabling. Default keeps the proven
+    #                            multistage behaviour unchanged.
+    trail_rule: str = _env("TRAILING_RULE", "multistage")
+    playbook_atr_mult: float = _env_float("TRAILING_PLAYBOOK_ATR_MULT", 2.0)
 
 
 @dataclass(frozen=True)
