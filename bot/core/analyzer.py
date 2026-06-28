@@ -831,6 +831,32 @@ class Analyzer:
         except Exception as _cal_exc:
             logger.debug("Confidence calibration skipped: %s", _cal_exc)
 
+        # ── Per-setup expectancy nudge (Phase C) ─────────────────────────────
+        # Shade confidence by THIS setup's own track record (symbol + regime +
+        # direction win rate from completed trades). Small, bounded, and shrunk
+        # by sample count, so it can only nudge — never dominate. Fail-open;
+        # default OFF (shadow-logs the would-be nudge, applies nothing).
+        try:
+            from bot.learning.setup_expectancy import get_setup_expectancy
+            _exp = get_setup_expectancy()
+            if _exp is not None and _exp.is_ready():
+                _nudge = _exp.confidence_nudge(signal.symbol, regime.value, direction.value)
+                if _nudge != 0.0:
+                    if CONFIG.analyzer.setup_expectancy_enabled:
+                        _before = blended_confidence
+                        blended_confidence = round(
+                            max(0.0, min(1.0, blended_confidence + _nudge)), 2)
+                        audit(trade_log,
+                              f"Setup expectancy nudge {_before:.2f} -> {blended_confidence:.2f}",
+                              action="setup_expectancy", result="APPLIED",
+                              data={"symbol": signal.symbol, "regime": regime.value,
+                                    "direction": direction.value, "nudge": round(_nudge, 4)})
+                    else:
+                        logger.debug("Setup-expectancy shadow: %s %s %s nudge=%+.3f",
+                                     signal.symbol, regime.value, direction.value, _nudge)
+        except Exception as _exp_exc:
+            logger.debug("Setup expectancy skipped: %s", _exp_exc)
+
         # SIGNAL QUALITY: threshold at min_confidence (matches config)
         # RANGE/CHOP trades need high raw confluence to survive after penalty
         # Per-strategy-type confidence threshold
