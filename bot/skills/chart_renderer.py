@@ -614,7 +614,6 @@ def _elliott_wave_overlay(df, price_ax, t):
     except Exception:  # noqa: BLE001
         return
     try:
-        import numpy as np
         highs = df["High"].to_numpy()
         lows = df["Low"].to_numpy()
         closes = df["Close"].to_numpy()
@@ -841,7 +840,6 @@ def _pattern_zones_overlay(df, price_ax, t):
     except Exception:  # noqa: BLE001
         return
     try:
-        import numpy as np
         opens = df["Open"].to_numpy()
         highs = df["High"].to_numpy()
         lows = df["Low"].to_numpy()

@@ -27,8 +27,7 @@ from pydantic import BaseModel
 
 from bot.db.models import (
     create_user, authenticate_user, get_user_by_id,
-    create_link_token, get_user_portfolio, get_user_settings,
-    unlink_telegram,
+    create_link_token, get_user_portfolio, unlink_telegram,
 )
 
 auth_router = APIRouter()

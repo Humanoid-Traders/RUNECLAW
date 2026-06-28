@@ -1387,7 +1387,7 @@ class RuneClawEngine:
         """
         idea = self._pending_ideas.get(trade_id, None)
         if idea is None:
-            return f"Trade not found or expired."
+            return "Trade not found or expired."
 
         # Store for marketing forwarder access
         self._last_confirmed_idea = idea
@@ -1710,7 +1710,7 @@ class RuneClawEngine:
         # LIVE-ONLY: this bot only executes live trades. Paper mode is disabled.
         if not CONFIG.is_live():
             self._pending_pyramid.pop(trade_id, None)
-            self._transition(AgentState.IDLE, f"paper mode disabled")
+            self._transition(AgentState.IDLE, "paper mode disabled")
             return "⛔ Paper trading is disabled on this bot. This bot is LIVE-ONLY."
 
         # ── RC-AUD-018 / Audit F-14: SIMULATION_MODE hard veto ──
@@ -1812,7 +1812,7 @@ class RuneClawEngine:
                   data={"trade_id": trade_id, "stored_atr": stored_atr})
             self._pending_pyramid.pop(trade_id, None)
             self._transition(AgentState.IDLE, f"no ATR for {trade_id}")
-            return f"Trade REJECTED: no valid ATR available — cannot compute safe SL distance"
+            return "Trade REJECTED: no valid ATR available — cannot compute safe SL distance"
 
         result = await self.live_executor.execute(
             idea, size_usd,
@@ -1885,8 +1885,8 @@ class RuneClawEngine:
                 action="human_reject",
                 result="REJECTED",
             )
-            return f"Trade REJECTED."
-        return f"Trade not found."
+            return "Trade REJECTED."
+        return "Trade not found."
 
     async def force_scan(self) -> dict:
         """Force an immediate scan cycle, bypassing cooldown and pending gates.

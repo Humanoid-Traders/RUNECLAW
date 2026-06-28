@@ -12,10 +12,9 @@ for War Room integration.
 from __future__ import annotations
 
 import threading
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from bot.compat import UTC
-from typing import Optional
 
 
 @dataclass

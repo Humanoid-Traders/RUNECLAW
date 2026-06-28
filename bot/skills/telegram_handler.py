@@ -33,7 +33,7 @@ from telegram.ext import (
     filters,
 )
 
-from bot.config import CONFIG, _env_bool
+from bot.config import CONFIG
 
 # SEC-H3 FIX: strict symbol regex — applied at every Telegram entry point
 # before symbols reach CCXT or the LLM.
@@ -54,31 +54,18 @@ from bot.marketing.channel_forwarder import ChannelForwarder
 from bot.formatters.rich_cards import (
     display_symbol,
     fetch_analysis_data,
-    render_analysis_card,
-    render_multi_analysis,
-    render_comparison_table,
-    render_recommended_orders,
-    render_pending_orders,
-    render_pnl_report,
     render_open_positions,
     render_status_card,
-    _fmt_price,
-    _fmt_vol,
-    _pct,
 )
 from bot.warroom.warroom_bot import (
     render_start as wr_start,
-    render_status as wr_status,
-    render_signal as wr_signal,
     render_risk as wr_risk,
     render_performance as wr_performance,
-    render_positions as wr_positions,
     render_daily_report as wr_daily_report,
     render_strategy_mode as wr_strategy_mode,
     render_pause as wr_pause,
     render_resume as wr_resume,
     render_emergency_stop as wr_emergency_stop,
-    handle_callback as wr_handle_callback,
     _bar,
 )
 
@@ -929,9 +916,9 @@ class TelegramHandler:
         # Pending users get a clear message
         if not user.get("authorized", False):
             await self._send(update,
-                f"\U0001f512 Your account is pending approval.\n\n"
-                f"Once approved, just talk to me naturally.\n"
-                f"No commands needed — the Claw understands.")
+                "\U0001f512 Your account is pending approval.\n\n"
+                "Once approved, just talk to me naturally.\n"
+                "No commands needed — the Claw understands.")
             return
 
         # Rate limit check
@@ -1124,14 +1111,14 @@ class TelegramHandler:
                     await self._send(update, result)
                 except Exception as exc:
                     await self._send(update,
-                        f"Something went wrong. Try again or use a command.")
+                        "Something went wrong. Try again or use a command.")
                 return
 
         if intent.matched and intent.confidence >= 0.5 and not intent.kwargs.get("symbol"):
             # Partial match — skill needs a symbol we couldn't extract
             await self._send(update,
-                f"What coin do you want me to look at?\n\n"
-                f"Which asset? Say something like <i>\"scan BTC\"</i> or <i>\"check ETH\"</i>")
+                "What coin do you want me to look at?\n\n"
+                "Which asset? Say something like <i>\"scan BTC\"</i> or <i>\"check ETH\"</i>")
             return
 
         # ── Fallback: AI chat ─────────────────────────────────────
@@ -1643,7 +1630,7 @@ class TelegramHandler:
                 f"- Trading: \U0001f525 Live\n\n"
                 f"<i>This user can now execute live trades on the exchange.</i>")
         else:
-            await self._send(update, f"\U0001f534 Failed to grant live trading.")
+            await self._send(update, "\U0001f534 Failed to grant live trading.")
 
     async def _cmd_revoke_live(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """Admin only: /revoke_live <telegram_id> — restrict user to paper only."""
@@ -1669,7 +1656,7 @@ class TelegramHandler:
                 f"- User: <b>{html.escape(name)}</b> (<code>{target_id}</code>)\n"
                 f"- Trading: \U0001f4dd Paper only")
         else:
-            await self._send(update, f"\U0001f534 User not found.")
+            await self._send(update, "\U0001f534 User not found.")
 
     async def _cmd_set_tier(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """Admin only: /set_tier <telegram_id> <tier> — change user tier."""
@@ -1764,13 +1751,13 @@ class TelegramHandler:
                 for gid in groups:
                     msg += f"\u2022 <code>{gid}</code>\n"
             msg += (
-                f"\n<b>Commands:</b>\n"
-                f"<code>/channel on</code> \u2014 enable auto-posting\n"
-                f"<code>/channel off</code> \u2014 disable auto-posting\n"
-                f"<code>/channel add &lt;chat_id&gt;</code> \u2014 add group\n"
-                f"<code>/channel remove &lt;chat_id&gt;</code> \u2014 remove group\n"
-                f"<code>/channel test</code> \u2014 send test message\n\n"
-                f"<i>Groups are also auto-detected when the bot receives a message in them.</i>"
+                "\n<b>Commands:</b>\n"
+                "<code>/channel on</code> \u2014 enable auto-posting\n"
+                "<code>/channel off</code> \u2014 disable auto-posting\n"
+                "<code>/channel add &lt;chat_id&gt;</code> \u2014 add group\n"
+                "<code>/channel remove &lt;chat_id&gt;</code> \u2014 remove group\n"
+                "<code>/channel test</code> \u2014 send test message\n\n"
+                "<i>Groups are also auto-detected when the bot receives a message in them.</i>"
             )
             await self._send(update, msg)
             return
@@ -1905,7 +1892,7 @@ class TelegramHandler:
             }
             icon = icons.get(current, "\U0001f30d")
             lines = [
-                f"\U0001f504 <b>ASSET UNIVERSE</b>\n",
+                "\U0001f504 <b>ASSET UNIVERSE</b>\n",
                 f"Current: {icon} <b>{current.upper()}</b>\n",
                 "<b>Multi-Asset:</b>",
                 "  <code>/mode all_markets</code> \u2014 EVERYTHING: crypto + all TradFi futures",
@@ -2682,7 +2669,7 @@ class TelegramHandler:
             # Header
             SEP = "─" * 16
             lines = [
-                f"💰 <b>BITGET PORTFOLIO</b>",
+                "💰 <b>BITGET PORTFOLIO</b>",
                 f"{SEP}",
                 f"   {pnl_icon}  Net PnL: <code>${pnl_sign}{realized_pnl:.2f}</code> (fees: ${total_fees:.2f})",
                 "",
@@ -2843,7 +2830,7 @@ class TelegramHandler:
                             f"- Qty: <code>{contracts:.6f}</code>\n"
                             f"- uPnL: <code>${upnl:+,.2f}</code>\n"
                         )
-                    lines.append(f"\n<i>\u26a0\ufe0f Showing exchange data \u2014 local tracking out of sync</i>")
+                    lines.append("\n<i>\u26a0\ufe0f Showing exchange data \u2014 local tracking out of sync</i>")
                     await self._send(update, "\n".join(lines))
                     return
             except Exception:
@@ -3850,7 +3837,7 @@ class TelegramHandler:
                 _pos_display += f" + {_pending_count} pending"
 
             lines = [
-                f"\U0001f4bc <b>YOUR PORTFOLIO</b> (LIVE)",
+                "\U0001f4bc <b>YOUR PORTFOLIO</b> (LIVE)",
                 sep,
                 "",
                 f"- Equity: <code>${display_equity:,.2f}</code>",
@@ -3937,7 +3924,7 @@ class TelegramHandler:
             # ── PAPER MODE: show paper portfolio data ──
             display_equity = state.equity_usd
             lines = [
-                f"\U0001f4bc <b>YOUR PORTFOLIO</b> (PAPER)",
+                "\U0001f4bc <b>YOUR PORTFOLIO</b> (PAPER)",
                 sep,
                 "",
                 f"- Equity: <code>${display_equity:,.2f}</code>",
@@ -4461,8 +4448,8 @@ class TelegramHandler:
             # TradeIdea validation errors (SL=entry, etc.) — report but don't crash
             system_log.warning(f"Swing scan validation error: {ve}")
             await self._send(update,
-                f"<b>Swing scan:</b> skipped — invalid setup generated "
-                f"(SL too close to entry). Try again or use /scan.")
+                "<b>Swing scan:</b> skipped — invalid setup generated "
+                "(SL too close to entry). Try again or use /scan.")
         except Exception as exc:
             system_log.error(f"Swing scan error: {exc}", exc_info=True)
             await self._send(update, f"\U0001f534 <b>Swing scan error:</b> <code>{html.escape(str(exc)[:200])}</code>")
@@ -4574,7 +4561,7 @@ class TelegramHandler:
 
         from bot.core.stock_trading import (
             get_market_session, format_stock_scan_header,
-            format_stock_signal_line, is_stock_symbol, get_stock_risk_params,
+            format_stock_signal_line,
         )
         from bot.config import US_STOCK_SYMBOLS
 
@@ -5005,7 +4992,7 @@ class TelegramHandler:
                         f"@ <code>${o['price']:,.4f}</code>")
                 lines.append("")
 
-            lines.append(f"<i>Source: Bitget USDT-M Futures</i>")
+            lines.append("<i>Source: Bitget USDT-M Futures</i>")
 
             # ── Render orders card image ──
             card_sent = False
@@ -5049,7 +5036,7 @@ class TelegramHandler:
             # Always send text as well for copy-paste of IDs
             if card_sent:
                 # Send compact text with order IDs only
-                id_lines = [f"<b>Order IDs</b> (for cancel):"]
+                id_lines = ["<b>Order IDs</b> (for cancel):"]
                 for o in all_display_orders[:6]:
                     dir_l = "LONG" if o["side"] == "BUY" else "SHORT"
                     id_lines.append(f"  {o['sym']} {dir_l} — <code>{o['oid']}</code>")
@@ -5442,16 +5429,16 @@ class TelegramHandler:
 
                 lines = [
                     f"{d_icon} <b>{html.escape(pair)} {dir_label}</b> \u2014 Limit Order \u2022 {strategy_type}",
-                    f"",
+                    "",
                     f"\U0001f4cd <b>Limit Price:</b> <code>${limit_price:,.4f}</code>",
                     f"\U0001f4b2 <b>Current:</b>    <code>${current:,.4f}</code>  {fill_hint} {dist_pct:+.2f}% to fill",
-                    f"",
+                    "",
                     f"\U0001f4b0 <b>Size:</b> <code>${size_usd:,.2f}</code> margin | <b>{leverage:.0f}x</b> leverage",
                 ]
                 if quantity > 0:
                     lines.append(f"   Qty: <code>{quantity:.4f}</code> contracts")
 
-                lines.append(f"")
+                lines.append("")
 
                 if sl > 0:
                     lines.append(
@@ -5462,7 +5449,7 @@ class TelegramHandler:
                 if rr_at_fill > 0:
                     lines.append(f"\u2696\ufe0f <b>R:R at fill:</b> 1:{rr_at_fill:.1f}")
 
-                lines.append(f"")
+                lines.append("")
                 lines.append(f"\U0001f4b8 <b>Est. fees:</b> ${total_fees:.4f} (entry + exit)")
                 lines.append(f"\u23f3 <b>Waiting:</b> {age_str}")
 
@@ -5784,7 +5771,7 @@ class TelegramHandler:
             return
         chat_id = update.effective_chat.id
         try:
-            from bot.core.strategy_router import select_strategy, strategy_summary
+            from bot.core.strategy_router import select_strategy
             regime = self.engine.risk._current_regime
             vol_state = self.engine.risk._current_vol_state
             profile = select_strategy(regime, vol_state)
@@ -6332,7 +6319,7 @@ class TelegramHandler:
                     f"- Qty: <code>{_qty:,.4f}</code> | Size: <code>${sz:,.2f}</code>",
                     f"- Hold: <code>{hold_hours:.1f}h</code>",
                     "",
-                    f"<b>Fees & Costs:</b>",
+                    "<b>Fees & Costs:</b>",
                     f"- Entry fee ({comm_pct}%): <code>${entry_fee:.4f}</code>",
                     f"- Exit fee ({comm_pct}%, est): <code>${exit_fee_est:.4f}</code>",
                     f"- Funding ({hold_hours:.1f}h hold): <code>${funding_paid:.4f}</code>",
@@ -6574,7 +6561,7 @@ class TelegramHandler:
                     f"- Exit: <code>{closed_trade.exit_price:,.4f}</code>",
                     f"- Size: <code>${sz:,.2f}</code>",
                     "",
-                    f"<b>PNL Breakdown:</b>",
+                    "<b>PNL Breakdown:</b>",
                     f"- Gross PNL: <code>${closed_trade.gross_pnl:+,.2f}</code>",
                     f"- Commission: <code>${closed_trade.commission:.2f}</code>",
                     f"- Funding ({hold_h:.1f}h): <code>${funding_paid:.2f}</code>",
@@ -6766,7 +6753,7 @@ class TelegramHandler:
                                 asset=original_idea.asset, direction=d,
                                 entry_price=new_price, stop_loss=new_sl, take_profit=new_tp,
                                 confidence=original_idea.confidence,
-                                reasoning=f"Auto re-analyzed after price drift",
+                                reasoning="Auto re-analyzed after price drift",
                                 source="auto_reanalyze")
                             ohlcv = await exchange.fetch_ohlcv(original_idea.asset, "4h", limit=30)
                             h = [c[2] for c in ohlcv]; l = [c[3] for c in ohlcv]; cl = [c[4] for c in ohlcv]

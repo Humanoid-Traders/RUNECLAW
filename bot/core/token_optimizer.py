@@ -16,8 +16,7 @@ Safety guarantees:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Optional
+from dataclasses import dataclass
 
 from bot.utils.logger import audit, system_log
 from bot.utils.models import MarketSignal

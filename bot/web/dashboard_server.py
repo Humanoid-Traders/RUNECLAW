@@ -10,7 +10,6 @@ F-03 FIX: CORS restricted to configured origin (not wildcard).
 
 from __future__ import annotations
 
-import json
 import hmac
 import os
 import pathlib

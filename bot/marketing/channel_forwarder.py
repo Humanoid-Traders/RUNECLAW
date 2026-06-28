@@ -8,13 +8,11 @@ no sensitive data. Public-facing marketing content only.
 
 from __future__ import annotations
 
-import asyncio
 import html
 import json
 import threading
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 from bot.compat import UTC
 from bot.utils.logger import audit, system_log

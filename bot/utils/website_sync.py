@@ -12,7 +12,6 @@ import os
 import threading
 import urllib.request
 import urllib.error
-from datetime import datetime
 from typing import Optional
 
 log = logging.getLogger(__name__)

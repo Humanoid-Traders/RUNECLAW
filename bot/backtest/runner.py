@@ -15,7 +15,6 @@ import argparse
 import asyncio
 import json
 import sys
-from datetime import datetime
 from pathlib import Path
 
 from bot.backtest.data_loader import DataLoader
@@ -202,7 +201,7 @@ async def _run_backtest(args: argparse.Namespace) -> None:
         print(f"  Saved data to {data_path}")
 
     # Run backtest
-    print(f"  Running backtest...")
+    print("  Running backtest...")
     engine = BacktestEngine(config)
     result = await engine.run(bars)
     engine.cleanup()  # remove temp state dir

@@ -14,7 +14,6 @@ with a logged warning (unlike risk engine which is fail-closed).
 from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Optional
 
 
 @dataclass

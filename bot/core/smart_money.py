@@ -21,13 +21,11 @@ import threading
 from collections import deque
 from datetime import datetime
 from bot.compat import UTC
-from typing import Optional
 
 import numpy as np
 from pydantic import BaseModel, Field
 
 from bot.core.order_flow import OrderFlowSignal
-from bot.utils.logger import audit, system_log
 
 
 # ── Output Models ─────────────────────────────────────────────────

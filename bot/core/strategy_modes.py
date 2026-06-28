@@ -22,9 +22,7 @@ Design rules:
 from __future__ import annotations
 
 from enum import Enum
-from typing import Optional
 
-import numpy as np
 from pydantic import BaseModel, Field
 
 from bot.core.ta_utils import Regime

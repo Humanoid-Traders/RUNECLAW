@@ -218,7 +218,6 @@ def _build_scan_payload(results: list[dict], engine=None) -> dict:
     # Fallback to paper portfolio if live data not available
     if engine and not live_data_loaded:
         try:
-            from bot.risk.risk_engine import RiskEngine
             risk = engine.risk
             portfolio = engine.portfolio
             state = portfolio.snapshot()

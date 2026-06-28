@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import asyncio
 import time
-from bot.utils.logger import audit, system_log
 
 
 class AsyncRateLimiter:

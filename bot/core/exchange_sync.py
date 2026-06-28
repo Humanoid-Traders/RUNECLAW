@@ -22,7 +22,6 @@ import logging
 import time
 from typing import Any
 
-from bot.compat import UTC
 from bot.config import CONFIG
 from bot.core.live_executor import normalize_symbol
 from bot.utils.logger import audit, trade_log, system_log

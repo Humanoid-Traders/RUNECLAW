@@ -10,7 +10,6 @@ Data source: Bitget via ccxt (spot ticker + futures ticker for same asset).
 
 from __future__ import annotations
 
-import asyncio
 import time
 import logging
 from dataclasses import dataclass, field

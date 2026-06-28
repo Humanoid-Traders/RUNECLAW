@@ -11,7 +11,6 @@ import logging
 from typing import Optional
 
 from .models import (
-    ChangeClassification,
     DecisionMemory,
     ImprovementProposal,
     ReflectionMemory,

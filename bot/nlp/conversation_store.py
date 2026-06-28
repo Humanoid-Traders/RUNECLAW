@@ -18,12 +18,10 @@ import json
 import threading
 import time
 from collections import OrderedDict
-from dataclasses import asdict, dataclass, field
-from datetime import datetime
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-from bot.compat import UTC
 
 
 @dataclass

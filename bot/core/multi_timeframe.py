@@ -20,8 +20,7 @@ from typing import Optional
 import numpy as np
 from pydantic import BaseModel, Field
 
-from bot.core.ta_utils import _ema, _compute_adx, Regime
-from bot.utils.logger import audit, system_log
+from bot.core.ta_utils import _ema, _compute_adx
 
 
 # ── Output Model ──────────────────────────────────────────────────

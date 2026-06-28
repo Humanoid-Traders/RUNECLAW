@@ -938,7 +938,7 @@ class RiskEngine:
                         passed.append(f"MACRO_EVENT: REDUCE (size×{ctx.size_multiplier}) — {ctx.explanation}")
                         # C2-11: size reduction already applied pre-cap above
                     else:
-                        passed.append(f"MACRO_EVENT: CLEAR")
+                        passed.append("MACRO_EVENT: CLEAR")
                     macro_checked = True
                 except Exception as exc:
                     failed.append(f"MACRO_EVENT: v2 provider error ({exc}) — fail-closed")

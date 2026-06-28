@@ -7,7 +7,6 @@ Feedback improves recommendations only — it must NOT directly bypass risk gate
 from __future__ import annotations
 
 import logging
-from typing import Optional
 
 from .models import FeedbackType, HumanFeedback
 from .store import LearningStore

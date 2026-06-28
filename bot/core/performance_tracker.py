@@ -20,7 +20,6 @@ from bot.core.metrics import MetricsEngine
 from bot.risk.portfolio import PortfolioTracker
 from bot.utils.logger import audit
 from bot.utils.models import (
-    MetricsSnapshot,
     RiskVerdict,
     TradeExecution,
     TradeIdea,
