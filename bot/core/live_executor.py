@@ -157,7 +157,7 @@ def _user_state_path(base_file: str, state_dir: Optional[str], user_id) -> str:
     """
     if user_id is None and state_dir is None:
         return base_file
-    d = state_dir or os.environ.get("RUNECLAW_STATE_DIR", "data")
+    d: str = state_dir or os.environ.get("RUNECLAW_STATE_DIR") or "data"
     name = os.path.basename(base_file)
     if user_id is not None:
         stem, ext = os.path.splitext(name)
