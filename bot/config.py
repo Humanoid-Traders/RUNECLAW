@@ -486,6 +486,11 @@ class AnalyzerConfig:
     # Default OFF — the curve is computed in shadow-mode (logged, not applied)
     # until deliberately enabled. See bot/learning/confidence_calibration.py.
     confidence_calibration_enabled: bool = _env_bool("CONFIDENCE_CALIBRATION_ENABLED", False)
+    # Per-setup expectancy (Phase C): when ON, a setup's own historical win rate
+    # (symbol + regime + direction, from completed trades) applies a small bounded
+    # nudge to confidence. Default OFF — computed in shadow-mode (logged, not
+    # applied) until enabled. See bot/learning/setup_expectancy.py.
+    setup_expectancy_enabled: bool = _env_bool("SETUP_EXPECTANCY_ENABLED", False)
     sma_period: int = 50
     trend_alignment_bonus: float = 0.10
     trend_misalignment_penalty: float = 0.08

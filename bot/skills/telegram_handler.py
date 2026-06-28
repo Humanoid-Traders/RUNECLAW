@@ -2754,34 +2754,39 @@ class TelegramHandler:
 
     @guard("admin")
     async def _cmd_calibration(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-        """/calibration [refit] — show the confidence-calibration curve, or refit
-        it from closed-trade history. Calibration remaps model confidence to
-        realized win rate; it is applied only when CONFIDENCE_CALIBRATION_ENABLED."""
+        """/calibration [refit] — show the learning overlays (confidence
+        calibration + per-setup expectancy), or refit/reload them from closed-
+        trade history. Each is applied only when its flag is enabled."""
         args = ctx.args or []
-        do_refit = bool(args) and args[0].lower() in ("refit", "fit", "rebuild")
+        do_refit = bool(args) and args[0].lower() in ("refit", "fit", "rebuild", "reload")
         try:
             from bot.learning.confidence_calibration import refit_and_save, ConfidenceCalibrator
+            from bot.learning.setup_expectancy import get_setup_expectancy
             if do_refit:
                 cal = refit_and_save()
-                # Make the live analyzer pick up the new curve immediately.
                 if hasattr(self.engine, "analyzer") and hasattr(self.engine.analyzer, "refresh_calibrator"):
                     self.engine.analyzer.refresh_calibrator()
-                action = "Refit complete.\n"
+                exp = get_setup_expectancy(reload=True)
+                action = "Refit/reload complete.\n\n"
             else:
                 cal = ConfidenceCalibrator.load() or ConfidenceCalibrator()
+                exp = get_setup_expectancy()
                 action = ""
         except Exception as exc:
-            await self._send(update, f"🔴 Calibration error: {html.escape(str(exc))}")
+            await self._send(update, f"🔴 Learning overlay error: {html.escape(str(exc))}")
             return
 
-        enabled = getattr(CONFIG.analyzer, "confidence_calibration_enabled", False)
-        mode = "APPLIED (live)" if enabled else "SHADOW (logged, not applied)"
+        cal_on = getattr(CONFIG.analyzer, "confidence_calibration_enabled", False)
+        exp_on = getattr(CONFIG.analyzer, "setup_expectancy_enabled", False)
+        _mode = lambda on: "APPLIED (live)" if on else "SHADOW (logged, not applied)"
         await self._send(update,
-            "<b>Confidence calibration</b>\n\n"
-            f"Mode: <code>{mode}</code>\n"
+            "<b>Learning overlays</b>\n\n"
             f"{action}"
+            f"<b>Confidence calibration</b> — <code>{_mode(cal_on)}</code>\n"
             f"<code>{html.escape(cal.summary())}</code>\n\n"
-            "<i>Refit from closed-trade history: </i><code>/calibration refit</code>")
+            f"<b>Per-setup expectancy</b> — <code>{_mode(exp_on)}</code>\n"
+            f"<code>{html.escape(exp.summary())}</code>\n\n"
+            "<i>Refit/reload from history: </i><code>/calibration refit</code>")
 
     @guard("portfolio")
     async def _cmd_livebalance(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
