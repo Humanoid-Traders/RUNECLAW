@@ -692,7 +692,7 @@ class SentimentAnalyzer:
 
         bias_icon = {"BULLISH": "^", "BEARISH": "v", "NEUTRAL": "-"}.get(bias, "-")
         lines = [
-            f"<b>SENTIMENT WAR ROOM</b>",
+            "<b>SENTIMENT WAR ROOM</b>",
             f"<b>Bias:</b> {bias} [{bias_icon}]  Score: {score:+.2f}",
             "",
         ]

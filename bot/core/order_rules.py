@@ -14,7 +14,7 @@ Uses the existing _classify_symbol() from market_scanner.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 from bot.compat import UTC
 
 logger = logging.getLogger(__name__)
@@ -55,7 +55,7 @@ def is_market_open(asset_class: str, now: datetime | None = None) -> tuple[bool,
 
     if asset_class in _SESSION_HOURS:
         if weekday >= 5:
-            return False, f"Stock perps are closed on weekends"
+            return False, "Stock perps are closed on weekends"
         # Stock perps: 02:30 – 09:00 UTC (US market hours during EDT)
         minutes_today = now.hour * 60 + now.minute
         # Stocks: 02:30 - 09:00 UTC (9:30 AM - 4:00 PM ET during EDT)

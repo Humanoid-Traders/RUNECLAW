@@ -22,7 +22,7 @@ import json
 import os
 import re
 import traceback
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 from bot.core.engine import RuneClawEngine
@@ -457,7 +457,7 @@ class RuneClawMCPServer:
 
     async def _fullscan(self, mode: str = "quick") -> str:
         """Run full 67-symbol scan and return structured results."""
-        from bot.skills.scan_skill import UNIVERSE, _scan_symbol, _compute_rsi
+        from bot.skills.scan_skill import UNIVERSE, _scan_symbol
 
         exchange = await self._engine.scanner._get_exchange()
         results = []

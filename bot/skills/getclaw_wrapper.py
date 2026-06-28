@@ -9,7 +9,6 @@ and receive a standardised risk verdict without touching internals.
 from __future__ import annotations
 
 from bot.core.engine import RuneClawEngine
-from bot.risk.risk_engine import RiskEngine
 from bot.utils.models import Direction, RiskVerdict, TradeIdea
 
 

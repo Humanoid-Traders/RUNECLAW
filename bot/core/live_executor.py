@@ -35,9 +35,9 @@ from bot.utils.models import Direction, TradeIdea
 from bot.utils.trailing import make_trailing_state, update_trailing_stop
 from bot.core.order_rules import (
     is_market_open, is_weekend_queued, adjust_sl_for_gap_risk,
-    adjust_size_for_weekend, should_defer_tp_sl, ASSET_RULES,
+    adjust_size_for_weekend, should_defer_tp_sl,
 )
-from bot.core.limit_entry import calculate_entry, validate_entry_distance, EntryResult
+from bot.core.limit_entry import calculate_entry
 from bot.core.market_scanner import _classify_symbol
 
 logger = logging.getLogger(__name__)
@@ -1553,7 +1553,7 @@ class LiveExecutor:
         if not CONFIG.is_live():
             audit(trade_log, f"LIVE EXECUTION BLOCKED: is_live() returned False at execution time for {idea.asset}",
                   action="live_execute", result="BLOCKED_NOT_LIVE")
-            return f"Live execution blocked: live mode was deactivated before order placement."
+            return "Live execution blocked: live mode was deactivated before order placement."
 
         audit(trade_log, f"Live execution starting: {idea.direction.value} {idea.asset}",
               action="live_execute", result="STARTING",
@@ -1586,12 +1586,12 @@ class LiveExecutor:
                     # Reset degraded flag since we're about to hit the REST API
                     self._ws_last_seen = time.time()
                 else:
-                    audit(trade_log, f"Order blocked: system degraded (paused)",
+                    audit(trade_log, "Order blocked: system degraded (paused)",
                           action="execute", result="DEGRADED")
                     return "EXECUTION BLOCKED: system is in degraded mode (paused) — WebSocket disconnected"
             if deg_mode == "reduce_only":
                 # Only allow closing positions, not opening new ones
-                audit(trade_log, f"Order blocked: reduce-only mode",
+                audit(trade_log, "Order blocked: reduce-only mode",
                       action="execute", result="REDUCE_ONLY")
                 return "EXECUTION BLOCKED: system is in reduce-only mode — too many API errors"
 
@@ -1858,7 +1858,7 @@ class LiveExecutor:
                     use_limit = False
                     limit_price = None
                     audit(trade_log,
-                          f"Limit order downgraded to market: no ATR for offset calculation",
+                          "Limit order downgraded to market: no ATR for offset calculation",
                           action="limit_downgrade", result="MARKET_FALLBACK",
                           data={"symbol": symbol})
 
@@ -5571,7 +5571,7 @@ class LiveExecutor:
                     # Empty dict — try backup
                     if source == path and bak_path.exists():
                         audit(trade_log,
-                              f"Main positions file is empty, trying backup",
+                              "Main positions file is empty, trying backup",
                               action="load_positions", result="FALLBACK_TO_BAK")
                         continue
                     return

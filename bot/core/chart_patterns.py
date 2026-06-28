@@ -948,8 +948,8 @@ def detect_elliott_diagonal(
                         "signal": "bearish",  # ending diagonal = reversal
                         "confidence": round(min(0.75, conf), 2),
                         "description": (
-                            f"Ending diagonal (wave 5 exhaustion): waves shortening, "
-                            f"converging trendlines → bearish reversal expected"
+                            "Ending diagonal (wave 5 exhaustion): waves shortening, "
+                            "converging trendlines → bearish reversal expected"
                         ),
                         "key_levels": {
                             "w1_start": sl[0][1], "w1_top": sh[0][1],
@@ -996,8 +996,8 @@ def detect_elliott_diagonal(
                         "signal": "bullish",  # bearish ending diagonal = bullish reversal
                         "confidence": round(min(0.75, conf), 2),
                         "description": (
-                            f"Ending diagonal (wave 5 exhaustion): waves shortening, "
-                            f"converging trendlines → bullish reversal expected"
+                            "Ending diagonal (wave 5 exhaustion): waves shortening, "
+                            "converging trendlines → bullish reversal expected"
                         ),
                         "key_levels": {
                             "w1_start": sh[0][1], "w1_low": sl[0][1],

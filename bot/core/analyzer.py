@@ -43,7 +43,6 @@ def _sanitize_symbol(symbol: str) -> str:
     return s
 
 import numpy as np
-from openai import AsyncOpenAI
 
 from bot.config import CONFIG
 from bot.core.llm_cache import SemanticLLMCache
@@ -57,12 +56,12 @@ from bot.core.explainability import ExplainabilityEngine
 from bot.core.multi_timeframe import MTFConfluence
 from bot.core.sentiment import SentimentEngine
 from bot.core.smart_money import SmartMoneyEngine
-from bot.core.strategy_modes import StrategySelector, MODE_CONFIGS
+from bot.core.strategy_modes import StrategySelector
 from bot.llm.provider import BYOK, LLMProvider, LLMTier, PROVIDER_CATALOG, create_llm_client, llm_complete, LLMConfig, resolve_tier_config
 from bot.core.volume_profile import compute_volume_profile, poc_magnet_signal
 from bot.core.liquidity_sweep import detect_sweeps, sweep_to_confluence_votes
-from bot.core.supply_demand import detect_zones, zones_to_confluence, find_nearest_zone
-from bot.core.smart_exits import detect_squeeze, TimeOfDayEdge, AdaptiveLimitDistance
+from bot.core.supply_demand import detect_zones, zones_to_confluence
+from bot.core.smart_exits import detect_squeeze
 from bot.core.chart_patterns import scan_all_chart_patterns
 from bot.core.order_flow import OrderFlowAnalyzer
 from bot.utils.logger import audit, system_log, trade_log, scan_log
@@ -811,7 +810,7 @@ class Analyzer:
                 "reason": (
                     f"Score {blended_confidence:.0%} < {min_conf:.0%} threshold"
                     + (f" (regime {regime.value} penalty -{regime_confidence_penalty:.0%})" if regime_confidence_penalty > 0 else "")
-                    + (f" (counter-trend penalty)" if counter_trend_penalty < 1.0 else "")
+                    + (" (counter-trend penalty)" if counter_trend_penalty < 1.0 else "")
                 ),
             }
             audit(trade_log, "Low blended confidence -- skipping",
@@ -1772,7 +1771,6 @@ class Analyzer:
         vp = indicators.get("_vp_result")
         if vp is not None:
             try:
-                from bot.core.volume_profile import volume_profile_to_confluence
                 # Use net bullish/bearish vote based on price vs POC
                 vp_vote = 0.0
                 if hasattr(vp, 'price_vs_poc'):
@@ -2258,7 +2256,6 @@ class Analyzer:
             if sdk_type == "anthropic":
                 # Use unified llm_complete for Anthropic (different API format)
                 # Track usage from Anthropic response
-                import anthropic as _anthropic_mod
                 messages = [{"role": "user", "content": prompt}]
 
                 # Apply prompt caching to system prompt — saves 90% on input costs

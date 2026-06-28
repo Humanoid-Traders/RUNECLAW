@@ -20,14 +20,13 @@ from .model_compare import ModelComparer
 from .models import (
     ChangeClassification,
     DecisionMemory,
-    ImprovementProposal,
     LearningTier,
     ReflectionMemory,
 )
 from .patterns import PatternLearner
 from .prompt_opt import PromptOptimizer
 from .reflection import ReflectionEngine
-from .safety_policy import classify_proposal, validate_learning_action
+from .safety_policy import classify_proposal
 from .store import LearningStore
 from .strategy_eval import StrategyEvaluator
 

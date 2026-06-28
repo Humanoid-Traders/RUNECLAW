@@ -11,7 +11,7 @@ Data source: Candle timestamps already fetched via ccxt.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional
 

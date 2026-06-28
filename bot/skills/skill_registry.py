@@ -264,7 +264,7 @@ class ScanMarketSkill(BaseSkill):
         lines.append(f"\n{_OK} {bullish} bullish  {_BAD} {bearish} bearish  \u2022  {cats_found} categories")
         if spikes:
             lines.append(f"\U0001f4a5 {spikes} volume spike{'s' if spikes != 1 else ''} detected")
-        lines.append(f"\n<i>\U0001f504 /mode all_markets \u2022 say \"deep scan\" for full analysis</i>")
+        lines.append("\n<i>\U0001f504 /mode all_markets \u2022 say \"deep scan\" for full analysis</i>")
         return "\n".join(lines)
 
 
@@ -636,7 +636,7 @@ class GetPortfolioSkill(BaseSkill):
             pnl_icon = "\U0001f7e2" if live_total_pnl >= 0 else "\U0001f534"
 
             lines = [
-                f"<b>Portfolio</b> (LIVE)\n",
+                "<b>Portfolio</b> (LIVE)\n",
                 f"Equity: <code>${display_equity:,.2f}</code>",
                 f"Open: <code>{len(live_open)}</code> | Exposure: <code>${live_exposure:,.2f}</code>",
                 f"Realized PnL: {pnl_icon} <code>${live_total_pnl:+,.2f}</code>",
@@ -675,12 +675,12 @@ class GetPortfolioSkill(BaseSkill):
             f"\U0001f4b0 <b>PORTFOLIO</b>\n{SEP}",
             f"   {pnl_icon} {_pill(_money(state.total_pnl, sign=True))}\n",
             # ── Balance card ──
-            f"\U0001f4b3 <b>Balance</b>",
+            "\U0001f4b3 <b>Balance</b>",
             f"- Equity: <code>{_money(state.equity_usd)}</code>",
             f"- Available: <code>{_money(state.balance_usd)}</code>",
             f"- Win Rate: <code>{state.win_rate:.0%}</code>\n",
             # ── PnL waterfall ──
-            f"\U0001f4c8 <b>PnL Waterfall</b>",
+            "\U0001f4c8 <b>PnL Waterfall</b>",
             "<pre>",
             f"  \u25b8 Gross    {_money(state.total_gross_pnl, sign=True):>14}",
             f"  \u25b8 Commiss  {_money(state.total_commission):>14}",
@@ -972,7 +972,7 @@ class MacroCalendarSkill(BaseSkill):
             lines.append(f"- Next event in: <code>{t}</code>")
 
         if upcoming:
-            lines.append(f"\n\U0001f4cb <b>Upcoming</b>")
+            lines.append("\n\U0001f4cb <b>Upcoming</b>")
             for ev in upcoming:
                 times = cal.format_event_times(ev)
                 sev = getattr(ev, "severity", "medium")
@@ -1072,7 +1072,7 @@ class CostBreakdownSkill(BaseSkill):
         lines = [
             f"\U0001f4b0 <b>AGENT ECONOMICS</b>\n{SEP}",
             "",
-            f"\u26a1 <b>LLM Usage</b>",
+            "\u26a1 <b>LLM Usage</b>",
             f"- Total: <code>${cost.llm_cost_usd:,.4f}</code> ({cost.llm_calls} calls)",
             f"- Tokens In: <code>{cost.prompt_tokens:,}</code>",
             f"- Tokens Out: <code>{cost.completion_tokens:,}</code>",
@@ -1085,12 +1085,12 @@ class CostBreakdownSkill(BaseSkill):
             n = cost.calls_by_category.get(cat, 0)
             if n > 0:
                 if not cats_found:
-                    lines.extend([f"\n\U0001f4ca <b>Breakdown</b>"])
+                    lines.extend(["\n\U0001f4ca <b>Breakdown</b>"])
                     cats_found = True
                 lines.append(f"- {cat.title()}: <code>${c:,.4f}</code> ({n})")
 
         lines.extend([
-            f"\n\U0001f4b3 <b>Operating Total</b>",
+            "\n\U0001f4b3 <b>Operating Total</b>",
             f"- LLM: <code>${cost.llm_cost_usd:,.4f}</code>",
             f"- Infra: <code>${cost.infra_cost_usd:,.4f}</code>",
             f"- Total: <code>${cost.operating_cost_usd:,.4f}</code>",
@@ -1100,7 +1100,7 @@ class CostBreakdownSkill(BaseSkill):
             lines.append(f"- Per Trade: <code>${cpt:,.4f}</code>")
 
         lines.extend([
-            f"\n\U0001f4c8 <b>Net</b>",
+            "\n\U0001f4c8 <b>Net</b>",
             f"- Equity: <code>{_money(econ_equity)}</code>",
             f"- Costs: <code>-${cost.operating_cost_usd:,.4f}</code>",
             f"{SEP}",
@@ -1113,7 +1113,7 @@ class CostBreakdownSkill(BaseSkill):
             total_lookups = cache_snap["hits"] + cache_snap["misses"]
             hit_pct = cache_snap["hit_rate"] * 100
             lines.extend([
-                f"\n\U0001f9e0 <b>LLM Cache</b>",
+                "\n\U0001f9e0 <b>LLM Cache</b>",
                 f"- Hits: <code>{cache_snap['hits']}</code>",
                 f"- Misses: <code>{cache_snap['misses']}</code>",
                 f"- Hit Rate: <code>{hit_pct:.1f}%</code>",
@@ -1189,8 +1189,8 @@ class RunStrategySkill(BaseSkill):
             a = f"  <i>/{aliases[0]}</i>" if aliases else ""
             lines.append(f"  {cfg['icon']} <b>{cfg['label']}</b>{a}")
             lines.append(f"     <i>{cfg['desc']}</i>")
-        lines.append(f"\n<i>\u25b8 Say \"run\" + name \u2022 21 checks active</i>")
-        lines.append(f"<i>\u25b8 Or: say \"run BTC\", \"run SOL\", etc.</i>")
+        lines.append("\n<i>\u25b8 Say \"run\" + name \u2022 21 checks active</i>")
+        lines.append("<i>\u25b8 Or: say \"run BTC\", \"run SOL\", etc.</i>")
         return "\n".join(lines)
 
     @classmethod
@@ -1242,7 +1242,7 @@ class RunStrategySkill(BaseSkill):
         ]
         lines.extend(results or ["  <i>No actionable ideas passed analysis</i>"])
         if ideas > 0:
-            lines.append(f"\n<i>Say \"trade\" to review and confirm</i>")
+            lines.append("\n<i>Say \"trade\" to review and confirm</i>")
         return "\n".join(lines)
 
     async def execute(self, engine: RuneClawEngine, **kwargs: Any) -> str:
@@ -1317,7 +1317,7 @@ class RunStrategySkill(BaseSkill):
         ]
         lines.extend(results or ["  <i>No actionable ideas passed filters</i>"])
         if ideas > 0:
-            lines.append(f"\n<i>Say \"trade\" to review and confirm</i>")
+            lines.append("\n<i>Say \"trade\" to review and confirm</i>")
         return "\n".join(lines)
 
 
@@ -1395,7 +1395,7 @@ class LearningDashboardSkill(BaseSkill):
         t = tier_icons.get(score["tier"], _NEU)
 
         lines = [
-            f"\U0001f9e0 <b>AI LEARNING SYSTEM</b>\n",
+            "\U0001f9e0 <b>AI LEARNING SYSTEM</b>\n",
             f"  {t} Score: <code>{score['composite_score']}/10</code>  [{score['tier']}]\n",
         ]
 
@@ -1458,7 +1458,7 @@ class LearningDashboardSkill(BaseSkill):
         lines.append("</pre>\n")
 
         # ── Data summary ─────────────────────────────────────
-        lines.append(f"\U0001f4be <b>Data Summary</b>")
+        lines.append("\U0001f4be <b>Data Summary</b>")
         total = sum(stats.values())
         lines.append(f"- Total records: <code>{total}</code>")
         lines.append(f"- Strategies scored: <code>{score.get('strategies_evaluated', 0)}</code>")
@@ -1467,14 +1467,14 @@ class LearningDashboardSkill(BaseSkill):
 
         # ── Proposals ────────────────────────────────────────
         lines.extend([
-            f"\U0001f4cb <b>Proposals</b>",
+            "\U0001f4cb <b>Proposals</b>",
             f"- Pending: <code>{dash['pending_proposals']}</code>",
             f"- Blocked: <code>{dash['blocked_proposals']}</code>",
         ])
 
         # ── Strategy rankings ────────────────────────────────
         if dash.get("strategy_rankings"):
-            lines.append(f"\n\U0001f3af <b>Strategy Rankings</b>")
+            lines.append("\n\U0001f3af <b>Strategy Rankings</b>")
             for s in dash["strategy_rankings"][:5]:
                 of = f" {_WARN}" if s["overfitting"] else ""
                 lines.append(
@@ -1485,7 +1485,7 @@ class LearningDashboardSkill(BaseSkill):
         # ── Prompt versions ──────────────────────────────────
         pv = dash.get("prompt_versions", {})
         if pv and pv.get("versions"):
-            lines.append(f"\n\U0001f4dd <b>Prompt Versions</b>")
+            lines.append("\n\U0001f4dd <b>Prompt Versions</b>")
             lines.append(f"  Active: v{pv.get('current_version', '?')}  "
                          f"({pv.get('total_versions', 0)} versions tracked)")
 
@@ -1496,8 +1496,8 @@ class LearningDashboardSkill(BaseSkill):
             lines.append(f"\n\U0001f916 <b>Model Agreement</b>: {rate:.0%}")
 
         lines.append(
-            f"\n\U0001f512 <i>Safety sandbox active"
-            f" \u2014 AI learns aggressively, never overrides risk</i>"
+            "\n\U0001f512 <i>Safety sandbox active"
+            " \u2014 AI learns aggressively, never overrides risk</i>"
         )
         return "\n".join(lines)
 
@@ -1515,11 +1515,11 @@ class FeedbackSkill(BaseSkill):
         text = kwargs.get("text", "")
         if not did or not ft:
             return (
-                f"\U0001f4ac <b>FEEDBACK</b>\n\n"
-                f"Say <code>feedback &lt;id&gt; &lt;type&gt; [text]</code>\n\n"
-                f"Types: <code>correct</code>, <code>incorrect</code>, "
-                f"<code>too_risky</code>, <code>too_conservative</code>, "
-                f"<code>good_rejection</code>, <code>good_explanation</code>"
+                "\U0001f4ac <b>FEEDBACK</b>\n\n"
+                "Say <code>feedback &lt;id&gt; &lt;type&gt; [text]</code>\n\n"
+                "Types: <code>correct</code>, <code>incorrect</code>, "
+                "<code>too_risky</code>, <code>too_conservative</code>, "
+                "<code>good_rejection</code>, <code>good_explanation</code>"
             )
         fb = engine.learning.submit_feedback(decision_audit_id=did, feedback_type=ft, feedback_text=text)
         return (f"{_OK} Feedback recorded: <code>{fb.audit_id}</code>\n"
@@ -1544,7 +1544,7 @@ class PatternsSkill(BaseSkill):
                 f"WR {_pill(f'{p.historical_win_rate:.0%}')}  "
                 f"Avg {_pill(f'${p.avg_pnl:.2f}')}  ({p.sample_size})"
             )
-        lines.append(f"\n<i>\u25c7 Patterns are observations, not signals</i>")
+        lines.append("\n<i>\u25c7 Patterns are observations, not signals</i>")
         return "\n".join(lines)
 
 
@@ -1583,11 +1583,11 @@ class OptimizationSkill(BaseSkill):
         lines = [
             f"\u26a1 <b>TOKEN OPTIMIZER</b>\n{SEP}",
             "",
-            f"\U0001f4be <b>Cache</b>",
+            "\U0001f4be <b>Cache</b>",
             f"- Size: <code>{cache.get('size', 0)}/{cache.get('max_size', 0)}</code>",
             f"- Hit Rate: <code>{cache.get('hit_rate', 0):.0%}</code>",
             f"- Evictions: <code>{cache.get('evictions', 0)}</code>",
-            f"\n\U0001f4ca <b>Tier Distribution</b>",
+            "\n\U0001f4ca <b>Tier Distribution</b>",
             f"- T1 Rules: <code>{tiers.get('tier1_rules', 0)}</code> (free)",
             f"- T2 Mini: <code>{tiers.get('tier2_mini', 0)}</code> (cheap)",
             f"- T3 Full: <code>{tiers.get('tier3_full', 0)}</code> (best)",
@@ -1597,7 +1597,7 @@ class OptimizationSkill(BaseSkill):
 
         saved = savings.get("total_estimated_cost_saved_usd", 0)
         lines.extend([
-            f"\n\U0001f4b0 <b>Savings</b>",
+            "\n\U0001f4b0 <b>Savings</b>",
             f"- Tokens: <code>~{savings.get('total_estimated_tokens_saved', 0):,}</code>",
             f"- Cost: <code>~${saved:,.4f}</code>",
         ])
@@ -1753,11 +1753,11 @@ class ProScanSkill(BaseSkill):
         if not signals:
             return (
                 header +
-                f"\n\u2694\ufe0f <b>Executive Read</b>\n"
-                f"<i>The Claw sees no actionable movement. Market is compressed.\n"
-                f"No trigger, no trade. Stand down until structure resolves.</i>\n\n"
-                f"<b>Claw Verdict:</b> Observation mode.\n\n"
-                f"<i>\u26a0\ufe0f Not financial advice. Use your own risk management.</i>"
+                "\n\u2694\ufe0f <b>Executive Read</b>\n"
+                "<i>The Claw sees no actionable movement. Market is compressed.\n"
+                "No trigger, no trade. Stand down until structure resolves.</i>\n\n"
+                "<b>Claw Verdict:</b> Observation mode.\n\n"
+                "<i>\u26a0\ufe0f Not financial advice. Use your own risk management.</i>"
             )
 
         # Sort by mode preference
@@ -2080,13 +2080,13 @@ class ProScanSkill(BaseSkill):
                 )
 
             verdict_lines.append(
-                f"\n<i>\u25b8 Say \"trade\" to review \u2022 \"why not\" for rejections</i>"
+                "\n<i>\u25b8 Say \"trade\" to review \u2022 \"why not\" for rejections</i>"
             )
 
         # Risk note
         risk_note = (
-            f"\n\n<i>\u26a0\ufe0f Not financial advice. Use your own risk management.\n"
-            f"Protect capital first. Opportunity comes second.</i>"
+            "\n\n<i>\u26a0\ufe0f Not financial advice. Use your own risk management.\n"
+            "Protect capital first. Opportunity comes second.</i>"
         )
 
         # One-Glance Verdict
@@ -2103,24 +2103,24 @@ class ProScanSkill(BaseSkill):
                 f"Best: <b>{_esc(best.asset)}</b> ({best.confidence:.0%} conf, {_best_rr:.1f}R)\n"
             )
         else:
-            one_glance_lines.append(f"\n🔒 <b>One-Glance Verdict: Stand Down</b>")
+            one_glance_lines.append("\n🔒 <b>One-Glance Verdict: Stand Down</b>")
             one_glance_lines.append(
-                f"  No actionable setups. The Claw watches structure.\n"
+                "  No actionable setups. The Claw watches structure.\n"
             )
 
         # Next Best Action
         next_action_lines = []
-        next_action_lines.append(f"\n🎯 <b>Next Best Action</b>")
+        next_action_lines.append("\n🎯 <b>Next Best Action</b>")
         if ideas_found:
             best_idea, _ = ideas_found[0]
             if best_idea.direction.value == "LONG":
                 next_action_lines.append(f"  Wait for confirmation above <code>${best_idea.entry_price:,.6g}</code> before entry.")
             else:
                 next_action_lines.append(f"  Wait for rejection below <code>${best_idea.entry_price:,.6g}</code> before entry.")
-            next_action_lines.append(f"  <i>Entry is conditional. No trigger, no trade.</i>")
+            next_action_lines.append("  <i>Entry is conditional. No trigger, no trade.</i>")
         else:
-            next_action_lines.append(f"  Stand down. No actionable setups detected.")
-            next_action_lines.append(f"  <i>The Claw watches structure. Patience is edge.</i>")
+            next_action_lines.append("  Stand down. No actionable setups detected.")
+            next_action_lines.append("  <i>The Claw watches structure. Patience is edge.</i>")
 
         # ── Assemble ──
         parts = [
@@ -2319,8 +2319,8 @@ class PlaybookSkill(BaseSkill):
         # ── Section 1: Scanner Status ──
         lines.append(f"\U0001f4e1 <b>SCANNER SWEEP</b>\n{SEP}")
         lines.append(f"- Universe: <code>{len(DEEPSCAN_UNIVERSE)} symbols</code>")
-        lines.append(f"- Timeframes: <code>4H \u00b7 1H \u00b7 15M \u00b7 5M</code>")
-        lines.append(f"- Batch Mode: <code>Parallel async</code>")
+        lines.append("- Timeframes: <code>4H \u00b7 1H \u00b7 15M \u00b7 5M</code>")
+        lines.append("- Batch Mode: <code>Parallel async</code>")
         lines.append(f"- Last Scan: <code>{now}</code>")
 
         # Show recent scan results if available
@@ -2335,14 +2335,14 @@ class PlaybookSkill(BaseSkill):
 
         # ── Section 2: AI Brain ──
         lines.append(f"\n\U0001f9e0 <b>AI BRAIN</b>\n{SEP}")
-        lines.append(f"- Profiles: <code>6 strategy modes</code>")
-        lines.append(f"- Indicators: <code>14+ (RSI/MACD/BB/EMA/ADX/ATR/OBV/VWAP/MFI/Fib)</code>")
-        lines.append(f"- Candle Patterns: <code>15 detected</code>")
-        lines.append(f"- Chart Patterns: <code>13 (H&amp;S/DT/DB/Flags/Tri/Wedge)</code>")
-        lines.append(f"- Elliott Waves: <code>5-wave impulse count</code>")
-        lines.append(f"- Market Structure: <code>HH/HL/BOS/CHoCH/Sweep</code>")
-        lines.append(f"- MTF Alignment: <code>1H \u00b7 4H \u00b7 1D</code>")
-        lines.append(f"- Order Flow: <code>CVD \u00b7 Book \u00b7 Whale \u00b7 Funding</code>")
+        lines.append("- Profiles: <code>6 strategy modes</code>")
+        lines.append("- Indicators: <code>14+ (RSI/MACD/BB/EMA/ADX/ATR/OBV/VWAP/MFI/Fib)</code>")
+        lines.append("- Candle Patterns: <code>15 detected</code>")
+        lines.append("- Chart Patterns: <code>13 (H&amp;S/DT/DB/Flags/Tri/Wedge)</code>")
+        lines.append("- Elliott Waves: <code>5-wave impulse count</code>")
+        lines.append("- Market Structure: <code>HH/HL/BOS/CHoCH/Sweep</code>")
+        lines.append("- MTF Alignment: <code>1H \u00b7 4H \u00b7 1D</code>")
+        lines.append("- Order Flow: <code>CVD \u00b7 Book \u00b7 Whale \u00b7 Funding</code>")
 
         # LLM status
         llm_provider = CONFIG.llm.provider if CONFIG.llm and CONFIG.llm.provider else "groq"
@@ -2365,7 +2365,7 @@ class PlaybookSkill(BaseSkill):
         # ── Section 4: Live Execution ──
         lines.append(f"\u26a1 <b>LIVE EXECUTION</b>\n{SEP}")
         lines.append(f"- Mode: <code>{sim}</code>")
-        lines.append(f"- Exchange: <code>Bitget</code>")
+        lines.append("- Exchange: <code>Bitget</code>")
 
         # LIVE FIX: show real exchange equity in LIVE mode
         if CONFIG.is_live():
@@ -2394,7 +2394,7 @@ class PlaybookSkill(BaseSkill):
             lines.append(f"- Open Positions: <code>{state.open_positions}</code>")
 
         lines.append(f"- Daily PnL: <code>{_money(state.daily_pnl, sign=True)}</code>")
-        lines.append(f"- Trailing Stop: <code>Active (shared logic)</code>")
+        lines.append("- Trailing Stop: <code>Active (shared logic)</code>")
         lines.append("")
 
         # ── Section 5: Active Positions ──

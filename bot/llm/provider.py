@@ -633,7 +633,7 @@ class BYOKManager:
         catalog = PROVIDER_CATALOG.get(cfg.provider, {})
 
         lines = [
-            f"🤖 **LLM Status**",
+            "🤖 **LLM Status**",
             f"Provider: `{cfg.provider.value.upper()}`",
             f"Model: `{cfg.model}`",
             f"Key: `{cfg.key_fingerprint()}`",

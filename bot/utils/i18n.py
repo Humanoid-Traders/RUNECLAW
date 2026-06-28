@@ -9,7 +9,6 @@ Usage:
     msg = t("welcome", lang, name="Trader")  # with placeholders
 """
 
-from typing import Optional
 
 # Default language
 DEFAULT_LANG = "en"
@@ -462,7 +461,6 @@ def set_user_lang(users_db, tg_id: str, lang: str) -> bool:
     if user and isinstance(user, dict):
         user["lang"] = lang
         # UserStore uses _users dict + _save()
-        import threading
         with users_db._lock:
             users_db._users[str(tg_id)] = user
             users_db._save()

@@ -12,11 +12,10 @@ from __future__ import annotations
 import functools, json, logging, os, urllib.request, urllib.error
 from telegram import Update
 from telegram.ext import ContextTypes
-from telegram.constants import ParseMode
 
 from bot.db.models import (
     get_user_by_chat_id, get_user_settings, get_user_portfolio,
-    save_user_portfolio, consume_link_token, link_telegram,
+    save_user_portfolio, link_telegram,
     unlink_telegram, UserSettings,
 )
 from bot.db.models import User as DBUser

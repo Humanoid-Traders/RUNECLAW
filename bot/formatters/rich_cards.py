@@ -151,7 +151,7 @@ def _verdict_header(status_icon: str, status_label: str, bias: str = "",
                      risk_state: str = "", action: str = "") -> str:
     """Build a one-glance verdict header block."""
     lines = []
-    lines.append(f"⚔️ <b>RUNECLAW VERDICT</b>")
+    lines.append("⚔️ <b>RUNECLAW VERDICT</b>")
     lines.append(SEP)
     lines.append(f"  Status: {status_icon} <b>{status_label}</b>")
     if bias:
@@ -256,7 +256,7 @@ async def fetch_analysis_data(exchange, symbol: str, timeframe: str = "1h",
             if abs(price - recent_high) / price < 0.01:
                 structure += ", consolidating at top"
             else:
-                structure += f", pulling back from high"
+                structure += ", pulling back from high"
         elif price < sma20:
             structure = f"Downtrend from {_fmt_price(recent_high)} \u2192 testing {_fmt_price(recent_low)}"
         else:
@@ -475,9 +475,9 @@ def render_recommended_orders(assets: List[Dict[str, Any]],
         lines.append(f"- SL: {_fmt_price(idea.stop_loss)} (-{sl_pct:.1f}%) | TP: {_fmt_price(idea.take_profit)} (+{tp_pct:.1f}%)")
         lines.append(f"- R:R 1:{idea.risk_reward_ratio:.1f} | Conf: {idea.confidence:.0%}")
         if i == best_idx and a["bid_depth"] > a["ask_depth"]:
-            lines.append(f"- \u2705 Bid dominance \u2014 cleaner setup")
+            lines.append("- \u2705 Bid dominance \u2014 cleaner setup")
         elif a["ask_depth"] > a["bid_depth"] * 1.5:
-            lines.append(f"- \u26a0\ufe0f Ask wall present \u2014 caution")
+            lines.append("- \u26a0\ufe0f Ask wall present \u2014 caution")
         lines.append("")
 
     is_pullback = any(
@@ -490,7 +490,7 @@ def render_recommended_orders(assets: List[Dict[str, Any]],
     # Next Best Action
     if lines:
         lines.append("")
-        lines.append(f"🎯 <b>Next Action:</b> <i>Entry is conditional. Wait for confirmation trigger before execution.</i>")
+        lines.append("🎯 <b>Next Action:</b> <i>Entry is conditional. Wait for confirmation trigger before execution.</i>")
 
     return "\n".join(lines)
 

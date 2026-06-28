@@ -13,12 +13,12 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from bot.compat import UTC
 from enum import Enum
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Callable, Optional
 
 logger = logging.getLogger(__name__)
 

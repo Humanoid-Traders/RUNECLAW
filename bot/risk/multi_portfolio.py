@@ -16,9 +16,8 @@ import re
 import threading
 from typing import Optional, Callable
 
-from bot.config import CONFIG
 from bot.risk.portfolio import PortfolioTracker, TrailingStopConfig
-from bot.utils.models import PortfolioState, TradeExecution, TradeIdea
+from bot.utils.models import PortfolioState, TradeExecution
 
 log = logging.getLogger("runeclaw.multi_portfolio")
 

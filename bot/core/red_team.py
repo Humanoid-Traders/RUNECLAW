@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field, ValidationError
 from bot.risk.portfolio import PortfolioTracker
 from bot.risk.risk_engine import RiskEngine
 from bot.config import CONFIG
-from bot.utils.models import Direction, RiskVerdict, TradeIdea
+from bot.utils.models import Direction, TradeIdea
 
 # Default ATR for scenarios not specifically testing the volatility guard.
 # Expressed as a fraction of entry price (2%), well within the 6% guard threshold.

@@ -24,7 +24,7 @@ from typing import Any
 
 # ── Compatibility shim: use pydantic if available, else plain dataclass ──────
 try:
-    from pydantic import BaseModel, Field
+    from pydantic import BaseModel, Field  # noqa: F401  (availability probe)
 
     _USE_PYDANTIC = True
 except ImportError:  # pragma: no cover
@@ -762,7 +762,7 @@ def format_quant_for_telegram(result: dict) -> str:
         return "\u2588" * filled_b + "\u2591" * (8 - filled_b)
 
     lines = [
-        f"<b>\u2501\u2501 RUNECLAW QUANT \u2501\u2501</b>",
+        "<b>\u2501\u2501 RUNECLAW QUANT \u2501\u2501</b>",
         f"<b>{symbol}</b>",
         "",
         f"<b>Regime:</b> {regime_label}",
@@ -770,7 +770,7 @@ def format_quant_for_telegram(result: dict) -> str:
         f"<b>Vol State:</b> {vol_state}",
         f"<b>GARCH:</b> {garch_dir}",
         "",
-        f"\u2501\u2501 Factors \u2501\u2501",
+        "\u2501\u2501 Factors \u2501\u2501",
         f"Trend:     {_bar(factors.get('trend', 0))} {factors.get('trend', 0):.2f}",
         f"Momentum:  {_bar(factors.get('momentum', 0))} {factors.get('momentum', 0):.2f}",
         f"MeanRev:   {_bar(factors.get('mean_reversion', 0))} {factors.get('mean_reversion', 0):.2f}",

@@ -63,7 +63,7 @@ def run_telegram() -> None:
         except (ProcessLookupError, ValueError):
             pass  # Process already dead, stale PID file
         except PermissionError:
-            print(f"  WARNING: Cannot kill existing process. May cause Telegram conflicts.")
+            print("  WARNING: Cannot kill existing process. May cause Telegram conflicts.")
 
     # Write our PID
     with open(_PID_FILE, "w") as f:
