@@ -284,7 +284,11 @@ class BacktestEngine:
                     continue
                 # Not stopped out — now update trailing with favorable extreme
                 check_price = bar.high
-                sl, trailing_active = update_trailing_stop(bt_meta, check_price, sl, direction.value)
+                sl, trailing_active = update_trailing_stop(
+                    bt_meta, check_price, sl, direction.value,
+                    rule=CONFIG.trailing.trail_rule,
+                    playbook_atr_mult=CONFIG.trailing.playbook_atr_mult,
+                )
                 pos.stop_loss = sl
             else:
                 if bar.high >= sl:
@@ -298,7 +302,11 @@ class BacktestEngine:
                     continue
                 # Not stopped out — now update trailing with favorable extreme
                 check_price = bar.low
-                sl, trailing_active = update_trailing_stop(bt_meta, check_price, sl, direction.value)
+                sl, trailing_active = update_trailing_stop(
+                    bt_meta, check_price, sl, direction.value,
+                    rule=CONFIG.trailing.trail_rule,
+                    playbook_atr_mult=CONFIG.trailing.playbook_atr_mult,
+                )
                 pos.stop_loss = sl
 
     def _close_position(
