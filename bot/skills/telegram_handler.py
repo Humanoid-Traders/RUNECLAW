@@ -995,7 +995,7 @@ class TelegramHandler:
                 # H-18 FIX: LIVE mode — check per-user live trading permission
                 if CONFIG.is_live() and not self._is_admin(update):
                     caller_uid_str = str(update.effective_user.id) if update.effective_user else ""
-                    if not self.users.can_trade_live(caller_uid_str):
+                    if not self._can_trade_live(caller_uid_str):
                         await self._send(update,
                             "\U0001f512 <b>Live trading not enabled</b>\n\n"
                             "Ask an admin to grant you live trading access with /grant_live.")
@@ -1225,6 +1225,23 @@ class TelegramHandler:
             return True  # no allowlist configured -> preserve open/demo behavior
         return self._get_tg_id(update) in allow
 
+    def _can_trade_live(self, tg_id) -> bool:
+        """THE single authority for 'may this Telegram user place LIVE orders'.
+
+        Defense-in-depth: BOTH the operator-controlled env allowlist
+        (TELEGRAM_CHAT_ID / ADMIN_TELEGRAM_IDS) AND the per-user UserStore flag
+        must permit it. Centralizing it here means every gate and every status
+        display agree, and there is exactly one place to audit/change the live-
+        trade decision. A user not on the allowlist can never trade live even if a
+        stale users.json flag says otherwise (closes the divergence edge). When no
+        allowlist is configured (demo/paper), it falls back to the UserStore flag
+        — identical to the prior behaviour.
+        """
+        allow = self._allowlist_ids()
+        if allow and str(tg_id) not in allow:
+            return False
+        return self.users.can_trade_live(tg_id)
+
     def _is_admin(self, update: Update) -> bool:
         """Check if the user is an admin (user-store role OR ADMIN_TELEGRAM_IDS)."""
         tg_id = self._get_tg_id(update)
@@ -1393,7 +1410,7 @@ class TelegramHandler:
 
         # Show user's tier and trading mode
         tier_label = self.users.tier_label(tg_id)
-        can_live = self.users.can_trade_live(tg_id)
+        can_live = self._can_trade_live(tg_id)
         trade_mode = "\U0001f525 Live" if can_live else "\U0001f4dd Paper"
 
         # Get user language preference
@@ -1451,7 +1468,7 @@ class TelegramHandler:
             return
 
         tier_label = self.users.tier_label(tg_id)
-        can_live = self.users.can_trade_live(tg_id)
+        can_live = self._can_trade_live(tg_id)
         trade_mode = "\U0001f525 Live" if can_live else "\U0001f4dd Paper"
 
         msg = (
@@ -1553,7 +1570,7 @@ class TelegramHandler:
         if ok:
             target = self.users.get(target_id)
             name = target.get("name", "Unknown") if target else "Unknown"
-            can_live = self.users.can_trade_live(target_id)
+            can_live = self._can_trade_live(target_id)
             trade_mode = "\U0001f525 Live" if can_live else "\U0001f4dd Paper"
             SEP = "\u2500" * 16
             await self._send(update,
@@ -1881,7 +1898,7 @@ class TelegramHandler:
             role = u.get("role", "?")
             tier = u.get("tier", "basic")
             auth = "\u2713" if u.get("authorized") else "\u2717"
-            can_live = self.users.can_trade_live(u["telegram_id"])
+            can_live = self._can_trade_live(u["telegram_id"])
             mode = "LIVE" if can_live else "paper"
             lines.append(f" {tid:<10}{name:<12}{auth}{role:<7}{tier:<7}{mode}")
 
@@ -6719,7 +6736,7 @@ class TelegramHandler:
             # H-18 FIX: LIVE mode — check per-user live trading permission
             if CONFIG.is_live() and not self._is_admin(update):
                 caller_uid_str = str(update.effective_user.id) if update.effective_user else ""
-                if not self.users.can_trade_live(caller_uid_str):
+                if not self._can_trade_live(caller_uid_str):
                     await self._send(update,
                         "\U0001f512 <b>Live trading not enabled</b>\n\n"
                         "Ask an admin to grant you live trading access with /grant_live.",
@@ -6792,7 +6809,7 @@ class TelegramHandler:
                 # Forward trade open to marketing channels
                 idea = self.engine._pending_ideas.get(trade_id) or self.engine._last_confirmed_idea
                 if idea:
-                    can_live = self.users.can_trade_live(caller_uid or "")
+                    can_live = self._can_trade_live(caller_uid or "")
                     _mode = "LIVE" if can_live and not CONFIG.simulation_mode else "PAPER"
                     try:
                         await self.forwarder.post_trade_opened(idea, mode=_mode)
