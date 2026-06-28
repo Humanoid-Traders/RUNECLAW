@@ -8,6 +8,7 @@ File-backed user management with roles and admin commands.
 from __future__ import annotations
 
 import asyncio
+import functools
 import html
 import logging
 import os
@@ -171,6 +172,27 @@ _KB_DASH = InlineKeyboardMarkup([
     [InlineKeyboardButton("Portfolio", callback_data="pane:portfolio"),
      InlineKeyboardButton("Scan", callback_data="pane:scan")],
 ])
+
+
+def guard(command: str = ""):
+    """Decorator for command handlers: run the auth / rate-limit / role-permission
+    gate (``self._guard``) before the body, returning early if it fails.
+
+    Replaces the copy-pasted ``if not await self._guard(update, "..."): return``
+    prelude. Equivalent in every way — the gate still runs first and still
+    short-circuits — but the permission string now lives in one visible place per
+    command instead of two boilerplate lines inside each body. Handlers that must
+    run logic BEFORE the gate (e.g. a ``update.message`` null-check) keep the
+    inline call instead.
+    """
+    def _decorate(func):
+        @functools.wraps(func)
+        async def _wrapped(self, update, ctx, *args, **kwargs):
+            if not await self._guard(update, command):
+                return
+            return await func(self, update, ctx, *args, **kwargs)
+        return _wrapped
+    return _decorate
 
 
 class TelegramHandler:
@@ -1463,10 +1485,9 @@ class TelegramHandler:
 
     # ── Language command ──────────────────────────────────────
 
+    @guard("lang")
     async def _cmd_lang(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """Switch between English and Traditional Chinese."""
-        if not await self._guard(update, "lang"):
-            return
         tg_id = self._get_tg_id(update)
         current_lang = get_user_lang(self.users, tg_id)
 
@@ -1872,10 +1893,9 @@ class TelegramHandler:
 
     # ── Mode switching ────────────────────────────────────────
 
+    @guard("mode")
     async def _cmd_mode(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """Switch asset universe: /mode solana | /mode all | /mode stocks | /mode metals | etc."""
-        if not await self._guard(update, "mode"):
-            return
 
         args = (update.message.text or "").split()
         valid_modes = {"all_markets", "all", "solana", "stocks", "hybrid", "metals",
@@ -2051,6 +2071,7 @@ class TelegramHandler:
 
     # ── Live Trading Commands ─────────────────────────────────
 
+    @guard("admin")
     async def _cmd_autoconfirm(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """/autoconfirm — view or set auto-confirm threshold.
 
@@ -2059,8 +2080,6 @@ class TelegramHandler:
           /autoconfirm 0.75    — set to 75% confidence
           /autoconfirm off     — disable (set to 1.0)
         """
-        if not await self._guard(update, "admin"):
-            return
 
         from bot.config import RUNTIME
         args = ctx.args or []
@@ -2114,10 +2133,9 @@ class TelegramHandler:
                 "\u274c Invalid value. Use a number (0.50-1.00) or 'off'.\n"
                 "Example: <code>/autoconfirm 0.75</code>")
 
+    @guard("admin")
     async def _cmd_forcescan(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """/forcescan — force immediate scan bypassing cooldown and pending gates."""
-        if not await self._guard(update, "admin"):
-            return
 
         await self._send(update,
             "\U0001f50d <b>Force scan starting...</b>\n"
@@ -2555,10 +2573,9 @@ class TelegramHandler:
         except Exception as exc:
             await update.message.reply_text(f"Hold-time analysis error: {exc}")
 
+    @guard("admin")
     async def _cmd_golive(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """/golive — enable live trading with double confirmation."""
-        if not await self._guard(update, "admin"):
-            return
 
         args = ctx.args or []
         if args and args[0].upper() == "OFF":
@@ -2610,10 +2627,9 @@ class TelegramHandler:
             "\u2022 <code>/liveclose &lt;id&gt;</code> — close a position\n"
             "\u2022 <code>/golive OFF</code> — disable live mode")
 
+    @guard("portfolio")
     async def _cmd_livebalance(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """/livebalance — check real USDT balance + spot holdings on Bitget."""
-        if not await self._guard(update, "portfolio"):
-            return
         try:
             bal = await self.engine.live_executor.fetch_balance()
             # LIVE FIX: update engine's cached balance so /status shows fresh data
@@ -2728,10 +2744,9 @@ class TelegramHandler:
         except Exception as exc:
             await self._send(update, f"\u274c Balance fetch failed: {exc}")
 
+    @guard("portfolio")
     async def _cmd_livepositions(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """/livepositions — show live positions and pending orders separately."""
-        if not await self._guard(update, "portfolio"):
-            return
         positions = self.engine.live_executor._positions
         filled_pos = [p for p in positions.values() if p.status == "open"]
         pending_pos = [p for p in positions.values() if p.status == "pending_fill"]
@@ -3061,10 +3076,9 @@ class TelegramHandler:
             system_log.debug("livepositions card render failed: %s", exc)
             return False
 
+    @guard("admin")
     async def _cmd_liveclose(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """/liveclose <trade_id> — manually close a live position."""
-        if not await self._guard(update, "admin"):
-            return
         args = ctx.args or []
         if not args:
             await self._send(update, "Usage: <code>/liveclose TRADE_ID</code>")
@@ -3073,20 +3087,18 @@ class TelegramHandler:
         result = await self.engine.live_executor.close_position(trade_id, "manual_telegram")
         await self._send(update, f"\U0001f510 {result}")
 
+    @guard("admin")
     async def _cmd_buy(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """/buy — DISABLED (futures-only mode)."""
-        if not await self._guard(update, "admin"):
-            return
         await self._send(update,
             "\u274c <b>Spot trading is disabled</b>\n\n"
             "RUNECLAW operates in <b>futures-only mode</b> (USDT-M perpetuals at 5x leverage).\n\n"
             "The bot automatically opens positions via AI analysis. "
             "Use <code>/livepositions</code> to view open positions.")
 
+    @guard("admin")
     async def _cmd_sell(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """/sell — DISABLED (futures-only mode)."""
-        if not await self._guard(update, "admin"):
-            return
         await self._send(update,
             "\u274c <b>Spot trading is disabled</b>\n\n"
             "RUNECLAW operates in <b>futures-only mode</b> (USDT-M perpetuals at 5x leverage).\n\n"
@@ -3094,17 +3106,15 @@ class TelegramHandler:
 
     # ── Proactive Alerts (Move 2) ──────────────────────────────
 
+    @guard("status")
     async def _cmd_health(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """Show system health status."""
-        if not await self._guard(update, "status"):
-            return
         text = self.engine.health.format_telegram()
         await self._send(update, text)
 
+    @guard("scan")
     async def _cmd_watch(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """/watch [on|off|status] — toggle proactive alerts for this chat."""
-        if not await self._guard(update, "scan"):
-            return
 
         tg_id = self._get_tg_id(update)
         args = ctx.args or []
@@ -3470,10 +3480,9 @@ class TelegramHandler:
 
     # ── LLM BYOK commands ────────────────────────────────────
 
+    @guard("mode")
     async def _cmd_setllm(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """/setllm <provider> [api_key] [model] — switch LLM provider at runtime."""
-        if not await self._guard(update, "mode"):
-            return
         # Audit F-12: swapping the analysis LLM / injecting a key affects every
         # trade decision — restrict to admins, not the broad `mode` permission.
         if not self._is_admin(update):
@@ -3537,10 +3546,9 @@ class TelegramHandler:
                 "Failed to delete /setllm message containing API key: %s — "
                 "key may be visible in chat history", del_exc)
 
+    @guard("status")
     async def _cmd_llmstatus(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """/llmstatus — show current LLM provider and key fingerprint."""
-        if not await self._guard(update, "status"):
-            return
 
         env_config = LLMConfig(
             provider=LLMProvider(CONFIG.llm.provider) if CONFIG.llm.provider else LLMProvider.OPENAI,
@@ -3555,10 +3563,9 @@ class TelegramHandler:
             f"{SEP}\n"
             f"<pre>{html.escape(status)}</pre>")
 
+    @guard("mode")
     async def _cmd_llmreset(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """/llmreset — clear runtime LLM key, revert to .env settings."""
-        if not await self._guard(update, "mode"):
-            return
         # Audit F-12: admin-only, mirroring /setllm.
         if not self._is_admin(update):
             await self._send(update,
@@ -3578,10 +3585,9 @@ class TelegramHandler:
             f"- {html.escape(msg)}\n"
             f"- Status: 🟢 using .env defaults")
 
+    @guard("status")
     async def _cmd_llmtiers(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """/llmtiers — show multi-tier LLM routing configuration."""
-        if not await self._guard(update, "status"):
-            return
 
         env_config = LLMConfig(
             provider=LLMProvider(CONFIG.llm.provider) if CONFIG.llm.provider else LLMProvider.OPENAI,
@@ -3617,9 +3623,8 @@ class TelegramHandler:
 
     # ── Protected commands ────────────────────────────────────
 
+    @guard("dashboard")
     async def _cmd_dashboard(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-        if not await self._guard(update, "dashboard"):
-            return
         # L-14 FIX: key by user_id instead of chat_id to avoid cross-user pane leaks
         user_id = self._get_tg_id(update)
         pane = self._last_pane.get(user_id, "status")
@@ -3628,9 +3633,8 @@ class TelegramHandler:
         await self._send(update, text, reply_markup=_KB_DASH)
         self._last_pane[user_id] = pane
 
+    @guard("scan")
     async def _cmd_scan(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-        if not await self._guard(update, "scan"):
-            return
         user_id = self._get_tg_id(update)
         result = await self.registry.dispatch("scan_market", self.engine, user_id=user_id)
         # Visual grid card from the structured signals the skill stashed; falls
@@ -3698,9 +3702,8 @@ class TelegramHandler:
             system_log.debug("scan signals card render failed: %s", exc)
             return False
 
+    @guard("analyze")
     async def _cmd_analyze(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-        if not await self._guard(update, "analyze"):
-            return
         args = ctx.args
         if args:
             raw = args[0].upper().strip()
@@ -3766,9 +3769,8 @@ class TelegramHandler:
         else:
             await self._send(update, result)
 
+    @guard("portfolio")
     async def _cmd_portfolio(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-        if not await self._guard(update, "portfolio"):
-            return
         user_id = self._get_tg_id(update)
         # Use per-user portfolio if it exists, otherwise show shared
         if self.engine.user_portfolios.has_user(user_id):
@@ -4150,9 +4152,8 @@ class TelegramHandler:
 
         return (direction, symbol, entry, sl, tp, margin)
 
+    @guard("risk")
     async def _cmd_risk(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-        if not await self._guard(update, "risk"):
-            return
         user_id = self._get_tg_id(update)
         portfolio = self.engine.user_portfolios.get(user_id)
         state = portfolio.snapshot()
@@ -4198,9 +4199,8 @@ class TelegramHandler:
             system_log.debug("risk card render failed: %s", exc)
         await self._send(update, rendered["text"], reply_markup=kb)
 
+    @guard("status")
     async def _cmd_status(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-        if not await self._guard(update, "status"):
-            return
         user_id = self._get_tg_id(update)
         # Show per-user equity in status
         user_portfolio = self.engine.user_portfolios.get(user_id)
@@ -4236,16 +4236,14 @@ class TelegramHandler:
         )
         await self._send(update, msg, reply_markup=_KB_WARROOM)
 
+    @guard("rejected")
     async def _cmd_rejected(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-        if not await self._guard(update, "rejected"):
-            return
         result = await self.registry.dispatch("rejected_trades", self.engine, user_id=self._get_tg_id(update))
         await self._send(update, result)
 
+    @guard("rejected")
     async def _cmd_whynot(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """/whynot [symbol] — explain why a trade was rejected by risk."""
-        if not await self._guard(update, "rejected"):
-            return
         args = ctx.args or []
         symbol = args[0].upper().strip() if args else ""
         # H-17 FIX: validate symbol format before passing to skill
@@ -4256,15 +4254,13 @@ class TelegramHandler:
             self.engine, symbol=symbol)
         await self._send(update, result)
 
+    @guard("halt")
     async def _cmd_halt(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-        if not await self._guard(update, "halt"):
-            return
         result = await self.registry.dispatch("halt", self.engine)
         await self._send(update, result)
 
+    @guard("reset")
     async def _cmd_reset(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-        if not await self._guard(update, "reset"):
-            return
         was_active = self.engine.risk.circuit_breaker_active
         streak_before = self.engine.risk.consecutive_losses
         self.engine.risk.reset_circuit_breaker()
@@ -4276,15 +4272,13 @@ class TelegramHandler:
             msg = f"\U0001f7e1 <b>Nothing to reset</b>\n\nCB: off  \u2022  Streak: {streak_before}"
         await self._send(update, msg)
 
+    @guard("macro")
     async def _cmd_macro(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-        if not await self._guard(update, "macro"):
-            return
         result = await self.registry.dispatch("macro_calendar", self.engine)
         await self._send(update, result)
 
+    @guard("backtest")
     async def _cmd_backtest(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-        if not await self._guard(update, "backtest"):
-            return
         args = ctx.args or []
         bars = args[0] if args else "720"
         seed = args[1] if len(args) > 1 else "42"
@@ -4294,9 +4288,8 @@ class TelegramHandler:
             self.engine, bars=bars, seed=seed)
         await self._send(update, result)
 
+    @guard("walkforward")
     async def _cmd_walkforward(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-        if not await self._guard(update, "walkforward"):
-            return
         args = ctx.args or []
         bars = args[0] if args else "1440"
         folds = args[1] if len(args) > 1 else "3"
@@ -4344,15 +4337,13 @@ class TelegramHandler:
         except Exception as exc:
             await ctx.bot.send_message(chat_id=chat_id, text=f"\u274c Error: {exc}")
 
+    @guard("costs")
     async def _cmd_costs(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-        if not await self._guard(update, "costs"):
-            return
         result = await self.registry.dispatch("costs", self.engine, user_id=self._get_tg_id(update))
         await self._send(update, result)
 
+    @guard("run")
     async def _cmd_run(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-        if not await self._guard(update, "run"):
-            return
         strategy = " ".join(ctx.args) if ctx.args else ""
         if strategy:
             await self._send(update,
@@ -4361,20 +4352,18 @@ class TelegramHandler:
             self.engine, strategy=strategy)
         await self._send(update, result)
 
+    @guard("run")
     async def _cmd_momentum(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """Shortcut for /run momentum."""
-        if not await self._guard(update, "run"):
-            return
         await self._send(update, "\u23f3 <i>Running Momentum Hunter...</i>")
         result = await self.registry.dispatch("run_strategy",
             self.engine, strategy="momentum")
         if not await self._render_strategy_setups_card(update, "MOMENTUM HUNTER"):
             await self._send(update, result)
 
+    @guard("run")
     async def _cmd_dip(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """Shortcut for /run dip."""
-        if not await self._guard(update, "run"):
-            return
         await self._send(update, "\u23f3 <i>Running Dip Sniper (all symbols)...</i>")
         result = await self.registry.dispatch("run_strategy",
             self.engine, strategy="dip")
@@ -4400,10 +4389,9 @@ class TelegramHandler:
             system_log.debug("strategy setups card render failed: %s", exc)
             return False
 
+    @guard("scan")
     async def _cmd_scalp(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """Scalp scan: 5m candles, tight SL, top-3 by volume."""
-        if not await self._guard(update, "scan"):
-            return
         await self._send(update, "\u26a1 <i>Scalp scan — 5M candles, tight zones...</i>")
         try:
             result = await self.registry.dispatch("pro_scan",
@@ -4416,10 +4404,9 @@ class TelegramHandler:
             system_log.error(f"Scalp scan error: {exc}", exc_info=True)
             await self._send(update, f"🔴 <b>Scalp scan error:</b> <code>{html.escape(str(exc)[:200])}</code>")
 
+    @guard("scan")
     async def _cmd_intraday(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """Intraday scan: 15m candles, top-5 movers."""
-        if not await self._guard(update, "scan"):
-            return
         await self._send(update, "\U0001f4ca <i>Intraday scan — 15M structure...</i>")
         try:
             result = await self.registry.dispatch("pro_scan",
@@ -4432,10 +4419,9 @@ class TelegramHandler:
             system_log.error(f"Intraday scan error: {exc}", exc_info=True)
             await self._send(update, f"🔴 <b>Intraday scan error:</b> <code>{html.escape(str(exc)[:200])}</code>")
 
+    @guard("scan")
     async def _cmd_swing(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """Swing scan: 4h candles, wide SL/TP, trend-based."""
-        if not await self._guard(update, "scan"):
-            return
         await self._send(update, "<i>Checking the 4H chart...</i>")
         try:
             result = await self.registry.dispatch("pro_scan",
@@ -4454,10 +4440,9 @@ class TelegramHandler:
             system_log.error(f"Swing scan error: {exc}", exc_info=True)
             await self._send(update, f"\U0001f534 <b>Swing scan error:</b> <code>{html.escape(str(exc)[:200])}</code>")
 
+    @guard("playbook")
     async def _cmd_playbook(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """GetClaw-style full system playbook briefing."""
-        if not await self._guard(update, "playbook"):
-            return
         await self._send(update, "📋 <i>Assembling playbook...</i>")
         try:
             result = await self.registry.dispatch("playbook", self.engine, user_id=self._get_tg_id(update))
@@ -4466,10 +4451,9 @@ class TelegramHandler:
             system_log.error(f"Playbook error: {exc}")
             await self._send(update, f"🔴 <b>Playbook error:</b> <code>{html.escape(str(exc)[:200])}</code>")
 
+    @guard("deepscan")
     async def _cmd_deepscan(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """Deep scan 67+ symbols with chart + candle patterns."""
-        if not await self._guard(update, "deepscan"):
-            return
         # Parse optional timeframe from args: /deepscan 1h
         tf = "4h"
         if ctx.args:
@@ -4548,16 +4532,14 @@ class TelegramHandler:
             system_log.error(f"Deepscan error: {exc}", exc_info=True)
             await self._send(update, f"🔴 <b>Deepscan error:</b> <code>{html.escape(str(exc)[:200])}</code>")
 
+    @guard("scan")
     async def _cmd_fullscan(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """Full 67-symbol scan via scan_skill module. /fullscan [deep|deepall|swing|scalp|SYMBOL]"""
-        if not await self._guard(update, "scan"):
-            return
         await _scan_skill_handler(update, ctx)
 
+    @guard("scan")
     async def _cmd_stockscan(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """/stockscan — Scan US stock tokenized perpetuals."""
-        if not await self._guard(update, "scan"):
-            return
 
         from bot.core.stock_trading import (
             get_market_session, format_stock_scan_header,
@@ -4732,40 +4714,35 @@ class TelegramHandler:
             system_log.debug("stockscan card render failed: %s", exc)
             return False
 
+    @guard("learn")
     async def _cmd_learn(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-        if not await self._guard(update, "learn"):
-            return
         result = await self.registry.dispatch("learning", self.engine)
         await self._send(update, result)
 
+    @guard("patterns")
     async def _cmd_patterns(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-        if not await self._guard(update, "patterns"):
-            return
         result = await self.registry.dispatch("patterns", self.engine)
         await self._send(update, result)
 
+    @guard("proposals")
     async def _cmd_proposals(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-        if not await self._guard(update, "proposals"):
-            return
         result = await self.registry.dispatch("proposals", self.engine)
         await self._send(update, result)
 
+    @guard("optimize")
     async def _cmd_optimize(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-        if not await self._guard(update, "optimize"):
-            return
         result = await self.registry.dispatch("optimize", self.engine)
         await self._send(update, result)
 
     # ── War Room commands ────────────────────────────────────────
 
+    @guard("scan")
     async def _cmd_latest_signal(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """Show all pending trade signals with action buttons.
 
         If no signals are pending, auto-triggers a fresh scan cycle
         so the user always sees current opportunities.
         """
-        if not await self._guard(update, "scan"):
-            return
 
         # Filter to only show ideas above the display threshold (default 70%)
         from bot.config import CONFIG
@@ -4847,10 +4824,9 @@ class TelegramHandler:
                 import asyncio
                 await asyncio.sleep(0.3)
 
+    @guard("portfolio")
     async def _cmd_orders(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """Show open/pending orders on Bitget exchange."""
-        if not await self._guard(update, "portfolio"):
-            return
 
         await self._send(update, "<i>Fetching open orders from Bitget...</i>")
 
@@ -5047,10 +5023,9 @@ class TelegramHandler:
             await self._send(update,
                 f"\U0001f534 <b>Failed to fetch orders:</b> <code>{html.escape(str(exc)[:200])}</code>")
 
+    @guard("portfolio")
     async def _cmd_open_positions(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """Show open positions in rich format — per-user."""
-        if not await self._guard(update, "portfolio"):
-            return
         user_id = self._get_tg_id(update)
         portfolio = self.engine.user_portfolios.get(user_id)
 
@@ -5462,10 +5437,9 @@ class TelegramHandler:
         elif not filled_positions:
             await self._send(update, "No pending orders.")
 
+    @guard("portfolio")
     async def _cmd_performance(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """Performance summary — per-user."""
-        if not await self._guard(update, "portfolio"):
-            return
         user_id = self._get_tg_id(update)
 
         # LIVE mode: use real trade data from executor + exchange fallback
@@ -5640,19 +5614,17 @@ class TelegramHandler:
             system_log.debug("performance card render failed: %s", exc)
         await self._send(update, rendered["text"])
 
+    @guard("halt")
     async def _cmd_pause(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """Pause trading — activates circuit breaker."""
-        if not await self._guard(update, "halt"):
-            return
         self.engine.risk.emergency_halt("pause_telegram")
         rendered = wr_pause()
         await self._send(update, rendered["text"])
         audit(system_log, "Bot paused via /pause", action="pause", result="OK")
 
+    @guard("reset")
     async def _cmd_resume(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """Resume trading — deactivates circuit breaker."""
-        if not await self._guard(update, "reset"):
-            return
         self.engine.risk.reset_circuit_breaker()
         rendered = wr_resume()
         await self._send(update, rendered["text"])
@@ -5676,10 +5648,9 @@ class TelegramHandler:
         except Exception as exc:
             await self._send(update, f"❌ Close all failed: {exc}")
 
+    @guard("halt")
     async def _cmd_emergency_stop(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """Emergency stop confirmation prompt."""
-        if not await self._guard(update, "halt"):
-            return
         rendered = wr_emergency_stop()
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("\u26d4 CONFIRM STOP", callback_data="emergency_confirm"),
@@ -5687,10 +5658,9 @@ class TelegramHandler:
         ])
         await self._send(update, rendered["text"], reply_markup=kb)
 
+    @guard("journal")
     async def _cmd_daily_report(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """Daily trading report."""
-        if not await self._guard(update, "journal"):
-            return
         user_id = self._get_tg_id(update)
 
         # LIVE mode: use real trade data from executor
@@ -5802,10 +5772,9 @@ class TelegramHandler:
 
     # ── Signal stats command ─────────────────────────────────────
 
+    @guard("scan")
     async def _cmd_signals(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """Show per-pair signal stats using SignalTracker."""
-        if not await self._guard(update, "scan"):
-            return
         text = self.signal_tracker.format_for_telegram()
         await self._send(update, text)
 
