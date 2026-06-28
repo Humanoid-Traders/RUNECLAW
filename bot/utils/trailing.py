@@ -18,7 +18,7 @@ The trail only tightens, never widens.
 from __future__ import annotations
 
 # Stage definitions: (R-threshold to enter, SL floor in R-units, ATR trail multiplier)
-_STAGES = {
+_STAGES: dict[int, dict[str, float | None]] = {
     0: {"r_threshold": 0.0, "floor_r": None, "atr_mult": None},
     1: {"r_threshold": 1.0, "floor_r": 0.0,  "atr_mult": 2.0},
     2: {"r_threshold": 2.0, "floor_r": 0.5,  "atr_mult": 1.5},

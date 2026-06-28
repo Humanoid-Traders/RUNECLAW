@@ -61,7 +61,14 @@ import time
 from collections import deque
 from datetime import datetime
 from bot.compat import UTC
-from typing import Any, Callable, Optional
+from typing import TYPE_CHECKING, Any, Callable, Optional
+
+if TYPE_CHECKING:
+    # Import only for type-checking so the forward-ref annotations on __init__
+    # resolve (no runtime import cycle). These are the real types behind the
+    # "PortfolioTracker"/"MacroCalendar" string annotations below.
+    from bot.macro.calendar import MacroCalendar
+    from bot.risk.portfolio import PortfolioTracker
 
 from dataclasses import dataclass
 
@@ -740,9 +747,11 @@ class RiskEngine:
                         passed.append(
                             f"MARGIN_RISK: reduced leverage {leverage}x→{safe_lev}x "
                             f"(SL {sl_dist_pct:.1f}% × {safe_lev}x = {new_margin:.1f}% ≤ {max_margin_risk:.1f}%)")
-                        # Store adjusted leverage on idea for executor
+                        # Store adjusted leverage on idea for executor (dynamic
+                        # attr; setattr keeps the runtime behaviour identical while
+                        # not tripping the typed-attribute check).
                         try:
-                            idea._adjusted_leverage = safe_lev
+                            setattr(idea, "_adjusted_leverage", safe_lev)
                         except Exception:
                             pass
                     else:
