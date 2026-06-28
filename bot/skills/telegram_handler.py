@@ -1549,15 +1549,13 @@ class TelegramHandler:
     async def _cmd_approve(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """Admin only: /approve <telegram_id> [role]"""
         if not self._is_admin(update):
-            await self._send(update, "\U0001f512 Admin only.")
+            await self._send(update, f"\U0001f512 {t('admin_only', self._lang(update))}")
             return
 
         args = ctx.args or []
         if not args:
             await self._send(update,
-                "\U0001f4cb <b>Usage</b>\n\n"
-                "<code>/approve &lt;telegram_id&gt; [role]</code>\n\n"
-                "Roles: <code>trader</code> (default), <code>viewer</code>, <code>admin</code>")
+                f"\U0001f4cb {t('approve_usage', self._lang(update))}")
             return
 
         target_id = args[0].strip()
@@ -1565,15 +1563,14 @@ class TelegramHandler:
         # Input validation: Telegram IDs are numeric only
         if not target_id.isdigit():
             await self._send(update,
-                "\U0001f534 Invalid Telegram ID. Must be numeric.")
+                f"\U0001f534 {t('invalid_tg_id_numeric', self._lang(update))}")
             return
 
         role = args[1].strip().lower() if len(args) > 1 else "trader"
 
         if role not in ("trader", "viewer", "admin"):
             await self._send(update,
-                f"\U0001f534 Invalid role: <code>{html.escape(role)}</code>\n"
-                f"Valid: <code>trader</code>, <code>viewer</code>, <code>admin</code>")
+                f"\U0001f534 {t('invalid_role', self._lang(update), role=html.escape(role))}")
             return
 
         ok = self.users.authorize(target_id, role=role)
@@ -1584,183 +1581,146 @@ class TelegramHandler:
             trade_mode = "\U0001f525 Live" if can_live else "\U0001f4dd Paper"
             SEP = "\u2500" * 16
             await self._send(update,
-                f"\u2705 <b>USER APPROVED</b>\n"
-                f"{SEP}\n"
-                f"- Name: <b>{html.escape(name)}</b>\n"
-                f"- ID: <code>{target_id}</code>\n"
-                f"- Role: <code>{role}</code>\n"
-                f"- Trading: {trade_mode}\n"
-                f"- Status: \U0001f7e2 authorized\n\n"
-                f"<i>Use /grant_live or /revoke_live to change trading mode</i>")
+                f"\u2705 {t('approve_result', self._lang(update), sep=SEP, name=html.escape(name), id=target_id, role=role, trade_mode=trade_mode)}")
             # Notify the approved user
             try:
                 await ctx.bot.send_message(
                     chat_id=int(target_id),
                     text=(
-                        f"🟢 <b>Access Granted</b>\n"
-                        f"{SEP}\n"
-                        f"Your RUNECLAW account has been approved.\n"
-                        f"- Role: <code>{role}</code>\n\n"
-                        f"Use /start to begin trading."
+                        f"🟢 {t('access_granted', get_user_lang(self.users, target_id), sep=SEP, role=role)}"
                     ),
                     parse_mode="HTML")
             except Exception:
                 pass  # User may not have started the bot yet
         else:
             await self._send(update,
-                f"🔴 Failed to approve <code>{html.escape(target_id)}</code>")
+                f"🔴 {t('approve_failed', self._lang(update), id=html.escape(target_id))}")
 
     async def _cmd_revoke(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """Admin only: /revoke <telegram_id>"""
         if not self._is_admin(update):
-            await self._send(update, "\U0001f512 Admin only.")
+            await self._send(update, f"\U0001f512 {t('admin_only', self._lang(update))}")
             return
 
         args = ctx.args or []
         if not args:
             await self._send(update,
-                "<code>/revoke &lt;telegram_id&gt;</code>")
+                f"{t('revoke_usage', self._lang(update))}")
             return
 
         target_id = args[0].strip()
 
         # L-13 FIX: validate Telegram ID format
         if not target_id.isdigit():
-            await self._send(update, "Invalid Telegram ID format.")
+            await self._send(update, f"{t('invalid_tg_id_format', self._lang(update))}")
             return
 
         # Don't let admin revoke themselves
         if target_id == self._get_tg_id(update):
-            await self._send(update, "\U0001f534 Cannot revoke yourself.")
+            await self._send(update, f"\U0001f534 {t('cannot_revoke_self', self._lang(update))}")
             return
 
         ok = self.users.revoke(target_id)
         if ok:
             SEP = "─" * 16
             await self._send(update,
-                f"⚠️ <b>ACCESS REVOKED</b>\n"
-                f"{SEP}\n"
-                f"- ID: <code>{target_id}</code>\n"
-                f"- Status: 🔴 <code>pending</code>")
+                f"⚠️ {t('revoke_result', self._lang(update), sep=SEP, id=target_id)}")
         else:
             await self._send(update,
-                f"\U0001f534 User <code>{html.escape(target_id)}</code> not found")
+                f"\U0001f534 {t('user_not_found_id', self._lang(update), id=html.escape(target_id))}")
 
     async def _cmd_grant_live(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """Admin only: /grant_live <telegram_id> — allow user to trade live."""
         if not self._is_admin(update):
-            await self._send(update, "\U0001f512 Admin only.")
+            await self._send(update, f"\U0001f512 {t('admin_only', self._lang(update))}")
             return
         args = ctx.args or []
         if not args:
             await self._send(update,
-                "\U0001f4cb <b>Usage</b>\n\n"
-                "<code>/grant_live &lt;telegram_id&gt;</code>\n\n"
-                "Grants live trading permission to a user.\n"
-                "Without this, users trade paper only.")
+                f"\U0001f4cb {t('grant_live_usage', self._lang(update))}")
             return
         target_id = args[0].strip()
         if not target_id.isdigit():
-            await self._send(update, "\U0001f534 Invalid Telegram ID.")
+            await self._send(update, f"\U0001f534 {t('invalid_tg_id', self._lang(update))}")
             return
         user = self.users.get(target_id)
         if not user or not user.get("authorized"):
             await self._send(update,
-                f"\U0001f534 User <code>{target_id}</code> not found or not approved.\n"
-                f"Use /approve first.")
+                f"\U0001f534 {t('grant_live_not_approved', self._lang(update), id=target_id)}")
             return
         ok = self.users.set_live_trading(target_id, True)
         if ok:
             name = user.get("name", "Unknown")
             await self._send(update,
-                f"\U0001f525 <b>LIVE TRADING GRANTED</b>\n\n"
-                f"- User: <b>{html.escape(name)}</b> (<code>{target_id}</code>)\n"
-                f"- Role: <code>{user.get('role', 'trader')}</code>\n"
-                f"- Trading: \U0001f525 Live\n\n"
-                f"<i>This user can now execute live trades on the exchange.</i>")
+                f"\U0001f525 {t('grant_live_result', self._lang(update), name=html.escape(name), id=target_id, role=user.get('role', 'trader'))}")
         else:
-            await self._send(update, "\U0001f534 Failed to grant live trading.")
+            await self._send(update, f"\U0001f534 {t('grant_live_failed', self._lang(update))}")
 
     async def _cmd_revoke_live(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """Admin only: /revoke_live <telegram_id> — restrict user to paper only."""
         if not self._is_admin(update):
-            await self._send(update, "\U0001f512 Admin only.")
+            await self._send(update, f"\U0001f512 {t('admin_only', self._lang(update))}")
             return
         args = ctx.args or []
         if not args:
             await self._send(update,
-                "<code>/revoke_live &lt;telegram_id&gt;</code>\n\n"
-                "Restricts user to paper trading only.")
+                f"{t('revoke_live_usage', self._lang(update))}")
             return
         target_id = args[0].strip()
         if not target_id.isdigit():
-            await self._send(update, "\U0001f534 Invalid Telegram ID.")
+            await self._send(update, f"\U0001f534 {t('invalid_tg_id', self._lang(update))}")
             return
         ok = self.users.set_live_trading(target_id, False)
         if ok:
             user = self.users.get(target_id)
             name = user.get("name", "Unknown") if user else "Unknown"
             await self._send(update,
-                f"\U0001f4dd <b>LIVE TRADING REVOKED</b>\n\n"
-                f"- User: <b>{html.escape(name)}</b> (<code>{target_id}</code>)\n"
-                f"- Trading: \U0001f4dd Paper only")
+                f"\U0001f4dd {t('revoke_live_result', self._lang(update), name=html.escape(name), id=target_id)}")
         else:
-            await self._send(update, "\U0001f534 User not found.")
+            await self._send(update, f"\U0001f534 {t('user_not_found', self._lang(update))}")
 
     async def _cmd_set_tier(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """Admin only: /set_tier <telegram_id> <tier> — change user tier."""
         if not self._is_admin(update):
-            await self._send(update, "\U0001f512 Admin only.")
+            await self._send(update, f"\U0001f512 {t('admin_only', self._lang(update))}")
             return
         args = ctx.args or []
         if len(args) < 2:
             from bot.utils.user_store import TIERS
             tiers_str = " / ".join(f"<code>{t}</code>" for t in TIERS)
             await self._send(update,
-                "\U0001f4cb <b>Usage</b>\n\n"
-                f"<code>/set_tier &lt;telegram_id&gt; &lt;tier&gt;</code>\n\n"
-                f"Tiers: {tiers_str}\n\n"
-                "\U0001f7e2 <b>basic</b> — Paper trading, basic analysis\n"
-                "\U0001f535 <b>pro</b> — + Backtesting, patterns, strategies\n"
-                "\U0001f7e1 <b>elite</b> — + Live eligible, priority signals, early access\n"
-                "\U0001f534 <b>admin</b> — Full access")
+                f"\U0001f4cb {t('set_tier_usage', self._lang(update), tiers=tiers_str)}")
             return
         target_id = args[0].strip()
         tier = args[1].strip().lower()
         if not target_id.isdigit():
-            await self._send(update, "\U0001f534 Invalid Telegram ID.")
+            await self._send(update, f"\U0001f534 {t('invalid_tg_id', self._lang(update))}")
             return
         from bot.utils.user_store import TIERS
         if tier not in TIERS:
             await self._send(update,
-                f"\U0001f534 Invalid tier: <code>{html.escape(tier)}</code>\n"
-                f"Valid: {', '.join(f'<code>{t}</code>' for t in TIERS)}")
+                f"\U0001f534 {t('invalid_tier', self._lang(update), tier=html.escape(tier), valid=', '.join(f'<code>{_t}</code>' for _t in TIERS))}")
             return
         user = self.users.get(target_id)
         if not user:
-            await self._send(update, f"\U0001f534 User <code>{target_id}</code> not found.")
+            await self._send(update, f"\U0001f534 {t('user_not_found_id_period', self._lang(update), id=target_id)}")
             return
         ok = self.users.set_tier(target_id, tier)
         if ok:
             name = user.get("name", "Unknown")
             tier_label = self.users.tier_label(target_id)
             await self._send(update,
-                f"\U0001f3af <b>TIER UPDATED</b>\n\n"
-                f"- User: <b>{html.escape(name)}</b> (<code>{target_id}</code>)\n"
-                f"- Tier: {tier_label}\n"
-                f"- Role: <code>{user.get('role', 'trader')}</code>")
+                f"\U0001f3af {t('set_tier_result', self._lang(update), name=html.escape(name), id=target_id, tier_label=tier_label, role=user.get('role', 'trader'))}")
             # Notify the user
             try:
                 await ctx.bot.send_message(
                     chat_id=int(target_id),
-                    text=(f"\U0001f3af <b>Account Upgraded</b>\n\n"
-                          f"Your tier has been updated to: {tier_label}\n"
-                          f"Use /start to see your new features."),
+                    text=(f"\U0001f3af {t('account_upgraded', get_user_lang(self.users, target_id), tier_label=tier_label)}"),
                     parse_mode="HTML")
             except Exception:
                 pass
         else:
-            await self._send(update, "\U0001f534 Failed to update tier.")
+            await self._send(update, f"\U0001f534 {t('set_tier_failed', self._lang(update))}")
 
     # ── Marketing / Channel commands ──────────────────────────
 
@@ -1777,7 +1737,7 @@ class TelegramHandler:
             except Exception:
                 pass
         if not is_bot_admin and not is_group_admin:
-            await self._send(update, "\U0001f512 Admin only.")
+            await self._send(update, f"\U0001f512 {t('admin_only', self._lang(update))}")
             return
 
         # Auto-detect this group if command is run in one
@@ -1856,7 +1816,7 @@ class TelegramHandler:
             except Exception:
                 pass
         if not is_bot_admin and not is_group_admin:
-            await self._send(update, "\U0001f512 Admin only.")
+            await self._send(update, f"\U0001f512 {t('admin_only', self._lang(update))}")
             return
         args = ctx.args or []
         if not args:
@@ -1872,18 +1832,18 @@ class TelegramHandler:
     async def _cmd_users(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """Admin only: list all registered users."""
         if not self._is_admin(update):
-            await self._send(update, "\U0001f512 Admin only.")
+            await self._send(update, f"\U0001f512 {t('admin_only', self._lang(update))}")
             return
 
         all_users = self.users.list_users()
         if not all_users:
-            await self._send(update, "\U0001f4cb <b>No registered users</b>")
+            await self._send(update, f"\U0001f4cb {t('no_registered_users', self._lang(update))}")
             return
 
         counts = self.users.count()
         SEP = "─" * 16
         lines = [
-            f"👥 <b>REGISTERED USERS</b>  ({len(all_users)} total)\n"
+            f"👥 {t('users_header', self._lang(update), n=len(all_users))}\n"
             f"{SEP}\n",
         ]
 
@@ -1915,7 +1875,7 @@ class TelegramHandler:
         lines.append("</pre>")
 
         if len(all_users) > 15:
-            lines.append(f"\n<i>Showing last 15 of {len(all_users)}</i>")
+            lines.append(f"\n<i>{t('users_more', self._lang(update), n=len(all_users))}</i>")
 
         await self._send(update, "\n".join(lines))
 
