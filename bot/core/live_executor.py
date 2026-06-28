@@ -4891,7 +4891,11 @@ class LiveExecutor:
                         elif "liquidat" in close_type:
                             reason = "LIQUIDATED"
                         else:
-                            reason = "MANUAL CLOSE"
+                            # Bitget reported a closeType we don't classify (could
+                            # be a user close on the app, an ADL, a partial-ladder
+                            # reduceOnly, etc.). It is NOT necessarily a manual
+                            # close — say so honestly instead of asserting "MANUAL".
+                            reason = "CLOSED (unknown)"
 
                         final_pnl = net_profit if net_profit != 0 else pnl
 
@@ -4947,7 +4951,9 @@ class LiveExecutor:
                         elif matched_order == pos.sl_order_id:
                             reason = "SL HIT (exchange)"
                         else:
-                            reason = "MANUAL CLOSE"
+                            # Close-side fill not tied to our SL/TP order IDs —
+                            # mechanism unknown (manual, ADL, partial ladder, …).
+                            reason = "CLOSED (unknown)"
                         if fill_price > 0 and total_profit != 0:
                             return {
                                 "close_price": fill_price,
@@ -4978,7 +4984,8 @@ class LiveExecutor:
                             "close_price": fill_price,
                             "pnl": profit,
                             "fees": total_fees,
-                            "reason": "MANUAL CLOSE",
+                            # Unrecognized close-side fill — see note above.
+                            "reason": "CLOSED (unknown)",
                             "source": "exchange_fill_recent",
                         }
 
@@ -5032,10 +5039,12 @@ class LiveExecutor:
 
         When exchange history is unavailable, we compare the exit price
         to the stored TP and SL levels to determine the most likely trigger.
-        If exit price is not close to either TP or SL, assume manual close.
+        If exit price is not close to either TP or SL, the mechanism is unknown
+        (a user close, ADL, or partial-ladder fill all look the same here) — we
+        report "CLOSED (unknown)" rather than asserting a manual close.
         """
         if pos.stop_loss <= 0 or pos.take_profit <= 0 or exit_price <= 0:
-            return "MANUAL CLOSE"
+            return "CLOSED (unknown)"
 
         dist_to_sl = abs(exit_price - pos.stop_loss)
         dist_to_tp = abs(exit_price - pos.take_profit)
@@ -5069,8 +5078,10 @@ class LiveExecutor:
         elif dist_to_sl <= proximity_threshold:
             return "SL HIT (inferred)"
 
-        # Not near TP or SL — this was a manual close
-        return "MANUAL CLOSE"
+        # Exit sits between SL and TP and near neither — most likely a deliberate
+        # close, but we can't prove it was the user vs ADL/partial-fill, so report
+        # the honest "unknown" rather than asserting MANUAL.
+        return "CLOSED (unknown)"
 
     async def _handle_already_closed_position(self, pos: LivePosition) -> str | None:
         """Handle a position that was already closed on exchange (25227).
