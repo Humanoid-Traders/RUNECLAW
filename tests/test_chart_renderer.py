@@ -47,6 +47,35 @@ def test_render_produces_valid_png():
     assert len(png) > 5000
 
 
+@needs_charts
+def test_default_canvas_is_large_for_legibility():
+    # C2: the default render bumped to a much larger canvas (was ~520px wide)
+    # so the dense SMC/pattern overlays stay readable.
+    import struct
+    df = cr.compute_chart_indicators(_candles(120))
+    png = cr.render_chart_png(df, title="WLD 1h", levels={"entry": 0})
+    w, h = struct.unpack(">II", png[16:24])
+    assert w >= 1500 and h >= 900
+
+
+@needs_charts
+def test_many_patterns_render_without_crashing():
+    # C1: a long, choppy series triggers many overlapping pattern detections;
+    # the declutter cap + label de-collision must never raise.
+    import math
+    candles, t0, price = [], 1_700_000_000_000, 100.0
+    for i in range(200):
+        o = price
+        c = price * (1 + 0.02 * math.sin(i / 4.0) + 0.01 * math.sin(i / 1.7))
+        h = max(o, c) * 1.01
+        lo = min(o, c) * 0.99
+        candles.append([t0 + i * 3_600_000, o, h, lo, c, 100.0 + (i % 7)])
+        price = c
+    df = cr.compute_chart_indicators(candles)
+    png = cr.render_chart_png(df, title="chop", levels={"entry": price})
+    assert png[:8] == b"\x89PNG\r\n\x1a\n"
+
+
 def test_build_returns_none_on_bad_input():
     # These must never raise — they return None so callers fall back to text.
     assert cr.build_chart_png([], "empty") is None

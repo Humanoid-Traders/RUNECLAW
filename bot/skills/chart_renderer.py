@@ -140,7 +140,7 @@ def compute_chart_indicators(candles, rsi_length: int = 14,
     return df
 
 
-def render_chart_png(df, title: str = "RUNECLAW Setup", dpi: int = 160,
+def render_chart_png(df, title: str = "RUNECLAW Setup", dpi: int = 180,
                      levels: Optional[dict] = None, theme: str = _DEFAULT_THEME,
                      subtitle: str = "", smc: bool = True) -> bytes:
     """Render a polished 3-panel chart to PNG bytes. BLOCKING — call via to_thread.
@@ -203,7 +203,7 @@ def render_chart_png(df, title: str = "RUNECLAW Setup", dpi: int = 160,
     plot_kwargs = dict(
         type="candle", style=style, addplot=add,
         volume=True, panel_ratios=(6, 1.6, 2),
-        ylabel="Price", returnfig=True, figratio=(16, 10), figscale=1.0,
+        ylabel="Price", returnfig=True, figratio=(16, 10), figscale=1.3,
         datetime_format="%m/%d %Hh", xrotation=15, tight_layout=False,
         scale_padding={"left": 0.4, "right": 2.2, "top": 1.5, "bottom": 0.7},
     )
@@ -847,6 +847,21 @@ def _pattern_zones_overlay(df, price_ax, t):
         patterns = scan_all_chart_patterns(opens, highs, lows, closes, lookback=5)
         span = (float(highs.max()) - float(lows.min())) or 1.0
 
+        # Declutter: an unbounded pattern list crams overlapping badges (e.g.
+        # Wyckoff + Descending Triangle + Inverse H&S + CHoCH all in one price
+        # band) and the chart becomes unreadable. Keep only the most-confident
+        # few and de-collide their labels vertically.
+        _MAX_PATTERNS = 4
+        _drawable = [
+            p for p in patterns
+            if not any(s in p.get("name", "")
+                       for s in ("Elliott", "Liquidity", "S/R Flip"))
+        ]
+        _drawable.sort(key=lambda p: float(p.get("confidence", 0) or 0), reverse=True)
+        patterns = _drawable[:_MAX_PATTERNS]
+        _placed_label_ys: list = []
+        _min_label_gap = 0.05 * span
+
         for pat in patterns:
             name = pat.get("name", "")
             kl = pat.get("key_levels", {})
@@ -1017,6 +1032,13 @@ def _pattern_zones_overlay(df, price_ax, t):
             all_vals = [v for v in kl.values() if isinstance(v, (int, float))]
             if all_vals:
                 mid_y = (max(all_vals) + min(all_vals)) / 2
+                # Nudge the badge up until it clears every already-placed label,
+                # so overlapping zones don't stack their text into one blob.
+                for _ in range(8):
+                    if all(abs(mid_y - py) >= _min_label_gap for py in _placed_label_ys):
+                        break
+                    mid_y += _min_label_gap
+                _placed_label_ys.append(mid_y)
                 price_ax.text(
                     n * 0.05, mid_y, name, color="#ffffff", fontsize=6.5,
                     fontweight="bold", ha="left", va="center",
