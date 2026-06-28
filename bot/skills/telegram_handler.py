@@ -2782,6 +2782,11 @@ class TelegramHandler:
         # Best-effort: ROLLING ATR per active symbol (Wilder, 1h candles) so the
         # trail-read threshold drifts tick-for-tick like the Playbook instead of
         # using the static atr_at_entry. Guarded — falls back to atr_at_entry.
+        # Window matches the Playbook EXACTLY: kline_interval '1h', atr_period 14,
+        # Wilder smoothing, limit = max(period + 5, 30) = 30 candles, so the ATR
+        # number on the card equals the Playbook's _wilder_atr(bars, 14).
+        _ATR_PERIOD = 14
+        _ATR_LIMIT = max(_ATR_PERIOD + 5, 30)
         rolling_atr: dict = {}
         if filled_pos:
             try:
@@ -2791,12 +2796,13 @@ class TelegramHandler:
                     if _p.symbol in rolling_atr:
                         continue
                     try:
-                        _ohlcv = await exchange.fetch_ohlcv(_p.symbol, timeframe="1h", limit=50)
+                        _ohlcv = await exchange.fetch_ohlcv(
+                            _p.symbol, timeframe="1h", limit=_ATR_LIMIT)
                         if _ohlcv and len(_ohlcv) > 2:
                             _h = [float(c[2]) for c in _ohlcv]
                             _lo = [float(c[3]) for c in _ohlcv]
                             _cl = [float(c[4]) for c in _ohlcv]
-                            _a = _pt.atr_from_candles(_h, _lo, _cl)
+                            _a = _pt.atr_from_candles(_h, _lo, _cl, period=_ATR_PERIOD)
                             if _a > 0:
                                 rolling_atr[_p.symbol] = _a
                     except Exception:
