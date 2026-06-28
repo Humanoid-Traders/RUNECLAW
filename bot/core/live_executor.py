@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from bot.compat import UTC
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, cast
 
 import ccxt.async_support as ccxt
 
@@ -685,7 +685,7 @@ class LiveExecutor:
         if the venue/market data is unavailable so the caller can fall back.
         """
         try:
-            return exchange.price_to_precision(symbol, price)
+            return cast(str, exchange.price_to_precision(symbol, price))
         except Exception as exc:  # noqa: BLE001
             logger.debug("price_to_precision failed for %s @ %s: %s", symbol, price, exc)
             return None
@@ -755,10 +755,10 @@ class LiveExecutor:
         params.setdefault("clientOid", coid)       # Bitget raw param
         params.setdefault("clientOrderId", coid)   # ccxt unified alias
         try:
-            return await exchange.create_order(
+            return cast(dict, await exchange.create_order(
                 symbol=symbol, type=type, side=side, amount=amount,
                 price=price, params=params
-            )
+            ))
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "create_order raised for %s (coid=%s): %s — checking whether it landed",
@@ -1229,7 +1229,7 @@ class LiveExecutor:
 
                     if sl_id is None:
                         # UNPROTECTED adopted position — alert loudly, do NOT close.
-                        lp.unprotected = True  # runtime marker (not persisted schema)
+                        setattr(lp, "unprotected", True)  # runtime marker (not persisted schema)
                         _err_suffix = f": {_place_exc}" if _place_exc is not None else ""
                         logger.critical(
                             "UNPROTECTED ADOPTED POSITION (%s %s): safety stop-loss "
@@ -2937,12 +2937,12 @@ class LiveExecutor:
             # loop below branches on the response code, and recover the JSON
             # error body off an HTTPError exactly as before.
             try:
-                return BitgetV3Client.from_config().request("POST", path, body_dict)
+                return cast(dict, BitgetV3Client.from_config().request("POST", path, body_dict))
             except Exception as e:
                 if hasattr(e, 'read'):
                     try:
                         raw_body = e.read().decode()
-                        return _json.loads(raw_body)
+                        return cast(dict, _json.loads(raw_body))
                     except (ValueError, UnicodeDecodeError) as parse_exc:
                         logger.warning("Non-JSON error response from exchange: %s (parse error: %s)",
                                        getattr(e, 'code', '?'), parse_exc)
@@ -2962,7 +2962,7 @@ class LiveExecutor:
                     import math
                     dp = max(0, -int(math.floor(math.log10(price_precision))))
                 else:
-                    dp = int(price_precision)
+                    dp = int(cast(Any, price_precision))
                 return f"{price:.{dp}f}"
             # Fallback: conservative rounding by magnitude
             # Use fewer decimals to avoid precision rejection (25606)
@@ -3441,7 +3441,7 @@ class LiveExecutor:
                 # got the stop on. Clear it the moment an exchange stop exists,
                 # on whichever path placed it.
                 if getattr(pos, "unprotected", False) and pos.sl_order_id:
-                    pos.unprotected = False
+                    setattr(pos, "unprotected", False)
                     audit(trade_log,
                           f"Position {pos.symbol} now protected — clearing unprotected marker",
                           action="unprotected_cleared", result="PROTECTED",
@@ -3590,8 +3590,8 @@ class LiveExecutor:
                     _now_ts = time.time()
                     _last_alert = getattr(pos, "_unprotected_alert_at", 0.0) or 0.0
                     if _now_ts - _last_alert >= CONFIG.execution.unprotected_alert_interval_s:
-                        pos._unprotected_alert_at = _now_ts
-                        pos.unprotected = True
+                        setattr(pos, "_unprotected_alert_at", _now_ts)
+                        setattr(pos, "unprotected", True)
                         logger.critical(
                             "UNPROTECTED POSITION (%s %s): no exchange stop-loss after "
                             "retry — live with NO venue stop (price-monitored locally). "
@@ -4524,7 +4524,7 @@ class LiveExecutor:
                 pos.sl_order_id = re_sl
                 pos.tp_order_id = re_tp
                 if re_sl is None:
-                    pos.unprotected = True
+                    setattr(pos, "unprotected", True)
                     logger.critical(
                         "RESIDUAL UNPROTECTED (%s %s): could not re-place stop-loss on "
                         "the %.8f remainder — price-monitoring only. Review on Bitget.",
@@ -4848,7 +4848,7 @@ class LiveExecutor:
         #   Pass 1: from 5 min before position opened (tight)
         #   Pass 2: from 1 hour before position opened (wider)
         #   Pass 3: no startTime filter at all (widest — gets last 20 positions)
-        time_windows = []
+        time_windows: list[Optional[int]] = []
         if pos.opened_at:
             ts_ms = int(pos.opened_at.timestamp() * 1000)
             time_windows.append(ts_ms - 300_000)    # 5 min before open
@@ -5276,7 +5276,7 @@ class LiveExecutor:
                   action="flash_close_v3", result="OK",
                   data={"symbol": bitget_symbol, "posSide": pos_side,
                         "close_list": close_list})
-            return result
+            return cast(Optional[dict], result)
         else:
             error_code = result.get("code", "")
             error_msg = result.get("msg", str(result))
@@ -5842,7 +5842,7 @@ class LiveExecutor:
                             # Mark for retry on next tick — exchange data will
                             # become available once Bitget history propagates.
                             _retries = getattr(pos, '_reconcile_retries', 0) + 1
-                            pos._reconcile_retries = _retries
+                            setattr(pos, "_reconcile_retries", _retries)
                             if _retries <= 10:
                                 logger.warning(
                                     "Reconcile: %s not on exchange but no close data yet "

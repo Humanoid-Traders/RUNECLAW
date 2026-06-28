@@ -19,7 +19,7 @@ import asyncio
 import threading
 from datetime import datetime
 from bot.compat import UTC
-from typing import Optional
+from typing import Any, Optional, cast
 
 import ccxt.async_support as ccxt
 
@@ -153,6 +153,8 @@ class MarketScanner:
         spot_task = self._fetch_spot_tickers()
         futures_task = self._fetch_futures_tickers()
 
+        spot_result: Any
+        futures_result: Any
         spot_result, futures_result = await asyncio.gather(
             spot_task, futures_task, return_exceptions=True,
         )
@@ -217,7 +219,7 @@ class MarketScanner:
 
         self._evict_stale(seen_symbols)
 
-        cats = {}
+        cats: dict[str, int] = {}
         for s in top:
             cats[s.asset_category] = cats.get(s.asset_category, 0) + 1
         audit(system_log,
@@ -353,13 +355,13 @@ class MarketScanner:
 
     async def _fetch_spot_tickers(self) -> dict:
         exchange = await self._get_exchange()
-        return await exchange.fetch_tickers()
+        return cast(dict, await exchange.fetch_tickers())
 
     async def _fetch_futures_tickers(self) -> dict:
         exchange = await self._get_futures_exchange()
-        return await exchange.fetch_tickers(params={
+        return cast(dict, await exchange.fetch_tickers(params={
             "productType": "USDT-FUTURES",
-        })
+        }))
 
     # ── Shared processing ────────────────────────────────────────
 
