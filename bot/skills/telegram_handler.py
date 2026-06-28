@@ -4220,6 +4220,7 @@ class TelegramHandler:
     @guard("risk")
     async def _cmd_risk(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         user_id = self._get_tg_id(update)
+        lang = self._lang(update)  # i18n: resolve once for this command
         portfolio = self.engine.user_portfolios.get(user_id)
         state = portfolio.snapshot()
         # LIVE FIX: use real open position count
@@ -4236,9 +4237,9 @@ class TelegramHandler:
         }
         rendered = wr_risk(data)
         kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("Safe Mode", callback_data="risk_safe_mode"),
-             InlineKeyboardButton("Pause", callback_data="risk_pause")],
-            [InlineKeyboardButton("Stop Bot", callback_data="risk_emergency_stop")],
+            [InlineKeyboardButton(t("btn_safe_mode", lang), callback_data="risk_safe_mode"),
+             InlineKeyboardButton(t("btn_pause", lang), callback_data="risk_pause")],
+            [InlineKeyboardButton(t("btn_stop_bot", lang), callback_data="risk_emergency_stop")],
         ])
         # Visual stats card (guarded — falls back to text + same keyboard).
         try:
@@ -4246,19 +4247,19 @@ class TelegramHandler:
             cb = self.engine.risk.circuit_breaker_active
             dd = data["current_drawdown"]
             _png = render_stats_card({
-                "title": "RISK",
+                "title": t("lbl_risk_title", lang),
                 "subtitle": f"{datetime.now(UTC).strftime('%H:%M')} UTC",
                 "tiles": [
-                    {"label": "Daily Loss Limit", "value": f"{data['daily_loss_limit']:.1f}%", "color": "yellow"},
-                    {"label": "Current Drawdown", "value": f"{dd:.1f}%",
+                    {"label": t("lbl_daily_loss_limit", lang), "value": f"{data['daily_loss_limit']:.1f}%", "color": "yellow"},
+                    {"label": t("lbl_current_drawdown", lang), "value": f"{dd:.1f}%",
                      "color": "red" if dd > 0 else "green"},
-                    {"label": "Open Trades", "value": f"{data['open_trades']}/{data['max_open_trades']}", "color": "white"},
-                    {"label": "Leverage Cap", "value": f"{data['leverage_cap']}x", "color": "cyan"},
-                    {"label": "Circuit Breaker", "value": "TRIPPED" if cb else "OK",
+                    {"label": t("lbl_open_trades", lang), "value": f"{data['open_trades']}/{data['max_open_trades']}", "color": "white"},
+                    {"label": t("lbl_leverage_cap", lang), "value": f"{data['leverage_cap']}x", "color": "cyan"},
+                    {"label": t("lbl_circuit_breaker", lang), "value": t("val_tripped", lang) if cb else t("val_ok", lang),
                      "color": "red" if cb else "green"},
                 ],
             })
-            if _png and await self._send_photo(update, _png, "\U0001f6e1️ <b>RISK</b>", reply_markup=kb):
+            if _png and await self._send_photo(update, _png, f"\U0001f6e1️ <b>{t('lbl_risk_title', lang)}</b>", reply_markup=kb):
                 return
         except Exception as exc:
             system_log.debug("risk card render failed: %s", exc)
@@ -4313,7 +4314,7 @@ class TelegramHandler:
         symbol = args[0].upper().strip() if args else ""
         # H-17 FIX: validate symbol format before passing to skill
         if symbol and not _SYMBOL_RE.match(symbol):
-            await self._send(update, "Invalid symbol format.")
+            await self._send(update, t("invalid_symbol_format", self._lang(update)))
             return
         result = await self.registry.dispatch("whynot",
             self.engine, symbol=symbol)
@@ -4329,12 +4330,13 @@ class TelegramHandler:
         was_active = self.engine.risk.circuit_breaker_active
         streak_before = self.engine.risk.consecutive_losses
         self.engine.risk.reset_circuit_breaker()
+        lang = self._lang(update)
         if was_active:
-            msg = "\U0001f7e2 <b>Circuit breaker reset</b>\n\nTrading resumed."
+            msg = f"\U0001f7e2 {t('reset_cb_done', lang)}"
         elif streak_before >= 3:
-            msg = f"\U0001f7e2 <b>Streak cleared</b>  {streak_before} \u2192 0"
+            msg = f"\U0001f7e2 {t('reset_streak_cleared', lang, n=streak_before)}"
         else:
-            msg = f"\U0001f7e1 <b>Nothing to reset</b>\n\nCB: off  \u2022  Streak: {streak_before}"
+            msg = f"\U0001f7e1 {t('reset_nothing', lang, n=streak_before)}"
         await self._send(update, msg)
 
     @guard("macro")
