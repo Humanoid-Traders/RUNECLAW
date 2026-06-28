@@ -4187,6 +4187,28 @@ class TelegramHandler:
              InlineKeyboardButton("Pause", callback_data="risk_pause")],
             [InlineKeyboardButton("Stop Bot", callback_data="risk_emergency_stop")],
         ])
+        # Visual stats card (guarded — falls back to text + same keyboard).
+        try:
+            from bot.formatters.signal_card import render_stats_card
+            cb = self.engine.risk.circuit_breaker_active
+            dd = data["current_drawdown"]
+            _png = render_stats_card({
+                "title": "RISK",
+                "subtitle": f"{datetime.now(UTC).strftime('%H:%M')} UTC",
+                "tiles": [
+                    {"label": "Daily Loss Limit", "value": f"{data['daily_loss_limit']:.1f}%", "color": "yellow"},
+                    {"label": "Current Drawdown", "value": f"{dd:.1f}%",
+                     "color": "red" if dd > 0 else "green"},
+                    {"label": "Open Trades", "value": f"{data['open_trades']}/{data['max_open_trades']}", "color": "white"},
+                    {"label": "Leverage Cap", "value": f"{data['leverage_cap']}x", "color": "cyan"},
+                    {"label": "Circuit Breaker", "value": "TRIPPED" if cb else "OK",
+                     "color": "red" if cb else "green"},
+                ],
+            })
+            if _png and await self._send_photo(update, _png, "\U0001f6e1️ <b>RISK</b>", reply_markup=kb):
+                return
+        except Exception as exc:
+            system_log.debug("risk card render failed: %s", exc)
         await self._send(update, rendered["text"], reply_markup=kb)
 
     async def _cmd_status(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -5603,6 +5625,32 @@ class TelegramHandler:
             }
 
         rendered = wr_performance(data)
+        # Visual stats card (guarded — falls back to the text readout).
+        try:
+            from bot.formatters.signal_card import render_stats_card
+            _tp = data.get("total_pnl", data.get("today_pnl", 0.0))
+            _wr = data.get("win_rate", 0.0)
+            tiles = [
+                {"label": "Today PnL", "value": f"${data.get('today_pnl', 0.0):+,.2f}",
+                 "color": "green" if data.get("today_pnl", 0.0) >= 0 else "red"},
+                {"label": "Week PnL", "value": f"${data.get('week_pnl', 0.0):+,.2f}",
+                 "color": "green" if data.get("week_pnl", 0.0) >= 0 else "red"},
+                {"label": "Win Rate", "value": f"{_wr:.0f}%", "color": "cyan"},
+                {"label": "Trades", "value": str(data.get("total_trades", data.get("trades_today", 0))), "color": "white"},
+                {"label": "Best", "value": str(data.get("best_pair", "N/A")), "color": "green"},
+                {"label": "Worst", "value": str(data.get("worst_pair", "N/A")), "color": "red"},
+            ]
+            _png = render_stats_card({
+                "title": "PERFORMANCE",
+                "subtitle": f"{datetime.now(UTC).strftime('%H:%M')} UTC",
+                "hero": {"label": "Total PnL", "value": f"${_tp:+,.2f}",
+                         "color": "green" if _tp >= 0 else "red"},
+                "tiles": tiles,
+            })
+            if _png and await self._send_photo(update, _png, "\U0001f4c8 <b>PERFORMANCE</b>"):
+                return
+        except Exception as exc:
+            system_log.debug("performance card render failed: %s", exc)
         await self._send(update, rendered["text"])
 
     async def _cmd_pause(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
