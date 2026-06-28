@@ -410,6 +410,47 @@ _STRINGS: dict[str, dict[str, str]] = {
     "scanning": {"en": "Scanning market...", "zh": "掃描市場中..."},
     "analyzing": {"en": "Analyzing {asset}...", "zh": "分析 {asset} 中..."},
     "no_setups": {"en": "No trade setups found.", "zh": "未找到交易機會。"},
+
+    # ── /portfolio (labels shared by the stats card + the text fallback) ──
+    # NOTE: each "en" is byte-identical to the literal it replaces in the
+    # handler, so English output is unchanged; only zh users see a difference.
+    "portfolio_title": {"en": "YOUR PORTFOLIO", "zh": "你的投資組合"},
+    "portfolio_card_title": {"en": "PORTFOLIO", "zh": "投資組合"},
+    "lbl_equity": {"en": "Equity", "zh": "權益"},
+    "lbl_realized_pnl": {"en": "Realized PnL", "zh": "已實現損益"},
+    "lbl_win_rate": {"en": "Win Rate", "zh": "勝率"},
+    "lbl_win_rate_lc": {"en": "Win rate", "zh": "勝率"},
+    "lbl_open_positions": {"en": "Open Positions", "zh": "持倉數"},
+    "lbl_total_trades": {"en": "Total Trades", "zh": "總交易數"},
+    "lbl_exposure": {"en": "Exposure", "zh": "曝險"},
+    "lbl_max_drawdown": {"en": "Max Drawdown", "zh": "最大回撤"},
+    "lbl_net_pnl": {"en": "Net PnL", "zh": "淨損益"},
+    "lbl_fees_paid": {"en": "Fees Paid", "zh": "已付手續費"},
+    "lbl_unrealized_pnl": {"en": "Unrealized PnL", "zh": "未實現損益"},
+    "lbl_cash": {"en": "Cash", "zh": "現金"},
+    "lbl_daily_pnl": {"en": "Daily PnL", "zh": "當日損益"},
+    "lbl_drawdown": {"en": "Drawdown", "zh": "回撤"},
+    "lbl_size": {"en": "Size", "zh": "金額"},
+    "lbl_pnl": {"en": "PNL", "zh": "損益"},
+    "lbl_current": {"en": "Current", "zh": "現價"},
+    "lbl_limit": {"en": "Limit", "zh": "限價"},
+    "lbl_placed": {"en": "Placed", "zh": "下單時間"},
+    "lbl_net": {"en": "Net", "zh": "淨額"},
+    "lbl_sl": {"en": "SL", "zh": "止損"},
+    "lbl_tp": {"en": "TP", "zh": "止盈"},
+    "hdr_open_positions": {"en": "Open Positions:", "zh": "持倉:"},
+    "hdr_pending_limits": {"en": "Pending Limit Orders:", "zh": "掛單限價單:"},
+    "hdr_recent_trades": {"en": "Recent Trades:", "zh": "近期交易:"},
+    "hdr_recent_trades_net": {"en": "Recent Trades (net of fees):", "zh": "近期交易（已扣手續費）:"},
+    "lbl_session": {"en": "Session:", "zh": "本期:"},
+    "portfolio_no_trades": {
+        "en": "No trades yet. Say \"scan\" to find signals.",
+        "zh": "尚無交易。輸入「掃描」來尋找信號。",
+    },
+    "portfolio_no_live_trades": {
+        "en": "No live trades yet. Say \"scan\" to find signals.",
+        "zh": "尚無實盤交易。輸入「掃描」來尋找信號。",
+    },
 }
 
 
