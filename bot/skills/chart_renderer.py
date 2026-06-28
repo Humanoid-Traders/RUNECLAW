@@ -213,7 +213,13 @@ def render_chart_png(df, title: str = "RUNECLAW Setup", dpi: int = 180,
     if levels:
         for key, color, tag in (("entry", t["entry"], "Entry"),
                                 ("stop_loss", t["stop"], "SL"),
-                                ("take_profit", t["target"], "TP")):
+                                ("take_profit", t["target"], "TP"),
+                                # C4 live-position overlays (distinct hues so they
+                                # never read as the static SL): trail SL (orange),
+                                # liquidation (magenta), Playbook ratchet (purple).
+                                ("trail", "#f7931a", "Trail"),
+                                ("liq", "#ff2bd0", "Liq"),
+                                ("threshold", "#9c6bff", "Trig")):
             val = levels.get(key)
             try:
                 if val is not None and float(val) > 0:
@@ -1359,10 +1365,16 @@ async def build_idea_chart_composite(candles_by_tf: dict, idea,
 async def build_position_chart(bot, symbol: str,
                                entry: float = 0, sl: float = 0, tp: float = 0,
                                theme: str = _DEFAULT_THEME,
-                               dpi: int = 140) -> Optional[bytes]:
+                               dpi: int = 140, *,
+                               liq: float = 0, trail_sl: float = 0,
+                               direction: str = "", atr: float = 0) -> Optional[bytes]:
     """Fetch candles and render a quick 1h chart for a position status card.
 
-    If entry/sl/tp are provided, overlays them as horizontal levels.
+    Overlays the static entry/SL/TP plus, when supplied, the LIVE-position
+    context (C4): the trailing-stop level, the liquidation price, and the
+    Playbook ratchet threshold (computed from direction + SL + ATR). Each draws
+    in a distinct hue so they never read as the static SL.
+
     Returns PNG bytes or None. Does NOT send — caller handles delivery.
     """
     if not _CHARTS_AVAILABLE:
@@ -1379,13 +1391,29 @@ async def build_position_chart(bot, symbol: str,
         if not candles or len(candles) < 25:
             return None
         pair = symbol.replace("/", "")
-        levels = {}
+        levels: dict = {}
         if entry > 0:
             levels["entry"] = entry
         if sl > 0:
-            levels["sl"] = sl
+            levels["stop_loss"] = sl
         if tp > 0:
-            levels["tp"] = tp
+            levels["take_profit"] = tp
+        # C4 live overlays (only drawn when meaningfully distinct from the SL).
+        if trail_sl > 0 and abs(trail_sl - sl) > (sl * 1e-4 if sl else 0):
+            levels["trail"] = trail_sl
+        if liq > 0:
+            levels["liq"] = liq
+        # Playbook ratchet threshold: the mark at which the trail is DEMANDED.
+        if direction and sl > 0 and atr > 0:
+            try:
+                last_close = float(candles[-1][4]) if candles[-1] and len(candles[-1]) > 4 else 0.0
+                if last_close > 0:
+                    from bot.core.position_telemetry import playbook_trail_threshold
+                    thr = playbook_trail_threshold(direction, sl, atr / last_close)
+                    if thr and thr > 0:
+                        levels["threshold"] = thr
+            except Exception:
+                pass
         png = await asyncio.to_thread(
             build_chart_png, candles, f"{pair} · 1h", 25, dpi,
             levels or None, theme, "")
