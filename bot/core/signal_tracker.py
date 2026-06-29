@@ -1,8 +1,7 @@
 """
 RUNECLAW Signal Tracker — per-pair signal history and win rate tracking.
 
-Thread-safe in-memory storage of signal outcomes for blacklist detection
-and War Room reporting.
+Thread-safe in-memory storage of signal outcomes for War Room reporting.
 """
 
 from __future__ import annotations
@@ -30,13 +29,12 @@ class SignalRecord:
 
 
 class SignalTracker:
-    """Track signals per pair and compute win rates for blacklisting."""
+    """Track signals per pair and compute win rates for War Room reporting."""
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._signals: dict[str, list[SignalRecord]] = {}  # symbol -> records
         self._by_id: dict[str, SignalRecord] = {}  # signal_id -> record
-        self._blacklist_cache: set[str] = set()
 
     # ── Recording ────────────────────────────────────────────
 
@@ -72,8 +70,6 @@ class SignalTracker:
             rec.pnl = pnl
             rec.exit_price = exit_price
             rec.closed = True
-            # Invalidate blacklist cache
-            self._blacklist_cache.clear()
 
     # ── Queries ──────────────────────────────────────────────
 
@@ -118,26 +114,6 @@ class SignalTracker:
                 for sym in self._signals
             }
 
-    def get_blacklist(
-        self, min_signals: int = 20, max_win_rate: float = 0.30
-    ) -> list[str]:
-        """Pairs that should be avoided based on poor performance."""
-        with self._lock:
-            if self._blacklist_cache:
-                return list(self._blacklist_cache)
-            bl: list[str] = []
-            for sym in self._signals:
-                stats = self._pair_stats_locked(sym)
-                closed_count = stats["wins"] + stats["losses"]
-                if closed_count >= min_signals and stats["win_rate"] <= max_win_rate:
-                    bl.append(sym)
-            self._blacklist_cache = set(bl)
-            return bl
-
-    def is_blacklisted(self, symbol: str) -> bool:
-        """Check if a symbol is on the blacklist."""
-        return symbol in set(self.get_blacklist())
-
     # ── Formatting ───────────────────────────────────────────
 
     def format_for_telegram(self) -> str:
@@ -164,8 +140,6 @@ class SignalTracker:
             f" {'─'*12}{'─'*4}{'─'*4}{'─'*4}{'─'*7}{'─'*9}",
         ]
 
-        blacklisted = set(self.get_blacklist())
-
         for sym, stats in sorted(
             all_stats.items(), key=lambda x: x[1]["total_signals"], reverse=True
         ):
@@ -174,19 +148,13 @@ class SignalTracker:
             # Win rate bar: 5 chars
             filled = round(wr * 5)
             bar = "█" * filled + "░" * (5 - filled)
-            bl_mark = " ⛔" if sym in blacklisted else ""
             lines.append(
                 f" {short:<12}{stats['total_signals']:>4}"
                 f"{stats['wins']:>4}{stats['losses']:>4}"
                 f"  {bar}"
-                f" ${stats['avg_pnl']:>+7.2f}{bl_mark}"
+                f" ${stats['avg_pnl']:>+7.2f}"
             )
 
         lines.append("</pre>")
-
-        if blacklisted:
-            lines.append(
-                f"\n⛔ <i>Blacklisted: {', '.join(s.replace('/USDT','').replace(':USDT','') for s in blacklisted)}</i>"
-            )
 
         return "\n".join(lines)

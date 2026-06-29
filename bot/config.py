@@ -747,28 +747,6 @@ class LimitOrderConfig:
 
 
 @dataclass(frozen=True)
-class ScaleOutConfig:
-    """Rule 9: Scale-out ladder for partial profit taking."""
-    enabled: bool = _env_bool("SCALE_OUT_ENABLED", True)
-    tranche1_pct: float = _env_float("SCALE_OUT_T1_PCT", 50.0)   # close 50% at first target
-    tranche1_target_pct: float = _env_float("SCALE_OUT_T1_TARGET", 3.5)  # +3.5% profit
-    tranche2_pct: float = _env_float("SCALE_OUT_T2_PCT", 25.0)   # close 25% at second target
-    tranche2_target_pct: float = _env_float("SCALE_OUT_T2_TARGET", 7.0)  # +7.0% profit
-    runner_pct: float = _env_float("SCALE_OUT_RUNNER_PCT", 25.0)  # 25% runner with ATR trail
-    runner_trail_atr_mult: float = _env_float("SCALE_OUT_RUNNER_ATR", 1.0)  # trail at 1x ATR
-
-
-@dataclass(frozen=True)
-class TwoTrancheConfig:
-    """Rule 11: Split entries into two tranches."""
-    enabled: bool = _env_bool("TWO_TRANCHE_ENABLED", True)
-    tranche1_pct: float = _env_float("TRANCHE1_PCT", 60.0)       # 60% first entry
-    tranche2_pct: float = _env_float("TRANCHE2_PCT", 40.0)       # 40% on confirmation
-    confirmation_bars: int = int(_env_float("TRANCHE2_CONFIRM_BARS", 3))
-    retest_tolerance_pct: float = _env_float("TRANCHE2_RETEST_TOL", 0.5)
-
-
-@dataclass(frozen=True)
 class TimeStopConfig:
     """Rules 6/17: Time-based position auto-close."""
     enabled: bool = _env_bool("TIME_STOP_ENABLED", True)
@@ -975,8 +953,6 @@ class AppConfig:
     analyzer: AnalyzerConfig = field(default_factory=AnalyzerConfig)
     learning: LearningConfig = field(default_factory=LearningConfig)
     cache: CacheConfig = field(default_factory=CacheConfig)
-    scale_out: ScaleOutConfig = field(default_factory=ScaleOutConfig)
-    two_tranche: TwoTrancheConfig = field(default_factory=TwoTrancheConfig)
     time_stop: TimeStopConfig = field(default_factory=TimeStopConfig)
     trailing: TrailingStopConfig = field(default_factory=TrailingStopConfig)
     limit_orders: LimitOrderConfig = field(default_factory=LimitOrderConfig)

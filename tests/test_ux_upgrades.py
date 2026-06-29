@@ -66,37 +66,8 @@ class TestSignalTrackerRecordAndQuery:
         assert len(all_stats) == 2
 
 
-class TestSignalTrackerBlacklist:
-    """Signal tracker: blacklist logic."""
-
-    def test_no_blacklist_when_few_signals(self):
-        tracker = SignalTracker()
-        for i in range(10):
-            tracker.record_signal("BAD/USDT", "LONG", 0.5, 1.0, f"s{i}")
-            tracker.record_outcome(f"s{i}", pnl=-10.0, exit_price=0.9)
-        # Only 10 closed, default min_signals=20
-        assert tracker.get_blacklist() == []
-        assert not tracker.is_blacklisted("BAD/USDT")
-
-    def test_blacklisted_with_low_win_rate(self):
-        tracker = SignalTracker()
-        for i in range(25):
-            tracker.record_signal("DOGE/USDT", "LONG", 0.5, 1.0, f"s{i}")
-            # 5 wins, 20 losses = 20% win rate
-            pnl = 10.0 if i < 5 else -10.0
-            tracker.record_outcome(f"s{i}", pnl=pnl, exit_price=1.1 if i < 5 else 0.9)
-        bl = tracker.get_blacklist()
-        assert "DOGE/USDT" in bl
-        assert tracker.is_blacklisted("DOGE/USDT")
-
-    def test_not_blacklisted_with_good_win_rate(self):
-        tracker = SignalTracker()
-        for i in range(25):
-            tracker.record_signal("SOL/USDT", "LONG", 0.8, 100.0, f"s{i}")
-            # 20 wins, 5 losses = 80% win rate
-            pnl = 10.0 if i < 20 else -10.0
-            tracker.record_outcome(f"s{i}", pnl=pnl, exit_price=110.0 if i < 20 else 90.0)
-        assert not tracker.is_blacklisted("SOL/USDT")
+class TestSignalTrackerFormatting:
+    """Signal tracker: War Room display."""
 
     def test_format_for_telegram_not_empty(self):
         tracker = SignalTracker()
