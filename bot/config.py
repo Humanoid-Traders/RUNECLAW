@@ -502,6 +502,11 @@ class AnalyzerConfig:
     # OFF — until enabled the voter is purely price-derived (no external network
     # call). See bot/core/sentiment.py.
     external_sentiment_enabled: bool = _env_bool("EXTERNAL_SENTIMENT_ENABLED", False)
+    # Funding carry-cost awareness: when ON, apply a small bounded confidence
+    # haircut when a trade would PAY adverse funding over its expected hold (the
+    # carry-cost dimension the instantaneous funding signals miss). Default OFF —
+    # only ever reduces confidence. See bot/core/funding.py.
+    funding_cost_aware_enabled: bool = _env_bool("FUNDING_COST_AWARE_ENABLED", False)
     sma_period: int = 50
     trend_alignment_bonus: float = 0.10
     trend_misalignment_penalty: float = 0.08
