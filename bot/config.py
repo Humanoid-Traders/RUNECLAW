@@ -501,8 +501,23 @@ class LLMConfig:
 @dataclass(frozen=True)
 class AnalyzerConfig:
     """Tunable parameters for the AI analyzer / confluence engine."""
-    llm_weight: float = 0.6
-    confluence_weight: float = 0.4
+    # Confidence-blend weights: blended = llm_conf*llm_weight + confluence*confluence_weight.
+    # Now env-configurable (LLM Optimization Plan Phase 5) so the split can be
+    # tuned from evidence without a code change. Defaults preserve the prior
+    # hardcoded 0.6 / 0.4.
+    llm_weight: float = _env_float_bounded("LLM_BLEND_WEIGHT", 0.6, 0.0, 1.0)
+    confluence_weight: float = _env_float_bounded("CONFLUENCE_BLEND_WEIGHT", 0.4, 0.0, 1.0)
+    # Uncalibrated-LLM weight cap (opt-in, default OFF). The LLM drives `llm_weight`
+    # (0.6) of the blended confidence, but until confidence calibration is ON its
+    # confidence is unproven against realized outcomes — a hallucinated or
+    # overconfident thesis flows straight into sizing. When this is ON *and*
+    # calibration is OFF, the LLM's weight is capped at
+    # `uncalibrated_llm_weight_cap` and the freed weight is shifted to the
+    # deterministic, auditable confluence score (so the weights still sum to the
+    # same total). Once calibration is enabled the cap lifts automatically.
+    # Default OFF makes the blend byte-identical to today.
+    uncalibrated_llm_weight_cap_enabled: bool = _env_bool("UNCALIBRATED_LLM_WEIGHT_CAP_ENABLED", False)
+    uncalibrated_llm_weight_cap: float = _env_float_bounded("UNCALIBRATED_LLM_WEIGHT_CAP", 0.4, 0.0, 1.0)
     # Confidence calibration (Phase A): when ON, the final blended confidence is
     # remapped through a monotonic reliability curve fitted from the bot's own
     # closed-trade history, so a confidence value reflects realized win rate.

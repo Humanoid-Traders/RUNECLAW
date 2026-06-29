@@ -693,8 +693,10 @@ class Analyzer:
         # Without this, counter_trend (0.5x) + regime_penalty (-0.15) = ~70-80% total
         # reduction, eliminating legitimate mean-reversion setups entirely.
 
-        # Blend LLM/rule-based confidence with confluence score
-        blended_confidence = confidence * CONFIG.analyzer.llm_weight + confluence * CONFIG.analyzer.confluence_weight
+        # Blend LLM/rule-based confidence with confluence score. The weights are
+        # capped if the uncalibrated-LLM guard is active (see _blend_weights).
+        _llm_w, _conf_w = self._blend_weights()
+        blended_confidence = confidence * _llm_w + confluence * _conf_w
 
         # ── LLM Calibration Log ──────────────────────────────────────
         # Captures raw LLM confidence vs confluence BEFORE any post-blend
@@ -1634,6 +1636,28 @@ class Analyzer:
         return results
 
     # -- Regime Detection --
+
+    def _blend_weights(self) -> tuple[float, float]:
+        """Return the (llm_weight, confluence_weight) used to blend confidence.
+
+        Normally the configured weights (0.6 / 0.4). When the uncalibrated-LLM
+        guard is ON *and* confidence calibration is OFF, the LLM's confidence is
+        unproven against realized outcomes, so its weight is capped at
+        ``uncalibrated_llm_weight_cap`` and the freed weight is shifted to the
+        deterministic, auditable confluence score (the total is preserved). Once
+        calibration is enabled the cap lifts automatically. Pure / side-effect
+        free so it is unit-testable.
+        """
+        cfg = CONFIG.analyzer
+        llm_w = cfg.llm_weight
+        conf_w = cfg.confluence_weight
+        if (getattr(cfg, "uncalibrated_llm_weight_cap_enabled", False)
+                and not cfg.confidence_calibration_enabled):
+            cap = cfg.uncalibrated_llm_weight_cap
+            if llm_w > cap:
+                conf_w += (llm_w - cap)  # preserve the total weight
+                llm_w = cap
+        return llm_w, conf_w
 
     def _regime_hard_gate_reason(
         self, regime: Regime, direction: Direction, adx: float
