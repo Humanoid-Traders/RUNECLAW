@@ -778,6 +778,14 @@ class TimeStopConfig:
     swing_close_hours: float = _env_float("TIME_STOP_SWING_CLOSE_H", 24.0)
     limit_expire_intraday_hours: float = _env_float("LIMIT_EXPIRE_INTRA_H", 4.0)
     limit_expire_swing_hours: float = _env_float("LIMIT_EXPIRE_SWING_H", 48.0)
+    # Auto-close LIVE positions on smart-exit triggers (time stop, signal-hold
+    # limit, VWAP-reversion done/failed, volume-signal decay). Default OFF: a
+    # live position whose thesis has invalidated otherwise rides all the way to
+    # its exchange stop-loss. Paper positions already auto-close on these
+    # triggers in _check_paper_positions; this opt-in extends the SAME checks to
+    # real positions, closing at market via the executor. Byte-identical live
+    # behaviour until enabled.
+    live_auto_close_enabled: bool = _env_bool("TIME_STOP_LIVE_AUTO_CLOSE", False)
 
 
 @dataclass(frozen=True)
