@@ -68,6 +68,9 @@ features.
    SL/TP monitoring → REST fallback. Dead-socket reconnect is handled by the
    websockets ping/pong timeout.)**
 8. **SL/TP side-sanity assertion + post-placement "stop is open" verify** [S].
+   **(Side-sanity done — `_place_sl_tp`/`_place_sl_tp_v3` refuse an inverted pair
+   → unprotected-position escalation handles it. Post-placement re-verify is
+   already covered by the periodic SL/TP self-heal.)**
 9. **Reconcile SL/TP qty to exchange-verified fill size; unify
    unprotected→flatten across all entry paths** [M].
 
