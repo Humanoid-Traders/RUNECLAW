@@ -481,6 +481,24 @@ defaults:
       Floor on the correlation size multiplier — a new correlated trade is never
       sized below this fraction of its full fixed-fractional size.
 
+  live_risk_hardening_enabled:
+    value: false
+    env_var: LIVE_RISK_HARDENING_ENABLED
+    description: >
+      Opt-in (default OFF). When ON and running live, applies a stricter
+      portfolio-risk posture for real money without touching paper/backtest:
+      forces correlation-aware sizing on, forces covariance VaR on (falling back
+      to the per-trade proxy when data is thin — never a downgrade to skip), and
+      caps drawdown at live_max_drawdown_pct. Never applies in paper mode.
+
+  live_max_drawdown_pct:
+    value: 7.0
+    env_var: LIVE_MAX_DRAWDOWN_PCT
+    description: >
+      Tighter max-drawdown limit applied only when live risk hardening is active
+      (live + LIVE_RISK_HARDENING_ENABLED). In paper mode the standard
+      max_drawdown_pct applies.
+
   macro_calendar_fail_closed_when_stale:
     value: true
     env_var: MACRO_CALENDAR_FAIL_CLOSED_WHEN_STALE

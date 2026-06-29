@@ -410,7 +410,7 @@ class RiskEngine:
 
     def check_drawdown_recovery(self, current_dd_pct: float) -> None:
         """Check if we should enter/exit drawdown recovery mode."""
-        max_dd = CONFIG.risk.max_drawdown_pct
+        max_dd = self._effective_max_drawdown_pct()
         recovery_threshold = max_dd * 0.7  # enter recovery at 70% of max DD
         exit_threshold = max_dd * 0.3       # exit when DD drops to 30% of max
 
@@ -601,7 +601,7 @@ class RiskEngine:
         # correlation group AND direction — the marginal portfolio risk of each
         # additional correlated, same-side bet is larger. Only reduces (mult in
         # [floor, 1.0]); the notional cap and check #2 below stay authoritative.
-        if CONFIG.risk.correlation_sizing_enabled:
+        if CONFIG.risk.correlation_sizing_enabled or self._live_hardening():
             _corr_mult = self._correlation_size_factor(idea)
             if _corr_mult < 1.0:
                 position_usd *= _corr_mult
@@ -696,9 +696,10 @@ class RiskEngine:
             daily_loss_pct = self._last_known_daily_loss_pct
 
         try:
-            # 4. Drawdown
-            if state.max_drawdown_pct >= CONFIG.risk.max_drawdown_pct:
-                failed.append(f"DRAWDOWN: {state.max_drawdown_pct:.1f}% >= {CONFIG.risk.max_drawdown_pct}%")
+            # 4. Drawdown — the live-hardened cap is tighter when live + opted in.
+            _max_dd = self._effective_max_drawdown_pct()
+            if state.max_drawdown_pct >= _max_dd:
+                failed.append(f"DRAWDOWN: {state.max_drawdown_pct:.1f}% >= {_max_dd}%")
                 # C-05 FIX: trip circuit breaker AND reject the CURRENT trade
                 self._trip_circuit_breaker("max drawdown breached")
                 if "CIRCUIT_BREAKER: tripped during evaluation" not in failed:
@@ -1485,7 +1486,7 @@ class RiskEngine:
         # Opt-in covariance VaR (roadmap H-05). Default OFF → this is a no-op and
         # the per-trade proxy below runs byte-for-byte as before. Returns None
         # (fall through) whenever it lacks the data to compute a real matrix.
-        if CONFIG.risk.var_covariance_enabled and idea is not None:
+        if (CONFIG.risk.var_covariance_enabled or self._live_hardening()) and idea is not None:
             cov_result = self._compute_portfolio_var_covariance(
                 position_usd, confidence_level, idea)
             if cov_result is not None:
@@ -1730,6 +1731,23 @@ class RiskEngine:
             risk_log.warning("Correlation v2 check failed (fail-open): %s", _corr_exc)
 
         return None
+
+    def _live_hardening(self) -> bool:
+        """True when the stricter live risk posture is active — i.e. the operator
+        opted in (live_risk_hardening_enabled) AND we are running live. In paper
+        / backtest it is always False, so paper behaviour is never affected.
+        Fail-safe: any error returns False (no hardening) rather than raising."""
+        try:
+            return bool(CONFIG.risk.live_risk_hardening_enabled) and CONFIG.is_live()
+        except Exception:
+            return False
+
+    def _effective_max_drawdown_pct(self) -> float:
+        """The max-drawdown limit in force: the tighter live cap when live
+        hardening is active, otherwise the standard paper limit."""
+        if self._live_hardening():
+            return CONFIG.risk.live_max_drawdown_pct
+        return CONFIG.risk.max_drawdown_pct
 
     def _correlation_size_factor(self, idea: TradeIdea) -> float:
         """Graduated size reduction for correlated, same-direction stacking.
