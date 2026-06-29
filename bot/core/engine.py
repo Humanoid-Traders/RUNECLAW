@@ -2358,6 +2358,16 @@ class RuneClawEngine:
         except Exception as exc:
             system_log.debug("Live smart-exit evaluation failed: %s", exc)
 
+    @staticmethod
+    def _is_fill_message(msg: str) -> bool:
+        """True when an executor position-monitor message is a FILL/OPEN — a
+        filled limit order OR a limit→market fallback (the limit converted to a
+        market fill) — rather than an actual CLOSE. Fills are notified as
+        "TRADE OPENED"; everything else as a close. The fallback message was
+        previously misrouted to the close path and shown as "❌ Trade Closed"."""
+        first = (msg or "").split("\n", 1)[0]
+        return first.startswith("LIMIT FILLED:") or "MARKET FALLBACK:" in first
+
     async def _check_open_positions(self) -> None:
         """Monitor open positions for SL/TP hits."""
         positions = self.portfolio.open_positions
@@ -2394,8 +2404,12 @@ class RuneClawEngine:
                 try:
                     live_closed = await _ex.check_positions()
                     for msg in live_closed:
-                        # Distinguish limit fills from actual closes
-                        is_fill = msg.startswith("LIMIT FILLED:")
+                        # Distinguish limit fills from actual closes. A
+                        # "LIMIT → MARKET FALLBACK:" message is a position OPEN
+                        # (the limit converted to a market fill), not a close —
+                        # route it to the fill ("TRADE OPENED") path so it isn't
+                        # mislabeled as "❌ Trade Closed".
+                        is_fill = self._is_fill_message(msg)
                         if is_fill:
                             audit(trade_log, f"Limit order filled: {msg}",
                                   action="limit_fill_notify", result="FILLED")

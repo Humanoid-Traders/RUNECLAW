@@ -4201,8 +4201,10 @@ class LiveExecutor:
                         "fill_price": fill_price, "quantity": filled_qty,
                         "sl": pos.stop_loss, "tp": pos.take_profit})
 
-            sl_info = f" | SL: {sl_id}" if sl_id else ""
-            tp_info = f" | TP: {tp_id}" if tp_id else ""
+            # Show SL/TP PRICES (not the exchange order IDs) — the order IDs are
+            # meaningless to the operator and were rendering as huge integers.
+            sl_info = f" | SL: ${pos.stop_loss:,.4f}" if pos.stop_loss else ""
+            tp_info = f" | TP: ${pos.take_profit:,.4f}" if pos.take_profit else ""
             return (
                 f"LIMIT → MARKET FALLBACK: {pos.direction} {pos.symbol}\n"
                 f"Original limit: ${old_entry:,.4f} → Market fill: ${fill_price:,.4f}\n"
