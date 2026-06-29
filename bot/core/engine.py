@@ -648,6 +648,45 @@ class RuneClawEngine:
         """
         return [self.live_executor, *self._user_executors.values()]
 
+    async def account_risk_overview(self) -> list[dict]:
+        """Read-only per-account live risk snapshot for admin observability.
+
+        One row per active account (operator + every per-user executor):
+        ``account``, ``user_id``, ``equity_usd``, ``open_positions``,
+        ``exposure_usd`` (margin committed), ``circuit_open``,
+        ``consecutive_losses``, ``error``. Breaker state is read directly from the
+        engine that OWNS that account's safety state — the shared engine for the
+        operator, the per-user engine (if one exists yet) for a user — so reading
+        the overview never creates state as a side effect. Fail-open per account:
+        an error on one account is captured in its ``error`` field instead of
+        aborting the sweep. Default (per-user OFF) → just the operator row.
+        """
+        rows: list[dict] = []
+        for ex in self._all_live_executors():
+            uid = getattr(ex, "user_id", None)
+            row = {
+                "account": str(uid or "operator"), "user_id": uid,
+                "equity_usd": None, "open_positions": 0, "exposure_usd": 0.0,
+                "circuit_open": False, "consecutive_losses": 0, "error": None,
+            }
+            try:
+                positions = list(getattr(ex, "open_positions", []) or [])
+                row["open_positions"] = len(positions)
+                row["exposure_usd"] = round(
+                    sum(float(getattr(p, "cost_usd", 0.0) or 0.0) for p in positions), 2)
+                bal = await self.get_user_live_equity(str(uid)) if uid else await self.get_live_equity()
+                if bal:
+                    row["equity_usd"] = round(float(bal.get("total", 0.0) or 0.0), 2)
+                eng = self._user_risk.get(str(uid)) if uid else self.risk
+                if eng is not None:
+                    row["circuit_open"] = bool(eng.circuit_breaker_active)
+                    row["consecutive_losses"] = int(getattr(eng, "consecutive_losses", 0) or 0)
+            except Exception as exc:
+                row["error"] = str(exc)
+                logger.warning("Account overview: %s failed: %s", row["account"], exc)
+            rows.append(row)
+        return rows
+
     async def flatten_all_positions(self, reason: str = "manual_closeall") -> list[dict]:
         """Close every open position on EVERY account (operator + per-user).
 

@@ -266,7 +266,7 @@ class TelegramHandler:
             ("signals", self._cmd_signals),
             # Admin commands
             ("approve", self._cmd_approve), ("revoke", self._cmd_revoke),
-            ("users", self._cmd_users),
+            ("users", self._cmd_users), ("accounts", self._cmd_accounts),
             ("grant_live", self._cmd_grant_live), ("revoke_live", self._cmd_revoke_live),
             ("set_tier", self._cmd_set_tier),
             # Marketing / channel forwarder
@@ -1882,6 +1882,53 @@ class TelegramHandler:
         if len(all_users) > 15:
             lines.append(f"\n<i>{t('users_more', self._lang(update), n=len(all_users))}</i>")
 
+        await self._send(update, "\n".join(lines))
+
+    async def _cmd_accounts(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """Admin only: /accounts — live risk snapshot per trading account.
+
+        One row per active account (operator + every per-user account): live
+        equity, open positions, margin exposure, and circuit-breaker state. This
+        is the per-user live observability view — what /users (a registration
+        roster) does not show.
+        """
+        if not self._is_admin(update):
+            await self._send(update, f"\U0001f512 {t('admin_only', self._lang(update))}")
+            return
+        try:
+            rows = await self.engine.account_risk_overview()
+        except Exception as exc:
+            await self._send(update, f"❌ Account overview failed: {exc}")
+            return
+        if not rows:
+            await self._send(update, "📋 No active trading accounts.")
+            return
+
+        _dash = "─"
+        lines = ["🛡 <b>ACCOUNT RISK</b>", "<pre>"]
+        lines.append(f" {'ACCT':<10}{'EQUITY':>9}{'POS':>4}{'EXPOSURE':>10}{'CB':>4}{'STRK':>5}")
+        lines.append(f" {_dash*10}{_dash*9}{_dash*4}{_dash*10}{_dash*4}{_dash*5}")
+        n_live = n_halted = 0
+        for r in rows:
+            acct = r["account"][:10]
+            if r.get("error"):
+                lines.append(f" {acct:<10}  ERROR: {str(r['error'])[:24]}")
+                continue
+            eq = r["equity_usd"]
+            eq_s = f"${eq:,.0f}" if eq is not None else "—"
+            pos = r["open_positions"]
+            exp = f"${r['exposure_usd']:,.0f}"
+            cb = "⛔" if r["circuit_open"] else "·"
+            strk = r["consecutive_losses"]
+            if eq is not None:
+                n_live += 1
+            if r["circuit_open"]:
+                n_halted += 1
+            lines.append(f" {acct:<10}{eq_s:>9}{pos:>4}{exp:>10}{cb:>4}{strk:>5}")
+        lines.append("</pre>")
+        lines.append(
+            f"\n<i>{len(rows)} account(s) · {n_live} with live equity · "
+            f"{n_halted} halted (⛔)</i>")
         await self._send(update, "\n".join(lines))
 
     # ── Mode switching ────────────────────────────────────────
