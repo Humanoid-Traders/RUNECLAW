@@ -491,6 +491,12 @@ class AnalyzerConfig:
     # nudge to confidence. Default OFF — computed in shadow-mode (logged, not
     # applied) until enabled. See bot/learning/setup_expectancy.py.
     setup_expectancy_enabled: bool = _env_bool("SETUP_EXPECTANCY_ENABLED", False)
+    # Voter-weight learning application (Phase B2): when ON, each confluence
+    # voter's hand-tuned weight is multiplied by a learned, bounded ([0.5,1.5])
+    # multiplier reflecting how well that voter has predicted winning trades.
+    # Default OFF — until enabled, weights are byte-identical to hand-tuned.
+    # See bot/learning/voter_weights.py and docs/VOTER_WEIGHT_LEARNING.md.
+    voter_weight_learning_enabled: bool = _env_bool("VOTER_WEIGHT_LEARNING_ENABLED", False)
     # External sentiment: when ON, the sentiment voter blends the live market-wide
     # Fear & Greed index (alternative.me) as a bounded contrarian signal. Default
     # OFF — until enabled the voter is purely price-derived (no external network

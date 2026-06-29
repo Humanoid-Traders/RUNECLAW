@@ -193,6 +193,18 @@ class VoterWeightLearner:
                 f"adjusted: {moved or 'none'}")
 
 
+_INSTANCE: Optional["VoterWeightLearner"] = None
+
+
+def get_voter_learner(reload: bool = False) -> Optional["VoterWeightLearner"]:
+    """Process-wide singleton, lazily loaded from disk. Returns None if no learner
+    has been fitted yet (caller treats that as 'use hand-tuned weights')."""
+    global _INSTANCE
+    if _INSTANCE is None or reload:
+        _INSTANCE = VoterWeightLearner.load()
+    return _INSTANCE
+
+
 def refit_and_save(store=None, path: str = _FILE) -> "VoterWeightLearner":
     """Fit a learner from the learning store and persist it. Safe on a fresh bot:
     too little history stays identity (all multipliers 1.0)."""
@@ -203,4 +215,6 @@ def refit_and_save(store=None, path: str = _FILE) -> "VoterWeightLearner":
     except OSError as exc:
         log.warning("voter_weights save failed: %s", exc)
     log.info("Refit %s", learner.summary())
+    global _INSTANCE
+    _INSTANCE = learner          # apply immediately to the live singleton
     return learner

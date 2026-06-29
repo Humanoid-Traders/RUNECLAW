@@ -1721,7 +1721,23 @@ class Analyzer:
         # byte-identical; `names` lets a learner attribute outcomes to voters.
         names: list[str] = []
 
+        # Phase B2: optional learned per-voter weight multiplier. Resolved once
+        # per call. Default OFF (or no fitted learner) -> `_vw_mult` is None and
+        # `aw` is byte-identical. When ON, each voter's weight is scaled by its
+        # bounded ([0.5,1.5]) learned multiplier.
+        _vw_mult = None
+        if CONFIG.analyzer.voter_weight_learning_enabled:
+            try:
+                from bot.learning.voter_weights import get_voter_learner
+                _lw = get_voter_learner()
+                if _lw is not None and _lw.is_ready():
+                    _vw_mult = _lw.multiplier
+            except Exception:
+                _vw_mult = None
+
         def aw(weight: float, name: str) -> None:
+            if _vw_mult is not None:
+                weight = weight * _vw_mult(name)
             weights.append(weight)
             names.append(name)
 
