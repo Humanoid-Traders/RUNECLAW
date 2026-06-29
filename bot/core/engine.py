@@ -61,6 +61,10 @@ class RuneClawEngine:
         self.scanner = MarketScanner()
         self.cost = CostTracker()
         self.analyzer = Analyzer(cost_tracker=self.cost)
+        # Learning auto-refit: keeps calibration/voter/expectancy learners fresh
+        # as closed outcomes accrue (gated by CONFIG.analyzer.learning_auto_refit_*).
+        from bot.learning.auto_refit import LearningAutoRefit
+        self._auto_refit = LearningAutoRefit(CONFIG.analyzer.learning_auto_refit_interval)
         self.order_flow = OrderFlowAnalyzer()
         # Exchange flow provider: real-time funding rates + OI from Bitget
         self.exchange_flow = ExchangeFlowProvider(
@@ -338,6 +342,15 @@ class RuneClawEngine:
                 )
         except Exception as _lo_exc:
             logger.debug("Learning outcome record skipped: %s", _lo_exc)
+        # Auto-refit the learners every N closed outcomes (gated, fail-open).
+        # Keeps calibration/voter/expectancy fresh without a manual /calibration
+        # refit. Only updates persisted learner state — never changes a decision
+        # unless the learners' own application flags are on.
+        try:
+            if CONFIG.analyzer.learning_auto_refit_enabled:
+                self._auto_refit.note_closed_trade(getattr(self, "analyzer", None))
+        except Exception as _ar_exc:
+            logger.debug("Learning auto-refit skipped: %s", _ar_exc)
         # If closed adversely (SL / stop / liquidation), set a per-symbol cooldown
         # to prevent immediate re-entry.  A liquidation ("LIQUIDATED") is the most
         # adverse close of all, so it must arm the cooldown too.

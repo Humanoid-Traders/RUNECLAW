@@ -507,6 +507,13 @@ class AnalyzerConfig:
     # carry-cost dimension the instantaneous funding signals miss). Default OFF —
     # only ever reduces confidence. See bot/core/funding.py.
     funding_cost_aware_enabled: bool = _env_bool("FUNDING_COST_AWARE_ENABLED", False)
+    # Learning auto-refit: when ON, the three learners (calibration, voter weights,
+    # setup expectancy) are re-fitted from closed-trade history every
+    # LEARNING_AUTO_REFIT_INTERVAL closed trades, so they don't go stale. Refitting
+    # only updates persisted learner state — it never changes a decision unless the
+    # learners' own application flags are on. Default OFF. See bot/learning/auto_refit.py.
+    learning_auto_refit_enabled: bool = _env_bool("LEARNING_AUTO_REFIT_ENABLED", False)
+    learning_auto_refit_interval: int = int(_env_float("LEARNING_AUTO_REFIT_INTERVAL", 25))
     sma_period: int = 50
     trend_alignment_bonus: float = 0.10
     trend_misalignment_penalty: float = 0.08
