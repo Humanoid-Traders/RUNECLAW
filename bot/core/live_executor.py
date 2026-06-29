@@ -2692,6 +2692,31 @@ class LiveExecutor:
                       data={"asset": idea.asset, "size_usd": size_usd, "error": str(exc)})
                 return f"EXECUTION FAILED: {exc}"
 
+    @staticmethod
+    def _sltp_side_error(
+        direction: Direction, stop_loss: float, take_profit: float
+    ) -> Optional[str]:
+        """Side-sanity check for a stop/target pair. Returns an error string if the
+        levels are on the wrong side for the direction, else None.
+
+        A LONG must have SL below TP (stop under entry, target above); a SHORT the
+        reverse. Both must be positive. A wrong-side (inverted) pair would place a
+        stop that fails to protect or a target that fills the instant it's posted —
+        so we refuse to place either and let the unprotected-position machinery
+        alert/flatten instead. Fires only on genuinely-invalid input.
+        """
+        try:
+            if stop_loss is None or take_profit is None or stop_loss <= 0 or take_profit <= 0:
+                return f"non-positive SL/TP (sl={stop_loss}, tp={take_profit})"
+            is_long = direction == Direction.LONG
+            if is_long and not (stop_loss < take_profit):
+                return f"LONG requires SL<TP but sl={stop_loss} tp={take_profit}"
+            if (not is_long) and not (stop_loss > take_profit):
+                return f"SHORT requires SL>TP but sl={stop_loss} tp={take_profit}"
+            return None
+        except Exception as exc:
+            return f"side-check error: {exc}"
+
     async def _place_sl_tp(
         self, exchange: ccxt.Exchange, symbol: str,
         direction: Direction, quantity: float,
@@ -2712,6 +2737,19 @@ class LiveExecutor:
         sl_id = None
         tp_id = None
         close_side = "sell" if direction == Direction.LONG else "buy"
+
+        # Side-sanity: never post a wrong-side (inverted) SL/TP — it would fail to
+        # protect or fill instantly. Refuse both and leave the position to the
+        # unprotected-position alert/escalation (safer than a bad stop on-venue).
+        _side_err = self._sltp_side_error(direction, stop_loss, take_profit)
+        if _side_err:
+            audit(trade_log,
+                  f"SL/TP side-sanity FAILED for {symbol} ({direction}): {_side_err} "
+                  f"— refusing to place SL/TP",
+                  action="sltp_side_check", result="REJECTED", level=logging.ERROR,
+                  data={"symbol": symbol, "direction": str(direction),
+                        "stop_loss": stop_loss, "take_profit": take_profit})
+            return None, None
 
         # GETCLAW: Check and cancel existing plan orders before placing new ones.
         # Prevents duplicate SL/TP orders that can cause double-closes.
@@ -2971,6 +3009,22 @@ class LiveExecutor:
 
         sl_id = None
         tp_id = None
+
+        # Side-sanity: when BOTH levels are set, refuse an inverted pair (a
+        # wrong-side stop/target that fails to protect or fills instantly). Lenient
+        # on a single-sided update (one level 0), which is an intentional SL-only
+        # or TP-only call (e.g. trailing-stop moves). Covers the direct v3 callers
+        # that bypass _place_sl_tp.
+        if stop_loss and take_profit and stop_loss > 0 and take_profit > 0:
+            _side_err = self._sltp_side_error(direction, stop_loss, take_profit)
+            if _side_err:
+                audit(trade_log,
+                      f"SL/TP side-sanity FAILED (v3) for {symbol} ({direction}): "
+                      f"{_side_err} — refusing to place SL/TP",
+                      action="sltp_side_check", result="REJECTED", level=logging.ERROR,
+                      data={"symbol": symbol, "direction": str(direction),
+                            "stop_loss": stop_loss, "take_profit": take_profit})
+                return None, None
 
         # Strip "/USDT" from ccxt symbol format to get Bitget symbol
         bitget_symbol = symbol.replace("/USDT", "USDT").replace(":USDT", "")
