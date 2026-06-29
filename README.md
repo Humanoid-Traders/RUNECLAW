@@ -171,6 +171,21 @@ Scanner (perceives market), Analyst (generates theses), Risk (gates every trade)
 Sentinel (monitors for black swans). Communication via SwarmBus pub/sub, with Sentinel broadcasting HALT
 to all agents when severity >= 0.8. Ready for production deployment as separate Agent Hub agents.
 
+### Multi-User Live Trading (NEW)
+RUNECLAW supports **multiple users trading live on their own Bitget accounts**, each isolated from the others. Default OFF — set `PER_USER_LIVE_ENABLED=true` to enable. Every layer is gated and the operator path is byte-identical until enabled:
+- **Own-account execution** -- each user links their own keys via `/connect` (Fernet-encrypted at rest); their confirmed trades execute on **their** account, never the operator's. A user with no linked keys is rejected, never silently routed.
+- **Per-user risk isolation** -- each user gets their own circuit breaker, loss streak, daily-loss, and drawdown state; one user's halt never stops anyone else.
+- **Own-equity sizing** -- positions are sized against the user's own balance, not the operator's.
+- **Per-user margin caps** -- admins cap a user's per-trade margin with `/setcap` (tighten-only, never above the global live cap).
+- **Global kill-switch** -- the emergency stop / `/closeall` flattens **every** account (operator + all per-user) and halts all risk engines at once; `/reset` resumes.
+- **Per-user observability** -- `/accounts` shows each account's live equity, open positions, exposure, breaker state, governor throttling, and configured caps.
+- **Dedicated access allowlist** -- onboard regular live users via `LIVE_TRADER_TELEGRAM_IDS` (grants live-trade permission **without** operator/admin privileges), then `/approve` + `/grant_live`.
+
+> Live enablement, hardening order, and a first-live-user pre-flight checklist are documented in `docs/MULTI_USER_LIVE_SETUP.md`, `docs/LIVE_HARDENING_RUNBOOK.md`, and `docs/FIRST_LIVE_USER_PREFLIGHT.md`.
+
+### Realized-Performance Governor (NEW)
+A closed-loop backstop on top of the pre-trade checks (gated `LIVE_PERFORMANCE_GOVERNOR_ENABLED`). It scores the realized win rate and net PnL of recent **closed** trades per account and automatically **reduces** position size when results degrade — or **pauses** trading when an account is both losing often and net-negative. Tighten-only; surfaced in `/accounts`.
+
 ---
 
 ## Architecture
@@ -211,7 +226,7 @@ to all agents when severity >= 0.8. Ready for production deployment as separate 
 - **Redis** (port 6379 internal, not host-exposed) -- LLM cache, rate limiting, session state
 - **Dashboard** (served via API Bridge) -- War Room, Live Signals, portfolio views
 
-**Pipeline:** SCAN --> ANALYZE --> RISK GATE --> HUMAN CONFIRM --> EXECUTE (paper)
+**Pipeline:** SCAN --> ANALYZE --> RISK GATE --> HUMAN CONFIRM --> EXECUTE (paper or live; live is gated and human-confirmed, with admin-only auto-execution)
 
 ### Runtime Services
 
@@ -238,7 +253,7 @@ to all agents when severity >= 0.8. Ready for production deployment as separate 
 - Technical indicators: RSI-14, MACD (12/26/9), Bollinger Bands (20/2), ATR-14, ADX-14, VWAP, SMA-50 trend alignment, On-Balance Volume (OBV), Rolling VWAP (20-bar and 50-bar)
 - Candlestick pattern detection: 14 patterns (detected, contributed to pattern scoring) including doji, hammer, shooting star, engulfing, harami, tweezer top/bottom, morning/evening star, three white soldiers, three black crows
 - Fibonacci retracement levels: swing high/low detection over 50-bar lookback, standard levels (23.6%, 38.2%, 50%, 61.8%, 78.6%) with zone classification
-- 10-voter confluence scoring model (expanded from 6; some voters derived from overlapping data sources): RSI, MACD, Bollinger %B, Volume Spike, ADX, VWAP, OBV trend, candlestick pattern, Fibonacci zone, plus LLM confidence
+- 30+ voter confluence scoring model (expanded from the original 6; some voters derived from overlapping data sources): momentum (RSI, MACD, Stochastic), trend (ADX, EMA ribbon, VWAP), volume (spike, OBV, volume profile/POC), structure (Bollinger %B, Donchian, Keltner squeeze, Fibonacci), pattern (chart patterns, Elliott, Wyckoff, harmonics, liquidity sweep), order-flow (CVD, book imbalance, whale prints, funding), plus multi-timeframe, smart-money, and sentiment voters and the blended LLM confidence. Optional family-cap de-correlation and learned per-voter weights.
 - LLM-powered directional thesis generation (Gemini 2.5 Flash default, GPT-4o / Anthropic / Groq compatible)
 - Rule-based fallback when no LLM key is configured
 - Structured `TradeIdea` output with entry, SL, TP, confidence, reasoning
@@ -392,13 +407,36 @@ python -m bot.main --mode scan
 | `/optimize` | LLM token optimization stats |
 | `/costs` | Agent economics (LLM + infra breakdown) |
 | `/watch on\|off` | Toggle proactive alerts |
-| `/halt` | Emergency kill-switch (trip breaker, cancel all) |
+| `/halt` | Emergency kill-switch (trip breaker on ALL accounts, cancel all) |
+| `/closeall` | Admin: flatten open positions on every account (operator + per-user) |
 | `/pause` / `/resume` | Pause/resume trading |
 | `/mode solana` | Switch to Solana ecosystem mode (15 tokens) |
 | `/mode all` | Switch back to all Bitget markets |
 | `/setllm` | Switch LLM provider at runtime (BYOK) |
 | `/llmstatus` | Current LLM provider and model info |
 | `/help` | List all available commands |
+
+### Live & multi-user commands
+
+| Command | Who | Description |
+|---------|-----|-------------|
+| `/connect <key> <secret> <pass>` | user | Link your own Bitget account (DM only; validated, encrypted at rest) |
+| `/disconnect` | user | Remove your linked Bitget keys |
+| `/exchange` | user | Check your linked-account status |
+| `/livebalance` | user | Your live Bitget balance |
+| `/livepositions` | user | Your open live positions with SL/TP |
+| `/liveclose <id>` | user | Close one of your live positions |
+| `/golive CONFIRM` | admin | Arm live trading (when not env-armed) |
+| `/approve <id> [role]` | admin | Approve a pending user (trader/viewer/admin) |
+| `/grant_live <id>` / `/revoke_live <id>` | admin | Grant/revoke a user's live-trade permission |
+| `/setcap <id> <usd\|off>` | admin | Cap a user's per-trade margin (tighten-only) |
+| `/accounts` | admin | Per-account live risk: equity, exposure, breaker, governor, caps |
+| `/users` | admin | Registered-user roster (role, tier, mode) |
+| `/health` | admin | Engine vitals (WS, balance, tick health) |
+| `/slippage` | admin | Execution-quality / slippage drift |
+| `/calibration` | admin | Confidence-calibration learner readiness |
+
+> Multi-user live trading is OFF by default (`PER_USER_LIVE_ENABLED`). See `docs/MULTI_USER_LIVE_SETUP.md` for onboarding.
 
 Trade confirmation uses Telegram inline keyboards -- tap **Confirm** or **Reject** directly in the chat.
 
@@ -414,7 +452,7 @@ runeclaw/
 |   |-- core/
 |   |   |-- engine.py           # Central orchestrator (9-state FSM)
 |   |   |-- market_scanner.py   # Bitget market scanner, volume spike detection
-|   |   |-- analyzer.py         # AI + technical analysis, 10+ voter confluence
+|   |   |-- analyzer.py         # AI + technical analysis, 30+ voter confluence
 |   |   |-- order_flow.py       # Exchange microstructure: CVD, book imbalance, whales
 |   |   |-- smart_money.py      # Liquidation cascade, funding squeeze, whale tracking
 |   |   |-- multi_timeframe.py  # HTF alignment, market structure, BOS/CHoCH
@@ -614,7 +652,7 @@ This is a **hackathon prototype** (maturity: early-stage). Known limitations:
 - **No guaranteed uptime** -- no monitoring, alerting, or failover infrastructure
 - **Scalability:** Single-instance today -- swarm uses experimental in-process pub/sub (not a production MCP deployment)
 - **Correlation guard** -- currently implemented as a per-group count cap (max 2 positions per correlation group), not a full pairwise correlation matrix. The `MAX_CORRELATION` config knob is reserved for future implementation.
-- **Confluence voters** -- the 10-voter model uses indicators derived from the same price-volume series (RSI, MACD, OBV, VWAP, Bollinger Bands), which are not statistically independent. Naive summation may double-count momentum signals. Weighted scoring mitigates this but does not eliminate it.
+- **Confluence voters** -- the expanded 30+ voter model includes many indicators derived from the same price-volume series (RSI, MACD, OBV, VWAP, Bollinger Bands), which are not statistically independent. Naive summation may double-count momentum signals. Weighted scoring -- plus an optional family-cap de-correlation pass (`CONFLUENCE_FAMILY_CAP_ENABLED`) and learned per-voter weights -- mitigates this but does not eliminate it.
 
 ### Backtest Methodology
 
@@ -657,7 +695,7 @@ python run_realdata_backtest.py --llm --output results.json
 | Circuit breaker | **Auto-halt** on daily loss / drawdown | None or manual only |
 | Human confirmation | **Required** via Telegram keyboard | Auto-execute or no gate |
 | Regime detection | **ADX-14 regime filter** blocks counter-trend | Not considered |
-| Confluence scoring | **10-voter model** (some voters from overlapping data sources) | 1-2 indicators |
+| Confluence scoring | **30+ voter model** (with optional family-cap de-correlation) | 1-2 indicators |
 | Audit trail | **Full JSONL** -- every decision logged | Minimal or none |
 | Simulation-first | **Default mode** -- live requires 2 explicit flags | Often live by default |
 | Position sizing | **Fixed-fractional** with exposure caps | Fixed lot or % of balance |
