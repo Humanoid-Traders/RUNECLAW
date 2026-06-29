@@ -685,6 +685,13 @@ class ExecutionConfig:
     # fills. Surfaces execution-quality drift before it quietly drains equity.
     slippage_alert_mean_pct: float = _env_float_bounded("SLIPPAGE_ALERT_MEAN_PCT", 0.20, 0.0, 100.0)
     slippage_alert_min_trades: int = int(_env_float_bounded("SLIPPAGE_ALERT_MIN_TRADES", 10, 1, 100000))
+    # Live position caps (hard safety limits enforced by the live executor's
+    # preflight). Defaults are the conservative micro-test values ($100 margin /
+    # trade, $500 total, 5 positions); raise them via env for real-size live
+    # trading. These are MARGIN figures — exchange notional is margin × leverage.
+    max_live_position_usd: float = _env_float_bounded("MICRO_MAX_POSITION_USD", 100.0, 1.0, 10_000_000.0)
+    max_live_total_exposure_usd: float = _env_float_bounded("MICRO_MAX_TOTAL_EXPOSURE", 500.0, 1.0, 100_000_000.0)
+    max_live_open_positions: int = int(_env_float_bounded("MICRO_MAX_OPEN_POSITIONS", 5, 1, 1000))
     # Order splitting
     order_split_enabled: bool = _env_bool("ORDER_SPLIT_ENABLED", True)
     order_split_threshold_usd: float = _env_float("ORDER_SPLIT_THRESHOLD_USD", 500.0)

@@ -83,10 +83,14 @@ def display_symbol(s: str) -> str:
 
 
 # ── Safety limits ────────────────────────────────────────────────────
-# $800 deposit, $100 margin per trade at 5x = $500 notional per trade
-MICRO_MAX_POSITION_USD = 100.0    # Max $100 margin per trade
-MICRO_MAX_TOTAL_EXPOSURE = 500.0  # Max $500 total margin exposure
-MICRO_MAX_OPEN_POSITIONS = 5      # Max 5 concurrent positions
+# Live position caps (MARGIN). Now operator-configurable via env
+# (MICRO_MAX_POSITION_USD / MICRO_MAX_TOTAL_EXPOSURE / MICRO_MAX_OPEN_POSITIONS),
+# sourced from CONFIG.execution. Defaults are the conservative micro-test values
+# ($100 margin/trade, $500 total, 5 positions) — raise them for real-size live
+# trading. Read once at import, so set the env before launch.
+MICRO_MAX_POSITION_USD = CONFIG.execution.max_live_position_usd          # Max margin per trade
+MICRO_MAX_TOTAL_EXPOSURE = CONFIG.execution.max_live_total_exposure_usd  # Max total margin exposure
+MICRO_MAX_OPEN_POSITIONS = CONFIG.execution.max_live_open_positions      # Max concurrent positions
 
 
 # ── Execution result classification (audit F-1) ──────────────────────
