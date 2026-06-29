@@ -91,10 +91,15 @@ trade live even if the stored flag says otherwise.
 `/grant`/`/revoke`, `/mode`, and admin auto-trade. The global kill-switch
 (emergency stop / `/closeall`) still flattens **every** account including theirs.
 
-## Admin visibility
+## Admin visibility & limits
 
-`/accounts` — live risk per account (equity, open positions, exposure,
-breaker state) across the operator and every per-user account.
+- `/accounts` — live risk per account (equity, open positions, exposure,
+  breaker state) across the operator and every per-user account.
+- `/setcap <telegram_id> <max_margin_usd | off>` — cap how much margin a user may
+  commit to a single live trade. Tighten-only: it can only *reduce* the size the
+  risk engine already sized, never raise it above the global live cap
+  (`MICRO_MAX_POSITION_USD`). Use it to start a new/untrusted user small (e.g.
+  `/setcap 12345678 25`) and raise as they earn trust; `off` clears it.
 
 ---
 

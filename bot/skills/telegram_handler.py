@@ -267,6 +267,7 @@ class TelegramHandler:
             # Admin commands
             ("approve", self._cmd_approve), ("revoke", self._cmd_revoke),
             ("users", self._cmd_users), ("accounts", self._cmd_accounts),
+            ("setcap", self._cmd_setcap),
             ("grant_live", self._cmd_grant_live), ("revoke_live", self._cmd_revoke_live),
             ("set_tier", self._cmd_set_tier),
             # Marketing / channel forwarder
@@ -1933,6 +1934,49 @@ class TelegramHandler:
             f"\n<i>{len(rows)} account(s) · {n_live} with live equity · "
             f"{n_halted} halted (⛔)</i>")
         await self._send(update, "\n".join(lines))
+
+    async def _cmd_setcap(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """Admin only: /setcap <telegram_id> <max_margin_usd | off> — cap how much
+        margin a regular user may commit to a single live trade (tighten-only,
+        never above the global micro cap). 'off' clears the cap."""
+        if not self._is_admin(update):
+            await self._send(update, f"\U0001f512 {t('admin_only', self._lang(update))}")
+            return
+        args = ctx.args or []
+        if len(args) != 2:
+            await self._send(update,
+                "📋 <b>Usage:</b> <code>/setcap &lt;telegram_id&gt; &lt;max_margin_usd | off&gt;</code>\n\n"
+                "Caps a user's per-trade margin (only reduces; never exceeds the "
+                "global live cap). Example: <code>/setcap 12345678 50</code> or "
+                "<code>/setcap 12345678 off</code>.")
+            return
+        target_id, raw = args[0].strip(), args[1].strip().lower()
+        if not target_id.isdigit():
+            await self._send(update,
+                f"\U0001f534 {t('invalid_tg_id_numeric', self._lang(update))}")
+            return
+        if not self.users.get(target_id):
+            await self._send(update, "🔴 No such user. They must /start first.")
+            return
+        if raw in ("off", "none", "clear", "0"):
+            self.users.set_max_margin(target_id, None)
+            await self._send(update,
+                f"🟢 Margin cap <b>cleared</b> for <code>{target_id}</code> — "
+                "back to the global live cap.")
+            return
+        try:
+            usd = float(raw)
+        except ValueError:
+            await self._send(update,
+                "🔴 Amount must be a number (USD) or <code>off</code>.")
+            return
+        if usd <= 0:
+            await self._send(update, "🔴 Cap must be greater than 0 (or <code>off</code>).")
+            return
+        self.users.set_max_margin(target_id, usd)
+        await self._send(update,
+            f"🟢 Margin cap set: <code>{target_id}</code> may commit at most "
+            f"<b>${usd:,.2f}</b> margin per live trade (still bounded by the global cap).")
 
     # ── Mode switching ────────────────────────────────────────
 
