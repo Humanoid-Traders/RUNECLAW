@@ -458,6 +458,29 @@ defaults:
       Minimum closed trades before Kelly sizing has an edge estimate. Below this
       it is a no-op (fixed-fractional size is left unchanged).
 
+  correlation_sizing_enabled:
+    value: false
+    env_var: CORRELATION_SIZING_ENABLED
+    description: >
+      Opt-in portfolio-aware correlation sizing (default OFF). Shrinks a new
+      trade that stacks on already-open positions in the SAME correlation group
+      AND direction — only reduces (multiplier in [floor, 1.0]); the notional and
+      margin caps stay authoritative. Byte-identical to prior behaviour when OFF.
+
+  correlation_sizing_step:
+    value: 0.20
+    env_var: CORRELATION_SIZING_STEP
+    description: >
+      Size reduction per same-group, same-direction open position (0.20 = -20%
+      each). Applied before the notional cap; floored by correlation_sizing_floor.
+
+  correlation_sizing_floor:
+    value: 0.5
+    env_var: CORRELATION_SIZING_FLOOR
+    description: >
+      Floor on the correlation size multiplier — a new correlated trade is never
+      sized below this fraction of its full fixed-fractional size.
+
 # =============================================================================
 # CORRELATION GROUPS
 # =============================================================================

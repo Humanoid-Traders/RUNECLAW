@@ -596,6 +596,16 @@ class RiskEngine:
         if _macro_size_mult < 1.0:
             position_usd *= _macro_size_mult
 
+        # Portfolio-aware correlation sizing (opt-in, default OFF). Shrink the
+        # new trade when it stacks on existing open positions in the SAME
+        # correlation group AND direction — the marginal portfolio risk of each
+        # additional correlated, same-side bet is larger. Only reduces (mult in
+        # [floor, 1.0]); the notional cap and check #2 below stay authoritative.
+        if CONFIG.risk.correlation_sizing_enabled:
+            _corr_mult = self._correlation_size_factor(idea)
+            if _corr_mult < 1.0:
+                position_usd *= _corr_mult
+
         # C-03 FIX: Cap position_usd at max_notional BEFORE check #2 runs.
         # The fixed-fractional formula (risk_budget / stop_distance) routinely
         # produces notional sizes far exceeding the risk budget itself (e.g.,
@@ -1715,6 +1725,42 @@ class RiskEngine:
             risk_log.warning("Correlation v2 check failed (fail-open): %s", _corr_exc)
 
         return None
+
+    def _correlation_size_factor(self, idea: TradeIdea) -> float:
+        """Graduated size reduction for correlated, same-direction stacking.
+
+        Returns a multiplier in ``[correlation_sizing_floor, 1.0]``. The new
+        trade's size is reduced by ``correlation_sizing_step`` for EACH
+        already-open position that shares the same correlation group AND trade
+        direction. Rationale: the count-cap in ``_check_correlation`` either
+        rejects or fully admits a trade, but the marginal portfolio risk of
+        piling a second/third *correlated, same-side* bet on top of existing ones
+        is larger than the first — so those are sized down rather than admitted at
+        full size. The shared unmapped-alt bucket is excluded (its members are not
+        all mutually correlated, so co-membership isn't a concentrated bet).
+        Floored so size is never cut below the configured fraction. Fail-open: any
+        error returns 1.0 (no reduction) so this can never block a trade.
+        """
+        try:
+            new_group = self._correlation_group(idea.asset)
+            if new_group == _UNMAPPED_GROUP:
+                return 1.0
+            new_dir = idea.direction.value if hasattr(idea.direction, "value") else str(idea.direction)
+            same = 0
+            for pos in self._portfolio.open_positions:
+                if self._correlation_group(pos.asset) != new_group:
+                    continue
+                pos_dir = pos.direction.value if hasattr(pos.direction, "value") else str(pos.direction)
+                if pos_dir == new_dir:
+                    same += 1
+            if same <= 0:
+                return 1.0
+            step = CONFIG.risk.correlation_sizing_step
+            floor = CONFIG.risk.correlation_sizing_floor
+            return max(floor, 1.0 - step * same)
+        except Exception as exc:
+            risk_log.warning("Correlation sizing failed (fail-open): %s", exc)
+            return 1.0
 
     # -- Persistence (F-01) --
 
