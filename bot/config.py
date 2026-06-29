@@ -496,6 +496,13 @@ class TelegramConfig:
     bot_token: str = _env("TELEGRAM_BOT_TOKEN")
     chat_id: str = _env("TELEGRAM_CHAT_ID")
     admin_ids: str = _env("ADMIN_TELEGRAM_IDS", "")  # Comma-separated admin user IDs — get premium LLM routing
+    # Comma-separated Telegram IDs allowed to trade LIVE on their OWN linked
+    # account WITHOUT operator/admin identity. Members are permitted onto the
+    # bot + live-trade allowlist, but are NOT operators (no admin commands, no
+    # operator-account routing) — so per-user risk isolation, own-account
+    # execution, and own-equity sizing apply to them. Use this (not
+    # ADMIN_TELEGRAM_IDS) to onboard regular live users under PER_USER_LIVE_ENABLED.
+    live_trader_ids: str = _env("LIVE_TRADER_TELEGRAM_IDS", "")
     rate_limit_per_minute: int = 20
     # Opt-in: attach a rendered price/EMA/RSI chart to analysis cards.
     # Off by default — requires the optional `charts` extra (mplfinance).

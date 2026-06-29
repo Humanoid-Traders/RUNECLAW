@@ -1219,14 +1219,17 @@ class TelegramHandler:
         """Telegram IDs permitted to use the bot (audit F-2).
 
         Sourced from TELEGRAM_CHAT_ID (the operator; may be comma-separated for
-        multi-channel auto-scan) plus ADMIN_TELEGRAM_IDS. An EMPTY set means no
-        allowlist is configured (e.g. an unconfigured demo / paper setup), in
-        which case the allowlist is NOT enforced and the prior open-registration
-        behavior is preserved — live mode already requires TELEGRAM_CHAT_ID via
-        is_live(), so a live bot always has a non-empty allowlist.
+        multi-channel auto-scan), ADMIN_TELEGRAM_IDS, and LIVE_TRADER_TELEGRAM_IDS
+        (regular live users — permitted to use the bot + trade live on their OWN
+        account, but NOT operators/admins). An EMPTY set means no allowlist is
+        configured (e.g. an unconfigured demo / paper setup), in which case the
+        allowlist is NOT enforced and the prior open-registration behavior is
+        preserved — live mode already requires TELEGRAM_CHAT_ID via is_live(), so a
+        live bot always has a non-empty allowlist.
         """
         ids: set[str] = set()
-        for raw in (CONFIG.telegram.chat_id, CONFIG.telegram.admin_ids):
+        for raw in (CONFIG.telegram.chat_id, CONFIG.telegram.admin_ids,
+                    CONFIG.telegram.live_trader_ids):
             if raw:
                 ids |= {s.strip() for s in str(raw).split(",") if s.strip()}
         return ids
