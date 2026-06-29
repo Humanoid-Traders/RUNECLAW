@@ -429,6 +429,29 @@ class RuneClawEngine:
         live_open = len(ex.open_positions)
         return live_eq, live_open
 
+    def _per_user_margin_cap(self, user_id) -> Optional[float]:
+        """Operator-set max margin (USD) for THIS user's live trade, or None.
+
+        Only applies under per-user live to a regular (non-operator) user — the
+        operator/admin trade the operator account under the global micro caps.
+        Tighten-only: the caller folds it into the existing position cap with a
+        min(), so it can only REDUCE the size the risk engine already sized and
+        capped. None (no cap set) → no change. Fail-open: a store hiccup → None.
+        """
+        if not getattr(CONFIG, "per_user_live_enabled", False):
+            return None
+        if not user_id or user_id in ("auto", "") or self._is_operator_user(user_id):
+            return None
+        store = getattr(self, "_user_store", None)
+        if store is None:
+            return None
+        try:
+            cap = store.max_margin(user_id)
+        except Exception as exc:
+            logger.debug("Per-user margin cap lookup failed for %s: %s", user_id, exc)
+            return None
+        return cap if (cap is not None and cap > 0) else None
+
     def _on_live_position_closed(self, pos) -> None:
         """Handle live position close: invalidate cache + set SL cooldown."""
         self._invalidate_live_balance_cache()
@@ -2054,6 +2077,12 @@ class RuneClawEngine:
         try:
             from bot.core.live_executor import MICRO_MAX_POSITION_USD
             recheck_cap = MICRO_MAX_POSITION_USD if CONFIG.is_live() else None
+            # Per-user margin cap (operator-set, tighten-only): a regular user's
+            # live trade is capped at THEIR ceiling, never above the global micro
+            # cap. None when unset / operator / per-user off → no change.
+            _user_cap = self._per_user_margin_cap(user_id)
+            if _user_cap is not None:
+                recheck_cap = _user_cap if recheck_cap is None else min(recheck_cap, _user_cap)
             # LIVE FIX: size + count against the account this confirm executes on.
             # Default/operator → the shared operator balance + exchange count
             # (byte-identical). A regular user under per-user live → THEIR OWN

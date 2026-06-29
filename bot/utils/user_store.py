@@ -290,6 +290,39 @@ class UserStore:
                   action="live_trading_permission", result="OK")
             return True
 
+    def max_margin(self, telegram_id: int | str) -> Optional[float]:
+        """Operator-set max margin (USD) a user may commit to a single live trade,
+        or None if unset. Used by the engine to tighten the per-user position cap."""
+        user = self.get(telegram_id)
+        if not user:
+            return None
+        v = user.get("max_margin_usd")
+        if v is None:
+            return None
+        try:
+            f = float(v)
+        except (TypeError, ValueError):
+            return None
+        return f if f > 0 else None
+
+    def set_max_margin(self, telegram_id: int | str, usd: Optional[float]) -> bool:
+        """Set (or clear, when usd is None) a user's per-trade max margin cap.
+        Returns True on success, False if the user does not exist."""
+        key = str(telegram_id)
+        with self._lock:
+            if key not in self._users:
+                return False
+            if usd is None:
+                self._users[key].pop("max_margin_usd", None)
+            else:
+                self._users[key]["max_margin_usd"] = float(usd)
+            self._save()
+            audit(system_log,
+                  f"Max margin {'cleared' if usd is None else f'set to ${usd:.2f}'} "
+                  f"for user {key}",
+                  action="user_max_margin", result="OK")
+            return True
+
     def sim_opt_in(self, telegram_id: int | str) -> bool:
         """Whether this user has opted into PAPER (sim) practice mode. When True
         (and PAPER_SIM_OPT_IN_ENABLED), their confirmed trades are simulated into
