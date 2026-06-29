@@ -691,13 +691,20 @@ class RuneClawEngine:
                 "account": str(uid or "operator"), "user_id": uid,
                 "equity_usd": None, "open_positions": 0, "exposure_usd": 0.0,
                 "circuit_open": False, "consecutive_losses": 0,
-                "governor": None, "error": None,
+                "governor": None, "cap_usd": None, "error": None,
             }
             try:
                 positions = list(getattr(ex, "open_positions", []) or [])
                 row["open_positions"] = len(positions)
                 row["exposure_usd"] = round(
                     sum(float(getattr(p, "cost_usd", 0.0) or 0.0) for p in positions), 2)
+                # Operator-set per-trade margin cap (/setcap), for this user only.
+                store = getattr(self, "_user_store", None)
+                if uid and store is not None:
+                    try:
+                        row["cap_usd"] = store.max_margin(uid)
+                    except Exception:
+                        row["cap_usd"] = None
                 bal = await self.get_user_live_equity(str(uid)) if uid else await self.get_live_equity()
                 if bal:
                     row["equity_usd"] = round(float(bal.get("total", 0.0) or 0.0), 2)
