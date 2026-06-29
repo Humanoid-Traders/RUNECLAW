@@ -829,6 +829,18 @@ def _fibonacci_levels_overlay(df, price_ax, t):
         return
 
 
+def _badge_within_panel(mid_y: float, ylo: float, yhi: float,
+                        margin_frac: float = 0.04) -> bool:
+    """True when a pattern badge's y falls inside the visible price panel (with a
+    small margin). Out-of-range badges (e.g. far Fibonacci-extension midpoints)
+    must be skipped — drawn unclipped, they expand bbox_inches="tight" and leave
+    a large black gap under the chart."""
+    if yhi <= ylo:
+        return False
+    m = (yhi - ylo) * margin_frac
+    return ylo + m <= mid_y <= yhi - m
+
+
 def _pattern_zones_overlay(df, price_ax, t):
     """Draw shaded zones and labels for detected chart patterns.
 
@@ -1036,19 +1048,30 @@ def _pattern_zones_overlay(df, price_ax, t):
             all_vals = [v for v in kl.values() if isinstance(v, (int, float))]
             if all_vals:
                 mid_y = (max(all_vals) + min(all_vals)) / 2
+                # Skip badges whose midpoint falls OUTSIDE the visible price
+                # range. A pattern with far key levels (e.g. Fibonacci extension
+                # projections well below price) would otherwise draw an unclipped
+                # label beyond the panel, and bbox_inches="tight" would stretch
+                # the saved PNG down to it — the big black gap under the chart.
+                _ylo, _yhi = price_ax.get_ylim()
+                _ymargin = (_yhi - _ylo) * 0.04
+                if not _badge_within_panel(mid_y, _ylo, _yhi):
+                    continue
                 # Nudge the badge up until it clears every already-placed label,
                 # so overlapping zones don't stack their text into one blob.
                 for _ in range(8):
                     if all(abs(mid_y - py) >= _min_label_gap for py in _placed_label_ys):
                         break
                     mid_y += _min_label_gap
+                # Keep the nudged badge inside the panel too.
+                mid_y = min(mid_y, _yhi - _ymargin)
                 _placed_label_ys.append(mid_y)
                 price_ax.text(
                     n * 0.05, mid_y, name, color="#ffffff", fontsize=6.5,
                     fontweight="bold", ha="left", va="center",
                     bbox=dict(boxstyle="round,pad=0.14", fc=shade_color,
                               ec="none", alpha=0.80),
-                    zorder=5,
+                    zorder=5, clip_on=True,  # never blow out the figure bbox
                 )
     except Exception:  # noqa: BLE001 — never crash the chart
         return
