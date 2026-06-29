@@ -291,11 +291,65 @@ Examples:
     trade_group.add_argument("--slippage", type=float, default=0.05, help="Slippage %% (default: 0.05)")
     trade_group.add_argument("--use-llm", action="store_true", help="Use LLM for analysis (default: rule-based)")
 
+    # Walk-forward analysis
+    wf_group = parser.add_argument_group("walk-forward")
+    wf_group.add_argument("--walk-forward", type=int, metavar="N", default=0,
+                          help="Run N-fold walk-forward analysis instead of a single backtest")
+    wf_group.add_argument("--wf-optimize", action="store_true",
+                          help="Anchored optimisation: sweep confidence_threshold on in-sample, "
+                               "validate out-of-sample (reports the overfitting gap)")
+
     # Output
     parser.add_argument("--output", "-o", type=str, help="Save JSON results to file")
 
     args = parser.parse_args()
-    asyncio.run(_run_backtest(args))
+    if args.walk_forward and args.walk_forward > 0:
+        asyncio.run(_run_walk_forward(args))
+    else:
+        asyncio.run(_run_backtest(args))
+
+
+async def _run_walk_forward(args: argparse.Namespace) -> None:
+    """Execute walk-forward analysis with the given CLI arguments."""
+    from bot.backtest.walk_forward import run_walk_forward
+    config = BacktestConfig(
+        symbol=args.symbol, timeframe=args.timeframe, initial_balance=args.balance,
+        commission_pct=args.commission, slippage_pct=args.slippage, use_llm=args.use_llm,
+    )
+    print(f"\n  Loading data for {config.symbol}...")
+    bars, _ = await _load_bars(args, config)
+    if len(bars) < 220:
+        print(f"  ERROR: walk-forward needs more bars (got {len(bars)}). Try --limit 1000+.")
+        sys.exit(1)
+
+    base = {"symbol": args.symbol, "timeframe": args.timeframe,
+            "initial_balance": args.balance, "commission_pct": args.commission,
+            "slippage_pct": args.slippage, "use_llm": args.use_llm}
+    grid = ([{"confidence_threshold": t} for t in (0.45, 0.5, 0.55, 0.6)]
+            if args.wf_optimize else None)
+    print(f"  Running {args.walk_forward}-fold walk-forward"
+          f"{' with IS optimisation' if grid else ''}...")
+    report = await run_walk_forward(bars, base, n_folds=args.walk_forward, param_grid=grid)
+
+    print("\n" + "=" * 60)
+    print("  WALK-FORWARD ANALYSIS")
+    print("=" * 60)
+    print(f"  {report.summary()}\n")
+    for f in report.folds:
+        chosen = (f" thr={f.chosen.get('confidence_threshold')}"
+                  if grid and "confidence_threshold" in f.chosen else "")
+        print(f"  fold {f.index}: OOS return {f.oos_return_pct:+6.2f}%  "
+              f"win {f.oos_win_rate:.0%}  trades {f.oos_trades:>3}  "
+              f"Sharpe {f.oos_sharpe:5.2f}  maxDD {f.oos_max_dd:5.2f}%{chosen}")
+    print("=" * 60)
+
+    if args.output:
+        out_path = Path(args.output)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(out_path, "w") as f:
+            json.dump({"summary": report.summary(),
+                       "folds": [vars(fl) for fl in report.folds]}, f, indent=2, default=str)
+        print(f"  Results saved to {args.output}")
 
 
 if __name__ == "__main__":
