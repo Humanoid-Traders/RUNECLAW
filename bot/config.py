@@ -528,6 +528,14 @@ class AnalyzerConfig:
     # Default OFF makes the blend byte-identical to today.
     uncalibrated_llm_weight_cap_enabled: bool = _env_bool("UNCALIBRATED_LLM_WEIGHT_CAP_ENABLED", False)
     uncalibrated_llm_weight_cap: float = _env_float_bounded("UNCALIBRATED_LLM_WEIGHT_CAP", 0.4, 0.0, 1.0)
+    # Per-user BYOK LLM routing (opt-in, default OFF). When ON, the LLM thesis for
+    # a command a user runs by hand (/analyze) uses THAT user's own provider key
+    # (from their encrypted settings) instead of the operator's — so their
+    # analysis draws on their own quota/billing. Fail-open: if the user has no key
+    # / an invalid provider / the client can't build, it silently falls back to
+    # the operator config. The continuous background scan is unaffected (analysis
+    # there is shared/operator-funded). Default OFF → byte-identical until enabled.
+    per_user_llm_enabled: bool = _env_bool("PER_USER_LLM_ENABLED", False)
     # Confidence calibration (Phase A): when ON, the final blended confidence is
     # remapped through a monotonic reliability curve fitted from the bot's own
     # closed-trade history, so a confidence value reflects realized win rate.

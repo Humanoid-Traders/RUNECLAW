@@ -298,6 +298,48 @@ class Analyzer:
             audit(trade_log, f"LLM SDK import error: {e}", action="llm_init", result="FAIL")
             return None
 
+    @staticmethod
+    def _resolve_user_llm_config(user_id):
+        """Build an LLMConfig from a user's own saved provider + (decrypted) key,
+        or None to fall back to the operator config. Pure-ish (a DB read) and
+        side-effect free so it is unit-testable. Returns None when: per-user is
+        not applicable, the user has no key, the provider is unknown, or anything
+        errors (fail-open)."""
+        try:
+            from bot.db.models import get_user_settings
+            from bot.llm.provider import LLMConfig, LLMProvider
+            settings = get_user_settings(int(user_id))
+            key = (settings.llm_api_key or "").strip()
+            if not key:
+                return None
+            try:
+                provider = LLMProvider(settings.llm_provider)
+            except ValueError:
+                return None
+            cfg = LLMConfig(provider=provider, api_key=key)
+            return cfg if cfg.is_configured() else None
+        except Exception as exc:
+            logger.debug("per-user LLM config resolve failed for %s: %s", user_id, exc)
+            return None
+
+    def _maybe_user_client(self, user_id):
+        """Return (client, cfg) routed to the user's OWN LLM key, or (None, None)
+        to use the operator client. Gated by CONFIG.analyzer.per_user_llm_enabled;
+        fail-open on any error."""
+        try:
+            if user_id is None or not getattr(CONFIG.analyzer, "per_user_llm_enabled", False):
+                return None, None
+            cfg = self._resolve_user_llm_config(user_id)
+            if cfg is None:
+                return None, None
+            client = self._build_client_for_config(cfg)
+            if client is None:
+                return None, None
+            return client, cfg
+        except Exception as exc:
+            logger.debug("per-user LLM client resolve failed for %s: %s", user_id, exc)
+            return None, None
+
     def refresh_llm_client(self) -> None:
         """Refresh LLM client after BYOK /setllm change."""
         self._llm_config = self._resolve_llm_config()
@@ -341,7 +383,7 @@ class Analyzer:
 
     async def analyze(self, signal: MarketSignal, candles: list[list[float]], order_flow=None,
                        candles_4h=None, candles_1d=None, is_admin: bool = False,
-                       as_of: Optional[datetime] = None) -> Optional[TradeIdea]:
+                       as_of: Optional[datetime] = None, user_id=None) -> Optional[TradeIdea]:
         """
         Full analysis pipeline:
         1. Compute technical indicators from OHLCV candles.
@@ -595,7 +637,7 @@ class Analyzer:
         if sma50 is not None:
             indicators["sma50"] = round(sma50, 6)
 
-        thesis = await self._llm_thesis(signal, indicators, order_flow=order_flow, is_admin=is_admin)
+        thesis = await self._llm_thesis(signal, indicators, order_flow=order_flow, is_admin=is_admin, user_id=user_id)
 
         if thesis is None:
             self._last_rejection_diag = {
@@ -2294,7 +2336,7 @@ class Analyzer:
 
     # -- LLM Reasoning --
 
-    async def _llm_thesis(self, signal: MarketSignal, indicators: dict, order_flow=None, is_admin: bool = False) -> Optional[dict]:
+    async def _llm_thesis(self, signal: MarketSignal, indicators: dict, order_flow=None, is_admin: bool = False, user_id=None) -> Optional[dict]:
         """Ask the LLM for a directional call with reasoning.
 
         Token optimization pipeline:
@@ -2410,6 +2452,21 @@ class Analyzer:
                 active_client = self._llm
                 active_cfg = self._resolve_llm_config()
                 model = self.THESIS_MODEL if use_full_model else self.SCAN_MODEL
+
+        # Per-user BYOK routing (opt-in, default OFF): for a command the user ran
+        # by hand, route the thesis through THEIR own provider key. Fail-open —
+        # (None, None) leaves the operator client selected above untouched.
+        _user_client, _user_cfg = self._maybe_user_client(user_id)
+        if _user_client is not None:
+            active_client = _user_client
+            active_cfg = _user_cfg
+            model = _user_cfg.model
+            audit(trade_log,
+                  f"Per-user LLM routing: user={user_id} "
+                  f"{_user_cfg.provider.value}/{model}",
+                  action="per_user_llm", result="ROUTED",
+                  data={"user_id": str(user_id), "provider": _user_cfg.provider.value})
+
         category = "thesis" if use_full_model else "analyze"
         max_tokens = CONFIG.llm.max_tokens if use_full_model else 512
         tier_label = TieredPipeline.tier_label(tier)
