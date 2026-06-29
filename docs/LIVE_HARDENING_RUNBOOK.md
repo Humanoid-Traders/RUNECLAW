@@ -14,6 +14,13 @@ order to turn them on, what each does, and what to watch after each step.
   `/livepositions` (open live trades + SL/TP), `/slippage` (execution quality),
   `/positions`, `/calibration` (learner readiness), `/whynot SYMBOL` (why a trade
   was skipped).
+- **Emergency controls (admin):** the kill-switch covers **every** account
+  (operator + all per-user), not just the operator:
+  - **Emergency Stop** (button / confirm) — trips the circuit breaker on **all**
+    risk engines, clears queued ideas, and flattens open positions on **every**
+    account. Say "resume" / `/reset` to clear all breakers and restart.
+  - `/halt` — pauses **new** trades on all accounts (does not flatten).
+  - `/closeall` — flattens open positions on all accounts (does not halt).
 
 ---
 

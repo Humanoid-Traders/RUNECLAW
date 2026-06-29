@@ -4462,7 +4462,9 @@ class TelegramHandler:
     async def _cmd_reset(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         was_active = self.engine.risk.circuit_breaker_active
         streak_before = self.engine.risk.consecutive_losses
-        self.engine.risk.reset_circuit_breaker()
+        # Reset the shared engine AND every per-user risk engine, so resuming
+        # after a global halt clears every account's breaker (not just operator).
+        self.engine.reset_circuit_breaker_all()
         lang = self._lang(update)
         if was_active:
             msg = f"\U0001f7e2 {t('reset_cb_done', lang)}"
@@ -5956,12 +5958,18 @@ class TelegramHandler:
             await self._send(update, "No live executor available.")
             return
 
-        await self._send(update, "⏳ Closing all positions...")
+        await self._send(update, "⏳ Closing all positions (every account)...")
         try:
-            results = await self.engine.live_executor.close_all_positions(reason="admin_closeall")
-            msg = "⛔ <b>Close All Results:</b>\n\n" + "\n".join(
-                f"• {r[:120]}" for r in results[:10])
-            await self._send(update, msg)
+            # Flatten EVERY account (operator + per-user), not just the operator.
+            accounts = await self.engine.flatten_all_positions(reason="admin_closeall")
+            if not accounts:
+                await self._send(update, "No live accounts to close.")
+                return
+            lines = ["⛔ <b>Close All Results:</b>"]
+            for acct in accounts:
+                lines.append(f"\n<b>{acct['account']}:</b>")
+                lines.extend(f"• {m[:120]}" for m in acct["messages"][:10])
+            await self._send(update, "\n".join(lines))
         except Exception as exc:
             await self._send(update, f"❌ Close all failed: {exc}")
 
@@ -6219,29 +6227,25 @@ class TelegramHandler:
             return
 
         if data == "emergency_confirm":
-            self.engine.risk.emergency_halt("emergency_stop_telegram")
-            # Clear pending ideas (must access the underlying dict, not the property copy)
-            self.engine._pending_ideas.clear()
-
-            # GETCLAW: Close all open positions on exchange
-            close_msgs = []
-            if CONFIG.is_live() and hasattr(self.engine, 'live_executor'):
-                try:
-                    close_msgs = await self.engine.live_executor.close_all_positions(
-                        reason="emergency_stop")
-                except Exception as exc:
-                    close_msgs = [f"Failed to close positions: {exc}"]
+            # GLOBAL KILL-SWITCH: halt the shared engine AND every per-user risk
+            # engine, clear queued ideas, and flatten EVERY account (operator +
+            # per-user) — not just the operator.
+            summary = await self.engine.emergency_halt_all("emergency_stop_telegram")
 
             close_summary = ""
-            if close_msgs:
-                close_summary = "\n\n<b>Position closes:</b>\n" + "\n".join(
-                    f"• {m[:100]}" for m in close_msgs[:10])
+            if summary.get("accounts"):
+                parts = []
+                for acct in summary["accounts"]:
+                    parts.append(f"\n<b>{acct['account']}:</b>")
+                    parts.extend(f"• {m[:100]}" for m in acct["messages"][:10])
+                close_summary = "\n\n<b>Position closes:</b>" + "".join(parts)
 
             await self._send(update,
                 f"⛔ <b>EMERGENCY STOP</b>\n\n"
-                f"• Circuit breaker: ON\n"
-                f"• Pending ideas: cleared\n"
-                f"• Exchange positions: close attempted{close_summary}\n\n"
+                f"• Circuit breaker: ON ({summary.get('engines_halted', 0)} engine(s))\n"
+                f"• Pending ideas: cleared ({summary.get('pending_cleared', 0)})\n"
+                f"• Accounts flattened: {len(summary.get('accounts', []))}"
+                f"{close_summary}\n\n"
                 f"Say \"resume\" when ready to restart.",
                 edit=True)
             audit(system_log, "EMERGENCY STOP executed", action="emergency_stop", result="OK")

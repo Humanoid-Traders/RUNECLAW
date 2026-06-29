@@ -893,6 +893,13 @@ class HaltSkill(BaseSkill):
     async def execute(self, engine: RuneClawEngine, **kwargs: Any) -> str:
         from bot.utils.models import AgentState
         engine.risk.emergency_halt("manual halt via /halt command")
+        # Halt every per-user risk engine too, so no account can open new trades
+        # (default per-user OFF → _user_risk empty → identical to before).
+        for _uid, _eng in list(getattr(engine, "_user_risk", {}).items()):
+            try:
+                _eng.emergency_halt("manual halt via /halt command")
+            except Exception:
+                pass
         cancelled = list(engine._pending_ideas.keys())
         engine._pending_ideas.clear()
         engine._pending_atr.clear()
