@@ -87,6 +87,14 @@ class ProactiveMonitor:
         self._last_cb_state: bool = False          # last circuit breaker state
         self._last_state: str = ""                 # last engine FSM state
         self._alerted_signals: set = set()         # signal IDs already alerted
+        # Early-warning state (Tier 1a hardening): track the highest drawdown
+        # tier already alerted (re-arms only after recovery), WS/health/balance
+        # and warning-rate breaker last-states so each transition alerts once.
+        self._last_dd_tier: int = 0                # 0=none, 50/75/85 = pct-of-limit tier
+        self._last_ws_ok: bool = True              # last WS-connected state (live)
+        self._ws_down_since: float = 0.0           # monotonic ts WS first seen down
+        self._last_warn_rate: bool = False         # last warning-rate-breaker state
+        self._last_tick_degraded: bool = False     # last tick-failure alert state
         # Optional async callback(chat_id, idea) -> None to push a setup chart
         # alongside a signal alert. Set via set_chart_fn(); never required.
         self._chart_fn: Optional[Callable] = None
@@ -141,6 +149,11 @@ class ProactiveMonitor:
         """Run all alert checks and return any triggered alerts."""
         alerts: list[Alert] = []
         alerts.extend(self._check_circuit_breaker())
+        alerts.extend(self._check_drawdown_tiers())
+        alerts.extend(self._check_tick_failures())
+        alerts.extend(self._check_warning_rate_breaker())
+        alerts.extend(self._check_ws_health())
+        alerts.extend(self._check_stale_balance())
         alerts.extend(self._check_volume_spikes())
         alerts.extend(self._check_black_swan())
         alerts.extend(self._check_state_changes())
@@ -209,6 +222,166 @@ class ProactiveMonitor:
             ))
 
         self._last_cb_state = cb_active
+        return alerts
+
+    def _check_drawdown_tiers(self) -> list[Alert]:
+        """Early-warning alerts as drawdown approaches the circuit-breaker limit.
+
+        Fires once at 50%, 75%, 85% of MAX_DRAWDOWN_PCT so the operator can act
+        BEFORE the breaker halts trading. Re-arms only after drawdown recovers to
+        a lower tier (tracked via _last_dd_tier), so it doesn't spam."""
+        alerts: list[Alert] = []
+        try:
+            dd = getattr(self.engine.risk, "current_drawdown_pct", None)
+            limit = float(getattr(CONFIG.risk, "max_drawdown_pct", 0) or 0)
+            if dd is None or limit <= 0:
+                return alerts
+            frac = float(dd) / limit
+            tier = 85 if frac >= 0.85 else (75 if frac >= 0.75 else (50 if frac >= 0.50 else 0))
+            if tier > self._last_dd_tier and tier > 0:
+                sev = "CRITICAL" if tier >= 85 else "WARNING"
+                alerts.append(Alert(
+                    alert_type="DRAWDOWN_TIER", severity=sev,
+                    title=f"Drawdown {tier}% of limit",
+                    body=(
+                        f"⚠️ <b>DRAWDOWN AT {tier}% OF LIMIT</b>\n"
+                        "────────────────\n"
+                        f"- Current drawdown: <code>{float(dd):.2f}%</code>\n"
+                        f"- Circuit-breaker limit: <code>{limit:.2f}%</code>\n\n"
+                        "The risk engine halts all entries at 100% of the limit.\n"
+                        "Consider reducing size or reviewing open risk now.\n"
+                        "────────────────\n"
+                        "\U0001f449 /status — review engine state\n"
+                        "\U0001f449 /positions — inspect open trades"),
+                    dedup_key=f"dd_tier_{tier}"))
+            # Re-arm tiers once we drop below them (frac fell).
+            self._last_dd_tier = tier
+        except Exception as exc:
+            system_log.debug("drawdown-tier check failed: %s", exc)
+        return alerts
+
+    def _check_tick_failures(self) -> list[Alert]:
+        """Alert when the engine's main loop has failed repeatedly — positions
+        may be silently unmonitored (SL/TP not firing)."""
+        alerts: list[Alert] = []
+        try:
+            fails = int(getattr(self.engine, "_tick_consecutive_failures", 0) or 0)
+            degraded = fails >= 3
+            if degraded and not self._last_tick_degraded:
+                alerts.append(Alert(
+                    alert_type="TICK_FAILURE", severity="CRITICAL",
+                    title="Engine loop degraded",
+                    body=(
+                        "\U0001f6a8 <b>ENGINE LOOP DEGRADED</b>\n"
+                        "────────────────\n"
+                        f"The main loop has failed <b>{fails}</b> times in a row.\n"
+                        "Scanning and position monitoring may be impaired — "
+                        "open positions could be <b>unmonitored</b>.\n"
+                        "────────────────\n"
+                        "\U0001f449 /status — check engine state\n"
+                        "\U0001f449 /positions — verify SL/TP are in place"),
+                    dedup_key="tick_degraded"))
+            self._last_tick_degraded = degraded
+        except Exception as exc:
+            system_log.debug("tick-failure check failed: %s", exc)
+        return alerts
+
+    def _check_warning_rate_breaker(self) -> list[Alert]:
+        """Alert when the infrastructure warning-rate breaker trips — signal
+        generation is being suppressed by repeated errors (API/auth/WS)."""
+        alerts: list[Alert] = []
+        try:
+            tripped = bool(getattr(self.engine.risk, "warning_rate_breaker_active", False))
+            if tripped and not self._last_warn_rate:
+                key = getattr(self.engine.risk, "_warning_rate_trip_key", "")
+                alerts.append(Alert(
+                    alert_type="WARNING_RATE", severity="WARNING",
+                    title="Warning-rate breaker tripped",
+                    body=(
+                        "\U0001f7e0 <b>WARNING-RATE BREAKER TRIPPED</b>\n"
+                        "────────────────\n"
+                        "Repeated infrastructure warnings have <b>suppressed new "
+                        "entries</b> (existing positions are still monitored).\n"
+                        f"- Trigger: <code>{key or 'n/a'}</code>\n\n"
+                        "Usually transient (exchange API / WS). It clears as the "
+                        "error rate falls.\n"
+                        "────────────────\n"
+                        "\U0001f449 /status — review engine health"),
+                    dedup_key="warn_rate_tripped"))
+            self._last_warn_rate = tripped
+        except Exception as exc:
+            system_log.debug("warning-rate check failed: %s", exc)
+        return alerts
+
+    def _check_ws_health(self) -> list[Alert]:
+        """Alert when the price WebSocket has been disconnected for a sustained
+        window in live mode (SL/TP monitoring falls back to slower REST polling)."""
+        alerts: list[Alert] = []
+        try:
+            if not CONFIG.is_live():
+                return alerts
+            ws = getattr(self.engine, "ws_feed", None)
+            if ws is None:
+                return alerts
+            connected = bool(ws.is_connected())
+            now = time.monotonic()
+            if not connected:
+                if self._ws_down_since == 0.0:
+                    self._ws_down_since = now
+                # Alert once it's been down for > 5 minutes.
+                if (now - self._ws_down_since) > 300 and self._last_ws_ok:
+                    self._last_ws_ok = False
+                    alerts.append(Alert(
+                        alert_type="WS_DOWN", severity="WARNING",
+                        title="Price feed disconnected",
+                        body=(
+                            "\U0001f7e0 <b>PRICE WEBSOCKET DISCONNECTED</b>\n"
+                            "────────────────\n"
+                            "The real-time price feed has been down for "
+                            "&gt;5 minutes. SL/TP monitoring is on slower REST "
+                            "polling until it reconnects.\n"
+                            "────────────────\n"
+                            "\U0001f449 /health — check system vitals"),
+                        dedup_key="ws_down"))
+            else:
+                if not self._last_ws_ok:
+                    alerts.append(Alert(
+                        alert_type="WS_UP", severity="INFO",
+                        title="Price feed reconnected",
+                        body="✅ <b>Price WebSocket reconnected</b> — "
+                             "real-time monitoring restored.",
+                        dedup_key="ws_up"))
+                self._ws_down_since = 0.0
+                self._last_ws_ok = True
+        except Exception as exc:
+            system_log.debug("ws-health check failed: %s", exc)
+        return alerts
+
+    def _check_stale_balance(self) -> list[Alert]:
+        """Alert when the live balance cache is very stale — position sizing may
+        be based on out-of-date equity."""
+        alerts: list[Alert] = []
+        try:
+            if not CONFIG.is_live():
+                return alerts
+            ts = float(getattr(self.engine, "_live_balance_cache_ts", 0.0) or 0.0)
+            if ts <= 0:
+                return alerts
+            age = time.monotonic() - ts
+            if age > 300:        # > 5 minutes stale
+                alerts.append(Alert(
+                    alert_type="STALE_BALANCE", severity="WARNING",
+                    title="Live balance stale",
+                    body=(
+                        "\U0001f7e0 <b>LIVE BALANCE CACHE STALE</b>\n"
+                        "────────────────\n"
+                        f"Exchange equity hasn't refreshed in <code>{age/60:.0f} min</code>. "
+                        "Position sizing may use out-of-date equity.\n"
+                        "────────────────\n"
+                        "\U0001f449 /livebalance — force a refresh"),
+                    dedup_key="stale_balance"))
+        except Exception as exc:
+            system_log.debug("stale-balance check failed: %s", exc)
         return alerts
 
     def _check_volume_spikes(self) -> list[Alert]:

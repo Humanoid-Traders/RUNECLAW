@@ -173,6 +173,9 @@ class RuneClawEngine:
         # M-13 FIX: live balance cache as instance attributes (not class-level mutables)
         self._live_balance_cache: dict = {}
         self._live_balance_cache_ts: float = 0.0
+        # Consecutive engine-tick failures, mirrored from the run loop so the
+        # proactive monitor can alert when the main loop is degraded/unmonitored.
+        self._tick_consecutive_failures: int = 0
         self._LIVE_BALANCE_TTL: float = 30.0  # cache live balance for 30 seconds
         # H-05 FIX: track last known valid prices for WS sanity checks
         self._last_known_prices: dict[str, float] = {}
@@ -721,8 +724,10 @@ class RuneClawEngine:
             try:
                 await self._tick()
                 _consecutive_failures = 0
+                self._tick_consecutive_failures = 0
             except Exception as exc:
                 _consecutive_failures += 1
+                self._tick_consecutive_failures = _consecutive_failures
                 audit(
                     system_log,
                     f"Engine tick error (#{_consecutive_failures}): {exc}",
