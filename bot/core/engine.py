@@ -198,9 +198,12 @@ class RuneClawEngine:
         from bot.core.cross_asset import CrossAssetTracker
         self.cross_asset = CrossAssetTracker()
 
-        # Slippage tracker
+        # Slippage tracker. Wire it into the operator executor so realized
+        # slippage (intended entry vs actual fill) is actually recorded — the
+        # executor's record() call is a no-op until _slippage_tracker is set.
         from bot.core.slippage import SlippageTracker
         self.slippage = SlippageTracker()
+        self.live_executor._slippage_tracker = self.slippage
 
         # Trade journal
         from bot.core.trade_journal import TradeJournal
@@ -403,6 +406,8 @@ class RuneClawEngine:
             ex = LiveExecutor(user_id=user_id, credentials=creds)
             ex.on_position_closed = lambda pos: self._on_live_position_closed(pos)
             ex._risk_engine = self.risk
+            # Record realized slippage into the shared tracker (no-op until set).
+            ex._slippage_tracker = getattr(self, "slippage", None)
             self._user_executors[key] = ex
             audit(system_log, f"Per-user live executor bound for user {user_id}",
                   action="per_user_executor", result="BOUND", data={"user": key})
