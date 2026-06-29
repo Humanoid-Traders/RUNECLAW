@@ -54,10 +54,18 @@ Safety (mirrors `confidence_calibration.py`):
   alongside calibration and expectancy; `/calibration refit` rebuilds it from
   history. Storage: `data/learning/voter_weights.json`.
 
-## Next (B2 — application)
+## Application (B2 — done, gated OFF)
 
-Wire the learned multiplier into the live confluence sum behind a default-OFF
-flag, applied at the `aw()` helper: `weight *= learner.multiplier(name)`. Because
-the multiplier is `1.0` until enough history accrues (and the flag is off by
-default), enabling it is a gradual, observable change — and it can never move a
-weight outside `[0.5, 1.5]` of its hand-tuned value.
+The learned multiplier is wired into the live confluence sum at the `aw()` helper:
+`weight *= learner.multiplier(name)`, behind `VOTER_WEIGHT_LEARNING_ENABLED`
+(default **OFF**). When off — or before a learner is fitted — `aw` is
+byte-identical to the hand-tuned weights (locked by `tests/test_voter_weight_apply.py`
+and the confluence regression test). When on, each voter's weight is scaled by its
+bounded `[0.5, 1.5]` multiplier, so enabling it is a gradual, observable change
+that can never move a weight far from its hand-tuned value.
+
+- **Enable:** set `VOTER_WEIGHT_LEARNING_ENABLED=true` once `/calibration refit`
+  reports the learner is fitted on enough trades.
+- **Scope:** applies to the named scalar/labeled voters routed through `aw()`.
+  Bulk sub-engine voters (order-flow / MTF / smart-money / divergence / sweep /
+  supply-demand) are recorded but not yet weight-scaled — a future increment.
