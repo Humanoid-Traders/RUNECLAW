@@ -184,9 +184,33 @@ class BitgetWSFeed:
     # Public accessors (thread-safe: return snapshots)
     # ------------------------------------------------------------------
 
-    def get_prices(self) -> dict[str, float]:
-        """Return ``{symbol: last_price}`` for all tracked symbols."""
-        return {sym: tick.last for sym, tick in self._ticks.items()}
+    def get_prices(self, max_age_sec: Optional[float] = None) -> dict[str, float]:
+        """Return ``{symbol: last_price}`` for tracked symbols.
+
+        When ``max_age_sec`` is given and > 0, only ticks whose timestamp is within
+        that many seconds of now are returned — so a silently-stalled feed can't
+        serve a stale price to stop logic. ``None``/0 returns every tick (the
+        original behaviour). A tick with an unreadable timestamp is treated as
+        stale (excluded) under a freshness filter.
+        """
+        if not max_age_sec:
+            return {sym: tick.last for sym, tick in self._ticks.items()}
+        now = time.time()
+        out: dict[str, float] = {}
+        for sym, tick in self._ticks.items():
+            try:
+                if now - tick.timestamp.timestamp() <= max_age_sec:
+                    out[sym] = tick.last
+            except Exception:
+                continue  # unreadable timestamp → treat as stale
+        return out
+
+    def seconds_since_last_msg(self) -> Optional[float]:
+        """Age in seconds of the most recent WS message across all symbols, or
+        None if no message has been received yet. For health/observability."""
+        if not self._last_msg_ts:
+            return None
+        return time.time() - self._last_msg_ts
 
     def get_tick(self, symbol: str) -> Optional[PriceTick]:
         """Get the latest tick for *symbol* (ccxt format)."""

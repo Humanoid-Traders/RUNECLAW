@@ -738,6 +738,14 @@ class ExecutionConfig:
     max_live_position_usd: float = _env_float_bounded("MICRO_MAX_POSITION_USD", 100.0, 1.0, 10_000_000.0)
     max_live_total_exposure_usd: float = _env_float_bounded("MICRO_MAX_TOTAL_EXPOSURE", 500.0, 1.0, 100_000_000.0)
     max_live_open_positions: int = int(_env_float_bounded("MICRO_MAX_OPEN_POSITIONS", 5, 1, 1000))
+    # WebSocket price staleness guard. The live SL/TP monitoring loop prefers
+    # sub-second WS prices over REST, but is_connected() reflects socket state,
+    # not data freshness — a silently-stalled-but-connected feed would serve a
+    # stale 'last' price to stop logic. When >0, WS ticks older than this many
+    # seconds are excluded from the monitoring price set, so the loop falls back
+    # to REST (and the exchange-side stop remains the ultimate backstop). 0
+    # disables the guard (use every WS tick regardless of age).
+    ws_max_tick_age_sec: float = _env_float_bounded("WS_MAX_TICK_AGE_SEC", 15.0, 0.0, 3600.0)
     # Order splitting
     order_split_enabled: bool = _env_bool("ORDER_SPLIT_ENABLED", True)
     order_split_threshold_usd: float = _env_float("ORDER_SPLIT_THRESHOLD_USD", 500.0)

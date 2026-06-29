@@ -64,6 +64,9 @@ features.
 
 ### P2 — Live-money safety hardening
 7. **WS tick-staleness guard + reconnect watchdog** [S] — biggest live-exit risk.
+   **(Staleness guard done — `WS_MAX_TICK_AGE_SEC`; stale WS ticks excluded from
+   SL/TP monitoring → REST fallback. Dead-socket reconnect is handled by the
+   websockets ping/pong timeout.)**
 8. **SL/TP side-sanity assertion + post-placement "stop is open" verify** [S].
 9. **Reconcile SL/TP qty to exchange-verified fill size; unify
    unprotected→flatten across all entry paths** [M].

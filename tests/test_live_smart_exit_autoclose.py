@@ -50,7 +50,7 @@ def _engine(executor, prices, vwap=None):
     eng = RuneClawEngine.__new__(RuneClawEngine)
     eng.ws_feed = SimpleNamespace(
         is_connected=lambda: True,
-        get_prices=lambda: prices,
+        get_prices=lambda max_age_sec=None: prices,
     )
     eng._last_vwap = vwap or {}
     eng._close_notify_callback = None

@@ -2703,7 +2703,8 @@ class RuneClawEngine:
             prices: dict = {}
             try:
                 if self.ws_feed.is_connected():
-                    prices = self.ws_feed.get_prices() or {}
+                    prices = self.ws_feed.get_prices(
+                        max_age_sec=CONFIG.execution.ws_max_tick_age_sec) or {}
             except Exception:
                 prices = {}
 
@@ -2922,9 +2923,12 @@ class RuneClawEngine:
                 p for pf in self.user_portfolios.all_portfolios().values()
                 for p in pf.open_positions]
 
-            # Prefer WebSocket prices (sub-second) over REST (polling)
+            # Prefer WebSocket prices (sub-second) over REST (polling), but only
+            # FRESH ticks — a stale-but-connected feed must not drive stop logic.
+            # When all WS ticks are stale, ws_prices is empty → fall back to REST.
             if self.ws_feed.is_connected():
-                ws_prices = self.ws_feed.get_prices()
+                ws_prices = self.ws_feed.get_prices(
+                    max_age_sec=CONFIG.execution.ws_max_tick_age_sec)
                 if ws_prices:
                     prices = ws_prices
                 else:
