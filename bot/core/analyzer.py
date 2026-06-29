@@ -664,6 +664,30 @@ class Analyzer:
                   data={"symbol": signal.symbol, "regime": regime.value,
                         "penalty": regime_confidence_penalty})
 
+        # Regime HARD gates (opt-in, default OFF). The penalties above SOFTEN
+        # the lowest-edge regimes; with the flag ON, the worst become hard
+        # no-trades — chop has no directional edge, and a counter-trend entry
+        # into a strong trend is where drawdowns cluster. Default OFF keeps the
+        # soft-penalty behaviour byte-for-byte.
+        if CONFIG.analyzer.regime_hard_gates_enabled:
+            _adx = float(indicators.get("adx", 0) or 0)
+            _gate_reason = self._regime_hard_gate_reason(regime, direction, _adx)
+            if _gate_reason:
+                self._last_rejection_diag = {
+                    "symbol": signal.symbol,
+                    "stage": "regime_hard_gate",
+                    "regime": regime.value,
+                    "direction": direction.value,
+                    "adx": round(_adx, 1),
+                    "reason": _gate_reason,
+                }
+                audit(trade_log,
+                      f"Regime hard gate: {signal.symbol} skipped — {_gate_reason}",
+                      action="analyze", result="REJECTED_REGIME_GATE",
+                      data={"symbol": signal.symbol, "regime": regime.value,
+                            "direction": direction.value, "adx": round(_adx, 1)})
+                return None
+
         confidence = max(0.0, min(1.0, thesis.get("confidence", 0.0))) * counter_trend_penalty
         # C2-20 FIX: Cap combined penalty — confidence never drops below 25% of raw.
         # Without this, counter_trend (0.5x) + regime_penalty (-0.15) = ~70-80% total
@@ -1610,6 +1634,28 @@ class Analyzer:
         return results
 
     # -- Regime Detection --
+
+    def _regime_hard_gate_reason(
+        self, regime: Regime, direction: Direction, adx: float
+    ) -> Optional[str]:
+        """Return a no-trade reason if the regime HARD gate blocks this entry,
+        else None. Pure decision logic (no side effects) so it is unit-testable.
+
+        Gates (only consulted when CONFIG.analyzer.regime_hard_gates_enabled):
+          - CHOP / UNKNOWN regime → block (no directional edge).
+          - Counter-trend entry into a STRONG trend (ADX >= regime_strong_adx):
+            SHORT in TREND_UP, or LONG in TREND_DOWN → block.
+        """
+        strong = CONFIG.analyzer.regime_strong_adx
+        if regime == Regime.CHOP:
+            return "CHOP regime — no directional edge"
+        if regime == Regime.UNKNOWN:
+            return "UNKNOWN regime — insufficient regime signal"
+        if regime == Regime.TREND_UP and direction == Direction.SHORT and adx >= strong:
+            return f"counter-trend SHORT in strong TREND_UP (ADX {adx:.0f} >= {strong:.0f})"
+        if regime == Regime.TREND_DOWN and direction == Direction.LONG and adx >= strong:
+            return f"counter-trend LONG in strong TREND_DOWN (ADX {adx:.0f} >= {strong:.0f})"
+        return None
 
     def _detect_regime(self, indicators: dict, symbol: str) -> Regime:
         """
