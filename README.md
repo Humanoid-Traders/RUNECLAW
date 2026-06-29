@@ -41,6 +41,10 @@
   <b>Try it live right now &rarr; <a href="https://t.me/HTRUNECLAW_bot">@HTRUNECLAW_bot</a></b>
 </p>
 
+<p align="center">
+  <b>English</b> &middot; <a href="./README.zh-TW.md">繁體中文</a>
+</p>
+
 ---
 
 > **DISCLAIMER:** RUNECLAW is an educational prototype built for the Bitget AI Base Camp · Hackathon S1.
