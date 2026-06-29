@@ -118,6 +118,14 @@ class RuneClawEngine:
         # telegram user_id, each bound to that user's OWN linked Bitget account.
         # Empty + unused while the flag is off, so the operator path is unchanged.
         self._user_executors: dict[str, LiveExecutor] = {}
+        # Per-user RiskEngines (PER_USER_LIVE_ENABLED, default OFF): keyed by
+        # telegram user_id, each bound to that user's OWN portfolio + persisted
+        # to data/risk_state_{user_id}.json.  Isolates the stateful safety
+        # breakers (loss streak, circuit breaker, daily-loss, drawdown) so one
+        # user's losses can't trip another user's halt.  Empty + unused while the
+        # flag is off — risk_for() returns the shared operator engine — so the
+        # operator path is byte-identical.  See risk_for().
+        self._user_risk: dict[str, "RiskEngine"] = {}
         self.health = SystemHealthMonitor()
         # Multi-user portfolio manager: per-user isolated paper wallets
         self.user_portfolios = MultiUserPortfolio(
@@ -144,7 +152,14 @@ class RuneClawEngine:
                 # C2-52 FIX: log website sync errors instead of silently swallowing
                 logger.warning("Website sync failed: %s", exc)
         self.portfolio._on_trade_close = _on_trade_close_composite
+        # Route each user's paper close into the RiskEngine that owns THAT user's
+        # streak/breaker state.  In default (per-user OFF) mode risk_for() always
+        # returns the shared engine, so this is equivalent to feeding every close
+        # into self.risk — exactly as before — while also correctly handling
+        # portfolios restored from disk.  When per-user live is on, each user's
+        # losses accrue against their own breaker instead of one global counter.
         self.user_portfolios._on_trade_close = self.risk.record_trade_result
+        self.user_portfolios._on_trade_close_user = self._route_user_trade_close
         # C2-34: Wire combined state saver for atomic portfolio+risk persistence.
         # Both components delegate their saves to this function, which writes
         # a single combined_state.json via fsync + os.replace.
@@ -437,6 +452,81 @@ class RuneClawEngine:
             except Exception:
                 pass
         return False
+
+    def risk_for(self, user_id: str = ""):
+        """Return the RiskEngine whose stateful safety breakers apply to THIS caller.
+
+        Default (PER_USER_LIVE_ENABLED off): ALWAYS the shared operator engine —
+        byte-identical to before. When per-user live trading is on, a real human
+        user (not ''/'auto', and not an operator/admin) gets their OWN RiskEngine
+        bound to their OWN portfolio and persisted to data/risk_state_{user}.json,
+        so one user's loss streak / circuit breaker / daily-loss / drawdown can't
+        trip another user's halt.
+
+        Only ACCOUNT-specific state is isolated. MARKET-wide context (regime,
+        order-flow signal, rolling price history) is shared from the operator
+        engine via _sync_risk_market_context so every user evaluates against
+        identical market conditions — the per-user split must never loosen a
+        market gate, only separate the account breakers.
+        """
+        if not getattr(CONFIG, "per_user_live_enabled", False):
+            return self.risk
+        # Auto-trade ('auto') and unattended ('') paths run the operator engine.
+        if not user_id or user_id in ("auto", ""):
+            return self.risk
+        # Operators/admins trade the operator account → operator engine.
+        if self._is_operator_user(user_id):
+            return self.risk
+        key = str(user_id)
+        eng = self._user_risk.get(key)
+        if eng is None:
+            try:
+                safe = self.user_portfolios._sanitize(user_id)
+            except Exception:
+                return self.risk
+            eng = RiskEngine(
+                self.user_portfolios.get(user_id),
+                state_file=f"data/risk_state_{safe}.json",
+                macro_calendar=self.macro_calendar,
+                macro_provider=self.macro_provider,
+            )
+            self._user_risk[key] = eng
+            audit(system_log, f"Per-user risk engine bound for user {user_id}",
+                  action="per_user_risk", result="BOUND", data={"user": key})
+        self._sync_risk_market_context(eng)
+        return eng
+
+    def _sync_risk_market_context(self, eng) -> None:
+        """Mirror MARKET-wide (not account-specific) state from the operator
+        engine onto a per-user engine so every user's market gates see identical
+        conditions. Shares references where the underlying data is global (price
+        history, order-flow signal). Fail-open: never block a trade on a sync
+        hiccup — the per-user engine just keeps its own (safe-default) context."""
+        if eng is self.risk:
+            return
+        try:
+            eng._current_regime = self.risk._current_regime
+            eng._current_vol_state = self.risk._current_vol_state
+            eng._last_of_signal = self.risk._last_of_signal
+            eng._order_flow = self.risk._order_flow
+            eng._price_history = self.risk._price_history  # shared global series
+        except Exception as exc:
+            logger.debug("Per-user risk market-context sync skipped: %s", exc)
+
+    def _route_user_trade_close(self, user_id: str, pnl: float) -> None:
+        """Feed a user's closed-trade PnL into the RiskEngine that owns that
+        user's streak/breaker state. In default mode risk_for() returns the
+        shared engine, so this is identical to self.risk.record_trade_result."""
+        try:
+            self.risk_for(user_id).record_trade_result(pnl)
+        except Exception as exc:
+            # Never let streak bookkeeping break a close; fall back to shared.
+            logger.warning("Per-user trade-close routing failed for %s: %s — "
+                           "recording on shared engine", user_id, exc)
+            try:
+                self.risk.record_trade_result(pnl)
+            except Exception:
+                pass
 
     def per_user_live_eligibility(self, user_id) -> tuple:
         """Whether THIS human user's confirmed live trade may execute, and why.
@@ -1769,7 +1859,11 @@ class RuneClawEngine:
                     live_open_recheck = exchange_ct + pending_ct
                 except Exception:
                     live_open_recheck = len(self.live_executor.open_positions)
-            recheck = self.risk.evaluate(idea, atr=stored_atr, live_equity=live_eq_recheck, max_position_usd=recheck_cap, live_open_count=live_open_recheck)
+            # Per-user risk isolation: this confirm-time gate runs against the
+            # engine that owns THIS user's breaker/streak/daily-loss/drawdown
+            # state. Default (per-user OFF) → shared operator engine, unchanged.
+            recheck_engine = self.risk_for(user_id)
+            recheck = recheck_engine.evaluate(idea, atr=stored_atr, live_equity=live_eq_recheck, max_position_usd=recheck_cap, live_open_count=live_open_recheck)
         except Exception as exc:
             # Fix 6: if re-check raises, do NOT silently lose the idea.
             # Log it as a failed re-check and return a clear message.
