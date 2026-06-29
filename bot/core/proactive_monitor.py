@@ -155,6 +155,7 @@ class ProactiveMonitor:
         alerts.extend(self._check_ws_health())
         alerts.extend(self._check_stale_balance())
         alerts.extend(self._check_macro_calendar_stale())
+        alerts.extend(self._check_unprotected_positions())
         alerts.extend(self._check_slippage())
         alerts.extend(self._check_volume_spikes())
         alerts.extend(self._check_black_swan())
@@ -383,6 +384,61 @@ class ProactiveMonitor:
                     dedup_key="stale_balance"))
         except Exception as exc:
             system_log.debug("stale-balance check failed: %s", exc)
+        return alerts
+
+    def _check_unprotected_positions(self) -> list[Alert]:
+        """CRITICAL alert (live only) when an open position has NO exchange
+        stop-loss after the grace window — i.e. SL placement / self-heal FAILED
+        and the position is live with no venue-side protection. A naked leveraged
+        perp is account-threatening and was otherwise only logged. Independent of
+        the executor's check_positions message flow, so it can't be mislabeled or
+        missed. Covers every executor (operator + per-user)."""
+        alerts: list[Alert] = []
+        try:
+            if not CONFIG.is_live():
+                return alerts
+            grace = float(getattr(CONFIG.execution, "unprotected_alert_grace_seconds", 120.0))
+            executors = []
+            try:
+                executors = list(self.engine._all_live_executors())
+            except Exception:
+                ex = getattr(self.engine, "live_executor", None)
+                if ex is not None:
+                    executors = [ex]
+            now = datetime.now(UTC)
+            for ex in executors:
+                for pos in (getattr(ex, "open_positions", []) or []):
+                    if getattr(pos, "status", "") != "open":
+                        continue
+                    opened_at = getattr(pos, "opened_at", None)
+                    age = (now - opened_at).total_seconds() if opened_at else 1e9
+                    has_sl = bool(getattr(pos, "sl_order_id", None))
+                    marked = bool(getattr(pos, "unprotected", False))
+                    # Unprotected = no exchange stop (or explicitly flagged) AND
+                    # past the placement grace, so self-heal has had its chance.
+                    if age < grace or (has_sl and not marked):
+                        continue
+                    sym = getattr(pos, "symbol", "?")
+                    tid = getattr(pos, "trade_id", sym)
+                    sl = getattr(pos, "stop_loss", 0.0) or 0.0
+                    direction = getattr(pos, "direction", "")
+                    alerts.append(Alert(
+                        alert_type="POSITION_UNPROTECTED", severity="CRITICAL",
+                        title=f"Unprotected: {sym}",
+                        body=(
+                            "\U0001f6a8 <b>POSITION UNPROTECTED — NO EXCHANGE STOP</b>\n"
+                            "────────────────\n"
+                            f"- {sym} <b>{direction}</b> "
+                            f"open <code>{age/60:.0f} min</code> with NO venue stop-loss.\n"
+                            f"- Intended stop: <code>${sl:,.4f}</code>\n"
+                            "- Self-heal keeps retrying and the local price check is the "
+                            "only backstop — a gap/outage could run it unbounded.\n"
+                            "────────────────\n"
+                            "\U0001f449 Place a stop on Bitget manually now.\n"
+                            "\U0001f449 /livepositions — review · /health — vitals"),
+                        dedup_key=f"unprotected_{tid}"))
+        except Exception as exc:
+            system_log.debug("unprotected-position check failed: %s", exc)
         return alerts
 
     def _check_slippage(self) -> list[Alert]:

@@ -731,6 +731,12 @@ class ExecutionConfig:
     # unprotected position (throttle so it never spams).
     unprotected_alert_interval_s: float = _env_float_bounded(
         "UNPROTECTED_ALERT_INTERVAL_S", 300.0, 10.0, 86400.0)
+    # Proactive-monitor unprotected-position alert: grace seconds before an open
+    # live position with NO exchange stop is treated as a self-heal FAILURE and
+    # alerted (must exceed the ~90s placement grace so a normal just-opened
+    # position isn't flagged while its stop is still being placed).
+    unprotected_alert_grace_seconds: float = _env_float_bounded(
+        "UNPROTECTED_ALERT_GRACE_SECONDS", 120.0, 90.0, 3600.0)
 
 
 @dataclass(frozen=True)
