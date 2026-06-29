@@ -773,6 +773,21 @@ class Analyzer:
         except Exception as _fr_exc:
             logger.warning("Funding rate arb filter failed for %s: %s", signal.symbol, _fr_exc)
 
+        # ── Funding carry-cost awareness (gated) ─────────────────────────────
+        # funding_arb above rewards/penalises the INSTANTANEOUS funding direction;
+        # this adds the missing dimension — the carry COST a trade would PAY over
+        # its expected hold (a swing pays many funding intervals, a scalp ~none).
+        # Bounded, only ever REDUCES confidence, fail-open, default OFF.
+        try:
+            if (CONFIG.analyzer.funding_cost_aware_enabled
+                    and order_flow is not None and hasattr(order_flow, "funding_rate")):
+                from bot.core.funding import funding_cost_haircut
+                _hair = funding_cost_haircut(order_flow.funding_rate, direction.value, strategy_type)
+                if _hair < 0.0:
+                    blended_confidence += _hair
+        except Exception as _fc_exc:
+            logger.debug("Funding cost-aware haircut skipped for %s: %s", signal.symbol, _fc_exc)
+
         # IMPROVEMENT #3: Smart-money direct confidence boost.
         # When smart_money_score is strongly directional (+/-), give a small
         # direct bonus to blended_confidence. This gives whale/institutional
