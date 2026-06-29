@@ -243,14 +243,58 @@ ADMIN_TIER_ROUTING: dict[LLMTier, dict] = {
 }
 
 
+# Elite user-tier routing — premium thesis, cheap scan (LLM Optimization Plan P2).
+ELITE_TIER_ROUTING: dict[LLMTier, dict] = {
+    LLMTier.SCAN: {"provider": LLMProvider.ALIBABA, "model": "qwen3.6-flash",
+                   "reason": "Elite: fast/cheap scan"},
+    LLMTier.THESIS: {"provider": LLMProvider.ANTHROPIC, "model": "claude-sonnet-4-6",
+                     "reason": "Elite: Sonnet thesis"},
+    LLMTier.LEARNING: {"provider": LLMProvider.ANTHROPIC, "model": "claude-sonnet-4-6",
+                       "reason": "Elite: Sonnet learning"},
+    LLMTier.CHAT: {"provider": LLMProvider.ANTHROPIC, "model": "claude-sonnet-4-6",
+                   "reason": "Elite: Sonnet chat"},
+}
+
+# Pro user-tier routing — mid models (LLM Optimization Plan P2).
+PRO_TIER_ROUTING: dict[LLMTier, dict] = {
+    LLMTier.SCAN: {"provider": LLMProvider.ALIBABA, "model": "qwen3.6-flash",
+                   "reason": "Pro: fast/cheap scan"},
+    LLMTier.THESIS: {"provider": LLMProvider.GEMINI, "model": "gemini-2.5-flash",
+                     "reason": "Pro: Gemini thesis"},
+    LLMTier.LEARNING: {"provider": LLMProvider.GEMINI, "model": "gemini-2.5-flash",
+                       "reason": "Pro: Gemini learning"},
+    LLMTier.CHAT: {"provider": LLMProvider.ALIBABA, "model": "qwen3.6-flash",
+                   "reason": "Pro: Qwen chat"},
+}
+
+# Map a user TIER (from the user store) to its premium routing table. Tiers not
+# listed here (basic / free / unknown) use the existing default routing — they
+# are never downgraded. "admin" keeps using the is_admin path.
+USER_TIER_ROUTING: dict[str, dict] = {
+    "admin": ADMIN_TIER_ROUTING,
+    "elite": ELITE_TIER_ROUTING,
+    "pro": PRO_TIER_ROUTING,
+}
+
+
+def routing_for_user_tier(user_tier) -> "Optional[dict]":
+    """Premium routing table for a user tier, or None to use default routing."""
+    if not user_tier:
+        return None
+    return USER_TIER_ROUTING.get(str(user_tier).strip().lower())
+
+
 def resolve_tier_config(
     tier: LLMTier,
     primary_config: "LLMConfig",
     is_admin: bool = False,
+    routing_override: "Optional[dict]" = None,
 ) -> "LLMConfig":
     """Resolve LLM config for a specific task tier.
 
     Priority order:
+      0. routing_override: an explicit routing table (e.g. a user-tier table) —
+         used directly, like the admin premium path (skips env tier overrides)
       1. Admin routing: if is_admin, use ADMIN_TIER_ROUTING (premium models)
       2. Env override: LLM_TIER_{SCAN|THESIS|LEARNING|CHAT}_PROVIDER + _KEY + _MODEL
       3. Default tier routing (cheap models for non-admin)
@@ -259,13 +303,16 @@ def resolve_tier_config(
     This lets operators run per-user quality tiers: admin gets Sonnet,
     everyone else gets the cheapest route.
     """
-    # Admin override — use premium routing, skip env tier overrides
-    routing = ADMIN_TIER_ROUTING if is_admin else DEFAULT_TIER_ROUTING
+    # routing_override (user-tier table) or admin → premium routing, skip env
+    # tier overrides; otherwise the default cheap routing.
+    use_table_directly = routing_override is not None or is_admin
+    routing = (routing_override if routing_override is not None
+               else (ADMIN_TIER_ROUTING if is_admin else DEFAULT_TIER_ROUTING))
 
     tier_upper = tier.value.upper()
 
-    # For non-admin: check explicit tier env override
-    if not is_admin:
+    # For non-admin without an explicit override: check explicit tier env override
+    if not use_table_directly:
         tier_provider_str = os.getenv(f"LLM_TIER_{tier_upper}_PROVIDER", "")
         if tier_provider_str:
             try:

@@ -3892,9 +3892,11 @@ class TelegramHandler:
             f"\u23f3 <i>{t('analyzing', self._lang(update), asset=html.escape(symbol))}</i>")
 
         try:
+            _tg_id = self._get_tg_id(update)
             result = await self.registry.dispatch("analyze_asset",
                 self.engine, symbol=symbol, is_admin=admin,
-                user_id=self._get_tg_id(update))
+                user_id=_tg_id,
+                user_tier=(self.users.get(_tg_id) or {}).get("tier"))
         except Exception as exc:
             system_log.error("analyze_asset failed for %s: %s", symbol, exc, exc_info=True)
             await self._send(update,

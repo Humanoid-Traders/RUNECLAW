@@ -340,6 +340,28 @@ class Analyzer:
             logger.debug("per-user LLM client resolve failed for %s: %s", user_id, exc)
             return None, None
 
+    def _maybe_tier_client(self, user_tier, use_full_model: bool):
+        """Return (client, cfg, model) routed by the user's TIER to operator-funded
+        premium models (elite/pro/admin), or (None, None, None) to keep the
+        default. Gated by CONFIG.analyzer.per_user_llm_tiers_enabled; fail-open.
+        BYOK (the user's own key) takes precedence and is applied before this."""
+        try:
+            if not getattr(CONFIG.analyzer, "per_user_llm_tiers_enabled", False):
+                return None, None, None
+            from bot.llm.provider import routing_for_user_tier, resolve_tier_config
+            table = routing_for_user_tier(user_tier)
+            if table is None or self._llm_config is None:
+                return None, None, None
+            task_tier = LLMTier.THESIS if use_full_model else LLMTier.SCAN
+            cfg = resolve_tier_config(task_tier, self._llm_config, routing_override=table)
+            client = self._build_client_for_config(cfg)
+            if client is None:
+                return None, None, None
+            return client, cfg, cfg.model
+        except Exception as exc:
+            logger.debug("per-user tier client resolve failed for tier=%s: %s", user_tier, exc)
+            return None, None, None
+
     def refresh_llm_client(self) -> None:
         """Refresh LLM client after BYOK /setllm change."""
         self._llm_config = self._resolve_llm_config()
@@ -383,7 +405,7 @@ class Analyzer:
 
     async def analyze(self, signal: MarketSignal, candles: list[list[float]], order_flow=None,
                        candles_4h=None, candles_1d=None, is_admin: bool = False,
-                       as_of: Optional[datetime] = None, user_id=None) -> Optional[TradeIdea]:
+                       as_of: Optional[datetime] = None, user_id=None, user_tier=None) -> Optional[TradeIdea]:
         """
         Full analysis pipeline:
         1. Compute technical indicators from OHLCV candles.
@@ -637,7 +659,7 @@ class Analyzer:
         if sma50 is not None:
             indicators["sma50"] = round(sma50, 6)
 
-        thesis = await self._llm_thesis(signal, indicators, order_flow=order_flow, is_admin=is_admin, user_id=user_id)
+        thesis = await self._llm_thesis(signal, indicators, order_flow=order_flow, is_admin=is_admin, user_id=user_id, user_tier=user_tier)
 
         if thesis is None:
             self._last_rejection_diag = {
@@ -2336,7 +2358,7 @@ class Analyzer:
 
     # -- LLM Reasoning --
 
-    async def _llm_thesis(self, signal: MarketSignal, indicators: dict, order_flow=None, is_admin: bool = False, user_id=None) -> Optional[dict]:
+    async def _llm_thesis(self, signal: MarketSignal, indicators: dict, order_flow=None, is_admin: bool = False, user_id=None, user_tier=None) -> Optional[dict]:
         """Ask the LLM for a directional call with reasoning.
 
         Token optimization pipeline:
@@ -2466,6 +2488,19 @@ class Analyzer:
                   f"{_user_cfg.provider.value}/{model}",
                   action="per_user_llm", result="ROUTED",
                   data={"user_id": str(user_id), "provider": _user_cfg.provider.value})
+        else:
+            # No BYOK key → route by the user's TIER to operator-funded premium
+            # models (elite/pro/admin); basic/free keep the default. Fail-open.
+            _tier_client, _tier_cfg, _tier_model = self._maybe_tier_client(user_tier, use_full_model)
+            if _tier_client is not None:
+                active_client = _tier_client
+                active_cfg = _tier_cfg
+                model = _tier_model
+                audit(trade_log,
+                      f"Tier LLM routing: tier={user_tier} "
+                      f"{_tier_cfg.provider.value}/{model}",
+                      action="tier_llm", result="ROUTED",
+                      data={"user_tier": str(user_tier), "provider": _tier_cfg.provider.value})
 
         category = "thesis" if use_full_model else "analyze"
         max_tokens = CONFIG.llm.max_tokens if use_full_model else 512
