@@ -155,6 +155,7 @@ class ProactiveMonitor:
         alerts.extend(self._check_ws_health())
         alerts.extend(self._check_stale_balance())
         alerts.extend(self._check_macro_calendar_stale())
+        alerts.extend(self._check_slippage())
         alerts.extend(self._check_volume_spikes())
         alerts.extend(self._check_black_swan())
         alerts.extend(self._check_state_changes())
@@ -382,6 +383,51 @@ class ProactiveMonitor:
                     dedup_key="stale_balance"))
         except Exception as exc:
             system_log.debug("stale-balance check failed: %s", exc)
+        return alerts
+
+    def _check_slippage(self) -> list[Alert]:
+        """Alert (live only) when a symbol's mean absolute slippage drifts above
+        the configured threshold, once it has enough recorded fills. Execution
+        quality silently drains equity over many trades — surfacing it lets the
+        operator switch to limit orders, trim size, or drop the symbol."""
+        alerts: list[Alert] = []
+        try:
+            if not CONFIG.is_live():
+                return alerts
+            tracker = getattr(self.engine, "slippage", None)
+            if tracker is None:
+                return alerts
+            _exec = getattr(CONFIG, "execution", None)
+            if _exec is None:
+                return alerts
+            thresh = float(getattr(_exec, "slippage_alert_mean_pct", 0.20))
+            min_trades = int(getattr(_exec, "slippage_alert_min_trades", 10))
+            for symbol, stats in (tracker.get_all_stats() or {}).items():
+                if stats.total_trades < min_trades:
+                    continue
+                if stats.mean_slippage_pct <= thresh:
+                    continue
+                alerts.append(Alert(
+                    alert_type="SLIPPAGE_HIGH", severity="WARNING",
+                    title=f"High slippage: {symbol}",
+                    body=(
+                        "\U0001f7e0 <b>EXECUTION SLIPPAGE ELEVATED</b>\n"
+                        "────────────────\n"
+                        f"- Symbol: <code>{symbol}</code>\n"
+                        f"- Mean slippage: <code>{stats.mean_slippage_pct:.3f}%</code> "
+                        f"(&gt; {thresh:.3f}% limit)\n"
+                        f"- p95: <code>{stats.p95_slippage_pct:.3f}%</code>\n"
+                        f"- Fills: <code>{stats.total_trades}</code>, "
+                        f"adverse <code>{stats.adverse_count}</code>\n"
+                        f"- Est. lost: <code>${stats.total_slippage_usd:,.2f}</code>\n"
+                        "────────────────\n"
+                        "\U0001f449 Consider limit orders, smaller size, or dropping "
+                        "this symbol.\n"
+                        "\U0001f449 /slippage — full execution-quality report"),
+                    # Dedup per symbol; the 5-min cooldown prevents repeat spam.
+                    dedup_key=f"slippage_high_{symbol}"))
+        except Exception as exc:
+            system_log.debug("slippage check failed: %s", exc)
         return alerts
 
     def _check_macro_calendar_stale(self) -> list[Alert]:

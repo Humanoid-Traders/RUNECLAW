@@ -680,6 +680,11 @@ class ExecutionConfig:
     # Slippage guard
     slippage_guard_enabled: bool = _env_bool("SLIPPAGE_GUARD_ENABLED", True)
     max_slippage_edge_ratio: float = _env_float("MAX_SLIPPAGE_EDGE_RATIO", 0.30)
+    # Slippage alert: the proactive monitor warns (live only) when a symbol's
+    # mean absolute slippage exceeds this %, once it has at least N recorded
+    # fills. Surfaces execution-quality drift before it quietly drains equity.
+    slippage_alert_mean_pct: float = _env_float_bounded("SLIPPAGE_ALERT_MEAN_PCT", 0.20, 0.0, 100.0)
+    slippage_alert_min_trades: int = int(_env_float_bounded("SLIPPAGE_ALERT_MIN_TRADES", 10, 1, 100000))
     # Order splitting
     order_split_enabled: bool = _env_bool("ORDER_SPLIT_ENABLED", True)
     order_split_threshold_usd: float = _env_float("ORDER_SPLIT_THRESHOLD_USD", 500.0)
