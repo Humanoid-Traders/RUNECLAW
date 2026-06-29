@@ -491,6 +491,11 @@ class AnalyzerConfig:
     # nudge to confidence. Default OFF — computed in shadow-mode (logged, not
     # applied) until enabled. See bot/learning/setup_expectancy.py.
     setup_expectancy_enabled: bool = _env_bool("SETUP_EXPECTANCY_ENABLED", False)
+    # External sentiment: when ON, the sentiment voter blends the live market-wide
+    # Fear & Greed index (alternative.me) as a bounded contrarian signal. Default
+    # OFF — until enabled the voter is purely price-derived (no external network
+    # call). See bot/core/sentiment.py.
+    external_sentiment_enabled: bool = _env_bool("EXTERNAL_SENTIMENT_ENABLED", False)
     sma_period: int = 50
     trend_alignment_bonus: float = 0.10
     trend_misalignment_penalty: float = 0.08
