@@ -995,6 +995,15 @@ class AppConfig:
     # Allow auto-confirm to place LIVE (real-money) orders with no human press.
     # Even with a low threshold, auto-confirm cannot trade live unless this is set.
     auto_confirm_live_enabled: bool = _env_bool("AUTO_CONFIRM_LIVE_ENABLED", False)
+    # Gate auto-confirm on CALIBRATED confidence (opt-in, default OFF). When ON
+    # AND a fitted confidence calibrator exists, the auto-confirm threshold is
+    # tested against min(raw, calibrated) confidence — so a real-money auto-trade
+    # requires BOTH the raw blend AND the measured (calibrated) win-rate to clear
+    # the bar. This can only TIGHTEN auto-confirm, never loosen it: with no
+    # calibration data the calibrator is identity, so it is a no-op until evidence
+    # shows the raw confidence is over-optimistic. Makes the 0.85 admin auto-trade
+    # mean "~85% realized win rate", not a raw LLM+voter blend.
+    auto_confirm_use_calibrated: bool = _env_bool("AUTO_CONFIRM_USE_CALIBRATED", False)
     # TTL for pending ideas in seconds (default 300 = 5 min)
     pending_idea_ttl: int = int(_env_float("PENDING_IDEA_TTL", 300))
 

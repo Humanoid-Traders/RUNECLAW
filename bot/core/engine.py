@@ -996,7 +996,7 @@ class RuneClawEngine:
         auto_threshold = RUNTIME.auto_confirm_threshold
         auto_ideas = [
             (tid, tidea) for tid, tidea in list(self._pending_ideas.items())
-            if tidea.confidence >= auto_threshold
+            if self._auto_confirm_gate_value(tidea) >= auto_threshold
         ]
         if auto_ideas and CONFIG.is_live() and not CONFIG.auto_confirm_live_enabled:
             for tid, tidea in auto_ideas:
@@ -2202,7 +2202,7 @@ class RuneClawEngine:
         auto_threshold = RUNTIME.auto_confirm_threshold
         auto_confirmed = 0
         for tid, tidea in list(self._pending_ideas.items()):
-            if tidea.confidence >= auto_threshold:
+            if self._auto_confirm_gate_value(tidea) >= auto_threshold:
                 try:
                     result = await self.confirm_trade(tid, user_id="auto")
                     auto_confirmed += 1
@@ -2357,6 +2357,28 @@ class RuneClawEngine:
                           action="live_smart_exit", result="ERROR")
         except Exception as exc:
             system_log.debug("Live smart-exit evaluation failed: %s", exc)
+
+    def _auto_confirm_gate_value(self, idea) -> float:
+        """The confidence value the auto-confirm threshold is tested against.
+
+        With CONFIG.auto_confirm_use_calibrated ON and a fitted calibrator
+        available, return min(raw, calibrated) confidence — a real-money
+        auto-trade then requires BOTH the raw blend AND the measured (calibrated)
+        win-rate to clear the bar. This can only TIGHTEN auto-confirm, never
+        loosen it: with no calibration data the calibrator is identity, so it is
+        a no-op until evidence shows the raw confidence is over-optimistic.
+        Fail-open: any error returns the raw confidence (gate never breaks)."""
+        raw = float(getattr(idea, "confidence", 0.0) or 0.0)
+        try:
+            if not getattr(CONFIG, "auto_confirm_use_calibrated", False):
+                return raw
+            cal = self.analyzer._get_calibrator() if getattr(self, "analyzer", None) else None
+            if not cal or not cal.is_ready():
+                return raw
+            calibrated = float(cal.calibrate(raw))
+            return min(raw, calibrated)
+        except Exception:
+            return raw
 
     @staticmethod
     def _is_fill_message(msg: str) -> bool:
