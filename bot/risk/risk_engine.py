@@ -246,6 +246,11 @@ class RiskEngine:
         # Feature: Drawdown recovery mode
         self._in_drawdown_recovery: bool = False
         self._recovery_start_dd: float = 0.0
+        # Feature: Live-performance governor — rolling window of realized closed
+        # trade PnLs. In-memory only (rebuilds after restart from live closes),
+        # like _equity_history; the governor fails OPEN until min_samples accrue,
+        # which is safe because it only ever REDUCES size, never grows it.
+        self._realized_pnl_window: deque[float] = deque(maxlen=100_000)
         # Feature: Rolling return correlation (V2)
         self._price_history: dict[str, list[float]] = {}
         # Feature: Warning rate circuit breaker
@@ -349,6 +354,9 @@ class RiskEngine:
             self._record_trade_result_locked(pnl)
 
     def _record_trade_result_locked(self, pnl: float) -> None:
+        # Live-performance governor: record EVERY realized close (win/loss/flat)
+        # so the rolling window reflects the true recent win rate + net PnL.
+        self._realized_pnl_window.append(float(pnl))
         if pnl < 0:
             self._consecutive_losses += 1
             self._last_loss_time = time.time()
@@ -434,6 +442,40 @@ class RiskEngine:
         if self._equity_curve_halved:
             return 0.5
         return 1.0
+
+    @property
+    def live_performance_size_multiplier(self) -> float:
+        """Sizing multiplier from the live-performance governor.
+
+        Scores the most-recent ``live_perf_window`` realized closed trades:
+          - **1.0 (healthy)** — win rate above the reduce threshold AND the
+            window is net-positive, OR fewer than ``live_perf_min_samples``
+            trades so far (fail OPEN — never penalise a cold start).
+          - **0.0 (pause)** — win rate at/below ``live_perf_pause_winrate`` AND
+            the window is net-negative: the strategy is losing both often and on
+            balance, so stop trading.
+          - **live_perf_reduce_mult (reduce)** — otherwise underperforming
+            (win rate at/below ``live_perf_reduce_winrate`` OR net-negative).
+
+        Tighten-only: the return is always in [0.0, 1.0]. Caller applies it as a
+        pre-cap size reduction (and treats 0.0 as a pause/reject), exactly like
+        the equity-curve breaker. Fail-open on any error → 1.0.
+        """
+        try:
+            window = CONFIG.risk.live_perf_window
+            recent = list(self._realized_pnl_window)[-window:]
+            if len(recent) < CONFIG.risk.live_perf_min_samples:
+                return 1.0
+            wins = sum(1 for p in recent if p > 0)
+            win_rate = wins / len(recent)
+            net = sum(recent)
+            if win_rate <= CONFIG.risk.live_perf_pause_winrate and net < 0:
+                return 0.0
+            if win_rate <= CONFIG.risk.live_perf_reduce_winrate or net < 0:
+                return CONFIG.risk.live_perf_reduce_mult
+            return 1.0
+        except Exception:
+            return 1.0
 
     @property
     def in_drawdown_recovery(self) -> bool:
@@ -585,6 +627,20 @@ class RiskEngine:
                 failed.append("EQUITY_CURVE: trading paused — equity below 2σ of MA")
             else:
                 position_usd *= _eq_mult
+
+        # Live-performance governor (opt-in, default OFF): de-risk on REALIZED
+        # recent results. Reduces size when the recent window underperforms and
+        # pauses (rejects) when it is both losing often and net-negative. Only
+        # ever tightens; no-op until live_perf_min_samples closed trades accrue.
+        if CONFIG.risk.live_performance_governor_enabled:
+            _gov_mult = self.live_performance_size_multiplier
+            if _gov_mult < 1.0:
+                if _gov_mult <= 0:
+                    failed.append(
+                        "LIVE_PERF_GOVERNOR: trading paused — realized win rate "
+                        "and net PnL below floor over recent window")
+                else:
+                    position_usd *= _gov_mult
 
         # Drawdown recovery mode: require higher confidence, reduce size
         if self._in_drawdown_recovery:

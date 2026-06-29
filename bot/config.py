@@ -251,6 +251,27 @@ class RiskLimits:
     # Default OFF → byte-identical until enabled; in paper mode it never applies.
     live_risk_hardening_enabled: bool = _env_bool("LIVE_RISK_HARDENING_ENABLED", False)
     live_max_drawdown_pct: float = _env_float_bounded("LIVE_MAX_DRAWDOWN_PCT", 7.0, 0.1, 100.0)
+    # Live-performance governor (opt-in, default OFF). A closed-loop backstop ON
+    # TOP of the pre-trade checks: it scores REALIZED closed-trade outcomes over a
+    # rolling window and de-risks when the strategy is actually losing — a graduated
+    # SIZE REDUCTION when the recent window underperforms (low win rate OR net
+    # negative), and a PAUSE (size 0, trade rejected) only when it is BOTH losing
+    # often AND net-negative. It can only tighten (reduce/pause), never grow size or
+    # loosen a gate, and is a no-op below live_perf_min_samples closed trades (fails
+    # OPEN = normal sizing). Distinct from the equity-curve breaker (equity vs MA)
+    # and the consecutive-loss breaker (streak): this reads realized win rate + net
+    # PnL of the most recent trades. Default OFF → byte-identical until enabled.
+    live_performance_governor_enabled: bool = _env_bool("LIVE_PERFORMANCE_GOVERNOR_ENABLED", False)
+    # Rolling window of most-recent CLOSED trades the governor scores.
+    live_perf_window: int = int(_env_float_bounded("LIVE_PERF_WINDOW", 20, 2, 100000))
+    # Minimum closed trades before the governor acts (below this → full size).
+    live_perf_min_samples: int = int(_env_float_bounded("LIVE_PERF_MIN_SAMPLES", 10, 1, 100000))
+    # Win rate at/below which the window counts as underperforming → reduce.
+    live_perf_reduce_winrate: float = _env_float_bounded("LIVE_PERF_REDUCE_WINRATE", 0.40, 0.0, 1.0)
+    # Win rate at/below which (AND net-negative) the governor pauses trading.
+    live_perf_pause_winrate: float = _env_float_bounded("LIVE_PERF_PAUSE_WINRATE", 0.25, 0.0, 1.0)
+    # Size multiplier applied while in the reduce zone.
+    live_perf_reduce_mult: float = _env_float_bounded("LIVE_PERF_REDUCE_MULT", 0.5, 0.05, 1.0)
 
 
 @dataclass(frozen=True)
