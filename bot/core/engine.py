@@ -1413,6 +1413,42 @@ class RuneClawEngine:
                 del self._ohlcv_cache[old_key]
         return data
 
+    @staticmethod
+    def _timeframe_to_ms(timeframe: str) -> int:
+        """Parse a ccxt timeframe ('5m','1h','4h','1d','1w') to milliseconds; 0 if
+        unparseable."""
+        try:
+            unit = timeframe[-1].lower()
+            n = int(timeframe[:-1])
+            mult = {"m": 60_000, "h": 3_600_000, "d": 86_400_000, "w": 604_800_000}.get(unit)
+            return n * mult if mult else 0
+        except Exception:
+            return 0
+
+    def _drop_forming_candle(self, ohlcv, timeframe: str):
+        """Drop the in-progress (still-forming) last candle so indicators/patterns
+        compute on CLOSED bars only — eliminating repaint. Gated by
+        DROP_UNCLOSED_CANDLE_ENABLED (default OFF → returns ohlcv unchanged). The
+        last candle is dropped only when its period has not yet elapsed (its open
+        time + timeframe is still in the future), so a feed that already excludes
+        the forming bar is left intact. Fail-open: any error returns ohlcv as-is.
+        """
+        if not getattr(CONFIG.analyzer, "drop_unclosed_candle_enabled", False):
+            return ohlcv
+        try:
+            if not ohlcv or len(ohlcv) < 3:
+                return ohlcv
+            tf_ms = self._timeframe_to_ms(timeframe)
+            if tf_ms <= 0:
+                return ohlcv
+            last_open = float(ohlcv[-1][0])
+            now_ms = time.time() * 1000.0
+            if now_ms < last_open + tf_ms:   # last candle's period not yet closed
+                return ohlcv[:-1]
+            return ohlcv
+        except Exception:
+            return ohlcv
+
     async def _refine_entry_mtf(self, idea: TradeIdea, exchange) -> TradeIdea:
         """Zoom into lower timeframe to find optimal entry within the setup zone.
 
@@ -1562,6 +1598,10 @@ class RuneClawEngine:
             )
             return None
 
+        # Repaint fix (gated): drop the still-forming last candle so all TA uses
+        # CLOSED bars only. Entry pricing is unaffected — the analyzer prices off
+        # the live ticker (signal.price), not the last candle. No-op when off.
+        ohlcv = self._drop_forming_candle(ohlcv, timeframe)
         idea = await self.analyzer.analyze(signal, ohlcv, order_flow=of_signal, is_admin=is_admin, user_id=user_id, user_tier=user_tier)
         if idea is None:
             audit(scan_log, f"Analysis produced no idea for {signal.symbol}",

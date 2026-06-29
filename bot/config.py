@@ -616,6 +616,14 @@ class AnalyzerConfig:
     # learners' own application flags are on. Default OFF. See bot/learning/auto_refit.py.
     learning_auto_refit_enabled: bool = _env_bool("LEARNING_AUTO_REFIT_ENABLED", False)
     learning_auto_refit_interval: int = int(_env_float("LEARNING_AUTO_REFIT_INTERVAL", 25))
+    # Drop the in-progress (unclosed) candle before computing indicators/patterns.
+    # Live OHLCV from the exchange includes the current forming bar as the last
+    # element; reading closes[-1] on it makes every voter flicker pre-close
+    # (repaint). When ON, the still-forming last candle is dropped before analysis
+    # so all TA uses CLOSED bars only — aligning live with the (bar-closed)
+    # backtest. Entry/price logic is unaffected (it uses the live ticker price,
+    # not the last candle). Default OFF → byte-identical until enabled.
+    drop_unclosed_candle_enabled: bool = _env_bool("DROP_UNCLOSED_CANDLE_ENABLED", False)
     sma_period: int = 50
     trend_alignment_bonus: float = 0.10
     trend_misalignment_penalty: float = 0.08
