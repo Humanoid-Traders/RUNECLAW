@@ -265,6 +265,54 @@ class UserSettings:
     scan_interval_sec: int = 60
 
 
+import logging as _logging
+_log = _logging.getLogger(__name__)
+
+# --- Per-user LLM API key encryption at rest ---------------------------------
+# The llm_api_key column held the user's LLM provider key in PLAINTEXT. These
+# are real secrets (provider quota / billing), so they are now Fernet-encrypted
+# at rest using the SAME master key as the exchange-credential store
+# (RUNECLAW_SECRETS_KEY > data/.exchange_secret.key). Encryption happens at the
+# save/get boundary so the in-memory UserSettings.llm_api_key stays plaintext for
+# callers. Legacy plaintext rows are read transparently and re-encrypted on the
+# next save (no migration step needed).
+_LLM_CIPHER = None
+
+
+def _llm_cipher():
+    global _LLM_CIPHER
+    if _LLM_CIPHER is None:
+        from cryptography.fernet import Fernet
+        from bot.core.exchange_credentials import _load_or_create_master_key
+        _LLM_CIPHER = Fernet(_load_or_create_master_key())
+    return _LLM_CIPHER
+
+
+def _encrypt_llm_key(plaintext: str) -> str:
+    """Fernet-encrypt an LLM key for storage. Empty stays empty. Fail-CLOSED: if
+    encryption is unavailable, store nothing rather than leak plaintext."""
+    if not plaintext:
+        return ""
+    try:
+        return _llm_cipher().encrypt(plaintext.encode()).decode()
+    except Exception as exc:
+        _log.error("LLM key encryption failed (%s) — not storing the key", exc)
+        return ""
+
+
+def _decrypt_llm_key(stored: str) -> str:
+    """Decrypt a stored LLM key. A value that isn't valid Fernet ciphertext is
+    assumed to be a legacy plaintext key and returned as-is (it will be
+    re-encrypted on the next save)."""
+    if not stored:
+        return ""
+    try:
+        return _llm_cipher().decrypt(stored.encode()).decode()
+    except Exception:
+        # Legacy plaintext (pre-encryption) or unreadable — pass through.
+        return stored
+
+
 def get_user_settings(user_id: int) -> UserSettings:
     with get_db() as db:
         row = db.execute(
@@ -279,7 +327,7 @@ def get_user_settings(user_id: int) -> UserSettings:
         max_position_pct=row["max_position_pct"],
         max_open_positions=row["max_open_positions"],
         llm_provider=row["llm_provider"],
-        llm_api_key=row["llm_api_key"],
+        llm_api_key=_decrypt_llm_key(row["llm_api_key"]),
         notifications_on=bool(row["notifications_on"]),
         scan_interval_sec=row["scan_interval_sec"],
     )
@@ -301,7 +349,7 @@ def save_user_settings(s: UserSettings) -> None:
             (
                 s.user_id, s.paper_balance, s.max_daily_loss_pct,
                 s.max_position_pct, s.max_open_positions,
-                s.llm_provider, s.llm_api_key,
+                s.llm_provider, _encrypt_llm_key(s.llm_api_key),
                 int(s.notifications_on), s.scan_interval_sec,
             ),
         )
