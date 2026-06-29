@@ -1949,6 +1949,12 @@ class TelegramHandler:
                     f"{icon} <code>{acct[:10]}</code> {g['status']} "
                     f"(×{g['multiplier']:.2f} · win {g['win_rate']*100:.0f}% · "
                     f"net ${g['net_pnl']:,.0f} · n={g['samples']})")
+        # 🎚 Per-user margin caps (/setcap) — show only accounts that have one set.
+        capped = [(r["account"], r["cap_usd"]) for r in rows
+                  if r.get("cap_usd") and r["cap_usd"] > 0]
+        if capped:
+            lines.append("\n🎚 <b>Per-trade caps:</b> " + " · ".join(
+                f"<code>{a[:10]}</code> ${c:,.0f}" for a, c in capped))
         await self._send(update, "\n".join(lines))
 
     async def _cmd_setcap(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
