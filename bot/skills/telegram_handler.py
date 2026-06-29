@@ -2781,6 +2781,7 @@ class TelegramHandler:
 
         cal_on = getattr(CONFIG.analyzer, "confidence_calibration_enabled", False)
         exp_on = getattr(CONFIG.analyzer, "setup_expectancy_enabled", False)
+        vw_on = getattr(CONFIG.analyzer, "voter_weight_learning_enabled", False)
         _mode = lambda on: "APPLIED (live)" if on else "SHADOW (logged, not applied)"
         await self._send(update,
             "<b>Learning overlays</b>\n\n"
@@ -2789,7 +2790,7 @@ class TelegramHandler:
             f"<code>{html.escape(cal.summary())}</code>\n\n"
             f"<b>Per-setup expectancy</b> — <code>{_mode(exp_on)}</code>\n"
             f"<code>{html.escape(exp.summary())}</code>\n\n"
-            f"<b>Voter-weight learning</b> — <code>instrument-only (not yet applied)</code>\n"
+            f"<b>Voter-weight learning</b> — <code>{_mode(vw_on)}</code>\n"
             f"<code>{html.escape(vw.summary())}</code>\n\n"
             "<i>Refit/reload from history: </i><code>/calibration refit</code>")
 
