@@ -6,9 +6,18 @@ Risk states are computed from proximity to scheduled events:
   PRE_EVENT_CAUTION:      Within 24h before event
   EVENT_LOCKDOWN:         30min before to 30min after
   POST_EVENT_VOLATILITY:  30min to 4h after
-  BLACKOUT:               Calendar evaluation failed (fail-closed)
+  BLACKOUT:               Calendar evaluation failed OR the schedule is exhausted
+                          (fail-closed)
 
 All event times stored as UTC. Display helpers convert to ET / Amsterdam.
+
+NOTE ON STALENESS: the schedule below is hardcoded (currently 2026). Once every
+event is in the past, the calendar is EXHAUSTED — there is no future event left
+to gate against. Previously that silently reported NORMAL, so all macro event
+protection vanished without any error. Now an exhausted calendar fails closed
+(BLACKOUT) by default and sets ``snapshot.stale=True`` so the proactive monitor
+can alert. Regenerate the schedule yearly (extend ``build_2026_calendar`` /
+add a new ``build_<year>_calendar`` and pass it in) or wire a live feed.
 """
 
 from __future__ import annotations
@@ -127,12 +136,29 @@ class MacroCalendar:
         self,
         events: Optional[list[MacroEvent]] = None,
         now_fn: Optional[Callable[[], datetime]] = None,
+        fail_closed_when_stale: bool = True,
     ) -> None:
         self._events: list[MacroEvent] = sorted(
             events or build_2026_calendar(),
             key=lambda e: e.scheduled_utc,
         )
         self._now_fn = now_fn or (lambda: datetime.now(UTC))
+        # When the schedule is exhausted (had events, all now in the past),
+        # fail closed (BLACKOUT) rather than silently reporting NORMAL. An
+        # operator who knowingly accepts the gap can set this False; the stale
+        # flag (and its alert) still fires regardless.
+        self._fail_closed_when_stale = fail_closed_when_stale
+
+    def is_exhausted(self) -> bool:
+        """True when the calendar HAD events but none remain in the future.
+
+        An intentionally-empty calendar (no events configured) is NOT exhausted —
+        that is an explicit "no macro calendar" choice, not a silently-aged-out
+        schedule.
+        """
+        if not self._events:
+            return False
+        return self._next_after(self._now_fn()) is None
 
     def evaluate(self) -> MacroStateSnapshot:
         """Compute the current macro risk state. Fail-closed: exceptions → BLACKOUT."""
@@ -181,8 +207,21 @@ class MacroCalendar:
                     time_until_next=timedelta(seconds=delta),
                 )
 
-        # NORMAL
+        # NORMAL — unless the schedule is EXHAUSTED (had events, all now past).
         nxt = self._next_after(now)
+        if nxt is None and self._events:
+            # No future event remains: macro protection has silently aged out.
+            # Fail closed by default (BLACKOUT blocks new entries in the risk
+            # engine) and flag stale so the monitor can alert. If the operator
+            # opted out of fail-closed, report NORMAL but still mark stale.
+            return MacroStateSnapshot(
+                state=(
+                    MacroRiskState.BLACKOUT
+                    if self._fail_closed_when_stale
+                    else MacroRiskState.NORMAL
+                ),
+                stale=True,
+            )
         return MacroStateSnapshot(
             state=MacroRiskState.NORMAL,
             next_event=nxt,

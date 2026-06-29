@@ -970,7 +970,12 @@ class RiskEngine:
                     ev_label = macro_snap.active_event.label if macro_snap.active_event else "unknown"
                     failed.append(f"MACRO_EVENT: {macro_snap.state.value} - {ev_label}")
                 elif macro_snap.state == MacroRiskState.BLACKOUT:
-                    failed.append("MACRO_EVENT: BLACKOUT - calendar evaluation failed (fail-closed)")
+                    if getattr(macro_snap, "stale", False):
+                        failed.append(
+                            "MACRO_EVENT: BLACKOUT - macro calendar exhausted "
+                            "(no future events; refresh the schedule) (fail-closed)")
+                    else:
+                        failed.append("MACRO_EVENT: BLACKOUT - calendar evaluation failed (fail-closed)")
                 else:
                     passed.append(f"MACRO_EVENT: {macro_snap.state.value}")
             elif not macro_checked:
