@@ -241,6 +241,16 @@ class RiskLimits:
     correlation_sizing_step: float = _env_float_bounded("CORRELATION_SIZING_STEP", 0.20, 0.0, 1.0)
     # Floor on the multiplier — size is never reduced below this fraction.
     correlation_sizing_floor: float = _env_float_bounded("CORRELATION_SIZING_FLOOR", 0.5, 0.1, 1.0)
+    # Live risk hardening (opt-in, default OFF). When ON *and* running live, it
+    # applies a stricter portfolio-risk posture for real money WITHOUT touching
+    # paper/backtest behaviour:
+    #   - forces correlation-aware position sizing on (even if its own flag is off),
+    #   - forces covariance-based portfolio VaR on (falls back to the per-trade
+    #     proxy whenever data is insufficient — never a downgrade to skip),
+    #   - caps drawdown at live_max_drawdown_pct (tighter than the paper limit).
+    # Default OFF → byte-identical until enabled; in paper mode it never applies.
+    live_risk_hardening_enabled: bool = _env_bool("LIVE_RISK_HARDENING_ENABLED", False)
+    live_max_drawdown_pct: float = _env_float_bounded("LIVE_MAX_DRAWDOWN_PCT", 7.0, 0.1, 100.0)
 
 
 @dataclass(frozen=True)
