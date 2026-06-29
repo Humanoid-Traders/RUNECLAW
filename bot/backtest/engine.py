@@ -203,6 +203,16 @@ class BacktestEngine:
             atr_value = sum(true_ranges) / len(true_ranges)
 
         # 4b. Risk gate (same as live). BT-H2: pass bar time for session sizing.
+        # Regime-aware sizing (gated, same bridge as live): set the analyzer's
+        # per-symbol regime so the per-regime multiplier applies, keeping backtest
+        # ↔ live parity. No-op when REGIME_SIZING_ENABLED is off.
+        if CONFIG.risk.regime_sizing_enabled:
+            try:
+                _reg = self.analyzer._current_regimes.get(signal.symbol)
+                if _reg is not None:
+                    self.risk.set_regime(_reg.value, "NORMAL")
+            except Exception:
+                pass
         risk_check = self.risk.evaluate(idea, atr=atr_value, as_of=bar.timestamp)
         if risk_check.verdict == RiskVerdict.REJECTED:
             self._ideas_rejected_risk += 1

@@ -499,6 +499,16 @@ defaults:
       (live + LIVE_RISK_HARDENING_ENABLED). In paper mode the standard
       max_drawdown_pct applies.
 
+  regime_sizing_enabled:
+    value: false
+    env_var: REGIME_SIZING_ENABLED
+    description: >
+      Opt-in (default OFF). Bridges the analyzer's per-symbol market regime into
+      the risk engine before each evaluate(), so the per-regime position-size
+      multiplier actually applies (CHOP 0.5× / RANGE 0.7× reduce; TREND 1.2× /
+      EXPANSION 1.3× increase). The notional/margin cap stays the final
+      authority. OFF → regime stays UNKNOWN → 1.0× (byte-identical).
+
   live_performance_governor_enabled:
     value: false
     env_var: LIVE_PERFORMANCE_GOVERNOR_ENABLED

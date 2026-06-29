@@ -606,6 +606,27 @@ class RuneClawEngine:
         self._sync_risk_market_context(eng)
         return eng
 
+    def _apply_regime_to(self, engine, symbol) -> None:
+        """Bridge the analyzer's per-symbol market regime onto ``engine`` so its
+        per-regime size multiplier applies during evaluate().
+
+        Gated by REGIME_SIZING_ENABLED (default OFF): when off this is a no-op, so
+        the regime stays UNKNOWN and the multiplier is 1.0× — byte-identical to
+        before. The analyzer's Regime values are already a subset of the risk
+        engine's _REGIME_MULTIPLIERS keys, so regime.value passes straight through;
+        volatility overlay is left NORMAL (regime is the lever here). Fail-open:
+        any lookup error leaves the engine's regime untouched.
+        """
+        if not getattr(CONFIG.risk, "regime_sizing_enabled", False):
+            return
+        try:
+            regimes = getattr(self.analyzer, "_current_regimes", None)
+            reg = regimes.get(symbol) if regimes else None
+            if reg is not None:
+                engine.set_regime(reg.value, "NORMAL")
+        except Exception as exc:
+            logger.debug("Regime bridge skipped for %s: %s", symbol, exc)
+
     def _sync_risk_market_context(self, eng) -> None:
         """Mirror MARKET-wide (not account-specific) state from the operator
         engine onto a per-user engine so every user's market gates see identical
@@ -1761,6 +1782,9 @@ class RuneClawEngine:
         # Wire order flow signal to risk engine so check #23 (bid dominance) runs
         if of_signal is not None:
             self.risk.set_order_flow_signal(of_signal)
+        # Regime-aware sizing (gated): set the analyzer's regime for this symbol
+        # so the per-regime multiplier applies. No-op when REGIME_SIZING_ENABLED off.
+        self._apply_regime_to(self.risk, idea.asset)
         risk_check = self.risk.evaluate(idea, atr=atr_value, live_equity=live_eq, max_position_usd=exec_cap, live_open_count=live_open)
 
         # Log risk evaluation to scan log
@@ -2105,6 +2129,10 @@ class RuneClawEngine:
             # engine that owns THIS user's breaker/streak/daily-loss/drawdown
             # state. Default (per-user OFF) → shared operator engine, unchanged.
             recheck_engine = self.risk_for(user_id)
+            # Regime-aware sizing (gated): set regime AFTER risk_for (whose market-
+            # context sync may have copied the shared engine's regime) so this
+            # idea's symbol regime is authoritative for the executed-size recheck.
+            self._apply_regime_to(recheck_engine, idea.asset)
             recheck = recheck_engine.evaluate(idea, atr=stored_atr, live_equity=live_eq_recheck, max_position_usd=recheck_cap, live_open_count=live_open_recheck)
         except Exception as exc:
             # Fix 6: if re-check raises, do NOT silently lose the idea.
