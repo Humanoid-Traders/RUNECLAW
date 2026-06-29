@@ -559,6 +559,14 @@ class AnalyzerConfig:
     chop_sl_mult: float = 1.5
     chop_tp_mult: float = 2.0
     chop_confidence_penalty: float = 0.15
+    # Regime HARD gates (opt-in, default OFF). The penalties above only SOFTEN
+    # the lowest-edge regimes; with this ON they become hard no-trades:
+    #   - CHOP / UNKNOWN regime  -> skip the signal entirely.
+    #   - Counter-trend entry in a STRONG trend (ADX >= regime_strong_adx)
+    #     (SHORT in TREND_UP / LONG in TREND_DOWN) -> skip entirely.
+    # Default OFF preserves the current soft-penalty behaviour byte-for-byte.
+    regime_hard_gates_enabled: bool = _env_bool("REGIME_HARD_GATES_ENABLED", False)
+    regime_strong_adx: float = _env_float_bounded("REGIME_STRONG_ADX", 30.0, 20.0, 60.0)
     # RSI hard block: reject LONG when RSI >= this, reject SHORT when RSI <= inverse
     rsi_overbought_block: float = _env_float("RSI_OVERBOUGHT_BLOCK", 72.0)
     rsi_oversold_block: float = _env_float("RSI_OVERSOLD_BLOCK", 28.0)
