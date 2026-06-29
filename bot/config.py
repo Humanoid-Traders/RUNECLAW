@@ -261,6 +261,16 @@ class RiskLimits:
     # OPEN = normal sizing). Distinct from the equity-curve breaker (equity vs MA)
     # and the consecutive-loss breaker (streak): this reads realized win rate + net
     # PnL of the most recent trades. Default OFF → byte-identical until enabled.
+    # Regime-aware position sizing (opt-in, default OFF). The analyzer already
+    # classifies a per-symbol market regime (TREND_UP/TREND_DOWN/EXPANSION/RANGE/
+    # CHOP), but it was never bridged into the risk engine, so _current_regime
+    # stayed "UNKNOWN" and the per-regime size multipliers were always 1.0×. When
+    # ON, the engine sets the risk engine's regime from the analyzer before each
+    # evaluate(), so get_regime_adjusted_params applies the per-regime multiplier
+    # (e.g. CHOP 0.5× / RANGE 0.7× reduce, TREND 1.2× / EXPANSION 1.3× increase).
+    # The notional/margin cap stays the final authority, so increases can never
+    # exceed it. Default OFF → regime stays UNKNOWN → byte-identical (1.0×).
+    regime_sizing_enabled: bool = _env_bool("REGIME_SIZING_ENABLED", False)
     live_performance_governor_enabled: bool = _env_bool("LIVE_PERFORMANCE_GOVERNOR_ENABLED", False)
     # Rolling window of most-recent CLOSED trades the governor scores.
     live_perf_window: int = int(_env_float_bounded("LIVE_PERF_WINDOW", 20, 2, 100000))
