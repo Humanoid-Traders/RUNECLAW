@@ -195,6 +195,12 @@ class RuneClawEngine:
         # M-13 FIX: live balance cache as instance attributes (not class-level mutables)
         self._live_balance_cache: dict = {}
         self._live_balance_cache_ts: float = 0.0
+        # Per-user live balance caches (PER_USER_LIVE_ENABLED, default OFF):
+        # a regular user's confirmed live trade must size against THEIR OWN linked
+        # account, not the operator's. Keyed by user_id, same TTL as the operator
+        # cache. Empty + unused while the flag is off → operator path unchanged.
+        self._user_live_balance_cache: dict[str, dict] = {}
+        self._user_live_balance_cache_ts: dict[str, float] = {}
         # Consecutive engine-tick failures, mirrored from the run loop so the
         # proactive monitor can alert when the main loop is degraded/unmonitored.
         self._tick_consecutive_failures: int = 0
@@ -341,6 +347,87 @@ class RuneClawEngine:
         """Force a fresh balance fetch on the next equity check."""
         self._live_balance_cache = {}
         self._live_balance_cache_ts = 0.0
+        # Per-user caches too: a close on any account may change that user's
+        # equity, so drop them all and let the next check refetch.
+        self._user_live_balance_cache.clear()
+        self._user_live_balance_cache_ts.clear()
+
+    async def get_user_live_equity(self, user_id: str = "") -> Optional[dict]:
+        """LIVE exchange balance for the account THIS user's trade executes on.
+
+        Operator/admin/auto/unattended, or per-user live OFF, or a user with no
+        own keys (routed to operator) → the shared operator balance (identical to
+        get_live_equity). A regular user under per-user live → THEIR OWN linked
+        account's balance, fetched via their executor and cached per-user with the
+        same TTL. Fail-safe: returns the last cached value on error, else None, so
+        the caller falls back to capped paper-equity sizing rather than the WRONG
+        account's equity.
+        """
+        if not CONFIG.is_live():
+            return None
+        ex = self._executor_for(user_id)
+        # Operator path: per-user off, or operator/admin/auto/unattended, or the
+        # user has no own keys (executor fell back to operator).
+        if (ex is self.live_executor
+                or not getattr(CONFIG, "per_user_live_enabled", False)
+                or not user_id or user_id in ("auto", "")
+                or self._is_operator_user(user_id)):
+            return await self.get_live_equity()
+        key = str(user_id)
+        now = time.monotonic()
+        ts = self._user_live_balance_cache_ts.get(key, 0.0)
+        cached = self._user_live_balance_cache.get(key)
+        if cached and (now - ts) < self._LIVE_BALANCE_TTL:
+            return cached
+        try:
+            bal = await ex.fetch_balance()
+            if "error" not in bal or bal.get("total", 0) > 0:
+                self._user_live_balance_cache[key] = bal
+                self._user_live_balance_cache_ts[key] = now
+                return bal
+        except Exception as exc:
+            system_log.warning(
+                "Per-user live balance fetch failed for %s: %s — using %s",
+                user_id, exc, "cached value" if cached else "paper fallback")
+        return cached if cached else None
+
+    async def _live_recheck_context(self, user_id: str = "") -> tuple:
+        """Return ``(live_equity, live_open_count)`` for the account THIS user's
+        confirm will execute on, so the pre-execution risk re-check sizes and
+        counts against the RIGHT account.
+
+        Operator/default path is byte-identical to the prior inline logic (shared
+        balance cache + operator exchange position count). A regular user under
+        per-user live gets their OWN account's balance + open-position count.
+        """
+        if not CONFIG.is_live():
+            return None, None
+        ex = self._executor_for(user_id)
+        per_user = (
+            ex is not self.live_executor
+            and getattr(CONFIG, "per_user_live_enabled", False)
+            and bool(user_id) and user_id not in ("auto", "")
+            and not self._is_operator_user(user_id)
+        )
+        if not per_user:
+            # Operator path — preserves the exact prior behaviour.
+            live_eq = self._live_balance_cache.get("total", 0.0) if self._live_balance_cache else None
+            try:
+                exchange_ct = await get_exchange_position_count(self)
+                pending_ct = sum(
+                    1 for p in self.live_executor.open_positions
+                    if p.status == "pending_fill"
+                )
+                live_open = exchange_ct + pending_ct
+            except Exception:
+                live_open = len(self.live_executor.open_positions)
+            return live_eq, live_open
+        # Per-user regular path — the user's OWN account.
+        bal = await self.get_user_live_equity(user_id)
+        live_eq = bal.get("total", 0.0) if bal else None
+        # open_positions already filters to open + pending_fill for this account.
+        live_open = len(ex.open_positions)
+        return live_eq, live_open
 
     def _on_live_position_closed(self, pos) -> None:
         """Handle live position close: invalidate cache + set SL cooldown."""
@@ -1843,22 +1930,14 @@ class RuneClawEngine:
         # Stale-data check #12 guards against time drift (>300s = reject).
         self._transition(AgentState.RISK_CHECK, f"re-checking risk for {trade_id}")
         try:
-            # LIVE FIX: pass live equity for re-check sizing too
-            live_eq_recheck = self._live_balance_cache.get("total", 0.0) if (CONFIG.is_live() and self._live_balance_cache) else None
             from bot.core.live_executor import MICRO_MAX_POSITION_USD
             recheck_cap = MICRO_MAX_POSITION_USD if CONFIG.is_live() else None
-            # CRITICAL: count filled + pending positions (same as scan path)
-            live_open_recheck = None
-            if CONFIG.is_live():
-                try:
-                    exchange_ct = await get_exchange_position_count(self)
-                    pending_ct = sum(
-                        1 for p in self.live_executor.open_positions
-                        if p.status == "pending_fill"
-                    )
-                    live_open_recheck = exchange_ct + pending_ct
-                except Exception:
-                    live_open_recheck = len(self.live_executor.open_positions)
+            # LIVE FIX: size + count against the account this confirm executes on.
+            # Default/operator → the shared operator balance + exchange count
+            # (byte-identical). A regular user under per-user live → THEIR OWN
+            # account's equity + open-position count, so they are never sized
+            # against the operator's (much larger) balance.
+            live_eq_recheck, live_open_recheck = await self._live_recheck_context(user_id)
             # Per-user risk isolation: this confirm-time gate runs against the
             # engine that owns THIS user's breaker/streak/daily-loss/drawdown
             # state. Default (per-user OFF) → shared operator engine, unchanged.
