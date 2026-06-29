@@ -531,6 +531,17 @@ class Analyzer:
 
         # ── Sentiment Analysis ──
         try:
+            # When enabled, refresh the EXTERNAL market-wide Fear & Greed index
+            # (alternative.me) so the sentiment voter blends real crowd sentiment
+            # — a contrarian signal independent of this symbol's price action —
+            # instead of being purely price-derived (which echoes other voters).
+            # Cached with a TTL inside the engine; fail-open (network error keeps
+            # the last/None value → zero external adjustment). Default OFF.
+            if CONFIG.analyzer.external_sentiment_enabled:
+                try:
+                    await self._sentiment.refresh_fear_greed()
+                except Exception as _fg_exc:
+                    system_log.debug("External Fear & Greed refresh failed: %s", _fg_exc)
             self._sentiment.update(
                 symbol=signal.symbol,
                 price=signal.price,

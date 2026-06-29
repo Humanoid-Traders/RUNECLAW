@@ -497,6 +497,11 @@ class AnalyzerConfig:
     # Default OFF — until enabled, weights are byte-identical to hand-tuned.
     # See bot/learning/voter_weights.py and docs/VOTER_WEIGHT_LEARNING.md.
     voter_weight_learning_enabled: bool = _env_bool("VOTER_WEIGHT_LEARNING_ENABLED", False)
+    # External sentiment: when ON, the sentiment voter blends the live market-wide
+    # Fear & Greed index (alternative.me) as a bounded contrarian signal. Default
+    # OFF — until enabled the voter is purely price-derived (no external network
+    # call). See bot/core/sentiment.py.
+    external_sentiment_enabled: bool = _env_bool("EXTERNAL_SENTIMENT_ENABLED", False)
     sma_period: int = 50
     trend_alignment_bonus: float = 0.10
     trend_misalignment_penalty: float = 0.08
