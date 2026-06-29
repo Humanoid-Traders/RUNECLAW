@@ -536,6 +536,14 @@ class AnalyzerConfig:
     # the operator config. The continuous background scan is unaffected (analysis
     # there is shared/operator-funded). Default OFF → byte-identical until enabled.
     per_user_llm_enabled: bool = _env_bool("PER_USER_LLM_ENABLED", False)
+    # Tier-based operator LLM routing (opt-in, default OFF; LLM Optimization Plan
+    # P2). When ON, a user's TIER (admin / elite / pro from the user store) maps
+    # to operator-funded LLM quality for their hand-run /analyze: elite → Sonnet
+    # thesis, pro → Gemini thesis, admin → Sonnet everywhere. basic / free / unknown
+    # tiers keep the existing default routing (never downgraded). A user's OWN key
+    # (per_user_llm_enabled / BYOK) takes precedence over their tier. Fail-open to
+    # default routing. Default OFF → byte-identical until enabled.
+    per_user_llm_tiers_enabled: bool = _env_bool("PER_USER_LLM_TIERS_ENABLED", False)
     # Confidence calibration (Phase A): when ON, the final blended confidence is
     # remapped through a monotonic reliability curve fitted from the bot's own
     # closed-trade history, so a confidence value reflects realized win rate.

@@ -398,7 +398,8 @@ class AnalyzeAssetSkill(BaseSkill):
             return f"{_BAD} <b>ANALYSIS</b>\n\n<i>Invalid price (0 or negative) for</i> <code>{_esc(symbol)}</code>"
 
         idea = await engine._analyze_signal(sig, is_admin=kwargs.get("is_admin", False),
-                                            user_id=kwargs.get("user_id"))
+                                            user_id=kwargs.get("user_id"),
+                                            user_tier=kwargs.get("user_tier"))
         if idea is None:
             vol_m = sig.volume_usd_24h / 1_000_000 if sig.volume_usd_24h else 0
             arrow = _spark(sig.change_pct_24h)
