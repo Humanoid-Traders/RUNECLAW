@@ -43,14 +43,21 @@ features.
 1. **Bridge analyzer regime → `risk.set_regime()` before `evaluate()`** [S] —
    unlocks the dead regime-multiplier stack. *Changes live sizing → gated +
    backtest-validated.* **(In progress — first build.)**
-2. **Wire strategy-router outputs** (sl/tp ATR mult, size, min-conf) instead of
-   `pass` [M].
+2. ~~**Wire strategy-router outputs**~~ — **WITHDRAWN on verification.** The
+   analyzer already owns strategy selection: `_classify_strategy_type` (a richer,
+   multi-factor classifier) sets `idea.strategy_type`, which already feeds
+   per-strategy risk sizing. The engine's `strategy_router.select_strategy` is a
+   *cruder, redundant* regime→map used only by a dead `pass` block and a broken
+   `/strategy` admin display. Wiring it would **downgrade** strategy selection.
+   Action: optional cleanup (remove the dead block, fix the `/strategy` display) —
+   *not* activation.
 3. **Enable + validate calibration, family-cap, voter-weight learning** [M] —
    backtest each, then default-on with a readiness report.
 
 ### P1 — Signal-quality correctness
 4. **Drop the in-progress candle before all TA** [S] — removes systemic repaint
-   and aligns live with the (bar-closed) backtest.
+   and aligns live with the (bar-closed) backtest. **(Done — gated
+   `DROP_UNCLOSED_CANDLE_ENABLED`.)**
 5. **Unify the two scan paths** [M] — `/scan` calls the real scanner + analyzer.
 6. **Use the full framework prompt on all LLM tiers** [S] — non-admin scans
    currently get a degraded one-liner.
