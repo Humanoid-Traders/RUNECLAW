@@ -38,15 +38,42 @@ class MultiUserPortfolio:
         self,
         default_balance: float = DEFAULT_PAPER_BALANCE,
         on_trade_close: Optional[Callable[[float], None]] = None,
+        on_trade_close_user: Optional[Callable[[str, float], None]] = None,
         trailing_config: Optional[TrailingStopConfig] = None,
     ) -> None:
         self._default_balance = default_balance
         self._on_trade_close = on_trade_close
+        # User-aware close callback (user_id, pnl) -> None.  When set, each
+        # user's trade close is routed WITH its user_id so per-user risk state
+        # (loss streak / circuit breaker) can be isolated.  When None, behaviour
+        # falls back to the plain (pnl)->None callback above.  Both attributes
+        # are resolved LIVE at close time (see _make_close_cb), so the engine can
+        # wire them after construction and restored portfolios route correctly.
+        self._on_trade_close_user = on_trade_close_user
         self._trailing_config = trailing_config
         self._portfolios: dict[str, PortfolioTracker] = {}
         self._lock = threading.Lock()
         # Auto-load existing portfolios from disk
         self._load_existing()
+
+    def _make_close_cb(self, user_id: str) -> Callable[[float], None]:
+        """Build a stable per-tracker close callback for ``user_id``.
+
+        The returned closure resolves ``_on_trade_close_user`` /
+        ``_on_trade_close`` LIVE on every close, so callbacks wired onto this
+        manager AFTER a tracker is created (including portfolios restored from
+        disk during __init__) still route correctly.  Prefers the user-aware
+        callback when present; otherwise preserves the historical (pnl)->None
+        behaviour exactly."""
+        def _cb(pnl: float) -> None:
+            user_cb = self._on_trade_close_user
+            if user_cb is not None:
+                user_cb(user_id, pnl)
+                return
+            plain_cb = self._on_trade_close
+            if plain_cb is not None:
+                plain_cb(pnl)
+        return _cb
 
     def _load_existing(self) -> None:
         """Scan data/ for existing portfolio_*.json files and load them."""
@@ -67,7 +94,7 @@ class MultiUserPortfolio:
             try:
                 portfolio = PortfolioTracker(
                     initial_balance=None,  # None triggers _load_state_on_init()
-                    on_trade_close=self._on_trade_close,
+                    on_trade_close=self._make_close_cb(user_id),
                     state_file=path,
                     trailing_config=self._trailing_config,
                 )
@@ -108,7 +135,7 @@ class MultiUserPortfolio:
                 state_file = f"data/portfolio_{user_id}.json"
                 portfolio = PortfolioTracker(
                     initial_balance=self._default_balance,
-                    on_trade_close=self._on_trade_close,
+                    on_trade_close=self._make_close_cb(user_id),
                     state_file=state_file,
                     trailing_config=self._trailing_config,
                 )
