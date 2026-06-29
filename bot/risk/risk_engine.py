@@ -477,6 +477,42 @@ class RiskEngine:
         except Exception:
             return 1.0
 
+    def live_performance_state(self) -> dict:
+        """Read-only diagnostic snapshot of the live-performance governor.
+
+        Returns ``{enabled, samples, win_rate, net_pnl, multiplier, status}`` where
+        status is one of: ``OFF`` (flag off), ``WARMUP`` (fewer than
+        ``live_perf_min_samples`` closed trades), ``OK``, ``REDUCE``, or ``PAUSE``.
+        Pure — never mutates state; fail-safe to an OFF/zeroed snapshot on error.
+        Used by the admin /accounts view to surface why an account is throttled.
+        """
+        try:
+            enabled = bool(CONFIG.risk.live_performance_governor_enabled)
+            window = CONFIG.risk.live_perf_window
+            recent = list(self._realized_pnl_window)[-window:]
+            n = len(recent)
+            wins = sum(1 for p in recent if p > 0)
+            win_rate = (wins / n) if n else 0.0
+            net = sum(recent)
+            mult = self.live_performance_size_multiplier
+            if not enabled:
+                status = "OFF"
+            elif n < CONFIG.risk.live_perf_min_samples:
+                status = "WARMUP"
+            elif mult <= 0:
+                status = "PAUSE"
+            elif mult < 1.0:
+                status = "REDUCE"
+            else:
+                status = "OK"
+            return {
+                "enabled": enabled, "samples": n, "win_rate": round(win_rate, 3),
+                "net_pnl": round(net, 2), "multiplier": mult, "status": status,
+            }
+        except Exception:
+            return {"enabled": False, "samples": 0, "win_rate": 0.0,
+                    "net_pnl": 0.0, "multiplier": 1.0, "status": "OFF"}
+
     @property
     def in_drawdown_recovery(self) -> bool:
         return self._in_drawdown_recovery

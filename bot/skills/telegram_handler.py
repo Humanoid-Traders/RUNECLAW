@@ -1933,6 +1933,22 @@ class TelegramHandler:
         lines.append(
             f"\n<i>{len(rows)} account(s) · {n_live} with live equity · "
             f"{n_halted} halted (⛔)</i>")
+        # ⚙ Live-performance governor — surface only accounts it is actively
+        # throttling (REDUCE/PAUSE) so the size changes aren't invisible. Quiet
+        # when nothing is throttled or the governor is off.
+        throttled = []
+        for r in rows:
+            g = r.get("governor")
+            if g and g.get("status") in ("REDUCE", "PAUSE"):
+                throttled.append((r["account"], g))
+        if throttled:
+            lines.append("\n⚙ <b>Governor throttling:</b>")
+            for acct, g in throttled:
+                icon = "⏸" if g["status"] == "PAUSE" else "🔻"
+                lines.append(
+                    f"{icon} <code>{acct[:10]}</code> {g['status']} "
+                    f"(×{g['multiplier']:.2f} · win {g['win_rate']*100:.0f}% · "
+                    f"net ${g['net_pnl']:,.0f} · n={g['samples']})")
         await self._send(update, "\n".join(lines))
 
     async def _cmd_setcap(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
