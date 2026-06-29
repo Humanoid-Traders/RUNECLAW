@@ -92,8 +92,6 @@ RUNECLAW supports any OpenAI-compatible LLM provider via `LLM_BASE_URL`:
 
 > **Zero-cost setup:** Set `LLM_PROVIDER=gemini` and `LLM_MODEL=gemini-2.5-flash` with a free API key from [Google AI Studio](https://aistudio.google.com/apikey). No credit card required.
 
-### Solana Ecosystem Mode (NEW)
-
 ### Multi-Timeframe Scan Modes (NEW)
 Three dedicated scan commands with rich dashboard-grade output:
 - **`/scalp`** -- 5-minute candles, top 3 by volume, tight SL/TP for quick trades
@@ -102,7 +100,25 @@ Three dedicated scan commands with rich dashboard-grade output:
 
 Each scan produces 4 sections: **Account Status** (equity, positions, circuit breaker), **Live Tickers** (price, 24h change, volume table), **Regime Assessment** (per-asset narrative with RSI, VWAP, EMA20, support/resistance levels), and **Scan Verdict** (actionable trade ideas with entry/SL/TP/R:R and confidence bars).
 
-### Solana Ecosystem ModeSet `ASSET_UNIVERSE=solana` in `.env` or use `/mode solana` in the Telegram bot to prioritize 15 Solana ecosystem tokens. All tokens trade on Bitget with full USDT pair support.
+### Multi-Asset Universe — Crypto + TradFi Perps (NEW)
+Beyond crypto, RUNECLAW scans and trades **non-crypto USDT-M perpetuals on Bitget** — the same risk engine, AI analysis, and human-confirmation flow apply to every class. Switch focus instantly with `/mode <universe>` (or `ASSET_UNIVERSE` in `.env`), no restart required:
+
+| `/mode` | Universe | Instruments |
+|---------|----------|-------------|
+| `all_markets` | Everything | crypto + all TradFi perps below |
+| `solana` | Solana ecosystem | 15 SOL-ecosystem tokens (see below) |
+| `metals` | Precious + industrial metals | Gold (XAU), Silver (XAG), Platinum (XPT), Palladium (XPD), Copper, PAX Gold |
+| `commodities` | Energy | WTI Crude (CL), Brent (BZ), Natural Gas |
+| `stocks` | US equity perps | TSLA, AAPL, MSFT, GOOGL, AMZN, META, NVDA, AMD, COIN, MSTR, HOOD, PLTR, ARM, MRVL, INTC |
+| `etfs` | Sector / region ETFs | XLK, DFEN, KWEB, SGOV, EWH, INDA |
+| `pre_ipo` | Pre-IPO tokens | OpenAI, Anthropic |
+| `tradfi` | All non-crypto | metals + commodities + stocks + ETFs + pre-IPO |
+| `hybrid` | Mixed | crypto majors + selected TradFi |
+
+**TradFi-aware risk:** metals and energy trade 24/7; US stock/ETF perps respect **DST-aware US market hours** (the engine distinguishes regular vs extended session). Stock positions use tighter SL/TP multipliers and a max-correlated-stock cap (it won't stack 5 tech names at once), and metals carry sector tags (Precious / Industrial) for correlation-aware concentration limits.
+
+### Solana Ecosystem Mode (NEW)
+Set `ASSET_UNIVERSE=solana` in `.env` or use `/mode solana` to prioritize 15 Solana ecosystem tokens. All trade on Bitget with full USDT pair support.
 
 **Tokens:** SOL, JUP, JTO, BONK, WIF, PYTH, RAY, ORCA, RENDER, HNT, MOBILE, W, JITO, TENSOR, DRIFT
 
@@ -245,6 +261,7 @@ A closed-loop backstop on top of the pre-trade checks (gated `LIVE_PERFORMANCE_G
 
 ### Market Intelligence
 - Real-time scanning of 67 Bitget USDT pairs (API bridge) / 324+ pairs (Telegram bot)
+- **Multi-asset:** crypto plus non-crypto USDT-M perps — metals (gold/silver/platinum/palladium/copper), energy (WTI/Brent/NatGas), US stock perps (TSLA, NVDA, AAPL, …), ETFs, and pre-IPO tokens — switchable via `/mode` (see Multi-Asset Universe)
 - Volume spike detection (2x rolling average)
 - Momentum scoring with configurable thresholds
 - Top N mover ranking with structured signal output
@@ -410,8 +427,7 @@ python -m bot.main --mode scan
 | `/halt` | Emergency kill-switch (trip breaker on ALL accounts, cancel all) |
 | `/closeall` | Admin: flatten open positions on every account (operator + per-user) |
 | `/pause` / `/resume` | Pause/resume trading |
-| `/mode solana` | Switch to Solana ecosystem mode (15 tokens) |
-| `/mode all` | Switch back to all Bitget markets |
+| `/mode <universe>` | Switch asset universe — `solana`, `metals`, `commodities`, `stocks`, `etfs`, `pre_ipo`, `tradfi`, `hybrid`, `all_markets` (no restart) |
 | `/setllm` | Switch LLM provider at runtime (BYOK) |
 | `/llmstatus` | Current LLM provider and model info |
 | `/help` | List all available commands |
