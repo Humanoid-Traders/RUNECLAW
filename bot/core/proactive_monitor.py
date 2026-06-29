@@ -154,6 +154,7 @@ class ProactiveMonitor:
         alerts.extend(self._check_warning_rate_breaker())
         alerts.extend(self._check_ws_health())
         alerts.extend(self._check_stale_balance())
+        alerts.extend(self._check_macro_calendar_stale())
         alerts.extend(self._check_volume_spikes())
         alerts.extend(self._check_black_swan())
         alerts.extend(self._check_state_changes())
@@ -382,6 +383,44 @@ class ProactiveMonitor:
                     dedup_key="stale_balance"))
         except Exception as exc:
             system_log.debug("stale-balance check failed: %s", exc)
+        return alerts
+
+    def _check_macro_calendar_stale(self) -> list[Alert]:
+        """Alert when the macro calendar is EXHAUSTED — the hardcoded schedule has
+        aged out, so all macro event protection (FOMC/CPI lockdowns) has silently
+        disappeared. With the fail-safe ON the risk engine is now blocking new
+        entries (BLACKOUT); either way the operator must refresh the schedule."""
+        alerts: list[Alert] = []
+        try:
+            cal = getattr(self.engine, "macro_calendar", None)
+            if cal is None or not hasattr(cal, "is_exhausted"):
+                return alerts
+            if not cal.is_exhausted():
+                return alerts
+            fail_closed = bool(getattr(
+                CONFIG.risk, "macro_calendar_fail_closed_when_stale", True))
+            posture = (
+                "New entries are <b>blocked</b> (BLACKOUT) until refreshed."
+                if fail_closed else
+                "Event protection is <b>OFF</b> (fail-closed disabled) — trades "
+                "are running with no macro lockdown."
+            )
+            alerts.append(Alert(
+                alert_type="MACRO_CALENDAR_STALE", severity="CRITICAL",
+                title="Macro calendar exhausted",
+                body=(
+                    "\U0001f7e0 <b>MACRO CALENDAR EXHAUSTED</b>\n"
+                    "────────────────\n"
+                    "Every scheduled macro event is now in the past — there are "
+                    "no future FOMC/CPI/PCE/NFP events to gate against. The "
+                    "hardcoded schedule needs regenerating.\n"
+                    f"{posture}\n"
+                    "────────────────\n"
+                    "\U0001f449 Refresh the macro schedule (extend the calendar "
+                    "or wire a live feed)."),
+                dedup_key="macro_calendar_stale"))
+        except Exception as exc:
+            system_log.debug("macro-calendar-stale check failed: %s", exc)
         return alerts
 
     def _check_volume_spikes(self) -> list[Alert]:

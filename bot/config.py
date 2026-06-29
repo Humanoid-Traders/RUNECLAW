@@ -180,6 +180,15 @@ class RiskLimits:
     require_stop_loss: bool = _env_bool("REQUIRE_STOP_LOSS", True)
     # Portfolio VaR: reject trades that would push parametric VaR above this %.
     max_portfolio_var_pct: float = _env_float_bounded("MAX_PORTFOLIO_VAR_PCT", 15.0, 0.1, 100.0)
+    # Macro calendar staleness fail-safe (default ON = safe). The macro event
+    # schedule is hardcoded; once every event is in the past it is EXHAUSTED and
+    # there is no future event to gate against. With this ON, an exhausted
+    # calendar fails closed (BLACKOUT → new entries blocked) and the monitor
+    # alerts, instead of silently reporting NORMAL with all event protection
+    # gone. An operator who knowingly accepts the gap can set this False; the
+    # staleness alert still fires. No effect while future events remain.
+    macro_calendar_fail_closed_when_stale: bool = _env_bool(
+        "MACRO_CALENDAR_FAIL_CLOSED_WHEN_STALE", True)
     # Covariance-based portfolio VaR (roadmap H-05). Default OFF: the live guard
     # keeps using the per-trade-return proxy until an operator opts in. When ON
     # AND every held + proposed asset has at least var_covariance_min_points of

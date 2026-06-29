@@ -70,7 +70,10 @@ class RuneClawEngine:
         self.exchange_flow = ExchangeFlowProvider(
             exchange_factory=self.scanner._get_exchange,
         )
-        self.macro_calendar = MacroCalendar(events=build_2026_calendar())
+        self.macro_calendar = MacroCalendar(
+            events=build_2026_calendar(),
+            fail_closed_when_stale=CONFIG.risk.macro_calendar_fail_closed_when_stale,
+        )
         self.macro_provider = MacroEventProvider(
             seed_path=Path("config/macro_calendar.seed.json"),
             funding_provider=self.exchange_flow.funding_rate_provider,

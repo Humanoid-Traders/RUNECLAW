@@ -150,10 +150,14 @@ class TestMacroRiskStates:
     def test_post_event_ends_after_4h(self):
         event_dt = datetime(2026, 6, 1, 14, 0, tzinfo=UTC)
         now = event_dt + timedelta(hours=4, minutes=1)
-        cal = _cal([_make_event(event_dt)], now)
+        # Include a far-future event so the calendar is NOT exhausted (which would
+        # fail closed). This isolates the post-event-window-ends behaviour.
+        future = _make_event(datetime(2026, 8, 1, 14, 0, tzinfo=UTC))
+        cal = _cal([_make_event(event_dt), future], now)
         snap = cal.evaluate()
-        # Should be NORMAL (no upcoming events either) or PRE_EVENT if another is near
+        # Post-event window has elapsed and the next event is >24h away → NORMAL.
         assert snap.state == MacroRiskState.NORMAL
+        assert snap.stale is False
 
     def test_blackout_on_exception(self):
         """Fail-closed: if evaluate raises, return BLACKOUT."""
@@ -195,12 +199,30 @@ class TestMacroEdgeCases:
         assert snap.next_event.label == "CPI"
 
     def test_all_events_in_past(self):
-        """All events in the past → NORMAL."""
+        """All events in the past → EXHAUSTED → fail closed (BLACKOUT) + stale.
+
+        Previously this returned NORMAL, silently dropping all macro event
+        protection once the hardcoded schedule aged out. The fail-safe now routes
+        an exhausted calendar to BLACKOUT (blocks new entries) and flags it stale
+        so the monitor alerts.
+        """
         ev = _make_event(datetime(2025, 1, 1, 14, 0, tzinfo=UTC))
         now = datetime(2026, 12, 31, tzinfo=UTC)
         cal = _cal([ev], now)
         snap = cal.evaluate()
+        assert snap.state == MacroRiskState.BLACKOUT
+        assert snap.stale is True
+
+    def test_all_events_in_past_opt_out_reports_normal(self):
+        """With the fail-safe disabled, an exhausted calendar reports NORMAL but
+        is still flagged stale (so the staleness alert still fires)."""
+        ev = _make_event(datetime(2025, 1, 1, 14, 0, tzinfo=UTC))
+        now = datetime(2026, 12, 31, tzinfo=UTC)
+        cal = _cal([ev], now)
+        cal._fail_closed_when_stale = False
+        snap = cal.evaluate()
         assert snap.state == MacroRiskState.NORMAL
+        assert snap.stale is True
 
 
 # ---------------------------------------------------------------------------

@@ -55,3 +55,9 @@ class MacroStateSnapshot(BaseModel):
     time_until_next: Optional[timedelta] = None
     active_event: Optional[MacroEvent] = None
     evaluated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    # True when the calendar is EXHAUSTED — it had events but every one is now in
+    # the past, so no future event remains to protect against. The hardcoded
+    # schedule silently aging out is exactly this case; surfacing it lets the
+    # risk engine fail-closed and the monitor alert instead of reporting NORMAL
+    # while event protection has quietly disappeared.
+    stale: bool = False

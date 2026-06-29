@@ -481,6 +481,16 @@ defaults:
       Floor on the correlation size multiplier — a new correlated trade is never
       sized below this fraction of its full fixed-fractional size.
 
+  macro_calendar_fail_closed_when_stale:
+    value: true
+    env_var: MACRO_CALENDAR_FAIL_CLOSED_WHEN_STALE
+    description: >
+      Default ON (safe). When the hardcoded macro event schedule is exhausted
+      (every event is in the past), the calendar fails closed (BLACKOUT → new
+      entries blocked) and the monitor alerts, instead of silently reporting
+      NORMAL with all FOMC/CPI event protection gone. No effect while future
+      events remain. Set False to knowingly accept the gap (alert still fires).
+
 # =============================================================================
 # CORRELATION GROUPS
 # =============================================================================
