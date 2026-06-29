@@ -499,6 +499,52 @@ defaults:
       (live + LIVE_RISK_HARDENING_ENABLED). In paper mode the standard
       max_drawdown_pct applies.
 
+  live_performance_governor_enabled:
+    value: false
+    env_var: LIVE_PERFORMANCE_GOVERNOR_ENABLED
+    description: >
+      Opt-in (default OFF). A closed-loop backstop on top of the pre-trade
+      checks: scores REALIZED closed-trade outcomes over a rolling window and
+      de-risks when the strategy is actually losing — graduated size reduction
+      when the recent window underperforms (low win rate OR net-negative), and a
+      pause (size 0, trade rejected) only when it is BOTH losing often AND
+      net-negative. Tighten-only; no-op below live_perf_min_samples trades.
+
+  live_perf_window:
+    value: 20
+    env_var: LIVE_PERF_WINDOW
+    description: >
+      Rolling window of most-recent closed trades the live-performance governor
+      scores for win rate and net PnL.
+
+  live_perf_min_samples:
+    value: 10
+    env_var: LIVE_PERF_MIN_SAMPLES
+    description: >
+      Minimum closed trades before the governor acts. Below this the window is
+      too small to judge, so the governor is a no-op (full size).
+
+  live_perf_reduce_winrate:
+    value: 0.40
+    env_var: LIVE_PERF_REDUCE_WINRATE
+    description: >
+      Win rate at/below which the recent window counts as underperforming and
+      the governor applies live_perf_reduce_mult (also triggers on net-negative
+      window PnL).
+
+  live_perf_pause_winrate:
+    value: 0.25
+    env_var: LIVE_PERF_PAUSE_WINRATE
+    description: >
+      Win rate at/below which — AND with a net-negative window — the governor
+      pauses trading (size 0, trade rejected) rather than merely reducing.
+
+  live_perf_reduce_mult:
+    value: 0.5
+    env_var: LIVE_PERF_REDUCE_MULT
+    description: >
+      Size multiplier applied while the governor is in the reduce zone.
+
   macro_calendar_fail_closed_when_stale:
     value: true
     env_var: MACRO_CALENDAR_FAIL_CLOSED_WHEN_STALE

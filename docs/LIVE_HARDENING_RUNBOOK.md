@@ -55,11 +55,19 @@ The learners need closed-trade history before they mean anything.
 ```bash
 LEARNING_AUTO_REFIT_ENABLED=true            # refit calibration + voter-weights + expectancy from closed trades
 UNCALIBRATED_LLM_WEIGHT_CAP_ENABLED=true    # cap the unproven LLM's blend weight UNTIL calibration lands
+LIVE_PERFORMANCE_GOVERNOR_ENABLED=true      # de-risk automatically when REALIZED results degrade (needs ~10+ closes)
 ```
 
 **Effect:** the learners accrue their curves in **shadow** (logged, not yet applied);
 the LLM can't dominate sizing while its confidence is still unproven (this cap
-auto-lifts the moment calibration is enabled in Stage 3).
+auto-lifts the moment calibration is enabled in Stage 3). The **performance
+governor** is a separate, deterministic backstop: it watches the realized win
+rate + net PnL of your most recent closed trades and, once ≥`LIVE_PERF_MIN_SAMPLES`
+(default 10) have accrued, **shrinks size** when the recent window underperforms
+and **pauses trading** if it's both losing often *and* net-negative. It can only
+tighten — no effect while results are healthy or before enough trades exist.
+Tune `LIVE_PERF_REDUCE_WINRATE` / `LIVE_PERF_PAUSE_WINRATE` if the defaults feel
+too eager; `/whynot SYMBOL` shows `LIVE_PERF_GOVERNOR` when it acts.
 **Watch:** let this run until you have a meaningful sample of **closed** trades
 (≈50–100+). Check `/calibration` — it tells you when the calibrator `is_ready`.
 **Do not proceed to Stage 3 until the calibrator reports ready.**
@@ -112,7 +120,7 @@ Raise these **after** Stage 1, not before — the risk tightening should be on f
 | Stage | Flags | When |
 |---|---|---|
 | 1 | `LIVE_RISK_HARDENING_ENABLED`, `REGIME_HARD_GATES_ENABLED`, `TIME_STOP_LIVE_AUTO_CLOSE` | now |
-| 2 | `LEARNING_AUTO_REFIT_ENABLED`, `UNCALIBRATED_LLM_WEIGHT_CAP_ENABLED` | now, then wait ~50–100 closes |
+| 2 | `LEARNING_AUTO_REFIT_ENABLED`, `UNCALIBRATED_LLM_WEIGHT_CAP_ENABLED`, `LIVE_PERFORMANCE_GOVERNOR_ENABLED` | now, then wait ~50–100 closes |
 | 3 | `CONFIDENCE_CALIBRATION_ENABLED` → `AUTO_CONFIRM_USE_CALIBRATED` → `VOTER_WEIGHT_LEARNING_ENABLED` → `SETUP_EXPECTANCY_ENABLED` | after calibrator ready |
 | 4 | `FUNDING_COST_AWARE_ENABLED`, `EXTERNAL_SENTIMENT_ENABLED`, blend-weight tuning | last |
 
