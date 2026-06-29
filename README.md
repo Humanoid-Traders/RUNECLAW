@@ -134,6 +134,12 @@ Talk to RUNECLAW in plain English instead of memorizing commands:
 - **LLM fallback**: when rule-based patterns don't match, optional LLM classification routes to the right skill
 - **AI chat**: unmatched messages get a contextual response from the LLM (never invents trades)
 
+### Bilingual Interface — English / 繁體中文 (NEW)
+The entire Telegram interface is **localized in English and Traditional Chinese (繁體中文)**:
+- **Per-user language preference** -- each user picks their language with `/lang`; the choice is stored per user, so messages, menus, alerts, and risk explanations all render in the selected language.
+- **Full coverage** -- commands, confirmations, risk-check verdicts, trade notifications, and error messages are all translated (see `bot/utils/i18n.py`, `SUPPORTED_LANGS = {en, zh}`).
+- **Safe fallback** -- any untranslated key falls back to English rather than failing.
+
 ### Proactive Alert Monitor (NEW)
 Background coroutine that pushes unsolicited alerts without waiting for commands:
 - **Circuit breaker** trips and clears
@@ -430,7 +436,35 @@ python -m bot.main --mode scan
 | `/mode <universe>` | Switch asset universe — `solana`, `metals`, `commodities`, `stocks`, `etfs`, `pre_ipo`, `tradfi`, `hybrid`, `all_markets` (no restart) |
 | `/setllm` | Switch LLM provider at runtime (BYOK) |
 | `/llmstatus` | Current LLM provider and model info |
+| `/lang` | Switch interface language — English / 繁體中文 (per-user) |
+| `/paper on\|off` | Toggle paper vs live execution for your trades |
 | `/help` | List all available commands |
+
+### Scanning, analysis & strategy commands
+
+| Command | Description |
+|---------|-------------|
+| `/deepscan` / `/fullscan` | Multi-timeframe deep scan / full-universe scan |
+| `/stockscan` | Scan the US stock-perp universe |
+| `/forcescan` | Force an immediate scan cycle |
+| `/momentum` `/dip` `/squeeze` `/sweep` `/zones` | Strategy preset shortcuts (aliases for `/run <preset>`) |
+| `/buy <SYM>` / `/sell <SYM>` | Stage a manual long/short trade idea (still risk-gated + confirmed) |
+| `/strategy` | Active strategy + regime routing |
+| `/session` | Current trading-session sizing context |
+| `/performance` | Performance summary (win rate, PnL, R) |
+| `/daily_report` | End-of-day trading report (trades, wins/losses, best/worst, PnL) |
+| `/equitycurve` | Equity-curve view |
+| `/holdtime` | Hold-time distribution analytics |
+| `/attribution` | Per-factor PnL attribution |
+| `/crossasset` | Cross-asset correlation view |
+| `/montecarlo` | Monte-Carlo robustness simulation |
+| `/signals` / `/latest_signal` | Signal stats / most recent signal |
+| `/orders` / `/open_positions` | Open orders / open positions |
+| `/autoconfirm` | Toggle admin auto-confirm (0.85 gate) |
+| `/playbook` | GetAgent playbook controls |
+| `/llmtiers` / `/llmreset` | LLM tier routing config / reset |
+| `/set_tier` `/revoke` | Admin: set a user's tier / revoke access |
+| `/channel` `/broadcast` | Admin: marketing channel forwarder |
 
 ### Live & multi-user commands
 
@@ -741,7 +775,7 @@ RUNECLAW is open for collaboration. If you're building for the Bitget AI Base Ca
 | **Multi-Exchange Connectors** | Add OKX, Bybit, Binance adapters -- same risk engine, more markets | Medium |
 | **Web Dashboard** | Real-time charts, portfolio tracker, risk heatmap in browser | Medium |
 | **New Analysis Strategies** | Custom indicator combinations, ML-based pattern detection, orderbook imbalance | Easy-Hard |
-| **Multi-Language Telegram** | i18n support for bot messages (EN/ZH/ES/RU/AR) | Easy |
+| **More Languages** | English + Traditional Chinese (繁體中文) ship today via `/lang`; add ES/RU/AR/etc. on the same i18n layer | Easy |
 | **On-Chain Data Feeds** | Integrate whale wallet tracking, DEX flows, funding rates from on-chain sources | Medium |
 | **Sentiment Feeds** | Twitter/X sentiment, Fear & Greed index, news NLP scoring | Medium |
 | **Portfolio Optimization** | Kelly criterion sizing, correlation-aware allocation, Markowitz frontier | Hard |
