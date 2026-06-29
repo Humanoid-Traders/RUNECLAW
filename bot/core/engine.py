@@ -648,6 +648,89 @@ class RuneClawEngine:
         """
         return [self.live_executor, *self._user_executors.values()]
 
+    async def flatten_all_positions(self, reason: str = "manual_closeall") -> list[dict]:
+        """Close every open position on EVERY account (operator + per-user).
+
+        ``/closeall`` and the emergency kill-switch both route through here so a
+        flatten can never miss a per-user account. Fail-open per account: one
+        account's error is captured in its result and never blocks the others.
+        Returns ``[{"account": label, "messages": [...]}, ...]``. No-op in paper
+        mode. Default (per-user OFF) → just the operator account, as before.
+        """
+        results: list[dict] = []
+        if not CONFIG.is_live():
+            return results
+        for ex in self._all_live_executors():
+            label = getattr(ex, "user_id", None) or "operator"
+            try:
+                msgs = await ex.close_all_positions(reason=reason)
+            except Exception as exc:
+                logger.error("Flatten-all: account %s close failed: %s", label, exc)
+                msgs = [f"close_all_positions failed: {exc}"]
+            results.append({"account": str(label), "messages": list(msgs)})
+        return results
+
+    async def emergency_halt_all(self, reason: str = "emergency") -> dict:
+        """GLOBAL KILL-SWITCH: stop NEW trades on every account and flatten ALL.
+
+        1. Trip the circuit breaker on the shared operator engine AND every
+           per-user RiskEngine, so no new trade can pass risk on any account.
+        2. Clear all queued ideas (pending ideas / ATR / pyramid flags).
+        3. Flatten open positions on every live executor (operator + per-user).
+
+        Fail-open per step: an error on one engine/account never blocks halting
+        the rest. Default (per-user OFF) → shared engine + operator account only,
+        i.e. equivalent to the prior operator-only stop plus no-op per-user loops.
+        Returns a structured summary for the caller to render.
+        """
+        engines_halted = 0
+        try:
+            self.risk.emergency_halt(reason)
+            engines_halted += 1
+        except Exception as exc:
+            logger.error("Kill-switch: shared risk engine halt failed: %s", exc)
+        for uid, eng in list(self._user_risk.items()):
+            try:
+                eng.emergency_halt(reason)
+                engines_halted += 1
+            except Exception as exc:
+                logger.error("Kill-switch: user %s risk engine halt failed: %s", uid, exc)
+        pending_cleared = len(self._pending_ideas)
+        self._pending_ideas.clear()
+        self._pending_atr.clear()
+        self._pending_pyramid.clear()
+        accounts = await self.flatten_all_positions(reason=reason)
+        audit(system_log, f"GLOBAL KILL-SWITCH engaged: {reason}",
+              action="emergency_halt_all", result="OK",
+              data={"engines_halted": engines_halted,
+                    "pending_cleared": pending_cleared,
+                    "accounts_flattened": len(accounts)})
+        return {
+            "reason": reason,
+            "engines_halted": engines_halted,
+            "pending_cleared": pending_cleared,
+            "accounts": accounts,
+        }
+
+    def reset_circuit_breaker_all(self) -> int:
+        """Resume after a global halt: reset the circuit breaker on the shared
+        engine AND every per-user RiskEngine. Returns the number of engines
+        reset. Fail-open per engine. Default (per-user OFF) → just the shared
+        engine, identical to a bare reset_circuit_breaker()."""
+        reset = 0
+        try:
+            self.risk.reset_circuit_breaker()
+            reset += 1
+        except Exception as exc:
+            logger.error("Resume: shared risk engine reset failed: %s", exc)
+        for uid, eng in list(self._user_risk.items()):
+            try:
+                eng.reset_circuit_breaker()
+                reset += 1
+            except Exception as exc:
+                logger.error("Resume: user %s risk engine reset failed: %s", uid, exc)
+        return reset
+
     def _rehydrate_user_executors(self) -> None:
         """Rebuild per-user executors for all linked users at startup so their
         PERSISTED live positions resume being monitored after a restart (per-user
