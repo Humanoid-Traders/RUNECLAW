@@ -256,6 +256,7 @@ class TestAllowlist:
         with patch("bot.skills.telegram_handler.CONFIG") as mc:
             mc.telegram.chat_id = ""
             mc.telegram.admin_ids = ""
+            mc.telegram.live_trader_ids = ""
             assert handler._is_allowlisted(stranger) is True
 
     def test_admin_ids_are_allowlisted(self):
