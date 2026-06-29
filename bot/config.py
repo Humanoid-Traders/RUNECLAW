@@ -218,6 +218,20 @@ class RiskLimits:
     # closed trades there is no edge estimate, so it is a no-op (size unchanged).
     kelly_sizing_enabled: bool = _env_bool("KELLY_SIZING_ENABLED", False)
     kelly_min_trades: int = int(_env_float_bounded("KELLY_MIN_TRADES", 20, 1, 100000))
+    # Portfolio-aware correlation sizing (opt-in, default OFF). The existing
+    # correlation check (_check_correlation) is a count-cap CONCENTRATION GATE:
+    # it rejects once a group is full but does nothing for the trades it lets
+    # through. This adds a graduated size REDUCTION for a new trade that shares a
+    # correlation group AND direction with already-open positions, so the second
+    # and third correlated bet are smaller (the marginal portfolio risk they add
+    # is larger). It can only SHRINK size (multiplier in [floor, 1.0]); the
+    # notional/margin caps and every gate below stay authoritative. Default OFF
+    # makes this byte-identical to prior behaviour.
+    correlation_sizing_enabled: bool = _env_bool("CORRELATION_SIZING_ENABLED", False)
+    # Reduction per same-group same-direction open position (0.20 → −20% each).
+    correlation_sizing_step: float = _env_float_bounded("CORRELATION_SIZING_STEP", 0.20, 0.0, 1.0)
+    # Floor on the multiplier — size is never reduced below this fraction.
+    correlation_sizing_floor: float = _env_float_bounded("CORRELATION_SIZING_FLOOR", 0.5, 0.1, 1.0)
 
 
 @dataclass(frozen=True)
