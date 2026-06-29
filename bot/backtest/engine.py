@@ -68,6 +68,14 @@ class BacktestEngine:
         self.analyzer = Analyzer()
         if not config.use_llm:
             self.analyzer._llm = None
+        # Deterministic parity: replay recorded LLM theses so the backtest runs
+        # the SAME blended path live uses, with no network call. Takes precedence
+        # over use_llm; the offline hook short-circuits the network LLM and falls
+        # back to the rule engine for (symbol, time) pairs with no recording.
+        if config.use_recorded_llm:
+            from bot.backtest.recorded_llm import RecordedLLM
+            self._recorded_llm = RecordedLLM.from_jsonl(config.recorded_llm_path)
+            self.analyzer._offline_thesis_fn = self._recorded_llm.thesis_at
 
         # Tracking
         self._trades: list[BacktestTrade] = []

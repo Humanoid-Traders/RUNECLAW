@@ -24,6 +24,12 @@ class BacktestConfig(BaseModel):
     max_open_positions: int = 5
     confidence_threshold: float = 0.5
     use_llm: bool = False                  # default: rule-based for reproducibility
+    # Deterministic backtest parity: replay recorded LLM theses
+    # (data/learning/llm_calibration.jsonl) so the run exercises the live blended
+    # path with no network. Takes precedence over use_llm. Default OFF preserves
+    # the rule-based default.
+    use_recorded_llm: bool = False
+    recorded_llm_path: str = "data/learning/llm_calibration.jsonl"
     lookback_size: int = 100               # bars needed for indicator calculation
     scan_interval: int = 4                 # check for signals every N bars
 

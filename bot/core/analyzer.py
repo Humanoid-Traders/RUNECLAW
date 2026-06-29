@@ -210,6 +210,10 @@ class Analyzer:
         # Resolve provider config (runtime BYOK overrides .env)
         self._llm_config = self._resolve_llm_config()
         self._llm = self._build_llm_client()
+        # Offline thesis hook (backtest recorded-LLM replay). None in live/paper;
+        # set to a callable(signal, indicators, as_of) -> thesis|None by the
+        # backtest for deterministic parity. See bot/backtest/recorded_llm.py.
+        self._offline_thesis_fn = None
         # Confidence calibrator (Phase A): lazily loaded from disk. ``False`` is
         # the "looked, none on disk" sentinel so we don't re-stat every analyze().
         self._calibrator = None
@@ -659,7 +663,7 @@ class Analyzer:
         if sma50 is not None:
             indicators["sma50"] = round(sma50, 6)
 
-        thesis = await self._llm_thesis(signal, indicators, order_flow=order_flow, is_admin=is_admin, user_id=user_id, user_tier=user_tier)
+        thesis = await self._llm_thesis(signal, indicators, order_flow=order_flow, is_admin=is_admin, user_id=user_id, user_tier=user_tier, as_of=as_of)
 
         if thesis is None:
             self._last_rejection_diag = {
@@ -2358,7 +2362,7 @@ class Analyzer:
 
     # -- LLM Reasoning --
 
-    async def _llm_thesis(self, signal: MarketSignal, indicators: dict, order_flow=None, is_admin: bool = False, user_id=None, user_tier=None) -> Optional[dict]:
+    async def _llm_thesis(self, signal: MarketSignal, indicators: dict, order_flow=None, is_admin: bool = False, user_id=None, user_tier=None, as_of=None) -> Optional[dict]:
         """Ask the LLM for a directional call with reasoning.
 
         Token optimization pipeline:
@@ -2369,6 +2373,20 @@ class Analyzer:
           5. LLM call with rate limiting
           6. Cache the response for future use
         """
+        # Offline thesis hook (backtest parity): when set, replay a recorded LLM
+        # thesis deterministically instead of calling the network, so the
+        # backtest exercises the SAME blended path live uses. Returns the
+        # recorded thesis, or falls back to the rule engine when no record
+        # exists for this (symbol, time).
+        if getattr(self, "_offline_thesis_fn", None) is not None:
+            rec = self._offline_thesis_fn(signal, indicators, as_of)
+            if rec is not None:
+                return rec
+            result = self._rule_based_thesis(signal, indicators)
+            if result is not None:
+                result["source"] = "RULE_ENGINE_NO_RECORD"
+            return result
+
         if self._llm is None:
             result = self._rule_based_thesis(signal, indicators)
             if result is None:

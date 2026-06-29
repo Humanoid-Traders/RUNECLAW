@@ -208,6 +208,7 @@ async def _run_backtest(args: argparse.Namespace) -> None:
         commission_pct=args.commission,
         slippage_pct=args.slippage,
         use_llm=args.use_llm,
+        use_recorded_llm=args.use_recorded_llm,
     )
 
     # Load data (real-data-first; see _load_bars).
@@ -290,6 +291,9 @@ Examples:
     trade_group.add_argument("--commission", type=float, default=0.1, help="Commission %% (default: 0.1)")
     trade_group.add_argument("--slippage", type=float, default=0.05, help="Slippage %% (default: 0.05)")
     trade_group.add_argument("--use-llm", action="store_true", help="Use LLM for analysis (default: rule-based)")
+    trade_group.add_argument("--use-recorded-llm", action="store_true",
+                             help="Replay recorded LLM theses (data/learning/llm_calibration.jsonl) "
+                                  "for deterministic parity with the live blended path")
 
     # Walk-forward analysis
     wf_group = parser.add_argument_group("walk-forward")
@@ -315,6 +319,7 @@ async def _run_walk_forward(args: argparse.Namespace) -> None:
     config = BacktestConfig(
         symbol=args.symbol, timeframe=args.timeframe, initial_balance=args.balance,
         commission_pct=args.commission, slippage_pct=args.slippage, use_llm=args.use_llm,
+        use_recorded_llm=args.use_recorded_llm,
     )
     print(f"\n  Loading data for {config.symbol}...")
     bars, _ = await _load_bars(args, config)
