@@ -176,6 +176,10 @@ class RuneClawEngine:
         # Consecutive engine-tick failures, mirrored from the run loop so the
         # proactive monitor can alert when the main loop is degraded/unmonitored.
         self._tick_consecutive_failures: int = 0
+        # Throttle for the periodic SL/TP self-heal (re-place stops that went
+        # missing DURING operation, not just at startup). monotonic seconds.
+        self._last_sltp_verify_ts: float = 0.0
+        self._SLTP_VERIFY_INTERVAL: float = 300.0  # 5 minutes
         self._LIVE_BALANCE_TTL: float = 30.0  # cache live balance for 30 seconds
         # H-05 FIX: track last known valid prices for WS sanity checks
         self._last_known_prices: dict[str, float] = {}
@@ -2260,6 +2264,21 @@ class RuneClawEngine:
 
         # Also check live positions if in live mode
         if CONFIG.is_live():
+            # SL/TP self-heal: re-place any stop that went missing DURING
+            # operation (adopted-unprotected, cancelled SL, deferred-then-filled).
+            # verify_and_fix_sltp is idempotent; throttled so it isn't run every
+            # tick. Previously this ran ONLY at startup, so a position that became
+            # naked mid-session stayed naked until the next restart.
+            _now = time.monotonic()
+            if (_now - self._last_sltp_verify_ts) >= self._SLTP_VERIFY_INTERVAL:
+                self._last_sltp_verify_ts = _now
+                for _ex in self._all_live_executors():
+                    try:
+                        await _ex.verify_and_fix_sltp()
+                    except Exception as _vexc:
+                        audit(system_log, f"Periodic SL/TP self-heal error: {_vexc}",
+                              action="periodic_sltp_verify", result="ERROR")
+
             # Monitor every account (operator + any per-user). With per-user off
             # this loops once over the operator — identical to before.
             for _ex in self._all_live_executors():
