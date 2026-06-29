@@ -161,7 +161,6 @@ class ProactiveMonitor:
         alerts.extend(self._check_trade_signals())
         alerts.extend(self._check_sl_tp_proximity())
         alerts.extend(self._check_time_stops())
-        alerts.extend(self._check_scale_out())
         return alerts
 
     def _check_circuit_breaker(self) -> list[Alert]:
@@ -843,71 +842,4 @@ class ProactiveMonitor:
                     ))
         except Exception as exc:
             logger.debug("_check_time_stops error: %s", exc)
-        return alerts
-
-    # ── Scale-Out Ladder (Rule 9) ────────────────────────────────
-
-    def _check_scale_out(self) -> list[Alert]:
-        """Check scale-out ladder levels for open positions."""
-        alerts = []
-        if not CONFIG.scale_out.enabled:
-            return alerts
-
-        try:
-            scale_out = getattr(self.engine, 'scale_out', None)
-            if scale_out is None:
-                return alerts
-
-            all_positions = []
-            if self.engine.user_portfolios.all_portfolios():
-                for uid in self.engine.user_portfolios.all_portfolios():
-                    portfolio = self.engine.user_portfolios.get(uid)
-                    all_positions.extend(portfolio.open_positions)
-            else:
-                all_positions.extend(self.engine.portfolio.open_positions)
-
-            if not all_positions:
-                return alerts
-
-            ws_prices = {}
-            if self.engine.ws_feed.is_connected():
-                ws_prices = self.engine.ws_feed.get_prices() or {}
-
-            for pos in all_positions:
-                current_price = ws_prices.get(pos.asset) or 0
-                if current_price <= 0:
-                    continue
-
-                # Get ATR if available
-                atr = 0.0
-                if hasattr(self.engine, '_last_scan_signals'):
-                    for sig in self.engine._last_scan_signals:
-                        if sig.symbol == pos.asset:
-                            atr = getattr(sig, 'atr', 0.0) or 0.0
-                            break
-
-                actions = scale_out.check(pos.trade_id, current_price, atr)
-                for action in actions:
-                    if action.action_type == "partial_close":
-                        key = f"scaleout_{pos.trade_id}_t{action.tranche_id}"
-                        base = pos.asset.split('/')[0] if '/' in pos.asset else pos.asset
-                        alerts.append(Alert(
-                            alert_type="SCALE_OUT",
-                            severity="INFO",
-                            title=f"Scale-Out: {pos.asset} T{action.tranche_id}",
-                            body=(
-                                f"\U0001f4b0 <b>SCALE-OUT — {pos.asset}</b>\n"
-                                "────────────────\n"
-                                f"- Tranche: <code>T{action.tranche_id}</code>\n"
-                                f"- Close: <code>{action.close_pct:.0%}</code> of position\n"
-                                f"- Trigger: <code>${action.trigger_price:,.4f}</code>\n"
-                                f"- Reason: {action.reason}\n"
-                                "────────────────\n"
-                                f"\U0001f449 /positions — review position\n"
-                                f"\U0001f449 /close {base} — manual close"
-                            ),
-                            dedup_key=key,
-                        ))
-        except Exception as exc:
-            logger.debug("_check_scale_out error: %s", exc)
         return alerts
