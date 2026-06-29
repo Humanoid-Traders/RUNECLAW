@@ -129,10 +129,16 @@ def test_stale_balance_quiet_when_not_live():
     assert _mon(_engine(bal_ts=time.monotonic() - 999))._check_stale_balance() == []
 
 
-def test_stale_balance_alerts_when_old(live):
-    fresh = _mon(_engine(bal_ts=time.monotonic()))
+def test_stale_balance_alerts_when_old(live, monkeypatch):
+    # Pin the monotonic clock to a large fixed value. On a freshly-booted CI
+    # runner time.monotonic() (seconds since an arbitrary epoch) can be < 400,
+    # so `time.monotonic() - 400` goes NEGATIVE and trips the `ts <= 0`
+    # "never fetched" guard in the check — a false negative unrelated to
+    # staleness. A stable large base removes that environment dependence.
+    monkeypatch.setattr(pm.time, "monotonic", lambda: 1_000_000.0)
+    fresh = _mon(_engine(bal_ts=1_000_000.0))
     assert fresh._check_stale_balance() == []
-    stale = _mon(_engine(bal_ts=time.monotonic() - 400))
+    stale = _mon(_engine(bal_ts=1_000_000.0 - 400))
     a = stale._check_stale_balance()
     assert len(a) == 1 and a[0].alert_type == "STALE_BALANCE"
 
