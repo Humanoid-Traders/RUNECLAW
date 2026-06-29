@@ -2262,6 +2262,94 @@ class RuneClawEngine:
 
         return prices
 
+    async def _evaluate_live_smart_exits(self, executor) -> None:
+        """Gated (default OFF): auto-close LIVE positions whose thesis has
+        invalidated, instead of letting them ride to the exchange stop-loss.
+
+        Runs the SAME smart-exit checks the paper path already applies in
+        ``_check_paper_positions`` — time stop, signal-hold limit, VWAP-reversion
+        done/failed, volume-signal decay — against the executor's open positions,
+        and closes a fired position at market via ``executor.close_position``.
+
+        Gated behind ``CONFIG.time_stop.enabled`` AND
+        ``CONFIG.time_stop.live_auto_close_enabled`` (both must be true; the
+        latter defaults False), so live behaviour is byte-identical until an
+        operator opts in. Fail-open throughout: any error is swallowed so this
+        can never disrupt the SL/TP monitoring that runs alongside it. Never
+        bypasses the risk engine — it only ever CLOSES an existing position.
+        """
+        cfg = CONFIG.time_stop
+        if not (cfg.enabled and getattr(cfg, "live_auto_close_enabled", False)):
+            return
+        try:
+            from bot.core.smart_exits import (
+                should_time_exit,
+                check_signal_hold_limit,
+                check_vwap_reversion_exit,
+                should_volume_decay_exit,
+            )
+            prices: dict = {}
+            try:
+                if self.ws_feed.is_connected():
+                    prices = self.ws_feed.get_prices() or {}
+            except Exception:
+                prices = {}
+
+            for pos in list(getattr(executor, "_positions", {}).values()):
+                if getattr(pos, "status", "") != "open":
+                    continue
+                price = prices.get(pos.symbol) or 0
+                if price <= 0 or pos.entry_price <= 0:
+                    continue
+
+                hold_h = (datetime.now(UTC) - pos.opened_at).total_seconds() / 3600.0
+                candles_held = int(hold_h)  # 1H candles
+                if pos.direction == "LONG":
+                    risk = pos.entry_price - pos.stop_loss
+                    pnl_raw = price - pos.entry_price
+                else:
+                    risk = pos.stop_loss - pos.entry_price
+                    pnl_raw = pos.entry_price - price
+                r_mult = pnl_raw / risk if risk > 0 else 0.0
+
+                sig = getattr(pos, "signal_type", "momentum_confluence")
+                stype = getattr(pos, "strategy_type", "swing")
+
+                should_exit, reason = should_time_exit(stype, candles_held, r_mult)
+                if not should_exit:
+                    should_exit, reason = check_signal_hold_limit(sig, hold_h, r_mult)
+                if not should_exit:
+                    should_exit, reason = should_volume_decay_exit(sig, candles_held, r_mult)
+                if not should_exit:
+                    vwap = self._last_vwap.get(pos.symbol, 0)
+                    if vwap > 0:
+                        should_exit, reason = check_vwap_reversion_exit(
+                            sig, price, vwap, pos.direction)
+
+                if not should_exit:
+                    continue
+
+                audit(trade_log, f"Live smart-exit auto-close: {pos.symbol} — {reason}",
+                      action="live_smart_exit", result="CLOSED",
+                      data={"symbol": pos.symbol, "r_multiple": round(r_mult, 2),
+                            "hold_hours": round(hold_h, 1), "signal_type": sig,
+                            "strategy_type": stype})
+                try:
+                    await executor.close_position(
+                        pos.trade_id, reason=f"smart_exit:{reason[:48]}")
+                    if self._close_notify_callback:
+                        try:
+                            await self._close_notify_callback(
+                                f"Smart-exit closed {pos.symbol}: {reason}")
+                        except Exception as nexc:
+                            logger.debug("Smart-exit notify failed: %s", nexc)
+                except Exception as cexc:
+                    audit(system_log,
+                          f"Live smart-exit close failed for {pos.symbol}: {cexc}",
+                          action="live_smart_exit", result="ERROR")
+        except Exception as exc:
+            system_log.debug("Live smart-exit evaluation failed: %s", exc)
+
     async def _check_open_positions(self) -> None:
         """Monitor open positions for SL/TP hits."""
         positions = self.portfolio.open_positions
@@ -2348,6 +2436,11 @@ class RuneClawEngine:
                 except Exception as exc:
                     audit(system_log, f"Reconciliation error: {exc}",
                           action="reconcile", result="ERROR")
+
+                # Gated (default OFF): auto-close live positions whose thesis has
+                # invalidated (time stop / signal-hold limit / VWAP reversion /
+                # volume decay) instead of letting them ride to the exchange SL.
+                await self._evaluate_live_smart_exits(_ex)
 
             # Periodic orphan adoption: catch positions opened on exchange
             # but not tracked locally (e.g., after bot restart, manual trades,
