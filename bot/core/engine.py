@@ -1148,6 +1148,10 @@ class RuneClawEngine:
                 await self._tick()
                 _consecutive_failures = 0
                 self._tick_consecutive_failures = 0
+                # Web wallet (2b): pull any pending exchange-credential requests
+                # the website queued and import them into the credential store.
+                # Throttled, fail-open, no-op unless WEB_CREDS_KEY is configured.
+                self._maybe_pull_web_credentials()
             except Exception as exc:
                 _consecutive_failures += 1
                 self._tick_consecutive_failures = _consecutive_failures
@@ -1195,6 +1199,34 @@ class RuneClawEngine:
         audit(system_log, "Engine stopped", action="stop")
 
     # -- Pipeline stages --
+
+    def _maybe_pull_web_credentials(self) -> None:
+        """Throttled, fail-open pull of website-queued exchange credentials.
+
+        No-op unless the operator has configured WEB_CREDS_KEY (and the website
+        sync secret). On a successful connect/disconnect it invalidates the
+        affected per-user executor so the next trade rebuilds with the new keys.
+        """
+        try:
+            import time as _time
+            now = _time.monotonic()
+            last = getattr(self, "_last_cred_pull", 0.0)
+            if now - last < 30.0:
+                return
+            self._last_cred_pull = now
+            from bot.utils.credential_pull import pull_and_apply, is_configured
+            if not is_configured():
+                return
+            n = pull_and_apply(on_change=self.invalidate_user_executor)
+            if n:
+                audit(system_log, f"Applied {n} web credential request(s)",
+                      action="web_credentials_pull", result="OK")
+        except Exception as exc:
+            try:
+                audit(system_log, f"Web credential pull error: {exc}",
+                      action="web_credentials_pull", result="ERROR")
+            except Exception:
+                pass
 
     async def _tick(self) -> None:
         """One full scan-analyze cycle."""
