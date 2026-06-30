@@ -2520,8 +2520,12 @@ class Analyzer:
             if result is None:
                 return None
             result["source"] = "RULE_ENGINE_TIER1"
-            # Cache the rule result too (saves re-computation)
-            self._llm_cache.put(cache_key, result, signal.symbol)
+            # #42: do NOT cache the tier-1 rule result under the LLM cache key.
+            # The key is built from coarse indicator buckets, so a later signal
+            # that buckets to the same key but classifies tier 2/3 would hit this
+            # entry and be served a cheap rule thesis as "LLM_CACHED" instead of
+            # running the LLM. Rule computation is free, so recomputing on the
+            # rare tier-1 collision costs nothing and keeps the cache LLM-only.
             return result
 
         # Budget guard: fall back to rules when daily limit exceeded (fix J)
