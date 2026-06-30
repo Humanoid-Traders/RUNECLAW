@@ -34,15 +34,13 @@ class TestReportStructure:
                 assert isinstance(env, str) and isinstance(label, str)
                 assert isinstance(on, bool)
 
-    def test_default_off_flags_report_off(self, monkeypatch):
-        # Tier-4 judgment/sizing flags still ship default-OFF (config-backed rows).
-        for env in ("REGIME_SIZING_ENABLED", "DROP_UNCLOSED_CANDLE_ENABLED",
-                    "DAILY_LOSS_BREAKER_AUTORESET"):
-            monkeypatch.delenv(env, raising=False)
-        flat = _flat(audit_flag_report())
-        for env in ("REGIME_SIZING_ENABLED", "DROP_UNCLOSED_CANDLE_ENABLED",
-                    "DAILY_LOSS_BREAKER_AUTORESET"):
-            assert flat[env] is False
+    def test_explicitly_disabled_env_flag_reports_off(self, monkeypatch):
+        # All audit flags now default ON; the report still reflects an explicit
+        # disable for an env-read row.
+        monkeypatch.setenv("OF_GUARD_TOP_DEPTH_ENABLED", "0")
+        assert _flat(audit_flag_report())["OF_GUARD_TOP_DEPTH_ENABLED"] is False
+        monkeypatch.setenv("OF_GUARD_TOP_DEPTH_ENABLED", "1")
+        assert _flat(audit_flag_report())["OF_GUARD_TOP_DEPTH_ENABLED"] is True
 
     def test_default_on_guards_report_on(self):
         # REST/WS staleness guards default to a positive value → ON.
@@ -54,6 +52,10 @@ class TestReportStructure:
         assert flat["VERIFY_CLASSIC_SLTP_ON_RESTART"] is True
         # Tier 3 learning flags are now enabled by default (config-backed rows).
         assert flat["LEARN_FROM_PAPER_CLOSES"] is True
+        # Tier 4 judgment/sizing flags are now enabled by default (config-backed).
+        assert flat["REGIME_SIZING_ENABLED"] is True
+        assert flat["DROP_UNCLOSED_CANDLE_ENABLED"] is True
+        assert flat["DAILY_LOSS_BREAKER_AUTORESET"] is True
         assert flat["CONFIDENCE_CALIBRATION_ENABLED"] is True
 
 

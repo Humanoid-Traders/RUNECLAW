@@ -42,22 +42,28 @@ class TestConfigMethod:
     def test_unknown_strategy_falls_back_to_default(self):
         assert CONFIG.strategy_types.get_max_position_pct("nonsense", 13.0) == 13.0
 
-    def test_flag_defaults_off(self):
-        assert CONFIG.risk.per_strategy_notional_cap_enabled is False
+    def test_flag_defaults_on(self, monkeypatch):
+        # Enabled by default (operator-requested activation); explicit env still wins.
+        monkeypatch.delenv("PER_STRATEGY_NOTIONAL_CAP_ENABLED", raising=False)
+        from bot.config import RiskLimits
+        assert RiskLimits().per_strategy_notional_cap_enabled is True
 
 
 class TestCapBinds:
     def test_scalp_capped_tighter_when_enabled(self):
         idea = _scalp_idea()
-        # OFF (default): global 13% cap.
-        off = _risk().evaluate(idea, atr=2.0, max_position_usd=None)
-        assert off.position_size_usd == pytest.approx(10_000 * 0.13, rel=1e-3)
-
-        # ON: scalp's per-strategy 8% cap (flip the frozen flag, then restore).
-        object.__setattr__(CONFIG.risk, "per_strategy_notional_cap_enabled", True)
+        # The flag is frozen on CONFIG.risk; toggle via object.__setattr__ and
+        # restore the original (now default-ON) value.
+        _orig = CONFIG.risk.per_strategy_notional_cap_enabled
         try:
+            # OFF: global 13% cap.
+            object.__setattr__(CONFIG.risk, "per_strategy_notional_cap_enabled", False)
+            off = _risk().evaluate(idea, atr=2.0, max_position_usd=None)
+            assert off.position_size_usd == pytest.approx(10_000 * 0.13, rel=1e-3)
+            # ON: scalp's per-strategy 8% cap.
+            object.__setattr__(CONFIG.risk, "per_strategy_notional_cap_enabled", True)
             on = _risk().evaluate(idea, atr=2.0, max_position_usd=None)
         finally:
-            object.__setattr__(CONFIG.risk, "per_strategy_notional_cap_enabled", False)
+            object.__setattr__(CONFIG.risk, "per_strategy_notional_cap_enabled", _orig)
         assert on.position_size_usd == pytest.approx(10_000 * 0.08, rel=1e-3)
         assert on.position_size_usd < off.position_size_usd

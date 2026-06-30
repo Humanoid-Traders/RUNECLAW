@@ -19,17 +19,17 @@ Invariants asserted:
 import math
 import os
 import tempfile
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 import pytest
-from hypothesis import given, settings, strategies as st
+from hypothesis import given, settings
+from hypothesis import strategies as st
 
 from bot.compat import UTC
 from bot.config import CONFIG
 from bot.risk.portfolio import PortfolioTracker
 from bot.risk.risk_engine import RiskEngine
 from bot.utils.models import Direction, RiskVerdict, TradeIdea
-from datetime import datetime
 
 
 def _isolated_engine(balance: float = 10_000.0) -> RiskEngine:
@@ -127,8 +127,16 @@ class TestEvaluateInvariants:
         assert math.isfinite(check.position_pct)
 
         # 3. The hard margin cap has authority for EVERY result (equity > 0):
-        #    position_pct can never exceed max_position_pct.
-        assert check.position_pct <= CONFIG.risk.max_position_pct + 1e-6
+        #    position_pct can never exceed the effective per-trade cap. With the
+        #    per-strategy notional cap enabled (now the default), that cap is the
+        #    idea's strategy ceiling (e.g. position 15%); otherwise it's the global
+        #    max_position_pct.
+        if CONFIG.risk.per_strategy_notional_cap_enabled:
+            _cap = CONFIG.strategy_types.get_max_position_pct(
+                getattr(idea, "strategy_type", "swing"), CONFIG.risk.max_position_pct)
+        else:
+            _cap = CONFIG.risk.max_position_pct
+        assert check.position_pct <= _cap + 1e-6
 
         # 4. Verdict ⟺ failed-check list agree (no silent disagreement).
         if check.verdict == RiskVerdict.APPROVED:

@@ -142,7 +142,7 @@ class RiskLimits:
     # cap (StrategyTypeConfig.get_max_position_pct) instead of the single global
     # max_position_pct, so a scalp can ride a tighter notional ceiling than a
     # position trade. Default OFF → both use max_position_pct (byte-identical).
-    per_strategy_notional_cap_enabled: bool = _env_bool("PER_STRATEGY_NOTIONAL_CAP_ENABLED", False)
+    per_strategy_notional_cap_enabled: bool = _env_bool("PER_STRATEGY_NOTIONAL_CAP_ENABLED", True)
     max_daily_loss_pct: float = _env_float_bounded("MAX_DAILY_LOSS_PCT", 5.0, 0.1, 50)
     # Auto-reset a DAILY-LOSS circuit-breaker trip at UTC day rollover (opt-in,
     # default OFF; deep-audit medium). The daily-loss limit is a per-day guard,
@@ -153,7 +153,7 @@ class RiskLimits:
     # itself active); drawdown / streak / manual trips stay manual. If the new
     # day is also bad, the daily-loss check re-trips immediately. Default OFF
     # keeps the breaker fully manual (byte-identical).
-    daily_loss_breaker_autoreset_enabled: bool = _env_bool("DAILY_LOSS_BREAKER_AUTORESET", False)
+    daily_loss_breaker_autoreset_enabled: bool = _env_bool("DAILY_LOSS_BREAKER_AUTORESET", True)
     # CFG-2: clamp risk-gate limits so an operator typo or a negative value
     # (which would invert the `>`/`<` comparisons and silently disable the guard)
     # cannot load. Bounds are generous enough to never reject a legitimate value.
@@ -285,7 +285,7 @@ class RiskLimits:
     # (e.g. CHOP 0.5× / RANGE 0.7× reduce, TREND 1.2× / EXPANSION 1.3× increase).
     # The notional/margin cap stays the final authority, so increases can never
     # exceed it. Default OFF → regime stays UNKNOWN → byte-identical (1.0×).
-    regime_sizing_enabled: bool = _env_bool("REGIME_SIZING_ENABLED", False)
+    regime_sizing_enabled: bool = _env_bool("REGIME_SIZING_ENABLED", True)
     live_performance_governor_enabled: bool = _env_bool("LIVE_PERFORMANCE_GOVERNOR_ENABLED", False)
     # Rolling window of most-recent CLOSED trades the governor scores.
     live_perf_window: int = int(_env_float_bounded("LIVE_PERF_WINDOW", 20, 2, 100000))
@@ -680,7 +680,7 @@ class AnalyzerConfig:
     # so all TA uses CLOSED bars only — aligning live with the (bar-closed)
     # backtest. Entry/price logic is unaffected (it uses the live ticker price,
     # not the last candle). Default OFF → byte-identical until enabled.
-    drop_unclosed_candle_enabled: bool = _env_bool("DROP_UNCLOSED_CANDLE_ENABLED", False)
+    drop_unclosed_candle_enabled: bool = _env_bool("DROP_UNCLOSED_CANDLE_ENABLED", True)
     sma_period: int = 50
     trend_alignment_bonus: float = 0.10
     trend_misalignment_penalty: float = 0.08
