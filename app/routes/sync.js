@@ -350,4 +350,55 @@ router.post('/signals', async (req, res) => {
   }
 });
 
+/**
+ * GET /api/bot/sync/credentials/pending
+ * Bot pulls pending exchange-credential requests (encrypted). The bot decrypts
+ * (WEB_CREDS_KEY), imports into its Fernet store keyed by telegram_id (connect)
+ * or removes them (disconnect), then ACKs so the row is cleared. Bot-secret authed.
+ */
+router.get('/credentials/pending', async (req, res) => {
+  try {
+    const [rows] = await pool.execute(
+      `SELECT user_id, telegram_id, exchange, action, encrypted_payload, created_at
+       FROM pending_credentials ORDER BY created_at ASC LIMIT 100`
+    );
+    res.json({ pending: rows });
+  } catch (err) {
+    console.error('Cred pending fetch error:', err.message);
+    res.status(500).json({ error: 'Failed to fetch pending credentials' });
+  }
+});
+
+/**
+ * POST /api/bot/sync/credentials/ack
+ * Body: { acks: [{ user_id, action, ok }] }
+ * For each successful ack, delete the pending row and update connection status
+ * (connect -> connected=true, disconnect -> connected=false). Bot-secret authed.
+ */
+router.post('/credentials/ack', async (req, res) => {
+  try {
+    const acks = Array.isArray(req.body && req.body.acks) ? req.body.acks.slice(0, 200) : [];
+    let applied = 0;
+    for (const a of acks) {
+      if (!a || a.user_id == null || !a.ok) continue;
+      const uid = parseInt(a.user_id);
+      if (!Number.isInteger(uid)) continue;
+      await pool.execute('DELETE FROM pending_credentials WHERE user_id = ?', [uid]);
+      const connected = a.action === 'disconnect' ? false : true;
+      await pool.execute(
+        `INSERT INTO exchange_status (user_id, exchange, connected)
+         VALUES (?, 'bitget', ?)
+         ON DUPLICATE KEY UPDATE connected = VALUES(connected),
+           updated_at = CURRENT_TIMESTAMP`,
+        [uid, connected]
+      );
+      applied++;
+    }
+    res.json({ ok: true, applied });
+  } catch (err) {
+    console.error('Cred ack error:', err.message);
+    res.status(500).json({ error: 'Failed to ack credentials' });
+  }
+});
+
 module.exports = router;
