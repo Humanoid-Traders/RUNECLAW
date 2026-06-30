@@ -3855,6 +3855,58 @@ class LiveExecutor:
 
         return closed_messages
 
+    async def _reattempt_post_fill_sl(
+        self, exchange: "ccxt.Exchange", pos: "LivePosition",
+        direction, qty: float, sl_id, tp_id, trade_id: Optional[str] = None,
+    ):
+        """Post-fill stop-loss-failure handling for the limit-fill and
+        drift-market-fallback entry paths.
+
+        The synchronous market entry path enforces RC-AUD-001: if the stop-loss
+        cannot be placed, retry once and FLATTEN. These two post-fill paths
+        previously did neither — the limit path warned only when BOTH legs failed
+        and the drift path was silent — so an SL-only failure left a live,
+        leveraged position with no exchange stop and no operator alert until a
+        later ``check_positions`` tick noticed.
+
+        This mirrors the market path's *retry + unprotected-marker + alert* so the
+        grace/escalation machinery engages immediately. It deliberately does NOT
+        flatten here: unlike the synchronous market path, these run inside the
+        monitoring context where the bounded grace sub-loop (audit F-4) is the
+        designed remediation (re-protect within grace, flatten on breach).
+
+        Byte-identical when the stop-loss placed (the common case): it returns the
+        ids unchanged and takes no action. Returns the resolved ``(sl_id, tp_id)``.
+        """
+        if sl_id is None and pos.stop_loss > 0:
+            audit(trade_log,
+                  f"SL placement failed post-fill for {pos.symbol} — retrying once",
+                  action="sl_retry", result="RETRY",
+                  data={"trade_id": trade_id, "symbol": pos.symbol})
+            try:
+                retry_sl, retry_tp = await self._place_sl_tp(
+                    exchange, pos.symbol, direction, qty,
+                    pos.stop_loss, pos.take_profit)
+                if retry_sl:
+                    sl_id = retry_sl
+                if tp_id is None and retry_tp:
+                    tp_id = retry_tp
+            except Exception as exc:
+                logger.warning("Post-fill SL retry raised for %s: %s", pos.symbol, exc)
+        if sl_id is None and pos.stop_loss > 0:
+            # A stop was intended but didn't place. Flag so the unprotected
+            # escalation/grace machinery in check_positions treats this position
+            # as unprotected immediately. (sl=0 means no stop was intended, so it
+            # is not flagged — matching how the rest of the executor treats it.)
+            setattr(pos, "unprotected", True)
+            audit(trade_log,
+                  f"UNPROTECTED position {pos.symbol}: stop-loss not placed post-fill "
+                  f"— flagged for grace re-protection / escalation",
+                  action="sl_tp_failed", result="UNPROTECTED",
+                  data={"trade_id": trade_id, "symbol": pos.symbol,
+                        "stop_loss": getattr(pos, "stop_loss", None)})
+        return sl_id, tp_id
+
     async def _check_pending_limit(self, exchange: "ccxt.Exchange",
                                     trade_id: str, pos: LivePosition) -> Optional[str]:
         """Check if a pending limit order has been filled or should be cancelled.
@@ -3964,6 +4016,10 @@ class LiveExecutor:
                     exchange, pos.symbol, direction,
                     filled_qty, pos.stop_loss, pos.take_profit
                 )
+                # RC-AUD-001 parity: retry-once + mark-unprotected on SL failure
+                # (the bare market path flattens; here the grace sub-loop remediates).
+                sl_id, tp_id = await self._reattempt_post_fill_sl(
+                    exchange, pos, direction, filled_qty, sl_id, tp_id, trade_id)
                 pos.sl_order_id = sl_id
                 pos.tp_order_id = tp_id
 
@@ -3986,8 +4042,10 @@ class LiveExecutor:
                 trail_info = " | Trailing: armed" if pos.trailing_state else ""
                 st_label = getattr(pos, 'strategy_type', 'swing').upper()
                 sl_tp_warn = ""
-                if sl_id is None and tp_id is None:
-                    sl_tp_warn = "\n⚠️ SL/TP FAILED — position unprotected!"
+                if sl_id is None:
+                    # No exchange stop-loss is the safety-critical case (a missing
+                    # TP alone is not). Surface it to the operator regardless of TP.
+                    sl_tp_warn = "\n⚠️ STOP-LOSS not placed — position unprotected (monitoring active)!"
                 return (
                     f"LIMIT FILLED: {pos.direction} {pos.symbol} [{st_label}]\n"
                     f"Fill: ${fill_price:,.4f} | Qty: {filled_qty:.6f}{sl_info}{tp_info}{trail_info}{sl_tp_warn}"
@@ -4292,6 +4350,11 @@ class LiveExecutor:
             sl_id, tp_id = await self._place_sl_tp(
                 exchange, pos.symbol, direction,
                 filled_qty, pos.stop_loss, pos.take_profit)
+            # RC-AUD-001 parity: a drift→market fallback is a real market entry,
+            # so apply the same retry-once + mark-unprotected on SL failure as the
+            # primary market path (previously this path had no SL-failure handling).
+            sl_id, tp_id = await self._reattempt_post_fill_sl(
+                exchange, pos, direction, filled_qty, sl_id, tp_id, trade_id)
             pos.sl_order_id = sl_id
             pos.tp_order_id = tp_id
 
