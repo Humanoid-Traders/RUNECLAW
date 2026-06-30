@@ -123,10 +123,18 @@ OF_RECORD_SNAPSHOTS=1             # live order-flow shadow-recording (default ON
 # OF_SNAPSHOT_PATH=data/learning/order_flow_snapshots.jsonl   # optional override
 ```
 
-Then run the backtest with `BacktestConfig.use_recorded_order_flow=True` (or the
-runner's equivalent flag). It replays the most recent snapshot at/before each
-bar; with no recording the analyzer simply runs without order flow, identical to
-the legacy backtest.
+Then run the backtest with `--use-recorded-order-flow` (or
+`BacktestConfig.use_recorded_order_flow=True`). It replays the most recent
+snapshot at/before each bar; with no recording the analyzer simply runs without
+order flow, identical to the legacy backtest (the runner prints how many
+snapshots loaded so an empty replay isn't mistaken for the real thing):
+
+```bash
+python -m bot.backtest.runner --use-recorded-order-flow          # default JSONL path
+python -m bot.backtest.runner --use-recorded-order-flow \
+    --of-snapshot-path data/learning/order_flow_snapshots.jsonl  # explicit path
+python -m bot.backtest.runner --use-recorded-order-flow --walk-forward 5  # also per-fold
+```
 
 ---
 
