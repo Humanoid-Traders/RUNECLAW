@@ -88,6 +88,64 @@ def _pct_diff(a: float, b: float) -> float:
     return abs(a - b) / abs(a) * 100
 
 
+# ── ATR-normalized pattern tolerances (deep-audit medium #24) ──────
+# Symmetry tolerances ("shoulders/tops roughly equal") were hard-coded absolute
+# percentages, so the same 5% / 3% gate applied to a placid pair and a violently
+# volatile one. When PATTERN_ATR_TOLERANCES_ENABLED is on, the tolerance scales
+# with recent ATR-as-%-of-price and is clamped to [floor × fixed, fixed] — it can
+# only TIGHTEN from the legacy fixed value (never loosen past it), so enabling it
+# is a strictly more selective, higher-quality filter. Confidence is then derived
+# against the same (volatility-appropriate) tolerance. Default OFF → byte-identical.
+_PATTERN_ATR_PERIOD = 14
+_PATTERN_ATR_TOL_MULT = 1.5      # tolerance ≈ 1.5 × ATR%
+_PATTERN_ATR_TOL_FLOOR = 0.4     # never tighter than 0.4 × the legacy fixed gate
+
+
+def _atr_pct(highs, lows, closes, period: int = _PATTERN_ATR_PERIOD) -> float:
+    """Average True Range over the last ``period`` bars, expressed as a percentage
+    of the latest close. Returns 0.0 when data is insufficient or price is
+    non-positive (callers then fall back to the legacy fixed tolerance)."""
+    n = len(closes)
+    if n < 2:
+        return 0.0
+    p = min(period, n - 1)
+    trs = []
+    for i in range(n - p, n):
+        prev_close = float(closes[i - 1])
+        tr = max(
+            float(highs[i]) - float(lows[i]),
+            abs(float(highs[i]) - prev_close),
+            abs(float(lows[i]) - prev_close),
+        )
+        trs.append(tr)
+    if not trs:
+        return 0.0
+    atr = sum(trs) / len(trs)
+    last = float(closes[-1])
+    if last <= 0:
+        return 0.0
+    return atr / last * 100.0
+
+
+def _sym_tolerance(highs, lows, closes, fixed_pct: float) -> float:
+    """ATR-normalized symmetry tolerance (in %). Returns ``fixed_pct`` unchanged
+    when the flag is off (byte-identical) or ATR is unavailable; otherwise scales
+    with ATR% and clamps to ``[floor × fixed_pct, fixed_pct]`` so it only ever
+    tightens the legacy gate."""
+    if not _env_bool("PATTERN_ATR_TOLERANCES_ENABLED", False):
+        return fixed_pct
+    atrp = _atr_pct(highs, lows, closes)
+    if atrp <= 0.0:
+        return fixed_pct
+    tol = _PATTERN_ATR_TOL_MULT * atrp
+    lo = _PATTERN_ATR_TOL_FLOOR * fixed_pct
+    if tol < lo:
+        tol = lo
+    if tol > fixed_pct:
+        tol = fixed_pct
+    return tol
+
+
 def _trendline_slope(points: list[tuple[int, float]]) -> float:
     """Simple linear regression slope from (index, price) points."""
     if len(points) < 2:
@@ -127,14 +185,15 @@ def detect_head_and_shoulders(
         left, head, right = sh[-3], sh[-2], sh[-1]
         # Head must be highest
         if head[1] > left[1] and head[1] > right[1]:
-            # Shoulders roughly equal (within 3%)
+            # Shoulders roughly equal — ATR-normalized tolerance (#24)
             shoulder_diff = _pct_diff(left[1], right[1])
-            if shoulder_diff < 5.0:
+            tol = _sym_tolerance(highs, lows, closes, 5.0)
+            if shoulder_diff < tol:
                 # Neckline from swing lows between shoulders
                 neckline_lows = [s for s in sl if left[0] < s[0] < right[0]]
                 neckline = np.mean([s[1] for s in neckline_lows]) if neckline_lows else min(left[1], right[1])
                 price = float(closes[-1])
-                conf = min(0.85, 0.6 + (1.0 - shoulder_diff / 5.0) * 0.25)
+                conf = min(0.85, 0.6 + (1.0 - shoulder_diff / tol) * 0.25)
                 if price < neckline:
                     conf = min(0.95, conf + 0.10)  # confirmed break
                 return {
@@ -151,11 +210,12 @@ def detect_head_and_shoulders(
         left, head, right = sl[-3], sl[-2], sl[-1]
         if head[1] < left[1] and head[1] < right[1]:
             shoulder_diff = _pct_diff(left[1], right[1])
-            if shoulder_diff < 5.0:
+            tol = _sym_tolerance(highs, lows, closes, 5.0)
+            if shoulder_diff < tol:
                 neckline_highs = [s for s in sh if left[0] < s[0] < right[0]]
                 neckline = np.mean([s[1] for s in neckline_highs]) if neckline_highs else max(left[1], right[1])
                 price = float(closes[-1])
-                conf = min(0.85, 0.6 + (1.0 - shoulder_diff / 5.0) * 0.25)
+                conf = min(0.85, 0.6 + (1.0 - shoulder_diff / tol) * 0.25)
                 if price > neckline:
                     conf = min(0.95, conf + 0.10)
                 return {
@@ -185,12 +245,13 @@ def detect_double_top_bottom(
     if len(sh) >= 2:
         top1, top2 = sh[-2], sh[-1]
         diff = _pct_diff(top1[1], top2[1])
-        if diff < 3.0:
+        tol = _sym_tolerance(highs, lows, closes, 3.0)
+        if diff < tol:
             price = float(closes[-1])
             # Trough between tops
             trough_lows = [s for s in sl if top1[0] < s[0] < top2[0]]
             neckline = min(s[1] for s in trough_lows) if trough_lows else min(top1[1], top2[1]) * 0.97
-            conf = min(0.85, 0.55 + (1.0 - diff / 3.0) * 0.30)
+            conf = min(0.85, 0.55 + (1.0 - diff / tol) * 0.30)
             if price < neckline:
                 conf = min(0.90, conf + 0.10)
             return {
@@ -205,11 +266,12 @@ def detect_double_top_bottom(
     if len(sl) >= 2:
         bot1, bot2 = sl[-2], sl[-1]
         diff = _pct_diff(bot1[1], bot2[1])
-        if diff < 3.0:
+        tol = _sym_tolerance(highs, lows, closes, 3.0)
+        if diff < tol:
             price = float(closes[-1])
             peak_highs = [s for s in sh if bot1[0] < s[0] < bot2[0]]
             neckline = max(s[1] for s in peak_highs) if peak_highs else max(bot1[1], bot2[1]) * 1.03
-            conf = min(0.85, 0.55 + (1.0 - diff / 3.0) * 0.30)
+            conf = min(0.85, 0.55 + (1.0 - diff / tol) * 0.30)
             if price > neckline:
                 conf = min(0.90, conf + 0.10)
             return {
