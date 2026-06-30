@@ -6176,6 +6176,24 @@ class TelegramHandler:
         except Exception:
             pass
 
+    def _representative_regime(self) -> str:
+        """A real market regime to display for /strategy. The risk engine's
+        _current_regime stays "UNKNOWN" unless REGIME_SIZING_ENABLED (the
+        regime→sizing bridge is gated), but the analyzer detects a regime per
+        symbol regardless. Return the most common real regime the analyzer
+        currently sees, falling back to the risk engine's value."""
+        try:
+            regimes = getattr(getattr(self.engine, "analyzer", None), "_current_regimes", None)
+            if regimes:
+                from collections import Counter
+                vals = [str(getattr(r, "value", r)) for r in regimes.values()
+                        if str(getattr(r, "value", r) or "").upper() not in ("", "UNKNOWN")]
+                if vals:
+                    return Counter(vals).most_common(1)[0][0]
+        except Exception:
+            pass
+        return str(getattr(self.engine.risk, "_current_regime", "UNKNOWN") or "UNKNOWN")
+
     async def _cmd_strategy(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """Show active strategy and regime-based routing."""
         if not self._is_admin(update):
@@ -6183,7 +6201,7 @@ class TelegramHandler:
         chat_id = update.effective_chat.id
         try:
             from bot.core.strategy_router import select_strategy
-            regime = self.engine.risk._current_regime
+            regime = self._representative_regime()
             vol_state = self.engine.risk._current_vol_state
             profile = select_strategy(regime, vol_state)
 
