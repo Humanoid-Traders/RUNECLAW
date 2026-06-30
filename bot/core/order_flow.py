@@ -533,39 +533,6 @@ class OrderFlowAnalyzer:
             else:
                 sig.whale_bias = "neutral"
 
-    async def _fill_deriv_metrics(
-        self, sig: OrderFlowSignal, exchange, deriv_sym: str, ok: list[str]
-    ) -> None:
-        # Funding rate (perp only)
-        try:
-            fr = await exchange.fetch_funding_rate(deriv_sym)
-            rate = fr.get("fundingRate")
-            if rate is not None:
-                sig.funding_rate = float(rate)
-                ok.append("funding")
-        except Exception as exc:  # noqa: BLE001
-            sig.notes.append(f"funding n/a (spot symbol or unsupported): {exc}")
-
-        # Open interest + change vs last observation
-        try:
-            oi = await exchange.fetch_open_interest(deriv_sym)
-            oi_usd = oi.get("openInterestValue")
-            if oi_usd is None:
-                amt = oi.get("openInterestAmount")
-                if amt is not None and sig.mid_price > 0:
-                    oi_usd = float(amt) * sig.mid_price
-            if oi_usd is not None:
-                oi_usd = float(oi_usd)
-                sig.open_interest_usd = round(oi_usd, 2)
-                with self._lock:
-                    prev = self._oi_history.get(deriv_sym)
-                    self._oi_history[deriv_sym] = oi_usd
-                if prev is not None and prev > 0:
-                    sig.oi_change_pct = round((oi_usd - prev) / prev * 100, 3)
-                ok.append("open_interest")
-        except Exception as exc:  # noqa: BLE001
-            sig.notes.append(f"open_interest n/a: {exc}")
-
     def _fill_spot_futures_divergence(self, sig: OrderFlowSignal, deriv_sym: str) -> None:
         """Detect divergence between spot demand and futures speculation.
 
