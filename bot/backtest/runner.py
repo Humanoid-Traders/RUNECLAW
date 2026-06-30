@@ -157,15 +157,20 @@ def _ascii_equity_curve(equity_points, width: int = 70, height: int = 12) -> str
     return "\n".join(lines)
 
 
-async def _load_bars(args: argparse.Namespace, config) -> tuple[list, bool]:
-    """Load OHLCV bars for a backtest. Returns (bars, used_synthetic).
+async def _load_bars(args: argparse.Namespace, config) -> tuple[list, bool, str]:
+    """Load OHLCV bars for a backtest. Returns (bars, used_synthetic, data_source).
+
+    data_source is one of "csv" | "bitget_real" | "synthetic" |
+    "synthetic_fallback" so the caller can stamp it into the saved result and a
+    synthetic run is never mistaken for a real backtest.
 
     REAL market data is the DEFAULT — synthetic GBM is the single biggest
     backtest-vs-live divergence risk (no microstructure, no fat tails, no gaps),
     so it is demoted to an explicit --synthetic smoke test. Precedence:
     --csv > --synthetic > real Bitget fetch (default). If the real fetch fails
     (offline / no exchange) the runner falls back to a clearly-labelled synthetic
-    smoke test rather than aborting.
+    smoke test rather than aborting — UNLESS --strict-data is set, in which case
+    the failure is raised so automated/CI runs never silently use fake data.
     """
     def _synthetic():
         return DataLoader.generate_synthetic(
@@ -175,13 +180,13 @@ async def _load_bars(args: argparse.Namespace, config) -> tuple[list, bool]:
     if args.csv:
         bars = DataLoader.from_csv(args.csv)
         print(f"  Loaded {len(bars)} bars from {args.csv}")
-        return bars, False
+        return bars, False, "csv"
 
     if args.synthetic:
         bars = _synthetic()
         print(f"  ⚠️  SMOKE TEST: {len(bars)} SYNTHETIC bars "
               f"(seed={args.seed}) — NOT a real backtest")
-        return bars, True
+        return bars, True, "synthetic"
 
     # Default: real Bitget klines (--fetch is accepted but redundant now).
     try:
@@ -190,13 +195,19 @@ async def _load_bars(args: argparse.Namespace, config) -> tuple[list, bool]:
         if not bars:
             raise RuntimeError("no bars returned")
         print(f"  Fetched {len(bars)} REAL bars from Bitget")
-        return bars, False
+        return bars, False, "bitget_real"
     except Exception as exc:
+        # --strict-data: never silently substitute synthetic for a failed real
+        # fetch (protects automated/CI runs that expect real data).
+        if getattr(args, "strict_data", False):
+            print(f"  ❌  Real-data fetch failed ({exc}); --strict-data set, aborting "
+                  f"instead of using synthetic data.")
+            raise
         print(f"  ⚠️  Real-data fetch failed ({exc}); "
               f"falling back to a SYNTHETIC smoke test")
         bars = _synthetic()
         print(f"  ⚠️  SMOKE TEST: {len(bars)} synthetic bars — NOT a real backtest")
-        return bars, True
+        return bars, True, "synthetic_fallback"
 
 
 async def _run_backtest(args: argparse.Namespace) -> None:
@@ -213,7 +224,7 @@ async def _run_backtest(args: argparse.Namespace) -> None:
 
     # Load data (real-data-first; see _load_bars).
     print(f"\n  Loading data for {config.symbol}...")
-    bars, used_synthetic = await _load_bars(args, config)
+    bars, used_synthetic, data_source = await _load_bars(args, config)
 
     if len(bars) < 110:
         print(f"  ERROR: Need at least 110 bars, got {len(bars)}. Aborting.")
@@ -231,8 +242,15 @@ async def _run_backtest(args: argparse.Namespace) -> None:
     result = await engine.run(bars)
     engine.cleanup()  # remove temp state dir
 
+    # Stamp data provenance so the saved result is self-describing.
+    result.used_synthetic = used_synthetic
+    result.data_source = data_source
+
     # Display results
     print(_format_result_summary(result))
+    if used_synthetic:
+        print("  ⚠️  These numbers come from SYNTHETIC data "
+              f"(data_source={data_source}) — NOT a real backtest.")
 
     # Save JSON result
     if args.output:
@@ -275,6 +293,8 @@ Examples:
     data_group.add_argument("--limit", type=int, default=720, help="Real bars to fetch (default: 720)")
     data_group.add_argument("--bars", type=int, default=720, help="Synthetic bars to generate (default: 720)")
     data_group.add_argument("--save-data", action="store_true", help="Save synthetic data to CSV")
+    data_group.add_argument("--strict-data", action="store_true",
+                            help="Abort (don't fall back to synthetic) if the real-data fetch fails")
 
     # Synthetic data params
     synth_group = parser.add_argument_group("synthetic data")
@@ -322,7 +342,7 @@ async def _run_walk_forward(args: argparse.Namespace) -> None:
         use_recorded_llm=args.use_recorded_llm,
     )
     print(f"\n  Loading data for {config.symbol}...")
-    bars, _ = await _load_bars(args, config)
+    bars, used_synthetic, data_source = await _load_bars(args, config)
     if len(bars) < 220:
         print(f"  ERROR: walk-forward needs more bars (got {len(bars)}). Try --limit 1000+.")
         sys.exit(1)
@@ -340,6 +360,9 @@ async def _run_walk_forward(args: argparse.Namespace) -> None:
     print("  WALK-FORWARD ANALYSIS")
     print("=" * 60)
     print(f"  {report.summary()}\n")
+    if used_synthetic:
+        print("  ⚠️  SYNTHETIC data "
+              f"(data_source={data_source}) — walk-forward numbers are NOT real.\n")
     for f in report.folds:
         chosen = (f" thr={f.chosen.get('confidence_threshold')}"
                   if grid and "confidence_threshold" in f.chosen else "")
@@ -353,6 +376,8 @@ async def _run_walk_forward(args: argparse.Namespace) -> None:
         out_path.parent.mkdir(parents=True, exist_ok=True)
         with open(out_path, "w") as f:
             json.dump({"summary": report.summary(),
+                       "used_synthetic": used_synthetic,
+                       "data_source": data_source,
                        "folds": [vars(fl) for fl in report.folds]}, f, indent=2, default=str)
         print(f"  Results saved to {args.output}")
 
