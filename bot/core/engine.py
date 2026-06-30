@@ -3146,7 +3146,7 @@ class RuneClawEngine:
                             symbol=c.asset,
                             direction=c.direction.value if hasattr(c.direction, 'value') else str(c.direction),
                             pnl_result=float(c.pnl),
-                            market_regime=str(getattr(self.risk, '_current_regime', '') or ''),
+                            market_regime=self._outcome_regime(c.asset),
                             trade_id=getattr(c, 'trade_id', '') or '',
                             source="paper_outcome",
                         )
