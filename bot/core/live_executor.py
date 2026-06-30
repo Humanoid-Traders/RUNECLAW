@@ -5573,6 +5573,64 @@ class LiveExecutor:
 
     # ── Balance cache invalidation callback ────────────────────────
 
+    @staticmethod
+    def _missing_classic_legs(sl_id, tp_id, live_ids) -> tuple[bool, bool]:
+        """Given stored classic SL/TP order IDs and the set of order IDs that are
+        currently live on the exchange, return (sl_missing, tp_missing). A stored
+        ID that is no longer live means that protective leg was lost (filled /
+        cancelled while offline) and must be re-placed. A falsy stored ID counts
+        as missing."""
+        live = {str(x) for x in (live_ids or set())}
+        sl_missing = (not sl_id) or (str(sl_id) not in live)
+        tp_missing = (not tp_id) or (str(tp_id) not in live)
+        return sl_missing, tp_missing
+
+    async def _live_protective_order_ids(self, pos):
+        """Best-effort set of order IDs currently protecting `pos` on the
+        exchange: open plan/trigger orders for the symbol (classic two-order
+        SL/TP live here) PLUS the position-attached stopLossId / takeProfitId.
+
+        Returns the union set on success, or None when the exchange could not be
+        queried at all (BOTH sources errored) — the caller then trusts the stored
+        IDs as before (fail-open), so a transient query failure never triggers a
+        spurious re-placement."""
+        try:
+            exchange = await self._get_exchange()
+        except Exception as exc:
+            logger.debug("_live_protective_order_ids: no exchange for %s: %s", pos.symbol, exc)
+            return None
+        ccxt_sym = pos.symbol if ":USDT" in pos.symbol else f"{pos.symbol}:USDT"
+        ids: set[str] = set()
+        plan_ok = False
+        pos_ok = False
+        # Open plan/trigger orders (classic two-order SL/TP).
+        try:
+            plans = await exchange.fetch_open_orders(
+                ccxt_sym, params={"productType": "USDT-FUTURES", "isPlan": "plan_order"})
+            for o in (plans or []):
+                oid = o.get("id") or (o.get("info", {}) or {}).get("orderId")
+                if oid:
+                    ids.add(str(oid))
+            plan_ok = True
+        except Exception as exc:
+            logger.debug("plan-order fetch failed for %s: %s", pos.symbol, exc)
+        # Position-attached SL/TP IDs (accounts that attach protection to the position).
+        try:
+            positions = await exchange.fetch_positions(
+                [ccxt_sym], params={"productType": "USDT-FUTURES"})
+            for p in (positions or []):
+                info = p.get("info", {}) or {}
+                for k in ("stopLossId", "takeProfitId"):
+                    v = info.get(k)
+                    if v:
+                        ids.add(str(v))
+            pos_ok = True
+        except Exception as exc:
+            logger.debug("position fetch failed for %s: %s", pos.symbol, exc)
+        if not (plan_ok or pos_ok):
+            return None  # couldn't verify either source → fail-open
+        return ids
+
     async def verify_and_fix_sltp(self) -> None:
         """Verify all open positions have SL/TP on exchange and re-place if missing.
 
@@ -5599,6 +5657,25 @@ class LiveExecutor:
                 # to ensure they're actually on exchange (could be stale from a
                 # restart). The v3 API is idempotent so this is safe.
                 needs_fix = True
+            elif getattr(CONFIG.execution, "verify_classic_sltp_on_restart", False):
+                # Distinct, present classic IDs (two SEPARATE orders). The stored
+                # IDs alone don't prove the legs are still live — a leg lost while
+                # offline (filled / cancelled on-venue) leaves the position
+                # half-protected. Verify each leg against the exchange and re-place
+                # the pair if either is gone (placement cancels survivors first).
+                live_ids = await self._live_protective_order_ids(pos)
+                if live_ids is not None:  # None = couldn't verify → trust stored IDs
+                    sl_missing, tp_missing = self._missing_classic_legs(
+                        pos.sl_order_id, pos.tp_order_id, live_ids)
+                    if sl_missing or tp_missing:
+                        needs_fix = True
+                        audit(trade_log,
+                              f"Classic SL/TP leg missing on exchange for {pos.symbol} "
+                              f"(sl_missing={sl_missing} tp_missing={tp_missing}) — re-placing",
+                              action="startup_sltp_verify", result="LEG_MISSING",
+                              data={"trade_id": pos.trade_id, "symbol": pos.symbol,
+                                    "sl_order_id": pos.sl_order_id,
+                                    "tp_order_id": pos.tp_order_id})
 
             if needs_fix and pos.stop_loss > 0 and pos.take_profit > 0:
                 direction = Direction.LONG if pos.direction == "LONG" else Direction.SHORT

@@ -782,6 +782,17 @@ class ExecutionConfig:
     # that cycle and the exchange-side stop remains the protection. A missing
     # timestamp is NOT treated as stale (can't verify → don't disable). 0 disables.
     live_ticker_max_age_sec: float = _env_float_bounded("LIVE_TICKER_MAX_AGE_SEC", 120.0, 0.0, 3600.0)
+    # Verify classic (two-order) SL/TP legs against the exchange on restart
+    # (opt-in, default OFF; deep-audit medium). verify_and_fix_sltp re-places
+    # protection when the stored SL/TP IDs are both empty or identical (v3
+    # combined order), but when they are DISTINCT and present (two separate
+    # classic orders) it trusts them blindly — so a leg lost while the bot was
+    # offline (filled / cancelled on-venue) leaves the position half-protected
+    # and is never re-placed. When ON, each distinct classic leg is checked
+    # against the exchange's live orders; if one is gone, the SL/TP pair is
+    # re-placed (placement cancels survivors first, so no duplicates). Default
+    # OFF keeps restart behaviour byte-identical. RECOMMENDED ON for live money.
+    verify_classic_sltp_on_restart: bool = _env_bool("VERIFY_CLASSIC_SLTP_ON_RESTART", False)
     # Order splitting
     order_split_enabled: bool = _env_bool("ORDER_SPLIT_ENABLED", True)
     order_split_threshold_usd: float = _env_float("ORDER_SPLIT_THRESHOLD_USD", 500.0)
