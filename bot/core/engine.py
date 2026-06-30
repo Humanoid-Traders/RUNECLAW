@@ -1608,6 +1608,20 @@ class RuneClawEngine:
             results = await asyncio.gather(ohlcv_task, of_task, return_exceptions=True)
             ohlcv = results[0] if not isinstance(results[0], Exception) else None
             of_signal = results[1] if not isinstance(results[1], Exception) else None
+
+            # #17: shadow-record the live order-flow snapshot so the backtest can
+            # replay the same microstructure path (gated OF_RECORD_SNAPSHOTS,
+            # default OFF). Best-effort, fail-open — never breaks the scan path.
+            if of_signal is not None and \
+                    os.getenv("OF_RECORD_SNAPSHOTS", "").strip().lower() in ("1", "true", "yes", "on"):
+                try:
+                    from bot.backtest.recorded_order_flow import record_snapshot
+                    record_snapshot(
+                        os.getenv("OF_SNAPSHOT_PATH", "data/learning/order_flow_snapshots.jsonl"),
+                        of_signal,
+                    )
+                except Exception:
+                    pass
             if isinstance(results[0], Exception):
                 audit(
                     system_log,
