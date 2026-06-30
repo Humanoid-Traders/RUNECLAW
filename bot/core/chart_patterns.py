@@ -31,11 +31,47 @@ Design rules:
 
 from __future__ import annotations
 
+import os
 from typing import Optional
 
 import numpy as np
 
 from bot.core.multi_timeframe import _find_swings
+
+
+def _env_bool(key: str, default: bool) -> bool:
+    raw = os.getenv(key)
+    if raw is None:
+        return default
+    return raw.strip().lower() in ("1", "true", "yes", "on")
+
+
+# Leading-diagonal pre-trend window (deep-audit medium): bars immediately before
+# the pattern start used to gauge the prior move, and the minimum such bars
+# required to classify at all.
+_LEADING_DIAG_PRE_BARS = 10
+_LEADING_DIAG_MIN_PRE_BARS = 5
+
+
+def _leading_diagonal_pre_trend(closes, swing_lows, use_fix: bool) -> float:
+    """Move preceding a candidate leading diagonal (positive = price fell into
+    the pattern, the down-move a bullish wave-1 diagonal should follow).
+
+    The fix measures the prior trend over up to _LEADING_DIAG_PRE_BARS bars
+    IMMEDIATELY BEFORE the pattern start (swing_lows[0] index), and returns 0.0
+    (→ not classified) when there isn't enough pre-pattern history. The legacy
+    path reads the first 10 bars of the whole window — disconnected from where
+    the pattern actually begins — and is kept byte-identical when the fix is OFF.
+    """
+    if not use_fix:
+        return float(closes[0] - closes[min(10, len(closes) - 1)])
+    if len(swing_lows) < 1:
+        return 0.0
+    start = int(swing_lows[0][0])
+    pre_start = max(0, start - _LEADING_DIAG_PRE_BARS)
+    if (start - pre_start) < _LEADING_DIAG_MIN_PRE_BARS:
+        return 0.0  # too little history before the pattern to confirm a prior trend
+    return float(closes[pre_start] - closes[start])
 
 
 # ── Types ────────────────────────────────────────────────────────
@@ -1011,8 +1047,11 @@ def detect_elliott_diagonal(
     # Detected by: 5 waves with overlap + converging, but preceded by
     # a move in the opposite direction (prior trend reversal)
     if len(closes) >= 30:
-        # Check if price was falling before the current structure
-        pre_trend = closes[0] - closes[min(10, len(closes) - 1)]
+        # Check if price was falling INTO the pattern (before sl[0]). The legacy
+        # path read the first 10 bars of the whole window — unrelated to where
+        # the diagonal starts — so the reversal precondition was meaningless.
+        pre_trend = _leading_diagonal_pre_trend(
+            closes, sl, _env_bool("LEADING_DIAGONAL_PRETREND_FIX", False))
         if pre_trend > 0 and len(sl) >= 2 and len(sh) >= 2:
             # Was falling, now we see a rising 5-wave structure with overlap
             if sl[0][1] < sh[0][1] and sl[1][1] > sl[0][1]:
