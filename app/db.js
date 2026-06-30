@@ -31,6 +31,8 @@ class MemoryDB {
     this.scanCache = null; // { scan_json, updated_at }
     this.signals = [];     // global signal stream (UPSERT by signal_key)
     this._nextSignalId = 1;
+    this.pendingCreds = [];   // pending_credentials (UPSERT by user_id)
+    this.exchangeStatus = {}; // user_id -> { connected }
   }
 
   // Minimal query interface matching mysql2 pool.execute() return format
@@ -75,6 +77,40 @@ class MemoryDB {
       return [rows, []];
     }
 
+    // -- PENDING CREDENTIALS / EXCHANGE STATUS --
+    if (cmd.includes('INSERT INTO PENDING_CREDENTIALS')) {
+      // params: user_id, telegram_id, [encrypted_payload] — action is a literal
+      // in the SQL ('connect'/'disconnect'). UPSERT by user_id.
+      const action = cmd.includes("'DISCONNECT'") ? 'disconnect' : 'connect';
+      const row = {
+        user_id: params[0], telegram_id: params[1], exchange: 'bitget', action,
+        encrypted_payload: action === 'disconnect' ? null : params[2],
+        created_at: new Date(),
+      };
+      const i = this.pendingCreds.findIndex(p => p.user_id === row.user_id);
+      if (i >= 0) this.pendingCreds[i] = { id: this.pendingCreds[i].id, ...row };
+      else this.pendingCreds.push({ id: this.pendingCreds.length + 1, ...row });
+      return [{ affectedRows: 1 }, []];
+    }
+    if (cmd.includes('DELETE FROM PENDING_CREDENTIALS')) {
+      this.pendingCreds = this.pendingCreds.filter(p => String(p.user_id) !== String(params[0]));
+      return [{ affectedRows: 1 }, []];
+    }
+    if (cmd.includes('FROM PENDING_CREDENTIALS')) {  // SELECT (DELETE handled above)
+      if (cmd.includes('WHERE USER_ID')) {
+        return [this.pendingCreds.filter(p => String(p.user_id) === String(params[0])), []];
+      }
+      return [[...this.pendingCreds].sort((a, b) => a.created_at - b.created_at), []];
+    }
+    if (cmd.includes('INSERT INTO EXCHANGE_STATUS')) {
+      this.exchangeStatus[params[0]] = { connected: !!params[1] };
+      return [{ affectedRows: 1 }, []];
+    }
+    if (cmd.includes('FROM EXCHANGE_STATUS')) {
+      const s = this.exchangeStatus[params[0]];
+      return [s ? [{ connected: s.connected }] : [], []];
+    }
+
     // -- USERS --
     if (cmd.includes('INSERT INTO USERS')) {
       const exists = this.users.find(u => u.email === params[0]);
@@ -99,9 +135,15 @@ class MemoryDB {
     if (cmd.includes('UPDATE USERS SET LINK_TOKEN')) {
       // Could be the link-token generation (3 params) or token consumption (1 param)
       if (cmd.includes('TELEGRAM_LINKED')) {
-        // Consume token: UPDATE users SET link_token=NULL, ..., telegram_linked=TRUE WHERE id=?
-        const user = this.users.find(u => u.id === params[0]);
-        if (user) { user.link_token = null; user.link_token_expires = null; user.telegram_linked = true; }
+        // Consume token: ...telegram_linked=TRUE[, telegram_id=?] WHERE id=?
+        // params end with the user id; telegram_id (if present) is just before it.
+        const userId = params[params.length - 1];
+        const tgId = cmd.includes('TELEGRAM_ID') ? params[params.length - 2] : null;
+        const user = this.users.find(u => u.id === userId);
+        if (user) {
+          user.link_token = null; user.link_token_expires = null; user.telegram_linked = true;
+          if (tgId != null) user.telegram_id = tgId;
+        }
         return [{ affectedRows: user ? 1 : 0 }, []];
       }
       const user = this.users.find(u => u.id === params[2]);
@@ -259,11 +301,17 @@ async function migrate() {
         password_hash VARCHAR(255) NOT NULL,
         plan VARCHAR(50) DEFAULT 'free',
         telegram_linked BOOLEAN DEFAULT FALSE,
+        telegram_id VARCHAR(32) DEFAULT NULL,
         link_token VARCHAR(100),
         link_token_expires TIMESTAMP NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);
+    // Back-fill telegram_id on pre-existing deployments (CREATE TABLE IF NOT
+    // EXISTS won't add it). Ignore the duplicate-column error if already present.
+    try {
+      await pool.execute('ALTER TABLE users ADD COLUMN telegram_id VARCHAR(32) DEFAULT NULL');
+    } catch (e) { /* column already exists — fine */ }
     await pool.execute(`
       CREATE TABLE IF NOT EXISTS trades (
         id INT AUTO_INCREMENT PRIMARY KEY,
@@ -325,6 +373,32 @@ async function migrate() {
         resolved_at TIMESTAMP NULL DEFAULT NULL,
         INDEX idx_created (created_at),
         INDEX idx_symbol (symbol)
+      )
+    `);
+    // Pending exchange-credential submissions. The website encrypts the keys
+    // (AES-256-GCM, WEB_CREDS_KEY) into encrypted_payload; the bot PULLS pending
+    // rows over the shared-secret channel, imports them into its own Fernet store
+    // keyed by telegram_id, then the row is deleted. One in-flight request per
+    // user (UPSERT). Raw keys are NEVER stored in plaintext.
+    await pool.execute(`
+      CREATE TABLE IF NOT EXISTS pending_credentials (
+        id BIGINT AUTO_INCREMENT PRIMARY KEY,
+        user_id INT NOT NULL UNIQUE,
+        telegram_id VARCHAR(32) NOT NULL,
+        exchange VARCHAR(16) DEFAULT 'bitget',
+        action VARCHAR(16) DEFAULT 'connect',
+        encrypted_payload TEXT DEFAULT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    // Per-user exchange connection status, set by the bot's ack after it imports
+    // (connect) or removes (disconnect) the credentials. Drives the web UI badge.
+    await pool.execute(`
+      CREATE TABLE IF NOT EXISTS exchange_status (
+        user_id INT PRIMARY KEY,
+        exchange VARCHAR(16) DEFAULT 'bitget',
+        connected BOOLEAN DEFAULT FALSE,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
       )
     `);
   }

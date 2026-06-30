@@ -248,10 +248,11 @@ router.post('/validate-token', async (req, res) => {
 
     const user = rows[0];
 
-    // Consume the token and mark telegram as linked
+    // Consume the token, mark telegram linked, and RECORD the telegram id so the
+    // website can attach exchange-credential submissions to the right bot account.
     await pool.execute(
-      'UPDATE users SET link_token = NULL, link_token_expires = NULL, telegram_linked = TRUE WHERE id = ?',
-      [user.id]
+      'UPDATE users SET link_token = NULL, link_token_expires = NULL, telegram_linked = TRUE, telegram_id = ? WHERE id = ?',
+      [String(chat_id).slice(0, 32), user.id]
     );
 
     res.json({ user_id: user.id, email: user.email, plan: user.plan });

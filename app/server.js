@@ -28,6 +28,7 @@ const tradesRouter = require('./routes/trades');
 const syncRouter = require('./routes/sync');
 const marketRouter = require('./routes/market');
 const signalsRouter = require('./routes/signals');
+const credentialsRouter = require('./routes/credentials');
 
 const app = express();
 
@@ -48,6 +49,7 @@ app.use('/api/trades', tradesRouter);
 app.use('/api/bot/sync', syncRouter);
 app.use('/api/market', marketRouter);
 app.use('/api/signals', signalsRouter);
+app.use('/api/credentials', credentialsRouter);
 
 // SPA fallback - serve index.html for non-API routes
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
