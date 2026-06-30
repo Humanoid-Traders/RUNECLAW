@@ -140,5 +140,7 @@ class TestGateEnabled:
 
 
 class TestDefaultsOff:
-    def test_flag_defaults_off(self):
-        assert OrderFlowConfig().time_bars_enabled is False
+    def test_flag_defaults_on(self, monkeypatch):
+        # Enabled by default (operator-requested activation); explicit env still wins.
+        monkeypatch.delenv("OF_TIME_BARS_ENABLED", raising=False)
+        assert OrderFlowConfig().time_bars_enabled is True

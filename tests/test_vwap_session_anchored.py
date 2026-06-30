@@ -71,12 +71,21 @@ def _bars():
 
 class TestComputeIndicatorsIntegration:
     def test_exposes_session_vwap_distinct_from_full_window(self):
+        import bot.core.analyzer as az
         highs, lows, closes, vols, times = _bars()
-        res = Analyzer._compute_indicators(highs, lows, closes, vols, times=times)
+        # Force the anchoring OFF (default is now ON) to verify the full-window
+        # "vwap" stays distinct from the session value. AnalyzerConfig is frozen,
+        # so toggle via object.__setattr__ with restore.
+        _orig = az.CONFIG.analyzer.vwap_session_anchored
+        object.__setattr__(az.CONFIG.analyzer, "vwap_session_anchored", False)
+        try:
+            res = Analyzer._compute_indicators(highs, lows, closes, vols, times=times)
+        finally:
+            object.__setattr__(az.CONFIG.analyzer, "vwap_session_anchored", _orig)
         assert res is not None
         # typical_price == close here, so session VWAP (day-1 bars) == 200.
         assert res["vwap_session"] == 200.0
-        # Default OFF: "vwap" stays the full-window cumulative (~125), not 200.
+        # OFF: "vwap" stays the full-window cumulative (~125), not 200.
         assert res["vwap"] == 125.0
 
 
@@ -86,6 +95,8 @@ class TestGating:
         assert 'results["vwap"] = results["vwap_session"]' in src
         assert 'vwap_session_anchored' in src
 
-    def test_config_flag_defaults_off(self):
+    def test_config_flag_defaults_on(self, monkeypatch):
+        # Enabled by default (operator-requested activation); explicit env still wins.
+        monkeypatch.delenv("VWAP_SESSION_ANCHORED", raising=False)
         from bot.config import AnalyzerConfig
-        assert AnalyzerConfig().vwap_session_anchored is False
+        assert AnalyzerConfig().vwap_session_anchored is True

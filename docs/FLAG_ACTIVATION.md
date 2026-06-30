@@ -44,20 +44,20 @@ OF_GUARD_TOP_DEPTH_ENABLED=1       # require real top-of-book depth ≥ position
 LLM_CACHE_SCOPED_KEY=1             # scope LLM cache key by model/tier (default ON)
 ```
 
-## 2. Signal-changing — backtest first
+## 2. Signal-changing — ✅ now ON by default
 
-Each is correct, but alters which trades fire. Run
-`python -m bot.backtest.runner` (now with honest `data_source`) and compare
-before enabling on live money.
+Each is correct, but alters which trades fire. **These now default ON in code**
+(operator-requested activation). Set any to `0`/`false` in `.env` to disable, and
+backtest (`python -m bot.backtest.runner`, honest `data_source`) to compare.
 
 ```dotenv
-OF_FUNDING_VOTE_FIXED_SCALE=1      # funding confluence vote actually contributes
-VWAP_SESSION_ANCHORED=1            # vwap voters use session-anchored VWAP
-LEADING_DIAGONAL_PRETREND_FIX=1    # stricter leading-diagonal detection
-LIQUIDITY_SWEEP_OWN_CLOSE=1        # stricter liquidity-sweep detection
-OF_TIME_BARS_ENABLED=1             # taker 3-bar gate becomes time-aware
+OF_FUNDING_VOTE_FIXED_SCALE=1      # funding confluence vote actually contributes (default ON)
+VWAP_SESSION_ANCHORED=1            # vwap voters use session-anchored VWAP (default ON)
+LEADING_DIAGONAL_PRETREND_FIX=1    # stricter leading-diagonal detection (default ON)
+LIQUIDITY_SWEEP_OWN_CLOSE=1        # stricter liquidity-sweep detection (default ON)
+OF_TIME_BARS_ENABLED=1             # taker 3-bar gate becomes time-aware (default ON)
 PATTERN_ATR_TOLERANCES_ENABLED=1   # H&S / double-top symmetry tolerance scales with
-                                   # ATR (only ever tightens the fixed 5%/3% gate)
+                                   # ATR — only ever tightens the fixed 5%/3% gate (default ON)
 ```
 
 ## 3. Learning — enable the write now, apply later

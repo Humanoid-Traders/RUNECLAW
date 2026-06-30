@@ -34,7 +34,8 @@ class TestResolveScale:
         assert _resolve(0.01) == 0.01
 
     def test_none_off_is_dead_scale(self, monkeypatch):
-        monkeypatch.delenv("OF_FUNDING_VOTE_FIXED_SCALE", raising=False)
+        # Explicitly disabled (default is now ON) → legacy dead scale.
+        monkeypatch.setenv("OF_FUNDING_VOTE_FIXED_SCALE", "0")
         assert _resolve(None) == _DEAD
 
     def test_none_on_is_fixed_scale(self, monkeypatch):
@@ -65,9 +66,9 @@ class TestFundingVoteMagnitude:
 
 
 class TestGating:
-    def test_default_off_uses_dead_scale(self, monkeypatch):
-        # No explicit override, flag off → byte-identical dead behaviour.
-        monkeypatch.delenv("OF_FUNDING_VOTE_FIXED_SCALE", raising=False)
+    def test_explicit_off_uses_dead_scale(self, monkeypatch):
+        # Explicitly disabled → byte-identical legacy dead behaviour.
+        monkeypatch.setenv("OF_FUNDING_VOTE_FIXED_SCALE", "0")
         v = _funding_vote(_sig(0.0005))
         assert abs(v) < 0.02
 
@@ -76,5 +77,7 @@ class TestGating:
         v = _funding_vote(_sig(0.0005))
         assert v == -1.0
 
-    def test_config_flag_defaults_off(self):
-        assert OrderFlowConfig().funding_vote_fixed_scale is False
+    def test_config_flag_defaults_on(self, monkeypatch):
+        # Enabled by default (operator-requested activation); explicit env still wins.
+        monkeypatch.delenv("OF_FUNDING_VOTE_FIXED_SCALE", raising=False)
+        assert OrderFlowConfig().funding_vote_fixed_scale is True

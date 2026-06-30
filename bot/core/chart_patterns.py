@@ -132,7 +132,7 @@ def _sym_tolerance(highs, lows, closes, fixed_pct: float) -> float:
     when the flag is off (byte-identical) or ATR is unavailable; otherwise scales
     with ATR% and clamps to ``[floor × fixed_pct, fixed_pct]`` so it only ever
     tightens the legacy gate."""
-    if not _env_bool("PATTERN_ATR_TOLERANCES_ENABLED", False):
+    if not _env_bool("PATTERN_ATR_TOLERANCES_ENABLED", True):
         return fixed_pct
     atrp = _atr_pct(highs, lows, closes)
     if atrp <= 0.0:
@@ -1124,7 +1124,7 @@ def detect_elliott_diagonal(
         # path read the first 10 bars of the whole window — unrelated to where
         # the diagonal starts — so the reversal precondition was meaningless.
         pre_trend = _leading_diagonal_pre_trend(
-            closes, sl, _env_bool("LEADING_DIAGONAL_PRETREND_FIX", False))
+            closes, sl, _env_bool("LEADING_DIAGONAL_PRETREND_FIX", True))
         if pre_trend > 0 and len(sl) >= 2 and len(sh) >= 2:
             # Was falling, now we see a rising 5-wave structure with overlap
             if sl[0][1] < sh[0][1] and sl[1][1] > sl[0][1]:
@@ -1281,7 +1281,7 @@ def detect_liquidity_sweep(
     # wick plus the current bar's position could fire a false sweep. When enabled,
     # each candidate bar is checked against ITS OWN close (deep-audit medium).
     # Default OFF keeps the legacy behaviour byte-identical.
-    use_own_close = _env_bool("LIQUIDITY_SWEEP_OWN_CLOSE", False)
+    use_own_close = _env_bool("LIQUIDITY_SWEEP_OWN_CLOSE", True)
 
     # Check last 3 bars for sweeps (not just the last bar)
     check_bars = min(3, len(lows))

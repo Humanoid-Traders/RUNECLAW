@@ -45,7 +45,7 @@ class TestAtrPct:
 
 class TestSymTolerance:
     def test_flag_off_returns_fixed_exactly(self, monkeypatch):
-        monkeypatch.delenv("PATTERN_ATR_TOLERANCES_ENABLED", raising=False)
+        monkeypatch.setenv("PATTERN_ATR_TOLERANCES_ENABLED", "0")
         highs, lows, closes = _flat_series()
         assert _sym_tolerance(highs, lows, closes, 5.0) == 5.0
         assert _sym_tolerance(highs, lows, closes, 3.0) == 3.0
@@ -90,7 +90,7 @@ class TestHeadAndShouldersGate:
         monkeypatch.setattr(cp, "_find_swings", lambda h, lw, lb: _SWINGS)
 
     def test_detected_when_flag_off(self, _patched_swings, monkeypatch):
-        monkeypatch.delenv("PATTERN_ATR_TOLERANCES_ENABLED", raising=False)
+        monkeypatch.setenv("PATTERN_ATR_TOLERANCES_ENABLED", "0")
         # Low-vol closes; shoulder_diff = 3% < fixed 5% → H&S detected.
         highs, lows, closes = _flat_series(price=100.0, half_range=0.05)
         res = detect_head_and_shoulders(highs, lows, closes)
@@ -117,7 +117,7 @@ class TestHeadAndShouldersGate:
         monkeypatch.setattr(cp, "_find_swings", lambda h, lw, lb: swings)
         highs, lows, closes = _flat_series(price=100.0, half_range=1.0)  # ATR%≈2 → tol 3
 
-        monkeypatch.delenv("PATTERN_ATR_TOLERANCES_ENABLED", raising=False)
+        monkeypatch.setenv("PATTERN_ATR_TOLERANCES_ENABLED", "0")
         conf_off = detect_head_and_shoulders(highs, lows, closes)["confidence"]
         monkeypatch.setenv("PATTERN_ATR_TOLERANCES_ENABLED", "1")
         conf_on = detect_head_and_shoulders(highs, lows, closes)["confidence"]
