@@ -26,7 +26,11 @@ from dataclasses import dataclass
 from typing import Any
 
 from bot.core.engine import RuneClawEngine
-from bot.skills.skill_registry import SkillRegistry, build_default_registry
+from bot.skills.skill_registry import (
+    _TOTAL_RISK_CHECKS,
+    SkillRegistry,
+    build_default_registry,
+)
 from bot.utils.logger import audit, system_log
 
 # C5 FIX: bearer token authentication for MCP tool calls.
@@ -124,9 +128,9 @@ TOOL_CATALOGUE: tuple[MCPToolDef, ...] = (
         mcp_name="runeclaw_shield",
         skill_name="_shield_evaluate",
         description=(
-            "RUNECLAW Shield: 21 fail-closed risk checks on a trade proposal. "
-            "Any external agent can call this to get an immutable safety decision. "
-            "Returns approved/rejected with check details."
+            f"RUNECLAW Shield: {_TOTAL_RISK_CHECKS} fail-closed risk checks on a "
+            "trade proposal. Any external agent can call this to get an immutable "
+            "safety decision. Returns approved/rejected with check details."
         ),
         params=(
             MCPToolParam(
@@ -429,7 +433,7 @@ class RuneClawMCPServer:
         self, symbol: str, direction: str, entry_price: float,
         stop_loss: float, take_profit: float, confidence: float = 0.65,
     ) -> str:
-        """Run 21 fail-closed risk checks on a trade proposal."""
+        """Run the RUNECLAW Shield fail-closed risk checks on a trade proposal."""
         from bot.utils.models import Direction, TradeIdea, RiskVerdict
 
         dir_enum = Direction.LONG if direction.lower() == "long" else Direction.SHORT

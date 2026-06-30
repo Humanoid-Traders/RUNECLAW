@@ -1855,7 +1855,7 @@ class RuneClawEngine:
         if is_pyramid_add:
             self._pending_pyramid[idea.id] = True
 
-        # Risk gate — pass ATR so all 18 checks run
+        # Risk gate — pass ATR so all risk-engine checks run
         # LIVE FIX: pass actual exchange equity so sizing is based on real capital
         live_eq = self._live_balance_cache.get("total", 0.0) if (CONFIG.is_live() and self._live_balance_cache) else None
         # Pass micro-test cap so risk evaluates the actual execution size
