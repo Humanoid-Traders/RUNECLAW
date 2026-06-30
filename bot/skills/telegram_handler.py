@@ -262,6 +262,7 @@ class TelegramHandler:
             ("closeall", self._cmd_close_all),
             ("daily_report", self._cmd_daily_report),
             ("strategy", self._cmd_strategy),
+            ("flags", self._cmd_flags),
             # Signal stats
             ("signals", self._cmd_signals),
             # Admin commands
@@ -6175,6 +6176,18 @@ class TelegramHandler:
             await self.forwarder.post_daily_report(report_summary)
         except Exception:
             pass
+
+    async def _cmd_flags(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """Show which deep-audit opt-in flags are ON/OFF (admin)."""
+        if not self._is_admin(update):
+            return
+        chat_id = update.effective_chat.id
+        try:
+            from bot.core.flag_status import format_flag_report
+            await ctx.bot.send_message(chat_id=chat_id, text=format_flag_report(),
+                                       parse_mode="HTML")
+        except Exception as exc:
+            await ctx.bot.send_message(chat_id=chat_id, text=f"❌ Error: {exc}")
 
     def _representative_regime(self) -> str:
         """A real market regime to display for /strategy. The risk engine's
