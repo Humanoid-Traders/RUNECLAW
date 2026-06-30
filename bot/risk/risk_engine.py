@@ -668,6 +668,7 @@ class RiskEngine:
         if _eq_mult < 1.0:
             if _eq_mult <= 0:
                 failed.append("EQUITY_CURVE: trading paused — equity below 2σ of MA")
+                position_usd = 0.0  # #50: a paused trade reports size 0, not a phantom notional
             else:
                 position_usd *= _eq_mult
 
@@ -682,6 +683,7 @@ class RiskEngine:
                     failed.append(
                         "LIVE_PERF_GOVERNOR: trading paused — realized win rate "
                         "and net PnL below floor over recent window")
+                    position_usd = 0.0  # #50: paused → report size 0, not a phantom notional
                 else:
                     position_usd *= _gov_mult
 
