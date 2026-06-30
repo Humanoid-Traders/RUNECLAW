@@ -998,9 +998,15 @@ class Analyzer:
                               data={"symbol": signal.symbol, "raw": blended_confidence,
                                     "calibrated": _calibrated})
                     blended_confidence = _calibrated
-                else:
-                    logger.debug("Calibration shadow: %s raw=%.2f -> would=%.2f",
-                                 signal.symbol, blended_confidence, _calibrated)
+                elif _calibrated != blended_confidence:
+                    # #36: shadow mode exists to be OBSERVED before enabling, but
+                    # the delta went to DEBUG (no handler) → invisible. Emit it on
+                    # the same visible audit channel as the APPLIED path.
+                    audit(trade_log,
+                          f"Confidence calibration SHADOW {blended_confidence:.2f} -> would={_calibrated:.2f}",
+                          action="confidence_calibration", result="SHADOW",
+                          data={"symbol": signal.symbol, "raw": blended_confidence,
+                                "would": _calibrated})
         except Exception as _cal_exc:
             logger.debug("Confidence calibration skipped: %s", _cal_exc)
 
@@ -1025,8 +1031,14 @@ class Analyzer:
                               data={"symbol": signal.symbol, "regime": regime.value,
                                     "direction": direction.value, "nudge": round(_nudge, 4)})
                     else:
-                        logger.debug("Setup-expectancy shadow: %s %s %s nudge=%+.3f",
-                                     signal.symbol, regime.value, direction.value, _nudge)
+                        # #36: surface the would-be nudge on the visible audit
+                        # channel (was DEBUG → invisible) so shadow mode can be
+                        # evaluated before the flag is enabled.
+                        audit(trade_log,
+                              f"Setup expectancy SHADOW nudge would={_nudge:+.3f} on {blended_confidence:.2f}",
+                              action="setup_expectancy", result="SHADOW",
+                              data={"symbol": signal.symbol, "regime": regime.value,
+                                    "direction": direction.value, "nudge": round(_nudge, 4)})
         except Exception as _exp_exc:
             logger.debug("Setup expectancy skipped: %s", _exp_exc)
 
