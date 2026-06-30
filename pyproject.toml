@@ -30,6 +30,9 @@ crypto = [
 anthropic = [
     "anthropic==0.104.1",
 ]
+mcp = [
+    "mcp>=1.0.0",
+]
 charts = [
     "mplfinance>=0.12.10b0",
     "matplotlib>=3.7",

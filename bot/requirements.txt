@@ -11,3 +11,7 @@ cryptography>=48.0.1
 Pillow>=10.3.0
 # RC-AUD-020: optional — durable JWT revocation store (token_store.py import-guards it).
 redis>=5.0.0
+# OKX-AI: optional — official MCP SDK for the read-only stdio transport
+# (bot/mcp/transport.py import-guards it; when absent the existing in-process
+# RuneClawMCPServer still works, only the external transport is unavailable).
+mcp>=1.0.0
