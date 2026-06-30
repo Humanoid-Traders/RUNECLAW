@@ -18,14 +18,29 @@ import os
 from bot.config import CONFIG
 
 
-def _env_on(key: str) -> bool:
-    """Mirror the order-flow / chart-pattern modules' _env_bool semantics."""
-    return (os.getenv(key) or "").strip().lower() in ("1", "true", "yes", "on")
+def _env_on(key: str, default: bool = False) -> bool:
+    """Mirror the order-flow / chart-pattern modules' _env_bool semantics. ``default``
+    is the in-code default applied when the env var is unset, so the report reflects
+    the EFFECTIVE state (the code default), not just an explicit override."""
+    raw = os.getenv(key)
+    if raw is None:
+        return default
+    return raw.strip().lower() in ("1", "true", "yes", "on")
 
 
 def _attr(section: str, name: str, default=False):
     sec = getattr(CONFIG, section, None)
     return getattr(sec, name, default) if sec is not None else default
+
+
+def _of(name: str, default: bool = False) -> bool:
+    """Effective default of an OrderFlowConfig field (it's a standalone dataclass,
+    not a CONFIG section, so read its constructed default rather than env-only)."""
+    try:
+        from bot.core.order_flow import OrderFlowConfig
+        return bool(getattr(OrderFlowConfig(), name, default))
+    except Exception:
+        return default
 
 
 def _pos(section: str, name: str) -> bool:
@@ -55,21 +70,23 @@ def audit_flag_report() -> list[tuple[str, list[tuple[str, str, bool]]]]:
             ("LLM_FALLBACK_COST_ACCOUNTING", "Count fallback LLM calls vs daily budgets",
              bool(_attr("llm", "fallback_cost_accounting_enabled"))),
             ("OF_GUARD_TOP_DEPTH_ENABLED", "Top-of-book executable-depth guard",
-             _env_on("OF_GUARD_TOP_DEPTH_ENABLED")),
+             _of("guard_top_depth_enabled", True)),
             ("LLM_CACHE_SCOPED_KEY", "Per-model/tier LLM cache key (multi-user)",
              bool(_attr("analyzer", "llm_cache_scoped_key"))),
         ]),
         ("Signal-changing — backtest before enabling on live money", [
             ("OF_FUNDING_VOTE_FIXED_SCALE", "Funding confluence vote (real scale)",
-             _env_on("OF_FUNDING_VOTE_FIXED_SCALE")),
+             _of("funding_vote_fixed_scale", True)),
             ("VWAP_SESSION_ANCHORED", "Session-anchored VWAP for vwap voters",
              bool(_attr("analyzer", "vwap_session_anchored"))),
             ("LEADING_DIAGONAL_PRETREND_FIX", "Leading-diagonal pre-trend window",
-             _env_on("LEADING_DIAGONAL_PRETREND_FIX")),
+             _env_on("LEADING_DIAGONAL_PRETREND_FIX", True)),
             ("LIQUIDITY_SWEEP_OWN_CLOSE", "Liquidity-sweep own-close check",
-             _env_on("LIQUIDITY_SWEEP_OWN_CLOSE")),
+             _env_on("LIQUIDITY_SWEEP_OWN_CLOSE", True)),
             ("OF_TIME_BARS_ENABLED", "Taker 3-bar gate time-awareness",
-             _env_on("OF_TIME_BARS_ENABLED")),
+             _of("time_bars_enabled", True)),
+            ("PATTERN_ATR_TOLERANCES_ENABLED", "ATR-scaled chart-pattern tolerances",
+             _env_on("PATTERN_ATR_TOLERANCES_ENABLED", True)),
         ]),
         ("Learning — enable the write first, apply once history builds", [
             ("LEARN_FROM_PAPER_CLOSES", "Feed paper/sim closes to the learners",
@@ -90,6 +107,12 @@ def audit_flag_report() -> list[tuple[str, list[tuple[str, str, bool]]]]:
              bool(_attr("analyzer", "drop_unclosed_candle_enabled"))),
             ("REGIME_SIZING_ENABLED", "Regime→sizing bridge (also fills _current_regime)",
              bool(_attr("risk", "regime_sizing_enabled"))),
+            ("PER_STRATEGY_NOTIONAL_CAP_ENABLED", "Per-strategy notional cap (scalp/intraday/swing/position)",
+             bool(_attr("risk", "per_strategy_notional_cap_enabled"))),
+        ]),
+        ("Backtest fidelity / recording", [
+            ("OF_RECORD_SNAPSHOTS", "Shadow-record live order flow for backtest replay",
+             _env_on("OF_RECORD_SNAPSHOTS", True)),
         ]),
     ]
 
