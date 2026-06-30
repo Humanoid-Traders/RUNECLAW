@@ -5368,10 +5368,11 @@ class TestSprint6Fixes:
     def test_c2_41_epsilon_floating_point_only(self):
         """C2-41: Position size check should use floating-point epsilon, not 1% tolerance."""
         import inspect
-        source = inspect.getsource(RiskEngine._evaluate_locked)
-        # Should use tiny epsilon (1e-9), not 0.01
+        # The epsilon now lives in the _position_within_cap helper that check #2
+        # delegates to (deep-audit dedup); it must still be the tiny float epsilon.
+        source = inspect.getsource(RiskEngine._position_within_cap)
         assert "1e-9" in source
-        assert "0.01" not in source.split("POSITION_SIZE")[0].split("POSITION_SIZE")[-1] or True
+        assert "0.01" not in source
 
     def test_c2_43_rejection_history_deepcopy(self):
         """C2-43: rejection_history property should return a deep copy."""
