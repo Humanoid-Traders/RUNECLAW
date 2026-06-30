@@ -452,6 +452,33 @@ class RuneClawEngine:
             return None
         return cap if (cap is not None and cap > 0) else None
 
+    def _outcome_regime(self, symbol: str) -> str:
+        """Best-available market regime to tag a closed-trade outcome with.
+
+        Prefer the analyzer's actual detected regime for this symbol (a real
+        value like TREND_UP / RANGE). The risk engine's _current_regime stays
+        "UNKNOWN" unless REGIME_SIZING_ENABLED (the regime→sizing bridge is
+        gated), so tagging outcomes with it stored "UNKNOWN" for every trade
+        while setup-expectancy looks up by the analyzer's real regime — the keys
+        never matched and the nudge was permanently zero (deep-audit medium).
+        Tolerates symbol-format differences; falls back to _current_regime."""
+        try:
+            regimes = getattr(getattr(self, "analyzer", None), "_current_regimes", None)
+            if regimes:
+                reg = regimes.get(symbol)
+                if reg is None and symbol:
+                    nsym = normalize_symbol(symbol)
+                    reg = regimes.get(nsym) or next(
+                        (v for k, v in regimes.items() if normalize_symbol(k) == nsym),
+                        None)
+                if reg is not None:
+                    val = getattr(reg, "value", reg)
+                    if val:
+                        return str(val)
+        except Exception:
+            pass
+        return str(getattr(self.risk, "_current_regime", "") or "")
+
     def _on_live_position_closed(self, pos) -> None:
         """Handle live position close: invalidate cache + set SL cooldown."""
         self._invalidate_live_balance_cache()
@@ -468,7 +495,7 @@ class RuneClawEngine:
                     symbol=getattr(pos, "symbol", ""),
                     direction=str(getattr(pos, "direction", "") or ""),
                     pnl_result=float(_pnl),
-                    market_regime=str(getattr(self.risk, "_current_regime", "") or ""),
+                    market_regime=self._outcome_regime(getattr(pos, "symbol", "")),
                     trade_id=getattr(pos, "trade_id", ""),
                 )
         except Exception as _lo_exc:
