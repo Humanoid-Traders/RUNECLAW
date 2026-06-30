@@ -1473,6 +1473,22 @@ class LiveExecutor:
             logger.warning("adopt_exchange_limit_orders() failed: %s", exc)
         return adopted
 
+    @staticmethod
+    def _emergency_leverage(leverage_mult, is_futures: bool) -> int:
+        """Leverage to record on an emergency (post-order-crash) position: the
+        ACTUAL leverage used to size the order for futures, else 1 (spot).
+
+        Recording the config default here would over-state leverage — dynamic
+        leverage only ever reduces from the default — and therefore under-count
+        the position's margin when pos.leverage later drives the
+        cost_usd = notional / leverage recomputation. Returns at least 1."""
+        if not is_futures:
+            return 1
+        try:
+            return max(1, int(leverage_mult))
+        except (TypeError, ValueError):
+            return 1
+
     async def execute(self, idea: TradeIdea, size_usd: float,
                       order_type: str = "", atr_value: float = 0.0) -> str:
         """Execute a live trade on Bitget.
@@ -1618,6 +1634,11 @@ class LiveExecutor:
         order = None  # H-02 FIX: sentinel for emergency position path
         current_price = idea.entry_price  # N-01 FIX: sentinel for emergency path
         quantity = 0.0  # N-01 FIX: sentinel for emergency path
+        # Sentinel so the emergency-position record can store the ACTUAL leverage
+        # used (deep-audit medium). The dynamic block below overwrites this with
+        # the real value before any order is placed; the default here only acts
+        # as a fail-safe if a crash somehow precedes that (order would be None then).
+        leverage_mult = CONFIG.exchange.default_leverage
         try:
             exchange = await self._get_exchange()
             is_futures = CONFIG.exchange.trade_mode == "futures"
@@ -2639,7 +2660,12 @@ class LiveExecutor:
                     cost_usd=size_usd,
                     stop_loss=idea.stop_loss,
                     take_profit=idea.take_profit,
-                    leverage=CONFIG.exchange.default_leverage if is_futures else 1,
+                    # Record the ACTUAL leverage used to size this order, not the
+                    # config default — pos.leverage drives cost_usd/exposure
+                    # recomputation, and dynamic leverage only ever reduces from
+                    # the default, so the default over-stated leverage and
+                    # under-counted this position's margin.
+                    leverage=self._emergency_leverage(leverage_mult, is_futures),
                     is_spot=False,
                     opened_at=datetime.now(UTC),
                     status="open",
