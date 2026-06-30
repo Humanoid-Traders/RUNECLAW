@@ -143,3 +143,10 @@ class BacktestResult(BaseModel):
 
     # Effective config snapshot for reproducibility (fix L)
     effective_config: dict = Field(default_factory=dict)
+
+    # Data provenance (deep-audit medium): make a saved result self-describing so
+    # a synthetic-fallback run is never mistaken for a real backtest. data_source
+    # is one of "csv" | "bitget_real" | "synthetic" | "synthetic_fallback";
+    # used_synthetic is True for the latter two. Stamped by the runner.
+    used_synthetic: bool = False
+    data_source: str = "unknown"
