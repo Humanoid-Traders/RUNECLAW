@@ -3108,6 +3108,23 @@ class RuneClawEngine:
                     )
                 except Exception:
                     pass
+                # Feed the paper/sim close into the learning loop's WRITE side
+                # (opt-in, default OFF). Live closes already record via
+                # _on_live_position_closed; this lets the simulation-first
+                # majority of closes accumulate learning history, tagged
+                # source="paper_outcome" so live evidence stays distinguishable.
+                try:
+                    if CONFIG.learning.learn_from_paper_closes_enabled:
+                        self.learning.record_closed_outcome(
+                            symbol=c.asset,
+                            direction=c.direction.value if hasattr(c.direction, 'value') else str(c.direction),
+                            pnl_result=float(c.pnl),
+                            market_regime=str(getattr(self.risk, '_current_regime', '') or ''),
+                            trade_id=getattr(c, 'trade_id', '') or '',
+                            source="paper_outcome",
+                        )
+                except Exception as _lp_exc:
+                    logger.debug("Paper-close learning record skipped: %s", _lp_exc)
                 # Record time-of-day outcome
                 try:
                     from datetime import datetime as _dt
