@@ -6098,9 +6098,29 @@ class LiveExecutor:
                         [ccxt_symbol],
                         params={"productType": "USDT-FUTURES"},
                     )
-                    has_position = any(
-                        abs(float(p.get("contracts", 0) or 0)) > 0 for p in positions
-                    )
+                    if self._hedge_mode:
+                        # Hedge mode: the account can hold BOTH a long and a short
+                        # on the same symbol at once. A side-agnostic check would
+                        # see the OPPOSITE side's position and conclude ours still
+                        # exists, so a closed long is never reconciled while a short
+                        # remains (its PnL never realized). Match the tracked side.
+                        # Fail-safe: if ccxt doesn't report a usable side, treat it
+                        # as present (broad check) so we never falsely close a live
+                        # position. The downstream real-close-data requirement
+                        # backstops this either way.
+                        _want = pos.direction.lower()
+
+                        def _present(p):
+                            if abs(float(p.get("contracts", 0) or 0)) <= 0:
+                                return False
+                            _side = (p.get("side") or "").lower()
+                            return _side == _want or _side not in ("long", "short")
+
+                        has_position = any(_present(p) for p in positions)
+                    else:
+                        has_position = any(
+                            abs(float(p.get("contracts", 0) or 0)) > 0 for p in positions
+                        )
 
                     if not has_position:
                         # ── RACE RE-CHECK: status may have changed during await ──

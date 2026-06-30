@@ -455,3 +455,90 @@ class TestAdoptSafetyStopSizing:
         call_qty = executor._place_sl_tp.await_args.args[3]
         assert call_qty == pytest.approx(0.0005), \
             "safety stop must be sized off lp.quantity (totalQty), not contracts"
+
+
+# ── Hedge-mode reconciliation: match the tracked side ────────────────
+
+
+class TestHedgeModeReconcile:
+    """In hedge mode the account can hold a long AND a short on one symbol.
+    reconcile_positions must match the TRACKED side, or a closed long is never
+    reconciled while an opposite-side short remains (PnL never realized)."""
+
+    def _seed_long(self, executor: LiveExecutor) -> str:
+        tid = "T-HEDGE-LONG"
+        executor._positions[tid] = LivePosition(
+            trade_id=tid, symbol="BTC/USDT", direction="LONG",
+            entry_price=100_000.0, quantity=0.0003, cost_usd=30.0,
+            stop_loss=98_000.0, take_profit=105_000.0, status="open",
+            sl_order_id=None, tp_order_id=None,
+        )
+        return tid
+
+    def _close_data(self, executor):
+        executor._fetch_bitget_close_data = AsyncMock(return_value={
+            "close_price": 99_000.0, "reason": "sl_hit",
+            "source": "bitget_history", "pnl": -3.0,
+        })
+
+    @pytest.mark.asyncio
+    async def test_opposite_side_only_reconciles_tracked_long(self):
+        # Only a SHORT remains on the exchange; the tracked LONG is gone.
+        executor, mock_ex = _executor_with_mock()
+        executor._hedge_mode = True
+        tid = self._seed_long(executor)
+        self._close_data(executor)
+        mock_ex.fetch_positions = AsyncMock(return_value=[
+            {"contracts": 0.0005, "side": "short"},
+        ])
+
+        msgs = await executor.reconcile_positions()
+        assert any("RECONCILED" in m for m in msgs)
+        # Reconciled close finalizes and removes the position from the open book.
+        assert tid not in executor._positions or executor._positions[tid].status == "closed"
+        assert any(ct.trade_id == tid for ct in executor._closed_trades)
+
+    @pytest.mark.asyncio
+    async def test_same_side_present_is_not_reconciled(self):
+        # The tracked LONG still exists on the exchange → leave it open.
+        executor, mock_ex = _executor_with_mock()
+        executor._hedge_mode = True
+        tid = self._seed_long(executor)
+        self._close_data(executor)
+        mock_ex.fetch_positions = AsyncMock(return_value=[
+            {"contracts": 0.0003, "side": "long"},
+        ])
+
+        msgs = await executor.reconcile_positions()
+        assert msgs == []
+        assert executor._positions[tid].status == "open"
+
+    @pytest.mark.asyncio
+    async def test_missing_side_is_failsafe_present(self):
+        # ccxt didn't report a usable side → treat as present (never falsely close).
+        executor, mock_ex = _executor_with_mock()
+        executor._hedge_mode = True
+        tid = self._seed_long(executor)
+        self._close_data(executor)
+        mock_ex.fetch_positions = AsyncMock(return_value=[
+            {"contracts": 0.0005},  # no "side" key
+        ])
+
+        msgs = await executor.reconcile_positions()
+        assert msgs == []
+        assert executor._positions[tid].status == "open"
+
+    @pytest.mark.asyncio
+    async def test_one_way_mode_unchanged_broad_check(self):
+        # One-way mode keeps the side-agnostic check: any contracts → present.
+        executor, mock_ex = _executor_with_mock()
+        executor._hedge_mode = False
+        tid = self._seed_long(executor)
+        self._close_data(executor)
+        mock_ex.fetch_positions = AsyncMock(return_value=[
+            {"contracts": 0.0003, "side": "short"},  # side ignored in one-way
+        ])
+
+        msgs = await executor.reconcile_positions()
+        assert msgs == []
+        assert executor._positions[tid].status == "open"
