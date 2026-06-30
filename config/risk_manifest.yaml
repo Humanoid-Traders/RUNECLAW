@@ -303,6 +303,11 @@ defaults:
     env_var: MAX_DAILY_LOSS_PCT
     description: "Max daily loss as % of equity before circuit breaker trips"
 
+  daily_loss_breaker_autoreset_enabled:
+    value: false
+    env_var: DAILY_LOSS_BREAKER_AUTORESET
+    description: "Auto-reset a daily-loss circuit-breaker trip at UTC day rollover (drawdown/streak/manual stay manual)"
+
   max_drawdown_pct:
     value: 10.0
     env_var: MAX_DRAWDOWN_PCT
