@@ -60,18 +60,20 @@ PATTERN_ATR_TOLERANCES_ENABLED=1   # H&S / double-top symmetry tolerance scales 
                                    # ATR — only ever tightens the fixed 5%/3% gate (default ON)
 ```
 
-## 3. Learning — enable the write now, apply later
+## 3. Learning — ✅ now ON by default
 
-Turn on the write so the simulation-first history accumulates; once there are
-enough closed setups, enable the apply flags.
+The write (paper/sim closes → learners) and the apply nudges are **now default ON
+in code** (operator-requested activation). Note the nudges only bite once enough
+closed setups have accumulated — they fail open (identity) below the minimum
+sample count — so enabling them before history builds is harmless. Set any to
+`0`/`false` in `.env` to disable.
 
 ```dotenv
-LEARN_FROM_PAPER_CLOSES=1          # start feeding paper/sim closes to the learners
-# …then, once history builds:
-SETUP_EXPECTANCY_ENABLED=1         # apply the per-setup expectancy nudge
-CONFIDENCE_CALIBRATION_ENABLED=1   # apply confidence calibration
-ADAPTIVE_CONFIDENCE_ENABLED=1      # apply the adaptive-confidence nudge
-LEARNING_AUTO_REFIT_ENABLED=1      # auto-refit the learners on closed trades
+LEARN_FROM_PAPER_CLOSES=1          # feed paper/sim closes to the learners (default ON)
+SETUP_EXPECTANCY_ENABLED=1         # apply the per-setup expectancy nudge (default ON)
+CONFIDENCE_CALIBRATION_ENABLED=1   # apply confidence calibration (default ON)
+ADAPTIVE_CONFIDENCE_ENABLED=1      # apply the adaptive-confidence nudge (default ON)
+LEARNING_AUTO_REFIT_ENABLED=1      # auto-refit the learners on closed trades (default ON)
 ```
 
 ## 4. Judgment calls (your decision)

@@ -66,6 +66,8 @@ class TestEngineWiring:
 
 
 class TestConfigDefault:
-    def test_flag_defaults_off(self):
+    def test_flag_defaults_on(self, monkeypatch):
+        # Enabled by default (operator-requested activation); explicit env still wins.
+        monkeypatch.delenv("LEARN_FROM_PAPER_CLOSES", raising=False)
         from bot.config import LearningConfig
-        assert LearningConfig().learn_from_paper_closes_enabled is False
+        assert LearningConfig().learn_from_paper_closes_enabled is True
