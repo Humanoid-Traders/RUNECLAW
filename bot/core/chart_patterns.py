@@ -170,13 +170,14 @@ def _normalize_slope(slope: float, price: float) -> float:
 def detect_head_and_shoulders(
     highs: np.ndarray, lows: np.ndarray, closes: np.ndarray,
     lookback: int = 5,
+    swings: Optional[dict] = None,  # #41: precomputed swings (compute-once in scan)
 ) -> Optional[PatternResult]:
     """Detect Head & Shoulders (bearish) or Inverse H&S (bullish).
 
     H&S: three swing highs where middle is highest (head), flanked by
     two lower and roughly equal shoulders.
     """
-    swings = _find_swings(highs, lows, lookback)
+    swings = swings if swings is not None else _find_swings(highs, lows, lookback)
     sh = swings["swing_highs"]
     sl = swings["swing_lows"]
 
@@ -235,9 +236,10 @@ def detect_head_and_shoulders(
 def detect_double_top_bottom(
     highs: np.ndarray, lows: np.ndarray, closes: np.ndarray,
     lookback: int = 5,
+    swings: Optional[dict] = None,  # #41: precomputed swings (compute-once in scan)
 ) -> Optional[PatternResult]:
     """Detect Double Top (bearish) or Double Bottom (bullish)."""
-    swings = _find_swings(highs, lows, lookback)
+    swings = swings if swings is not None else _find_swings(highs, lows, lookback)
     sh = swings["swing_highs"]
     sl = swings["swing_lows"]
 
@@ -290,6 +292,7 @@ def detect_double_top_bottom(
 def detect_flags(
     highs: np.ndarray, lows: np.ndarray, closes: np.ndarray,
     lookback: int = 5,
+    swings: Optional[dict] = None,  # #41: precomputed swings (compute-once in scan)
 ) -> Optional[PatternResult]:
     """Detect Bull Flag or Bear Flag.
 
@@ -357,9 +360,10 @@ def detect_flags(
 def detect_triangles(
     highs: np.ndarray, lows: np.ndarray, closes: np.ndarray,
     lookback: int = 5,
+    swings: Optional[dict] = None,  # #41: precomputed swings (compute-once in scan)
 ) -> Optional[PatternResult]:
     """Detect Ascending, Descending, or Symmetrical Triangle."""
-    swings = _find_swings(highs, lows, lookback)
+    swings = swings if swings is not None else _find_swings(highs, lows, lookback)
     sh = swings["swing_highs"]
     sl = swings["swing_lows"]
 
@@ -411,12 +415,13 @@ def detect_triangles(
 def detect_wedges(
     highs: np.ndarray, lows: np.ndarray, closes: np.ndarray,
     lookback: int = 5,
+    swings: Optional[dict] = None,  # #41: precomputed swings (compute-once in scan)
 ) -> Optional[PatternResult]:
     """Detect Rising Wedge (bearish) or Falling Wedge (bullish).
 
     Both trendlines slope in the same direction but converge.
     """
-    swings = _find_swings(highs, lows, lookback)
+    swings = swings if swings is not None else _find_swings(highs, lows, lookback)
     sh = swings["swing_highs"]
     sl = swings["swing_lows"]
 
@@ -458,9 +463,10 @@ def detect_wedges(
 def detect_rectangle(
     highs: np.ndarray, lows: np.ndarray, closes: np.ndarray,
     lookback: int = 5,
+    swings: Optional[dict] = None,  # #41: precomputed swings (compute-once in scan)
 ) -> Optional[PatternResult]:
     """Detect Rectangle / Range-bound price action."""
-    swings = _find_swings(highs, lows, lookback)
+    swings = swings if swings is not None else _find_swings(highs, lows, lookback)
     sh = swings["swing_highs"]
     sl = swings["swing_lows"]
 
@@ -497,6 +503,7 @@ def detect_rectangle(
 def detect_cup_and_handle(
     highs: np.ndarray, lows: np.ndarray, closes: np.ndarray,
     lookback: int = 5,
+    swings: Optional[dict] = None,  # #41: precomputed swings (compute-once in scan)
 ) -> Optional[PatternResult]:
     """Detect Cup and Handle pattern (bullish continuation).
 
@@ -506,7 +513,7 @@ def detect_cup_and_handle(
     if len(closes) < 40:
         return None
 
-    swings = _find_swings(highs, lows, lookback)
+    swings = swings if swings is not None else _find_swings(highs, lows, lookback)
     sh = swings["swing_highs"]
     sl = swings["swing_lows"]
 
@@ -558,13 +565,14 @@ def detect_cup_and_handle(
 def detect_sr_flip(
     highs: np.ndarray, lows: np.ndarray, closes: np.ndarray,
     lookback: int = 5,
+    swings: Optional[dict] = None,  # #41: precomputed swings (compute-once in scan)
 ) -> Optional[PatternResult]:
     """Detect Support becoming Resistance or Resistance becoming Support.
 
     Looks for a price level that was tested as support, broken, then retested as resistance
     (or vice versa).
     """
-    swings = _find_swings(highs, lows, lookback)
+    swings = swings if swings is not None else _find_swings(highs, lows, lookback)
     sh = swings["swing_highs"]
     sl = swings["swing_lows"]
 
@@ -615,6 +623,7 @@ def _fib_ratio(a: float, b: float) -> float:
 def detect_elliott_impulse(
     highs: np.ndarray, lows: np.ndarray, closes: np.ndarray,
     lookback: int = 5,
+    swings: Optional[dict] = None,  # #41: precomputed swings (compute-once in scan)
 ) -> Optional[PatternResult]:
     """Elliott Wave 5-wave impulse detection with Fibonacci validation.
 
@@ -629,7 +638,7 @@ def detect_elliott_impulse(
       - Extended wave 3 (most common extension)
       - Truncated 5th (wave 5 fails to exceed wave 3)
     """
-    swings = _find_swings(highs, lows, lookback)
+    swings = swings if swings is not None else _find_swings(highs, lows, lookback)
     sh = swings["swing_highs"]
     sl = swings["swing_lows"]
 
@@ -833,6 +842,7 @@ def detect_elliott_impulse(
 def detect_elliott_corrective(
     highs: np.ndarray, lows: np.ndarray, closes: np.ndarray,
     lookback: int = 5,
+    swings: Optional[dict] = None,  # #41: precomputed swings (compute-once in scan)
 ) -> Optional[PatternResult]:
     """Detect ABC corrective wave after a prior impulse move.
 
@@ -845,7 +855,7 @@ def detect_elliott_corrective(
     Wave B must not exceed the start of the prior impulse.
     Confidence: 0.55 for partial (A-B visible), 0.65-0.75 for complete ABC.
     """
-    swings = _find_swings(highs, lows, lookback)
+    swings = swings if swings is not None else _find_swings(highs, lows, lookback)
     sh = swings["swing_highs"]
     sl = swings["swing_lows"]
 
@@ -986,6 +996,7 @@ def detect_elliott_corrective(
 def detect_elliott_diagonal(
     highs: np.ndarray, lows: np.ndarray, closes: np.ndarray,
     lookback: int = 5,
+    swings: Optional[dict] = None,  # #41: precomputed swings (compute-once in scan)
 ) -> Optional[PatternResult]:
     """Detect leading and ending diagonal patterns.
 
@@ -1000,7 +1011,7 @@ def detect_elliott_diagonal(
 
     Both types: waves get progressively shorter and trendlines converge.
     """
-    swings = _find_swings(highs, lows, lookback)
+    swings = swings if swings is not None else _find_swings(highs, lows, lookback)
     sh = swings["swing_highs"]
     sl = swings["swing_lows"]
 
@@ -1144,6 +1155,7 @@ def detect_elliott_diagonal(
 def detect_elliott_wxy(
     highs: np.ndarray, lows: np.ndarray, closes: np.ndarray,
     lookback: int = 5,
+    swings: Optional[dict] = None,  # #41: precomputed swings (compute-once in scan)
 ) -> Optional[PatternResult]:
     """Detect WXY double-combination corrective pattern.
 
@@ -1154,7 +1166,7 @@ def detect_elliott_wxy(
     This forms when a simple ABC correction is insufficient.
     Appears as an extended sideways consolidation.
     """
-    swings = _find_swings(highs, lows, lookback)
+    swings = swings if swings is not None else _find_swings(highs, lows, lookback)
     sh = swings["swing_highs"]
     sl = swings["swing_lows"]
 
@@ -1250,13 +1262,14 @@ def detect_elliott_wxy(
 def detect_liquidity_sweep(
     highs: np.ndarray, lows: np.ndarray, closes: np.ndarray,
     lookback: int = 5,
+    swings: Optional[dict] = None,  # #41: precomputed swings (compute-once in scan)
 ) -> Optional[PatternResult]:
     """Detect liquidity sweep: price briefly pierces a swing level then reverses.
 
     Bullish sweep: wick below a swing low, close back above → trapped sellers.
     Bearish sweep: wick above a swing high, close back below → trapped buyers.
     """
-    swings = _find_swings(highs, lows, lookback)
+    swings = swings if swings is not None else _find_swings(highs, lows, lookback)
     sh = swings["swing_highs"]
     sl = swings["swing_lows"]
 
@@ -1313,6 +1326,7 @@ def detect_liquidity_sweep(
 def detect_wyckoff_phases(
     highs: np.ndarray, lows: np.ndarray, closes: np.ndarray,
     lookback: int = 5,
+    swings: Optional[dict] = None,  # #41: precomputed swings (compute-once in scan)
 ) -> Optional[PatternResult]:
     """Detect Wyckoff Accumulation or Distribution phases.
 
@@ -1490,13 +1504,14 @@ def detect_wyckoff_phases(
 def detect_harmonic_pattern(
     highs: np.ndarray, lows: np.ndarray, closes: np.ndarray,
     lookback: int = 5,
+    swings: Optional[dict] = None,  # #41: precomputed swings (compute-once in scan)
 ) -> Optional[PatternResult]:
     """Detect XABCD harmonic patterns: Gartley, Butterfly, Bat, Crab.
 
     Finds 5 alternating swing points and checks Fibonacci ratio rules
     between the XA, AB, BC, CD legs with +/-10% tolerance.
     """
-    swings = _find_swings(highs, lows, lookback)
+    swings = swings if swings is not None else _find_swings(highs, lows, lookback)
     sh = swings["swing_highs"]
     sl = swings["swing_lows"]
 
@@ -1599,6 +1614,7 @@ def detect_harmonic_pattern(
 def detect_fibonacci_extensions(
     highs: np.ndarray, lows: np.ndarray, closes: np.ndarray,
     lookback: int = 5,
+    swings: Optional[dict] = None,  # #41: precomputed swings (compute-once in scan)
 ) -> Optional[PatternResult]:
     """Compute Fibonacci extension targets from the most recent impulse wave.
 
@@ -1606,7 +1622,7 @@ def detect_fibonacci_extensions(
     extension levels at 1.0, 1.272, 1.618, 2.0, and 2.618 of the impulse.
     Returns None if no clear impulse + retracement is found.
     """
-    swings = _find_swings(highs, lows, lookback)
+    swings = swings if swings is not None else _find_swings(highs, lows, lookback)
     sh = swings["swing_highs"]
     sl = swings["swing_lows"]
 
@@ -1684,10 +1700,16 @@ def scan_all_chart_patterns(
     if len(closes) < 20:
         return []
 
-    # TODO: Optimization — compute swing points ONCE here and pass to each
-    # detector instead of each detector calling _find_swings independently.
-    # Requires adding an optional `swings` parameter to each detector function.
-    # swings = _find_swings(highs, lows, lookback)
+    # #41: compute swing points ONCE and pass to each detector via the optional
+    # `swings` kwarg, instead of every detector calling _find_swings independently
+    # (~14× per symbol per call). Each detector still recomputes if not passed, so
+    # the result is byte-identical — the shared swings is exactly what each would
+    # have computed (same highs/lows/lookback). Fail-open: if the shared compute
+    # raises, fall back to per-detector recompute.
+    try:
+        shared_swings = _find_swings(highs, lows, lookback)
+    except Exception:
+        shared_swings = None
 
     detectors = [
         detect_head_and_shoulders,
@@ -1711,7 +1733,7 @@ def scan_all_chart_patterns(
     results: list[PatternResult] = []
     for detector in detectors:
         try:
-            pattern = detector(highs, lows, closes, lookback)
+            pattern = detector(highs, lows, closes, lookback, swings=shared_swings)
             if pattern:
                 results.append(pattern)
         except Exception:
