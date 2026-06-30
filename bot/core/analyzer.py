@@ -251,8 +251,11 @@ class Analyzer:
         self._cost = cost_tracker
         # Async rate limiter: prevent 429s without blocking the event loop
         from bot.utils.rate_limiter import AsyncRateLimiter
+        # #43: cap RPM from the dedicated per-provider config, NOT the daily
+        # budget. daily_call_limit/24*60 worked out to thousands of RPM, so the
+        # limiter never throttled and never prevented a 429.
         self._rate_limiter = AsyncRateLimiter(
-            max_rpm=int(CONFIG.llm.daily_call_limit / 24 * 60) or 40,
+            max_rpm=int(getattr(CONFIG.llm, "max_rpm", 40)) or 40,
             name="llm",
         )
         # Token optimization: semantic cache + stats
