@@ -89,6 +89,13 @@ class BacktestEngine:
         # Open position tracking with backtest metadata
         self._open_bt_positions: dict[str, dict] = {}
 
+    @staticmethod
+    def _below_confidence_gate(confidence: float, threshold: float) -> bool:
+        """True if a trade should be skipped because its confidence is below the
+        per-run ``confidence_threshold``. ``threshold <= 0`` disables the gate. A
+        confidence exactly AT the threshold passes (gate is strict ``<``)."""
+        return threshold > 0.0 and float(confidence) < float(threshold)
+
     def cleanup(self) -> None:
         """Explicitly remove the temp state directory. Call after backtest completes."""
         import shutil
@@ -185,6 +192,15 @@ class BacktestEngine:
         # session-aware confidence is causal/reproducible (not wall-clock).
         idea = await self.analyzer.analyze(signal, candles, as_of=bar.timestamp)
         if idea is None:
+            self._ideas_rejected_confidence += 1
+            return
+
+        # Per-run confidence gate. The walk-forward optimizer sweeps
+        # config.confidence_threshold; honor it here as an explicit minimum so the
+        # swept value actually filters trades (otherwise every grid entry produced
+        # identical results and the optimization was a no-op). 0 = no extra gate.
+        thr = getattr(self.config, "confidence_threshold", 0.0) or 0.0
+        if self._below_confidence_gate(idea.confidence, thr):
             self._ideas_rejected_confidence += 1
             return
 

@@ -22,7 +22,12 @@ class BacktestConfig(BaseModel):
     slippage_pct: float = 0.05             # 0.05% simulated slippage
     max_position_pct: float = 2.0          # matches live risk config
     max_open_positions: int = 5
-    confidence_threshold: float = 0.5
+    # Extra minimum-confidence entry gate applied ON TOP of the analyzer's
+    # per-strategy floors. 0.0 = no extra gate (the default — entries are governed
+    # by the analyzer/risk thresholds, unchanged). The walk-forward optimizer
+    # (--wf-optimize) sweeps this to find the entry cutoff that generalizes OOS,
+    # so it must actually filter trades; the engine honors it in _evaluate_bar.
+    confidence_threshold: float = 0.0
     use_llm: bool = False                  # default: rule-based for reproducibility
     # Deterministic backtest parity: replay recorded LLM theses
     # (data/learning/llm_calibration.jsonl) so the run exercises the live blended
