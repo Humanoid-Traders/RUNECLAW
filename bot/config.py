@@ -552,6 +552,12 @@ class LLMConfig:
     max_tokens: int = int(_env_float("LLM_MAX_TOKENS", 1024))
     timeout_seconds: float = _env_float("LLM_TIMEOUT_SEC", 15.0)
     daily_call_limit: int = int(_env_float("LLM_DAILY_LIMIT", 500))
+    # Async request-rate cap (requests/minute) for the LLM client. Dedicated
+    # per-provider RPM bound — independent of the DAILY budget (deep-audit #43).
+    # The previous limiter derived RPM from daily_call_limit (≈thousands/min), so
+    # it never actually throttled and 429-prevention was a no-op. 40 RPM is a safe
+    # default that won't delay normal hourly-scan operation but caps real bursts.
+    max_rpm: int = int(_env_float("LLM_MAX_RPM", 40))
     daily_budget_usd: float = _env_float("LLM_DAILY_BUDGET_USD", 1.0)  # fail to rules if exceeded
     est_cost_per_analysis: float = _env_float("LLM_EST_COST_PER_ANALYSIS", 0.003)  # for backtest projection
     # Account cascading-fallback LLM calls against the daily budgets (opt-in,
