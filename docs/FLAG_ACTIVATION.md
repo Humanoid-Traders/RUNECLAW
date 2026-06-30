@@ -93,6 +93,23 @@ BACKTEST_PARTIAL_TP=1             # backtest scales out through the live partial
                                   # backtest win-rate / R:R reflect live exits.
 ```
 
+**Order-flow replay (#17).** The backtest runs the analyzer with no order flow, so
+the smart-money voter / order-flow confluence / veto / funding haircut never fire
+— backtest signals diverge from live. To close the gap, *shadow-record* live order
+flow, then replay it in the backtest:
+
+```dotenv
+# 1. On the LIVE bot — log each computed order-flow snapshot (write-only, no
+#    signal effect). Accumulates data/learning/order_flow_snapshots.jsonl.
+OF_RECORD_SNAPSHOTS=1
+# OF_SNAPSHOT_PATH=data/learning/order_flow_snapshots.jsonl   # optional override
+```
+
+Then run the backtest with `BacktestConfig.use_recorded_order_flow=True` (or the
+runner's equivalent flag). It replays the most recent snapshot at/before each
+bar; with no recording the analyzer simply runs without order flow, identical to
+the legacy backtest.
+
 ---
 
 *This file is the human-readable companion to the `/flags` command, which reads

@@ -35,6 +35,12 @@ class BacktestConfig(BaseModel):
     # the rule-based default.
     use_recorded_llm: bool = False
     recorded_llm_path: str = "data/learning/llm_calibration.jsonl"
+    # Deep-audit #17: replay shadow-recorded order-flow snapshots so the backtest
+    # exercises the SAME microstructure path live runs (smart-money voter,
+    # order-flow confluence/veto, funding haircut) instead of order_flow=None.
+    # Default OFF → analyzer runs without order flow, identical to today.
+    use_recorded_order_flow: bool = False
+    recorded_order_flow_path: str = "data/learning/order_flow_snapshots.jsonl"
     lookback_size: int = 100               # bars needed for indicator calculation
     scan_interval: int = 4                 # check for signals every N bars
 

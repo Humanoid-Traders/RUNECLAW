@@ -85,6 +85,17 @@ class BacktestEngine:
             self._recorded_llm = RecordedLLM.from_jsonl(config.recorded_llm_path)
             self.analyzer._offline_thesis_fn = self._recorded_llm.thesis_at
 
+        # #17: replay shadow-recorded order-flow snapshots into analyze() so the
+        # backtest runs the same microstructure path live does. Default OFF →
+        # _recorded_order_flow stays None and analyze() gets order_flow=None,
+        # byte-identical to the legacy backtest.
+        self._recorded_order_flow = None
+        if config.use_recorded_order_flow:
+            from bot.backtest.recorded_order_flow import RecordedOrderFlow
+            self._recorded_order_flow = RecordedOrderFlow.from_jsonl(
+                config.recorded_order_flow_path
+            )
+
         # Tracking
         self._trades: list[BacktestTrade] = []
         self._equity_curve: list[EquityPoint] = []
@@ -205,9 +216,17 @@ class BacktestEngine:
         if len(candles) < 30:
             return
 
+        # #17: replay the causal order-flow snapshot for this bar (None when
+        # disabled or no record → analyzer runs without order flow as before).
+        order_flow = None
+        if self._recorded_order_flow is not None:
+            order_flow = self._recorded_order_flow.signal_at(signal.symbol, as_of=bar.timestamp)
+
         # 3. Run analyzer (same as live). BT-H2: pass the simulated bar time so
         # session-aware confidence is causal/reproducible (not wall-clock).
-        idea = await self.analyzer.analyze(signal, candles, as_of=bar.timestamp)
+        idea = await self.analyzer.analyze(
+            signal, candles, order_flow=order_flow, as_of=bar.timestamp
+        )
         if idea is None:
             self._ideas_rejected_confidence += 1
             return
