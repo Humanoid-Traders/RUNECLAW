@@ -3878,7 +3878,7 @@ class LiveExecutor:
         Byte-identical when the stop-loss placed (the common case): it returns the
         ids unchanged and takes no action. Returns the resolved ``(sl_id, tp_id)``.
         """
-        if sl_id is None and getattr(pos, "stop_loss", 0) and pos.stop_loss > 0:
+        if sl_id is None and pos.stop_loss > 0:
             audit(trade_log,
                   f"SL placement failed post-fill for {pos.symbol} — retrying once",
                   action="sl_retry", result="RETRY",
@@ -3893,7 +3893,7 @@ class LiveExecutor:
                     tp_id = retry_tp
             except Exception as exc:
                 logger.warning("Post-fill SL retry raised for %s: %s", pos.symbol, exc)
-        if sl_id is None and getattr(pos, "stop_loss", 0) and pos.stop_loss > 0:
+        if sl_id is None and pos.stop_loss > 0:
             # A stop was intended but didn't place. Flag so the unprotected
             # escalation/grace machinery in check_positions treats this position
             # as unprotected immediately. (sl=0 means no stop was intended, so it
