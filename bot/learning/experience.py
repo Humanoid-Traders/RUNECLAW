@@ -97,6 +97,7 @@ class ExperienceMemory:
         pnl_result: float,
         market_regime: str = "",
         trade_id: str = "",
+        source: str = "live_outcome",
     ) -> DecisionMemory:
         """Record a CLOSED-trade outcome as a COMPLETE, queryable record.
 
@@ -105,9 +106,13 @@ class ExperienceMemory:
         symbol + direction + non-null pnl) could never match — leaving the
         learning loop open. This writes the symbol, direction, regime AND the
         realized pnl together so similar-setup lookups actually find it.
+
+        ``source`` tags the record as ``"live_outcome"`` (default) or
+        ``"paper_outcome"`` so live and paper evidence can be distinguished (and
+        weighted) by consumers; the default keeps the live caller byte-identical.
         """
         record = DecisionMemory(
-            source="live_outcome",
+            source=source or "live_outcome",
             symbol=symbol,
             direction=direction,
             market_regime=market_regime or "",

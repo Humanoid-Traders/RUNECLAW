@@ -703,6 +703,16 @@ class LearningConfig:
     rewards winners), additive only, and never overrides the 23 risk checks.
     """
     adaptive_confidence_enabled: bool = _env_bool("ADAPTIVE_CONFIDENCE_ENABLED", False)
+    # Feed PAPER/sim closes into the learning loop's write side (opt-in, default
+    # OFF; deep-audit medium). Today record_closed_outcome fires only on LIVE
+    # closes, so in simulation-first operation the learners (calibration / voter
+    # weights / setup expectancy) see almost no data. When ON, each paper close
+    # also records an outcome tagged source="paper_outcome" (live stays
+    # "live_outcome"), so similar-setup lookups and calibration accumulate from
+    # the abundant paper history. The records are LABELLED so live vs paper can
+    # be weighted later; for now an opted-in operator consumes them equally.
+    # Default OFF keeps the write side byte-identical (live-only).
+    learn_from_paper_closes_enabled: bool = _env_bool("LEARN_FROM_PAPER_CLOSES", False)
     # Require at least this many similar (same symbol+direction+regime) closed
     # setups before any adjustment — avoids reacting to noise.
     adaptive_confidence_min_samples: int = int(
