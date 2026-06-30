@@ -590,6 +590,15 @@ class AnalyzerConfig:
     # Default OFF makes the blend byte-identical to today.
     uncalibrated_llm_weight_cap_enabled: bool = _env_bool("UNCALIBRATED_LLM_WEIGHT_CAP_ENABLED", False)
     uncalibrated_llm_weight_cap: float = _env_float_bounded("UNCALIBRATED_LLM_WEIGHT_CAP", 0.4, 0.0, 1.0)
+    # Session-anchored VWAP (opt-in, default OFF; deep-audit medium). The "vwap"
+    # indicator is a cumulative VWAP over the WHOLE fetched window (~100 bars,
+    # anchored to bar[0]), which drifts as the window slides and is not the
+    # session VWAP traders mean. The proper session VWAP — anchored to the
+    # current UTC day's first bar — is always exposed as "vwap_session"; when
+    # this flag is ON the "vwap" key consumers read (vwap_reversion classifier,
+    # S/R candidate) is set to that session value. Default OFF keeps "vwap" the
+    # legacy full-window value (byte-identical).
+    vwap_session_anchored: bool = _env_bool("VWAP_SESSION_ANCHORED", False)
     # Per-user BYOK LLM routing (opt-in, default OFF). When ON, the LLM thesis for
     # a command a user runs by hand (/analyze) uses THAT user's own provider key
     # (from their encrypted settings) instead of the operator's — so their
