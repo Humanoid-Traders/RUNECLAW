@@ -3486,6 +3486,22 @@ class LiveExecutor:
                     "iterations": max_iter})
         return None
 
+    @staticmethod
+    def _ticker_too_old(ticker, max_age_sec: float, now_sec: float) -> bool:
+        """True if the ticker's timestamp is older than ``max_age_sec`` — so its
+        ``last`` price must not drive stop logic. ``max_age_sec <= 0`` disables the
+        check. A missing/zero timestamp returns False (can't verify freshness →
+        don't disable monitoring). Fail-safe: any error → False (not stale)."""
+        if max_age_sec <= 0:
+            return False
+        try:
+            ts = (ticker or {}).get("timestamp")
+            if not ts:
+                return False
+            return (now_sec - float(ts) / 1000.0) > max_age_sec
+        except Exception:
+            return False
+
     async def check_positions(self) -> list[str]:
         """Check open positions against current prices. Returns list of close/update messages.
 
@@ -3616,6 +3632,25 @@ class LiveExecutor:
 
                 price = float(tickers.get(pos.symbol, {}).get("last", 0))
                 if price <= 0:
+                    continue
+
+                # ── Staleness guard ──
+                # A frozen/old REST `last` must not drive a trailing tighten or a
+                # local stop-out. If the ticker is stale, skip local monitoring for
+                # this symbol this cycle — the exchange-side stop remains the
+                # protection. (Pairs with the WS staleness guard; this covers the
+                # REST path the WS guard does not.)
+                if self._ticker_too_old(
+                    tickers.get(pos.symbol), CONFIG.execution.live_ticker_max_age_sec, time.time()
+                ):
+                    _ts = (tickers.get(pos.symbol) or {}).get("timestamp")
+                    _age = time.time() - float(_ts) / 1000.0 if _ts else -1.0
+                    audit(trade_log,
+                          f"Stale ticker for {pos.symbol} ({_age:.0f}s old) — skipping "
+                          f"local SL/TP this cycle; exchange stop still active",
+                          action="ticker_stale", result="SKIPPED", level=logging.WARNING,
+                          data={"symbol": pos.symbol, "age_sec": round(_age, 1),
+                                "max_age": CONFIG.execution.live_ticker_max_age_sec})
                     continue
 
                 # ── Trailing stop update ──
