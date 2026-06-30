@@ -1640,10 +1640,11 @@ class RuneClawEngine:
             of_signal = results[1] if not isinstance(results[1], Exception) else None
 
             # #17: shadow-record the live order-flow snapshot so the backtest can
-            # replay the same microstructure path (gated OF_RECORD_SNAPSHOTS,
-            # default OFF). Best-effort, fail-open — never breaks the scan path.
+            # replay the same microstructure path (gated OF_RECORD_SNAPSHOTS, now
+            # default ON). Write-only, best-effort, fail-open — never breaks the
+            # scan path. Set OF_RECORD_SNAPSHOTS=0 to disable.
             if of_signal is not None and \
-                    os.getenv("OF_RECORD_SNAPSHOTS", "").strip().lower() in ("1", "true", "yes", "on"):
+                    os.getenv("OF_RECORD_SNAPSHOTS", "1").strip().lower() in ("1", "true", "yes", "on"):
                 try:
                     from bot.backtest.recorded_order_flow import record_snapshot
                     record_snapshot(

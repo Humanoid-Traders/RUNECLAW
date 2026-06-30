@@ -36,11 +36,11 @@ class TestReportStructure:
 
     def test_explicitly_disabled_env_flag_reports_off(self, monkeypatch):
         # All audit flags now default ON; the report still reflects an explicit
-        # disable for an env-read row.
-        monkeypatch.setenv("OF_GUARD_TOP_DEPTH_ENABLED", "0")
-        assert _flat(audit_flag_report())["OF_GUARD_TOP_DEPTH_ENABLED"] is False
-        monkeypatch.setenv("OF_GUARD_TOP_DEPTH_ENABLED", "1")
-        assert _flat(audit_flag_report())["OF_GUARD_TOP_DEPTH_ENABLED"] is True
+        # disable for a live env-read row (PATTERN_ATR is read per-report).
+        monkeypatch.setenv("PATTERN_ATR_TOLERANCES_ENABLED", "0")
+        assert _flat(audit_flag_report())["PATTERN_ATR_TOLERANCES_ENABLED"] is False
+        monkeypatch.setenv("PATTERN_ATR_TOLERANCES_ENABLED", "1")
+        assert _flat(audit_flag_report())["PATTERN_ATR_TOLERANCES_ENABLED"] is True
 
     def test_default_on_guards_report_on(self):
         # REST/WS staleness guards default to a positive value → ON.
@@ -61,10 +61,14 @@ class TestReportStructure:
 
 class TestEnvReflection:
     def test_env_only_flag_reflects_env(self, monkeypatch):
-        monkeypatch.delenv("OF_TIME_BARS_ENABLED", raising=False)
-        assert _flat(audit_flag_report())["OF_TIME_BARS_ENABLED"] is False
-        monkeypatch.setenv("OF_TIME_BARS_ENABLED", "true")
-        assert _flat(audit_flag_report())["OF_TIME_BARS_ENABLED"] is True
+        # PATTERN_ATR is read live per-report (chart-pattern flags have no config
+        # field). Unset → default ON; explicit values reflect immediately.
+        monkeypatch.delenv("PATTERN_ATR_TOLERANCES_ENABLED", raising=False)
+        assert _flat(audit_flag_report())["PATTERN_ATR_TOLERANCES_ENABLED"] is True
+        monkeypatch.setenv("PATTERN_ATR_TOLERANCES_ENABLED", "0")
+        assert _flat(audit_flag_report())["PATTERN_ATR_TOLERANCES_ENABLED"] is False
+        monkeypatch.setenv("PATTERN_ATR_TOLERANCES_ENABLED", "true")
+        assert _flat(audit_flag_report())["PATTERN_ATR_TOLERANCES_ENABLED"] is True
 
     def test_env_on_helper_accepts_truthy_spellings(self):
         import os

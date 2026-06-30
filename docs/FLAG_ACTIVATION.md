@@ -1,15 +1,21 @@
 # Flag Activation Runbook
 
-The 2026 deep-audit fixes ship **gated default-OFF** so live trading behaviour
-never changes without an explicit operator decision. This runbook lists every
-opt-in flag, what it does, and the recommended order to enable them. Set a flag
-in your `.env` (or deployment environment) and **restart the bot** for it to take
-effect. Run `/flags` in Telegram any time to see the current ON/OFF state.
+> **Status (2026-06): all deep-audit flags are now ON by default in code.** The
+> operator activated the full set, staged in the order below. Each flag's
+> in-code default is now ON, so a fresh deploy runs with everything enabled —
+> **no `.env` edit needed**. To DISABLE any one, set it to `0`/`false` in your
+> `.env` (process env > `.env` > in-code default) and **restart the bot**. Run
+> `/flags` in Telegram to see the live ON/OFF state (it reads the effective
+> config).
 
-> Live-money rule of thumb: enable the **safety/observability** group freely;
-> **backtest** the signal-changing group before flipping it on real money; turn
-> on the **learning write** early so history accumulates, and only apply the
-> learning nudges once there is enough data.
+The sections below document each flag, what it does, and the order it was
+enabled. They are kept as the canonical reference and as the **disable** guide.
+
+> Live-money note: the **signal-changing** group alters which trades fire and the
+> **judgment/sizing** group changes sizing/TA — backtest (`python -m
+> bot.backtest.runner`) if you want to compare against the legacy behaviour
+> before relying on them. The learning nudges fail open (identity) until enough
+> closed setups accumulate.
 
 ---
 
@@ -103,15 +109,17 @@ BACKTEST_PARTIAL_TP=1             # backtest scales out through the live partial
                                   # backtest win-rate / R:R reflect live exits.
 ```
 
-**Order-flow replay (#17).** The backtest runs the analyzer with no order flow, so
-the smart-money voter / order-flow confluence / veto / funding haircut never fire
-— backtest signals diverge from live. To close the gap, *shadow-record* live order
-flow, then replay it in the backtest:
+`BACKTEST_PARTIAL_TP` stays opt-in (a backtest-run choice, not a live setting).
+
+**Order-flow replay (#17) — recording now ON by default.** The backtest runs the
+analyzer with no order flow, so the smart-money voter / order-flow confluence /
+veto / funding haircut never fire — backtest signals diverge from live. To close
+the gap the LIVE bot now **shadow-records** each computed order-flow snapshot by
+default (write-only, no signal effect; accumulates
+`data/learning/order_flow_snapshots.jsonl`):
 
 ```dotenv
-# 1. On the LIVE bot — log each computed order-flow snapshot (write-only, no
-#    signal effect). Accumulates data/learning/order_flow_snapshots.jsonl.
-OF_RECORD_SNAPSHOTS=1
+OF_RECORD_SNAPSHOTS=1             # live order-flow shadow-recording (default ON; set 0 to disable)
 # OF_SNAPSHOT_PATH=data/learning/order_flow_snapshots.jsonl   # optional override
 ```
 
