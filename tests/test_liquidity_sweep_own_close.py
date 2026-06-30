@@ -30,7 +30,7 @@ def _arrays(*, low18, close18, low19, close19):
 
 class TestOwnCloseGate:
     def test_disabled_fires_false_sweep(self, monkeypatch):
-        monkeypatch.delenv("LIQUIDITY_SWEEP_OWN_CLOSE", raising=False)
+        monkeypatch.setenv("LIQUIDITY_SWEEP_OWN_CLOSE", "0")
         # Bar -2 wicked below 100 but closed BELOW (no reclaim); the latest bar
         # merely sits above 100. Legacy uses closes[-1] → false bullish sweep.
         h, lw, c = _arrays(low18=99.0, close18=99.5, low19=100.5, close19=101.0)
@@ -55,7 +55,7 @@ class TestOwnCloseGate:
         # When the LATEST bar itself sweeps+reclaims, closes[-offset]==closes[-1],
         # so both modes detect it identically.
         kw = dict(low18=105.0, close18=105.0, low19=99.0, close19=101.0)
-        monkeypatch.delenv("LIQUIDITY_SWEEP_OWN_CLOSE", raising=False)
+        monkeypatch.setenv("LIQUIDITY_SWEEP_OWN_CLOSE", "0")
         off = detect_liquidity_sweep(*_arrays(**kw))
         monkeypatch.setenv("LIQUIDITY_SWEEP_OWN_CLOSE", "1")
         on = detect_liquidity_sweep(*_arrays(**kw))

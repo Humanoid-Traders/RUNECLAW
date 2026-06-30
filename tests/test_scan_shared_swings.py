@@ -75,6 +75,9 @@ class TestScanEquivalence:
 class TestSharedSwingsActuallyUsed:
     def test_provided_swings_bypasses_find_swings(self, monkeypatch):
         # If the detector recomputed, this would raise; passing swings must skip it.
+        # Disable the (now default-ON) ATR tolerance so the 3% shoulders pass — this
+        # test is about the swings bypass, not the tolerance gate.
+        monkeypatch.setenv("PATTERN_ATR_TOLERANCES_ENABLED", "0")
         monkeypatch.setattr(cp, "_find_swings", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("recomputed")))
         swings = {"swing_highs": [(10, 100.0), (20, 110.0), (30, 103.0)],
                   "swing_lows": [(15, 98.0), (25, 99.0)]}

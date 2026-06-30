@@ -117,7 +117,7 @@ class OrderFlowConfig:
     # keeps the gate byte-identical (bars stored as bare floats, no span check);
     # the check is tightening-only (it can only reject a confirmation), so it is
     # safe-direction regardless of poll cadence.
-    time_bars_enabled: bool = _env_bool("OF_TIME_BARS_ENABLED", False)
+    time_bars_enabled: bool = _env_bool("OF_TIME_BARS_ENABLED", True)
     taker_bar_min_span_sec: float = _env_float("OF_TAKER_BAR_MIN_SPAN_SEC", 20.0)
     taker_bar_max_span_sec: float = _env_float("OF_TAKER_BAR_MAX_SPAN_SEC", 300.0)
     # --- Funding confluence vote: scale fix (deep-audit medium) ---
@@ -128,7 +128,7 @@ class OrderFlowConfig:
     # |funding| ≥ 0.05% saturates the contrarian vote to ±1. When ON, the vote
     # uses the fixed scale and actually contributes; default OFF keeps the old
     # (dead) 0.03 scale so confluence is byte-identical until enabled.
-    funding_vote_fixed_scale: bool = _env_bool("OF_FUNDING_VOTE_FIXED_SCALE", False)
+    funding_vote_fixed_scale: bool = _env_bool("OF_FUNDING_VOTE_FIXED_SCALE", True)
 
 
 # ── Output schema ──────────────────────────────────────────────────────────
@@ -660,7 +660,7 @@ class OrderFlowAnalyzer:
         if funding_extreme is not None:
             return funding_extreme
         return (OrderFlowAnalyzer._FUNDING_SCALE_FIXED
-                if _env_bool("OF_FUNDING_VOTE_FIXED_SCALE", False)
+                if _env_bool("OF_FUNDING_VOTE_FIXED_SCALE", True)
                 else OrderFlowAnalyzer._FUNDING_SCALE_DEAD)
 
     @staticmethod

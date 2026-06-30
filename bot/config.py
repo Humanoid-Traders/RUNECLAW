@@ -609,7 +609,7 @@ class AnalyzerConfig:
     # this flag is ON the "vwap" key consumers read (vwap_reversion classifier,
     # S/R candidate) is set to that session value. Default OFF keeps "vwap" the
     # legacy full-window value (byte-identical).
-    vwap_session_anchored: bool = _env_bool("VWAP_SESSION_ANCHORED", False)
+    vwap_session_anchored: bool = _env_bool("VWAP_SESSION_ANCHORED", True)
     # Per-user BYOK LLM routing (opt-in, default OFF). When ON, the LLM thesis for
     # a command a user runs by hand (/analyze) uses THAT user's own provider key
     # (from their encrypted settings) instead of the operator's — so their
