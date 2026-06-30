@@ -111,6 +111,15 @@ class OrderFlowConfig:
     time_bars_enabled: bool = _env_bool("OF_TIME_BARS_ENABLED", False)
     taker_bar_min_span_sec: float = _env_float("OF_TAKER_BAR_MIN_SPAN_SEC", 20.0)
     taker_bar_max_span_sec: float = _env_float("OF_TAKER_BAR_MAX_SPAN_SEC", 300.0)
+    # --- Funding confluence vote: scale fix (deep-audit medium) ---
+    # to_confluence_votes normalised the funding rate by 0.03 (3%), but funding
+    # rates are tiny (typically ±0.0001–0.0005), so the vote was ~60x too small
+    # to ever move confluence — effectively dead. The correct scale is 0.0005
+    # (= funding_extreme above, and what the smart-money scorer already uses):
+    # |funding| ≥ 0.05% saturates the contrarian vote to ±1. When ON, the vote
+    # uses the fixed scale and actually contributes; default OFF keeps the old
+    # (dead) 0.03 scale so confluence is byte-identical until enabled.
+    funding_vote_fixed_scale: bool = _env_bool("OF_FUNDING_VOTE_FIXED_SCALE", False)
 
 
 # ── Output schema ──────────────────────────────────────────────────────────
@@ -648,12 +657,33 @@ class OrderFlowAnalyzer:
 
     # -- Integration helpers --
 
+    # Funding-vote normalisation scales (see funding_vote_fixed_scale).
+    _FUNDING_SCALE_DEAD = 0.03      # legacy: ~60x too large → vote ≈ 0
+    _FUNDING_SCALE_FIXED = 0.0005   # correct: |funding| ≥ 0.05% saturates to ±1
+
     @staticmethod
-    def to_confluence_votes(sig: OrderFlowSignal, funding_extreme: float = 0.03) -> tuple[list[float], list[float], list[str]]:
+    def _resolve_funding_scale(funding_extreme: Optional[float]) -> float:
+        """Pick the funding-vote normalisation scale. An explicit value (caller
+        / test) wins; otherwise use the fixed 0.0005 scale when
+        OF_FUNDING_VOTE_FIXED_SCALE is on, else the legacy dead 0.03 scale so
+        confluence stays byte-identical by default."""
+        if funding_extreme is not None:
+            return funding_extreme
+        return (OrderFlowAnalyzer._FUNDING_SCALE_FIXED
+                if _env_bool("OF_FUNDING_VOTE_FIXED_SCALE", False)
+                else OrderFlowAnalyzer._FUNDING_SCALE_DEAD)
+
+    @staticmethod
+    def to_confluence_votes(sig: OrderFlowSignal, funding_extreme: Optional[float] = None) -> tuple[list[float], list[float], list[str]]:
         """Return (votes, weights, labels) so order flow drops straight into
         Analyzer._score_confluence. Votes are graded in [-1, 1]; weights are
         scaled by the signal's data-confidence so a half-empty snapshot counts
-        for less."""
+        for less.
+
+        funding_extreme overrides the funding-vote normalisation scale; when
+        None it is resolved from OF_FUNDING_VOTE_FIXED_SCALE (default OFF → the
+        legacy 0.03 scale, byte-identical)."""
+        funding_extreme = OrderFlowAnalyzer._resolve_funding_scale(funding_extreme)
         votes: list[float] = []
         weights: list[float] = []
         labels: list[str] = []
