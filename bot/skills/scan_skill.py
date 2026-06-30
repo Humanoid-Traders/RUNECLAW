@@ -423,9 +423,15 @@ async def _scan_symbol(exchange, symbol: str) -> Optional[dict]:
     trend_s = min(abs(price - sma50) / sma50 * 10, 1.0) if sma50 > 0 else 0
     score = round(mom * 0.4 + trend_s * 0.3 + min(vol_ratio / 3, 1.0) * 0.3, 3)
     patterns = scan_all_chart_patterns(o, h, l, c)
+    # 24h change (~6 bars of 4h) for the scan display. The formatters already
+    # read "change_pct"; without this it was always 0 → the %-change was never
+    # shown (deep-audit low: dead change_str).
+    change_pct = (((price - float(c[-7])) / float(c[-7])) * 100.0
+                  if len(c) >= 7 and c[-7] > 0 else 0.0)
     return {"sym": symbol, "price": price, "dir": direction, "score": score,
             "rsi": round(rsi, 1), "atr": round(atr, 4),
             "vol_ratio": round(vol_ratio, 2), "sma20": round(sma20, 4),
+            "change_pct": round(change_pct, 2),
             "patterns": patterns}
 
 
