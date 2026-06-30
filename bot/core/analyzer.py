@@ -481,6 +481,7 @@ class Analyzer:
             lows = np.array([c[3] for c in candles], dtype=float)
             closes = np.array([c[4] for c in candles], dtype=float)
             volumes = np.array([c[5] if len(c) > 5 else 0 for c in candles], dtype=float)
+            times = np.array([c[0] for c in candles], dtype=float)  # epoch ms (ccxt)
             # Reject NaN/Inf in OHLCV data
             for name, arr in [("opens", opens), ("highs", highs), ("lows", lows), ("closes", closes)]:
                 if not np.all(np.isfinite(arr)):
@@ -492,7 +493,7 @@ class Analyzer:
                   result="SKIP", data={"symbol": signal.symbol, "error": str(exc)})
             return None
 
-        indicators = self._compute_indicators(highs, lows, closes, volumes, opens=opens)
+        indicators = self._compute_indicators(highs, lows, closes, volumes, opens=opens, times=times)
         if indicators is None:
             audit(trade_log, "Indicator computation failed (insufficient data)", action="analyze",
                   result="SKIP", data={"symbol": signal.symbol, "candles": len(candles)})
@@ -1423,10 +1424,42 @@ class Analyzer:
     # -- Technical Indicators --
 
     @staticmethod
+    @staticmethod
+    def _session_anchor_index(times: Optional[np.ndarray]) -> int:
+        """Index of the first bar in the SAME UTC day as the latest bar (the
+        session open). Returns 0 when timestamps are unavailable/degenerate, so
+        the caller falls back to the full window."""
+        if times is None or len(times) == 0:
+            return 0
+        try:
+            day = int(times[-1] // 86_400_000)  # UTC day number from epoch ms
+            idx = len(times) - 1
+            while idx > 0 and int(times[idx - 1] // 86_400_000) == day:
+                idx -= 1
+            return idx
+        except (ValueError, TypeError, OverflowError):
+            return 0
+
+    @staticmethod
+    def _session_vwap(typical_price: np.ndarray, volumes: np.ndarray,
+                      times: Optional[np.ndarray]) -> Optional[float]:
+        """Session-anchored VWAP over bars from the current UTC day's open to now.
+        Returns None when it can't be computed (no timestamps, zero volume in the
+        session) so the caller keeps the full-window VWAP."""
+        idx = Analyzer._session_anchor_index(times)
+        seg_tp = typical_price[idx:]
+        seg_vol = volumes[idx:]
+        sv = float(np.sum(seg_vol))
+        if sv <= 0:
+            return None
+        return float(np.sum(seg_tp * seg_vol) / sv)
+
+    @staticmethod
     def _compute_indicators(
         highs: np.ndarray, lows: np.ndarray, closes: np.ndarray,
         volumes: Optional[np.ndarray] = None,
         opens: Optional[np.ndarray] = None,
+        times: Optional[np.ndarray] = None,
     ) -> Optional[dict]:
         """
         Calculate RSI-14, MACD (12/26/9), Bollinger Bands (20/2),
@@ -1511,13 +1544,25 @@ class Analyzer:
         results["plus_di"] = adx_data["plus_di"]
         results["minus_di"] = adx_data["minus_di"]
 
-        # ── VWAP approximation (if volume available) ──
+        # ── VWAP (if volume available) ──
+        # NOTE: this "vwap" is a FULL-WINDOW cumulative VWAP — anchored to bar[0]
+        # of the fetched window (~100 bars), so it drifts as the window slides and
+        # is NOT the session VWAP traders mean. The session-anchored value (from
+        # the current UTC day's first bar) is exposed below as "vwap_session";
+        # when CONFIG.analyzer.vwap_session_anchored is ON it replaces "vwap".
         if volumes is not None and len(volumes) > 0:
             typical_price = (highs + lows + closes) / 3
             cum_tp_vol = np.cumsum(typical_price * volumes)
             cum_vol = np.cumsum(volumes)
             vwap = cum_tp_vol[-1] / cum_vol[-1] if cum_vol[-1] > 0 else closes[-1]
             results["vwap"] = round(float(vwap), 6)
+
+            # Session-anchored VWAP (anchored to the current UTC day's first bar).
+            session_vwap = Analyzer._session_vwap(typical_price, volumes, times)
+            if session_vwap is not None:
+                results["vwap_session"] = round(float(session_vwap), 6)
+                if getattr(CONFIG.analyzer, "vwap_session_anchored", False):
+                    results["vwap"] = results["vwap_session"]
 
             # Rolling VWAP variants (20-bar and 50-bar lookbacks)
             for anchor_len, label in [(20, "vwap_20"), (50, "vwap_50")]:
