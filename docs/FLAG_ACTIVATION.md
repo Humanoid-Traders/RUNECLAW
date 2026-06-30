@@ -14,8 +14,12 @@ enabled. They are kept as the canonical reference and as the **disable** guide.
 > Live-money note: the **signal-changing** group alters which trades fire and the
 > **judgment/sizing** group changes sizing/TA — backtest (`python -m
 > bot.backtest.runner`) if you want to compare against the legacy behaviour
-> before relying on them. The learning nudges fail open (identity) until enough
-> closed setups accumulate.
+> before relying on them. For a reproducible legacy-vs-new comparison across many
+> seeds (and walk-forward), run `python scripts/flag_compare.py` (see
+> `--walk-forward N`, `--seeds`, `--json`). On synthetic data the robust effect is
+> the risk-sizing change (per-strategy cap + regime sizing) shrinking notional;
+> OF_* / learning flags need real L2 / history to show. The learning nudges fail
+> open (identity) until enough closed setups accumulate.
 
 ---
 
