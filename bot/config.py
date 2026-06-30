@@ -578,7 +578,7 @@ class LLMConfig:
     # spend, so the bot may fall back to the rule engine sooner — the intended
     # correction. Default OFF keeps the accounting byte-identical to today.
     # RECOMMENDED ON for live money so the configured budgets actually bind.
-    fallback_cost_accounting_enabled: bool = _env_bool("LLM_FALLBACK_COST_ACCOUNTING", False)
+    fallback_cost_accounting_enabled: bool = _env_bool("LLM_FALLBACK_COST_ACCOUNTING", True)
 
 
 @dataclass(frozen=True)
@@ -638,7 +638,7 @@ class AnalyzerConfig:
     # never create one); it costs some cache sharing. RECOMMENDED ON whenever
     # per_user_llm_enabled / per_user_llm_tiers_enabled is ON. Default OFF →
     # cache key byte-identical to the legacy single-namespace behaviour.
-    llm_cache_scoped_key: bool = _env_bool("LLM_CACHE_SCOPED_KEY", False)
+    llm_cache_scoped_key: bool = _env_bool("LLM_CACHE_SCOPED_KEY", True)
     # Confidence calibration (Phase A): when ON, the final blended confidence is
     # remapped through a monotonic reliability curve fitted from the bot's own
     # closed-trade history, so a confidence value reflects realized win rate.
@@ -822,7 +822,7 @@ class ExecutionConfig:
     # many seconds while connected. 0 disables → read loop byte-identical. Set
     # comfortably above the quietest symbol's natural tick gap to avoid spurious
     # reconnects (e.g. 60–120s). RECOMMENDED ON for live money.
-    ws_idle_timeout_sec: float = _env_float_bounded("WS_IDLE_TIMEOUT_SEC", 0.0, 0.0, 3600.0)
+    ws_idle_timeout_sec: float = _env_float_bounded("WS_IDLE_TIMEOUT_SEC", 90.0, 0.0, 3600.0)
     # REST ticker staleness guard for the live SL/TP monitor (check_positions).
     # The WS guard above only covers the WS price path; the executor's local
     # SL/TP loop reads `last` from REST fetch_ticker, where a frozen/old value
@@ -842,7 +842,7 @@ class ExecutionConfig:
     # against the exchange's live orders; if one is gone, the SL/TP pair is
     # re-placed (placement cancels survivors first, so no duplicates). Default
     # OFF keeps restart behaviour byte-identical. RECOMMENDED ON for live money.
-    verify_classic_sltp_on_restart: bool = _env_bool("VERIFY_CLASSIC_SLTP_ON_RESTART", False)
+    verify_classic_sltp_on_restart: bool = _env_bool("VERIFY_CLASSIC_SLTP_ON_RESTART", True)
     # Order splitting
     order_split_enabled: bool = _env_bool("ORDER_SPLIT_ENABLED", True)
     order_split_threshold_usd: float = _env_float("ORDER_SPLIT_THRESHOLD_USD", 500.0)

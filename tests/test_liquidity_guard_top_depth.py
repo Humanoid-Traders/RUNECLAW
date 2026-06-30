@@ -72,7 +72,9 @@ class TestLiquidityGuardGated:
 
 
 class TestDefaults:
-    def test_flag_defaults_off(self):
+    def test_flag_defaults_on(self, monkeypatch):
+        # Enabled by default (operator-requested activation); explicit env still wins.
+        monkeypatch.delenv("OF_GUARD_TOP_DEPTH_ENABLED", raising=False)
         cfg = OrderFlowConfig()
-        assert cfg.guard_top_depth_enabled is False
+        assert cfg.guard_top_depth_enabled is True
         assert cfg.book_top_levels == 5

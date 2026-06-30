@@ -30,16 +30,18 @@ deployed — nothing to set:
 
 ---
 
-## 1. Safety / observability — recommended ON
+## 1. Safety / observability — ✅ now ON by default
 
-Pure tightenings; they can only make the bot safer or more accurate.
+Pure tightenings; they can only make the bot safer or more accurate. **These now
+default ON in code** (operator-requested activation) — listed here for reference;
+set any to `0`/`false` in `.env` to disable.
 
 ```dotenv
-WS_IDLE_TIMEOUT_SEC=90              # reconnect a silently-stalled WS feed
-VERIFY_CLASSIC_SLTP_ON_RESTART=1   # re-place a lost SL/TP leg after a restart
-LLM_FALLBACK_COST_ACCOUNTING=1     # count fallback LLM calls against daily budgets
-OF_GUARD_TOP_DEPTH_ENABLED=1       # require real top-of-book depth ≥ position size
-LLM_CACHE_SCOPED_KEY=1             # only needed if you run multi-user LLM tiers
+WS_IDLE_TIMEOUT_SEC=90              # reconnect a silently-stalled WS feed (default 90)
+VERIFY_CLASSIC_SLTP_ON_RESTART=1   # re-place a lost SL/TP leg after a restart (default ON)
+LLM_FALLBACK_COST_ACCOUNTING=1     # count fallback LLM calls against daily budgets (default ON)
+OF_GUARD_TOP_DEPTH_ENABLED=1       # require real top-of-book depth ≥ position size (default ON)
+LLM_CACHE_SCOPED_KEY=1             # scope LLM cache key by model/tier (default ON)
 ```
 
 ## 2. Signal-changing — backtest first

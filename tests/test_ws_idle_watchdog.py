@@ -85,7 +85,9 @@ class TestIdleWatchdog:
         feed._ws.close.assert_not_called()
 
 
-class TestDefaultOff:
-    def test_flag_defaults_off(self):
+class TestDefaultOn:
+    def test_flag_defaults_on(self, monkeypatch):
+        # Enabled by default (operator-requested activation); explicit env still wins.
+        monkeypatch.delenv("WS_IDLE_TIMEOUT_SEC", raising=False)
         from bot.config import ExecutionConfig
-        assert ExecutionConfig().ws_idle_timeout_sec == 0.0
+        assert ExecutionConfig().ws_idle_timeout_sec == 90.0
