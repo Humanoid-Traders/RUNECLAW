@@ -51,12 +51,14 @@ class TestPositionWithinCap:
 
 
 class TestComparedAgainstPerTradeCap:
-    def test_check2_uses_max_position_pct_not_symbol_exposure(self):
+    def test_check2_uses_per_trade_cap_not_symbol_exposure(self):
         src = inspect.getsource(RiskEngine._evaluate_locked)
-        # The check-#2 block compares the post-cap margin to the per-trade cap…
-        assert "max_margin_pct = CONFIG.risk.max_position_pct" in src
-        # …and the old (unreachable) comparison against the symbol-exposure limit
-        # is gone from check #2.
+        # check #2 compares the post-cap margin to the SAME per-trade cap the
+        # notional clamp used (_cap_pct), which defaults to max_position_pct when
+        # the #47 per-strategy flag is off — NOT the symbol-exposure limit.
+        assert "max_margin_pct = _cap_pct" in src
+        assert "_cap_pct = CONFIG.risk.max_position_pct" in src
+        # The old (unreachable) comparison against symbol-exposure is gone.
         assert "max_margin_pct = CONFIG.risk.max_symbol_exposure_pct" not in src
 
     def test_reject_branch_is_reachable_at_symbol_exposure_level(self):

@@ -138,6 +138,11 @@ def _env_float_bounded(key: str, default: float, min_val: float, max_val: float)
 class RiskLimits:
     """Hard risk limits -- breaching any one triggers circuit breaker."""
     max_position_pct: float = _env_float_bounded("MAX_POSITION_PCT", 13.0, 1, 100)
+    # #47: when ON, the notional cap + the POSITION_SIZE check use the per-strategy
+    # cap (StrategyTypeConfig.get_max_position_pct) instead of the single global
+    # max_position_pct, so a scalp can ride a tighter notional ceiling than a
+    # position trade. Default OFF → both use max_position_pct (byte-identical).
+    per_strategy_notional_cap_enabled: bool = _env_bool("PER_STRATEGY_NOTIONAL_CAP_ENABLED", False)
     max_daily_loss_pct: float = _env_float_bounded("MAX_DAILY_LOSS_PCT", 5.0, 0.1, 50)
     # Auto-reset a DAILY-LOSS circuit-breaker trip at UTC day rollover (opt-in,
     # default OFF; deep-audit medium). The daily-loss limit is a per-day guard,
@@ -1034,6 +1039,16 @@ class StrategyTypeConfig:
     swing_max_risk_pct: float = _env_float("SWING_MAX_RISK_PCT", 2.0)
     position_max_risk_pct: float = _env_float("POSITION_MAX_RISK_PCT", 2.0)
 
+    # Max NOTIONAL (margin) cap as % of equity, per type (#47). The per-type risk
+    # budget above shapes size by stop distance, but the notional cap was a single
+    # global value (RiskLimits.max_position_pct), which washed the per-type budget
+    # back out. These let a scalp ride a tighter notional ceiling than a position
+    # trade. Only consulted when RiskLimits.per_strategy_notional_cap_enabled is on.
+    scalp_max_position_pct: float = _env_float("SCALP_MAX_POSITION_PCT", 8.0)
+    intraday_max_position_pct: float = _env_float("INTRADAY_MAX_POSITION_PCT", 10.0)
+    swing_max_position_pct: float = _env_float("SWING_MAX_POSITION_PCT", 13.0)
+    position_max_position_pct: float = _env_float("POSITION_MAX_POSITION_PCT", 15.0)
+
     # Min risk:reward ratio per type
     scalp_min_rr: float = _env_float("SCALP_MIN_RR", 1.2)
     intraday_min_rr: float = _env_float("INTRADAY_MIN_RR", 1.5)
@@ -1075,6 +1090,12 @@ class StrategyTypeConfig:
 
     def get_max_risk_pct(self, strategy_type: str) -> float:
         return getattr(self, f"{strategy_type}_max_risk_pct", 2.0)
+
+    def get_max_position_pct(self, strategy_type: str, default: float) -> float:
+        """Per-type notional (margin) cap as % of equity (#47). Unknown types fall
+        back to ``default`` (the caller passes the global RiskLimits.max_position_pct
+        so unmapped strategies are unchanged)."""
+        return getattr(self, f"{strategy_type}_max_position_pct", default)
 
     def get_min_rr(self, strategy_type: str) -> float:
         return getattr(self, f"{strategy_type}_min_rr", 1.5)

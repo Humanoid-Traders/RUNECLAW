@@ -298,6 +298,11 @@ defaults:
     env_var: MAX_POSITION_PCT
     description: "Max percentage of equity risked per position (fixed-fractional sizing)"
 
+  per_strategy_notional_cap_enabled:
+    value: false
+    env_var: PER_STRATEGY_NOTIONAL_CAP_ENABLED
+    description: "Use the per-strategy notional cap (StrategyTypeConfig) instead of the global max_position_pct for the size cap + POSITION_SIZE check"
+
   max_daily_loss_pct:
     value: 5.0
     env_var: MAX_DAILY_LOSS_PCT
