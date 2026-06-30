@@ -720,10 +720,13 @@ class ProactiveMonitor:
             if not all_positions:
                 return alerts
 
-            # Get current prices from WS feed
+            # Get current prices from WS feed. Apply the same staleness bound the
+            # SL/TP monitor uses so a silently-stalled feed can't drive a
+            # proactive alert off a frozen price (0 = no filter).
             ws_prices = {}
             if self.engine.ws_feed.is_connected():
-                ws_prices = self.engine.ws_feed.get_prices() or {}
+                ws_prices = self.engine.ws_feed.get_prices(
+                    max_age_sec=getattr(CONFIG.execution, "ws_max_tick_age_sec", 0)) or {}
 
             for pos in all_positions:
                 current_price = ws_prices.get(pos.asset)
@@ -864,10 +867,12 @@ class ProactiveMonitor:
             now = datetime.now(UTC)
             cfg = CONFIG.time_stop
 
-            # Get current prices
+            # Get current prices (staleness-bounded, as in the SL/TP monitor) so
+            # a frozen WS price can't trigger a time-stop/SL-proximity alert.
             ws_prices = {}
             if self.engine.ws_feed.is_connected():
-                ws_prices = self.engine.ws_feed.get_prices() or {}
+                ws_prices = self.engine.ws_feed.get_prices(
+                    max_age_sec=getattr(CONFIG.execution, "ws_max_tick_age_sec", 0)) or {}
 
             for pos in all_positions:
                 opened_at = getattr(pos, 'opened_at', None)
