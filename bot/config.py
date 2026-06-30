@@ -773,6 +773,16 @@ class ExecutionConfig:
     # to REST (and the exchange-side stop remains the ultimate backstop). 0
     # disables the guard (use every WS tick regardless of age).
     ws_max_tick_age_sec: float = _env_float_bounded("WS_MAX_TICK_AGE_SEC", 15.0, 0.0, 3600.0)
+    # WS idle-stall watchdog (opt-in, default 0 = OFF; deep-audit medium). The
+    # read loop blocks on `async for raw in ws`, and ping/pong keepalive only
+    # detects a truly dead socket — a feed that stays pong-alive but stops
+    # pushing ticker data (server-side subscription drop, half-open stall) would
+    # freeze prices indefinitely with no reconnect. When >0, a watchdog forces a
+    # reconnect + resubscribe (and alerts) if no WS message has arrived for this
+    # many seconds while connected. 0 disables → read loop byte-identical. Set
+    # comfortably above the quietest symbol's natural tick gap to avoid spurious
+    # reconnects (e.g. 60–120s). RECOMMENDED ON for live money.
+    ws_idle_timeout_sec: float = _env_float_bounded("WS_IDLE_TIMEOUT_SEC", 0.0, 0.0, 3600.0)
     # REST ticker staleness guard for the live SL/TP monitor (check_positions).
     # The WS guard above only covers the WS price path; the executor's local
     # SL/TP loop reads `last` from REST fetch_ticker, where a frozen/old value
