@@ -366,13 +366,18 @@ class OrderFlowAnalyzer:
         prev_price: Optional[float] = None
         for t in trades:
             cost = self._trade_cost(t)
+            price = float(t.get("price") or 0)
             side = t.get("side")
             if side not in ("buy", "sell"):
                 # Fallback: tick rule (uptick = buyer-initiated)
-                price = float(t.get("price") or 0)
                 if prev_price is not None and price != prev_price:
                     side = "buy" if price > prev_price else "sell"
-                prev_price = price
+            # Advance every iteration so the tick rule compares against the
+            # IMMEDIATELY preceding trade — not a stale price left over from the
+            # last side-less trade (mirrors _fill_whale_metrics). Bug: the update
+            # used to live inside the branch above, so exchange-sided trades did
+            # not advance prev_price and later tick-rule inferences were wrong.
+            prev_price = price
             if side == "buy":
                 buy_usd += cost
             elif side == "sell":
