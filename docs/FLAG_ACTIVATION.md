@@ -54,6 +54,8 @@ VWAP_SESSION_ANCHORED=1            # vwap voters use session-anchored VWAP
 LEADING_DIAGONAL_PRETREND_FIX=1    # stricter leading-diagonal detection
 LIQUIDITY_SWEEP_OWN_CLOSE=1        # stricter liquidity-sweep detection
 OF_TIME_BARS_ENABLED=1             # taker 3-bar gate becomes time-aware
+PATTERN_ATR_TOLERANCES_ENABLED=1   # H&S / double-top symmetry tolerance scales with
+                                   # ATR (only ever tightens the fixed 5%/3% gate)
 ```
 
 ## 3. Learning — enable the write now, apply later
