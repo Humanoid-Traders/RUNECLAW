@@ -29,6 +29,8 @@ class MemoryDB {
     this._nextTradeId = 1;
     this._nextSnapId = 1;
     this.scanCache = null; // { scan_json, updated_at }
+    this.signals = [];     // global signal stream (UPSERT by signal_key)
+    this._nextSignalId = 1;
   }
 
   // Minimal query interface matching mysql2 pool.execute() return format
@@ -36,6 +38,42 @@ class MemoryDB {
     const cmd = sql.trim().toUpperCase();
 
     if (cmd.startsWith('CREATE TABLE')) return [[], []];
+
+    // -- SIGNALS -- (checked before TRADES: the stats query shares COUNT(*)/wins
+    // aliases with trade handlers, so it must match here first.)
+    if (cmd.includes('INSERT INTO SIGNALS')) {
+      // params: signal_key, symbol, direction, confidence, score, pattern,
+      // regime, entry_price, stop_loss, take_profit, rr, thesis, status, pnl,
+      // created_at, resolved_at. ON DUPLICATE KEY updates status/pnl/resolved_at.
+      const cols = ['signal_key','symbol','direction','confidence','score','pattern',
+        'regime','entry_price','stop_loss','take_profit','rr','thesis','status','pnl',
+        'created_at','resolved_at'];
+      const row = {}; cols.forEach((k, i) => { row[k] = params[i]; });
+      const existing = this.signals.find(s => s.signal_key === row.signal_key);
+      if (existing) {
+        existing.status = row.status; existing.pnl = row.pnl; existing.resolved_at = row.resolved_at;
+      } else {
+        row.id = this._nextSignalId++;
+        this.signals.push(row);
+      }
+      return [{ affectedRows: 1 }, []];
+    }
+
+    if (cmd.includes('FROM SIGNALS') && cmd.includes('COUNT(*)')) {
+      const resolved = this.signals.filter(s => s.pnl !== null && s.pnl !== undefined);
+      const wins = resolved.filter(s => Number(s.pnl) > 0).length;
+      const net_pnl = resolved.reduce((a, s) => a + (Number(s.pnl) || 0), 0);
+      return [[{ resolved: resolved.length, wins, net_pnl }], []];
+    }
+
+    if (cmd.includes('FROM SIGNALS')) {
+      // Filters are ignored in the mock; newest-first up to the LIMIT (last param).
+      const limit = parseInt(params[params.length - 1]) || 50;
+      const rows = [...this.signals]
+        .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+        .slice(0, limit);
+      return [rows, []];
+    }
 
     // -- USERS --
     if (cmd.includes('INSERT INTO USERS')) {
