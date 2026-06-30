@@ -580,15 +580,17 @@ class RiskEngine:
         # C2-24 FIX: Floor at 0.1% to prevent near-zero stop distances from
         # producing astronomically large intermediate position values.
         stop_distance_pct = max(stop_distance_pct, 0.001)
-        uncapped_position_usd = position_usd  # fallback: flat notional
+        # Fixed-fractional size from the per-strategy risk budget. stop_distance_pct
+        # is floored above so the branch is always taken; if it ever weren't,
+        # position_usd retains the flat-notional value computed above as the
+        # fallback. #54: dropped the redundant pre-assignment of risk_budget and
+        # the uncapped_position_usd mirror — position_usd is the only value read below.
         if stop_distance_pct > 0:
-            risk_budget = sizing_equity * (CONFIG.risk.max_position_pct / 100.0)
             # Per-strategy-type risk budget scaling
             _st = getattr(idea, 'strategy_type', 'swing')
             st_risk_pct = CONFIG.strategy_types.get_max_risk_pct(_st)
             risk_budget = sizing_equity * (st_risk_pct / 100.0)
-            uncapped_position_usd = risk_budget / stop_distance_pct
-            position_usd = uncapped_position_usd
+            position_usd = risk_budget / stop_distance_pct
 
         # Apply execution cap (e.g., micro-test $10 limit).
         # The risk engine must evaluate the ACTUAL position size that will
@@ -597,7 +599,6 @@ class RiskEngine:
         # rejected because the theoretical size (e.g., $43) exceeds 20%.
         if max_position_usd is not None and max_position_usd > 0:
             position_usd = min(position_usd, max_position_usd)
-            uncapped_position_usd = min(uncapped_position_usd, max_position_usd)
 
         # C2-11 FIX: Compute macro size multiplier BEFORE the notional cap and
         # check #2, so the capped value reflects the macro-adjusted size.
