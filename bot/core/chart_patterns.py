@@ -1200,35 +1200,47 @@ def detect_liquidity_sweep(
 
     price = float(closes[-1])
 
+    # A sweep-and-reclaim is a property of ONE bar: it wicks through the level
+    # AND closes back on the right side. The legacy check verified the reclaim
+    # with the LATEST close (closes[-1]) even for a bar 2-3 back, so an old bar's
+    # wick plus the current bar's position could fire a false sweep. When enabled,
+    # each candidate bar is checked against ITS OWN close (deep-audit medium).
+    # Default OFF keeps the legacy behaviour byte-identical.
+    use_own_close = _env_bool("LIQUIDITY_SWEEP_OWN_CLOSE", False)
+
     # Check last 3 bars for sweeps (not just the last bar)
     check_bars = min(3, len(lows))
 
-    # Bullish sweep: recent bar wick went below a prior swing low but price closed above it
+    # Bullish sweep: recent bar wick went below a prior swing low but that bar closed back above it
     if sl:
         nearest_sl = sl[-1][1]
         for offset in range(1, check_bars + 1):
             last_low = float(lows[-offset])
-            if last_low < nearest_sl * 0.998 and price > nearest_sl:
+            reclaim_close = float(closes[-offset]) if use_own_close else price
+            if last_low < nearest_sl * 0.998 and reclaim_close > nearest_sl:
                 return {
                     "name": "Liquidity Sweep (Bullish)",
                     "signal": "bullish",
                     "confidence": 0.70,
                     "description": f"Swept lows at ${nearest_sl:,.2f}, reclaimed — trapped sellers",
-                    "key_levels": {"swept_level": nearest_sl, "wick_low": last_low},
+                    "key_levels": {"swept_level": nearest_sl, "wick_low": last_low,
+                                   "reclaim_close": reclaim_close},
                 }
 
-    # Bearish sweep: recent bar wick above a prior swing high but price closed below it
+    # Bearish sweep: recent bar wick above a prior swing high but that bar closed back below it
     if sh:
         nearest_sh = sh[-1][1]
         for offset in range(1, check_bars + 1):
             last_high = float(highs[-offset])
-            if last_high > nearest_sh * 1.002 and price < nearest_sh:
+            reclaim_close = float(closes[-offset]) if use_own_close else price
+            if last_high > nearest_sh * 1.002 and reclaim_close < nearest_sh:
                 return {
                     "name": "Liquidity Sweep (Bearish)",
                     "signal": "bearish",
                     "confidence": 0.70,
                     "description": f"Swept highs at ${nearest_sh:,.2f}, rejected — trapped buyers",
-                    "key_levels": {"swept_level": nearest_sh, "wick_high": last_high},
+                    "key_levels": {"swept_level": nearest_sh, "wick_high": last_high,
+                                   "reclaim_close": reclaim_close},
                 }
 
     return None
