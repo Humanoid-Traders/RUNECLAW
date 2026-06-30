@@ -743,6 +743,16 @@ class LearningConfig:
     # be weighted later; for now an opted-in operator consumes them equally.
     # Default OFF keeps the write side byte-identical (live-only).
     learn_from_paper_closes_enabled: bool = _env_bool("LEARN_FROM_PAPER_CLOSES", True)
+    # Also log a DECISION row for per-user paper (practice) fills, so the
+    # confidence-calibration and voter-weight learners — which JOIN a decision row
+    # to the outcome by paper_trade_id — can train on paper history too (without
+    # it, paper trades have only an outcome row and contribute nothing to those
+    # two learners). Default OFF: those learners apply to LIVE confidence and the
+    # admin auto-trade gate, so paper-derived calibration influencing live is an
+    # explicit operator opt-in. The paper outcome write itself stays governed by
+    # LEARN_FROM_PAPER_CLOSES above.
+    learn_calibration_from_paper_enabled: bool = _env_bool(
+        "LEARN_CALIBRATION_FROM_PAPER", False)
     # Require at least this many similar (same symbol+direction+regime) closed
     # setups before any adjustment — avoids reacting to noise.
     adaptive_confidence_min_samples: int = int(

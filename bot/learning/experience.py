@@ -56,9 +56,11 @@ class ExperienceMemory:
         risk_engine_version: str = "v1",
         mode: str = "paper",
         confluence_votes: Optional[list] = None,
+        source: str = "runeclaw_engine",
     ) -> DecisionMemory:
         """Record a complete trading decision."""
         record = DecisionMemory(
+            source=source or "runeclaw_engine",
             symbol=symbol,
             direction=direction,
             confidence=confidence,

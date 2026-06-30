@@ -2043,6 +2043,35 @@ class RuneClawEngine:
             return f"⚠️ [PAPER] Simulated fill failed: {str(exc)[:160]}"
 
         self._pending_ideas.pop(trade_id, None)
+        # Log a DECISION row for this paper fill (gated, default OFF) so the
+        # confidence-calibration / voter-weight learners can JOIN it to the paper
+        # outcome (recorded later by the paper loop) via paper_trade_id and train
+        # on paper history. Uses trade.trade_id (== idea.id), the SAME key the
+        # outcome row carries. Fail-open. Tagged source="paper_decision" so paper-
+        # sourced training data stays auditable/distinguishable from live.
+        try:
+            if CONFIG.learning.learn_calibration_from_paper_enabled:
+                self.learning.log_decision(
+                    symbol=idea.asset,
+                    direction=idea.direction.value,
+                    confidence=idea.confidence,
+                    blended_confidence_raw=getattr(idea, "blended_confidence_raw", None) or 0.0,
+                    confluence_score=idea.confidence,
+                    entry_price=idea.entry_price,
+                    stop_loss=idea.stop_loss,
+                    take_profit=idea.take_profit,
+                    risk_reward=idea.risk_reward_ratio,
+                    position_size_usd=size_usd,
+                    risk_engine_result="APPROVED",
+                    checks_passed=getattr(recheck, "checks_passed", []),
+                    checks_failed=[],
+                    decision="TRADE_ACCEPTED_PAPER",
+                    paper_trade_id=trade.trade_id,
+                    confluence_votes=getattr(idea, "_confluence_votes", []),
+                    source="paper_decision",
+                )
+        except Exception as _pd_exc:
+            logger.debug("Paper decision-log skipped: %s", _pd_exc)
         audit(trade_log,
               f"PAPER fill: {idea.direction.value} {idea.asset} @ {idea.entry_price} "
               f"size ${size_usd:.2f} (user {user_id})",
