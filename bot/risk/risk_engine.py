@@ -73,6 +73,7 @@ if TYPE_CHECKING:
 from dataclasses import dataclass
 
 from bot.config import CONFIG
+from bot.utils.durable_io import fsync_dir
 from bot.utils.logger import audit, risk_log
 from bot.utils.models import RiskCheck, RiskVerdict, TradeIdea
 
@@ -1972,6 +1973,9 @@ class RiskEngine:
                 f.flush()
                 os.fsync(f.fileno())
             os.replace(tmp, self._state_file)  # atomic on POSIX
+            # Persist the rename itself (not just the tmp contents) so the
+            # circuit-breaker state survives a crash/power loss. Best-effort.
+            fsync_dir(self._state_file)
         except Exception as exc:
             # Log save failure -- circuit breaker state is safety-critical
             audit(risk_log, f"Failed to persist risk state: {exc}",

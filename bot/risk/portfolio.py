@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any, Optional, Callable, cast
 
 from bot.config import CONFIG
+from bot.utils.durable_io import fsync_dir
 from bot.utils.logger import audit, trade_log
 from bot.utils.models import (
     Direction, PortfolioState, TradeExecution, TradeIdea, TradeStatus,
@@ -538,6 +539,9 @@ class PortfolioTracker:
                 f.flush()
                 os.fsync(f.fileno())
             os.replace(tmp, str(target_path))
+            # Persist the rename itself (not just the tmp contents) so it
+            # survives a crash/power loss. Best-effort.
+            fsync_dir(str(target_path))
         except Exception as exc:
             audit(trade_log, f"Failed to save portfolio state: {exc}",
                   action="save_state", result="ERROR")
