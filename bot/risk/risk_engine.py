@@ -217,6 +217,10 @@ class RiskEngine:
         self._consecutive_losses = 0
         self._last_loss_time: Optional[float] = None  # epoch seconds
         self._circuit_breaker_trips = 0
+        # Why/when the breaker last tripped, so a DAILY-LOSS trip can auto-reset
+        # at day rollover while drawdown/streak/manual trips stay manual.
+        self._circuit_trip_cause: str = ""        # "daily_loss" | "drawdown" | "streak" | "manual"
+        self._circuit_trip_day: str = ""          # UTC YYYY-MM-DD of the trip
         self._total_checks = 0
         self._total_rejections = 0
         # C2-45 FIX: deque with maxlen auto-prunes, no manual size checks needed
@@ -363,7 +367,8 @@ class RiskEngine:
             self._save_state()
             if self._consecutive_losses >= CONFIG.risk.max_consecutive_losses:
                 self._trip_circuit_breaker(
-                    f"consecutive loss streak: {self._consecutive_losses}"
+                    f"consecutive loss streak: {self._consecutive_losses}",
+                    cause="streak",
                 )
         elif pnl > 0:
             # C-06 FIX: A single small win should not erase a long loss streak.
@@ -722,6 +727,27 @@ class RiskEngine:
         if max_notional_usd > 0 and position_usd > max_notional_usd:
             position_usd = max_notional_usd
 
+        # Auto-reset a DAILY-LOSS breaker trip once the UTC day has rolled over
+        # (opt-in, default OFF). Without it a single bad day latches the breaker
+        # until a human runs /reset, even after daily_pnl rolls back to ~0. Only
+        # the daily-loss cause is cleared; drawdown/streak/manual stay manual, and
+        # if today is also a loss the daily-loss check below re-trips immediately.
+        _today_utc = (as_of or datetime.now(UTC)).strftime("%Y-%m-%d")
+        if self._should_autoreset_daily_breaker(
+                self._circuit_open, self._circuit_trip_cause, self._circuit_trip_day,
+                _today_utc, CONFIG.risk.daily_loss_breaker_autoreset_enabled,
+                self._consecutive_losses, CONFIG.risk.max_consecutive_losses):
+            _prev_day = self._circuit_trip_day
+            self._circuit_open = False
+            self._circuit_trip_cause = ""
+            self._circuit_trip_day = ""
+            audit(risk_log,
+                  f"Daily-loss circuit breaker auto-reset at day rollover "
+                  f"(tripped {_prev_day}, now {_today_utc})",
+                  action="circuit_breaker", result="AUTO_RESET",
+                  data={"tripped_day": _prev_day, "today": _today_utc})
+            self._save_state()
+
         # ── Individual checks — each wrapped so a raised exception → REJECTED ──
         # This is the fail-closed contract: if ANY check cannot be evaluated,
         # the trade is REJECTED.  No silent pass-through on errors.
@@ -781,7 +807,7 @@ class RiskEngine:
             if state.daily_pnl < 0 and daily_loss_pct >= CONFIG.risk.max_daily_loss_pct:
                 failed.append(f"DAILY_LOSS: {daily_loss_pct:.1f}% >= {CONFIG.risk.max_daily_loss_pct}%")
                 # C-05 FIX: trip circuit breaker AND reject the CURRENT trade
-                self._trip_circuit_breaker("daily loss limit breached")
+                self._trip_circuit_breaker("daily loss limit breached", cause="daily_loss")
                 if "CIRCUIT_BREAKER: tripped during evaluation" not in failed:
                     failed.append("CIRCUIT_BREAKER: tripped during evaluation — current trade rejected")
             else:
@@ -798,7 +824,7 @@ class RiskEngine:
             if state.max_drawdown_pct >= _max_dd:
                 failed.append(f"DRAWDOWN: {state.max_drawdown_pct:.1f}% >= {_max_dd}%")
                 # C-05 FIX: trip circuit breaker AND reject the CURRENT trade
-                self._trip_circuit_breaker("max drawdown breached")
+                self._trip_circuit_breaker("max drawdown breached", cause="drawdown")
                 if "CIRCUIT_BREAKER: tripped during evaluation" not in failed:
                     failed.append("CIRCUIT_BREAKER: tripped during evaluation — current trade rejected")
             else:
@@ -1904,6 +1930,8 @@ class RiskEngine:
             self._consecutive_losses = data.get("consecutive_losses", 0)
             self._last_loss_time = data.get("last_loss_time")
             self._circuit_breaker_trips = data.get("circuit_breaker_trips", 0)
+            self._circuit_trip_cause = data.get("circuit_trip_cause", "")
+            self._circuit_trip_day = data.get("circuit_trip_day", "")
             if self._circuit_open:
                 audit(risk_log, "Circuit breaker state restored from disk: ACTIVE",
                       action="state_restore", result="LOADED")
@@ -1956,6 +1984,8 @@ class RiskEngine:
             "consecutive_losses": self._consecutive_losses,
             "last_loss_time": self._last_loss_time,
             "circuit_breaker_trips": self._circuit_breaker_trips,
+            "circuit_trip_cause": self._circuit_trip_cause,
+            "circuit_trip_day": self._circuit_trip_day,
             "saved_at": datetime.now(UTC).isoformat(),
         }
 
@@ -1966,6 +1996,8 @@ class RiskEngine:
         self._consecutive_losses = data.get("consecutive_losses", 0)
         self._last_loss_time = data.get("last_loss_time")
         self._circuit_breaker_trips = data.get("circuit_breaker_trips", 0)
+        self._circuit_trip_cause = data.get("circuit_trip_cause", "")
+        self._circuit_trip_day = data.get("circuit_trip_day", "")
         if self._circuit_open:
             audit(risk_log, "Circuit breaker state restored from combined state: ACTIVE",
                   action="state_restore", result="LOADED")
@@ -1987,12 +2019,17 @@ class RiskEngine:
         margin_pct = position_usd / sizing_equity * 100
         return (margin_pct < max_position_pct + 1e-9), margin_pct
 
-    def _trip_circuit_breaker(self, reason: str) -> None:
+    def _trip_circuit_breaker(self, reason: str, cause: str = "manual") -> None:
         if not self._circuit_open:
             self._circuit_open = True
             self._circuit_breaker_trips += 1
+            # Record the owning cause + UTC day so a daily-loss trip can
+            # auto-reset at rollover while drawdown/streak/manual stay manual.
+            self._circuit_trip_cause = cause
+            self._circuit_trip_day = datetime.now(UTC).strftime("%Y-%m-%d")
             audit(risk_log, f"CIRCUIT BREAKER TRIPPED: {reason}",
-                  action="circuit_breaker", result="HALTED")
+                  action="circuit_breaker", result="HALTED",
+                  data={"cause": cause, "day": self._circuit_trip_day})
             self._save_state()
 
     def emergency_halt(self, reason: str) -> None:
@@ -2007,6 +2044,24 @@ class RiskEngine:
             self._circuit_open = False
             self._consecutive_losses = 0
             self._last_loss_time = None
+            self._circuit_trip_cause = ""
+            self._circuit_trip_day = ""
             audit(risk_log, "Circuit breaker manually reset",
                   action="circuit_breaker", result="RESET")
             self._save_state()
+
+    @staticmethod
+    def _should_autoreset_daily_breaker(circuit_open: bool, cause: str, trip_day: str,
+                                        today: str, enabled: bool,
+                                        streak: int, max_streak: int) -> bool:
+        """Whether a tripped breaker should auto-reset at day rollover.
+
+        Applies ONLY to a daily-loss-caused trip, once the UTC day has rolled
+        over past the trip day, and only when a loss-streak block is not itself
+        active (so we never resume into a maxed streak). Drawdown / streak /
+        manual trips never auto-reset — they require human intervention."""
+        return bool(
+            enabled and circuit_open and cause == "daily_loss"
+            and trip_day and today and trip_day != today
+            and streak < max_streak
+        )

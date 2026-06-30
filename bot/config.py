@@ -139,6 +139,16 @@ class RiskLimits:
     """Hard risk limits -- breaching any one triggers circuit breaker."""
     max_position_pct: float = _env_float_bounded("MAX_POSITION_PCT", 13.0, 1, 100)
     max_daily_loss_pct: float = _env_float_bounded("MAX_DAILY_LOSS_PCT", 5.0, 0.1, 50)
+    # Auto-reset a DAILY-LOSS circuit-breaker trip at UTC day rollover (opt-in,
+    # default OFF; deep-audit medium). The daily-loss limit is a per-day guard,
+    # but the breaker is a single latch with no record of why it tripped, so a
+    # single bad day halts trading until a human runs /reset — even after
+    # daily_pnl rolls back to ~0. When ON, ONLY a daily-loss-caused trip is
+    # cleared once the day has rolled over (and the loss-streak guard is not
+    # itself active); drawdown / streak / manual trips stay manual. If the new
+    # day is also bad, the daily-loss check re-trips immediately. Default OFF
+    # keeps the breaker fully manual (byte-identical).
+    daily_loss_breaker_autoreset_enabled: bool = _env_bool("DAILY_LOSS_BREAKER_AUTORESET", False)
     # CFG-2: clamp risk-gate limits so an operator typo or a negative value
     # (which would invert the `>`/`<` comparisons and silently disable the guard)
     # cannot load. Bounds are generous enough to never reject a legitimate value.
