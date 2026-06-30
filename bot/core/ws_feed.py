@@ -15,12 +15,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
 from dataclasses import dataclass
 from datetime import datetime
 from bot.compat import UTC
 from typing import Optional
 
+from bot.config import CONFIG
 from bot.utils.logger import system_log, audit
 
 # Conditional import -- keeps tests working when websockets is not installed.
@@ -38,6 +40,7 @@ BITGET_WS_URL = "wss://ws.bitget.com/v3/ws/public"
 PING_INTERVAL_S = 25
 RECONNECT_BASE_S = 1
 RECONNECT_MAX_S = 60
+WS_IDLE_POLL_S = 5.0  # how often the idle watchdog checks the last-message age
 
 
 # ---------------------------------------------------------------------------
@@ -241,6 +244,53 @@ class BitgetWSFeed:
     # Internal: connection loop
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _is_idle_stalled(last_msg_ts: float, now: float, timeout: float) -> bool:
+        """True when the feed is connected but no message has arrived for longer
+        than `timeout` seconds. timeout <= 0 disables (never stalled). A
+        not-yet-seeded last_msg_ts (0/falsy) is not treated as stalled — the
+        watchdog seeds it at connect to start the grace period."""
+        if not timeout or timeout <= 0:
+            return False
+        if not last_msg_ts:
+            return False
+        return (now - last_msg_ts) > timeout
+
+    async def _idle_watchdog(self) -> None:
+        """Force a reconnect when the socket is open but the data stream has gone
+        silent. ping/pong keepalive only catches a dead socket; a feed that stays
+        pong-alive while Bitget stops pushing ticker data (subscription dropped
+        server-side, half-open stall) would otherwise freeze prices forever.
+        Closing the socket breaks the read loop so the outer loop reconnects and
+        resubscribes. Gated by CONFIG.execution.ws_idle_timeout_sec (0 disables →
+        byte-identical, watchdog returns immediately)."""
+        timeout = float(getattr(CONFIG.execution, "ws_idle_timeout_sec", 0.0) or 0.0)
+        if timeout <= 0:
+            return
+        poll = min(WS_IDLE_POLL_S, timeout)
+        while self._connected and not self._stop_event.is_set():
+            try:
+                await asyncio.wait_for(self._stop_event.wait(), timeout=poll)
+                return  # stop requested during the wait
+            except asyncio.TimeoutError:
+                pass
+            if self._is_idle_stalled(self._last_msg_ts, time.time(), timeout):
+                age = time.time() - self._last_msg_ts
+                audit(
+                    system_log,
+                    f"WS feed STALLED: no data for {age:.0f}s (>{timeout:.0f}s) "
+                    f"— forcing reconnect/resubscribe",
+                    action="ws_feed_stall",
+                    result="STALL",
+                    level=logging.WARNING,
+                )
+                try:
+                    if self._ws is not None:
+                        await self._ws.close()
+                except Exception:
+                    pass
+                return  # read loop will end; outer loop reconnects
+
     async def _run_loop(self) -> None:
         """Outer loop: connect, subscribe, read messages, reconnect."""
         while not self._stop_event.is_set():
@@ -289,6 +339,9 @@ class BitgetWSFeed:
             self._ws = ws
             self._connected = True
             self._reconnect_delay = RECONNECT_BASE_S
+            # Seed the last-message clock at connect so the idle watchdog measures
+            # the grace period from now (not from a stale prior-connection value).
+            self._last_msg_ts = time.time()
 
             audit(
                 system_log,
@@ -300,20 +353,31 @@ class BitgetWSFeed:
             if self._symbols:
                 await self._send_subscribe(list(self._symbols))
 
-            # Message read loop
-            async for raw in ws:
-                if self._stop_event.is_set():
-                    break
-                self._last_msg_ts = time.time()
+            # Idle-stall watchdog runs alongside the read loop (no-op when the
+            # timeout is 0). If the feed goes silent it closes the socket, which
+            # ends the read loop below and triggers a reconnect + resubscribe.
+            watchdog = asyncio.create_task(self._idle_watchdog())
+            try:
+                # Message read loop
+                async for raw in ws:
+                    if self._stop_event.is_set():
+                        break
+                    self._last_msg_ts = time.time()
+                    try:
+                        self._handle_message(raw)
+                    except Exception as exc:
+                        audit(
+                            system_log,
+                            f"WS parse error: {exc}",
+                            action="ws_feed_parse",
+                            result="WARN",
+                        )
+            finally:
+                watchdog.cancel()
                 try:
-                    self._handle_message(raw)
-                except Exception as exc:
-                    audit(
-                        system_log,
-                        f"WS parse error: {exc}",
-                        action="ws_feed_parse",
-                        result="WARN",
-                    )
+                    await watchdog
+                except (asyncio.CancelledError, Exception):
+                    pass
 
     # ------------------------------------------------------------------
     # Internal: subscribe / unsubscribe helpers
