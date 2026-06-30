@@ -220,6 +220,8 @@ async def _run_backtest(args: argparse.Namespace) -> None:
         slippage_pct=args.slippage,
         use_llm=args.use_llm,
         use_recorded_llm=args.use_recorded_llm,
+        use_recorded_order_flow=args.use_recorded_order_flow,
+        recorded_order_flow_path=args.of_snapshot_path,
     )
 
     # Load data (real-data-first; see _load_bars).
@@ -239,6 +241,11 @@ async def _run_backtest(args: argparse.Namespace) -> None:
     # Run backtest
     print("  Running backtest...")
     engine = BacktestEngine(config)
+    if config.use_recorded_order_flow:
+        n_of = len(engine._recorded_order_flow) if engine._recorded_order_flow is not None else 0
+        print(f"  Order-flow replay: {n_of} recorded snapshot(s) from "
+              f"{config.recorded_order_flow_path}"
+              + ("" if n_of else " — none found, running WITHOUT order flow (legacy path)"))
     result = await engine.run(bars)
     engine.cleanup()  # remove temp state dir
 
@@ -264,7 +271,7 @@ async def _run_backtest(args: argparse.Namespace) -> None:
         print(f"  Results saved to {args.output}")
 
 
-def main() -> None:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="RUNECLAW Backtest Runner",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -314,6 +321,14 @@ Examples:
     trade_group.add_argument("--use-recorded-llm", action="store_true",
                              help="Replay recorded LLM theses (data/learning/llm_calibration.jsonl) "
                                   "for deterministic parity with the live blended path")
+    trade_group.add_argument("--use-recorded-order-flow", action="store_true",
+                             help="Replay shadow-recorded order-flow snapshots so the smart-money "
+                                  "voter / OF confluence / veto / funding haircut fire in backtest "
+                                  "(needs live OF_RECORD_SNAPSHOTS data; else runs without order flow)")
+    trade_group.add_argument("--of-snapshot-path", type=str,
+                             default="data/learning/order_flow_snapshots.jsonl",
+                             help="Path to the recorded order-flow JSONL "
+                                  "(default: data/learning/order_flow_snapshots.jsonl)")
 
     # Walk-forward analysis
     wf_group = parser.add_argument_group("walk-forward")
@@ -326,7 +341,11 @@ Examples:
     # Output
     parser.add_argument("--output", "-o", type=str, help="Save JSON results to file")
 
-    args = parser.parse_args()
+    return parser
+
+
+def main() -> None:
+    args = build_parser().parse_args()
     if args.walk_forward and args.walk_forward > 0:
         asyncio.run(_run_walk_forward(args))
     else:
@@ -340,6 +359,8 @@ async def _run_walk_forward(args: argparse.Namespace) -> None:
         symbol=args.symbol, timeframe=args.timeframe, initial_balance=args.balance,
         commission_pct=args.commission, slippage_pct=args.slippage, use_llm=args.use_llm,
         use_recorded_llm=args.use_recorded_llm,
+        use_recorded_order_flow=args.use_recorded_order_flow,
+        recorded_order_flow_path=args.of_snapshot_path,
     )
     print(f"\n  Loading data for {config.symbol}...")
     bars, used_synthetic, data_source = await _load_bars(args, config)
@@ -349,7 +370,10 @@ async def _run_walk_forward(args: argparse.Namespace) -> None:
 
     base = {"symbol": args.symbol, "timeframe": args.timeframe,
             "initial_balance": args.balance, "commission_pct": args.commission,
-            "slippage_pct": args.slippage, "use_llm": args.use_llm}
+            "slippage_pct": args.slippage, "use_llm": args.use_llm,
+            "use_recorded_llm": args.use_recorded_llm,
+            "use_recorded_order_flow": args.use_recorded_order_flow,
+            "recorded_order_flow_path": args.of_snapshot_path}
     grid = ([{"confidence_threshold": t} for t in (0.45, 0.5, 0.55, 0.6)]
             if args.wf_optimize else None)
     print(f"  Running {args.walk_forward}-fold walk-forward"
