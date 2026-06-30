@@ -36,6 +36,7 @@ from bot.risk.risk_engine import RiskEngine
 from bot.risk.multi_portfolio import MultiUserPortfolio
 from bot.core.dashboard_pusher import DashboardPusher
 from bot.utils.audit_chain import AuditChain, DecisionRecord
+from bot.utils.durable_io import fsync_dir
 from bot.utils.logger import audit, system_log, trade_log, scan_log
 from bot.utils.models import (
     AgentState,
@@ -997,6 +998,8 @@ class RuneClawEngine:
             f.flush()
             os.fsync(f.fileno())
         os.replace(tmp, str(combined_path))
+        # Persist the rename itself (not just the tmp contents) — best-effort.
+        fsync_dir(str(combined_path))
 
     def _transition(self, new_state: AgentState, reason: str = "") -> None:
         """Transition the FSM to a new state. Every transition is audit-logged."""
