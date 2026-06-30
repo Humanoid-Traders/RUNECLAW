@@ -131,15 +131,37 @@ class ConfidenceCalibrator:
 
     @staticmethod
     def samples_from_decisions(decisions) -> list[tuple[float, bool]]:
-        """Extract ``(confidence, won)`` from DecisionMemory-like records that
-        have a non-null ``pnl_result`` (i.e. completed trades)."""
+        """Extract ``(confidence, won)`` for completed trades.
+
+        The confidence-bearing DECISION record (written at decision time, with
+        ``pnl_result`` still None) and the realized OUTCOME record (``pnl_result``
+        set, ``confidence`` left at its 0.0 default) are SEPARATE append-only
+        records linked by ``paper_trade_id``. So confidence and outcome must be
+        JOINED across records by ``paper_trade_id`` — the same join
+        ``voter_weights.samples_from_decisions`` uses. Reading both off a single
+        record (the prior behaviour) only ever matched outcome rows, whose
+        confidence is 0.0, so the calibrator trained entirely on
+        confidence=0.0 → a degenerate single-bin curve.
+        """
+        # First pass: realized outcome (won) keyed by paper_trade_id.
+        outcome: dict[str, bool] = {}
+        for d in decisions:
+            tid = getattr(d, "paper_trade_id", "") or ""
+            pnl = getattr(d, "pnl_result", None)
+            if tid and pnl is not None:
+                outcome[tid] = float(pnl) > 0.0
+        # Second pass: join each decision's confidence to its trade's outcome.
+        # Drop confidence<=0.0 — that is the unset sentinel on outcome/result rows,
+        # never a real model confidence — so only genuine decisions are fit.
         out: list[tuple[float, bool]] = []
         for d in decisions:
-            pnl = getattr(d, "pnl_result", None)
-            conf = getattr(d, "confidence", None)
-            if pnl is None or conf is None:
+            tid = getattr(d, "paper_trade_id", "") or ""
+            if not tid or tid not in outcome:
                 continue
-            out.append((float(conf), float(pnl) > 0.0))
+            conf = getattr(d, "confidence", None)
+            if conf is None or float(conf) <= 0.0:
+                continue
+            out.append((float(conf), outcome[tid]))
         return out
 
     # -- applying --------------------------------------------------------------
