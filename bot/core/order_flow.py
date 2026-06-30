@@ -38,17 +38,17 @@ from __future__ import annotations
 import asyncio
 import os
 import threading
+import time
 from collections import deque
 from dataclasses import dataclass
 from datetime import datetime
-from bot.compat import UTC
 from typing import Optional
 
 import numpy as np
 from pydantic import BaseModel, Field
 
+from bot.compat import UTC
 from bot.utils.logger import audit, system_log
-
 
 # ── Config (mirrors bot/config.py style; fold into AppConfig if you like) ──
 
@@ -64,6 +64,13 @@ def _env_int(key: str, default: int) -> int:
         return int(float(os.getenv(key, str(default))))
     except ValueError:
         return default
+
+
+def _env_bool(key: str, default: bool) -> bool:
+    raw = os.getenv(key)
+    if raw is None:
+        return default
+    return raw.strip().lower() in ("1", "true", "yes", "on")
 
 
 @dataclass(frozen=True)
@@ -90,6 +97,20 @@ class OrderFlowConfig:
     w_whale: float = 1.2
     w_funding: float = 0.6
     max_tracked_symbols: int = 300
+    # --- Taker 3-bar gate: time-awareness (deep-audit HIGH) ---
+    # The taker 3-bar confirmation gate counts the last 3 polled "bars" as if
+    # they were uniform time bars, but polls are irregular: 3 polls fired in a
+    # burst (manual rescan, tight loop) confirm a "3-bar" trend that spans only
+    # seconds, and a gappy/stale window confirms on data that no longer reflects
+    # live flow. When enabled, the gate additionally requires the wall-clock span
+    # of the last 3 bars to fall within [min, max] seconds — too short = burst,
+    # too long = stale/gappy — and rejects the confirmation otherwise. Default OFF
+    # keeps the gate byte-identical (bars stored as bare floats, no span check);
+    # the check is tightening-only (it can only reject a confirmation), so it is
+    # safe-direction regardless of poll cadence.
+    time_bars_enabled: bool = _env_bool("OF_TIME_BARS_ENABLED", False)
+    taker_bar_min_span_sec: float = _env_float("OF_TAKER_BAR_MIN_SPAN_SEC", 20.0)
+    taker_bar_max_span_sec: float = _env_float("OF_TAKER_BAR_MAX_SPAN_SEC", 300.0)
 
 
 # ── Output schema ──────────────────────────────────────────────────────────
@@ -336,12 +357,19 @@ class OrderFlowAnalyzer:
         sig.aggressor_ratio = round(buy_usd / total, 4) if total > 0 else 0.5
         sig.cvd_window_usd = round(delta, 2)
 
-        # Gate 2: track taker bar ratio (buy/sell) for 3-bar rule
+        # Gate 2: track taker bar ratio (buy/sell) for 3-bar rule. When
+        # time-awareness is enabled, stamp each bar with wall-clock time so the
+        # gate can reject burst/stale confirmations; otherwise store a bare
+        # float (byte-identical to the legacy behaviour). The gate handles both
+        # shapes via _bar_ratio/_bar_ts.
         bar_ratio = (buy_usd / sell_usd) if sell_usd > 0 else (2.0 if buy_usd > 0 else 1.0)
         with self._lock:
             ratios = self._taker_bar_ratios.setdefault(
                 symbol, deque(maxlen=10))
-            ratios.append(round(bar_ratio, 4))
+            if self.config.time_bars_enabled:
+                ratios.append((time.time(), round(bar_ratio, 4)))
+            else:
+                ratios.append(round(bar_ratio, 4))
 
         # Track spot volume for spot-vs-futures divergence
         sig.spot_volume_usd = round(total, 2)
@@ -736,31 +764,67 @@ class OrderFlowAnalyzer:
 
     # -- Gate 2: Taker 3-Bar Rule --
 
+    @staticmethod
+    def _bar_ratio(entry) -> float:
+        """Extract the bar ratio from a stored entry. Entries are bare floats
+        (legacy / time-bars OFF) or (timestamp, ratio) tuples (time-bars ON)."""
+        if isinstance(entry, tuple):
+            return float(entry[1])
+        return float(entry)
+
+    @staticmethod
+    def _bar_ts(entry):
+        """Extract the wall-clock timestamp from a stored entry, or None when
+        the entry carries no timestamp (legacy bare-float bars)."""
+        if isinstance(entry, tuple):
+            return float(entry[0])
+        return None
+
+    @staticmethod
+    def _taker_span_ok(entries, min_span: float, max_span: float) -> tuple:
+        """Check the wall-clock span of the last 3 bars. Returns (ok, span).
+
+        Fail-open: if any of the last 3 bars lacks a timestamp (mixed legacy
+        data after enabling the flag), span can't be verified, so we don't veto
+        a confirmation — (True, None). Otherwise the span (newest - oldest of
+        the 3) must fall within [min_span, max_span]: too short = burst, too
+        long = stale/gappy."""
+        ts = [OrderFlowAnalyzer._bar_ts(e) for e in entries[-3:]]
+        if any(t is None for t in ts):
+            return True, None
+        span = ts[-1] - ts[0]
+        return (min_span <= span <= max_span), span
+
     def check_taker_3bar_gate(self, symbol: str, direction: str) -> dict:
         """Gate 2: Require 3 consecutive taker bars confirming direction.
 
         For LONG: 3 consecutive bars where buy_vol > sell_vol (ratio > 1.0)
         For SHORT: 3 consecutive bars where sell_vol > buy_vol (ratio < 1.0)
 
+        When time-awareness is enabled (config.time_bars_enabled), the last-3
+        window must also span a sane amount of wall-clock time — bursts (too
+        short) and stale/gappy windows (too long) no longer confirm a trend.
+
         Returns dict with: passed, direction, ratios, streak_count, reason.
         """
         with self._lock:
             ratios_deque = self._taker_bar_ratios.get(symbol)
             if not ratios_deque or len(ratios_deque) < 3:
+                n = len(ratios_deque) if ratios_deque else 0
                 return {
                     "passed": False,
                     "direction": direction,
-                    "ratios": list(ratios_deque) if ratios_deque else [],
+                    "ratios": [round(self._bar_ratio(e), 3) for e in ratios_deque] if ratios_deque else [],
                     "streak_count": 0,
-                    "reason": f"insufficient taker data ({len(ratios_deque) if ratios_deque else 0}/3 bars)",
+                    "reason": f"insufficient taker data ({n}/3 bars)",
                 }
-            ratios = list(ratios_deque)
+            entries = list(ratios_deque)
 
+        ratios = [self._bar_ratio(e) for e in entries]
         last_3 = ratios[-3:]
         dir_upper = direction.upper()
 
         if dir_upper == "LONG":
-            streak = sum(1 for r in reversed(ratios) if r > 1.0)
             # Count from the end until broken
             actual_streak = 0
             for r in reversed(ratios):
@@ -778,14 +842,34 @@ class OrderFlowAnalyzer:
                     break
             confirmed = all(r < 1.0 for r in last_3)
 
+        reason = "3-bar taker gate confirmed" if confirmed else (
+            f"taker flow not aligned: last 3 ratios {[round(r, 3) for r in last_3]}"
+        )
+
+        # Time-awareness: a confirmed streak can still be vetoed if the 3-bar
+        # window spans too little (burst) or too much (stale/gappy) wall-clock.
+        if confirmed and self.config.time_bars_enabled:
+            span_ok, span = self._taker_span_ok(
+                entries,
+                self.config.taker_bar_min_span_sec,
+                self.config.taker_bar_max_span_sec,
+            )
+            if not span_ok:
+                confirmed = False
+                lo = self.config.taker_bar_min_span_sec
+                hi = self.config.taker_bar_max_span_sec
+                kind = "burst" if span is not None and span < lo else "stale/gappy"
+                reason = (
+                    f"taker 3-bar span {span:.0f}s outside [{lo:.0f},{hi:.0f}]s "
+                    f"({kind}); confirmation rejected"
+                )
+
         return {
             "passed": confirmed,
             "direction": dir_upper,
             "ratios": [round(r, 3) for r in last_3],
             "streak_count": actual_streak,
-            "reason": "3-bar taker gate confirmed" if confirmed else (
-                f"taker flow not aligned: last 3 ratios {[round(r, 3) for r in last_3]}"
-            ),
+            "reason": reason,
         }
 
     # -- Rule 20: Bid Dominance Gate --
