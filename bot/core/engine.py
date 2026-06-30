@@ -972,9 +972,22 @@ class RuneClawEngine:
         self.risk._combined_saver = self._save_combined_state
 
     def _save_combined_state(self) -> None:
-        """Atomically write portfolio + risk state to a single file.
-        Called by either portfolio._auto_save() or risk._save_state()
-        whenever either component's state changes."""
+        """Atomically write the OPERATOR's portfolio + risk state to a single file.
+        Called by either portfolio._auto_save() or risk._save_state() whenever
+        either component's state changes.
+
+        Scope is the operator account by design (deep-audit #12). Per-user paper
+        portfolios and per-user RiskEngines are deliberately NOT folded into this
+        file — each persists independently and atomically to its OWN per-user file:
+          • per-user portfolio → data/portfolio_{user}.json
+            (MultiUserPortfolio.get / _load_existing; PortfolioTracker atomic save)
+          • per-user risk      → data/risk_state_{user}.json
+            (risk_for(user); RiskEngine._save_state_individual atomic save)
+        Both are restored on startup from those files, so no per-user state is lost.
+        Snapshotting them here too would create a second source of truth for the
+        same account and risk write-skew between the two; keep this file
+        operator-only. The test suite guards this intent
+        (tests/test_combined_state_per_user_intent.py)."""
         import json as _json
         combined = {
             "version": 1,
