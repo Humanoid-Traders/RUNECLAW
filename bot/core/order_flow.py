@@ -5,7 +5,7 @@ A perception module that reads exchange microstructure to detect
 directional pressure, large prints, and CVD-price divergences from
 data RUNECLAW can already reach through ccxt:
 
-  - Order-book imbalance + spread + top-of-book depth
+  - Order-book imbalance + spread + depth (full-book sum and top-N executable)
   - Cumulative Volume Delta (CVD) from the aggressor side of trades
   - CVD-price divergence (absorption/distribution detection)
   - Whale-print detection (adaptive percentile threshold)
@@ -85,6 +85,15 @@ class OrderFlowConfig:
     # Liquidity guard thresholds (used by the risk engine, not for scoring)
     max_spread_bps: float = _env_float("OF_MAX_SPREAD_BPS", 50.0)
     min_top_depth_usd: float = _env_float("OF_MIN_DEPTH_USD", 2_000.0)  # absolute floor; scaled by position size
+    # Top-of-book executable depth (deep-audit medium): bid_depth_usd/ask_depth_usd
+    # SUM all OF_BOOK_DEPTH (25) levels, which overstates immediately-fillable
+    # liquidity. book_top_levels is how many best levels count as "executable",
+    # exposed as bid/ask_depth_top_usd. When OF_GUARD_TOP_DEPTH_ENABLED is on, the
+    # liquidity guard additionally requires that top-of-book executable depth to
+    # cover the position size (a naturally-scaled tightening); default OFF leaves
+    # the guard byte-identical (25-level sum only).
+    book_top_levels: int = _env_int("OF_BOOK_TOP_LEVELS", 5)
+    guard_top_depth_enabled: bool = _env_bool("OF_GUARD_TOP_DEPTH_ENABLED", False)
     # Large-cap symbols that should always require $10K+ book depth
     LARGE_CAP_SYMBOLS: frozenset = frozenset({
         "BTC/USDT", "ETH/USDT", "SOL/USDT",
@@ -132,8 +141,10 @@ class OrderFlowSignal(BaseModel):
     # Order book
     book_imbalance: float = 0.0          # (bid_depth - ask_depth) / total, [-1, 1]
     spread_bps: float = 0.0
-    bid_depth_usd: float = 0.0
-    ask_depth_usd: float = 0.0
+    bid_depth_usd: float = 0.0           # SUM over all fetched levels (~25)
+    ask_depth_usd: float = 0.0           # SUM over all fetched levels (~25)
+    bid_depth_top_usd: float = 0.0       # SUM over the top-N best levels (executable)
+    ask_depth_top_usd: float = 0.0       # SUM over the top-N best levels (executable)
     mid_price: float = 0.0
 
     # Trade flow (aggressor-side)
@@ -227,7 +238,7 @@ class OrderFlowAnalyzer:
             sig.notes.append(f"order_book unavailable: {book_result}")
         else:
             try:
-                self._fill_book_metrics(sig, book_result)
+                self._fill_book_metrics(sig, book_result, self.config.book_top_levels)
                 ok.append("book")
             except Exception as exc:  # noqa: BLE001
                 sig.notes.append(f"order_book processing error: {exc}")
@@ -316,7 +327,7 @@ class OrderFlowAnalyzer:
     # -- Components --
 
     @staticmethod
-    def _fill_book_metrics(sig: OrderFlowSignal, book: dict) -> None:
+    def _fill_book_metrics(sig: OrderFlowSignal, book: dict, top_levels: int = 5) -> None:
         bids = book.get("bids") or []
         asks = book.get("asks") or []
         if not bids or not asks:
@@ -327,14 +338,21 @@ class OrderFlowAnalyzer:
         mid = (best_bid + best_ask) / 2.0
         if mid <= 0:
             return
-        # USD notional resting on each side (price * base_amount)
+        # USD notional resting on each side (price * base_amount). The full-book
+        # sum feeds soft scoring (imbalance); the top-N sum is the genuinely
+        # executable depth used by the liquidity guard.
         bid_usd = sum(float(p) * float(a) for p, a in bids)
         ask_usd = sum(float(p) * float(a) for p, a in asks)
+        n = max(1, int(top_levels))
+        bid_top = sum(float(p) * float(a) for p, a in bids[:n])
+        ask_top = sum(float(p) * float(a) for p, a in asks[:n])
         total = bid_usd + ask_usd
         sig.mid_price = round(mid, 8)
         sig.spread_bps = round((best_ask - best_bid) / mid * 1e4, 2)
         sig.bid_depth_usd = round(bid_usd, 2)
         sig.ask_depth_usd = round(ask_usd, 2)
+        sig.bid_depth_top_usd = round(bid_top, 2)
+        sig.ask_depth_top_usd = round(ask_top, 2)
         sig.book_imbalance = round((bid_usd - ask_usd) / total, 4) if total > 0 else 0.0
 
     def _fill_trade_metrics(self, sig: OrderFlowSignal, trades: list, symbol: str) -> None:
@@ -790,6 +808,19 @@ class OrderFlowAnalyzer:
         if top_depth < effective_threshold:
             return (f"LIQUIDITY: thin book, min side depth ${top_depth:,.0f} < "
                     f"${effective_threshold:,.0f} (position=${position_size_usd:,.0f})")
+
+        # Top-of-book executable-depth check (opt-in, default OFF; deep-audit
+        # medium). The check above sums ~25 levels, which overstates fillable
+        # liquidity. When enabled, additionally require the top-N executable
+        # depth to cover the position notional — a naturally position-scaled
+        # tightening (no separate threshold), so a book that is deep when summed
+        # but thin at the top no longer passes.
+        if self.config.guard_top_depth_enabled and position_size_usd > 0:
+            top_exec = min(sig.bid_depth_top_usd, sig.ask_depth_top_usd)
+            if top_exec < position_size_usd:
+                return (f"LIQUIDITY: thin top-of-book, executable ${top_exec:,.0f} < "
+                        f"position ${position_size_usd:,.0f} "
+                        f"(top {self.config.book_top_levels} levels)")
         return None
 
     # -- Gate 2: Taker 3-Bar Rule --
