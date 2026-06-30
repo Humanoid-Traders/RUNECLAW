@@ -93,7 +93,7 @@ class OrderFlowConfig:
     # cover the position size (a naturally-scaled tightening); default OFF leaves
     # the guard byte-identical (25-level sum only).
     book_top_levels: int = _env_int("OF_BOOK_TOP_LEVELS", 5)
-    guard_top_depth_enabled: bool = _env_bool("OF_GUARD_TOP_DEPTH_ENABLED", False)
+    guard_top_depth_enabled: bool = _env_bool("OF_GUARD_TOP_DEPTH_ENABLED", True)
     # Large-cap symbols that should always require $10K+ book depth
     LARGE_CAP_SYMBOLS: frozenset = frozenset({
         "BTC/USDT", "ETH/USDT", "SOL/USDT",

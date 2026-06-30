@@ -34,11 +34,12 @@ class TestReportStructure:
                 assert isinstance(env, str) and isinstance(label, str)
                 assert isinstance(on, bool)
 
-    def test_default_off_flags_report_off(self):
-        # These ship default-OFF, so on a clean config they read False.
+    def test_default_off_flags_report_off(self, monkeypatch):
+        # Flags still shipping default-OFF (flipped ON in later enablement tiers).
+        for env in ("OF_TIME_BARS_ENABLED", "LEARN_FROM_PAPER_CLOSES"):
+            monkeypatch.delenv(env, raising=False)
         flat = _flat(audit_flag_report())
-        for env in ("WS_IDLE_TIMEOUT_SEC", "VERIFY_CLASSIC_SLTP_ON_RESTART",
-                    "OF_TIME_BARS_ENABLED", "LEARN_FROM_PAPER_CLOSES"):
+        for env in ("OF_TIME_BARS_ENABLED", "LEARN_FROM_PAPER_CLOSES"):
             assert flat[env] is False
 
     def test_default_on_guards_report_on(self):
@@ -46,6 +47,9 @@ class TestReportStructure:
         flat = _flat(audit_flag_report())
         assert flat["LIVE_TICKER_MAX_AGE_SEC"] is True
         assert flat["WS_MAX_TICK_AGE_SEC"] is True
+        # Tier 1 safety/observability flags are now enabled by default.
+        assert flat["WS_IDLE_TIMEOUT_SEC"] is True
+        assert flat["VERIFY_CLASSIC_SLTP_ON_RESTART"] is True
 
 
 class TestEnvReflection:

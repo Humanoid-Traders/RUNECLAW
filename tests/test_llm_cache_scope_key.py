@@ -115,7 +115,9 @@ class TestScopeSalt:
         assert "byok" not in s and "tier:" not in s
 
 
-class TestDefaultFlagOff:
-    def test_scoped_key_defaults_off(self):
+class TestDefaultFlagOn:
+    def test_scoped_key_defaults_on(self, monkeypatch):
+        # Enabled by default (operator-requested activation); explicit env still wins.
+        monkeypatch.delenv("LLM_CACHE_SCOPED_KEY", raising=False)
         from bot.config import AnalyzerConfig
-        assert AnalyzerConfig().llm_cache_scoped_key is False
+        assert AnalyzerConfig().llm_cache_scoped_key is True

@@ -113,7 +113,9 @@ class TestAccountingGate:
         assert snap.completion_tokens == 321
 
 
-class TestDefaultOff:
-    def test_flag_defaults_off(self):
+class TestDefaultOn:
+    def test_flag_defaults_on(self, monkeypatch):
+        # Enabled by default (operator-requested activation); explicit env still wins.
+        monkeypatch.delenv("LLM_FALLBACK_COST_ACCOUNTING", raising=False)
         from bot.config import LLMConfig
-        assert LLMConfig().fallback_cost_accounting_enabled is False
+        assert LLMConfig().fallback_cost_accounting_enabled is True

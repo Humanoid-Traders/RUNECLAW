@@ -147,7 +147,9 @@ class TestVerifyAndFixClassic:
         assert pos.sl_order_id == "SL-1" and pos.tp_order_id == "TP-2"
 
 
-class TestDefaultOff:
-    def test_flag_defaults_off(self):
+class TestDefaultOn:
+    def test_flag_defaults_on(self, monkeypatch):
+        # Enabled by default (operator-requested activation); explicit env still wins.
+        monkeypatch.delenv("VERIFY_CLASSIC_SLTP_ON_RESTART", raising=False)
         from bot.config import ExecutionConfig
-        assert ExecutionConfig().verify_classic_sltp_on_restart is False
+        assert ExecutionConfig().verify_classic_sltp_on_restart is True
