@@ -109,6 +109,14 @@ a{color:var(--gold);text-decoration:none}
 .sig-pnl.pos{color:var(--green);background:var(--green-dim)}
 .sig-pnl.neg{color:var(--red);background:var(--red-dim)}
 .sig-time{color:var(--text3);font-size:10px;min-width:84px;text-align:right}
+.cred-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.cred-form{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.cred-in{flex:1;min-width:140px;background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:8px 10px;color:var(--text);font-family:var(--mono);font-size:12px}
+.cred-in:focus{outline:none;border-color:var(--gold)}
+.cred-btn{background:var(--gold);color:#1a1407;border:none;border-radius:4px;padding:8px 14px;font-weight:700;font-size:12px;cursor:pointer;letter-spacing:.5px}
+.cred-btn:hover{background:var(--gold2)}
+.cred-danger{background:var(--red-dim);color:var(--red)}
+.cred-note{font-size:11px;color:var(--text3);margin-top:8px;line-height:1.5}
 
 /* === PORTFOLIO === */
 .port-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px;margin-bottom:12px}
@@ -151,6 +159,7 @@ a{color:var(--gold);text-decoration:none}
     <div class="panel" id="portfolioPanel"><div class="panel-title">&#128176; PORTFOLIO</div><div id="portfolioContent"><div class="loading"><div class="spinner"></div><br>Loading...</div></div></div>
     <div class="panel" id="keyCallPanel"><div class="panel-title">&#9876; KEY CALL</div><div id="keyCallContent"><div class="empty-msg">Run /getclaw in Telegram for market call</div></div></div>
   </div>
+  <div class="panel" id="walletPanel"><div class="panel-title">&#128091; WALLET &mdash; EXCHANGE CONNECTION</div><div id="walletContent"></div></div>
   <div class="panel" id="signalsPanel"><div class="panel-title">&#128225; SIGNAL STREAM <span id="signalsStats" style="font-family:var(--mono);font-size:11px;color:var(--dim);font-weight:400"></span></div><div id="signalsContent"><div class="loading"><div class="spinner"></div><br>Loading signals...</div></div></div>
 </div>
 <script>
@@ -428,6 +437,73 @@ function renderPortfolio() {
   el.innerHTML=h;
 }
 
+let credStatus = null;
+function authHeaders() { return TOKEN ? {'Authorization':'Bearer '+TOKEN} : {}; }
+
+async function fetchCreds() {
+  const el = document.getElementById('walletContent');
+  if (!LOGGED_IN) { el.innerHTML = '<div class="empty-msg">Log in to connect your exchange.</div>'; return; }
+  try {
+    const r = await fetch('/api/credentials/status', {headers: authHeaders()});
+    credStatus = await r.json();
+    renderCreds();
+  } catch(e) { el.innerHTML = '<div class="empty-msg">Could not load connection status.</div>'; }
+}
+
+function renderCreds() {
+  const el = document.getElementById('walletContent');
+  const s = credStatus || {};
+  if (!s.crypto_ready) { el.innerHTML = '<div class="empty-msg">Exchange connection is not enabled on this deployment.</div>'; return; }
+  if (!s.linked) {
+    el.innerHTML = '<div class="empty-msg">Link your Telegram first (use <b>/link</b> in the bot), then connect your exchange here.</div>';
+    return;
+  }
+  if (s.connected && s.pending !== 'disconnect') {
+    el.innerHTML = `<div class="cred-row"><span class="sig-status" style="color:var(--green);background:var(--green-dim)">&#9679; CONNECTED</span>
+      <button class="cred-btn cred-danger" onclick="disconnectExchange()">Disconnect</button></div>
+      <div class="cred-note">Your Bitget keys are stored encrypted by the bot. We never display them.</div>`;
+    return;
+  }
+  if (s.pending) {
+    el.innerHTML = `<div class="cred-row"><span class="sig-status">&#8987; ${s.pending.toUpperCase()} PENDING</span>
+      <span class="cred-note">The bot will apply this shortly.</span></div>`;
+    return;
+  }
+  el.innerHTML = `<form class="cred-form" onsubmit="return connectExchange(event)">
+      <input class="cred-in" id="ckey" placeholder="Bitget API key" autocomplete="off" required>
+      <input class="cred-in" id="csec" type="password" placeholder="API secret" autocomplete="off" required>
+      <input class="cred-in" id="cpass" type="password" placeholder="Passphrase" autocomplete="off" required>
+      <button class="cred-btn" type="submit">Connect Bitget</button>
+    </form>
+    <div class="cred-note">&#128274; Use <b>withdrawal-disabled</b> API keys. Keys are encrypted in transit and at rest; the bot is the only holder.</div>
+    <div id="credMsg" class="cred-note"></div>`;
+}
+
+async function connectExchange(ev) {
+  ev.preventDefault();
+  const msg = document.getElementById('credMsg');
+  const body = {
+    api_key: document.getElementById('ckey').value.trim(),
+    api_secret: document.getElementById('csec').value.trim(),
+    passphrase: document.getElementById('cpass').value.trim(),
+  };
+  msg.textContent = 'Submitting…';
+  try {
+    const r = await fetch('/api/credentials', {method:'POST', headers:{...authHeaders(),'Content-Type':'application/json'}, body: JSON.stringify(body)});
+    const j = await r.json();
+    if (j.ok) { msg.textContent = 'Submitted — connecting…'; setTimeout(fetchCreds, 1500); }
+    else { msg.textContent = j.error || 'Failed.'; }
+  } catch(e) { msg.textContent = 'Network error.'; }
+  return false;
+}
+
+async function disconnectExchange() {
+  try {
+    await fetch('/api/credentials', {method:'DELETE', headers: authHeaders()});
+    setTimeout(fetchCreds, 1200);
+  } catch(e) { /* ignore */ }
+}
+
 async function fetchSignals() {
   try {
     const [sr, str] = await Promise.all([
@@ -490,7 +566,7 @@ function renderKeyCall() {
 
 async function init() {
   await fetchTickers();
-  await Promise.all([fetchScan(), fetchPublicPortfolio(), fetchPortfolio(), fetchSignals()]);
+  await Promise.all([fetchScan(), fetchPublicPortfolio(), fetchPortfolio(), fetchSignals(), fetchCreds()]);
   renderCircuit(); // ensure circuit breaker renders even if fetches return no data
   setInterval(fetchTickers, 5000);
   setInterval(fetchScan, 30000);
