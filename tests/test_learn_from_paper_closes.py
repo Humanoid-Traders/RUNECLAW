@@ -64,6 +64,21 @@ class TestEngineWiring:
         src = inspect.getsource(engine_mod.RuneClawEngine._on_live_position_closed)
         assert "record_closed_outcome" in src
 
+    def test_paper_close_advances_auto_refit(self):
+        # The paper-close path must ALSO advance the auto-refit cadence, otherwise
+        # the learners never refit in simulation-first operation (they only ever
+        # saw the live-close hook). Gated on both the paper-write flag and the
+        # auto-refit flag, with a distinct (paper) marker.
+        src = inspect.getsource(engine_mod)
+        assert "Learning auto-refit skipped (paper)" in src
+        # note_closed_trade is now wired from BOTH the live and paper close paths.
+        assert src.count("self._auto_refit.note_closed_trade(") >= 2
+        # The paper hook is gated on BOTH the paper-write flag and the auto-refit
+        # flag (so the counter only advances when a paper outcome was recorded).
+        normalized = " ".join(src.split())
+        assert ("CONFIG.learning.learn_from_paper_closes_enabled "
+                "and CONFIG.analyzer.learning_auto_refit_enabled") in normalized
+
 
 class TestConfigDefault:
     def test_flag_defaults_on(self, monkeypatch):

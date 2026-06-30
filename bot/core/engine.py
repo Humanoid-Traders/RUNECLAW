@@ -3197,6 +3197,19 @@ class RuneClawEngine:
                         )
                 except Exception as _lp_exc:
                     logger.debug("Paper-close learning record skipped: %s", _lp_exc)
+                # Advance the auto-refit cadence on paper closes too (gated,
+                # fail-open). note_closed_trade is what turns accumulated outcomes
+                # into refitted learner state; it was wired into live closes only,
+                # so in simulation-first operation the learners never refit despite
+                # the paper history just recorded above. Gate on the paper-write
+                # flag so the counter only advances when a paper outcome was
+                # actually recorded.
+                try:
+                    if (CONFIG.learning.learn_from_paper_closes_enabled
+                            and CONFIG.analyzer.learning_auto_refit_enabled):
+                        self._auto_refit.note_closed_trade(getattr(self, "analyzer", None))
+                except Exception as _ar_paper_exc:
+                    logger.debug("Learning auto-refit skipped (paper): %s", _ar_paper_exc)
                 # Record time-of-day outcome
                 try:
                     from datetime import datetime as _dt
