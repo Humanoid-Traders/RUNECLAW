@@ -1608,6 +1608,23 @@ class RuneClawEngine:
             signal: Market signal to analyze.
             timeframe: OHLCV timeframe to fetch (e.g. "5m", "15m", "1h", "4h").
         """
+        # ── Per-symbol cooldown after SL hit (checked FIRST) ─────────
+        # #32: short-circuit a cooling symbol BEFORE the expensive OHLCV +
+        # order-flow fetch and full analysis pipeline, instead of after.
+        # Prevents immediate re-entry into a symbol that just stopped out.
+        # (idea.asset == signal.symbol, so the decision is identical, just earlier.)
+        symbol_key = normalize_symbol(signal.symbol)
+        _sym_cd = self._symbol_cooldowns.get(symbol_key, 0)
+        if _sym_cd:
+            if time.monotonic() < _sym_cd:
+                _remaining = int(_sym_cd - time.monotonic())
+                audit(scan_log,
+                      f"Signal skipped: {signal.symbol} on post-SL cooldown ({_remaining}s remaining)",
+                      action="symbol_cooldown", result="SKIPPED")
+                return None
+            # Cooldown expired → clear it.
+            self._symbol_cooldowns.pop(symbol_key, None)
+
         try:
             # Use futures exchange for non-Crypto categories (metals, commodities, etc.)
             category = getattr(signal, "asset_category", "Crypto") or "Crypto"
@@ -1760,19 +1777,6 @@ class RuneClawEngine:
                 pass  # strategy_type is set from the router
         except Exception as _strat_exc:
             logger.warning("Strategy router selection failed for %s: %s", idea.asset, _strat_exc)
-
-        # ── Per-symbol cooldown after SL hit ─────────────────────────
-        # Prevents immediate re-entry into a symbol that just stopped out
-        symbol_key = normalize_symbol(idea.asset)
-        _sym_cd = self._symbol_cooldowns.get(symbol_key, 0)
-        if _sym_cd and time.monotonic() < _sym_cd:
-            _remaining = int(_sym_cd - time.monotonic())
-            audit(scan_log,
-                  f"Signal skipped: {idea.asset} on post-SL cooldown ({_remaining}s remaining)",
-                  action="symbol_cooldown", result="SKIPPED")
-            return None
-        elif _sym_cd and time.monotonic() >= _sym_cd:
-            self._symbol_cooldowns.pop(symbol_key, None)
 
         # ── Smart pyramid / duplicate symbol guard ─────────────────
         # Rules: max 2 entries per symbol, same direction adds require
