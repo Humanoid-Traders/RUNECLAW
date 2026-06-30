@@ -1964,6 +1964,9 @@ class RuneClawEngine:
                 symbol=signal.symbol,
                 direction=idea.direction.value,
                 confidence=idea.confidence,
+                # #35: persist the calibrator's apply-target so it trains on the
+                # same field (falls back to confidence when unset).
+                blended_confidence_raw=getattr(idea, "blended_confidence_raw", None) or 0.0,
                 confluence_score=idea.confidence,
                 entry_price=idea.entry_price,
                 stop_loss=idea.stop_loss,
@@ -2579,6 +2582,9 @@ class RuneClawEngine:
             symbol=idea.asset,
             direction=idea.direction.value,
             confidence=idea.confidence,
+            # #35: persist the calibrator's apply-target so it trains on the same
+            # field (falls back to confidence when unset).
+            blended_confidence_raw=getattr(idea, "blended_confidence_raw", None) or 0.0,
             confluence_score=idea.confidence,
             entry_price=idea.entry_price,
             stop_loss=idea.stop_loss,

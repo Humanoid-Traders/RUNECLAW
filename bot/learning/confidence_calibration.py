@@ -158,7 +158,13 @@ class ConfidenceCalibrator:
             tid = getattr(d, "paper_trade_id", "") or ""
             if not tid or tid not in outcome:
                 continue
-            conf = getattr(d, "confidence", None)
+            # #35: train on the exact field the calibrator is APPLIED to — the
+            # pre-calibration/pre-nudge analyzer blended confidence — so the curve
+            # is fitted in the same space it remaps. Records written before this
+            # field existed (or rejected rows) leave it 0.0; fall back to the
+            # post-adjustment `confidence` so historical data still counts.
+            raw = getattr(d, "blended_confidence_raw", 0.0) or 0.0
+            conf = float(raw) if float(raw) > 0.0 else getattr(d, "confidence", None)
             if conf is None or float(conf) <= 0.0:
                 continue
             out.append((float(conf), outcome[tid]))

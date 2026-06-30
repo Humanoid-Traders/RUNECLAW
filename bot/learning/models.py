@@ -93,6 +93,12 @@ class DecisionMemory(BaseModel):
     strategy_signal: str = ""
     direction: str = ""
     confidence: float = 0.0
+    # #35: the analyzer-stage blended confidence BEFORE calibration/expectancy
+    # nudges — i.e. the exact value the calibrator is APPLIED to. The calibrator
+    # must train on this same field (not the post-adjustment `confidence`), or it
+    # fits one distribution and remaps another. 0.0 = unset (old records) → the
+    # trainer falls back to `confidence`.
+    blended_confidence_raw: float = 0.0
     confluence_score: float = 0.0
     entry_price: float = 0.0
     stop_loss: float = 0.0

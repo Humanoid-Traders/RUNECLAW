@@ -81,6 +81,11 @@ class TradeIdea(BaseModel):
     stop_loss: float
     take_profit: float
     confidence: float = Field(ge=0.0, le=1.0)
+    # #35: the analyzer-stage blended confidence BEFORE the calibration/expectancy
+    # adjustments — the exact value the calibrator is applied to. Carried so the
+    # decision record can persist it as the calibrator's training field (train and
+    # apply on the same field). None = not set by the analyzer.
+    blended_confidence_raw: Optional[float] = None
     reasoning: str
     signals_used: list[str] = Field(default_factory=list)
     source: str = "unknown"

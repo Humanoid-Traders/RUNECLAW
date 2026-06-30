@@ -980,6 +980,13 @@ class Analyzer:
         # confidence. The lower bound never binds (the floors keep it ≥ 0).
         blended_confidence = max(0.0, min(1.0, blended_confidence))
 
+        # #35: snapshot the blended confidence the calibrator is APPLIED to, BEFORE
+        # the calibration remap and the setup-expectancy nudge below mutate it. The
+        # decision record persists this exact value so the calibrator trains on the
+        # same field it remaps (otherwise it fits post-adjustment confidence and
+        # applies the curve to this pre-adjustment value — a systematic mismatch).
+        _blended_confidence_raw = blended_confidence
+
         # ── Confidence calibration (Phase A) ─────────────────────────────────
         # Remap the final confidence through a reliability curve fitted from the
         # bot's own closed-trade history, so the number reflects realized win
@@ -1231,6 +1238,7 @@ class Analyzer:
             stop_loss=_r_sl,
             take_profit=_r_tp,
             confidence=blended_confidence,
+            blended_confidence_raw=_blended_confidence_raw,
             reasoning=(
                 f"[{source}|{regime.value}|{mode_tag}|{strategy_type}|C={confluence:.2f}"
                 f"{mtf_tag}{sm_tag}] {thesis.get('reasoning', '')}"
