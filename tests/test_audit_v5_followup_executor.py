@@ -411,3 +411,47 @@ class TestResidualCloseReconciliation:
         # No residual → the normal close finalization runs (position closed).
         assert tid not in executor._positions
         assert "RESIDUAL" not in result
+
+
+# ── Adopt safety-stop sized off the RECORDED quantity, not ccxt `contracts` ──
+
+
+class TestAdoptSafetyStopSizing:
+    """The adopted-position safety SL/TP must be sized off the same quantity the
+    LivePosition records (lp.quantity = totalQty/available preferred over ccxt
+    `contracts`), so the stop protects the whole adopted position even when the
+    ccxt-parsed `contracts` diverges from the exchange's reported size."""
+
+    @staticmethod
+    def _divergent_position() -> dict:
+        # ccxt `contracts` UNDER-reports vs the exchange's raw totalQty.
+        return {
+            "symbol": "BTC/USDT:USDT", "side": "long",
+            "contracts": 0.0001,                      # ccxt-parsed (distrusted)
+            "entryPrice": 100_000.0, "leverage": 1,
+            "initialMargin": 10.0, "timestamp": None,
+            "info": {
+                "openPriceAvg": "100000", "totalQty": "0.0005",  # true size
+                "margin": "10", "leverage": "1",
+            },
+        }
+
+    @pytest.mark.asyncio
+    async def test_safety_stop_uses_total_qty_not_contracts(self):
+        executor, mock_ex = _executor_with_mock()
+        mock_ex.fetch_positions = AsyncMock(return_value=[self._divergent_position()])
+        executor._place_sl_tp = AsyncMock(return_value=("SL-1", "TP-1"))
+
+        with patch.object(type(live_executor_mod.CONFIG), "is_live", return_value=True):
+            adopted = await executor.adopt_exchange_positions()
+
+        assert adopted == ["BTC"]
+        lp = next(p for p in executor._positions.values()
+                  if p.symbol == "BTC/USDT:USDT")
+        # The position records the totalQty-derived size...
+        assert lp.quantity == pytest.approx(0.0005)
+        # ...and the safety stop was placed for THAT size, not ccxt contracts.
+        assert executor._place_sl_tp.await_count == 1
+        call_qty = executor._place_sl_tp.await_args.args[3]
+        assert call_qty == pytest.approx(0.0005), \
+            "safety stop must be sized off lp.quantity (totalQty), not contracts"

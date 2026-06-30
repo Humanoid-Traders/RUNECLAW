@@ -1268,8 +1268,15 @@ class LiveExecutor:
                     tp_id: Optional[str] = None
                     _place_exc: Optional[Exception] = None
                     try:
+                        # Size the safety stop off the RECORDED position size
+                        # (lp.quantity = totalQty/available preferred over ccxt
+                        # `contracts`, per the same distrust applied at adoption
+                        # above), so the stop protects the whole adopted position
+                        # rather than the ccxt-parsed contract count. reduceOnly
+                        # clamps the upper bound, so this can only ever protect
+                        # more, never over-close.
                         sl_id, tp_id = await self._place_sl_tp(
-                            exchange, raw_sym, direction, contracts,
+                            exchange, raw_sym, direction, lp.quantity,
                             lp.stop_loss, lp.take_profit,
                         )
                     except Exception as exc:
@@ -1282,7 +1289,7 @@ class LiveExecutor:
                     if sl_id is None:
                         try:
                             retry_sl, retry_tp = await self._place_sl_tp(
-                                exchange, raw_sym, direction, contracts,
+                                exchange, raw_sym, direction, lp.quantity,
                                 lp.stop_loss, lp.take_profit,
                             )
                             sl_id = retry_sl
@@ -1325,10 +1332,11 @@ class LiveExecutor:
                 self._positions[trade_id] = lp
                 adopted.append(sym)
                 audit(trade_log,
-                      f"ADOPTED exchange position: {sym} {side} entry={entry_price} qty={contracts} lev={leverage}x",
+                      f"ADOPTED exchange position: {sym} {side} entry={entry_price} qty={lp.quantity} lev={leverage}x",
                       action="adopt_position", result="OK",
                       data={"trade_id": trade_id, "symbol": raw_sym,
-                            "entry_price": entry_price, "contracts": contracts})
+                            "entry_price": entry_price, "quantity": lp.quantity,
+                            "contracts": contracts})
 
             if adopted:
                 self._save_positions()
