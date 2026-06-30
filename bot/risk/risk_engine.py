@@ -736,7 +736,17 @@ class RiskEngine:
             if kelly_usd > 0:
                 position_usd = min(position_usd, kelly_usd)
 
-        max_notional_usd = sizing_equity * (CONFIG.risk.max_position_pct / 100.0)
+        # #47: the notional cap %. Per-strategy when enabled (a scalp can ride a
+        # tighter ceiling than a position trade), else the global max_position_pct.
+        # Resolved ONCE so the cap here and the POSITION_SIZE check below agree.
+        if CONFIG.risk.per_strategy_notional_cap_enabled:
+            _cap_strategy = getattr(idea, "strategy_type", "swing")
+            _cap_pct = CONFIG.strategy_types.get_max_position_pct(
+                _cap_strategy, CONFIG.risk.max_position_pct)
+        else:
+            _cap_pct = CONFIG.risk.max_position_pct
+
+        max_notional_usd = sizing_equity * (_cap_pct / 100.0)
         if max_notional_usd > 0 and position_usd > max_notional_usd:
             position_usd = max_notional_usd
 
@@ -801,7 +811,7 @@ class RiskEngine:
             if sizing_equity <= 0:
                 failed.append("EQUITY: zero or negative equity")
             else:
-                max_margin_pct = CONFIG.risk.max_position_pct  # the per-trade cap
+                max_margin_pct = _cap_pct  # #47: same per-trade cap clamped above
                 ok, margin_pct = self._position_within_cap(
                     position_usd, sizing_equity, max_margin_pct)
                 if ok:

@@ -78,6 +78,9 @@ LEARNING_AUTO_REFIT_ENABLED=1      # auto-refit the learners on closed trades
 DAILY_LOSS_BREAKER_AUTORESET=1     # auto-resume after a bad day rolls over (vs manual /reset)
 DROP_UNCLOSED_CANDLE_ENABLED=1     # compute TA on closed candles only (repaint fix)
 REGIME_SIZING_ENABLED=1            # apply regime→sizing multipliers (also fills _current_regime)
+PER_STRATEGY_NOTIONAL_CAP_ENABLED=1  # size cap + POSITION_SIZE check use the per-strategy
+                                     # notional ceiling (scalp 8% / intraday 10% / swing 13% /
+                                     # position 15%) instead of the global max_position_pct (13%)
 ```
 
 ## 5. Backtest fidelity (backtest runs only — no live effect)
