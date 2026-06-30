@@ -1,7 +1,9 @@
 """
 RUNECLAW Token Optimizer -- 4 LLM token optimization strategies.
 
-1. Tiered Analysis Pipeline: rule-engine → gpt-4o-mini → gpt-4o escalation
+1. Tiered Analysis Pipeline: rule-engine → cheap-tier LLM → full-tier LLM
+   escalation (concrete models come from the configured provider — OpenAI
+   defaults to gpt-4o-mini / gpt-4o, other providers route to qwen / sonnet / etc.)
 2. Smart Batching: combine multiple symbols into single LLM calls
 3. Adaptive Frequency: skip LLM when market is quiet (low ADX, no volume spike)
 
@@ -18,6 +20,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from bot.config import CONFIG
 from bot.utils.logger import audit, system_log
 from bot.utils.models import MarketSignal
 
@@ -25,18 +28,22 @@ from bot.utils.models import MarketSignal
 # ── Tiered Analysis Pipeline ────────────────────────────────────
 
 class TieredPipeline:
-    """3-tier escalation: free rules → gpt-4o-mini → gpt-4o.
+    """3-tier escalation: free rules → cheap-tier LLM → full-tier LLM.
+
+    The concrete model per tier is the configured provider's (OpenAI defaults:
+    gpt-4o-mini for cheap, gpt-4o for full; other providers route to their own
+    cheap/full models, e.g. qwen / sonnet). The tier logic is model-agnostic.
 
     Tier 1 (FREE): Rule engine handles clear-cut signals:
       - RSI < 25 or > 75 (extreme)
       - ADX > 35 and strong DI divergence (clear trend)
       - Confluence > 0.75 or < 0.25 (strong agreement)
 
-    Tier 2 (CHEAP): gpt-4o-mini for moderate signals:
+    Tier 2 (CHEAP): cheap-tier model for moderate signals:
       - Confluence 0.40-0.60 (ambiguous zone)
       - Mixed indicators
 
-    Tier 3 (FULL): gpt-4o for high-potential signals:
+    Tier 3 (FULL): full-tier model for high-potential signals:
       - Confluence > 0.60 (promising but needs thesis quality)
       - Large position size at risk
     """
@@ -252,15 +259,18 @@ class OptimizationStats:
     estimated_cost_saved_usd: float = 0.0
 
     def record_tier(self, tier: int) -> None:
+        # #44: derive saved cost from the configured per-analysis cost instead of
+        # hardcoded gpt-4o-era constants, so the estimate tracks the actual model.
+        _full_cost = float(getattr(CONFIG.llm, "est_cost_per_analysis", 0.003) or 0.003)
         if tier == 1:
             self.tier1_rule_calls += 1
             self.estimated_tokens_saved += 800  # full call avoided
-            self.estimated_cost_saved_usd += 0.003
+            self.estimated_cost_saved_usd += _full_cost
         elif tier == 2:
             self.tier2_mini_calls += 1
-            # mini is ~17x cheaper than full, savings = 16/17 of full cost
+            # cheap tier is ~17x cheaper than full → savings ≈ 16/17 of full cost
             self.estimated_tokens_saved += 600
-            self.estimated_cost_saved_usd += 0.0028
+            self.estimated_cost_saved_usd += _full_cost * (16.0 / 17.0)
         else:
             self.tier3_full_calls += 1
 
