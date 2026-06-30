@@ -299,7 +299,7 @@ defaults:
     description: "Max percentage of equity risked per position (fixed-fractional sizing)"
 
   per_strategy_notional_cap_enabled:
-    value: false
+    value: true
     env_var: PER_STRATEGY_NOTIONAL_CAP_ENABLED
     description: "Use the per-strategy notional cap (StrategyTypeConfig) instead of the global max_position_pct for the size cap + POSITION_SIZE check"
 
@@ -309,7 +309,7 @@ defaults:
     description: "Max daily loss as % of equity before circuit breaker trips"
 
   daily_loss_breaker_autoreset_enabled:
-    value: false
+    value: true
     env_var: DAILY_LOSS_BREAKER_AUTORESET
     description: "Auto-reset a daily-loss circuit-breaker trip at UTC day rollover (drawdown/streak/manual stay manual)"
 
@@ -510,7 +510,7 @@ defaults:
       max_drawdown_pct applies.
 
   regime_sizing_enabled:
-    value: false
+    value: true
     env_var: REGIME_SIZING_ENABLED
     description: >
       Opt-in (default OFF). Bridges the analyzer's per-symbol market regime into
