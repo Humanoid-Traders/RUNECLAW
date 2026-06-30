@@ -1661,15 +1661,18 @@ class Analyzer:
         stoch_k_period = 14
         stoch_smooth = 3
         if len(closes) >= stoch_k_period + stoch_smooth:
-            # Raw %K: (Close - Lowest Low) / (Highest High - Lowest Low) * 100
-            raw_k = np.zeros(len(closes) - stoch_k_period + 1)
-            for si in range(len(raw_k)):
-                window_h = highs[si:si + stoch_k_period]
-                window_l = lows[si:si + stoch_k_period]
-                hh = np.max(window_h)
-                ll = np.min(window_l)
-                raw_k[si] = ((closes[si + stoch_k_period - 1] - ll) / (hh - ll) * 100
-                             if hh > ll else 50.0)
+            # Raw %K: (Close - Lowest Low) / (Highest High - Lowest Low) * 100.
+            # #40: vectorized rolling max/min over the period window instead of a
+            # per-bar Python loop over the whole array — numerically identical
+            # (same windowed max/min and the hh<=ll → 50.0 fallback).
+            from numpy.lib.stride_tricks import sliding_window_view
+            hh = sliding_window_view(highs, stoch_k_period).max(axis=1)
+            ll = sliding_window_view(lows, stoch_k_period).min(axis=1)
+            last_close = closes[stoch_k_period - 1:]
+            denom = hh - ll
+            raw_k = np.full(len(denom), 50.0)
+            _ok = denom > 0
+            raw_k[_ok] = (last_close[_ok] - ll[_ok]) / denom[_ok] * 100
             # Smooth %K (3-period SMA of raw %K)
             if len(raw_k) >= stoch_smooth:
                 smooth_k = np.convolve(raw_k, np.ones(stoch_smooth) / stoch_smooth, mode='valid')
