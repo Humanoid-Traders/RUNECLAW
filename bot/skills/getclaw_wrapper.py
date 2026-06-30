@@ -26,7 +26,7 @@ class GetClawAdapter:
         stop: float,
         take_profit: float,
     ) -> dict:
-        """Run all 18 risk-engine checks against a proposed signal.
+        """Run all of the risk engine's fail-closed checks against a proposed signal.
 
         Returns a dict ready for downstream consumption with verdict,
         sizing, risk-reward, and an optional quant score.
