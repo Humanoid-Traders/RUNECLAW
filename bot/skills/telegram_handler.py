@@ -1277,6 +1277,45 @@ class TelegramHandler:
                 return True
         return False
 
+    @staticmethod
+    def _split_pos_close_owner(rest: str) -> tuple[str, str | None]:
+        """Split a ``pos_close_`` payload into (trade_id, owner_uid).
+
+        The owner uid is appended as ``...:{uid}`` (Telegram ids are integers).
+        The trade_id itself can contain ':' (adopted symbols like
+        ``BTC-USDT:USDT``), so split on the LAST ':' and only treat the tail as an
+        owner tag when it is all-digits. Untagged (legacy / pair-name) payloads
+        return ``owner_uid=None``.
+        """
+        bits = rest.rsplit(":", 1)
+        if len(bits) == 2 and bits[1].isdigit():
+            return bits[0], bits[1]
+        return rest, None
+
+    def _caller_executor(self, update: Update):
+        """The LiveExecutor whose positions THIS caller may view/close.
+
+        Routes through the engine's per-user resolver (engine._executor_for).
+        With PER_USER_LIVE_ENABLED off this is ALWAYS the shared operator executor
+        — byte-identical to the prior single-account behaviour.
+
+        With per-user ON, engine._executor_for falls back to the operator executor
+        when a caller has no linked account (intended for the gated execution
+        path). For the VIEW/CLOSE layer that fallback would leak the operator's
+        positions to a non-operator user, so here we return None in that case
+        (caller is not an operator/admin AND resolved to the shared executor) so
+        such a caller can neither see nor close anyone else's positions.
+        """
+        uid = self._get_tg_id(update)
+        ex = self.engine._executor_for(uid)
+        if not getattr(CONFIG, "per_user_live_enabled", False):
+            return ex  # single-account mode — shared operator executor for all
+        owns_operator = self._is_admin(update) or self._uid_matches(
+            uid, CONFIG.telegram.chat_id)
+        if ex is self.engine.live_executor and not owns_operator:
+            return None  # non-owner fell back to operator account → no access
+        return ex
+
     def _check_auth(self, update: Update) -> bool:
         """Check if user is authorized (any role except pending).
 
@@ -4472,9 +4511,10 @@ class TelegramHandler:
         lang = self._lang(update)  # i18n: resolve once for this command
         portfolio = self.engine.user_portfolios.get(user_id)
         state = portfolio.snapshot()
-        # LIVE FIX: use real open position count
+        # LIVE FIX: use real open position count (per-user: the caller's own).
         if CONFIG.is_live() and hasattr(self.engine, 'live_executor'):
-            open_count = len(self.engine.live_executor.open_positions)
+            _risk_ex = self._caller_executor(update)
+            open_count = len(_risk_ex.open_positions) if _risk_ex else 0
         else:
             open_count = state.open_positions
         data = {
@@ -5468,13 +5508,17 @@ class TelegramHandler:
 
         positions_data = []
 
-        # LIVE FIX: in LIVE mode, show positions from LiveExecutor
+        # LIVE FIX: in LIVE mode, show positions from LiveExecutor.
+        # Per-user isolation: route through the CALLER's executor so each user
+        # sees only their own account's positions (resolves to the shared operator
+        # executor when PER_USER_LIVE_ENABLED is off — byte-identical default).
         if CONFIG.is_live():
-            live_positions = self.engine.live_executor.open_positions
+            executor = self._caller_executor(update)
+            live_positions = executor.open_positions if executor else []
             if live_positions:
                 prices: dict[str, float] = {}
                 try:
-                    exchange = await self.engine.live_executor._get_exchange()
+                    exchange = await executor._get_exchange()
                     for p in live_positions:
                         if p.symbol not in prices:
                             try:
@@ -5530,11 +5574,11 @@ class TelegramHandler:
                         "status": getattr(pos, "status", "open"),
                         "strategy_type": getattr(pos, "strategy_type", "swing"),
                     })
-            else:
+            elif executor:
                 # No locally-tracked positions — fall back to exchange API
                 # to catch orphans (positions opened outside bot or lost on restart)
                 try:
-                    exchange = await self.engine.live_executor._get_exchange()
+                    exchange = await executor._get_exchange()
                     ex_positions = await exchange.fetch_positions()
                     open_ex = [p for p in (ex_positions or [])
                                if isinstance(p, dict) and float(p.get("contracts") or 0) > 0]
@@ -5749,9 +5793,11 @@ class TelegramHandler:
 
             d_emoji = "\U0001f7e2" if direction == "LONG" else "\U0001f534"
             pnl_emoji = "\U0001f7e2" if pnl_pct >= 0 else "\U0001f534"
+            # Owner-tag the destructive Close callback (RC-AUD-004 style IDOR
+            # guard) so only the user who owns this position can close it.
             kb = InlineKeyboardMarkup([[
                 InlineKeyboardButton(f"{pair}", callback_data=f"pos_details_{tid}"),
-                InlineKeyboardButton("Close", callback_data=f"pos_close_{tid}"),
+                InlineKeyboardButton("Close", callback_data=f"pos_close_{tid}:{user_id}"),
             ]])
 
             if card_png:
@@ -5865,7 +5911,7 @@ class TelegramHandler:
                 lines.append(f"\u23f3 <b>Waiting:</b> {age_str}")
 
                 kb = InlineKeyboardMarkup([[
-                    InlineKeyboardButton("Cancel", callback_data=f"pos_close_{tid}"),
+                    InlineKeyboardButton("Cancel", callback_data=f"pos_close_{tid}:{user_id}"),
                 ]])
 
                 await self._send(update, "\n".join(lines), reply_markup=kb)
@@ -6454,9 +6500,10 @@ class TelegramHandler:
             pos_match = None
             is_live_pos = False
 
-            if CONFIG.is_live():
+            _detail_ex = self._caller_executor(update)
+            if CONFIG.is_live() and _detail_ex is not None:
                 ident_clean = ident.replace("/", "").replace(":USDT", "")
-                for lp in self.engine.live_executor.open_positions:
+                for lp in _detail_ex.open_positions:
                     if is_trade_id:
                         if lp.trade_id == ident:
                             pos_match = lp
@@ -6637,7 +6684,7 @@ class TelegramHandler:
                 # Use trade_id for buttons if we have a live position
                 btn_id = pos_match.trade_id if is_live_pos else pair
                 kb = InlineKeyboardMarkup([[
-                    InlineKeyboardButton("Close", callback_data=f"pos_close_{btn_id}"),
+                    InlineKeyboardButton("Close", callback_data=f"pos_close_{btn_id}:{user_id}"),
                     InlineKeyboardButton("Refresh", callback_data=f"pos_details_{btn_id}"),
                 ]])
 
@@ -6779,18 +6826,34 @@ class TelegramHandler:
             return
 
         if data.startswith("pos_close_"):
-            ident = data.removeprefix("pos_close_")
+            ident, owner_uid = self._split_pos_close_owner(
+                data.removeprefix("pos_close_"))
             is_trade_id = ident.startswith("TI-")
             pair = ident  # fallback for display
             user_id = self._get_tg_id(update)
+            # IDOR guard (RC-AUD-004 style): if the button carries an owner tag,
+            # only that user may close it. The per-user executor routing below is
+            # the primary isolation; this is defense-in-depth against a crafted /
+            # replayed callback.
+            if owner_uid is not None and not self._uid_matches(user_id, owner_uid):
+                await self._send(update,
+                    "\U0001f512 <b>Access denied</b>\n\n"
+                    "Only the user who owns this position can close it.",
+                    edit=True)
+                audit(system_log,
+                      f"pos_close IDOR blocked: caller={user_id} owner={owner_uid}",
+                      action="callback_idor_block", result="DENIED")
+                return
             portfolio = self.engine.user_portfolios.get(user_id)
 
             closed_trade = None
             live_closed = False
 
-            # LIVE mode: close via LiveExecutor
-            if CONFIG.is_live():
-                executor = self.engine.live_executor
+            # LIVE mode: close via the CALLER's executor so a user can only ever
+            # close their OWN account's positions (resolves to the shared operator
+            # executor when PER_USER_LIVE_ENABLED is off — byte-identical default).
+            executor = self._caller_executor(update)
+            if CONFIG.is_live() and executor is not None:
                 for lp in list(executor.open_positions):
                     if is_trade_id:
                         matched = lp.trade_id == ident
@@ -6853,10 +6916,12 @@ class TelegramHandler:
             if live_closed:
                 return  # Already sent response (success or error) — do not fall through
 
-            # LIVE mode fallback: close untracked exchange positions directly
-            if CONFIG.is_live() and not live_closed:
+            # LIVE mode fallback: close untracked exchange positions directly.
+            # Use the caller's executor/exchange so this can't reach into the
+            # operator's (or another user's) account.
+            if CONFIG.is_live() and not live_closed and executor is not None:
                 try:
-                    exchange = await self.engine.live_executor._get_exchange()
+                    exchange = await executor._get_exchange()
                     ex_positions = await exchange.fetch_positions()
                     for ep in (ex_positions or []):
                         if not isinstance(ep, dict):
@@ -6875,7 +6940,7 @@ class TelegramHandler:
                             margin = float(ep.get("initialMargin") or ep.get("collateral") or 0)
                             leverage = int(float(ep.get("leverage") or 1))
                             close_params = {"productType": "USDT-FUTURES"}
-                            hedge = getattr(self.engine.live_executor, '_hedge_mode', False)
+                            hedge = getattr(executor, '_hedge_mode', False)
                             if hedge:
                                 close_params["tradeSide"] = "close"
                             try:
@@ -6908,7 +6973,7 @@ class TelegramHandler:
                                 from datetime import datetime, timezone
                                 from bot.core.live_executor import LivePosition
                                 already_recorded = False
-                                for ct in self.engine.live_executor._closed_trades:
+                                for ct in executor._closed_trades:
                                     ct_clean = ct.symbol.replace("/", "").replace(":USDT", "")
                                     if ct_clean == ep_clean and ct.direction == side:
                                         # Check if closed within the last 5 minutes
@@ -6937,7 +7002,7 @@ class TelegramHandler:
                                         opened_at=opened_at,
                                         closed_at=datetime.now(timezone.utc),
                                     )
-                                    self.engine.live_executor._append_closed_trade(closed_pos)
+                                    executor._append_closed_trade(closed_pos)
 
                                 pnl_emoji = "\U0001f7e2" if net_pnl >= 0 else "\U0001f534"
                                 lines = [
