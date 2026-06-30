@@ -289,4 +289,61 @@ router.post('/scan', async (req, res) => {
   }
 });
 
+/**
+ * POST /api/bot/sync/signals
+ * Body: { signals: [{ signal_key, symbol, direction, confidence, score, pattern,
+ *         regime, entry_price, stop_loss, take_profit, rr, thesis, status, pnl,
+ *         created_at, resolved_at }] }
+ *
+ * Append/UPSERT to the global signal stream. signal_key is the stable per-signal
+ * id from the bot, so re-syncing the same signal updates its outcome (status/pnl)
+ * rather than duplicating. Global stream (not per-user); the dashboard joins each
+ * user's taken trades to it. Bot-secret authed (botAuth middleware above).
+ */
+router.post('/signals', async (req, res) => {
+  try {
+    const list = Array.isArray(req.body && req.body.signals) ? req.body.signals : [];
+    if (list.length === 0) return res.json({ ok: true, upserted: 0 });
+    // Cap a single batch to bound the write cost of a malformed/huge payload.
+    const batch = list.slice(0, 500);
+    let upserted = 0;
+    for (const s of batch) {
+      if (!s || !s.signal_key || !s.symbol || !s.direction) continue;
+      await pool.execute(
+        `INSERT INTO signals
+           (signal_key, symbol, direction, confidence, score, pattern, regime,
+            entry_price, stop_loss, take_profit, rr, thesis, status, pnl,
+            created_at, resolved_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE
+           status = VALUES(status), pnl = VALUES(pnl),
+           resolved_at = VALUES(resolved_at)`,
+        [
+          String(s.signal_key).slice(0, 128),
+          String(s.symbol).slice(0, 32),
+          String(s.direction).slice(0, 8),
+          Number(s.confidence) || 0,
+          Number(s.score) || 0,
+          s.pattern ? String(s.pattern).slice(0, 64) : null,
+          s.regime ? String(s.regime).slice(0, 32) : null,
+          Number(s.entry_price) || 0,
+          Number(s.stop_loss) || 0,
+          Number(s.take_profit) || 0,
+          Number(s.rr) || 0,
+          s.thesis != null ? String(s.thesis) : null,
+          s.status ? String(s.status).slice(0, 16) : 'NEW',
+          (s.pnl === null || s.pnl === undefined) ? null : Number(s.pnl),
+          s.created_at ? new Date(s.created_at) : new Date(),
+          s.resolved_at ? new Date(s.resolved_at) : null,
+        ]
+      );
+      upserted++;
+    }
+    res.json({ ok: true, upserted });
+  } catch (err) {
+    console.error('Signals sync error:', err.message);
+    res.status(500).json({ error: 'Signals sync failed' });
+  }
+});
+
 module.exports = router;
