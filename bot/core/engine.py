@@ -1221,6 +1221,19 @@ class RuneClawEngine:
             if n:
                 audit(system_log, f"Applied {n} web credential request(s)",
                       action="web_credentials_pull", result="OK")
+            # Web wallet (3a): also pull live-control changes (live on/off, margin
+            # cap, pause) and apply them via the UserStore. The allowlist is
+            # reported to the UI but still enforced by the live gate — the web
+            # cannot grant live access the operator hasn't pre-approved.
+            store = getattr(self, "_user_store", None)
+            if store is not None:
+                from bot.utils.control_pull import pull_and_apply_controls
+                m = pull_and_apply_controls(
+                    store=store, allowlist_check=self._is_operator_user,
+                    on_change=self.invalidate_user_executor)
+                if m:
+                    audit(system_log, f"Applied {m} web control change(s)",
+                          action="web_controls_pull", result="OK")
         except Exception as exc:
             try:
                 audit(system_log, f"Web credential pull error: {exc}",

@@ -401,4 +401,56 @@ router.post('/credentials/ack', async (req, res) => {
   }
 });
 
+/**
+ * GET /api/bot/sync/controls/pending
+ * Bot pulls pending live-control changes (live on/off, margin cap, pause).
+ * Bot-secret authed.
+ */
+router.get('/controls/pending', async (req, res) => {
+  try {
+    const [rows] = await pool.execute(
+      `SELECT user_id, telegram_id, live_enabled, max_margin, paused, created_at
+       FROM pending_controls ORDER BY created_at ASC LIMIT 200`
+    );
+    res.json({ pending: rows });
+  } catch (err) {
+    console.error('Controls pending fetch error:', err.message);
+    res.status(500).json({ error: 'Failed to fetch pending controls' });
+  }
+});
+
+/**
+ * POST /api/bot/sync/controls/ack
+ * Body: { acks: [{ user_id, live_enabled, max_margin, paused, allowlisted, ok }] }
+ * Bot reports the APPLIED state (from its UserStore). Clears the pending row and
+ * mirrors the state into user_controls for the web UI. Bot-secret authed.
+ */
+router.post('/controls/ack', async (req, res) => {
+  try {
+    const acks = Array.isArray(req.body && req.body.acks) ? req.body.acks.slice(0, 200) : [];
+    let applied = 0;
+    for (const a of acks) {
+      if (!a || a.user_id == null || !a.ok) continue;
+      const uid = parseInt(a.user_id);
+      if (!Number.isInteger(uid)) continue;
+      await pool.execute('DELETE FROM pending_controls WHERE user_id = ?', [uid]);
+      await pool.execute(
+        `INSERT INTO user_controls (user_id, live_enabled, max_margin, paused, allowlisted)
+         VALUES (?, ?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE live_enabled = VALUES(live_enabled),
+           max_margin = VALUES(max_margin), paused = VALUES(paused),
+           allowlisted = VALUES(allowlisted), updated_at = CURRENT_TIMESTAMP`,
+        [uid, a.live_enabled ? 1 : 0,
+         (a.max_margin === null || a.max_margin === undefined) ? null : Number(a.max_margin),
+         a.paused ? 1 : 0, a.allowlisted ? 1 : 0]
+      );
+      applied++;
+    }
+    res.json({ ok: true, applied });
+  } catch (err) {
+    console.error('Controls ack error:', err.message);
+    res.status(500).json({ error: 'Failed to ack controls' });
+  }
+});
+
 module.exports = router;
