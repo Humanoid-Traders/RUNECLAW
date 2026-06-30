@@ -582,6 +582,19 @@ class AnalyzerConfig:
     # (per_user_llm_enabled / BYOK) takes precedence over their tier. Fail-open to
     # default routing. Default OFF → byte-identical until enabled.
     per_user_llm_tiers_enabled: bool = _env_bool("PER_USER_LLM_TIERS_ENABLED", False)
+    # Scoped semantic-LLM-cache key (opt-in, default OFF; deep-audit medium). The
+    # semantic cache keys on bucketed market conditions only, NOT on which model
+    # answers — but the answering model depends on the pipeline tier (rule vs
+    # scan vs thesis), the admin/basic boundary, a user's BYOK key, and their
+    # premium tier. With a single namespace, an admin/premium/BYOK thesis (or a
+    # tier-1 rule result) is served to any user with the same indicator buckets,
+    # and vice-versa. When ON, the cache key is additionally salted with that
+    # routing identity so responses never cross those boundaries. Making the key
+    # MORE specific is strictly safe-direction (it can only avoid a wrong reuse,
+    # never create one); it costs some cache sharing. RECOMMENDED ON whenever
+    # per_user_llm_enabled / per_user_llm_tiers_enabled is ON. Default OFF →
+    # cache key byte-identical to the legacy single-namespace behaviour.
+    llm_cache_scoped_key: bool = _env_bool("LLM_CACHE_SCOPED_KEY", False)
     # Confidence calibration (Phase A): when ON, the final blended confidence is
     # remapped through a monotonic reliability curve fitted from the bot's own
     # closed-trade history, so a confidence value reflects realized win rate.

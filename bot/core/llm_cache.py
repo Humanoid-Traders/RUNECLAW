@@ -83,7 +83,7 @@ class SemanticLLMCache:
         self._stats = CacheStats()
 
     @staticmethod
-    def build_cache_key(symbol: str, indicators: dict) -> str:
+    def build_cache_key(symbol: str, indicators: dict, scope: str = "") -> str:
         """Build a bucketed cache key from signal + indicators.
 
         Bucketing strategy:
@@ -91,6 +91,12 @@ class SemanticLLMCache:
           - RSI: 3 zones (oversold < 35, overbought > 65, neutral)
           - ADX: 3 buckets (low < 20, medium 20-30, high > 30)
           - MACD: sign only (positive/negative)
+
+        `scope` is an optional routing-identity salt (pipeline tier / admin /
+        BYOK user / premium tier). It namespaces the cache so a response from
+        one answering model is never served to a request that would be answered
+        by a different one. Default "" reproduces the legacy single-namespace
+        key byte-for-byte.
         """
         regime = indicators.get("regime", "UNKNOWN")
         confluence = indicators.get("confluence", 0.5)
@@ -121,6 +127,8 @@ class SemanticLLMCache:
         macd_dir = "pos" if macd_hist >= 0 else "neg"
 
         raw_key = f"{symbol}|{regime}|{conf_bucket}|{rsi_zone}|{macd_dir}|{adx_bucket}"
+        if scope:
+            raw_key = f"{raw_key}|{scope}"
         # W5 FIX: use full 64-char SHA-256 hex to avoid collision risk
         return hashlib.sha256(raw_key.encode()).hexdigest()
 

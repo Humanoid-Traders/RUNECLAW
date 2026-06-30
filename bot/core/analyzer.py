@@ -366,6 +366,40 @@ class Analyzer:
             logger.debug("per-user tier client resolve failed for tier=%s: %s", user_tier, exc)
             return None, None, None
 
+    def _llm_cache_scope(self, signal, indicators, is_admin, user_id, user_tier) -> str:
+        """Routing-identity salt for the semantic-cache key (deep-audit medium).
+
+        The semantic cache keys on bucketed market conditions only, so a cached
+        thesis is reused for any request with the same buckets — regardless of
+        which model produced it. But the answering model depends on:
+          - the pipeline tier (tier 1 = rule engine, tier 2 = scan model,
+            tier 3 = thesis model),
+          - the admin/basic boundary (admins use premium operator clients),
+          - a user's BYOK key (their own provider answers), and
+          - their premium tier (elite/pro map to premium operator models).
+        Salting the key with these dimensions stops a premium/admin/BYOK thesis
+        (or a tier-1 rule result) from leaking to a basic user, and vice-versa.
+
+        Cheap and side-effect-free: classify_tier is pure; the BYOK/tier
+        dimensions are derived from config flags + identity without building any
+        client or reading the key. Fail-open: any error yields a coarse salt
+        rather than raising on the hot path."""
+        parts = []
+        try:
+            parts.append(f"t{TieredPipeline.classify_tier(indicators, signal)}")
+        except Exception:
+            parts.append("t?")
+        parts.append("admin" if is_admin else "user")
+        # BYOK: when per-user LLM is enabled, each user may be answered by their
+        # OWN provider/key, so isolate every user_id into its own namespace.
+        if user_id is not None and getattr(CONFIG.analyzer, "per_user_llm_enabled", False):
+            parts.append(f"byok:{user_id}")
+        # Tier routing: when enabled, the user's tier selects premium operator
+        # models, so a premium-tier thesis must not be served to a basic user.
+        if user_tier is not None and getattr(CONFIG.analyzer, "per_user_llm_tiers_enabled", False):
+            parts.append(f"tier:{user_tier}")
+        return "|".join(parts)
+
     def refresh_llm_client(self) -> None:
         """Refresh LLM client after BYOK /setllm change."""
         self._llm_config = self._resolve_llm_config()
@@ -2395,7 +2429,15 @@ class Analyzer:
             return result
 
         # ── Optimization 1: Semantic Cache ──
-        cache_key = SemanticLLMCache.build_cache_key(signal.symbol, indicators)
+        # Scope the key by the answering model's routing identity (default OFF →
+        # byte-identical) so an admin/premium/BYOK thesis (or a tier-1 rule
+        # result) is never served to a basic user with the same buckets.
+        cache_scope = ""
+        if getattr(CONFIG.analyzer, "llm_cache_scoped_key", False):
+            cache_scope = self._llm_cache_scope(
+                signal, indicators, is_admin, user_id, user_tier)
+        cache_key = SemanticLLMCache.build_cache_key(
+            signal.symbol, indicators, scope=cache_scope)
         cached = self._llm_cache.get(cache_key)
         if cached is not None:
             # Stats tracked by cache internally -- no double-count
