@@ -257,7 +257,9 @@ class RiskEngine:
         # which is safe because it only ever REDUCES size, never grows it.
         self._realized_pnl_window: deque[float] = deque(maxlen=100_000)
         # Feature: Rolling return correlation (V2)
-        self._price_history: dict[str, list[float]] = {}
+        # #49: (timestamp, price) points so cross-asset returns align on a common
+        # time grid, not by list position. In-memory only (not persisted).
+        self._price_history: dict[str, list[tuple[float, float]]] = {}
         # Feature: Warning rate circuit breaker
         # Tracks infrastructure warnings (EXCEPTION/CRITICAL_FAIL audit events).
         # If any single warning key fires > threshold times in the sliding window,
@@ -523,11 +525,18 @@ class RiskEngine:
     def in_drawdown_recovery(self) -> bool:
         return self._in_drawdown_recovery
 
-    def update_price_history(self, symbol: str, price: float) -> None:
-        """Record a price point for rolling correlation calculation."""
+    def update_price_history(self, symbol: str, price: float, ts: Optional[float] = None) -> None:
+        """Record a (timestamp, price) point for rolling correlation / VaR.
+
+        #49: the point is timestamped so cross-asset return series can be aligned
+        on a common time grid rather than by list position. Callers feeding a whole
+        watchlist on one tick should pass a SHARED ``ts`` for that tick, so a symbol
+        that misses some ticks doesn't get its stale returns paired against another
+        symbol's fresh ones. ``ts=None`` stamps wall-clock now (each call distinct →
+        the VaR path then falls back to positional alignment, the prior behaviour)."""
         if symbol not in self._price_history:
             self._price_history[symbol] = []
-        self._price_history[symbol].append(price)
+        self._price_history[symbol].append((float(ts) if ts is not None else time.time(), float(price)))
         if len(self._price_history[symbol]) > 100:
             self._price_history[symbol] = self._price_history[symbol][-100:]
 
@@ -1683,6 +1692,42 @@ class RiskEngine:
                 out.append((prices[i] - prev) / prev)
         return out
 
+    def _aligned_returns(self, assets: list[str], min_points: int) -> Optional[dict[str, list[float]]]:
+        """#49: per-asset return series aligned on a COMMON timestamp grid.
+
+        Builds {ts: price} per asset (last price wins per timestamp), intersects the
+        timestamps across all assets, and computes returns over that shared, sorted
+        grid — so a symbol that missed some ticks contributes only timestamps it
+        actually has, instead of having its returns paired positionally against
+        another symbol's. Returns equal-length series, or None when the common
+        overlap is too small (caller then falls back to positional alignment)."""
+        maps: dict[str, dict[float, float]] = {}
+        for a in assets:
+            hist = self._price_history.get(a) or []
+            m: dict[float, float] = {}
+            for pt in hist:
+                # Only timestamped (ts, price) points can be time-aligned. Bare
+                # floats (legacy / direct test fixtures) → bail to positional.
+                if not (isinstance(pt, (tuple, list)) and len(pt) == 2):
+                    return None
+                m[float(pt[0])] = float(pt[1])
+            if not m:
+                return None
+            maps[a] = m
+        common = set(maps[assets[0]].keys())
+        for a in assets[1:]:
+            common &= set(maps[a].keys())
+        grid = sorted(common)
+        if len(grid) < min_points + 1:
+            return None
+        out: dict[str, list[float]] = {}
+        for a in assets:
+            px = [maps[a][t] for t in grid]
+            rets = [((px[k] - px[k - 1]) / px[k - 1]) if px[k - 1] > 0 else 0.0
+                    for k in range(1, len(px))]
+            out[a] = rets
+        return out
+
     def _compute_portfolio_var_covariance(
         self, position_usd: float, confidence_level: float, idea: TradeIdea
     ) -> Optional[VarResult]:
@@ -1736,21 +1781,26 @@ class RiskEngine:
             assets = [a for a, n in weights_usd.items() if n != 0.0]
             if not assets:
                 return 0.0
-            # Build per-asset return series; require every asset to have history.
-            series: dict[str, list[float]] = {}
-            for a in assets:
-                prices = self._price_history.get(a) if hasattr(self, "_price_history") else None
-                rets = self._returns_from_prices(prices) if prices else []
-                if len(rets) < min_points:
+            # #49: prefer returns aligned on a COMMON timestamp grid so a symbol
+            # that missed ticks isn't paired positionally against a fresher one.
+            aligned = self._aligned_returns(assets, min_points)
+            if aligned is not None:
+                window = len(next(iter(aligned.values())))
+            else:
+                # Fallback (insufficient timestamp overlap, e.g. unshared stamps):
+                # the prior trailing-common-window positional alignment.
+                series: dict[str, list[float]] = {}
+                for a in assets:
+                    hist = self._price_history.get(a) if hasattr(self, "_price_history") else None
+                    prices = [(pt[1] if isinstance(pt, (tuple, list)) else pt) for pt in hist] if hist else None
+                    rets = self._returns_from_prices(prices) if prices else []
+                    if len(rets) < min_points:
+                        return None
+                    series[a] = rets
+                window = min(len(series[a]) for a in assets)
+                if window < min_points:
                     return None
-                series[a] = rets
-            # Align on the trailing common window (price buffers are appended per
-            # scan tick and aren't timestamped, so the last L points are the best
-            # available alignment).
-            window = min(len(series[a]) for a in assets)
-            if window < min_points:
-                return None
-            aligned = {a: series[a][-window:] for a in assets}
+                aligned = {a: series[a][-window:] for a in assets}
             means = {a: sum(aligned[a]) / window for a in assets}
             w = {a: weights_usd[a] / equity for a in assets}
             # Portfolio variance = Σ_i Σ_j w_i w_j cov(i, j), sample cov (ddof=1).
@@ -1837,8 +1887,13 @@ class RiskEngine:
                     if pos.asset == idea.asset:
                         continue
                     if pos.asset in self._price_history:
-                        prices_new = self._price_history[idea.asset]
-                        prices_existing = self._price_history[pos.asset]
+                        # #49: _price_history now holds (ts, price); strip to prices
+                        # for this positional correlation gate (unchanged behaviour).
+                        # Tolerant of legacy bare-float points too.
+                        prices_new = [(pt[1] if isinstance(pt, (tuple, list)) else pt)
+                                      for pt in self._price_history[idea.asset]]
+                        prices_existing = [(pt[1] if isinstance(pt, (tuple, list)) else pt)
+                                           for pt in self._price_history[pos.asset]]
                         min_len = min(len(prices_new), len(prices_existing), 30)
                         if min_len >= 10:
                             import numpy as np

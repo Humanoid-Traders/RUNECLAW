@@ -3030,10 +3030,14 @@ class RuneClawEngine:
                 except Exception:
                     pass
 
-            # Feed prices to risk engine for correlation v2
+            # Feed prices to risk engine for correlation v2. #49: stamp every
+            # symbol fed this tick with ONE shared timestamp so the VaR path can
+            # align cross-asset returns on a common grid (a symbol missing from
+            # this tick simply lacks that timestamp, instead of drifting).
+            _tick_ts = time.time()
             for _rp_sym, _rp_px in prices.items():
                 try:
-                    self.risk.update_price_history(_rp_sym, _rp_px)
+                    self.risk.update_price_history(_rp_sym, _rp_px, ts=_tick_ts)
                 except Exception:
                     pass
 
