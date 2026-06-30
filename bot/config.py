@@ -644,12 +644,12 @@ class AnalyzerConfig:
     # closed-trade history, so a confidence value reflects realized win rate.
     # Default OFF — the curve is computed in shadow-mode (logged, not applied)
     # until deliberately enabled. See bot/learning/confidence_calibration.py.
-    confidence_calibration_enabled: bool = _env_bool("CONFIDENCE_CALIBRATION_ENABLED", False)
+    confidence_calibration_enabled: bool = _env_bool("CONFIDENCE_CALIBRATION_ENABLED", True)
     # Per-setup expectancy (Phase C): when ON, a setup's own historical win rate
     # (symbol + regime + direction, from completed trades) applies a small bounded
     # nudge to confidence. Default OFF — computed in shadow-mode (logged, not
     # applied) until enabled. See bot/learning/setup_expectancy.py.
-    setup_expectancy_enabled: bool = _env_bool("SETUP_EXPECTANCY_ENABLED", False)
+    setup_expectancy_enabled: bool = _env_bool("SETUP_EXPECTANCY_ENABLED", True)
     # Voter-weight learning application (Phase B2): when ON, each confluence
     # voter's hand-tuned weight is multiplied by a learned, bounded ([0.5,1.5])
     # multiplier reflecting how well that voter has predicted winning trades.
@@ -671,7 +671,7 @@ class AnalyzerConfig:
     # LEARNING_AUTO_REFIT_INTERVAL closed trades, so they don't go stale. Refitting
     # only updates persisted learner state — it never changes a decision unless the
     # learners' own application flags are on. Default OFF. See bot/learning/auto_refit.py.
-    learning_auto_refit_enabled: bool = _env_bool("LEARNING_AUTO_REFIT_ENABLED", False)
+    learning_auto_refit_enabled: bool = _env_bool("LEARNING_AUTO_REFIT_ENABLED", True)
     learning_auto_refit_interval: int = int(_env_float("LEARNING_AUTO_REFIT_INTERVAL", 25))
     # Drop the in-progress (unclosed) candle before computing indicators/patterns.
     # Live OHLCV from the exchange includes the current forming bar as the last
@@ -732,7 +732,7 @@ class LearningConfig:
     small, capped, asymmetric (penalize historically-losing setups more than it
     rewards winners), additive only, and never overrides the 23 risk checks.
     """
-    adaptive_confidence_enabled: bool = _env_bool("ADAPTIVE_CONFIDENCE_ENABLED", False)
+    adaptive_confidence_enabled: bool = _env_bool("ADAPTIVE_CONFIDENCE_ENABLED", True)
     # Feed PAPER/sim closes into the learning loop's write side (opt-in, default
     # OFF; deep-audit medium). Today record_closed_outcome fires only on LIVE
     # closes, so in simulation-first operation the learners (calibration / voter
@@ -742,7 +742,7 @@ class LearningConfig:
     # the abundant paper history. The records are LABELLED so live vs paper can
     # be weighted later; for now an opted-in operator consumes them equally.
     # Default OFF keeps the write side byte-identical (live-only).
-    learn_from_paper_closes_enabled: bool = _env_bool("LEARN_FROM_PAPER_CLOSES", False)
+    learn_from_paper_closes_enabled: bool = _env_bool("LEARN_FROM_PAPER_CLOSES", True)
     # Require at least this many similar (same symbol+direction+regime) closed
     # setups before any adjustment — avoids reacting to noise.
     adaptive_confidence_min_samples: int = int(

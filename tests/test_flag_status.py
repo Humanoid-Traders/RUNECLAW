@@ -35,11 +35,13 @@ class TestReportStructure:
                 assert isinstance(on, bool)
 
     def test_default_off_flags_report_off(self, monkeypatch):
-        # Flags still shipping default-OFF (flipped ON in later enablement tiers).
-        for env in ("OF_TIME_BARS_ENABLED", "LEARN_FROM_PAPER_CLOSES"):
+        # Tier-4 judgment/sizing flags still ship default-OFF (config-backed rows).
+        for env in ("REGIME_SIZING_ENABLED", "DROP_UNCLOSED_CANDLE_ENABLED",
+                    "DAILY_LOSS_BREAKER_AUTORESET"):
             monkeypatch.delenv(env, raising=False)
         flat = _flat(audit_flag_report())
-        for env in ("OF_TIME_BARS_ENABLED", "LEARN_FROM_PAPER_CLOSES"):
+        for env in ("REGIME_SIZING_ENABLED", "DROP_UNCLOSED_CANDLE_ENABLED",
+                    "DAILY_LOSS_BREAKER_AUTORESET"):
             assert flat[env] is False
 
     def test_default_on_guards_report_on(self):
@@ -50,6 +52,9 @@ class TestReportStructure:
         # Tier 1 safety/observability flags are now enabled by default.
         assert flat["WS_IDLE_TIMEOUT_SEC"] is True
         assert flat["VERIFY_CLASSIC_SLTP_ON_RESTART"] is True
+        # Tier 3 learning flags are now enabled by default (config-backed rows).
+        assert flat["LEARN_FROM_PAPER_CLOSES"] is True
+        assert flat["CONFIDENCE_CALIBRATION_ENABLED"] is True
 
 
 class TestEnvReflection:

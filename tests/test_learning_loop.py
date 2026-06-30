@@ -85,8 +85,11 @@ class TestNudgeRule:
 
 
 class TestConfigSafeDefaults:
-    def test_disabled_by_default(self):
-        assert CONFIG.learning.adaptive_confidence_enabled is False
+    def test_enabled_by_default(self, monkeypatch):
+        # Enabled by default (operator-requested activation); explicit env still wins.
+        monkeypatch.delenv("ADAPTIVE_CONFIDENCE_ENABLED", raising=False)
+        from bot.config import LearningConfig
+        assert LearningConfig().adaptive_confidence_enabled is True
 
     def test_penalty_exceeds_boost(self):
         assert (CONFIG.learning.adaptive_confidence_max_penalty
