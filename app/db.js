@@ -263,6 +263,32 @@ async function migrate() {
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
       )
     `);
+    // Global signal stream (every generated signal, taken or not). signal_key is
+    // a stable per-signal id from the bot so re-syncs UPSERT (update outcome)
+    // instead of duplicating. pnl/status are filled when the signal resolves.
+    await pool.execute(`
+      CREATE TABLE IF NOT EXISTS signals (
+        id BIGINT AUTO_INCREMENT PRIMARY KEY,
+        signal_key VARCHAR(128) NOT NULL UNIQUE,
+        symbol VARCHAR(32) NOT NULL,
+        direction VARCHAR(8) NOT NULL,
+        confidence DECIMAL(6,4) DEFAULT 0,
+        score DECIMAL(10,4) DEFAULT 0,
+        pattern VARCHAR(64) DEFAULT NULL,
+        regime VARCHAR(32) DEFAULT NULL,
+        entry_price DECIMAL(20,8) DEFAULT 0,
+        stop_loss DECIMAL(20,8) DEFAULT 0,
+        take_profit DECIMAL(20,8) DEFAULT 0,
+        rr DECIMAL(10,4) DEFAULT 0,
+        thesis TEXT DEFAULT NULL,
+        status VARCHAR(16) DEFAULT 'NEW',
+        pnl DECIMAL(20,8) DEFAULT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        resolved_at TIMESTAMP NULL DEFAULT NULL,
+        INDEX idx_created (created_at),
+        INDEX idx_symbol (symbol)
+      )
+    `);
   }
   // In-memory DB needs no migration
 }

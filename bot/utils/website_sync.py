@@ -192,3 +192,62 @@ def sync_scan_in_background(scan_payload: dict) -> None:
         daemon=True,
     )
     t.start()
+
+
+def build_signal_payload(signal_key: str, idea, *, score: float = 0.0,
+                         regime: str = "", status: str = "NEW",
+                         pnl: Optional[float] = None,
+                         created_at: str = "", resolved_at: str = "") -> dict:
+    """Shape one signal-stream row from a TradeIdea-like object (dict or model).
+
+    ``signal_key`` is a STABLE per-signal id so re-syncing the same signal updates
+    its outcome (status/pnl) instead of duplicating. Every generated signal —
+    taken or not — belongs in the stream; the dashboard joins a user's own trades
+    to it. Pure shaping (no I/O); returns a JSON-ready dict.
+    """
+    direction = str(_attr(idea, "direction", "")).split(".")[-1]
+    entry = float(_attr(idea, "entry_price", 0) or 0)
+    sl = float(_attr(idea, "stop_loss", 0) or 0)
+    tp = float(_attr(idea, "take_profit", 0) or 0)
+    rr = _attr(idea, "risk_reward_ratio", None)
+    if rr is None:
+        risk = abs(entry - sl)
+        rr = (abs(tp - entry) / risk) if risk > 0 else 0.0
+    return {
+        "signal_key": str(signal_key),
+        "symbol": _attr(idea, "asset", "") or _attr(idea, "symbol", ""),
+        "direction": direction,
+        "confidence": float(_attr(idea, "confidence", 0) or 0),
+        "score": float(score or 0),
+        "pattern": _attr(idea, "pattern"),
+        "regime": regime or "",
+        "entry_price": entry,
+        "stop_loss": sl,
+        "take_profit": tp,
+        "rr": float(rr or 0),
+        "thesis": _attr(idea, "reasoning", "") or _attr(idea, "thesis", ""),
+        "status": status,
+        "pnl": pnl,
+        "created_at": created_at or "",
+        "resolved_at": resolved_at or "",
+    }
+
+
+def sync_signals(signals: list[dict]) -> bool:
+    """Push a batch of signal-stream rows to the website (UPSERT by signal_key)."""
+    if not signals:
+        return True
+    result = _post("/api/bot/sync/signals", {"signals": signals})
+    if result and result.get("ok"):
+        log.info(f"Synced {result.get('upserted', 0)} signal(s) to website")
+        return True
+    log.warning("Signal stream sync failed")
+    return False
+
+
+def sync_signals_in_background(signals: list[dict]) -> None:
+    """Non-blocking signal-stream sync."""
+    if not signals:
+        return
+    t = threading.Thread(target=sync_signals, args=(list(signals),), daemon=True)
+    t.start()

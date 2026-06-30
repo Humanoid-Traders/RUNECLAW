@@ -362,12 +362,58 @@ def _build_scan_payload(results: list[dict], engine=None) -> dict:
     }
 
 
-def _push_scan_to_dashboard(results: list[dict], engine=None) -> None:
-    """Build scan payload and push to website in background."""
+def _scan_signal_rows(payload: dict) -> list[dict]:
+    """Map a scan payload's entry_cards into signal-stream rows (pure)."""
+    regime = ""
     try:
-        from bot.utils.website_sync import sync_scan_in_background
+        regime = str((payload.get("regime") or {}).get("label", "") or "")
+    except Exception:
+        regime = ""
+    ts = str(payload.get("timestamp", "") or "")
+    # Compact, stable-per-(symbol,direction,scan) key so re-pushing the same scan
+    # signal UPSERTs (carries an outcome later) instead of duplicating.
+    ts_key = "".join(ch for ch in ts if ch.isalnum())
+    rows = []
+    for c in payload.get("entry_cards", []) or []:
+        sym = c.get("symbol", "")
+        direction = c.get("direction", "")
+        if not sym or not direction:
+            continue
+        try:
+            score = float(c.get("score", 0) or 0)
+        except (TypeError, ValueError):
+            score = 0.0
+        rows.append({
+            "signal_key": f"{sym}-{direction}-{ts_key}",
+            "symbol": sym,
+            "direction": direction,
+            "confidence": score,          # scan score is a 0..1 confidence proxy
+            "score": score,
+            "pattern": c.get("trigger") or None,
+            "regime": regime,
+            "entry_price": float(c.get("entry", 0) or 0),
+            "stop_loss": float(c.get("stop_loss", 0) or 0),
+            "take_profit": float(c.get("tp1", 0) or 0),
+            "rr": float(c.get("rr", 0) or 0),
+            "thesis": c.get("thesis", "") or "",
+            "status": "NEW",
+            "pnl": None,
+            "created_at": ts,
+            "resolved_at": "",
+        })
+    return rows
+
+
+def _push_scan_to_dashboard(results: list[dict], engine=None) -> None:
+    """Build scan payload and push to website in background (scan + signal stream)."""
+    try:
+        from bot.utils.website_sync import (
+            sync_scan_in_background, sync_signals_in_background)
         payload = _build_scan_payload(results, engine)
         sync_scan_in_background(payload)
+        # Also append the scan's signals to the global signal-stream (every
+        # generated signal, taken or not). Best-effort, non-blocking.
+        sync_signals_in_background(_scan_signal_rows(payload))
     except Exception as exc:
         log.warning("Dashboard scan push failed: %s", exc)
 
