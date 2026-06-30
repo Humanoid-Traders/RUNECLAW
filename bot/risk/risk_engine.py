@@ -928,8 +928,8 @@ class RiskEngine:
         try:
             # 9. Consecutive loss streak
             # C2-35 FIX: soft limit derived from config, not hardcoded to 3.
-            # Always stays 2 below the hard circuit-breaker limit.
-            soft_limit = max(2, CONFIG.risk.max_consecutive_losses - 2)
+            # Always strictly below the hard circuit-breaker limit (see helper).
+            soft_limit = self._soft_loss_streak_limit(CONFIG.risk.max_consecutive_losses)
             if self._consecutive_losses >= soft_limit:
                 failed.append(f"LOSS_STREAK: {self._consecutive_losses} consecutive losses (>= {soft_limit})")
             else:
@@ -2005,6 +2005,21 @@ class RiskEngine:
         if self._circuit_open:
             audit(risk_log, "Circuit breaker state restored from combined state: ACTIVE",
                   action="state_restore", result="LOADED")
+
+    @staticmethod
+    def _soft_loss_streak_limit(hard_limit) -> int:
+        """Soft loss-streak warning threshold (risk check #9): fires ~2 losses
+        before the hard circuit-breaker limit, but ALWAYS strictly below it.
+
+        The old `max(2, hard - 2)` equalled or EXCEEDED the hard limit when it
+        was configured <= 2 (e.g. hard=1 → soft=2 > hard; hard=2 → soft=2 = hard),
+        so the soft warning could never fire before the breaker (or fired at the
+        same count). For hard <= 1 the breaker dominates, so the soft limit just
+        equals it. Default config (hard=5 → soft=3) is unchanged."""
+        hard = max(1, int(hard_limit))
+        if hard < 2:
+            return hard
+        return min(max(2, hard - 2), hard - 1)
 
     @staticmethod
     def _position_within_cap(position_usd: float, sizing_equity: float,
