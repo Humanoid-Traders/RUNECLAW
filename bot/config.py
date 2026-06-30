@@ -544,6 +544,20 @@ class LLMConfig:
     daily_call_limit: int = int(_env_float("LLM_DAILY_LIMIT", 500))
     daily_budget_usd: float = _env_float("LLM_DAILY_BUDGET_USD", 1.0)  # fail to rules if exceeded
     est_cost_per_analysis: float = _env_float("LLM_EST_COST_PER_ANALYSIS", 0.003)  # for backtest projection
+    # Account cascading-fallback LLM calls against the daily budgets (opt-in,
+    # default OFF; deep-audit medium). The primary-provider path increments the
+    # daily call counter and records token/dollar cost, but the cascading
+    # fallback (_try_llm_fallback) makes real billable calls — including the
+    # priciest provider, Anthropic Sonnet — without touching either counter. So
+    # a flapping primary lets the bot silently exceed BOTH the daily call limit
+    # and the daily dollar cap via fallbacks. When ON, each successful fallback
+    # call increments _llm_calls_today and records cost (exact token usage on
+    # OpenAI-compatible providers; a char-length estimate on the Anthropic path,
+    # whose helper discards usage). This makes the budget guards trip on true
+    # spend, so the bot may fall back to the rule engine sooner — the intended
+    # correction. Default OFF keeps the accounting byte-identical to today.
+    # RECOMMENDED ON for live money so the configured budgets actually bind.
+    fallback_cost_accounting_enabled: bool = _env_bool("LLM_FALLBACK_COST_ACCOUNTING", False)
 
 
 @dataclass(frozen=True)

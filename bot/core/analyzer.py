@@ -366,6 +366,16 @@ class Analyzer:
             logger.debug("per-user tier client resolve failed for tier=%s: %s", user_tier, exc)
             return None, None, None
 
+    @staticmethod
+    def _estimate_tokens(text: str) -> int:
+        """Rough token estimate (~4 chars/token) for billable LLM calls whose
+        provider/helper does not return a usage object — used only by the
+        cascading-fallback cost accounting so the dollar guard sees approximate
+        spend rather than zero. Never less than 1 for non-empty text."""
+        if not text:
+            return 0
+        return max(1, len(text) // 4)
+
     def _llm_cache_scope(self, signal, indicators, is_admin, user_id, user_tier) -> str:
         """Routing-identity salt for the semantic-cache key (deep-audit medium).
 
@@ -2824,6 +2834,10 @@ class Analyzer:
 
                 if sdk_type == "anthropic":
                     raw_text = await llm_complete(fb_client, fb_config, sys_content, prompt)
+                    # llm_complete discards usage → estimate from char length so
+                    # the dollar guard still sees (approximate) fallback spend.
+                    _pt = self._estimate_tokens(sys_content + prompt)
+                    _ct = self._estimate_tokens(raw_text or "")
                 else:
                     resp = await asyncio.wait_for(
                         fb_client.chat.completions.create(
@@ -2838,6 +2852,26 @@ class Analyzer:
                         timeout=CONFIG.llm.timeout_seconds + 5,  # extra grace for fallback
                     )
                     raw_text = resp.choices[0].message.content or ""
+                    _u = getattr(resp, "usage", None)
+                    _pt = (getattr(_u, "prompt_tokens", 0) or 0) if _u is not None \
+                        else self._estimate_tokens(sys_content + prompt)
+                    _ct = (getattr(_u, "completion_tokens", 0) or 0) if _u is not None \
+                        else self._estimate_tokens(raw_text or "")
+
+                # Account this billable fallback call against the daily budgets
+                # (deep-audit medium). Done here — after a successful API response,
+                # before the parse check — so every billable round-trip counts,
+                # mirroring the primary path. Gated default-OFF → byte-identical.
+                if getattr(CONFIG.llm, "fallback_cost_accounting_enabled", False):
+                    self._llm_calls_today += 1
+                    if self._cost is not None:
+                        self._cost.record_llm(
+                            model=default_model,
+                            prompt_tokens=_pt,
+                            completion_tokens=_ct,
+                            symbol=signal.symbol,
+                            category="thesis" if use_full_model else "analyze",
+                        )
 
                 result = self._parse_llm_response(raw_text or "")
                 # C-07 FIX (fallback path): block trade on parse failure,
