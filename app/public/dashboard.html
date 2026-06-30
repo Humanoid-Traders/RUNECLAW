@@ -97,6 +97,18 @@ a{color:var(--gold);text-decoration:none}
 .eg-val.green{color:var(--green)}.eg-val.red{color:var(--red)}
 .entry-thesis{font-size:12px;color:var(--text2);line-height:1.6;margin-top:8px;padding-top:8px;border-top:1px solid var(--border)}
 .entry-trigger{font-family:var(--mono);font-size:11px;color:var(--orange);background:var(--orange-dim);padding:4px 8px;border-radius:3px;margin-top:8px;display:inline-block}
+.sig-stream{display:flex;flex-direction:column;gap:2px;max-height:420px;overflow-y:auto}
+.sig-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:7px 8px;border-bottom:1px solid var(--border);flex-wrap:wrap}
+.sig-row:hover{background:var(--bg)}
+.sig-main{display:flex;align-items:center;gap:8px;min-width:160px}
+.sig-sym{font-family:var(--mono);font-size:14px;font-weight:700}
+.sig-pat{font-size:10px;color:var(--text3);background:var(--bg);padding:2px 6px;border-radius:3px;border:1px solid var(--border)}
+.sig-meta{display:flex;align-items:center;gap:12px;font-family:var(--mono);font-size:11px;color:var(--text2)}
+.sig-status{font-size:10px;letter-spacing:1px;color:var(--gold);background:var(--gold-dim);padding:2px 7px;border-radius:3px}
+.sig-pnl{font-weight:700;padding:2px 7px;border-radius:3px}
+.sig-pnl.pos{color:var(--green);background:var(--green-dim)}
+.sig-pnl.neg{color:var(--red);background:var(--red-dim)}
+.sig-time{color:var(--text3);font-size:10px;min-width:84px;text-align:right}
 
 /* === PORTFOLIO === */
 .port-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px;margin-bottom:12px}
@@ -139,6 +151,7 @@ a{color:var(--gold);text-decoration:none}
     <div class="panel" id="portfolioPanel"><div class="panel-title">&#128176; PORTFOLIO</div><div id="portfolioContent"><div class="loading"><div class="spinner"></div><br>Loading...</div></div></div>
     <div class="panel" id="keyCallPanel"><div class="panel-title">&#9876; KEY CALL</div><div id="keyCallContent"><div class="empty-msg">Run /getclaw in Telegram for market call</div></div></div>
   </div>
+  <div class="panel" id="signalsPanel"><div class="panel-title">&#128225; SIGNAL STREAM <span id="signalsStats" style="font-family:var(--mono);font-size:11px;color:var(--dim);font-weight:400"></span></div><div id="signalsContent"><div class="loading"><div class="spinner"></div><br>Loading signals...</div></div></div>
 </div>
 <script>
 const TOKEN = localStorage.getItem('token');
@@ -154,6 +167,7 @@ const SYMBOLS = [
 ];
 
 let tickerData = {}, scanData = null, portfolioData = null, publicPortfolio = null;
+let signalsData = null, signalStats = null;
 
 function fmt(n, d=2) { return n != null ? Number(n).toFixed(d) : '--'; }
 function fmtK(n) { if(n==null)return'--';n=Number(n);if(n>=1e9)return(n/1e9).toFixed(1)+'B';if(n>=1e6)return(n/1e6).toFixed(1)+'M';if(n>=1e3)return(n/1e3).toFixed(1)+'K';return n.toFixed(0); }
@@ -414,6 +428,59 @@ function renderPortfolio() {
   el.innerHTML=h;
 }
 
+async function fetchSignals() {
+  try {
+    const [sr, str] = await Promise.all([
+      fetch('/api/signals?limit=40'), fetch('/api/signals/stats')
+    ]);
+    signalsData = (await sr.json()).signals || [];
+    signalStats = await str.json();
+    renderSignals();
+  } catch(e) { /* fail soft */ }
+}
+
+function renderSignals() {
+  const el = document.getElementById('signalsContent');
+  const stEl = document.getElementById('signalsStats');
+  if (signalStats && stEl) {
+    const wr = signalStats.win_rate || 0;
+    stEl.innerHTML = signalStats.resolved > 0
+      ? `&mdash; ${signalStats.resolved} resolved | ${fmt(wr,1)}% win | net <span class="${pctC(signalStats.net_pnl)}">${pctS(signalStats.net_pnl)}</span>`
+      : '';
+  }
+  if (!signalsData || !signalsData.length) {
+    el.innerHTML = '<div class="empty-msg">No signals yet. Run /scan in Telegram to generate the stream.</div>';
+    return;
+  }
+  let h = '<div class="sig-stream">';
+  signalsData.forEach(s => {
+    const dc = (s.direction||'LONG').toLowerCase();
+    const conf = Math.round((Number(s.confidence)||0)*100);
+    const resolved = s.pnl !== null && s.pnl !== undefined;
+    const pnl = Number(s.pnl)||0;
+    const statusTag = resolved
+      ? `<span class="sig-pnl ${pctC(pnl)}">${pctS(pnl)}</span>`
+      : `<span class="sig-status">${(s.status||'NEW')}</span>`;
+    const when = s.created_at ? new Date(s.created_at).toLocaleString([], {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) : '';
+    h += `<div class="sig-row">
+      <div class="sig-main">
+        <span class="entry-dir ${dc}">${s.direction||'LONG'}</span>
+        <span class="sig-sym">${s.symbol||'--'}</span>
+        ${s.pattern?`<span class="sig-pat">${s.pattern}</span>`:''}
+      </div>
+      <div class="sig-meta">
+        <span title="confidence">${conf}%</span>
+        <span title="entry">@$${fmtP(s.entry_price)}</span>
+        <span title="risk:reward">1:${fmt(s.rr,1)}</span>
+        ${statusTag}
+        <span class="sig-time">${when}</span>
+      </div>
+    </div>`;
+  });
+  h += '</div>';
+  el.innerHTML = h;
+}
+
 function renderKeyCall() {
   const el=document.getElementById('keyCallContent');
   if(!scanData?.key_call){el.innerHTML='<div class="empty-msg">Run /getclaw in Telegram for market call</div>';return;}
@@ -423,11 +490,12 @@ function renderKeyCall() {
 
 async function init() {
   await fetchTickers();
-  await Promise.all([fetchScan(), fetchPublicPortfolio(), fetchPortfolio()]);
+  await Promise.all([fetchScan(), fetchPublicPortfolio(), fetchPortfolio(), fetchSignals()]);
   renderCircuit(); // ensure circuit breaker renders even if fetches return no data
   setInterval(fetchTickers, 5000);
   setInterval(fetchScan, 30000);
   setInterval(fetchPublicPortfolio, 60000);
+  setInterval(fetchSignals, 45000);
   if (LOGGED_IN) setInterval(fetchPortfolio, 60000);
 }
 init();

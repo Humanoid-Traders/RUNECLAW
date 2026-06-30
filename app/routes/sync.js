@@ -116,7 +116,11 @@ function botAuth(req, res, next) {
     return res.status(503).json({ error: 'Sync not configured (BOT_SYNC_SECRET unset)' });
   }
   const secret = req.headers['x-bot-secret'];
-  if (!secret || !crypto.timingSafeEqual(Buffer.from(secret), Buffer.from(SYNC_SECRET))) {
+  const a = Buffer.from(secret || '');
+  const b = Buffer.from(SYNC_SECRET);
+  // timingSafeEqual THROWS on unequal-length buffers — length-check first so a
+  // wrong-length secret returns a clean 403 instead of crashing to a 500.
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
     return res.status(403).json({ error: 'Invalid bot secret' });
   }
   next();
