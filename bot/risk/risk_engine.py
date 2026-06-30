@@ -704,9 +704,9 @@ class RiskEngine:
         # 13% budget / 3% stop = 433% of equity).  The cap reduces the actual
         # position to max_position_pct of equity — meaning the per-trade risk
         # is smaller than the budget (conservative), but the notional exposure
-        # stays bounded.  Check #2 then verifies the CAPPED value against
-        # max_symbol_exposure_pct (a wider limit), giving it real authority to
-        # reject only when exposure is genuinely dangerous.
+        # stays bounded.  Check #2 then re-asserts that this per-trade cap held
+        # (a fail-closed invariant); the per-SYMBOL aggregate exposure limit
+        # (max_symbol_exposure_pct) is enforced separately by check #15.
         # Kelly sizing (opt-in, default OFF; tighten-only). Take the SMALLER of
         # the fixed-fractional size and the half-Kelly size from realized history.
         # Kelly can only shrink the position, never grow it — a no-edge or
@@ -747,20 +747,25 @@ class RiskEngine:
             failed.append(f"WARNING_RATE_BREAKER: evaluation error ({exc})")
 
         try:
-            # 2. Position size — enforces the per-symbol cap (real authority).
+            # 2. Position size — fail-closed invariant that the per-trade cap held.
             # Audit F-3: position_usd is the MARGIN committed; the live executor
-            # multiplies it by leverage to derive exchange notional. This %-cap is
-            # therefore a margin/equity cap (margin <= max_symbol_exposure_pct of
-            # equity); the executor enforces a separate hard notional ceiling
-            # (margin x max-leverage). Labeled "margin" so the audit trail is
-            # honest about the unit (was misleadingly "notional").
+            # multiplies it by leverage to derive exchange notional. position_usd
+            # was just clamped above to max_position_pct of equity, so this check
+            # verifies that clamp against the SAME limit (max_position_pct): in
+            # normal operation it always passes, but if the cap is ever bypassed
+            # or miscomputed it rejects (fail-closed) rather than waving the
+            # oversized trade through. It is NOT the per-symbol aggregate guard —
+            # that is max_symbol_exposure_pct, enforced by check #15 against the
+            # symbol's total (existing + new) exposure. (Was wrongly comparing a
+            # single capped trade against max_symbol_exposure_pct (20% > the 13%
+            # cap), which made this branch unreachable — deep-audit medium.)
             if sizing_equity <= 0:
                 failed.append("EQUITY: zero or negative equity")
             else:
-                margin_pct = (position_usd / sizing_equity * 100)
-                max_margin_pct = CONFIG.risk.max_symbol_exposure_pct  # 20% default
-                # C2-41 FIX: Use floating-point epsilon, not 1% overage tolerance
-                if margin_pct < max_margin_pct + 1e-9:  # floating-point tolerance only
+                max_margin_pct = CONFIG.risk.max_position_pct  # the per-trade cap
+                ok, margin_pct = self._position_within_cap(
+                    position_usd, sizing_equity, max_margin_pct)
+                if ok:
                     passed.append(f"POSITION_SIZE: margin {margin_pct:.1f}% <= {max_margin_pct}%")
                 else:
                     failed.append(f"POSITION_SIZE: margin {margin_pct:.1f}% exceeds {max_margin_pct}% cap")
@@ -1964,6 +1969,23 @@ class RiskEngine:
         if self._circuit_open:
             audit(risk_log, "Circuit breaker state restored from combined state: ACTIVE",
                   action="state_restore", result="LOADED")
+
+    @staticmethod
+    def _position_within_cap(position_usd: float, sizing_equity: float,
+                             max_position_pct: float) -> tuple[bool, float]:
+        """Check #2 invariant: is the committed margin within the per-trade cap
+        (max_position_pct of equity)? Returns (ok, margin_pct).
+
+        position_usd is clamped to this same cap just before check #2, so in
+        normal operation this passes — but if that clamp is ever bypassed or
+        miscomputed, ok=False rejects the trade (fail-closed) instead of waving
+        an oversized position through. Uses a float epsilon so a value exactly
+        at the cap passes. (max_position_pct is the per-TRADE cap; the per-SYMBOL
+        aggregate limit is max_symbol_exposure_pct, checked separately.)"""
+        if sizing_equity <= 0:
+            return False, 0.0
+        margin_pct = position_usd / sizing_equity * 100
+        return (margin_pct < max_position_pct + 1e-9), margin_pct
 
     def _trip_circuit_breaker(self, reason: str) -> None:
         if not self._circuit_open:
