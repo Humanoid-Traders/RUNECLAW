@@ -25,6 +25,14 @@ from bot.utils.models import Direction, MarketSignal, RiskVerdict
 from bot.utils.trailing import make_trailing_state, update_trailing_stop
 
 
+def _env_bool(key: str, default: bool = False) -> bool:
+    """Read a boolean env flag. Truthy = {1,true,yes,on} (case-insensitive)."""
+    raw = os.getenv(key)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
 class BacktestEngine:
     """
     Event-driven backtesting engine.
@@ -88,6 +96,15 @@ class BacktestEngine:
 
         # Open position tracking with backtest metadata
         self._open_bt_positions: dict[str, dict] = {}
+
+        # #18: backtest partial-TP/pyramiding parity. Default OFF so the
+        # default backtest output is byte-identical to the single full-exit
+        # model. When enabled, open positions are managed through the SAME
+        # partial-TP ladder live uses (TP1 50% @1.5R + SL→breakeven, TP2 30%
+        # @2.5R + lock 1R, runner 20% ATR-trail), so backtest exit behavior
+        # reflects live. Gated by its own env flag (NOT CONFIG.partial_tp.enabled,
+        # which defaults TRUE for live) to keep default backtests unchanged.
+        self._partial_tp_enabled = _env_bool("BACKTEST_PARTIAL_TP", False)
 
     @staticmethod
     def _below_confidence_gate(confidence: float, threshold: float) -> bool:
@@ -268,6 +285,22 @@ class BacktestEngine:
             **trailing,
         }
 
+        # #18: when the partial-TP ladder is enabled, create the SAME state object
+        # live uses so the backtest scales out identically. The ladder then owns the
+        # stop (breakeven after TP1, lock-1R after TP2, ATR-trail for the runner);
+        # the legacy single-exit trailing path above is skipped for this position.
+        if self._partial_tp_enabled:
+            from bot.core.partial_tp import create_partial_tp_state
+            self._open_bt_positions[idea.id]["ptp_state"] = create_partial_tp_state(
+                trade_id=idea.id,
+                direction=idea.direction.value,
+                entry_price=adjusted_entry,
+                stop_loss=trade.stop_loss,
+                take_profit=trade.take_profit,
+                quantity=trade.quantity,
+                atr=canonical_atr,
+            )
+
         audit(trade_log, f"[BT] Opened {idea.direction.value} {idea.asset}",
               action="backtest_execute", result="OPENED",
               data={"trade_id": idea.id, "entry": adjusted_entry, "size": size_usd})
@@ -284,6 +317,15 @@ class BacktestEngine:
                 continue
 
             bt_meta = self._open_bt_positions[tid]
+
+            # #18: positions opened under the partial-TP ladder are driven
+            # entirely by the ladder (scale-outs + ladder-owned stop). Only
+            # reached when BACKTEST_PARTIAL_TP is on, so the default single-exit
+            # path below is byte-identical when the flag is off.
+            if self._partial_tp_enabled and "ptp_state" in bt_meta:
+                self._check_ladder_intrabar(tid, pos, bt_meta, bar)
+                continue
+
             direction = pos.direction
             sl = pos.stop_loss
             tp = pos.take_profit
@@ -417,6 +459,178 @@ class BacktestEngine:
         audit(trade_log, f"[BT] Closed {idea.asset} reason={reason} PnL=${net_pnl:.2f}",
               action="backtest_close", result=reason,
               data={"trade_id": trade_id, "pnl": net_pnl, "duration_h": duration_hours})
+
+    def _check_ladder_intrabar(
+        self, tid: str, pos, bt_meta: dict, bar: BacktestBar
+    ) -> None:
+        """#18: drive one position through the live partial-TP ladder against the
+        bar's high/low. Mirrors ``bot.core.partial_tp.check_partial_tp`` exactly but
+        is bar-aware: TP / runner-trail levels are tested against the FAVORABLE
+        extreme (limit-style fills at the ladder price), while the stop is tested
+        against the ADVERSE extreme first — the same pessimistic SL-before-TP
+        convention the single-exit path uses. A runner stop hit is caught by the
+        stop check on a subsequent bar, consistent with how the legacy trailing
+        path defers stop fills."""
+        cfg = CONFIG.partial_tp
+        state = bt_meta["ptp_state"]
+        is_long = pos.direction == Direction.LONG
+        adverse = bar.low if is_long else bar.high
+        favorable = bar.high if is_long else bar.low
+
+        # 1. Stop first (pessimistic). current_sl already reflects breakeven /
+        #    lock-1R / runner-trail moves from prior bars. A gap through the stop
+        #    fills at the bar open (worse than the stop), not magically at the level.
+        if (is_long and adverse <= state.current_sl) or (
+            not is_long and adverse >= state.current_sl
+        ):
+            sl_fill = min(state.current_sl, bar.open) if is_long else max(state.current_sl, bar.open)
+            reason = "TRAILING_SL" if state.tp1_hit else "SL"
+            self._close_position(tid, sl_fill, bar, reason)
+            return
+
+        # 2. TP1 — close tp1_close_pct of the original qty at 1.5R, SL→breakeven.
+        if not state.tp1_hit and state.initial_risk > 0:
+            tp1_price = (
+                state.entry_price + cfg.tp1_r_multiple * state.initial_risk if is_long
+                else state.entry_price - cfg.tp1_r_multiple * state.initial_risk
+            )
+            reached = favorable >= tp1_price if is_long else favorable <= tp1_price
+            if reached:
+                close_qty = min(
+                    state.original_qty * (cfg.tp1_close_pct / 100.0), state.remaining_qty
+                )
+                if close_qty > 0:
+                    state.tp1_hit = True
+                    state.tp1_qty_closed = close_qty
+                    state.remaining_qty -= close_qty
+                    fee_buffer = state.entry_price * 0.001
+                    state.current_sl = (
+                        state.entry_price + fee_buffer if is_long
+                        else state.entry_price - fee_buffer
+                    )
+                    pos.stop_loss = state.current_sl
+                    self._partial_close(tid, bt_meta, pos, close_qty, tp1_price, bar, "TP1")
+
+        # 3. TP2 — close tp2_close_pct at 2.5R, tighten SL to lock 1R of profit.
+        if state.tp1_hit and not state.tp2_hit and state.initial_risk > 0:
+            tp2_price = (
+                state.entry_price + cfg.tp2_r_multiple * state.initial_risk if is_long
+                else state.entry_price - cfg.tp2_r_multiple * state.initial_risk
+            )
+            reached = favorable >= tp2_price if is_long else favorable <= tp2_price
+            if reached:
+                close_qty = min(
+                    state.original_qty * (cfg.tp2_close_pct / 100.0), state.remaining_qty
+                )
+                if close_qty > 0:
+                    state.tp2_hit = True
+                    state.tp2_qty_closed = close_qty
+                    state.remaining_qty -= close_qty
+                    lock = state.initial_risk
+                    state.current_sl = (
+                        state.entry_price + lock if is_long else state.entry_price - lock
+                    )
+                    pos.stop_loss = state.current_sl
+                    self._partial_close(tid, bt_meta, pos, close_qty, tp2_price, bar, "TP2")
+
+        # 4. Runner — ATR-trail the remaining qty using the favorable extreme;
+        #    never loosen the stop. The trailed stop is filled by step 1 next bar.
+        if state.tp2_hit and state.remaining_qty > 0:
+            trail_dist = state.atr * cfg.runner_trail_atr_mult
+            if is_long:
+                state.runner_trail_best = max(state.runner_trail_best, favorable)
+                new_sl = max(state.runner_trail_best - trail_dist, state.current_sl)
+            else:
+                state.runner_trail_best = min(state.runner_trail_best, favorable)
+                new_sl = min(state.runner_trail_best + trail_dist, state.current_sl)
+            state.current_sl = new_sl
+            pos.stop_loss = new_sl
+
+    def _partial_close(
+        self, tid: str, bt_meta: dict, pos, close_qty: float,
+        exit_price: float, bar: BacktestBar, reason: str,
+    ) -> None:
+        """#18: realize a fraction (``close_qty``) of an open position at a ladder
+        price. Credits freed margin + net PnL back to the portfolio balance,
+        reduces the portfolio position quantity in place, and records a partial
+        BacktestTrade. The residual is closed later via ``_close_position``. Margin /
+        commission accounting mirrors ``PortfolioTracker._close_position_locked`` so
+        the equity curve stays consistent; the next mark-to-market refreshes peak /
+        drawdown off the reduced position."""
+        if close_qty <= 0:
+            return
+
+        # Exit slippage — limit fills are adjusted adversely by slippage_pct
+        # (same model as _close_position).
+        slippage_exit = exit_price * (self.config.slippage_pct / 100)
+        if pos.direction == Direction.LONG:
+            adjusted_exit = exit_price - slippage_exit
+            pnl = (adjusted_exit - pos.entry_price) * close_qty
+        else:
+            adjusted_exit = exit_price + slippage_exit
+            pnl = (pos.entry_price - adjusted_exit) * close_qty
+
+        size_usd = pos.entry_price * close_qty
+        exit_notional = adjusted_exit * close_qty
+        commission = (size_usd + exit_notional) * (self.config.commission_pct / 100.0)
+        net_pnl = pnl - commission
+        lev = getattr(pos, "leverage", 1) or 1
+        margin = size_usd / lev
+
+        # Realize into the shared portfolio balance + daily PnL. Reducing
+        # pos.quantity shrinks the residual's locked margin / unrealized PnL so
+        # total equity is conserved across the scale-out.
+        self.portfolio.balance += margin + net_pnl
+        try:
+            self.portfolio._record_daily_pnl(net_pnl)
+        except Exception:
+            pass
+        pos.quantity = round(pos.quantity - close_qty, 10)
+
+        # Attribute this fill's share of entry slippage; shrink the residual's so
+        # _close_position doesn't re-charge the whole entry slippage to the runner.
+        orig_qty = bt_meta["ptp_state"].original_qty
+        per_unit_entry_slip = (bt_meta["slippage_entry"] / orig_qty) if orig_qty > 0 else 0.0
+        this_entry_slip = per_unit_entry_slip * close_qty
+        bt_meta["slippage_entry"] = max(0.0, bt_meta["slippage_entry"] - this_entry_slip)
+        total_slippage = this_entry_slip + slippage_exit * close_qty
+
+        idea = bt_meta["idea"]
+        bt_trade = BacktestTrade(
+            trade_id=tid,
+            symbol=idea.asset,
+            direction=idea.direction.value,
+            entry_price=bt_meta["adjusted_entry"],
+            exit_price=adjusted_exit,
+            entry_time=bt_meta["entry_time"],
+            exit_time=bar.timestamp,
+            quantity=round(close_qty, 8),
+            size_usd=round(size_usd, 2),
+            pnl_usd=round(pnl, 2),  # gross (before commission), matches _close_position
+            pnl_pct=round((pnl / size_usd * 100) if size_usd > 0 else 0, 2),
+            commission_usd=round(commission, 2),
+            slippage_usd=round(total_slippage, 2),
+            net_pnl_usd=round(net_pnl, 2),
+            exit_reason=reason,
+            confidence=idea.confidence,
+            risk_verdict=bt_meta["risk_verdict"],
+            reasoning=idea.reasoning,
+            signals_used=idea.signals_used,
+        )
+        self._trades.append(bt_trade)
+
+        # Realized R:R for this scale-out (reward measured to the ladder fill).
+        risk_dist = abs(bt_meta["adjusted_entry"] - idea.stop_loss)
+        if risk_dist > 0:
+            if idea.direction == Direction.LONG:
+                reward_dist = adjusted_exit - bt_meta["adjusted_entry"]
+            else:
+                reward_dist = bt_meta["adjusted_entry"] - adjusted_exit
+            self._rr_values.append(reward_dist / risk_dist)
+
+        audit(trade_log, f"[BT] Partial {idea.asset} {reason} qty={close_qty:.6f} PnL=${net_pnl:.2f}",
+              action="backtest_partial_close", result=reason,
+              data={"trade_id": tid, "pnl": net_pnl, "remaining_qty": pos.quantity})
 
     def _close_all_at_bar(self, bar: BacktestBar, reason: str) -> None:
         """Force-close all remaining open positions at bar close."""

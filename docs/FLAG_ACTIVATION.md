@@ -78,6 +78,19 @@ DROP_UNCLOSED_CANDLE_ENABLED=1     # compute TA on closed candles only (repaint 
 REGIME_SIZING_ENABLED=1            # apply regime→sizing multipliers (also fills _current_regime)
 ```
 
+## 5. Backtest fidelity (backtest runs only — no live effect)
+
+These change only what the backtest models; they never touch live trading.
+
+```dotenv
+BACKTEST_PARTIAL_TP=1             # backtest scales out through the live partial-TP
+                                  # ladder (TP1 50% @1.5R + SL→breakeven, TP2 30%
+                                  # @2.5R + lock 1R, runner 20% ATR-trail) instead
+                                  # of a single full exit. Default OFF keeps legacy
+                                  # backtest numbers byte-identical; turn ON to make
+                                  # backtest win-rate / R:R reflect live exits.
+```
+
 ---
 
 *This file is the human-readable companion to the `/flags` command, which reads
