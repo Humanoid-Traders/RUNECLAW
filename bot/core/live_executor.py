@@ -377,6 +377,50 @@ class LiveExecutor:
                             cfg.default_leverage, cfg.margin_mode)
         return self._exchange
 
+    def _compute_target_leverage(self, symbol: str) -> int:
+        """Single source of truth for dynamic leverage (deep-audit medium).
+
+        Used by BOTH the set-leverage path (_ensure_leverage) and the sizing path
+        (execute), which had diverged: the set path still scaled leverage UP
+        ×1.4 in low vol while sizing was reduce-only, so the exchange leverage
+        and the leverage used to size the order disagreed.
+
+        Dynamic leverage only ever REDUCES from the configured default — never
+        increases it — because up-scaling in low realized vol amplified losses on
+        full-stop hits (the live drawdown). High vol de-leverages (protective);
+        low/normal vol keeps the default. Fail-safe: any error → 1x (safest).
+        Returns an int ≥ 1."""
+        cfg = CONFIG.exchange
+        default_lev = max(1, int(cfg.default_leverage))
+        if not getattr(cfg, "dynamic_leverage_enabled", False):
+            return default_lev
+        try:
+            sym_base = normalize_symbol(symbol)
+            atr_pct = self._last_atr_pct.get(sym_base, 0.02)
+            min_lev = int(getattr(cfg, "min_leverage", 1))
+            lev = default_lev
+            if atr_pct > 0.04:        # high vol (>4% ATR) → halve
+                lev = max(min_lev, lev // 2)
+            elif atr_pct > 0.03:      # elevated vol → ×0.7
+                lev = max(min_lev, int(lev * 0.7))
+            # low/normal vol: keep the default (never up-scale).
+            lev = min(lev, default_lev)  # defensive cap: never exceed default
+            lev = max(1, lev)
+            audit(trade_log,
+                  f"Dynamic leverage for {symbol}: {default_lev}x → {lev}x (ATR={atr_pct:.3%})",
+                  action="dynamic_leverage", result="ADJUSTED")
+            return lev
+        except Exception as exc:
+            logger.warning(
+                "Dynamic leverage calc failed for %s — using 1x (safe default): %s",
+                symbol, exc)
+            audit(trade_log,
+                  f"Dynamic leverage FAILED for {symbol}: using 1x safe default",
+                  action="dynamic_leverage", result="EXCEPTION",
+                  data={"error": str(exc)[:200]})
+            self._record_warning("dynamic_leverage")
+            return 1
+
     async def _ensure_leverage(self, symbol: str) -> None:
         """Set leverage and margin mode for a symbol (futures only).
 
@@ -483,30 +527,8 @@ class LiveExecutor:
             else:
                 logger.debug("Margin mode verification failed for %s: %s", symbol, verify_exc)
 
-        # ── Set leverage (with dynamic scaling) ──
-        _target_leverage = cfg.default_leverage
-        dynamic_lev_enabled = getattr(cfg, 'dynamic_leverage_enabled', False)
-        if dynamic_lev_enabled:
-            try:
-                # Get current ATR-based volatility
-                _sym_base = normalize_symbol(symbol)
-                atr_pct = self._last_atr_pct.get(_sym_base, 0.02)
-
-                min_lev = getattr(cfg, 'min_leverage', 1)
-                max_lev = getattr(cfg, 'max_leverage', cfg.default_leverage * 2)
-
-                if atr_pct > 0.04:  # high vol (>4% ATR)
-                    _target_leverage = max(min_lev, _target_leverage // 2)
-                elif atr_pct > 0.03:  # elevated vol
-                    _target_leverage = max(min_lev, int(_target_leverage * 0.7))
-                elif atr_pct < 0.01:  # low vol
-                    _target_leverage = min(max_lev, int(_target_leverage * 1.4))
-
-                audit(trade_log,
-                      f"Dynamic leverage for {symbol}: {cfg.default_leverage}x → {_target_leverage}x (ATR={atr_pct:.3%})",
-                      action="dynamic_leverage", result="ADJUSTED")
-            except Exception:
-                pass  # fail to default leverage
+        # ── Set leverage (dynamic scaling via the shared, reduce-only helper) ──
+        _target_leverage = self._compute_target_leverage(symbol)
 
         try:
             await exchange.set_leverage(
@@ -1743,43 +1765,10 @@ class LiveExecutor:
             # Calculate quantity
             # For futures with leverage: size_usd is the margin (collateral).
             # Notional exposure = margin * leverage, so qty = (size_usd * leverage) / price.
-            # Dynamic leverage scaling based on regime and volatility
-            leverage_mult = CONFIG.exchange.default_leverage
-            if getattr(CONFIG.exchange, 'dynamic_leverage_enabled', False):
-                try:
-                    _sym_base = normalize_symbol(symbol)
-                    atr_pct = self._last_atr_pct.get(_sym_base, 0.02)
-                    min_lev = getattr(CONFIG.exchange, 'min_leverage', 1)
-
-                    # Risk-discipline (from live-trade analysis): dynamic leverage
-                    # only ever REDUCES vs the configured default — it must never
-                    # *increase* it. Low realized volatility does not justify more
-                    # leverage; the old code scaled UP ×1.4 in low vol, amplifying
-                    # losses on the full-stop hits that drove the live drawdown.
-                    # High vol still de-leverages (the protective direction).
-                    if atr_pct > 0.04:
-                        leverage_mult = max(min_lev, leverage_mult // 2)
-                    elif atr_pct > 0.03:
-                        leverage_mult = max(min_lev, int(leverage_mult * 0.7))
-                    # low/normal vol: keep the default (no up-scaling).
-
-                    # Defensive cap: never exceed the configured default leverage.
-                    leverage_mult = min(leverage_mult, CONFIG.exchange.default_leverage)
-
-                    audit(trade_log,
-                          f"Dynamic leverage for {symbol}: {CONFIG.exchange.default_leverage}x → {leverage_mult}x (ATR={atr_pct:.3%})",
-                          action="dynamic_leverage", result="ADJUSTED")
-                except Exception as _lev_exc:
-                    # CRITICAL FIX: log + use 1x (safest) instead of silent default
-                    leverage_mult = 1
-                    logger.warning(
-                        "Dynamic leverage calc failed for %s — using 1x (safe default): %s",
-                        symbol, _lev_exc)
-                    audit(trade_log,
-                          f"Dynamic leverage FAILED for {symbol}: using 1x safe default",
-                          action="dynamic_leverage", result="EXCEPTION",
-                          data={"error": str(_lev_exc)[:200]})
-                    self._record_warning("dynamic_leverage")
+            # Dynamic leverage scaling — shared, reduce-only helper so the
+            # leverage used to SIZE the order matches the leverage SET on the
+            # exchange in _ensure_leverage (they had diverged: deep-audit medium).
+            leverage_mult = self._compute_target_leverage(symbol)
             quantity = (size_usd * leverage_mult) / current_price
 
             # Determine side

@@ -39,9 +39,17 @@ class TestDynamicLeverageOnlyReduces:
             assert _dyn_lev(d, atr_pct=atr) <= d, f"atr={atr} exceeded default {d}"
 
     def test_executor_source_has_no_upscale_and_caps_at_default(self):
+        # The dynamic-leverage rule now lives in the single _compute_target_leverage
+        # helper, used by both the set-leverage and sizing paths (deep-audit dedup).
         import bot.core.live_executor as le
-        src = inspect.getsource(le.LiveExecutor.execute)
-        # The x1.4 low-vol up-scale must be gone.
-        assert "leverage_mult * 1.4" not in src
-        # And there must be an explicit cap at the default leverage.
-        assert "min(leverage_mult, CONFIG.exchange.default_leverage)" in src
+        helper_src = inspect.getsource(le.LiveExecutor._compute_target_leverage)
+        # No low-vol up-scale anywhere in the rule.
+        assert "* 1.4" not in helper_src
+        # Explicit cap at the default leverage.
+        assert "min(lev, default_lev)" in helper_src
+        # Both paths delegate to the helper rather than recomputing.
+        exec_src = inspect.getsource(le.LiveExecutor.execute)
+        ensure_src = inspect.getsource(le.LiveExecutor._ensure_leverage)
+        assert "self._compute_target_leverage(symbol)" in exec_src
+        assert "self._compute_target_leverage(symbol)" in ensure_src
+        assert "* 1.4" not in exec_src and "* 1.4" not in ensure_src
