@@ -639,10 +639,16 @@ class GetPortfolioSkill(BaseSkill):
             live_open = executor.open_positions
             all_closed = executor.closed_positions
 
-            # Exclude adopted orphan trades so numbers match Performance
+            # Exclude adopted orphan trades and never-filled orders (canceled/
+            # expired/price_drift/rejected all close at $0 PnL) so this matches
+            # the same trade set /performance and /portfolio use — otherwise
+            # those zero-PnL non-fills inflate the trade count and drag win
+            # rate down without ever counting as a win.
             _excl_prefixes = ("TI-adopted", "TI-injected")
+            _non_trade_reasons = {"canceled", "cancelled", "expired", "price_drift", "rejected"}
             live_closed = [t for t in all_closed
-                           if not any(getattr(t, "trade_id", "").startswith(p) for p in _excl_prefixes)]
+                           if not any(getattr(t, "trade_id", "").startswith(p) for p in _excl_prefixes)
+                           and getattr(t, "close_reason", "") not in _non_trade_reasons]
 
             # Get real equity
             user_id = kwargs.get("user_id", "")
