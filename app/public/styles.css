@@ -59,7 +59,6 @@ code{font-family:var(--mono);font-size:.9em;background:var(--bg3);border:1px sol
 }
 .brand{display:flex;align-items:center;gap:9px;font-family:var(--head);font-weight:700;
   font-size:18px;letter-spacing:2px;color:var(--gold);white-space:nowrap}
-.brand .dot{width:8px;height:8px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green);animation:pulse 2.4s infinite}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.45}}
 .nav-links{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 .nav-links a{color:var(--text2);font-size:13.5px;font-weight:500;padding:7px 11px;border-radius:var(--r-sm)}
@@ -72,6 +71,16 @@ code{font-family:var(--mono);font-size:.9em;background:var(--bg3);border:1px sol
 .nav-acct button{font-family:var(--mono);font-size:12px;color:var(--text2);background:none;border:none;cursor:pointer;padding:0}
 .nav-acct button:hover{color:var(--red)}
 .nav-acct .sep{color:var(--border2)}
+.nav-toggle{display:none;background:none;border:1px solid var(--border2);border-radius:var(--r-sm);
+  color:var(--text2);width:34px;height:34px;cursor:pointer;flex-shrink:0}
+.nav-toggle .icon{width:18px;height:18px;vertical-align:0}
+
+/* ---- Icons / brand mark (shared sprite, see #icon-sprite in body) ----- */
+.icon{width:16px;height:16px;display:inline-block;vertical-align:-3px;flex-shrink:0;color:var(--gold)}
+.icon-lg{width:20px;height:20px}
+.icon-muted{color:var(--text3)}
+.brand-mark{width:23px;height:23px;flex-shrink:0}
+.brand-mark .brand-core{animation:pulse 2.4s infinite;transform-origin:center}
 
 /* ---- Buttons (shared) -------------------------------------------------- */
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;
@@ -121,6 +130,36 @@ code{font-family:var(--mono);font-size:.9em;background:var(--bg3);border:1px sol
 .loading{text-align:center;padding:24px;color:var(--text3);font-family:var(--mono);font-size:12px}
 .empty-msg{font-family:var(--mono);font-size:12px;color:var(--text3);text-align:center;padding:22px;line-height:1.7}
 
+/* ---- Skeleton shimmer (loading placeholders) --------------------------- */
+.skel{border-radius:4px;background:linear-gradient(100deg,var(--bg3) 30%,var(--bg4) 50%,var(--bg3) 70%);
+  background-size:200% 100%;animation:shimmer 1.6s ease-in-out infinite}
+@keyframes shimmer{0%{background-position:180% 0}100%{background-position:-20% 0}}
+.skel-row{height:14px;margin-bottom:8px;width:100%}
+.skel-row:nth-child(2){width:82%}.skel-row:nth-child(3){width:64%}
+
+/* ---- AI-generated reasoning callout (cyan = AI, gold = brand chrome) --- */
+.ai-thesis{position:relative;margin-top:10px;padding:11px 13px;border-radius:var(--r-sm);
+  background:linear-gradient(100deg,var(--cyan-dim) 0%,rgba(6,182,212,.04) 45%,var(--cyan-dim) 100%);
+  background-size:220% 100%;border:1px solid rgba(6,182,212,.28);
+  animation:ai-glow 5s ease-in-out infinite}
+@keyframes ai-glow{0%,100%{background-position:0 0}50%{background-position:100% 0}}
+.ai-thesis-label{display:flex;align-items:center;gap:5px;font-family:var(--mono);font-size:10px;
+  font-weight:700;letter-spacing:1.2px;color:var(--cyan);text-transform:uppercase;margin-bottom:5px}
+.ai-thesis-label .icon{width:12px;height:12px;vertical-align:-1px;color:var(--cyan)}
+.ai-thesis-body{font-size:12.5px;color:var(--text2);line-height:1.6}
+.icon-ai{color:var(--cyan)}
+
+/* ---- Live agent activity ticker ---------------------------------------- */
+.agent-ticker{display:flex;align-items:center;gap:9px;padding:8px 14px;margin-bottom:12px;
+  background:var(--bg2);border:1px solid var(--border);border-radius:var(--r-sm);
+  font-family:var(--mono);font-size:12px;color:var(--text2);overflow:hidden}
+.agent-ticker .at-dot{width:7px;height:7px;border-radius:50%;background:var(--green);
+  box-shadow:0 0 7px var(--green);animation:pulse 2.4s infinite;flex-shrink:0}
+.agent-ticker .icon{color:var(--cyan);width:14px;height:14px;flex-shrink:0}
+.agent-ticker .at-text{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  animation:at-fade .4s ease}
+@keyframes at-fade{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:translateY(0)}}
+
 /* ---- Footer (shared) --------------------------------------------------- */
 .site-footer{margin-top:auto;border-top:1px solid var(--border);background:var(--bg2);
   padding:22px 20px;color:var(--text3);font-size:13px}
@@ -137,8 +176,13 @@ code{font-family:var(--mono);font-size:.9em;background:var(--bg3);border:1px sol
 
 /* ---- Responsive -------------------------------------------------------- */
 @media(max-width:640px){
-  .topnav{padding:10px 14px}
+  .topnav{padding:10px 14px;flex-wrap:wrap}
   .brand{font-size:16px;letter-spacing:1.5px}
-  .nav-links a{padding:6px 8px;font-size:13px}
   .nav-acct{display:none}
+  .nav-toggle{display:inline-flex;align-items:center;justify-content:center;order:2;margin-left:auto}
+  .nav-links{display:none;order:3;width:100%;flex-direction:column;align-items:stretch;gap:2px;
+    margin-top:10px;padding-top:10px;border-top:1px solid var(--border)}
+  .nav-links.open{display:flex}
+  .nav-links a{padding:9px 10px;font-size:14px}
+  .nav-links a.cta{text-align:center}
 }
