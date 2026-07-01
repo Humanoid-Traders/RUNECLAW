@@ -11,6 +11,9 @@
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <link rel="icon" type="image/png" sizes="256x256" href="/app_icon_256.png">
 <link rel="apple-touch-icon" href="/app_icon_512.png">
+<link rel="manifest" href="/manifest.json">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="RUNECLAW">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/styles.css">
@@ -197,6 +200,19 @@ a{color:var(--gold);text-decoration:none}
 .candle-tip .o{color:var(--text2)}.candle-tip .h{color:var(--green)}.candle-tip .l{color:var(--red)}
 .candle-tip .c{color:var(--gold2);font-weight:700}
 
+/* === ORDER BOOK & FUNDING === */
+.depth-ladder{display:grid;grid-template-columns:1fr 1fr;gap:10px;font-family:var(--mono);font-size:11px}
+.depth-col h5{font-size:10px;color:var(--text3);text-transform:uppercase;margin-bottom:6px;letter-spacing:.5px;font-weight:600}
+.depth-row{position:relative;display:flex;justify-content:space-between;padding:3px 6px;margin-bottom:2px;border-radius:3px;overflow:hidden}
+.depth-row .bar{position:absolute;top:0;bottom:0;z-index:0}
+.depth-row.bid .bar{right:0;background:rgba(34,197,94,.18)}
+.depth-row.ask .bar{left:0;background:rgba(239,68,68,.18)}
+.depth-row span{position:relative;z-index:1}
+.depth-row .px.bid{color:var(--green)}.depth-row .px.ask{color:var(--red)}
+.funding-stat{text-align:center;padding:14px 0}
+.funding-stat .fr-val{font-family:var(--mono);font-size:28px;font-weight:700}
+.funding-stat .fr-label{font-size:11px;color:var(--text3);margin-top:6px}
+
 /* === KEY CALL === */
 .key-call{font-size:13px;color:var(--text2);line-height:1.7}
 .key-call strong{color:var(--text)}
@@ -222,6 +238,20 @@ a{color:var(--gold);text-decoration:none}
 .ob-tag{font-family:var(--mono);font-size:10px;letter-spacing:1px;padding:3px 8px;border-radius:3px}
 .ob-tag.done{color:var(--green);background:var(--green-dim)}
 .ob-tag.todo{color:var(--orange);background:var(--orange-dim)}
+.ob-highlight{animation:ob-flash 1.6s ease}
+@keyframes ob-flash{0%{box-shadow:0 0 0 2px var(--gold)}100%{box-shadow:none}}
+
+/* === AI READINESS SCORE === */
+.readiness-pct{font-family:var(--mono);font-size:26px;font-weight:700;margin-bottom:8px}
+.readiness-pct.red{color:var(--red)}.readiness-pct.amber{color:var(--orange)}.readiness-pct.green{color:var(--green)}
+.readiness-bar-track{height:14px;background:var(--bg3);border-radius:7px;overflow:hidden;border:1px solid var(--border);margin-bottom:10px}
+.readiness-bar-fill{height:100%;transition:width .4s ease}
+.readiness-bar-fill.red{background:var(--red)}
+.readiness-bar-fill.amber{background:var(--orange)}
+.readiness-bar-fill.green{background:var(--green)}
+.readiness-factors{display:flex;flex-wrap:wrap;gap:8px;font-family:var(--mono);font-size:11px}
+.readiness-factor{padding:3px 9px;border-radius:12px;border:1px solid var(--border);color:var(--text3)}
+.readiness-factor.done{color:var(--green);border-color:rgba(34,197,94,.3);background:var(--green-dim)}
 
 /* === PNL CALENDAR HEATMAP === */
 .hm-grid{display:grid;grid-auto-flow:column;grid-template-rows:repeat(7,1fr);gap:3px;overflow-x:auto;padding-bottom:2px}
@@ -229,6 +259,28 @@ a{color:var(--gold);text-decoration:none}
 .hm-empty{background:var(--bg3)}
 .hm-pos1{background:rgba(34,197,94,.35)}.hm-pos2{background:rgba(34,197,94,.65)}.hm-pos3{background:var(--green)}
 .hm-neg1{background:rgba(239,68,68,.35)}.hm-neg2{background:rgba(239,68,68,.65)}.hm-neg3{background:var(--red)}
+
+/* === TRADE JOURNAL === */
+.journal-list{display:flex;flex-direction:column;gap:10px;max-height:420px;overflow-y:auto}
+.journal-row{background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:8px 10px}
+.journal-head{display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:12px;margin-bottom:6px}
+.journal-date{color:var(--text3);font-size:10px}
+.journal-note{width:100%;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);
+  font-size:12px;padding:6px 8px;resize:vertical;min-height:32px;font-family:inherit}
+.journal-note:focus{outline:none;border-color:var(--gold)}
+
+/* === ACTIVITY LOG === */
+.activity-list{display:flex;flex-direction:column;gap:0;max-height:340px;overflow-y:auto}
+.activity-row{display:flex;align-items:center;gap:10px;padding:7px 8px;border-bottom:1px solid var(--border);font-family:var(--mono);font-size:12px}
+.activity-row .act-icon{font-size:9px;flex-shrink:0}
+.activity-row .act-time{margin-left:auto;color:var(--text3);font-size:10px;white-space:nowrap}
+
+/* === NOTIFICATION BELL === */
+.notif-btn{background:none;border:none;cursor:pointer;color:var(--text3);padding:0;display:inline-flex;
+  align-items:center;vertical-align:-2px}
+.notif-btn:hover{color:var(--text2)}
+.notif-btn.on{color:var(--gold)}
+.notif-btn .icon{width:14px;height:14px;color:inherit}
 
 /* === TOASTS === */
 .toast-container{position:fixed;bottom:18px;right:18px;z-index:100;display:flex;flex-direction:column;gap:8px;
@@ -266,6 +318,7 @@ a{color:var(--gold);text-decoration:none}
   <symbol id="icon-coin" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v10M9.3 9.3c0-1.3 1.2-2.3 2.7-2.3s2.7 1 2.7 2.3c0 2.5-5.4 1.9-5.4 4.4 0 1.3 1.2 2.3 2.7 2.3s2.7-1 2.7-2.3"/></g></symbol>
   <symbol id="icon-sparkle" viewBox="0 0 24 24"><g fill="currentColor"><path d="M12 3l1.6 4.4L18 9l-4.4 1.6L12 15l-1.6-4.4L6 9l4.4-1.6L12 3z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8L19 15z"/></g></symbol>
   <symbol id="icon-menu" viewBox="0 0 24 24"><g stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></g></symbol>
+  <symbol id="icon-bell" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 10a6 6 0 0 1 12 0c0 5 2 6 2 6H4s2-1 2-6Z"/><path d="M10 20a2 2 0 0 0 4 0"/></g></symbol>
 </svg>
 <nav class="topnav">
   <a href="/" class="brand"><svg class="brand-mark"><use href="#brand-mark"></use></svg>RUNECLAW</a>
@@ -276,11 +329,19 @@ a{color:var(--gold);text-decoration:none}
     <a href="https://t.me/HTRUNECLAW_bot" target="_blank" rel="noopener">Telegram</a>
     <a href="https://humanoid-traders-1.gitbook.io/humanoid-traders-ai" target="_blank" rel="noopener">Docs</a>
   </div>
-  <div class="nav-acct"><span id="acctChip"></span><span id="connHealth" class="live">&#9679; LIVE</span> <span id="headerTime">--:--</span></div>
+  <div class="nav-acct"><span id="acctChip"></span><button id="notifBtn" class="notif-btn" onclick="toggleNotifications()" title="Enable trade notifications"><svg class="icon"><use href="#icon-bell"></use></svg></button><span id="connHealth" class="live">&#9679; LIVE</span> <span id="headerTime">--:--</span></div>
 </nav>
 <div class="toast-container" id="toastContainer"></div>
 <div class="war-room" id="app">
   <div class="agent-ticker" id="agentTicker"><span class="at-dot"></span><svg class="icon"><use href="#icon-sparkle"></use></svg><span class="at-text" id="agentTickerText">Booting agent loop&hellip;</span></div>
+  <div class="panel" id="readinessPanel">
+    <div class="panel-title"><svg class="icon icon-ai"><use href="#icon-sparkle"></use></svg> AI READINESS SCORE <span id="healthLabel" class="badge" style="margin-left:auto"></span></div>
+    <div id="readinessContent"></div>
+  </div>
+  <div class="panel" id="cockpitPanel">
+    <div class="panel-title"><svg class="icon icon-ai"><use href="#icon-sparkle"></use></svg> AI COCKPIT</div>
+    <div id="cockpitContent"></div>
+  </div>
   <div class="panel" id="onboardPanel" style="display:none"><div class="panel-title"><svg class="icon"><use href="#icon-rocket"></use></svg> GETTING STARTED</div><div id="onboardContent"></div></div>
   <div class="grid-top">
     <div class="panel regime" id="regimePanel"><div class="panel-title"><svg class="icon"><use href="#icon-globe"></use></svg> BTC REGIME</div><div class="skel-wrap"><div class="skel skel-row"></div><div class="skel skel-row"></div><div class="skel skel-row"></div></div></div>
@@ -311,13 +372,20 @@ a{color:var(--gold);text-decoration:none}
     </div>
   </div>
   <div class="grid-top" style="grid-template-columns:1fr 1fr">
+    <div class="panel" id="depthPanel"><div class="panel-title"><svg class="icon"><use href="#icon-chart"></use></svg> ORDER BOOK</div><div id="depthContent"><div class="empty-msg">Loading order book&hellip;</div></div></div>
+    <div class="panel" id="fundingPanel"><div class="panel-title"><svg class="icon"><use href="#icon-bolt"></use></svg> FUNDING RATE</div><div id="fundingContent"><div class="empty-msg">Loading funding rate&hellip;</div></div></div>
+  </div>
+  <div class="grid-top" style="grid-template-columns:1fr 1fr">
     <div class="panel" id="portfolioPanel"><div class="panel-title"><svg class="icon"><use href="#icon-coin"></use></svg> PORTFOLIO</div><div id="portfolioContent"><div class="skel-wrap"><div class="skel skel-row"></div><div class="skel skel-row"></div><div class="skel skel-row"></div></div></div></div>
     <div class="panel" id="keyCallPanel"><div class="panel-title"><svg class="icon icon-ai"><use href="#icon-sparkle"></use></svg> KEY CALL</div><div id="keyCallContent"><div class="empty-msg">Run /getclaw in Telegram for market call</div></div></div>
   </div>
   <div class="panel" id="heatmapPanel"><div class="panel-title"><svg class="icon"><use href="#icon-chart"></use></svg> PNL CALENDAR</div><div id="heatmapContent"><div class="empty-msg">Log in to see your day-by-day PnL.</div></div></div>
+  <div class="panel" id="journalPanel"><div class="panel-title"><svg class="icon"><use href="#icon-coin"></use></svg> TRADE JOURNAL</div><div id="journalContent"><div class="empty-msg">Log in to journal your trades.</div></div></div>
+  <div class="panel" id="activityPanel"><div class="panel-title"><svg class="icon"><use href="#icon-radar"></use></svg> ACTIVITY LOG</div><div id="activityContent"><div class="empty-msg">Log in to see your activity log.</div></div></div>
   <div class="panel" id="walletPanel"><div class="panel-title"><svg class="icon"><use href="#icon-wallet"></use></svg> WALLET &mdash; EXCHANGE CONNECTION</div><div id="walletContent"></div></div>
   <div class="panel" id="controlsPanel"><div class="panel-title"><svg class="icon"><use href="#icon-target"></use></svg> LIVE CONTROLS</div><div id="controlsContent"></div></div>
   <div class="panel" id="calcPanel"><div class="panel-title"><svg class="icon"><use href="#icon-coin"></use></svg> POSITION SIZE CALCULATOR</div><div id="calcContent"></div></div>
+  <div class="panel" id="strategyPanel"><div class="panel-title"><svg class="icon"><use href="#icon-shield"></use></svg> STRATEGY &amp; RISK LOGIC</div><div id="strategyContent"><div class="empty-msg">Loading strategy config&hellip;</div></div></div>
   <div class="panel" id="insightsPanel"><div class="panel-title"><svg class="icon"><use href="#icon-chart"></use></svg> SIGNAL INSIGHTS</div><div id="insightsContent"><div class="skel-wrap"><div class="skel skel-row"></div><div class="skel skel-row"></div><div class="skel skel-row"></div></div></div></div>
   <div class="panel" id="signalsPanel"><div class="panel-title"><svg class="icon"><use href="#icon-radar"></use></svg> SIGNAL STREAM <span id="signalsStats" style="font-family:var(--mono);font-size:11px;color:var(--text3);font-weight:400"></span></div>
     <div class="sig-filters">
@@ -402,9 +470,12 @@ function updateConnHealth() {
   if (!el) return;
   const syncTime = scanData?.received_at || scanData?.timestamp;
   if (!syncTime) { el.innerHTML = '&#9679; CONNECTING'; el.className = 'live warn'; return; }
+  // The autonomous scan loop's own interval adapts 60-600s with volatility
+  // (SMART_SCAN_MIN/MAX_INTERVAL) -- these thresholds must tolerate that
+  // full range or a perfectly healthy bot flashes false "stale"/"disconnected".
   const ageSec = (Date.now() - new Date(syncTime).getTime()) / 1000;
-  if (ageSec < 90) { el.innerHTML = '&#9679; LIVE'; el.className = 'live'; }
-  else if (ageSec < 300) { el.innerHTML = '&#9679; STALE'; el.className = 'live warn'; }
+  if (ageSec < 900) { el.innerHTML = '&#9679; LIVE'; el.className = 'live'; }
+  else if (ageSec < 1800) { el.innerHTML = '&#9679; STALE'; el.className = 'live warn'; }
   else { el.innerHTML = '&#9679; DISCONNECTED'; el.className = 'live danger'; }
 }
 
@@ -495,14 +566,14 @@ function renderRegime() {
     <div class="btc-price">$${price.toLocaleString('en-US',{maximumFractionDigits:0})}</div>
     <div class="btc-change ${pctC(change)}">${pctS(change)}%</div>
     <div class="btc-meta">
-      <div><span class="label">HIGH</span><span class="val">$${high.toLocaleString()}</span></div>
-      <div><span class="label">LOW</span><span class="val">$${low.toLocaleString()}</span></div>
+      <div><span class="label">HIGH</span><span class="val">$${high.toLocaleString('en-US')}</span></div>
+      <div><span class="label">LOW</span><span class="val">$${low.toLocaleString('en-US')}</span></div>
       <div><span class="label">RANGE</span><span class="val">${fmt(range,1)}%</span></div>
       <div><span class="label">VOL</span><span class="val">$${fmtK(vol)}</span></div>
       ${ls?`<div><span class="label">L/S</span><span class="val ${parseFloat(ls)>55?'neg':'pos'}">${ls}% long</span></div>`:''}
       ${funding?`<div><span class="label">FUND</span><span class="val">${funding}</span></div>`:''}
     </div>
-    ${gate?`<div class="gate">&#9888; GATE: BTC 1H close above $${Number(gate).toLocaleString()} required</div>`:''}`;
+    ${gate?`<div class="gate">&#9888; GATE: BTC 1H close above $${Number(gate).toLocaleString('en-US')} required</div>`:''}`;
 }
 
 function renderCircuit() {
@@ -533,6 +604,7 @@ function renderCircuit() {
     '<span class="rule-tag active">R12 Regime</span><span class="rule-tag clear">R14 Clear</span><span class="rule-tag clear">R15 BE</span><span class="rule-tag active">R16 Isolated</span><span class="rule-tag clear">R7 Corr</span>'}
   </div>`;
   renderCandles(); // refresh SL/TP/entry overlay lines against latest position data
+  renderStrategyConfig();
 }
 
 let _watchlist = [];
@@ -663,6 +735,90 @@ function renderHeatmap(trades) {
   }
   html += '</div>';
   el.innerHTML = html;
+}
+
+// === ACTIVITY LOG (real position open/close events only) ===
+async function fetchActivity() {
+  if (!LOGGED_IN) return;
+  const el = document.getElementById('activityContent');
+  try {
+    const r = await fetch('/api/trades/activity?limit=30', { headers: authHeaders() });
+    const d = await r.json();
+    renderActivity(d.events || []);
+  } catch (e) { if (el) el.innerHTML = '<div class="empty-msg">Could not load activity log.</div>'; }
+}
+function renderActivity(events) {
+  const el = document.getElementById('activityContent');
+  if (!el) return;
+  if (!events.length) { el.innerHTML = '<div class="empty-msg">No activity yet.</div>'; return; }
+  let h = '<div class="activity-list">';
+  for (const e of events) {
+    const sym = (e.symbol || '').replace(':USDT', '').replace('/USDT', '');
+    const dc = (e.direction || '').toLowerCase();
+    const when = e.timestamp ? new Date(e.timestamp).toLocaleString([], {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'}) : '';
+    if (e.type === 'open') {
+      h += `<div class="activity-row"><span class="act-icon" style="color:var(--gold)">&#9679;</span>
+        <span>Opened <b class="sym">${sym}</b> <span class="entry-dir ${dc==='long'?'long':'short'}">${(e.direction||'').toUpperCase()}</span> &middot; $${fmt(e.size_usd)}</span>
+        <span class="act-time">${when}</span></div>`;
+    } else {
+      const pnl = parseFloat(e.pnl) || 0;
+      h += `<div class="activity-row"><span class="act-icon ${pnl>=0?'pos':'neg'}">&#9679;</span>
+        <span>Closed <b class="sym">${sym}</b> <span class="entry-dir ${dc==='long'?'long':'short'}">${(e.direction||'').toUpperCase()}</span> &middot; <b class="${pnl>=0?'pos':'neg'}">${pnl>=0?'+':''}$${pnl.toFixed(2)}</b></span>
+        <span class="act-time">${when}</span></div>`;
+    }
+  }
+  h += '</div>';
+  el.innerHTML = h;
+}
+
+// === TRADE JOURNAL ===
+async function fetchJournal() {
+  if (!LOGGED_IN) return;
+  const el = document.getElementById('journalContent');
+  try {
+    const r = await fetch('/api/trades/history?limit=20', { headers: authHeaders() });
+    const d = await r.json();
+    renderJournal(d.trades || []);
+  } catch (e) { if (el) el.innerHTML = '<div class="empty-msg">Could not load trade journal.</div>'; }
+}
+function renderJournal(trades) {
+  const el = document.getElementById('journalContent');
+  if (!el) return;
+  if (!trades.length) { el.innerHTML = '<div class="empty-msg">No closed trades yet.</div>'; return; }
+  const esc = (s) => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  let h = '<div class="journal-list">';
+  for (const t of trades) {
+    const pnl = parseFloat(t.pnl) || 0;
+    const sym = (t.symbol || '').replace(':USDT', '').replace('/USDT', '');
+    const dc = (t.direction || '').toLowerCase();
+    const when = t.closed_at ? new Date(t.closed_at).toLocaleDateString([], {month:'short', day:'numeric'}) : '';
+    h += `<div class="journal-row">
+      <div class="journal-head">
+        <span class="sym">${sym}</span>
+        <span class="entry-dir ${dc==='long'?'long':'short'}">${(t.direction||'').toUpperCase()}</span>
+        <span class="${pnl>=0?'pos':'neg'}" style="margin-left:auto;font-weight:700">${pnl>=0?'+':''}$${pnl.toFixed(2)}</span>
+        <span class="journal-date">${when}</span>
+      </div>
+      <textarea class="journal-note" data-id="${t.id}" placeholder="Add a note — why did this work or not?" onblur="saveJournalNote(this)">${esc(t.notes)}</textarea>
+    </div>`;
+  }
+  h += '</div>';
+  el.innerHTML = h;
+  el.querySelectorAll('.journal-note').forEach(ta => { ta.dataset.saved = ta.value; });
+}
+async function saveJournalNote(el) {
+  const id = el.dataset.id;
+  const notes = el.value;
+  if (el.dataset.saved === notes) return; // unchanged, skip the write
+  try {
+    const r = await fetch(`/api/trades/${id}/notes`, {
+      method: 'PATCH', headers: {...authHeaders(), 'Content-Type': 'application/json'},
+      body: JSON.stringify({ notes }),
+    });
+    const j = await r.json();
+    if (j.ok) { el.dataset.saved = notes; showToast('Note saved.', 'success'); }
+    else showToast(j.error || 'Failed to save note.', 'error');
+  } catch (e) { showToast('Network error saving note.', 'error'); }
 }
 
 async function exportTradesCSV() {
@@ -932,6 +1088,94 @@ function candleHover(ev) {
 }
 function candleHoverEnd() { const t = document.getElementById('candleTip'); if (t) t.style.display = 'none'; }
 
+// === ORDER BOOK DEPTH ===
+async function fetchDepth() {
+  const el = document.getElementById('depthContent');
+  const symbol = _chartSymbol || 'BTCUSDT';
+  try {
+    const r = await fetch(`/api/market/depth/${symbol}`);
+    const d = await r.json();
+    renderDepth(d.data || {});
+  } catch (e) { if (el) el.innerHTML = '<div class="empty-msg">Order book unavailable right now.</div>'; }
+}
+function renderDepth(book) {
+  const el = document.getElementById('depthContent');
+  if (!el) return;
+  const bids = (book.bids || []).slice(0, 5);
+  const asks = (book.asks || []).slice(0, 5);
+  if (!bids.length && !asks.length) { el.innerHTML = '<div class="empty-msg">No order book data yet.</div>'; return; }
+  const sizes = [...bids, ...asks].map(l => parseFloat(l[1]) || 0);
+  const maxSize = Math.max(...sizes, 1e-9);
+  const rows = (levels, side) => levels.map(l => {
+    const price = parseFloat(l[0]), size = parseFloat(l[1]) || 0;
+    const pct = Math.min(100, (size / maxSize) * 100);
+    return `<div class="depth-row ${side}"><div class="bar" style="width:${pct}%"></div><span class="px ${side}">${fmtP(price)}</span><span>${size.toFixed(3)}</span></div>`;
+  }).join('') || '<div class="empty-msg">--</div>';
+  el.innerHTML = `<div class="depth-ladder">
+    <div class="depth-col"><h5>Bids</h5>${rows(bids, 'bid')}</div>
+    <div class="depth-col"><h5>Asks</h5>${rows(asks, 'ask')}</div>
+  </div>`;
+}
+
+// === FUNDING RATE ===
+async function fetchFunding() {
+  const el = document.getElementById('fundingContent');
+  const symbol = _chartSymbol || 'BTCUSDT';
+  try {
+    const r = await fetch(`/api/market/funding/${symbol}`);
+    const d = await r.json();
+    const rows = Array.isArray(d.data) ? d.data : (d.data ? [d.data] : []);
+    const info = rows[0] || {};
+    const rate = parseFloat(info.fundingRate);
+    if (!Number.isFinite(rate)) { if (el) el.innerHTML = '<div class="empty-msg">No funding data yet.</div>'; return; }
+    const pct = rate * 100;
+    if (el) el.innerHTML = `<div class="funding-stat">
+      <div class="fr-val ${pct >= 0 ? 'pos' : 'neg'}">${pct >= 0 ? '+' : ''}${pct.toFixed(4)}%</div>
+      <div class="fr-label">${symbol.replace('USDT','')} &middot; funding rate</div>
+    </div>`;
+  } catch (e) { if (el) el.innerHTML = '<div class="empty-msg">Funding rate unavailable right now.</div>'; }
+}
+
+// === BROWSER PUSH NOTIFICATIONS ===
+// Toasts only fire while this tab is open and focused; real Notification API
+// pushes reach the user even when the dashboard is backgrounded. Permission
+// is only ever requested on an explicit click (browsers block auto-request).
+function notifSupported() { return typeof Notification !== 'undefined'; }
+function updateNotifBtn() {
+  const btn = document.getElementById('notifBtn');
+  if (!btn || !notifSupported()) { if (btn) btn.style.display = 'none'; return; }
+  const granted = Notification.permission === 'granted';
+  btn.classList.toggle('on', granted);
+  btn.title = granted ? 'Trade notifications on'
+    : Notification.permission === 'denied' ? 'Notifications blocked — check your browser site settings'
+    : 'Enable trade notifications';
+}
+async function toggleNotifications() {
+  if (!notifSupported()) { showToast('Notifications are not supported in this browser.', 'warn'); return; }
+  if (Notification.permission === 'granted') {
+    showToast('Notifications are already enabled for this site.', 'info');
+    return;
+  }
+  if (Notification.permission === 'denied') {
+    showToast('Notifications are blocked — enable them in your browser’s site settings.', 'warn');
+    return;
+  }
+  const perm = await Notification.requestPermission();
+  updateNotifBtn();
+  showToast(perm === 'granted' ? 'Trade notifications enabled.' : 'Notifications not enabled.', perm === 'granted' ? 'success' : 'warn');
+}
+function notifySimple(title, body) {
+  if (!notifSupported() || Notification.permission !== 'granted') return;
+  try { new Notification(title, { body, icon: '/app_icon_256.png' }); } catch (e) { /* fail open */ }
+}
+function notifyTrade(data) {
+  const pnl = Number(data && data.pnl);
+  const sym = ((data && data.symbol) || 'Position').replace(':USDT', '').replace('/USDT', '');
+  const dir = (data && data.direction) || '';
+  const body = Number.isFinite(pnl) ? `${dir} closed ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}` : `${dir} position updated`;
+  notifySimple(`RUNECLAW · ${sym}`, body);
+}
+
 // === TOASTS ===
 function showToast(message, type) {
   const c = document.getElementById('toastContainer');
@@ -960,6 +1204,74 @@ function renderAccount() {
 
 // A 4-step getting-started checklist. Hidden once the three required steps
 // (account, Telegram link, exchange connect) are done; live is optional.
+// === AI READINESS SCORE (computed from real state only) ===
+function computeAIReadiness() {
+  const factors = [
+    { label: 'Account', done: LOGGED_IN },
+    { label: 'Telegram', done: !!(credStatus && credStatus.linked) },
+    { label: 'Bitget', done: !!(credStatus && credStatus.connected) },
+    { label: 'Risk limit', done: !!(controlState && controlState.max_margin != null) },
+    { label: 'Monitoring', done: !!(controlState && controlState.linked && !controlState.paused) },
+  ];
+  const done = factors.filter(f => f.done).length;
+  return { pct: Math.round((done / factors.length) * 100), factors };
+}
+function readinessTier(pct) { return pct >= 70 ? 'green' : pct >= 40 ? 'amber' : 'red'; }
+
+function renderReadiness() {
+  const el = document.getElementById('readinessContent');
+  if (!el) return;
+  const { pct, factors } = computeAIReadiness();
+  const tier = readinessTier(pct);
+  el.innerHTML = `
+    <div class="readiness-pct ${tier}">${pct}%</div>
+    <div class="readiness-bar-track"><div class="readiness-bar-fill ${tier}" style="width:${pct}%"></div></div>
+    <div class="readiness-factors">${factors.map(f => `<span class="readiness-factor ${f.done?'done':''}">${f.done?'&#10003;':'&#9675;'} ${f.label}</span>`).join('')}</div>`;
+
+  const healthEl = document.getElementById('healthLabel');
+  if (!healthEl) return;
+  const connEl = document.getElementById('connHealth');
+  const connDanger = !!(connEl && connEl.classList.contains('danger'));
+  const connWarn = !!(connEl && connEl.classList.contains('warn'));
+  let text, cls;
+  if (connDanger || pct < 40) { text = connDanger ? 'Critical' : 'Needs Attention'; cls = 'badge-red'; }
+  else if (connWarn || pct < 70) { text = 'Good'; cls = 'badge-orange'; }
+  else { text = 'Excellent'; cls = 'badge-green'; }
+  healthEl.textContent = text;
+  healthEl.className = 'badge ' + cls;
+}
+
+// === AI COCKPIT (state-aware recommendation, sourced from real connection
+// state -- not a generative chat backend. "Prompt" buttons just scroll to
+// the real panel that answers the question.) ===
+function nextBestAction() {
+  if (!LOGGED_IN) return { text: 'Create your account to unlock the AI cockpit, wallet, and live controls.', panel: null };
+  if (!(credStatus && credStatus.linked)) return { text: 'Telegram is not connected yet. Link @HTRUNECLAW_bot so signals and trades map to your account.', panel: 'onboardPanel' };
+  if (!(credStatus && credStatus.connected)) return { text: 'Bitget is not connected. Add read + trade-only API keys below — never enable withdrawal permissions.', panel: 'walletPanel' };
+  if (!(controlState && controlState.max_margin != null)) return { text: 'Set a per-trade margin cap in Live Controls before enabling live trading.', panel: 'controlsPanel' };
+  if (!(controlState && controlState.live_enabled && controlState.allowlisted)) return { text: 'Core connections and risk limits are ready. Paper trading is active — live trading needs operator approval.', panel: 'controlsPanel' };
+  return { text: 'Everything is connected and configured. Monitor the strategy logic and signal stream below.', panel: 'strategyPanel' };
+}
+function renderCockpit() {
+  const el = document.getElementById('cockpitContent');
+  if (!el) return;
+  const rec = nextBestAction();
+  const prompts = [
+    { label: 'What should I connect next?', panel: rec.panel || 'readinessPanel' },
+    { label: 'Check my setup readiness', panel: 'readinessPanel' },
+    { label: 'Review my Bitget security', panel: 'walletPanel' },
+    { label: 'Show risk recommendations', panel: 'strategyPanel' },
+  ];
+  el.innerHTML = `
+    <div class="ai-thesis" style="margin-top:0">
+      <div class="ai-thesis-label"><svg class="icon"><use href="#icon-sparkle"></use></svg>Recommended next step</div>
+      <div class="ai-thesis-body">${rec.text}</div>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
+      ${prompts.map(p => `<button class="btn-ghost" style="font-family:var(--mono);font-size:11px;color:var(--text2);background:none;border:1px solid var(--border);border-radius:14px;padding:5px 12px;cursor:pointer" onclick="scrollToPanel('${p.panel}')">${p.label}</button>`).join('')}
+    </div>`;
+}
+
 function renderOnboarding() {
   const panel = document.getElementById('onboardPanel');
   const el = document.getElementById('onboardContent');
@@ -973,9 +1285,9 @@ function renderOnboarding() {
     { title:'Link Telegram', desc:'Connect @HTRUNECLAW_bot so signals and trades map to you.', done: linked,
       cta:'<a href="/">Get your link token &#8599;</a>' },
     { title:'Connect your exchange', desc:'Add withdrawal-disabled Bitget keys (encrypted at rest).', done: connected,
-      cta:'See the WALLET panel below.' },
-    { title:'Enable live trading', desc:'Optional and needs operator approval &mdash; paper runs without it.', done: liveEff,
-      cta:'See the LIVE CONTROLS panel below.', optional:true },
+      cta:'<a href="#" onclick="scrollToPanel(\'walletPanel\');return false">Go to the WALLET panel &darr;</a>' },
+    { title:'Enable live trading', desc:'Optional and needs operator approval &mdash; paper runs without it. Set your per-trade margin cap here too.', done: liveEff,
+      cta:'<a href="#" onclick="scrollToPanel(\'controlsPanel\');return false">Go to LIVE CONTROLS &darr;</a>', optional:true },
   ];
   if (steps.slice(0,3).every(s => s.done)) { panel.style.display = 'none'; return; }
   panel.style.display = '';
@@ -992,6 +1304,17 @@ function renderOnboarding() {
   }).join('') + '</div>';
 }
 
+// Guided-flow navigation: the onboarding checklist's steps scroll to and
+// briefly highlight the panel where that step is actually completed,
+// instead of just describing where to look.
+function scrollToPanel(id) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.scrollIntoView({behavior: 'smooth', block: 'start'});
+  el.classList.add('ob-highlight');
+  setTimeout(() => el.classList.remove('ob-highlight'), 1600);
+}
+
 async function fetchControls() {
   const el = document.getElementById('controlsContent');
   if (!LOGGED_IN) { el.innerHTML = '<div class="empty-msg">Log in to manage live controls.</div>'; return; }
@@ -1000,6 +1323,8 @@ async function fetchControls() {
     controlState = await r.json();
     renderControls();
     renderOnboarding();
+    renderReadiness();
+    renderCockpit();
   } catch(e) { el.innerHTML = '<div class="empty-msg">Could not load controls.</div>'; }
 }
 
@@ -1041,6 +1366,7 @@ async function stopTrading() {
     const j = await r.json();
     msg.textContent = j.ok ? 'Emergency stop queued — closing positions…' : (j.error || 'Failed.');
     showToast(j.ok ? 'Emergency stop queued — closing positions.' : (j.error || 'Emergency stop failed.'), j.ok ? 'success' : 'error');
+    if (j.ok) notifySimple('RUNECLAW · Emergency Stop', 'Live trading disabled — closing your open positions.');
     if (j.ok) setTimeout(fetchControls, 2500);
   } catch(e) { msg.textContent = 'Network error.'; showToast('Network error — emergency stop not sent.', 'error'); }
 }
@@ -1107,6 +1433,44 @@ function updateCalculator() {
     ${overCap?`<br><span class="neg">&#9888; Exceeds your $${fmt(cap)} margin cap</span>`:''}`;
 }
 
+// === STRATEGY & RISK LOGIC ===
+// Every value here comes straight from the bot's own CONFIG/RUNTIME (pushed
+// via _push_scan_summary_to_website's "config" section) -- read-only,
+// nothing here is fabricated or user-editable; these are operator-level
+// settings, not per-user preferences.
+function renderStrategyConfig() {
+  const el = document.getElementById('strategyContent');
+  if (!el) return;
+  const cfg = scanData?.config;
+  if (!cfg) { el.innerHTML = '<div class="empty-msg">Strategy config not available yet.</div>'; return; }
+  const onOff = (v) => v ? '<span class="pos">ON</span>' : '<span style="color:var(--text3)">OFF</span>';
+  const modeTag = cfg.mode === 'LIVE'
+    ? '<span class="badge badge-green">&#9679; LIVE</span>'
+    : '<span class="badge badge-orange">PAPER</span>';
+  let h = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+    <span style="font-family:var(--mono);font-size:11px;color:var(--text3)">Mode</span>${modeTag}
+  </div>`;
+  h += `<div class="port-stats" style="margin-bottom:12px">
+    <div class="port-stat"><div class="ps-label">Min Confidence</div><div class="ps-val">${fmt(cfg.min_confidence*100,0)}%</div></div>
+    <div class="port-stat"><div class="ps-label">Max Open Pos</div><div class="ps-val">${cfg.max_open_positions}</div></div>
+    <div class="port-stat"><div class="ps-label">Daily Loss Cap</div><div class="ps-val neg">${fmt(cfg.max_daily_loss_pct,1)}%</div></div>
+    <div class="port-stat"><div class="ps-label">Max Drawdown</div><div class="ps-val neg">${fmt(cfg.max_drawdown_pct,1)}%</div></div>
+  </div>
+  <div style="display:flex;gap:14px;flex-wrap:wrap;font-family:var(--mono);font-size:11px;color:var(--text2);margin-bottom:12px">
+    <span>Symbol loss-streak guard: ${onOff(cfg.symbol_loss_streak_enabled)}</span>
+    <span>Adaptive threshold: ${onOff(cfg.adaptive_threshold_enabled)}</span>
+    <span>Auto-confirm &ge; ${fmt(cfg.auto_confirm_threshold*100,0)}%</span>
+  </div>`;
+  const types = cfg.strategy_types || {};
+  h += '<div style="overflow-x:auto"><table class="universe-table"><tr><th>Strategy</th><th>Min Conf.</th><th>Time Warn</th><th>Time Close</th></tr>';
+  for (const k of ['scalp', 'intraday', 'swing', 'position']) {
+    const s = types[k]; if (!s) continue;
+    h += `<tr><td class="sym" style="text-transform:capitalize">${k}</td><td style="font-family:var(--mono)">${fmt(s.min_confidence*100,0)}%</td><td style="font-family:var(--mono)">${fmt(s.time_warn_hours,1)}h</td><td style="font-family:var(--mono)">${fmt(s.time_close_hours,1)}h</td></tr>`;
+  }
+  h += '</table></div>';
+  el.innerHTML = h;
+}
+
 async function fetchCreds() {
   const el = document.getElementById('walletContent');
   if (!LOGGED_IN) { el.innerHTML = '<div class="empty-msg">Log in to connect your exchange.</div>'; return; }
@@ -1115,6 +1479,8 @@ async function fetchCreds() {
     credStatus = await r.json();
     renderCreds();
     renderOnboarding();
+    renderReadiness();
+    renderCockpit();
   } catch(e) { el.innerHTML = '<div class="empty-msg">Could not load connection status.</div>'; }
 }
 
@@ -1333,7 +1699,11 @@ function connectStream() {
     const es = new EventSource('/api/stream');
     es.addEventListener('scan', () => { fetchScan(); rotateTicker(); });
     es.addEventListener('portfolio', () => { fetchPublicPortfolio(); if (LOGGED_IN) fetchPortfolio(); });
-    es.addEventListener('trade', () => { if (LOGGED_IN) { fetchPortfolio(); fetchHeatmap(); } fetchPublicPortfolio(); });
+    es.addEventListener('trade', (ev) => {
+      if (LOGGED_IN) { fetchPortfolio(); fetchHeatmap(); fetchJournal(); fetchActivity(); }
+      fetchPublicPortfolio();
+      try { notifyTrade(JSON.parse(ev.data || '{}')); } catch (e) { /* malformed payload -- skip notification only */ }
+    });
     es.addEventListener('signals', fetchSignals);
     es.onerror = () => { /* browser auto-reconnects; polling still covers gaps */ };
   } catch (e) { /* fail open to polling only */ }
@@ -1342,6 +1712,8 @@ function connectStream() {
 async function init() {
   renderAccount();
   renderOnboarding(); // show step 1 immediately for logged-out visitors
+  renderReadiness();
+  renderCockpit();
   ['fltDirection','fltStatus','fltConf'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.addEventListener('change', fetchSignals);
@@ -1351,11 +1723,14 @@ async function init() {
     const el = document.getElementById(id);
     if (el) el.addEventListener('change', fetchCandles);
   });
+  const chartSymbolEl = document.getElementById('chartSymbol');
+  if (chartSymbolEl) chartSymbolEl.addEventListener('change', () => { fetchDepth(); fetchFunding(); });
   const uniSearch = document.getElementById('uniSearch');
   if (uniSearch) uniSearch.addEventListener('input', renderUniverse);
   renderCalculator();
+  updateNotifBtn();
   await fetchTickers();
-  await Promise.all([fetchScan(), fetchPublicPortfolio(), fetchPortfolio(), fetchSignals(), fetchCreds(), fetchControls(), fetchCandles(), fetchHeatmap()]);
+  await Promise.all([fetchScan(), fetchPublicPortfolio(), fetchPortfolio(), fetchSignals(), fetchCreds(), fetchControls(), fetchCandles(), fetchHeatmap(), fetchDepth(), fetchFunding(), fetchJournal(), fetchActivity()]);
   renderCircuit(); // ensure circuit breaker renders even if fetches return no data
   rotateTicker();
   connectStream();
@@ -1364,10 +1739,13 @@ async function init() {
   setInterval(fetchPublicPortfolio, 60000);
   setInterval(fetchSignals, 30000);              // faster signal refresh
   setInterval(fetchCandles, 20000);
+  setInterval(fetchDepth, 5000);
+  setInterval(fetchFunding, 30000);
   setInterval(rotateTicker, 4500);
   if (LOGGED_IN) setInterval(fetchPortfolio, 45000);
 }
 init();
+if('serviceWorker' in navigator){navigator.serviceWorker.register('/sw.js').catch(()=>{});}
 </script>
 </body>
 </html>

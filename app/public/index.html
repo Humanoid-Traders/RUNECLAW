@@ -13,6 +13,9 @@
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <link rel="icon" type="image/png" sizes="256x256" href="/app_icon_256.png">
 <link rel="apple-touch-icon" href="/app_icon_512.png">
+<link rel="manifest" href="/manifest.json">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="RUNECLAW">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/styles.css">
@@ -275,7 +278,7 @@ function showAccount(data){
   document.getElementById('account').style.display='block';
   document.getElementById('d-email').textContent=data.email||'-';
   document.getElementById('d-plan').textContent=data.plan||'free';
-  document.getElementById('d-equity').textContent='$'+(data.equity||10000).toLocaleString();
+  document.getElementById('d-equity').textContent='$'+(data.equity||10000).toLocaleString('en-US');
   const linked=!!data.telegram_linked;
   document.getElementById('d-tg-status').innerHTML=linked?'<span class="badge badge-green">Linked</span>':'<span class="badge badge-orange">Not linked</span>';
   document.getElementById('linked-ok').style.display=linked?'flex':'none';
@@ -307,6 +310,7 @@ function copyToken(){
     SESSION={...res,token:s.token};showAccount(SESSION);
   }catch{localStorage.removeItem('rc_session');}
 })();
+if('serviceWorker' in navigator){navigator.serviceWorker.register('/sw.js').catch(()=>{});}
 </script>
 </body>
 </html>

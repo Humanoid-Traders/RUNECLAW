@@ -224,16 +224,31 @@ class MemoryDB {
 
     if (cmd.includes('INSERT INTO TRADES')) {
       const trade = { id: this._nextTradeId++ };
-      // Parse based on param count
-      if (params.length === 12) {
+      // Parse based on param count. Both real call sites (sync.js's full
+      // POST / and its /trade-event close branch) bind exactly 11 params
+      // for a closed-trade insert -- 'CLOSED' is a literal in the SQL, not
+      // a placeholder -- so this must be 11, not 12 (the previous ===12
+      // check never matched either real call site, silently dropping every
+      // closed trade's user_id/symbol/etc in dev/demo mode without MySQL).
+      if (params.length === 11) {
         // Closed trade insert
         Object.assign(trade, { user_id: params[0], symbol: params[1], direction: params[2], entry_price: params[3], exit_price: params[4], size_usd: params[5], pnl: params[6], fees: params[7], status: 'CLOSED', pattern: params[8], opened_at: params[9], closed_at: params[10] });
       } else if (params.length === 10) {
-        // Open trade insert
+        // Open trade insert (positions array from the full sync -- includes opened_at)
+        Object.assign(trade, { user_id: params[0], symbol: params[1], direction: params[2], entry_price: params[3], size_usd: params[4], fees: params[5], status: 'OPEN', pattern: params[6], stop_loss: params[7], take_profit: params[8], opened_at: params[9] });
+      } else if (params.length === 9) {
+        // Open trade insert (trade-event open branch -- no explicit opened_at)
         Object.assign(trade, { user_id: params[0], symbol: params[1], direction: params[2], entry_price: params[3], size_usd: params[4], fees: params[5], status: 'OPEN', pattern: params[6], stop_loss: params[7], take_profit: params[8], opened_at: new Date() });
       }
       this.trades.push(trade);
       return [{ insertId: trade.id }, []];
+    }
+
+    if (cmd.includes('UPDATE TRADES SET NOTES')) {
+      // params: notes, id, user_id
+      const t = this.trades.find(t => t.id === params[1] && t.user_id === params[2]);
+      if (t) t.notes = params[0];
+      return [{ affectedRows: t ? 1 : 0 }, []];
     }
 
     if (cmd.includes('SUM(PNL)') && cmd.includes('SUM(FEES)') && cmd.includes('COUNT(*)')) {
@@ -259,12 +274,24 @@ class MemoryDB {
         const count = this.trades.filter(t => t.user_id === params[0] && t.status === 'OPEN').length;
         return [[{ open_count: count }], []];
       }
-      const count = this.trades.filter(t => t.user_id === params[0] && t.status === params[1]).length;
+      // /api/trades/history's count query has status = 'CLOSED' as a literal,
+      // not a bound param -- there is no params[1] to compare against there.
+      const status = cmd.includes("STATUS = 'CLOSED'") ? 'CLOSED' : params[1];
+      const count = this.trades.filter(t => t.user_id === params[0] && t.status === status).length;
       return [[{ total: count }], []];
     }
 
     if (cmd.includes('SELECT PNL, SIZE_USD')) {
       const rows = this.trades.filter(t => t.user_id === params[0] && t.status === params[1]).sort((a, b) => new Date(a.closed_at) - new Date(b.closed_at));
+      return [rows, []];
+    }
+
+    if (cmd.includes('COALESCE(CLOSED_AT')) {
+      // GET /api/trades/activity -- both OPEN and CLOSED trades, newest first
+      const limit = params[1] || 60;
+      const rows = this.trades.filter(t => t.user_id === params[0])
+        .sort((a, b) => new Date(b.closed_at || b.opened_at) - new Date(a.closed_at || a.opened_at))
+        .slice(0, limit);
       return [rows, []];
     }
 
@@ -382,10 +409,16 @@ async function migrate() {
         take_profit DECIMAL(18,8),
         opened_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         closed_at TIMESTAMP NULL,
+        notes TEXT DEFAULT NULL,
         INDEX idx_user_status (user_id, status),
         INDEX idx_user_opened (user_id, opened_at)
       )
     `);
+    // Back-fill notes on pre-existing deployments (CREATE TABLE IF NOT EXISTS
+    // won't add it). Ignore the duplicate-column error if already present.
+    try {
+      await pool.execute('ALTER TABLE trades ADD COLUMN notes TEXT DEFAULT NULL');
+    } catch (e) { /* column already exists — fine */ }
     await pool.execute(`
       CREATE TABLE IF NOT EXISTS equity_snapshots (
         id INT AUTO_INCREMENT PRIMARY KEY,

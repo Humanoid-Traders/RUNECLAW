@@ -648,6 +648,78 @@ class RuneClawEngine:
         user_id = getattr(executor, "user_id", None) or 1
         sync_in_background(user_id, equity, positions, closed)
 
+    def _push_scan_summary_to_website(self, signals: list) -> None:
+        """Push a fresh regime/circuit-breaker/key-call summary every
+        autonomous scan cycle (fire-and-forget, fail-open).
+
+        _build_scan_payload's circuit_breaker section (equity, net_pnl,
+        win_rate, trades, open positions, rules) only ever reads from
+        engine.risk / engine.portfolio / live exchange data -- it does not
+        actually need the caller's `results` list to be shaped like the
+        manual /scan command's own lightweight scanner output. Calling it
+        with an empty list still yields an accurate, real circuit-breaker
+        section; only regime/entry_cards/key_call would stay placeholder,
+        so this derives a real regime + key_call from BTC's own signal in
+        the autonomous scanner's output (a different shape: .symbol/.price/
+        .change_pct_24h/.momentum_score, not the manual scanner's .sym/.rsi).
+        """
+        from bot.skills.scan_skill import _build_scan_payload
+        from bot.utils.website_sync import sync_scan_in_background
+
+        payload = _build_scan_payload([], self)
+        btc_sig = next(
+            (s for s in (signals or []) if normalize_symbol(getattr(s, "symbol", "")).startswith("BTC")),
+            None,
+        )
+        if btc_sig is not None:
+            momentum = getattr(btc_sig, "momentum_score", 0.0) or 0.0
+            change = getattr(btc_sig, "change_pct_24h", 0.0) or 0.0
+            if momentum > 0.15 or change > 1.5:
+                label, score = "BULLISH", min(momentum, 1.0)
+            elif momentum < -0.15 or change < -1.5:
+                label, score = "BEARISH", max(momentum, -1.0)
+            else:
+                label, score = "NEUTRAL", momentum
+            payload["regime"] = {
+                "label": label, "score": round(score, 2),
+                "gate": getattr(btc_sig, "price", 0.0) or 0.0,
+                "long_short": "", "funding": "",
+            }
+            payload["key_call"] = (
+                f"<b>Autonomous scan</b> — {len(signals)} pairs scanned this cycle\n"
+                f"BTC 24h change: {change:+.2f}% | momentum {momentum:+.2f}\n"
+                f"Scanned at {datetime.now(UTC).strftime('%H:%M UTC')}"
+            )
+        payload["config"] = self._build_strategy_config_summary()
+        sync_scan_in_background(payload)
+
+    def _build_strategy_config_summary(self) -> dict:
+        """Real (not fabricated) strategy/risk knobs for the website's
+        STRATEGY / LOGIC page -- every value here reads directly from the
+        same CONFIG/RUNTIME the engine itself trades against.
+        """
+        from bot.config import RUNTIME
+
+        st = CONFIG.strategy_types
+        return {
+            "mode": "LIVE" if CONFIG.is_live() else "PAPER",
+            "min_confidence": CONFIG.risk.min_confidence,
+            "max_open_positions": CONFIG.risk.max_open_positions,
+            "max_daily_loss_pct": CONFIG.risk.max_daily_loss_pct,
+            "max_drawdown_pct": CONFIG.risk.max_drawdown_pct,
+            "symbol_loss_streak_enabled": CONFIG.risk.symbol_loss_streak_enabled,
+            "adaptive_threshold_enabled": CONFIG.adaptive.adaptive_threshold_enabled,
+            "auto_confirm_threshold": round(RUNTIME.auto_confirm_threshold, 2),
+            "strategy_types": {
+                st_name: {
+                    "min_confidence": st.get_min_confidence(st_name),
+                    "time_close_hours": st.get_time_close_hours(st_name),
+                    "time_warn_hours": st.get_time_warn_hours(st_name),
+                }
+                for st_name in ("scalp", "intraday", "swing", "position")
+            },
+        }
+
     def _executor_for(self, user_id: str = ""):
         """Return the LiveExecutor that should place THIS caller's live order.
 
@@ -1532,6 +1604,18 @@ class RuneClawEngine:
         audit(scan_log, f"Scan cycle: {scan_summary['signals_found']} signals from market",
               action="scan_cycle", result="OK" if signals else "NO_SIGNALS",
               data=scan_summary)
+
+        # Push a fresh regime/circuit-breaker/key-call summary every autonomous
+        # cycle. Before this, those dashboard panels only ever refreshed from a
+        # manual Telegram /scan (or DeepScanSkill/PlaybookSkill query) -- while
+        # trade/signal sync now update automatically (see _on_live_position_closed
+        # and _build_signal_sync_payloads), this summary could go stale for
+        # hours between manual scans, showing the dashboard as "disconnected"
+        # even while the bot was healthy and trading normally.
+        try:
+            self._push_scan_summary_to_website(signals)
+        except Exception as _scan_push_exc:
+            logger.debug("Autonomous scan summary push skipped: %s", _scan_push_exc)
 
         if not signals:
             self._transition(AgentState.IDLE, "no signals found")

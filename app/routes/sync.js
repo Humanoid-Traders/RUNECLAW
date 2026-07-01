@@ -13,9 +13,15 @@ const router = express.Router();
 
 // Best-effort nudge to connected dashboards -- never let a broadcast issue
 // affect the actual sync response (the bot's write already succeeded).
-function nudge(type) {
-  try { broadcast(type); } catch (e) { /* non-fatal */ }
+function nudge(type, data) {
+  try { broadcast(type, data); } catch (e) { /* non-fatal */ }
 }
+
+// Dedupe key for the most recently notified closed trade. The full-replace
+// POST / sync fires on every portfolio sync, not just on a fresh close, so
+// without this a "trade" SSE event (and therefore a browser notification)
+// would re-fire for the same already-seen close every time the bot re-syncs.
+let lastNotifiedClose = null;
 
 // CRITICAL: No fallback secret. Refuse to serve sync if unset.
 const SYNC_SECRET = process.env.BOT_SYNC_SECRET;
@@ -200,6 +206,17 @@ router.post('/', async (req, res) => {
       updated_at: new Date().toISOString()
     };
 
+    // Notify about a genuinely NEW closed trade, deduped against the last one
+    // we already surfaced (this endpoint replaces the whole trade list on
+    // every sync, not just when a fresh close happens).
+    const lastClosed = (closed_trades && closed_trades.length) ? closed_trades[closed_trades.length - 1] : null;
+    if (lastClosed) {
+      const key = `${lastClosed.symbol}|${lastClosed.closed_at}|${lastClosed.pnl}`;
+      if (key !== lastNotifiedClose) {
+        lastNotifiedClose = key;
+        nudge('trade', { symbol: lastClosed.symbol, direction: lastClosed.direction, pnl: lastClosed.pnl });
+      }
+    }
     nudge('portfolio');
     res.json({ ok: true, synced: { closed: closedCount, open: openCount, equity: eq } });
   } catch (err) {

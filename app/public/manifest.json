@@ -1,0 +1,14 @@
+{
+  "name": "RUNECLAW — AI Trading Command Core",
+  "short_name": "RUNECLAW",
+  "description": "Autonomous AI trading agent for Bitget USDT-M futures — signal stream, risk engine, and portfolio tracking.",
+  "start_url": "/dashboard",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#090a0e",
+  "theme_color": "#090a0e",
+  "icons": [
+    { "src": "/app_icon_256.png", "sizes": "256x256", "type": "image/png" },
+    { "src": "/app_icon_512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
