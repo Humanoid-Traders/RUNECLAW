@@ -15,9 +15,20 @@
 const express = require('express');
 const { pool } = require('../db');
 const { authMiddleware } = require('../auth');
+const { rateLimit, userKey } = require('../lib/rate_limit');
 
 const router = express.Router();
 router.use(authMiddleware);
+
+// Per-user limits on the mutating control endpoints. Emergency stop gets its own
+// (slightly tighter) bucket so a settings-spam can't exhaust the stop budget.
+const ctlLimit = rateLimit({ windowMs: 60000, max: 20, key: userKey });
+const stopLimit = rateLimit({ windowMs: 60000, max: 10, key: userKey });
+
+function secLog(event, req, extra) {
+  const uid = req.user && req.user.user_id;
+  console.log(`[SECURITY] ${event} user=${uid}${extra ? ' ' + extra : ''}`);
+}
 
 // GET /api/controls/status -> current applied state + any pending change
 router.get('/status', async (req, res) => {
@@ -45,7 +56,7 @@ router.get('/status', async (req, res) => {
 });
 
 // POST /api/controls  body: { live_enabled?, max_margin?, paused? } (omit = unchanged)
-router.post('/', async (req, res) => {
+router.post('/', ctlLimit, async (req, res) => {
   try {
     const uid = req.user.user_id;
     const [u] = await pool.execute(
@@ -74,6 +85,7 @@ router.post('/', async (req, res) => {
          paused = VALUES(paused), created_at = CURRENT_TIMESTAMP`,
       [uid, String(u[0].telegram_id), live, margin, paused]
     );
+    secLog('controls_change', req, `live=${live} paused=${paused} margin=${margin}`);
     res.json({ ok: true, pending: true });
   } catch (err) {
     console.error('Controls submit error:', err.message);
@@ -84,7 +96,7 @@ router.post('/', async (req, res) => {
 // POST /api/controls/stop -> EMERGENCY STOP: disable live + pause (flag changes,
 // applied by the normal control pull) AND queue a flatten of the user's live
 // positions (processed asynchronously by the bot via the user's own executor).
-router.post('/stop', async (req, res) => {
+router.post('/stop', stopLimit, async (req, res) => {
   try {
     const uid = req.user.user_id;
     const [u] = await pool.execute(
@@ -108,6 +120,7 @@ router.post('/stop', async (req, res) => {
        ON DUPLICATE KEY UPDATE telegram_id = VALUES(telegram_id), created_at = CURRENT_TIMESTAMP`,
       [uid, tg]
     );
+    secLog('emergency_stop', req);
     res.json({ ok: true, stopping: true });
   } catch (err) {
     console.error('Emergency stop error:', err.message);

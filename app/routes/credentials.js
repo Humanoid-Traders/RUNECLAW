@@ -15,9 +15,24 @@ const express = require('express');
 const { pool } = require('../db');
 const { authMiddleware } = require('../auth');
 const creds = require('../lib/creds_crypto');
+const { rateLimit, userKey } = require('../lib/rate_limit');
 
 const router = express.Router();
 router.use(authMiddleware);
+
+// Per-user limit on the mutating credential endpoints (submit/disconnect). GET
+// /status is left unlimited (cheap read). Money endpoint — keep it tight.
+const credLimit = rateLimit({ windowMs: 60000, max: 10, key: userKey });
+
+// Max accepted length for any single key field (a real Bitget key is ~64 chars;
+// this bounds a malicious oversized payload before it is encrypted/stored).
+const MAX_FIELD = 512;
+
+// Security audit line (never logs key material).
+function secLog(event, req, extra) {
+  const uid = req.user && req.user.user_id;
+  console.log(`[SECURITY] ${event} user=${uid}${extra ? ' ' + extra : ''}`);
+}
 
 async function _userRow(uid) {
   const [rows] = await pool.execute(
@@ -47,7 +62,7 @@ router.get('/status', async (req, res) => {
 });
 
 // POST /api/credentials  body: { api_key, api_secret, passphrase }
-router.post('/', async (req, res) => {
+router.post('/', credLimit, async (req, res) => {
   try {
     if (!creds.isConfigured()) {
       return res.status(503).json({ error: 'Credential encryption not configured (WEB_CREDS_KEY)' });
@@ -60,6 +75,9 @@ router.post('/', async (req, res) => {
     const { api_key, api_secret, passphrase } = req.body || {};
     if (!api_key || !api_secret || !passphrase) {
       return res.status(400).json({ error: 'api_key, api_secret and passphrase are required.' });
+    }
+    if ([api_key, api_secret, passphrase].some(v => typeof v !== 'string' || v.length > MAX_FIELD)) {
+      return res.status(400).json({ error: 'Credential fields are malformed or too long.' });
     }
     // Encrypt the secret material at rest immediately. Never logged.
     const payload = creds.encryptJSON({
@@ -74,6 +92,7 @@ router.post('/', async (req, res) => {
          created_at = CURRENT_TIMESTAMP`,
       [uid, String(u.telegram_id), payload]
     );
+    secLog('exchange_connect_submitted', req);
     res.json({ ok: true, pending: 'connect' });
   } catch (err) {
     console.error('Cred submit error:', err.message); // never logs the body
@@ -82,7 +101,7 @@ router.post('/', async (req, res) => {
 });
 
 // DELETE /api/credentials -> queue a disconnect (bot removes them from its store)
-router.delete('/', async (req, res) => {
+router.delete('/', credLimit, async (req, res) => {
   try {
     const uid = req.user.user_id;
     const u = await _userRow(uid);
@@ -94,6 +113,7 @@ router.delete('/', async (req, res) => {
          created_at = CURRENT_TIMESTAMP`,
       [uid, tg]
     );
+    secLog('exchange_disconnect_requested', req);
     res.json({ ok: true, pending: 'disconnect' });
   } catch (err) {
     console.error('Cred disconnect error:', err.message);

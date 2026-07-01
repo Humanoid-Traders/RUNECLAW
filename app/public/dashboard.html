@@ -109,6 +109,38 @@ a{color:var(--gold);text-decoration:none}
 .sig-pnl.pos{color:var(--green);background:var(--green-dim)}
 .sig-pnl.neg{color:var(--red);background:var(--red-dim)}
 .sig-time{color:var(--text3);font-size:10px;min-width:84px;text-align:right}
+.sig-filters{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px}
+.sig-filters select{background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:5px 8px;color:var(--text2);font-family:var(--mono);font-size:11px;cursor:pointer}
+.sig-filters select:focus{outline:none;border-color:var(--gold)}
+.ins-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px}
+.ins-block h4{margin:0 0 6px;font-size:11px;letter-spacing:1px;color:var(--text3);text-transform:uppercase;font-weight:600}
+.ins-bar{display:flex;align-items:center;gap:8px;margin-bottom:4px;font-family:var(--mono);font-size:11px}
+.ins-label{min-width:82px;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ins-track{flex:1;height:12px;background:var(--bg);border-radius:3px;overflow:hidden;position:relative;border:1px solid var(--border)}
+.ins-fill{height:100%;background:var(--green);opacity:.65}
+.ins-wr{min-width:38px;text-align:right;color:var(--text)}
+.ins-n{min-width:52px;text-align:right;color:var(--text3);font-size:10px}
+.ins-overall{display:flex;gap:18px;flex-wrap:wrap;margin-bottom:14px;font-family:var(--mono);font-size:12px}
+.ins-overall b{color:var(--gold);font-size:15px}
+.perf-row{display:flex;gap:10px;flex-wrap:wrap;margin-top:10px}
+.perf-chip{flex:1;min-width:96px;background:var(--bg);border:1px solid var(--border);border-radius:5px;padding:7px 9px}
+.pnl-bar{display:flex;align-items:center;gap:8px;margin-bottom:3px}
+.pnl-sym{min-width:56px;color:var(--text2)}
+.pnl-track{flex:1;height:10px;background:var(--bg);border-radius:3px;overflow:hidden;border:1px solid var(--border)}
+.pnl-fill{height:100%;display:block}
+.pnl-fill.pos{background:var(--green);opacity:.7}
+.pnl-fill.neg{background:var(--red);opacity:.7}
+.pnl-val{min-width:66px;text-align:right;font-weight:700}
+.pnl-val.pos{color:var(--green)}.pnl-val.neg{color:var(--red)}
+.pnl-wr{min-width:34px;text-align:right;color:var(--text3);font-size:10px}
+.pos-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
+.pos-card{background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px 10px;font-family:var(--mono);font-size:11px}
+.pc-head{display:flex;align-items:center;gap:6px;margin-bottom:5px}
+.pc-head .sym{font-size:13px;font-weight:700}
+.pc-upnl{margin-left:auto;font-weight:700}
+.pc-upnl.pos{color:var(--green)}.pc-upnl.neg{color:var(--red)}
+.pc-meta{display:flex;gap:10px;flex-wrap:wrap;color:var(--text2);font-size:10px;margin-top:2px}
+.pc-meta b{color:var(--text)}
 .cred-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
 .cred-form{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 .cred-in{flex:1;min-width:140px;background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:8px 10px;color:var(--text);font-family:var(--mono);font-size:12px}
@@ -136,6 +168,22 @@ a{color:var(--gold);text-decoration:none}
 .spinner{display:inline-block;width:20px;height:20px;border:2px solid var(--border);border-top-color:var(--gold);border-radius:50%;animation:spin .8s linear infinite;margin-bottom:8px}
 @keyframes spin{to{transform:rotate(360deg)}}
 .empty-msg{font-family:var(--mono);font-size:12px;color:var(--text3);text-align:center;padding:20px}
+.acct-chip{font-family:var(--mono);font-size:11px;margin-right:12px}
+.acct-chip a,.acct-chip button{font-family:var(--mono);font-size:11px;color:var(--gold);background:none;border:none;cursor:pointer;padding:0}
+.acct-chip .sep{color:var(--text3);margin:0 6px}
+.onboard-steps{display:flex;flex-direction:column;gap:8px}
+.ob-step{display:flex;align-items:center;gap:10px;padding:8px 10px;background:var(--bg3);border:1px solid var(--border);border-radius:6px}
+.ob-step.done{opacity:.6}
+.ob-num{width:22px;height:22px;flex:0 0 22px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:11px;font-weight:700;background:var(--bg);border:1px solid var(--border2);color:var(--text2)}
+.ob-step.done .ob-num{background:var(--green-dim);border-color:var(--green);color:var(--green)}
+.ob-step.active .ob-num{background:var(--gold-dim);border-color:var(--gold);color:var(--gold)}
+.ob-body{flex:1}
+.ob-title{font-weight:600;font-size:14px}
+.ob-desc{font-family:var(--mono);font-size:11px;color:var(--text3)}
+.ob-desc a{color:var(--gold)}
+.ob-tag{font-family:var(--mono);font-size:10px;letter-spacing:1px;padding:3px 8px;border-radius:3px}
+.ob-tag.done{color:var(--green);background:var(--green-dim)}
+.ob-tag.todo{color:var(--orange);background:var(--orange-dim)}
 
 ::-webkit-scrollbar{width:6px}::-webkit-scrollbar-track{background:var(--bg)}::-webkit-scrollbar-thumb{background:var(--border2);border-radius:3px}
 @media(max-width:768px){.grid-top{grid-template-columns:1fr}.entry-cards{grid-template-columns:1fr}.header h1{font-size:16px}}
@@ -145,8 +193,9 @@ a{color:var(--gold);text-decoration:none}
 <div class="war-room" id="app">
   <div class="header">
     <h1>RUNECLAW WAR ROOM</h1>
-    <div class="meta"><span class="live">&#9679;</span> LIVE <span id="headerTime">--:--</span></div>
+    <div class="meta"><span id="acctChip"></span><span class="live">&#9679;</span> LIVE <span id="headerTime">--:--</span></div>
   </div>
+  <div class="panel" id="onboardPanel" style="display:none"><div class="panel-title">&#128640; GETTING STARTED</div><div id="onboardContent"></div></div>
   <div class="grid-top">
     <div class="panel regime" id="regimePanel"><div class="panel-title">&#127760; BTC REGIME</div><div class="loading"><div class="spinner"></div><br>Loading...</div></div>
     <div class="panel" id="circuitPanel"><div class="panel-title">&#9889; CIRCUIT BREAKER</div><div id="circuitContent"><div class="loading"><div class="spinner"></div><br>Loading...</div></div></div>
@@ -163,11 +212,29 @@ a{color:var(--gold);text-decoration:none}
   </div>
   <div class="panel" id="walletPanel"><div class="panel-title">&#128091; WALLET &mdash; EXCHANGE CONNECTION</div><div id="walletContent"></div></div>
   <div class="panel" id="controlsPanel"><div class="panel-title">&#127919; LIVE CONTROLS</div><div id="controlsContent"></div></div>
-  <div class="panel" id="signalsPanel"><div class="panel-title">&#128225; SIGNAL STREAM <span id="signalsStats" style="font-family:var(--mono);font-size:11px;color:var(--dim);font-weight:400"></span></div><div id="signalsContent"><div class="loading"><div class="spinner"></div><br>Loading signals...</div></div></div>
+  <div class="panel" id="insightsPanel"><div class="panel-title">&#128202; SIGNAL INSIGHTS</div><div id="insightsContent"><div class="loading"><div class="spinner"></div><br>Loading insights...</div></div></div>
+  <div class="panel" id="signalsPanel"><div class="panel-title">&#128225; SIGNAL STREAM <span id="signalsStats" style="font-family:var(--mono);font-size:11px;color:var(--dim);font-weight:400"></span></div>
+    <div class="sig-filters">
+      <select id="fltDirection"><option value="">All sides</option><option value="LONG">Long</option><option value="SHORT">Short</option></select>
+      <select id="fltStatus"><option value="">All status</option><option value="NEW">New</option><option value="WIN">Win</option><option value="LOSS">Loss</option></select>
+      <select id="fltConf"><option value="">Any conf.</option><option value="0.6">&#8805; 60%</option><option value="0.7">&#8805; 70%</option><option value="0.8">&#8805; 80%</option><option value="0.9">&#8805; 90%</option></select>
+    </div>
+    <div id="signalsContent"><div class="loading"><div class="spinner"></div><br>Loading signals...</div></div></div>
 </div>
 <script>
-const TOKEN = localStorage.getItem('token');
+// Resolve the JWT. The account page (index.html) persists the session under
+// `rc_session` ({token,user_id}); older builds used a bare `token`. Accept both
+// so a logged-in user landing on /dashboard is recognised (previously they were
+// silently treated as anonymous, disabling the whole wallet/controls layer).
+function resolveToken() {
+  const legacy = localStorage.getItem('token');
+  if (legacy) return legacy;
+  try { const s = JSON.parse(localStorage.getItem('rc_session') || 'null'); return (s && s.token) || null; }
+  catch (e) { return null; }
+}
+const TOKEN = resolveToken();
 const LOGGED_IN = !!TOKEN;
+function doLogout() { localStorage.removeItem('rc_session'); localStorage.removeItem('token'); location.href = '/'; }
 
 const SYMBOLS = [
   'BTCUSDT','ETHUSDT','SOLUSDT','BNBUSDT','AVAXUSDT','ADAUSDT',
@@ -179,7 +246,7 @@ const SYMBOLS = [
 ];
 
 let tickerData = {}, scanData = null, portfolioData = null, publicPortfolio = null;
-let signalsData = null, signalStats = null;
+let signalsData = null, signalStats = null, signalAnalytics = null;
 
 function fmt(n, d=2) { return n != null ? Number(n).toFixed(d) : '--'; }
 function fmtK(n) { if(n==null)return'--';n=Number(n);if(n>=1e9)return(n/1e9).toFixed(1)+'B';if(n>=1e6)return(n/1e6).toFixed(1)+'M';if(n>=1e3)return(n/1e3).toFixed(1)+'K';return n.toFixed(0); }
@@ -223,13 +290,15 @@ async function fetchPortfolio() {
   }
   try {
     const h = { Authorization: 'Bearer ' + TOKEN };
-    const [s, o, e] = await Promise.all([
-      fetch('/api/trades/stats', {headers:h}), fetch('/api/trades/open', {headers:h}), fetch('/api/trades/equity-curve', {headers:h})
+    const [s, o, e, bk] = await Promise.all([
+      fetch('/api/trades/stats', {headers:h}), fetch('/api/trades/open', {headers:h}),
+      fetch('/api/trades/equity-curve', {headers:h}), fetch('/api/trades/breakdown', {headers:h})
     ]);
     const stats = await s.json(); const open = await o.json(); const eq = await e.json();
+    const breakdown = bk.ok === false ? null : await bk.json().catch(()=>null);
     // Only use authenticated data if it has real trades
     if (stats && stats.total_trades > 0) {
-      portfolioData = { stats, positions: open.positions||[], snapshots: eq.snapshots||[] };
+      portfolioData = { stats, positions: open.positions||[], snapshots: eq.snapshots||[], breakdown };
     }
     renderPortfolio(); renderCircuit();
   } catch(e) { renderPortfolio(); }
@@ -407,18 +476,44 @@ function renderPortfolio() {
       <defs><linearGradient id="eqg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="var(--gold)" stop-opacity="0.3"/><stop offset="1" stop-color="var(--gold)" stop-opacity="0"/></linearGradient></defs>
       <polygon points="0,${ht} ${pts} ${w},${ht}" fill="url(#eqg)"/><polyline points="${pts}" fill="none" stroke="var(--gold)" stroke-width="2"/></svg>`;
   }
+  const bd = hasAuth ? portfolioData.breakdown : null;
+  if(bd && bd.trades>0){
+    h+=`<div class="perf-row">
+      <div class="perf-chip"><div class="ps-label">Max Drawdown</div><div class="ps-val neg">-$${fmt(bd.drawdown.max_abs)}${bd.drawdown.max_pct?` <span style="font-size:10px">(${fmt(bd.drawdown.max_pct,1)}%)</span>`:''}</div></div>
+      <div class="perf-chip"><div class="ps-label">Expectancy</div><div class="ps-val ${pctC(bd.expectancy)}">${bd.expectancy>=0?'+':''}$${fmt(bd.expectancy)}</div></div>
+      ${bd.best?`<div class="perf-chip"><div class="ps-label">Best</div><div class="ps-val pos">+$${fmt(bd.best.pnl)}<span style="font-size:9px;color:var(--text3)"> ${(bd.best.symbol||'').replace('USDT','')}</span></div></div>`:''}
+      ${bd.worst?`<div class="perf-chip"><div class="ps-label">Worst</div><div class="ps-val neg">$${fmt(bd.worst.pnl)}<span style="font-size:9px;color:var(--text3)"> ${(bd.worst.symbol||'').replace('USDT','')}</span></div></div>`:''}
+    </div>`;
+    if(bd.by_symbol && bd.by_symbol.length){
+      const maxAbs=Math.max(...bd.by_symbol.map(g=>Math.abs(g.net_pnl)),1);
+      h+='<div style="font-family:var(--mono);font-size:11px;margin-top:8px"><div style="color:var(--text3);margin-bottom:4px">PNL BY SYMBOL</div>';
+      for(const g of bd.by_symbol.slice(0,8)){
+        const pos=g.net_pnl>=0, wpct=Math.max(3,Math.round(Math.abs(g.net_pnl)/maxAbs*100));
+        h+=`<div class="pnl-bar">
+          <span class="pnl-sym">${(g.symbol||'').replace('USDT','')}</span>
+          <span class="pnl-track"><span class="pnl-fill ${pos?'pos':'neg'}" style="width:${wpct}%"></span></span>
+          <span class="pnl-val ${pos?'pos':'neg'}">${pos?'+':''}$${fmt(g.net_pnl)}</span>
+          <span class="pnl-wr" title="${g.wins}/${g.n} win">${fmt(g.win_rate,0)}%</span>
+        </div>`;
+      }
+      h+='</div>';
+    }
+  }
   if(pos.length>0){
-    h+='<div style="font-family:var(--mono);font-size:11px;margin-top:8px"><div style="color:var(--text3);margin-bottom:4px">OPEN POSITIONS</div>';
+    h+='<div style="margin-top:10px"><div style="font-family:var(--mono);font-size:11px;color:var(--text3);margin-bottom:6px">OPEN POSITIONS</div><div class="pos-cards">';
     for(const p of pos){
-      const sym=p.symbol||'';const dir=(p.direction||p.side||'').toUpperCase();
+      const sym=(p.symbol||'').replace('USDT','');const dir=(p.direction||p.side||'').toUpperCase();
       const entry=p.entry_price||p.entryPrice||0;const upnl=p.unrealized_pnl!=null?p.unrealized_pnl:p.unrealizedPnl;
-      h+=`<div style="display:flex;justify-content:space-between;gap:8px;padding:3px 0;border-bottom:1px solid var(--border)">
-        <span class="sym">${sym}</span><span class="${dir==='LONG'?'pos':'neg'}">${dir}</span>
-        <span>$${fmtP(entry)}</span>
-        ${upnl!=null?`<span class="${Number(upnl)>=0?'pos':'neg'}">${Number(upnl)>=0?'+':''}$${fmt(upnl)}</span>`:''}
+      const size=p.size_usd!=null?p.size_usd:(p.margin!=null?p.margin:null);
+      const sl=p.stop_loss!=null?p.stop_loss:p.stopLoss;const tp=p.take_profit!=null?p.take_profit:p.takeProfit;
+      h+=`<div class="pos-card">
+        <div class="pc-head"><span class="sym">${sym}</span><span class="entry-dir ${dir==='LONG'?'long':'short'}">${dir}</span>
+          ${upnl!=null?`<span class="pc-upnl ${Number(upnl)>=0?'pos':'neg'}">${Number(upnl)>=0?'+':''}$${fmt(upnl)}</span>`:''}</div>
+        <div class="pc-meta"><span>Entry <b>$${fmtP(entry)}</b></span>${size!=null?`<span>Size <b>$${fmt(size)}</b></span>`:''}</div>
+        ${(sl||tp)?`<div class="pc-meta">${sl?`<span class="neg">SL $${fmtP(sl)}</span>`:''}${tp?`<span class="pos">TP $${fmtP(tp)}</span>`:''}</div>`:''}
       </div>`;
     }
-    h+='</div>';
+    h+='</div></div>';
   } else if(s.open_positions>0){
     h+=`<div class="empty-msg" style="margin-top:8px">${s.open_positions} open position${s.open_positions>1?'s':''}</div>`;
   } else h+='<div class="empty-msg" style="margin-top:8px">No open positions</div>';
@@ -443,6 +538,49 @@ function renderPortfolio() {
 let credStatus = null, controlState = null;
 function authHeaders() { return TOKEN ? {'Authorization':'Bearer '+TOKEN} : {}; }
 
+function renderAccount() {
+  const el = document.getElementById('acctChip');
+  if (!el) return;
+  el.className = 'acct-chip';
+  el.innerHTML = LOGGED_IN
+    ? '<a href="/">Account</a><span class="sep">|</span><button onclick="doLogout()">Log out</button><span class="sep">|</span>'
+    : '<a href="/">Log in &#8599;</a><span class="sep">|</span>';
+}
+
+// A 4-step getting-started checklist. Hidden once the three required steps
+// (account, Telegram link, exchange connect) are done; live is optional.
+function renderOnboarding() {
+  const panel = document.getElementById('onboardPanel');
+  const el = document.getElementById('onboardContent');
+  if (!panel || !el) return;
+  const linked = !!((credStatus && credStatus.linked) || (controlState && controlState.linked));
+  const connected = !!(credStatus && credStatus.connected);
+  const liveEff = !!(controlState && controlState.live_enabled && controlState.allowlisted);
+  const steps = [
+    { title:'Create your account', desc:'Sign in to unlock wallet & live controls.', done: LOGGED_IN,
+      cta:'<a href="/">Log in or register &#8599;</a>' },
+    { title:'Link Telegram', desc:'Connect @HTRUNECLAW_bot so signals and trades map to you.', done: linked,
+      cta:'<a href="/">Get your link token &#8599;</a>' },
+    { title:'Connect your exchange', desc:'Add withdrawal-disabled Bitget keys (encrypted at rest).', done: connected,
+      cta:'See the WALLET panel below.' },
+    { title:'Enable live trading', desc:'Optional and needs operator approval &mdash; paper runs without it.', done: liveEff,
+      cta:'See the LIVE CONTROLS panel below.', optional:true },
+  ];
+  if (steps.slice(0,3).every(s => s.done)) { panel.style.display = 'none'; return; }
+  panel.style.display = '';
+  const firstTodo = steps.findIndex(s => !s.done);
+  el.innerHTML = '<div class="onboard-steps">' + steps.map((s,i) => {
+    const cls = s.done ? 'done' : (i === firstTodo ? 'active' : '');
+    const tag = s.done ? '<span class="ob-tag done">DONE</span>'
+      : `<span class="ob-tag todo">${s.optional ? 'OPTIONAL' : 'TO DO'}</span>`;
+    return `<div class="ob-step ${cls}">
+      <span class="ob-num">${s.done ? '&#10003;' : (i+1)}</span>
+      <div class="ob-body"><div class="ob-title">${s.title}</div>
+        <div class="ob-desc">${s.desc}${s.done ? '' : ' ' + s.cta}</div></div>
+      ${tag}</div>`;
+  }).join('') + '</div>';
+}
+
 async function fetchControls() {
   const el = document.getElementById('controlsContent');
   if (!LOGGED_IN) { el.innerHTML = '<div class="empty-msg">Log in to manage live controls.</div>'; return; }
@@ -450,6 +588,7 @@ async function fetchControls() {
     const r = await fetch('/api/controls/status', {headers: authHeaders()});
     controlState = await r.json();
     renderControls();
+    renderOnboarding();
   } catch(e) { el.innerHTML = '<div class="empty-msg">Could not load controls.</div>'; }
 }
 
@@ -517,6 +656,7 @@ async function fetchCreds() {
     const r = await fetch('/api/credentials/status', {headers: authHeaders()});
     credStatus = await r.json();
     renderCreds();
+    renderOnboarding();
   } catch(e) { el.innerHTML = '<div class="empty-msg">Could not load connection status.</div>'; }
 }
 
@@ -574,15 +714,68 @@ async function disconnectExchange() {
   } catch(e) { /* ignore */ }
 }
 
+function signalQuery() {
+  const p = new URLSearchParams({ limit: '40' });
+  const dir = document.getElementById('fltDirection');
+  const st = document.getElementById('fltStatus');
+  const cf = document.getElementById('fltConf');
+  if (dir && dir.value) p.set('direction', dir.value);
+  if (st && st.value) p.set('status', st.value);
+  if (cf && cf.value) p.set('min_confidence', cf.value);
+  return p.toString();
+}
+
 async function fetchSignals() {
   try {
-    const [sr, str] = await Promise.all([
-      fetch('/api/signals?limit=40'), fetch('/api/signals/stats')
+    const [sr, str, ar] = await Promise.all([
+      fetch('/api/signals?' + signalQuery()),
+      fetch('/api/signals/stats'),
+      fetch('/api/signals/analytics'),
     ]);
     signalsData = (await sr.json()).signals || [];
     signalStats = await str.json();
+    signalAnalytics = await ar.json();
     renderSignals();
+    renderInsights();
   } catch(e) { /* fail soft */ }
+}
+
+function insBars(groups, empty) {
+  if (!groups || !groups.length) return `<div class="empty-msg" style="padding:8px">${empty}</div>`;
+  return groups.map(g => {
+    const wr = g.win_rate || 0;
+    const col = wr >= 55 ? 'var(--green)' : wr >= 45 ? 'var(--gold)' : 'var(--red)';
+    return `<div class="ins-bar">
+      <span class="ins-label" title="${g.key}">${g.key}</span>
+      <span class="ins-track"><span class="ins-fill" style="width:${Math.max(2,Math.min(100,wr))}%;background:${col}"></span></span>
+      <span class="ins-wr">${fmt(wr,0)}%</span>
+      <span class="ins-n">${g.n}&nbsp;sig</span>
+    </div>`;
+  }).join('');
+}
+
+function renderInsights() {
+  const el = document.getElementById('insightsContent');
+  if (!el) return;
+  const a = signalAnalytics;
+  if (!a || !a.overall || !a.overall.resolved) {
+    el.innerHTML = '<div class="empty-msg">No resolved signals yet &mdash; insights appear once signals close out.</div>';
+    return;
+  }
+  const o = a.overall;
+  el.innerHTML = `
+    <div class="ins-overall">
+      <span><b>${o.resolved}</b> resolved</span>
+      <span><b>${fmt(o.win_rate,1)}%</b> win rate</span>
+      <span><b>${o.wins}</b>W / <b>${o.losses}</b>L</span>
+      <span>net <b class="${pctC(o.net_pnl)}" style="font-size:15px">${pctS(o.net_pnl)}</b></span>
+    </div>
+    <div class="ins-grid">
+      <div class="ins-block"><h4>By pattern</h4>${insBars(a.by_pattern,'No pattern data')}</div>
+      <div class="ins-block"><h4>By symbol</h4>${insBars(a.by_symbol,'No symbol data')}</div>
+      <div class="ins-block"><h4>By confidence</h4>${insBars(a.by_confidence,'No confidence data')}</div>
+      <div class="ins-block"><h4>By side</h4>${insBars(a.by_direction,'No side data')}</div>
+    </div>`;
 }
 
 function renderSignals() {
@@ -635,14 +828,20 @@ function renderKeyCall() {
 }
 
 async function init() {
+  renderAccount();
+  renderOnboarding(); // show step 1 immediately for logged-out visitors
+  ['fltDirection','fltStatus','fltConf'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('change', fetchSignals);
+  });
   await fetchTickers();
   await Promise.all([fetchScan(), fetchPublicPortfolio(), fetchPortfolio(), fetchSignals(), fetchCreds(), fetchControls()]);
   renderCircuit(); // ensure circuit breaker renders even if fetches return no data
   setInterval(fetchTickers, 5000);
   setInterval(fetchScan, 30000);
   setInterval(fetchPublicPortfolio, 60000);
-  setInterval(fetchSignals, 45000);
-  if (LOGGED_IN) setInterval(fetchPortfolio, 60000);
+  setInterval(fetchSignals, 30000);              // faster signal refresh
+  if (LOGGED_IN) setInterval(fetchPortfolio, 45000);
 }
 init();
 </script>
