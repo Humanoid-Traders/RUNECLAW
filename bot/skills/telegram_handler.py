@@ -4873,7 +4873,10 @@ class TelegramHandler:
                                 "rr": rr,
                                 "rsi": h.get("rsi", 0),
                                 "vol_ratio": 2.5 if h.get("vol_spike") else 1.0,
-                                "score": min(h.get("score", 0) / 10.0, 1.0),
+                                # Pre-normalized relative to this scan's best
+                                # hit (see DeepScanSkill.execute) -- NOT a
+                                # fixed-divisor guess that saturates at 100%.
+                                "score": h.get("score_norm", 0.0),
                             })
                         now_str = datetime.now(UTC).strftime('%H:%M UTC')
                         card_png = render_scan_results_card(

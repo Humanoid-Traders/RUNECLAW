@@ -29,6 +29,26 @@ def _get_portfolio(engine: RuneClawEngine, **kwargs):
     return engine.portfolio
 
 
+def normalize_deepscan_scores(hits: list[dict]) -> None:
+    """Add a "score_norm" (0-1) field to each hit, in place.
+
+    DeepScanSkill's raw "score" is an UNBOUNDED point count
+    (len(chart_patterns)*2 + len(candle_patterns)*1 + RSI/volume bonuses --
+    up to 16 chart-pattern detectors and 14 candlestick patterns can each
+    independently contribute), not a 0-1 confidence. A fixed divisor
+    (previously score/10.0, clamped to 1.0) assumed raw scores rarely exceed
+    10, but a symbol matching several detectors at once routinely scores
+    well above that -- every displayed hit then saturated at 1.0 (rendered
+    as "100%") regardless of how it actually compared to the rest of the
+    scan. Normalizing relative to THIS batch's own best hit instead gives a
+    meaningful relative ranking that self-adjusts if detectors are added,
+    removed, or retuned later.
+    """
+    max_raw = hits[0]["score"] if hits else 0
+    for h in hits:
+        h["score_norm"] = (h["score"] / max_raw) if max_raw > 0 else 0.0
+
+
 # ── Visual vocabulary ─────────────────────────────────────────
 _OK = "\U0001f7e2"        # green circle
 _WARN = "\U0001f7e1"      # yellow circle
@@ -2687,6 +2707,7 @@ class DeepScanSkill(BaseSkill):
         # Sort by score
         hits.sort(key=lambda h: h["score"], reverse=True)
         top = hits[:max_results]
+        normalize_deepscan_scores(top)
 
         # Store structured hits for card rendering
         engine._last_deepscan_hits = top
@@ -2759,7 +2780,9 @@ class DeepScanSkill(BaseSkill):
                     "sym": h["symbol"],
                     "price": h["price"],
                     "dir": "LONG" if h["rsi"] < 50 or h["chg"] > 0 else "SHORT",
-                    "score": min(h["score"] / 10.0, 1.0),  # normalize score
+                    # Pre-normalized relative to this scan's best hit (set
+                    # above, right after sorting) -- not a fixed-divisor guess.
+                    "score": h.get("score_norm", 0.0),
                     "rsi": round(h["rsi"], 1),
                     "atr": atr_val,
                     "vol_ratio": 2.5 if h["vol_spike"] else 1.0,
