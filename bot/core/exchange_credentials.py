@@ -217,7 +217,11 @@ async def validate_bitget_credentials(
             bal = await client.fetch_balance({"type": "swap"})
         except Exception as swap_exc:
             if "40085" in str(swap_exc) or "Unified Account" in str(swap_exc):
-                # UTA mode: fetch_balance without type returns unified balance
+                # UTA mode: switch the client to spot type so fetch_balance
+                # hits the unified account endpoint, not the Classic swap one.
+                # The defaultType "swap" in options causes even a bare
+                # fetch_balance() to use the Classic API.
+                client.options["defaultType"] = "spot"
                 bal = await client.fetch_balance()
             else:
                 raise
