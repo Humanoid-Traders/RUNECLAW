@@ -124,6 +124,10 @@ class TestStuckClosingRecovery:
 
         assert "TI-STUCK-1" in executor._positions
         assert executor._positions["TI-STUCK-1"].status == "open"
+        # Flagged so check_positions() defers this trade_id to
+        # reconcile_positions() instead of racing it with a second close
+        # attempt (see tests/test_recovered_from_closing_dedup.py).
+        assert "TI-STUCK-1" in executor._recovered_from_closing
 
     def test_open_status_unchanged_on_load(self, tmp_path):
         """A normal "open" record is loaded untouched (no false recovery)."""
@@ -135,6 +139,7 @@ class TestStuckClosingRecovery:
             executor = LiveExecutor()
 
         assert executor._positions["TI-OK-1"].status == "open"
+        assert "TI-OK-1" not in executor._recovered_from_closing
 
     def test_mixed_records_only_closing_is_recovered(self, tmp_path):
         """Among mixed records, only the "closing" one flips to "open"."""
@@ -151,6 +156,7 @@ class TestStuckClosingRecovery:
         assert executor._positions["TI-STUCK-1"].status == "open"
         assert executor._positions["TI-OK-1"].status == "open"
         assert executor._positions["TI-PEND-1"].status == "pending_fill"
+        assert executor._recovered_from_closing == {"TI-STUCK-1"}
 
 
 # ── RC-AUD-022: orphan-adoption unprotected-on-SL-failure alert ──────

@@ -280,6 +280,20 @@ class LiveExecutor:
         # settling (SL/TP placement, fill confirmation, etc. all take multiple
         # await points after the position/order is first recorded).
         self._recent_local_opens: dict[str, float] = {}
+        # Trade IDs whose "closing" status was reset to "open" by
+        # _load_positions()'s startup recovery (see there for why). Their
+        # true state is ambiguous — a close order may have already reached
+        # the exchange before the process died mid-close. Local SL/TP/
+        # time-stop heuristics in check_positions() skip these (they'd
+        # submit a REDUNDANT close order priced off a stale ticker) and
+        # defer entirely to reconcile_positions(), which queries the
+        # exchange directly and, on finding the position already gone,
+        # finalizes it from Bitget's own authoritative close record instead
+        # of guessing — and does so quietly (no duplicate notification),
+        # since the original close very likely already notified the user
+        # before the process died. Cleared once reconcile has resolved the
+        # position's true state (closed for real, or confirmed still open).
+        self._recovered_from_closing: set[str] = set()
         # Dynamic leverage: ATR-based volatility ratios per symbol
         self._last_atr_pct: dict[str, float] = {}  # symbol -> ATR/price ratio
         # Slippage tracker: set by engine
@@ -3746,6 +3760,18 @@ class LiveExecutor:
                 if pos.status != "open":
                     continue
 
+                # ── Defer startup-recovered "closing" positions to reconcile ──
+                # This position's true state is ambiguous (see
+                # _recovered_from_closing's docstring) -- a close order may
+                # have already reached the exchange before the process died
+                # mid-close. Placing a SECOND close here, priced off a
+                # possibly-stale local ticker, is exactly the duplicate-close
+                # incident this guards against. reconcile_positions() (called
+                # right after check_positions() every tick) queries the
+                # exchange directly and resolves this authoritatively.
+                if trade_id in self._recovered_from_closing:
+                    continue
+
                 # ── Clear a stale "unprotected" alarm ──
                 # `unprotected` is a runtime marker set when an exchange stop
                 # could not be placed (adoption / emergency / residual). It was
@@ -6146,12 +6172,17 @@ class LiveExecutor:
                     # Startup recovery: reset any positions stuck in "closing" status.
                     # The close order may or may not have succeeded on the exchange —
                     # resetting to "open" lets reconcile_positions() re-check and handle.
+                    # Flagged in _recovered_from_closing so check_positions()'s local
+                    # SL/TP/time-stop heuristics defer to reconcile instead of racing
+                    # it with a second, redundant close attempt (see that set's
+                    # docstring in __init__ for the full incident this guards against).
                     for tid, p in self._positions.items():
                         if p.status == "closing":
                             audit(trade_log,
                                   f"Startup recovery: position {tid} ({p.symbol}) stuck in 'closing' — resetting to 'open'",
                                   action="load_positions", result="RECOVERY")
                             p.status = "open"
+                            self._recovered_from_closing.add(tid)
                 return
             except Exception as exc:
                 audit(trade_log, f"Failed to load positions from {source}: {exc}",
@@ -6495,7 +6526,22 @@ class LiveExecutor:
                             "leverage": pos.leverage or 1,
                             "hold_time": hold_str,
                         }
-                        messages.append(msg)
+                        # Real incident: a position stuck in "closing" across a
+                        # restart got reset to "open" (see _load_positions()),
+                        # its local SL/TP heuristic then submitted a SECOND,
+                        # redundant close order (priced off a stale ticker,
+                        # since the real close already happened), and THIS
+                        # reconcile pass discovered the true close and sent
+                        # its own notification -- the user saw two conflicting
+                        # "closed" messages for one trade. The first was
+                        # already noise from a doomed redundant order; suppress
+                        # the notification here too since the user almost
+                        # certainly already saw a close message for this trade
+                        # before the process restarted.
+                        was_recovered = pos.trade_id in self._recovered_from_closing
+                        self._recovered_from_closing.discard(pos.trade_id)
+                        if not was_recovered:
+                            messages.append(msg)
 
                         audit(trade_log,
                               f"Position reconciled (closed on exchange): {pos.symbol} PnL=${pnl:.4f}",
@@ -6504,9 +6550,14 @@ class LiveExecutor:
                                   "trade_id": pos.trade_id, "reason": reason,
                                   "entry": pos.entry_price, "exit": est_exit,
                                   "pnl_usd": round(pnl, 4),
+                                  "notification_suppressed": was_recovered,
                               })
 
                     else:
+                        # Position still on exchange — confirmed genuinely
+                        # open, so a startup-recovered "closing" position is
+                        # no longer ambiguous; resume normal local monitoring.
+                        self._recovered_from_closing.discard(pos.trade_id)
                         # Position still on exchange — sync SL/TP from exchange data
                         for ep in positions:
                             if abs(float(ep.get("contracts", 0) or 0)) > 0:
