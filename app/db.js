@@ -33,6 +33,8 @@ class MemoryDB {
     this._nextSignalId = 1;
     this.pendingCreds = [];   // pending_credentials (UPSERT by user_id)
     this.exchangeStatus = {}; // user_id -> { connected }
+    this.pendingControls = []; // pending_controls (UPSERT by user_id)
+    this.userControls = {};   // user_id -> { live_enabled, max_margin, paused, allowlisted }
   }
 
   // Minimal query interface matching mysql2 pool.execute() return format
@@ -109,6 +111,40 @@ class MemoryDB {
     if (cmd.includes('FROM EXCHANGE_STATUS')) {
       const s = this.exchangeStatus[params[0]];
       return [s ? [{ connected: s.connected }] : [], []];
+    }
+
+    // -- PENDING CONTROLS / USER CONTROLS --
+    if (cmd.includes('DELETE FROM PENDING_CONTROLS')) {
+      this.pendingControls = this.pendingControls.filter(p => String(p.user_id) !== String(params[0]));
+      return [{ affectedRows: 1 }, []];
+    }
+    if (cmd.includes('INSERT INTO PENDING_CONTROLS')) {
+      // params: user_id, telegram_id, live_enabled, max_margin, paused
+      const row = { user_id: params[0], telegram_id: params[1],
+        live_enabled: params[2], max_margin: params[3], paused: params[4],
+        created_at: new Date() };
+      const i = this.pendingControls.findIndex(p => String(p.user_id) === String(row.user_id));
+      if (i >= 0) this.pendingControls[i] = { id: this.pendingControls[i].id, ...row };
+      else this.pendingControls.push({ id: this.pendingControls.length + 1, ...row });
+      return [{ affectedRows: 1 }, []];
+    }
+    if (cmd.includes('FROM PENDING_CONTROLS')) {
+      if (cmd.includes('WHERE USER_ID')) {
+        return [this.pendingControls.filter(p => String(p.user_id) === String(params[0])), []];
+      }
+      return [[...this.pendingControls].sort((a, b) => a.created_at - b.created_at), []];
+    }
+    if (cmd.includes('INSERT INTO USER_CONTROLS')) {
+      // params: user_id, live_enabled, max_margin, paused, allowlisted
+      this.userControls[params[0]] = {
+        live_enabled: !!params[1], max_margin: params[2],
+        paused: !!params[3], allowlisted: !!params[4],
+      };
+      return [{ affectedRows: 1 }, []];
+    }
+    if (cmd.includes('FROM USER_CONTROLS')) {
+      const c = this.userControls[params[0]];
+      return [c ? [c] : [], []];
     }
 
     // -- USERS --
@@ -398,6 +434,33 @@ async function migrate() {
         user_id INT PRIMARY KEY,
         exchange VARCHAR(16) DEFAULT 'bitget',
         connected BOOLEAN DEFAULT FALSE,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+      )
+    `);
+    // Pending per-user live-control changes (flags/numbers, not secrets — no
+    // encryption). The web queues a change; the bot pulls + applies it via the
+    // UserStore (live on/off, per-trade margin cap, pause-to-paper), then acks.
+    // NULL columns mean "leave unchanged". One in-flight request per user.
+    await pool.execute(`
+      CREATE TABLE IF NOT EXISTS pending_controls (
+        id BIGINT AUTO_INCREMENT PRIMARY KEY,
+        user_id INT NOT NULL UNIQUE,
+        telegram_id VARCHAR(32) NOT NULL,
+        live_enabled TINYINT DEFAULT NULL,
+        max_margin DECIMAL(20,2) DEFAULT NULL,
+        paused TINYINT DEFAULT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    // Current applied control state, written back by the bot's ack (the bot's
+    // UserStore is the source of truth; this mirrors it for the web UI).
+    await pool.execute(`
+      CREATE TABLE IF NOT EXISTS user_controls (
+        user_id INT PRIMARY KEY,
+        live_enabled BOOLEAN DEFAULT FALSE,
+        max_margin DECIMAL(20,2) DEFAULT NULL,
+        paused BOOLEAN DEFAULT FALSE,
+        allowlisted BOOLEAN DEFAULT FALSE,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
       )
     `);

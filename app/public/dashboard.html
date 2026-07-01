@@ -117,6 +117,8 @@ a{color:var(--gold);text-decoration:none}
 .cred-btn:hover{background:var(--gold2)}
 .cred-danger{background:var(--red-dim);color:var(--red)}
 .cred-note{font-size:11px;color:var(--text3);margin-top:8px;line-height:1.5}
+.ctl-grid{display:flex;flex-direction:column;gap:8px}
+.ctl-item{display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:12px;color:var(--text2);background:var(--bg);padding:8px 10px;border-radius:4px;border:1px solid var(--border)}
 
 /* === PORTFOLIO === */
 .port-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px;margin-bottom:12px}
@@ -160,6 +162,7 @@ a{color:var(--gold);text-decoration:none}
     <div class="panel" id="keyCallPanel"><div class="panel-title">&#9876; KEY CALL</div><div id="keyCallContent"><div class="empty-msg">Run /getclaw in Telegram for market call</div></div></div>
   </div>
   <div class="panel" id="walletPanel"><div class="panel-title">&#128091; WALLET &mdash; EXCHANGE CONNECTION</div><div id="walletContent"></div></div>
+  <div class="panel" id="controlsPanel"><div class="panel-title">&#127919; LIVE CONTROLS</div><div id="controlsContent"></div></div>
   <div class="panel" id="signalsPanel"><div class="panel-title">&#128225; SIGNAL STREAM <span id="signalsStats" style="font-family:var(--mono);font-size:11px;color:var(--dim);font-weight:400"></span></div><div id="signalsContent"><div class="loading"><div class="spinner"></div><br>Loading signals...</div></div></div>
 </div>
 <script>
@@ -437,8 +440,60 @@ function renderPortfolio() {
   el.innerHTML=h;
 }
 
-let credStatus = null;
+let credStatus = null, controlState = null;
 function authHeaders() { return TOKEN ? {'Authorization':'Bearer '+TOKEN} : {}; }
+
+async function fetchControls() {
+  const el = document.getElementById('controlsContent');
+  if (!LOGGED_IN) { el.innerHTML = '<div class="empty-msg">Log in to manage live controls.</div>'; return; }
+  try {
+    const r = await fetch('/api/controls/status', {headers: authHeaders()});
+    controlState = await r.json();
+    renderControls();
+  } catch(e) { el.innerHTML = '<div class="empty-msg">Could not load controls.</div>'; }
+}
+
+function renderControls() {
+  const el = document.getElementById('controlsContent');
+  const c = controlState || {};
+  if (!c.linked) { el.innerHTML = '<div class="empty-msg">Link your Telegram to manage live controls.</div>'; return; }
+  const liveEff = c.live_enabled && c.allowlisted;
+  const liveTag = liveEff
+    ? '<span class="sig-status" style="color:var(--green);background:var(--green-dim)">&#9679; LIVE ON</span>'
+    : (c.live_enabled && !c.allowlisted)
+      ? '<span class="sig-status">&#9679; ON &mdash; pending operator approval</span>'
+      : '<span class="sig-status" style="color:var(--orange);background:var(--orange-dim)">PAPER</span>';
+  el.innerHTML = `
+    <div class="cred-row" style="margin-bottom:10px">${liveTag}${c.pending?'<span class="cred-note">&#8987; applying…</span>':''}</div>
+    <div class="ctl-grid">
+      <label class="ctl-item"><span>Live trading</span>
+        <input type="checkbox" id="ctlLive" ${c.live_enabled?'checked':''}></label>
+      <label class="ctl-item"><span>Pause (route to paper)</span>
+        <input type="checkbox" id="ctlPause" ${c.paused?'checked':''}></label>
+      <label class="ctl-item"><span>Max margin / trade (USD, 0 = no cap)</span>
+        <input class="cred-in" id="ctlMargin" type="number" min="0" step="1" style="max-width:120px" value="${c.max_margin!=null?c.max_margin:''}"></label>
+    </div>
+    <button class="cred-btn" style="margin-top:10px" onclick="saveControls()">Apply</button>
+    <div id="ctlMsg" class="cred-note"></div>
+    <div class="cred-note">Enabling live still requires operator approval (allowlist). You can always disable, pause, or lower your risk here.</div>`;
+}
+
+async function saveControls() {
+  const msg = document.getElementById('ctlMsg');
+  const marginRaw = document.getElementById('ctlMargin').value.trim();
+  const body = {
+    live_enabled: document.getElementById('ctlLive').checked,
+    paused: document.getElementById('ctlPause').checked,
+  };
+  if (marginRaw !== '') body.max_margin = Number(marginRaw);
+  msg.textContent = 'Applying…';
+  try {
+    const r = await fetch('/api/controls', {method:'POST', headers:{...authHeaders(),'Content-Type':'application/json'}, body: JSON.stringify(body)});
+    const j = await r.json();
+    msg.textContent = j.ok ? 'Queued — applying shortly.' : (j.error || 'Failed.');
+    if (j.ok) setTimeout(fetchControls, 1800);
+  } catch(e) { msg.textContent = 'Network error.'; }
+}
 
 async function fetchCreds() {
   const el = document.getElementById('walletContent');
@@ -566,7 +621,7 @@ function renderKeyCall() {
 
 async function init() {
   await fetchTickers();
-  await Promise.all([fetchScan(), fetchPublicPortfolio(), fetchPortfolio(), fetchSignals(), fetchCreds()]);
+  await Promise.all([fetchScan(), fetchPublicPortfolio(), fetchPortfolio(), fetchSignals(), fetchCreds(), fetchControls()]);
   renderCircuit(); // ensure circuit breaker renders even if fetches return no data
   setInterval(fetchTickers, 5000);
   setInterval(fetchScan, 30000);
