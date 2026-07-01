@@ -37,6 +37,38 @@ _CJK_FONT_PATHS = [
 ]
 
 
+def humanize_close_reason(raw_reason: str, pnl_usd: float = 0.0) -> tuple[str, str]:
+    """Map a raw internal close-reason string to (emoji, friendly_label).
+
+    LiveExecutor's close-reason inference is deliberately honest: when the
+    exit price doesn't clearly match either SL or TP, it reports the literal
+    string "CLOSED (unknown)" rather than falsely asserting a manual close
+    (see LiveExecutor._infer_close_reason). That honesty is the right call
+    internally/in audit logs, but three separate user-facing renderers used
+    to display that raw string verbatim (as "CLOSED (unknown)" or, upper-
+    cased, "CLOSED (UNKNOWN)") -- reading as broken/placeholder text rather
+    than a deliberate "we can't prove which trigger fired" signal. When the
+    mechanism isn't confidently identified, this drops the technical
+    qualifier entirely and just reports the plain outcome (win/loss is
+    already conveyed by the PnL figure next to it).
+    """
+    r = (raw_reason or "").upper()
+    if "LIQUID" in r:
+        return "\U0001f4a5", "Liquidated"
+    if "TP" in r:
+        return "\U0001f3af", "Take-Profit Hit"
+    if "TRAILING" in r:
+        return "\U0001f6d1", "Trailing Stop Hit"
+    # Checked before the generic "SL"/"STOP" match below: a time-based exit
+    # reason containing the word "stop" (e.g. a hypothetical "TIME_STOP")
+    # would otherwise be misclassified as a stop-loss hit.
+    if "TIME" in r:
+        return "⏰", "Time Stop"
+    if "SL" in r or "STOP" in r:
+        return "\U0001f6d1", "Stop-Loss Hit"
+    return ("✅", "Closed") if pnl_usd >= 0 else ("❌", "Closed")
+
+
 def _has_cjk(s: str) -> bool:
     """True if the string contains any CJK ideograph (needs a CJK font)."""
     return any("㐀" <= ch <= "鿿" or "豈" <= ch <= "﫿" for ch in s)
@@ -845,8 +877,20 @@ def render_position_card(data: Dict[str, Any]) -> bytes:
 
     is_long = direction == "LONG"
     dir_color = _GREEN if is_long else _RED
-    pnl_positive = net_pnl >= 0
+    # GROSS sign (matches pnl_pct, the hero %, the current-price cell, and the
+    # card's overall accent) -- kept separate from the NET-of-fees sign below.
+    # A small favorable price move that fees eat into (net negative on a gross
+    # positive move, or vice versa) previously showed the gross "+0.60%" in
+    # red/loss color right next to a negative net dollar figure in the SAME
+    # line, reading as self-contradictory even though both numbers were
+    # individually correct.
+    pnl_positive = pnl_pct >= 0
     pnl_color = _GREEN if pnl_positive else _RED
+    # NET (after-fee) sign -- used ONLY for the dedicated "NET PnL" cell below,
+    # which can legitimately disagree with the gross sign once fees are
+    # subtracted.
+    net_positive = net_pnl >= 0
+    net_color = _GREEN if net_positive else _RED
 
     def _fmt(price: float) -> str:
         if price == 0:
@@ -890,7 +934,7 @@ def render_position_card(data: Dict[str, Any]) -> bytes:
     draw.text((PAD, y), pnl_text, fill=pnl_color, font=_font(28, bold=True))
     pnl_w = draw.textlength(pnl_text, font=_font(28, bold=True))
 
-    usd_text = f"  (${net_pnl:+,.2f})"
+    usd_text = f"  (${pnl_usd:+,.2f})"
     draw.text((PAD + pnl_w, y + 8), usd_text, fill=pnl_color, font=f_value)
 
     y += 42
@@ -935,7 +979,7 @@ def render_position_card(data: Dict[str, Any]) -> bytes:
     net_text = f"${net_pnl:+,.2f}"
     fees_text = f"fees ${fees:.2f}"
     full_w = W - PAD * 2
-    _cell(c1, y, "NET PnL", f"{net_text}  ({fees_text})", pnl_color, w=full_w)
+    _cell(c1, y, "NET PnL", f"{net_text}  ({fees_text})", net_color, w=full_w)
     y += CELL_H + GAP + 4
 
     # ── Market context line ──
@@ -1004,11 +1048,12 @@ def render_close_card(data: Dict[str, Any]) -> bytes:
 
     symbol = data.get("symbol", "???").replace("/USDT", "").replace(":USDT", "").replace("/", "")
     direction = data.get("direction", "LONG").upper()
-    reason = data.get("reason", "closed").upper()
+    pnl_usd = data.get("pnl_usd", 0)
+    _, reason = humanize_close_reason(data.get("reason", "closed"), pnl_usd)
+    reason = reason.upper()
     entry = data.get("entry", 0)
     exit_px = data.get("exit", 0)
     pnl_pct = data.get("pnl_pct", 0)
-    pnl_usd = data.get("pnl_usd", 0)
     fees = data.get("fees", 0)
     size_usd = data.get("size_usd", 0)
     leverage = data.get("leverage", 1)

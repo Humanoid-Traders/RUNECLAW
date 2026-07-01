@@ -1412,33 +1412,40 @@ class TelegramHandler:
         if mode_str == "LIVE":
             live_eq = await self.engine.get_effective_equity_async(tg_id)
             display_equity = live_eq if live_eq > 0 else state.equity_usd
-            executor = self.engine.live_executor
-            open_pos = len(executor.open_positions)
+            # Per-user isolation: route through the CALLER's executor so this
+            # status card reflects the SAME account /positions and /performance
+            # use (resolves to the shared operator executor when
+            # PER_USER_LIVE_ENABLED is off -- byte-identical default). A caller
+            # with no access (per-user on, no linked account) sees zero
+            # positions rather than the operator's.
+            executor = self._caller_executor(update)
+            open_pos = len(executor.open_positions) if executor else 0
             # Count filled vs pending separately
-            _all_tracked = list(executor._positions.values())
+            _all_tracked = list(executor._positions.values()) if executor else []
             _filled_count = sum(1 for p in _all_tracked if p.status == "open")
             _pending_count = sum(1 for p in _all_tracked if p.status == "pending_fill")
 
             # Cross-check with exchange for accurate pending order count
             # The bot's internal count can be stale after restarts
-            try:
-                _ex = await executor._get_exchange()
-                _ex_orders = await _ex.fetch_open_orders(
-                    params={"productType": "USDT-FUTURES"})
-                # Only count limit orders (not SL/TP trigger orders)
-                _ex_limit_orders = [
-                    o for o in (_ex_orders or [])
-                    if (o.get("type") or "").lower() == "limit"
-                ]
-                _exchange_pending = len(_ex_limit_orders)
-                if _exchange_pending != _pending_count:
-                    _pending_count = _exchange_pending
-            except Exception:
-                pass  # Fall back to internal count
+            if executor:
+                try:
+                    _ex = await executor._get_exchange()
+                    _ex_orders = await _ex.fetch_open_orders(
+                        params={"productType": "USDT-FUTURES"})
+                    # Only count limit orders (not SL/TP trigger orders)
+                    _ex_limit_orders = [
+                        o for o in (_ex_orders or [])
+                        if (o.get("type") or "").lower() == "limit"
+                    ]
+                    _exchange_pending = len(_ex_limit_orders)
+                    if _exchange_pending != _pending_count:
+                        _pending_count = _exchange_pending
+                except Exception:
+                    pass  # Fall back to internal count
 
             # Fallback: if no locally-tracked positions, check exchange directly
             # This catches orphan positions (opened but lost from local state)
-            if open_pos == 0:
+            if open_pos == 0 and executor:
                 try:
                     _ex = await executor._get_exchange()
                     _ex_pos = await _ex.fetch_positions()
@@ -1449,7 +1456,7 @@ class TelegramHandler:
                 except Exception:
                     pass
 
-            live_closed = executor.closed_positions
+            live_closed = executor.closed_positions if executor else []
             # Exclude adopted orphan trades, injected diagnostic artifacts, and
             # never-filled orders (canceled/expired/price_drift/rejected close at
             # $0 PnL) so this matches the same trade set /performance uses.
@@ -3081,13 +3088,24 @@ class TelegramHandler:
     @guard("portfolio")
     async def _cmd_livepositions(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """/livepositions — show live positions and pending orders separately."""
-        positions = self.engine.live_executor._positions
+        # Per-user isolation: route through the CALLER's executor so a user
+        # only ever sees their own account's positions (resolves to the
+        # shared operator executor when PER_USER_LIVE_ENABLED is off --
+        # byte-identical default). Mirrors _cmd_open_positions / the pos_close
+        # button callback, which already do this.
+        executor = self._caller_executor(update)
+        if executor is None:
+            await self._send(update,
+                "\U0001f512 <b>Access denied</b>\n\n"
+                "No linked exchange account for this user.")
+            return
+        positions = executor._positions
         filled_pos = [p for p in positions.values() if p.status == "open"]
         pending_pos = [p for p in positions.values() if p.status == "pending_fill"]
 
         # ── Visual card path (position cards + pending-orders card). Best-effort:
         #    any failure falls through to the rich text readout below. ──
-        if await self._render_livepositions_cards(update, filled_pos, pending_pos):
+        if await self._render_livepositions_cards(update, filled_pos, pending_pos, executor):
             return
 
         # Fetch current prices for all relevant symbols
@@ -3095,7 +3113,7 @@ class TelegramHandler:
         all_pos = filled_pos + pending_pos
         if all_pos:
             try:
-                exchange = await self.engine.live_executor._get_exchange()
+                exchange = await executor._get_exchange()
                 for p in all_pos:
                     if p.symbol not in current_prices:
                         try:
@@ -3111,7 +3129,7 @@ class TelegramHandler:
         ex_pos_map: dict = {}
         if filled_pos:
             try:
-                exchange = await self.engine.live_executor._get_exchange()
+                exchange = await executor._get_exchange()
                 _ex_positions = await exchange.fetch_positions(
                     params={"productType": "USDT-FUTURES"})
                 for _ep in (_ex_positions or []):
@@ -3131,7 +3149,7 @@ class TelegramHandler:
         rolling_atr: dict = {}
         if filled_pos:
             try:
-                exchange = await self.engine.live_executor._get_exchange()
+                exchange = await executor._get_exchange()
                 from bot.core import position_telemetry as _pt
                 for _p in filled_pos:
                     if _p.symbol in rolling_atr:
@@ -3154,7 +3172,7 @@ class TelegramHandler:
         # Fallback: check exchange directly if no local positions at all
         if not filled_pos and not pending_pos:
             try:
-                exchange = await self.engine.live_executor._get_exchange()
+                exchange = await executor._get_exchange()
                 ex_positions = await exchange.fetch_positions(
                     params={"productType": "USDT-FUTURES"})
                 ex_open = [p for p in (ex_positions or [])
@@ -3320,15 +3338,21 @@ class TelegramHandler:
 
         await self._send(update, "\n".join(lines))
 
-    async def _render_livepositions_cards(self, update, filled_pos, pending_pos) -> bool:
+    async def _render_livepositions_cards(self, update, filled_pos, pending_pos, executor=None) -> bool:
         """Render /livepositions as PNG cards: one position card per open position
         (composited into a single image) plus the pending-orders card.
 
         Best-effort and display-only: returns True if at least one card was sent;
         False (or on any error) lets the caller fall back to the text readout.
+
+        executor: the CALLER's resolved executor (see _cmd_livepositions) --
+        defaults to the shared operator executor for any other caller that
+        hasn't been updated to resolve one (byte-identical to prior behaviour).
         """
         if not filled_pos and not pending_pos:
             return False
+        if executor is None:
+            executor = self.engine.live_executor
         try:
             from datetime import datetime, timezone
 
@@ -3337,7 +3361,7 @@ class TelegramHandler:
 
             exchange = None
             try:
-                exchange = await self.engine.live_executor._get_exchange()
+                exchange = await executor._get_exchange()
             except Exception:
                 pass
 
@@ -3418,7 +3442,17 @@ class TelegramHandler:
             await self._send(update, "Usage: <code>/liveclose TRADE_ID</code>")
             return
         trade_id = args[0]
-        result = await self.engine.live_executor.close_position(trade_id, "manual_telegram")
+        # Per-user isolation: close via the CALLER's executor, same as
+        # _cmd_livepositions and the pos_close button callback (resolves to
+        # the shared operator executor when PER_USER_LIVE_ENABLED is off --
+        # byte-identical default) so a user can only ever close their OWN
+        # account's positions.
+        executor = self._caller_executor(update)
+        if executor is None:
+            await self._send(update,
+                "\U0001f512 <b>Access denied</b>\n\nNo linked exchange account for this user.")
+            return
+        result = await executor.close_position(trade_id, "manual_telegram")
         await self._send(update, f"\U0001f510 {result}")
 
     @guard("admin")
@@ -3601,29 +3635,12 @@ class TelegramHandler:
 
                 if close_png:
                     # Send as photo with brief caption
+                    from bot.formatters.signal_card import humanize_close_reason
                     sym = close_data.get("symbol", "").replace("/", "").replace(":USDT", "")
                     direction = close_data.get("direction", "")
                     pnl_usd = close_data.get("pnl_usd", 0)
                     reason = close_data.get("reason", "closed")
-                    # Show specific close reason with appropriate emoji
-                    if "TP" in reason.upper():
-                        pnl_emoji = "\U0001f3af"  # target emoji for TP
-                        reason_short = "TP HIT"
-                    elif "SL" in reason.upper() or "STOP" in reason.upper():
-                        pnl_emoji = "\U0001f6d1"  # stop sign for SL
-                        reason_short = "SL HIT"
-                    elif "TRAILING" in reason.upper():
-                        pnl_emoji = "\U0001f6d1"
-                        reason_short = "TRAILING SL"
-                    elif "TIME" in reason.upper():
-                        pnl_emoji = "\u23f0"  # alarm clock for time stop
-                        reason_short = "TIME STOP"
-                    elif pnl_usd >= 0:
-                        pnl_emoji = "\u2705"
-                        reason_short = reason
-                    else:
-                        pnl_emoji = "\u274c"
-                        reason_short = reason
+                    pnl_emoji, reason_short = humanize_close_reason(reason, pnl_usd)
                     cap = (f"{pnl_emoji} <b>{html.escape(sym)}</b> {direction} CLOSED\n"
                            f"PnL: ${pnl_usd:+,.2f} | {html.escape(reason_short)}")
                     for _cid in _notify_chat_ids:
@@ -3636,27 +3653,14 @@ class TelegramHandler:
                         except Exception:
                             pass
                 else:
-                    # Fallback to text — use reason-specific heading
+                    # Fallback to text — use reason-specific heading. close_data
+                    # can be None here, so there's no pnl_usd to key the sign
+                    # off; fall back to a text heuristic on msg in that case.
+                    from bot.formatters.signal_card import humanize_close_reason
                     reason = close_data.get("reason", "") if close_data else ""
-                    is_win = "+$" in msg
-                    if "TP" in reason.upper():
-                        emoji = "\U0001f3af"  # 🎯
-                        heading = "TP HIT"
-                    elif "SL" in reason.upper() or "STOP" in reason.upper():
-                        emoji = "\U0001f6d1"  # 🛑
-                        heading = "SL HIT"
-                    elif "TRAILING" in reason.upper():
-                        emoji = "\U0001f6d1"
-                        heading = "TRAILING SL"
-                    elif "TIME" in reason.upper():
-                        emoji = "\u23f0"  # ⏰
-                        heading = "TIME STOP"
-                    elif is_win:
-                        emoji = "\u2705"
-                        heading = "Trade Closed"
-                    else:
-                        emoji = "\u274c"
-                        heading = "Trade Closed"
+                    pnl_for_sign = (close_data.get("pnl_usd", 0) if close_data
+                                    else (1.0 if "+$" in msg else -1.0))
+                    emoji, heading = humanize_close_reason(reason, pnl_for_sign)
                     sym = close_data.get("symbol", "") if close_data else ""
                     direction = close_data.get("direction", "") if close_data else ""
                     if sym and direction:
