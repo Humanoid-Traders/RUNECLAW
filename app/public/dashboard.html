@@ -11,6 +11,9 @@
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <link rel="icon" type="image/png" sizes="256x256" href="/app_icon_256.png">
 <link rel="apple-touch-icon" href="/app_icon_512.png">
+<link rel="manifest" href="/manifest.json">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="RUNECLAW">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/styles.css">
@@ -197,6 +200,19 @@ a{color:var(--gold);text-decoration:none}
 .candle-tip .o{color:var(--text2)}.candle-tip .h{color:var(--green)}.candle-tip .l{color:var(--red)}
 .candle-tip .c{color:var(--gold2);font-weight:700}
 
+/* === ORDER BOOK & FUNDING === */
+.depth-ladder{display:grid;grid-template-columns:1fr 1fr;gap:10px;font-family:var(--mono);font-size:11px}
+.depth-col h5{font-size:10px;color:var(--text3);text-transform:uppercase;margin-bottom:6px;letter-spacing:.5px;font-weight:600}
+.depth-row{position:relative;display:flex;justify-content:space-between;padding:3px 6px;margin-bottom:2px;border-radius:3px;overflow:hidden}
+.depth-row .bar{position:absolute;top:0;bottom:0;z-index:0}
+.depth-row.bid .bar{right:0;background:rgba(34,197,94,.18)}
+.depth-row.ask .bar{left:0;background:rgba(239,68,68,.18)}
+.depth-row span{position:relative;z-index:1}
+.depth-row .px.bid{color:var(--green)}.depth-row .px.ask{color:var(--red)}
+.funding-stat{text-align:center;padding:14px 0}
+.funding-stat .fr-val{font-family:var(--mono);font-size:28px;font-weight:700}
+.funding-stat .fr-label{font-size:11px;color:var(--text3);margin-top:6px}
+
 /* === KEY CALL === */
 .key-call{font-size:13px;color:var(--text2);line-height:1.7}
 .key-call strong{color:var(--text)}
@@ -229,6 +245,13 @@ a{color:var(--gold);text-decoration:none}
 .hm-empty{background:var(--bg3)}
 .hm-pos1{background:rgba(34,197,94,.35)}.hm-pos2{background:rgba(34,197,94,.65)}.hm-pos3{background:var(--green)}
 .hm-neg1{background:rgba(239,68,68,.35)}.hm-neg2{background:rgba(239,68,68,.65)}.hm-neg3{background:var(--red)}
+
+/* === NOTIFICATION BELL === */
+.notif-btn{background:none;border:none;cursor:pointer;color:var(--text3);padding:0;display:inline-flex;
+  align-items:center;vertical-align:-2px}
+.notif-btn:hover{color:var(--text2)}
+.notif-btn.on{color:var(--gold)}
+.notif-btn .icon{width:14px;height:14px;color:inherit}
 
 /* === TOASTS === */
 .toast-container{position:fixed;bottom:18px;right:18px;z-index:100;display:flex;flex-direction:column;gap:8px;
@@ -266,6 +289,7 @@ a{color:var(--gold);text-decoration:none}
   <symbol id="icon-coin" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v10M9.3 9.3c0-1.3 1.2-2.3 2.7-2.3s2.7 1 2.7 2.3c0 2.5-5.4 1.9-5.4 4.4 0 1.3 1.2 2.3 2.7 2.3s2.7-1 2.7-2.3"/></g></symbol>
   <symbol id="icon-sparkle" viewBox="0 0 24 24"><g fill="currentColor"><path d="M12 3l1.6 4.4L18 9l-4.4 1.6L12 15l-1.6-4.4L6 9l4.4-1.6L12 3z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8L19 15z"/></g></symbol>
   <symbol id="icon-menu" viewBox="0 0 24 24"><g stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></g></symbol>
+  <symbol id="icon-bell" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 10a6 6 0 0 1 12 0c0 5 2 6 2 6H4s2-1 2-6Z"/><path d="M10 20a2 2 0 0 0 4 0"/></g></symbol>
 </svg>
 <nav class="topnav">
   <a href="/" class="brand"><svg class="brand-mark"><use href="#brand-mark"></use></svg>RUNECLAW</a>
@@ -276,7 +300,7 @@ a{color:var(--gold);text-decoration:none}
     <a href="https://t.me/HTRUNECLAW_bot" target="_blank" rel="noopener">Telegram</a>
     <a href="https://humanoid-traders-1.gitbook.io/humanoid-traders-ai" target="_blank" rel="noopener">Docs</a>
   </div>
-  <div class="nav-acct"><span id="acctChip"></span><span id="connHealth" class="live">&#9679; LIVE</span> <span id="headerTime">--:--</span></div>
+  <div class="nav-acct"><span id="acctChip"></span><button id="notifBtn" class="notif-btn" onclick="toggleNotifications()" title="Enable trade notifications"><svg class="icon"><use href="#icon-bell"></use></svg></button><span id="connHealth" class="live">&#9679; LIVE</span> <span id="headerTime">--:--</span></div>
 </nav>
 <div class="toast-container" id="toastContainer"></div>
 <div class="war-room" id="app">
@@ -309,6 +333,10 @@ a{color:var(--gold);text-decoration:none}
       </div>
       <div id="chartContent"><div class="empty-msg">Loading chart&hellip;</div></div>
     </div>
+  </div>
+  <div class="grid-top" style="grid-template-columns:1fr 1fr">
+    <div class="panel" id="depthPanel"><div class="panel-title"><svg class="icon"><use href="#icon-chart"></use></svg> ORDER BOOK</div><div id="depthContent"><div class="empty-msg">Loading order book&hellip;</div></div></div>
+    <div class="panel" id="fundingPanel"><div class="panel-title"><svg class="icon"><use href="#icon-bolt"></use></svg> FUNDING RATE</div><div id="fundingContent"><div class="empty-msg">Loading funding rate&hellip;</div></div></div>
   </div>
   <div class="grid-top" style="grid-template-columns:1fr 1fr">
     <div class="panel" id="portfolioPanel"><div class="panel-title"><svg class="icon"><use href="#icon-coin"></use></svg> PORTFOLIO</div><div id="portfolioContent"><div class="skel-wrap"><div class="skel skel-row"></div><div class="skel skel-row"></div><div class="skel skel-row"></div></div></div></div>
@@ -935,6 +963,94 @@ function candleHover(ev) {
 }
 function candleHoverEnd() { const t = document.getElementById('candleTip'); if (t) t.style.display = 'none'; }
 
+// === ORDER BOOK DEPTH ===
+async function fetchDepth() {
+  const el = document.getElementById('depthContent');
+  const symbol = _chartSymbol || 'BTCUSDT';
+  try {
+    const r = await fetch(`/api/market/depth/${symbol}`);
+    const d = await r.json();
+    renderDepth(d.data || {});
+  } catch (e) { if (el) el.innerHTML = '<div class="empty-msg">Order book unavailable right now.</div>'; }
+}
+function renderDepth(book) {
+  const el = document.getElementById('depthContent');
+  if (!el) return;
+  const bids = (book.bids || []).slice(0, 5);
+  const asks = (book.asks || []).slice(0, 5);
+  if (!bids.length && !asks.length) { el.innerHTML = '<div class="empty-msg">No order book data yet.</div>'; return; }
+  const sizes = [...bids, ...asks].map(l => parseFloat(l[1]) || 0);
+  const maxSize = Math.max(...sizes, 1e-9);
+  const rows = (levels, side) => levels.map(l => {
+    const price = parseFloat(l[0]), size = parseFloat(l[1]) || 0;
+    const pct = Math.min(100, (size / maxSize) * 100);
+    return `<div class="depth-row ${side}"><div class="bar" style="width:${pct}%"></div><span class="px ${side}">${fmtP(price)}</span><span>${size.toFixed(3)}</span></div>`;
+  }).join('') || '<div class="empty-msg">--</div>';
+  el.innerHTML = `<div class="depth-ladder">
+    <div class="depth-col"><h5>Bids</h5>${rows(bids, 'bid')}</div>
+    <div class="depth-col"><h5>Asks</h5>${rows(asks, 'ask')}</div>
+  </div>`;
+}
+
+// === FUNDING RATE ===
+async function fetchFunding() {
+  const el = document.getElementById('fundingContent');
+  const symbol = _chartSymbol || 'BTCUSDT';
+  try {
+    const r = await fetch(`/api/market/funding/${symbol}`);
+    const d = await r.json();
+    const rows = Array.isArray(d.data) ? d.data : (d.data ? [d.data] : []);
+    const info = rows[0] || {};
+    const rate = parseFloat(info.fundingRate);
+    if (!Number.isFinite(rate)) { if (el) el.innerHTML = '<div class="empty-msg">No funding data yet.</div>'; return; }
+    const pct = rate * 100;
+    if (el) el.innerHTML = `<div class="funding-stat">
+      <div class="fr-val ${pct >= 0 ? 'pos' : 'neg'}">${pct >= 0 ? '+' : ''}${pct.toFixed(4)}%</div>
+      <div class="fr-label">${symbol.replace('USDT','')} &middot; funding rate</div>
+    </div>`;
+  } catch (e) { if (el) el.innerHTML = '<div class="empty-msg">Funding rate unavailable right now.</div>'; }
+}
+
+// === BROWSER PUSH NOTIFICATIONS ===
+// Toasts only fire while this tab is open and focused; real Notification API
+// pushes reach the user even when the dashboard is backgrounded. Permission
+// is only ever requested on an explicit click (browsers block auto-request).
+function notifSupported() { return typeof Notification !== 'undefined'; }
+function updateNotifBtn() {
+  const btn = document.getElementById('notifBtn');
+  if (!btn || !notifSupported()) { if (btn) btn.style.display = 'none'; return; }
+  const granted = Notification.permission === 'granted';
+  btn.classList.toggle('on', granted);
+  btn.title = granted ? 'Trade notifications on'
+    : Notification.permission === 'denied' ? 'Notifications blocked — check your browser site settings'
+    : 'Enable trade notifications';
+}
+async function toggleNotifications() {
+  if (!notifSupported()) { showToast('Notifications are not supported in this browser.', 'warn'); return; }
+  if (Notification.permission === 'granted') {
+    showToast('Notifications are already enabled for this site.', 'info');
+    return;
+  }
+  if (Notification.permission === 'denied') {
+    showToast('Notifications are blocked — enable them in your browser’s site settings.', 'warn');
+    return;
+  }
+  const perm = await Notification.requestPermission();
+  updateNotifBtn();
+  showToast(perm === 'granted' ? 'Trade notifications enabled.' : 'Notifications not enabled.', perm === 'granted' ? 'success' : 'warn');
+}
+function notifySimple(title, body) {
+  if (!notifSupported() || Notification.permission !== 'granted') return;
+  try { new Notification(title, { body, icon: '/app_icon_256.png' }); } catch (e) { /* fail open */ }
+}
+function notifyTrade(data) {
+  const pnl = Number(data && data.pnl);
+  const sym = ((data && data.symbol) || 'Position').replace(':USDT', '').replace('/USDT', '');
+  const dir = (data && data.direction) || '';
+  const body = Number.isFinite(pnl) ? `${dir} closed ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}` : `${dir} position updated`;
+  notifySimple(`RUNECLAW · ${sym}`, body);
+}
+
 // === TOASTS ===
 function showToast(message, type) {
   const c = document.getElementById('toastContainer');
@@ -1044,6 +1160,7 @@ async function stopTrading() {
     const j = await r.json();
     msg.textContent = j.ok ? 'Emergency stop queued — closing positions…' : (j.error || 'Failed.');
     showToast(j.ok ? 'Emergency stop queued — closing positions.' : (j.error || 'Emergency stop failed.'), j.ok ? 'success' : 'error');
+    if (j.ok) notifySimple('RUNECLAW · Emergency Stop', 'Live trading disabled — closing your open positions.');
     if (j.ok) setTimeout(fetchControls, 2500);
   } catch(e) { msg.textContent = 'Network error.'; showToast('Network error — emergency stop not sent.', 'error'); }
 }
@@ -1336,7 +1453,11 @@ function connectStream() {
     const es = new EventSource('/api/stream');
     es.addEventListener('scan', () => { fetchScan(); rotateTicker(); });
     es.addEventListener('portfolio', () => { fetchPublicPortfolio(); if (LOGGED_IN) fetchPortfolio(); });
-    es.addEventListener('trade', () => { if (LOGGED_IN) { fetchPortfolio(); fetchHeatmap(); } fetchPublicPortfolio(); });
+    es.addEventListener('trade', (ev) => {
+      if (LOGGED_IN) { fetchPortfolio(); fetchHeatmap(); }
+      fetchPublicPortfolio();
+      try { notifyTrade(JSON.parse(ev.data || '{}')); } catch (e) { /* malformed payload -- skip notification only */ }
+    });
     es.addEventListener('signals', fetchSignals);
     es.onerror = () => { /* browser auto-reconnects; polling still covers gaps */ };
   } catch (e) { /* fail open to polling only */ }
@@ -1354,11 +1475,14 @@ async function init() {
     const el = document.getElementById(id);
     if (el) el.addEventListener('change', fetchCandles);
   });
+  const chartSymbolEl = document.getElementById('chartSymbol');
+  if (chartSymbolEl) chartSymbolEl.addEventListener('change', () => { fetchDepth(); fetchFunding(); });
   const uniSearch = document.getElementById('uniSearch');
   if (uniSearch) uniSearch.addEventListener('input', renderUniverse);
   renderCalculator();
+  updateNotifBtn();
   await fetchTickers();
-  await Promise.all([fetchScan(), fetchPublicPortfolio(), fetchPortfolio(), fetchSignals(), fetchCreds(), fetchControls(), fetchCandles(), fetchHeatmap()]);
+  await Promise.all([fetchScan(), fetchPublicPortfolio(), fetchPortfolio(), fetchSignals(), fetchCreds(), fetchControls(), fetchCandles(), fetchHeatmap(), fetchDepth(), fetchFunding()]);
   renderCircuit(); // ensure circuit breaker renders even if fetches return no data
   rotateTicker();
   connectStream();
@@ -1367,10 +1491,13 @@ async function init() {
   setInterval(fetchPublicPortfolio, 60000);
   setInterval(fetchSignals, 30000);              // faster signal refresh
   setInterval(fetchCandles, 20000);
+  setInterval(fetchDepth, 5000);
+  setInterval(fetchFunding, 30000);
   setInterval(rotateTicker, 4500);
   if (LOGGED_IN) setInterval(fetchPortfolio, 45000);
 }
 init();
+if('serviceWorker' in navigator){navigator.serviceWorker.register('/sw.js').catch(()=>{});}
 </script>
 </body>
 </html>
