@@ -50,6 +50,17 @@ from bot.core.smart_exits import TimeOfDayEdge, AdaptiveLimitDistance
 logger = logging.getLogger(__name__)
 
 
+def filter_adopted_messages(sync_msgs: list[str]) -> list[str]:
+    """The "Adopted"-labeled subset of sync_portfolio_with_exchange's messages.
+
+    Extracted so the adopt-notify callback (which expects the FULL list, to
+    render one consolidated "Found N position(s)..." notification) always
+    gets a real list -- passing it a single string one call at a time made
+    len()/iteration treat that string as a sequence of characters.
+    """
+    return [m for m in sync_msgs if "Adopted" in m]
+
+
 class RuneClawEngine:
     """
     Main event loop that ties scanner, analyzer, risk, and execution together.
@@ -3143,11 +3154,20 @@ class RuneClawEngine:
                     if "Adopted" in msg or "Ghost" in msg or "Orphan" in msg:
                         audit(system_log, f"Periodic sync: {msg}",
                               action="periodic_exchange_sync", result="SYNCED")
-                        if self._adopt_notify_callback and "Adopted" in msg:
-                            try:
-                                await self._adopt_notify_callback(msg)
-                            except Exception as exc:
-                                logger.debug("Adopt notify failed: %s", exc)
+                # _adopt_notify_callback expects a list[str] (it renders ONE
+                # consolidated "Found N position(s)..." notification) -- this
+                # used to call it once PER message with a single string, so
+                # len()/iteration over that string produced a garbled
+                # character-by-character bullet list (e.g. "Found 41
+                # position(s)" where 41 was the CHARACTER COUNT of one
+                # message, each letter its own bullet). Collect all "Adopted"
+                # messages first and notify once with the real list.
+                adopted_msgs = filter_adopted_messages(sync_msgs)
+                if adopted_msgs and self._adopt_notify_callback:
+                    try:
+                        await self._adopt_notify_callback(adopted_msgs)
+                    except Exception as exc:
+                        logger.debug("Adopt notify failed: %s", exc)
             except Exception as exc:
                 audit(system_log, f"Periodic exchange sync error: {exc}",
                       action="periodic_exchange_sync", result="ERROR")

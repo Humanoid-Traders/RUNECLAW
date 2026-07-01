@@ -382,6 +382,22 @@ class TelegramHandler:
                 except Exception as e2:
                     system_log.error("Failed to send message chunk %d/%d: %s", i + 1, len(chunks), e2)
 
+    async def _send_error(self, update: Update, command_name: str, exc: Exception) -> None:
+        """Log the real exception server-side and send a friendly, generic
+        reply -- never the raw exception text.
+
+        Several admin commands used to send f"❌ Error: {exc}" directly via
+        bot.send_message(), bypassing BOTH this class's _send() (which the
+        rest of the bot goes through) and its secret-redaction chokepoint
+        (Audit F-15: str(exc) on a ccxt/auth error can contain the raw API
+        key). Those sites also never logged the exception anywhere, so a
+        failure was invisible to the operator once the raw text was
+        (rightly) not something to rely on staring at in Telegram.
+        """
+        system_log.error("%s failed: %s", command_name, exc, exc_info=True)
+        await self._send(update,
+            f"❌ Something went wrong loading {command_name}. Try again in a moment.")
+
     async def _send_photo(self, update: Update, png: bytes, caption: str,
                           reply_markup=None) -> bool:
         """Send a photo with HTML caption + inline keyboard. Returns True on success."""
@@ -2520,7 +2536,7 @@ class TelegramHandler:
                 parse_mode="HTML",
             )
         except Exception as exc:
-            await context.bot.send_message(chat_id=chat_id, text=f"\u274c Error: {exc}")
+            await self._send_error(update, "the equity curve report", exc)
 
     async def _cmd_crossasset(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Show cross-asset correlation context."""
@@ -2548,7 +2564,7 @@ class TelegramHandler:
             ]
             await context.bot.send_message(chat_id=chat_id, text="\n".join(lines), parse_mode="HTML")
         except Exception as exc:
-            await context.bot.send_message(chat_id=chat_id, text=f"\u274c Error: {exc}")
+            await self._send_error(update, "the cross-asset context", exc)
 
     async def _cmd_slippage(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Show slippage statistics."""
@@ -2586,7 +2602,7 @@ class TelegramHandler:
 
             await context.bot.send_message(chat_id=chat_id, text="\n".join(lines), parse_mode="HTML")
         except Exception as exc:
-            await context.bot.send_message(chat_id=chat_id, text=f"\u274c Error: {exc}")
+            await self._send_error(update, "the slippage report", exc)
 
     async def _cmd_sweep(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Show liquidity sweep detection for a symbol."""
@@ -4709,7 +4725,7 @@ class TelegramHandler:
 
             await ctx.bot.send_message(chat_id=chat_id, text="\n".join(lines), parse_mode="HTML")
         except Exception as exc:
-            await ctx.bot.send_message(chat_id=chat_id, text=f"\u274c Error: {exc}")
+            await self._send_error(update, "the trade journal", exc)
 
     @guard("costs")
     async def _cmd_costs(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -6253,7 +6269,7 @@ class TelegramHandler:
             await ctx.bot.send_message(chat_id=chat_id, text=format_flag_report(),
                                        parse_mode="HTML")
         except Exception as exc:
-            await ctx.bot.send_message(chat_id=chat_id, text=f"❌ Error: {exc}")
+            await self._send_error(update, "the feature flags", exc)
 
     def _representative_regime(self) -> str:
         """A real market regime to display for /strategy. The risk engine's
@@ -6306,7 +6322,7 @@ class TelegramHandler:
 
             await ctx.bot.send_message(chat_id=chat_id, text="\n".join(lines), parse_mode="HTML")
         except Exception as exc:
-            await ctx.bot.send_message(chat_id=chat_id, text=f"\u274c Error: {exc}")
+            await self._send_error(update, "the strategy settings", exc)
 
     # ── Signal stats command ─────────────────────────────────────
 
