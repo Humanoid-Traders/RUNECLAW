@@ -46,7 +46,9 @@ def _stub_engine():
         _history=history,
     )
     risk = types.SimpleNamespace(circuit_breaker_active=False)
-    return types.SimpleNamespace(risk=risk, portfolio=portfolio)
+    stub = types.SimpleNamespace(risk=risk, portfolio=portfolio)
+    stub._build_strategy_config_summary = lambda: RuneClawEngine._build_strategy_config_summary(stub)
+    return stub
 
 
 class TestPushScanSummaryToWebsite:
@@ -61,6 +63,22 @@ class TestPushScanSummaryToWebsite:
 
         assert captured["payload"]["circuit_breaker"]["equity"] == 800.0
         assert captured["payload"]["regime"]["label"] == "NEUTRAL"  # no BTC signal -> placeholder default
+
+    def test_payload_includes_real_strategy_config(self, monkeypatch):
+        monkeypatch.setattr(eng_mod, "CONFIG", CONFIG)
+        import bot.utils.website_sync as ws
+        captured = {}
+        monkeypatch.setattr(ws, "sync_scan_in_background", lambda payload: captured.update(payload=payload))
+
+        stub = _stub_engine()
+        RuneClawEngine._push_scan_summary_to_website(stub, [])
+
+        cfg = captured["payload"]["config"]
+        assert cfg["min_confidence"] == CONFIG.risk.min_confidence
+        assert cfg["max_open_positions"] == CONFIG.risk.max_open_positions
+        assert cfg["mode"] in ("LIVE", "PAPER")
+        assert cfg["strategy_types"]["scalp"]["time_close_hours"] == CONFIG.strategy_types.get_time_close_hours("scalp")
+        assert cfg["strategy_types"]["swing"]["min_confidence"] == CONFIG.strategy_types.get_min_confidence("swing")
 
     def test_bullish_regime_derived_from_btc_signal(self, monkeypatch):
         monkeypatch.setattr(eng_mod, "CONFIG", CONFIG)

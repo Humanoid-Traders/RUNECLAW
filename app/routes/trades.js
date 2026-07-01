@@ -2,11 +2,14 @@ const express = require('express');
 const { pool } = require('../db');
 const { authMiddleware } = require('../auth');
 const { computePerformance } = require('../lib/trade_performance');
+const { rateLimit, userKey } = require('../lib/rate_limit');
 
 const router = express.Router();
 
 // All routes require auth
 router.use(authMiddleware);
+
+const notesLimit = rateLimit({ windowMs: 60000, max: 30, key: userKey });
 
 // GET /api/trades/stats - Portfolio statistics
 router.get('/stats', async (req, res) => {
@@ -87,7 +90,7 @@ router.get('/history', async (req, res) => {
     const offset = parseInt(req.query.offset) || 0;
 
     const [rows] = await pool.execute(
-      `SELECT id, symbol, direction, entry_price, exit_price, size_usd, pnl, fees, pattern, opened_at, closed_at
+      `SELECT id, symbol, direction, entry_price, exit_price, size_usd, pnl, fees, pattern, opened_at, closed_at, notes
        FROM trades WHERE user_id = ? AND status = 'CLOSED'
        ORDER BY closed_at DESC LIMIT ? OFFSET ?`,
       [uid, limit, offset]
@@ -119,6 +122,27 @@ router.get('/open', async (req, res) => {
   } catch (err) {
     console.error('Open error:', err.message);
     res.status(500).json({ error: 'Failed to fetch positions' });
+  }
+});
+
+// PATCH /api/trades/:id/notes - attach a journal note to one of the user's
+// OWN closed trades. Turns the trade history from a ledger into something
+// worth reviewing (why a setup worked or didn't).
+router.patch('/:id/notes', notesLimit, async (req, res) => {
+  try {
+    const uid = req.user.user_id;
+    const id = parseInt(req.params.id);
+    if (!Number.isInteger(id)) return res.status(400).json({ error: 'Invalid trade id' });
+    const notes = typeof req.body.notes === 'string' ? req.body.notes.slice(0, 2000) : '';
+    const [result] = await pool.execute(
+      'UPDATE trades SET notes = ? WHERE id = ? AND user_id = ?',
+      [notes, id, uid]
+    );
+    if (!result.affectedRows) return res.status(404).json({ error: 'Trade not found' });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('Trade notes error:', err.message);
+    res.status(500).json({ error: 'Failed to save note' });
   }
 });
 

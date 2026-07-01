@@ -238,6 +238,8 @@ a{color:var(--gold);text-decoration:none}
 .ob-tag{font-family:var(--mono);font-size:10px;letter-spacing:1px;padding:3px 8px;border-radius:3px}
 .ob-tag.done{color:var(--green);background:var(--green-dim)}
 .ob-tag.todo{color:var(--orange);background:var(--orange-dim)}
+.ob-highlight{animation:ob-flash 1.6s ease}
+@keyframes ob-flash{0%{box-shadow:0 0 0 2px var(--gold)}100%{box-shadow:none}}
 
 /* === PNL CALENDAR HEATMAP === */
 .hm-grid{display:grid;grid-auto-flow:column;grid-template-rows:repeat(7,1fr);gap:3px;overflow-x:auto;padding-bottom:2px}
@@ -245,6 +247,15 @@ a{color:var(--gold);text-decoration:none}
 .hm-empty{background:var(--bg3)}
 .hm-pos1{background:rgba(34,197,94,.35)}.hm-pos2{background:rgba(34,197,94,.65)}.hm-pos3{background:var(--green)}
 .hm-neg1{background:rgba(239,68,68,.35)}.hm-neg2{background:rgba(239,68,68,.65)}.hm-neg3{background:var(--red)}
+
+/* === TRADE JOURNAL === */
+.journal-list{display:flex;flex-direction:column;gap:10px;max-height:420px;overflow-y:auto}
+.journal-row{background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:8px 10px}
+.journal-head{display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:12px;margin-bottom:6px}
+.journal-date{color:var(--text3);font-size:10px}
+.journal-note{width:100%;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);
+  font-size:12px;padding:6px 8px;resize:vertical;min-height:32px;font-family:inherit}
+.journal-note:focus{outline:none;border-color:var(--gold)}
 
 /* === NOTIFICATION BELL === */
 .notif-btn{background:none;border:none;cursor:pointer;color:var(--text3);padding:0;display:inline-flex;
@@ -343,9 +354,11 @@ a{color:var(--gold);text-decoration:none}
     <div class="panel" id="keyCallPanel"><div class="panel-title"><svg class="icon icon-ai"><use href="#icon-sparkle"></use></svg> KEY CALL</div><div id="keyCallContent"><div class="empty-msg">Run /getclaw in Telegram for market call</div></div></div>
   </div>
   <div class="panel" id="heatmapPanel"><div class="panel-title"><svg class="icon"><use href="#icon-chart"></use></svg> PNL CALENDAR</div><div id="heatmapContent"><div class="empty-msg">Log in to see your day-by-day PnL.</div></div></div>
+  <div class="panel" id="journalPanel"><div class="panel-title"><svg class="icon"><use href="#icon-coin"></use></svg> TRADE JOURNAL</div><div id="journalContent"><div class="empty-msg">Log in to journal your trades.</div></div></div>
   <div class="panel" id="walletPanel"><div class="panel-title"><svg class="icon"><use href="#icon-wallet"></use></svg> WALLET &mdash; EXCHANGE CONNECTION</div><div id="walletContent"></div></div>
   <div class="panel" id="controlsPanel"><div class="panel-title"><svg class="icon"><use href="#icon-target"></use></svg> LIVE CONTROLS</div><div id="controlsContent"></div></div>
   <div class="panel" id="calcPanel"><div class="panel-title"><svg class="icon"><use href="#icon-coin"></use></svg> POSITION SIZE CALCULATOR</div><div id="calcContent"></div></div>
+  <div class="panel" id="strategyPanel"><div class="panel-title"><svg class="icon"><use href="#icon-shield"></use></svg> STRATEGY &amp; RISK LOGIC</div><div id="strategyContent"><div class="empty-msg">Loading strategy config&hellip;</div></div></div>
   <div class="panel" id="insightsPanel"><div class="panel-title"><svg class="icon"><use href="#icon-chart"></use></svg> SIGNAL INSIGHTS</div><div id="insightsContent"><div class="skel-wrap"><div class="skel skel-row"></div><div class="skel skel-row"></div><div class="skel skel-row"></div></div></div></div>
   <div class="panel" id="signalsPanel"><div class="panel-title"><svg class="icon"><use href="#icon-radar"></use></svg> SIGNAL STREAM <span id="signalsStats" style="font-family:var(--mono);font-size:11px;color:var(--text3);font-weight:400"></span></div>
     <div class="sig-filters">
@@ -564,6 +577,7 @@ function renderCircuit() {
     '<span class="rule-tag active">R12 Regime</span><span class="rule-tag clear">R14 Clear</span><span class="rule-tag clear">R15 BE</span><span class="rule-tag active">R16 Isolated</span><span class="rule-tag clear">R7 Corr</span>'}
   </div>`;
   renderCandles(); // refresh SL/TP/entry overlay lines against latest position data
+  renderStrategyConfig();
 }
 
 let _watchlist = [];
@@ -694,6 +708,56 @@ function renderHeatmap(trades) {
   }
   html += '</div>';
   el.innerHTML = html;
+}
+
+// === TRADE JOURNAL ===
+async function fetchJournal() {
+  if (!LOGGED_IN) return;
+  const el = document.getElementById('journalContent');
+  try {
+    const r = await fetch('/api/trades/history?limit=20', { headers: authHeaders() });
+    const d = await r.json();
+    renderJournal(d.trades || []);
+  } catch (e) { if (el) el.innerHTML = '<div class="empty-msg">Could not load trade journal.</div>'; }
+}
+function renderJournal(trades) {
+  const el = document.getElementById('journalContent');
+  if (!el) return;
+  if (!trades.length) { el.innerHTML = '<div class="empty-msg">No closed trades yet.</div>'; return; }
+  const esc = (s) => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  let h = '<div class="journal-list">';
+  for (const t of trades) {
+    const pnl = parseFloat(t.pnl) || 0;
+    const sym = (t.symbol || '').replace(':USDT', '').replace('/USDT', '');
+    const dc = (t.direction || '').toLowerCase();
+    const when = t.closed_at ? new Date(t.closed_at).toLocaleDateString([], {month:'short', day:'numeric'}) : '';
+    h += `<div class="journal-row">
+      <div class="journal-head">
+        <span class="sym">${sym}</span>
+        <span class="entry-dir ${dc==='long'?'long':'short'}">${(t.direction||'').toUpperCase()}</span>
+        <span class="${pnl>=0?'pos':'neg'}" style="margin-left:auto;font-weight:700">${pnl>=0?'+':''}$${pnl.toFixed(2)}</span>
+        <span class="journal-date">${when}</span>
+      </div>
+      <textarea class="journal-note" data-id="${t.id}" placeholder="Add a note — why did this work or not?" onblur="saveJournalNote(this)">${esc(t.notes)}</textarea>
+    </div>`;
+  }
+  h += '</div>';
+  el.innerHTML = h;
+  el.querySelectorAll('.journal-note').forEach(ta => { ta.dataset.saved = ta.value; });
+}
+async function saveJournalNote(el) {
+  const id = el.dataset.id;
+  const notes = el.value;
+  if (el.dataset.saved === notes) return; // unchanged, skip the write
+  try {
+    const r = await fetch(`/api/trades/${id}/notes`, {
+      method: 'PATCH', headers: {...authHeaders(), 'Content-Type': 'application/json'},
+      body: JSON.stringify({ notes }),
+    });
+    const j = await r.json();
+    if (j.ok) { el.dataset.saved = notes; showToast('Note saved.', 'success'); }
+    else showToast(j.error || 'Failed to save note.', 'error');
+  } catch (e) { showToast('Network error saving note.', 'error'); }
 }
 
 async function exportTradesCSV() {
@@ -1092,9 +1156,9 @@ function renderOnboarding() {
     { title:'Link Telegram', desc:'Connect @HTRUNECLAW_bot so signals and trades map to you.', done: linked,
       cta:'<a href="/">Get your link token &#8599;</a>' },
     { title:'Connect your exchange', desc:'Add withdrawal-disabled Bitget keys (encrypted at rest).', done: connected,
-      cta:'See the WALLET panel below.' },
-    { title:'Enable live trading', desc:'Optional and needs operator approval &mdash; paper runs without it.', done: liveEff,
-      cta:'See the LIVE CONTROLS panel below.', optional:true },
+      cta:'<a href="#" onclick="scrollToPanel(\'walletPanel\');return false">Go to the WALLET panel &darr;</a>' },
+    { title:'Enable live trading', desc:'Optional and needs operator approval &mdash; paper runs without it. Set your per-trade margin cap here too.', done: liveEff,
+      cta:'<a href="#" onclick="scrollToPanel(\'controlsPanel\');return false">Go to LIVE CONTROLS &darr;</a>', optional:true },
   ];
   if (steps.slice(0,3).every(s => s.done)) { panel.style.display = 'none'; return; }
   panel.style.display = '';
@@ -1109,6 +1173,17 @@ function renderOnboarding() {
         <div class="ob-desc">${s.desc}${s.done ? '' : ' ' + s.cta}</div></div>
       ${tag}</div>`;
   }).join('') + '</div>';
+}
+
+// Guided-flow navigation: the onboarding checklist's steps scroll to and
+// briefly highlight the panel where that step is actually completed,
+// instead of just describing where to look.
+function scrollToPanel(id) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.scrollIntoView({behavior: 'smooth', block: 'start'});
+  el.classList.add('ob-highlight');
+  setTimeout(() => el.classList.remove('ob-highlight'), 1600);
 }
 
 async function fetchControls() {
@@ -1225,6 +1300,44 @@ function updateCalculator() {
     Notional: <b>$${notional.toFixed(2)}</b> &middot;
     Margin needed: <b class="${overCap?'neg':''}">$${margin.toFixed(2)}</b>${lev>1?` @ ${lev}x`:''}
     ${overCap?`<br><span class="neg">&#9888; Exceeds your $${fmt(cap)} margin cap</span>`:''}`;
+}
+
+// === STRATEGY & RISK LOGIC ===
+// Every value here comes straight from the bot's own CONFIG/RUNTIME (pushed
+// via _push_scan_summary_to_website's "config" section) -- read-only,
+// nothing here is fabricated or user-editable; these are operator-level
+// settings, not per-user preferences.
+function renderStrategyConfig() {
+  const el = document.getElementById('strategyContent');
+  if (!el) return;
+  const cfg = scanData?.config;
+  if (!cfg) { el.innerHTML = '<div class="empty-msg">Strategy config not available yet.</div>'; return; }
+  const onOff = (v) => v ? '<span class="pos">ON</span>' : '<span style="color:var(--text3)">OFF</span>';
+  const modeTag = cfg.mode === 'LIVE'
+    ? '<span class="badge badge-green">&#9679; LIVE</span>'
+    : '<span class="badge badge-orange">PAPER</span>';
+  let h = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+    <span style="font-family:var(--mono);font-size:11px;color:var(--text3)">Mode</span>${modeTag}
+  </div>`;
+  h += `<div class="port-stats" style="margin-bottom:12px">
+    <div class="port-stat"><div class="ps-label">Min Confidence</div><div class="ps-val">${fmt(cfg.min_confidence*100,0)}%</div></div>
+    <div class="port-stat"><div class="ps-label">Max Open Pos</div><div class="ps-val">${cfg.max_open_positions}</div></div>
+    <div class="port-stat"><div class="ps-label">Daily Loss Cap</div><div class="ps-val neg">${fmt(cfg.max_daily_loss_pct,1)}%</div></div>
+    <div class="port-stat"><div class="ps-label">Max Drawdown</div><div class="ps-val neg">${fmt(cfg.max_drawdown_pct,1)}%</div></div>
+  </div>
+  <div style="display:flex;gap:14px;flex-wrap:wrap;font-family:var(--mono);font-size:11px;color:var(--text2);margin-bottom:12px">
+    <span>Symbol loss-streak guard: ${onOff(cfg.symbol_loss_streak_enabled)}</span>
+    <span>Adaptive threshold: ${onOff(cfg.adaptive_threshold_enabled)}</span>
+    <span>Auto-confirm &ge; ${fmt(cfg.auto_confirm_threshold*100,0)}%</span>
+  </div>`;
+  const types = cfg.strategy_types || {};
+  h += '<div style="overflow-x:auto"><table class="universe-table"><tr><th>Strategy</th><th>Min Conf.</th><th>Time Warn</th><th>Time Close</th></tr>';
+  for (const k of ['scalp', 'intraday', 'swing', 'position']) {
+    const s = types[k]; if (!s) continue;
+    h += `<tr><td class="sym" style="text-transform:capitalize">${k}</td><td style="font-family:var(--mono)">${fmt(s.min_confidence*100,0)}%</td><td style="font-family:var(--mono)">${fmt(s.time_warn_hours,1)}h</td><td style="font-family:var(--mono)">${fmt(s.time_close_hours,1)}h</td></tr>`;
+  }
+  h += '</table></div>';
+  el.innerHTML = h;
 }
 
 async function fetchCreds() {
@@ -1454,7 +1567,7 @@ function connectStream() {
     es.addEventListener('scan', () => { fetchScan(); rotateTicker(); });
     es.addEventListener('portfolio', () => { fetchPublicPortfolio(); if (LOGGED_IN) fetchPortfolio(); });
     es.addEventListener('trade', (ev) => {
-      if (LOGGED_IN) { fetchPortfolio(); fetchHeatmap(); }
+      if (LOGGED_IN) { fetchPortfolio(); fetchHeatmap(); fetchJournal(); }
       fetchPublicPortfolio();
       try { notifyTrade(JSON.parse(ev.data || '{}')); } catch (e) { /* malformed payload -- skip notification only */ }
     });
@@ -1482,7 +1595,7 @@ async function init() {
   renderCalculator();
   updateNotifBtn();
   await fetchTickers();
-  await Promise.all([fetchScan(), fetchPublicPortfolio(), fetchPortfolio(), fetchSignals(), fetchCreds(), fetchControls(), fetchCandles(), fetchHeatmap(), fetchDepth(), fetchFunding()]);
+  await Promise.all([fetchScan(), fetchPublicPortfolio(), fetchPortfolio(), fetchSignals(), fetchCreds(), fetchControls(), fetchCandles(), fetchHeatmap(), fetchDepth(), fetchFunding(), fetchJournal()]);
   renderCircuit(); // ensure circuit breaker renders even if fetches return no data
   rotateTicker();
   connectStream();

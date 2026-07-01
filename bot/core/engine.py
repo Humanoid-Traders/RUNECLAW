@@ -690,7 +690,35 @@ class RuneClawEngine:
                 f"BTC 24h change: {change:+.2f}% | momentum {momentum:+.2f}\n"
                 f"Scanned at {datetime.now(UTC).strftime('%H:%M UTC')}"
             )
+        payload["config"] = self._build_strategy_config_summary()
         sync_scan_in_background(payload)
+
+    def _build_strategy_config_summary(self) -> dict:
+        """Real (not fabricated) strategy/risk knobs for the website's
+        STRATEGY / LOGIC page -- every value here reads directly from the
+        same CONFIG/RUNTIME the engine itself trades against.
+        """
+        from bot.config import RUNTIME
+
+        st = CONFIG.strategy_types
+        return {
+            "mode": "LIVE" if CONFIG.is_live() else "PAPER",
+            "min_confidence": CONFIG.risk.min_confidence,
+            "max_open_positions": CONFIG.risk.max_open_positions,
+            "max_daily_loss_pct": CONFIG.risk.max_daily_loss_pct,
+            "max_drawdown_pct": CONFIG.risk.max_drawdown_pct,
+            "symbol_loss_streak_enabled": CONFIG.risk.symbol_loss_streak_enabled,
+            "adaptive_threshold_enabled": CONFIG.adaptive.adaptive_threshold_enabled,
+            "auto_confirm_threshold": round(RUNTIME.auto_confirm_threshold, 2),
+            "strategy_types": {
+                st_name: {
+                    "min_confidence": st.get_min_confidence(st_name),
+                    "time_close_hours": st.get_time_close_hours(st_name),
+                    "time_warn_hours": st.get_time_warn_hours(st_name),
+                }
+                for st_name in ("scalp", "intraday", "swing", "position")
+            },
+        }
 
     def _executor_for(self, user_id: str = ""):
         """Return the LiveExecutor that should place THIS caller's live order.
