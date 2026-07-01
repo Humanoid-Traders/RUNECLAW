@@ -878,6 +878,26 @@ class TelegramHandler:
         if not configs_to_try:
             return "No LLM configured. Use /setllm to set a provider, or add LLM_API_KEY to .env."
 
+        # Budget guard: refuse to spend once the shared daily LLM budget is
+        # exhausted, mirroring analyzer.py's guard for trade-thesis calls.
+        # Chat previously had NO budget check at all -- every free-text
+        # message that didn't match a rule-based intent triggered a live
+        # LLM call regardless of how much had already been spent that day,
+        # from EVERY authorized user (chat uses the operator's single
+        # configured key; per-user BYOK is opt-in and off by default).
+        if hasattr(self.engine, 'cost'):
+            snap = self.engine.cost.snapshot()
+            if (snap.llm_calls >= CONFIG.llm.daily_call_limit
+                    or snap.llm_cost_usd >= CONFIG.llm.daily_budget_usd):
+                audit(system_log,
+                      f"Chat LLM budget exhausted (calls={snap.llm_calls}, "
+                      f"cost=${snap.llm_cost_usd:.4f})",
+                      action="chat_llm_budget", result="EXHAUSTED")
+                return (
+                    "I've used up today's AI budget — try again tomorrow, "
+                    "or use a specific command like /scan or /positions."
+                )
+
         # Try each config in order
         last_error = ""
         for source, cfg in configs_to_try:
@@ -890,14 +910,24 @@ class TelegramHandler:
                     client, cfg, system_prompt, question,
                     history=history)
 
-                # Track cost
-                if cfg.sdk_type() != "anthropic" and hasattr(self.engine, 'cost'):
+                # Track cost. llm_complete() discards the provider's usage
+                # object for EVERY provider (Anthropic and OpenAI-compatible
+                # alike), so this has always been an estimate -- but the
+                # Anthropic branch used to skip recording ENTIRELY, meaning
+                # every chat reply served by Claude (whether the configured
+                # chat provider, or the hardcoded ANTHROPIC_API_KEY fallback
+                # above) was invisible to /costs AND to the budget guard just
+                # added. Estimate for every provider now (~4 chars/token,
+                # same convention analyzer.py already uses for its own
+                # Anthropic fallback cost accounting).
+                if hasattr(self.engine, 'cost'):
                     history_tokens = sum(len(m.get("content", "")) // 4
                                          for m in history)
+                    completion_tokens = max(1, len(answer) // 4) if answer else 0
                     self.engine.cost.record_llm(
                         model=cfg.model,
                         prompt_tokens=500 + history_tokens,
-                        completion_tokens=256,
+                        completion_tokens=completion_tokens,
                         category="chat",
                     )
 
