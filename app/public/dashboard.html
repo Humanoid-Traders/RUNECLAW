@@ -4,24 +4,29 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>RUNECLAW War Room</title>
-<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700;900&family=Rajdhani:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/styles.css">
 <style>
 /* === RESET & BASE === */
 *{margin:0;padding:0;box-sizing:border-box}
+/* Palette + type inherited from /styles.css; kept here so dashboard-specific
+   component rules resolve identically and stay in sync with the design system. */
 :root{
-  --bg:#0a0a0f;--bg2:#0f1117;--bg3:#141820;--bg4:#1a1f2e;
-  --gold:#c9a84c;--gold2:#e8c55a;--gold-dim:rgba(201,168,76,0.15);
-  --green:#22c55e;--green-dim:rgba(34,197,94,0.12);
-  --red:#ef4444;--red-dim:rgba(239,68,68,0.12);
-  --cyan:#06b6d4;--cyan-dim:rgba(6,182,212,0.1);
-  --orange:#f59e0b;--orange-dim:rgba(245,158,11,0.12);
-  --text:#e2e8f0;--text2:#94a3b8;--text3:#64748b;
-  --border:#1e293b;--border2:#334155;
-  --mono:'JetBrains Mono',monospace;
-  --head:'Cinzel',serif;
-  --body:'Rajdhani',sans-serif;
+  --bg:#090a0e;--bg2:#12141b;--bg3:#171a22;--bg4:#1e222c;
+  --gold:#cbb06a;--gold2:#e6cf86;--gold-dim:rgba(203,176,106,0.14);
+  --green:#22c55e;--green-dim:rgba(34,197,94,0.13);
+  --red:#ef4444;--red-dim:rgba(239,68,68,0.13);
+  --cyan:#06b6d4;--cyan-dim:rgba(6,182,212,0.12);
+  --orange:#f59e0b;--orange-dim:rgba(245,158,11,0.13);
+  --text:#e6e9ef;--text2:#9aa4b4;--text3:#616b7d;
+  --border:#232734;--border2:#333b4c;
+  --mono:'JetBrains Mono',ui-monospace,monospace;
+  --head:'Cinzel',Georgia,serif;
+  --body:'Inter',system-ui,-apple-system,sans-serif;
 }
-body{background:var(--bg);color:var(--text);font-family:var(--body);font-size:15px;line-height:1.5;min-height:100vh}
+body{background:var(--bg);color:var(--text);font-family:var(--body);font-size:15px;line-height:1.5;min-height:100vh;display:flex;flex-direction:column}
+.war-room{flex:1}
 a{color:var(--gold);text-decoration:none}
 
 /* === LAYOUT === */
@@ -36,7 +41,7 @@ a{color:var(--gold);text-decoration:none}
 .grid-main{display:grid;grid-template-columns:1fr;gap:12px;margin-bottom:12px}
 @media(min-width:1024px){.grid-top{grid-template-columns:340px 1fr}}
 
-.panel{background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:14px;position:relative;overflow:hidden}
+.panel{background:var(--bg2);border:1px solid var(--border);border-radius:9px;padding:15px;position:relative;overflow:hidden;box-shadow:0 1px 2px rgba(0,0,0,.35)}
 .panel::before{content:'';position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,var(--gold-dim),transparent)}
 .panel-title{font-family:var(--head);color:var(--gold);font-size:13px;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:10px;display:flex;align-items:center;gap:8px}
 
@@ -190,11 +195,17 @@ a{color:var(--gold);text-decoration:none}
 </style>
 </head>
 <body>
-<div class="war-room" id="app">
-  <div class="header">
-    <h1>RUNECLAW WAR ROOM</h1>
-    <div class="meta"><span id="acctChip"></span><span class="live">&#9679;</span> LIVE <span id="headerTime">--:--</span></div>
+<nav class="topnav">
+  <a href="/" class="brand"><span class="dot"></span>RUNECLAW</a>
+  <div class="nav-links">
+    <a href="/dashboard" class="active">War Room</a>
+    <a href="/">Account</a>
+    <a href="https://t.me/HTRUNECLAW_bot" target="_blank" rel="noopener">Telegram</a>
+    <a href="https://humanoid-traders-1.gitbook.io/humanoid-traders-ai" target="_blank" rel="noopener">Docs</a>
   </div>
+  <div class="nav-acct"><span id="acctChip"></span><span class="live">&#9679;</span> LIVE <span id="headerTime">--:--</span></div>
+</nav>
+<div class="war-room" id="app">
   <div class="panel" id="onboardPanel" style="display:none"><div class="panel-title">&#128640; GETTING STARTED</div><div id="onboardContent"></div></div>
   <div class="grid-top">
     <div class="panel regime" id="regimePanel"><div class="panel-title">&#127760; BTC REGIME</div><div class="loading"><div class="spinner"></div><br>Loading...</div></div>
@@ -213,7 +224,7 @@ a{color:var(--gold);text-decoration:none}
   <div class="panel" id="walletPanel"><div class="panel-title">&#128091; WALLET &mdash; EXCHANGE CONNECTION</div><div id="walletContent"></div></div>
   <div class="panel" id="controlsPanel"><div class="panel-title">&#127919; LIVE CONTROLS</div><div id="controlsContent"></div></div>
   <div class="panel" id="insightsPanel"><div class="panel-title">&#128202; SIGNAL INSIGHTS</div><div id="insightsContent"><div class="loading"><div class="spinner"></div><br>Loading insights...</div></div></div>
-  <div class="panel" id="signalsPanel"><div class="panel-title">&#128225; SIGNAL STREAM <span id="signalsStats" style="font-family:var(--mono);font-size:11px;color:var(--dim);font-weight:400"></span></div>
+  <div class="panel" id="signalsPanel"><div class="panel-title">&#128225; SIGNAL STREAM <span id="signalsStats" style="font-family:var(--mono);font-size:11px;color:var(--text3);font-weight:400"></span></div>
     <div class="sig-filters">
       <select id="fltDirection"><option value="">All sides</option><option value="LONG">Long</option><option value="SHORT">Short</option></select>
       <select id="fltStatus"><option value="">All status</option><option value="NEW">New</option><option value="WIN">Win</option><option value="LOSS">Loss</option></select>
@@ -221,6 +232,17 @@ a{color:var(--gold);text-decoration:none}
     </div>
     <div id="signalsContent"><div class="loading"><div class="spinner"></div><br>Loading signals...</div></div></div>
 </div>
+<footer class="site-footer">
+  <div class="inner">
+    <div class="brand" style="font-size:15px"><span class="dot"></span>RUNECLAW</div>
+    <div class="foot-links">
+      <a href="/">Account</a>
+      <a href="https://t.me/HTRUNECLAW_bot" target="_blank" rel="noopener">Telegram Bot</a>
+      <a href="https://humanoid-traders-1.gitbook.io/humanoid-traders-ai" target="_blank" rel="noopener">Docs</a>
+    </div>
+  </div>
+  <div class="risk">Market data and signals are informational only and not financial advice. Live trading uses withdrawal-disabled API keys and is gated by the risk engine and operator approval. Trade at your own risk.</div>
+</footer>
 <script>
 // Resolve the JWT. The account page (index.html) persists the session under
 // `rc_session` ({token,user_id}); older builds used a bare `token`. Accept both
