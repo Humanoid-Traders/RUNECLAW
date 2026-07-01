@@ -402,9 +402,12 @@ function updateConnHealth() {
   if (!el) return;
   const syncTime = scanData?.received_at || scanData?.timestamp;
   if (!syncTime) { el.innerHTML = '&#9679; CONNECTING'; el.className = 'live warn'; return; }
+  // The autonomous scan loop's own interval adapts 60-600s with volatility
+  // (SMART_SCAN_MIN/MAX_INTERVAL) -- these thresholds must tolerate that
+  // full range or a perfectly healthy bot flashes false "stale"/"disconnected".
   const ageSec = (Date.now() - new Date(syncTime).getTime()) / 1000;
-  if (ageSec < 90) { el.innerHTML = '&#9679; LIVE'; el.className = 'live'; }
-  else if (ageSec < 300) { el.innerHTML = '&#9679; STALE'; el.className = 'live warn'; }
+  if (ageSec < 900) { el.innerHTML = '&#9679; LIVE'; el.className = 'live'; }
+  else if (ageSec < 1800) { el.innerHTML = '&#9679; STALE'; el.className = 'live warn'; }
   else { el.innerHTML = '&#9679; DISCONNECTED'; el.className = 'live danger'; }
 }
 
@@ -495,14 +498,14 @@ function renderRegime() {
     <div class="btc-price">$${price.toLocaleString('en-US',{maximumFractionDigits:0})}</div>
     <div class="btc-change ${pctC(change)}">${pctS(change)}%</div>
     <div class="btc-meta">
-      <div><span class="label">HIGH</span><span class="val">$${high.toLocaleString()}</span></div>
-      <div><span class="label">LOW</span><span class="val">$${low.toLocaleString()}</span></div>
+      <div><span class="label">HIGH</span><span class="val">$${high.toLocaleString('en-US')}</span></div>
+      <div><span class="label">LOW</span><span class="val">$${low.toLocaleString('en-US')}</span></div>
       <div><span class="label">RANGE</span><span class="val">${fmt(range,1)}%</span></div>
       <div><span class="label">VOL</span><span class="val">$${fmtK(vol)}</span></div>
       ${ls?`<div><span class="label">L/S</span><span class="val ${parseFloat(ls)>55?'neg':'pos'}">${ls}% long</span></div>`:''}
       ${funding?`<div><span class="label">FUND</span><span class="val">${funding}</span></div>`:''}
     </div>
-    ${gate?`<div class="gate">&#9888; GATE: BTC 1H close above $${Number(gate).toLocaleString()} required</div>`:''}`;
+    ${gate?`<div class="gate">&#9888; GATE: BTC 1H close above $${Number(gate).toLocaleString('en-US')} required</div>`:''}`;
 }
 
 function renderCircuit() {
