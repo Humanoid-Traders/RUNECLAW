@@ -849,12 +849,20 @@ class TelegramHandler:
         if chat_cfg.is_configured():
             configs_to_try.append(("chat_tier", chat_cfg))
 
-        # 2. Fallback providers from env (Gemini, Anthropic, Alibaba)
+        # 2. Fallback providers from env (Gemini, Alibaba, and — admin only —
+        # Anthropic). The operator's Claude key is reserved for admin use;
+        # resolve_tier_config() above already enforces this for the primary
+        # chat-tier config, but this hardcoded fallback chain is a SEPARATE
+        # mechanism that doesn't go through resolve_tier_config, so it needs
+        # its own is_admin gate to keep non-admin chat from silently falling
+        # back to Anthropic when the primary/chat-tier call fails.
         _FALLBACK_PROVIDERS = [
             (LLMProvider.GEMINI, "GEMINI_API_KEY", "gemini-2.0-flash"),
-            (LLMProvider.ANTHROPIC, "ANTHROPIC_API_KEY", "claude-haiku-4-5"),
             (LLMProvider.ALIBABA, "ALIBABA_API_KEY", "qwen3.6-plus"),
         ]
+        if is_admin:
+            _FALLBACK_PROVIDERS.insert(
+                1, (LLMProvider.ANTHROPIC, "ANTHROPIC_API_KEY", "claude-haiku-4-5"))
         for provider, key_env, model in _FALLBACK_PROVIDERS:
             api_key = os.getenv(key_env, "")
             if api_key and not any(
@@ -869,10 +877,11 @@ class TelegramHandler:
                     timeout_seconds=20.0,
                 )))
 
-        # 3. Primary config as last resort
-        if active_cfg.is_configured() and not any(
-            c.provider == active_cfg.provider for _, c in configs_to_try
-        ):
+        # 3. Primary config as last resort. Non-admin guard: if the
+        # operator's global/BYOK-runtime provider is itself Anthropic, a
+        # non-admin caller must not fall back to it here either.
+        if (active_cfg.is_configured() and (is_admin or active_cfg.provider != LLMProvider.ANTHROPIC)
+                and not any(c.provider == active_cfg.provider for _, c in configs_to_try)):
             configs_to_try.append(("primary", active_cfg))
 
         if not configs_to_try:
