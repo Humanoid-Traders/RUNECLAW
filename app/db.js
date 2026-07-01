@@ -286,6 +286,15 @@ class MemoryDB {
       return [rows, []];
     }
 
+    if (cmd.includes('COALESCE(CLOSED_AT')) {
+      // GET /api/trades/activity -- both OPEN and CLOSED trades, newest first
+      const limit = params[1] || 60;
+      const rows = this.trades.filter(t => t.user_id === params[0])
+        .sort((a, b) => new Date(b.closed_at || b.opened_at) - new Date(a.closed_at || a.opened_at))
+        .slice(0, limit);
+      return [rows, []];
+    }
+
     if (cmd.includes("STATUS = 'CLOSED'") && cmd.includes('ORDER BY CLOSED_AT DESC')) {
       let rows = this.trades.filter(t => t.user_id === params[0] && t.status === 'CLOSED').sort((a, b) => new Date(b.closed_at) - new Date(a.closed_at));
       const limit = params[1] || 50;

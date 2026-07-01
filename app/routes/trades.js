@@ -146,6 +146,34 @@ router.patch('/:id/notes', notesLimit, async (req, res) => {
   }
 });
 
+// GET /api/trades/activity - Real position open/close activity feed.
+// Built only from this user's own trades table -- no synthetic "Telegram
+// connected"/"risk settings changed" entries, since those aren't persisted
+// with history once the bot acknowledges and applies them (pending_* rows
+// are deleted, not archived).
+router.get('/activity', async (req, res) => {
+  try {
+    const uid = req.user.user_id;
+    const limit = Math.min(parseInt(req.query.limit) || 30, 100);
+    const [rows] = await pool.execute(
+      `SELECT symbol, direction, pnl, size_usd, status, opened_at, closed_at
+       FROM trades WHERE user_id = ?
+       ORDER BY COALESCE(closed_at, opened_at) DESC LIMIT ?`,
+      [uid, limit * 2]
+    );
+    const events = [];
+    for (const t of rows) {
+      if (t.opened_at) events.push({ type: 'open', symbol: t.symbol, direction: t.direction, size_usd: t.size_usd, timestamp: t.opened_at });
+      if (t.status === 'CLOSED' && t.closed_at) events.push({ type: 'close', symbol: t.symbol, direction: t.direction, pnl: t.pnl, timestamp: t.closed_at });
+    }
+    events.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+    res.json({ events: events.slice(0, limit) });
+  } catch (err) {
+    console.error('Activity error:', err.message);
+    res.status(500).json({ error: 'Failed to fetch activity' });
+  }
+});
+
 // GET /api/trades/breakdown - realised PnL by symbol + max drawdown + expectancy.
 // Computed in-process over the user's closed trades (bounded window) so it
 // behaves the same on MySQL and the in-memory mock.

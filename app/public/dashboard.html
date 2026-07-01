@@ -241,6 +241,18 @@ a{color:var(--gold);text-decoration:none}
 .ob-highlight{animation:ob-flash 1.6s ease}
 @keyframes ob-flash{0%{box-shadow:0 0 0 2px var(--gold)}100%{box-shadow:none}}
 
+/* === AI READINESS SCORE === */
+.readiness-pct{font-family:var(--mono);font-size:26px;font-weight:700;margin-bottom:8px}
+.readiness-pct.red{color:var(--red)}.readiness-pct.amber{color:var(--orange)}.readiness-pct.green{color:var(--green)}
+.readiness-bar-track{height:14px;background:var(--bg3);border-radius:7px;overflow:hidden;border:1px solid var(--border);margin-bottom:10px}
+.readiness-bar-fill{height:100%;transition:width .4s ease}
+.readiness-bar-fill.red{background:var(--red)}
+.readiness-bar-fill.amber{background:var(--orange)}
+.readiness-bar-fill.green{background:var(--green)}
+.readiness-factors{display:flex;flex-wrap:wrap;gap:8px;font-family:var(--mono);font-size:11px}
+.readiness-factor{padding:3px 9px;border-radius:12px;border:1px solid var(--border);color:var(--text3)}
+.readiness-factor.done{color:var(--green);border-color:rgba(34,197,94,.3);background:var(--green-dim)}
+
 /* === PNL CALENDAR HEATMAP === */
 .hm-grid{display:grid;grid-auto-flow:column;grid-template-rows:repeat(7,1fr);gap:3px;overflow-x:auto;padding-bottom:2px}
 .hm-cell{width:11px;height:11px;border-radius:2px;background:var(--bg)}
@@ -256,6 +268,12 @@ a{color:var(--gold);text-decoration:none}
 .journal-note{width:100%;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);
   font-size:12px;padding:6px 8px;resize:vertical;min-height:32px;font-family:inherit}
 .journal-note:focus{outline:none;border-color:var(--gold)}
+
+/* === ACTIVITY LOG === */
+.activity-list{display:flex;flex-direction:column;gap:0;max-height:340px;overflow-y:auto}
+.activity-row{display:flex;align-items:center;gap:10px;padding:7px 8px;border-bottom:1px solid var(--border);font-family:var(--mono);font-size:12px}
+.activity-row .act-icon{font-size:9px;flex-shrink:0}
+.activity-row .act-time{margin-left:auto;color:var(--text3);font-size:10px;white-space:nowrap}
 
 /* === NOTIFICATION BELL === */
 .notif-btn{background:none;border:none;cursor:pointer;color:var(--text3);padding:0;display:inline-flex;
@@ -316,6 +334,14 @@ a{color:var(--gold);text-decoration:none}
 <div class="toast-container" id="toastContainer"></div>
 <div class="war-room" id="app">
   <div class="agent-ticker" id="agentTicker"><span class="at-dot"></span><svg class="icon"><use href="#icon-sparkle"></use></svg><span class="at-text" id="agentTickerText">Booting agent loop&hellip;</span></div>
+  <div class="panel" id="readinessPanel">
+    <div class="panel-title"><svg class="icon icon-ai"><use href="#icon-sparkle"></use></svg> AI READINESS SCORE <span id="healthLabel" class="badge" style="margin-left:auto"></span></div>
+    <div id="readinessContent"></div>
+  </div>
+  <div class="panel" id="cockpitPanel">
+    <div class="panel-title"><svg class="icon icon-ai"><use href="#icon-sparkle"></use></svg> AI COCKPIT</div>
+    <div id="cockpitContent"></div>
+  </div>
   <div class="panel" id="onboardPanel" style="display:none"><div class="panel-title"><svg class="icon"><use href="#icon-rocket"></use></svg> GETTING STARTED</div><div id="onboardContent"></div></div>
   <div class="grid-top">
     <div class="panel regime" id="regimePanel"><div class="panel-title"><svg class="icon"><use href="#icon-globe"></use></svg> BTC REGIME</div><div class="skel-wrap"><div class="skel skel-row"></div><div class="skel skel-row"></div><div class="skel skel-row"></div></div></div>
@@ -355,6 +381,7 @@ a{color:var(--gold);text-decoration:none}
   </div>
   <div class="panel" id="heatmapPanel"><div class="panel-title"><svg class="icon"><use href="#icon-chart"></use></svg> PNL CALENDAR</div><div id="heatmapContent"><div class="empty-msg">Log in to see your day-by-day PnL.</div></div></div>
   <div class="panel" id="journalPanel"><div class="panel-title"><svg class="icon"><use href="#icon-coin"></use></svg> TRADE JOURNAL</div><div id="journalContent"><div class="empty-msg">Log in to journal your trades.</div></div></div>
+  <div class="panel" id="activityPanel"><div class="panel-title"><svg class="icon"><use href="#icon-radar"></use></svg> ACTIVITY LOG</div><div id="activityContent"><div class="empty-msg">Log in to see your activity log.</div></div></div>
   <div class="panel" id="walletPanel"><div class="panel-title"><svg class="icon"><use href="#icon-wallet"></use></svg> WALLET &mdash; EXCHANGE CONNECTION</div><div id="walletContent"></div></div>
   <div class="panel" id="controlsPanel"><div class="panel-title"><svg class="icon"><use href="#icon-target"></use></svg> LIVE CONTROLS</div><div id="controlsContent"></div></div>
   <div class="panel" id="calcPanel"><div class="panel-title"><svg class="icon"><use href="#icon-coin"></use></svg> POSITION SIZE CALCULATOR</div><div id="calcContent"></div></div>
@@ -708,6 +735,40 @@ function renderHeatmap(trades) {
   }
   html += '</div>';
   el.innerHTML = html;
+}
+
+// === ACTIVITY LOG (real position open/close events only) ===
+async function fetchActivity() {
+  if (!LOGGED_IN) return;
+  const el = document.getElementById('activityContent');
+  try {
+    const r = await fetch('/api/trades/activity?limit=30', { headers: authHeaders() });
+    const d = await r.json();
+    renderActivity(d.events || []);
+  } catch (e) { if (el) el.innerHTML = '<div class="empty-msg">Could not load activity log.</div>'; }
+}
+function renderActivity(events) {
+  const el = document.getElementById('activityContent');
+  if (!el) return;
+  if (!events.length) { el.innerHTML = '<div class="empty-msg">No activity yet.</div>'; return; }
+  let h = '<div class="activity-list">';
+  for (const e of events) {
+    const sym = (e.symbol || '').replace(':USDT', '').replace('/USDT', '');
+    const dc = (e.direction || '').toLowerCase();
+    const when = e.timestamp ? new Date(e.timestamp).toLocaleString([], {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'}) : '';
+    if (e.type === 'open') {
+      h += `<div class="activity-row"><span class="act-icon" style="color:var(--gold)">&#9679;</span>
+        <span>Opened <b class="sym">${sym}</b> <span class="entry-dir ${dc==='long'?'long':'short'}">${(e.direction||'').toUpperCase()}</span> &middot; $${fmt(e.size_usd)}</span>
+        <span class="act-time">${when}</span></div>`;
+    } else {
+      const pnl = parseFloat(e.pnl) || 0;
+      h += `<div class="activity-row"><span class="act-icon ${pnl>=0?'pos':'neg'}">&#9679;</span>
+        <span>Closed <b class="sym">${sym}</b> <span class="entry-dir ${dc==='long'?'long':'short'}">${(e.direction||'').toUpperCase()}</span> &middot; <b class="${pnl>=0?'pos':'neg'}">${pnl>=0?'+':''}$${pnl.toFixed(2)}</b></span>
+        <span class="act-time">${when}</span></div>`;
+    }
+  }
+  h += '</div>';
+  el.innerHTML = h;
 }
 
 // === TRADE JOURNAL ===
@@ -1143,6 +1204,74 @@ function renderAccount() {
 
 // A 4-step getting-started checklist. Hidden once the three required steps
 // (account, Telegram link, exchange connect) are done; live is optional.
+// === AI READINESS SCORE (computed from real state only) ===
+function computeAIReadiness() {
+  const factors = [
+    { label: 'Account', done: LOGGED_IN },
+    { label: 'Telegram', done: !!(credStatus && credStatus.linked) },
+    { label: 'Bitget', done: !!(credStatus && credStatus.connected) },
+    { label: 'Risk limit', done: !!(controlState && controlState.max_margin != null) },
+    { label: 'Monitoring', done: !!(controlState && controlState.linked && !controlState.paused) },
+  ];
+  const done = factors.filter(f => f.done).length;
+  return { pct: Math.round((done / factors.length) * 100), factors };
+}
+function readinessTier(pct) { return pct >= 70 ? 'green' : pct >= 40 ? 'amber' : 'red'; }
+
+function renderReadiness() {
+  const el = document.getElementById('readinessContent');
+  if (!el) return;
+  const { pct, factors } = computeAIReadiness();
+  const tier = readinessTier(pct);
+  el.innerHTML = `
+    <div class="readiness-pct ${tier}">${pct}%</div>
+    <div class="readiness-bar-track"><div class="readiness-bar-fill ${tier}" style="width:${pct}%"></div></div>
+    <div class="readiness-factors">${factors.map(f => `<span class="readiness-factor ${f.done?'done':''}">${f.done?'&#10003;':'&#9675;'} ${f.label}</span>`).join('')}</div>`;
+
+  const healthEl = document.getElementById('healthLabel');
+  if (!healthEl) return;
+  const connEl = document.getElementById('connHealth');
+  const connDanger = !!(connEl && connEl.classList.contains('danger'));
+  const connWarn = !!(connEl && connEl.classList.contains('warn'));
+  let text, cls;
+  if (connDanger || pct < 40) { text = connDanger ? 'Critical' : 'Needs Attention'; cls = 'badge-red'; }
+  else if (connWarn || pct < 70) { text = 'Good'; cls = 'badge-orange'; }
+  else { text = 'Excellent'; cls = 'badge-green'; }
+  healthEl.textContent = text;
+  healthEl.className = 'badge ' + cls;
+}
+
+// === AI COCKPIT (state-aware recommendation, sourced from real connection
+// state -- not a generative chat backend. "Prompt" buttons just scroll to
+// the real panel that answers the question.) ===
+function nextBestAction() {
+  if (!LOGGED_IN) return { text: 'Create your account to unlock the AI cockpit, wallet, and live controls.', panel: null };
+  if (!(credStatus && credStatus.linked)) return { text: 'Telegram is not connected yet. Link @HTRUNECLAW_bot so signals and trades map to your account.', panel: 'onboardPanel' };
+  if (!(credStatus && credStatus.connected)) return { text: 'Bitget is not connected. Add read + trade-only API keys below — never enable withdrawal permissions.', panel: 'walletPanel' };
+  if (!(controlState && controlState.max_margin != null)) return { text: 'Set a per-trade margin cap in Live Controls before enabling live trading.', panel: 'controlsPanel' };
+  if (!(controlState && controlState.live_enabled && controlState.allowlisted)) return { text: 'Core connections and risk limits are ready. Paper trading is active — live trading needs operator approval.', panel: 'controlsPanel' };
+  return { text: 'Everything is connected and configured. Monitor the strategy logic and signal stream below.', panel: 'strategyPanel' };
+}
+function renderCockpit() {
+  const el = document.getElementById('cockpitContent');
+  if (!el) return;
+  const rec = nextBestAction();
+  const prompts = [
+    { label: 'What should I connect next?', panel: rec.panel || 'readinessPanel' },
+    { label: 'Check my setup readiness', panel: 'readinessPanel' },
+    { label: 'Review my Bitget security', panel: 'walletPanel' },
+    { label: 'Show risk recommendations', panel: 'strategyPanel' },
+  ];
+  el.innerHTML = `
+    <div class="ai-thesis" style="margin-top:0">
+      <div class="ai-thesis-label"><svg class="icon"><use href="#icon-sparkle"></use></svg>Recommended next step</div>
+      <div class="ai-thesis-body">${rec.text}</div>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
+      ${prompts.map(p => `<button class="btn-ghost" style="font-family:var(--mono);font-size:11px;color:var(--text2);background:none;border:1px solid var(--border);border-radius:14px;padding:5px 12px;cursor:pointer" onclick="scrollToPanel('${p.panel}')">${p.label}</button>`).join('')}
+    </div>`;
+}
+
 function renderOnboarding() {
   const panel = document.getElementById('onboardPanel');
   const el = document.getElementById('onboardContent');
@@ -1194,6 +1323,8 @@ async function fetchControls() {
     controlState = await r.json();
     renderControls();
     renderOnboarding();
+    renderReadiness();
+    renderCockpit();
   } catch(e) { el.innerHTML = '<div class="empty-msg">Could not load controls.</div>'; }
 }
 
@@ -1348,6 +1479,8 @@ async function fetchCreds() {
     credStatus = await r.json();
     renderCreds();
     renderOnboarding();
+    renderReadiness();
+    renderCockpit();
   } catch(e) { el.innerHTML = '<div class="empty-msg">Could not load connection status.</div>'; }
 }
 
@@ -1567,7 +1700,7 @@ function connectStream() {
     es.addEventListener('scan', () => { fetchScan(); rotateTicker(); });
     es.addEventListener('portfolio', () => { fetchPublicPortfolio(); if (LOGGED_IN) fetchPortfolio(); });
     es.addEventListener('trade', (ev) => {
-      if (LOGGED_IN) { fetchPortfolio(); fetchHeatmap(); fetchJournal(); }
+      if (LOGGED_IN) { fetchPortfolio(); fetchHeatmap(); fetchJournal(); fetchActivity(); }
       fetchPublicPortfolio();
       try { notifyTrade(JSON.parse(ev.data || '{}')); } catch (e) { /* malformed payload -- skip notification only */ }
     });
@@ -1579,6 +1712,8 @@ function connectStream() {
 async function init() {
   renderAccount();
   renderOnboarding(); // show step 1 immediately for logged-out visitors
+  renderReadiness();
+  renderCockpit();
   ['fltDirection','fltStatus','fltConf'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.addEventListener('change', fetchSignals);
@@ -1595,7 +1730,7 @@ async function init() {
   renderCalculator();
   updateNotifBtn();
   await fetchTickers();
-  await Promise.all([fetchScan(), fetchPublicPortfolio(), fetchPortfolio(), fetchSignals(), fetchCreds(), fetchControls(), fetchCandles(), fetchHeatmap(), fetchDepth(), fetchFunding(), fetchJournal()]);
+  await Promise.all([fetchScan(), fetchPublicPortfolio(), fetchPortfolio(), fetchSignals(), fetchCreds(), fetchControls(), fetchCandles(), fetchHeatmap(), fetchDepth(), fetchFunding(), fetchJournal(), fetchActivity()]);
   renderCircuit(); // ensure circuit breaker renders even if fetches return no data
   rotateTicker();
   connectStream();
