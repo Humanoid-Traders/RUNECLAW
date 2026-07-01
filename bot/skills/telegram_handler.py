@@ -7283,17 +7283,24 @@ class TelegramHandler:
                         audit(system_log, f"Auto re-analyze failed: {retry_exc}",
                               action="auto_reanalyze", result="ERROR")
 
-            # Detect failure by checking for known error prefixes
-            _fail_prefixes = (
-                "EXECUTION FAILED:", "INSUFFICIENT FUNDS:", "INVALID ORDER:",
-                "BLOCKED:", "PREFLIGHT FAILED:", "Risk re-check FAILED",
+            # Detect failure. Route through the canonical classifier (the same
+            # one engine.confirm_trade and scan_skill's confirm callback use)
+            # rather than a third local prefix list — a previous drifted copy
+            # in scan_skill.py missed "EXECUTION BLOCKED:" (degraded-mode /
+            # reduce-only), which announced a blocked trade as "EXECUTED". This
+            # local list has the same gap (also missing "EXECUTION ABORTED",
+            # "REFUSED:", "Live execution blocked") and would reproduce that
+            # bug the first time this path hits one of those outcomes.
+            from bot.core.live_executor import execution_indicates_failure
+            _local_fail_markers = (
                 "Trade not found", "not found", "expired", "No pending",
                 "Trade REJECTED", "Trade HALTED", "Execution denied",
             )
             # Case-insensitive prefix check: catches both "Trade REJECTED" and
             # "Trade rejected" (post-critique, manual reject, etc.)
             result_lower = result.lower()
-            is_failure = any(result_lower.startswith(p.lower()) for p in _fail_prefixes)
+            is_failure = (execution_indicates_failure(result)
+                          or any(result_lower.startswith(p.lower()) for p in _local_fail_markers))
             if not is_failure:
                 msg = f"\u2705 {t('trade_executed_ok', self._lang(update))}\n\n{result}"
                 # Forward trade open to marketing channels
