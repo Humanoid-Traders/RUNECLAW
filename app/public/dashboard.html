@@ -473,9 +473,24 @@ function renderControls() {
       <label class="ctl-item"><span>Max margin / trade (USD, 0 = no cap)</span>
         <input class="cred-in" id="ctlMargin" type="number" min="0" step="1" style="max-width:120px" value="${c.max_margin!=null?c.max_margin:''}"></label>
     </div>
-    <button class="cred-btn" style="margin-top:10px" onclick="saveControls()">Apply</button>
+    <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+      <button class="cred-btn" onclick="saveControls()">Apply</button>
+      <button class="cred-btn cred-danger" onclick="stopTrading()">&#128721; Emergency Stop</button>
+    </div>
     <div id="ctlMsg" class="cred-note"></div>
-    <div class="cred-note">Enabling live still requires operator approval (allowlist). You can always disable, pause, or lower your risk here.</div>`;
+    <div class="cred-note">Enabling live still requires operator approval (allowlist). Emergency Stop disables live, pauses, and closes your open positions.</div>`;
+}
+
+async function stopTrading() {
+  if (!confirm('Emergency Stop: disable live, pause, and close your open positions. Continue?')) return;
+  const msg = document.getElementById('ctlMsg');
+  msg.textContent = 'Stopping…';
+  try {
+    const r = await fetch('/api/controls/stop', {method:'POST', headers: authHeaders()});
+    const j = await r.json();
+    msg.textContent = j.ok ? 'Emergency stop queued — closing positions…' : (j.error || 'Failed.');
+    if (j.ok) setTimeout(fetchControls, 2500);
+  } catch(e) { msg.textContent = 'Network error.'; }
 }
 
 async function saveControls() {

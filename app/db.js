@@ -35,6 +35,7 @@ class MemoryDB {
     this.exchangeStatus = {}; // user_id -> { connected }
     this.pendingControls = []; // pending_controls (UPSERT by user_id)
     this.userControls = {};   // user_id -> { live_enabled, max_margin, paused, allowlisted }
+    this.pendingFlatten = []; // pending_flatten (UPSERT by user_id)
   }
 
   // Minimal query interface matching mysql2 pool.execute() return format
@@ -145,6 +146,22 @@ class MemoryDB {
     if (cmd.includes('FROM USER_CONTROLS')) {
       const c = this.userControls[params[0]];
       return [c ? [c] : [], []];
+    }
+    if (cmd.includes('DELETE FROM PENDING_FLATTEN')) {
+      this.pendingFlatten = this.pendingFlatten.filter(p => String(p.user_id) !== String(params[0]));
+      return [{ affectedRows: 1 }, []];
+    }
+    if (cmd.includes('INTO PENDING_FLATTEN')) {
+      const row = { user_id: params[0], telegram_id: params[1], created_at: new Date() };
+      const i = this.pendingFlatten.findIndex(p => String(p.user_id) === String(row.user_id));
+      if (i >= 0) this.pendingFlatten[i] = row; else this.pendingFlatten.push(row);
+      return [{ affectedRows: 1 }, []];
+    }
+    if (cmd.includes('FROM PENDING_FLATTEN')) {
+      if (cmd.includes('WHERE USER_ID')) {
+        return [this.pendingFlatten.filter(p => String(p.user_id) === String(params[0])), []];
+      }
+      return [[...this.pendingFlatten].sort((a, b) => a.created_at - b.created_at), []];
     }
 
     // -- USERS --
@@ -462,6 +479,16 @@ async function migrate() {
         paused BOOLEAN DEFAULT FALSE,
         allowlisted BOOLEAN DEFAULT FALSE,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+      )
+    `);
+    // Emergency-stop flatten requests. Separate from pending_controls because the
+    // bot processes it asynchronously (closes the user's live positions via THEIR
+    // own executor) and must not clear the request until the close completes.
+    await pool.execute(`
+      CREATE TABLE IF NOT EXISTS pending_flatten (
+        user_id INT PRIMARY KEY,
+        telegram_id VARCHAR(32) NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);
   }

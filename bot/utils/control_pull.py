@@ -83,3 +83,17 @@ def pull_and_apply_controls(store=None, allowlist_check=None, on_change=None) ->
     if acks:
         _request("/api/bot/sync/controls/ack", {"acks": acks})
     return len(acks)
+
+
+def fetch_flatten_pending() -> list[dict]:
+    """Fetch queued emergency-stop flatten requests. Empty when unconfigured."""
+    if not SYNC_SECRET:
+        return []
+    resp = _request("/api/bot/sync/flatten/pending")
+    return (resp or {}).get("pending", []) if resp else []
+
+
+def ack_flatten(acks: list[dict]) -> None:
+    """Clear completed flatten requests on the website (only ok=True rows clear)."""
+    if acks and SYNC_SECRET:
+        _request("/api/bot/sync/flatten/ack", {"acks": acks})

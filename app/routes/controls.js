@@ -81,4 +81,38 @@ router.post('/', async (req, res) => {
   }
 });
 
+// POST /api/controls/stop -> EMERGENCY STOP: disable live + pause (flag changes,
+// applied by the normal control pull) AND queue a flatten of the user's live
+// positions (processed asynchronously by the bot via the user's own executor).
+router.post('/stop', async (req, res) => {
+  try {
+    const uid = req.user.user_id;
+    const [u] = await pool.execute(
+      'SELECT telegram_linked, telegram_id FROM users WHERE id = ?', [uid]);
+    if (!u[0] || !u[0].telegram_linked || !u[0].telegram_id) {
+      return res.status(409).json({ error: 'Link your Telegram first.' });
+    }
+    const tg = String(u[0].telegram_id);
+    // Flag changes: live off + paused. (max_margin left unchanged = NULL.)
+    await pool.execute(
+      `INSERT INTO pending_controls (user_id, telegram_id, live_enabled, max_margin, paused)
+       VALUES (?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE telegram_id = VALUES(telegram_id),
+         live_enabled = VALUES(live_enabled), paused = VALUES(paused),
+         created_at = CURRENT_TIMESTAMP`,
+      [uid, tg, 0, null, 1]
+    );
+    // Flatten request (own table; the bot acks it only after the close completes).
+    await pool.execute(
+      `INSERT INTO pending_flatten (user_id, telegram_id) VALUES (?, ?)
+       ON DUPLICATE KEY UPDATE telegram_id = VALUES(telegram_id), created_at = CURRENT_TIMESTAMP`,
+      [uid, tg]
+    );
+    res.json({ ok: true, stopping: true });
+  } catch (err) {
+    console.error('Emergency stop error:', err.message);
+    res.status(500).json({ error: 'Failed to queue emergency stop' });
+  }
+});
+
 module.exports = router;
