@@ -1,0 +1,144 @@
+/* ==========================================================================
+   RUNECLAW — shared design system
+   One professional dark theme with the RUNECLAW gold accent, used by both the
+   marketing/account page (index.html) and the trading dashboard (dashboard.html)
+   so the whole product reads as one coherent, professional surface.
+   ========================================================================== */
+
+:root {
+  /* Surfaces (near-black -> raised panels) */
+  --bg:#090a0e; --bg2:#12141b; --bg3:#171a22; --bg4:#1e222c;
+  --border:#232734; --border2:#333b4c;
+
+  /* Brand + semantic */
+  --gold:#cbb06a; --gold2:#e6cf86; --gold-dim:rgba(203,176,106,.14);
+  --green:#22c55e; --green-dim:rgba(34,197,94,.13);
+  --red:#ef4444; --red-dim:rgba(239,68,68,.13);
+  --orange:#f59e0b; --orange-dim:rgba(245,158,11,.13);
+  --cyan:#06b6d4; --cyan-dim:rgba(6,182,212,.12);
+
+  /* Text ramp */
+  --text:#e6e9ef; --text2:#9aa4b4; --text3:#616b7d;
+
+  /* Type */
+  --head:'Cinzel',Georgia,serif;
+  --ui:'Inter',system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+  --mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
+  --body:var(--ui);
+
+  /* Scale */
+  --r:10px; --r-sm:7px; --r-lg:16px;
+  --sp:16px;
+  --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.25);
+  --maxw:1320px;
+}
+
+*{margin:0;padding:0;box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{
+  background:var(--bg);color:var(--text);
+  font-family:var(--ui);font-size:15px;line-height:1.55;
+  min-height:100vh;display:flex;flex-direction:column;
+  -webkit-font-smoothing:antialiased;
+}
+a{color:var(--gold);text-decoration:none;transition:color .15s}
+a:hover{color:var(--gold2)}
+code{font-family:var(--mono);font-size:.9em;background:var(--bg3);border:1px solid var(--border);border-radius:4px;padding:1px 5px;color:var(--gold2)}
+::selection{background:var(--gold-dim)}
+::-webkit-scrollbar{width:8px;height:8px}
+::-webkit-scrollbar-track{background:var(--bg)}
+::-webkit-scrollbar-thumb{background:var(--border2);border-radius:4px}
+::-webkit-scrollbar-thumb:hover{background:#43506a}
+
+/* ---- Top navigation (shared) ------------------------------------------- */
+.topnav{
+  position:sticky;top:0;z-index:40;
+  display:flex;align-items:center;justify-content:space-between;gap:16px;
+  padding:12px 20px;background:rgba(9,10,14,.82);backdrop-filter:blur(10px);
+  border-bottom:1px solid var(--border);
+}
+.brand{display:flex;align-items:center;gap:9px;font-family:var(--head);font-weight:700;
+  font-size:18px;letter-spacing:2px;color:var(--gold);white-space:nowrap}
+.brand .dot{width:8px;height:8px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green);animation:pulse 2.4s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.45}}
+.nav-links{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.nav-links a{color:var(--text2);font-size:13.5px;font-weight:500;padding:7px 11px;border-radius:var(--r-sm)}
+.nav-links a:hover{color:var(--text);background:var(--bg3)}
+.nav-links a.active{color:var(--gold)}
+.nav-links a.cta{background:var(--gold);color:#0a0b0e;font-weight:700}
+.nav-links a.cta:hover{background:var(--gold2);color:#0a0b0e}
+.nav-acct{display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:12px;color:var(--text3)}
+.nav-acct .live{color:var(--green)}
+.nav-acct button{font-family:var(--mono);font-size:12px;color:var(--text2);background:none;border:none;cursor:pointer;padding:0}
+.nav-acct button:hover{color:var(--red)}
+.nav-acct .sep{color:var(--border2)}
+
+/* ---- Buttons (shared) -------------------------------------------------- */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;
+  padding:11px 18px;border-radius:var(--r-sm);border:1px solid transparent;
+  font-family:var(--ui);font-size:14px;font-weight:600;cursor:pointer;
+  transition:.15s;line-height:1;text-decoration:none}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.btn-primary{background:var(--gold);color:#0a0b0e}
+.btn-primary:hover{background:var(--gold2);color:#0a0b0e}
+.btn-green{background:var(--green);color:#06120a}
+.btn-green:hover{filter:brightness(1.08)}
+.btn-danger{background:var(--red-dim);color:var(--red);border-color:rgba(239,68,68,.35)}
+.btn-danger:hover{background:rgba(239,68,68,.2)}
+.btn-ghost{background:transparent;border-color:var(--border2);color:var(--text)}
+.btn-ghost:hover{background:var(--bg3);border-color:#43506a}
+.btn-block{width:100%}
+.btn-sm{padding:8px 13px;font-size:13px}
+
+/* ---- Cards / panels (shared) ------------------------------------------- */
+.card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);
+  padding:20px;box-shadow:var(--shadow)}
+.card-title{font-family:var(--head);color:var(--gold);font-size:13px;letter-spacing:1.4px;
+  text-transform:uppercase;margin-bottom:14px;display:flex;align-items:center;gap:8px}
+
+/* ---- Forms (shared) ---------------------------------------------------- */
+.field{margin-bottom:14px}
+.field label{display:block;font-size:11px;font-weight:600;color:var(--text2);
+  margin-bottom:6px;text-transform:uppercase;letter-spacing:.6px}
+.input{width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:var(--r-sm);
+  color:var(--text);font-family:var(--ui);font-size:14px;padding:11px 13px;outline:none;transition:.15s}
+.input:focus{border-color:var(--gold);background:var(--bg4)}
+.input::placeholder{color:var(--text3)}
+
+/* ---- Badges / pills ---------------------------------------------------- */
+.badge{display:inline-flex;align-items:center;gap:5px;font-family:var(--mono);
+  font-size:11px;font-weight:600;letter-spacing:.5px;padding:3px 9px;border-radius:20px}
+.badge-green{background:var(--green-dim);color:var(--green)}
+.badge-gold{background:var(--gold-dim);color:var(--gold)}
+.badge-orange{background:var(--orange-dim);color:var(--orange)}
+.badge-red{background:var(--red-dim);color:var(--red)}
+.badge-muted{background:var(--bg3);color:var(--text2);border:1px solid var(--border)}
+
+/* ---- Feedback: spinner / empty ---------------------------------------- */
+.spinner{display:inline-block;width:20px;height:20px;border:2px solid var(--border);
+  border-top-color:var(--gold);border-radius:50%;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.loading{text-align:center;padding:24px;color:var(--text3);font-family:var(--mono);font-size:12px}
+.empty-msg{font-family:var(--mono);font-size:12px;color:var(--text3);text-align:center;padding:22px;line-height:1.7}
+
+/* ---- Footer (shared) --------------------------------------------------- */
+.site-footer{margin-top:auto;border-top:1px solid var(--border);background:var(--bg2);
+  padding:22px 20px;color:var(--text3);font-size:13px}
+.site-footer .inner{max-width:var(--maxw);margin:0 auto;display:flex;align-items:center;
+  justify-content:space-between;gap:16px;flex-wrap:wrap}
+.site-footer a{color:var(--text2)}
+.site-footer a:hover{color:var(--gold)}
+.site-footer .foot-links{display:flex;gap:16px;flex-wrap:wrap}
+.site-footer .risk{width:100%;font-size:11px;color:var(--text3);line-height:1.6;
+  border-top:1px solid var(--border);margin-top:14px;padding-top:12px;max-width:var(--maxw);margin-left:auto;margin-right:auto}
+
+/* ---- P&L color helpers ------------------------------------------------- */
+.pos{color:var(--green)} .neg{color:var(--red)}
+
+/* ---- Responsive -------------------------------------------------------- */
+@media(max-width:640px){
+  .topnav{padding:10px 14px}
+  .brand{font-size:16px;letter-spacing:1.5px}
+  .nav-links a{padding:6px 8px;font-size:13px}
+  .nav-acct{display:none}
+}
