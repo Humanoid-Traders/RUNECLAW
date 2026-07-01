@@ -969,15 +969,19 @@ async def callback_confirm_reject(update: Update, context: ContextTypes.DEFAULT_
                 log.error("Auto re-analyze failed for %s: %s", symbol, retry_exc)
                 result = f"Auto re-analyze failed: {retry_exc}"
 
-        # Check if execution succeeded
-        _fail_prefixes = (
-            "EXECUTION FAILED:", "INSUFFICIENT FUNDS:", "INVALID ORDER:",
-            "BLOCKED:", "PREFLIGHT FAILED:", "Risk re-check FAILED",
+        # Check if execution succeeded. Use the canonical classifier (same one
+        # engine.confirm_trade uses) rather than a local prefix list — a stale
+        # local copy here previously missed "EXECUTION BLOCKED:" (degraded-mode
+        # / reduce-only blocks), so a blocked trade with NO order placed was
+        # displayed to the user as "✅ EXECUTED".
+        from bot.core.live_executor import execution_indicates_failure
+        _local_fail_markers = (
             "Trade not found", "not found", "expired", "No pending",
             "Trade REJECTED", "Trade HALTED", "Execution denied",
             "Auto re-analyze failed",
         )
-        is_failure = any(result.startswith(p) for p in _fail_prefixes)
+        is_failure = (execution_indicates_failure(result)
+                      or any(result.startswith(p) for p in _local_fail_markers))
         if is_failure:
             await query.message.reply_text(
                 f"\u274c <b>{symbol} {direction.value}</b> -- Execution failed\n\n{result}",
