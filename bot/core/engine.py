@@ -1152,6 +1152,11 @@ class RuneClawEngine:
                 # the website queued and import them into the credential store.
                 # Throttled, fail-open, no-op unless WEB_CREDS_KEY is configured.
                 self._maybe_pull_web_credentials()
+                # Web wallet (3b): process any emergency-stop flatten requests
+                # (close the user's live positions via THEIR own executor). Async,
+                # fail-open, throttled; guarded so it never touches another
+                # account's positions.
+                await self._maybe_flatten_web_requests()
             except Exception as exc:
                 _consecutive_failures += 1
                 self._tick_consecutive_failures = _consecutive_failures
@@ -1240,6 +1245,54 @@ class RuneClawEngine:
                       action="web_credentials_pull", result="ERROR")
             except Exception:
                 pass
+
+    async def _maybe_flatten_web_requests(self) -> None:
+        """Process website emergency-stop flatten requests: close each requesting
+        user's live positions via THEIR OWN executor, then ack.
+
+        Isolation guard (same as the position-UI fix): a request is only honoured
+        against the caller's own per-user executor. If ``_executor_for`` would fall
+        back to the shared operator executor for a non-operator user, we do NOT
+        flatten (there is nothing of theirs to close) — a web request can never
+        close the operator's or another user's positions. Throttled, fail-open.
+        """
+        try:
+            import time as _time
+            now = _time.monotonic()
+            if now - getattr(self, "_last_flatten_pull", 0.0) < 20.0:
+                return
+            self._last_flatten_pull = now
+            from bot.utils.control_pull import fetch_flatten_pending, ack_flatten
+            rows = fetch_flatten_pending()
+            if not rows:
+                return
+            per_user = getattr(CONFIG, "per_user_live_enabled", False)
+            acks = []
+            for r in rows:
+                uid = r.get("user_id")
+                tg = str(r.get("telegram_id") or "")
+                if uid is None or not tg:
+                    continue
+                try:
+                    ex = self._executor_for(tg)
+                    # Never flatten the shared operator account for a non-operator.
+                    if per_user and ex is self.live_executor and not self._is_operator_user(tg):
+                        acks.append({"user_id": uid, "ok": True, "closed": 0})
+                        continue
+                    closed = await ex.close_all_positions(reason="web_emergency_stop")
+                    audit(system_log,
+                          f"Web emergency-stop flatten for user {tg}: {len(closed)} closed",
+                          action="web_flatten", result="OK",
+                          data={"user": tg, "closed": len(closed)})
+                    acks.append({"user_id": uid, "ok": True, "closed": len(closed)})
+                except Exception as exc:
+                    # Leave the row un-acked (retry next poll) on a close failure.
+                    audit(system_log, f"Web flatten failed for user {tg}: {exc}",
+                          action="web_flatten", result="ERROR")
+            if acks:
+                ack_flatten(acks)
+        except Exception:
+            pass
 
     async def _tick(self) -> None:
         """One full scan-analyze cycle."""

@@ -8,6 +8,8 @@ state + allowlist flag are reported back, and enabling live still depends on the
 operator allowlist (surfaced separately).
 """
 
+import pytest
+
 import bot.utils.control_pull as ctl
 
 
@@ -107,3 +109,75 @@ class TestProcessControls:
 class TestPullGate:
     def test_no_store_is_noop(self):
         assert ctl.pull_and_apply_controls(store=None) == 0
+
+
+class TestFlattenIsolationGuard:
+    """The emergency-stop flatten must close the requesting user's OWN positions
+    only — never the shared operator account for a non-operator (mirrors #199)."""
+
+    def _stub(self, monkeypatch, resolved_ex, operator_ex, is_operator, per_user=True):
+        import types
+        import bot.core.engine as eng_mod
+
+        class _Cfg:
+            per_user_live_enabled = per_user
+        monkeypatch.setattr(eng_mod, "CONFIG", _Cfg)
+        monkeypatch.setattr(eng_mod, "audit", lambda *a, **k: None)
+
+        acked = {}
+        monkeypatch.setattr("bot.utils.control_pull.fetch_flatten_pending",
+                            lambda: [{"user_id": 1, "telegram_id": "222"}])
+        monkeypatch.setattr("bot.utils.control_pull.ack_flatten",
+                            lambda acks: acked.update({"acks": acks}))
+
+        stub = types.SimpleNamespace()
+        stub.live_executor = operator_ex
+        stub._executor_for = lambda tg: resolved_ex
+        stub._is_operator_user = lambda tg: is_operator
+        stub._last_flatten_pull = 0.0
+        # time.monotonic starts >20 past 0.0 so the throttle passes.
+        return stub, acked
+
+    @pytest.mark.asyncio
+    async def test_non_operator_fallback_does_not_flatten_operator(self, monkeypatch):
+        import bot.core.engine as eng_mod
+
+        class _Op:
+            def __init__(self): self.called = False
+            async def close_all_positions(self, reason=""): self.called = True; return ["x"]
+        op = _Op()
+        # resolved == operator executor, caller is NOT operator -> must NOT close.
+        stub, acked = self._stub(monkeypatch, resolved_ex=op, operator_ex=op, is_operator=False)
+        await eng_mod.RuneClawEngine._maybe_flatten_web_requests(stub)
+        assert op.called is False
+        assert acked["acks"][0] == {"user_id": 1, "ok": True, "closed": 0}
+
+    @pytest.mark.asyncio
+    async def test_own_executor_is_flattened(self, monkeypatch):
+        import bot.core.engine as eng_mod
+
+        class _UserEx:
+            def __init__(self): self.called = False
+            async def close_all_positions(self, reason=""): self.called = True; return ["a", "b"]
+
+        class _Op:
+            async def close_all_positions(self, reason=""): return []
+        user_ex, op = _UserEx(), _Op()
+        # resolved is the user's OWN executor (distinct from operator) -> close it.
+        stub, acked = self._stub(monkeypatch, resolved_ex=user_ex, operator_ex=op, is_operator=False)
+        await eng_mod.RuneClawEngine._maybe_flatten_web_requests(stub)
+        assert user_ex.called is True
+        assert acked["acks"][0]["ok"] is True and acked["acks"][0]["closed"] == 2
+
+    @pytest.mark.asyncio
+    async def test_operator_can_flatten_operator(self, monkeypatch):
+        import bot.core.engine as eng_mod
+
+        class _Op:
+            def __init__(self): self.called = False
+            async def close_all_positions(self, reason=""): self.called = True; return ["x"]
+        op = _Op()
+        # caller IS the operator -> flattening the operator account is allowed.
+        stub, acked = self._stub(monkeypatch, resolved_ex=op, operator_ex=op, is_operator=True)
+        await eng_mod.RuneClawEngine._maybe_flatten_web_requests(stub)
+        assert op.called is True

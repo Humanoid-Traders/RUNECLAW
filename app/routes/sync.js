@@ -453,4 +453,39 @@ router.post('/controls/ack', async (req, res) => {
   }
 });
 
+/**
+ * GET /api/bot/sync/flatten/pending  — bot pulls emergency-stop flatten requests.
+ * POST /api/bot/sync/flatten/ack { acks:[{user_id, ok}] } — clear completed ones.
+ * Bot-secret authed. The bot closes the user's positions via THEIR own executor
+ * before acking, so a failed close is retried next poll (row is left in place).
+ */
+router.get('/flatten/pending', async (req, res) => {
+  try {
+    const [rows] = await pool.execute(
+      'SELECT user_id, telegram_id, created_at FROM pending_flatten ORDER BY created_at ASC LIMIT 200');
+    res.json({ pending: rows });
+  } catch (err) {
+    console.error('Flatten pending error:', err.message);
+    res.status(500).json({ error: 'Failed to fetch flatten requests' });
+  }
+});
+
+router.post('/flatten/ack', async (req, res) => {
+  try {
+    const acks = Array.isArray(req.body && req.body.acks) ? req.body.acks.slice(0, 200) : [];
+    let applied = 0;
+    for (const a of acks) {
+      if (!a || a.user_id == null || !a.ok) continue;
+      const uid = parseInt(a.user_id);
+      if (!Number.isInteger(uid)) continue;
+      await pool.execute('DELETE FROM pending_flatten WHERE user_id = ?', [uid]);
+      applied++;
+    }
+    res.json({ ok: true, applied });
+  } catch (err) {
+    console.error('Flatten ack error:', err.message);
+    res.status(500).json({ error: 'Failed to ack flatten' });
+  }
+});
+
 module.exports = router;
