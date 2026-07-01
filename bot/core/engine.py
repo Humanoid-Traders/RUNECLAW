@@ -61,6 +61,27 @@ def filter_adopted_messages(sync_msgs: list[str]) -> list[str]:
     return [m for m in sync_msgs if "Adopted" in m]
 
 
+def _build_signal_sync_payloads(ideas: list, regime_fn) -> list[dict]:
+    """Shape a batch of newly-generated TradeIdeas into website signal-stream rows.
+
+    Extracted from _tick() so the real engine-generated signal stream (as
+    opposed to the manual Telegram /scan path's separate lightweight scanner)
+    can be verified without driving a full scan cycle.
+    """
+    from bot.utils.website_sync import build_signal_payload
+
+    return [
+        build_signal_payload(
+            idea.id, idea,
+            score=idea.confidence,
+            regime=regime_fn(idea.asset),
+            status="NEW",
+            created_at=idea.timestamp.isoformat(),
+        )
+        for idea in ideas
+    ]
+
+
 class RuneClawEngine:
     """
     Main event loop that ties scanner, analyzer, risk, and execution together.
@@ -579,6 +600,53 @@ class RuneClawEngine:
                     # pnl == 0 (breakeven): no change, matching the account-wide streak.
             except Exception as _sls_exc:
                 logger.debug("Symbol loss-streak tracking skipped: %s", _sls_exc)
+
+        # Push real live state to the website dashboard. The paper portfolio's
+        # close callback (_on_trade_close_composite, above) already does this
+        # for paper trades; live closes never reached the website at all before
+        # this, so the dashboard showed paper/default data for live users.
+        try:
+            self._sync_live_state_to_website()
+        except Exception as _sync_exc:
+            logger.debug("Live website sync skipped: %s", _sync_exc)
+
+    def _sync_live_state_to_website(self) -> None:
+        """Push the live executor's real open positions, recent closed trades,
+        and equity to the website dashboard (fire-and-forget, fail-open).
+
+        Mirrors _on_trade_close_composite's paper sync, but sources from the
+        actual LiveExecutor instead of the paper portfolio -- so a live user's
+        dashboard reflects their real Bitget account, not simulated state.
+        """
+        from bot.utils.website_sync import sync_in_background
+
+        executor = self.live_executor
+
+        def _open_dict(pos) -> dict:
+            return {
+                "asset": pos.symbol,
+                "direction": pos.direction,
+                "entry_price": pos.entry_price,
+                "quantity": pos.quantity,
+                "commission": pos.commission or 0,
+                "pattern": pos.signal_type,
+                "stop_loss": pos.stop_loss,
+                "take_profit": pos.take_profit,
+                "opened_at": pos.opened_at,
+            }
+
+        def _closed_dict(pos) -> dict:
+            d = _open_dict(pos)
+            d["exit_price"] = pos.close_price or 0
+            d["pnl"] = pos.pnl_usd or 0
+            d["closed_at"] = pos.closed_at
+            return d
+
+        positions = [_open_dict(p) for p in executor.open_positions]
+        closed = [_closed_dict(p) for p in executor.closed_positions[-50:]]
+        equity = self.get_effective_equity()
+        user_id = getattr(executor, "user_id", None) or 1
+        sync_in_background(user_id, equity, positions, closed)
 
     def _executor_for(self, user_id: str = ""):
         """Return the LiveExecutor that should place THIS caller's live order.
@@ -1481,6 +1549,7 @@ class RuneClawEngine:
 
         tasks = [_safe_analyze(sig) for sig in signals]
         results = await asyncio.gather(*tasks)
+        _synced_ideas = []
         for idea in results:
             if idea:
                 # Filter: don't present ideas below min_confidence threshold
@@ -1504,6 +1573,19 @@ class RuneClawEngine:
                     self._pending_atr.pop(existing_id, None)
                     self._pending_pyramid.pop(existing_id, None)  # C2-31 FIX: clean stale pyramid flag
                 self._pending_ideas[idea.id] = idea
+                _synced_ideas.append(idea)
+
+        # Push these real, engine-generated signals to the website's signal
+        # stream. Previously the dashboard's "Signals" feed only updated from
+        # manual Telegram /scan (a different, simpler scanner) — it never saw
+        # what the autonomous engine actually generates and trades on.
+        if _synced_ideas:
+            try:
+                from bot.utils.website_sync import sync_signals_in_background
+                sync_signals_in_background(
+                    _build_signal_sync_payloads(_synced_ideas, self._outcome_regime))
+            except Exception as _sig_sync_exc:
+                logger.debug("Signal stream sync skipped: %s", _sig_sync_exc)
 
         # ── Adaptive Confidence Threshold ──
         # Auto-adjust threshold based on recent win rate
