@@ -146,6 +146,11 @@ _CLOSED_TRADES_FILE = os.path.join(
 _MAX_CLOSED_TRADES = 500  # Cap closed trade history
 # F-13 FIX: Maximum order history retained in memory
 _MAX_ORDER_HISTORY = 200
+# Orphan-adoption false-positive guard (see _recent_local_opens): grace period
+# after a genuine local open during which the same symbol is never
+# re-"adopted" as an orphan by adopt_exchange_positions()/
+# adopt_exchange_limit_orders(), regardless of exact-match quirks.
+_RECENT_LOCAL_OPEN_GRACE = 300  # seconds
 
 
 def _user_state_path(base_file: str, state_dir: Optional[str], user_id) -> str:
@@ -267,6 +272,14 @@ class LiveExecutor:
         # Exchange sync: periodically check for untracked positions
         self._last_exchange_sync: float = 0
         self._EXCHANGE_SYNC_INTERVAL: float = 300  # 5 minutes
+        # Orphan-adoption false-positive guard: symbol -> time.time() of the
+        # most recent GENUINE local open (fresh order placement, not an
+        # adoption itself). adopt_exchange_positions()/adopt_exchange_limit_orders()
+        # skip a symbol here for a grace window so a bot-placed trade can never
+        # be re-"adopted" as its own orphan while local bookkeeping is still
+        # settling (SL/TP placement, fill confirmation, etc. all take multiple
+        # await points after the position/order is first recorded).
+        self._recent_local_opens: dict[str, float] = {}
         # Dynamic leverage: ATR-based volatility ratios per symbol
         self._last_atr_pct: dict[str, float] = {}  # symbol -> ATR/price ratio
         # Slippage tracker: set by engine
@@ -1198,6 +1211,23 @@ class LiveExecutor:
                                 sym, side, _ADOPT_COOLDOWN)
                     continue
 
+                # Grace window: skip symbols the bot itself just opened locally.
+                # Real incident: a just-filled bot position ("AMD LONG") was
+                # re-"adopted" as an orphan on the very next sync tick, sending a
+                # confusing duplicate notification for a position that was
+                # already fully tracked. The (sym, side) tuple match above is
+                # exact-match only, so ANY transient disagreement between local
+                # and exchange side/direction reporting in the first moments
+                # after a fill falls through to adoption. Give fresh local
+                # opens a grace period to settle before treating them as
+                # possible orphans; a GENUINE orphan is unaffected since it
+                # persists well past this window.
+                _last_local_open = self._recent_local_opens.get(sym)
+                if _last_local_open is not None and _now - _last_local_open < _RECENT_LOCAL_OPEN_GRACE:
+                    logger.info("Skipping adoption of %s %s — opened locally %ds ago (grace %ds)",
+                                sym, side, int(_now - _last_local_open), _RECENT_LOCAL_OPEN_GRACE)
+                    continue
+
                 # Adopt this position — always use raw exchange data (info.openPriceAvg)
                 # as primary source, with ccxt's entryPrice as fallback.
                 # RULE: exchange numbers are the only truth, no exceptions.
@@ -1485,6 +1515,24 @@ class LiveExecutor:
                     logger.debug(
                         "Skipping duplicate limit order %s for %s %s @ %.4f — already tracked",
                         oid, raw_sym, direction, price)
+                    continue
+
+                # Grace window: skip symbols the bot itself just placed an order
+                # for. Real incident: a bot-placed pending limit order ("XPT
+                # SHORT") was re-"adopted" as an orphan moments after being
+                # placed, sending a confusing duplicate notification for an
+                # order that was already fully tracked. The combo match above
+                # is exact-match only (symbol+direction+price to 4dp), so any
+                # transient disagreement in how the exchange echoes the order
+                # back falls through to adoption. Give fresh local opens a
+                # grace period to settle; a GENUINE orphan is unaffected since
+                # it persists well past this window.
+                _sym_norm = normalize_symbol(raw_sym)
+                _last_local_open = self._recent_local_opens.get(_sym_norm)
+                if _last_local_open is not None and time.time() - _last_local_open < _RECENT_LOCAL_OPEN_GRACE:
+                    logger.info(
+                        "Skipping adoption of limit order %s for %s %s — opened locally %ds ago (grace %ds)",
+                        oid, raw_sym, direction, int(time.time() - _last_local_open), _RECENT_LOCAL_OPEN_GRACE)
                     continue
 
                 # ── Get real data from exchange order info ──
@@ -2398,6 +2446,7 @@ class LiveExecutor:
                 status="pending_fill" if is_pending_limit else "open",
             )
             self._positions[idea.id] = position
+            self._recent_local_opens[normalize_symbol(idea.asset)] = time.time()
 
             # F-07 FIX: persist after opening
             self._save_positions()
@@ -2731,6 +2780,7 @@ class LiveExecutor:
                     status="open",
                 )
                 self._positions[idea.id] = emergency_pos
+                self._recent_local_opens[normalize_symbol(idea.asset)] = time.time()
                 self._save_positions()
                 audit(trade_log,
                       f"EMERGENCY position created for {idea.asset} after post-order crash: {exc}",
