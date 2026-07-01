@@ -122,6 +122,25 @@ a{color:var(--gold);text-decoration:none}
 .ins-n{min-width:52px;text-align:right;color:var(--text3);font-size:10px}
 .ins-overall{display:flex;gap:18px;flex-wrap:wrap;margin-bottom:14px;font-family:var(--mono);font-size:12px}
 .ins-overall b{color:var(--gold);font-size:15px}
+.perf-row{display:flex;gap:10px;flex-wrap:wrap;margin-top:10px}
+.perf-chip{flex:1;min-width:96px;background:var(--bg);border:1px solid var(--border);border-radius:5px;padding:7px 9px}
+.pnl-bar{display:flex;align-items:center;gap:8px;margin-bottom:3px}
+.pnl-sym{min-width:56px;color:var(--text2)}
+.pnl-track{flex:1;height:10px;background:var(--bg);border-radius:3px;overflow:hidden;border:1px solid var(--border)}
+.pnl-fill{height:100%;display:block}
+.pnl-fill.pos{background:var(--green);opacity:.7}
+.pnl-fill.neg{background:var(--red);opacity:.7}
+.pnl-val{min-width:66px;text-align:right;font-weight:700}
+.pnl-val.pos{color:var(--green)}.pnl-val.neg{color:var(--red)}
+.pnl-wr{min-width:34px;text-align:right;color:var(--text3);font-size:10px}
+.pos-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
+.pos-card{background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px 10px;font-family:var(--mono);font-size:11px}
+.pc-head{display:flex;align-items:center;gap:6px;margin-bottom:5px}
+.pc-head .sym{font-size:13px;font-weight:700}
+.pc-upnl{margin-left:auto;font-weight:700}
+.pc-upnl.pos{color:var(--green)}.pc-upnl.neg{color:var(--red)}
+.pc-meta{display:flex;gap:10px;flex-wrap:wrap;color:var(--text2);font-size:10px;margin-top:2px}
+.pc-meta b{color:var(--text)}
 .cred-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
 .cred-form{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 .cred-in{flex:1;min-width:140px;background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:8px 10px;color:var(--text);font-family:var(--mono);font-size:12px}
@@ -243,13 +262,15 @@ async function fetchPortfolio() {
   }
   try {
     const h = { Authorization: 'Bearer ' + TOKEN };
-    const [s, o, e] = await Promise.all([
-      fetch('/api/trades/stats', {headers:h}), fetch('/api/trades/open', {headers:h}), fetch('/api/trades/equity-curve', {headers:h})
+    const [s, o, e, bk] = await Promise.all([
+      fetch('/api/trades/stats', {headers:h}), fetch('/api/trades/open', {headers:h}),
+      fetch('/api/trades/equity-curve', {headers:h}), fetch('/api/trades/breakdown', {headers:h})
     ]);
     const stats = await s.json(); const open = await o.json(); const eq = await e.json();
+    const breakdown = bk.ok === false ? null : await bk.json().catch(()=>null);
     // Only use authenticated data if it has real trades
     if (stats && stats.total_trades > 0) {
-      portfolioData = { stats, positions: open.positions||[], snapshots: eq.snapshots||[] };
+      portfolioData = { stats, positions: open.positions||[], snapshots: eq.snapshots||[], breakdown };
     }
     renderPortfolio(); renderCircuit();
   } catch(e) { renderPortfolio(); }
@@ -427,18 +448,44 @@ function renderPortfolio() {
       <defs><linearGradient id="eqg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="var(--gold)" stop-opacity="0.3"/><stop offset="1" stop-color="var(--gold)" stop-opacity="0"/></linearGradient></defs>
       <polygon points="0,${ht} ${pts} ${w},${ht}" fill="url(#eqg)"/><polyline points="${pts}" fill="none" stroke="var(--gold)" stroke-width="2"/></svg>`;
   }
+  const bd = hasAuth ? portfolioData.breakdown : null;
+  if(bd && bd.trades>0){
+    h+=`<div class="perf-row">
+      <div class="perf-chip"><div class="ps-label">Max Drawdown</div><div class="ps-val neg">-$${fmt(bd.drawdown.max_abs)}${bd.drawdown.max_pct?` <span style="font-size:10px">(${fmt(bd.drawdown.max_pct,1)}%)</span>`:''}</div></div>
+      <div class="perf-chip"><div class="ps-label">Expectancy</div><div class="ps-val ${pctC(bd.expectancy)}">${bd.expectancy>=0?'+':''}$${fmt(bd.expectancy)}</div></div>
+      ${bd.best?`<div class="perf-chip"><div class="ps-label">Best</div><div class="ps-val pos">+$${fmt(bd.best.pnl)}<span style="font-size:9px;color:var(--text3)"> ${(bd.best.symbol||'').replace('USDT','')}</span></div></div>`:''}
+      ${bd.worst?`<div class="perf-chip"><div class="ps-label">Worst</div><div class="ps-val neg">$${fmt(bd.worst.pnl)}<span style="font-size:9px;color:var(--text3)"> ${(bd.worst.symbol||'').replace('USDT','')}</span></div></div>`:''}
+    </div>`;
+    if(bd.by_symbol && bd.by_symbol.length){
+      const maxAbs=Math.max(...bd.by_symbol.map(g=>Math.abs(g.net_pnl)),1);
+      h+='<div style="font-family:var(--mono);font-size:11px;margin-top:8px"><div style="color:var(--text3);margin-bottom:4px">PNL BY SYMBOL</div>';
+      for(const g of bd.by_symbol.slice(0,8)){
+        const pos=g.net_pnl>=0, wpct=Math.max(3,Math.round(Math.abs(g.net_pnl)/maxAbs*100));
+        h+=`<div class="pnl-bar">
+          <span class="pnl-sym">${(g.symbol||'').replace('USDT','')}</span>
+          <span class="pnl-track"><span class="pnl-fill ${pos?'pos':'neg'}" style="width:${wpct}%"></span></span>
+          <span class="pnl-val ${pos?'pos':'neg'}">${pos?'+':''}$${fmt(g.net_pnl)}</span>
+          <span class="pnl-wr" title="${g.wins}/${g.n} win">${fmt(g.win_rate,0)}%</span>
+        </div>`;
+      }
+      h+='</div>';
+    }
+  }
   if(pos.length>0){
-    h+='<div style="font-family:var(--mono);font-size:11px;margin-top:8px"><div style="color:var(--text3);margin-bottom:4px">OPEN POSITIONS</div>';
+    h+='<div style="margin-top:10px"><div style="font-family:var(--mono);font-size:11px;color:var(--text3);margin-bottom:6px">OPEN POSITIONS</div><div class="pos-cards">';
     for(const p of pos){
-      const sym=p.symbol||'';const dir=(p.direction||p.side||'').toUpperCase();
+      const sym=(p.symbol||'').replace('USDT','');const dir=(p.direction||p.side||'').toUpperCase();
       const entry=p.entry_price||p.entryPrice||0;const upnl=p.unrealized_pnl!=null?p.unrealized_pnl:p.unrealizedPnl;
-      h+=`<div style="display:flex;justify-content:space-between;gap:8px;padding:3px 0;border-bottom:1px solid var(--border)">
-        <span class="sym">${sym}</span><span class="${dir==='LONG'?'pos':'neg'}">${dir}</span>
-        <span>$${fmtP(entry)}</span>
-        ${upnl!=null?`<span class="${Number(upnl)>=0?'pos':'neg'}">${Number(upnl)>=0?'+':''}$${fmt(upnl)}</span>`:''}
+      const size=p.size_usd!=null?p.size_usd:(p.margin!=null?p.margin:null);
+      const sl=p.stop_loss!=null?p.stop_loss:p.stopLoss;const tp=p.take_profit!=null?p.take_profit:p.takeProfit;
+      h+=`<div class="pos-card">
+        <div class="pc-head"><span class="sym">${sym}</span><span class="entry-dir ${dir==='LONG'?'long':'short'}">${dir}</span>
+          ${upnl!=null?`<span class="pc-upnl ${Number(upnl)>=0?'pos':'neg'}">${Number(upnl)>=0?'+':''}$${fmt(upnl)}</span>`:''}</div>
+        <div class="pc-meta"><span>Entry <b>$${fmtP(entry)}</b></span>${size!=null?`<span>Size <b>$${fmt(size)}</b></span>`:''}</div>
+        ${(sl||tp)?`<div class="pc-meta">${sl?`<span class="neg">SL $${fmtP(sl)}</span>`:''}${tp?`<span class="pos">TP $${fmtP(tp)}</span>`:''}</div>`:''}
       </div>`;
     }
-    h+='</div>';
+    h+='</div></div>';
   } else if(s.open_positions>0){
     h+=`<div class="empty-msg" style="margin-top:8px">${s.open_positions} open position${s.open_positions>1?'s':''}</div>`;
   } else h+='<div class="empty-msg" style="margin-top:8px">No open positions</div>';

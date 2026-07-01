@@ -1,6 +1,7 @@
 const express = require('express');
 const { pool } = require('../db');
 const { authMiddleware } = require('../auth');
+const { computePerformance } = require('../lib/trade_performance');
 
 const router = express.Router();
 
@@ -118,6 +119,32 @@ router.get('/open', async (req, res) => {
   } catch (err) {
     console.error('Open error:', err.message);
     res.status(500).json({ error: 'Failed to fetch positions' });
+  }
+});
+
+// GET /api/trades/breakdown - realised PnL by symbol + max drawdown + expectancy.
+// Computed in-process over the user's closed trades (bounded window) so it
+// behaves the same on MySQL and the in-memory mock.
+router.get('/breakdown', async (req, res) => {
+  try {
+    const uid = req.user.user_id;
+    const [rows] = await pool.execute(
+      `SELECT symbol, direction, pnl, size_usd, closed_at
+       FROM trades WHERE user_id = ? AND status = 'CLOSED'
+       ORDER BY closed_at DESC LIMIT 2000`,
+      [uid]
+    );
+    // Seed drawdown % against the latest equity snapshot if we have one.
+    const [snap] = await pool.execute(
+      'SELECT equity FROM equity_snapshots WHERE user_id = ? ORDER BY snapshot_at DESC LIMIT 1',
+      [uid]
+    );
+    const net = rows.reduce((a, r) => a + (parseFloat(r.pnl) || 0), 0);
+    const startEquity = snap.length > 0 ? Math.max(parseFloat(snap[0].equity) - net, 1) : 10000;
+    res.json(computePerformance(rows, { startEquity }));
+  } catch (err) {
+    console.error('Breakdown error:', err.message);
+    res.status(500).json({ error: 'Failed to compute breakdown' });
   }
 });
 
