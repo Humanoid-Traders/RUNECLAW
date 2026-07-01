@@ -187,6 +187,11 @@ class RuneClawEngine:
         # Per-symbol cooldown after SL hit — prevents immediate re-entry
         self._symbol_cooldowns: dict[str, float] = {}  # symbol_key -> monotonic expiry
         self._symbol_cooldown_seconds: float = float(os.environ.get("SYMBOL_SL_COOLDOWN_SEC", "1800"))  # 30 min default
+        # Per-symbol loss-streak tracking — a much longer cooldown (see
+        # CONFIG.risk.symbol_loss_streak_*) once a symbol has lost repeatedly,
+        # reusing _symbol_cooldowns above so the existing pre-analysis check
+        # in _analyze_signal blocks it the same way a post-SL cooldown does.
+        self._symbol_loss_streaks: dict[str, int] = {}  # symbol_key -> consecutive losses
         self._last_rebalance_check: float = 0.0  # monotonic timestamp
         self._rebalance_interval: float = 4 * 3600  # 4 hours minimum between checks
         # /whynot: store last RiskCheck per symbol when risk rejects a trade
@@ -524,6 +529,45 @@ class RuneClawEngine:
                 logger.info(
                     "Symbol cooldown set: %s blocked for %ds after SL hit",
                     sym_key, int(self._symbol_cooldown_seconds))
+
+        # ── Per-symbol loss-streak cooldown ────────────────────────────────
+        # The account-wide consecutive-loss streak (RiskEngine) decays on ANY
+        # win, so a symbol that keeps losing stays fully eligible as long as
+        # OTHER symbols occasionally win. This tracks consecutive losses PER
+        # SYMBOL (same decay-on-win / no-change-on-breakeven logic) and, once
+        # a symbol hits the threshold, arms a much longer cooldown by reusing
+        # _symbol_cooldowns — the SAME dict/check the post-SL cooldown above
+        # uses, already wired into _analyze_signal's early pre-analysis guard.
+        if CONFIG.risk.symbol_loss_streak_enabled:
+            try:
+                _streak_sym = normalize_symbol(getattr(pos, "symbol", ""))
+                _streak_pnl = getattr(pos, "pnl_usd", None)
+                if _streak_sym and _streak_pnl is not None:
+                    _streak_pnl = float(_streak_pnl)
+                    if _streak_pnl < 0:
+                        streak = self._symbol_loss_streaks.get(_streak_sym, 0) + 1
+                        self._symbol_loss_streaks[_streak_sym] = streak
+                        if streak >= CONFIG.risk.symbol_loss_streak_threshold:
+                            _existing_expiry = self._symbol_cooldowns.get(_streak_sym, 0)
+                            _new_expiry = (time.monotonic()
+                                           + CONFIG.risk.symbol_loss_streak_cooldown_seconds)
+                            self._symbol_cooldowns[_streak_sym] = max(_existing_expiry, _new_expiry)
+                            # Reset so it takes a fresh run of losses to re-trip
+                            # once this cooldown clears, rather than tripping
+                            # again on the very next loss.
+                            self._symbol_loss_streaks[_streak_sym] = 0
+                            audit(system_log,
+                                  f"Symbol loss-streak cooldown armed: {_streak_sym} "
+                                  f"({streak} consecutive losses) blocked for "
+                                  f"{int(CONFIG.risk.symbol_loss_streak_cooldown_seconds)}s",
+                                  action="symbol_loss_streak", result="COOLDOWN_ARMED",
+                                  data={"symbol": _streak_sym, "streak": streak})
+                    elif _streak_pnl > 0:
+                        self._symbol_loss_streaks[_streak_sym] = max(
+                            0, self._symbol_loss_streaks.get(_streak_sym, 0) - 1)
+                    # pnl == 0 (breakeven): no change, matching the account-wide streak.
+            except Exception as _sls_exc:
+                logger.debug("Symbol loss-streak tracking skipped: %s", _sls_exc)
 
     def _executor_for(self, user_id: str = ""):
         """Return the LiveExecutor that should place THIS caller's live order.
@@ -1706,10 +1750,13 @@ class RuneClawEngine:
             signal: Market signal to analyze.
             timeframe: OHLCV timeframe to fetch (e.g. "5m", "15m", "1h", "4h").
         """
-        # ── Per-symbol cooldown after SL hit (checked FIRST) ─────────
+        # ── Per-symbol cooldown after SL hit OR a loss streak (checked FIRST) ─
         # #32: short-circuit a cooling symbol BEFORE the expensive OHLCV +
         # order-flow fetch and full analysis pipeline, instead of after.
-        # Prevents immediate re-entry into a symbol that just stopped out.
+        # Shared by two arming sources (both in _on_live_position_closed): a
+        # single post-SL cooldown (short, ~30 min) and a longer loss-streak
+        # cooldown once the symbol has lost repeatedly (see
+        # CONFIG.risk.symbol_loss_streak_*) — same dict/check either way.
         # (idea.asset == signal.symbol, so the decision is identical, just earlier.)
         symbol_key = normalize_symbol(signal.symbol)
         _sym_cd = self._symbol_cooldowns.get(symbol_key, 0)
@@ -1717,7 +1764,7 @@ class RuneClawEngine:
             if time.monotonic() < _sym_cd:
                 _remaining = int(_sym_cd - time.monotonic())
                 audit(scan_log,
-                      f"Signal skipped: {signal.symbol} on post-SL cooldown ({_remaining}s remaining)",
+                      f"Signal skipped: {signal.symbol} on symbol cooldown ({_remaining}s remaining)",
                       action="symbol_cooldown", result="SKIPPED")
                 return None
             # Cooldown expired → clear it.

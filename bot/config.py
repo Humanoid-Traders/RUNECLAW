@@ -173,6 +173,20 @@ class RiskLimits:
         "SIGNAL_DISPLAY_MIN_CONFIDENCE", 0.70, 0.1, 1.0)
     max_consecutive_losses: int = int(_env_float_bounded("MAX_CONSECUTIVE_LOSSES", 5, 1, 50))
     cooldown_after_loss_seconds: int = int(_env_float("COOLDOWN_AFTER_LOSS_SEC", 120))
+    # Per-SYMBOL loss-streak cooldown. The account-wide streak above decays on
+    # ANY win, so a chronically-losing symbol keeps getting re-entered as long
+    # as OTHER symbols occasionally win — and the existing post-SL cooldown
+    # (SYMBOL_SL_COOLDOWN_SEC, 30 min) only guards against immediate re-entry
+    # after a single stop-out, not a demonstrated repeat-loser. This tracks
+    # consecutive losses PER SYMBOL (same decay-on-win logic as the account-
+    # wide streak) and, once a symbol hits the threshold, blocks new entries on
+    # THAT symbol for a much longer cooldown by reusing the same
+    # engine._symbol_cooldowns mechanism the post-SL cooldown already uses.
+    symbol_loss_streak_enabled: bool = _env_bool("SYMBOL_LOSS_STREAK_ENABLED", True)
+    symbol_loss_streak_threshold: int = int(
+        _env_float_bounded("SYMBOL_LOSS_STREAK_THRESHOLD", 3, 1, 20))
+    symbol_loss_streak_cooldown_seconds: float = _env_float_bounded(
+        "SYMBOL_LOSS_STREAK_COOLDOWN_SEC", 43200.0, 60.0, 604800.0)  # 12h default
     max_portfolio_exposure_pct: float = _env_float_bounded("MAX_PORTFOLIO_EXPOSURE_PCT", 80.0, 0.0, 1000.0)
     max_symbol_exposure_pct: float = _env_float_bounded("MAX_SYMBOL_EXPOSURE_PCT", 20.0, 0.0, 1000.0)
     max_correlation_per_group: int = int(_env_float("MAX_CORRELATION_PER_GROUP", 2))
