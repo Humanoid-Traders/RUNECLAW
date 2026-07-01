@@ -84,7 +84,7 @@ def _budget_config(*, daily_call_limit=500, daily_budget_usd=1.0):
 
 class TestBudgetGuard:
     def test_refuses_to_call_once_daily_call_limit_reached(self, monkeypatch):
-        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+        monkeypatch.setenv("GEMINI_API_KEY", "test-key")
         monkeypatch.setattr(th_mod, "CONFIG", _budget_config(daily_call_limit=1))
         cost = CostTracker()
         cost.record_llm(model="claude-haiku-4-5", prompt_tokens=10, completion_tokens=10)
@@ -99,7 +99,7 @@ class TestBudgetGuard:
         create_client_mock.assert_not_called()
 
     def test_refuses_to_call_once_daily_dollar_budget_reached(self, monkeypatch):
-        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+        monkeypatch.setenv("GEMINI_API_KEY", "test-key")
         monkeypatch.setattr(th_mod, "CONFIG", _budget_config(daily_budget_usd=0.01))
         cost = CostTracker()
         cost.record_llm(model="claude-sonnet-4-6", prompt_tokens=1_000_000, completion_tokens=0)
@@ -114,7 +114,7 @@ class TestBudgetGuard:
         create_client_mock.assert_not_called()
 
     def test_calls_through_when_under_budget(self, monkeypatch):
-        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+        monkeypatch.setenv("GEMINI_API_KEY", "test-key")
         monkeypatch.setattr(th_mod, "CONFIG", _budget_config())
         cost = CostTracker()
 
@@ -130,7 +130,8 @@ class TestAnthropicCostIsTracked:
     def test_anthropic_chat_reply_is_recorded_not_skipped(self, monkeypatch):
         """The exact regression: before this fix, a successful Anthropic chat
         reply recorded ZERO cost/calls, making it invisible to /costs and the
-        budget guard above."""
+        budget guard above. Anthropic is admin-only (see TestNonAdminNeverGetsAnthropic
+        below), so this exercises the admin path."""
         monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
         monkeypatch.setattr(th_mod, "CONFIG", _budget_config())
         cost = CostTracker()
@@ -138,7 +139,7 @@ class TestAnthropicCostIsTracked:
         monkeypatch.setattr(th_mod, "create_llm_client", lambda cfg: object())
         monkeypatch.setattr(th_mod, "llm_complete", AsyncMock(return_value="a" * 400))
 
-        answer = _run(H._llm_chat(_stub(cost), "hello"))
+        answer = _run(H._llm_chat(_stub(cost), "hello", is_admin=True))
 
         assert answer == "a" * 400
         snap = cost.snapshot()

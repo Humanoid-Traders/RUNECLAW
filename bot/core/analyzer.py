@@ -2828,7 +2828,9 @@ class Analyzer:
                     if isinstance(active_cfg.provider, LLMProvider)
                     else str(active_cfg.provider)
                 )
-            fallback_result = await self._try_llm_fallback(prompt, signal, use_full_model, failed_provider=failed_provider)
+            fallback_result = await self._try_llm_fallback(
+                prompt, signal, use_full_model, failed_provider=failed_provider,
+                is_admin=is_admin)
             if fallback_result is not None:
                 fallback_result["source"] = f"LLM_FALLBACK_{fallback_result.get('_fallback_provider', 'UNKNOWN')}"
                 fallback_result.pop("_fallback_provider", None)
@@ -2846,13 +2848,16 @@ class Analyzer:
         signal: MarketSignal,
         use_full_model: bool,
         failed_provider: Optional[str] = None,
+        is_admin: bool = False,
     ) -> Optional[dict]:
         """Try alternate LLM providers when the primary fails (rate limit, error).
 
         Cascading order:
           1. Gemini (free tier, high quota)
           2. Groq (free tier, fast)
-          3. Anthropic (paid, high quality)
+          3. Anthropic (paid, high quality) — admin callers only; the
+             operator's Claude key is reserved for admin use, matching
+             resolve_tier_config()'s hard non-admin guard for the primary path
           4. DeepSeek (cheap, good quality)
 
         Skips the provider that actually failed (which may differ from the global
@@ -2877,9 +2882,11 @@ class Analyzer:
             (LLMProvider.ALIBABA, "ALIBABA_API_KEY", "qwen3.6-flash"),
             (LLMProvider.GEMINI, "GEMINI_API_KEY", "gemini-2.0-flash"),
             (LLMProvider.GROQ, "GROQ_API_KEY", "llama-3.3-70b-versatile"),
-            (LLMProvider.ANTHROPIC, "ANTHROPIC_API_KEY", "claude-sonnet-4-6"),
             (LLMProvider.DEEPSEEK, "DEEPSEEK_API_KEY", "deepseek-chat"),
         ]
+        if is_admin:
+            fallback_chain.insert(
+                3, (LLMProvider.ANTHROPIC, "ANTHROPIC_API_KEY", "claude-sonnet-4-6"))
 
         for provider, key_env, default_model in fallback_chain:
             if provider.value == skip_provider:

@@ -200,9 +200,9 @@ DEFAULT_TIER_ROUTING: dict[LLMTier, dict] = {
         "reason": "Fast and cheap — handles high-frequency scans without burning Anthropic/Gemini quota",
     },
     LLMTier.THESIS: {
-        "provider": LLMProvider.ANTHROPIC,
-        "model": "claude-sonnet-4-6",
-        "reason": "Best reasoning-to-cost ratio for trade thesis — 80% cheaper than Opus, near-equal structured output",
+        "provider": LLMProvider.GEMINI,
+        "model": "gemini-2.5-pro",
+        "reason": "Anthropic is reserved for admin (see ADMIN_TIER_ROUTING) — best free-tier reasoning for trade thesis otherwise",
     },
     LLMTier.LEARNING: {
         "provider": LLMProvider.GEMINI,
@@ -212,13 +212,17 @@ DEFAULT_TIER_ROUTING: dict[LLMTier, dict] = {
     LLMTier.CHAT: {
         "provider": LLMProvider.ALIBABA,
         "model": "qwen3.6-flash",
-        "reason": "Fast user-facing responses, preserves Anthropic credits for thesis generation",
+        "reason": "Fast, cheap user-facing responses — Anthropic is reserved for admin",
     },
 }
 
 
 # Admin tier routing — premium models for all tasks.
-# Used when the requesting user is in ADMIN_TELEGRAM_IDS.
+# Used when the requesting user is in ADMIN_TELEGRAM_IDS. This is the ONLY
+# routing table that should ever reference LLMProvider.ANTHROPIC — the
+# operator's Claude key is reserved for admin use, and resolve_tier_config()
+# enforces this with a hard guard regardless of what any other table or env
+# override says.
 ADMIN_TIER_ROUTING: dict[LLMTier, dict] = {
     LLMTier.SCAN: {
         "provider": LLMProvider.ANTHROPIC,
@@ -243,16 +247,19 @@ ADMIN_TIER_ROUTING: dict[LLMTier, dict] = {
 }
 
 
-# Elite user-tier routing — premium thesis, cheap scan (LLM Optimization Plan P2).
+# Elite user-tier routing — best non-Anthropic models, cheap scan (LLM
+# Optimization Plan P2). Anthropic/Claude is reserved for admin only — see
+# resolve_tier_config()'s hard non-admin guard, which refuses to hand out the
+# operator's Claude key regardless of what any routing table says.
 ELITE_TIER_ROUTING: dict[LLMTier, dict] = {
     LLMTier.SCAN: {"provider": LLMProvider.ALIBABA, "model": "qwen3.6-flash",
                    "reason": "Elite: fast/cheap scan"},
-    LLMTier.THESIS: {"provider": LLMProvider.ANTHROPIC, "model": "claude-sonnet-4-6",
-                     "reason": "Elite: Sonnet thesis"},
-    LLMTier.LEARNING: {"provider": LLMProvider.ANTHROPIC, "model": "claude-sonnet-4-6",
-                       "reason": "Elite: Sonnet learning"},
-    LLMTier.CHAT: {"provider": LLMProvider.ANTHROPIC, "model": "claude-sonnet-4-6",
-                   "reason": "Elite: Sonnet chat"},
+    LLMTier.THESIS: {"provider": LLMProvider.GEMINI, "model": "gemini-2.5-pro",
+                     "reason": "Elite: best free-tier reasoning for thesis"},
+    LLMTier.LEARNING: {"provider": LLMProvider.GEMINI, "model": "gemini-2.5-pro",
+                       "reason": "Elite: best free-tier reasoning for learning"},
+    LLMTier.CHAT: {"provider": LLMProvider.GEMINI, "model": "gemini-2.5-pro",
+                   "reason": "Elite: best free-tier reasoning for chat"},
 }
 
 # Pro user-tier routing — mid models (LLM Optimization Plan P2).
@@ -302,6 +309,13 @@ def resolve_tier_config(
 
     This lets operators run per-user quality tiers: admin gets Sonnet,
     everyone else gets the cheapest route.
+
+    Hard non-admin guard: the operator's Anthropic/Claude key is reserved for
+    admin use ONLY. When is_admin is False, ANY step above that would
+    otherwise resolve to LLMProvider.ANTHROPIC (an explicit env tier
+    override, a routing-table entry, or the final primary_config fallback)
+    is skipped in favor of the next step, so a non-admin caller can never be
+    handed the admin's Claude key regardless of how routing is configured.
     """
     # routing_override (user-tier table) or admin → premium routing, skip env
     # tier overrides; otherwise the default cheap routing.
@@ -346,7 +360,11 @@ def resolve_tier_config(
                 # config rather than returning a keyless config that silently
                 # runs the tier with no LLM (the default-routing branch below
                 # already guards this way with `if alt_key:`).
-                if tier_key:
+                # Non-admin guard: this whole branch only runs when NOT
+                # is_admin (use_table_directly is False here), so an explicit
+                # env override asking for Anthropic must not be honored —
+                # fall through to the next step instead.
+                if tier_key and tier_provider != LLMProvider.ANTHROPIC:
                     catalog = PROVIDER_CATALOG.get(tier_provider, {})
                     return LLMConfig(
                         provider=tier_provider,
@@ -356,9 +374,13 @@ def resolve_tier_config(
                     )
 
     # 2. Check if the selected routing has a different provider with a key available
+    # Non-admin guard: `routing` is ADMIN_TIER_ROUTING when is_admin, so this
+    # only excludes Anthropic for the non-admin routing tables (default /
+    # per-user-tier), never for the admin table itself.
     default_route = routing.get(tier, {})
     default_provider = default_route.get("provider")
-    if default_provider and default_provider != primary_config.provider:
+    if (default_provider and default_provider != primary_config.provider
+            and (is_admin or default_provider != LLMProvider.ANTHROPIC)):
         # Try to find a key for the default tier provider
         key_env_map = {
             LLMProvider.GEMINI: "GEMINI_API_KEY",
@@ -385,6 +407,16 @@ def resolve_tier_config(
             )
 
     # 3. Fall back to primary config (single-provider mode)
+    # Non-admin guard: if the operator's global LLM_PROVIDER is itself
+    # Anthropic, a non-admin caller must not be handed it here either.
+    # Return an unconfigured stand-in (empty key) instead of a working
+    # Anthropic config — callers already treat "not configured" as a signal
+    # to degrade gracefully (rule-based logic / "no LLM configured" chat
+    # reply), which is exactly the right behavior here: there is no cheap
+    # alternative key configured at all, so the tier truly has nothing to
+    # route to for this non-admin caller.
+    if not is_admin and primary_config.provider == LLMProvider.ANTHROPIC:
+        return LLMConfig(provider=primary_config.provider, api_key="")
     return primary_config
 
 
