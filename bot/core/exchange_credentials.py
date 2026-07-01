@@ -209,22 +209,12 @@ async def validate_bitget_credentials(
             "sandbox": sandbox,
             "timeout": 15000,
             "enableRateLimit": True,
-            "options": {"defaultType": "swap"},
+            "options": {
+                "defaultType": "swap",
+                "uta": True,  # Support Bitget Unified Trading Account
+            },
         })
-        # Try Classic Account API first, then fall back to Unified Account
-        # (UTA) if the user's Bitget account is in unified mode (error 40085).
-        try:
-            bal = await client.fetch_balance({"type": "swap"})
-        except Exception as swap_exc:
-            if "40085" in str(swap_exc) or "Unified Account" in str(swap_exc):
-                # UTA mode: switch the client to spot type so fetch_balance
-                # hits the unified account endpoint, not the Classic swap one.
-                # The defaultType "swap" in options causes even a bare
-                # fetch_balance() to use the Classic API.
-                client.options["defaultType"] = "spot"
-                bal = await client.fetch_balance()
-            else:
-                raise
+        bal = await client.fetch_balance({"type": "swap"})
         free = 0.0
         try:
             free = float((bal.get("USDT") or {}).get("free", 0.0) or 0.0)
