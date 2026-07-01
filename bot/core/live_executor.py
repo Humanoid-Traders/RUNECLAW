@@ -1144,6 +1144,62 @@ class LiveExecutor:
             logger.warning("detect_untracked_positions() failed: %s", exc)
         return report
 
+    def dedupe_duplicate_positions(self) -> list[str]:
+        """Merge local records that refer to the SAME real exchange position
+        or order but ended up tracked twice.
+
+        Real incident: adopt_exchange_positions()/adopt_exchange_limit_orders()
+        falsely "adopted" a position/order the bot had already placed and was
+        correctly tracking, creating a SECOND local record (trade_id prefixed
+        "ORPHAN-" or "TI-adopted-") for the exact same symbol+direction —
+        /openorders and /livepositions then disagreed about which trade_id was
+        "the" order, since each happened to read a different record. Both
+        records are never safe to leave standing: if either one's own
+        stale/expiry logic tried to cancel "its" limit order, it could cancel
+        the single real order shared by both, leaving the other record
+        believing the order is still resting when it is not.
+
+        This never touches the exchange — it only closes the redundant LOCAL
+        record. Keeps the bot's own original record (it has real SL/TP levels;
+        an adoption artifact only has safety-default 3%/6% levels) or, failing
+        that, the earliest-opened record.
+
+        Returns human-readable messages describing each merge.
+        """
+        messages: list[str] = []
+        groups: dict[tuple[str, str], list[LivePosition]] = {}
+        for p in self._positions.values():
+            if p.status not in ("open", "pending_fill"):
+                continue
+            groups.setdefault((normalize_symbol(p.symbol), p.direction), []).append(p)
+
+        def _is_adoption_artifact(p: LivePosition) -> bool:
+            return p.trade_id.startswith("ORPHAN-") or p.trade_id.startswith("TI-adopted-")
+
+        _epoch = datetime.fromtimestamp(0, tz=UTC)
+        for (sym, direction), group in groups.items():
+            if len(group) < 2:
+                continue
+            group.sort(key=lambda p: (_is_adoption_artifact(p), p.opened_at or _epoch))
+            keeper, *dupes = group
+            for dup in dupes:
+                dup.status = "closed"
+                dup.closed_at = datetime.now(UTC)
+                dup.pnl_usd = 0.0
+                dup.close_reason = "duplicate_merged"
+                msg = (
+                    f"Merged duplicate local record for {sym} {direction}: "
+                    f"kept {keeper.trade_id}, dropped {dup.trade_id} "
+                    f"(no exchange action taken)"
+                )
+                messages.append(msg)
+                audit(trade_log, msg, action="dedupe_position", result="MERGED",
+                      data={"symbol": sym, "direction": direction,
+                            "kept": keeper.trade_id, "dropped": dup.trade_id})
+        if messages:
+            self._save_positions()
+        return messages
+
     async def adopt_exchange_positions(self) -> list[str]:
         """Adopt any exchange positions not tracked locally into _positions.
 
@@ -1159,6 +1215,7 @@ class LiveExecutor:
         adopted: list[str] = []
         if not CONFIG.is_live():
             return adopted
+        self.dedupe_duplicate_positions()
 
         # Build cooldown set from recently closed positions
         _now = time.time()
