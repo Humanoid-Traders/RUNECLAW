@@ -87,3 +87,21 @@ async def test_genuine_fill_is_still_announced_as_executed():
     sent = update.callback_query.message.reply_text.call_args_list[-1]
     text = sent.args[0] if sent.args else sent.kwargs.get("text", "")
     assert "EXECUTED" in text
+
+
+@pytest.mark.asyncio
+async def test_confirm_trade_exception_does_not_leak_raw_text():
+    """Audit F-15: a caught exception (e.g. a ccxt/auth error whose str()
+    can contain the raw API key) must never reach the user verbatim -- only
+    a friendly generic message, with the real exception logged server-side."""
+    update, context = _make_update_and_context("Filled at $0.20462, qty 48.7")
+    secret_bearing_error = RuntimeError("auth failed: api_key=SUPER_SECRET_TOKEN_123")
+    context.bot_data["engine"].confirm_trade = AsyncMock(side_effect=secret_bearing_error)
+
+    await scan_skill.callback_confirm_reject(update, context)
+
+    sent = update.callback_query.message.reply_text.call_args_list[-1]
+    text = sent.args[0] if sent.args else sent.kwargs.get("text", "")
+    assert "SUPER_SECRET_TOKEN_123" not in text
+    assert "api_key" not in text
+    assert "Something went wrong" in text

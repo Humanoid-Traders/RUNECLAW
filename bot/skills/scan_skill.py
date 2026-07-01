@@ -991,5 +991,11 @@ async def callback_confirm_reject(update: Update, context: ContextTypes.DEFAULT_
                 f"\u2705 <b>{symbol} {direction.value} EXECUTED</b>\n\n{result}",
                 parse_mode="HTML")
     except Exception as exc:
-        log.error("Confirm callback failed for %s: %s", symbol, exc)
-        await query.message.reply_text(f"\u26a0\ufe0f Execution failed: {exc}", parse_mode="HTML")
+        # Audit F-15: log the real exception server-side, but never send raw
+        # exception text to the user -- str(exc) on a ccxt/auth error can
+        # contain the raw API key (same class of leak fixed across
+        # telegram_handler.py's command handlers).
+        log.error("Confirm callback failed for %s: %s", symbol, exc, exc_info=True)
+        await query.message.reply_text(
+            "\u26a0\ufe0f Something went wrong confirming this trade. Try again in a moment.",
+            parse_mode="HTML")
