@@ -648,9 +648,12 @@ class TelegramHandler:
                 # Use live executor stats (actual exchange trades)
                 live_closed_all = executor.closed_positions if executor else []
                 live_open = executor.open_positions if executor else []
-                # Exclude adopted orphan trades from stats
+                # Exclude adopted orphan trades and never-filled orders (canceled/
+                # expired/price_drift/rejected close at $0 PnL) from stats.
+                _non_trade_reasons_pane = {"canceled", "cancelled", "expired", "price_drift", "rejected"}
                 live_closed = [t for t in live_closed_all
-                               if not any(getattr(t, "trade_id", "").startswith(p) for p in _ORPHAN_PREFIXES)]
+                               if not any(getattr(t, "trade_id", "").startswith(p) for p in _ORPHAN_PREFIXES)
+                               and getattr(t, "close_reason", "") not in _non_trade_reasons_pane]
                 total_trades = len(live_closed)
                 wins = sum(1 for t in live_closed if (t.pnl_usd or 0) > 0)
                 win_rate_val = wins / total_trades if total_trades > 0 else 0
@@ -1447,9 +1450,13 @@ class TelegramHandler:
                     pass
 
             live_closed = executor.closed_positions
-            # Exclude adopted orphan trades and injected diagnostic artifacts from win rate
+            # Exclude adopted orphan trades, injected diagnostic artifacts, and
+            # never-filled orders (canceled/expired/price_drift/rejected close at
+            # $0 PnL) so this matches the same trade set /performance uses.
+            _non_trade_reasons_start = {"canceled", "cancelled", "expired", "price_drift", "rejected"}
             user_closed = [t for t in live_closed
-                           if not any(getattr(t, "trade_id", "").startswith(p) for p in _ORPHAN_PREFIXES)]
+                           if not any(getattr(t, "trade_id", "").startswith(p) for p in _ORPHAN_PREFIXES)
+                           and getattr(t, "close_reason", "") not in _non_trade_reasons_start]
             if user_closed:
                 wins = sum(1 for t in user_closed if (t.pnl_usd or 0) > 0)
                 win_rate = f"{wins / len(user_closed) * 100:.0f}"
@@ -2987,9 +2994,13 @@ class TelegramHandler:
             executor = self.engine.live_executor
             open_pos = executor.open_positions
             closed_pos = executor.closed_positions
-            # Filter out adopted/injected trades for consistency with Performance view
+            # Filter out adopted/injected trades and never-filled orders (canceled/
+            # expired/price_drift/rejected close at $0 PnL) for consistency with
+            # the Performance view.
+            _non_trade_reasons_bal = {"canceled", "cancelled", "expired", "price_drift", "rejected"}
             user_closed = [t for t in closed_pos
-                           if not any(getattr(t, "trade_id", "").startswith(p) for p in _ORPHAN_PREFIXES)]
+                           if not any(getattr(t, "trade_id", "").startswith(p) for p in _ORPHAN_PREFIXES)
+                           and getattr(t, "close_reason", "") not in _non_trade_reasons_bal]
             adopted_closed = [t for t in closed_pos
                               if any(getattr(t, "trade_id", "").startswith(p) for p in _ORPHAN_PREFIXES)]
             realized_pnl = sum(p.pnl_usd or 0 for p in user_closed)
@@ -6154,9 +6165,11 @@ class TelegramHandler:
         # LIVE mode: use real trade data from executor
         if CONFIG.is_live() and hasattr(self.engine, 'live_executor'):
             executor = self.engine.live_executor
+            _non_trade_reasons_daily = {"canceled", "cancelled", "expired", "price_drift", "rejected"}
             closed = [t for t in executor.closed_positions
                        if not any(getattr(t, "trade_id", "").startswith(p)
-                                  for p in _ORPHAN_PREFIXES)]
+                                  for p in _ORPHAN_PREFIXES)
+                       and getattr(t, "close_reason", "") not in _non_trade_reasons_daily]
             today_trades = len(closed)
             wins = sum(1 for t in closed if (t.pnl_usd or 0) > 0)
             losses = today_trades - wins
