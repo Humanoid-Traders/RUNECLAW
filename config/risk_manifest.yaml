@@ -353,6 +353,21 @@ defaults:
     env_var: COOLDOWN_AFTER_LOSS_SEC
     description: "Seconds to wait after a losing trade before allowing new entries"
 
+  symbol_loss_streak_enabled:
+    value: true
+    env_var: SYMBOL_LOSS_STREAK_ENABLED
+    description: "Track consecutive losses per symbol (not just account-wide) and arm a long cooldown on that symbol once the streak threshold is hit"
+
+  symbol_loss_streak_threshold:
+    value: 3
+    env_var: SYMBOL_LOSS_STREAK_THRESHOLD
+    description: "Consecutive losses on the SAME symbol before its loss-streak cooldown arms"
+
+  symbol_loss_streak_cooldown_seconds:
+    value: 43200.0
+    env_var: SYMBOL_LOSS_STREAK_COOLDOWN_SEC
+    description: "Seconds a symbol is blocked from new entries after its loss-streak cooldown arms (default 12h)"
+
   max_portfolio_exposure_pct:
     value: 80.0
     env_var: MAX_PORTFOLIO_EXPOSURE_PCT

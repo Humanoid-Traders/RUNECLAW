@@ -2097,6 +2097,38 @@ class LiveExecutor:
                     "amount": quantity, "coid": coid, "params": futures_params,
                 }
                 if use_limit and limit_price:
+                    # FINAL authoritative re-validation, right at the point of
+                    # submission. Multiple upstream paths can produce
+                    # limit_price (confluence recalc, the precision/tick-size
+                    # rounding chain, the bitget tick safety net) — rather than
+                    # trust whichever one ran last, re-run ccxt's own
+                    # price_to_precision one more time here so whatever gets
+                    # submitted is unconditionally what the exchange's own
+                    # market data says is valid. Logged at INFO so a repeat of
+                    # error 45115 ("price should be a multiple of X") shows the
+                    # exact value that was actually sent, not just the error.
+                    _final_price = limit_price
+                    if market:
+                        try:
+                            _final_str = active_exchange.price_to_precision(symbol, limit_price)
+                            if _final_str is not None:
+                                _final_price = float(_final_str)
+                        except Exception as _fp_exc:
+                            logger.warning(
+                                "Final price_to_precision re-check failed for %s @ %s: %s "
+                                "— submitting pre-rounded value",
+                                symbol, limit_price, _fp_exc)
+                    if _final_price != limit_price:
+                        logger.warning(
+                            "Final price re-validation changed %s limit price %.10g -> %.10g "
+                            "before submission (upstream rounding didn't match market precision)",
+                            symbol, limit_price, _final_price)
+                    limit_price = _final_price
+                    logger.info(
+                        "Submitting %s limit order @ %s (pricePlace=%s priceEndStep=%s)",
+                        symbol, limit_price,
+                        (market or {}).get("info", {}).get("pricePlace"),
+                        (market or {}).get("info", {}).get("priceEndStep"))
                     # ccxt requires price as a top-level param for limit orders
                     create_kwargs["price"] = limit_price
 
