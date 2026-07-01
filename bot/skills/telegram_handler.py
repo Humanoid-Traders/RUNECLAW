@@ -2481,7 +2481,7 @@ class TelegramHandler:
                 parse_mode="HTML",
             )
         except Exception as exc:
-            await context.bot.send_message(chat_id=chat_id, text=f"\u274c Monte Carlo error: {exc}")
+            await self._send_error(update, "the Monte Carlo simulation", exc)
 
     async def _cmd_attribution(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Show trade signal attribution — which indicators contribute to wins."""
@@ -2527,7 +2527,7 @@ class TelegramHandler:
                 parse_mode="HTML",
             )
         except Exception as exc:
-            await context.bot.send_message(chat_id=chat_id, text=f"\u274c Attribution error: {exc}")
+            await self._send_error(update, "signal attribution", exc)
 
     async def _cmd_equitycurve(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Show equity curve circuit breaker status."""
@@ -2686,7 +2686,7 @@ class TelegramHandler:
 
             await update.message.reply_text("\n".join(lines))
         except Exception as exc:
-            await update.message.reply_text(f"Sweep scan error: {exc}")
+            await self._send_error(update, "the liquidity sweep scan", exc)
 
     async def _cmd_zones(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Show supply/demand zones for a symbol."""
@@ -2734,7 +2734,7 @@ class TelegramHandler:
 
             await update.message.reply_text("\n".join(lines))
         except Exception as exc:
-            await update.message.reply_text(f"Zone scan error: {exc}")
+            await self._send_error(update, "the supply/demand zone scan", exc)
 
     async def _cmd_squeeze(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Show volatility squeeze status for a symbol."""
@@ -2781,7 +2781,7 @@ class TelegramHandler:
 
             await update.message.reply_text("\n".join(lines))
         except Exception as exc:
-            await update.message.reply_text(f"Squeeze error: {exc}")
+            await self._send_error(update, "the squeeze scan", exc)
 
     async def _cmd_holdtime(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Show hold-time analytics by strategy type."""
@@ -2789,7 +2789,7 @@ class TelegramHandler:
             text = self.engine.hold_analytics.summary()
             await update.message.reply_text(text)
         except Exception as exc:
-            await update.message.reply_text(f"Hold-time analysis error: {exc}")
+            await self._send_error(update, "the hold-time analysis", exc)
 
     @guard("admin")
     async def _cmd_golive(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -3864,6 +3864,15 @@ class TelegramHandler:
 
     async def _notify_admins(self, text: str, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """Send a notification to all admin users."""
+        # Audit F-15 (defense-in-depth): this is a second legitimate direct-send
+        # chokepoint alongside _send() (it targets every admin's chat_id, not
+        # the current update's), so it needs its own redaction rather than
+        # inheriting _send()'s.
+        if text:
+            try:
+                text = _redact_string(text)
+            except Exception:
+                pass
         for u in self.users.list_users():
             if u.get("role") == "admin" and u.get("authorized"):
                 try:
