@@ -109,6 +109,19 @@ a{color:var(--gold);text-decoration:none}
 .sig-pnl.pos{color:var(--green);background:var(--green-dim)}
 .sig-pnl.neg{color:var(--red);background:var(--red-dim)}
 .sig-time{color:var(--text3);font-size:10px;min-width:84px;text-align:right}
+.sig-filters{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px}
+.sig-filters select{background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:5px 8px;color:var(--text2);font-family:var(--mono);font-size:11px;cursor:pointer}
+.sig-filters select:focus{outline:none;border-color:var(--gold)}
+.ins-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px}
+.ins-block h4{margin:0 0 6px;font-size:11px;letter-spacing:1px;color:var(--text3);text-transform:uppercase;font-weight:600}
+.ins-bar{display:flex;align-items:center;gap:8px;margin-bottom:4px;font-family:var(--mono);font-size:11px}
+.ins-label{min-width:82px;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ins-track{flex:1;height:12px;background:var(--bg);border-radius:3px;overflow:hidden;position:relative;border:1px solid var(--border)}
+.ins-fill{height:100%;background:var(--green);opacity:.65}
+.ins-wr{min-width:38px;text-align:right;color:var(--text)}
+.ins-n{min-width:52px;text-align:right;color:var(--text3);font-size:10px}
+.ins-overall{display:flex;gap:18px;flex-wrap:wrap;margin-bottom:14px;font-family:var(--mono);font-size:12px}
+.ins-overall b{color:var(--gold);font-size:15px}
 .cred-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
 .cred-form{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 .cred-in{flex:1;min-width:140px;background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:8px 10px;color:var(--text);font-family:var(--mono);font-size:12px}
@@ -163,7 +176,14 @@ a{color:var(--gold);text-decoration:none}
   </div>
   <div class="panel" id="walletPanel"><div class="panel-title">&#128091; WALLET &mdash; EXCHANGE CONNECTION</div><div id="walletContent"></div></div>
   <div class="panel" id="controlsPanel"><div class="panel-title">&#127919; LIVE CONTROLS</div><div id="controlsContent"></div></div>
-  <div class="panel" id="signalsPanel"><div class="panel-title">&#128225; SIGNAL STREAM <span id="signalsStats" style="font-family:var(--mono);font-size:11px;color:var(--dim);font-weight:400"></span></div><div id="signalsContent"><div class="loading"><div class="spinner"></div><br>Loading signals...</div></div></div>
+  <div class="panel" id="insightsPanel"><div class="panel-title">&#128202; SIGNAL INSIGHTS</div><div id="insightsContent"><div class="loading"><div class="spinner"></div><br>Loading insights...</div></div></div>
+  <div class="panel" id="signalsPanel"><div class="panel-title">&#128225; SIGNAL STREAM <span id="signalsStats" style="font-family:var(--mono);font-size:11px;color:var(--dim);font-weight:400"></span></div>
+    <div class="sig-filters">
+      <select id="fltDirection"><option value="">All sides</option><option value="LONG">Long</option><option value="SHORT">Short</option></select>
+      <select id="fltStatus"><option value="">All status</option><option value="NEW">New</option><option value="WIN">Win</option><option value="LOSS">Loss</option></select>
+      <select id="fltConf"><option value="">Any conf.</option><option value="0.6">&#8805; 60%</option><option value="0.7">&#8805; 70%</option><option value="0.8">&#8805; 80%</option><option value="0.9">&#8805; 90%</option></select>
+    </div>
+    <div id="signalsContent"><div class="loading"><div class="spinner"></div><br>Loading signals...</div></div></div>
 </div>
 <script>
 const TOKEN = localStorage.getItem('token');
@@ -179,7 +199,7 @@ const SYMBOLS = [
 ];
 
 let tickerData = {}, scanData = null, portfolioData = null, publicPortfolio = null;
-let signalsData = null, signalStats = null;
+let signalsData = null, signalStats = null, signalAnalytics = null;
 
 function fmt(n, d=2) { return n != null ? Number(n).toFixed(d) : '--'; }
 function fmtK(n) { if(n==null)return'--';n=Number(n);if(n>=1e9)return(n/1e9).toFixed(1)+'B';if(n>=1e6)return(n/1e6).toFixed(1)+'M';if(n>=1e3)return(n/1e3).toFixed(1)+'K';return n.toFixed(0); }
@@ -574,15 +594,68 @@ async function disconnectExchange() {
   } catch(e) { /* ignore */ }
 }
 
+function signalQuery() {
+  const p = new URLSearchParams({ limit: '40' });
+  const dir = document.getElementById('fltDirection');
+  const st = document.getElementById('fltStatus');
+  const cf = document.getElementById('fltConf');
+  if (dir && dir.value) p.set('direction', dir.value);
+  if (st && st.value) p.set('status', st.value);
+  if (cf && cf.value) p.set('min_confidence', cf.value);
+  return p.toString();
+}
+
 async function fetchSignals() {
   try {
-    const [sr, str] = await Promise.all([
-      fetch('/api/signals?limit=40'), fetch('/api/signals/stats')
+    const [sr, str, ar] = await Promise.all([
+      fetch('/api/signals?' + signalQuery()),
+      fetch('/api/signals/stats'),
+      fetch('/api/signals/analytics'),
     ]);
     signalsData = (await sr.json()).signals || [];
     signalStats = await str.json();
+    signalAnalytics = await ar.json();
     renderSignals();
+    renderInsights();
   } catch(e) { /* fail soft */ }
+}
+
+function insBars(groups, empty) {
+  if (!groups || !groups.length) return `<div class="empty-msg" style="padding:8px">${empty}</div>`;
+  return groups.map(g => {
+    const wr = g.win_rate || 0;
+    const col = wr >= 55 ? 'var(--green)' : wr >= 45 ? 'var(--gold)' : 'var(--red)';
+    return `<div class="ins-bar">
+      <span class="ins-label" title="${g.key}">${g.key}</span>
+      <span class="ins-track"><span class="ins-fill" style="width:${Math.max(2,Math.min(100,wr))}%;background:${col}"></span></span>
+      <span class="ins-wr">${fmt(wr,0)}%</span>
+      <span class="ins-n">${g.n}&nbsp;sig</span>
+    </div>`;
+  }).join('');
+}
+
+function renderInsights() {
+  const el = document.getElementById('insightsContent');
+  if (!el) return;
+  const a = signalAnalytics;
+  if (!a || !a.overall || !a.overall.resolved) {
+    el.innerHTML = '<div class="empty-msg">No resolved signals yet &mdash; insights appear once signals close out.</div>';
+    return;
+  }
+  const o = a.overall;
+  el.innerHTML = `
+    <div class="ins-overall">
+      <span><b>${o.resolved}</b> resolved</span>
+      <span><b>${fmt(o.win_rate,1)}%</b> win rate</span>
+      <span><b>${o.wins}</b>W / <b>${o.losses}</b>L</span>
+      <span>net <b class="${pctC(o.net_pnl)}" style="font-size:15px">${pctS(o.net_pnl)}</b></span>
+    </div>
+    <div class="ins-grid">
+      <div class="ins-block"><h4>By pattern</h4>${insBars(a.by_pattern,'No pattern data')}</div>
+      <div class="ins-block"><h4>By symbol</h4>${insBars(a.by_symbol,'No symbol data')}</div>
+      <div class="ins-block"><h4>By confidence</h4>${insBars(a.by_confidence,'No confidence data')}</div>
+      <div class="ins-block"><h4>By side</h4>${insBars(a.by_direction,'No side data')}</div>
+    </div>`;
 }
 
 function renderSignals() {
@@ -635,6 +708,10 @@ function renderKeyCall() {
 }
 
 async function init() {
+  ['fltDirection','fltStatus','fltConf'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('change', fetchSignals);
+  });
   await fetchTickers();
   await Promise.all([fetchScan(), fetchPublicPortfolio(), fetchPortfolio(), fetchSignals(), fetchCreds(), fetchControls()]);
   renderCircuit(); // ensure circuit breaker renders even if fetches return no data
