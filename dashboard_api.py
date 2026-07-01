@@ -19,7 +19,7 @@ API_KEY = os.environ.get("DASHBOARD_API_KEY", "")
 CORS_ORIGIN = os.environ.get("DASHBOARD_CORS_ORIGIN", "")
 ENVIRONMENT = os.environ.get("ENVIRONMENT", "production")
 # Additional allowed origins (always permitted alongside CORS_ORIGIN)
-_EXTRA_ORIGINS = {"https://y9z5438h.mule.page"}
+_EXTRA_ORIGINS = {"https://pmvc58g2.mule.page"}
 if ENVIRONMENT == "development":
     _EXTRA_ORIGINS.add("http://localhost:9090")
 

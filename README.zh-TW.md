@@ -30,7 +30,7 @@
 
 <p align="center">
   <a href="https://github.com/Humanoid-Traders/RUNECLAW">GitHub</a> &middot;
-  <a href="https://y9z5438h.mule.page/">網站</a> &middot;
+  <a href="https://pmvc58g2.mule.page/">網站</a> &middot;
   <a href="https://humanoid-traders-1.gitbook.io/humanoid-traders-ai">文件</a> &middot;
   <a href="https://t.me/HTRUNECLAW_bot">實機機器人</a> &middot;
   <a href="https://t.me/+VRNgsmkR5pszZTdk">Telegram</a> &middot;

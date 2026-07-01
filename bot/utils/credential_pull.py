@@ -27,7 +27,7 @@ from typing import Callable, Optional
 
 log = logging.getLogger(__name__)
 
-WEBSITE_URL = os.getenv("WEBSITE_URL", "https://y9z5438h.mule.page")
+WEBSITE_URL = os.getenv("WEBSITE_URL", "https://pmvc58g2.mule.page")
 SYNC_SECRET = os.getenv("BOT_SYNC_SECRET", "")
 
 
