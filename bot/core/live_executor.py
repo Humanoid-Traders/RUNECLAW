@@ -4650,6 +4650,39 @@ class LiveExecutor:
 
         return results
 
+    @staticmethod
+    def _reconcile_exchange_close_pnl(
+        exchange_pnl: float, exchange_close_fees: float, pnl_is_net: bool,
+        entry_notional: float, entry_fee_pct: float,
+    ) -> tuple[float, float, float]:
+        """Reconstruct (gross_pnl, net_pnl, commission) from an exchange-
+        reported close, honoring whether exchange_pnl is already fee-adjusted.
+
+        Bitget's position-history endpoint exposes achievedProfits (gross)
+        and netProfit (fee-adjusted) as SEPARATE fields; the per-fill
+        "profit" value used by the fetch_my_trades fallback paths follows
+        the same "achieved profit" convention and is gross too. Treating
+        every exchange_pnl as already-net (the old behavior) double-counted
+        the close fee into gross_pnl and reported a still-gross figure as
+        net_pnl for any close that fell through to a fetch_my_trades path.
+
+        exchange_close_fees is the FULL round trip (open+close) only when
+        pnl_is_net is True (it comes from position-history's openFee+
+        closeFee sum); the fetch_my_trades paths only ever see the closing
+        fill, so entry_notional/entry_fee_pct estimate the missing entry-side
+        fee the same way the fully-local fallback does.
+        """
+        if pnl_is_net:
+            net_pnl = exchange_pnl
+            commission = exchange_close_fees
+            gross_pnl = net_pnl + commission
+        else:
+            gross_pnl = exchange_pnl
+            estimated_entry_fee = entry_notional * entry_fee_pct / 100.0
+            commission = exchange_close_fees + estimated_entry_fee
+            net_pnl = gross_pnl - commission
+        return gross_pnl, net_pnl, commission
+
     async def close_position(self, trade_id: str, reason: str = "bot_auto",
                               close_price: float = 0) -> str:
         """Close a live position by placing the opposite order."""
@@ -4971,6 +5004,14 @@ class LiveExecutor:
             #           2) fetch_my_trades (profit, excludes funding)
             #           3) entry/exit price calculation (fallback)
             exchange_pnl = None
+            # Whether exchange_pnl above is already fee-adjusted. Only the
+            # position-history endpoint's netProfit field is; achievedProfits
+            # (its own fallback) and every per-fill "profit" value below are
+            # gross, same Bitget "achieved profit" convention. See the
+            # gross/net reconstruction below — treating a gross figure as
+            # already-net understated total fees and reported gross PnL to
+            # the user as "net".
+            _pnl_is_net = False
 
             # Try position history first (includes funding fees — most accurate)
             try:
@@ -4980,6 +5021,7 @@ class LiveExecutor:
                 if pos_hist_data and pos_hist_data.get("pnl") is not None:
                     exchange_pnl = pos_hist_data["pnl"]
                     exchange_close_fees = pos_hist_data.get("fees", 0) or 0
+                    _pnl_is_net = pos_hist_data.get("pnl_is_net", False)
                     if pos_hist_data.get("close_price", 0) > 0:
                         fill_price = pos_hist_data["close_price"]
                     logger.info("Using Bitget position history PnL for %s: $%.4f (fees $%.4f)",
@@ -5026,10 +5068,13 @@ class LiveExecutor:
                     self._record_warning("fee_fetch")
 
             if exchange_pnl is not None:
-                # Use exchange numbers directly — no estimation
-                gross_pnl = exchange_pnl + exchange_close_fees  # profit is net of fees
-                commission = exchange_close_fees
-                net_pnl = exchange_pnl
+                is_limit_entry = getattr(pos, 'order_type', '') == 'limit'
+                entry_fee_pct = CONFIG.risk.maker_fee_pct if is_limit_entry else CONFIG.risk.taker_fee_pct
+                gross_pnl, net_pnl, commission = self._reconcile_exchange_close_pnl(
+                    exchange_pnl, exchange_close_fees, _pnl_is_net,
+                    entry_notional=pos.entry_price * pos.quantity,
+                    entry_fee_pct=entry_fee_pct,
+                )
             else:
                 # Fallback: calculate from entry/exit prices
                 if pos.direction == "LONG":
@@ -5316,6 +5361,11 @@ class LiveExecutor:
                             "fees": total_fees,
                             "reason": reason,
                             "source": "bitget_position_history",
+                            # netProfit is fee-adjusted (fees here already sum
+                            # BOTH openFee+closeFee); the achievedProfits
+                            # fallback used when netProfit==0 is gross, same
+                            # as the per-fill "profit" paths below.
+                            "pnl_is_net": net_profit != 0,
                         }
             except Exception as e:
                 logger.debug("Bitget position history lookup failed for %s (window=%s): %s",
@@ -5368,6 +5418,11 @@ class LiveExecutor:
                                 "fees": total_fees,
                                 "reason": reason,
                                 "source": "exchange_fill_sltp",
+                                # Bitget's per-fill "profit" is gross (same
+                                # convention as achievedProfits above); fees
+                                # here are close-side only, never the entry
+                                # leg — caller must not treat this as net.
+                                "pnl_is_net": False,
                             }
 
                 # Then try matching by reduceOnly / close side trades
@@ -5394,6 +5449,8 @@ class LiveExecutor:
                             # Unrecognized close-side fill — see note above.
                             "reason": "CLOSED (unknown)",
                             "source": "exchange_fill_recent",
+                            # Gross, close-side fee only — see exchange_fill_sltp note.
+                            "pnl_is_net": False,
                         }
 
                 # If we got trades but none matched, try without since filter
