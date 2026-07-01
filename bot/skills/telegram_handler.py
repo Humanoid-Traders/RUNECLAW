@@ -573,6 +573,20 @@ class TelegramHandler:
         "You are RUNECLAW, an AI trading assistant.\n"
         "Talk like a knowledgeable friend — casual, clear, no jargon overload.\n\n"
 
+        "GROUNDING — never invent facts you weren't given:\n"
+        "- Only state that the user has an open position if it appears in the "
+        "ACTIVE POSITIONS section below. If that section says none, say they "
+        "have no open positions — never reference a position from earlier in "
+        "the conversation as if it's still open; positions close.\n"
+        "- You do NOT have a live market-data feed in this chat. Never state a "
+        "specific current price (BTC, ETH, or any asset) as if it's live or "
+        "current — you don't know it. If asked for current price or "
+        "market conditions, say you don't have real-time data here and "
+        "suggest they run a scan (e.g. 'scan BTC') for live numbers.\n"
+        "- Only cite specific entry/SL/TP/PnL numbers that appear in this "
+        "prompt's ACTIVE POSITIONS / RECENT CLOSED TRADES sections. Never "
+        "make numbers up to sound complete.\n\n"
+
         "PERSONALITY:\n"
         "- Friendly and direct. Like texting a trading buddy.\n"
         "- Keep answers short and actionable.\n"
@@ -696,6 +710,13 @@ class TelegramHandler:
             engine_state = f"{mode} mode, CB={'ON' if cb else 'OFF'}"
 
             # Inject actual open positions
+            # NEVER leave this section blank when is_live -- an LLM given no
+            # explicit statement about position status will happily invent
+            # one from stale conversation history (a symbol mentioned in an
+            # earlier scan/chat turn) rather than say "no open positions."
+            # Real incident: a user with zero live positions was told by
+            # chat "HYPE (your open short)" -- there was no position at all;
+            # the prompt simply never said so either way.
             if is_live and executor:
                 # Use live executor positions (actual exchange positions)
                 if executor.open_positions:
@@ -719,6 +740,13 @@ class TelegramHandler:
                         "\n\nACTIVE POSITIONS (live exchange):\n" +
                         "\n".join(pos_lines)
                     )
+                else:
+                    positions_detail = (
+                        "\n\nACTIVE POSITIONS (live exchange): none right now. "
+                        "Do not reference any open position -- if the user "
+                        "asks about a specific symbol, treat it as a fresh "
+                        "question, not an existing trade."
+                    )
             elif user_portfolio.open_positions:
                 pos_lines = []
                 for pos in user_portfolio.open_positions:
@@ -738,6 +766,12 @@ class TelegramHandler:
                 positions_detail = (
                     "\n\nACTIVE POSITIONS (live data):\n" +
                     "\n".join(pos_lines)
+                )
+            else:
+                positions_detail = (
+                    "\n\nACTIVE POSITIONS: none right now. Do not reference "
+                    "any open position -- if the user asks about a specific "
+                    "symbol, treat it as a fresh question, not an existing trade."
                 )
 
             # Inject recent closed trades
