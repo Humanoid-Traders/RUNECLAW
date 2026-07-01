@@ -211,7 +211,16 @@ async def validate_bitget_credentials(
             "enableRateLimit": True,
             "options": {"defaultType": "swap"},
         })
-        bal = await client.fetch_balance({"type": "swap"})
+        # Try Classic Account API first, then fall back to Unified Account
+        # (UTA) if the user's Bitget account is in unified mode (error 40085).
+        try:
+            bal = await client.fetch_balance({"type": "swap"})
+        except Exception as swap_exc:
+            if "40085" in str(swap_exc) or "Unified Account" in str(swap_exc):
+                # UTA mode: fetch_balance without type returns unified balance
+                bal = await client.fetch_balance()
+            else:
+                raise
         free = 0.0
         try:
             free = float((bal.get("USDT") or {}).get("free", 0.0) or 0.0)
