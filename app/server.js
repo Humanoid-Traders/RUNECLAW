@@ -30,6 +30,7 @@ const marketRouter = require('./routes/market');
 const signalsRouter = require('./routes/signals');
 const credentialsRouter = require('./routes/credentials');
 const controlsRouter = require('./routes/controls');
+const { router: streamRouter } = require('./routes/stream');
 
 const app = express();
 
@@ -52,6 +53,7 @@ app.use('/api/market', marketRouter);
 app.use('/api/signals', signalsRouter);
 app.use('/api/credentials', credentialsRouter);
 app.use('/api/controls', controlsRouter);
+app.use('/api/stream', streamRouter);
 
 // SPA fallback - serve index.html for non-API routes
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));

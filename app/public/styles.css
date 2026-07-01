@@ -68,6 +68,8 @@ code{font-family:var(--mono);font-size:.9em;background:var(--bg3);border:1px sol
 .nav-links a.cta:hover{background:var(--gold2);color:#0a0b0e}
 .nav-acct{display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:12px;color:var(--text3)}
 .nav-acct .live{color:var(--green)}
+.nav-acct .live.warn{color:var(--orange)}
+.nav-acct .live.danger{color:var(--red)}
 .nav-acct button{font-family:var(--mono);font-size:12px;color:var(--text2);background:none;border:none;cursor:pointer;padding:0}
 .nav-acct button:hover{color:var(--red)}
 .nav-acct .sep{color:var(--border2)}

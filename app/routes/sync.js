@@ -7,8 +7,15 @@
 const express = require('express');
 const crypto = require('crypto');
 const { pool } = require('../db');
+const { broadcast } = require('./stream');
 
 const router = express.Router();
+
+// Best-effort nudge to connected dashboards -- never let a broadcast issue
+// affect the actual sync response (the bot's write already succeeded).
+function nudge(type) {
+  try { broadcast(type); } catch (e) { /* non-fatal */ }
+}
 
 // CRITICAL: No fallback secret. Refuse to serve sync if unset.
 const SYNC_SECRET = process.env.BOT_SYNC_SECRET;
@@ -193,6 +200,7 @@ router.post('/', async (req, res) => {
       updated_at: new Date().toISOString()
     };
 
+    nudge('portfolio');
     res.json({ ok: true, synced: { closed: closedCount, open: openCount, equity: eq } });
   } catch (err) {
     console.error('Sync error:', err.message);
@@ -245,6 +253,7 @@ router.post('/trade-event', async (req, res) => {
       );
     }
 
+    nudge('trade');
     res.json({ ok: true });
   } catch (err) {
     console.error('Trade event error:', err.message);
@@ -286,6 +295,7 @@ router.post('/scan', async (req, res) => {
         updated_at: latestScan.received_at,
       };
     }
+    nudge('scan');
     res.json({ ok: true });
   } catch (err) {
     console.error('Scan sync error:', err.message);
@@ -343,6 +353,7 @@ router.post('/signals', async (req, res) => {
       );
       upserted++;
     }
+    nudge('signals');
     res.json({ ok: true, upserted });
   } catch (err) {
     console.error('Signals sync error:', err.message);
