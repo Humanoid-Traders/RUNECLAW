@@ -762,6 +762,53 @@ class LiveExecutor:
             logger.debug("price_to_precision failed for %s @ %s: %s", symbol, price, exc)
             return None
 
+    @staticmethod
+    def _bitget_tick_safety_net(market: Optional[dict], limit_price: float) -> float:
+        """Double-check tick alignment using Bitget's own market info fields.
+
+        Bitget contracts report pricePlace (decimal-place count) AND
+        priceEndStep (last-digit step multiplier) as a PAIR — the real tick is
+        priceEndStep * 10^-pricePlace (e.g. pricePlace=1, priceEndStep=1 -> 0.1;
+        pricePlace=4, priceEndStep=5 -> 0.0005). ccxt's own market parser
+        combines them the same way. A prior version of this safety net treated
+        whichever field it checked first as EITHER "the tick itself" (if < 1)
+        OR "a flat decimal-place count" (if >= 1), which only worked by
+        coincidence for symbols where pricePlace and priceEndStep are
+        numerically equal (e.g. BTC, both "1") — for any symbol where they
+        differ, it silently produced the wrong tick (e.g. pricePlace=4,
+        priceEndStep=5 was rounded to 5 decimal places instead of the nearest
+        0.0005), which Bitget then rejects as "price should be a multiple of X".
+
+        Falls back to a standalone ``priceTick`` field (an absolute tick, not a
+        pair) if pricePlace/priceEndStep aren't both present. Returns
+        ``limit_price`` unchanged if no usable tick info is found.
+        """
+        if not market:
+            return limit_price
+        info = market.get("info", {}) or {}
+        price_place = info.get("pricePlace")
+        price_end_step = info.get("priceEndStep")
+        tick = None
+        if price_place is not None and price_end_step is not None:
+            try:
+                tick = float(price_end_step) * (10 ** -int(float(price_place)))
+            except (ValueError, TypeError):
+                tick = None
+        if tick is None:
+            price_tick = info.get("priceTick")
+            if price_tick is not None:
+                try:
+                    tick = float(price_tick)
+                except (ValueError, TypeError):
+                    tick = None
+        if tick is None or tick <= 0:
+            return limit_price
+        try:
+            rounded = round(limit_price / tick) * tick
+            return round(rounded, 10)  # clean float artifacts
+        except (ValueError, TypeError, ZeroDivisionError):
+            return limit_price
+
     async def _find_order_by_client_oid(
         self, exchange: "ccxt.Exchange", symbol: str, coid: str
     ) -> tuple[Optional[dict], bool]:
@@ -1982,25 +2029,9 @@ class LiveExecutor:
                     logger.debug("Limit price fallback rounding: %s -> %s", _prec_price, limit_price)
 
                 # Safety net: double-check tick alignment via market info fields
-                if market:
-                    _tick_step = None
-                    for _field in ("priceEndStep", "pricePlace", "priceTick"):
-                        _val = market.get("info", {}).get(_field)
-                        if _val is not None:
-                            _tick_step = _val
-                            break
-                    if _tick_step is not None:
-                        try:
-                            _step = float(_tick_step)
-                            if _step < 1:
-                                # priceEndStep is actual tick (e.g. 0.1)
-                                limit_price = round(limit_price / _step) * _step
-                                limit_price = round(limit_price, 10)  # clean float artifacts
-                            else:
-                                # pricePlace is decimal count
-                                limit_price = round(limit_price, int(_step))
-                        except (ValueError, TypeError):
-                            pass
+                # (see _bitget_tick_safety_net for why this needs pricePlace and
+                # priceEndStep combined, not treated as alternatives).
+                limit_price = self._bitget_tick_safety_net(market, limit_price)
 
             if is_futures:
                 # Futures: use USDT-FUTURES product type
