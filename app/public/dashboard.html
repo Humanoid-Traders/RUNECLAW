@@ -4,6 +4,13 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>RUNECLAW War Room</title>
+<meta name="description" content="RUNECLAW War Room — live BTC regime, circuit breaker, scanned universe, AI-reasoned entry setups, and portfolio tracking.">
+<meta property="og:title" content="RUNECLAW War Room">
+<meta property="og:image" content="/og_image_1200x630.jpg">
+<meta name="theme-color" content="#090a0e">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="icon" type="image/png" sizes="256x256" href="/app_icon_256.png">
+<link rel="apple-touch-icon" href="/app_icon_512.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/styles.css">
@@ -100,7 +107,6 @@ a{color:var(--gold);text-decoration:none}
 .eg-label{color:var(--text3);font-size:10px;text-transform:uppercase}
 .eg-val{font-weight:600;margin-top:2px}
 .eg-val.green{color:var(--green)}.eg-val.red{color:var(--red)}
-.entry-thesis{font-size:12px;color:var(--text2);line-height:1.6;margin-top:8px;padding-top:8px;border-top:1px solid var(--border)}
 .entry-trigger{font-family:var(--mono);font-size:11px;color:var(--orange);background:var(--orange-dim);padding:4px 8px;border-radius:3px;margin-top:8px;display:inline-block}
 .sig-stream{display:flex;flex-direction:column;gap:2px;max-height:420px;overflow-y:auto}
 .sig-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:7px 8px;border-bottom:1px solid var(--border);flex-wrap:wrap}
@@ -162,7 +168,12 @@ a{color:var(--gold);text-decoration:none}
 .port-stat{background:var(--bg3);border:1px solid var(--border);border-radius:4px;padding:10px;text-align:center}
 .port-stat .ps-label{font-size:11px;color:var(--text3);text-transform:uppercase}
 .port-stat .ps-val{font-family:var(--mono);font-size:18px;font-weight:700;margin-top:2px}
-.equity-chart{width:100%;height:120px;margin:8px 0}
+.equity-chart{width:100%;height:120px;margin:8px 0;cursor:crosshair}
+.eq-wrap{position:relative}
+.eq-tip{position:absolute;top:2px;display:none;background:var(--bg);border:1px solid var(--border2);
+  border-radius:4px;padding:5px 8px;font-family:var(--mono);font-size:11px;color:var(--text);
+  pointer-events:none;white-space:nowrap;z-index:5;box-shadow:0 2px 8px rgba(0,0,0,.4)}
+.eq-tip b{color:var(--gold)}
 
 /* === KEY CALL === */
 .key-call{font-size:13px;color:var(--text2);line-height:1.7}
@@ -195,9 +206,29 @@ a{color:var(--gold);text-decoration:none}
 </style>
 </head>
 <body>
+<svg id="icon-sprite" style="display:none" aria-hidden="true">
+  <symbol id="brand-mark" viewBox="0 0 32 32">
+    <circle cx="16" cy="16" r="12.5" fill="none" stroke="var(--gold)" stroke-width="1.3" opacity=".55"/>
+    <circle cx="16" cy="16" r="9" fill="none" stroke="var(--cyan)" stroke-width="1.1" opacity=".55"/>
+    <text x="16" y="21.5" font-family="Georgia,serif" font-size="17" fill="var(--gold2)" text-anchor="middle">&#5169;</text>
+    <circle class="brand-core" cx="16" cy="5.2" r="1.5" fill="var(--green)"/>
+  </symbol>
+  <symbol id="icon-radar" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5.3"/><circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"/><path d="M12 12 18 6"/></g></symbol>
+  <symbol id="icon-chart" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V11"/><path d="M10 20V6"/><path d="M16 20V13.5"/><path d="M20 20V4"/></g></symbol>
+  <symbol id="icon-shield" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v6c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z"/><path d="M9 12l2 2 4-4"/></g></symbol>
+  <symbol id="icon-wallet" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="18" height="13" rx="2.2"/><path d="M3 10.5h18"/><circle cx="17" cy="14.7" r="1.1" fill="currentColor" stroke="none"/></g></symbol>
+  <symbol id="icon-rocket" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2c3 2 5 6 5 10 0 2-.7 3.8-1.6 5.2L12 22l-3.4-4.8C7.7 15.8 7 14 7 12c0-4 2-8 5-10z"/><circle cx="12" cy="10.5" r="2"/><path d="M8.3 16.6 5.5 19.4M15.7 16.6l2.8 2.8"/></g></symbol>
+  <symbol id="icon-globe" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><ellipse cx="12" cy="12" rx="4" ry="9"/><path d="M3 12h18"/></g></symbol>
+  <symbol id="icon-bolt" viewBox="0 0 24 24"><path d="M13 2 4 14h6l-1 8 9-12h-6l1-8z" fill="currentColor"/></symbol>
+  <symbol id="icon-target" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.3" fill="currentColor" stroke="none"/></g></symbol>
+  <symbol id="icon-coin" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v10M9.3 9.3c0-1.3 1.2-2.3 2.7-2.3s2.7 1 2.7 2.3c0 2.5-5.4 1.9-5.4 4.4 0 1.3 1.2 2.3 2.7 2.3s2.7-1 2.7-2.3"/></g></symbol>
+  <symbol id="icon-sparkle" viewBox="0 0 24 24"><g fill="currentColor"><path d="M12 3l1.6 4.4L18 9l-4.4 1.6L12 15l-1.6-4.4L6 9l4.4-1.6L12 3z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8L19 15z"/></g></symbol>
+  <symbol id="icon-menu" viewBox="0 0 24 24"><g stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></g></symbol>
+</svg>
 <nav class="topnav">
-  <a href="/" class="brand"><span class="dot"></span>RUNECLAW</a>
-  <div class="nav-links">
+  <a href="/" class="brand"><svg class="brand-mark"><use href="#brand-mark"></use></svg>RUNECLAW</a>
+  <button class="nav-toggle" id="navToggle" onclick="toggleNav()" aria-label="Menu"><svg class="icon"><use href="#icon-menu"></use></svg></button>
+  <div class="nav-links" id="navLinks">
     <a href="/dashboard" class="active">War Room</a>
     <a href="/">Account</a>
     <a href="https://t.me/HTRUNECLAW_bot" target="_blank" rel="noopener">Telegram</a>
@@ -206,25 +237,26 @@ a{color:var(--gold);text-decoration:none}
   <div class="nav-acct"><span id="acctChip"></span><span class="live">&#9679;</span> LIVE <span id="headerTime">--:--</span></div>
 </nav>
 <div class="war-room" id="app">
-  <div class="panel" id="onboardPanel" style="display:none"><div class="panel-title">&#128640; GETTING STARTED</div><div id="onboardContent"></div></div>
+  <div class="agent-ticker" id="agentTicker"><span class="at-dot"></span><svg class="icon"><use href="#icon-sparkle"></use></svg><span class="at-text" id="agentTickerText">Booting agent loop&hellip;</span></div>
+  <div class="panel" id="onboardPanel" style="display:none"><div class="panel-title"><svg class="icon"><use href="#icon-rocket"></use></svg> GETTING STARTED</div><div id="onboardContent"></div></div>
   <div class="grid-top">
-    <div class="panel regime" id="regimePanel"><div class="panel-title">&#127760; BTC REGIME</div><div class="loading"><div class="spinner"></div><br>Loading...</div></div>
-    <div class="panel" id="circuitPanel"><div class="panel-title">&#9889; CIRCUIT BREAKER</div><div id="circuitContent"><div class="loading"><div class="spinner"></div><br>Loading...</div></div></div>
+    <div class="panel regime" id="regimePanel"><div class="panel-title"><svg class="icon"><use href="#icon-globe"></use></svg> BTC REGIME</div><div class="skel-wrap"><div class="skel skel-row"></div><div class="skel skel-row"></div><div class="skel skel-row"></div></div></div>
+    <div class="panel" id="circuitPanel"><div class="panel-title"><svg class="icon"><use href="#icon-bolt"></use></svg> CIRCUIT BREAKER</div><div id="circuitContent"><div class="skel-wrap"><div class="skel skel-row"></div><div class="skel skel-row"></div><div class="skel skel-row"></div></div></div></div>
   </div>
   <div class="grid-main">
-    <div class="panel" id="universePanel"><div class="panel-title">&#128640; EXPANDED UNIVERSE &mdash; LIVE</div><div id="universeContent"><div class="loading"><div class="spinner"></div><br>Fetching tickers...</div></div></div>
+    <div class="panel" id="universePanel"><div class="panel-title"><svg class="icon"><use href="#icon-rocket"></use></svg> EXPANDED UNIVERSE &mdash; LIVE</div><div id="universeContent"><div class="skel-wrap"><div class="skel skel-row"></div><div class="skel skel-row"></div><div class="skel skel-row"></div></div></div></div>
   </div>
   <div class="grid-main">
-    <div class="panel" id="entryPanel"><div class="panel-title">&#127919; TOP ENTRY CARDS</div><div id="entryContent"><div class="empty-msg">Run /getclaw in Telegram to generate entry cards</div></div></div>
+    <div class="panel" id="entryPanel"><div class="panel-title"><svg class="icon"><use href="#icon-target"></use></svg> TOP ENTRY CARDS</div><div id="entryContent"><div class="empty-msg">Run /getclaw in Telegram to generate entry cards</div></div></div>
   </div>
   <div class="grid-top" style="grid-template-columns:1fr 1fr">
-    <div class="panel" id="portfolioPanel"><div class="panel-title">&#128176; PORTFOLIO</div><div id="portfolioContent"><div class="loading"><div class="spinner"></div><br>Loading...</div></div></div>
-    <div class="panel" id="keyCallPanel"><div class="panel-title">&#9876; KEY CALL</div><div id="keyCallContent"><div class="empty-msg">Run /getclaw in Telegram for market call</div></div></div>
+    <div class="panel" id="portfolioPanel"><div class="panel-title"><svg class="icon"><use href="#icon-coin"></use></svg> PORTFOLIO</div><div id="portfolioContent"><div class="skel-wrap"><div class="skel skel-row"></div><div class="skel skel-row"></div><div class="skel skel-row"></div></div></div></div>
+    <div class="panel" id="keyCallPanel"><div class="panel-title"><svg class="icon icon-ai"><use href="#icon-sparkle"></use></svg> KEY CALL</div><div id="keyCallContent"><div class="empty-msg">Run /getclaw in Telegram for market call</div></div></div>
   </div>
-  <div class="panel" id="walletPanel"><div class="panel-title">&#128091; WALLET &mdash; EXCHANGE CONNECTION</div><div id="walletContent"></div></div>
-  <div class="panel" id="controlsPanel"><div class="panel-title">&#127919; LIVE CONTROLS</div><div id="controlsContent"></div></div>
-  <div class="panel" id="insightsPanel"><div class="panel-title">&#128202; SIGNAL INSIGHTS</div><div id="insightsContent"><div class="loading"><div class="spinner"></div><br>Loading insights...</div></div></div>
-  <div class="panel" id="signalsPanel"><div class="panel-title">&#128225; SIGNAL STREAM <span id="signalsStats" style="font-family:var(--mono);font-size:11px;color:var(--text3);font-weight:400"></span></div>
+  <div class="panel" id="walletPanel"><div class="panel-title"><svg class="icon"><use href="#icon-wallet"></use></svg> WALLET &mdash; EXCHANGE CONNECTION</div><div id="walletContent"></div></div>
+  <div class="panel" id="controlsPanel"><div class="panel-title"><svg class="icon"><use href="#icon-target"></use></svg> LIVE CONTROLS</div><div id="controlsContent"></div></div>
+  <div class="panel" id="insightsPanel"><div class="panel-title"><svg class="icon"><use href="#icon-chart"></use></svg> SIGNAL INSIGHTS</div><div id="insightsContent"><div class="skel-wrap"><div class="skel skel-row"></div><div class="skel skel-row"></div><div class="skel skel-row"></div></div></div></div>
+  <div class="panel" id="signalsPanel"><div class="panel-title"><svg class="icon"><use href="#icon-radar"></use></svg> SIGNAL STREAM <span id="signalsStats" style="font-family:var(--mono);font-size:11px;color:var(--text3);font-weight:400"></span></div>
     <div class="sig-filters">
       <select id="fltDirection"><option value="">All sides</option><option value="LONG">Long</option><option value="SHORT">Short</option></select>
       <select id="fltStatus"><option value="">All status</option><option value="NEW">New</option><option value="WIN">Win</option><option value="LOSS">Loss</option></select>
@@ -234,7 +266,7 @@ a{color:var(--gold);text-decoration:none}
 </div>
 <footer class="site-footer">
   <div class="inner">
-    <div class="brand" style="font-size:15px"><span class="dot"></span>RUNECLAW</div>
+    <div class="brand" style="font-size:15px"><svg class="brand-mark"><use href="#brand-mark"></use></svg>RUNECLAW</div>
     <div class="foot-links">
       <a href="/">Account</a>
       <a href="https://t.me/HTRUNECLAW_bot" target="_blank" rel="noopener">Telegram Bot</a>
@@ -257,6 +289,7 @@ function resolveToken() {
 const TOKEN = resolveToken();
 const LOGGED_IN = !!TOKEN;
 function doLogout() { localStorage.removeItem('rc_session'); localStorage.removeItem('token'); location.href = '/'; }
+function toggleNav(){document.getElementById('navLinks').classList.toggle('open');}
 
 const SYMBOLS = [
   'BTCUSDT','ETHUSDT','SOLUSDT','BNBUSDT','AVAXUSDT','ADAUSDT',
@@ -269,6 +302,23 @@ const SYMBOLS = [
 
 let tickerData = {}, scanData = null, portfolioData = null, publicPortfolio = null;
 let signalsData = null, signalStats = null, signalAnalytics = null;
+let _eqSnaps = [];
+
+function eqHover(ev) {
+  if (_eqSnaps.length < 2) return;
+  const rect = ev.currentTarget.getBoundingClientRect();
+  const relX = ev.clientX - rect.left;
+  const frac = Math.max(0, Math.min(1, relX / rect.width));
+  const idx = Math.round(frac * (_eqSnaps.length - 1));
+  const snap = _eqSnaps[idx];
+  const tip = document.getElementById('eqTip');
+  if (!tip || !snap) return;
+  const when = snap.snapshot_at;
+  tip.style.display = 'block';
+  tip.style.left = Math.min(rect.width - 96, Math.max(0, relX - 44)) + 'px';
+  tip.innerHTML = `<b>$${fmt(parseFloat(snap.equity))}</b>${when ? `<br>${new Date(when).toLocaleString([], {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'})}` : ''}`;
+}
+function eqHoverEnd() { const tip = document.getElementById('eqTip'); if (tip) tip.style.display = 'none'; }
 
 function fmt(n, d=2) { return n != null ? Number(n).toFixed(d) : '--'; }
 function fmtK(n) { if(n==null)return'--';n=Number(n);if(n>=1e9)return(n/1e9).toFixed(1)+'B';if(n>=1e6)return(n/1e6).toFixed(1)+'M';if(n>=1e3)return(n/1e3).toFixed(1)+'K';return n.toFixed(0); }
@@ -346,7 +396,7 @@ function renderRegime() {
     else if (change > 1.5) { rLabel = 'BULLISH'; rClass = 'bullish'; rScore = 1; }
   }
 
-  el.innerHTML = `<div class="panel-title">&#127760; BTC REGIME</div>
+  el.innerHTML = `<div class="panel-title"><svg class="icon"><use href="#icon-globe"></use></svg> BTC REGIME</div>
     <div class="badge ${rClass}">${rClass==='bearish'?'&#128308;':rClass==='bullish'?'&#128994;':'&#128992;'} ${rLabel} ${rScore?'Score: '+rScore.toFixed(1):''}</div>
     <div class="btc-price">$${price.toLocaleString('en-US',{maximumFractionDigits:0})}</div>
     <div class="btc-change ${pctC(change)}">${pctS(change)}%</div>
@@ -456,7 +506,7 @@ function renderEntryCards() {
         <div class="eg-item"><div class="eg-label">R:R</div><div class="eg-val" style="color:${rrColor}">1:${fmt(rr,1)}</div></div>
       </div>
       ${c.trigger?`<div class="entry-trigger">&#9888; ${c.trigger}</div>`:''}
-      ${c.thesis?`<div class="entry-thesis">${c.thesis}</div>`:''}
+      ${c.thesis?`<div class="ai-thesis"><div class="ai-thesis-label"><svg class="icon"><use href="#icon-sparkle"></use></svg>AI Thesis</div><div class="ai-thesis-body">${c.thesis}</div></div>`:''}
     </div>`;
   });
   h+='</div>';el.innerHTML=h;
@@ -492,12 +542,14 @@ function renderPortfolio() {
   const pos = authPos.length > 0 ? authPos : livePos;
   const snaps = hasAuth ? portfolioData.snapshots : [];
   if(snaps.length>1){
+    _eqSnaps = snaps;
     const vals=snaps.map(s=>parseFloat(s.equity)),mn=Math.min(...vals)*0.998,mx=Math.max(...vals)*1.002,w=600,ht=100;
     const pts=vals.map((v,i)=>`${(i/(vals.length-1))*w},${ht-((v-mn)/(mx-mn))*ht}`).join(' ');
-    h+=`<svg class="equity-chart" viewBox="0 0 ${w} ${ht}" preserveAspectRatio="none">
+    h+=`<div class="eq-wrap"><svg class="equity-chart" viewBox="0 0 ${w} ${ht}" preserveAspectRatio="none" onmousemove="eqHover(event)" onmouseleave="eqHoverEnd()">
       <defs><linearGradient id="eqg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="var(--gold)" stop-opacity="0.3"/><stop offset="1" stop-color="var(--gold)" stop-opacity="0"/></linearGradient></defs>
-      <polygon points="0,${ht} ${pts} ${w},${ht}" fill="url(#eqg)"/><polyline points="${pts}" fill="none" stroke="var(--gold)" stroke-width="2"/></svg>`;
-  }
+      <polygon points="0,${ht} ${pts} ${w},${ht}" fill="url(#eqg)"/><polyline points="${pts}" fill="none" stroke="var(--gold)" stroke-width="2"/></svg>
+      <div class="eq-tip" id="eqTip"></div></div>`;
+  } else { _eqSnaps = []; }
   const bd = hasAuth ? portfolioData.breakdown : null;
   if(bd && bd.trades>0){
     h+=`<div class="perf-row">
@@ -842,11 +894,49 @@ function renderSignals() {
   el.innerHTML = h;
 }
 
+// Agent activity ticker -- rotates through short status lines built ONLY
+// from data actually fetched (scan regime, top setup, circuit breaker,
+// resolved-signal stats, symbol count). Never fabricates activity.
+let tickerMsgs = [], tickerIdx = 0;
+function agentTickerMessages() {
+  const msgs = [];
+  const nTickers = Object.keys(tickerData).length;
+  if (nTickers) msgs.push(`Scanning ${nTickers} symbols across the Bitget universe`);
+  if (scanData?.regime?.label) {
+    const sc = scanData.regime.score;
+    msgs.push(`Regime read: ${scanData.regime.label}${sc != null ? ` (score ${fmt(sc,1)})` : ''}`);
+  }
+  const top = scanData?.entry_cards?.[0];
+  if (top) msgs.push(`Top setup: ${top.symbol||'--'} ${top.direction||''} @ ${Math.round((top.score||0)*100)}% confidence`);
+  const rules = scanData?.circuit_breaker?.rules || [];
+  if (rules.length) {
+    const active = rules.filter(r => r.active).length;
+    msgs.push(active ? `Circuit breaker: ${active} rule${active>1?'s':''} active` : 'Circuit breaker clear — trading enabled');
+  }
+  if (signalStats && signalStats.resolved > 0) {
+    msgs.push(`${signalStats.resolved} signals resolved · ${fmt(signalStats.win_rate,1)}% win rate`);
+  }
+  const syncTime = scanData?.received_at || scanData?.timestamp;
+  if (syncTime) msgs.push(`Last scan sync: ${new Date(syncTime).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}`);
+  return msgs;
+}
+function rotateTicker() {
+  tickerMsgs = agentTickerMessages();
+  const el = document.getElementById('agentTickerText');
+  if (!el || !tickerMsgs.length) return;
+  tickerIdx = tickerIdx % tickerMsgs.length;
+  el.style.animation = 'none';
+  void el.offsetHeight; // force reflow so the fade-in restarts
+  el.style.animation = '';
+  el.textContent = tickerMsgs[tickerIdx];
+  tickerIdx = (tickerIdx + 1) % tickerMsgs.length;
+}
+
 function renderKeyCall() {
   const el=document.getElementById('keyCallContent');
   if(!scanData?.key_call){el.innerHTML='<div class="empty-msg">Run /getclaw in Telegram for market call</div>';return;}
   const ts=scanData.timestamp||scanData.received_at||'';
-  el.innerHTML=`<div class="key-call">${ts?`<div style="font-family:var(--mono);font-size:11px;color:var(--text3);margin-bottom:8px">${ts}</div>`:''}${scanData.key_call}</div>`;
+  el.innerHTML=`${ts?`<div style="font-family:var(--mono);font-size:11px;color:var(--text3);margin-bottom:8px">${ts}</div>`:''}<div class="key-call ai-thesis" style="margin-top:0"><div class="ai-thesis-body" style="font-size:13px;color:var(--text2)">${scanData.key_call}</div></div>`;
 }
 
 async function init() {
@@ -859,10 +949,12 @@ async function init() {
   await fetchTickers();
   await Promise.all([fetchScan(), fetchPublicPortfolio(), fetchPortfolio(), fetchSignals(), fetchCreds(), fetchControls()]);
   renderCircuit(); // ensure circuit breaker renders even if fetches return no data
+  rotateTicker();
   setInterval(fetchTickers, 5000);
   setInterval(fetchScan, 30000);
   setInterval(fetchPublicPortfolio, 60000);
   setInterval(fetchSignals, 30000);              // faster signal refresh
+  setInterval(rotateTicker, 4500);
   if (LOGGED_IN) setInterval(fetchPortfolio, 45000);
 }
 init();
