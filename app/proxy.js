@@ -13,7 +13,7 @@ if (process.env.ENABLE_LEGACY_PROXY !== 'true') {
   process.exit(1);
 }
 
-const REMOTE = 'y9z5438h.mule.page';
+const REMOTE = 'pmvc58g2.mule.page';
 
 const server = http.createServer((req, res) => {
   const options = {

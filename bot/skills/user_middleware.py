@@ -24,7 +24,7 @@ from bot.utils.i18n import t
 
 log = logging.getLogger(__name__)
 
-WEBSITE_URL = os.getenv("WEBSITE_URL", "https://y9z5438h.mule.page")
+WEBSITE_URL = os.getenv("WEBSITE_URL", "https://pmvc58g2.mule.page")
 REGISTER_URL = WEBSITE_URL
 
 

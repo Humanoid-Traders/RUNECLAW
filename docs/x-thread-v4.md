@@ -99,7 +99,7 @@ For Bitget AI Base Camp · Hackathon S1
 8/8 — OPEN SOURCE
 
 Full code: github.com/Humanoid-Traders/RUNECLAW
-Website: y9z5438h.mule.page
+Website: pmvc58g2.mule.page
 Docs: humanoid-traders-1.gitbook.io/humanoid-traders-ai
 
 AGPL-3.0 licensed. Fork it. Audit it. Break it.

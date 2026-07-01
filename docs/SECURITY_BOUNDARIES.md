@@ -7,7 +7,7 @@ architectural boundary, not a defect.
 
 ### Node.js Stack (`app/auth.js`)
 - **Audience**: End users (public web dashboard)
-- **Deployment**: Mule Pages (`y9z5438h.mule.page`)
+- **Deployment**: Mule Pages (`pmvc58g2.mule.page`)
 - **Auth**: JWT (bcrypt passwords, 1h expiry, ≥32-char secret)
 - **Tokens**: Issued by `app/auth.js`, verified by `app/routes/trades.js`
 - **Transport**: HTTPS (Mule Pages TLS)
