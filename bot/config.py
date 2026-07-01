@@ -1018,13 +1018,13 @@ class StrategyTypeConfig:
     - swing:     wide stops, trailing after 1R, 24h time-stop
     - position:  widest stops, trailing after 1.5R, 72h time-stop
     """
-    # ── SCALP (hold: 5-30 min) ──
+    # ── SCALP (hold: 5 min - 2h) ──
     scalp_sl_atr_mult: float = _env_float("SCALP_SL_ATR_MULT", 1.5)
     scalp_tp_atr_mult: float = _env_float("SCALP_TP_ATR_MULT", 2.0)
     scalp_trailing_enabled: bool = _env_bool("SCALP_TRAILING_ENABLED", False)
     scalp_trailing_atr_mult: float = _env_float("SCALP_TRAILING_ATR_MULT", 1.0)
-    scalp_time_close_hours: float = _env_float("SCALP_TIME_CLOSE_H", 0.5)
-    scalp_time_warn_hours: float = _env_float("SCALP_TIME_WARN_H", 0.25)
+    scalp_time_close_hours: float = _env_float("SCALP_TIME_CLOSE_H", 2.0)
+    scalp_time_warn_hours: float = _env_float("SCALP_TIME_WARN_H", 1.0)
 
     # ── INTRADAY (hold: 30 min - 4h) ──
     intraday_sl_atr_mult: float = _env_float("INTRADAY_SL_ATR_MULT", 2.0)
