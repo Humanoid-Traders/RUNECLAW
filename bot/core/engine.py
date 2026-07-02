@@ -1092,8 +1092,15 @@ class RuneClawEngine:
         Use this in Telegram command handlers to ensure fresh data.
         """
         if CONFIG.is_live():
-            if not self._live_balance_cache:
-                await self.get_live_equity()
+            # Balance-mismatch fix: always route through get_live_equity(),
+            # which honors the TTL and refreshes an EXPIRED cache. The old
+            # `if not cache: refresh` short-circuit served a populated-but-
+            # stale cache forever, so the status card could show an equity
+            # tens of dollars away from the fresh /portfolio fetch. Fail-open:
+            # on fetch failure get_live_equity() returns the cached value.
+            bal = await self.get_live_equity()
+            if bal:
+                return bal.get("total", 0.0)
             if self._live_balance_cache:
                 return self._live_balance_cache.get("total", 0.0)
         portfolio = self.user_portfolios.get(user_id) if user_id else self.portfolio
