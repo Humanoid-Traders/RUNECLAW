@@ -1407,8 +1407,16 @@ class Analyzer:
         # 0.65, a LIQUIDITY_SWEEP 0.68 (these per-mode bars were dead fields
         # until the signal-stack audit).
         min_conf = CONFIG.strategy_types.get_min_confidence(strategy_type)
+        # The mode floor applies only to SPECIFIC setup modes (BREAKOUT 0.65,
+        # LIQUIDITY_SWEEP 0.68...) — a breakout that can't clear a breakout
+        # bar isn't one. CONSERVATIVE is the uncertain-regime catch-all that
+        # most scans land in; applying its 0.65 raised the effective global
+        # gate from 0.55 for nearly every idea and collapsed trade flow
+        # (measured: 44 -> 10 trades, +3.66% -> -0.20%).
         if (CONFIG.analyzer.mode_min_confidence_enabled
-                and mode_config is not None):
+                and mode_config is not None
+                and getattr(getattr(mode_config, "mode", None), "value", "")
+                not in ("", "CONSERVATIVE")):
             min_conf = max(min_conf, getattr(mode_config, "min_confidence", 0.0))
         if blended_confidence < min_conf:
             thesis_src = thesis.get("source", "unknown")

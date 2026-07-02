@@ -120,6 +120,20 @@ class TestModeMinConfidence:
     def test_flag_default_on(self):
         assert CONFIG.analyzer.mode_min_confidence_enabled is True
 
+    def test_conservative_exempt_from_floor(self):
+        # The floor applies to SPECIFIC setup modes only. CONSERVATIVE is the
+        # uncertain-regime catch-all most scans land in — applying its 0.65
+        # bar raised the effective global gate from 0.55 for nearly every
+        # idea and collapsed the measured trade flow (44 -> 10 trades).
+        from bot.core.strategy_modes import MODE_CONFIGS, StrategyMode
+        conservative = MODE_CONFIGS[StrategyMode.CONSERVATIVE]
+        assert conservative.min_confidence > 0.55  # would strangle if applied
+        # Pin the exemption logic shape used in the analyzer gate:
+        assert getattr(conservative.mode, "value", "") == "CONSERVATIVE"
+        specific = MODE_CONFIGS[StrategyMode.BREAKOUT]
+        assert specific.min_confidence >= 0.6
+        assert getattr(specific.mode, "value", "") != "CONSERVATIVE"
+
     def test_mode_configs_have_no_dead_sltp_fields(self):
         from bot.core.strategy_modes import MODE_CONFIGS
         for cfg in MODE_CONFIGS.values():

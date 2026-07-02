@@ -792,9 +792,11 @@ class AnalyzerConfig:
     # (lean toward value, fade deep chase). See bot/core/smc.py.
     smc_voters_enabled: bool = _env_bool("SMC_VOTERS_ENABLED", True)
 
-    # Strategy-mode confidence floor (default ON): the selected mode's
-    # min_confidence (e.g. BREAKOUT 0.65, LIQUIDITY_SWEEP 0.68) RAISES the
-    # per-strategy-type bar when stricter. These per-mode bars existed in
+    # Strategy-mode confidence floor (default ON): a SPECIFIC selected
+    # mode's min_confidence (e.g. BREAKOUT 0.65, LIQUIDITY_SWEEP 0.68)
+    # RAISES the per-strategy-type bar when stricter. The CONSERVATIVE
+    # catch-all default is exempt — applying its bar to every uncertain
+    # scan measurably collapsed trade flow. These per-mode bars existed in
     # MODE_CONFIGS since day one but were dead — nothing ever read them.
     mode_min_confidence_enabled: bool = _env_bool("MODE_MIN_CONFIDENCE_ENABLED", True)
 
