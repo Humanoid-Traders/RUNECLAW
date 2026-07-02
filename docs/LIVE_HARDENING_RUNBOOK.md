@@ -133,3 +133,23 @@ Raise these **after** Stage 1, not before — the risk tightening should be on f
 
 If anything misbehaves: set the offending flag back to `false`, restart, and report
 what you saw — every step is independently reversible.
+
+---
+
+## Deployment-host hygiene (ops)
+
+Two host-level practices that are outside this repository's control but bite
+live operators:
+
+1. **Pin the Python runtime.** The repo now ships `.python-version` (3.11) and
+   `pyproject.toml` declares `requires-python = ">=3.11"`. Use `pyenv`/`uv` (or
+   your image's base tag) so the host resolves the same interpreter — silent
+   3.10 fallbacks break `datetime.UTC` and modern typing at import time.
+
+2. **Keep any watchdog/restart script OUTSIDE the repo working tree.** If your
+   deploy loop uses `git reset --hard`/`git clean` to update the checkout, any
+   watchdog script stored inside the tree loses local edits and (on some
+   setups) its execute bit. Install it to `/usr/local/bin` (or a systemd unit)
+   instead, or re-assert `chmod +x` as a post-reset step in the deploy script.
+   Nothing inside this repository performs `git reset` — this is purely about
+   the host-side update loop some operators run.
