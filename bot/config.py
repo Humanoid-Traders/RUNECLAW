@@ -172,6 +172,19 @@ class RiskLimits:
     signal_display_min_confidence: float = _env_float_bounded(
         "SIGNAL_DISPLAY_MIN_CONFIDENCE", 0.70, 0.1, 1.0)
     max_consecutive_losses: int = int(_env_float_bounded("MAX_CONSECUTIVE_LOSSES", 5, 1, 50))
+    # Half-open recovery for the SOFT loss-streak gate (risk check #9). The
+    # soft gate rejects new ideas at (hard - 2) consecutive losses, but the
+    # streak only decays on a WIN — with trading blocked no win can ever
+    # happen, so the gate was a PERMANENT silent latch two losses below the
+    # visible circuit breaker (production-data backtest: 3 early losses froze
+    # the strategy for the remaining ~8 months; live freezes the same way,
+    # the operator just sees a bot that scans but never trades). After this
+    # cool-off since the last loss, ONE probe trade is allowed at a time
+    # (only while flat): a losing probe re-arms the gate and walks the streak
+    # toward the hard breaker (still manual-reset); a winning probe decays
+    # it. 0 disables probing (legacy permanent latch).
+    loss_streak_probe_hours: float = _env_float_bounded(
+        "LOSS_STREAK_PROBE_HOURS", 24.0, 0.0, 720.0)
     cooldown_after_loss_seconds: int = int(_env_float("COOLDOWN_AFTER_LOSS_SEC", 120))
     # Per-SYMBOL loss-streak cooldown. The account-wide streak above decays on
     # ANY win, so a chronically-losing symbol keeps getting re-entered as long

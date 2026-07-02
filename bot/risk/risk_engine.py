@@ -977,9 +977,27 @@ class RiskEngine:
             # 9. Consecutive loss streak
             # C2-35 FIX: soft limit derived from config, not hardcoded to 3.
             # Always strictly below the hard circuit-breaker limit (see helper).
+            # Half-open recovery: the streak only decays on a WIN, so without
+            # a probe path this gate is a permanent latch (blocked trading ->
+            # no wins -> blocked forever, silently, below the visible hard
+            # breaker). After loss_streak_probe_hours since the last loss, ONE
+            # probe trade is allowed at a time (only while flat). A losing
+            # probe re-arms the gate via _last_loss_time; a winning probe
+            # decays the streak. Unknown last-loss time fails closed.
             soft_limit = self._soft_loss_streak_limit(CONFIG.risk.max_consecutive_losses)
             if self._consecutive_losses >= soft_limit:
-                failed.append(f"LOSS_STREAK: {self._consecutive_losses} consecutive losses (>= {soft_limit})")
+                probe_s = CONFIG.risk.loss_streak_probe_hours * 3600.0
+                _open_ct = (live_open_count if live_open_count is not None
+                            else state.open_positions)
+                if (probe_s > 0 and self._last_loss_time is not None
+                        and self._now() - self._last_loss_time >= probe_s
+                        and _open_ct == 0):
+                    _cool_h = (self._now() - self._last_loss_time) / 3600.0
+                    passed.append(
+                        f"LOSS_STREAK: {self._consecutive_losses} losses, "
+                        f"probe allowed after {_cool_h:.1f}h cool-off")
+                else:
+                    failed.append(f"LOSS_STREAK: {self._consecutive_losses} consecutive losses (>= {soft_limit})")
             else:
                 passed.append(f"LOSS_STREAK: {self._consecutive_losses} OK")
         except Exception as exc:

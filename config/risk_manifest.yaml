@@ -121,15 +121,21 @@ checks:
   - id: 9
     name: LOSS_STREAK
     description: >
-      Soft reject at 3+ consecutive losses. Hard stop (circuit breaker)
-      at max_consecutive_losses (default 5).
+      Soft reject at (max_consecutive_losses - 2) consecutive losses. Hard
+      stop (circuit breaker) at max_consecutive_losses (default 5). The
+      streak decays one step per WIN, so without a recovery path the soft
+      gate would latch permanently (blocked trading -> no wins -> blocked
+      forever). Half-open recovery: after loss_streak_probe_hours since the
+      last loss, ONE probe trade is allowed at a time (only while flat); a
+      losing probe re-arms the gate, a winning probe decays the streak.
     fail_behavior: closed
     threshold:
-      soft_reject_at: 3          # hardcoded in engine
+      soft_reject_at: 3          # max_consecutive_losses - 2
       circuit_breaker_at: 5      # max_consecutive_losses
+      probe_after_hours: 24      # LOSS_STREAK_PROBE_HOURS (0 = legacy latch)
     env_var: MAX_CONSECUTIVE_LOSSES
     trips_circuit_breaker: false
-    notes: "Soft reject is hardcoded at 3. Circuit breaker threshold is configurable."
+    notes: "Soft reject derives from the hard limit. Probe cool-off via LOSS_STREAK_PROBE_HOURS."
 
   - id: 10
     name: ENTRY_PRICE
@@ -347,6 +353,15 @@ defaults:
     value: 5
     env_var: MAX_CONSECUTIVE_LOSSES
     description: "Consecutive losses before circuit breaker trips (soft reject at 3)"
+
+  loss_streak_probe_hours:
+    value: 24.0
+    env_var: LOSS_STREAK_PROBE_HOURS
+    description: >
+      Cool-off since the last loss after which the soft loss-streak gate
+      allows one probe trade at a time (only while flat). Prevents the soft
+      gate from becoming a permanent silent latch — the streak only decays on
+      wins, which can't happen while trading is blocked. 0 = legacy latch.
 
   cooldown_after_loss_seconds:
     value: 120
