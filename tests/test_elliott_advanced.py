@@ -254,13 +254,15 @@ class TestTimeframeMatchedElliott:
         assert "elliott_degree_tf" not in ind
 
 
-class TestGatedConfigDefaultsOff:
-    def test_all_elliott_flags_default_off(self):
+class TestElliottFlagsDefaultOn:
+    def test_all_elliott_flags_default_on(self):
+        # Operator enabled the full Elliott suite; each flag is still
+        # env-overridable (e.g. ELLIOTT_MTF_ENABLED=false) but defaults ON.
         a = CONFIG.analyzer
-        assert a.elliott_zigzag_enabled is False
-        assert a.elliott_wave_action_enabled is False
-        assert a.elliott_fib_targets_enabled is False
-        assert a.elliott_mtf_enabled is False
+        assert a.elliott_zigzag_enabled is True
+        assert a.elliott_wave_action_enabled is True
+        assert a.elliott_fib_targets_enabled is True
+        assert a.elliott_mtf_enabled is True
 
 
 class TestRunElliottDetectorsReplaces:

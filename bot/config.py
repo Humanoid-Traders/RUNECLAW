@@ -735,23 +735,28 @@ class AnalyzerConfig:
     volume_profile_lookback: int = int(_env_float("VOLUME_PROFILE_LOOKBACK", 100))
     volume_profile_bins: int = int(_env_float("VOLUME_PROFILE_BINS", 50))
 
-    # ── Advanced Elliott Wave (bot/core/elliott.py) — all default OFF, so the
-    # analyzer's wave handling is byte-identical to before unless explicitly
-    # enabled. Each toggle is independent for A/B evaluation.
+    # ── Advanced Elliott Wave (bot/core/elliott.py) — now default ON at the
+    # operator's request. Each toggle stays independent and env-overridable, so
+    # any one can be turned back off (e.g. ELLIOTT_MTF_ENABLED=false) without
+    # touching the others. All fail-open; none bypasses the risk engine.
     #   zigzag:      feed the EW detectors structural ATR-ZigZag pivots instead
     #                of the fixed 5-bar fractal (filters noise wiggles).
-    #   wave_action: dampen/flip the EW confluence vote by the wave's *position*
-    #                (a terminal wave 5 / ending diagonal should not add trend
+    #   wave_action: dampen the EW confluence vote by the wave's *position*
+    #                (a terminal wave 5 / ending diagonal stops adding trend
     #                conviction) instead of voting the raw pattern signal.
-    #   fib_targets: expose Fib-projected wave targets + the wave-invalidation
-    #                level into the entry/SL/TP anchor pool.
+    #   fib_targets: wave-anchor the stop to the invalidation level (only ever
+    #                TIGHTENS) and extend the target to the Fib projection.
     #   mtf:         run wave detection on the timeframe whose degree matches the
-    #                setup's strategy_type (scalp<intraday<swing<position).
-    elliott_zigzag_enabled: bool = _env_bool("ELLIOTT_ZIGZAG_ENABLED", False)
+    #                setup's strategy_type (scalp<intraday<swing<position). This
+    #                one fetches extra candle timeframes per symbol — cached and
+    #                fail-open, but it raises Bitget API load; set
+    #                ELLIOTT_MTF_ENABLED=false to disable just that if scans
+    #                start hitting rate limits.
+    elliott_zigzag_enabled: bool = _env_bool("ELLIOTT_ZIGZAG_ENABLED", True)
     elliott_zigzag_atr_mult: float = _env_float("ELLIOTT_ZIGZAG_ATR_MULT", 1.5)
-    elliott_wave_action_enabled: bool = _env_bool("ELLIOTT_WAVE_ACTION_ENABLED", False)
-    elliott_fib_targets_enabled: bool = _env_bool("ELLIOTT_FIB_TARGETS_ENABLED", False)
-    elliott_mtf_enabled: bool = _env_bool("ELLIOTT_MTF_ENABLED", False)
+    elliott_wave_action_enabled: bool = _env_bool("ELLIOTT_WAVE_ACTION_ENABLED", True)
+    elliott_fib_targets_enabled: bool = _env_bool("ELLIOTT_FIB_TARGETS_ENABLED", True)
+    elliott_mtf_enabled: bool = _env_bool("ELLIOTT_MTF_ENABLED", True)
 
 
 @dataclass(frozen=True)
