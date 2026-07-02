@@ -91,8 +91,9 @@ class TestHeadAndShouldersGate:
 
     def test_detected_when_flag_off(self, _patched_swings, monkeypatch):
         monkeypatch.setenv("PATTERN_ATR_TOLERANCES_ENABLED", "0")
-        # Low-vol closes; shoulder_diff = 3% < fixed 5% → H&S detected.
-        highs, lows, closes = _flat_series(price=100.0, half_range=0.05)
+        # Low-vol closes BELOW the 98.5 neckline (completion gating now
+        # requires the confirmed break); shoulder_diff 3% < fixed 5%.
+        highs, lows, closes = _flat_series(price=97.0, half_range=0.05)
         res = detect_head_and_shoulders(highs, lows, closes)
         assert res is not None and res["name"] == "Head & Shoulders"
 
@@ -104,8 +105,9 @@ class TestHeadAndShouldersGate:
 
     def test_still_detected_when_flag_on_high_vol(self, _patched_swings, monkeypatch):
         monkeypatch.setenv("PATTERN_ATR_TOLERANCES_ENABLED", "1")
-        # High vol → tol capped at fixed 5% → 3% gap still passes.
-        highs, lows, closes = _flat_series(price=100.0, half_range=20.0)
+        # High vol → tol capped at fixed 5% → 3% gap still passes. Price
+        # below the 98.5 neckline (completion gating).
+        highs, lows, closes = _flat_series(price=97.0, half_range=20.0)
         res = detect_head_and_shoulders(highs, lows, closes)
         assert res is not None and res["name"] == "Head & Shoulders"
 
@@ -115,7 +117,8 @@ class TestHeadAndShouldersGate:
         swings = {"swing_highs": [(10, 100.0), (20, 110.0), (30, 101.0)],
                   "swing_lows": [(15, 98.0), (25, 99.0)]}
         monkeypatch.setattr(cp, "_find_swings", lambda h, lw, lb: swings)
-        highs, lows, closes = _flat_series(price=100.0, half_range=1.0)  # ATR%≈2 → tol 3
+        # Price below the 98.5 neckline (completion gating); ATR%≈2 → tol 3.
+        highs, lows, closes = _flat_series(price=97.0, half_range=1.0)
 
         monkeypatch.setenv("PATTERN_ATR_TOLERANCES_ENABLED", "0")
         conf_off = detect_head_and_shoulders(highs, lows, closes)["confidence"]

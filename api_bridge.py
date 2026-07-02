@@ -700,6 +700,11 @@ async def patterns(symbol: str, timeframe: str = "1h", limit: int = 100, _rl: No
         raise HTTPException(status_code=400, detail="Invalid symbol format.")
 
     ohlcv = await _fetch_ohlcv(symbol, timeframe, limit)
+    # Repaint guard (audit fix): drop the in-progress candle so a mid-bar
+    # "doji"/"hammer" shown on the dashboard can't vanish at bar close.
+    if ohlcv:
+        from bot.utils.candles import drop_forming_candle
+        ohlcv = drop_forming_candle(ohlcv, timeframe)
     if not ohlcv or len(ohlcv) < 20:
         raise HTTPException(status_code=400, detail=f"Insufficient data for {symbol}")
 

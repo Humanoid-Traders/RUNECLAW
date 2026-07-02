@@ -81,7 +81,8 @@ class TestSharedSwingsActuallyUsed:
         monkeypatch.setattr(cp, "_find_swings", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("recomputed")))
         swings = {"swing_highs": [(10, 100.0), (20, 110.0), (30, 103.0)],
                   "swing_lows": [(15, 98.0), (25, 99.0)]}
-        closes = np.full(60, 100.0)
+        # Below the 98.5 neckline — completion gating now requires the break.
+        closes = np.full(60, 97.0)
         highs = closes + 1
         lows = closes - 1
         # Should not raise — uses the provided swings.

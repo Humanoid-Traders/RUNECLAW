@@ -738,6 +738,7 @@ class Analyzer:
                 n = p.get("name", "")
                 return ("Wyckoff" in n or "Harmonic" in n or "Elliott" in n
                         or any(h in n for h in ("Gartley", "Butterfly", "Bat", "Crab"))
+                        or "Liquidity Sweep" in n
                         or ("Fibonacci" in n and "ext" in n.lower()))
             if CONFIG.analyzer.pattern_dedup_enabled:
                 agg_patterns = [p for p in chart_patterns if not _has_dedicated_voter(p)]
@@ -2060,6 +2061,18 @@ class Analyzer:
             if "bb_upper" in results and "bb_lower" in results:
                 results["kc_squeeze"] = (results["bb_upper"] < results["kc_upper"] and
                                           results["bb_lower"] > results["kc_lower"])
+                # Previous-bar squeeze state, so the regime can detect the
+                # RELEASE transition (on -> off) instead of compression itself.
+                # Prior-bar Keltner width reuses the current ATR (it moves
+                # little bar-to-bar and avoids a second full ATR pass).
+                if len(closes) >= 21:
+                    _pc = closes[:-1]
+                    _bb_mid_p = float(np.mean(_pc[-20:]))
+                    _bb_sd_p = float(np.std(_pc[-20:]))
+                    _kc_mid_p = float(_ema(_pc, 20)[-1])
+                    results["kc_squeeze_prev"] = (
+                        _bb_mid_p + 2 * _bb_sd_p < _kc_mid_p + 2 * kc_atr
+                        and _bb_mid_p - 2 * _bb_sd_p > _kc_mid_p - 2 * kc_atr)
 
         # ── EMA Ribbon (9/21) — trend filter ──
         if len(closes) >= 21:
@@ -2116,27 +2129,33 @@ class Analyzer:
                                                       stoch_high_10 < stoch_high_prev)
 
         # ── Donchian Channels (20-period) — Turtle Breakout ──
+        # Audit fix: the channel EXCLUDES the current bar. Including it made
+        # the breakout self-defeating — closes[-1] >= max(highs incl. own
+        # high) requires closing exactly at the 20-bar max's own high, so the
+        # donchian voter and TURTLE_BREAKOUT trigger almost never fired.
+        # Standard Turtle compares price to the PRIOR N-bar channel.
         dc_period = 20
-        if len(closes) >= dc_period:
-            dc_high = float(np.max(highs[-dc_period:]))
-            dc_low = float(np.min(lows[-dc_period:]))
+        if len(closes) >= dc_period + 1:
+            dc_high = float(np.max(highs[-(dc_period + 1):-1]))
+            dc_low = float(np.min(lows[-(dc_period + 1):-1]))
             dc_mid = (dc_high + dc_low) / 2
             results["dc_upper"] = round(dc_high, 6)
             results["dc_lower"] = round(dc_low, 6)
             results["dc_mid"] = round(dc_mid, 6)
             results["dc_width"] = round((dc_high - dc_low) / dc_low * 100 if dc_low > 0 else 0, 4)
-            # Breakout detection
+            # Breakout detection: close beyond the prior channel
             results["dc_breakout_high"] = float(closes[-1]) >= dc_high
             results["dc_breakout_low"] = float(closes[-1]) <= dc_low
             # Position within channel (0=bottom, 1=top)
             results["dc_position"] = round(
                 (closes[-1] - dc_low) / (dc_high - dc_low) if dc_high > dc_low else 0.5, 4
             )
-            # 55-period Donchian for Turtle system confirmation
-            dc55_period = min(55, len(closes))
+            # 55-period Donchian for Turtle system confirmation (same
+            # prior-channel convention)
+            dc55_period = min(55, len(closes) - 1)
             if dc55_period >= 40:
-                dc55_high = float(np.max(highs[-dc55_period:]))
-                dc55_low = float(np.min(lows[-dc55_period:]))
+                dc55_high = float(np.max(highs[-(dc55_period + 1):-1]))
+                dc55_low = float(np.min(lows[-(dc55_period + 1):-1]))
                 results["dc55_upper"] = round(dc55_high, 6)
                 results["dc55_lower"] = round(dc55_low, 6)
                 results["dc55_breakout_high"] = float(closes[-1]) >= dc55_high
@@ -2312,9 +2331,14 @@ class Analyzer:
         plus_di = indicators.get("plus_di", 0)
         minus_di = indicators.get("minus_di", 0)
         squeeze = indicators.get("kc_squeeze", False)
+        squeeze_prev = indicators.get("kc_squeeze_prev", False)
 
-        # -- Raw regime classification (same logic as before) --
-        if squeeze and 18 <= adx <= 35:
+        # -- Raw regime classification --
+        # EXPANSION is the squeeze RELEASE (was on, now off) per its own
+        # definition in ta_utils. The old test fired while the squeeze was
+        # still ON — i.e. during compression, the opposite condition — and
+        # granted the expansion confidence bonus in the middle of chop.
+        if (not squeeze) and squeeze_prev and 18 <= adx <= 35:
             raw = Regime.EXPANSION
         elif adx > 25:
             raw = Regime.TREND_UP if plus_di > minus_di else Regime.TREND_DOWN
@@ -2621,10 +2645,16 @@ class Analyzer:
             # Net vote scaled by imbalance: ranges from -1 to +1
             geo_vote = (geo_bull_w - geo_bear_w) / geo_total
             votes.append(geo_vote)
-            # Scale weight by number of patterns detected (more patterns = stronger signal)
-            geo_count = indicators.get("chart_patterns_bullish_count", 0) + \
-                        indicators.get("chart_patterns_bearish_count", 0)
-            scaled_weight = min(1.0, 0.7 * min(geo_count, 3))  # cap at 3 patterns
+            # Scale weight by the number of patterns AGREEING with the net
+            # vote (audit fix: counting both sides let contradictory patterns
+            # from one structure INCREASE conviction weight).
+            if geo_vote > 0:
+                geo_count = indicators.get("chart_patterns_bullish_count", 0)
+            elif geo_vote < 0:
+                geo_count = indicators.get("chart_patterns_bearish_count", 0)
+            else:
+                geo_count = 1
+            scaled_weight = min(1.0, 0.7 * min(max(geo_count, 1), 3))  # cap at 3 patterns
             aw(scaled_weight, "chart_patterns")
 
         # ── Divergence Scanner voter ──
@@ -2782,16 +2812,29 @@ class Analyzer:
                 e_signal = ew.get("signal", "neutral")
                 e_conf = ew.get("confidence", 0.5)
                 _amult = 1.0
+                _flip = False
                 if _wave_action is not None:
                     try:
-                        _amult = float(_wave_action(ew).get("weight_mult", 1.0))
+                        _act = _wave_action(ew)
+                        _amult = float(_act.get("weight_mult", 1.0))
+                        # Audit fix: a COMPLETED corrective (ABC / WXY) is
+                        # labeled with the correction's own direction, but the
+                        # doctrine ("correction complete — trend resumes",
+                        # bias "with" the prior trend) means the tradeable
+                        # signal is the RESUMPTION — the opposite direction.
+                        # The old code took only weight_mult and cast the vote
+                        # exactly backwards for these two voters.
+                        if (ew_label in ("ew_corrective", "ew_wxy")
+                                and _act.get("bias") == "with"
+                                and _act.get("action") == "enter"):
+                            _flip = True
                     except Exception:
                         _amult = 1.0
                 if e_signal == "bullish":
-                    votes.append(e_conf)
+                    votes.append(-e_conf if _flip else e_conf)
                     aw(_boost(ew_weight, ew_label) * _amult, ew_label)
                 elif e_signal == "bearish":
-                    votes.append(-e_conf)
+                    votes.append(e_conf if _flip else -e_conf)
                     aw(_boost(ew_weight, ew_label) * _amult, ew_label)
                 else:
                     votes.append(0.0)
@@ -2972,7 +3015,7 @@ class Analyzer:
             _PATTERN_FAMILY = {
                 "candlestick", "chart_patterns", "reversal", "wyckoff",
                 "harmonic", "ew_impulse", "ew_corrective", "ew_diagonal",
-                "ew_wxy", "elliott",
+                "ew_wxy", "elliott", "liquidity_sweep",
             }
             if len(names) == len(votes):
                 p_active = [i for i, n in enumerate(names)
@@ -3922,6 +3965,7 @@ _CANDLE_STRENGTH: dict = {
     "bullish_harami": 1.0, "bearish_harami": 1.0,
     "tweezer_top": 1.0, "tweezer_bottom": 1.0,
     "hammer": 1.0, "shooting_star": 1.0,
+    "dragonfly_doji": 1.0, "gravestone_doji": 1.0,
 }
 
 
@@ -3975,6 +4019,19 @@ def _detect_candlestick_patterns(
         if body_pct < 0.10:
             patterns["doji"] = "neutral"
 
+        # Directional doji (audit fix): a plain doji is neutral (display only),
+        # but the dragonfly/gravestone variants carry direction — a dragonfly
+        # at a downtrend low is buyers rejecting lower prices; a gravestone at
+        # an uptrend high is the mirror. Gated by the same trend context as
+        # hammer/shooting star so the geometry appears where it means reversal.
+        if body_pct <= 0.10:
+            if (last_lower >= 0.6 * last_range and last_upper <= 0.10 * last_range
+                    and (not _ctx_on or trend_ctx == -1)):
+                patterns["dragonfly_doji"] = "bullish"
+            if (last_upper >= 0.6 * last_range and last_lower <= 0.10 * last_range
+                    and (not _ctx_on or trend_ctx == 1)):
+                patterns["gravestone_doji"] = "bearish"
+
         # Hammer: small body at top, long lower wick (>= 2x body). With trend
         # context on, it must appear in a DOWNTREND (it is a bottom reversal).
         if last_lower >= 2 * last_body and last_upper < last_body and body_pct < 0.4:
@@ -4001,13 +4058,20 @@ def _detect_candlestick_patterns(
     prev_abs = float(abs_body[-2])
     curr_abs = float(abs_body[-1])
 
+    # Trend-context suppression for reversal patterns (audit fix): a bullish
+    # reversal (engulfing / morning star / soldiers) printed INTO an
+    # established uptrend has nothing to reverse — suppress only when the
+    # context is OPPOSITE (lenient: flat/unknown context keeps legacy firing).
+    _suppress_bull = _ctx_on and trend_ctx == 1
+    _suppress_bear = _ctx_on and trend_ctx == -1
+
     # Bullish Engulfing: prev bearish, current bullish wraps prev entirely
-    if prev_body < 0 and curr_body > 0 and curr_abs > prev_abs:
+    if prev_body < 0 and curr_body > 0 and curr_abs > prev_abs and not _suppress_bull:
         if float(c[-1]) > float(o[-2]) and float(o[-1]) < float(c[-2]):
             patterns["bullish_engulfing"] = "bullish"
 
     # Bearish Engulfing: prev bullish, current bearish wraps prev entirely
-    if prev_body > 0 and curr_body < 0 and curr_abs > prev_abs:
+    if prev_body > 0 and curr_body < 0 and curr_abs > prev_abs and not _suppress_bear:
         if float(c[-1]) < float(o[-2]) and float(o[-1]) > float(c[-2]):
             patterns["bearish_engulfing"] = "bearish"
 
@@ -4039,21 +4103,48 @@ def _detect_candlestick_patterns(
     b0, b1, b2 = float(body[-3]), float(body[-2]), float(body[-1])
     a0, a1, a2 = float(abs_body[-3]), float(abs_body[-2]), float(abs_body[-1])
     _body0_mid = (float(o[-3]) + float(c[-3])) / 2.0
-    if b0 < 0 and a0 > 0 and a1 < a0 * 0.3 and b2 > 0 and a2 > a0 * 0.5:
+    if b0 < 0 and a0 > 0 and a1 < a0 * 0.3 and b2 > 0 and a2 > a0 * 0.5 and not _suppress_bull:
         if not _ctx_on or float(c[-1]) > _body0_mid:
             patterns["morning_star"] = "bullish"
 
-    if b0 > 0 and a0 > 0 and a1 < a0 * 0.3 and b2 < 0 and a2 > a0 * 0.5:
+    if b0 > 0 and a0 > 0 and a1 < a0 * 0.3 and b2 < 0 and a2 > a0 * 0.5 and not _suppress_bear:
         if not _ctx_on or float(c[-1]) < _body0_mid:
             patterns["evening_star"] = "bearish"
 
-    # Three White Soldiers: three consecutive bullish candles with higher closes
-    if b0 > 0 and b1 > 0 and b2 > 0:
+    # Three White Soldiers / Black Crows (audit fix): monotone closes alone
+    # let three +0.01% drifts fire the TOP-strength (1.5) pattern in any slow
+    # trend. Standard definition requires three LONG bodies — each body >= 60%
+    # of its own bar range AND >= the average body of the preceding ~10 bars —
+    # with each candle opening within the previous candle's body.
+    _avg_hist = np.abs(closes[:-3] - opens[:-3])[-10:]
+    _avg_body = float(np.mean(_avg_hist)) if len(_avg_hist) > 0 else 0.0
+
+    def _long_body(i: int) -> bool:
+        rng = float(candle_range[i])
+        ab = float(abs_body[i])
+        if rng <= 0 or ab < 0.6 * rng:
+            return False
+        return _avg_body <= 0 or ab >= _avg_body
+
+    def _opens_in_prev_body(i: int) -> bool:
+        lo = min(float(o[i - 1]), float(c[i - 1]))
+        hi = max(float(o[i - 1]), float(c[i - 1]))
+        return lo <= float(o[i]) <= hi
+
+    _long3 = _long_body(-3) and _long_body(-2) and _long_body(-1)
+    _staircase = _opens_in_prev_body(-2) and _opens_in_prev_body(-1)
+
+    # Three White Soldiers: three consecutive long bullish candles with higher
+    # closes, each opening within the prior body (a reversal from a downtrend
+    # — suppressed when the context is already an uptrend).
+    if b0 > 0 and b1 > 0 and b2 > 0 and _long3 and _staircase and not _suppress_bull:
         if float(c[-2]) > float(c[-3]) and float(c[-1]) > float(c[-2]):
             patterns["three_white_soldiers"] = "bullish"
 
-    # Three Black Crows: three consecutive bearish candles with lower closes
-    if b0 < 0 and b1 < 0 and b2 < 0:
+    # Three Black Crows: three consecutive long bearish candles with lower
+    # closes, each opening within the prior body (top reversal — suppressed
+    # when the context is already a downtrend).
+    if b0 < 0 and b1 < 0 and b2 < 0 and _long3 and _staircase and not _suppress_bear:
         if float(c[-2]) < float(c[-3]) and float(c[-1]) < float(c[-2]):
             patterns["three_black_crows"] = "bearish"
 
