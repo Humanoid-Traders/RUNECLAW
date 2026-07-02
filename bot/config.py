@@ -779,6 +779,13 @@ class AnalyzerConfig:
     # Backtests resample the primary bars into closed 4h/1d groups for parity.
     mtf_confluence_enabled: bool = _env_bool("MTF_CONFLUENCE_ENABLED", True)
 
+    # Level-aware SL/TP (default ON): snap the ATR stop just beyond the
+    # nearest scored support/resistance (swing wicks, POC/VAH/VAL, prior-day
+    # high/low, round numbers) — tighten-only — and clip the target just
+    # inside an opposing wall at 50-105% of the ATR distance. See
+    # bot/core/levels.py; the leverage margin-risk cap still runs after.
+    level_aware_sltp_enabled: bool = _env_bool("LEVEL_AWARE_SLTP_ENABLED", True)
+
     # Advanced VWAP (bot/core/vwap.py). Default ON at the operator's request;
     # each is env-overridable. These activate VWAP math that used to be computed
     # but unused, and match the anchor to the setup horizon:

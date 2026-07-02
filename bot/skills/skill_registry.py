@@ -2643,6 +2643,11 @@ class DeepScanSkill(BaseSkill):
                 errors += 1
                 continue
             symbol, ohlcv = result
+            # Repaint guard (audit fix): patterns computed on the in-progress
+            # candle can vanish at bar close — same policy as the live path.
+            if ohlcv:
+                from bot.utils.candles import drop_forming_candle
+                ohlcv = drop_forming_candle(ohlcv, timeframe)
             if ohlcv is None or len(ohlcv) < 30:
                 if ohlcv is None:
                     errors += 1

@@ -190,21 +190,28 @@ def detect_head_and_shoulders(
             shoulder_diff = _pct_diff(left[1], right[1])
             tol = _sym_tolerance(highs, lows, closes, 5.0)
             if shoulder_diff < tol:
-                # Neckline from swing lows between shoulders
+                # Neckline from swing lows between shoulders. If none were
+                # retained, SKIP the pattern (audit fix): the old fallback
+                # fabricated a neckline from a shoulder PEAK, which was
+                # nearly always already "broken". Completion gating (audit
+                # fix): only emit once price has CONFIRMED the pattern by
+                # closing below the neckline — the old +0.10 break bonus is
+                # folded into the base. Unconfirmed geometry falls through
+                # to the Inverse H&S check below.
                 neckline_lows = [s for s in sl if left[0] < s[0] < right[0]]
-                neckline = np.mean([s[1] for s in neckline_lows]) if neckline_lows else min(left[1], right[1])
-                price = float(closes[-1])
-                conf = min(0.85, 0.6 + (1.0 - shoulder_diff / tol) * 0.25)
-                if price < neckline:
-                    conf = min(0.95, conf + 0.10)  # confirmed break
-                return {
-                    "name": "Head & Shoulders",
-                    "signal": "bearish",
-                    "confidence": round(conf, 2),
-                    "description": f"H&S top: head ${head[1]:,.2f}, neckline ~${neckline:,.2f}",
-                    "key_levels": {"head": head[1], "left_shoulder": left[1],
-                                   "right_shoulder": right[1], "neckline": float(neckline)},
-                }
+                if neckline_lows:
+                    neckline = np.mean([s[1] for s in neckline_lows])
+                    price = float(closes[-1])
+                    if price < neckline:
+                        conf = min(0.95, 0.70 + (1.0 - shoulder_diff / tol) * 0.25)
+                        return {
+                            "name": "Head & Shoulders",
+                            "signal": "bearish",
+                            "confidence": round(conf, 2),
+                            "description": f"H&S top: head ${head[1]:,.2f}, neckline ~${neckline:,.2f}",
+                            "key_levels": {"head": head[1], "left_shoulder": left[1],
+                                           "right_shoulder": right[1], "neckline": float(neckline)},
+                        }
 
     # Inverse H&S: three swing lows where middle is lowest
     if len(sl) >= 3:
@@ -213,12 +220,16 @@ def detect_head_and_shoulders(
             shoulder_diff = _pct_diff(left[1], right[1])
             tol = _sym_tolerance(highs, lows, closes, 5.0)
             if shoulder_diff < tol:
+                # Same audit fixes as H&S: no fabricated neckline, and only
+                # emit once price CONFIRMS with a close above the neckline.
                 neckline_highs = [s for s in sh if left[0] < s[0] < right[0]]
-                neckline = np.mean([s[1] for s in neckline_highs]) if neckline_highs else max(left[1], right[1])
+                if not neckline_highs:
+                    return None
+                neckline = np.mean([s[1] for s in neckline_highs])
                 price = float(closes[-1])
-                conf = min(0.85, 0.6 + (1.0 - shoulder_diff / tol) * 0.25)
-                if price > neckline:
-                    conf = min(0.95, conf + 0.10)
+                if price <= neckline:
+                    return None
+                conf = min(0.95, 0.70 + (1.0 - shoulder_diff / tol) * 0.25)
                 return {
                     "name": "Inverse Head & Shoulders",
                     "signal": "bullish",
@@ -250,19 +261,23 @@ def detect_double_top_bottom(
         tol = _sym_tolerance(highs, lows, closes, 3.0)
         if diff < tol:
             price = float(closes[-1])
-            # Trough between tops
+            # Trough between tops. Completion gating (audit fix): a double
+            # top is only bearish once price CONFIRMS by closing below the
+            # interim trough — the old code voted while price was still
+            # between the tops, shorting every range that shaped two highs.
+            # No trough retained -> no neckline -> no pattern (the old
+            # fallback fabricated one 3% under the tops).
             trough_lows = [s for s in sl if top1[0] < s[0] < top2[0]]
-            neckline = min(s[1] for s in trough_lows) if trough_lows else min(top1[1], top2[1]) * 0.97
-            conf = min(0.85, 0.55 + (1.0 - diff / tol) * 0.30)
-            if price < neckline:
-                conf = min(0.90, conf + 0.10)
-            return {
-                "name": "Double Top",
-                "signal": "bearish",
-                "confidence": round(conf, 2),
-                "description": f"Double top at ~${top1[1]:,.2f}, neckline ~${neckline:,.2f}",
-                "key_levels": {"top1": top1[1], "top2": top2[1], "neckline": float(neckline)},
-            }
+            if trough_lows and price < min(s[1] for s in trough_lows):
+                neckline = min(s[1] for s in trough_lows)
+                conf = min(0.90, 0.65 + (1.0 - diff / tol) * 0.25)
+                return {
+                    "name": "Double Top",
+                    "signal": "bearish",
+                    "confidence": round(conf, 2),
+                    "description": f"Double top at ~${top1[1]:,.2f}, neckline ~${neckline:,.2f}",
+                    "key_levels": {"top1": top1[1], "top2": top2[1], "neckline": float(neckline)},
+                }
 
     # Double Bottom: two swing lows at roughly same level
     if len(sl) >= 2:
@@ -271,18 +286,19 @@ def detect_double_top_bottom(
         tol = _sym_tolerance(highs, lows, closes, 3.0)
         if diff < tol:
             price = float(closes[-1])
+            # Mirror of the double-top gating: confirmed only on a close
+            # ABOVE the interim peak; no fabricated neckline.
             peak_highs = [s for s in sh if bot1[0] < s[0] < bot2[0]]
-            neckline = max(s[1] for s in peak_highs) if peak_highs else max(bot1[1], bot2[1]) * 1.03
-            conf = min(0.85, 0.55 + (1.0 - diff / tol) * 0.30)
-            if price > neckline:
-                conf = min(0.90, conf + 0.10)
-            return {
-                "name": "Double Bottom",
-                "signal": "bullish",
-                "confidence": round(conf, 2),
-                "description": f"Double bottom at ~${bot1[1]:,.2f}, neckline ~${neckline:,.2f}",
-                "key_levels": {"bot1": bot1[1], "bot2": bot2[1], "neckline": float(neckline)},
-            }
+            if peak_highs and price > max(s[1] for s in peak_highs):
+                neckline = max(s[1] for s in peak_highs)
+                conf = min(0.90, 0.65 + (1.0 - diff / tol) * 0.25)
+                return {
+                    "name": "Double Bottom",
+                    "signal": "bullish",
+                    "confidence": round(conf, 2),
+                    "description": f"Double bottom at ~${bot1[1]:,.2f}, neckline ~${neckline:,.2f}",
+                    "key_levels": {"bot1": bot1[1], "bot2": bot2[1], "neckline": float(neckline)},
+                }
 
     return None
 
@@ -377,8 +393,12 @@ def detect_triangles(
     nh = _normalize_slope(high_slope, price)
     nl = _normalize_slope(low_slope, price)
 
-    # Ascending: flat highs, rising lows
-    if abs(nh) < 0.05 and nl > 0.02:
+    # Ascending: flat highs, rising lows. Bands are DISJOINT with the
+    # symmetrical case below (audit fix): "flat" is |nh| < 0.02, while
+    # symmetrical requires nh < -0.02 — previously |nh| < 0.05 overlapped
+    # nh in (-0.05, -0.02) and a textbook symmetrical triangle returned as
+    # a bullish Ascending Triangle because this branch matched first.
+    if abs(nh) < 0.02 and nl > 0.02:
         return {
             "name": "Ascending Triangle",
             "signal": "bullish",
@@ -387,8 +407,8 @@ def detect_triangles(
             "key_levels": {"resistance": sh[-1][1], "support_rising": sl[-1][1]},
         }
 
-    # Descending: falling highs, flat lows
-    if nh < -0.02 and abs(nl) < 0.05:
+    # Descending: falling highs, flat lows (mirror of the ascending bands)
+    if nh < -0.02 and abs(nl) < 0.02:
         return {
             "name": "Descending Triangle",
             "signal": "bearish",
@@ -435,8 +455,9 @@ def detect_wedges(
     nh = _normalize_slope(high_slope, price)
     nl = _normalize_slope(low_slope, price)
 
-    # Rising wedge: both slopes positive, but highs slope < lows slope (converging)
-    if nh > 0.01 and nl > 0.01 and nl > nh:
+    # Rising wedge: both slopes clearly positive (nh >= 0.02 keeps this
+    # disjoint from the ascending triangle's flat-highs band), lows steeper.
+    if nh >= 0.02 and nl > nh:
         return {
             "name": "Rising Wedge",
             "signal": "bearish",
@@ -445,8 +466,9 @@ def detect_wedges(
             "key_levels": {"upper": sh[-1][1], "lower": sl[-1][1]},
         }
 
-    # Falling wedge: both slopes negative, but lows slope < highs slope (converging)
-    if nh < -0.01 and nl < -0.01 and nh > nl:
+    # Falling wedge: both slopes clearly negative (nl <= -0.02 keeps this
+    # disjoint from the descending triangle's flat-lows band), highs steeper.
+    if nl <= -0.02 and nh < 0 and nh > nl:
         return {
             "name": "Falling Wedge",
             "signal": "bullish",
@@ -544,9 +566,14 @@ def detect_cup_and_handle(
     if cup_depth_pct < 5.0:
         return None
 
-    # Handle: the last swing high should be slightly below right lip
+    # Handle: the last swing high should be slightly below right lip.
+    # Completion gating (audit fix): the pattern previously voted bullish
+    # while price was still UNDER the right lip — no breakout condition at
+    # all. Require a confirmed close above the lip.
     if handle_high[0] > right_lip[0] and handle_high[1] <= right_lip[1]:
         price = float(closes[-1])
+        if price <= right_lip[1]:
+            return None
         conf = min(0.80, 0.55 + cup_depth_pct / 40)
         return {
             "name": "Cup and Handle",
@@ -1520,13 +1547,18 @@ def detect_harmonic_pattern(
         """Check if *actual* falls within [lo, hi] with tolerance on edges."""
         return lo * (1 - tol) <= actual <= hi * (1 + tol)
 
-    # Pattern ratio definitions:
-    #   xb = XA->B retracement, ac = AB->C extension, xd = XA->D retracement
+    # Pattern ratio definitions (audit fix — the old "ac" ranges were the
+    # CD/BC projection ranges misapplied to BC/AB, demanding C beyond A, so
+    # real textbook harmonics could NEVER match while invalid expanding
+    # geometries did):
+    #   xb = |A-B| / |X-A|  (B retracement of XA)
+    #   ac = |B-C| / |A-B|  (C retracement of AB — 0.382..0.886 for ALL four)
+    #   xd = |A-D| / |X-A|  (<1: D retraces XA; >1: D extends beyond X)
     PATTERNS = {
-        "Gartley":   {"xb": (0.618, 0.618), "ac": (1.272, 1.618), "xd": (0.786, 0.786)},
-        "Butterfly": {"xb": (0.786, 0.786), "ac": (1.618, 2.618), "xd": (1.272, 1.618)},
-        "Bat":       {"xb": (0.382, 0.500), "ac": (1.618, 2.618), "xd": (0.886, 0.886)},
-        "Crab":      {"xb": (0.382, 0.618), "ac": (2.240, 3.618), "xd": (1.618, 1.618)},
+        "Gartley":   {"xb": (0.618, 0.618), "ac": (0.382, 0.886), "xd": (0.786, 0.786)},
+        "Butterfly": {"xb": (0.786, 0.786), "ac": (0.382, 0.886), "xd": (1.272, 1.618)},
+        "Bat":       {"xb": (0.382, 0.500), "ac": (0.382, 0.886), "xd": (0.886, 0.886)},
+        "Crab":      {"xb": (0.382, 0.618), "ac": (0.382, 0.886), "xd": (1.618, 1.618)},
     }
 
     def _check_xabcd(x: float, a: float, b: float, c: float, d: float,
@@ -1552,12 +1584,11 @@ def detect_harmonic_pattern(
             if not _ratio_in_range(ac_ratio, ac_lo, ac_hi):
                 continue
 
-            # D check: for patterns where D extends beyond X (xd > 1),
-            # measure from X; otherwise measure A->D / XA.
-            if xd_hi > 1.0:
-                xd_actual = abs(d - x) / xa
-            else:
-                xd_actual = abs(d - a) / xa
+            # D check (audit fix): |A-D| / |X-A| uniformly — a retracement
+            # pattern has AD < XA, an extension pattern has AD > XA (D beyond
+            # X). The old |D-X|/XA test for extensions demanded AD ~ 2.3x XA,
+            # off by a whole unit.
+            xd_actual = abs(d - a) / xa
             if not _ratio_in_range(xd_actual, xd_lo, xd_hi):
                 continue
 
