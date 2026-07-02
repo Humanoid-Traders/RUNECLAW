@@ -172,9 +172,23 @@ class BacktestEngine:
         scan_interval = self.config.scan_interval
 
         self._pending_entry = None
+        _breaker_tripped_at: int | None = None
 
         for i in range(lookback_size, len(bars)):
             current_bar = bars[i]
+
+            # Optional breaker auto-reset (breaker_reset_bars > 0): emulate an
+            # operator resetting a tripped breaker after N bars, so one early
+            # losing streak doesn't silently halt a months-long run.
+            if self.config.breaker_reset_bars > 0:
+                if self.risk.circuit_breaker_active:
+                    if _breaker_tripped_at is None:
+                        _breaker_tripped_at = i
+                    elif i - _breaker_tripped_at >= self.config.breaker_reset_bars:
+                        self.risk.reset_circuit_breaker()
+                        _breaker_tripped_at = None
+                else:
+                    _breaker_tripped_at = None
 
             # --- Fill any queued next-open entry at THIS bar's open (audit
             # fix #15) before stop checks, so the freshly opened position is

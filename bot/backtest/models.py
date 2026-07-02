@@ -35,6 +35,14 @@ class BacktestConfig(BaseModel):
     # Run both and compare: a large edge gap between them means the strategy's
     # backtested edge lives in the fill assumption, not the signal.
     fill_mode: str = "close"               # "close" | "next_open"
+    # Auto-reset a tripped circuit breaker after this many bars (0 = never,
+    # the default — breaker halts are preserved exactly like live). A
+    # drawdown/streak trip normally requires MANUAL reset; in a months-long
+    # unattended backtest one early losing streak otherwise halts trading for
+    # the remainder of the run, so the result measures the halt rather than
+    # the strategy. Set e.g. 24 (a day of 1h bars) to measure strategy edge
+    # with an operator assumed to reset the breaker daily.
+    breaker_reset_bars: int = 0
     use_llm: bool = False                  # default: rule-based for reproducibility
     # Deterministic backtest parity: replay recorded LLM theses
     # (data/learning/llm_calibration.jsonl) so the run exercises the live blended

@@ -219,6 +219,7 @@ async def _run_backtest(args: argparse.Namespace) -> None:
         commission_pct=args.commission,
         slippage_pct=args.slippage,
         fill_mode=args.fill_mode,
+        breaker_reset_bars=args.breaker_reset_bars,
         use_llm=args.use_llm,
         use_recorded_llm=args.use_recorded_llm,
         use_recorded_order_flow=args.use_recorded_order_flow,
@@ -322,6 +323,11 @@ Examples:
                              help="Entry fill convention: same-bar close (legacy, optimistic) "
                                   "or next-bar open (conservative; audit fix #15). Run both "
                                   "and compare to see how much edge lives in the fill assumption.")
+    trade_group.add_argument("--breaker-reset-bars", type=int, default=0,
+                             help="Auto-reset a tripped circuit breaker after N bars (0=never, "
+                                  "the default). A drawdown/streak trip needs MANUAL reset, so in "
+                                  "a months-long run one early losing streak otherwise halts the "
+                                  "rest — set e.g. 24 to emulate a daily operator reset.")
     trade_group.add_argument("--use-llm", action="store_true", help="Use LLM for analysis (default: rule-based)")
     trade_group.add_argument("--use-recorded-llm", action="store_true",
                              help="Replay recorded LLM theses (data/learning/llm_calibration.jsonl) "
