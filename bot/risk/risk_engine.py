@@ -2162,6 +2162,37 @@ class RiskEngine:
                   action="circuit_breaker", result="RESET")
             self._save_state()
 
+    def pending_retrip_reason(self) -> Optional[str]:
+        """Why the just-reset breaker would RE-TRIP on the next evaluation, or
+        None if it would stay clear.
+
+        A manual /resume clears the breaker flag, but the daily-loss and
+        drawdown checks re-trip it the moment the next trade is evaluated if
+        their underlying condition still holds — the operator then sees a
+        'BOT RESUMED / breaker CLEAR' card immediately contradicted by a
+        'Paused' status. This mirrors evaluate()'s conditions read-only so the
+        resume card can warn honestly instead. Best-effort: returns None on
+        any error.
+        """
+        try:
+            state = self._portfolio.snapshot()
+            base = state.equity_usd
+            if base and base > 0 and state.daily_pnl < 0:
+                daily_loss_pct = abs(state.daily_pnl / base * 100)
+                if daily_loss_pct >= CONFIG.risk.max_daily_loss_pct:
+                    return (f"daily loss {daily_loss_pct:.1f}% still >= "
+                            f"{CONFIG.risk.max_daily_loss_pct}% limit — the breaker "
+                            f"re-trips on the next trade check until equity recovers "
+                            f"or the UTC day rolls over")
+            _max_dd = self._effective_max_drawdown_pct()
+            if state.max_drawdown_pct >= _max_dd:
+                return (f"drawdown {state.max_drawdown_pct:.1f}% still >= "
+                        f"{_max_dd}% limit — the breaker re-trips on the next "
+                        f"trade check until equity recovers")
+        except Exception:
+            return None
+        return None
+
     @staticmethod
     def _should_autoreset_daily_breaker(circuit_open: bool, cause: str, trip_day: str,
                                         today: str, enabled: bool,

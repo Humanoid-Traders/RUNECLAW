@@ -6224,9 +6224,18 @@ class TelegramHandler:
     async def _cmd_resume(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """Resume trading — deactivates circuit breaker."""
         self.engine.risk.reset_circuit_breaker()
-        rendered = wr_resume()
+        # Honest resume: if the daily-loss/drawdown condition still holds, the
+        # breaker re-trips on the next evaluation — warn instead of showing a
+        # clean CLEAR that the next status card contradicts with "Paused".
+        _retrip = ""
+        try:
+            _retrip = self.engine.risk.pending_retrip_reason() or ""
+        except Exception:
+            _retrip = ""
+        rendered = wr_resume(retrip_warning=_retrip)
         await self._send(update, rendered["text"])
-        audit(system_log, "Bot resumed via /resume", action="resume", result="OK")
+        audit(system_log, "Bot resumed via /resume", action="resume", result="OK",
+              data={"retrip_warning": _retrip or None})
 
     async def _cmd_close_all(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """Admin only: /closeall — close all open positions on exchange."""
