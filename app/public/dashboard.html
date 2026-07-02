@@ -272,6 +272,39 @@ a{color:var(--gold);text-decoration:none}
 .chart-legend span{display:inline-flex;align-items:center;gap:4px;color:var(--text3)}
 .chart-legend i{width:14px;height:2px;border-radius:1px;display:inline-block}
 
+/* === CVD SUB-PANEL (tape cumulative delta, below the price chart) === */
+.cvd-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-family:var(--mono);font-size:10px;
+  color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin:10px 0 4px}
+.cvd-head b{font-size:12px;text-transform:none;letter-spacing:0}
+.cvd-svg{width:100%;height:64px;display:block}
+
+/* === CONFLUENCE VOTES === */
+.conf-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-family:var(--mono);font-size:11px;
+  color:var(--text2);margin-bottom:10px}
+.conf-head b{color:var(--gold);font-size:15px}
+.vote-bar{display:flex;align-items:center;gap:8px;margin-bottom:4px;font-family:var(--mono);font-size:11px}
+.vote-label{min-width:104px;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.vote-track{flex:1;height:12px;background:var(--bg);border-radius:3px;overflow:hidden;position:relative;border:1px solid var(--border)}
+.vote-track::before{content:'';position:absolute;left:50%;top:0;bottom:0;width:1px;background:var(--border2)}
+.vote-fill{position:absolute;top:0;bottom:0}
+.vote-fill.pos{left:50%;background:var(--green);opacity:.65}
+.vote-fill.neg{right:50%;background:var(--red);opacity:.65}
+.vote-val{min-width:50px;text-align:right}
+.vote-val.pos{color:var(--green)}.vote-val.neg{color:var(--red)}
+
+/* === GATE TELEMETRY TILES === */
+.gate-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
+.gate-tile{background:var(--bg3);border:1px solid var(--border);border-radius:4px;padding:8px 10px}
+.gate-tile.warn{border-color:rgba(245,158,11,.35);background:var(--orange-dim)}
+.gate-tile.danger{border-color:rgba(239,68,68,.35);background:var(--red-dim)}
+.gate-name{font-size:10px;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.gate-counts{display:flex;align-items:center;gap:7px;font-family:var(--mono);font-size:12px;margin-top:3px}
+.gate-counts .p{color:var(--green)}.gate-counts .f{color:var(--red)}.gate-counts .s{color:var(--text3)}
+.gate-fail{font-family:var(--mono);font-size:10px;font-weight:600;padding:1px 6px;border-radius:3px;margin-left:auto}
+.gate-fail.ok{background:var(--green-dim);color:var(--green)}
+.gate-fail.warn{background:var(--orange-dim);color:var(--orange)}
+.gate-fail.danger{background:var(--red-dim);color:var(--red)}
+
 /* === SETTINGS === */
 .set-section{margin-bottom:18px}
 .set-section h4{font-family:var(--head);color:var(--gold);font-size:12px;letter-spacing:1px;text-transform:uppercase;
@@ -414,10 +447,18 @@ a{color:var(--gold);text-decoration:none}
         <button class="ind-btn" data-ind="ema9" onclick="toggleIndicator('ema9')">EMA 9</button>
         <button class="ind-btn" data-ind="ema21" onclick="toggleIndicator('ema21')">EMA 21</button>
         <button class="ind-btn" data-ind="vwap" onclick="toggleIndicator('vwap')">VWAP</button>
+        <button class="ind-btn" data-ov="levels" onclick="toggleOverlay('levels')">Levels</button>
+        <button class="ind-btn" data-ov="fvg" onclick="toggleOverlay('fvg')">FVG</button>
+        <button class="ind-btn" data-ov="pools" onclick="toggleOverlay('pools')">Pools</button>
         <span class="chart-price" id="chartPrice"></span>
       </div>
       <div id="chartContent"><div class="empty-msg">Loading chart&hellip;</div></div>
+      <div id="cvdContent"></div>
     </div>
+  </div>
+  <div class="grid-top" data-view="markets" style="grid-template-columns:1fr 1fr">
+    <div class="panel" id="confluencePanel"><div class="panel-title"><svg class="icon icon-ai"><use href="#icon-sparkle"></use></svg> CONFLUENCE VOTES</div><div id="confluenceContent"><div class="empty-msg">Loading confluence breakdown&hellip;</div></div></div>
+    <div class="panel" id="gatesPanel"><div class="panel-title"><svg class="icon"><use href="#icon-shield"></use></svg> RISK GATE TELEMETRY</div><div id="gatesContent"><div class="empty-msg">Loading gate telemetry&hellip;</div></div></div>
   </div>
   <div class="grid-main" data-view="markets">
     <div class="panel" id="entryPanel"><div class="panel-title"><svg class="icon"><use href="#icon-target"></use></svg> TOP ENTRY CARDS</div><div id="entryContent"><div class="empty-msg">Run /getclaw in Telegram to generate entry cards</div></div></div>
@@ -1152,6 +1193,53 @@ function vwapSeries(candles) {
   return any ? out : null;
 }
 
+// === MARKET INSIGHT (bot decision picture: S/R levels, FVGs, liquidity
+// pools, confluence votes, tape CVD, gate telemetry -- same inputs the bot
+// trades off, fetched from /api/insight for the selected chart symbol) ===
+let insightData = null, _insightError = false;
+let _overlays = { levels: true, fvg: true, pools: true };
+try { _overlays = { ..._overlays, ...JSON.parse(localStorage.getItem('rc_overlays') || '{}') }; } catch (e) { /* keep defaults */ }
+const OVERLAY_TF = { '15min': '15m', '1h': '1h', '4h': '4h', '1d': '1d' };
+const LEVEL_META = {
+  swing: { color: '#8fa3c4' }, round: { color: '#8fa3c4' },
+  poc: { color: '#06b6d4' }, vah: { color: '#06b6d4' }, val: { color: '#06b6d4' },
+  pdh: { color: '#f59e0b' }, pdl: { color: '#f59e0b' },
+};
+function toggleOverlay(k) {
+  _overlays[k] = !_overlays[k];
+  localStorage.setItem('rc_overlays', JSON.stringify(_overlays));
+  renderOverlayButtons();
+  renderCandles();
+}
+function renderOverlayButtons() {
+  document.querySelectorAll('.ind-btn[data-ov]').forEach(b =>
+    b.classList.toggle('on', !!_overlays[b.dataset.ov]));
+}
+// The insight endpoint speaks CCXT symbols ("BTC/USDT"); the chart uses Bitget ("BTCUSDT").
+function insightSymbol(sym) { return baseCoin(sym) + '/USDT'; }
+// Insight only counts when it matches the chart's current symbol + timeframe --
+// stale data from a previous selection must never draw on the wrong chart.
+function currentInsight() {
+  if (!insightData) return null;
+  if (baseCoin(insightData.symbol) !== baseCoin(_chartSymbol)) return null;
+  if (insightData.timeframe !== (OVERLAY_TF[_chartGran] || '1h')) return null;
+  return insightData;
+}
+async function fetchInsight() {
+  const symbol = _chartSymbol || 'BTCUSDT';
+  const tf = OVERLAY_TF[_chartGran] || '1h';
+  try {
+    const r = await fetch(`/api/insight/${encodeURIComponent(insightSymbol(symbol))}?timeframe=${tf}&limit=200`);
+    const d = await r.json();
+    if (!r.ok || !d.symbol) throw new Error(d.error || 'HTTP ' + r.status);
+    insightData = d; _insightError = false;
+  } catch (e) { _insightError = true; /* chart + panels degrade to placeholders */ }
+  renderCandles();
+  renderConfluence();
+  renderCvd();
+  renderGates();
+}
+
 function renderCandles() {
   const el = document.getElementById('chartContent');
   const priceEl = document.getElementById('chartPrice');
@@ -1177,6 +1265,19 @@ function renderCandles() {
   const bodyW = Math.max(1.5, slot * 0.6);
 
   let svg = `<svg class="candle-svg" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" onmousemove="candleHover(event)" onmouseleave="candleHoverEnd()">`;
+  // Insight overlays share the chart's own y()/chartW transforms. FVG boxes
+  // draw first so candles render on top of the translucent bands.
+  const ins = currentInsight();
+  if (ins && _overlays.fvg) {
+    for (const g of ins.fvgs || []) {
+      if (g.filled) continue; // filled gaps no longer act as magnets
+      const top = Math.min(mx, Math.max(g.top, g.bottom));
+      const bot = Math.max(mn, Math.min(g.top, g.bottom));
+      if (top <= mn || bot >= mx) continue;
+      const bull = g.kind === 'bullish';
+      svg += `<rect x="${chartW * 0.75}" y="${y(top)}" width="${chartW * 0.25}" height="${Math.max(1, y(bot) - y(top))}" fill="${bull ? 'rgba(34,197,94,.10)' : 'rgba(239,68,68,.10)'}" stroke="${bull ? 'rgba(34,197,94,.28)' : 'rgba(239,68,68,.28)'}" stroke-width="0.5"/>`;
+    }
+  }
   _candles.forEach((c, i) => {
     const x = i * slot + slot / 2;
     const up = c.c >= c.o;
@@ -1190,6 +1291,30 @@ function renderCandles() {
       svg += `<line x1="0" y1="${y(v)}" x2="${chartW}" y2="${y(v)}" stroke="${color}" stroke-width="1" stroke-dasharray="4,3"/>
         <text x="${chartW + 4}" y="${y(v) + 3}" font-family="monospace" font-size="9" fill="${color}">${label}</text>`;
     }
+  }
+  if (ins && _overlays.levels) {
+    // Cap at the 10 highest-score levels inside the visible price range.
+    const visible = (ins.levels || []).filter(l => l.price > mn && l.price < mx)
+      .sort((a, b) => (b.score || 0) - (a.score || 0)).slice(0, 10);
+    for (const l of visible) {
+      const color = (LEVEL_META[l.kind] || LEVEL_META.swing).color;
+      const solid = (l.score || 0) >= 2;
+      const op = Math.max(0.35, Math.min(0.9, 0.3 + (l.score || 0) * 0.15));
+      const tag = l.kind === 'swing' ? (l.price >= (ins.price || 0) ? 'R' : 'S')
+        : l.kind === 'round' ? 'RND' : l.kind.toUpperCase();
+      const label = `${tag} ${fmtP(l.price)}${l.kind === 'swing' && l.touches > 1 ? ` ×${l.touches}` : ''}`;
+      svg += `<line x1="0" y1="${y(l.price)}" x2="${chartW}" y2="${y(l.price)}" stroke="${color}" stroke-width="${solid ? 1.2 : 0.8}" opacity="${op}"${solid ? '' : ' stroke-dasharray="5,4"'}/>
+        <text x="${chartW + 4}" y="${y(l.price) + 3}" font-family="monospace" font-size="8" fill="${color}" opacity="${op}">${label}</text>`;
+    }
+  }
+  if (ins && _overlays.pools) {
+    const poolLine = (p, color, tag) => {
+      if (!(p > mn && p < mx)) return;
+      svg += `<line x1="0" y1="${y(p)}" x2="${chartW}" y2="${y(p)}" stroke="${color}" stroke-width="0.8" opacity="0.55" stroke-dasharray="2,3"/>
+        <text x="${chartW + 4}" y="${y(p) + 3}" font-family="monospace" font-size="8" fill="${color}" opacity="0.7">&#8801; ${tag}</text>`;
+    };
+    (ins.pools?.eqh || []).forEach(p => poolLine(p, 'var(--red)', 'EQH'));
+    (ins.pools?.eql || []).forEach(p => poolLine(p, 'var(--green)', 'EQL'));
   }
   // Indicator overlays (EMA/VWAP) -- polylines across the same x-slots.
   const closes = _candles.map(c => c.c);
@@ -1227,6 +1352,102 @@ function candleHover(ev) {
     <span class="l">L ${fmtP(c.l)}</span> <span class="c">C ${fmtP(c.c)}</span>`;
 }
 function candleHoverEnd() { const t = document.getElementById('candleTip'); if (t) t.style.display = 'none'; }
+
+// === CONFLUENCE VOTE PANEL (signed per-voter breakdown from /api/insight) ===
+let _votesExpanded = false;
+function toggleVotes() { _votesExpanded = !_votesExpanded; renderConfluence(); }
+function regimeChip(regime) {
+  const r = String(regime || '').toUpperCase();
+  const cls = r.includes('UP') || r.includes('BULL') ? 'long' : r.includes('DOWN') || r.includes('BEAR') ? 'short' : '';
+  return cls ? `<span class="entry-dir ${cls}">${r.replace(/_/g, ' ')}</span>`
+             : `<span class="sig-status">${r.replace(/_/g, ' ') || '--'}</span>`;
+}
+function renderConfluence() {
+  const el = document.getElementById('confluenceContent');
+  if (!el) return;
+  const ins = currentInsight();
+  const votes = (ins && ins.votes) || [];
+  if (!votes.length) {
+    el.innerHTML = `<div class="empty-msg">${_insightError ? 'Insight feed unavailable right now.' : 'No confluence data for ' + baseCoin(_chartSymbol || 'BTCUSDT') + ' yet.'}</div>`;
+    return;
+  }
+  const ranked = votes.map(v => ({ ...v, imp: Math.abs((v.vote || 0) * (v.weight || 0)) }))
+    .sort((a, b) => b.imp - a.imp);
+  const maxImp = Math.max(...ranked.map(v => v.imp), 1e-9);
+  const shown = _votesExpanded ? ranked : ranked.slice(0, 14);
+  let h = `<div class="conf-head">${regimeChip(ins.regime)}
+    <span>blended confluence <b>${Math.round((ins.confluence || 0) * 100)}%</b></span>
+    <span style="color:var(--text3)">${baseCoin(ins.symbol)} &middot; ${ins.timeframe}</span></div>`;
+  for (const v of shown) {
+    const pos = (v.vote || 0) >= 0;
+    const wpct = Math.max(1, Math.round(v.imp / maxImp * 50)); // half-track each side of center
+    h += `<div class="vote-bar">
+      <span class="vote-label" title="${v.name} (weight ${fmt(v.weight, 2)})">${v.name}</span>
+      <span class="vote-track"><span class="vote-fill ${pos ? 'pos' : 'neg'}" style="width:${wpct}%"></span></span>
+      <span class="vote-val ${pos ? 'pos' : 'neg'}">${pos ? '+' : ''}${fmt(v.vote, 2)}</span>
+    </div>`;
+  }
+  if (ranked.length > 14) {
+    h += `<div style="margin-top:8px"><button class="ind-btn" onclick="toggleVotes()">${_votesExpanded ? 'Show top 14' : 'Show all (' + ranked.length + ')'}</button></div>`;
+  }
+  el.innerHTML = h;
+}
+
+// === CVD SUB-PANEL (tape cumulative delta, drawn under the price chart) ===
+function renderCvd() {
+  const el = document.getElementById('cvdContent');
+  if (!el) return;
+  const ins = currentInsight();
+  const cvd = ins && ins.cvd;
+  const series = (cvd && cvd.series) || [];
+  if (series.length < 2) {
+    el.innerHTML = '<div class="cvd-head">Tape CVD</div><div class="empty-msg" style="padding:8px">Tape CVD warming up / offline.</div>';
+    return;
+  }
+  const w = 800, ht = 64;
+  const mn = Math.min(...series), mx = Math.max(...series), span = (mx - mn) || 1;
+  const cy = v => ht - ((v - mn) / span) * ht;
+  const pts = series.map((v, i) => `${(i / (series.length - 1)) * w},${cy(v)}`).join(' ');
+  const last = Number(cvd.cum_delta_usd) || series[series.length - 1] || 0;
+  const col = last >= 0 ? 'var(--green)' : 'var(--red)';
+  const age = Number(cvd.age_sec);
+  const fresh = Number.isFinite(age) ? (age < 90 ? `${Math.round(age)}s ago` : `${Math.round(age / 60)}m ago`) : '--';
+  const zero = (mn < 0 && mx > 0) ? `<line x1="0" y1="${cy(0)}" x2="${w}" y2="${cy(0)}" stroke="var(--border2)" stroke-width="0.6" stroke-dasharray="3,3"/>` : '';
+  el.innerHTML = `<div class="cvd-head">Tape CVD
+      <b class="${last >= 0 ? 'pos' : 'neg'}">${last >= 0 ? '+' : '-'}$${fmtK(Math.abs(last))}</b>
+      <span>${cvd.trades || 0} trades</span><span>updated ${fresh}</span></div>
+    <svg class="cvd-svg" viewBox="0 0 ${w} ${ht}" preserveAspectRatio="none">${zero}<polyline points="${pts}" fill="none" stroke="${col}" stroke-width="1.4" opacity="0.9"/></svg>`;
+}
+
+// === GATE TELEMETRY TILES (risk-engine pass/fail/skip counters) ===
+function renderGates() {
+  const el = document.getElementById('gatesContent');
+  if (!el) return;
+  const ins = currentInsight();
+  const gates = (ins && ins.gates) || {};
+  const names = Object.keys(gates);
+  if (!names.length) {
+    el.innerHTML = `<div class="empty-msg">${_insightError ? 'Insight feed unavailable right now.' : 'No gate telemetry yet — counters fill as the risk engine evaluates trades.'}</div>`;
+    return;
+  }
+  let h = '<div class="gate-grid">';
+  for (const name of names) {
+    const g = gates[name] || {};
+    const p = g.passed || 0, f = g.failed || 0, s = g.skipped || 0;
+    const ran = p + f;
+    const failPct = ran > 0 ? (f / ran) * 100 : 0;
+    const idle = s > ran; // mostly skipped -- gate not really running
+    const tileCls = idle ? 'warn' : failPct > 60 ? 'danger' : '';
+    const chipCls = failPct > 60 ? 'danger' : failPct > 30 ? 'warn' : 'ok';
+    h += `<div class="gate-tile ${tileCls}" title="${name}: ${p} passed / ${f} failed / ${s} skipped">
+      <div class="gate-name">${name.replace(/_/g, ' ')}</div>
+      <div class="gate-counts"><span class="p">${p}P</span><span class="f">${f}F</span><span class="s">${s}S</span>
+        <span class="gate-fail ${chipCls}">${ran > 0 ? fmt(failPct, 0) + '% fail' : 'idle'}</span></div>
+    </div>`;
+  }
+  h += '</div>';
+  el.innerHTML = h;
+}
 
 // === ORDER BOOK DEPTH ===
 async function fetchDepth() {
@@ -1941,6 +2162,7 @@ async function init() {
   syncTopnavHeight();
   showView(location.hash.slice(1) || 'command');
   renderIndicatorButtons();
+  renderOverlayButtons();
   renderAccount();
   renderOnboarding(); // show step 1 immediately for logged-out visitors
   renderReadiness();
@@ -1954,6 +2176,7 @@ async function init() {
   ['chartSymbol','chartGran'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.addEventListener('change', fetchCandles);
+    if (el) el.addEventListener('change', fetchInsight); // overlays + panels follow the selection
   });
   const chartSymbolEl = document.getElementById('chartSymbol');
   if (chartSymbolEl) chartSymbolEl.addEventListener('change', () => { fetchDepth(); fetchFunding(); });
@@ -1962,7 +2185,7 @@ async function init() {
   renderCalculator();
   updateNotifBtn();
   await fetchTickers();
-  await Promise.all([fetchScan(), fetchPublicPortfolio(), fetchPortfolio(), fetchSignals(), fetchCreds(), fetchControls(), fetchCandles(), fetchHeatmap(), fetchDepth(), fetchFunding(), fetchJournal(), fetchActivity()]);
+  await Promise.all([fetchScan(), fetchPublicPortfolio(), fetchPortfolio(), fetchSignals(), fetchCreds(), fetchControls(), fetchCandles(), fetchInsight(), fetchHeatmap(), fetchDepth(), fetchFunding(), fetchJournal(), fetchActivity()]);
   renderCircuit(); // ensure circuit breaker renders even if fetches return no data
   rotateTicker();
   connectStream();
@@ -1973,6 +2196,7 @@ async function init() {
   setInterval(fetchCandles, 20000);
   setInterval(fetchDepth, 5000);
   setInterval(fetchFunding, 30000);
+  setInterval(fetchInsight, 60000);
   setInterval(rotateTicker, 4500);
   if (LOGGED_IN) setInterval(fetchPortfolio, 45000);
 }
