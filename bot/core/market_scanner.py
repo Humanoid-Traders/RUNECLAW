@@ -100,6 +100,7 @@ class MarketScanner:
         """Spot exchange for crypto/stock scanning."""
         if self._exchange is None:
             self._exchange = ccxt.bitget({
+                "aiohttp_trust_env": True,  # honor HTTPS_PROXY/CA env (no-op without proxy)
                 "sandbox": CONFIG.exchange.sandbox,
                 "timeout": 30000,
                 "enableRateLimit": True,
@@ -110,6 +111,7 @@ class MarketScanner:
         """Futures (swap) exchange for TradFi perpetuals scanning."""
         if self._futures_exchange is None:
             self._futures_exchange = ccxt.bitget({
+                "aiohttp_trust_env": True,  # honor HTTPS_PROXY/CA env (no-op without proxy)
                 "sandbox": CONFIG.exchange.sandbox,
                 "timeout": 30000,
                 "enableRateLimit": True,

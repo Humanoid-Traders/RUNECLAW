@@ -387,6 +387,7 @@ class LiveExecutor:
                 )
             is_futures = cfg.trade_mode == "futures"
             self._exchange = ccxt.bitget({
+                "aiohttp_trust_env": True,  # honor HTTPS_PROXY/CA env (no-op without proxy)
                 "apiKey": api_key,
                 "secret": api_secret,
                 "password": passphrase,
