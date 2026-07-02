@@ -1350,6 +1350,12 @@ class RuneClawEngine:
                 await self._tick()
                 _consecutive_failures = 0
                 self._tick_consecutive_failures = 0
+                # Dead-man's switch: ping an external health endpoint (e.g.
+                # healthchecks.io) after each successful tick, so a DEAD
+                # process — the one failure mode Telegram alerting can never
+                # report — raises an alarm at the monitor's grace timeout.
+                # Throttled + fail-open; no-op unless HEALTHCHECK_PING_URL set.
+                await self._maybe_ping_healthcheck()
                 # Web wallet (2b): pull any pending exchange-credential requests
                 # the website queued and import them into the credential store.
                 # Throttled, fail-open, no-op unless WEB_CREDS_KEY is configured.
@@ -1406,6 +1412,30 @@ class RuneClawEngine:
         audit(system_log, "Engine stopped", action="stop")
 
     # -- Pipeline stages --
+
+    async def _maybe_ping_healthcheck(self) -> None:
+        """Dead-man's-switch ping (ops tip #8). GETs HEALTHCHECK_PING_URL at
+        most every HEALTHCHECK_PING_INTERVAL_SEC so an external monitor (e.g.
+        healthchecks.io) alarms when the bot process dies or the tick loop
+        stalls. Fail-open: a failed ping never affects trading; no-op when the
+        URL is unset."""
+        url = CONFIG.monitoring.healthcheck_ping_url
+        if not url:
+            return
+        now = time.monotonic()
+        if (now - getattr(self, "_last_healthcheck_ping", 0.0)
+                < CONFIG.monitoring.healthcheck_ping_interval_sec):
+            return
+        self._last_healthcheck_ping = now
+        try:
+            import aiohttp
+            timeout = aiohttp.ClientTimeout(total=10)
+            async with aiohttp.ClientSession(timeout=timeout, trust_env=True) as s:
+                async with s.get(url) as resp:
+                    if resp.status >= 400:
+                        system_log.debug("Healthcheck ping HTTP %s", resp.status)
+        except Exception as exc:
+            system_log.debug("Healthcheck ping failed (non-fatal): %s", exc)
 
     def _maybe_pull_web_credentials(self) -> None:
         """Throttled, fail-open pull of website-queued exchange credentials.

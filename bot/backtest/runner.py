@@ -323,6 +323,11 @@ Examples:
                              help="Entry fill convention: same-bar close (legacy, optimistic) "
                                   "or next-bar open (conservative; audit fix #15). Run both "
                                   "and compare to see how much edge lives in the fill assumption.")
+    trade_group.add_argument("--honest", action="store_true",
+                             help="Preset for trustworthy numbers: --strict-data (never silently "
+                                  "substitute synthetic) + --fill-mode next_open (conservative "
+                                  "fills). Use this as your default invocation; close-fill "
+                                  "numbers flatter by ~0.9pp/run.")
     trade_group.add_argument("--breaker-reset-bars", type=int, default=0,
                              help="Auto-reset a tripped circuit breaker after N bars (0=never, "
                                   "the default). A drawdown/streak trip needs MANUAL reset, so in "
@@ -357,6 +362,9 @@ Examples:
 
 def main() -> None:
     args = build_parser().parse_args()
+    if args.honest:
+        args.strict_data = True
+        args.fill_mode = "next_open"
     if args.walk_forward and args.walk_forward > 0:
         asyncio.run(_run_walk_forward(args))
     else:
