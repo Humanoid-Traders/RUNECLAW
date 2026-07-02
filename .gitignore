@@ -79,6 +79,8 @@ docker-compose.override.yml
 *.db
 *.sqlite3
 data/
+# Auto-generated auth secret (never commit; regenerated per-deployment if absent)
+**/.jwt_secret
 # .github/ is intentionally tracked now (CI workflows live here). Only the
 # private CI backup dir stays ignored.
 .github_ci_backup/

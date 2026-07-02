@@ -303,12 +303,19 @@ function copyToken(){
 (async()=>{
   const saved=localStorage.getItem('rc_session');
   if(!saved)return;
+  let s;
+  try{s=JSON.parse(saved);}catch{localStorage.removeItem('rc_session');return;}
   try{
-    const s=JSON.parse(saved);
-    const res=await fetch(API+'/auth/me',{headers:{'Authorization':'Bearer '+s.token}}).then(r=>r.json());
-    if(res.error)throw new Error(res.error);
+    const r=await fetch(API+'/auth/me',{headers:{'Authorization':'Bearer '+s.token}});
+    // Only clear the saved session on a genuine auth failure (401/403). A
+    // transient network error or a 5xx must NOT log the user out -- keep the
+    // session so it works again once connectivity returns.
+    if(r.status===401||r.status===403){localStorage.removeItem('rc_session');return;}
+    if(!r.ok)return; // transient server issue: keep session, try again next load
+    const res=await r.json();
+    if(res.error){localStorage.removeItem('rc_session');return;}
     SESSION={...res,token:s.token};showAccount(SESSION);
-  }catch{localStorage.removeItem('rc_session');}
+  }catch{/* network error: keep the session, do not log out */}
 })();
 if('serviceWorker' in navigator){navigator.serviceWorker.register('/sw.js').catch(()=>{});}
 </script>
