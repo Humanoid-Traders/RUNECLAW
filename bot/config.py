@@ -680,11 +680,12 @@ class AnalyzerConfig:
     # Default OFF — until enabled, weights are byte-identical to hand-tuned.
     # See bot/learning/voter_weights.py and docs/VOTER_WEIGHT_LEARNING.md.
     voter_weight_learning_enabled: bool = _env_bool("VOTER_WEIGHT_LEARNING_ENABLED", False)
-    # External sentiment: when ON, the sentiment voter blends the live market-wide
-    # Fear & Greed index (alternative.me) as a bounded contrarian signal. Default
-    # OFF — until enabled the voter is purely price-derived (no external network
-    # call). See bot/core/sentiment.py.
-    external_sentiment_enabled: bool = _env_bool("EXTERNAL_SENTIMENT_ENABLED", False)
+    # External sentiment: when ON (default; the final runbook stage-4 item),
+    # the sentiment voter blends the live market-wide Fear & Greed index
+    # (alternative.me) as a BOUNDED contrarian adjustment (max ±0.3 on one
+    # 0.6-weight voter), cached 1h, fail-open to the price-derived read on any
+    # fetch failure. Disable to avoid the external network call.
+    external_sentiment_enabled: bool = _env_bool("EXTERNAL_SENTIMENT_ENABLED", True)
     # Funding carry-cost awareness: when ON (default; ops tip), apply a small
     # bounded confidence haircut when a trade would PAY adverse funding over
     # its expected hold (the carry-cost dimension the instantaneous funding

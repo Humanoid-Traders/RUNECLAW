@@ -198,7 +198,7 @@ class SentimentEngine:
         is cached in ``self._fear_greed_value`` for ``_FG_CACHE_TTL`` seconds.
         """
         try:
-            async with aiohttp.ClientSession() as session:
+            async with aiohttp.ClientSession(trust_env=True) as session:
                 async with session.get(_FG_API_URL, timeout=aiohttp.ClientTimeout(total=10)) as resp:
                     if resp.status != 200:
                         logger.warning("Fear & Greed API returned status %s", resp.status)
