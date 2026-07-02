@@ -379,6 +379,33 @@ def main() -> None:
         asyncio.run(_run_backtest(args))
 
 
+
+def _narrative(result, per_symbol: dict | None = None) -> str:
+    """Plain-language verdict for a run — deterministic (no LLM), so every
+    measurement ships with a summary a human can read at a glance."""
+    r = result
+    verdict = ("PROFITABLE" if r.total_return_pct > 0.5 else
+               "roughly breakeven" if r.total_return_pct > -0.5 else "NEGATIVE")
+    density = ("statistically thin (<15 trades — treat as anecdote)"
+               if r.total_trades < 15 else
+               f"{r.total_trades} trades")
+    lines = [
+        "",
+        "  \u2500\u2500 VERDICT " + "\u2500" * 56,
+        f"  This run is {verdict}: {r.total_return_pct:+.2f}% over the period on "
+        f"{density}, win rate {r.win_rate:.0%}, profit factor {r.profit_factor:.2f}.",
+        f"  Worst drawdown {r.max_drawdown_pct:.2f}% — risk containment "
+        + ("held." if r.max_drawdown_pct < 5 else "was STRESSED (>5%)."),
+    ]
+    if per_symbol:
+        best = max(per_symbol.items(), key=lambda kv: kv[1]["net_pnl"])
+        worst = min(per_symbol.items(), key=lambda kv: kv[1]["net_pnl"])
+        if best[1]["net_pnl"] > 0:
+            lines.append(f"  Best symbol {best[0]} (${best[1]['net_pnl']:+,.2f}); "
+                         f"worst {worst[0]} (${worst[1]['net_pnl']:+,.2f}).")
+    return "\n".join(lines)
+
+
 async def _run_portfolio(args: argparse.Namespace) -> None:
     """Portfolio backtest across --symbols with shared risk state."""
     from bot.backtest.portfolio_engine import PortfolioBacktester, portfolio_walk_forward
@@ -429,6 +456,7 @@ async def _run_portfolio(args: argparse.Namespace) -> None:
     for sym, row in sorted(pb.per_symbol.items()):
         print(f"    {sym:<16} {row['trades']:>3} trades  net ${row['net_pnl']:>9,.2f}  "
               f"win {row['win_rate']:.0%}")
+    print(_narrative(result, pb.per_symbol))
     if args.output:
         out_path = Path(args.output)
         out_path.parent.mkdir(parents=True, exist_ok=True)
