@@ -52,9 +52,11 @@ def _seed_history(engine, n_wins, n_losses, win=50.0, loss=20.0):
             quantity=1.0, status=TradeStatus.EXECUTED, pnl=-loss))
 
 
-class TestDefaultOff:
-    def test_config_default_is_off(self):
-        assert CONFIG.risk.kelly_sizing_enabled is False
+class TestDefaultOn:
+    def test_config_default_is_on(self):
+        # Default ON since the operator enabled runbook stage-2 hardening
+        # (tighten-only: Kelly can only ever REDUCE the base size).
+        assert CONFIG.risk.kelly_sizing_enabled is True
 
     def test_disabled_path_does_not_apply_kelly(self, monkeypatch):
         eng = _engine()

@@ -124,12 +124,12 @@ Raise these **after** Stage 1, not before — the risk tightening should be on f
 ---
 
 ## Quick reference — recommended end state
-| Stage | Flags | When |
+| Stage | Flags | Status |
 |---|---|---|
-| 1 | `LIVE_RISK_HARDENING_ENABLED`, `REGIME_HARD_GATES_ENABLED`, `TIME_STOP_LIVE_AUTO_CLOSE` | now |
-| 2 | `LEARNING_AUTO_REFIT_ENABLED`, `UNCALIBRATED_LLM_WEIGHT_CAP_ENABLED`, `LIVE_PERFORMANCE_GOVERNOR_ENABLED` | now, then wait ~50–100 closes |
-| 3 | `CONFIDENCE_CALIBRATION_ENABLED` → `AUTO_CONFIRM_USE_CALIBRATED` → `VOTER_WEIGHT_LEARNING_ENABLED` → `SETUP_EXPECTANCY_ENABLED` | after calibrator ready |
-| 4 | `FUNDING_COST_AWARE_ENABLED`, `EXTERNAL_SENTIMENT_ENABLED`, blend-weight tuning | last |
+| 1 | `LIVE_RISK_HARDENING_ENABLED`, `REGIME_HARD_GATES_ENABLED`, `TIME_STOP_LIVE_AUTO_CLOSE` | **default ON** (2026-07) |
+| 2 | `LEARNING_AUTO_REFIT_ENABLED`, `UNCALIBRATED_LLM_WEIGHT_CAP_ENABLED`, `LIVE_PERFORMANCE_GOVERNOR_ENABLED`, `KELLY_SIZING_ENABLED`, `CORRELATION_SIZING_ENABLED` | **default ON** (2026-07) |
+| 3 | `CONFIDENCE_CALIBRATION_ENABLED` (ON) → `AUTO_CONFIRM_USE_CALIBRATED` → `VOTER_WEIGHT_LEARNING_ENABLED` (run `validate_oos`, enable when hold_rate is good) → `SETUP_EXPECTANCY_ENABLED` (ON) | after ~50–100 closes |
+| 4 | `FUNDING_COST_AWARE_ENABLED`, `EXTERNAL_SENTIMENT_ENABLED`, blend-weight tuning | operator choice |
 
 If anything misbehaves: set the offending flag back to `false`, restart, and report
 what you saw — every step is independently reversible.

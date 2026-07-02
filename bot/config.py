@@ -249,14 +249,14 @@ class RiskLimits:
     # Drawdown recovery mode: after hitting max DD, enter conservative mode
     drawdown_recovery_conf_min: float = _env_float("DRAWDOWN_RECOVERY_CONF_MIN", 0.85)
     drawdown_recovery_size_mult: float = _env_float("DRAWDOWN_RECOVERY_SIZE_MULT", 0.5)
-    # Kelly-criterion sizing (opt-in, default OFF). When enabled, evaluate() also
+    # Kelly-criterion sizing (default ON; runbook stage 2, tighten-only). evaluate() also
     # derives a half-Kelly size from realized trade history and takes the SMALLER
     # of {fixed-fractional, Kelly}: Kelly can only TIGHTEN size, never grow it, and
     # the notional/margin caps below stay authoritative. Below kelly_min_trades
     # closed trades there is no edge estimate, so it is a no-op (size unchanged).
-    kelly_sizing_enabled: bool = _env_bool("KELLY_SIZING_ENABLED", False)
+    kelly_sizing_enabled: bool = _env_bool("KELLY_SIZING_ENABLED", True)
     kelly_min_trades: int = int(_env_float_bounded("KELLY_MIN_TRADES", 20, 1, 100000))
-    # Portfolio-aware correlation sizing (opt-in, default OFF). The existing
+    # Portfolio-aware correlation sizing (default ON; shrink-only). The existing
     # correlation check (_check_correlation) is a count-cap CONCENTRATION GATE:
     # it rejects once a group is full but does nothing for the trades it lets
     # through. This adds a graduated size REDUCTION for a new trade that shares a
@@ -265,12 +265,12 @@ class RiskLimits:
     # is larger). It can only SHRINK size (multiplier in [floor, 1.0]); the
     # notional/margin caps and every gate below stay authoritative. Default OFF
     # makes this byte-identical to prior behaviour.
-    correlation_sizing_enabled: bool = _env_bool("CORRELATION_SIZING_ENABLED", False)
+    correlation_sizing_enabled: bool = _env_bool("CORRELATION_SIZING_ENABLED", True)
     # Reduction per same-group same-direction open position (0.20 → −20% each).
     correlation_sizing_step: float = _env_float_bounded("CORRELATION_SIZING_STEP", 0.20, 0.0, 1.0)
     # Floor on the multiplier — size is never reduced below this fraction.
     correlation_sizing_floor: float = _env_float_bounded("CORRELATION_SIZING_FLOOR", 0.5, 0.1, 1.0)
-    # Live risk hardening (opt-in, default OFF). When ON *and* running live, it
+    # Live risk hardening (default ON; runbook stage 1). When ON *and* running live, it
     # applies a stricter portfolio-risk posture for real money WITHOUT touching
     # paper/backtest behaviour:
     #   - forces correlation-aware position sizing on (even if its own flag is off),
@@ -278,9 +278,9 @@ class RiskLimits:
     #     proxy whenever data is insufficient — never a downgrade to skip),
     #   - caps drawdown at live_max_drawdown_pct (tighter than the paper limit).
     # Default OFF → byte-identical until enabled; in paper mode it never applies.
-    live_risk_hardening_enabled: bool = _env_bool("LIVE_RISK_HARDENING_ENABLED", False)
+    live_risk_hardening_enabled: bool = _env_bool("LIVE_RISK_HARDENING_ENABLED", True)
     live_max_drawdown_pct: float = _env_float_bounded("LIVE_MAX_DRAWDOWN_PCT", 7.0, 0.1, 100.0)
-    # Live-performance governor (opt-in, default OFF). A closed-loop backstop ON
+    # Live-performance governor (default ON; runbook stage 2). A closed-loop backstop ON
     # TOP of the pre-trade checks: it scores REALIZED closed-trade outcomes over a
     # rolling window and de-risks when the strategy is actually losing — a graduated
     # SIZE REDUCTION when the recent window underperforms (low win rate OR net
@@ -300,7 +300,7 @@ class RiskLimits:
     # The notional/margin cap stays the final authority, so increases can never
     # exceed it. Default ON; when disabled regime stays UNKNOWN (1.0×).
     regime_sizing_enabled: bool = _env_bool("REGIME_SIZING_ENABLED", True)
-    live_performance_governor_enabled: bool = _env_bool("LIVE_PERFORMANCE_GOVERNOR_ENABLED", False)
+    live_performance_governor_enabled: bool = _env_bool("LIVE_PERFORMANCE_GOVERNOR_ENABLED", True)
     # Rolling window of most-recent CLOSED trades the governor scores.
     live_perf_window: int = int(_env_float_bounded("LIVE_PERF_WINDOW", 20, 2, 100000))
     # Minimum closed trades before the governor acts (below this → full size).
@@ -728,13 +728,13 @@ class AnalyzerConfig:
     chop_sl_mult: float = 1.5
     chop_tp_mult: float = 2.0
     chop_confidence_penalty: float = 0.15
-    # Regime HARD gates (opt-in, default OFF). The penalties above only SOFTEN
+    # Regime HARD gates (default ON; runbook stage 1). The penalties above only SOFTEN
     # the lowest-edge regimes; with this ON they become hard no-trades:
     #   - CHOP / UNKNOWN regime  -> skip the signal entirely.
     #   - Counter-trend entry in a STRONG trend (ADX >= regime_strong_adx)
     #     (SHORT in TREND_UP / LONG in TREND_DOWN) -> skip entirely.
-    # Default OFF preserves the current soft-penalty behaviour byte-for-byte.
-    regime_hard_gates_enabled: bool = _env_bool("REGIME_HARD_GATES_ENABLED", False)
+    # Disable to restore the soft-penalty-only behaviour.
+    regime_hard_gates_enabled: bool = _env_bool("REGIME_HARD_GATES_ENABLED", True)
     regime_strong_adx: float = _env_float_bounded("REGIME_STRONG_ADX", 30.0, 20.0, 60.0)
     # RSI hard block: reject LONG when RSI >= this, reject SHORT when RSI <= inverse
     rsi_overbought_block: float = _env_float("RSI_OVERBOUGHT_BLOCK", 72.0)
@@ -1098,13 +1098,13 @@ class TimeStopConfig:
     limit_expire_intraday_hours: float = _env_float("LIMIT_EXPIRE_INTRA_H", 4.0)
     limit_expire_swing_hours: float = _env_float("LIMIT_EXPIRE_SWING_H", 48.0)
     # Auto-close LIVE positions on smart-exit triggers (time stop, signal-hold
-    # limit, VWAP-reversion done/failed, volume-signal decay). Default OFF: a
-    # live position whose thesis has invalidated otherwise rides all the way to
-    # its exchange stop-loss. Paper positions already auto-close on these
-    # triggers in _check_paper_positions; this opt-in extends the SAME checks to
-    # real positions, closing at market via the executor. Byte-identical live
-    # behaviour until enabled.
-    live_auto_close_enabled: bool = _env_bool("TIME_STOP_LIVE_AUTO_CLOSE", False)
+    # limit, VWAP-reversion done/failed, volume-signal decay). Default ON
+    # (runbook stage 1): without it a live position whose thesis has
+    # invalidated rides all the way to its exchange stop-loss. Paper positions
+    # already auto-close on these triggers in _check_paper_positions; this
+    # extends the SAME checks to real positions, closing at market via the
+    # executor. Set TIME_STOP_LIVE_AUTO_CLOSE=false to let stops do all exits.
+    live_auto_close_enabled: bool = _env_bool("TIME_STOP_LIVE_AUTO_CLOSE", True)
 
 
 @dataclass(frozen=True)
