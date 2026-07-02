@@ -1999,7 +1999,23 @@ class RuneClawEngine:
         # CLOSED bars only. Entry pricing is unaffected — the analyzer prices off
         # the live ticker (signal.price), not the last candle. No-op when off.
         ohlcv = self._drop_forming_candle(ohlcv, timeframe)
-        idea = await self.analyzer.analyze(signal, ohlcv, order_flow=of_signal, is_admin=is_admin, user_id=user_id, user_tier=user_tier)
+
+        # Timeframe-matched Elliott (gated, default OFF): fetch the extra
+        # timeframes whose wave degree the analyzer may need for scalp/swing/etc,
+        # so it can read the wave structure appropriate to the setup. Cached and
+        # fail-open — a fetch failure just omits that timeframe (analyzer no-ops).
+        mtf_candles = None
+        if CONFIG.analyzer.elliott_mtf_enabled:
+            mtf_candles = {}
+            for _tf, _lim in (("15m", 200), ("1h", 200), ("4h", 200), ("1d", 200)):
+                try:
+                    _c = await self._cached_ohlcv(exchange, signal.symbol, _tf, limit=_lim, ttl=180)
+                    if _c:
+                        mtf_candles[_tf] = self._drop_forming_candle(_c, _tf)
+                except Exception as _mtf_exc:
+                    system_log.debug("Elliott MTF fetch %s failed: %s", _tf, _mtf_exc)
+
+        idea = await self.analyzer.analyze(signal, ohlcv, order_flow=of_signal, is_admin=is_admin, user_id=user_id, user_tier=user_tier, mtf_candles=mtf_candles)
         if idea is None:
             audit(scan_log, f"Analysis produced no idea for {signal.symbol}",
                   action="analyze_signal", result="NO_IDEA",
