@@ -80,6 +80,12 @@ _ELLIOTT_KEYS = ("elliott_impulse", "elliott_corrective", "elliott_diagonal",
                  "elliott_wxy", "elliott_pattern")
 
 
+# Analyzer schema/version tag stamped into every TradeIdea (audit fix #18).
+# Bump when the signal pipeline changes in a way that affects comparability
+# of recorded decisions (voters, blending, SL/TP logic).
+_ANALYSIS_VERSION = "2026.07-audit25"
+
+
 def _apply_elliott_wave_targets(direction, entry: float, stop_loss: float,
                                 take_profit: float, indicators: dict) -> tuple:
     """Wave-anchor the stop and (optionally) extend the target using the
@@ -622,7 +628,8 @@ class Analyzer:
     async def analyze(self, signal: MarketSignal, candles: list[list[float]], order_flow=None,
                        candles_4h=None, candles_1d=None, is_admin: bool = False,
                        as_of: Optional[datetime] = None, user_id=None, user_tier=None,
-                       mtf_candles: Optional[dict] = None) -> Optional[TradeIdea]:
+                       mtf_candles: Optional[dict] = None,
+                       timeframe: str = "1h") -> Optional[TradeIdea]:
         """
         Full analysis pipeline:
         1. Compute technical indicators from OHLCV candles.
@@ -1577,6 +1584,15 @@ class Analyzer:
             order_type=order_type,
             strategy_type=strategy_type,
             signal_type=signal_type,
+            # Provenance + evidence (audit fix #18)
+            timeframe=timeframe,
+            llm_confidence=round(float(thesis.get("confidence", 0.0)), 4),
+            confluence_score=round(float(confluence), 4),
+            model_provider=thesis.get("model") or thesis.get("source"),
+            prompt_hash=thesis.get("prompt_hash") or None,
+            analysis_version=_ANALYSIS_VERSION,
+            data_bars=indicators.get("data_bars"),
+            data_thin=indicators.get("data_thin"),
         )
 
         # Phase B: attach the per-voter breakdown so the decision recorder can
@@ -2928,6 +2944,27 @@ class Analyzer:
                     scale = cap / fam_weight
                     for i in active:
                         weights[i] *= scale
+
+            # PATTERN family cap (audit fix #12 extension): candlesticks,
+            # geometric patterns, reversal bars, Wyckoff, harmonics and the
+            # Elliott voters all read the same price STRUCTURE and can co-fire
+            # up to ~7 combined weight. Same rule: only actively-voting
+            # members, cap only ever reduces.
+            _PATTERN_FAMILY = {
+                "candlestick", "chart_patterns", "reversal", "wyckoff",
+                "harmonic", "ew_impulse", "ew_corrective", "ew_diagonal",
+                "ew_wxy", "elliott",
+            }
+            if len(names) == len(votes):
+                p_active = [i for i, n in enumerate(names)
+                            if n in _PATTERN_FAMILY and abs(votes[i]) > 1e-9]
+                if len(p_active) > 1:
+                    p_weight = sum(weights[i] for i in p_active)
+                    p_cap = CONFIG.confluence.pattern_weight_cap
+                    if p_weight > p_cap > 0:
+                        p_scale = p_cap / p_weight
+                        for i in p_active:
+                            weights[i] *= p_scale
 
         # Phase B: emit the named per-voter breakdown (best-effort; only when
         # fully aligned). Does not affect the confluence value.

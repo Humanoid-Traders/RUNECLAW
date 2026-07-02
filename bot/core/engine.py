@@ -2016,7 +2016,7 @@ class RuneClawEngine:
                 except Exception as _mtf_exc:
                     system_log.debug("Elliott MTF fetch %s failed: %s", _tf, _mtf_exc)
 
-        idea = await self.analyzer.analyze(signal, ohlcv, order_flow=of_signal, is_admin=is_admin, user_id=user_id, user_tier=user_tier, mtf_candles=mtf_candles)
+        idea = await self.analyzer.analyze(signal, ohlcv, order_flow=of_signal, is_admin=is_admin, user_id=user_id, user_tier=user_tier, mtf_candles=mtf_candles, timeframe=timeframe)
         if idea is None:
             audit(scan_log, f"Analysis produced no idea for {signal.symbol}",
                   action="analyze_signal", result="NO_IDEA",

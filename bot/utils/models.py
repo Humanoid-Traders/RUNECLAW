@@ -93,6 +93,16 @@ class TradeIdea(BaseModel):
     order_type: str = "market"  # "market" or "limit"
     strategy_type: str = "swing"  # "scalp" | "intraday" | "swing" | "position"
     signal_type: str = "momentum_confluence"  # momentum_confluence | vwap_reversion | regime_trend | volume_spike | funding_arb | unknown
+    # Provenance + evidence fields (audit fix #18) — all optional so every
+    # existing construction site stays valid; the analyzer populates them.
+    timeframe: Optional[str] = None
+    llm_confidence: Optional[float] = None       # raw thesis confidence pre-blend
+    confluence_score: Optional[float] = None     # deterministic voter consensus
+    model_provider: Optional[str] = None         # LLM provider/model when used
+    prompt_hash: Optional[str] = None            # sha256[:16] of the thesis prompt
+    analysis_version: Optional[str] = None       # analyzer schema/version tag
+    data_bars: Optional[int] = None              # bars the analysis actually saw
+    data_thin: Optional[bool] = None             # <50-bar window (see audit #10)
 
     @property
     def risk_reward_ratio(self) -> float:

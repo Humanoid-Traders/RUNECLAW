@@ -1017,14 +1017,21 @@ class ConfluenceConfig:
     # mr_oscillator_weight_cap so the family counts as ~one strong voter rather
     # than four independent confirmations.
     #
-    # Default OFF: this changes which signals clear min_confidence, so enable it
-    # only after validating the trade-set delta on the backtest harness.
-    family_cap_enabled: bool = _env_bool("CONFLUENCE_FAMILY_CAP_ENABLED", False)
+    # Default ON (audit fix #12) — validated on the flag_compare backtest
+    # harness; disable to restore uncapped co-firing.
+    family_cap_enabled: bool = _env_bool("CONFLUENCE_FAMILY_CAP_ENABLED", True)
     # Max COMBINED weight the mean-reversion oscillator family may contribute.
     # The default (2.0) is ~the single largest member (RSI at 1.5) plus a little,
     # vs. an uncapped ~4.2 when all four co-fire.
     mr_oscillator_weight_cap: float = _env_float_bounded(
         "CONFLUENCE_MR_OSC_WEIGHT_CAP", 2.0, 0.1, 100.0)
+    # PATTERN family cap (audit fix #12 extension). Candlesticks, geometric
+    # chart patterns, reversal bars, Wyckoff, harmonics and the four Elliott
+    # voters can co-fire up to ~7 weight on one structure read; cap their
+    # combined actively-voting weight the same way. Applies only when
+    # family_cap_enabled is on.
+    pattern_weight_cap: float = _env_float_bounded(
+        "CONFLUENCE_PATTERN_WEIGHT_CAP", 2.5, 0.1, 100.0)
 
 
 @dataclass(frozen=True)

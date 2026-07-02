@@ -38,6 +38,67 @@ def _ema(data: np.ndarray, period: int) -> np.ndarray:
     return out
 
 
+def rsi_series(closes: np.ndarray, period: int = 14) -> np.ndarray:
+    """Canonical Wilder RSI over the full array (audit fix #20 consolidation).
+
+    Warm-up indices (< period+1) are 50.0 (neutral). Zero-loss windows read
+    100.0; a perfectly flat window (no gains, no losses) reads 50.0.
+    """
+    closes = np.asarray(closes, dtype=float)
+    rsi = np.full(len(closes), 50.0)
+    deltas = np.diff(closes)
+    gains = np.where(deltas > 0, deltas, 0.0)
+    losses = np.where(deltas < 0, -deltas, 0.0)
+    if len(gains) < period:
+        return rsi
+    avg_gain = float(np.mean(gains[:period]))
+    avg_loss = float(np.mean(losses[:period]))
+    for i in range(period, len(gains)):
+        avg_gain = (avg_gain * (period - 1) + gains[i]) / period
+        avg_loss = (avg_loss * (period - 1) + losses[i]) / period
+        if avg_loss == 0:
+            rsi[i + 1] = 100.0 if avg_gain > 0 else 50.0
+        else:
+            rs = avg_gain / avg_loss
+            rsi[i + 1] = 100.0 - (100.0 / (1.0 + rs))
+    return rsi
+
+
+def obv_series(closes: np.ndarray, volumes: np.ndarray,
+               seed_first: bool = True) -> np.ndarray:
+    """Canonical On-Balance Volume (audit fix #20 consolidation).
+
+    ``seed_first`` seeds obv[0] with volumes[0] (the analyzer's convention);
+    False seeds 0 (the divergence scanner's legacy convention). The seed is a
+    constant offset, so slopes/divergence comparisons are identical either way.
+    Equal closes carry the previous value forward.
+    """
+    closes = np.asarray(closes, dtype=float)
+    volumes = np.asarray(volumes, dtype=float)
+    obv = np.zeros(len(closes))
+    if len(closes) == 0:
+        return obv
+    obv[0] = volumes[0] if seed_first and len(volumes) else 0.0
+    for i in range(1, len(closes)):
+        if closes[i] > closes[i - 1]:
+            obv[i] = obv[i - 1] + volumes[i]
+        elif closes[i] < closes[i - 1]:
+            obv[i] = obv[i - 1] - volumes[i]
+        else:
+            obv[i] = obv[i - 1]
+    return obv
+
+
+def macd_histogram_series(closes: np.ndarray, fast: int = 12, slow: int = 26,
+                          signal: int = 9) -> np.ndarray:
+    """Canonical MACD histogram over the full array (audit fix #20)."""
+    closes = np.asarray(closes, dtype=float)
+    if len(closes) < slow + signal:
+        return np.zeros(len(closes))
+    macd_line = _ema(closes, fast) - _ema(closes, slow)
+    return macd_line - _ema(macd_line, signal)
+
+
 def _compute_adx(highs: np.ndarray, lows: np.ndarray, closes: np.ndarray, period: int = 14) -> dict:
     """
     Average Directional Index with +DI and -DI.

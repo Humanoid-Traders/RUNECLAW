@@ -3039,6 +3039,22 @@ class LiveExecutor:
             # Always send tradeSide=close + reduceOnly for SL/TP to prevent reverse opens
             extra_params = {"productType": "USDT-FUTURES", "tradeSide": "close", "reduceOnly": True}
 
+            # Audit fix #21: round trigger prices onto the symbol's tick grid —
+            # previously only the v3 path applied precision and the classic path
+            # sent raw floats (venue may reject or silently round them).
+            _sl_r = self._round_price_to_market(exchange, symbol, stop_loss)
+            _tp_r = self._round_price_to_market(exchange, symbol, take_profit)
+            if _sl_r is not None:
+                try:
+                    stop_loss = float(_sl_r)
+                except (TypeError, ValueError):
+                    pass
+            if _tp_r is not None:
+                try:
+                    take_profit = float(_tp_r)
+                except (TypeError, ValueError):
+                    pass
+
             # Stop-loss
             try:
                 sl_order = await exchange.create_order(

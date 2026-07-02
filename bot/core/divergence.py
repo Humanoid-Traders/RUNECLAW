@@ -64,66 +64,24 @@ def _find_local_extrema(data: np.ndarray, order: int = 5) -> tuple[list[int], li
     return minima, maxima
 
 
+# Audit fix #20: RSI/MACD/OBV math consolidated into bot.core.ta_utils —
+# these thin wrappers keep the module's private names for existing callers.
+from bot.core.ta_utils import rsi_series, obv_series, macd_histogram_series
+
+
 def _compute_rsi(closes: np.ndarray, period: int = 14) -> np.ndarray:
-    """Compute RSI from close prices."""
-    deltas = np.diff(closes)
-    gains = np.where(deltas > 0, deltas, 0.0)
-    losses = np.where(deltas < 0, -deltas, 0.0)
-
-    rsi = np.full(len(closes), 50.0)  # default neutral
-
-    if len(gains) < period:
-        return rsi
-
-    avg_gain = np.mean(gains[:period])
-    avg_loss = np.mean(losses[:period])
-
-    for i in range(period, len(gains)):
-        avg_gain = (avg_gain * (period - 1) + gains[i]) / period
-        avg_loss = (avg_loss * (period - 1) + losses[i]) / period
-
-        if avg_loss == 0:
-            rsi[i + 1] = 100.0
-        else:
-            rs = avg_gain / avg_loss
-            rsi[i + 1] = 100.0 - (100.0 / (1.0 + rs))
-
-    return rsi
+    """Canonical Wilder RSI series (see ta_utils.rsi_series)."""
+    return rsi_series(closes, period)
 
 
 def _compute_macd_hist(closes: np.ndarray, fast: int = 12, slow: int = 26, signal: int = 9) -> np.ndarray:
-    """Compute MACD histogram from close prices."""
-    if len(closes) < slow + signal:
-        return np.zeros(len(closes))
-
-    def ema(data, period):
-        result = np.zeros(len(data))
-        result[0] = data[0]
-        mult = 2.0 / (period + 1)
-        for i in range(1, len(data)):
-            result[i] = (data[i] - result[i-1]) * mult + result[i-1]
-        return result
-
-    ema_fast = ema(closes, fast)
-    ema_slow = ema(closes, slow)
-    macd_line = ema_fast - ema_slow
-    signal_line = ema(macd_line, signal)
-    histogram = macd_line - signal_line
-
-    return histogram
+    """Canonical MACD histogram series (see ta_utils.macd_histogram_series)."""
+    return macd_histogram_series(closes, fast, slow, signal)
 
 
 def _compute_obv(closes: np.ndarray, volumes: np.ndarray) -> np.ndarray:
-    """Compute On-Balance Volume."""
-    obv = np.zeros(len(closes))
-    for i in range(1, len(closes)):
-        if closes[i] > closes[i-1]:
-            obv[i] = obv[i-1] + volumes[i]
-        elif closes[i] < closes[i-1]:
-            obv[i] = obv[i-1] - volumes[i]
-        else:
-            obv[i] = obv[i-1]
-    return obv
+    """Canonical OBV series; zero-seeded (legacy scanner convention)."""
+    return obv_series(closes, volumes, seed_first=False)
 
 
 def _check_divergence(
