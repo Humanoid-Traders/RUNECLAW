@@ -187,3 +187,32 @@ class TestStructureRatchet:
 
     def test_flag_default_on(self):
         assert CONFIG.trailing.structure_trail_enabled is True
+
+
+class TestGateTelemetry:
+    def test_counters_accumulate_by_gate(self):
+        import os
+        import tempfile
+        from datetime import datetime
+
+        from bot.compat import UTC
+        from bot.risk.portfolio import PortfolioTracker
+        from bot.risk.risk_engine import RiskEngine
+        from bot.utils.models import Direction, TradeIdea
+
+        state = os.path.join(tempfile.mkdtemp(prefix="rc-gates-"), "risk_state.json")
+        eng = RiskEngine(PortfolioTracker(initial_balance=10_000.0), state_file=state)
+        idea = TradeIdea(
+            asset="BTC/USDT", direction=Direction.LONG, entry_price=100.0,
+            stop_loss=95.0, take_profit=110.0, confidence=0.9,
+            reasoning="telemetry", source="scan", timestamp=datetime.now(UTC))
+        eng.evaluate(idea)
+        eng.evaluate(idea)
+        stats = eng.gate_stats()
+        assert stats, "gate stats must accumulate"
+        # Confidence gate ran twice and passed twice.
+        assert stats["CONFIDENCE"]["passed"] == 2
+        # Unwired order-flow gates count as SKIPS, not passes — the telemetry
+        # exists precisely to expose gates that are not really running.
+        assert stats["TAKER_3BAR"]["skipped"] == 2
+        assert stats["TAKER_3BAR"]["passed"] == 0

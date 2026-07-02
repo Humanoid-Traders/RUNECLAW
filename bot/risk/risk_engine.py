@@ -352,6 +352,12 @@ class RiskEngine:
         """Set the order flow analyzer for Gate 2 / Rule 20."""
         self._order_flow = analyzer
 
+    def gate_stats(self) -> dict[str, dict]:
+        """Per-gate pass/fail/skip counters accumulated over this process's
+        evaluations — the evidence base for tuning gate thresholds."""
+        return {k: dict(v) for k, v in sorted(
+            getattr(self, "_gate_stats", {}).items())}
+
     @property
     def stats(self) -> dict:
         return {
@@ -1290,6 +1296,25 @@ class RiskEngine:
 
         # -- Verdict --
         verdict = RiskVerdict.APPROVED if len(failed) == 0 else RiskVerdict.REJECTED
+
+        # Gate telemetry: per-check pass/fail/skip counters so newly-wired
+        # gates (taker 3-bar, book dominance, ...) can be threshold-tuned on
+        # live evidence instead of judgment. Prefix before ':' is the gate
+        # name; "skipped"/"fail-open" entries count as skips, not passes.
+        try:
+            stats = self._gate_stats
+        except AttributeError:
+            stats = self._gate_stats = {}
+        for entry in passed:
+            name_key = entry.split(":", 1)[0].strip()
+            low = entry.lower()
+            bucket = "skipped" if ("skipped" in low or "fail-open" in low) else "passed"
+            rec = stats.setdefault(name_key, {"passed": 0, "failed": 0, "skipped": 0})
+            rec[bucket] += 1
+        for entry in failed:
+            name_key = entry.split(":", 1)[0].strip()
+            rec = stats.setdefault(name_key, {"passed": 0, "failed": 0, "skipped": 0})
+            rec["failed"] += 1
 
         reason = "; ".join(failed) if failed else f"All {len(passed)} checks passed"
 

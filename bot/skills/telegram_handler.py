@@ -240,6 +240,7 @@ class TelegramHandler:
             ("rejected", self._cmd_rejected), ("halt", self._cmd_halt),
             ("reset", self._cmd_reset), ("macro", self._cmd_macro),
             ("whynot", self._cmd_whynot),
+            ("gates", self._cmd_gates),
             ("backtest", self._cmd_backtest), ("walkforward", self._cmd_walkforward),
             ("journal", self._cmd_journal), ("costs", self._cmd_costs),
             ("run", self._cmd_run), ("learn", self._cmd_learn),
@@ -4722,6 +4723,27 @@ class TelegramHandler:
         result = await self.registry.dispatch("whynot",
             self.engine, symbol=symbol)
         await self._send(update, result)
+
+    async def _cmd_gates(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """/gates — per-gate pass/fail/skip telemetry (threshold tuning evidence)."""
+        if not self._is_admin(update):
+            return
+        stats = self.engine.risk.gate_stats()
+        if not stats:
+            await self._send(update, "No gate evaluations recorded yet this session.")
+            return
+        lines = ["\U0001f6a6 <b>Risk Gate Telemetry</b>", "\u2500" * 28, ""]
+        for name, rec in stats.items():
+            total = rec["passed"] + rec["failed"] + rec["skipped"]
+            if total == 0:
+                continue
+            fail_pct = rec["failed"] / total * 100
+            lines.append(
+                f"<b>{name}</b>: {rec['passed']}P/{rec['failed']}F/{rec['skipped']}S"
+                f"  ({fail_pct:.0f}% fail)")
+        lines += ["", "Skips = fail-open (no data). High skip rates mean a gate",
+                  "is not really running; high fail rates mean it may be too strict."]
+        await self._send(update, "\n".join(lines))
 
     @guard("halt")
     async def _cmd_halt(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
