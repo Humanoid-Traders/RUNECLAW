@@ -74,7 +74,14 @@ class DataLoader:
         timeframe: str = "1h",
         limit: int = 500,
     ) -> list[BacktestBar]:
-        """Fetch historical OHLCV from Bitget via ccxt."""
+        """Fetch historical OHLCV from Bitget via ccxt.
+
+        Paginates past the exchange's ~1000-bars-per-call cap by walking
+        forward with ``since``, so deep-history backtests (e.g. 5000+ 1h bars,
+        ~7 months) work with a plain ``limit``. Batches are de-duplicated by
+        timestamp and trimmed to the most recent ``limit`` bars. A ``limit``
+        within one page behaves exactly like the old single-call fetch.
+        """
         import ccxt.async_support as ccxt
         from bot.config import CONFIG
 
@@ -83,13 +90,41 @@ class DataLoader:
             "secret": CONFIG.exchange.api_secret,
             "password": CONFIG.exchange.passphrase,
             "sandbox": CONFIG.exchange.sandbox,
+            "enableRateLimit": True,
             # Honor standard proxy env vars (HTTPS_PROXY + CA bundle) so real
             # data fetches work behind egress proxies (e.g. Claude Code cloud
             # sandboxes). No-op when no proxy env is set.
             "aiohttp_trust_env": True,
         })
         try:
-            raw = await exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
+            # Bitget spot candles allow 1000/page; the futures (mix) endpoint
+            # rejects large paged windows — 200/page is reliably accepted.
+            _page_cap = 200 if ":" in symbol else 1000
+            per_call = min(_page_cap, max(1, limit))
+            if limit <= per_call:
+                raw = await exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
+            else:
+                tf_ms = int(exchange.parse_timeframe(timeframe)) * 1000
+                since = exchange.milliseconds() - limit * tf_ms
+                seen: dict[int, list] = {}
+                while len(seen) < limit:
+                    # Bitget's futures (mix) candles endpoint rejects a bare
+                    # startTime — page with an explicit until as well.
+                    _until = min(since + per_call * tf_ms, exchange.milliseconds())
+                    batch = await exchange.fetch_ohlcv(
+                        symbol, timeframe, since=since, limit=per_call,
+                        params={"until": _until})
+                    if not batch:
+                        break
+                    for c in batch:
+                        seen[int(c[0])] = c
+                    new_since = int(batch[-1][0]) + tf_ms
+                    if new_since <= since:   # no forward progress — stop
+                        break
+                    since = new_since
+                    if len(batch) < per_call and since >= exchange.milliseconds():
+                        break
+                raw = [seen[k] for k in sorted(seen)][-limit:]
             return DataLoader.from_ohlcv_list(raw, symbol)
         finally:
             await exchange.close()
