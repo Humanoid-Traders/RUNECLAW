@@ -143,6 +143,9 @@ class RuneClawEngine:
         self.learning = LearningOrchestrator()
         # WebSocket feed for real-time price monitoring (supplements REST polling)
         self.ws_feed = BitgetWSFeed()
+        # Tape CVD: order flow reads true aggressor-side delta from the WS
+        # trade channel when fresh (WS_CVD_ENABLED), REST fallback otherwise.
+        self.order_flow.set_ws_feed(self.ws_feed)
         # Live executor for real Bitget orders (micro-test mode). This is the
         # SHARED OPERATOR executor (CONFIG.exchange keys) — the only one used
         # unless per-user live trading is enabled.

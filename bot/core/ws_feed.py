@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time as _time
+from collections import deque
 import logging
 import time
 from dataclasses import dataclass
@@ -115,6 +117,10 @@ class BitgetWSFeed:
         self._stop_event = asyncio.Event()
         self._reconnect_delay = RECONNECT_BASE_S
         self._last_msg_ts: float = 0.0
+        # WS trade-tape CVD (WS_CVD_ENABLED): true aggressor-side cumulative
+        # volume delta per symbol, deduped by trade id. Buckets are per-minute
+        # (minute_ts, cum_delta_at_end, last_price) for trend/divergence.
+        self._cvd: dict[str, dict] = {}
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -390,6 +396,11 @@ class BitgetWSFeed:
             {"instType": "usdt-futures", "topic": "ticker", "symbol": inst}
             for inst in symbols_to_bitget(symbols)
         ]
+        if getattr(CONFIG.execution, "ws_cvd_enabled", False):
+            args += [
+                {"instType": "usdt-futures", "topic": "trade", "symbol": inst}
+                for inst in symbols_to_bitget(symbols)
+            ]
         msg = json.dumps({"op": "subscribe", "args": args})
         try:
             await self._ws.send(msg)
@@ -414,6 +425,11 @@ class BitgetWSFeed:
             {"instType": "usdt-futures", "topic": "ticker", "symbol": inst}
             for inst in symbols_to_bitget(symbols)
         ]
+        if getattr(CONFIG.execution, "ws_cvd_enabled", False):
+            args += [
+                {"instType": "usdt-futures", "topic": "trade", "symbol": inst}
+                for inst in symbols_to_bitget(symbols)
+            ]
         msg = json.dumps({"op": "unsubscribe", "args": args})
         try:
             await self._ws.send(msg)
@@ -451,6 +467,10 @@ class BitgetWSFeed:
         action = data.get("action")
         arg = data.get("arg", {})
         topic = arg.get("topic") or arg.get("channel")  # v3 uses "topic", v2 fallback
+        if topic == "trade":
+            inst_id = arg.get("instId") or arg.get("symbol", "")
+            self._process_trades(symbol_from_bitget(inst_id), data.get("data", []))
+            return
         if topic != "ticker":
             return
 
@@ -485,6 +505,78 @@ class BitgetWSFeed:
             next_funding_time=_float(item.get("nextFundingTime", 0)),
         )
         self._ticks[symbol] = tick
+
+
+    # ------------------------------------------------------------------
+    # WS trade-tape CVD
+    # ------------------------------------------------------------------
+
+    def _process_trades(self, symbol: str, items: list[dict]) -> None:
+        """Accumulate true cumulative volume delta from public trades.
+
+        Deduped by trade id (a reconnect replays the recent tape), signed by
+        the aggressor side, bucketed per minute for trend/divergence reads.
+        Fail-open: any malformed item is skipped.
+        """
+        if not symbol or not items:
+            return
+        state = self._cvd.get(symbol)
+        if state is None:
+            state = {
+                "cum": 0.0,
+                "buckets": deque(maxlen=240),   # (minute_ts, cum_at_end, last_price)
+                "seen": deque(maxlen=4000),
+                "seen_set": set(),
+                "trades": 0,
+                "last_update": 0.0,
+            }
+            self._cvd[symbol] = state
+        for item in items:
+            try:
+                tid = str(item.get("tradeId") or item.get("i") or "")
+                if tid and tid in state["seen_set"]:
+                    continue
+                price = _float(item.get("price", item.get("p", 0)))
+                size = _float(item.get("size", item.get("v", 0)))
+                side = str(item.get("side", item.get("S", ""))).lower()
+                if price <= 0 or size <= 0 or side not in ("buy", "sell"):
+                    continue
+                delta = price * size * (1.0 if side == "buy" else -1.0)
+                state["cum"] += delta
+                state["trades"] += 1
+                state["last_update"] = _time.time()
+                if tid:
+                    if len(state["seen"]) == state["seen"].maxlen:
+                        state["seen_set"].discard(state["seen"][0])
+                    state["seen"].append(tid)
+                    state["seen_set"].add(tid)
+                ts_ms = _float(item.get("ts", 0)) or _time.time() * 1000.0
+                minute = int(ts_ms // 60_000)
+                buckets = state["buckets"]
+                if buckets and buckets[-1][0] == minute:
+                    buckets[-1] = (minute, state["cum"], price)
+                else:
+                    buckets.append((minute, state["cum"], price))
+            except Exception:
+                continue
+
+    def get_cvd(self, symbol: str, max_age_sec: float = 180.0) -> Optional[dict]:
+        """Fresh tape CVD for a symbol, or None (stale/absent → the caller
+        falls back to the REST-window approximation)."""
+        state = self._cvd.get(symbol)
+        if not state or state["trades"] == 0:
+            return None
+        age = _time.time() - state["last_update"]
+        if age > max_age_sec:
+            return None
+        buckets = list(state["buckets"])
+        return {
+            "cum_delta_usd": float(state["cum"]),
+            "series": [b[1] for b in buckets],
+            "prices": [b[2] for b in buckets],
+            "trades": int(state["trades"]),
+            "age_sec": round(age, 1),
+        }
 
 
 # ---------------------------------------------------------------------------

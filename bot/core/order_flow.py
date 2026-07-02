@@ -203,6 +203,7 @@ class OrderFlowAnalyzer:
         self.config = config or OrderFlowConfig()
         self._lock = threading.RLock()
         self._cvd_history: dict[str, deque] = {}   # symbol -> deque[float] per-call deltas
+        self._ws_feed = None  # BitgetWSFeed for tape CVD (set_ws_feed)
         self._price_history: dict[str, deque] = {}  # symbol -> deque[float] mid prices (for divergence)
         self._oi_history: dict[str, float] = {}     # symbol -> last open_interest_usd
         # Gate 2: Taker 3-bar ratios (buy_vol/sell_vol per bar)
@@ -213,6 +214,11 @@ class OrderFlowAnalyzer:
         self._price_snap_history: dict[str, deque] = {} # symbol -> deque[float] price snapshots for OI-price div
 
     # -- Public API --
+
+    def set_ws_feed(self, feed) -> None:
+        """Wire the WS feed so CVD can come from the TRUE trade tape
+        (deduped, gap-free) instead of overlapping REST windows."""
+        self._ws_feed = feed
 
     async def analyze(
         self,
@@ -418,7 +424,8 @@ class OrderFlowAnalyzer:
                 symbol, deque(maxlen=self.config.cvd_history_len))
             spot_hist.append(total)
 
-        # Rolling CVD + trend across calls
+        # Rolling CVD + trend across calls (REST-window approximation:
+        # overlapping/gappy 200-trade windows — used only as the fallback).
         with self._lock:
             hist = self._cvd_history.setdefault(
                 symbol, deque(maxlen=self.config.cvd_history_len))
@@ -433,6 +440,32 @@ class OrderFlowAnalyzer:
                 price_hist.append(last_price)
             sig.cvd_price_divergence = self._detect_cvd_divergence(
                 list(hist), list(price_hist))
+
+        # WS tape CVD override (audit fix): when fresh trade-channel data
+        # exists, the TRUE deduped cumulative delta replaces the REST
+        # approximation, and trend/divergence are computed on the real
+        # cumulative series (per-minute buckets) instead of window deltas.
+        # Fail-open: no/stale tape → the fallback above stands.
+        ws = getattr(self, "_ws_feed", None)
+        if ws is not None:
+            try:
+                tape = ws.get_cvd(symbol)
+                if tape and tape.get("trades", 0) >= 30:
+                    sig.cvd_cumulative_usd = round(tape["cum_delta_usd"], 2)
+                    series = tape.get("series") or []
+                    if len(series) >= 4:
+                        bucket_deltas = [series[i] - series[i - 1]
+                                         for i in range(1, len(series))]
+                        sig.cvd_trend = self._cvd_trend(bucket_deltas)
+                        prices = tape.get("prices") or []
+                        if len(prices) == len(series):
+                            sig.cvd_price_divergence = self._series_divergence(
+                                series, prices)
+                    sig.notes.append(
+                        f"cvd: ws tape ({tape['trades']} trades, "
+                        f"{tape['age_sec']}s fresh)")
+            except Exception as _ws_exc:  # noqa: BLE001
+                sig.notes.append(f"ws cvd unavailable: {_ws_exc}")
 
     @staticmethod
     def _cvd_trend(deltas: list[float]) -> str:
@@ -456,6 +489,25 @@ class OrderFlowAnalyzer:
             if last < 0:
                 return "falling"
         return "flat"
+
+    @staticmethod
+    def _series_divergence(cum_series: list[float], prices: list[float]) -> str:
+        """Divergence on the TRUE cumulative-CVD series: price makes a higher
+        high while cumulative delta makes a lower high → bearish_div; price
+        lower low while cum delta higher low → bullish_div. (The legacy
+        detector compared raw window DELTAS — a magnitude comparison, not
+        cumulative structure.)"""
+        n = min(len(cum_series), len(prices))
+        if n < 6:
+            return "none"
+        cum = cum_series[-n:]
+        px = prices[-n:]
+        half = n // 2
+        if max(px[half:]) > max(px[:half]) and max(cum[half:]) < max(cum[:half]):
+            return "bearish_div"
+        if min(px[half:]) < min(px[:half]) and min(cum[half:]) > min(cum[:half]):
+            return "bullish_div"
+        return "none"
 
     @staticmethod
     def _detect_cvd_divergence(cvd_deltas: list[float], prices: list[float]) -> str:

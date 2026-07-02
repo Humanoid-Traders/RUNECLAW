@@ -968,6 +968,12 @@ class ExecutionConfig:
     # comfortably above the quietest symbol's natural tick gap to avoid spurious
     # reconnects (e.g. 60–120s). RECOMMENDED ON for live money.
     ws_idle_timeout_sec: float = _env_float_bounded("WS_IDLE_TIMEOUT_SEC", 90.0, 0.0, 3600.0)
+    # WS trade-tape CVD (default ON): subscribe the public trade channel and
+    # maintain true aggressor-side cumulative volume delta per symbol —
+    # deduped by trade id, gap-free — replacing the overlapping 200-trade
+    # REST-window approximation whenever fresh tape data exists. Fail-open:
+    # no fresh tape -> the REST approximation is used exactly as before.
+    ws_cvd_enabled: bool = _env_bool("WS_CVD_ENABLED", True)
     # REST ticker staleness guard for the live SL/TP monitor (check_positions).
     # The WS guard above only covers the WS price path; the executor's local
     # SL/TP loop reads `last` from REST fetch_ticker, where a frozen/old value
