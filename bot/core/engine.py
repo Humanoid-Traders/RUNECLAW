@@ -2145,26 +2145,11 @@ class RuneClawEngine:
         if atr_value is not None and signal.price > 0:
             self._recent_atr_values[signal.symbol] = atr_value / signal.price
 
-        # Strategy router: select optimal strategy for regime
-        try:
-            from bot.core.strategy_router import select_strategy, get_strategy_adjustments
-            strategy_profile = select_strategy(
-                getattr(self.risk, '_current_regime', 'unknown'),
-                getattr(self.risk, '_current_vol_state', 'normal'),
-                adx=atr_value if atr_value else 0,
-            )
-            adjustments = get_strategy_adjustments(
-                strategy_profile,
-                idea.stop_loss,
-                idea.take_profit,
-                idea.confidence,
-            )
-            # Apply strategy-specific adjustments
-            if adjustments.get("strategy_type"):
-                # Override strategy type based on regime
-                pass  # strategy_type is set from the router
-        except Exception as _strat_exc:
-            logger.warning("Strategy router selection failed for %s: %s", idea.asset, _strat_exc)
+        # (Signal-stack audit: the old "strategy router" call here computed a
+        # 4-profile selection per signal, fed it an absolute-price ATR where
+        # ADX was expected, and then DISCARDED the result — dead weight with
+        # misleading inputs. Strategy behavior is owned by the analyzer's
+        # strategy_type classification + CONFIG.strategy_types.)
 
         # ── Smart pyramid / duplicate symbol guard ─────────────────
         # Rules: max 2 entries per symbol, same direction adds require

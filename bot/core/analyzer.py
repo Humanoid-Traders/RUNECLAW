@@ -823,6 +823,28 @@ class Analyzer:
         except Exception as exc:
             system_log.debug("Volume profile failed: %s", exc)
 
+        # ── Smart-money concepts: FVG / equal-level pools / premium-discount ──
+        if CONFIG.analyzer.smc_voters_enabled:
+            try:
+                from bot.core.smc import (equal_level_pools, find_fvgs, fvg_vote,
+                                          premium_discount)
+                _smc_atr = indicators.get("atr", 0.0) or 0.0
+                if _smc_atr > 0 and len(closes) >= 30:
+                    _fvgs = find_fvgs(highs, lows, closes)
+                    _fv, _fw = fvg_vote(_fvgs, float(closes[-1]), _smc_atr)
+                    _pools = equal_level_pools(highs, lows, _smc_atr)
+                    _pd = premium_discount(highs, lows, closes,
+                                           window=min(100, len(closes)))
+                    indicators["_smc"] = {
+                        "fvg_vote": _fv, "fvg_weight": _fw,
+                        "eqh": _pools["eqh"], "eql": _pools["eql"],
+                        "premium_discount": _pd,
+                    }
+                    indicators["fvg_count_unfilled"] = sum(
+                        1 for g in _fvgs if not g.filled)
+            except Exception as exc:
+                system_log.debug("SMC feature computation failed: %s", exc)
+
         # ── Liquidity Sweep Detection ──
         try:
             if opens is not None and len(opens) >= 20:
@@ -1380,8 +1402,14 @@ class Analyzer:
 
         # SIGNAL QUALITY: threshold at min_confidence (matches config)
         # RANGE/CHOP trades need high raw confluence to survive after penalty
-        # Per-strategy-type confidence threshold
+        # Per-strategy-type confidence threshold, RAISED (never lowered) by
+        # the selected strategy mode's own bar — a BREAKOUT setup demands
+        # 0.65, a LIQUIDITY_SWEEP 0.68 (these per-mode bars were dead fields
+        # until the signal-stack audit).
         min_conf = CONFIG.strategy_types.get_min_confidence(strategy_type)
+        if (CONFIG.analyzer.mode_min_confidence_enabled
+                and mode_config is not None):
+            min_conf = max(min_conf, getattr(mode_config, "min_confidence", 0.0))
         if blended_confidence < min_conf:
             thesis_src = thesis.get("source", "unknown")
             self._last_rejection_diag = {
@@ -1436,8 +1464,11 @@ class Analyzer:
                 else:
                     limit_entry = round(entry + offset, 8)
 
-        # STRATEGY: adaptive ATR multipliers based on volatility regime
-        # Strategy mode provides baseline SL/TP; volatility/regime can override
+        # STRATEGY: adaptive ATR multipliers based on volatility regime.
+        # SL/TP baselines come from CONFIG.strategy_types (per scalp/intraday/
+        # swing/position); volatility/regime can override, then level-aware
+        # snapping refines. (Strategy MODES do not set SL/TP — their live
+        # knobs are confluence_boost and min_confidence.)
         # Compute normalized volatility: ATR as a percentage of price
         vol_ratio = atr / entry if entry > 0 else 0.02
 
@@ -2072,6 +2103,31 @@ class Analyzer:
             results["taker_sell_ratio"] = round(float(down_vol / total_vol) if total_vol > 0 else 0.5, 4)
             results["taker_imbalance"] = round(float((up_vol - down_vol) / total_vol) if total_vol > 0 else 0, 4)
 
+        # ── Money Flow Index (14) — volume-weighted RSI (advertised but never
+        # implemented until the signal-stack audit). Typical-price money flow
+        # split by direction, Wilder-style ratio. ──
+        if volumes is not None and len(closes) >= 15:
+            tp = (highs + lows + closes) / 3.0
+            mf = tp * volumes
+            d_tp = np.diff(tp[-15:])
+            mf_win = mf[-14:]
+            pos = float(np.sum(mf_win[d_tp > 0]))
+            neg = float(np.sum(mf_win[d_tp < 0]))
+            if pos + neg > 0:
+                results["mfi"] = round(100.0 * pos / (pos + neg), 2)
+
+        # ── Per-bar volume spike: last CLOSED bar vs SMA-20 of prior volumes.
+        # The scanner-level signal.volume_spike compares the rolling 24h sum
+        # between scans — a quantity that essentially never doubles in 5
+        # minutes, leaving the voter inert. This is the bar-level read. ──
+        if volumes is not None and len(volumes) >= 21:
+            _v_prior = volumes[-21:-1]
+            _v_avg = float(np.mean(_v_prior))
+            if _v_avg > 0:
+                results["vol_spike_bar_ratio"] = round(float(volumes[-1]) / _v_avg, 3)
+                results["vol_spike_bar"] = bool(volumes[-1] >= 2.0 * _v_avg)
+                results["vol_spike_bar_dir"] = 1 if closes[-1] >= closes[-2] else -1
+
         # ── Keltner Channels (EMA-20 ± 2×ATR) ──
         if len(closes) >= 20 and "atr" in results:
             kc_mid = float(_ema(closes, 20)[-1])
@@ -2478,6 +2534,12 @@ class Analyzer:
             except Exception:
                 _vw_mult = None
 
+        # Learned per-voter multiplier for the direct-append voter blocks
+        # (OF/MTF/SM/divergence/sweep bypassed aw(), so the voter-weight
+        # learner could never adjust them — audit fix).
+        def _lw(weight: float, label: str) -> float:
+            return weight * (_vw_mult(label) if _vw_mult is not None else 1.0)
+
         def aw(weight: float, name: str) -> None:
             if _vw_mult is not None:
                 weight = weight * _vw_mult(name)
@@ -2544,12 +2606,38 @@ class Analyzer:
             aw(_boost(1.0, "bb_pct_b"), "bb_pct_b")
             _mark_mr_osc()
 
-        # Volume spike vote (weight 0.8 — confirms directional moves). With
-        # the dilution guard on, "no spike" is skipped (like the taker voter)
-        # rather than voting 0 on every quiet bar.
-        if signal.volume_spike:
-            # Volume spike confirms the direction of the price move
-            votes.append(1.0 if signal.change_pct_24h > 0 else -1.0)
+        # MFI vote (weight 0.9): volume-weighted RSI — same contrarian bands
+        # as RSI but confirmed by money flow. Joins the MR-oscillator family
+        # cap so it can't stack with RSI/stoch/BB beyond the family budget.
+        if "mfi" in indicators:
+            mfi = indicators["mfi"]
+            if mfi < 20:
+                votes.append(1.0)
+            elif mfi > 80:
+                votes.append(-1.0)
+            elif mfi < 35:
+                votes.append(0.5)
+            elif mfi > 65:
+                votes.append(-0.5)
+            else:
+                votes.append(0.0)
+            aw(_boost(0.9, "mfi"), "mfi")
+            _mark_mr_osc()
+
+        # Volume spike vote (weight 0.8 — confirms directional moves). The
+        # bar-level spike (last closed bar >= 2x SMA-20 volume) is the live
+        # trigger; the scanner's rolling-24h flag is kept as a secondary OR
+        # (it essentially never fires between 5-minute scans — audit fix).
+        # With the dilution guard on, "no spike" is skipped rather than
+        # voting 0 on every quiet bar.
+        _bar_spike = bool(indicators.get("vol_spike_bar"))
+        if _bar_spike or signal.volume_spike:
+            # Spike confirms the direction of the move: bar direction for the
+            # bar-level spike, 24h change for the scanner flag.
+            if _bar_spike:
+                votes.append(float(indicators.get("vol_spike_bar_dir", 1)))
+            else:
+                votes.append(1.0 if signal.change_pct_24h > 0 else -1.0)
             aw(0.8, "volume_spike")
         elif not _skip_missing:
             votes.append(0.0)
@@ -2684,7 +2772,7 @@ class Analyzer:
         div_weights = indicators.get("_div_weights")
         if div_votes and div_weights:
             votes.extend(div_votes)
-            weights.extend(div_weights)
+            weights.extend(_lw(w, "divergence") for w in div_weights)
             names.extend(["divergence"] * len(div_weights))
 
         # ── Volume Profile voter ──
@@ -2882,14 +2970,14 @@ class Analyzer:
         if order_flow is not None:
             of_votes, of_weights, of_labels = OrderFlowAnalyzer.to_confluence_votes(order_flow)
             votes += of_votes
-            weights += [_boost(w, l) for w, l in zip(of_weights, of_labels)]
+            weights += [_lw(_boost(w, l), l) for w, l in zip(of_weights, of_labels)]
             names.extend(of_labels)
 
         # Multi-timeframe votes (if available)
         if mtf_result is not None:
             mtf_votes, mtf_weights, mtf_labels = MTFConfluence.to_confluence_votes(mtf_result)
             votes += mtf_votes
-            weights += [_boost(w, l) for w, l in zip(mtf_weights, mtf_labels)]
+            weights += [_lw(_boost(w, l), l) for w, l in zip(mtf_weights, mtf_labels)]
             names.extend(mtf_labels)
 
         # Smart money votes (if available)
@@ -2898,7 +2986,7 @@ class Analyzer:
             # Per-strategy-type weight adjustment for smart money signals
             sm_weight_mult = CONFIG.strategy_types.get_smart_money_weight(strategy_type)
             votes += sm_votes
-            weights += [_boost(w * sm_weight_mult, l) for w, l in zip(sm_weights, sm_labels)]
+            weights += [_lw(_boost(w * sm_weight_mult, l), l) for w, l in zip(sm_weights, sm_labels)]
             names.extend(sm_labels)
 
         # Sentiment voter
@@ -2933,8 +3021,24 @@ class Analyzer:
         sweep_w = indicators.get("_sweep_weights")
         if sweep_v and sweep_w:
             votes.extend(sweep_v)
-            weights.extend(sweep_w)
+            weights.extend(_lw(w, "liquidity_sweep") for w in sweep_w)
             names.extend(["liquidity_sweep"] * len(sweep_w))
+
+        # Smart-money-concept voters (audit Tier 3, default ON):
+        #   fvg      — nearest UNFILLED fair value gap within 1 ATR acts as a
+        #              magnet/support (bullish gap below) or resistance.
+        #   premium_discount — lean toward value in the dealing range: deep
+        #              discount (<0.25) is bullish, deep premium (>0.75)
+        #              bearish; the middle votes nothing.
+        _smc = indicators.get("_smc")
+        if _smc:
+            if _smc.get("fvg_weight"):
+                votes.append(_smc["fvg_vote"])
+                aw(_boost(_smc["fvg_weight"], "fvg"), "fvg")
+            _pd = _smc.get("premium_discount")
+            if _pd is not None and (_pd <= 0.25 or _pd >= 0.75):
+                votes.append(1.0 if _pd <= 0.25 else -1.0)
+                aw(_boost(0.5, "premium_discount"), "premium_discount")
 
         # Supply/Demand Zone voter
         sd_zones = indicators.get("_sd_zones")
