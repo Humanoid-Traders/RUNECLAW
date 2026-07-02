@@ -6397,177 +6397,188 @@ class LiveExecutor:
                         )
 
                     if not has_position:
-                        # ── RACE RE-CHECK: status may have changed during await ──
-                        if pos.status in ("closing", "closed") or pos.trade_id not in self._positions:
-                            logger.debug("Reconcile: %s status changed to '%s' during fetch — skipping",
-                                         pos.symbol, pos.status)
+                        # ── Duplicate-close hardening (ops tip): serialize with
+                        # close_position()'s per-trade lock. The status checks
+                        # above are read WITHOUT the lock, so a close that starts
+                        # between our snapshot and here could otherwise be
+                        # processed twice (double notification / conflicting PnL
+                        # writes). If a close is mid-flight, defer to next tick.
+                        _rec_lock = self._close_locks.setdefault(pos.trade_id, asyncio.Lock())
+                        if _rec_lock.locked():
+                            logger.debug("Reconcile: %s close in flight (lock held) — deferring", pos.symbol)
                             continue
+                        async with _rec_lock:
+                            # ── RACE RE-CHECK: status may have changed during await ──
+                            if pos.status in ("closing", "closed") or pos.trade_id not in self._positions:
+                                logger.debug("Reconcile: %s status changed to '%s' during fetch — skipping",
+                                             pos.symbol, pos.status)
+                                continue
 
-                        # ── Double-counting guard ──
-                        # If this trade_id is already in closed_trades (e.g., from a
-                        # previous bot instance that closed it), skip re-reconciling.
-                        # This prevents stale-ticker PnL from overwriting the real close.
-                        already_closed = any(
-                            ct.trade_id == pos.trade_id for ct in self._closed_trades
-                        )
-                        if already_closed:
-                            audit(trade_log,
-                                  f"Reconcile skip: {pos.symbol} (trade {pos.trade_id}) already in closed_trades",
-                                  action="reconcile_skip", result="ALREADY_CLOSED")
-                            # Remove from open positions — it's already tracked as closed
-                            pos.status = "closed"
-                            self._save_positions()
-                            continue
+                            # ── Double-counting guard ──
+                            # If this trade_id is already in closed_trades (e.g., from a
+                            # previous bot instance that closed it), skip re-reconciling.
+                            # This prevents stale-ticker PnL from overwriting the real close.
+                            already_closed = any(
+                                ct.trade_id == pos.trade_id for ct in self._closed_trades
+                            )
+                            if already_closed:
+                                audit(trade_log,
+                                      f"Reconcile skip: {pos.symbol} (trade {pos.trade_id}) already in closed_trades",
+                                      action="reconcile_skip", result="ALREADY_CLOSED")
+                                # Remove from open positions — it's already tracked as closed
+                                pos.status = "closed"
+                                self._save_positions()
+                                continue
 
-                        # Position no longer on exchange — get real close data from Bitget
-                        # SAFETY: retry up to 3 times before giving up
-                        close_data = None
-                        for _retry in range(3):
-                            close_data = await self._fetch_bitget_close_data(pos)
+                            # Position no longer on exchange — get real close data from Bitget
+                            # SAFETY: retry up to 3 times before giving up
+                            close_data = None
+                            for _retry in range(3):
+                                close_data = await self._fetch_bitget_close_data(pos)
+                                if close_data and close_data["close_price"] > 0:
+                                    break
+                                if _retry < 2:
+                                    import asyncio as _aio
+                                    await _aio.sleep(2)  # brief pause before retry
+
                             if close_data and close_data["close_price"] > 0:
-                                break
-                            if _retry < 2:
-                                import asyncio as _aio
-                                await _aio.sleep(2)  # brief pause before retry
-
-                        if close_data and close_data["close_price"] > 0:
-                            est_exit = close_data["close_price"]
-                            reason = close_data["reason"]
-                            fill_source = close_data["source"]
-                            exchange_reported_pnl = close_data["pnl"]
-                        else:
-                            # SAFETY: do NOT close with ticker fallback.
-                            # Mark for retry on next tick — exchange data will
-                            # become available once Bitget history propagates.
-                            _retries = getattr(pos, '_reconcile_retries', 0) + 1
-                            setattr(pos, "_reconcile_retries", _retries)
-                            if _retries <= 10:
-                                logger.warning(
-                                    "Reconcile: %s not on exchange but no close data yet "
-                                    "(retry %d/10). Will retry next tick.",
-                                    pos.symbol, _retries)
-                                continue  # skip closing — try again next cycle
-                            # After 10 retries, use ticker as absolute last resort
-                            logger.warning(
-                                "Reconcile: %s — exhausted %d retries, falling back to ticker",
-                                pos.symbol, _retries)
-                            try:
-                                ticker = await exchange.fetch_ticker(ccxt_symbol)
-                                est_exit = float(ticker.get("last", 0) or 0)
-                            except Exception:
-                                est_exit = 0
-                            if est_exit <= 0:
-                                est_exit = pos.entry_price  # absolute fallback
-                            reason = self._infer_close_reason(pos, est_exit)
-                            fill_source = f"ticker_fallback_after_{_retries}_retries"
-                            exchange_reported_pnl = None
-
-                        # Compute PnL — prefer exchange-reported profit (source of truth)
-                        if exchange_reported_pnl is not None:
-                            pnl = exchange_reported_pnl
-                            fill_source = fill_source + "+exchange_pnl"
-                        elif pos.direction == "LONG":
-                            pnl = (est_exit - pos.entry_price) * pos.quantity
-                        else:
-                            pnl = (pos.entry_price - est_exit) * pos.quantity
-
-                        pos.close_reason = reason
-                        pos.status = "closed"
-                        pos.close_price = est_exit
-
-                        # ── Use exchange-reported PnL when available (most accurate) ──
-                        if exchange_reported_pnl is not None:
-                            # Bitget's profit field already accounts for fees
-                            net_pnl = exchange_reported_pnl
-                            # Estimate gross/commission split for display
-                            if pos.direction == "LONG":
-                                gross_pnl = (est_exit - pos.entry_price) * pos.quantity
+                                est_exit = close_data["close_price"]
+                                reason = close_data["reason"]
+                                fill_source = close_data["source"]
+                                exchange_reported_pnl = close_data["pnl"]
                             else:
-                                gross_pnl = (pos.entry_price - est_exit) * pos.quantity
-                            commission = gross_pnl - net_pnl
-                            if commission < 0:
-                                commission = 0
-                                gross_pnl = net_pnl
-                            pnl = gross_pnl
-                            logger.info("Using exchange-reported PnL for %s: $%.4f",
-                                        pos.symbol, net_pnl)
-                        else:
-                            # Deduct commission on reconciled close (same as manual close)
-                            entry_notional = pos.entry_price * pos.quantity
-                            exit_notional = est_exit * pos.quantity
-                            # GETCLAW: maker/taker fee split
-                            is_limit_entry = getattr(pos, 'order_type', '') == 'limit'
-                            entry_fee = CONFIG.risk.maker_fee_pct if is_limit_entry else CONFIG.risk.taker_fee_pct
-                            exit_fee = CONFIG.risk.taker_fee_pct  # SL/TP triggers = market = taker
-                            commission = (entry_notional * entry_fee / 100.0) + (exit_notional * exit_fee / 100.0)
-                            gross_pnl = pnl
-                            net_pnl = gross_pnl - commission
-                        pos.gross_pnl = round(gross_pnl, 4)
-                        pos.commission = round(commission, 4)
-                        pos.pnl_usd = round(net_pnl, 4)
-                        pos.closed_at = datetime.now(UTC)
+                                # SAFETY: do NOT close with ticker fallback.
+                                # Mark for retry on next tick — exchange data will
+                                # become available once Bitget history propagates.
+                                _retries = getattr(pos, '_reconcile_retries', 0) + 1
+                                setattr(pos, "_reconcile_retries", _retries)
+                                if _retries <= 10:
+                                    logger.warning(
+                                        "Reconcile: %s not on exchange but no close data yet "
+                                        "(retry %d/10). Will retry next tick.",
+                                        pos.symbol, _retries)
+                                    continue  # skip closing — try again next cycle
+                                # After 10 retries, use ticker as absolute last resort
+                                logger.warning(
+                                    "Reconcile: %s — exhausted %d retries, falling back to ticker",
+                                    pos.symbol, _retries)
+                                try:
+                                    ticker = await exchange.fetch_ticker(ccxt_symbol)
+                                    est_exit = float(ticker.get("last", 0) or 0)
+                                except Exception:
+                                    est_exit = 0
+                                if est_exit <= 0:
+                                    est_exit = pos.entry_price  # absolute fallback
+                                reason = self._infer_close_reason(pos, est_exit)
+                                fill_source = f"ticker_fallback_after_{_retries}_retries"
+                                exchange_reported_pnl = None
 
-                        self._save_positions()
-                        self._append_closed_trade(pos)
-                        # Invalidate balance cache on reconciled close
-                        self._fire_position_closed(pos)
+                            # Compute PnL — prefer exchange-reported profit (source of truth)
+                            if exchange_reported_pnl is not None:
+                                pnl = exchange_reported_pnl
+                                fill_source = fill_source + "+exchange_pnl"
+                            elif pos.direction == "LONG":
+                                pnl = (est_exit - pos.entry_price) * pos.quantity
+                            else:
+                                pnl = (pos.entry_price - est_exit) * pos.quantity
 
-                        pnl_str = f"+${net_pnl:.4f}" if net_pnl >= 0 else f"-${abs(net_pnl):.4f}"
-                        pnl_pct = ((est_exit - pos.entry_price) / pos.entry_price * 100) if pos.entry_price else 0
-                        if pos.direction == "SHORT":
-                            pnl_pct = -pnl_pct
-                        hold_secs = (pos.closed_at - pos.opened_at).total_seconds() if pos.closed_at and pos.opened_at else 0
-                        if hold_secs < 3600:
-                            hold_str = f"{hold_secs / 60:.0f}m"
-                        elif hold_secs < 86400:
-                            hold_str = f"{hold_secs / 3600:.1f}h"
-                        else:
-                            hold_str = f"{hold_secs / 86400:.1f}d"
-                        msg = (
-                            f"RECONCILED {pos.direction} {pos.symbol} ({reason})\n"
-                            f"Entry: ${pos.entry_price:,.4f} -> Exit: ~${est_exit:,.4f}\n"
-                            f"PnL: {pnl_str} ({pnl_pct:+.2f}%) | Hold: {hold_str}"
-                        )
-                        self._last_close_data = {
-                            "symbol": pos.symbol,
-                            "direction": pos.direction,
-                            "reason": reason,
-                            "entry": pos.entry_price,
-                            "exit": est_exit,
-                            "pnl_pct": pnl_pct,
-                            "pnl_usd": round(net_pnl, 4),
-                            "gross_pnl": round(gross_pnl, 4),
-                            "fees": round(commission, 4),
-                            "size_usd": round(pos.cost_usd, 2) if pos.cost_usd > 0 else round(pos.entry_price * pos.quantity, 2),
-                            "leverage": pos.leverage or 1,
-                            "hold_time": hold_str,
-                        }
-                        # Real incident: a position stuck in "closing" across a
-                        # restart got reset to "open" (see _load_positions()),
-                        # its local SL/TP heuristic then submitted a SECOND,
-                        # redundant close order (priced off a stale ticker,
-                        # since the real close already happened), and THIS
-                        # reconcile pass discovered the true close and sent
-                        # its own notification -- the user saw two conflicting
-                        # "closed" messages for one trade. The first was
-                        # already noise from a doomed redundant order; suppress
-                        # the notification here too since the user almost
-                        # certainly already saw a close message for this trade
-                        # before the process restarted.
-                        was_recovered = pos.trade_id in self._recovered_from_closing
-                        self._recovered_from_closing.discard(pos.trade_id)
-                        if not was_recovered:
-                            messages.append(msg)
+                            pos.close_reason = reason
+                            pos.status = "closed"
+                            pos.close_price = est_exit
 
-                        audit(trade_log,
-                              f"Position reconciled (closed on exchange): {pos.symbol} PnL=${pnl:.4f}",
-                              action="reconcile_close", result="CLOSED",
-                              data={
-                                  "trade_id": pos.trade_id, "reason": reason,
-                                  "entry": pos.entry_price, "exit": est_exit,
-                                  "pnl_usd": round(pnl, 4),
-                                  "notification_suppressed": was_recovered,
-                              })
+                            # ── Use exchange-reported PnL when available (most accurate) ──
+                            if exchange_reported_pnl is not None:
+                                # Bitget's profit field already accounts for fees
+                                net_pnl = exchange_reported_pnl
+                                # Estimate gross/commission split for display
+                                if pos.direction == "LONG":
+                                    gross_pnl = (est_exit - pos.entry_price) * pos.quantity
+                                else:
+                                    gross_pnl = (pos.entry_price - est_exit) * pos.quantity
+                                commission = gross_pnl - net_pnl
+                                if commission < 0:
+                                    commission = 0
+                                    gross_pnl = net_pnl
+                                pnl = gross_pnl
+                                logger.info("Using exchange-reported PnL for %s: $%.4f",
+                                            pos.symbol, net_pnl)
+                            else:
+                                # Deduct commission on reconciled close (same as manual close)
+                                entry_notional = pos.entry_price * pos.quantity
+                                exit_notional = est_exit * pos.quantity
+                                # GETCLAW: maker/taker fee split
+                                is_limit_entry = getattr(pos, 'order_type', '') == 'limit'
+                                entry_fee = CONFIG.risk.maker_fee_pct if is_limit_entry else CONFIG.risk.taker_fee_pct
+                                exit_fee = CONFIG.risk.taker_fee_pct  # SL/TP triggers = market = taker
+                                commission = (entry_notional * entry_fee / 100.0) + (exit_notional * exit_fee / 100.0)
+                                gross_pnl = pnl
+                                net_pnl = gross_pnl - commission
+                            pos.gross_pnl = round(gross_pnl, 4)
+                            pos.commission = round(commission, 4)
+                            pos.pnl_usd = round(net_pnl, 4)
+                            pos.closed_at = datetime.now(UTC)
+
+                            self._save_positions()
+                            self._append_closed_trade(pos)
+                            # Invalidate balance cache on reconciled close
+                            self._fire_position_closed(pos)
+
+                            pnl_str = f"+${net_pnl:.4f}" if net_pnl >= 0 else f"-${abs(net_pnl):.4f}"
+                            pnl_pct = ((est_exit - pos.entry_price) / pos.entry_price * 100) if pos.entry_price else 0
+                            if pos.direction == "SHORT":
+                                pnl_pct = -pnl_pct
+                            hold_secs = (pos.closed_at - pos.opened_at).total_seconds() if pos.closed_at and pos.opened_at else 0
+                            if hold_secs < 3600:
+                                hold_str = f"{hold_secs / 60:.0f}m"
+                            elif hold_secs < 86400:
+                                hold_str = f"{hold_secs / 3600:.1f}h"
+                            else:
+                                hold_str = f"{hold_secs / 86400:.1f}d"
+                            msg = (
+                                f"RECONCILED {pos.direction} {pos.symbol} ({reason})\n"
+                                f"Entry: ${pos.entry_price:,.4f} -> Exit: ~${est_exit:,.4f}\n"
+                                f"PnL: {pnl_str} ({pnl_pct:+.2f}%) | Hold: {hold_str}"
+                            )
+                            self._last_close_data = {
+                                "symbol": pos.symbol,
+                                "direction": pos.direction,
+                                "reason": reason,
+                                "entry": pos.entry_price,
+                                "exit": est_exit,
+                                "pnl_pct": pnl_pct,
+                                "pnl_usd": round(net_pnl, 4),
+                                "gross_pnl": round(gross_pnl, 4),
+                                "fees": round(commission, 4),
+                                "size_usd": round(pos.cost_usd, 2) if pos.cost_usd > 0 else round(pos.entry_price * pos.quantity, 2),
+                                "leverage": pos.leverage or 1,
+                                "hold_time": hold_str,
+                            }
+                            # Real incident: a position stuck in "closing" across a
+                            # restart got reset to "open" (see _load_positions()),
+                            # its local SL/TP heuristic then submitted a SECOND,
+                            # redundant close order (priced off a stale ticker,
+                            # since the real close already happened), and THIS
+                            # reconcile pass discovered the true close and sent
+                            # its own notification -- the user saw two conflicting
+                            # "closed" messages for one trade. The first was
+                            # already noise from a doomed redundant order; suppress
+                            # the notification here too since the user almost
+                            # certainly already saw a close message for this trade
+                            # before the process restarted.
+                            was_recovered = pos.trade_id in self._recovered_from_closing
+                            self._recovered_from_closing.discard(pos.trade_id)
+                            if not was_recovered:
+                                messages.append(msg)
+
+                            audit(trade_log,
+                                  f"Position reconciled (closed on exchange): {pos.symbol} PnL=${pnl:.4f}",
+                                  action="reconcile_close", result="CLOSED",
+                                  data={
+                                      "trade_id": pos.trade_id, "reason": reason,
+                                      "entry": pos.entry_price, "exit": est_exit,
+                                      "pnl_usd": round(pnl, 4),
+                                      "notification_suppressed": was_recovered,
+                                  })
 
                     else:
                         # Position still on exchange — confirmed genuinely
