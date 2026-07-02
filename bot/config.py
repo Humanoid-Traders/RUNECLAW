@@ -788,6 +788,45 @@ class AnalyzerConfig:
     vwap_setup_anchoring_enabled: bool = _env_bool("VWAP_SETUP_ANCHORING_ENABLED", True)
     vwap_anchored_pivot_enabled: bool = _env_bool("VWAP_ANCHORED_PIVOT_ENABLED", True)
 
+    # Direction-aware Fibonacci (default ON; audit fix #4). The legacy fib
+    # module force-fit every market into a bullish low->high retracement and
+    # its voter could only lean long. When ON, the dominant leg is inferred
+    # from the ORDER of the window extremes (high before low = down-leg) and a
+    # down-leg gets the mirrored high->low retracement plus symmetric bearish
+    # votes; the emitted "fib_trend" key tells consumers which framing applies.
+    # Disable to restore the legacy bullish-only behaviour.
+    fib_direction_aware_enabled: bool = _env_bool("FIB_DIRECTION_AWARE_ENABLED", True)
+    # Pattern de-correlation (default ON; audit fix #5). Wyckoff / Harmonic /
+    # Elliott / Fib-extension detections vote through DEDICATED voters; when ON
+    # they are excluded from the aggregate chart_patterns vote so the same
+    # evidence is counted once, not twice.
+    pattern_dedup_enabled: bool = _env_bool("PATTERN_DEDUP_ENABLED", True)
+    # Data-quality penalty (default ON; audit fix #10). Signals produced from a
+    # thin window (<50 bars: SMA-50, vwap_50 and the full fib window are all
+    # unavailable or shrunken) carry less confirmation; apply a small bounded
+    # confidence penalty and stamp data_bars/data_thin into the indicators so
+    # the gap is visible instead of silent.
+    data_quality_penalty_enabled: bool = _env_bool("DATA_QUALITY_PENALTY_ENABLED", True)
+    data_thin_penalty: float = _env_float_bounded("DATA_THIN_PENALTY", 0.05, 0.0, 0.5)
+    # Candlestick upgrades (default ON; audit fixes #13/#14):
+    #   trend context — a hammer only counts in a downtrend and a shooting star
+    #     in an uptrend (pure geometry fires constantly in the wrong context);
+    #     morning/evening stars additionally require the third candle to close
+    #     into the first candle's body.
+    #   strength vote — the candlestick confluence vote scales by pattern
+    #     strength (3-candle formations > 2-candle > single) instead of a raw
+    #     bull-vs-bear key count where a lone doji-adjacent hammer equalled
+    #     three white soldiers.
+    candle_trend_context_enabled: bool = _env_bool("CANDLE_TREND_CONTEXT_ENABLED", True)
+    candle_strength_vote_enabled: bool = _env_bool("CANDLE_STRENGTH_VOTE_ENABLED", True)
+    # Voter dilution fix (default ON; audit fix #16). The five always-vote
+    # voters (rsi/macd/bb/adx/volume_spike) appended a 0-vote even when their
+    # input was missing or neutral-by-default, inflating the denominator and
+    # compressing every real signal toward 0.5; sentiment did the same when the
+    # engine was present but had no data. When ON, a voter with no data is
+    # SKIPPED (weight not appended) rather than voting 0.
+    voter_skip_missing_enabled: bool = _env_bool("VOTER_SKIP_MISSING_ENABLED", True)
+
 
 @dataclass(frozen=True)
 class LearningConfig:

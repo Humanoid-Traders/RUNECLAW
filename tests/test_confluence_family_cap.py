@@ -33,9 +33,15 @@ def _score(indicators, *, enabled=False, cap=2.0):
         return Analyzer._score_confluence(indicators, Regime.RANGE, _signal())
 
 
-# Four oscillators all screaming the same direction.
-_BULL_CLUSTER = {"rsi": 25, "bb_pct_b": 0.1, "stoch_k": 15, "stoch_d": 15, "fib_zone": "below_786"}
-_BEAR_CLUSTER = {"rsi": 78, "bb_pct_b": 0.92, "stoch_k": 88, "stoch_d": 88, "fib_zone": "above_236"}
+# Four oscillators all screaming the same direction, plus one PRESENT neutral
+# out-of-family voter (macd at 0). Since the dilution guard (audit fix #16)
+# skips ABSENT voters, an all-one-family electorate would make the cap a no-op
+# (uniform scaling cancels in the weighted mean) — the neutral macd anchors the
+# denominator exactly like the pre-guard behaviour the cap was built against.
+_BULL_CLUSTER = {"rsi": 25, "bb_pct_b": 0.1, "stoch_k": 15, "stoch_d": 15,
+                 "fib_zone": "below_786", "macd_histogram": 0.0}
+_BEAR_CLUSTER = {"rsi": 78, "bb_pct_b": 0.92, "stoch_k": 88, "stoch_d": 88,
+                 "fib_zone": "above_236", "macd_histogram": 0.0}
 
 
 class TestCapReducesCoFiring:

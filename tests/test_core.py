@@ -1128,11 +1128,14 @@ class TestAdvancedAnalysis:
         assert patterns["doji"] == "neutral"
 
     def test_hammer_detection(self):
-        """Hammer: small body at top, long lower wick."""
-        opens = np.array([100, 101, 105], dtype=float)
-        highs = np.array([103, 104, 105.5], dtype=float)
-        lows = np.array([97, 98, 98], dtype=float)
-        closes = np.array([101, 100, 105.3], dtype=float)  # body=0.3, upper_wick=0.2, lower_wick=7
+        """Hammer: small body at top, long lower wick — in a DOWNTREND
+        (trend context is required since audit fix #13)."""
+        # Nine falling bars establish the downtrend, then the hammer bar.
+        base = np.array([120, 118, 116, 114, 112, 110, 108, 106, 104], dtype=float)
+        opens = np.append(base + 0.5, 105.0)
+        highs = np.append(base + 1.0, 105.5)
+        lows = np.append(base - 1.0, 98.0)
+        closes = np.append(base, 105.3)  # body=0.3, upper_wick=0.2, lower_wick=7
         patterns = _detect_candlestick_patterns(opens, highs, lows, closes)
         assert "hammer" in patterns
         assert patterns["hammer"] == "bullish"
