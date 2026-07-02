@@ -468,10 +468,10 @@ defaults:
       Lowered from $50K default so small-cap and micro-test trades can pass.
 
   kelly_sizing_enabled:
-    value: false
+    value: true
     env_var: KELLY_SIZING_ENABLED
     description: >
-      Opt-in half-Kelly sizing (default OFF). When enabled, evaluate() takes the
+      Half-Kelly sizing (default ON; runbook stage 2). evaluate() takes the
       SMALLER of the fixed-fractional size and the half-Kelly size from realized
       history — tighten-only, never grows size; the notional/margin caps stay
       authoritative.
@@ -484,10 +484,10 @@ defaults:
       it is a no-op (fixed-fractional size is left unchanged).
 
   correlation_sizing_enabled:
-    value: false
+    value: true
     env_var: CORRELATION_SIZING_ENABLED
     description: >
-      Opt-in portfolio-aware correlation sizing (default OFF). Shrinks a new
+      Portfolio-aware correlation sizing (default ON; shrink-only). Shrinks a new
       trade that stacks on already-open positions in the SAME correlation group
       AND direction — only reduces (multiplier in [floor, 1.0]); the notional and
       margin caps stay authoritative. Byte-identical to prior behaviour when OFF.
@@ -507,10 +507,10 @@ defaults:
       sized below this fraction of its full fixed-fractional size.
 
   live_risk_hardening_enabled:
-    value: false
+    value: true
     env_var: LIVE_RISK_HARDENING_ENABLED
     description: >
-      Opt-in (default OFF). When ON and running live, applies a stricter
+      Default ON (runbook stage 1). When ON and running live, applies a stricter
       portfolio-risk posture for real money without touching paper/backtest:
       forces correlation-aware sizing on, forces covariance VaR on (falling back
       to the per-trade proxy when data is thin — never a downgrade to skip), and
@@ -535,10 +535,10 @@ defaults:
       authority. OFF → regime stays UNKNOWN → 1.0× (byte-identical).
 
   live_performance_governor_enabled:
-    value: false
+    value: true
     env_var: LIVE_PERFORMANCE_GOVERNOR_ENABLED
     description: >
-      Opt-in (default OFF). A closed-loop backstop on top of the pre-trade
+      Default ON (runbook stage 2). A closed-loop backstop on top of the pre-trade
       checks: scores REALIZED closed-trade outcomes over a rolling window and
       de-risks when the strategy is actually losing — graduated size reduction
       when the recent window underperforms (low win rate OR net-negative), and a
