@@ -315,6 +315,11 @@ Examples:
     # Trading params
     trade_group = parser.add_argument_group("trading")
     trade_group.add_argument("--symbol", type=str, default="BTC/USDT", help="Trading pair (default: BTC/USDT)")
+    trade_group.add_argument("--symbols", type=str, default="",
+                             help="Comma-separated symbols for a PORTFOLIO backtest (shared "
+                                  "equity/risk/breaker across all of them — measures the SYSTEM, "
+                                  "not one pair). E.g. \"BTC/USDT:USDT,ETH/USDT:USDT,SOL/USDT:USDT\". "
+                                  "Overrides --symbol; real data only.")
     trade_group.add_argument("--timeframe", type=str, default="1h", help="Candle timeframe (default: 1h)")
     trade_group.add_argument("--balance", type=float, default=10000.0, help="Starting balance (default: 10000)")
     trade_group.add_argument("--commission", type=float, default=0.1, help="Commission %% (default: 0.1)")
@@ -365,10 +370,72 @@ def main() -> None:
     if args.honest:
         args.strict_data = True
         args.fill_mode = "next_open"
+    if args.symbols.strip():
+        asyncio.run(_run_portfolio(args))
+        return
     if args.walk_forward and args.walk_forward > 0:
         asyncio.run(_run_walk_forward(args))
     else:
         asyncio.run(_run_backtest(args))
+
+
+async def _run_portfolio(args: argparse.Namespace) -> None:
+    """Portfolio backtest across --symbols with shared risk state."""
+    from bot.backtest.portfolio_engine import PortfolioBacktester, portfolio_walk_forward
+
+    symbols = [s.strip() for s in args.symbols.split(",") if s.strip()]
+    config = BacktestConfig(
+        symbol=symbols[0], timeframe=args.timeframe,
+        initial_balance=args.balance, commission_pct=args.commission,
+        slippage_pct=args.slippage, fill_mode=args.fill_mode,
+        breaker_reset_bars=args.breaker_reset_bars,
+        use_llm=args.use_llm, use_recorded_llm=args.use_recorded_llm,
+        use_recorded_order_flow=args.use_recorded_order_flow,
+        recorded_order_flow_path=args.of_snapshot_path,
+    )
+    print(f"\n  Portfolio backtest: {len(symbols)} symbols, fetching {args.limit} bars each...")
+    data = {}
+    for sym in symbols:
+        try:
+            bars = await DataLoader.from_bitget(symbol=sym, timeframe=args.timeframe,
+                                                limit=args.limit)
+            if bars:
+                data[sym] = bars
+                print(f"  fetched {sym}: {len(bars)} REAL bars")
+        except Exception as exc:
+            print(f"  {sym}: fetch failed ({exc}) — skipped")
+    if not data:
+        print("  ERROR: no data fetched for any symbol. Aborting.")
+        sys.exit(1)
+
+    if args.walk_forward and args.walk_forward > 0:
+        folds = await portfolio_walk_forward(data, config, n_folds=args.walk_forward)
+        print(f"\n  PORTFOLIO {args.walk_forward}-fold walk-forward "
+              f"({len(data)} symbols, fill={config.fill_mode}):")
+        prof = sum(1 for f in folds if f["return_pct"] > 0)
+        for f in folds:
+            print(f"  fold {f['fold']}: {f['trades']:>3} trades  ret {f['return_pct']:+6.2f}%  "
+                  f"win {f['win_rate']:.0%}  maxDD {f['max_dd_pct']:5.2f}%  PF {f['profit_factor']:.2f}")
+        rets = [f["return_pct"] for f in folds]
+        print(f"  => profitable folds {prof}/{len(folds)} | mean OOS ret "
+              f"{sum(rets)/len(rets):+.2f}% | worst {min(rets):+.2f}%")
+        return
+
+    pb = PortfolioBacktester(config, symbols=list(data))
+    result = await pb.run(data)
+    pb.cleanup()
+    print(_format_result_summary(result))
+    print("  Per-symbol breakdown:")
+    for sym, row in sorted(pb.per_symbol.items()):
+        print(f"    {sym:<16} {row['trades']:>3} trades  net ${row['net_pnl']:>9,.2f}  "
+              f"win {row['win_rate']:.0%}")
+    if args.output:
+        out_path = Path(args.output)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(out_path, "w") as f:
+            json.dump({**result.model_dump(mode="json", exclude={"equity_curve", "trades"}),
+                       "per_symbol": pb.per_symbol}, f, indent=2, default=str)
+        print(f"  Results saved to {args.output}")
 
 
 async def _run_walk_forward(args: argparse.Namespace) -> None:
