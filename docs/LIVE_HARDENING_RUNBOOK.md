@@ -153,3 +153,33 @@ live operators:
    instead, or re-assert `chmod +x` as a post-reset step in the deploy script.
    Nothing inside this repository performs `git reset` — this is purely about
    the host-side update loop some operators run.
+
+---
+
+## Operating habits (ops tips, 2026-07)
+
+1. **Size like the backtest verdict is real.** The offline deterministic path
+   has no proven standalone edge yet; keep `MICRO_MAX_POSITION_USD` small until
+   the recorded-replay walk-forward is positive. The system's proven strength
+   is loss control — lean on it while edge evidence accumulates.
+2. **Run uninterrupted for 2–4 weeks.** The calibrator, setup expectancy,
+   voter-weight OOS validation and replay backtests all unlock at ~50–100
+   closed trades; restarts delay that.
+3. **`/whynot` when the bot feels quiet.** Structured no-trade reasons now back
+   it: all-`confidence` rejections → review per-strategy `min_confidence`;
+   `llm_direction_guard` rejections → LLM and voters are fighting.
+4. **Backtest invocation:** `python -m bot.backtest.runner --honest` (strict
+   real data + next-open fills). Close-fill numbers flatter by ~0.9pp/run.
+5. **Backups:** `./scripts/backup_data.sh` (cron daily; see the script header).
+   Everything the bot cannot regenerate — positions, learning store, auth
+   secret — lives in `data/` and compounds in value.
+6. **Dead-man's switch:** create a check at healthchecks.io (or similar), set
+   `HEALTHCHECK_PING_URL`, alarm grace ~30 min. Telegram can never report a
+   dead process; this does.
+7. **Key hygiene before scaling deposits:** rotate the Bitget key, confirm
+   withdrawals are disabled on it, IP-allowlist it to the VPS.
+8. **Payoff sequence once data accumulates:** (a) confirm the calibrator is
+   fitting, (b) `VoterWeightLearner.validate_oos` — enable
+   `VOTER_WEIGHT_LEARNING_ENABLED` only if hold_rate > ~0.6, (c) re-run the
+   walk-forward with `--use-recorded-llm --use-recorded-order-flow` for the
+   full-pipeline verdict, (d) only then consider `AUTO_CONFIRM_USE_CALIBRATED`.

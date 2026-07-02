@@ -685,11 +685,13 @@ class AnalyzerConfig:
     # OFF — until enabled the voter is purely price-derived (no external network
     # call). See bot/core/sentiment.py.
     external_sentiment_enabled: bool = _env_bool("EXTERNAL_SENTIMENT_ENABLED", False)
-    # Funding carry-cost awareness: when ON, apply a small bounded confidence
-    # haircut when a trade would PAY adverse funding over its expected hold (the
-    # carry-cost dimension the instantaneous funding signals miss). Default OFF —
-    # only ever reduces confidence. See bot/core/funding.py.
-    funding_cost_aware_enabled: bool = _env_bool("FUNDING_COST_AWARE_ENABLED", False)
+    # Funding carry-cost awareness: when ON (default; ops tip), apply a small
+    # bounded confidence haircut when a trade would PAY adverse funding over
+    # its expected hold (the carry-cost dimension the instantaneous funding
+    # signals miss). Haircut-only: it can only ever reduce confidence, so a
+    # thin edge is not silently eaten by perp funding on longer holds.
+    # See bot/core/funding.py.
+    funding_cost_aware_enabled: bool = _env_bool("FUNDING_COST_AWARE_ENABLED", True)
     # Learning auto-refit: when ON, the three learners (calibration, voter weights,
     # setup expectancy) are re-fitted from closed-trade history every
     # LEARNING_AUTO_REFIT_INTERVAL closed trades, so they don't go stale. Refitting
@@ -1259,6 +1261,20 @@ class StockTradingConfig:
 
 
 @dataclass(frozen=True)
+class MonitoringConfig:
+    """External liveness monitoring (ops)."""
+    # Dead-man's-switch ping (ops tip). When set to a monitor URL (e.g. a
+    # healthchecks.io check), the engine GETs it after each successful tick,
+    # throttled to the interval below — so a DEAD process or stalled tick loop
+    # raises an external alarm at the monitor's grace timeout, the one failure
+    # mode Telegram alerting can never report. Empty (the default) = disabled.
+    # Fail-open: ping failures never affect trading.
+    healthcheck_ping_url: str = _env("HEALTHCHECK_PING_URL", "")
+    healthcheck_ping_interval_sec: float = _env_float_bounded(
+        "HEALTHCHECK_PING_INTERVAL_SEC", 60.0, 5.0, 3600.0)
+
+
+@dataclass(frozen=True)
 class AppConfig:
     """Top-level application configuration."""
 
@@ -1328,6 +1344,7 @@ class AppConfig:
     adaptive: AdaptiveConfig = field(default_factory=AdaptiveConfig)
     execution: ExecutionConfig = field(default_factory=ExecutionConfig)
     confluence: ConfluenceConfig = field(default_factory=ConfluenceConfig)
+    monitoring: MonitoringConfig = field(default_factory=MonitoringConfig)
 
     def is_live(self) -> bool:
         """Live trading requires BOTH flags AND a Telegram chat allow-list.
