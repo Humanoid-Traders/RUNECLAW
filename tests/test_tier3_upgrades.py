@@ -124,11 +124,14 @@ class TestMeasuredDefaults:
         assert CONFIG.analyzer.smc_voters_enabled is False
         assert CONFIG.analyzer.mfi_voter_enabled is False
         assert CONFIG.analyzer.vol_spike_bar_vote_enabled is False
+        # Bisect-convicted (each alone costs; together they collapsed flow):
+        assert CONFIG.analyzer.mode_min_confidence_enabled is False
+        assert CONFIG.trailing.structure_trail_enabled is False
 
 
 class TestModeMinConfidence:
-    def test_flag_default_on(self):
-        assert CONFIG.analyzer.mode_min_confidence_enabled is True
+    def test_flag_default_off_measured(self):
+        assert CONFIG.analyzer.mode_min_confidence_enabled is False
 
     def test_conservative_exempt_from_floor(self):
         # The floor applies to SPECIFIC setup modes only. CONSERVATIVE is the
@@ -185,8 +188,8 @@ class TestStructureRatchet:
         sl = structure_ratchet(highs, lows, "LONG", current_sl=93.0, buffer=0.5)
         assert sl == 94.5   # plateau 95 - 0.5, NOT anything near 90
 
-    def test_flag_default_on(self):
-        assert CONFIG.trailing.structure_trail_enabled is True
+    def test_flag_default_off_measured(self):
+        assert CONFIG.trailing.structure_trail_enabled is False
 
 
 class TestGateTelemetry:

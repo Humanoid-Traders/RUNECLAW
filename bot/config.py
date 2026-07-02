@@ -799,7 +799,12 @@ class AnalyzerConfig:
     # catch-all default is exempt — applying its bar to every uncertain
     # scan measurably collapsed trade flow. These per-mode bars existed in
     # MODE_CONFIGS since day one but were dead — nothing ever read them.
-    mode_min_confidence_enabled: bool = _env_bool("MODE_MIN_CONFIDENCE_ENABLED", True)
+    # MEASURED default OFF: even scoped to specific modes, the per-mode bars
+    # (BREAKOUT 0.65 / TURTLE 0.60) suppress exactly the Donchian-driven
+    # trades the Tier 2 fixes unlocked — and those trades measured
+    # PROFITABLE (floor alone cost ~1.7pp and ~13 trades on the benchmark;
+    # combined with the structure trail it collapsed flow to 12 trades).
+    mode_min_confidence_enabled: bool = _env_bool("MODE_MIN_CONFIDENCE_ENABLED", False)
 
     # MFI voter (default OFF — measured): the MFI(14) indicator is always
     # computed; the VOTER measurably suppressed portfolio trade flow on the
@@ -1118,7 +1123,12 @@ class TrailingStopConfig:
     # top of whichever ATR rule is active. Applied identically in the
     # backtest (bar window per position) and live (closed 1h candles,
     # cached, fail-open).
-    structure_trail_enabled: bool = _env_bool("STRUCTURE_TRAIL_ENABLED", True)
+    # MEASURED default OFF: on the honest 10-perp benchmark the ratchet cut
+    # winners short and compounded with the mode floor (together: 44 -> 12
+    # trades, +3.66% -> -0.22%; trail alone cost ~1.3pp and ~17 trades).
+    # Fully built and env-flippable for re-tuning (wider fractal / later
+    # activation are the obvious knobs).
+    structure_trail_enabled: bool = _env_bool("STRUCTURE_TRAIL_ENABLED", False)
     structure_trail_buffer_atr: float = _env_float("STRUCTURE_TRAIL_BUFFER_ATR", 0.25)
 
 
