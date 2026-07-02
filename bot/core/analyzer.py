@@ -2619,18 +2619,23 @@ class Analyzer:
         # cap so it can't stack with RSI/stoch/BB beyond the family budget.
         if "mfi" in indicators:
             mfi = indicators["mfi"]
+            _mfi_vote = None
             if mfi < 20:
-                votes.append(1.0)
+                _mfi_vote = 1.0
             elif mfi > 80:
-                votes.append(-1.0)
+                _mfi_vote = -1.0
             elif mfi < 35:
-                votes.append(0.5)
+                _mfi_vote = 0.5
             elif mfi > 65:
-                votes.append(-0.5)
-            else:
-                votes.append(0.0)
-            aw(_boost(0.9, "mfi"), "mfi")
-            _mark_mr_osc()
+                _mfi_vote = -0.5
+            # Skip-don't-dilute (audit #16): the neutral 35-65 band casts NO
+            # vote. Voting 0 at weight 0.9 on nearly every bar dragged the
+            # confluence toward 0.5 across the board and starved the 0.55
+            # confidence gate (measured: 44 -> ~10 trades).
+            if _mfi_vote is not None:
+                votes.append(_mfi_vote)
+                aw(_boost(0.9, "mfi"), "mfi")
+                _mark_mr_osc()
 
         # Volume spike vote (weight 0.8 — confirms directional moves). The
         # bar-level spike (last closed bar >= 2x SMA-20 volume) is the live
