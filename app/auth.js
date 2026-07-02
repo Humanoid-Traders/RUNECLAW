@@ -13,7 +13,11 @@ if (!JWT_SECRET || JWT_SECRET.length < 32) {
   console.error('Generate one: node -e "console.log(require(\'crypto\').randomBytes(48).toString(\'hex\'))"');
   process.exit(1);
 }
-const JWT_EXPIRY = '1h'; // Shortened from 7d; use refresh tokens for longer sessions
+// Session lifetime. Was '1h', which -- with no refresh-token flow ever built --
+// logged users out every hour and broke every authenticated panel mid-session.
+// Default to a generous 30d so day-to-day use stays signed in; operators who
+// want shorter-lived tokens can set JWT_EXPIRY (e.g. '12h', '7d') in the env.
+const JWT_EXPIRY = process.env.JWT_EXPIRY || '30d';
 
 // Rate limiting: per-IP sliding window
 const loginAttempts = new Map(); // ip -> { count, firstAttempt, lockedUntil }
