@@ -1790,7 +1790,8 @@ class RuneClawEngine:
     def _drop_forming_candle(self, ohlcv, timeframe: str):
         """Drop the in-progress (still-forming) last candle so indicators/patterns
         compute on CLOSED bars only — eliminating repaint. Gated by
-        DROP_UNCLOSED_CANDLE_ENABLED (default OFF → returns ohlcv unchanged). The
+        DROP_UNCLOSED_CANDLE_ENABLED (default ON; when disabled returns ohlcv
+        unchanged and every closes[-1] consumer repaints intrabar). The
         last candle is dropped only when its period has not yet elapsed (its open
         time + timeframe is still in the future), so a feed that already excludes
         the forming bar is left intact. Fail-open: any error returns ohlcv as-is.
@@ -2000,7 +2001,7 @@ class RuneClawEngine:
         # the live ticker (signal.price), not the last candle. No-op when off.
         ohlcv = self._drop_forming_candle(ohlcv, timeframe)
 
-        # Timeframe-matched Elliott (gated, default OFF): fetch the extra
+        # Timeframe-matched Elliott (gated, default ON): fetch the extra
         # timeframes whose wave degree the analyzer may need for scalp/swing/etc,
         # so it can read the wave structure appropriate to the setup. Cached and
         # fail-open — a fetch failure just omits that timeframe (analyzer no-ops).

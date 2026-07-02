@@ -691,7 +691,7 @@ class Analyzer:
                 elif "Fibonacci" in name and "ext" in name.lower():
                     indicators["fib_extensions"] = p
 
-        # ── Advanced Elliott: structural ATR-ZigZag pivots (gated, default OFF) ──
+        # ── Advanced Elliott: structural ATR-ZigZag pivots (gated, default ON) ──
         # Replaces the fixed 5-bar fractal Elliott read with one built on
         # ATR-normalized ZigZag pivots, which filter out the noise wiggles the
         # fractal keeps. Fail-open; byte-identical when the flag is off.
@@ -841,7 +841,7 @@ class Analyzer:
             signal=signal,
         )
 
-        # ── Timeframe-matched Elliott (gated, default OFF) ──────────────
+        # ── Timeframe-matched Elliott (gated, default ON) ───────────────
         # Re-read the wave structure on the timeframe whose degree matches this
         # setup's strategy_type (scalp<intraday<swing<position), so a scalp sees
         # its lower-degree sub-wave and a swing its higher-degree wave -- rather
@@ -978,6 +978,43 @@ class Analyzer:
                       data={"symbol": signal.symbol, "regime": regime.value,
                             "direction": direction.value, "adx": round(_adx, 1)})
                 return None
+
+        # ── LLM direction guard (gated, default ON; audit fix #1) ──────────
+        # The thesis (LLM) picks the direction, but the deterministic voters
+        # are the decider of record: when the confluence score CLEARLY opposes
+        # the thesis direction (0.5 = neutral; >0.5 bullish, <0.5 bearish), the
+        # LLM does not get to overrule them unchecked. Opposition beyond the
+        # veto margin rejects the idea; beyond the haircut margin it halves the
+        # thesis confidence before blending. Rule-engine theses derive their
+        # direction FROM confluence and can never trip this guard.
+        if CONFIG.analyzer.llm_direction_guard_enabled:
+            _guard = self._direction_guard_action(
+                direction, confluence,
+                CONFIG.analyzer.llm_direction_haircut_margin,
+                CONFIG.analyzer.llm_direction_veto_margin)
+            if _guard == "veto":
+                self._last_rejection_diag = {
+                    "symbol": signal.symbol,
+                    "stage": "llm_direction_guard",
+                    "direction": direction.value,
+                    "confluence": round(confluence, 4),
+                    "reason": "thesis direction opposes strong deterministic consensus",
+                }
+                audit(trade_log,
+                      f"LLM direction guard: {signal.symbol} {direction.value} vetoed — "
+                      f"confluence {confluence:.2f} opposes",
+                      action="analyze", result="REJECTED_DIRECTION_GUARD",
+                      data={"symbol": signal.symbol, "direction": direction.value,
+                            "confluence": round(confluence, 4)})
+                return None
+            if _guard == "haircut":
+                counter_trend_penalty = min(counter_trend_penalty, 0.5)
+                audit(trade_log,
+                      f"LLM direction guard: {signal.symbol} {direction.value} haircut — "
+                      f"confluence {confluence:.2f} leans against",
+                      action="analyze", result="PENALTY",
+                      data={"symbol": signal.symbol, "direction": direction.value,
+                            "confluence": round(confluence, 4)})
 
         confidence = max(0.0, min(1.0, thesis.get("confidence", 0.0))) * counter_trend_penalty
         # C2-20 FIX: Cap combined penalty — confidence never drops below 25% of raw.
@@ -1315,11 +1352,11 @@ class Analyzer:
             take_profit = take_profit + entry_shift
             order_type = "limit"
 
-        # ── Wave-anchored SL/TP from Elliott Fib projections (gated, OFF) ──
+        # ── Wave-anchored SL/TP from Elliott Fib projections (gated, default ON) ──
         # Tighten the stop to the wave-invalidation level and extend the target
         # to the projected wave objective. Only ever reduces risk / increases
         # reward; never loosens the stop. Applied on absolute levels after the
-        # limit-entry shift so the invalidation isn't distorted. Off → no-op.
+        # limit-entry shift so the invalidation isn't distorted. Disabled → no-op.
         if CONFIG.analyzer.elliott_fib_targets_enabled:
             try:
                 stop_loss, take_profit = _apply_elliott_wave_targets(
@@ -1702,13 +1739,22 @@ class Analyzer:
             for i in range(period, len(gain)):
                 avg_gain = (avg_gain * (period - 1) + gain[i]) / period
                 avg_loss = (avg_loss * (period - 1) + loss[i]) / period
-            rs = avg_gain / max(avg_loss, 1e-10)
-            results["rsi"] = round(100 - 100 / (1 + rs), 2)
+            if avg_gain <= 1e-12 and avg_loss <= 1e-12:
+                # Perfectly flat market: no gains AND no losses. rs would be
+                # 0/epsilon → RSI=0 (max oversold, a spurious bullish vote);
+                # the neutral reading is 50 (audit fix #11).
+                results["rsi"] = 50.0
+            else:
+                rs = avg_gain / max(avg_loss, 1e-10)
+                results["rsi"] = round(100 - 100 / (1 + rs), 2)
         else:
             avg_gain = np.mean(gain) if len(gain) > 0 else 0
             avg_loss = np.mean(loss) if len(loss) > 0 else 1e-10
-            rs = avg_gain / max(avg_loss, 1e-10)
-            results["rsi"] = round(100 - 100 / (1 + rs), 2)
+            if avg_gain <= 1e-12 and avg_loss <= 1e-12:
+                results["rsi"] = 50.0
+            else:
+                rs = avg_gain / max(avg_loss, 1e-10)
+                results["rsi"] = round(100 - 100 / (1 + rs), 2)
 
         # ── MACD (12, 26, 9) — full-history EMA ──
         ema12 = _ema(closes, 12)
@@ -2038,6 +2084,28 @@ class Analyzer:
                 results[key] = _RSI_DEFAULT if key == "rsi" else 0.0
 
         return results
+
+    @staticmethod
+    def _direction_guard_action(direction, confluence: float,
+                                haircut_margin: float,
+                                veto_margin: float) -> Optional[str]:
+        """Pure decision for the LLM direction guard (audit fix #1).
+
+        Returns "veto" when the thesis direction opposes the deterministic
+        confluence consensus by >= veto_margin, "haircut" when it opposes by
+        >= haircut_margin, else None. Confluence 0.5 is neutral; deviation
+        above/below is the bullish/bearish consensus strength.
+        """
+        dev = confluence - 0.5
+        opposes = ((direction == Direction.LONG and dev < 0)
+                   or (direction == Direction.SHORT and dev > 0))
+        if not opposes:
+            return None
+        if abs(dev) >= veto_margin:
+            return "veto"
+        if abs(dev) >= haircut_margin:
+            return "haircut"
+        return None
 
     # -- Regime Detection --
 
@@ -2524,7 +2592,7 @@ class Analyzer:
             ("elliott_diagonal", 0.65, "ew_diagonal"),     # diagonal = reversal warning
             ("elliott_wxy", 0.55, "ew_wxy"),               # complex correction = consolidation
         ]
-        # Wave-position action multiplier (gated, default OFF): scale each EW
+        # Wave-position action multiplier (gated, default ON): scale each EW
         # voter's weight by where in the wave structure we are. A terminal wave
         # 5 / ending diagonal returns a <1 multiplier so it stops adding trend
         # conviction; a wave-3/4 pullback returns >1. Off → multiplier is 1.0

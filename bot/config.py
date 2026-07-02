@@ -141,7 +141,7 @@ class RiskLimits:
     # #47: when ON, the notional cap + the POSITION_SIZE check use the per-strategy
     # cap (StrategyTypeConfig.get_max_position_pct) instead of the single global
     # max_position_pct, so a scalp can ride a tighter notional ceiling than a
-    # position trade. Default OFF → both use max_position_pct (byte-identical).
+    # position trade. Default ON; disable to fall back to max_position_pct.
     per_strategy_notional_cap_enabled: bool = _env_bool("PER_STRATEGY_NOTIONAL_CAP_ENABLED", True)
     max_daily_loss_pct: float = _env_float_bounded("MAX_DAILY_LOSS_PCT", 5.0, 0.1, 50)
     # Auto-reset a DAILY-LOSS circuit-breaker trip at UTC day rollover (opt-in,
@@ -151,8 +151,8 @@ class RiskLimits:
     # daily_pnl rolls back to ~0. When ON, ONLY a daily-loss-caused trip is
     # cleared once the day has rolled over (and the loss-streak guard is not
     # itself active); drawdown / streak / manual trips stay manual. If the new
-    # day is also bad, the daily-loss check re-trips immediately. Default OFF
-    # keeps the breaker fully manual (byte-identical).
+    # day is also bad, the daily-loss check re-trips immediately. Default ON;
+    # disable to keep the breaker fully manual.
     daily_loss_breaker_autoreset_enabled: bool = _env_bool("DAILY_LOSS_BREAKER_AUTORESET", True)
     # CFG-2: clamp risk-gate limits so an operator typo or a negative value
     # (which would invert the `>`/`<` comparisons and silently disable the guard)
@@ -298,7 +298,7 @@ class RiskLimits:
     # evaluate(), so get_regime_adjusted_params applies the per-regime multiplier
     # (e.g. CHOP 0.5× / RANGE 0.7× reduce, TREND 1.2× / EXPANSION 1.3× increase).
     # The notional/margin cap stays the final authority, so increases can never
-    # exceed it. Default OFF → regime stays UNKNOWN → byte-identical (1.0×).
+    # exceed it. Default ON; when disabled regime stays UNKNOWN (1.0×).
     regime_sizing_enabled: bool = _env_bool("REGIME_SIZING_ENABLED", True)
     live_performance_governor_enabled: bool = _env_bool("LIVE_PERFORMANCE_GOVERNOR_ENABLED", False)
     # Rolling window of most-recent CLOSED trades the governor scores.
@@ -590,8 +590,8 @@ class LLMConfig:
     # OpenAI-compatible providers; a char-length estimate on the Anthropic path,
     # whose helper discards usage). This makes the budget guards trip on true
     # spend, so the bot may fall back to the rule engine sooner — the intended
-    # correction. Default OFF keeps the accounting byte-identical to today.
-    # RECOMMENDED ON for live money so the configured budgets actually bind.
+    # correction. Default ON so the configured budgets actually bind on
+    # live money; disable to revert to primary-path-only accounting.
     fallback_cost_accounting_enabled: bool = _env_bool("LLM_FALLBACK_COST_ACCOUNTING", True)
 
 
@@ -604,25 +604,35 @@ class AnalyzerConfig:
     # hardcoded 0.6 / 0.4.
     llm_weight: float = _env_float_bounded("LLM_BLEND_WEIGHT", 0.6, 0.0, 1.0)
     confluence_weight: float = _env_float_bounded("CONFLUENCE_BLEND_WEIGHT", 0.4, 0.0, 1.0)
-    # Uncalibrated-LLM weight cap (opt-in, default OFF). The LLM drives `llm_weight`
-    # (0.6) of the blended confidence, but until confidence calibration is ON its
-    # confidence is unproven against realized outcomes — a hallucinated or
-    # overconfident thesis flows straight into sizing. When this is ON *and*
-    # calibration is OFF, the LLM's weight is capped at
+    # Uncalibrated-LLM weight cap (default ON; audit fix #2). The LLM drives
+    # `llm_weight` (0.6) of the blended confidence, but until confidence
+    # calibration is ON its confidence is unproven against realized outcomes — a
+    # hallucinated or overconfident thesis flows straight into sizing. When this
+    # is ON *and* calibration is OFF, the LLM's weight is capped at
     # `uncalibrated_llm_weight_cap` and the freed weight is shifted to the
     # deterministic, auditable confluence score (so the weights still sum to the
-    # same total). Once calibration is enabled the cap lifts automatically.
-    # Default OFF makes the blend byte-identical to today.
-    uncalibrated_llm_weight_cap_enabled: bool = _env_bool("UNCALIBRATED_LLM_WEIGHT_CAP_ENABLED", False)
+    # same total). Once calibration is enabled the cap lifts automatically, so
+    # with calibration at its default (ON) this is a pure safety net.
+    uncalibrated_llm_weight_cap_enabled: bool = _env_bool("UNCALIBRATED_LLM_WEIGHT_CAP_ENABLED", True)
     uncalibrated_llm_weight_cap: float = _env_float_bounded("UNCALIBRATED_LLM_WEIGHT_CAP", 0.4, 0.0, 1.0)
-    # Session-anchored VWAP (opt-in, default OFF; deep-audit medium). The "vwap"
+    # LLM direction guard (default ON; audit fix #1). The thesis (LLM) chooses
+    # the trade direction, but it must not overrule a CLEAR deterministic
+    # consensus unchecked: when the confluence score opposes the thesis
+    # direction by >= the haircut margin (confluence 0.60+ the other way) the
+    # thesis confidence is halved before blending; by >= the veto margin
+    # (0.70+ the other way) the idea is rejected outright. Voters propose,
+    # the LLM narrates — not the reverse. Each margin is env-tunable.
+    llm_direction_guard_enabled: bool = _env_bool("LLM_DIRECTION_GUARD_ENABLED", True)
+    llm_direction_haircut_margin: float = _env_float_bounded("LLM_DIRECTION_HAIRCUT_MARGIN", 0.10, 0.0, 0.5)
+    llm_direction_veto_margin: float = _env_float_bounded("LLM_DIRECTION_VETO_MARGIN", 0.20, 0.0, 0.5)
+    # Session-anchored VWAP (default ON). The "vwap"
     # indicator is a cumulative VWAP over the WHOLE fetched window (~100 bars,
     # anchored to bar[0]), which drifts as the window slides and is not the
     # session VWAP traders mean. The proper session VWAP — anchored to the
     # current UTC day's first bar — is always exposed as "vwap_session"; when
-    # this flag is ON the "vwap" key consumers read (vwap_reversion classifier,
-    # S/R candidate) is set to that session value. Default OFF keeps "vwap" the
-    # legacy full-window value (byte-identical).
+    # this flag is ON (the default) the "vwap" key consumers read
+    # (vwap_reversion classifier, S/R candidate) is set to that session value.
+    # Set VWAP_SESSION_ANCHORED=false to keep the legacy full-window value.
     vwap_session_anchored: bool = _env_bool("VWAP_SESSION_ANCHORED", True)
     # Per-user BYOK LLM routing (opt-in, default OFF). When ON, the LLM thesis for
     # a command a user runs by hand (/analyze) uses THAT user's own provider key
@@ -650,19 +660,19 @@ class AnalyzerConfig:
     # routing identity so responses never cross those boundaries. Making the key
     # MORE specific is strictly safe-direction (it can only avoid a wrong reuse,
     # never create one); it costs some cache sharing. RECOMMENDED ON whenever
-    # per_user_llm_enabled / per_user_llm_tiers_enabled is ON. Default OFF →
-    # cache key byte-identical to the legacy single-namespace behaviour.
+    # per_user_llm_enabled / per_user_llm_tiers_enabled is ON. Default ON;
+    # disable to revert to the legacy single-namespace cache key.
     llm_cache_scoped_key: bool = _env_bool("LLM_CACHE_SCOPED_KEY", True)
-    # Confidence calibration (Phase A): when ON, the final blended confidence is
-    # remapped through a monotonic reliability curve fitted from the bot's own
-    # closed-trade history, so a confidence value reflects realized win rate.
-    # Default OFF — the curve is computed in shadow-mode (logged, not applied)
-    # until deliberately enabled. See bot/learning/confidence_calibration.py.
+    # Confidence calibration (Phase A): when ON (the default), the final blended
+    # confidence is remapped through a monotonic reliability curve fitted from
+    # the bot's own closed-trade history, so a confidence value reflects
+    # realized win rate. When disabled the curve is computed in shadow-mode
+    # (logged, not applied). See bot/learning/confidence_calibration.py.
     confidence_calibration_enabled: bool = _env_bool("CONFIDENCE_CALIBRATION_ENABLED", True)
-    # Per-setup expectancy (Phase C): when ON, a setup's own historical win rate
-    # (symbol + regime + direction, from completed trades) applies a small bounded
-    # nudge to confidence. Default OFF — computed in shadow-mode (logged, not
-    # applied) until enabled. See bot/learning/setup_expectancy.py.
+    # Per-setup expectancy (Phase C): when ON (the default), a setup's own
+    # historical win rate (symbol + regime + direction, from completed trades)
+    # applies a small bounded nudge to confidence. When disabled it is computed
+    # in shadow-mode (logged, not applied). See bot/learning/setup_expectancy.py.
     setup_expectancy_enabled: bool = _env_bool("SETUP_EXPECTANCY_ENABLED", True)
     # Voter-weight learning application (Phase B2): when ON, each confluence
     # voter's hand-tuned weight is multiplied by a learned, bounded ([0.5,1.5])
@@ -684,16 +694,17 @@ class AnalyzerConfig:
     # setup expectancy) are re-fitted from closed-trade history every
     # LEARNING_AUTO_REFIT_INTERVAL closed trades, so they don't go stale. Refitting
     # only updates persisted learner state — it never changes a decision unless the
-    # learners' own application flags are on. Default OFF. See bot/learning/auto_refit.py.
+    # learners' own application flags are on. Default ON. See bot/learning/auto_refit.py.
     learning_auto_refit_enabled: bool = _env_bool("LEARNING_AUTO_REFIT_ENABLED", True)
     learning_auto_refit_interval: int = int(_env_float("LEARNING_AUTO_REFIT_INTERVAL", 25))
     # Drop the in-progress (unclosed) candle before computing indicators/patterns.
     # Live OHLCV from the exchange includes the current forming bar as the last
     # element; reading closes[-1] on it makes every voter flicker pre-close
-    # (repaint). When ON, the still-forming last candle is dropped before analysis
-    # so all TA uses CLOSED bars only — aligning live with the (bar-closed)
-    # backtest. Entry/price logic is unaffected (it uses the live ticker price,
-    # not the last candle). Default OFF → byte-identical until enabled.
+    # (repaint). When ON (the default), the still-forming last candle is dropped
+    # before analysis so all TA uses CLOSED bars only — aligning live with the
+    # (bar-closed) backtest. Entry/price logic is unaffected (it uses the live
+    # ticker price, not the last candle). Setting DROP_UNCLOSED_CANDLE_ENABLED=
+    # false re-enables intrabar repainting — do not do that in live trading.
     drop_unclosed_candle_enabled: bool = _env_bool("DROP_UNCLOSED_CANDLE_ENABLED", True)
     sma_period: int = 50
     trend_alignment_bonus: float = 0.10
@@ -797,7 +808,7 @@ class LearningConfig:
     # "live_outcome"), so similar-setup lookups and calibration accumulate from
     # the abundant paper history. The records are LABELLED so live vs paper can
     # be weighted later; for now an opted-in operator consumes them equally.
-    # Default OFF keeps the write side byte-identical (live-only).
+    # Default ON; disable to record live outcomes only.
     learn_from_paper_closes_enabled: bool = _env_bool("LEARN_FROM_PAPER_CLOSES", True)
     # Also log a DECISION row for per-user paper (practice) fills, so the
     # confidence-calibration and voter-weight learners — which JOIN a decision row
@@ -899,7 +910,7 @@ class ExecutionConfig:
     # timestamp is NOT treated as stale (can't verify → don't disable). 0 disables.
     live_ticker_max_age_sec: float = _env_float_bounded("LIVE_TICKER_MAX_AGE_SEC", 120.0, 0.0, 3600.0)
     # Verify classic (two-order) SL/TP legs against the exchange on restart
-    # (opt-in, default OFF; deep-audit medium). verify_and_fix_sltp re-places
+    # (deep-audit medium; default ON). verify_and_fix_sltp re-places
     # protection when the stored SL/TP IDs are both empty or identical (v3
     # combined order), but when they are DISTINCT and present (two separate
     # classic orders) it trusts them blindly — so a leg lost while the bot was
@@ -907,7 +918,7 @@ class ExecutionConfig:
     # and is never re-placed. When ON, each distinct classic leg is checked
     # against the exchange's live orders; if one is gone, the SL/TP pair is
     # re-placed (placement cancels survivors first, so no duplicates). Default
-    # OFF keeps restart behaviour byte-identical. RECOMMENDED ON for live money.
+    # ON — recommended for live money; disable to trust restored state blindly.
     verify_classic_sltp_on_restart: bool = _env_bool("VERIFY_CLASSIC_SLTP_ON_RESTART", True)
     # Order splitting
     order_split_enabled: bool = _env_bool("ORDER_SPLIT_ENABLED", True)
