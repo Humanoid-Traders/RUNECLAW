@@ -1486,6 +1486,28 @@ class Analyzer:
             except Exception as exc:
                 system_log.debug("Elliott wave-target anchoring skipped: %s", exc)
 
+        # ── Level-aware SL/TP (gated, default ON) ────────────────────
+        # Snap the ATR stop just beyond real structure (tighten-only) and
+        # clip the target inside an opposing wall — a stop one tick above a
+        # triple-tested wick low is the sweep magnet the bot's own liquidity
+        # module models, and a TP just past resistance never fills. Applied
+        # after the Elliott anchoring on absolute levels; the leverage
+        # margin-risk cap below still runs after and only tightens further.
+        if CONFIG.analyzer.level_aware_sltp_enabled and atr > 0:
+            try:
+                from bot.core.levels import gather_levels, snap_sl_tp
+                _lvls = gather_levels(
+                    highs, lows, closes, atr,
+                    times=times,
+                    vp=indicators.get("volume_profile"))
+                _sl2, _tp2, _note = snap_sl_tp(
+                    direction.value, entry, stop_loss, take_profit, _lvls, atr)
+                if _note:
+                    stop_loss, take_profit = _sl2, _tp2
+                    indicators["level_snap"] = _note
+            except Exception as exc:
+                system_log.debug("Level-aware SL/TP skipped: %s", exc)
+
         # Guard against negative SL/TP from extreme ATR values
         if direction == Direction.LONG and stop_loss <= 0:
             stop_loss = entry * 0.01  # floor at 1% of entry
