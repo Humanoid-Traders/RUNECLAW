@@ -75,6 +75,120 @@ from bot.utils.models import Direction, MarketSignal, TradeIdea
 logger = logging.getLogger(__name__)
 
 
+# ── Advanced Elliott Wave recompute (gated) ──────────────────────
+_ELLIOTT_KEYS = ("elliott_impulse", "elliott_corrective", "elliott_diagonal",
+                 "elliott_wxy", "elliott_pattern")
+
+
+def _apply_elliott_wave_targets(direction, entry: float, stop_loss: float,
+                                take_profit: float, indicators: dict) -> tuple:
+    """Wave-anchor the stop and (optionally) extend the target using the
+    Elliott impulse's Fibonacci projections. SAFETY: SL is only ever *tightened*
+    (moved closer to entry, reducing risk), never loosened; TP is only extended
+    further in-favour, never pulled in. Direction must match the impulse signal.
+    Returns the (possibly adjusted) ``(stop_loss, take_profit)``. Fail-open.
+    """
+    from bot.core.elliott import project_targets
+    imp = indicators.get("elliott_impulse")
+    if not imp:
+        return stop_loss, take_profit
+    is_long = str(getattr(direction, "value", direction)).upper() == "LONG"
+    sig = imp.get("signal")
+    if (is_long and sig != "bullish") or (not is_long and sig != "bearish"):
+        return stop_loss, take_profit  # impulse disagrees with the trade side
+    t = project_targets(imp)
+    if not t:
+        return stop_loss, take_profit
+
+    inval = t.get("invalidation")
+    if inval is not None and inval > 0:
+        # Only tighten: for a LONG, a higher invalidation than the ATR stop is
+        # tighter (less risk); it must still sit below entry and not hug it.
+        if is_long and stop_loss < inval < entry * 0.999:
+            stop_loss = float(inval)
+        elif (not is_long) and entry * 1.001 < inval < stop_loss:
+            stop_loss = float(inval)
+
+    tp2 = t.get("tp2")
+    if tp2 is not None and tp2 > 0:
+        # Only extend further in-favour than the ATR target.
+        if is_long and tp2 > take_profit:
+            take_profit = float(tp2)
+        elif (not is_long) and tp2 < take_profit:
+            take_profit = float(tp2)
+    return stop_loss, take_profit
+
+
+def _run_elliott_detectors(indicators: dict, highs, lows, closes, swings) -> None:
+    """Run the 4 Elliott detectors with the given swings and replace the
+    elliott_* indicator set. Shared by the ZigZag and timeframe-matched paths.
+    """
+    from bot.core.chart_patterns import (
+        detect_elliott_impulse, detect_elliott_corrective,
+        detect_elliott_diagonal, detect_elliott_wxy,
+    )
+    for k in _ELLIOTT_KEYS:
+        indicators.pop(k, None)
+    detectors = (
+        (detect_elliott_impulse, "elliott_impulse"),
+        (detect_elliott_corrective, "elliott_corrective"),
+        (detect_elliott_diagonal, "elliott_diagonal"),
+        (detect_elliott_wxy, "elliott_wxy"),
+    )
+    for fn, key in detectors:
+        try:
+            pat = fn(highs, lows, closes, swings=swings)
+        except Exception:
+            pat = None
+        if pat:
+            indicators[key] = pat
+            indicators["elliott_pattern"] = pat
+
+
+def _apply_timeframe_matched_elliott(indicators: dict, strategy_type: str,
+                                     mtf_candles: dict) -> None:
+    """Recompute the elliott_* indicators on the timeframe whose wave degree
+    matches ``strategy_type``. ``mtf_candles`` maps a timeframe string to an
+    OHLCV list. No-op (fail-open) when the matched timeframe wasn't supplied or
+    the series is too short. Mutates ``indicators``.
+    """
+    from bot.core.elliott import timeframe_for_strategy, atr_zigzag_pivots
+    from bot.core.multi_timeframe import _find_swings
+
+    tf = timeframe_for_strategy(strategy_type)
+    series = mtf_candles.get(tf)
+    if not series or len(series) < 30:
+        return
+    arr = np.asarray(series, dtype=float)
+    # OHLCV rows: [ts, open, high, low, close, volume]
+    highs = arr[:, 2]
+    lows = arr[:, 3]
+    closes = arr[:, 4]
+    if CONFIG.analyzer.elliott_zigzag_enabled:
+        swings = atr_zigzag_pivots(highs, lows, closes,
+                                   atr_mult=CONFIG.analyzer.elliott_zigzag_atr_mult)
+        if not (swings["swing_highs"] or swings["swing_lows"]):
+            swings = _find_swings(highs, lows, 5)
+    else:
+        swings = _find_swings(highs, lows, 5)
+    _run_elliott_detectors(indicators, highs, lows, closes, swings)
+    indicators["elliott_degree_tf"] = tf  # observability: which TF the waves came from
+
+
+def _recompute_elliott_indicators(indicators: dict, highs, lows, closes,
+                                   atr_mult: float) -> None:
+    """Recompute the elliott_* indicators from structural ATR-ZigZag pivots,
+    replacing the fixed-fractal read. Gated by the caller; fail-open (leaves
+    existing indicators untouched on any error). Mutates ``indicators``.
+    """
+    from bot.core.elliott import atr_zigzag_pivots
+    swings = atr_zigzag_pivots(highs, lows, closes, atr_mult=atr_mult)
+    if not (swings["swing_highs"] or swings["swing_lows"]):
+        return  # zigzag found nothing structural — keep the fractal read
+    # Clear + replace the fractal-derived Elliott set wholesale (clean A/B).
+    _run_elliott_detectors(indicators, highs, lows, closes, swings)
+
+
 # ── Limit entry helper ───────────────────────────────────────────
 
 def _compute_limit_entry(
@@ -456,7 +570,8 @@ class Analyzer:
 
     async def analyze(self, signal: MarketSignal, candles: list[list[float]], order_flow=None,
                        candles_4h=None, candles_1d=None, is_admin: bool = False,
-                       as_of: Optional[datetime] = None, user_id=None, user_tier=None) -> Optional[TradeIdea]:
+                       as_of: Optional[datetime] = None, user_id=None, user_tier=None,
+                       mtf_candles: Optional[dict] = None) -> Optional[TradeIdea]:
         """
         Full analysis pipeline:
         1. Compute technical indicators from OHLCV candles.
@@ -549,6 +664,18 @@ class Analyzer:
                     indicators["elliott_pattern"] = p
                 elif "Fibonacci" in name and "ext" in name.lower():
                     indicators["fib_extensions"] = p
+
+        # ── Advanced Elliott: structural ATR-ZigZag pivots (gated, default OFF) ──
+        # Replaces the fixed 5-bar fractal Elliott read with one built on
+        # ATR-normalized ZigZag pivots, which filter out the noise wiggles the
+        # fractal keeps. Fail-open; byte-identical when the flag is off.
+        if CONFIG.analyzer.elliott_zigzag_enabled:
+            try:
+                _recompute_elliott_indicators(
+                    indicators, highs, lows, closes,
+                    atr_mult=CONFIG.analyzer.elliott_zigzag_atr_mult)
+            except Exception as exc:
+                system_log.debug("Elliott ZigZag recompute skipped: %s", exc)
 
         # ── Divergence Scanner ──
         try:
@@ -687,6 +814,18 @@ class Analyzer:
             smart_money_score=smart_money_score,
             signal=signal,
         )
+
+        # ── Timeframe-matched Elliott (gated, default OFF) ──────────────
+        # Re-read the wave structure on the timeframe whose degree matches this
+        # setup's strategy_type (scalp<intraday<swing<position), so a scalp sees
+        # its lower-degree sub-wave and a swing its higher-degree wave -- rather
+        # than every setup getting the same primary-timeframe read. Overrides the
+        # elliott_* indicators BEFORE confluence voting + SL/TP use them. Fail-open.
+        if CONFIG.analyzer.elliott_mtf_enabled and mtf_candles:
+            try:
+                _apply_timeframe_matched_elliott(indicators, strategy_type, mtf_candles)
+            except Exception as exc:
+                system_log.debug("Timeframe-matched Elliott skipped: %s", exc)
 
         # Phase B: capture the named per-voter breakdown alongside the score so
         # downstream recording can persist it for voter-weight learning. The
@@ -1139,6 +1278,18 @@ class Analyzer:
             stop_loss = stop_loss + entry_shift
             take_profit = take_profit + entry_shift
             order_type = "limit"
+
+        # ── Wave-anchored SL/TP from Elliott Fib projections (gated, OFF) ──
+        # Tighten the stop to the wave-invalidation level and extend the target
+        # to the projected wave objective. Only ever reduces risk / increases
+        # reward; never loosens the stop. Applied on absolute levels after the
+        # limit-entry shift so the invalidation isn't distorted. Off → no-op.
+        if CONFIG.analyzer.elliott_fib_targets_enabled:
+            try:
+                stop_loss, take_profit = _apply_elliott_wave_targets(
+                    direction, entry, stop_loss, take_profit, indicators)
+            except Exception as exc:
+                system_log.debug("Elliott wave-target anchoring skipped: %s", exc)
 
         # Guard against negative SL/TP from extreme ATR values
         if direction == Direction.LONG and stop_loss <= 0:
@@ -2283,17 +2434,35 @@ class Analyzer:
             ("elliott_diagonal", 0.65, "ew_diagonal"),     # diagonal = reversal warning
             ("elliott_wxy", 0.55, "ew_wxy"),               # complex correction = consolidation
         ]
+        # Wave-position action multiplier (gated, default OFF): scale each EW
+        # voter's weight by where in the wave structure we are. A terminal wave
+        # 5 / ending diagonal returns a <1 multiplier so it stops adding trend
+        # conviction; a wave-3/4 pullback returns >1. Off → multiplier is 1.0
+        # for every pattern, so the vote weights are byte-identical to before.
+        _ew_action_on = CONFIG.analyzer.elliott_wave_action_enabled
+        _wave_action = None
+        if _ew_action_on:
+            try:
+                from bot.core.elliott import wave_action as _wave_action
+            except Exception:
+                _wave_action = None
         for ew_key, ew_weight, ew_label in _elliott_types:
             ew = indicators.get(ew_key)
             if ew:
                 e_signal = ew.get("signal", "neutral")
                 e_conf = ew.get("confidence", 0.5)
+                _amult = 1.0
+                if _wave_action is not None:
+                    try:
+                        _amult = float(_wave_action(ew).get("weight_mult", 1.0))
+                    except Exception:
+                        _amult = 1.0
                 if e_signal == "bullish":
                     votes.append(e_conf)
-                    aw(_boost(ew_weight, ew_label), ew_label)
+                    aw(_boost(ew_weight, ew_label) * _amult, ew_label)
                 elif e_signal == "bearish":
                     votes.append(-e_conf)
-                    aw(_boost(ew_weight, ew_label), ew_label)
+                    aw(_boost(ew_weight, ew_label) * _amult, ew_label)
                 else:
                     votes.append(0.0)
                     aw(0.25, ew_label)

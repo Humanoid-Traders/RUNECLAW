@@ -735,6 +735,24 @@ class AnalyzerConfig:
     volume_profile_lookback: int = int(_env_float("VOLUME_PROFILE_LOOKBACK", 100))
     volume_profile_bins: int = int(_env_float("VOLUME_PROFILE_BINS", 50))
 
+    # ── Advanced Elliott Wave (bot/core/elliott.py) — all default OFF, so the
+    # analyzer's wave handling is byte-identical to before unless explicitly
+    # enabled. Each toggle is independent for A/B evaluation.
+    #   zigzag:      feed the EW detectors structural ATR-ZigZag pivots instead
+    #                of the fixed 5-bar fractal (filters noise wiggles).
+    #   wave_action: dampen/flip the EW confluence vote by the wave's *position*
+    #                (a terminal wave 5 / ending diagonal should not add trend
+    #                conviction) instead of voting the raw pattern signal.
+    #   fib_targets: expose Fib-projected wave targets + the wave-invalidation
+    #                level into the entry/SL/TP anchor pool.
+    #   mtf:         run wave detection on the timeframe whose degree matches the
+    #                setup's strategy_type (scalp<intraday<swing<position).
+    elliott_zigzag_enabled: bool = _env_bool("ELLIOTT_ZIGZAG_ENABLED", False)
+    elliott_zigzag_atr_mult: float = _env_float("ELLIOTT_ZIGZAG_ATR_MULT", 1.5)
+    elliott_wave_action_enabled: bool = _env_bool("ELLIOTT_WAVE_ACTION_ENABLED", False)
+    elliott_fib_targets_enabled: bool = _env_bool("ELLIOTT_FIB_TARGETS_ENABLED", False)
+    elliott_mtf_enabled: bool = _env_bool("ELLIOTT_MTF_ENABLED", False)
+
 
 @dataclass(frozen=True)
 class LearningConfig:
