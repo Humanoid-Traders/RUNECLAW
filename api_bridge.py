@@ -739,6 +739,95 @@ async def patterns(symbol: str, timeframe: str = "1h", limit: int = 100, _rl: No
 
 # ── Emergency halt ──────────────────────────────────────────────
 
+@app.get("/insight/{symbol}")
+async def insight(symbol: str, timeframe: str = "1h", limit: int = 200,
+                  _rl: None = Depends(_require_rate_limit)):
+    """Consolidated decision picture for the dashboard: scored S/R levels,
+    FVGs, liquidity pools, premium/discount, regime, the signed per-voter
+    confluence breakdown, tape CVD and gate telemetry — the same inputs the
+    bot trades off, not a parallel implementation."""
+    if engine is None: raise HTTPException(status_code=503, detail="Engine not initialized")
+    if not _SYMBOL_RE.match(symbol):
+        raise HTTPException(status_code=400, detail="Invalid symbol format.")
+
+    ohlcv = await _fetch_ohlcv(symbol, timeframe, limit)
+    if ohlcv:
+        from bot.utils.candles import drop_forming_candle
+        ohlcv = drop_forming_candle(ohlcv, timeframe)
+    if not ohlcv or len(ohlcv) < 40:
+        raise HTTPException(status_code=400, detail=f"Insufficient data for {symbol}")
+
+    candles = np.array(ohlcv, dtype=float)
+    times, opens = candles[:, 0], candles[:, 1]
+    highs, lows = candles[:, 2], candles[:, 3]
+    closes, volumes = candles[:, 4], candles[:, 5]
+
+    from bot.core.analyzer import Analyzer
+    from bot.core.levels import gather_levels
+    from bot.core.smc import equal_level_pools, find_fvgs, premium_discount
+    from bot.core.volume_profile import compute_volume_profile
+    from bot.utils.models import MarketSignal
+
+    ind = Analyzer._compute_indicators(highs, lows, closes, volumes,
+                                       opens=opens, times=times)
+    atr = float(ind.get("atr") or 0.0)
+    vp = None
+    try:
+        vpr = compute_volume_profile(highs, lows, closes, volumes,
+                                     current_price=float(closes[-1]))
+        if vpr is not None:
+            vp = {"poc": vpr.poc, "vah": vpr.vah, "val": vpr.val}
+            ind["volume_profile"] = {**vp, "price_vs_poc": vpr.price_vs_poc,
+                                     "in_value_area": vpr.price_in_value_area,
+                                     "skew": vpr.profile_skew}
+    except Exception:
+        vp = None
+
+    levels = gather_levels(highs, lows, closes, atr, times=times, vp=vp) if atr > 0 else []
+    fvgs = find_fvgs(highs, lows, closes) if atr > 0 else []
+    pools = equal_level_pools(highs, lows, atr) if atr > 0 else {"eqh": [], "eql": []}
+    pd_pos = premium_discount(highs, lows, closes, window=min(100, len(closes)))
+
+    sig = MarketSignal(symbol=symbol, price=float(closes[-1]),
+                       change_pct_24h=float((closes[-1] - closes[-25]) / closes[-25] * 100)
+                       if len(closes) > 25 and closes[-25] > 0 else 0.0,
+                       volume_usd_24h=float(np.sum(volumes[-24:] * closes[-24:])))
+    regime = engine.analyzer._detect_regime(ind, symbol)
+    breakdown: list = []
+    try:
+        confluence = Analyzer._score_confluence(ind, regime, sig, breakdown=breakdown)
+    except Exception:
+        confluence = 0.5
+
+    cvd = None
+    try:
+        tape = engine.ws_feed.get_cvd(symbol) if engine.ws_feed else None
+        if tape:
+            cvd = {"cum_delta_usd": tape["cum_delta_usd"],
+                   "series": tape["series"][-120:],
+                   "prices": tape["prices"][-120:],
+                   "trades": tape["trades"], "age_sec": tape["age_sec"]}
+    except Exception:
+        cvd = None
+
+    return {
+        "symbol": symbol, "timeframe": timeframe,
+        "price": float(closes[-1]), "atr": atr,
+        "regime": regime.value, "confluence": round(float(confluence), 4),
+        "levels": [{"price": lv.price, "kind": lv.kind, "touches": lv.touches,
+                    "score": round(lv.score, 2)} for lv in levels],
+        "fvgs": [{"kind": g.kind, "top": g.top, "bottom": g.bottom,
+                  "filled": g.filled} for g in fvgs],
+        "pools": pools,
+        "premium_discount": round(pd_pos, 4) if pd_pos is not None else None,
+        "cvd": cvd,
+        "votes": [{"name": n, "vote": round(float(v), 4),
+                   "weight": round(float(w), 4)}
+                  for n, v, w in breakdown if abs(w) > 1e-9],
+        "gates": engine.risk.gate_stats() if hasattr(engine.risk, "gate_stats") else {},
+    }
+
+
 @app.post("/risk/halt")
 async def risk_halt(_token: str = Depends(require_dashboard_token), _rl: None = Depends(_require_rate_limit)):
     """Emergency stop — activate circuit breaker, close all positions."""
