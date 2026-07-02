@@ -274,3 +274,37 @@ def _legacy_update(
                 sl = trailing_sl
 
     return sl, state["trailing_active"]
+
+
+def structure_ratchet(
+    highs: list[float],
+    lows: list[float],
+    direction: str,
+    current_sl: float,
+    buffer: float,
+    fractal: int = 3,
+) -> float:
+    """Ratchet the stop to just beyond the most recent CONFIRMED swing.
+
+    For LONG: the newest swing low (a low lower than ``fractal`` neighbors on
+    each side, so the last ``fractal`` bars can never qualify — no repaint)
+    minus ``buffer``; adopted only if TIGHTER than current_sl. SHORT mirrors
+    with swing highs. Tighten-only by construction.
+    """
+    n = len(lows)
+    if n < 2 * fractal + 1 or buffer < 0:
+        return current_sl
+    if direction == "LONG":
+        for i in range(n - fractal - 1, fractal - 1, -1):
+            if all(lows[i] <= lows[i - j] for j in range(1, fractal + 1)) and \
+               all(lows[i] <= lows[i + j] for j in range(1, fractal + 1)):
+                candidate = lows[i] - buffer
+                return max(current_sl, candidate)
+        return current_sl
+    else:
+        for i in range(n - fractal - 1, fractal - 1, -1):
+            if all(highs[i] >= highs[i - j] for j in range(1, fractal + 1)) and \
+               all(highs[i] >= highs[i + j] for j in range(1, fractal + 1)):
+                candidate = highs[i] + buffer
+                return min(current_sl, candidate)
+        return current_sl

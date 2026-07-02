@@ -116,6 +116,16 @@ class TestSweepDecayDedup:
         assert len(votes) == 2
 
 
+class TestMeasuredDefaults:
+    def test_measured_harmful_voters_ship_dark(self):
+        # These measured NEGATIVE on the honest 10-symbol benchmark (flow
+        # 44 -> ~10-18 trades, +3.66% -> ~-0.2%): infrastructure stays,
+        # voters default OFF until a configuration measures non-harmful.
+        assert CONFIG.analyzer.smc_voters_enabled is False
+        assert CONFIG.analyzer.mfi_voter_enabled is False
+        assert CONFIG.analyzer.vol_spike_bar_vote_enabled is False
+
+
 class TestModeMinConfidence:
     def test_flag_default_on(self):
         assert CONFIG.analyzer.mode_min_confidence_enabled is True
@@ -140,3 +150,40 @@ class TestModeMinConfidence:
             assert not hasattr(cfg, "sl_mult")
             assert not hasattr(cfg, "tp_mult")
             assert cfg.min_confidence >= 0.5   # the live knob
+
+
+class TestStructureRatchet:
+    def test_long_ratchets_under_newest_confirmed_swing(self):
+        from bot.utils.trailing import structure_ratchet
+        # Clean V-bottom at i=3 (94): 3 higher lows on each side -> confirmed.
+        lows = [97, 96, 95, 94, 95, 96, 97, 97.5, 98, 98.5, 99, 99.5]
+        highs = [x + 1 for x in lows]
+        sl = structure_ratchet(highs, lows, "LONG", current_sl=92.0, buffer=0.5)
+        assert sl == 93.5   # 94 - 0.5 buffer
+
+    def test_never_widens(self):
+        from bot.utils.trailing import structure_ratchet
+        lows = [97, 96, 95, 94, 95, 96, 97, 97.5, 98, 98.5, 99, 99.5]
+        highs = [x + 1 for x in lows]
+        sl = structure_ratchet(highs, lows, "LONG", current_sl=97.0, buffer=0.5)
+        assert sl == 97.0   # candidate 93.5 is wider — rejected
+
+    def test_short_mirrors(self):
+        from bot.utils.trailing import structure_ratchet
+        # Inverted-V top at i=3 (106).
+        highs = [103, 104, 105, 106, 105, 104, 103, 102.5, 102, 101.5, 101, 100.5]
+        lows = [x - 1 for x in highs]
+        sl = structure_ratchet(highs, lows, "SHORT", current_sl=108.0, buffer=0.5)
+        assert sl == 106.5  # 106 + 0.5 buffer
+
+    def test_unconfirmed_recent_low_ignored_confirmed_plateau_ratchets(self):
+        from bot.utils.trailing import structure_ratchet
+        # The deep low on the LAST bar is unconfirmed (no right-side bars) and
+        # must NOT anchor the stop; the confirmed 95 plateau still does.
+        lows = [95.0] * 11 + [90.0]
+        highs = [x + 1 for x in lows]
+        sl = structure_ratchet(highs, lows, "LONG", current_sl=93.0, buffer=0.5)
+        assert sl == 94.5   # plateau 95 - 0.5, NOT anything near 90
+
+    def test_flag_default_on(self):
+        assert CONFIG.trailing.structure_trail_enabled is True

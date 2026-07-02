@@ -2617,7 +2617,7 @@ class Analyzer:
         # MFI vote (weight 0.9): volume-weighted RSI — same contrarian bands
         # as RSI but confirmed by money flow. Joins the MR-oscillator family
         # cap so it can't stack with RSI/stoch/BB beyond the family budget.
-        if "mfi" in indicators:
+        if CONFIG.analyzer.mfi_voter_enabled and "mfi" in indicators:
             mfi = indicators["mfi"]
             _mfi_vote = None
             if mfi < 20:
@@ -2643,7 +2643,8 @@ class Analyzer:
         # (it essentially never fires between 5-minute scans — audit fix).
         # With the dilution guard on, "no spike" is skipped rather than
         # voting 0 on every quiet bar.
-        _bar_spike = bool(indicators.get("vol_spike_bar"))
+        _bar_spike = (CONFIG.analyzer.vol_spike_bar_vote_enabled
+                      and bool(indicators.get("vol_spike_bar")))
         if _bar_spike or signal.volume_spike:
             # Spike confirms the direction of the move: bar direction for the
             # bar-level spike, 24h change for the scanner flag.
