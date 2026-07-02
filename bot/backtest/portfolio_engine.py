@@ -118,6 +118,8 @@ class PortfolioBacktester:
 
         snap_counter = 0
         for ts in timeline:
+            # Simulated clock: cooldown-after-loss must elapse in BAR time.
+            self._risk.set_sim_time(ts)
             for sym, bars in streams.items():
                 i = idx[sym]
                 if i >= len(bars) or bars[i].timestamp != ts:

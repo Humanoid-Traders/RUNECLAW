@@ -217,6 +217,12 @@ class RiskEngine:
         self._circuit_open = False
         self._consecutive_losses = 0
         self._last_loss_time: Optional[float] = None  # epoch seconds
+        # Backtests pin this to the replayed bar time (epoch seconds) so
+        # time-based guards measure SIMULATED elapsed time, not wall-clock —
+        # a replay covers months of bars in seconds of wall time, so a
+        # wall-clock cooldown-after-loss would otherwise latch the whole
+        # remaining run after the first loss. Live code never sets this.
+        self._sim_now: Optional[float] = None
         self._circuit_breaker_trips = 0
         # Why/when the breaker last tripped, so a DAILY-LOSS trip can auto-reset
         # at day rollover while drawdown/streak/manual trips stay manual.
@@ -355,6 +361,20 @@ class RiskEngine:
             "consecutive_losses": self._consecutive_losses,
         }
 
+    def set_sim_time(self, when: "datetime") -> None:
+        """Pin the engine's clock to a replayed bar timestamp (backtest only).
+
+        While set, loss timestamps are recorded in simulated time and the
+        cooldown-after-loss guard measures simulated elapsed seconds. Live
+        code never calls this, so live behavior is byte-identical.
+        """
+        self._sim_now = when.timestamp()
+
+    def _now(self) -> float:
+        """Current time in epoch seconds — simulated bar time under backtest
+        replay (see set_sim_time), wall-clock otherwise."""
+        return self._sim_now if self._sim_now is not None else time.time()
+
     def record_trade_result(self, pnl: float) -> None:
         """Track consecutive losses for streak-based circuit breaker."""
         with self._lock:
@@ -366,7 +386,7 @@ class RiskEngine:
         self._realized_pnl_window.append(float(pnl))
         if pnl < 0:
             self._consecutive_losses += 1
-            self._last_loss_time = time.time()
+            self._last_loss_time = self._now()
             self._save_state()
             if self._consecutive_losses >= CONFIG.risk.max_consecutive_losses:
                 self._trip_circuit_breaker(
@@ -1037,9 +1057,13 @@ class RiskEngine:
 
         # RC-AUD-008: cooldown-after-loss also binds for manual trades (anti-revenge).
         try:
-            # 13. Cooldown after loss
+            # 13. Cooldown after loss. Under backtest replay both the loss
+            # stamp (via _now/set_sim_time) and this comparison use SIMULATED
+            # bar time — wall-clock here would keep the cooldown armed for
+            # months of replayed bars after a single loss.
             if self._last_loss_time is not None:
-                elapsed = time.time() - self._last_loss_time
+                _now_epoch = as_of.timestamp() if as_of is not None else self._now()
+                elapsed = _now_epoch - self._last_loss_time
                 if elapsed < CONFIG.risk.cooldown_after_loss_seconds:
                     remaining = CONFIG.risk.cooldown_after_loss_seconds - elapsed
                     failed.append(f"COOLDOWN: {remaining:.0f}s remaining after last loss")

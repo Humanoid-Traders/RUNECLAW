@@ -177,6 +177,11 @@ class BacktestEngine:
         for i in range(lookback_size, len(bars)):
             current_bar = bars[i]
 
+            # Pin the risk engine's clock to the replayed bar so time-based
+            # guards (cooldown-after-loss) measure simulated elapsed time —
+            # wall-clock would keep the cooldown armed for months of bars.
+            self.risk.set_sim_time(current_bar.timestamp)
+
             # Optional breaker auto-reset (breaker_reset_bars > 0): emulate an
             # operator resetting a tripped breaker after N bars, so one early
             # losing streak doesn't silently halt a months-long run.
