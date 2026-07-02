@@ -80,6 +80,17 @@ class BacktestEngine:
         # the SAME blended path live uses, with no network call. Takes precedence
         # over use_llm; the offline hook short-circuits the network LLM and falls
         # back to the rule engine for (symbol, time) pairs with no recording.
+        # Audit fix #25: the confidence-calibration curve and setup-expectancy
+        # nudge are fitted on the bot's ENTIRE closed-trade history — future
+        # information relative to any replayed historical bar. Force both OFF
+        # for this backtest and restore the operator's settings in cleanup().
+        self._saved_learning_flags = (
+            CONFIG.analyzer.confidence_calibration_enabled,
+            CONFIG.analyzer.setup_expectancy_enabled,
+        )
+        object.__setattr__(CONFIG.analyzer, "confidence_calibration_enabled", False)
+        object.__setattr__(CONFIG.analyzer, "setup_expectancy_enabled", False)
+
         if config.use_recorded_llm:
             from bot.backtest.recorded_llm import RecordedLLM
             self._recorded_llm = RecordedLLM.from_jsonl(config.recorded_llm_path)
@@ -126,6 +137,13 @@ class BacktestEngine:
 
     def cleanup(self) -> None:
         """Explicitly remove the temp state directory. Call after backtest completes."""
+        try:
+            _cal, _exp = getattr(self, "_saved_learning_flags", (None, None))
+            if _cal is not None:
+                object.__setattr__(CONFIG.analyzer, "confidence_calibration_enabled", _cal)
+                object.__setattr__(CONFIG.analyzer, "setup_expectancy_enabled", _exp)
+        except Exception:
+            pass
         import shutil
         try:
             shutil.rmtree(self._bt_state_dir, ignore_errors=True)

@@ -8,7 +8,8 @@ CONFIG.confluence.family_cap_enabled is set, their COMBINED (actively-voting)
 weight is scaled down to mr_oscillator_weight_cap so the family counts as ~one
 strong voter.
 
-Default OFF — these tests pin the *opt-in* behaviour and that the flag gates it.
+Default ON since the 2026-07 audit (fix #12); these tests pin the cap
+behaviour and that the flag still gates it.
 """
 
 from unittest.mock import patch
@@ -25,11 +26,19 @@ def _signal():
 
 def _score(indicators, *, enabled=False, cap=2.0):
     if not enabled:
-        # Real CONFIG (family_cap_enabled defaults False) — the baseline.
-        return Analyzer._score_confluence(indicators, Regime.RANGE, _signal())
+        # Baseline = cap explicitly OFF (the flag defaults ON since the
+        # 2026-07 audit, so the uncapped baseline must be forced).
+        with patch("bot.core.analyzer.CONFIG") as cfg:
+            cfg.confluence.family_cap_enabled = False
+            cfg.analyzer.voter_skip_missing_enabled = True
+            cfg.analyzer.candle_strength_vote_enabled = True
+            return Analyzer._score_confluence(indicators, Regime.RANGE, _signal())
     with patch("bot.core.analyzer.CONFIG") as cfg:
         cfg.confluence.family_cap_enabled = True
         cfg.confluence.mr_oscillator_weight_cap = cap
+        cfg.confluence.pattern_weight_cap = 2.5
+        cfg.analyzer.voter_skip_missing_enabled = True
+        cfg.analyzer.candle_strength_vote_enabled = True
         return Analyzer._score_confluence(indicators, Regime.RANGE, _signal())
 
 
@@ -87,9 +96,10 @@ class TestFlagGating:
             disabled = Analyzer._score_confluence(_BULL_CLUSTER, Regime.RANGE, _signal())
         assert disabled == _score(_BULL_CLUSTER)
 
-    def test_default_config_is_off(self):
+    def test_default_config_is_on(self):
+        # Default ON since the 2026-07 audit (fix #12).
         from bot.config import CONFIG
-        assert CONFIG.confluence.family_cap_enabled is False
+        assert CONFIG.confluence.family_cap_enabled is True
 
 
 class TestWiring:

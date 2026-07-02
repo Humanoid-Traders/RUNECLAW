@@ -126,6 +126,7 @@ async def run_walk_forward(
     n_folds: int = 4,
     is_min_frac: float = 0.4,
     min_oos_bars: int = 20,
+    embargo_bars: int = 12,
     param_grid: Optional[list] = None,
     objective_key: str = "total_return_pct",
     backtest_fn: Optional[BacktestFn] = None,
@@ -146,7 +147,13 @@ async def run_walk_forward(
     for fold in folds:
         oos_bars = bars[fold.oos_start:fold.oos_end]
         if param_grid:
-            is_bars = bars[fold.is_start:fold.is_end]
+            # Audit fix #25: explicit embargo — exclude the last N in-sample
+            # bars adjacent to the OOS block so indicator lookback windows
+            # fitted in-sample cannot overlap the OOS data (the engine.py
+            # walk_forward_backtest already had a two-sided embargo; this
+            # brings the optimiser path in line).
+            _is_end = max(fold.is_start + 1, fold.is_end - max(0, int(embargo_bars)))
+            is_bars = bars[fold.is_start:_is_end]
             best_overrides, best_obj = None, None
             for grid in param_grid:
                 cfg = {**base_overrides, **grid}

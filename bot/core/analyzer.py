@@ -2163,17 +2163,19 @@ class Analyzer:
                 results["vol_capitulation_ratio"] = round(cur_vol / avg_vol_20 if avg_vol_20 > 0 else 1.0, 2)
 
         # ── VWAP Bands (±1σ, ±2σ) — intraday statistical extremes ──
+        # Audit fix #22: deviation is measured around the SAME anchor the bands
+        # are centered on (results["vwap"], which is session-anchored under the
+        # default). Previously the dispersion was computed against the
+        # cumulative full-window VWAP series while the center was the session
+        # value — a center/reference mismatch that skewed band widths.
         if volumes is not None and len(volumes) >= 20 and "vwap" in results:
             typical_price = (highs + lows + closes) / 3
-            cum_tp_vol = np.cumsum(typical_price * volumes)
-            cum_vol = np.cumsum(volumes)
-            vwap_series = cum_tp_vol / np.maximum(cum_vol, 1e-10)
-            # Rolling variance of price around VWAP
-            vwap_dev = np.sqrt(np.mean((typical_price[-20:] - vwap_series[-20:]) ** 2))
-            results["vwap_upper_1"] = round(float(results["vwap"] + vwap_dev), 6)
-            results["vwap_lower_1"] = round(float(results["vwap"] - vwap_dev), 6)
-            results["vwap_upper_2"] = round(float(results["vwap"] + 2 * vwap_dev), 6)
-            results["vwap_lower_2"] = round(float(results["vwap"] - 2 * vwap_dev), 6)
+            _band_center = float(results["vwap"])
+            vwap_dev = np.sqrt(np.mean((typical_price[-20:] - _band_center) ** 2))
+            results["vwap_upper_1"] = round(_band_center + vwap_dev, 6)
+            results["vwap_lower_1"] = round(_band_center - vwap_dev, 6)
+            results["vwap_upper_2"] = round(_band_center + 2 * vwap_dev, 6)
+            results["vwap_lower_2"] = round(_band_center - 2 * vwap_dev, 6)
 
         # ── Session Range (last 24 bars as session proxy) ──
         session_len = min(24, len(closes))

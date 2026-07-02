@@ -1829,8 +1829,11 @@ class RuneClawEngine:
 
             symbol = idea.asset
 
-            # Fetch 15m candles for the last ~12 hours (48 candles)
+            # Fetch 15m candles for the last ~12 hours (48 candles).
+            # Audit fix #23: drop the still-forming 15m bar like every other
+            # analysis path — refinement previously read the in-progress close.
             candles_15m = await self._cached_ohlcv(exchange, symbol, "15m", limit=48, ttl=60)
+            candles_15m = self._drop_forming_candle(candles_15m, "15m")
             if not candles_15m or len(candles_15m) < 20:
                 return idea
 
