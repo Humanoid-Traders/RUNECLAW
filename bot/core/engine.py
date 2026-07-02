@@ -1790,7 +1790,8 @@ class RuneClawEngine:
     def _drop_forming_candle(self, ohlcv, timeframe: str):
         """Drop the in-progress (still-forming) last candle so indicators/patterns
         compute on CLOSED bars only — eliminating repaint. Gated by
-        DROP_UNCLOSED_CANDLE_ENABLED (default OFF → returns ohlcv unchanged). The
+        DROP_UNCLOSED_CANDLE_ENABLED (default ON; when disabled returns ohlcv
+        unchanged and every closes[-1] consumer repaints intrabar). The
         last candle is dropped only when its period has not yet elapsed (its open
         time + timeframe is still in the future), so a feed that already excludes
         the forming bar is left intact. Fail-open: any error returns ohlcv as-is.
@@ -1828,8 +1829,11 @@ class RuneClawEngine:
 
             symbol = idea.asset
 
-            # Fetch 15m candles for the last ~12 hours (48 candles)
+            # Fetch 15m candles for the last ~12 hours (48 candles).
+            # Audit fix #23: drop the still-forming 15m bar like every other
+            # analysis path — refinement previously read the in-progress close.
             candles_15m = await self._cached_ohlcv(exchange, symbol, "15m", limit=48, ttl=60)
+            candles_15m = self._drop_forming_candle(candles_15m, "15m")
             if not candles_15m or len(candles_15m) < 20:
                 return idea
 
@@ -2000,7 +2004,7 @@ class RuneClawEngine:
         # the live ticker (signal.price), not the last candle. No-op when off.
         ohlcv = self._drop_forming_candle(ohlcv, timeframe)
 
-        # Timeframe-matched Elliott (gated, default OFF): fetch the extra
+        # Timeframe-matched Elliott (gated, default ON): fetch the extra
         # timeframes whose wave degree the analyzer may need for scalp/swing/etc,
         # so it can read the wave structure appropriate to the setup. Cached and
         # fail-open — a fetch failure just omits that timeframe (analyzer no-ops).
@@ -2015,7 +2019,7 @@ class RuneClawEngine:
                 except Exception as _mtf_exc:
                     system_log.debug("Elliott MTF fetch %s failed: %s", _tf, _mtf_exc)
 
-        idea = await self.analyzer.analyze(signal, ohlcv, order_flow=of_signal, is_admin=is_admin, user_id=user_id, user_tier=user_tier, mtf_candles=mtf_candles)
+        idea = await self.analyzer.analyze(signal, ohlcv, order_flow=of_signal, is_admin=is_admin, user_id=user_id, user_tier=user_tier, mtf_candles=mtf_candles, timeframe=timeframe)
         if idea is None:
             audit(scan_log, f"Analysis produced no idea for {signal.symbol}",
                   action="analyze_signal", result="NO_IDEA",

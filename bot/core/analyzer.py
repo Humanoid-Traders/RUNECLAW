@@ -80,6 +80,12 @@ _ELLIOTT_KEYS = ("elliott_impulse", "elliott_corrective", "elliott_diagonal",
                  "elliott_wxy", "elliott_pattern")
 
 
+# Analyzer schema/version tag stamped into every TradeIdea (audit fix #18).
+# Bump when the signal pipeline changes in a way that affects comparability
+# of recorded decisions (voters, blending, SL/TP logic).
+_ANALYSIS_VERSION = "2026.07-audit25"
+
+
 def _apply_elliott_wave_targets(direction, entry: float, stop_loss: float,
                                 take_profit: float, indicators: dict) -> tuple:
     """Wave-anchor the stop and (optionally) extend the target using the
@@ -412,9 +418,34 @@ class Analyzer:
         self._explainability = ExplainabilityEngine()
         # Diagnostic info for the last rejected analysis
         self._last_rejection_diag: Optional[dict] = None
+        # Structured no-trade reasons per symbol (audit fix #8): every analyzer
+        # skip path records WHY, so callers (/whynot, dashboard, learning) can
+        # enumerate skip reasons instead of scraping the audit log.
+        self._no_trade_reasons: dict[str, dict] = {}
         # Regime persistence: smooth out single-bar whipsaw changes
         self._regime_history: list[tuple[str, str]] = []  # (symbol, regime_value)
         self._current_regimes: dict[str, Regime] = {}  # per-symbol smoothed regime
+
+    def _record_no_trade(self, symbol: str, stage: str, reason: str, **data) -> None:
+        """Record a structured no-trade reason (audit fix #8). Best-effort —
+        never raises into the analysis path."""
+        try:
+            entry = {
+                "symbol": symbol,
+                "stage": stage,
+                "reason": reason,
+                "ts": datetime.now(UTC).isoformat(),
+                **data,
+            }
+            self._no_trade_reasons[symbol] = entry
+            self._last_rejection_diag = entry
+        except Exception:
+            pass
+
+    def get_no_trade_reason(self, symbol: str) -> Optional[dict]:
+        """Structured reason why the last analysis of `symbol` produced no
+        trade, or None if the last analysis produced an idea."""
+        return self._no_trade_reasons.get(symbol)
 
     def _resolve_llm_config(self) -> Optional[LLMConfig]:
         """Build LLMConfig from BYOK runtime or .env config."""
@@ -597,7 +628,8 @@ class Analyzer:
     async def analyze(self, signal: MarketSignal, candles: list[list[float]], order_flow=None,
                        candles_4h=None, candles_1d=None, is_admin: bool = False,
                        as_of: Optional[datetime] = None, user_id=None, user_tier=None,
-                       mtf_candles: Optional[dict] = None) -> Optional[TradeIdea]:
+                       mtf_candles: Optional[dict] = None,
+                       timeframe: str = "1h") -> Optional[TradeIdea]:
         """
         Full analysis pipeline:
         1. Compute technical indicators from OHLCV candles.
@@ -613,35 +645,69 @@ class Analyzer:
         if len(candles) < CONFIG.analyzer.min_candles:
             audit(trade_log, "Not enough candle data", action="analyze",
                   result="SKIP", data={"symbol": signal.symbol})
+            self._record_no_trade(signal.symbol, "data", "not enough candles",
+                                  candles=len(candles))
             return None
 
-        # Validate candle data integrity before processing
+        # Validate candle data integrity before processing (audit fix #9):
+        # field count, NaN/positivity on OHLC, volume/timestamp finiteness,
+        # ascending timestamp order and duplicate-bar removal — an out-of-order
+        # or duplicated exchange batch silently skews cumulative VWAP and the
+        # session anchor otherwise.
         try:
             for i, c in enumerate(candles):
                 if len(c) < 5:
                     raise ValueError(f"Candle {i} has {len(c)} fields (need >=5)")
+            times = np.array([c[0] for c in candles], dtype=float)  # epoch ms (ccxt)
+            if not np.all(np.isfinite(times)):
+                raise ValueError("Non-finite timestamps")
+            # Sort ascending + de-duplicate by timestamp (keep the LAST record
+            # for a duplicated bar — the freshest snapshot of that candle).
+            order = np.argsort(times, kind="stable")
+            if not np.array_equal(order, np.arange(len(times))):
+                candles = [candles[int(i)] for i in order]
+                times = times[order]
+            if len(times) > 1:
+                dup = np.concatenate([times[1:] == times[:-1], [False]])
+                if np.any(dup):
+                    keep = ~dup
+                    candles = [c for c, k in zip(candles, keep) if k]
+                    times = times[keep]
+            if len(candles) < CONFIG.analyzer.min_candles:
+                raise ValueError("Too few candles after de-duplication")
             opens = np.array([c[1] for c in candles], dtype=float)
             highs = np.array([c[2] for c in candles], dtype=float)
             lows = np.array([c[3] for c in candles], dtype=float)
             closes = np.array([c[4] for c in candles], dtype=float)
             volumes = np.array([c[5] if len(c) > 5 else 0 for c in candles], dtype=float)
-            times = np.array([c[0] for c in candles], dtype=float)  # epoch ms (ccxt)
-            # Reject NaN/Inf in OHLCV data
+            # Reject NaN/Inf in OHLC data; volume gets sanitized (a missing
+            # volume must not kill analysis, but NaN must not reach VWAP).
             for name, arr in [("opens", opens), ("highs", highs), ("lows", lows), ("closes", closes)]:
                 if not np.all(np.isfinite(arr)):
                     raise ValueError(f"Non-finite values in {name}")
                 if np.any(arr <= 0):
                     raise ValueError(f"Non-positive values in {name}")
+            volumes = np.where(np.isfinite(volumes) & (volumes >= 0), volumes, 0.0)
         except (ValueError, IndexError, TypeError) as exc:
             audit(trade_log, f"Invalid candle data: {exc}", action="analyze",
                   result="SKIP", data={"symbol": signal.symbol, "error": str(exc)})
+            self._record_no_trade(signal.symbol, "data", f"invalid candle data: {exc}")
             return None
 
         indicators = self._compute_indicators(highs, lows, closes, volumes, opens=opens, times=times)
         if indicators is None:
             audit(trade_log, "Indicator computation failed (insufficient data)", action="analyze",
                   result="SKIP", data={"symbol": signal.symbol, "candles": len(candles)})
+            self._record_no_trade(signal.symbol, "indicators",
+                                  "indicator computation failed", candles=len(candles))
             return None
+
+        # Data-quality stamp (audit fix #10): below 50 bars the SMA-50 trend
+        # check, vwap_50 anchor and the full 50-bar fib window are silently
+        # unavailable/shrunken — record it so downstream (and the operator)
+        # can see a thin-window signal for what it is.
+        indicators["data_bars"] = int(len(closes))
+        indicators["data_thin"] = bool(len(closes) < 50)
 
         # Candlestick pattern detection (needs opens)
         candle_patterns = _detect_candlestick_patterns(opens, highs, lows, closes)
@@ -652,13 +718,33 @@ class Analyzer:
             bearish_patterns = [k for k, v in candle_patterns.items() if v == "bearish"]
             indicators["candle_bullish_count"] = len(bullish_patterns)
             indicators["candle_bearish_count"] = len(bearish_patterns)
+            # Strength-weighted sums (audit fix #14): a three-candle formation
+            # is stronger evidence than a lone small-bar pattern.
+            indicators["candle_bullish_strength"] = round(
+                sum(_CANDLE_STRENGTH.get(k, 1.0) for k in bullish_patterns), 2)
+            indicators["candle_bearish_strength"] = round(
+                sum(_CANDLE_STRENGTH.get(k, 1.0) for k in bearish_patterns), 2)
 
         # ── Geometric chart pattern detection (H&S, double top/bottom, flags, etc.) ──
         chart_patterns = scan_all_chart_patterns(opens, highs, lows, closes)
         if chart_patterns:
             indicators["chart_patterns_geo"] = chart_patterns
-            bullish_geo = [p for p in chart_patterns if p.get("signal") == "bullish"]
-            bearish_geo = [p for p in chart_patterns if p.get("signal") == "bearish"]
+            # De-correlation (audit fix #5): Wyckoff / Harmonic / Elliott /
+            # Fib-extension results vote through their own DEDICATED voters
+            # below — counting them in the aggregate chart_patterns vote too
+            # double-counted the same evidence. The aggregate now covers only
+            # the purely-geometric patterns (H&S, double top, flags, ...).
+            def _has_dedicated_voter(p: dict) -> bool:
+                n = p.get("name", "")
+                return ("Wyckoff" in n or "Harmonic" in n or "Elliott" in n
+                        or any(h in n for h in ("Gartley", "Butterfly", "Bat", "Crab"))
+                        or ("Fibonacci" in n and "ext" in n.lower()))
+            if CONFIG.analyzer.pattern_dedup_enabled:
+                agg_patterns = [p for p in chart_patterns if not _has_dedicated_voter(p)]
+            else:
+                agg_patterns = chart_patterns
+            bullish_geo = [p for p in agg_patterns if p.get("signal") == "bullish"]
+            bearish_geo = [p for p in agg_patterns if p.get("signal") == "bearish"]
             indicators["chart_patterns_bullish_count"] = len(bullish_geo)
             indicators["chart_patterns_bearish_count"] = len(bearish_geo)
             # Weighted score uses pattern confidence values
@@ -691,7 +777,7 @@ class Analyzer:
                 elif "Fibonacci" in name and "ext" in name.lower():
                     indicators["fib_extensions"] = p
 
-        # ── Advanced Elliott: structural ATR-ZigZag pivots (gated, default OFF) ──
+        # ── Advanced Elliott: structural ATR-ZigZag pivots (gated, default ON) ──
         # Replaces the fixed 5-bar fractal Elliott read with one built on
         # ATR-normalized ZigZag pivots, which filter out the noise wiggles the
         # fractal keeps. Fail-open; byte-identical when the flag is off.
@@ -841,7 +927,7 @@ class Analyzer:
             signal=signal,
         )
 
-        # ── Timeframe-matched Elliott (gated, default OFF) ──────────────
+        # ── Timeframe-matched Elliott (gated, default ON) ───────────────
         # Re-read the wave structure on the timeframe whose degree matches this
         # setup's strategy_type (scalp<intraday<swing<position), so a scalp sees
         # its lower-degree sub-wave and a swing its higher-degree wave -- rather
@@ -907,6 +993,9 @@ class Analyzer:
                   f"Thesis has invalid direction={thesis.get('direction')!r}, blocking trade",
                   action="analyze", result="INVALID_DIRECTION",
                   data={"symbol": signal.symbol})
+            self._record_no_trade(
+                signal.symbol, "thesis",
+                thesis.get("reasoning") or "thesis returned no valid direction")
             return None
 
         direction = Direction.LONG if thesis["direction"] == "LONG" else Direction.SHORT
@@ -978,6 +1067,40 @@ class Analyzer:
                       data={"symbol": signal.symbol, "regime": regime.value,
                             "direction": direction.value, "adx": round(_adx, 1)})
                 return None
+
+        # ── LLM direction guard (gated, default ON; audit fix #1) ──────────
+        # The thesis (LLM) picks the direction, but the deterministic voters
+        # are the decider of record: when the confluence score CLEARLY opposes
+        # the thesis direction (0.5 = neutral; >0.5 bullish, <0.5 bearish), the
+        # LLM does not get to overrule them unchecked. Opposition beyond the
+        # veto margin rejects the idea; beyond the haircut margin it halves the
+        # thesis confidence before blending. Rule-engine theses derive their
+        # direction FROM confluence and can never trip this guard.
+        if CONFIG.analyzer.llm_direction_guard_enabled:
+            _guard = self._direction_guard_action(
+                direction, confluence,
+                CONFIG.analyzer.llm_direction_haircut_margin,
+                CONFIG.analyzer.llm_direction_veto_margin)
+            if _guard == "veto":
+                self._record_no_trade(
+                    signal.symbol, "llm_direction_guard",
+                    "thesis direction opposes strong deterministic consensus",
+                    direction=direction.value, confluence=round(confluence, 4))
+                audit(trade_log,
+                      f"LLM direction guard: {signal.symbol} {direction.value} vetoed — "
+                      f"confluence {confluence:.2f} opposes",
+                      action="analyze", result="REJECTED_DIRECTION_GUARD",
+                      data={"symbol": signal.symbol, "direction": direction.value,
+                            "confluence": round(confluence, 4)})
+                return None
+            if _guard == "haircut":
+                counter_trend_penalty = min(counter_trend_penalty, 0.5)
+                audit(trade_log,
+                      f"LLM direction guard: {signal.symbol} {direction.value} haircut — "
+                      f"confluence {confluence:.2f} leans against",
+                      action="analyze", result="PENALTY",
+                      data={"symbol": signal.symbol, "direction": direction.value,
+                            "confluence": round(confluence, 4)})
 
         confidence = max(0.0, min(1.0, thesis.get("confidence", 0.0))) * counter_trend_penalty
         # C2-20 FIX: Cap combined penalty — confidence never drops below 25% of raw.
@@ -1124,6 +1247,19 @@ class Analyzer:
                     # Smart money opposes direction — small penalty
                     blended_confidence -= 0.03 * abs(_sm_val)
 
+        # Data-quality penalty (audit fix #10): a thin (<50 bar) window lacks
+        # the SMA-50 trend check, vwap_50 anchor and full fib window — the
+        # signal has structurally less confirmation, so it needs a bounded
+        # confidence haircut instead of passing as a fully-confirmed setup.
+        if (CONFIG.analyzer.data_quality_penalty_enabled
+                and indicators.get("data_thin")):
+            blended_confidence -= CONFIG.analyzer.data_thin_penalty
+            audit(trade_log, "Data-quality penalty: thin window",
+                  action="analyze", result="PENALTY",
+                  data={"symbol": signal.symbol,
+                        "bars": indicators.get("data_bars"),
+                        "penalty": CONFIG.analyzer.data_thin_penalty})
+
         blended_confidence = round(max(0.0, min(1.0, blended_confidence)), 2)
 
         # Apply regime penalty (RANGE: -0.10, CHOP: -0.15, else: 0)
@@ -1253,6 +1389,11 @@ class Analyzer:
                   action="analyze", result="SKIP",
                   data={"symbol": signal.symbol, "raw_conf": confidence,
                         "confluence": confluence, "blended": blended_confidence})
+            self._record_no_trade(
+                signal.symbol, "confidence",
+                self._last_rejection_diag.get("reason", "below threshold")
+                if self._last_rejection_diag else "below threshold",
+                blended=round(blended_confidence, 3), threshold=min_conf)
             return None
 
         entry = signal.price
@@ -1315,11 +1456,11 @@ class Analyzer:
             take_profit = take_profit + entry_shift
             order_type = "limit"
 
-        # ── Wave-anchored SL/TP from Elliott Fib projections (gated, OFF) ──
+        # ── Wave-anchored SL/TP from Elliott Fib projections (gated, default ON) ──
         # Tighten the stop to the wave-invalidation level and extend the target
         # to the projected wave objective. Only ever reduces risk / increases
         # reward; never loosens the stop. Applied on absolute levels after the
-        # limit-entry shift so the invalidation isn't distorted. Off → no-op.
+        # limit-entry shift so the invalidation isn't distorted. Disabled → no-op.
         if CONFIG.analyzer.elliott_fib_targets_enabled:
             try:
                 stop_loss, take_profit = _apply_elliott_wave_targets(
@@ -1368,11 +1509,15 @@ class Analyzer:
             audit(trade_log,
                   f"LONG rejected: RSI {rsi_val:.1f} >= {CONFIG.analyzer.rsi_overbought_block} (overbought)",
                   action="rsi_block", result="BLOCKED")
+            self._record_no_trade(signal.symbol, "rsi_block",
+                                  f"LONG into overbought RSI {rsi_val:.1f}")
             return None
         if direction == Direction.SHORT and rsi_val <= CONFIG.analyzer.rsi_oversold_block:
             audit(trade_log,
                   f"SHORT rejected: RSI {rsi_val:.1f} <= {CONFIG.analyzer.rsi_oversold_block} (oversold)",
                   action="rsi_block", result="BLOCKED")
+            self._record_no_trade(signal.symbol, "rsi_block",
+                                  f"SHORT into oversold RSI {rsi_val:.1f}")
             return None
 
         # Tag source
@@ -1415,8 +1560,12 @@ class Analyzer:
                   f"(entry={_r_entry}, sl={_r_sl}, tp={_r_tp}, {direction.value})",
                   action="analyze", result="SKIP",
                   data={"symbol": signal.symbol})
+            self._record_no_trade(signal.symbol, "levels",
+                                  "degenerate SL/TP after rounding",
+                                  entry=_r_entry, sl=_r_sl, tp=_r_tp)
             return None
 
+        self._no_trade_reasons.pop(signal.symbol, None)
         idea = TradeIdea(
             id=f"TI-{uuid.uuid4().hex[:8]}",
             asset=signal.symbol,
@@ -1435,6 +1584,15 @@ class Analyzer:
             order_type=order_type,
             strategy_type=strategy_type,
             signal_type=signal_type,
+            # Provenance + evidence (audit fix #18)
+            timeframe=timeframe,
+            llm_confidence=round(float(thesis.get("confidence", 0.0)), 4),
+            confluence_score=round(float(confluence), 4),
+            model_provider=thesis.get("model") or thesis.get("source"),
+            prompt_hash=thesis.get("prompt_hash") or None,
+            analysis_version=_ANALYSIS_VERSION,
+            data_bars=indicators.get("data_bars"),
+            data_thin=indicators.get("data_thin"),
         )
 
         # Phase B: attach the per-voter breakdown so the decision recorder can
@@ -1702,13 +1860,22 @@ class Analyzer:
             for i in range(period, len(gain)):
                 avg_gain = (avg_gain * (period - 1) + gain[i]) / period
                 avg_loss = (avg_loss * (period - 1) + loss[i]) / period
-            rs = avg_gain / max(avg_loss, 1e-10)
-            results["rsi"] = round(100 - 100 / (1 + rs), 2)
+            if avg_gain <= 1e-12 and avg_loss <= 1e-12:
+                # Perfectly flat market: no gains AND no losses. rs would be
+                # 0/epsilon → RSI=0 (max oversold, a spurious bullish vote);
+                # the neutral reading is 50 (audit fix #11).
+                results["rsi"] = 50.0
+            else:
+                rs = avg_gain / max(avg_loss, 1e-10)
+                results["rsi"] = round(100 - 100 / (1 + rs), 2)
         else:
             avg_gain = np.mean(gain) if len(gain) > 0 else 0
             avg_loss = np.mean(loss) if len(loss) > 0 else 1e-10
-            rs = avg_gain / max(avg_loss, 1e-10)
-            results["rsi"] = round(100 - 100 / (1 + rs), 2)
+            if avg_gain <= 1e-12 and avg_loss <= 1e-12:
+                results["rsi"] = 50.0
+            else:
+                rs = avg_gain / max(avg_loss, 1e-10)
+                results["rsi"] = round(100 - 100 / (1 + rs), 2)
 
         # ── MACD (12, 26, 9) — full-history EMA ──
         ema12 = _ema(closes, 12)
@@ -1996,17 +2163,19 @@ class Analyzer:
                 results["vol_capitulation_ratio"] = round(cur_vol / avg_vol_20 if avg_vol_20 > 0 else 1.0, 2)
 
         # ── VWAP Bands (±1σ, ±2σ) — intraday statistical extremes ──
+        # Audit fix #22: deviation is measured around the SAME anchor the bands
+        # are centered on (results["vwap"], which is session-anchored under the
+        # default). Previously the dispersion was computed against the
+        # cumulative full-window VWAP series while the center was the session
+        # value — a center/reference mismatch that skewed band widths.
         if volumes is not None and len(volumes) >= 20 and "vwap" in results:
             typical_price = (highs + lows + closes) / 3
-            cum_tp_vol = np.cumsum(typical_price * volumes)
-            cum_vol = np.cumsum(volumes)
-            vwap_series = cum_tp_vol / np.maximum(cum_vol, 1e-10)
-            # Rolling variance of price around VWAP
-            vwap_dev = np.sqrt(np.mean((typical_price[-20:] - vwap_series[-20:]) ** 2))
-            results["vwap_upper_1"] = round(float(results["vwap"] + vwap_dev), 6)
-            results["vwap_lower_1"] = round(float(results["vwap"] - vwap_dev), 6)
-            results["vwap_upper_2"] = round(float(results["vwap"] + 2 * vwap_dev), 6)
-            results["vwap_lower_2"] = round(float(results["vwap"] - 2 * vwap_dev), 6)
+            _band_center = float(results["vwap"])
+            vwap_dev = np.sqrt(np.mean((typical_price[-20:] - _band_center) ** 2))
+            results["vwap_upper_1"] = round(_band_center + vwap_dev, 6)
+            results["vwap_lower_1"] = round(_band_center - vwap_dev, 6)
+            results["vwap_upper_2"] = round(_band_center + 2 * vwap_dev, 6)
+            results["vwap_lower_2"] = round(_band_center - 2 * vwap_dev, 6)
 
         # ── Session Range (last 24 bars as session proxy) ──
         session_len = min(24, len(closes))
@@ -2038,6 +2207,28 @@ class Analyzer:
                 results[key] = _RSI_DEFAULT if key == "rsi" else 0.0
 
         return results
+
+    @staticmethod
+    def _direction_guard_action(direction, confluence: float,
+                                haircut_margin: float,
+                                veto_margin: float) -> Optional[str]:
+        """Pure decision for the LLM direction guard (audit fix #1).
+
+        Returns "veto" when the thesis direction opposes the deterministic
+        confluence consensus by >= veto_margin, "haircut" when it opposes by
+        >= haircut_margin, else None. Confluence 0.5 is neutral; deviation
+        above/below is the bullish/bearish consensus strength.
+        """
+        dev = confluence - 0.5
+        opposes = ((direction == Direction.LONG and dev < 0)
+                   or (direction == Direction.SHORT and dev > 0))
+        if not opposes:
+            return None
+        if abs(dev) >= veto_margin:
+            return "veto"
+        if abs(dev) >= haircut_margin:
+            return "haircut"
+        return None
 
     # -- Regime Detection --
 
@@ -2244,59 +2435,73 @@ class Analyzer:
         def _boost(weight: float, label: str) -> float:
             return weight * boost_map.get(label, 1.0)
 
+        # Dilution guard (audit fix #16): when ON, a voter whose input is
+        # MISSING is skipped entirely (no weight appended) instead of casting
+        # a 0-vote that inflates the denominator and compresses real signals
+        # toward 0.5. A voter whose input is present-but-neutral still votes 0
+        # — genuine neutrality is information; absence is not.
+        _skip_missing = CONFIG.analyzer.voter_skip_missing_enabled
+
         # RSI vote (weight 1.5 — strong mean-reversion signal)
-        rsi = indicators.get("rsi", 50)
-        if rsi < 30:
-            votes.append(1.0)   # oversold → bullish
-        elif rsi > 70:
-            votes.append(-1.0)  # overbought → bearish
-        elif rsi < 40:
-            votes.append(0.3)
-        elif rsi > 60:
-            votes.append(-0.3)
-        else:
-            votes.append(0.0)
-        aw(_boost(1.5, "rsi"), "rsi")
-        _mark_mr_osc()
+        if not (_skip_missing and "rsi" not in indicators):
+            rsi = indicators.get("rsi", 50)
+            if rsi < 30:
+                votes.append(1.0)   # oversold → bullish
+            elif rsi > 70:
+                votes.append(-1.0)  # overbought → bearish
+            elif rsi < 40:
+                votes.append(0.3)
+            elif rsi > 60:
+                votes.append(-0.3)
+            else:
+                votes.append(0.0)
+            aw(_boost(1.5, "rsi"), "rsi")
+            _mark_mr_osc()
 
         # MACD vote (weight 1.0)
-        macd_hist = indicators.get("macd_histogram", 0)
-        if macd_hist > 0:
-            votes.append(1.0)
-        elif macd_hist < 0:
-            votes.append(-1.0)
-        else:
-            votes.append(0.0)
-        aw(1.0, "macd")
+        if not (_skip_missing and "macd_histogram" not in indicators):
+            macd_hist = indicators.get("macd_histogram", 0)
+            if macd_hist > 0:
+                votes.append(1.0)
+            elif macd_hist < 0:
+                votes.append(-1.0)
+            else:
+                votes.append(0.0)
+            aw(1.0, "macd")
 
         # Bollinger %B vote (weight 1.0)
-        pct_b = indicators.get("bb_pct_b", 0.5)
-        if pct_b < 0.2:
-            votes.append(1.0)   # near lower band → bullish
-        elif pct_b > 0.8:
-            votes.append(-1.0)  # near upper band → bearish
-        else:
-            votes.append(0.0)
-        aw(_boost(1.0, "bb_pct_b"), "bb_pct_b")
-        _mark_mr_osc()
+        if not (_skip_missing and "bb_pct_b" not in indicators):
+            pct_b = indicators.get("bb_pct_b", 0.5)
+            if pct_b < 0.2:
+                votes.append(1.0)   # near lower band → bullish
+            elif pct_b > 0.8:
+                votes.append(-1.0)  # near upper band → bearish
+            else:
+                votes.append(0.0)
+            aw(_boost(1.0, "bb_pct_b"), "bb_pct_b")
+            _mark_mr_osc()
 
-        # Volume spike vote (weight 0.8 — confirms directional moves)
+        # Volume spike vote (weight 0.8 — confirms directional moves). With
+        # the dilution guard on, "no spike" is skipped (like the taker voter)
+        # rather than voting 0 on every quiet bar.
         if signal.volume_spike:
             # Volume spike confirms the direction of the price move
             votes.append(1.0 if signal.change_pct_24h > 0 else -1.0)
-        else:
+            aw(0.8, "volume_spike")
+        elif not _skip_missing:
             votes.append(0.0)
-        aw(0.8, "volume_spike")
+            aw(0.8, "volume_spike")
 
         # ADX trend strength vote (weight 0.7)
-        adx = indicators.get("adx", 0)
-        if adx > 30:
-            votes.append(1.0 if indicators.get("plus_di", 0) > indicators.get("minus_di", 0) else -1.0)
-        elif adx > 20:
-            votes.append(0.3 if indicators.get("plus_di", 0) > indicators.get("minus_di", 0) else -0.3)
-        else:
-            votes.append(0.0)
-        aw(0.7, "adx")
+        if not (_skip_missing and "adx" not in indicators):
+            adx = indicators.get("adx", 0)
+            if adx > 30:
+                votes.append(1.0 if indicators.get("plus_di", 0) > indicators.get("minus_di", 0) else -1.0)
+            elif adx > 20:
+                votes.append(0.3 if indicators.get("plus_di", 0) > indicators.get("minus_di", 0) else -0.3)
+            else:
+                votes.append(0.0)
+            aw(0.7, "adx")
 
         # VWAP vote (weight 0.5 — institutional bias; optional slope damping)
         vwap = indicators.get("vwap")
@@ -2341,10 +2546,21 @@ class Analyzer:
                 votes.append(0.0)
             aw(0.6, "obv")
 
-        # Candlestick pattern vote (weight 0.8 — price action signal)
+        # Candlestick pattern vote (weight 0.8 — price action signal). With
+        # the strength flag on (audit fix #14) the vote is the NET pattern
+        # strength (three-candle formations outrank single bars) instead of a
+        # raw key count where a lone hammer equalled three white soldiers.
         bull_count = indicators.get("candle_bullish_count", 0)
         bear_count = indicators.get("candle_bearish_count", 0)
-        if bull_count > bear_count:
+        _bull_s = indicators.get("candle_bullish_strength")
+        _bear_s = indicators.get("candle_bearish_strength")
+        if (CONFIG.analyzer.candle_strength_vote_enabled
+                and _bull_s is not None and _bear_s is not None
+                and (_bull_s > 0 or _bear_s > 0)):
+            _net = (_bull_s - _bear_s) / max(_bull_s + _bear_s, 1e-9)
+            votes.append(max(-1.0, min(1.0, _net)))
+            aw(0.8 if abs(_net) > 1e-9 else 0.4, "candlestick")
+        elif bull_count > bear_count:
             votes.append(1.0)
             aw(0.8, "candlestick")
         elif bear_count > bull_count:
@@ -2354,17 +2570,24 @@ class Analyzer:
             votes.append(0.0)
             aw(0.4, "candlestick")
 
-        # Fibonacci zone vote (weight 0.5 — mean-reversion near key levels)
+        # Fibonacci zone vote (weight 0.5 — mean-reversion near key levels).
+        # Direction-aware (audit fix #4): the zone means "how deep price has
+        # retraced the dominant leg", so its trade meaning flips with the leg:
+        # up-leg deep retrace = bullish bounce; down-leg deep retrace (price
+        # bounced far up a downtrend) = bearish continuation. Symmetric votes
+        # replace the old always-bullish framing.
         fib_zone = indicators.get("fib_zone")
+        fib_trend = indicators.get("fib_trend", "up")
+        _fib_sign = 1.0 if fib_trend == "up" else -1.0
         _fib_before = len(votes)
         if fib_zone in ("618_786", "below_786"):
-            votes.append(1.0)   # deep retracement → bullish bounce potential
+            votes.append(1.0 * _fib_sign)   # deep retracement of the leg
             aw(0.5, "fibonacci")
         elif fib_zone == "500_618":
-            votes.append(0.5)   # moderate retracement → mildly bullish
+            votes.append(0.5 * _fib_sign)   # moderate retracement
             aw(0.5, "fibonacci")
         elif fib_zone == "above_236":
-            votes.append(-0.3)  # near swing high → mildly bearish
+            votes.append(-0.3 * _fib_sign)  # barely retraced → fade the leg end
             aw(0.5, "fibonacci")
         elif fib_zone is not None:
             votes.append(0.0)
@@ -2524,7 +2747,7 @@ class Analyzer:
             ("elliott_diagonal", 0.65, "ew_diagonal"),     # diagonal = reversal warning
             ("elliott_wxy", 0.55, "ew_wxy"),               # complex correction = consolidation
         ]
-        # Wave-position action multiplier (gated, default OFF): scale each EW
+        # Wave-position action multiplier (gated, default ON): scale each EW
         # voter's weight by where in the wave structure we are. A terminal wave
         # 5 / ending diagonal returns a <1 multiplier so it stops adding trend
         # conviction; a wave-3/4 pullback returns >1. Off → multiplier is 1.0
@@ -2601,6 +2824,11 @@ class Analyzer:
             try:
                 sentiment_votes = sentiment_engine.to_confluence_votes()
                 for _name, vote_val, vote_weight in sentiment_votes:
+                    # Dilution guard (audit fix #16): a present-but-dataless
+                    # sentiment engine returns a 0.0 vote — skip it rather
+                    # than diluting the denominator at weight 0.6.
+                    if _skip_missing and vote_val == 0.0:
+                        continue
                     votes.append(vote_val)
                     aw(vote_weight, "sentiment")
             except Exception as _sent_exc:
@@ -2718,6 +2946,27 @@ class Analyzer:
                     scale = cap / fam_weight
                     for i in active:
                         weights[i] *= scale
+
+            # PATTERN family cap (audit fix #12 extension): candlesticks,
+            # geometric patterns, reversal bars, Wyckoff, harmonics and the
+            # Elliott voters all read the same price STRUCTURE and can co-fire
+            # up to ~7 combined weight. Same rule: only actively-voting
+            # members, cap only ever reduces.
+            _PATTERN_FAMILY = {
+                "candlestick", "chart_patterns", "reversal", "wyckoff",
+                "harmonic", "ew_impulse", "ew_corrective", "ew_diagonal",
+                "ew_wxy", "elliott",
+            }
+            if len(names) == len(votes):
+                p_active = [i for i, n in enumerate(names)
+                            if n in _PATTERN_FAMILY and abs(votes[i]) > 1e-9]
+                if len(p_active) > 1:
+                    p_weight = sum(weights[i] for i in p_active)
+                    p_cap = CONFIG.confluence.pattern_weight_cap
+                    if p_weight > p_cap > 0:
+                        p_scale = p_cap / p_weight
+                        for i in p_active:
+                            weights[i] *= p_scale
 
         # Phase B: emit the named per-voter breakdown (best-effort; only when
         # fully aligned). Does not affect the confluence value.
@@ -2917,8 +3166,11 @@ class Analyzer:
             sdk_type = active_cfg.sdk_type() if active_cfg else "openai"
 
             # System prompt must mention "json" when using json_object response_format
-            # (required by Groq and some other providers)
-            use_json_format = not use_full_model and sdk_type != "anthropic"
+            # (required by Groq and some other providers). Audit fix #7: JSON
+            # mode is now enforced on BOTH tiers of the OpenAI-compatible path
+            # — the thesis tier previously relied on regex parsing alone. The
+            # full-model prompt already specifies a JSON output contract.
+            use_json_format = sdk_type != "anthropic"
 
             # Enhanced system prompt for Opus/Sonnet — structured for best trade analysis
             _TRADING_SYSTEM_PROMPT = (
@@ -2951,16 +3203,22 @@ class Analyzer:
                 "## Rules\n"
                 "- Never force a trade. \"No trade\" is a valid and often correct answer.\n"
                 "- Use exact prices from the data provided, not rounded approximations.\n"
+                "- Never invent indicator values, patterns, or levels that are not in the "
+                "provided data — cite only what was given to you.\n"
+                "- Never express certainty about future price; probabilities only. No "
+                "guarantees, ever.\n"
                 "- SL distance should be ATR-based (1.5-3x ATR from entry).\n"
                 "- TP distance should be at least 1.2x the SL distance.\n"
                 "- Confidence below 0.55 means skip the trade.\n"
             )
 
+            # Full-model calls always keep the rich prompt (it already carries
+            # the JSON output contract, so json_object mode is compatible);
+            # the terse prompt covers the cheap scan tier only.
             sys_content = (
+                _TRADING_SYSTEM_PROMPT if use_full_model else
                 "You are RUNECLAW, a risk-first crypto analyst. "
                 "Return concise analysis in json format with keys: direction, confidence, reasoning."
-                if use_json_format else
-                _TRADING_SYSTEM_PROMPT
             )
 
             if sdk_type == "anthropic":
@@ -2984,6 +3242,11 @@ class Analyzer:
                     "max_tokens": max_tokens,
                     "system": system_content,
                     "messages": messages,
+                    # Audit fix: the Anthropic path previously omitted the
+                    # configured temperature, so provider-default sampling
+                    # applied only here. (Ignored when adaptive thinking is
+                    # on — thinking requires default temperature.)
+                    "temperature": CONFIG.llm.temperature,
                 }
 
                 # Enable adaptive thinking for Opus 4.8+ (thesis tier)
@@ -2991,6 +3254,9 @@ class Analyzer:
                 # returns 400.  Adaptive lets the model decide how much to think.
                 if use_full_model and "opus" in model.lower():
                     create_kwargs["thinking"] = {"type": "adaptive"}
+                    # Extended thinking requires default sampling — the API
+                    # rejects an explicit non-default temperature with it.
+                    create_kwargs.pop("temperature", None)
                     # Structured output: guarantee valid JSON from the LLM
                     create_kwargs["output_config"] = {
                         "format": {
@@ -3494,12 +3760,21 @@ class Analyzer:
             (obv_trend == "falling" and direction == "SHORT")
         ) else 0
 
-        # Fib level support
+        # Fib level support — direction-aware (audit fix #4): the zone reads
+        # against the dominant leg, so a deep retrace supports LONG only on an
+        # up-leg and SHORT on a down-leg.
+        fib_trend = ind.get("fib_trend", "up")
         fib_bonus = 0.0
-        if fib_zone in ("618_786", "below_786") and direction == "LONG":
-            fib_bonus = 0.08  # deep retracement supports long
-        elif fib_zone == "above_236" and direction == "SHORT":
-            fib_bonus = 0.05  # near swing high supports short
+        if fib_zone in ("618_786", "below_786"):
+            if fib_trend == "up" and direction == "LONG":
+                fib_bonus = 0.08  # deep retracement of an up-leg supports long
+            elif fib_trend == "down" and direction == "SHORT":
+                fib_bonus = 0.08  # deep bounce in a down-leg supports short
+        elif fib_zone == "above_236":
+            if fib_trend == "up" and direction == "SHORT":
+                fib_bonus = 0.05  # near swing high supports short
+            elif fib_trend == "down" and direction == "LONG":
+                fib_bonus = 0.05  # near swing low supports long
 
         # Candlestick pattern bonus
         bull_patterns = sum(1 for v in candle_patterns.values() if v == "bullish")
@@ -3548,8 +3823,18 @@ def _compute_obv(closes: np.ndarray, volumes: np.ndarray) -> np.ndarray:
 
 def _compute_fibonacci(highs: np.ndarray, lows: np.ndarray, closes: np.ndarray) -> dict:
     """
-    Fibonacci retracement levels over the last 50 bars (or available data).
-    Identifies swing high/low and computes standard retracement levels.
+    Direction-aware Fibonacci retracement over the last 50 bars (audit fix #4).
+
+    The dominant leg is inferred from the ORDER of the extremes in the window:
+    swing low before swing high = an up-leg (retracement measured DOWN from the
+    high — the legacy behaviour); swing high before swing low = a down-leg
+    (retracement measured UP from the low). ``fib_zone`` always describes how
+    deep price has retraced the dominant leg, so ``618_786``/``below_786`` mean
+    "deep retracement" in BOTH framings and consumers interpret the zone
+    together with ``fib_trend`` ("up"/"down").
+
+    With FIB_DIRECTION_AWARE_ENABLED=false the legacy bullish-only framing is
+    used regardless of leg order.
     """
     lookback = min(50, len(highs))
     seg_h = highs[-lookback:]
@@ -3562,33 +3847,65 @@ def _compute_fibonacci(highs: np.ndarray, lows: np.ndarray, closes: np.ndarray) 
     if diff <= 0:
         return {"fib_swing_high": swing_high, "fib_swing_low": swing_low}
 
-    # Standard Fibonacci levels (from swing high retracing down)
+    trend = "up"
+    if getattr(CONFIG.analyzer, "fib_direction_aware_enabled", False):
+        idx_high = int(np.argmax(seg_h))
+        idx_low = int(np.argmin(seg_l))
+        if idx_high < idx_low:
+            trend = "down"
+
+    if trend == "up":
+        # Up-leg: levels descend from the swing high (legacy formula).
+        levels = {r: swing_high - r * diff for r in (0.236, 0.382, 0.5, 0.618, 0.786)}
+    else:
+        # Down-leg: price retraces UP from the swing low.
+        levels = {r: swing_low + r * diff for r in (0.236, 0.382, 0.5, 0.618, 0.786)}
+
     fib_levels = {
         "fib_swing_high": round(swing_high, 6),
         "fib_swing_low": round(swing_low, 6),
-        "fib_236": round(swing_high - 0.236 * diff, 6),
-        "fib_382": round(swing_high - 0.382 * diff, 6),
-        "fib_500": round(swing_high - 0.500 * diff, 6),
-        "fib_618": round(swing_high - 0.618 * diff, 6),
-        "fib_786": round(swing_high - 0.786 * diff, 6),
+        "fib_trend": trend,
+        "fib_236": round(levels[0.236], 6),
+        "fib_382": round(levels[0.382], 6),
+        "fib_500": round(levels[0.5], 6),
+        "fib_618": round(levels[0.618], 6),
+        "fib_786": round(levels[0.786], 6),
     }
 
-    # Determine which zone the current price sits in
+    # Zone = how deep price has retraced the dominant leg (0 = at the leg's
+    # end, 1 = fully retraced). Identical to the legacy ladder for up-legs.
     price = float(closes[-1])
-    if price >= fib_levels["fib_236"]:
+    if trend == "up":
+        retrace = (swing_high - price) / diff
+    else:
+        retrace = (price - swing_low) / diff
+    if retrace <= 0.236:
         fib_levels["fib_zone"] = "above_236"
-    elif price >= fib_levels["fib_382"]:
+    elif retrace <= 0.382:
         fib_levels["fib_zone"] = "236_382"
-    elif price >= fib_levels["fib_500"]:
+    elif retrace <= 0.500:
         fib_levels["fib_zone"] = "382_500"
-    elif price >= fib_levels["fib_618"]:
+    elif retrace <= 0.618:
         fib_levels["fib_zone"] = "500_618"
-    elif price >= fib_levels["fib_786"]:
+    elif retrace <= 0.786:
         fib_levels["fib_zone"] = "618_786"
     else:
         fib_levels["fib_zone"] = "below_786"
 
     return fib_levels
+
+
+# Relative evidential strength per candlestick pattern (audit fix #14):
+# three-candle formations outrank two-candle ones, which outrank single bars.
+_CANDLE_STRENGTH: dict = {
+    "three_white_soldiers": 1.5, "three_black_crows": 1.5,
+    "morning_star": 1.4, "evening_star": 1.4,
+    "bullish_engulfing": 1.2, "bearish_engulfing": 1.2,
+    "marubozu": 1.1,
+    "bullish_harami": 1.0, "bearish_harami": 1.0,
+    "tweezer_top": 1.0, "tweezer_bottom": 1.0,
+    "hammer": 1.0, "shooting_star": 1.0,
+}
 
 
 def _detect_candlestick_patterns(
@@ -3604,6 +3921,23 @@ def _detect_candlestick_patterns(
 
     # Use last 3 bars for multi-bar patterns
     o, h, l, c = opens[-3:], highs[-3:], lows[-3:], closes[-3:]
+
+    # Trend context (audit fix #13): reversal patterns need something to
+    # reverse — a hammer in an uptrend or a shooting star in a downtrend is
+    # geometry without meaning. Slope of the closes preceding the pattern
+    # decides: -1 downtrend, +1 uptrend, 0 flat/unknown. When the flag is off
+    # (or history is too short) context stays 0 and behaviour is legacy.
+    trend_ctx = 0
+    if (getattr(CONFIG.analyzer, "candle_trend_context_enabled", False)
+            and len(closes) >= 10):
+        _ctx = closes[-10:-2]  # bars before the pattern's final two candles
+        _c0, _c1 = float(_ctx[0]), float(_ctx[-1])
+        if _c0 > 0:
+            if _c1 < _c0 * 0.995:
+                trend_ctx = -1
+            elif _c1 > _c0 * 1.005:
+                trend_ctx = 1
+    _ctx_on = getattr(CONFIG.analyzer, "candle_trend_context_enabled", False)
 
     body = c - o  # positive = bullish candle
     abs_body = np.abs(body)
@@ -3624,13 +3958,17 @@ def _detect_candlestick_patterns(
         if body_pct < 0.10:
             patterns["doji"] = "neutral"
 
-        # Hammer: small body at top, long lower wick (>= 2x body)
+        # Hammer: small body at top, long lower wick (>= 2x body). With trend
+        # context on, it must appear in a DOWNTREND (it is a bottom reversal).
         if last_lower >= 2 * last_body and last_upper < last_body and body_pct < 0.4:
-            patterns["hammer"] = "bullish"
+            if not _ctx_on or trend_ctx == -1:
+                patterns["hammer"] = "bullish"
 
-        # Shooting Star: small body at bottom, long upper wick (>= 2x body)
+        # Shooting Star: small body at bottom, long upper wick (>= 2x body).
+        # With trend context on, it must appear in an UPTREND (top reversal).
         if last_upper >= 2 * last_body and last_lower < last_body and body_pct < 0.4:
-            patterns["shooting_star"] = "bearish"
+            if not _ctx_on or trend_ctx == 1:
+                patterns["shooting_star"] = "bearish"
 
         # Spinning Top: small body, moderate wicks on both sides
         if body_pct < 0.25 and last_upper > 0.25 * last_range and last_lower > 0.25 * last_range:
@@ -3677,15 +4015,20 @@ def _detect_candlestick_patterns(
             patterns["tweezer_bottom"] = "bullish"
 
     # -- Three-bar patterns --
-    # Morning Star: large bearish, small body (gap down), large bullish
+    # Morning/Evening Star. Crypto trades 24/7 so the textbook "gap" almost
+    # never prints; the meaningful confirmation (audit fix #13) is that the
+    # third candle closes back INTO the first candle's body (beyond its
+    # midpoint) — without it, any small middle bar plus a bounce qualifies.
     b0, b1, b2 = float(body[-3]), float(body[-2]), float(body[-1])
     a0, a1, a2 = float(abs_body[-3]), float(abs_body[-2]), float(abs_body[-1])
+    _body0_mid = (float(o[-3]) + float(c[-3])) / 2.0
     if b0 < 0 and a0 > 0 and a1 < a0 * 0.3 and b2 > 0 and a2 > a0 * 0.5:
-        patterns["morning_star"] = "bullish"
+        if not _ctx_on or float(c[-1]) > _body0_mid:
+            patterns["morning_star"] = "bullish"
 
-    # Evening Star: large bullish, small body (gap up), large bearish
     if b0 > 0 and a0 > 0 and a1 < a0 * 0.3 and b2 < 0 and a2 > a0 * 0.5:
-        patterns["evening_star"] = "bearish"
+        if not _ctx_on or float(c[-1]) < _body0_mid:
+            patterns["evening_star"] = "bearish"
 
     # Three White Soldiers: three consecutive bullish candles with higher closes
     if b0 > 0 and b1 > 0 and b2 > 0:

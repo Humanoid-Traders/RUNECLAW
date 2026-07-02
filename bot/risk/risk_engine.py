@@ -988,6 +988,31 @@ class RiskEngine:
             failed.append(f"STOP_LOSS: evaluation error ({exc})")
 
         try:
+            # 11b. Directional SL/TP side re-validation (audit fix #17).
+            # The TradeIdea model validator enforces LONG: SL<entry<TP and
+            # SHORT: TP<entry<SL at construction, but ideas built via
+            # model_construct (or mutated after construction) bypass it, and
+            # the risk-reward check uses abs() so it cannot see an inverted
+            # TP. Defense-in-depth: re-check the sides independently here.
+            _dir = getattr(idea.direction, "value", str(idea.direction))
+            _e, _sl, _tp = idea.entry_price, idea.stop_loss, idea.take_profit
+            if all(math.isfinite(x) for x in (_e, _sl, _tp)):
+                if _dir == "LONG" and not (_sl < _e < _tp):
+                    failed.append(
+                        f"SLTP_SIDES: LONG requires SL<entry<TP "
+                        f"(sl={_sl}, entry={_e}, tp={_tp})")
+                elif _dir == "SHORT" and not (_tp < _e < _sl):
+                    failed.append(
+                        f"SLTP_SIDES: SHORT requires TP<entry<SL "
+                        f"(sl={_sl}, entry={_e}, tp={_tp})")
+                else:
+                    passed.append("SLTP_SIDES: directionally valid")
+            else:
+                failed.append("SLTP_SIDES: non-finite level")
+        except Exception as exc:
+            failed.append(f"SLTP_SIDES: evaluation error ({exc})")
+
+        try:
             # 12. Stale data guard
             # Limit orders get 2x timeout — user needs time to review and set price
             is_limit_order = getattr(idea, 'order_type', '') == 'limit'

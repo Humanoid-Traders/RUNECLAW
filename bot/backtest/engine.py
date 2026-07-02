@@ -80,6 +80,17 @@ class BacktestEngine:
         # the SAME blended path live uses, with no network call. Takes precedence
         # over use_llm; the offline hook short-circuits the network LLM and falls
         # back to the rule engine for (symbol, time) pairs with no recording.
+        # Audit fix #25: the confidence-calibration curve and setup-expectancy
+        # nudge are fitted on the bot's ENTIRE closed-trade history — future
+        # information relative to any replayed historical bar. Force both OFF
+        # for this backtest and restore the operator's settings in cleanup().
+        self._saved_learning_flags = (
+            CONFIG.analyzer.confidence_calibration_enabled,
+            CONFIG.analyzer.setup_expectancy_enabled,
+        )
+        object.__setattr__(CONFIG.analyzer, "confidence_calibration_enabled", False)
+        object.__setattr__(CONFIG.analyzer, "setup_expectancy_enabled", False)
+
         if config.use_recorded_llm:
             from bot.backtest.recorded_llm import RecordedLLM
             self._recorded_llm = RecordedLLM.from_jsonl(config.recorded_llm_path)
@@ -126,6 +137,13 @@ class BacktestEngine:
 
     def cleanup(self) -> None:
         """Explicitly remove the temp state directory. Call after backtest completes."""
+        try:
+            _cal, _exp = getattr(self, "_saved_learning_flags", (None, None))
+            if _cal is not None:
+                object.__setattr__(CONFIG.analyzer, "confidence_calibration_enabled", _cal)
+                object.__setattr__(CONFIG.analyzer, "setup_expectancy_enabled", _exp)
+        except Exception:
+            pass
         import shutil
         try:
             shutil.rmtree(self._bt_state_dir, ignore_errors=True)
@@ -153,8 +171,18 @@ class BacktestEngine:
         lookback_size = self.config.lookback_size
         scan_interval = self.config.scan_interval
 
+        self._pending_entry = None
+
         for i in range(lookback_size, len(bars)):
             current_bar = bars[i]
+
+            # --- Fill any queued next-open entry at THIS bar's open (audit
+            # fix #15) before stop checks, so the freshly opened position is
+            # then exposed to this bar's range like a live fill would be. ---
+            if self._pending_entry is not None:
+                _p_idea, _p_risk = self._pending_entry
+                self._pending_entry = None
+                self._execute_fill(_p_idea, _p_risk, current_bar.open, current_bar)
 
             # --- Monitor open positions against this bar's high/low ---
             self._check_stops_intrabar(current_bar)
@@ -225,7 +253,8 @@ class BacktestEngine:
         # 3. Run analyzer (same as live). BT-H2: pass the simulated bar time so
         # session-aware confidence is causal/reproducible (not wall-clock).
         idea = await self.analyzer.analyze(
-            signal, candles, order_flow=order_flow, as_of=bar.timestamp
+            signal, candles, order_flow=order_flow, as_of=bar.timestamp,
+            timeframe=self.config.timeframe,
         )
         if idea is None:
             self._ideas_rejected_confidence += 1
@@ -272,16 +301,26 @@ class BacktestEngine:
                   action="backtest_risk", result="REJECTED")
             return
 
-        # 5. Execute (no human confirmation in backtest)
+        # 5. Execute (no human confirmation in backtest). With
+        # fill_mode="next_open" (audit fix #15) the approved idea is queued and
+        # filled at the NEXT bar's open instead of this bar's close.
+        if getattr(self.config, "fill_mode", "close") == "next_open":
+            self._pending_entry = (idea, risk_check)
+            return
+        self._execute_fill(idea, risk_check, idea.entry_price, bar)
+
+    def _execute_fill(self, idea, risk_check, fill_price: float, bar) -> None:
+        """Open the position at ``fill_price`` (bar close in legacy mode, next
+        bar's open in next_open mode) with slippage/commission applied."""
         size_usd = risk_check.position_size_usd
 
         # Apply entry slippage BEFORE opening portfolio position so the
         # portfolio's internal equity/drawdown curve reflects slipped entries.
-        slippage = idea.entry_price * (self.config.slippage_pct / 100)
+        slippage = fill_price * (self.config.slippage_pct / 100)
         if idea.direction == Direction.LONG:
-            adjusted_entry = idea.entry_price + slippage
+            adjusted_entry = fill_price + slippage
         else:
-            adjusted_entry = idea.entry_price - slippage
+            adjusted_entry = fill_price - slippage
 
         # Create a slippage-adjusted copy of the idea for portfolio
         slipped_idea = idea.model_copy(update={"entry_price": round(adjusted_entry, 6)})
@@ -291,7 +330,7 @@ class BacktestEngine:
         initial_risk = abs(idea.entry_price - idea.stop_loss)
         # M2 fix: read sl_mult from config instead of hardcoding
         sl_mult = CONFIG.analyzer.sl_atr_mult_default
-        canonical_atr = initial_risk / sl_mult if initial_risk > 0 else (atr_value or idea.entry_price * 0.02)
+        canonical_atr = initial_risk / sl_mult if initial_risk > 0 else idea.entry_price * 0.02
         trailing = make_trailing_state(adjusted_entry, idea.direction.value, initial_risk, canonical_atr)
         trailing["entry_price"] = adjusted_entry
         self._open_bt_positions[idea.id] = {

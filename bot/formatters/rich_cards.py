@@ -106,12 +106,12 @@ def compute_support_resistance(
 
 
 def compute_rsi(closes: np.ndarray, period: int = 14) -> float:
+    """Canonical Wilder RSI (audit fix #20: this card previously displayed a
+    simple-mean approximation that could disagree with the bot's real RSI)."""
     if len(closes) < period + 1:
         return 50.0
-    deltas = np.diff(closes)
-    g = np.mean(np.maximum(deltas[-period:], 0))
-    l = np.mean(np.maximum(-deltas[-period:], 0))
-    return 100.0 if l == 0 else float(100.0 - 100.0 / (1.0 + g / l))
+    from bot.core.ta_utils import rsi_series
+    return float(rsi_series(closes, period)[-1])
 
 
 def compute_atr(highs: np.ndarray, lows: np.ndarray, closes: np.ndarray,

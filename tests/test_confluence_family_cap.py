@@ -8,7 +8,8 @@ CONFIG.confluence.family_cap_enabled is set, their COMBINED (actively-voting)
 weight is scaled down to mr_oscillator_weight_cap so the family counts as ~one
 strong voter.
 
-Default OFF — these tests pin the *opt-in* behaviour and that the flag gates it.
+Default ON since the 2026-07 audit (fix #12); these tests pin the cap
+behaviour and that the flag still gates it.
 """
 
 from unittest.mock import patch
@@ -25,17 +26,31 @@ def _signal():
 
 def _score(indicators, *, enabled=False, cap=2.0):
     if not enabled:
-        # Real CONFIG (family_cap_enabled defaults False) — the baseline.
-        return Analyzer._score_confluence(indicators, Regime.RANGE, _signal())
+        # Baseline = cap explicitly OFF (the flag defaults ON since the
+        # 2026-07 audit, so the uncapped baseline must be forced).
+        with patch("bot.core.analyzer.CONFIG") as cfg:
+            cfg.confluence.family_cap_enabled = False
+            cfg.analyzer.voter_skip_missing_enabled = True
+            cfg.analyzer.candle_strength_vote_enabled = True
+            return Analyzer._score_confluence(indicators, Regime.RANGE, _signal())
     with patch("bot.core.analyzer.CONFIG") as cfg:
         cfg.confluence.family_cap_enabled = True
         cfg.confluence.mr_oscillator_weight_cap = cap
+        cfg.confluence.pattern_weight_cap = 2.5
+        cfg.analyzer.voter_skip_missing_enabled = True
+        cfg.analyzer.candle_strength_vote_enabled = True
         return Analyzer._score_confluence(indicators, Regime.RANGE, _signal())
 
 
-# Four oscillators all screaming the same direction.
-_BULL_CLUSTER = {"rsi": 25, "bb_pct_b": 0.1, "stoch_k": 15, "stoch_d": 15, "fib_zone": "below_786"}
-_BEAR_CLUSTER = {"rsi": 78, "bb_pct_b": 0.92, "stoch_k": 88, "stoch_d": 88, "fib_zone": "above_236"}
+# Four oscillators all screaming the same direction, plus one PRESENT neutral
+# out-of-family voter (macd at 0). Since the dilution guard (audit fix #16)
+# skips ABSENT voters, an all-one-family electorate would make the cap a no-op
+# (uniform scaling cancels in the weighted mean) — the neutral macd anchors the
+# denominator exactly like the pre-guard behaviour the cap was built against.
+_BULL_CLUSTER = {"rsi": 25, "bb_pct_b": 0.1, "stoch_k": 15, "stoch_d": 15,
+                 "fib_zone": "below_786", "macd_histogram": 0.0}
+_BEAR_CLUSTER = {"rsi": 78, "bb_pct_b": 0.92, "stoch_k": 88, "stoch_d": 88,
+                 "fib_zone": "above_236", "macd_histogram": 0.0}
 
 
 class TestCapReducesCoFiring:
@@ -81,9 +96,10 @@ class TestFlagGating:
             disabled = Analyzer._score_confluence(_BULL_CLUSTER, Regime.RANGE, _signal())
         assert disabled == _score(_BULL_CLUSTER)
 
-    def test_default_config_is_off(self):
+    def test_default_config_is_on(self):
+        # Default ON since the 2026-07 audit (fix #12).
         from bot.config import CONFIG
-        assert CONFIG.confluence.family_cap_enabled is False
+        assert CONFIG.confluence.family_cap_enabled is True
 
 
 class TestWiring:

@@ -218,6 +218,7 @@ async def _run_backtest(args: argparse.Namespace) -> None:
         initial_balance=args.balance,
         commission_pct=args.commission,
         slippage_pct=args.slippage,
+        fill_mode=args.fill_mode,
         use_llm=args.use_llm,
         use_recorded_llm=args.use_recorded_llm,
         use_recorded_order_flow=args.use_recorded_order_flow,
@@ -317,6 +318,10 @@ Examples:
     trade_group.add_argument("--balance", type=float, default=10000.0, help="Starting balance (default: 10000)")
     trade_group.add_argument("--commission", type=float, default=0.1, help="Commission %% (default: 0.1)")
     trade_group.add_argument("--slippage", type=float, default=0.05, help="Slippage %% (default: 0.05)")
+    trade_group.add_argument("--fill-mode", choices=("close", "next_open"), default="close",
+                             help="Entry fill convention: same-bar close (legacy, optimistic) "
+                                  "or next-bar open (conservative; audit fix #15). Run both "
+                                  "and compare to see how much edge lives in the fill assumption.")
     trade_group.add_argument("--use-llm", action="store_true", help="Use LLM for analysis (default: rule-based)")
     trade_group.add_argument("--use-recorded-llm", action="store_true",
                              help="Replay recorded LLM theses (data/learning/llm_calibration.jsonl) "

@@ -148,12 +148,91 @@ class VoterWeightLearner:
             return 1.0
         return self._mult.get(name, 1.0)
 
+    # -- validation ------------------------------------------------------------
+
+    def validate_oos(self, samples, split: float = 0.7) -> dict:
+        """Time-ordered out-of-sample validation (audit fix #19).
+
+        Fits on the FIRST ``split`` fraction of samples (they arrive in store
+        order = chronological) and evaluates on the rest: for each learned
+        voter, does agreeing-with-an-upweighted-voter (mult>1) still win more
+        often than base rate on unseen trades — and vice versa for downweighted
+        ones? Returns a report dict:
+
+            {"n_train", "n_test", "base_rate_test", "voters":
+                {name: {"mult", "oos_agree_n", "oos_win_rate", "oos_edge",
+                        "direction_holds"}},
+             "hold_rate"}
+
+        ``direction_holds`` is True when the sign of the OOS edge matches the
+        sign of the learned adjustment. ``hold_rate`` is the fraction of
+        learned voters whose adjustment direction held OOS — the go/no-go
+        number to check before enabling VOTER_WEIGHT_LEARNING_ENABLED.
+        """
+        clean = [s for s in samples if s and s[0]]
+        n = len(clean)
+        cut = max(1, int(n * split))
+        train, test = clean[:cut], clean[cut:]
+        report = {"n_train": len(train), "n_test": len(test),
+                  "base_rate_test": 0.0, "voters": {}, "hold_rate": 0.0}
+        if not test or len(train) < self.min_samples:
+            return report
+
+        fitted = VoterWeightLearner(self.min_samples, self.min_voter_samples,
+                                    self.gain, self.shrinkage).fit(train)
+        if not fitted.is_ready():
+            return report
+
+        base_rate = sum(1 for _, _, won in test if won) / len(test)
+        report["base_rate_test"] = round(base_rate, 4)
+
+        agree_n: dict[str, int] = {}
+        agree_w: dict[str, int] = {}
+        for votes, direction, won in test:
+            ds = _dir_sign(direction)
+            if ds == 0.0:
+                continue
+            seen = set()
+            for name, vote, _weight in votes:
+                if name in seen or name not in fitted._mult:
+                    continue
+                if vote * ds > _EPS:
+                    seen.add(name)
+                    agree_n[name] = agree_n.get(name, 0) + 1
+                    if won:
+                        agree_w[name] = agree_w.get(name, 0) + 1
+
+        holds = 0
+        judged = 0
+        for name, mult in fitted._mult.items():
+            an = agree_n.get(name, 0)
+            wr = (agree_w.get(name, 0) / an) if an else 0.0
+            edge = wr - base_rate
+            adj = mult - 1.0
+            direction_holds = (an > 0 and abs(adj) > 1e-6
+                               and (edge > 0) == (adj > 0))
+            if an > 0 and abs(adj) > 1e-6:
+                judged += 1
+                holds += 1 if direction_holds else 0
+            report["voters"][name] = {
+                "mult": round(mult, 3), "oos_agree_n": an,
+                "oos_win_rate": round(wr, 4), "oos_edge": round(edge, 4),
+                "direction_holds": direction_holds,
+            }
+        report["hold_rate"] = round(holds / judged, 4) if judged else 0.0
+        return report
+
     # -- persistence -----------------------------------------------------------
 
     def to_dict(self) -> dict:
+        from datetime import datetime, UTC
         return {"min_samples": self.min_samples, "min_voter_samples": self.min_voter_samples,
                 "gain": self.gain, "shrinkage": self.shrinkage,
-                "mult": self._mult, "n_samples": self._n_samples}
+                "mult": self._mult, "n_samples": self._n_samples,
+                # Versioning metadata (audit fix #19): a weights file without a
+                # schema version + fit timestamp cannot be audited or expired.
+                "schema_version": 2,
+                "fitted_at": datetime.now(UTC).isoformat()}
 
     def load_dict(self, d: dict) -> "VoterWeightLearner":
         self.min_samples = int(d.get("min_samples", self.min_samples))

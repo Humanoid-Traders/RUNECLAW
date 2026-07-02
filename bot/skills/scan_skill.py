@@ -793,19 +793,29 @@ async def _scan_single(update: Update, context: ContextTypes.DEFAULT_TYPE,
 # ── AI summary helper ─────────────────────────────────────────────
 
 async def _ai_summary(results: list[dict]) -> str:
+    # Audit fix #24: the old call passed (prompt, tier=..., max_tokens=...) to
+    # llm_complete, which takes (client, config, system_prompt, user_prompt) —
+    # it raised TypeError on every call and the feature was silently dead.
     try:
-        from bot.llm.provider import llm_complete, LLMTier
+        from bot.llm.provider import (
+            llm_complete, resolve_tier_config, create_llm_client, LLMTier)
+        from bot.config import CONFIG
     except ImportError:
         return "<i>LLM provider unavailable.</i>"
     lines = []
     for r in results:
         pats = ", ".join(p["name"] for p in r.get("patterns", [])[:2]) or "none"
         lines.append(f"{r['sym']}: {r['dir']} score={r['score']:.0%} RSI={r['rsi']} vol={r['vol_ratio']}x pats=[{pats}]")
-    prompt = ("You are RUNECLAW, an elite crypto trading AI. Given the scan results below, "
-              "write a 2-3 sentence market summary highlighting strongest setups, "
-              "prevailing bias, and notable patterns. Be concise.\n\n" + "\n".join(lines))
+    system_prompt = ("You are RUNECLAW, a crypto trading analysis assistant. Given scan "
+                     "results, write a 2-3 sentence market summary highlighting the "
+                     "strongest setups, prevailing bias, and notable patterns. Be "
+                     "concise. Never promise or guarantee outcomes.")
     try:
-        s = await llm_complete(prompt, tier=LLMTier.SCAN, max_tokens=300)
+        cfg = resolve_tier_config(LLMTier.SCAN, CONFIG.llm)
+        client = create_llm_client(cfg)
+        if client is None:
+            return "<i>LLM not configured.</i>"
+        s = await llm_complete(client, cfg, system_prompt, "\n".join(lines))
         return s.strip() if s else "<i>No summary generated.</i>"
     except Exception as exc:
         log.warning("AI summary failed: %s", exc)

@@ -28,6 +28,13 @@ class BacktestConfig(BaseModel):
     # (--wf-optimize) sweeps this to find the entry cutoff that generalizes OOS,
     # so it must actually filter trades; the engine honors it in _evaluate_bar.
     confidence_threshold: float = 0.0
+    # Entry fill convention (audit fix #15). "close" = fill at the same bar's
+    # close that generated the signal (legacy; optimistic — assumes you can
+    # transact at the closing print). "next_open" = queue the approved idea and
+    # fill at the NEXT bar's open (conservative; closer to live execution).
+    # Run both and compare: a large edge gap between them means the strategy's
+    # backtested edge lives in the fill assumption, not the signal.
+    fill_mode: str = "close"               # "close" | "next_open"
     use_llm: bool = False                  # default: rule-based for reproducibility
     # Deterministic backtest parity: replay recorded LLM theses
     # (data/learning/llm_calibration.jsonl) so the run exercises the live blended

@@ -28,8 +28,9 @@ asked for:
                               for wave-anchored stops.
 
 Everything here is pure math on plain numbers / dicts. All wiring into the
-analyzer is gated behind config flags that default OFF, so importing or
-even calling these functions can never change live behaviour on its own.
+analyzer is gated behind config flags (ELLIOTT_* — default ON, each
+env-overridable), so importing or even calling these functions can never
+change live behaviour on its own.
 """
 
 from __future__ import annotations
