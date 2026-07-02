@@ -25,7 +25,6 @@ Usage:
 from __future__ import annotations
 
 import time
-from typing import Optional
 
 from bot.backtest.engine import BacktestEngine
 from bot.backtest.models import BacktestConfig, BacktestResult, EquityPoint
