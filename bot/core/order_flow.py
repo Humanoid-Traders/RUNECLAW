@@ -119,7 +119,15 @@ class OrderFlowConfig:
     # safe-direction regardless of poll cadence.
     time_bars_enabled: bool = _env_bool("OF_TIME_BARS_ENABLED", True)
     taker_bar_min_span_sec: float = _env_float("OF_TAKER_BAR_MIN_SPAN_SEC", 20.0)
-    taker_bar_max_span_sec: float = _env_float("OF_TAKER_BAR_MAX_SPAN_SEC", 300.0)
+    # Max span raised 300s -> 1800s: taker bars accrue once per SCAN of a
+    # symbol (minutes apart), not per exchange tick — a 300s ceiling rejected
+    # every confirmed streak at real scan cadence, making Gate 2 unpassable.
+    taker_bar_max_span_sec: float = _env_float("OF_TAKER_BAR_MAX_SPAN_SEC", 1800.0)
+    # Rule 20 book-dominance confirmation ratio (favored:opposing side, top-N
+    # executable depth). The advertised 2:1 never actually ran (the gate was
+    # unwired) and blocks most entries in balanced books; the active default
+    # is a milder 1.2:1 confirmation, env-tunable.
+    dominance_required_ratio: float = _env_float("OF_DOMINANCE_RATIO", 1.2)
     # --- Funding confluence vote: scale fix (deep-audit medium) ---
     # to_confluence_votes normalised the funding rate by 0.03 (3%), but funding
     # rates are tiny (typically ±0.0001–0.0005), so the vote was ~60x too small
@@ -843,13 +851,18 @@ class OrderFlowAnalyzer:
         with self._lock:
             ratios_deque = self._taker_bar_ratios.get(symbol)
             if not ratios_deque or len(ratios_deque) < 3:
+                # Fail-OPEN on missing data: bars accrue one per scan, so a
+                # freshly scanned symbol has <3 bars for its first ~3 scans.
+                # Fail-closed here made every new symbol untradeable (and, at
+                # scan cadence, most symbols most of the time). The gate still
+                # REJECTS when 3 bars exist and actively misalign.
                 n = len(ratios_deque) if ratios_deque else 0
                 return {
-                    "passed": False,
+                    "passed": True,
                     "direction": direction,
                     "ratios": [round(self._bar_ratio(e), 3) for e in ratios_deque] if ratios_deque else [],
                     "streak_count": 0,
-                    "reason": f"insufficient taker data ({n}/3 bars)",
+                    "reason": f"insufficient taker data ({n}/3 bars) — fail-open",
                 }
             entries = list(ratios_deque)
 
@@ -908,40 +921,44 @@ class OrderFlowAnalyzer:
     # -- Rule 20: Bid Dominance Gate --
 
     def check_bid_dominance(self, sig: OrderFlowSignal, direction: str) -> dict:
-        """Rule 20: Require bid:ask depth ratio >= 2:1 for LONG entries.
+        """Rule 20: require book-side dominance in the TRADE direction —
+        bids for LONG, asks for SHORT. (Previously LONG-only, giving shorts a
+        structural free pass, and it compared the full ~25-level sums that the
+        module header itself calls trivially spoofable — the top-N executable
+        depth is used now, falling back to the full sums when top-N is absent.)
 
-        SHORT entries are not subject to this gate.
         Returns dict with: passed, bid_ask_ratio, required_ratio, reason.
+        bid_ask_ratio is always favored-side : opposing-side.
         """
         dir_upper = direction.upper()
-        if dir_upper != "LONG":
-            return {
-                "passed": True,
-                "bid_ask_ratio": None,
-                "required_ratio": None,
-                "reason": "bid dominance gate only applies to LONG entries",
-            }
+        required = self.config.dominance_required_ratio
 
         if "book" not in sig.components_ok:
             return {
                 "passed": False,
                 "bid_ask_ratio": None,
-                "required_ratio": 2.0,
+                "required_ratio": required,
                 "reason": "order book data unavailable (fail-closed)",
             }
 
-        bid_ask_ratio = (sig.bid_depth_usd / sig.ask_depth_usd) if sig.ask_depth_usd > 0 else 0.0
-        required = 2.0
-        passed = bid_ask_ratio >= required
+        bid_depth = sig.bid_depth_top_usd if sig.bid_depth_top_usd > 0 else sig.bid_depth_usd
+        ask_depth = sig.ask_depth_top_usd if sig.ask_depth_top_usd > 0 else sig.ask_depth_usd
+        if dir_upper == "LONG":
+            fav, opp, side = bid_depth, ask_depth, "bid"
+        else:
+            fav, opp, side = ask_depth, bid_depth, "ask"
+
+        ratio = (fav / opp) if opp > 0 else 0.0
+        passed = ratio >= required
 
         return {
             "passed": passed,
-            "bid_ask_ratio": round(bid_ask_ratio, 2),
+            "bid_ask_ratio": round(ratio, 2),
             "required_ratio": required,
             "reason": (
-                f"bid dominance {bid_ask_ratio:.2f}:1 confirmed"
+                f"{side} dominance {ratio:.2f}:1 confirmed (top-depth)"
                 if passed else
-                f"bid:ask ratio {bid_ask_ratio:.2f}:1 < {required:.1f}:1 required"
+                f"{side} side ratio {ratio:.2f}:1 < {required:.1f}:1 required"
             ),
         }
 

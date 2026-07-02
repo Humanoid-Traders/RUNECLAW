@@ -2850,16 +2850,20 @@ class TestMultiTimeframe:
 
     def test_confluence_votes_with_alignment(self):
         from bot.core.multi_timeframe import MTFConfluence, MTFResult
+        # bos_dir is required since the directional-BOS fix: the vote follows
+        # the BREAK direction instead of blindly copying the alignment score.
         result = MTFResult(
             alignment_score=0.7,
             structure_bias=0.5,
             bos_detected=True,
+            bos_dir=1,
             confidence=0.8,
         )
         votes, weights, labels = MTFConfluence.to_confluence_votes(result)
         assert len(votes) >= 2, "Should have alignment + structure votes"
         assert "mtf_alignment" in labels
         assert "mtf_bos" in labels
+        assert votes[labels.index("mtf_bos")] > 0
 
     def test_swing_detection(self):
         from bot.core.multi_timeframe import _find_swings

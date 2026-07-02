@@ -1250,23 +1250,41 @@ class RiskEngine:
         except Exception as exc:
             failed.append(f"TAKER_3BAR: evaluation error ({exc})")
 
-        # 23. Bid dominance gate (Rule 20) — bid:ask >= 2:1 for LONG; fail-open (audited)
+        # 23. Bid dominance gate (Rule 20) — book-side dominance in the trade
+        # direction; fail-open (audited) when unwired. The cached signal is
+        # used ONLY if it belongs to THIS symbol and is fresh — the engine
+        # caches the last successful analysis, so without these guards a LONG
+        # on symbol B could be gated by symbol A's book from minutes ago.
+        _OF_SIGNAL_MAX_AGE_S = 300
         try:
-            if self._order_flow is not None and self._last_of_signal is not None:
+            _sig = self._last_of_signal
+            if _sig is not None:
+                if getattr(_sig, "symbol", None) != idea.asset:
+                    _sig = None
+                else:
+                    try:
+                        _age = (datetime.now(UTC) - _sig.timestamp).total_seconds()
+                        if _age > _OF_SIGNAL_MAX_AGE_S:
+                            _sig = None
+                    except Exception:
+                        _sig = None
+            if self._order_flow is not None and _sig is not None:
                 direction_str = idea.direction.value if hasattr(idea.direction, 'value') else str(idea.direction)
-                gate20 = self._order_flow.check_bid_dominance(self._last_of_signal, direction_str)
+                gate20 = self._order_flow.check_bid_dominance(_sig, direction_str)
                 if gate20["passed"]:
                     passed.append(f"BID_DOMINANCE: {gate20['reason']}")
                 else:
                     failed.append(f"BID_DOMINANCE: {gate20['reason']}")
             else:
-                # Deliberate fail-open: no analyzer/signal → pass, but audit it.
+                # Deliberate fail-open: no analyzer, or no fresh same-symbol
+                # signal → pass, but audit it.
                 audit(risk_log,
-                      "Order flow check #23 (bid dominance) skipped — no analyzer/signal wired "
-                      "(deliberate fail-open)",
+                      "Order flow check #23 (bid dominance) skipped — no analyzer or no "
+                      "fresh signal for this symbol (deliberate fail-open)",
                       action="order_flow_gate", result="SKIPPED_NO_ANALYZER",
-                      data={"check": "BID_DOMINANCE"})
-                passed.append("BID_DOMINANCE: skipped (no order flow data)")
+                      data={"check": "BID_DOMINANCE", "idea_symbol": idea.asset,
+                            "cached_symbol": getattr(self._last_of_signal, "symbol", None)})
+                passed.append("BID_DOMINANCE: skipped (no fresh order flow data)")
         except Exception as exc:
             failed.append(f"BID_DOMINANCE: evaluation error ({exc})")
 

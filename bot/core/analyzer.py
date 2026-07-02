@@ -871,10 +871,23 @@ class Analyzer:
         regime = self._detect_regime(indicators, signal.symbol)
 
         # ── Multi-Timeframe Analysis ──
+        # MTF_CONFLUENCE_ENABLED (default ON): the engine ships its cached,
+        # forming-candle-cleaned 4h/1d fetches in mtf_candles — use them when
+        # the explicit params weren't given. (Before this the module was dead
+        # code: no caller ever supplied candles_4h/candles_1d.)
         mtf_result = None
+        if CONFIG.analyzer.mtf_confluence_enabled and mtf_candles:
+            if candles_4h is None:
+                candles_4h = mtf_candles.get("4h")
+            if candles_1d is None:
+                candles_1d = mtf_candles.get("1d")
         if candles_4h or candles_1d:
+            # Only feed the primary window into the "1h" slot when it actually
+            # IS 1h data (or a true 1h series is available) — a 5m/4h primary
+            # mislabeled as 1h would be weighted and structured as the wrong TF.
+            _c1h = (mtf_candles or {}).get("1h") or (candles if timeframe == "1h" else None)
             mtf_result = self._mtf.analyze(
-                candles_1h=candles,  # primary timeframe as 1H
+                candles_1h=_c1h,
                 candles_4h=candles_4h,
                 candles_1d=candles_1d,
             )
@@ -891,7 +904,8 @@ class Analyzer:
             # — a contrarian signal independent of this symbol's price action —
             # instead of being purely price-derived (which echoes other voters).
             # Cached with a TTL inside the engine; fail-open (network error keeps
-            # the last/None value → zero external adjustment). Default OFF.
+            # the last/None value → zero external adjustment). Default ON;
+            # backtests force it off (today's sentiment is lookahead there).
             if CONFIG.analyzer.external_sentiment_enabled:
                 try:
                     await self._sentiment.refresh_fear_greed()
@@ -1116,30 +1130,33 @@ class Analyzer:
         # Captures raw LLM confidence vs confluence BEFORE any post-blend
         # adjustments.  Enables offline calibration study: correlation,
         # direction agreement, precision/recall at thresholds per model.
-        try:
-            _raw_llm_conf = max(0.0, min(1.0, thesis.get("confidence", 0.0)))
-            _cal_entry = {
-                "ts": datetime.now(UTC).isoformat(),
-                "symbol": signal.symbol,
-                "llm_model": thesis.get("model_used", "rule_engine"),
-                "llm_source": thesis.get("source", "unknown"),
-                "llm_direction": thesis.get("direction"),
-                "llm_confidence_raw": round(_raw_llm_conf, 4),
-                "confluence_score": round(confluence, 4),
-                "confluence_direction": "LONG" if confluence > 0.55 else ("SHORT" if confluence < 0.45 else "NEUTRAL"),
-                "blended_confidence": round(blended_confidence, 4),
-                "regime": regime.value,
-                "strategy_type": strategy_type,
-                "counter_trend_penalty": counter_trend_penalty,
-                "prompt_hash": thesis.get("prompt_hash", ""),
-            }
-            import json as _json_cal
-            _cal_path = Path(__file__).resolve().parent.parent.parent / "data" / "learning" / "llm_calibration.jsonl"
-            _cal_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(_cal_path, "a") as _f:
-                _f.write(_json_cal.dumps(_cal_entry) + "\n")
-        except Exception as _cal_exc:
-            logger.debug("LLM calibration log error: %s", _cal_exc)
+        # LIVE ONLY: backtest replays (as_of set) must not append thousands
+        # of rule-engine rows to the operator's calibration study file.
+        if as_of is None:
+            try:
+                _raw_llm_conf = max(0.0, min(1.0, thesis.get("confidence", 0.0)))
+                _cal_entry = {
+                    "ts": datetime.now(UTC).isoformat(),
+                    "symbol": signal.symbol,
+                    "llm_model": thesis.get("model_used", "rule_engine"),
+                    "llm_source": thesis.get("source", "unknown"),
+                    "llm_direction": thesis.get("direction"),
+                    "llm_confidence_raw": round(_raw_llm_conf, 4),
+                    "confluence_score": round(confluence, 4),
+                    "confluence_direction": "LONG" if confluence > 0.55 else ("SHORT" if confluence < 0.45 else "NEUTRAL"),
+                    "blended_confidence": round(blended_confidence, 4),
+                    "regime": regime.value,
+                    "strategy_type": strategy_type,
+                    "counter_trend_penalty": counter_trend_penalty,
+                    "prompt_hash": thesis.get("prompt_hash", ""),
+                }
+                import json as _json_cal
+                _cal_path = Path(__file__).resolve().parent.parent.parent / "data" / "learning" / "llm_calibration.jsonl"
+                _cal_path.parent.mkdir(parents=True, exist_ok=True)
+                with open(_cal_path, "a") as _f:
+                    _f.write(_json_cal.dumps(_cal_entry) + "\n")
+            except Exception as _cal_exc:
+                logger.debug("LLM calibration log error: %s", _cal_exc)
 
         # SIGNAL QUALITY: multi-timeframe confirmation via SMA50
         # Acts as a proxy for higher-timeframe trend alignment on 1H data

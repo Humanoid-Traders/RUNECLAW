@@ -50,6 +50,7 @@ class PortfolioBacktester:
         self._saved_learning_flags = (
             CONFIG.analyzer.confidence_calibration_enabled,
             CONFIG.analyzer.setup_expectancy_enabled,
+            CONFIG.analyzer.external_sentiment_enabled,
         )
 
         # One engine per symbol; the FIRST engine's portfolio/risk/analyzer
@@ -58,7 +59,7 @@ class PortfolioBacktester:
         for i, sym in enumerate(self.symbols):
             cfg = config.model_copy(update={"symbol": sym})
             eng = BacktestEngine(cfg)
-            eng._saved_learning_flags = (None, None)  # orchestrator restores
+            eng._saved_learning_flags = (None, None, None)  # orchestrator restores
             if i == 0:
                 self._portfolio = eng.portfolio
                 self._risk = eng.risk
@@ -79,9 +80,15 @@ class PortfolioBacktester:
         for eng in self._engines.values():
             eng.cleanup()
         try:
-            _cal, _exp = self._saved_learning_flags
-            object.__setattr__(CONFIG.analyzer, "confidence_calibration_enabled", _cal)
-            object.__setattr__(CONFIG.analyzer, "setup_expectancy_enabled", _exp)
+            _cal, _exp, _ext = self._saved_learning_flags
+            # Idempotent (same reasoning as BacktestEngine.cleanup): never
+            # re-restore after a later backtest has re-forced the flags.
+            self._saved_learning_flags = (None, None, None)
+            if _cal is not None:
+                object.__setattr__(CONFIG.analyzer, "confidence_calibration_enabled", _cal)
+                object.__setattr__(CONFIG.analyzer, "setup_expectancy_enabled", _exp)
+            if _ext is not None:
+                object.__setattr__(CONFIG.analyzer, "external_sentiment_enabled", _ext)
         except Exception:
             pass
 
@@ -114,6 +121,13 @@ class PortfolioBacktester:
         last_close: dict[str, float] = {}
         for eng in self._engines.values():
             eng._pending_entry = None
+        # MTF parity (mirrors BacktestEngine.run): full raw history per symbol
+        # so _process_bar can resample closed 4h/1d groups.
+        for sym, bars in streams.items():
+            self._engines[sym]._all_raw = [
+                [int(b.timestamp.timestamp() * 1000), b.open, b.high, b.low, b.close, b.volume]
+                for b in bars
+            ]
 
         snap_counter = 0
         for ts in timeline:

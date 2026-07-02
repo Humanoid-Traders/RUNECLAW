@@ -22,6 +22,37 @@ def timeframe_to_ms(timeframe: str) -> int:
         return 0
 
 
+def resample_ohlcv(candles, source_tf: str, target_tf: str):
+    """Aggregate finer-timeframe OHLCV rows into CLOSED target-timeframe
+    candles (ccxt row format [ts, o, h, l, c, v], ascending).
+
+    Only complete target periods are returned — a trailing group whose period
+    has not fully elapsed by the last source bar's close is dropped. This
+    makes backtest replay see exactly the higher-TF history live would have
+    had at that bar close: no lookahead into the unfinished 4h/1d candle.
+
+    Returns [] when the timeframes are unparseable, equal, or the target is
+    not an integer multiple of the source.
+    """
+    src_ms = timeframe_to_ms(source_tf)
+    tgt_ms = timeframe_to_ms(target_tf)
+    if src_ms <= 0 or tgt_ms <= src_ms or tgt_ms % src_ms != 0 or not candles:
+        return []
+    groups: dict[int, list] = {}
+    for row in candles:
+        key = int(row[0] // tgt_ms)
+        g = groups.get(key)
+        if g is None:
+            groups[key] = [key * tgt_ms, row[1], row[2], row[3], row[4], row[5]]
+        else:
+            g[2] = max(g[2], row[2])
+            g[3] = min(g[3], row[3])
+            g[4] = row[4]
+            g[5] += row[5]
+    last_close_ms = candles[-1][0] + src_ms
+    return [groups[k] for k in sorted(groups) if (k + 1) * tgt_ms <= last_close_ms]
+
+
 def drop_forming_candle(ohlcv, timeframe: str):
     """Drop the in-progress (still-forming) last candle so indicators/patterns
     compute on CLOSED bars only — eliminating repaint. Gated by

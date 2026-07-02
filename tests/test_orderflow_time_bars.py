@@ -89,12 +89,15 @@ class TestGateDisabledIsIdentity:
         res = an.check_taker_3bar_gate("BTC/USDT", "LONG")
         assert res["passed"] is False
 
-    def test_insufficient_data(self):
+    def test_insufficient_data_fails_open(self):
+        # Bars accrue once per SCAN, so <3 bars is the normal state for a
+        # freshly scanned symbol — the gate now fails OPEN on missing data
+        # (it still rejects when 3 bars exist and actively misalign).
         an = _analyzer(time_bars_enabled=False)
         _seed(an, "BTC/USDT", [1.3, 1.4])
         res = an.check_taker_3bar_gate("BTC/USDT", "LONG")
-        assert res["passed"] is False
-        assert "insufficient" in res["reason"]
+        assert res["passed"] is True
+        assert "insufficient" in res["reason"] and "fail-open" in res["reason"]
 
 
 class TestGateEnabled:

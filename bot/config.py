@@ -772,6 +772,13 @@ class AnalyzerConfig:
     elliott_fib_targets_enabled: bool = _env_bool("ELLIOTT_FIB_TARGETS_ENABLED", True)
     elliott_mtf_enabled: bool = _env_bool("ELLIOTT_MTF_ENABLED", True)
 
+    # Multi-timeframe confluence (default ON): feed the engine's already
+    # fetched 4h/1d candles into MTFConfluence so the HH/HL/BOS/CHoCH
+    # structure + HTF alignment voters actually fire. Before this flag the
+    # module was dead code — no caller ever supplied candles_4h/candles_1d.
+    # Backtests resample the primary bars into closed 4h/1d groups for parity.
+    mtf_confluence_enabled: bool = _env_bool("MTF_CONFLUENCE_ENABLED", True)
+
     # Advanced VWAP (bot/core/vwap.py). Default ON at the operator's request;
     # each is env-overridable. These activate VWAP math that used to be computed
     # but unused, and match the anchor to the setup horizon:
