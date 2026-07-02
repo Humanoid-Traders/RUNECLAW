@@ -123,6 +123,53 @@ _EXECUTION_FAILURE_TOKENS = (
 )
 
 
+def recalc_sl_tp_for_shifted_entry(
+    entry_price: float,
+    stop_loss: float,
+    take_profit: float,
+    limit_price: float,
+    natural_sl: Optional[float],
+    side: str,
+) -> tuple[float, float, bool, str]:
+    """Pure SL/TP adjustment for a recalculated resting limit price.
+
+    1. Shift SL/TP by the entry displacement so the stop DISTANCE — which
+       drove position sizing and the leverage margin-risk cap — is preserved
+       at the new entry. Without this a LONG can fill at/below its own
+       unshifted stop when the limit moves up to ~2 ATR.
+    2. Apply the structure-based natural SL only if it TIGHTENS the stop and
+       sits on the correct side of the entry: a wider stop after sizing
+       silently raises dollar risk, and a wrong-side natural (entry cluster
+       below the session low) would stop out instantly.
+
+    Returns (new_sl, new_tp, shifted, natural_outcome) where natural_outcome
+    is "applied", "rejected_wrong_side", "rejected_wider" or "".
+    """
+    new_sl, new_tp = stop_loss, take_profit
+    shifted = False
+    entry_shift = limit_price - entry_price
+    if entry_shift != 0:
+        cand_sl = stop_loss + entry_shift
+        cand_tp = take_profit + entry_shift
+        if cand_sl > 0 and cand_tp > 0:
+            new_sl, new_tp = cand_sl, cand_tp
+            shifted = True
+
+    natural_outcome = ""
+    if natural_sl:
+        correct_side = (natural_sl < limit_price) if side == "buy" else (natural_sl > limit_price)
+        current_dist = abs(limit_price - new_sl) / limit_price
+        natural_dist = abs(limit_price - natural_sl) / limit_price
+        if not correct_side:
+            natural_outcome = "rejected_wrong_side"
+        elif 0 < natural_dist < current_dist:
+            new_sl = natural_sl
+            natural_outcome = "applied"
+        else:
+            natural_outcome = "rejected_wider"
+    return new_sl, new_tp, shifted, natural_outcome
+
+
 def execution_indicates_failure(result: str) -> bool:
     """True when execute()'s result string means NO live position resulted.
 
@@ -2034,6 +2081,10 @@ class LiveExecutor:
                     try:
                         ohlcv_data = await active_exchange.fetch_ohlcv(
                             symbol, "1h", limit=50)
+                        # Repaint guard: VWAP/EMA/session levels must come from
+                        # CLOSED bars, same policy as every analysis path.
+                        from bot.utils.candles import drop_forming_candle
+                        ohlcv_data = drop_forming_candle(ohlcv_data, "1h")
                     except Exception as ohlcv_exc:
                         logger.debug("Could not fetch OHLCV for limit calc: %s", ohlcv_exc)
 
@@ -2072,21 +2123,33 @@ class LiveExecutor:
                             if _re_rounded:
                                 quantity = float(_re_rounded)
 
-                    # Apply natural SL if better than current. natural_sl is
-                    # already computed on the correct side of entry (see
-                    # limit_entry: below entry for LONG, above for SHORT), so no
-                    # direction check is needed here — only the distance gate.
-                    if entry_result.natural_sl and limit_price:
-                        current_sl_dist = abs(idea.entry_price - idea.stop_loss) / idea.entry_price
-                        natural_sl_dist = abs(limit_price - entry_result.natural_sl) / limit_price
-                        # Use natural SL if it provides more room (wider) without exceeding 2x original
-                        if natural_sl_dist > current_sl_dist and natural_sl_dist < current_sl_dist * 2:
-                            old_sl = idea.stop_loss
-                            idea.stop_loss = entry_result.natural_sl
+                    # ── Keep SL/TP geometry attached to the RECALCULATED entry
+                    # and gate the structure SL (see recalc_sl_tp_for_shifted_entry) ──
+                    if limit_price:
+                        old_sl, old_tp = idea.stop_loss, idea.take_profit
+                        new_sl, new_tp, _shifted, _nat_outcome = recalc_sl_tp_for_shifted_entry(
+                            entry_price=idea.entry_price,
+                            stop_loss=idea.stop_loss,
+                            take_profit=idea.take_profit,
+                            limit_price=limit_price,
+                            natural_sl=entry_result.natural_sl,
+                            side=side,
+                        )
+                        idea.stop_loss = new_sl
+                        idea.take_profit = new_tp
+                        if _shifted or _nat_outcome:
                             audit(trade_log,
-                                  f"Natural SL applied: ${old_sl:,.4f} → ${idea.stop_loss:,.4f}",
-                                  action="natural_sl", result="APPLIED",
-                                  data={"old_sl": old_sl, "natural_sl": idea.stop_loss})
+                                  f"Limit-recalc SL/TP: SL ${old_sl:,.4f} → ${new_sl:,.4f}, "
+                                  f"TP ${old_tp:,.4f} → ${new_tp:,.4f} "
+                                  f"(shifted={_shifted}, natural_sl={_nat_outcome or 'n/a'})",
+                                  action="limit_recalc_sltp",
+                                  result=_nat_outcome.upper() if _nat_outcome else "SHIFTED",
+                                  data={"old_sl": old_sl, "new_sl": new_sl,
+                                        "old_tp": old_tp, "new_tp": new_tp,
+                                        "limit_price": limit_price,
+                                        "natural_sl": entry_result.natural_sl,
+                                        "natural_outcome": _nat_outcome,
+                                        "shifted": _shifted})
 
                     if limit_price:
                         audit(trade_log,
@@ -4428,8 +4491,10 @@ class LiveExecutor:
                 if cur_price >= pos.entry_price:
                     return False
 
-            # Fetch recent candles for ADX
+            # Fetch recent candles for ADX (closed bars only — repaint guard)
             ohlcv = await exchange.fetch_ohlcv(pos.symbol, "15m", limit=30)
+            from bot.utils.candles import drop_forming_candle
+            ohlcv = drop_forming_candle(ohlcv, "15m")
             if not ohlcv or len(ohlcv) < 14:
                 return False
 

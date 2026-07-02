@@ -1814,40 +1814,15 @@ class RuneClawEngine:
 
     @staticmethod
     def _timeframe_to_ms(timeframe: str) -> int:
-        """Parse a ccxt timeframe ('5m','1h','4h','1d','1w') to milliseconds; 0 if
-        unparseable."""
-        try:
-            unit = timeframe[-1].lower()
-            n = int(timeframe[:-1])
-            mult = {"m": 60_000, "h": 3_600_000, "d": 86_400_000, "w": 604_800_000}.get(unit)
-            return n * mult if mult else 0
-        except Exception:
-            return 0
+        """Parse a ccxt timeframe to milliseconds (shared util delegate)."""
+        from bot.utils.candles import timeframe_to_ms
+        return timeframe_to_ms(timeframe)
 
     def _drop_forming_candle(self, ohlcv, timeframe: str):
-        """Drop the in-progress (still-forming) last candle so indicators/patterns
-        compute on CLOSED bars only — eliminating repaint. Gated by
-        DROP_UNCLOSED_CANDLE_ENABLED (default ON; when disabled returns ohlcv
-        unchanged and every closes[-1] consumer repaints intrabar). The
-        last candle is dropped only when its period has not yet elapsed (its open
-        time + timeframe is still in the future), so a feed that already excludes
-        the forming bar is left intact. Fail-open: any error returns ohlcv as-is.
-        """
-        if not getattr(CONFIG.analyzer, "drop_unclosed_candle_enabled", False):
-            return ohlcv
-        try:
-            if not ohlcv or len(ohlcv) < 3:
-                return ohlcv
-            tf_ms = self._timeframe_to_ms(timeframe)
-            if tf_ms <= 0:
-                return ohlcv
-            last_open = float(ohlcv[-1][0])
-            now_ms = time.time() * 1000.0
-            if now_ms < last_open + tf_ms:   # last candle's period not yet closed
-                return ohlcv[:-1]
-            return ohlcv
-        except Exception:
-            return ohlcv
+        """Drop the in-progress last candle (repaint guard) — shared util
+        delegate so the live executor applies the identical policy."""
+        from bot.utils.candles import drop_forming_candle
+        return drop_forming_candle(ohlcv, timeframe)
 
     async def _refine_entry_mtf(self, idea: TradeIdea, exchange) -> TradeIdea:
         """Zoom into lower timeframe to find optimal entry within the setup zone.
@@ -1906,24 +1881,33 @@ class RuneClawEngine:
                         if 0.001 < pct_diff < 0.01:
                             # Refined entry is at support + small buffer
                             refined_entry = best_support + (current_price - best_support) * 0.2
-                            # Tighter SL based on 15m structure
+                            # Tighter SL based on 15m structure: RAISE the long
+                            # stop to just under the recent structure low —
+                            # min() here could only ever WIDEN risk — and never
+                            # place it at/above the refined entry.
                             min_low = float(np.min(recent_lows[-10:]))
-                            refined_sl = min(idea.stop_loss, min_low * 0.998)
-                            # Preserve R:R ratio for TP
+                            sl_candidate = min_low * 0.998
+                            refined_sl = idea.stop_loss
+                            if idea.stop_loss < sl_candidate < refined_entry:
+                                refined_sl = sl_candidate
+                            # Preserve R:R ratio for TP. Signed risk: if the
+                            # (kept) stop would sit at/above the refined entry
+                            # the refinement is geometrically invalid — skip it.
                             original_rr = abs(idea.take_profit - idea.entry_price) / abs(idea.entry_price - idea.stop_loss)
-                            new_risk = abs(refined_entry - refined_sl)
+                            new_risk = refined_entry - refined_sl
                             refined_tp = refined_entry + new_risk * original_rr
 
-                            audit(system_log,
-                                  f"MTF entry refined for {symbol}: {idea.entry_price:.4f} -> {refined_entry:.4f} "
-                                  f"(SL: {idea.stop_loss:.4f} -> {refined_sl:.4f})",
-                                  action="mtf_refine", result="REFINED")
+                            if new_risk > 0:
+                                audit(system_log,
+                                      f"MTF entry refined for {symbol}: {idea.entry_price:.4f} -> {refined_entry:.4f} "
+                                      f"(SL: {idea.stop_loss:.4f} -> {refined_sl:.4f})",
+                                      action="mtf_refine", result="REFINED")
 
-                            idea = idea.model_copy(update={
-                                "entry_price": round(refined_entry, 8),
-                                "stop_loss": round(refined_sl, 8),
-                                "take_profit": round(refined_tp, 8),
-                            })
+                                idea = idea.model_copy(update={
+                                    "entry_price": round(refined_entry, 8),
+                                    "stop_loss": round(refined_sl, 8),
+                                    "take_profit": round(refined_tp, 8),
+                                })
             else:
                 # For shorts, look for nearest resistance level above current price
                 resistance_candidates = []
@@ -1939,11 +1923,20 @@ class RuneClawEngine:
                         pct_diff = (best_resistance - current_price) / current_price
                         if 0.001 < pct_diff < 0.01:
                             refined_entry = best_resistance - (best_resistance - current_price) * 0.2
+                            # Mirror of the long side: LOWER the short stop to
+                            # just above recent structure, never widen, never
+                            # at/below the refined entry.
                             max_high = float(np.max(recent_highs[-10:]))
-                            refined_sl = max(idea.stop_loss, max_high * 1.002)
+                            sl_candidate = max_high * 1.002
+                            refined_sl = idea.stop_loss
+                            if refined_entry < sl_candidate < idea.stop_loss:
+                                refined_sl = sl_candidate
                             original_rr = abs(idea.take_profit - idea.entry_price) / abs(idea.entry_price - idea.stop_loss)
-                            new_risk = abs(refined_entry - refined_sl)
+                            new_risk = refined_sl - refined_entry
                             refined_tp = refined_entry - new_risk * original_rr
+
+                            if new_risk <= 0:
+                                return idea  # invalid geometry — keep original
 
                             audit(system_log,
                                   f"MTF entry refined for {symbol}: {idea.entry_price:.4f} -> {refined_entry:.4f} "

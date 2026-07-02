@@ -10,9 +10,8 @@ the live ticker, not the last candle).
 """
 
 import time
-from types import SimpleNamespace
-from unittest.mock import patch
 
+from bot.config import CONFIG
 from bot.core.engine import RuneClawEngine
 
 _HOUR = 3_600_000
@@ -22,10 +21,20 @@ def _eng():
     return RuneClawEngine.__new__(RuneClawEngine)
 
 
-def _cfg(enabled):
-    return patch("bot.core.engine.CONFIG",
-                 SimpleNamespace(analyzer=SimpleNamespace(
-                     drop_unclosed_candle_enabled=enabled)))
+class _cfg:
+    """Flip the real CONFIG flag (the logic now lives in bot.utils.candles,
+    which reads bot.config.CONFIG directly — patching the engine module's
+    CONFIG reference no longer reaches it)."""
+
+    def __init__(self, enabled):
+        self._enabled = enabled
+
+    def start(self):
+        self._old = CONFIG.analyzer.drop_unclosed_candle_enabled
+        object.__setattr__(CONFIG.analyzer, "drop_unclosed_candle_enabled", self._enabled)
+
+    def stop(self):
+        object.__setattr__(CONFIG.analyzer, "drop_unclosed_candle_enabled", self._old)
 
 
 def _candles(n, tf_ms, last_open):
