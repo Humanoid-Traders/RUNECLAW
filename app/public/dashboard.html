@@ -40,7 +40,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--body);font-size:15
 a{color:var(--gold);text-decoration:none}
 
 /* === LAYOUT === */
-.war-room{max-width:1400px;margin:0 auto;padding:16px}
+.war-room{max-width:1400px;margin:0 auto;padding:16px;width:100%;min-width:0}
 .header{display:flex;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--border);margin-bottom:16px}
 .header h1{font-family:var(--head);color:var(--gold);font-size:22px;letter-spacing:2px}
 .header .meta{font-family:var(--mono);font-size:12px;color:var(--text3)}
@@ -253,6 +253,38 @@ a{color:var(--gold);text-decoration:none}
 .readiness-factor{padding:3px 9px;border-radius:12px;border:1px solid var(--border);color:var(--text3)}
 .readiness-factor.done{color:var(--green);border-color:rgba(34,197,94,.3);background:var(--green-dim)}
 
+/* === VIEW ROUTER / SUB-NAV === */
+.subnav{position:sticky;top:var(--topnav-h,52px);z-index:30;display:flex;gap:4px;overflow-x:auto;min-width:0;
+  background:rgba(9,10,14,.92);backdrop-filter:blur(8px);border:1px solid var(--border);border-radius:9px;
+  padding:6px;margin-bottom:14px;scrollbar-width:none}
+.subnav::-webkit-scrollbar{display:none}
+.subnav a{font-family:var(--mono);font-size:11.5px;letter-spacing:.6px;color:var(--text3);padding:7px 13px;
+  border-radius:6px;white-space:nowrap;cursor:pointer;text-transform:uppercase;transition:.12s;font-weight:600}
+.subnav a:hover{color:var(--text);background:var(--bg3)}
+.subnav a.active{color:var(--gold);background:var(--gold-dim)}
+.view-hidden{display:none!important}
+
+/* === CHART INDICATOR TOGGLES === */
+.ind-btn{font-family:var(--mono);font-size:10px;letter-spacing:.5px;color:var(--text3);background:var(--bg);
+  border:1px solid var(--border);border-radius:4px;padding:4px 8px;cursor:pointer}
+.ind-btn.on{color:var(--gold);border-color:rgba(203,176,106,.4);background:var(--gold-dim)}
+.chart-legend{display:flex;gap:12px;flex-wrap:wrap;font-family:var(--mono);font-size:10px;margin-top:6px}
+.chart-legend span{display:inline-flex;align-items:center;gap:4px;color:var(--text3)}
+.chart-legend i{width:14px;height:2px;border-radius:1px;display:inline-block}
+
+/* === SETTINGS === */
+.set-section{margin-bottom:18px}
+.set-section h4{font-family:var(--head);color:var(--gold);font-size:12px;letter-spacing:1px;text-transform:uppercase;
+  margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid var(--border)}
+.set-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 0;font-size:13px;flex-wrap:wrap}
+.set-row .set-label{color:var(--text2)}
+.set-row .set-val{font-family:var(--mono);font-size:12px;color:var(--text)}
+.set-chip{display:inline-flex;gap:5px;align-items:center;font-family:var(--mono);font-size:11px;padding:3px 9px;border-radius:12px}
+.watch-tag{display:inline-flex;align-items:center;gap:5px;font-family:var(--mono);font-size:11px;background:var(--bg3);
+  border:1px solid var(--border);border-radius:12px;padding:3px 6px 3px 10px;margin:3px}
+.watch-tag button{background:none;border:none;color:var(--text3);cursor:pointer;font-size:13px;line-height:1;padding:0 2px}
+.watch-tag button:hover{color:var(--red)}
+
 /* === PNL CALENDAR HEATMAP === */
 .hm-grid{display:grid;grid-auto-flow:column;grid-template-rows:repeat(7,1fr);gap:3px;overflow-x:auto;padding-bottom:2px}
 .hm-cell{width:11px;height:11px;border-radius:2px;background:var(--bg)}
@@ -334,28 +366,41 @@ a{color:var(--gold);text-decoration:none}
 <div class="toast-container" id="toastContainer"></div>
 <div class="war-room" id="app">
   <div class="agent-ticker" id="agentTicker"><span class="at-dot"></span><svg class="icon"><use href="#icon-sparkle"></use></svg><span class="at-text" id="agentTickerText">Booting agent loop&hellip;</span></div>
-  <div class="panel" id="readinessPanel">
+  <nav class="subnav" id="subnav">
+    <a data-view-link="command" href="#command" onclick="goView('command');return false">Command</a>
+    <a data-view-link="markets" href="#markets" onclick="goView('markets');return false">Markets</a>
+    <a data-view-link="signals" href="#signals" onclick="goView('signals');return false">Signals</a>
+    <a data-view-link="portfolio" href="#portfolio" onclick="goView('portfolio');return false">Portfolio</a>
+    <a data-view-link="connect" href="#connect" onclick="goView('connect');return false">Connect</a>
+    <a data-view-link="settings" href="#settings" onclick="goView('settings');return false">Settings</a>
+  </nav>
+
+  <!-- ========== COMMAND ========== -->
+  <div class="panel" id="readinessPanel" data-view="command">
     <div class="panel-title"><svg class="icon icon-ai"><use href="#icon-sparkle"></use></svg> AI READINESS SCORE <span id="healthLabel" class="badge" style="margin-left:auto"></span></div>
     <div id="readinessContent"></div>
   </div>
-  <div class="panel" id="cockpitPanel">
+  <div class="panel" id="cockpitPanel" data-view="command">
     <div class="panel-title"><svg class="icon icon-ai"><use href="#icon-sparkle"></use></svg> AI COCKPIT</div>
     <div id="cockpitContent"></div>
   </div>
-  <div class="panel" id="onboardPanel" style="display:none"><div class="panel-title"><svg class="icon"><use href="#icon-rocket"></use></svg> GETTING STARTED</div><div id="onboardContent"></div></div>
-  <div class="grid-top">
+  <div class="panel" id="onboardPanel" data-view="command" style="display:none"><div class="panel-title"><svg class="icon"><use href="#icon-rocket"></use></svg> GETTING STARTED</div><div id="onboardContent"></div></div>
+  <div class="grid-top" data-view="command">
     <div class="panel regime" id="regimePanel"><div class="panel-title"><svg class="icon"><use href="#icon-globe"></use></svg> BTC REGIME</div><div class="skel-wrap"><div class="skel skel-row"></div><div class="skel skel-row"></div><div class="skel skel-row"></div></div></div>
     <div class="panel" id="circuitPanel"><div class="panel-title"><svg class="icon"><use href="#icon-bolt"></use></svg> CIRCUIT BREAKER</div><div id="circuitContent"><div class="skel-wrap"><div class="skel skel-row"></div><div class="skel skel-row"></div><div class="skel skel-row"></div></div></div></div>
   </div>
-  <div class="grid-main">
+  <div class="grid-top" data-view="command" style="grid-template-columns:1fr 1fr">
+    <div class="panel" id="portfolioPanel"><div class="panel-title"><svg class="icon"><use href="#icon-coin"></use></svg> PORTFOLIO</div><div id="portfolioContent"><div class="skel-wrap"><div class="skel skel-row"></div><div class="skel skel-row"></div><div class="skel skel-row"></div></div></div></div>
+    <div class="panel" id="keyCallPanel"><div class="panel-title"><svg class="icon icon-ai"><use href="#icon-sparkle"></use></svg> KEY CALL</div><div id="keyCallContent"><div class="empty-msg">Run /getclaw in Telegram for market call</div></div></div>
+  </div>
+
+  <!-- ========== MARKETS ========== -->
+  <div class="grid-main" data-view="markets">
     <div class="panel" id="universePanel"><div class="panel-title"><svg class="icon"><use href="#icon-rocket"></use></svg> EXPANDED UNIVERSE &mdash; LIVE</div>
       <div class="sig-filters"><input type="text" id="uniSearch" class="cred-in" style="max-width:160px;padding:5px 8px;font-size:11px" placeholder="Search symbol&hellip;"></div>
       <div id="universeContent"><div class="skel-wrap"><div class="skel skel-row"></div><div class="skel skel-row"></div><div class="skel skel-row"></div></div></div></div>
   </div>
-  <div class="grid-main">
-    <div class="panel" id="entryPanel"><div class="panel-title"><svg class="icon"><use href="#icon-target"></use></svg> TOP ENTRY CARDS</div><div id="entryContent"><div class="empty-msg">Run /getclaw in Telegram to generate entry cards</div></div></div>
-  </div>
-  <div class="grid-main">
+  <div class="grid-main" data-view="markets">
     <div class="panel" id="chartPanel">
       <div class="panel-title"><svg class="icon"><use href="#icon-chart"></use></svg> PRICE CHART</div>
       <div class="chart-toolbar">
@@ -366,34 +411,45 @@ a{color:var(--gold);text-decoration:none}
           <option value="4h">4h</option>
           <option value="1d">1D</option>
         </select>
+        <button class="ind-btn" data-ind="ema9" onclick="toggleIndicator('ema9')">EMA 9</button>
+        <button class="ind-btn" data-ind="ema21" onclick="toggleIndicator('ema21')">EMA 21</button>
+        <button class="ind-btn" data-ind="vwap" onclick="toggleIndicator('vwap')">VWAP</button>
         <span class="chart-price" id="chartPrice"></span>
       </div>
       <div id="chartContent"><div class="empty-msg">Loading chart&hellip;</div></div>
     </div>
   </div>
-  <div class="grid-top" style="grid-template-columns:1fr 1fr">
+  <div class="grid-main" data-view="markets">
+    <div class="panel" id="entryPanel"><div class="panel-title"><svg class="icon"><use href="#icon-target"></use></svg> TOP ENTRY CARDS</div><div id="entryContent"><div class="empty-msg">Run /getclaw in Telegram to generate entry cards</div></div></div>
+  </div>
+  <div class="grid-top" data-view="markets" style="grid-template-columns:1fr 1fr">
     <div class="panel" id="depthPanel"><div class="panel-title"><svg class="icon"><use href="#icon-chart"></use></svg> ORDER BOOK</div><div id="depthContent"><div class="empty-msg">Loading order book&hellip;</div></div></div>
     <div class="panel" id="fundingPanel"><div class="panel-title"><svg class="icon"><use href="#icon-bolt"></use></svg> FUNDING RATE</div><div id="fundingContent"><div class="empty-msg">Loading funding rate&hellip;</div></div></div>
   </div>
-  <div class="grid-top" style="grid-template-columns:1fr 1fr">
-    <div class="panel" id="portfolioPanel"><div class="panel-title"><svg class="icon"><use href="#icon-coin"></use></svg> PORTFOLIO</div><div id="portfolioContent"><div class="skel-wrap"><div class="skel skel-row"></div><div class="skel skel-row"></div><div class="skel skel-row"></div></div></div></div>
-    <div class="panel" id="keyCallPanel"><div class="panel-title"><svg class="icon icon-ai"><use href="#icon-sparkle"></use></svg> KEY CALL</div><div id="keyCallContent"><div class="empty-msg">Run /getclaw in Telegram for market call</div></div></div>
-  </div>
-  <div class="panel" id="heatmapPanel"><div class="panel-title"><svg class="icon"><use href="#icon-chart"></use></svg> PNL CALENDAR</div><div id="heatmapContent"><div class="empty-msg">Log in to see your day-by-day PnL.</div></div></div>
-  <div class="panel" id="journalPanel"><div class="panel-title"><svg class="icon"><use href="#icon-coin"></use></svg> TRADE JOURNAL</div><div id="journalContent"><div class="empty-msg">Log in to journal your trades.</div></div></div>
-  <div class="panel" id="activityPanel"><div class="panel-title"><svg class="icon"><use href="#icon-radar"></use></svg> ACTIVITY LOG</div><div id="activityContent"><div class="empty-msg">Log in to see your activity log.</div></div></div>
-  <div class="panel" id="walletPanel"><div class="panel-title"><svg class="icon"><use href="#icon-wallet"></use></svg> WALLET &mdash; EXCHANGE CONNECTION</div><div id="walletContent"></div></div>
-  <div class="panel" id="controlsPanel"><div class="panel-title"><svg class="icon"><use href="#icon-target"></use></svg> LIVE CONTROLS</div><div id="controlsContent"></div></div>
-  <div class="panel" id="calcPanel"><div class="panel-title"><svg class="icon"><use href="#icon-coin"></use></svg> POSITION SIZE CALCULATOR</div><div id="calcContent"></div></div>
-  <div class="panel" id="strategyPanel"><div class="panel-title"><svg class="icon"><use href="#icon-shield"></use></svg> STRATEGY &amp; RISK LOGIC</div><div id="strategyContent"><div class="empty-msg">Loading strategy config&hellip;</div></div></div>
-  <div class="panel" id="insightsPanel"><div class="panel-title"><svg class="icon"><use href="#icon-chart"></use></svg> SIGNAL INSIGHTS</div><div id="insightsContent"><div class="skel-wrap"><div class="skel skel-row"></div><div class="skel skel-row"></div><div class="skel skel-row"></div></div></div></div>
-  <div class="panel" id="signalsPanel"><div class="panel-title"><svg class="icon"><use href="#icon-radar"></use></svg> SIGNAL STREAM <span id="signalsStats" style="font-family:var(--mono);font-size:11px;color:var(--text3);font-weight:400"></span></div>
+
+  <!-- ========== SIGNALS ========== -->
+  <div class="panel" id="insightsPanel" data-view="signals"><div class="panel-title"><svg class="icon"><use href="#icon-chart"></use></svg> SIGNAL INSIGHTS</div><div id="insightsContent"><div class="skel-wrap"><div class="skel skel-row"></div><div class="skel skel-row"></div><div class="skel skel-row"></div></div></div></div>
+  <div class="panel" id="signalsPanel" data-view="signals"><div class="panel-title"><svg class="icon"><use href="#icon-radar"></use></svg> SIGNAL STREAM <span id="signalsStats" style="font-family:var(--mono);font-size:11px;color:var(--text3);font-weight:400"></span></div>
     <div class="sig-filters">
       <select id="fltDirection"><option value="">All sides</option><option value="LONG">Long</option><option value="SHORT">Short</option></select>
       <select id="fltStatus"><option value="">All status</option><option value="NEW">New</option><option value="WIN">Win</option><option value="LOSS">Loss</option></select>
       <select id="fltConf"><option value="">Any conf.</option><option value="0.6">&#8805; 60%</option><option value="0.7">&#8805; 70%</option><option value="0.8">&#8805; 80%</option><option value="0.9">&#8805; 90%</option></select>
     </div>
     <div id="signalsContent"><div class="loading"><div class="spinner"></div><br>Loading signals...</div></div></div>
+
+  <!-- ========== PORTFOLIO ========== -->
+  <div class="panel" id="heatmapPanel" data-view="portfolio"><div class="panel-title"><svg class="icon"><use href="#icon-chart"></use></svg> PNL CALENDAR</div><div id="heatmapContent"><div class="empty-msg">Log in to see your day-by-day PnL.</div></div></div>
+  <div class="panel" id="journalPanel" data-view="portfolio"><div class="panel-title"><svg class="icon"><use href="#icon-coin"></use></svg> TRADE JOURNAL</div><div id="journalContent"><div class="empty-msg">Log in to journal your trades.</div></div></div>
+  <div class="panel" id="activityPanel" data-view="portfolio"><div class="panel-title"><svg class="icon"><use href="#icon-radar"></use></svg> ACTIVITY LOG</div><div id="activityContent"><div class="empty-msg">Log in to see your activity log.</div></div></div>
+  <div class="panel" id="calcPanel" data-view="portfolio"><div class="panel-title"><svg class="icon"><use href="#icon-coin"></use></svg> POSITION SIZE CALCULATOR</div><div id="calcContent"></div></div>
+
+  <!-- ========== CONNECT ========== -->
+  <div class="panel" id="walletPanel" data-view="connect"><div class="panel-title"><svg class="icon"><use href="#icon-wallet"></use></svg> WALLET &mdash; EXCHANGE CONNECTION</div><div id="walletContent"></div></div>
+  <div class="panel" id="controlsPanel" data-view="connect"><div class="panel-title"><svg class="icon"><use href="#icon-target"></use></svg> LIVE CONTROLS</div><div id="controlsContent"></div></div>
+  <div class="panel" id="strategyPanel" data-view="connect"><div class="panel-title"><svg class="icon"><use href="#icon-shield"></use></svg> STRATEGY &amp; RISK LOGIC</div><div id="strategyContent"><div class="empty-msg">Loading strategy config&hellip;</div></div></div>
+
+  <!-- ========== SETTINGS ========== -->
+  <div class="panel" id="settingsPanel" data-view="settings"><div class="panel-title"><svg class="icon"><use href="#icon-shield"></use></svg> SETTINGS</div><div id="settingsContent"></div></div>
 </div>
 <footer class="site-footer">
   <div class="inner">
@@ -421,6 +477,36 @@ const TOKEN = resolveToken();
 const LOGGED_IN = !!TOKEN;
 function doLogout() { localStorage.removeItem('rc_session'); localStorage.removeItem('token'); location.href = '/'; }
 function toggleNav(){document.getElementById('navLinks').classList.toggle('open');}
+
+// === VIEW ROUTER ===
+// The dashboard's panels are grouped into named views via data-view. The
+// router toggles a `.view-hidden` class (never inline display) so a panel's
+// own visibility logic -- e.g. renderOnboarding hiding the checklist once
+// complete -- keeps working independently. All fetch intervals run
+// regardless of the active view, so switching is instant with fresh data.
+const VIEWS = ['command', 'markets', 'signals', 'portfolio', 'connect', 'settings'];
+function showView(v) {
+  if (!VIEWS.includes(v)) v = 'command';
+  document.querySelectorAll('[data-view]').forEach(el => {
+    const inView = el.dataset.view.split(' ').includes(v);
+    el.classList.toggle('view-hidden', !inView);
+  });
+  document.querySelectorAll('.subnav a').forEach(a =>
+    a.classList.toggle('active', a.dataset.viewLink === v));
+  if (v === 'settings') renderSettings();
+}
+function goView(v) {
+  showView(v);
+  if (location.hash.slice(1) !== v) location.hash = v;
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+window.addEventListener('hashchange', () => showView(location.hash.slice(1) || 'command'));
+// Keep the sticky sub-nav pinned just below the (variable-height) top nav.
+function syncTopnavHeight() {
+  const n = document.querySelector('.topnav');
+  if (n) document.documentElement.style.setProperty('--topnav-h', n.offsetHeight + 'px');
+}
+window.addEventListener('resize', syncTopnavHeight);
 
 const SYMBOLS = [
   'BTCUSDT','ETHUSDT','SOLUSDT','BNBUSDT','AVAXUSDT','ADAUSDT',
@@ -1008,8 +1094,10 @@ async function fetchCandles() {
     const r = await fetch(`/api/market/candles/${symbol}?granularity=${gran}&limit=100`);
     const d = await r.json();
     const rows = Array.isArray(d.data) ? d.data : [];
+    // Bitget candle tuple: [ts, open, high, low, close, baseVol, quoteVol].
     _candles = rows.map(c => ({
       t: Number(c[0]), o: parseFloat(c[1]), h: parseFloat(c[2]), l: parseFloat(c[3]), c: parseFloat(c[4]),
+      v: parseFloat(c[5]) || 0,
     })).filter(c => Number.isFinite(c.o) && Number.isFinite(c.c)).sort((a, b) => a.t - b.t);
     renderCandles();
   } catch (e) {
@@ -1024,6 +1112,44 @@ function matchingPositions(symbol) {
   const livePos = cb.open_positions || [];
   const all = authPos.length > 0 ? authPos : livePos;
   return all.filter(p => baseCoin(p.symbol) === base);
+}
+
+// === CHART INDICATORS (computed from real candle data only) ===
+let _indicators = {};
+try { _indicators = JSON.parse(localStorage.getItem('rc_indicators') || '{}'); } catch (e) { _indicators = {}; }
+const IND_META = { ema9: { color: '#06b6d4', label: 'EMA 9' }, ema21: { color: '#e6cf86', label: 'EMA 21' }, vwap: { color: '#b98cff', label: 'VWAP' } };
+function toggleIndicator(k) {
+  _indicators[k] = !_indicators[k];
+  localStorage.setItem('rc_indicators', JSON.stringify(_indicators));
+  renderIndicatorButtons();
+  renderCandles();
+}
+function renderIndicatorButtons() {
+  document.querySelectorAll('.ind-btn[data-ind]').forEach(b =>
+    b.classList.toggle('on', !!_indicators[b.dataset.ind]));
+}
+function emaSeries(values, period) {
+  if (values.length < period) return null;
+  const k = 2 / (period + 1);
+  const out = new Array(values.length).fill(null);
+  // Seed with the SMA of the first `period` closes.
+  let sma = 0;
+  for (let i = 0; i < period; i++) sma += values[i];
+  sma /= period;
+  out[period - 1] = sma;
+  for (let i = period; i < values.length; i++) out[i] = values[i] * k + out[i - 1] * (1 - k);
+  return out;
+}
+function vwapSeries(candles) {
+  const out = new Array(candles.length).fill(null);
+  let cumPV = 0, cumV = 0, any = false;
+  for (let i = 0; i < candles.length; i++) {
+    const tp = (candles[i].h + candles[i].l + candles[i].c) / 3;
+    const v = candles[i].v || 0;
+    cumPV += tp * v; cumV += v;
+    if (cumV > 0) { out[i] = cumPV / cumV; any = true; }
+  }
+  return any ? out : null;
 }
 
 function renderCandles() {
@@ -1065,8 +1191,22 @@ function renderCandles() {
         <text x="${chartW + 4}" y="${y(v) + 3}" font-family="monospace" font-size="9" fill="${color}">${label}</text>`;
     }
   }
+  // Indicator overlays (EMA/VWAP) -- polylines across the same x-slots.
+  const closes = _candles.map(c => c.c);
+  const activeInd = [];
+  const drawLine = (series, color) => {
+    if (!series) return;
+    const pts = series.map((val, i) => val == null ? null : `${i * slot + slot / 2},${y(val)}`).filter(Boolean).join(' ');
+    if (pts) svg += `<polyline points="${pts}" fill="none" stroke="${color}" stroke-width="1.4" opacity="0.9"/>`;
+  };
+  if (_indicators.ema9) { drawLine(emaSeries(closes, 9), IND_META.ema9.color); activeInd.push('ema9'); }
+  if (_indicators.ema21) { drawLine(emaSeries(closes, 21), IND_META.ema21.color); activeInd.push('ema21'); }
+  if (_indicators.vwap) { drawLine(vwapSeries(_candles), IND_META.vwap.color); activeInd.push('vwap'); }
   svg += '</svg>';
-  el.innerHTML = `<div class="candle-wrap">${svg}<div class="candle-tip" id="candleTip"></div></div>`;
+  const legend = activeInd.length
+    ? `<div class="chart-legend">${activeInd.map(k => `<span><i style="background:${IND_META[k].color}"></i>${IND_META[k].label}</span>`).join('')}</div>`
+    : '';
+  el.innerHTML = `<div class="candle-wrap">${svg}<div class="candle-tip" id="candleTip"></div></div>${legend}`;
   if (priceEl) {
     const last = _candles[_candles.length - 1];
     priceEl.innerHTML = last ? `$${fmtP(last.c)} <span class="${last.c >= last.o ? 'pos' : 'neg'}">${last.c >= last.o ? '&#9650;' : '&#9660;'}</span>` : '';
@@ -1272,6 +1412,82 @@ function renderCockpit() {
     </div>`;
 }
 
+// === SETTINGS VIEW (real account/connection state; no fabricated prefs) ===
+let _accountInfo = null;
+async function fetchAccountInfo() {
+  if (!LOGGED_IN || _accountInfo) return;
+  try {
+    const r = await fetch('/api/auth/me', { headers: authHeaders() });
+    if (r.ok) { _accountInfo = await r.json(); renderSettings(); }
+  } catch (e) { /* non-fatal */ }
+}
+function renderSettings() {
+  const el = document.getElementById('settingsContent');
+  if (!el) return;
+  const chip = (ok, onText, offText) =>
+    ok ? `<span class="set-chip badge-green">&#9679; ${onText}</span>`
+       : `<span class="set-chip badge-muted">&#9675; ${offText}</span>`;
+  const linked = !!(credStatus && credStatus.linked);
+  const connected = !!(credStatus && credStatus.connected);
+  const notifOn = notifSupported() && Notification.permission === 'granted';
+
+  // Account
+  let account;
+  if (!LOGGED_IN) {
+    account = `<div class="set-row"><span class="set-label">Not signed in</span><a class="btn btn-primary btn-sm" href="/">Log in</a></div>`;
+  } else {
+    const email = _accountInfo && _accountInfo.email ? _accountInfo.email : '&mdash;';
+    const plan = _accountInfo && _accountInfo.plan ? _accountInfo.plan : 'free';
+    account = `
+      <div class="set-row"><span class="set-label">Email</span><span class="set-val">${email}</span></div>
+      <div class="set-row"><span class="set-label">Plan</span><span class="set-val" style="text-transform:capitalize">${plan}</span></div>
+      <div class="set-row"><span class="set-label">Session</span><button class="cred-btn cred-danger" onclick="doLogout()">Log out</button></div>`;
+  }
+
+  // Watchlist
+  const watch = (_watchlist && _watchlist.length)
+    ? _watchlist.map(s => `<span class="watch-tag">${s.replace('USDT','')}<button onclick="togglePin('${s}');renderSettings()" title="Remove">&times;</button></span>`).join('')
+      + `<div style="margin-top:8px"><button class="cred-btn cred-danger" onclick="clearWatchlist()">Clear all</button></div>`
+    : `<div class="empty-msg" style="padding:8px;text-align:left">No pinned symbols. Pin symbols from the Markets universe table.</div>`;
+
+  el.innerHTML = `
+    <div class="set-section">
+      <h4>Account</h4>
+      ${account}
+    </div>
+    <div class="set-section">
+      <h4>Connections</h4>
+      <div class="set-row"><span class="set-label">Telegram &mdash; @HTRUNECLAW_bot</span>
+        <span style="display:flex;gap:8px;align-items:center">${chip(linked, 'Linked', 'Not linked')}
+        ${linked ? '' : '<button class="cred-btn" onclick="goView(\'connect\')">Connect</button>'}</span></div>
+      <div class="set-row"><span class="set-label">Bitget exchange</span>
+        <span style="display:flex;gap:8px;align-items:center">${chip(connected, 'Connected', 'Not connected')}
+        <button class="cred-btn" onclick="goView('connect')">${connected ? 'Manage' : 'Connect'}</button></span></div>
+    </div>
+    <div class="set-section">
+      <h4>Notifications</h4>
+      <div class="set-row"><span class="set-label">Browser trade notifications</span>
+        <span style="display:flex;gap:8px;align-items:center">${chip(notifOn, 'On', 'Off')}
+        ${notifOn ? '' : '<button class="cred-btn" onclick="toggleNotifications().then(renderSettings)">Enable</button>'}</span></div>
+      <div class="cred-note">Fires on your trade closes and emergency stop, even when this tab is in the background.</div>
+    </div>
+    <div class="set-section">
+      <h4>Watchlist</h4>
+      ${watch}
+    </div>
+    <div class="set-section">
+      <h4>Security</h4>
+      <div class="cred-note">&#128274; Bitget keys are encrypted at rest and held only by the bot &mdash; this dashboard never stores your secret. Never enable withdrawal permissions on your API key.</div>
+    </div>`;
+}
+function clearWatchlist() {
+  _watchlist = [];
+  localStorage.setItem('rc_watchlist', '[]');
+  renderUniverse();
+  renderSettings();
+  showToast('Watchlist cleared.', 'success');
+}
+
 function renderOnboarding() {
   const panel = document.getElementById('onboardPanel');
   const el = document.getElementById('onboardContent');
@@ -1310,9 +1526,19 @@ function renderOnboarding() {
 function scrollToPanel(id) {
   const el = document.getElementById(id);
   if (!el) return;
-  el.scrollIntoView({behavior: 'smooth', block: 'start'});
-  el.classList.add('ob-highlight');
-  setTimeout(() => el.classList.remove('ob-highlight'), 1600);
+  // The target panel may live in a different view -- switch to it first.
+  const host = el.closest('[data-view]');
+  if (host) {
+    const view = host.dataset.view.split(' ')[0];
+    if (!VIEWS.includes(view)) return;
+    goView(view);
+  }
+  // Defer the scroll/highlight until after the view swap + smooth scroll-to-top.
+  setTimeout(() => {
+    el.scrollIntoView({behavior: 'smooth', block: 'start'});
+    el.classList.add('ob-highlight');
+    setTimeout(() => el.classList.remove('ob-highlight'), 1600);
+  }, 120);
 }
 
 async function fetchControls() {
@@ -1325,6 +1551,7 @@ async function fetchControls() {
     renderOnboarding();
     renderReadiness();
     renderCockpit();
+    renderSettings();
   } catch(e) { el.innerHTML = '<div class="empty-msg">Could not load controls.</div>'; }
 }
 
@@ -1481,6 +1708,7 @@ async function fetchCreds() {
     renderOnboarding();
     renderReadiness();
     renderCockpit();
+    renderSettings();
   } catch(e) { el.innerHTML = '<div class="empty-msg">Could not load connection status.</div>'; }
 }
 
@@ -1710,10 +1938,14 @@ function connectStream() {
 }
 
 async function init() {
+  syncTopnavHeight();
+  showView(location.hash.slice(1) || 'command');
+  renderIndicatorButtons();
   renderAccount();
   renderOnboarding(); // show step 1 immediately for logged-out visitors
   renderReadiness();
   renderCockpit();
+  fetchAccountInfo();
   ['fltDirection','fltStatus','fltConf'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.addEventListener('change', fetchSignals);
