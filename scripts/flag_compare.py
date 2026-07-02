@@ -51,6 +51,10 @@ ENV_FLAGS = (
 )
 CFG_FLAGS = (
     ("analyzer", "vwap_session_anchored"),
+    ("analyzer", "vwap_bands_vote_enabled"),
+    ("analyzer", "vwap_slope_vote_enabled"),
+    ("analyzer", "vwap_setup_anchoring_enabled"),
+    ("analyzer", "vwap_anchored_pivot_enabled"),
     ("analyzer", "setup_expectancy_enabled"),
     ("analyzer", "confidence_calibration_enabled"),
     ("analyzer", "learning_auto_refit_enabled"),

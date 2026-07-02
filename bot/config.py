@@ -758,6 +758,25 @@ class AnalyzerConfig:
     elliott_fib_targets_enabled: bool = _env_bool("ELLIOTT_FIB_TARGETS_ENABLED", True)
     elliott_mtf_enabled: bool = _env_bool("ELLIOTT_MTF_ENABLED", True)
 
+    # Advanced VWAP (bot/core/vwap.py). Default ON at the operator's request;
+    # each is env-overridable. These activate VWAP math that used to be computed
+    # but unused, and match the anchor to the setup horizon:
+    #   bands_vote:      fade ±1σ/±2σ VWAP-band extremes back to VWAP in
+    #                    range/chop (volatility-adaptive mean reversion), and
+    #                    use the ±1σ band for the vwap_reversion classifier
+    #                    instead of a fixed 0.5% distance.
+    #   slope_vote:      dampen an above/below-VWAP bias that fights the VWAP's
+    #                    own slope (holding above a *rising* VWAP > a falling one).
+    #   setup_anchoring: re-point the "vwap" consumers read to the anchor whose
+    #                    horizon matches strategy_type (scalp/intraday→session,
+    #                    swing→rolling-50, position→full window).
+    #   anchored_pivot:  expose an AVWAP anchored at the last structural ZigZag
+    #                    pivot (reuses the Elliott pivot engine) as an S/R level.
+    vwap_bands_vote_enabled: bool = _env_bool("VWAP_BANDS_VOTE_ENABLED", True)
+    vwap_slope_vote_enabled: bool = _env_bool("VWAP_SLOPE_VOTE_ENABLED", True)
+    vwap_setup_anchoring_enabled: bool = _env_bool("VWAP_SETUP_ANCHORING_ENABLED", True)
+    vwap_anchored_pivot_enabled: bool = _env_bool("VWAP_ANCHORED_PIVOT_ENABLED", True)
+
 
 @dataclass(frozen=True)
 class LearningConfig:

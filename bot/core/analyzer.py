@@ -189,6 +189,26 @@ def _recompute_elliott_indicators(indicators: dict, highs, lows, closes,
     _run_elliott_detectors(indicators, highs, lows, closes, swings)
 
 
+def _apply_vwap_setup_anchoring(indicators: dict, strategy_type: str) -> None:
+    """Re-point the ``vwap`` value consumers read to the anchor whose horizon
+    matches this setup (scalp/intraday→session, swing→rolling-50, position→full
+    window). A UTC-day session VWAP is meaningful for a scalp but near-useless
+    for a multi-day swing. Fail-open: leaves ``vwap`` untouched when the chosen
+    anchor is missing. Records ``vwap_anchor_kind`` for transparency. Mutates
+    ``indicators``.
+    """
+    from bot.core.vwap import select_setup_anchor
+    anchors = {
+        "session": indicators.get("vwap_session"),
+        "rolling50": indicators.get("vwap_50"),
+        "full": indicators.get("vwap_full"),
+    }
+    val, kind = select_setup_anchor(strategy_type, anchors)
+    if val is not None:
+        indicators["vwap"] = val
+        indicators["vwap_anchor_kind"] = kind
+
+
 # ── Limit entry helper ───────────────────────────────────────────
 
 def _compute_limit_entry(
@@ -227,6 +247,12 @@ def _compute_limit_entry(
     vwap = indicators.get("vwap")
     if vwap is not None and vwap > 0:
         candidates.append(float(vwap))
+
+    # 2b. Anchored VWAP (AVWAP from the last structural pivot) — dynamic S/R
+    # since the most recent swing. Present only when the gated feature is on.
+    vwap_anchored = indicators.get("vwap_anchored")
+    if vwap_anchored is not None and vwap_anchored > 0:
+        candidates.append(float(vwap_anchored))
 
     # 3. Volume Profile POC
     poc = indicators.get("poc_price")
@@ -826,6 +852,16 @@ class Analyzer:
                 _apply_timeframe_matched_elliott(indicators, strategy_type, mtf_candles)
             except Exception as exc:
                 system_log.debug("Timeframe-matched Elliott skipped: %s", exc)
+
+        # ── Setup-matched VWAP anchoring (gated, default ON) ────────────
+        # Re-point the "vwap" consumers read (confluence vote, S/R candidate,
+        # reversion classifier) to the anchor whose horizon matches this setup,
+        # BEFORE confluence voting + SL/TP use it. Fail-open.
+        if CONFIG.analyzer.vwap_setup_anchoring_enabled:
+            try:
+                _apply_vwap_setup_anchoring(indicators, strategy_type)
+            except Exception as exc:
+                system_log.debug("VWAP setup anchoring skipped: %s", exc)
 
         # Phase B: capture the named per-voter breakdown alongside the score so
         # downstream recording can persist it for voter-weight learning. The
@@ -1580,11 +1616,18 @@ class Analyzer:
             if vol_osc > 20 or indicators.get("capitulation_sell") or indicators.get("capitulation_buy"):
                 return "volume_spike"
 
-        # VWAP reversion: price near VWAP in RANGE/CHOP regime
+        # VWAP reversion: price near VWAP in RANGE/CHOP regime. When the band
+        # feature is on, "near" is volatility-adaptive (within ±0.5σ of VWAP)
+        # instead of a fixed 0.5% — which is too wide for BTC and too tight for
+        # a volatile alt.
         vwap = indicators.get("vwap")
-        if vwap and vwap > 0:
-            vwap_dist_pct = abs(signal.price - vwap) / vwap * 100
-            if vwap_dist_pct < 0.5 and regime in (Regime.RANGE, Regime.CHOP):
+        if vwap and vwap > 0 and regime in (Regime.RANGE, Regime.CHOP):
+            u1 = indicators.get("vwap_upper_1")
+            if CONFIG.analyzer.vwap_bands_vote_enabled and u1 and u1 > vwap:
+                near = abs(signal.price - vwap) <= 0.5 * (u1 - vwap)
+            else:
+                near = abs(signal.price - vwap) / vwap * 100 < 0.5
+            if near:
                 return "vwap_reversion"
 
         # Regime trend: strong trend with ADX > 30
@@ -1730,6 +1773,9 @@ class Analyzer:
             cum_vol = np.cumsum(volumes)
             vwap = cum_tp_vol[-1] / cum_vol[-1] if cum_vol[-1] > 0 else closes[-1]
             results["vwap"] = round(float(vwap), 6)
+            # Preserve the full-window value even if session-anchoring overwrites
+            # "vwap" below — setup-matched anchoring (position setups) reads it.
+            results["vwap_full"] = round(float(vwap), 6)
 
             # Session-anchored VWAP (anchored to the current UTC day's first bar).
             session_vwap = Analyzer._session_vwap(typical_price, volumes, times)
@@ -1746,6 +1792,30 @@ class Analyzer:
                     cv = np.sum(seg_tp * seg_vol)
                     sv = np.sum(seg_vol)
                     results[label] = round(float(cv / sv) if sv > 0 else float(closes[-1]), 6)
+
+            # VWAP slope (gated): % change of the cumulative VWAP over the last
+            # ~10 bars, so a directional bias can be dampened when it fights a
+            # rising/falling anchor (see slope_adjusted_vote).
+            if getattr(CONFIG.analyzer, "vwap_slope_vote_enabled", False):
+                try:
+                    from bot.core.vwap import vwap_slope_pct
+                    vwap_series = cum_tp_vol / np.maximum(cum_vol, 1e-10)
+                    sp = vwap_slope_pct(vwap_series, lookback=10)
+                    if sp is not None:
+                        results["vwap_slope_pct"] = round(sp, 6)
+                except Exception:
+                    pass
+
+            # Anchored VWAP (gated): reset at the most recent structural ZigZag
+            # pivot — the institutional "average price since the swing" level.
+            if getattr(CONFIG.analyzer, "vwap_anchored_pivot_enabled", False):
+                try:
+                    from bot.core.vwap import anchored_vwap_from_last_pivot
+                    av = anchored_vwap_from_last_pivot(highs, lows, closes, volumes)
+                    if av is not None and av > 0:
+                        results["vwap_anchored"] = round(float(av), 6)
+                except Exception:
+                    pass
 
         # ── OBV (On-Balance Volume) ──
         if volumes is not None and len(volumes) > 1:
@@ -2228,16 +2298,36 @@ class Analyzer:
             votes.append(0.0)
         aw(0.7, "adx")
 
-        # VWAP vote (weight 0.5 — institutional bias)
+        # VWAP vote (weight 0.5 — institutional bias; optional slope damping)
         vwap = indicators.get("vwap")
         if vwap is not None:
             if signal.price > vwap * 1.005:
-                votes.append(1.0)   # above VWAP → bullish
+                vwap_vote = 1.0   # above VWAP → bullish
             elif signal.price < vwap * 0.995:
-                votes.append(-1.0)  # below VWAP → bearish
+                vwap_vote = -1.0  # below VWAP → bearish
             else:
-                votes.append(0.0)
+                vwap_vote = 0.0
+            # Dampen a bias that fights the VWAP's own slope (gated). When the
+            # flag is off or no slope is available this is a no-op, so the vote
+            # stays byte-identical to the legacy above/below read.
+            if CONFIG.analyzer.vwap_slope_vote_enabled:
+                from bot.core.vwap import slope_adjusted_vote
+                vwap_vote = slope_adjusted_vote(vwap_vote, indicators.get("vwap_slope_pct"))
+            votes.append(vwap_vote)
             aw(0.5, "vwap")
+
+        # VWAP band mean-reversion vote (weight 0.6 — volatility-adaptive
+        # extremes). Only appended when it actually fires (price at a ±1σ/±2σ
+        # band in a range/chop regime), so a neutral read never dilutes the
+        # confluence denominator. Gated, default ON.
+        if CONFIG.analyzer.vwap_bands_vote_enabled:
+            from bot.core.ta_utils import Regime as _Regime
+            from bot.core.vwap import band_reversion_signal
+            _in_range = regime in (_Regime.RANGE, _Regime.CHOP)
+            band_vote = band_reversion_signal(signal.price, indicators, _in_range)
+            if band_vote != 0.0:
+                votes.append(band_vote)
+                aw(0.6, "vwap_bands")
 
         # OBV trend vote (weight 0.6 — volume confirms price trend)
         # Guard: only vote when obv_trend is present to keep votes/weights aligned
