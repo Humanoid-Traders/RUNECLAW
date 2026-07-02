@@ -33,7 +33,9 @@ class MTFResult(BaseModel):
     aligned_timeframes: list[str] = Field(default_factory=list)
     conflicting_timeframes: list[str] = Field(default_factory=list)
     bos_detected: bool = False         # break of structure
+    bos_dir: int = 0                   # +1 break above swing high, -1 below swing low
     choch_detected: bool = False       # change of character
+    choch_dir: int = 0                 # +1 flip to bullish structure, -1 to bearish
     per_tf: dict[str, dict] = Field(default_factory=dict)  # per-TF details
     confidence: float = 0.0            # [0, 1]
     narrative: str = ""
@@ -88,7 +90,8 @@ def _analyze_structure(highs: np.ndarray, lows: np.ndarray, closes: np.ndarray, 
     sh = swings["swing_highs"]
     sl = swings["swing_lows"]
 
-    result = {"structure": "ranging", "bos": False, "choch": False, "bias": 0.0}
+    result = {"structure": "ranging", "bos": False, "choch": False, "bias": 0.0,
+              "bos_dir": 0, "choch_dir": 0}
 
     if len(sh) < 2 or len(sl) < 2:
         return result
@@ -119,32 +122,46 @@ def _analyze_structure(highs: np.ndarray, lows: np.ndarray, closes: np.ndarray, 
         result["structure"] = "ranging"
         result["bias"] = 0.0
 
-    # Break of Structure: price closes beyond the last swing
+    # Break of Structure: price closes beyond the last swing. The DIRECTION of
+    # the break is recorded so the confluence vote can follow the break itself
+    # — previously the mtf_bos vote fired in the alignment direction, so a
+    # bearish close below the last swing low during residual bullish EMA
+    # alignment cast a BULLISH vote labeled "mtf_bos".
     current_price = float(closes[-1])
     if len(sh) >= 1 and current_price > sh[-1][1] * 1.001:
         result["bos"] = True
+        result["bos_dir"] = 1
         result["bias"] = min(1.0, result["bias"] + 0.3)
     elif len(sl) >= 1 and current_price < sl[-1][1] * 0.999:
         result["bos"] = True
+        result["bos_dir"] = -1
         result["bias"] = max(-1.0, result["bias"] - 0.3)
 
-    # Change of Character: structure was one way, now swings reverse
+    # Change of Character: structure was one way, now swings reverse.
+    # choch_dir points in the NEW structure's direction (+1 flip-to-bullish).
     if len(sh) >= 3 and len(sl) >= 3:
         prev_bullish = sh[-3][1] < sh[-2][1] and sl[-3][1] < sl[-2][1]
         now_bearish = sh[-1][1] < sh[-2][1] and sl[-1][1] < sl[-2][1]
         prev_bearish = sh[-3][1] > sh[-2][1] and sl[-3][1] > sl[-2][1]
         now_bullish = sh[-1][1] > sh[-2][1] and sl[-1][1] > sl[-2][1]
 
-        if (prev_bullish and now_bearish) or (prev_bearish and now_bullish):
+        if prev_bullish and now_bearish:
             result["choch"] = True
+            result["choch_dir"] = -1
+        elif prev_bearish and now_bullish:
+            result["choch"] = True
+            result["choch_dir"] = 1
     elif len(sh) >= 2 and len(sl) >= 2:
         # With only 2 swing points, detect reversal from structure bias
         now_bearish = sh[-1][1] < sh[-2][1] and sl[-1][1] < sl[-2][1]
         now_bullish = sh[-1][1] > sh[-2][1] and sl[-1][1] > sl[-2][1]
         # CHoCH if current structure opposes the BOS direction
-        if result["bos"] and ((result["bias"] > 0 and now_bearish) or
-                               (result["bias"] < 0 and now_bullish)):
+        if result["bos"] and result["bias"] > 0 and now_bearish:
             result["choch"] = True
+            result["choch_dir"] = -1
+        elif result["bos"] and result["bias"] < 0 and now_bullish:
+            result["choch"] = True
+            result["choch_dir"] = 1
 
     return result
 
@@ -232,7 +249,9 @@ def _analyze_single_tf(
         "structure": structure["structure"],
         "structure_bias": round(structure["bias"], 2),
         "bos": structure["bos"],
+        "bos_dir": structure["bos_dir"],
         "choch": structure["choch"],
+        "choch_dir": structure["choch_dir"],
     }
 
 
@@ -317,7 +336,9 @@ class MTFConfluence:
         # Structure from HTF
         result.structure_bias = round(htf["structure_bias"], 4)
         result.bos_detected = htf.get("bos", False)
+        result.bos_dir = int(htf.get("bos_dir", 0))
         result.choch_detected = htf.get("choch", False)
+        result.choch_dir = int(htf.get("choch_dir", 0))
 
         # Confidence: based on how many TFs we have and how aligned they are
         tf_count_conf = len(tf_results) / 3.0
@@ -351,11 +372,20 @@ class MTFConfluence:
             weights.append(0.9 * conf)
             labels.append("mtf_structure")
 
-        # BOS gets extra weight — structural breakout is significant
-        if result.bos_detected and abs(result.alignment_score) > 0.2:
-            votes.append(result.alignment_score)  # same direction as alignment
+        # BOS gets extra weight — structural breakout is significant. The vote
+        # follows the BREAK direction (a bearish break during residual bullish
+        # EMA alignment must vote bearish, not bullish).
+        if result.bos_detected and result.bos_dir != 0:
+            votes.append(float(result.bos_dir))
             weights.append(0.6 * conf)
             labels.append("mtf_bos")
+
+        # CHoCH: structure flip votes in the NEW structure's direction —
+        # previously computed but never voted.
+        if result.choch_detected and result.choch_dir != 0:
+            votes.append(float(result.choch_dir))
+            weights.append(0.5 * conf)
+            labels.append("mtf_choch")
 
         return votes, weights, labels
 

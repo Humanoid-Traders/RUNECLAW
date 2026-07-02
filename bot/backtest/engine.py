@@ -84,12 +84,17 @@ class BacktestEngine:
         # nudge are fitted on the bot's ENTIRE closed-trade history — future
         # information relative to any replayed historical bar. Force both OFF
         # for this backtest and restore the operator's settings in cleanup().
+        # The external Fear & Greed fetch is likewise forced OFF: it returns
+        # TODAY'S crowd sentiment, which applied to historical bars is both
+        # lookahead and a nondeterminism source (network + 1h cache warmup).
         self._saved_learning_flags = (
             CONFIG.analyzer.confidence_calibration_enabled,
             CONFIG.analyzer.setup_expectancy_enabled,
+            CONFIG.analyzer.external_sentiment_enabled,
         )
         object.__setattr__(CONFIG.analyzer, "confidence_calibration_enabled", False)
         object.__setattr__(CONFIG.analyzer, "setup_expectancy_enabled", False)
+        object.__setattr__(CONFIG.analyzer, "external_sentiment_enabled", False)
 
         if config.use_recorded_llm:
             from bot.backtest.recorded_llm import RecordedLLM
@@ -136,12 +141,23 @@ class BacktestEngine:
         return threshold > 0.0 and float(confidence) < float(threshold)
 
     def cleanup(self) -> None:
-        """Explicitly remove the temp state directory. Call after backtest completes."""
+        """Explicitly remove the temp state directory. Call after backtest completes.
+
+        IDEMPOTENT: the saved flags are cleared after the restore. Without
+        this, __del__ (which also calls cleanup) re-restored the operator's
+        flags a SECOND time — and since GC of an engine often fires after the
+        NEXT engine's ctor has already forced the flags off, the late restore
+        silently re-enabled calibration/expectancy/external-sentiment in the
+        middle of the next run (first-run-vs-second-run nondeterminism).
+        """
         try:
-            _cal, _exp = getattr(self, "_saved_learning_flags", (None, None))
+            _cal, _exp, _ext = getattr(self, "_saved_learning_flags", (None, None, None))
+            self._saved_learning_flags = (None, None, None)
             if _cal is not None:
                 object.__setattr__(CONFIG.analyzer, "confidence_calibration_enabled", _cal)
                 object.__setattr__(CONFIG.analyzer, "setup_expectancy_enabled", _exp)
+            if _ext is not None:
+                object.__setattr__(CONFIG.analyzer, "external_sentiment_enabled", _ext)
         except Exception:
             pass
         import shutil
@@ -170,6 +186,13 @@ class BacktestEngine:
 
         lookback_size = self.config.lookback_size
         scan_interval = self.config.scan_interval
+
+        # Full raw history in ccxt row format, built once: _process_bar slices
+        # [:i+1] to resample closed 4h/1d groups for MTF parity with live.
+        self._all_raw = [
+            [int(b.timestamp.timestamp() * 1000), b.open, b.high, b.low, b.close, b.volume]
+            for b in bars
+        ]
 
         self._pending_entry = None
         _breaker_tripped_at: int | None = None
@@ -269,11 +292,34 @@ class BacktestEngine:
         if self._recorded_order_flow is not None:
             order_flow = self._recorded_order_flow.signal_at(signal.symbol, as_of=bar.timestamp)
 
+        # MTF parity with live: resample the CLOSED history up to this bar into
+        # 4h/1d groups (resample_ohlcv drops the trailing partial group — no
+        # lookahead into an unfinished higher-TF candle). Live fetches these
+        # timeframes from the exchange; the backtest derives them from the
+        # primary series so the same MTF voters fire in both.
+        mtf_candles = None
+        if CONFIG.analyzer.mtf_confluence_enabled:
+            all_raw = getattr(self, "_all_raw", None)
+            if all_raw:
+                from bot.utils.candles import resample_ohlcv
+                hist = all_raw[:bar_index + 1]
+                mtf_candles = {}
+                if self.config.timeframe == "1h":
+                    mtf_candles["1h"] = hist[-200:]
+                c4 = resample_ohlcv(hist[-824:], self.config.timeframe, "4h")
+                if len(c4) >= 30:
+                    mtf_candles["4h"] = c4[-200:]
+                c1d = resample_ohlcv(hist[-4824:], self.config.timeframe, "1d")
+                if len(c1d) >= 30:
+                    mtf_candles["1d"] = c1d[-200:]
+                if not mtf_candles:
+                    mtf_candles = None
+
         # 3. Run analyzer (same as live). BT-H2: pass the simulated bar time so
         # session-aware confidence is causal/reproducible (not wall-clock).
         idea = await self.analyzer.analyze(
             signal, candles, order_flow=order_flow, as_of=bar.timestamp,
-            timeframe=self.config.timeframe,
+            timeframe=self.config.timeframe, mtf_candles=mtf_candles,
         )
         if idea is None:
             self._ideas_rejected_confidence += 1

@@ -116,6 +116,10 @@ class RuneClawEngine:
             macro_calendar=self.macro_calendar,
             macro_provider=self.macro_provider,
         )
+        # Wire Gate 2 (taker 3-bar) + Rule 20 (book dominance) — without this
+        # both advertised order-flow gates permanently took their fail-open
+        # skip branch (set_order_flow_analyzer had zero callers).
+        self.risk.set_order_flow_analyzer(self.order_flow)
         self.compliance = ComplianceEngine()
         self.compliance_profile = default_demo_profile()
         # LIVE FIX: if env-level config enables live trading, auto-grant
@@ -1988,9 +1992,20 @@ class RuneClawEngine:
                 exchange = await self.scanner._get_futures_exchange()
             else:
                 exchange = await self.scanner._get_exchange()
-            # Parallelize OHLCV fetch and order flow analysis
+            # Parallelize OHLCV fetch and order flow analysis. For crypto spot
+            # symbols, map to the USDT-M perp so funding rate + open interest
+            # actually resolve — this is a FUTURES bot, and without the
+            # derivatives symbol both fetches raise on the spot market and the
+            # funding/OI voters, cascade + squeeze detectors and OI divergences
+            # were permanently neutral. Fail-open: a bad mapping just degrades
+            # those components to n/a exactly as before.
+            of_deriv = None
+            if (category == "Crypto" and ":" not in signal.symbol
+                    and signal.symbol.endswith("/USDT")):
+                of_deriv = f"{signal.symbol}:USDT"
             ohlcv_task = self._cached_ohlcv(exchange, signal.symbol, timeframe, limit=100)
-            of_task = self.order_flow.analyze(exchange, signal.symbol)
+            of_task = self.order_flow.analyze(exchange, signal.symbol,
+                                              derivatives_symbol=of_deriv)
             results = await asyncio.gather(ohlcv_task, of_task, return_exceptions=True)
             ohlcv = results[0] if not isinstance(results[0], Exception) else None
             of_signal = results[1] if not isinstance(results[1], Exception) else None
@@ -2039,7 +2054,7 @@ class RuneClawEngine:
         # so it can read the wave structure appropriate to the setup. Cached and
         # fail-open — a fetch failure just omits that timeframe (analyzer no-ops).
         mtf_candles = None
-        if CONFIG.analyzer.elliott_mtf_enabled:
+        if CONFIG.analyzer.elliott_mtf_enabled or CONFIG.analyzer.mtf_confluence_enabled:
             mtf_candles = {}
             for _tf, _lim in (("15m", 200), ("1h", 200), ("4h", 200), ("1d", 200)):
                 try:

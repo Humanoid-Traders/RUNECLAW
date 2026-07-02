@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import inspect
 import threading
 import time
 from typing import Any, Callable, Optional
@@ -103,12 +104,22 @@ class ExchangeFlowProvider:
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _get_exchange(self) -> Any:
-        """Obtain an exchange instance.  Returns None on failure."""
+    async def _get_exchange(self) -> Any:
+        """Obtain an exchange instance.  Returns None on failure.
+
+        Supports sync AND async factories: the engine wires
+        MarketScanner._get_exchange, which is a coroutine function — the old
+        synchronous call returned a bare coroutine object, every subsequent
+        fetch raised AttributeError into the broad except, and the provider
+        never returned live funding/OI data at all.
+        """
         if self._exchange_factory is None:
             return None
         try:
-            return self._exchange_factory()
+            result = self._exchange_factory()
+            if inspect.isawaitable(result):
+                result = await result
+            return result
         except Exception as exc:  # noqa: BLE001
             logger.warning("exchange_factory raised: %s", exc)
             return None
@@ -151,7 +162,7 @@ class ExchangeFlowProvider:
         if entry["funding_rate"] is not None and (time.time() - entry["updated_at"]) < self._funding_ttl:
             return entry["funding_rate"]
 
-        exchange = self._get_exchange()
+        exchange = await self._get_exchange()
         if exchange is None:
             return entry.get("funding_rate")
 
@@ -190,7 +201,7 @@ class ExchangeFlowProvider:
                 change_pct = (entry["oi_usd"] - entry["oi_prev_usd"]) / entry["oi_prev_usd"] * 100
             return {"oi_usd": entry["oi_usd"], "oi_change_pct": round(change_pct, 3)}
 
-        exchange = self._get_exchange()
+        exchange = await self._get_exchange()
         if exchange is None:
             if entry["oi_usd"] is not None:
                 return {"oi_usd": entry["oi_usd"], "oi_change_pct": 0.0}
@@ -237,7 +248,7 @@ class ExchangeFlowProvider:
         if entry["funding_history"] and (time.time() - entry["updated_at"]) < self._funding_ttl:
             return entry["funding_history"][-limit:]
 
-        exchange = self._get_exchange()
+        exchange = await self._get_exchange()
         if exchange is None:
             return entry.get("funding_history", [])[-limit:]
 
