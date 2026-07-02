@@ -83,6 +83,10 @@ class DataLoader:
             "secret": CONFIG.exchange.api_secret,
             "password": CONFIG.exchange.passphrase,
             "sandbox": CONFIG.exchange.sandbox,
+            # Honor standard proxy env vars (HTTPS_PROXY + CA bundle) so real
+            # data fetches work behind egress proxies (e.g. Claude Code cloud
+            # sandboxes). No-op when no proxy env is set.
+            "aiohttp_trust_env": True,
         })
         try:
             raw = await exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
