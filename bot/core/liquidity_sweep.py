@@ -41,6 +41,7 @@ class SweepSignal:
     suggested_entry: float   # recommended entry price
     suggested_sl: float      # recommended stop loss
     description: str
+    bars_ago: int = 0        # closed bars since the sweep candle (age decay)
 
 
 def _find_swing_lows(lows: np.ndarray, order: int = 5) -> list[tuple[int, float]]:
@@ -173,6 +174,7 @@ def detect_sweeps(
                     sl = bar_low - avg_range * 0.3  # below the sweep low
 
                     signals.append(SweepSignal(
+                        bars_ago=len(c) - 1 - bar_idx,
                         sweep_type="bullish_sweep",
                         level_price=sw_price,
                         sweep_low=bar_low,
@@ -226,6 +228,7 @@ def detect_sweeps(
                     sl = bar_high + avg_range * 0.3
 
                     signals.append(SweepSignal(
+                        bars_ago=len(c) - 1 - bar_idx,
                         sweep_type="bearish_sweep",
                         level_price=sw_price,
                         sweep_low=bar_low,
@@ -270,18 +273,34 @@ def _check_double_sweeps(signals: list[SweepSignal]) -> None:
 
 
 def sweep_to_confluence_votes(signals: list[SweepSignal]) -> tuple[list[float], list[float]]:
-    """Convert sweep signals to confluence votes/weights."""
+    """Convert sweep signals to confluence votes/weights.
+
+    Audit fixes: (a) one candle wicking through two stacked swing levels used
+    to produce TWO max-weight votes for the same physical event — signals are
+    now de-duplicated per sweep bar (strongest kept); (b) a sweep from 5 bars
+    ago voted at full strength for 5 consecutive scans — weight now decays
+    ~20%/bar of age (floor 30%).
+    """
     votes: list[float] = []
     weights: list[float] = []
 
-    for sig in signals[:2]:  # top 2 signals
+    # One signal per sweep bar: keep the highest-confidence one.
+    by_bar: dict[int, SweepSignal] = {}
+    for sig in signals:
+        cur = by_bar.get(sig.bars_ago)
+        if cur is None or sig.confidence > cur.confidence:
+            by_bar[sig.bars_ago] = sig
+    deduped = sorted(by_bar.values(), key=lambda s: (s.bars_ago, -s.confidence))
+
+    for sig in deduped[:2]:  # top 2 distinct sweep events, freshest first
         if "bullish" in sig.sweep_type:
             votes.append(1.0)
         else:
             votes.append(-1.0)
 
-        # Weight based on confidence, capped
+        # Weight based on confidence, capped, decayed by age.
         w = min(1.2, sig.confidence * 1.3)  # sweep signals get high weight
+        w *= max(0.3, 1.0 - 0.2 * max(0, sig.bars_ago))
         weights.append(round(w, 3))
 
     return votes, weights

@@ -786,6 +786,31 @@ class AnalyzerConfig:
     # bot/core/levels.py; the leverage margin-risk cap still runs after.
     level_aware_sltp_enabled: bool = _env_bool("LEVEL_AWARE_SLTP_ENABLED", True)
 
+    # Smart-money-concept voters (default OFF — measured): fair value gaps,
+    # equal-highs/lows liquidity pools and premium/discount positioning
+    # (bot/core/smc.py). On the 10-symbol honest benchmark these voters cut
+    # trade flow roughly in half and turned the period negative, so they
+    # ship dark until a configuration measures non-harmful.
+    smc_voters_enabled: bool = _env_bool("SMC_VOTERS_ENABLED", False)
+
+    # Strategy-mode confidence floor (default ON): a SPECIFIC selected
+    # mode's min_confidence (e.g. BREAKOUT 0.65, LIQUIDITY_SWEEP 0.68)
+    # RAISES the per-strategy-type bar when stricter. The CONSERVATIVE
+    # catch-all default is exempt — applying its bar to every uncertain
+    # scan measurably collapsed trade flow. These per-mode bars existed in
+    # MODE_CONFIGS since day one but were dead — nothing ever read them.
+    mode_min_confidence_enabled: bool = _env_bool("MODE_MIN_CONFIDENCE_ENABLED", True)
+
+    # MFI voter (default OFF — measured): the MFI(14) indicator is always
+    # computed; the VOTER measurably suppressed portfolio trade flow on the
+    # honest benchmark even in skip-neutral form, so it ships dark.
+    mfi_voter_enabled: bool = _env_bool("MFI_VOTER_ENABLED", False)
+    # Per-bar volume-spike voter upgrade (default OFF — measured): the
+    # bar-level spike indicator is always computed; using it as the voter
+    # trigger changed flow measurably negative in combination testing, so
+    # the voter keeps the legacy scanner flag until re-measured alone.
+    vol_spike_bar_vote_enabled: bool = _env_bool("VOL_SPIKE_BAR_VOTE_ENABLED", False)
+
     # Advanced VWAP (bot/core/vwap.py). Default ON at the operator's request;
     # each is env-overridable. These activate VWAP math that used to be computed
     # but unused, and match the anchor to the setup horizon:
@@ -956,6 +981,12 @@ class ExecutionConfig:
     # comfortably above the quietest symbol's natural tick gap to avoid spurious
     # reconnects (e.g. 60–120s). RECOMMENDED ON for live money.
     ws_idle_timeout_sec: float = _env_float_bounded("WS_IDLE_TIMEOUT_SEC", 90.0, 0.0, 3600.0)
+    # WS trade-tape CVD (default ON): subscribe the public trade channel and
+    # maintain true aggressor-side cumulative volume delta per symbol —
+    # deduped by trade id, gap-free — replacing the overlapping 200-trade
+    # REST-window approximation whenever fresh tape data exists. Fail-open:
+    # no fresh tape -> the REST approximation is used exactly as before.
+    ws_cvd_enabled: bool = _env_bool("WS_CVD_ENABLED", True)
     # REST ticker staleness guard for the live SL/TP monitor (check_positions).
     # The WS guard above only covers the WS price path; the executor's local
     # SL/TP loop reads `last` from REST fetch_ticker, where a frozen/old value
@@ -1081,6 +1112,14 @@ class TrailingStopConfig:
     #                            multistage behaviour unchanged.
     trail_rule: str = _env("TRAILING_RULE", "multistage")
     playbook_atr_mult: float = _env_float("TRAILING_PLAYBOOK_ATR_MULT", 2.0)
+    # Structure trailing (default ON): once trailing is active (>=1R), the
+    # stop also ratchets to just beyond the most recent CONFIRMED swing
+    # (3-bar fractal, excluding unconfirmed recent bars) — tighten-only, on
+    # top of whichever ATR rule is active. Applied identically in the
+    # backtest (bar window per position) and live (closed 1h candles,
+    # cached, fail-open).
+    structure_trail_enabled: bool = _env_bool("STRUCTURE_TRAIL_ENABLED", True)
+    structure_trail_buffer_atr: float = _env_float("STRUCTURE_TRAIL_BUFFER_ATR", 0.25)
 
 
 @dataclass(frozen=True)

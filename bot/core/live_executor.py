@@ -3963,6 +3963,21 @@ class LiveExecutor:
                         rule=CONFIG.trailing.trail_rule,
                         playbook_atr_mult=CONFIG.trailing.playbook_atr_mult,
                     )
+                    # Structure ratchet (mirrors the backtest): once trailing
+                    # is active, tighten behind the newest CONFIRMED 1h swing.
+                    # Closed candles only, cached 5 min, fail-open.
+                    if (CONFIG.trailing.structure_trail_enabled and trailing_active):
+                        try:
+                            _hl = await self._struct_candles(exchange, pos.symbol)
+                            if _hl:
+                                from bot.utils.trailing import structure_ratchet
+                                _buf = (CONFIG.trailing.structure_trail_buffer_atr
+                                        * float(pos.trailing_state.get("atr") or 0.0))
+                                new_sl = structure_ratchet(
+                                    _hl[0], _hl[1], pos.direction, new_sl, _buf)
+                        except Exception as _st_exc:
+                            logger.debug("structure ratchet skipped for %s: %s",
+                                         pos.symbol, _st_exc)
                     if new_sl != old_sl:
                         # Check if the SL moved enough to update on exchange
                         sl_change_pct = abs(new_sl - old_sl) / old_sl * 100 if old_sl > 0 else 100
@@ -4669,6 +4684,32 @@ class LiveExecutor:
                   f"Market fallback execution failed for {pos.symbol}: {exc}",
                   action="limit_drift_market_fallback", result="ERROR",
                   data={"trade_id": trade_id, "error": str(exc)})
+            return None
+
+    async def _struct_candles(self, exchange, symbol: str):
+        """Last ~40 CLOSED 1h bar (highs, lows) for the structure ratchet,
+        cached 5 minutes per symbol. Returns (highs, lows) or None."""
+        cache = getattr(self, "_struct_cache", None)
+        if cache is None:
+            cache = {}
+            self._struct_cache = cache
+        now = time.time()
+        hit = cache.get(symbol)
+        if hit and now - hit[0] < 300:
+            return hit[1]
+        try:
+            ohlcv = await exchange.fetch_ohlcv(symbol, "1h", limit=45)
+            from bot.utils.candles import drop_forming_candle
+            ohlcv = drop_forming_candle(ohlcv, "1h")
+            if not ohlcv or len(ohlcv) < 8:
+                return None
+            hl = ([float(c[2]) for c in ohlcv[-40:]],
+                  [float(c[3]) for c in ohlcv[-40:]])
+            cache[symbol] = (now, hl)
+            if len(cache) > 50:
+                cache.pop(next(iter(cache)))
+            return hl
+        except Exception:
             return None
 
     async def _update_exchange_sl(self, exchange: "ccxt.Exchange",

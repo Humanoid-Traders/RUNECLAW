@@ -40,10 +40,15 @@ class StrategyMode(str, Enum):
 
 
 class ModeConfig(BaseModel):
-    """Per-mode parameter overrides."""
+    """Per-mode parameter overrides.
+
+    Live fields: ``confluence_boost`` (voter-weight multipliers applied in
+    the analyzer) and ``min_confidence`` (raises the per-strategy-type
+    confidence bar — wired by the signal-stack audit). The old sl_mult /
+    tp_mult fields were removed: they were never read anywhere — SL/TP
+    geometry is owned by CONFIG.strategy_types + level-aware snapping.
+    """
     mode: StrategyMode
-    sl_mult: float = 2.5
-    tp_mult: float = 3.05
     min_confidence: float = 0.60
     confluence_boost: dict[str, float] = Field(default_factory=dict)
     description: str = ""
@@ -53,8 +58,6 @@ class ModeConfig(BaseModel):
 MODE_CONFIGS: dict[StrategyMode, ModeConfig] = {
     StrategyMode.TREND_CONTINUATION: ModeConfig(
         mode=StrategyMode.TREND_CONTINUATION,
-        sl_mult=2.0,
-        tp_mult=4.0,   # R:R = 2.0 — let winners run in trends
         min_confidence=0.58,
         confluence_boost={
             "mtf_alignment": 1.5,     # HTF alignment is crucial
@@ -66,8 +69,6 @@ MODE_CONFIGS: dict[StrategyMode, ModeConfig] = {
     ),
     StrategyMode.BREAKOUT: ModeConfig(
         mode=StrategyMode.BREAKOUT,
-        sl_mult=1.8,
-        tp_mult=3.5,   # R:R ~1.9
         min_confidence=0.65,  # higher bar — breakouts have high false-positive rate
         confluence_boost={
             "mtf_bos": 2.0,            # break of structure is THE signal
@@ -79,8 +80,6 @@ MODE_CONFIGS: dict[StrategyMode, ModeConfig] = {
     ),
     StrategyMode.MEAN_REVERSION: ModeConfig(
         mode=StrategyMode.MEAN_REVERSION,
-        sl_mult=1.5,
-        tp_mult=2.5,   # R:R ~1.67 — tighter targets in ranges
         min_confidence=0.62,
         confluence_boost={
             "rsi": 1.5,                # RSI extremes are key
@@ -94,8 +93,6 @@ MODE_CONFIGS: dict[StrategyMode, ModeConfig] = {
     ),
     StrategyMode.LIQUIDITY_SWEEP: ModeConfig(
         mode=StrategyMode.LIQUIDITY_SWEEP,
-        sl_mult=2.0,
-        tp_mult=3.0,   # R:R = 1.5
         min_confidence=0.68,  # highest bar — complex pattern
         confluence_boost={
             "liquidation_cascade": 2.0,   # cascade = sweep
@@ -107,8 +104,6 @@ MODE_CONFIGS: dict[StrategyMode, ModeConfig] = {
     ),
     StrategyMode.CONSERVATIVE: ModeConfig(
         mode=StrategyMode.CONSERVATIVE,
-        sl_mult=2.5,
-        tp_mult=3.05,
         min_confidence=0.65,
         confluence_boost={},
         description="Default / uncertain regime. Standard parameters with "
@@ -116,8 +111,6 @@ MODE_CONFIGS: dict[StrategyMode, ModeConfig] = {
     ),
     StrategyMode.TURTLE_BREAKOUT: ModeConfig(
         mode=StrategyMode.TURTLE_BREAKOUT,
-        sl_mult=2.0,
-        tp_mult=4.5,   # R:R = 2.25 — Turtle system lets winners run
         min_confidence=0.60,
         confluence_boost={
             "donchian": 2.0,           # Donchian breakout IS the signal

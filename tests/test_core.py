@@ -2973,11 +2973,14 @@ class TestStrategyModes:
         assert len(selection.candidates) > 0
         assert selection.reasoning != ""
 
-    def test_rr_ratios_valid(self):
+    def test_mode_min_confidence_sane(self):
+        # sl_mult/tp_mult were removed from ModeConfig (dead fields — SL/TP
+        # geometry is owned by CONFIG.strategy_types + level snapping). The
+        # live per-mode knob is min_confidence, now wired into the gate.
         from bot.core.strategy_modes import MODE_CONFIGS
         for mode, config in MODE_CONFIGS.items():
-            rr = config.tp_mult / config.sl_mult
-            assert rr >= 1.0, f"{mode}: R:R {rr:.2f} is below 1.0"
+            assert 0.5 <= config.min_confidence <= 0.8, \
+                f"{mode}: min_confidence {config.min_confidence} out of range"
 
 
 # ══════════════════════════════════════════════════════════════════
