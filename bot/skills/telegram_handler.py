@@ -1547,17 +1547,14 @@ class TelegramHandler:
                 except Exception:
                     pass
 
-            live_closed = executor.closed_positions if executor else []
-            # Exclude adopted orphan trades, injected diagnostic artifacts, and
-            # never-filled orders (canceled/expired/price_drift/rejected close at
-            # $0 PnL) so this matches the same trade set /performance uses.
-            _non_trade_reasons_start = {"canceled", "cancelled", "expired", "price_drift", "rejected"}
-            user_closed = [t for t in live_closed
-                           if not any(getattr(t, "trade_id", "").startswith(p) for p in _ORPHAN_PREFIXES)
-                           and getattr(t, "close_reason", "") not in _non_trade_reasons_start]
-            if user_closed:
-                wins = sum(1 for t in user_closed if (t.pnl_usd or 0) > 0)
-                win_rate = f"{wins / len(user_closed) * 100:.0f}"
+            # Win rate from the single shared source of truth so this card and
+            # the Portfolio card (which now routes to the SAME account via
+            # engine.viewer_executor) can never disagree — the reported
+            # 38%-vs-52% mismatch.
+            from bot.skills.live_stats import live_win_stats
+            _start_stats = live_win_stats(executor.closed_positions if executor else [])
+            if _start_stats["total"]:
+                win_rate = f"{_start_stats['win_rate']:.0f}"
             else:
                 win_rate = "N/A"
         else:

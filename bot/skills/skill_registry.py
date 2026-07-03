@@ -655,20 +655,24 @@ class GetPortfolioSkill(BaseSkill):
 
         # LIVE mode: show real exchange data
         if CONFIG.is_live() and hasattr(engine, 'live_executor'):
-            executor = engine.live_executor
+            # Route to the SAME account the caller's other cards (/start, /risk)
+            # show — via the shared viewer resolver — so the two never disagree
+            # about which book they describe. Under per-user live, a caller with
+            # no own linked account sees nothing here rather than the operator's
+            # book (previously it hard-coded engine.live_executor and leaked the
+            # operator account to every caller).
+            executor = engine.viewer_executor(kwargs.get("user_id", "") or "")
+            if executor is None:
+                return ("<b>Portfolio</b> (LIVE)\n\nNo linked live account. "
+                        "Use <code>/connect</code> to link your exchange keys.")
             live_open = executor.open_positions
-            all_closed = executor.closed_positions
 
-            # Exclude adopted orphan trades and never-filled orders (canceled/
-            # expired/price_drift/rejected all close at $0 PnL) so this matches
-            # the same trade set /performance and /portfolio use — otherwise
-            # those zero-PnL non-fills inflate the trade count and drag win
-            # rate down without ever counting as a win.
-            _excl_prefixes = ("TI-adopted", "TI-injected")
-            _non_trade_reasons = {"canceled", "cancelled", "expired", "price_drift", "rejected"}
-            live_closed = [t for t in all_closed
-                           if not any(getattr(t, "trade_id", "").startswith(p) for p in _excl_prefixes)
-                           and getattr(t, "close_reason", "") not in _non_trade_reasons]
+            # Win rate + real-trade set from the single shared source of truth
+            # (bot.skills.live_stats) so this card and every other card compute
+            # it identically — no more 38%-vs-52% drift between cards.
+            from bot.skills.live_stats import live_win_stats
+            _stats = live_win_stats(executor.closed_positions)
+            live_closed = _stats["trades"]
 
             # Get real equity
             user_id = kwargs.get("user_id", "")
@@ -683,9 +687,8 @@ class GetPortfolioSkill(BaseSkill):
 
             live_total_pnl = sum((p.pnl_usd or 0) for p in live_closed)
             live_exposure = sum(lp.cost_usd for lp in live_open)
-            wins = sum(1 for p in live_closed if (p.pnl_usd or 0) > 0)
-            total_closed = len(live_closed)
-            wr = (wins / total_closed * 100) if total_closed > 0 else 0
+            total_closed = _stats["total"]
+            wr = _stats["win_rate"]
 
             pnl_icon = "\U0001f7e2" if live_total_pnl >= 0 else "\U0001f534"
 
