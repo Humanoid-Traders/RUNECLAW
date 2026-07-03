@@ -128,9 +128,14 @@ class TestWaveAction:
         a = wave_action({"name": "Elliott Leading Diagonal", "signal": "bullish", "key_levels": {}})
         assert a["action"] == "enter" and a["weight_mult"] < 1.0
 
-    def test_complex_correction_waits(self):
+    def test_complex_correction_resolves_as_resumption(self):
+        # The WXY detector only fires on a COMPLETED W-X-Y geometry, so like
+        # a complete ABC it enters WITH the prior trend (the analyzer's
+        # corrective flip then points the vote at the resumption). The old
+        # "wait"/neutral return left the flip dead and the raw vote pointed
+        # in the correction's own direction — backwards.
         a = wave_action({"name": "Elliott WXY Double Combination", "signal": "bullish", "key_levels": {}})
-        assert a["action"] == "wait"
+        assert a["action"] == "enter" and a["bias"] == "with"
 
     def test_abc_complete_enters(self):
         a = wave_action({"name": "Elliott ABC Zigzag", "signal": "bullish", "key_levels": {}})

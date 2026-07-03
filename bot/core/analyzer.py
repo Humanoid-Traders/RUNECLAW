@@ -195,6 +195,29 @@ def _recompute_elliott_indicators(indicators: dict, highs, lows, closes,
     _run_elliott_detectors(indicators, highs, lows, closes, swings)
 
 
+def _apply_scalp_session_vwap(indicators: dict, strategy_type: str,
+                              mtf_candles: dict) -> None:
+    """For scalp/intraday setups, rebuild ``vwap_session`` from the 15m series
+    (audit follow-up). The primary 1h session VWAP is a UTC-day average of
+    <=24 hourly points — too coarse for a scalp; the 15m series gives ~96
+    intraday points. No-op (fail-open) for higher-horizon setups or when 15m
+    isn't supplied. Mutates ``indicators``.
+    """
+    if strategy_type not in ("scalp", "intraday"):
+        return
+    series = (mtf_candles or {}).get("15m")
+    if not series or len(series) < 8:
+        return
+    arr = np.asarray(series, dtype=float)
+    highs, lows, closes, volumes = arr[:, 2], arr[:, 3], arr[:, 4], arr[:, 5]
+    times = arr[:, 0]
+    tp = (highs + lows + closes) / 3.0
+    sv = Analyzer._session_vwap(tp, volumes, times)
+    if sv is not None and sv > 0:
+        indicators["vwap_session"] = round(float(sv), 6)
+        indicators["vwap_session_tf"] = "15m"  # observability
+
+
 def _apply_vwap_setup_anchoring(indicators: dict, strategy_type: str) -> None:
     """Re-point the ``vwap`` value consumers read to the anchor whose horizon
     matches this setup (scalp/intraday→session, swing→rolling-50, position→full
@@ -211,6 +234,21 @@ def _apply_vwap_setup_anchoring(indicators: dict, strategy_type: str) -> None:
     }
     val, kind = select_setup_anchor(strategy_type, anchors)
     if val is not None:
+        # Re-center the σ-bands on the new anchor (audit: bands were built
+        # around the session VWAP in _compute_indicators; re-pointing the
+        # center without moving the bands left the band-reversion voter and
+        # the directional vote referencing two different VWAPs). The band
+        # half-width (dispersion) is preserved — only the center moves.
+        _old_center = indicators.get("vwap")
+        _old_u1 = indicators.get("vwap_upper_1")
+        if (_old_center is not None and _old_u1 is not None
+                and val != _old_center):
+            _dev = float(_old_u1) - float(_old_center)
+            if _dev > 0:
+                indicators["vwap_upper_1"] = round(val + _dev, 6)
+                indicators["vwap_lower_1"] = round(val - _dev, 6)
+                indicators["vwap_upper_2"] = round(val + 2 * _dev, 6)
+                indicators["vwap_lower_2"] = round(val - 2 * _dev, 6)
         indicators["vwap"] = val
         indicators["vwap_anchor_kind"] = kind
 
@@ -777,6 +815,11 @@ class Analyzer:
                     indicators["elliott_pattern"] = p
                 elif "Fibonacci" in name and "ext" in name.lower():
                     indicators["fib_extensions"] = p
+                elif "Liquidity Sweep" in name:
+                    # Fallback evidence for the sweep voter when the
+                    # dedicated module detects nothing (audit: this result
+                    # was excluded from the aggregate AND had no consumer).
+                    indicators["chart_sweep"] = p
 
         # ── Advanced Elliott: structural ATR-ZigZag pivots (gated, default ON) ──
         # Replaces the fixed 5-bar fractal Elliott read with one built on
@@ -807,11 +850,23 @@ class Analyzer:
 
         # ── Volume Profile ──
         try:
-            vp = compute_volume_profile(
-                highs, lows, closes, volumes,
-                num_bins=CONFIG.analyzer.volume_profile_bins,
-                current_price=signal.price,
-            )
+            # Reuse the histogram _compute_indicators already built when the
+            # parameters are equivalent (default 50 bins; ticker within 0.1%
+            # of the last close, so the categorical fields match). Otherwise
+            # recompute with the configured bins — behavior identical.
+            _vp_cached = indicators.get("_vp_basic")
+            _lc = float(closes[-1]) if len(closes) else 0.0
+            if (_vp_cached is not None
+                    and CONFIG.analyzer.volume_profile_bins == 50
+                    and _lc > 0
+                    and abs(signal.price - _lc) / _lc < 0.001):
+                vp = _vp_cached
+            else:
+                vp = compute_volume_profile(
+                    highs, lows, closes, volumes,
+                    num_bins=CONFIG.analyzer.volume_profile_bins,
+                    current_price=signal.price,
+                )
             if vp is not None:
                 indicators["volume_profile"] = {
                     "poc": vp.poc, "vah": vp.vah, "val": vp.val,
@@ -975,6 +1030,15 @@ class Analyzer:
                 _apply_timeframe_matched_elliott(indicators, strategy_type, mtf_candles)
             except Exception as exc:
                 system_log.debug("Timeframe-matched Elliott skipped: %s", exc)
+
+        # ── Scalp session VWAP from 15m (gated, default ON) ─────────────
+        # Rebuild the session anchor scalps read from the 15m series BEFORE
+        # setup anchoring re-points "vwap" to it. Fail-open to the 1h session.
+        if (CONFIG.analyzer.scalp_session_vwap_enabled and mtf_candles):
+            try:
+                _apply_scalp_session_vwap(indicators, strategy_type, mtf_candles)
+            except Exception as exc:
+                system_log.debug("Scalp session VWAP skipped: %s", exc)
 
         # ── Setup-matched VWAP anchoring (gated, default ON) ────────────
         # Re-point the "vwap" consumers read (confluence vote, S/R candidate,
@@ -1542,10 +1606,30 @@ class Analyzer:
         if CONFIG.analyzer.level_aware_sltp_enabled and atr > 0:
             try:
                 from bot.core.levels import gather_levels, snap_sl_tp
+                # Feed the bot's own derived objectives into the level map
+                # (audit upgrade): fib retracements of the dominant leg and
+                # the Elliott impulse's projected targets are real magnets —
+                # the SL/TP snap should know about them.
+                _extras = []
+                for _fk in ("fib_382", "fib_500", "fib_618"):
+                    _fv = indicators.get(_fk)
+                    if _fv:
+                        _extras.append((float(_fv), "fib"))
+                _imp = indicators.get("elliott_impulse")
+                if _imp:
+                    try:
+                        from bot.core.elliott import project_targets
+                        _t = project_targets(_imp) or {}
+                        for _tk in ("tp1", "tp2"):
+                            if _t.get(_tk):
+                                _extras.append((float(_t[_tk]), "ew_target"))
+                    except Exception:
+                        pass
                 _lvls = gather_levels(
                     highs, lows, closes, atr,
                     times=times,
-                    vp=indicators.get("volume_profile"))
+                    vp=indicators.get("volume_profile"),
+                    extra_levels=_extras)
                 _sl2, _tp2, _note = snap_sl_tp(
                     direction.value, entry, stop_loss, take_profit, _lvls, atr)
                 if _note:
@@ -2090,6 +2174,9 @@ class Analyzer:
         if volumes is not None and len(volumes) >= 10:
             vp = compute_volume_profile(highs, lows, closes, volumes)
             if vp is not None:
+                # Cache for analyze()'s VP block (audit: the full 50-bin
+                # histogram ran twice per symbol per scan).
+                results["_vp_basic"] = vp
                 results["poc_price"] = vp.poc
                 results["value_area_high"] = vp.vah
                 results["value_area_low"] = vp.val
@@ -2441,6 +2528,16 @@ class Analyzer:
             raw = Regime.CHOP
 
         # -- Persistence / smoothing --
+        # EXPANSION bypasses smoothing (audit: EXPANSION starved). It is a
+        # single-bar squeeze-RELEASE event by construction — requiring 2-of-3
+        # consecutive readings meant the release bar could never reach
+        # consensus, so the boost/1.3x sizing/narrowed thresholds were dead in
+        # live. The release latches immediately for this read; the next
+        # non-expansion bar resolves through normal smoothing again.
+        if raw == Regime.EXPANSION:
+            self._regime_history.append((symbol, raw.value))
+            self._current_regimes[symbol] = raw
+            return raw
         self._regime_history.append((symbol, raw.value))
         # Keep history bounded (max 3 entries per symbol is enough;
         # cap total list at 300 to avoid unbounded growth across symbols)
@@ -2658,7 +2755,7 @@ class Analyzer:
             if _bar_spike:
                 votes.append(float(indicators.get("vol_spike_bar_dir", 1)))
             else:
-                votes.append(1.0 if signal.change_pct_24h > 0 else -1.0)
+                votes.append(1.0 if (signal.change_pct_24h or 0) > 0 else -1.0)
             aw(0.8, "volume_spike")
         elif not _skip_missing:
             votes.append(0.0)
@@ -2800,19 +2897,19 @@ class Analyzer:
         vp = indicators.get("_vp_result")
         if vp is not None:
             try:
-                # Use net bullish/bearish vote based on price vs POC
-                vp_vote = 0.0
-                if hasattr(vp, 'price_vs_poc'):
-                    if vp.price_vs_poc == "above":
-                        vp_vote = 0.5   # price above POC → bullish bias
-                    elif vp.price_vs_poc == "below":
-                        vp_vote = -0.5  # price below POC → bearish bias
-                if hasattr(vp, 'price_in_value_area') and vp.price_in_value_area:
-                    # Inside value area = mean-reversion zone, dampen signal
-                    vp_vote *= 0.5
-                if abs(vp_vote) > 0:
-                    votes.append(vp_vote)
-                    aw(0.6, "volume_profile")
+                # Direction-aware VP votes (audit: the richer
+                # volume_profile_to_confluence was dead code while this path
+                # used a crude above/below-POC bias that ignored VAH/VAL and
+                # the momentum-vs-contrarian split). Direction approximated
+                # from the running vote sum, same convention as the
+                # supply/demand voter below.
+                from bot.core.volume_profile import volume_profile_to_confluence
+                _pre = sum(v * w for v, w in zip(votes, weights))
+                vp_v, vp_w = volume_profile_to_confluence(
+                    vp, "LONG" if _pre >= 0 else "SHORT")
+                votes.extend(vp_v)
+                weights.extend(_lw(w, "volume_profile") for w in vp_w)
+                names.extend(["volume_profile"] * len(vp_w))
             except Exception as _vp_exc:
                 logger.warning("Volume profile confluence vote failed: %s", _vp_exc)
 
@@ -3044,6 +3141,28 @@ class Analyzer:
             votes.extend(sweep_v)
             weights.extend(_lw(w, "liquidity_sweep") for w in sweep_w)
             names.extend(["liquidity_sweep"] * len(sweep_w))
+        else:
+            # Fallback (audit: detected-then-dropped): the chart-pattern
+            # sweep detector was excluded from the aggregate because sweeps
+            # have a dedicated voter — but when the dedicated module found
+            # nothing, its evidence vanished entirely. Vote it here under the
+            # SAME name so the pattern family cap treats it as one sweep
+            # source and the two can never stack.
+            _cs = indicators.get("chart_sweep")
+            if _cs and _cs.get("signal") in ("bullish", "bearish"):
+                votes.append(1.0 if _cs["signal"] == "bullish" else -1.0)
+                aw(_lw(0.6 * float(_cs.get("confidence", 0.5)),
+                       "liquidity_sweep"), "liquidity_sweep")
+
+        # Fibonacci extensions voter (audit: detected-then-dropped). The
+        # detector fires when an impulse + retracement projects extension
+        # targets ahead — a mild continuation vote in the impulse direction,
+        # weighted by the detector's own confidence. Skip-don't-dilute.
+        _fx = indicators.get("fib_extensions")
+        if _fx and _fx.get("signal") in ("bullish", "bearish"):
+            votes.append(1.0 if _fx["signal"] == "bullish" else -1.0)
+            aw(_lw(0.4 * float(_fx.get("confidence", 0.6)) / 0.6,
+                   "fib_extension"), "fib_extension")
 
         # Smart-money-concept voters (audit Tier 3, default ON):
         #   fvg      — nearest UNFILLED fair value gap within 1 ATR acts as a
@@ -3070,7 +3189,9 @@ class Analyzer:
                 approx_dir = "LONG" if pre_sum >= 0 else "SHORT"
                 sd_v, sd_w = zones_to_confluence(sd_zones, signal.price, approx_dir)
                 votes.extend(sd_v)
-                weights.extend(sd_w)
+                # _lw: learned-weight coverage — every direct-append voter
+                # must pass through the multiplier or the learner has a hole.
+                weights.extend(_lw(w, "supply_demand") for w in sd_w)
                 names.extend(["supply_demand"] * len(sd_w))
             except Exception as _sd_exc:
                 logger.warning("Supply/demand zone confluence vote failed: %s", _sd_exc)
@@ -3175,6 +3296,26 @@ class Analyzer:
                         for i in p_active:
                             weights[i] *= p_scale
 
+        # STRUCTURE + AGGRESSION family caps (audit: BOS double-count,
+        # taker/CVD double-count). Same reduce-only discipline as the pattern
+        # cap: mtf structure voters describe one structural fact from several
+        # angles, and taker + of_cvd_trend are the same buy/sell aggression
+        # read from two data sources — cap each family so correlated votes
+        # can't stack past a single strong voter's budget.
+        if len(names) == len(votes) == len(weights):
+            for _fam, _cap in ((("mtf_structure", "mtf_bos", "mtf_choch",
+                                 "mtf_alignment"), 1.5),
+                               (("taker", "of_cvd_trend", "of_cvd_divergence"),
+                                1.0)):
+                _active = [i for i, n in enumerate(names)
+                           if n in _fam and abs(votes[i]) > 1e-9]
+                if len(_active) > 1:
+                    _wsum = sum(weights[i] for i in _active)
+                    if _wsum > _cap:
+                        _scale = _cap / _wsum
+                        for i in _active:
+                            weights[i] *= _scale
+
         # Phase B: emit the named per-voter breakdown (best-effort; only when
         # fully aligned). Does not affect the confluence value.
         if breakdown is not None and len(names) == len(votes) == len(weights):
@@ -3188,6 +3329,36 @@ class Analyzer:
         weighted_sum = sum(v * w for v, w in zip(votes, weights))
         # Normalize to [0, 1]: -total_weight → 0, +total_weight → 1
         confluence = (weighted_sum / total_weight + 1) / 2
+
+        # Cross-layer confirmation bonus (gated, default OFF — measured). The
+        # weighted average captures vote MAGNITUDE but not BREADTH: three
+        # independent families each nudging +0.5 average to the same net
+        # contribution as one strong vote, yet three independent confirmations
+        # are more robust. When >=2 distinct families (liquidity / price-action
+        # / structure / order-flow) agree with the net direction, nudge a
+        # small bounded amount toward it. The family caps already prevent
+        # SAME-concept stacking, so this can't re-introduce double-count.
+        if (CONFIG.analyzer.cross_layer_confirmation_enabled
+                and len(names) == len(votes) and abs(confluence - 0.5) > 1e-6):
+            net_dir = 1.0 if confluence > 0.5 else -1.0
+            _fam_map = {
+                "liquidity": ("liquidity_sweep",),
+                "price_action": ("candlestick", "reversal", "chart_patterns"),
+                "structure": ("mtf_bos", "mtf_structure", "mtf_choch"),
+                "order_flow": ("of_cvd_trend", "of_book_imbalance",
+                               "of_whale_bias", "taker"),
+            }
+            agreeing = 0
+            for _members in _fam_map.values():
+                fam_vote = sum(votes[i] for i, n in enumerate(names)
+                               if n in _members)
+                if fam_vote * net_dir > 1e-9:
+                    agreeing += 1
+            if agreeing >= 2:
+                # +0.03 per agreeing family beyond the first, capped at +0.09.
+                bonus = min(0.09, 0.03 * (agreeing - 1)) * net_dir
+                confluence += bonus
+
         return round(max(0.0, min(1.0, confluence)), 4)
 
     # -- LLM Reasoning --

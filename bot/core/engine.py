@@ -1808,8 +1808,13 @@ class RuneClawEngine:
         self._transition(AgentState.IDLE, "tick cycle complete")
 
     async def _cached_ohlcv(self, exchange, symbol, timeframe, limit=100, ttl=120):
-        """Fetch OHLCV with a simple TTL cache to avoid refetching within `ttl` seconds."""
-        key = f"{symbol}:{timeframe}"
+        """Fetch OHLCV with a simple TTL cache to avoid refetching within `ttl` seconds.
+
+        The cache key includes ``limit`` (audit): the MTF loop asks for 200
+        bars while the primary scan caches 100 — a shared key silently served
+        the shorter series and structure math ran on half its window.
+        """
+        key = f"{symbol}:{timeframe}:{limit}"
         now = time.monotonic()
         if key in self._ohlcv_cache:
             cached_time, cached_data = self._ohlcv_cache[key]

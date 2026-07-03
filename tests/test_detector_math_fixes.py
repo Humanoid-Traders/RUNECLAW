@@ -104,13 +104,18 @@ class TestTriangleBands:
         assert res["name"] == "Symmetrical Triangle"
         assert res["signal"] == "neutral"
 
-    def test_true_ascending_still_detected(self):
+    def test_true_ascending_detected_forming_until_breakout(self):
+        # Price inside the pattern: geometry classified but the directional
+        # vote is withheld (completion gating) — a coiling triangle is a
+        # range, not a long signal, until the close breaks the boundary.
         res = self._res(0.0, +0.05)
-        assert res is not None and res["name"] == "Ascending Triangle"
+        assert res is not None and res["name"] == "Ascending Triangle (forming)"
+        assert res["signal"] == "neutral"
 
-    def test_true_descending_still_detected(self):
+    def test_true_descending_detected_forming_until_breakout(self):
         res = self._res(-0.05, 0.0)
-        assert res is not None and res["name"] == "Descending Triangle"
+        assert res is not None and res["name"] == "Descending Triangle (forming)"
+        assert res["signal"] == "neutral"
 
 
 # ── completion gating ────────────────────────────────────────────
