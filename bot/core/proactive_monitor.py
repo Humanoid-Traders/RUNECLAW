@@ -23,6 +23,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime
 from bot.compat import UTC
@@ -95,6 +96,12 @@ class ProactiveMonitor:
         self._ws_down_since: float = 0.0           # monotonic ts WS first seen down
         self._last_warn_rate: bool = False         # last warning-rate-breaker state
         self._last_tick_degraded: bool = False     # last tick-failure alert state
+        # Strangle watchdog: rolling (wall_ts, evaluated, approved, fails_by_gate)
+        # snapshots of the risk engine's cumulative counters, plus our own
+        # last-alert time (the condition PERSISTS, so the generic 5-min dedup
+        # would spam — this re-alerts at most once per window).
+        self._strangle_snaps: deque = deque()
+        self._last_strangle_alert: float = 0.0
         # Optional async callback(chat_id, idea) -> None to push a setup chart
         # alongside a signal alert. Set via set_chart_fn(); never required.
         self._chart_fn: Optional[Callable] = None
@@ -163,6 +170,93 @@ class ProactiveMonitor:
         alerts.extend(self._check_trade_signals())
         alerts.extend(self._check_sl_tp_proximity())
         alerts.extend(self._check_time_stops())
+        alerts.extend(self._check_signal_strangle())
+        return alerts
+
+    def _check_signal_strangle(self) -> list[Alert]:
+        """Silent-strangle watchdog: ideas keep flowing but NOTHING has been
+        approved for a whole window — the failure shape of a silently latched
+        gate. (The soft loss-streak latch ran a production backtest dry for
+        ~8 months with zero operator-visible signal: the bot scans, generates
+        ideas, and rejects every one.) Names the top rejecting gate so the
+        operator knows WHERE the flow died, not just that it died."""
+        alerts: list[Alert] = []
+        window_s = CONFIG.risk.strangle_alert_hours * 3600.0
+        if window_s <= 0:
+            return alerts
+        try:
+            stats = self.engine.risk.eval_stats()
+            fails = {k: v.get("failed", 0)
+                     for k, v in self.engine.risk.gate_stats().items()}
+        except Exception:
+            return alerts
+
+        now = time.time()
+        snaps = self._strangle_snaps
+        snaps.append((now, stats["evaluated"], stats["approved"], fails))
+        while snaps and now - snaps[0][0] > 2 * window_s:
+            snaps.popleft()
+
+        # Baseline = the newest snapshot that is at least one window old.
+        base = None
+        for s in snaps:
+            if now - s[0] >= window_s:
+                base = s
+            else:
+                break
+        if base is None:
+            return alerts
+
+        evals_d = stats["evaluated"] - base[1]
+        approved_d = stats["approved"] - base[2]
+        if evals_d < CONFIG.risk.strangle_min_ideas or approved_d > 0:
+            return alerts
+        if now - self._last_strangle_alert < window_s:
+            return alerts   # persists — re-alert once per window, not per tick
+
+        gate_deltas = {k: v - base[3].get(k, 0) for k, v in fails.items()}
+        top_gate, top_fails = max(gate_deltas.items(),
+                                  key=lambda kv: kv[1], default=("?", 0))
+        streak = {}
+        try:
+            streak = self.engine.risk.streak_state()
+        except Exception:
+            pass
+        probe_line = ""
+        if streak.get("latched"):
+            p = streak.get("probe_in_seconds")
+            probe_line = (
+                f"- Loss streak: <code>{streak.get('consecutive_losses')}"
+                f"/{streak.get('soft_limit')} soft</code>"
+                + (f" — probe trade in <code>{p / 3600.0:.1f}h</code>\n"
+                   if p is not None and p > 0 else
+                   " — probe trade ALLOWED now\n" if p is not None else
+                   " — probing disabled\n"))
+
+        hours = CONFIG.risk.strangle_alert_hours
+        self._last_strangle_alert = now
+        alerts.append(Alert(
+            alert_type="SIGNAL_STRANGLE",
+            severity="WARNING",
+            title="Signal flow strangled",
+            body=(
+                "⚠️ <b>SIGNAL FLOW STRANGLED</b>\n"
+                "────────────────\n"
+                f"<code>{evals_d}</code> ideas evaluated in the last "
+                f"<code>{hours:.0f}h</code> — <b>zero approved</b>.\n\n"
+                f"- Top rejecting gate: <code>{top_gate}</code> "
+                f"(<code>{top_fails}</code> rejections)\n"
+                + probe_line +
+                "\nThe bot is scanning but cannot trade. If this is not "
+                "intentional (breaker/streak protection doing its job), a "
+                "gate may be latched or misconfigured.\n"
+                "────────────────\n"
+                "\U0001f449 /gates — per-gate pass/fail counters\n"
+                "\U0001f449 /status — engine + breaker state\n"
+                "\U0001f449 /whynot — why the last idea was rejected"
+            ),
+            dedup_key="signal_strangle",
+        ))
         return alerts
 
     def _check_circuit_breaker(self) -> list[Alert]:

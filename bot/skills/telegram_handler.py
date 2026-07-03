@@ -4704,6 +4704,20 @@ class TelegramHandler:
             pending_ideas=len(self.engine.pending_ideas) if hasattr(self.engine, "pending_ideas") else 0,
             lang=self._lang(update),
         )
+        # Strangle visibility: when the soft loss-streak gate is latched the
+        # bot scans but cannot trade — say so instead of looking merely idle.
+        try:
+            ss = self.engine.risk.streak_state()
+            if ss.get("latched"):
+                p = ss.get("probe_in_seconds")
+                probe = ("probing disabled" if p is None
+                         else "probe trade allowed NOW" if p <= 0
+                         else f"probe trade in {p / 3600.0:.1f}h")
+                msg += (f"\n⚠️ Loss streak "
+                        f"<code>{ss['consecutive_losses']}/{ss['soft_limit']}</code>"
+                        f" — new entries gated ({probe}).")
+        except Exception:
+            pass
         await self._send(update, msg, reply_markup=_KB_WARROOM)
 
     @guard("rejected")

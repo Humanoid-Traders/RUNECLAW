@@ -1430,7 +1430,23 @@ function renderGates() {
     el.innerHTML = `<div class="empty-msg">${_insightError ? 'Insight feed unavailable right now.' : 'No gate telemetry yet — counters fill as the risk engine evaluates trades.'}</div>`;
     return;
   }
-  let h = '<div class="gate-grid">';
+  let h = '';
+  // Strangle/streak banner: the bot scans but cannot trade. Amber while the
+  // half-open probe is pending, red if probing is disabled or breaker open.
+  const rs = (ins && ins.risk_state) || {};
+  if (rs.latched || rs.circuit_breaker_open) {
+    const p = rs.probe_in_seconds;
+    const probeTxt = rs.circuit_breaker_open ? 'circuit breaker OPEN — manual reset required'
+      : p === null || p === undefined ? 'probing disabled — manual reset required'
+      : p <= 0 ? 'probe trade allowed now'
+      : `probe trade in ${(p / 3600).toFixed(1)}h`;
+    const cls = (rs.circuit_breaker_open || p === null || p === undefined) ? 'danger' : 'warn';
+    h += `<div class="gate-tile ${cls}" style="margin-bottom:8px" title="New entries are gated by the loss-streak guard">
+      <div class="gate-name">ENTRIES GATED — loss streak ${rs.consecutive_losses ?? '?'}/${rs.soft_limit ?? '?'}</div>
+      <div class="gate-counts"><span class="gate-fail ${cls}">${probeTxt}</span></div>
+    </div>`;
+  }
+  h += '<div class="gate-grid">';
   for (const name of names) {
     const g = gates[name] || {};
     const p = g.passed || 0, f = g.failed || 0, s = g.skipped || 0;

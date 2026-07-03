@@ -358,6 +358,35 @@ class RiskEngine:
         return {k: dict(v) for k, v in sorted(
             getattr(self, "_gate_stats", {}).items())}
 
+    def eval_stats(self) -> dict:
+        """Cumulative idea-evaluation counters for the strangle watchdog:
+        total evaluated, total approved, and when something last passed."""
+        return {
+            "evaluated": getattr(self, "_eval_total", 0),
+            "approved": getattr(self, "_approved_total", 0),
+            "last_approval_time": getattr(self, "_last_approval_time", None),
+        }
+
+    def streak_state(self) -> dict:
+        """Loss-streak / probe posture for operator surfaces (/status,
+        dashboard). probe_in describes the half-open recovery: seconds until
+        a probe trade is allowed (0 = allowed now, None = gate not latched
+        or probing disabled)."""
+        soft = self._soft_loss_streak_limit(CONFIG.risk.max_consecutive_losses)
+        latched = self._consecutive_losses >= soft
+        probe_in = None
+        probe_s = CONFIG.risk.loss_streak_probe_hours * 3600.0
+        if latched and probe_s > 0 and self._last_loss_time is not None:
+            probe_in = max(0.0, probe_s - (self._now() - self._last_loss_time))
+        return {
+            "consecutive_losses": self._consecutive_losses,
+            "soft_limit": soft,
+            "hard_limit": CONFIG.risk.max_consecutive_losses,
+            "latched": latched,
+            "probe_in_seconds": probe_in,
+            "circuit_breaker_open": self._circuit_open,
+        }
+
     @property
     def stats(self) -> dict:
         return {
@@ -1314,6 +1343,15 @@ class RiskEngine:
 
         # -- Verdict --
         verdict = RiskVerdict.APPROVED if len(failed) == 0 else RiskVerdict.REJECTED
+
+        # Strangle-watchdog inputs: cumulative evaluated/approved counts and
+        # the time of the last approval (engine time, sim-aware). The
+        # proactive monitor diffs these to detect "ideas flow but nothing is
+        # ever approved" — the failure shape of a silently latched gate.
+        self._eval_total = getattr(self, "_eval_total", 0) + 1
+        if verdict == RiskVerdict.APPROVED:
+            self._approved_total = getattr(self, "_approved_total", 0) + 1
+            self._last_approval_time = self._now()
 
         # Gate telemetry: per-check pass/fail/skip counters so newly-wired
         # gates (taker 3-bar, book dominance, ...) can be threshold-tuned on

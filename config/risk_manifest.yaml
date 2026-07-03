@@ -363,6 +363,22 @@ defaults:
       gate from becoming a permanent silent latch — the streak only decays on
       wins, which can't happen while trading is blocked. 0 = legacy latch.
 
+  strangle_alert_hours:
+    value: 12.0
+    env_var: STRANGLE_ALERT_HOURS
+    description: >
+      Silent-strangle watchdog window: proactively WARN the operator when at
+      least strangle_min_ideas were evaluated over this many hours with ZERO
+      approvals, naming the top rejecting gate. Catches silently latched or
+      misconfigured gates (bot scans but never trades). 0 = off.
+
+  strangle_min_ideas:
+    value: 10
+    env_var: STRANGLE_MIN_IDEAS
+    description: >
+      Minimum ideas evaluated in the watchdog window before a zero-approval
+      state counts as a strangle (avoids false alarms in quiet markets).
+
   cooldown_after_loss_seconds:
     value: 120
     env_var: COOLDOWN_AFTER_LOSS_SEC

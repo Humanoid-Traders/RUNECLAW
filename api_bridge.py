@@ -22,7 +22,7 @@ import time
 from collections import defaultdict
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Optional
 
 import numpy as np
 from fastapi import FastAPI, HTTPException, Depends, Security, Request
@@ -825,6 +825,10 @@ async def insight(symbol: str, timeframe: str = "1h", limit: int = 200,
                    "weight": round(float(w), 4)}
                   for n, v, w in breakdown if abs(w) > 1e-9],
         "gates": engine.risk.gate_stats() if hasattr(engine.risk, "gate_stats") else {},
+        "risk_state": (engine.risk.streak_state()
+                       if hasattr(engine.risk, "streak_state") else {}),
+        "flow": (engine.risk.eval_stats()
+                 if hasattr(engine.risk, "eval_stats") else {}),
     }
 
 

@@ -185,6 +185,15 @@ class RiskLimits:
     # it. 0 disables probing (legacy permanent latch).
     loss_streak_probe_hours: float = _env_float_bounded(
         "LOSS_STREAK_PROBE_HOURS", 24.0, 0.0, 720.0)
+    # Silent-strangle watchdog (proactive monitor): WARN the operator when
+    # ideas keep flowing but NOTHING is approved for a whole window — the
+    # failure shape of a silently latched gate (the loss-streak latch ran a
+    # production backtest dry for ~8 months with zero operator-visible
+    # signal). Names the top rejecting gate from gate telemetry. 0 = off.
+    strangle_alert_hours: float = _env_float_bounded(
+        "STRANGLE_ALERT_HOURS", 12.0, 0.0, 168.0)
+    strangle_min_ideas: int = int(_env_float_bounded(
+        "STRANGLE_MIN_IDEAS", 10, 1, 10000))
     cooldown_after_loss_seconds: int = int(_env_float("COOLDOWN_AFTER_LOSS_SEC", 120))
     # Per-SYMBOL loss-streak cooldown. The account-wide streak above decays on
     # ANY win, so a chronically-losing symbol keeps getting re-entered as long
