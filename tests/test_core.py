@@ -4826,7 +4826,12 @@ class TestChartPatterns:
         lows = closes - 0.5
         result = detect_flags(highs, lows, closes)
         if result is not None:
-            assert result["signal"] == "bullish"
+            # Completion gating: a consolidating flag reports neutral until
+            # the close breaks the flag boundary; directional only post-break.
+            assert result["name"].startswith("Bull Flag")
+            assert result["signal"] in ("bullish", "neutral")
+            if "forming" in result["name"]:
+                assert result["signal"] == "neutral"
 
     def test_liquidity_sweep(self):
         """Wick below swing low with close above → bullish sweep."""

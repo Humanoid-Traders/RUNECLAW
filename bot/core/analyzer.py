@@ -2441,6 +2441,16 @@ class Analyzer:
             raw = Regime.CHOP
 
         # -- Persistence / smoothing --
+        # EXPANSION bypasses smoothing (audit: EXPANSION starved). It is a
+        # single-bar squeeze-RELEASE event by construction — requiring 2-of-3
+        # consecutive readings meant the release bar could never reach
+        # consensus, so the boost/1.3x sizing/narrowed thresholds were dead in
+        # live. The release latches immediately for this read; the next
+        # non-expansion bar resolves through normal smoothing again.
+        if raw == Regime.EXPANSION:
+            self._regime_history.append((symbol, raw.value))
+            self._current_regimes[symbol] = raw
+            return raw
         self._regime_history.append((symbol, raw.value))
         # Keep history bounded (max 3 entries per symbol is enough;
         # cap total list at 300 to avoid unbounded growth across symbols)
@@ -2658,7 +2668,7 @@ class Analyzer:
             if _bar_spike:
                 votes.append(float(indicators.get("vol_spike_bar_dir", 1)))
             else:
-                votes.append(1.0 if signal.change_pct_24h > 0 else -1.0)
+                votes.append(1.0 if (signal.change_pct_24h or 0) > 0 else -1.0)
             aw(0.8, "volume_spike")
         elif not _skip_missing:
             votes.append(0.0)
@@ -3070,7 +3080,9 @@ class Analyzer:
                 approx_dir = "LONG" if pre_sum >= 0 else "SHORT"
                 sd_v, sd_w = zones_to_confluence(sd_zones, signal.price, approx_dir)
                 votes.extend(sd_v)
-                weights.extend(sd_w)
+                # _lw: learned-weight coverage — every direct-append voter
+                # must pass through the multiplier or the learner has a hole.
+                weights.extend(_lw(w, "supply_demand") for w in sd_w)
                 names.extend(["supply_demand"] * len(sd_w))
             except Exception as _sd_exc:
                 logger.warning("Supply/demand zone confluence vote failed: %s", _sd_exc)
@@ -3174,6 +3186,26 @@ class Analyzer:
                         p_scale = p_cap / p_weight
                         for i in p_active:
                             weights[i] *= p_scale
+
+        # STRUCTURE + AGGRESSION family caps (audit: BOS double-count,
+        # taker/CVD double-count). Same reduce-only discipline as the pattern
+        # cap: mtf structure voters describe one structural fact from several
+        # angles, and taker + of_cvd_trend are the same buy/sell aggression
+        # read from two data sources — cap each family so correlated votes
+        # can't stack past a single strong voter's budget.
+        if len(names) == len(votes) == len(weights):
+            for _fam, _cap in ((("mtf_structure", "mtf_bos", "mtf_choch",
+                                 "mtf_alignment"), 1.5),
+                               (("taker", "of_cvd_trend", "of_cvd_divergence"),
+                                1.0)):
+                _active = [i for i, n in enumerate(names)
+                           if n in _fam and abs(votes[i]) > 1e-9]
+                if len(_active) > 1:
+                    _wsum = sum(weights[i] for i in _active)
+                    if _wsum > _cap:
+                        _scale = _cap / _wsum
+                        for i in _active:
+                            weights[i] *= _scale
 
         # Phase B: emit the named per-voter breakdown (best-effort; only when
         # fully aligned). Does not affect the confluence value.

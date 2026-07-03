@@ -343,26 +343,35 @@ def detect_flags(
         return None  # flag too wide
 
     if pole_move > 0 and norm_slope < 0 and abs(norm_slope) < 0.3:
-        # Bull flag: pole up, flag slopes gently down
+        # Bull flag: pole up, flag slopes gently down. Completion gating
+        # (audit): the continuation vote waits for the close above the flag's
+        # upper boundary (prior bars only — the trigger must not be the
+        # current bar's own high).
         conf = min(0.80, 0.50 + pole_pct / 20)
+        flag_res = float(np.max(flag_highs[:-1])) if len(flag_highs) > 1 else float(flag_highs[0])
+        broke = float(closes[-1]) > flag_res
         return {
-            "name": "Bull Flag",
-            "signal": "bullish",
-            "confidence": round(conf, 2),
-            "description": f"Bull flag: {pole_pct:.1f}% pole, consolidating",
+            "name": "Bull Flag" if broke else "Bull Flag (forming)",
+            "signal": "bullish" if broke else "neutral",
+            "confidence": round(conf if broke else min(conf, 0.55), 2),
+            "description": f"Bull flag: {pole_pct:.1f}% pole, consolidating"
+                           + ("" if broke else " (no breakout yet)"),
             "key_levels": {"pole_base": float(pole_closes[0]),
                            "pole_top": float(pole_closes[-1]),
                            "flag_low": float(np.min(flag_lows))},
         }
 
     if pole_move < 0 and norm_slope > 0 and abs(norm_slope) < 0.3:
-        # Bear flag: pole down, flag slopes gently up
+        # Bear flag: pole down, flag slopes gently up (see bull-flag gating).
         conf = min(0.80, 0.50 + pole_pct / 20)
+        flag_sup = float(np.min(flag_lows[:-1])) if len(flag_lows) > 1 else float(flag_lows[0])
+        broke = float(closes[-1]) < flag_sup
         return {
-            "name": "Bear Flag",
-            "signal": "bearish",
-            "confidence": round(conf, 2),
-            "description": f"Bear flag: {pole_pct:.1f}% drop, consolidating",
+            "name": "Bear Flag" if broke else "Bear Flag (forming)",
+            "signal": "bearish" if broke else "neutral",
+            "confidence": round(conf if broke else min(conf, 0.55), 2),
+            "description": f"Bear flag: {pole_pct:.1f}% drop, consolidating"
+                           + ("" if broke else " (no breakout yet)"),
             "key_levels": {"pole_top": float(pole_closes[0]),
                            "pole_base": float(pole_closes[-1]),
                            "flag_high": float(np.max(flag_highs))},
@@ -399,21 +408,28 @@ def detect_triangles(
     # nh in (-0.05, -0.02) and a textbook symmetrical triangle returned as
     # a bullish Ascending Triangle because this branch matched first.
     if abs(nh) < 0.02 and nl > 0.02:
+        # Completion gating (audit): continuation geometry only votes with
+        # the trend AFTER the breakout close — a forming triangle is a
+        # coiling range, and voting bullish mid-range front-ran the break.
+        broke = price > sh[-1][1]
         return {
-            "name": "Ascending Triangle",
-            "signal": "bullish",
-            "confidence": 0.70,
-            "description": f"Ascending triangle: flat resistance ~${sh[-1][1]:,.2f}, rising lows",
+            "name": "Ascending Triangle" if broke else "Ascending Triangle (forming)",
+            "signal": "bullish" if broke else "neutral",
+            "confidence": 0.70 if broke else 0.55,
+            "description": f"Ascending triangle: flat resistance ~${sh[-1][1]:,.2f}, rising lows"
+                           + ("" if broke else " (no breakout yet)"),
             "key_levels": {"resistance": sh[-1][1], "support_rising": sl[-1][1]},
         }
 
     # Descending: falling highs, flat lows (mirror of the ascending bands)
     if nh < -0.02 and abs(nl) < 0.02:
+        broke = price < sl[-1][1]
         return {
-            "name": "Descending Triangle",
-            "signal": "bearish",
-            "confidence": 0.70,
-            "description": f"Descending triangle: falling highs, flat support ~${sl[-1][1]:,.2f}",
+            "name": "Descending Triangle" if broke else "Descending Triangle (forming)",
+            "signal": "bearish" if broke else "neutral",
+            "confidence": 0.70 if broke else 0.55,
+            "description": f"Descending triangle: falling highs, flat support ~${sl[-1][1]:,.2f}"
+                           + ("" if broke else " (no breakout yet)"),
             "key_levels": {"resistance_falling": sh[-1][1], "support": sl[-1][1]},
         }
 
@@ -458,10 +474,11 @@ def detect_wedges(
     # Rising wedge: both slopes clearly positive (nh >= 0.02 keeps this
     # disjoint from the ascending triangle's flat-highs band), lows steeper.
     if nh >= 0.02 and nl > nh:
+        broke = price < sl[-1][1]
         return {
-            "name": "Rising Wedge",
-            "signal": "bearish",
-            "confidence": 0.65,
+            "name": "Rising Wedge" if broke else "Rising Wedge (forming)",
+            "signal": "bearish" if broke else "neutral",
+            "confidence": 0.65 if broke else 0.5,
             "description": "Rising wedge: converging upward trendlines, bearish reversal pattern",
             "key_levels": {"upper": sh[-1][1], "lower": sl[-1][1]},
         }
@@ -469,10 +486,11 @@ def detect_wedges(
     # Falling wedge: both slopes clearly negative (nl <= -0.02 keeps this
     # disjoint from the descending triangle's flat-lows band), highs steeper.
     if nl <= -0.02 and nh < 0 and nh > nl:
+        broke = price > sh[-1][1]
         return {
-            "name": "Falling Wedge",
-            "signal": "bullish",
-            "confidence": 0.65,
+            "name": "Falling Wedge" if broke else "Falling Wedge (forming)",
+            "signal": "bullish" if broke else "neutral",
+            "confidence": 0.65 if broke else 0.5,
             "description": "Falling wedge: converging downward trendlines, bullish reversal pattern",
             "key_levels": {"upper": sh[-1][1], "lower": sl[-1][1]},
         }

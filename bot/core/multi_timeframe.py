@@ -127,15 +127,18 @@ def _analyze_structure(highs: np.ndarray, lows: np.ndarray, closes: np.ndarray, 
     # — previously the mtf_bos vote fired in the alignment direction, so a
     # bearish close below the last swing low during residual bullish EMA
     # alignment cast a BULLISH vote labeled "mtf_bos".
+    # The break is NOT folded into ``bias`` here: the dedicated mtf_bos voter
+    # already votes bos_dir at 0.6·conf, and folding it into structure bias as
+    # well double-counted a single breakout in confluence (audit: BOS
+    # double-count). ``bias`` stays pure HH/HL structure; the break gets
+    # exactly one vote, through mtf_bos.
     current_price = float(closes[-1])
     if len(sh) >= 1 and current_price > sh[-1][1] * 1.001:
         result["bos"] = True
         result["bos_dir"] = 1
-        result["bias"] = min(1.0, result["bias"] + 0.3)
     elif len(sl) >= 1 and current_price < sl[-1][1] * 0.999:
         result["bos"] = True
         result["bos_dir"] = -1
-        result["bias"] = max(-1.0, result["bias"] - 0.3)
 
     # Change of Character: structure was one way, now swings reverse.
     # choch_dir points in the NEW structure's direction (+1 flip-to-bullish).
@@ -155,11 +158,12 @@ def _analyze_structure(highs: np.ndarray, lows: np.ndarray, closes: np.ndarray, 
         # With only 2 swing points, detect reversal from structure bias
         now_bearish = sh[-1][1] < sh[-2][1] and sl[-1][1] < sl[-2][1]
         now_bullish = sh[-1][1] > sh[-2][1] and sl[-1][1] > sl[-2][1]
-        # CHoCH if current structure opposes the BOS direction
-        if result["bos"] and result["bias"] > 0 and now_bearish:
+        # CHoCH if current structure opposes the BOS direction (bias no
+        # longer carries the break fold, so compare against bos_dir itself).
+        if result["bos"] and result["bos_dir"] > 0 and now_bearish:
             result["choch"] = True
             result["choch_dir"] = -1
-        elif result["bos"] and result["bias"] < 0 and now_bullish:
+        elif result["bos"] and result["bos_dir"] < 0 and now_bullish:
             result["choch"] = True
             result["choch_dir"] = 1
 

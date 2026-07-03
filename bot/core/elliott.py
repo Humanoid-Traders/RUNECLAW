@@ -205,8 +205,15 @@ def wave_action(pattern: Optional[dict]) -> dict:
                 "reason": "ABC correction complete — trend resumes" if complete
                           else "ABC correction still forming — wait"}
     if "WXY" in name or "WXYXZ" in name:
-        return {"action": "wait", "bias": "neutral", "weight_mult": 0.5,
-                "reason": "complex correction (WXY/WXYXZ) — consolidation, unclear"}
+        # The detector only fires on a COMPLETED W-X-Y geometry (the final
+        # swing is a confirmed pivot), so like a complete ABC the tradeable
+        # signal is the RESUMPTION of the prior trend — bias "with" + "enter"
+        # makes the analyzer's corrective flip reachable (audit: the old
+        # "wait"/neutral return left the flip branch dead and the raw vote
+        # pointed in the CORRECTION's direction, exactly backwards). Slightly
+        # lower conviction than ABC: complex corrections extend more often.
+        return {"action": "enter", "bias": "with", "weight_mult": 0.85,
+                "reason": "complex correction (WXY/WXYXZ) complete — prior trend resumes"}
     if "Impulse" in name:
         if current_wave == "5":
             return {"action": "exit", "bias": "against", "weight_mult": 0.35,
