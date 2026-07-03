@@ -24,6 +24,7 @@ from typing import Any
 
 from bot.config import CONFIG
 from bot.core.live_executor import normalize_symbol
+from bot.utils.close_reason import stop_exit_label
 from bot.utils.logger import audit, trade_log, system_log
 from bot.utils.models import Direction
 
@@ -230,7 +231,11 @@ async def _get_actual_close_price(
                     if matched_order == tp_order_id:
                         reason = "TP HIT (exchange)"
                     elif matched_order == sl_order_id:
-                        reason = "SL HIT (exchange)"
+                        # A trailing/breakeven stop on the profit side of entry
+                        # fills at a gain — never label it a loss ("SL HIT").
+                        reason = stop_exit_label(
+                            trade.direction == Direction.LONG, trade.entry_price,
+                            sl_price, fill_price) + " (exchange)"
                     else:
                         reason = "closed (exchange)"
                     return fill_price, reason, "exchange_fill"
@@ -250,7 +255,9 @@ async def _get_actual_close_price(
                             if o["id"] == tp_order_id:
                                 reason = "TP HIT (exchange)"
                             else:
-                                reason = "SL HIT (exchange)"
+                                reason = stop_exit_label(
+                                    trade.direction == Direction.LONG,
+                                    trade.entry_price, sl_price, fill_price) + " (exchange)"
                             return fill_price, reason, "closed_order"
         except Exception as e:
             logger.debug("Ghost close fetchClosedOrders failed for %s: %s", ccxt_symbol, e)
@@ -271,7 +278,10 @@ async def _get_actual_close_price(
         if dist_tp <= proximity_threshold and tp_price > 0:
             return tp_price, "TP HIT (estimated)", "estimated"
         elif dist_sl <= proximity_threshold and sl_price > 0:
-            return sl_price, "SL HIT (estimated)", "estimated"
+            sl_reason = stop_exit_label(
+                trade.direction == Direction.LONG, trade.entry_price,
+                sl_price, sl_price) + " (estimated)"
+            return sl_price, sl_reason, "estimated"
         else:
             return current_price, "manually closed", "ticker"
 

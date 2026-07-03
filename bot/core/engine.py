@@ -3365,6 +3365,18 @@ class RuneClawEngine:
                     except Exception as _vexc:
                         audit(system_log, f"Periodic SL/TP self-heal error: {_vexc}",
                               action="periodic_sltp_verify", result="ERROR")
+                    # Leverage self-heal: propagate the exchange's ACTUAL applied
+                    # leverage onto tracked positions while they are still OPEN.
+                    # Previously this ran ONLY at startup, so a position whose
+                    # exchange leverage differed from the bot's intent (e.g. a
+                    # manual 20x vs a tracked 10x) recorded the stale value at
+                    # close and under-counted margin risk the whole time it was
+                    # live (incident TI-a4ba8a82). Same 5-min throttle.
+                    try:
+                        await _ex.sync_positions_from_exchange()
+                    except Exception as _lexc:
+                        audit(system_log, f"Periodic leverage sync error: {_lexc}",
+                              action="periodic_leverage_sync", result="ERROR")
 
             # Monitor every account (operator + any per-user). With per-user off
             # this loops once over the operator — identical to before.
