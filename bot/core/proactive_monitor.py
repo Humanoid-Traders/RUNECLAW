@@ -102,6 +102,10 @@ class ProactiveMonitor:
         # would spam — this re-alerts at most once per window).
         self._strangle_snaps: deque = deque()
         self._last_strangle_alert: float = 0.0
+        # Learning readiness: last known per-component state, so a component
+        # BECOMING ready alerts exactly once (not every tick it stays ready).
+        self._readiness_states: dict[str, str] = {}
+        self._readiness_next_check: float = 0.0
         # Optional async callback(chat_id, idea) -> None to push a setup chart
         # alongside a signal alert. Set via set_chart_fn(); never required.
         self._chart_fn: Optional[Callable] = None
@@ -171,6 +175,48 @@ class ProactiveMonitor:
         alerts.extend(self._check_sl_tp_proximity())
         alerts.extend(self._check_time_stops())
         alerts.extend(self._check_signal_strangle())
+        alerts.extend(self._check_learning_readiness())
+        return alerts
+
+    def _check_learning_readiness(self) -> list[Alert]:
+        """Alert when a learner BECOMES validated-and-ready — the moment the
+        operator can act on the learning loop instead of remembering to poll
+        /readiness. Assessment reads the decision store, so it runs on a slow
+        cadence (hourly), not every 30s tick."""
+        alerts: list[Alert] = []
+        if not CONFIG.analyzer.learning_readiness_alert_enabled:
+            return alerts
+        now = time.time()
+        if now < self._readiness_next_check:
+            return alerts
+        self._readiness_next_check = now + 3600.0
+        try:
+            from bot.learning.readiness import assess_readiness, render_report
+            assessment = assess_readiness()
+        except Exception as exc:
+            logger.debug("readiness check failed: %s", exc)
+            return alerts
+        for name, comp in assessment.get("components", {}).items():
+            state = comp.get("state", "?")
+            prev = self._readiness_states.get(name)
+            self._readiness_states[name] = state
+            # First observation seeds the baseline silently; only a genuine
+            # transition INTO READY (while not yet applied) alerts.
+            if prev is None or state != "READY" or prev == "READY":
+                continue
+            if comp.get("applied") is True:
+                continue
+            alerts.append(Alert(
+                alert_type="LEARNING_READY",
+                severity="INFO",
+                title=f"Learning component ready: {name}",
+                body=("\U0001f9e0 <b>LEARNING COMPONENT VALIDATED</b>\n"
+                      "────────────────\n"
+                      f"<b>{name}</b> now clears its evidence bar and is "
+                      "ready to apply.\n\n" + render_report(assessment) +
+                      "\n\n\U0001f449 /readiness — full report"),
+                dedup_key=f"learning_ready_{name}",
+            ))
         return alerts
 
     def _check_signal_strangle(self) -> list[Alert]:

@@ -146,6 +146,16 @@ class RuneClawEngine:
         # Tape CVD: order flow reads true aggressor-side delta from the WS
         # trade channel when fresh (WS_CVD_ENABLED), REST fallback otherwise.
         self.order_flow.set_ws_feed(self.ws_feed)
+        # Warm the OI trend/divergence history from recorded snapshots so a
+        # restart doesn't blind the OI classifiers for the first N scans.
+        # Best-effort: returns 0 (cold start) on any problem.
+        try:
+            warmed = self.order_flow.warm_oi_history(
+                os.getenv("OF_SNAPSHOT_PATH", "data/learning/order_flow_snapshots.jsonl"))
+            if warmed:
+                system_log.info("OI history warmed from snapshots for %d symbols", warmed)
+        except Exception:
+            pass
         # Live executor for real Bitget orders (micro-test mode). This is the
         # SHARED OPERATOR executor (CONFIG.exchange keys) — the only one used
         # unless per-user live trading is enabled.

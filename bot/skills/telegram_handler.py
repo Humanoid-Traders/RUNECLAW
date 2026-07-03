@@ -240,7 +240,7 @@ class TelegramHandler:
             ("rejected", self._cmd_rejected), ("halt", self._cmd_halt),
             ("reset", self._cmd_reset), ("macro", self._cmd_macro),
             ("whynot", self._cmd_whynot),
-            ("gates", self._cmd_gates),
+            ("gates", self._cmd_gates), ("readiness", self._cmd_readiness),
             ("backtest", self._cmd_backtest), ("walkforward", self._cmd_walkforward),
             ("journal", self._cmd_journal), ("costs", self._cmd_costs),
             ("run", self._cmd_run), ("learn", self._cmd_learn),
@@ -4737,6 +4737,16 @@ class TelegramHandler:
         result = await self.registry.dispatch("whynot",
             self.engine, symbol=symbol)
         await self._send(update, result)
+
+    async def _cmd_readiness(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """/readiness — is the learning loop validated enough to apply?"""
+        if not self._is_admin(update):
+            return
+        try:
+            from bot.learning.readiness import assess_readiness, render_report
+            await self._send(update, render_report(assess_readiness()))
+        except Exception as exc:
+            await self._send(update, f"⚠️ Readiness assessment failed: {str(exc)[:160]}")
 
     async def _cmd_gates(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """/gates — per-gate pass/fail/skip telemetry (threshold tuning evidence)."""

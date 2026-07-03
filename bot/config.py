@@ -722,6 +722,13 @@ class AnalyzerConfig:
     # learners' own application flags are on. Default ON. See bot/learning/auto_refit.py.
     learning_auto_refit_enabled: bool = _env_bool("LEARNING_AUTO_REFIT_ENABLED", True)
     learning_auto_refit_interval: int = int(_env_float("LEARNING_AUTO_REFIT_INTERVAL", 25))
+    # Learning readiness alerting: assess hourly whether each learner has
+    # enough resolved outcomes AND clears its out-of-sample bar, and push a
+    # proactive alert the moment a component BECOMES ready to apply (see
+    # bot/learning/readiness.py and /readiness). Assessment only — never
+    # flips an application flag by itself.
+    learning_readiness_alert_enabled: bool = _env_bool(
+        "LEARNING_READINESS_ALERT_ENABLED", True)
     # Drop the in-progress (unclosed) candle before computing indicators/patterns.
     # Live OHLCV from the exchange includes the current forming bar as the last
     # element; reading closes[-1] on it makes every voter flicker pre-close

@@ -450,6 +450,8 @@ a{color:var(--gold);text-decoration:none}
         <button class="ind-btn" data-ov="levels" onclick="toggleOverlay('levels')">Levels</button>
         <button class="ind-btn" data-ov="fvg" onclick="toggleOverlay('fvg')">FVG</button>
         <button class="ind-btn" data-ov="pools" onclick="toggleOverlay('pools')">Pools</button>
+        <button class="ind-btn" data-ov="regime" onclick="toggleOverlay('regime')">Regime</button>
+        <button class="ind-btn" data-ov="trades" onclick="toggleOverlay('trades')">Trades</button>
         <span class="chart-price" id="chartPrice"></span>
       </div>
       <div id="chartContent"><div class="empty-msg">Loading chart&hellip;</div></div>
@@ -1130,6 +1132,7 @@ async function fetchCandles() {
   const symbol = (sel && sel.value) || 'BTCUSDT';
   const gran = (gsel && gsel.value) || '1h';
   _chartSymbol = symbol; _chartGran = gran;
+  fetchTradeMarks(symbol);
   const el = document.getElementById('chartContent');
   try {
     const r = await fetch(`/api/market/candles/${symbol}?granularity=${gran}&limit=100`);
@@ -1197,7 +1200,22 @@ function vwapSeries(candles) {
 // pools, confluence votes, tape CVD, gate telemetry -- same inputs the bot
 // trades off, fetched from /api/insight for the selected chart symbol) ===
 let insightData = null, _insightError = false;
-let _overlays = { levels: true, fvg: true, pools: true };
+let _overlays = { levels: true, fvg: true, pools: true, regime: true, trades: true };
+// Closed-trade chart markers, cached per symbol; markers degrade silently
+// when history is unavailable (e.g. not signed in).
+let _tradeMarks = { symbol: '', rows: [] };
+async function fetchTradeMarks(symbol) {
+  if (_tradeMarks.symbol === symbol) return;
+  _tradeMarks = { symbol, rows: [] };
+  try {
+    const r = await fetch('/api/trades/history?limit=100', { headers: authHeaders() });
+    if (!r.ok) return;
+    const d = await r.json();
+    const key = baseCoin(symbol);
+    _tradeMarks.rows = (d.trades || []).filter(t => baseCoin(t.symbol || '') === key);
+    if (_tradeMarks.rows.length) renderCandles();
+  } catch (e) { /* no markers */ }
+}
 try { _overlays = { ..._overlays, ...JSON.parse(localStorage.getItem('rc_overlays') || '{}') }; } catch (e) { /* keep defaults */ }
 const OVERLAY_TF = { '15min': '15m', '1h': '1h', '4h': '4h', '1d': '1d' };
 const LEVEL_META = {
@@ -1315,6 +1333,60 @@ function renderCandles() {
     };
     (ins.pools?.eqh || []).forEach(p => poolLine(p, 'var(--red)', 'EQH'));
     (ins.pools?.eql || []).forEach(p => poolLine(p, 'var(--green)', 'EQL'));
+  }
+  // Timestamp -> candle slot (newest candle at/left of t; -1 = before window).
+  const slotFor = t => {
+    let idx = -1;
+    for (let k = 0; k < n; k++) { if (_candles[k].t <= t) idx = k; else break; }
+    return idx;
+  };
+  // Regime ribbon: thin strip along the top, painted forward from each
+  // sampled regime to the next. Samples come from the SAME detector the
+  // bot trades with, replayed with no lookahead (see /api/insight).
+  if (ins && _overlays.regime && (ins.regime_series || []).length) {
+    const RGCOL = { TREND_UP: 'rgba(34,197,94,.55)', TREND_DOWN: 'rgba(239,68,68,.55)',
+                    EXPANSION: 'rgba(245,158,11,.6)', RANGE: 'rgba(148,163,184,.4)',
+                    CHOP: 'rgba(148,163,184,.25)', UNKNOWN: 'rgba(148,163,184,.15)' };
+    const series = ins.regime_series;
+    for (let s = 0; s < series.length; s++) {
+      const a = slotFor(series[s].t);
+      const b = s + 1 < series.length ? slotFor(series[s + 1].t) : n - 1;
+      if (b < 0) continue;
+      const x0 = Math.max(0, a < 0 ? 0 : a) * slot;
+      const x1 = Math.min(chartW, (b + 1) * slot);
+      if (x1 <= x0) continue;
+      svg += `<rect x="${x0}" y="0" width="${x1 - x0}" height="5" fill="${RGCOL[series[s].regime] || RGCOL.UNKNOWN}"><title>${series[s].regime}</title></rect>`;
+    }
+  }
+  // Trade annotations: entry ▲ / exit ▼ markers for this symbol's closed
+  // trades in the visible window (exit colored by realized PnL), plus a
+  // faint connector when both ends are on screen.
+  if (_overlays.trades && _tradeMarks.symbol === _chartSymbol && _tradeMarks.rows.length) {
+    const tri = (cx, cy, up2, color) => {
+      const s2 = 5;
+      const pts = up2 ? `${cx},${cy - s2} ${cx - s2},${cy + s2} ${cx + s2},${cy + s2}`
+                      : `${cx},${cy + s2} ${cx - s2},${cy - s2} ${cx + s2},${cy - s2}`;
+      return `<polygon points="${pts}" fill="${color}" opacity="0.95"/>`;
+    };
+    for (const tr of _tradeMarks.rows) {
+      const et = Date.parse(tr.opened_at), xt = Date.parse(tr.closed_at);
+      const ep = parseFloat(tr.entry_price), xp = parseFloat(tr.exit_price);
+      const win = parseFloat(tr.pnl) >= 0;
+      const ei = Number.isFinite(et) && et >= _candles[0].t ? slotFor(et) : -1;
+      const xi = Number.isFinite(xt) && xt >= _candles[0].t ? slotFor(xt) : -1;
+      const ex = ei >= 0 ? ei * slot + slot / 2 : -1;
+      const xx = xi >= 0 ? xi * slot + slot / 2 : -1;
+      if (ex >= 0 && xx >= 0 && ep > mn && ep < mx && xp > mn && xp < mx) {
+        svg += `<line x1="${ex}" y1="${y(ep)}" x2="${xx}" y2="${y(xp)}" stroke="${win ? 'var(--green)' : 'var(--red)'}" stroke-width="0.8" opacity="0.35" stroke-dasharray="2,2"/>`;
+      }
+      if (ex >= 0 && ep > mn && ep < mx) {
+        svg += tri(ex, y(ep), String(tr.direction).toUpperCase() === 'LONG', 'var(--gold)')
+          + `<title>${tr.direction} entry ${fmtP(ep)}</title>`;
+      }
+      if (xx >= 0 && xp > mn && xp < mx) {
+        svg += tri(xx, y(xp), false, win ? 'var(--green)' : 'var(--red)');
+      }
+    }
   }
   // Indicator overlays (EMA/VWAP) -- polylines across the same x-slots.
   const closes = _candles.map(c => c.c);
