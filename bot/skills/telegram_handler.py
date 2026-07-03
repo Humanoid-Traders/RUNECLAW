@@ -24,7 +24,14 @@ from typing import Optional
 # without these being in scope — latent NameErrors (flagged by ruff F821).
 logger = logging.getLogger(__name__)
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import (
+    BotCommand,
+    BotCommandScopeChat,
+    BotCommandScopeDefault,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Update,
+)
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
@@ -227,7 +234,10 @@ class TelegramHandler:
         self.forwarder = ChannelForwarder()
 
     def build_app(self) -> Application:
-        app = Application.builder().token(CONFIG.telegram.bot_token).build()
+        app = (Application.builder()
+               .token(CONFIG.telegram.bot_token)
+               .post_init(self._register_command_menu)
+               .build())
         # Store engine in bot_data so standalone skill handlers can access it
         app.bot_data["engine"] = self.engine
         app.bot_data["telegram_handler"] = self
@@ -317,6 +327,39 @@ class TelegramHandler:
         app.add_handler(MessageHandler(
             filters.TEXT & ~filters.COMMAND, self._handle_message))
         return app
+
+    @staticmethod
+    def _operator_chat_ids() -> list:
+        """Chat ids that should see the fuller operator "/" menu — the
+        configured operator chat plus any admin ids (both may be comma-lists)."""
+        ids: list = []
+        for raw in (CONFIG.telegram.chat_id, CONFIG.telegram.admin_ids):
+            for part in str(raw or "").split(","):
+                part = part.strip()
+                if part and part.lstrip("-").isdigit() and part not in ids:
+                    ids.append(part)
+        return ids
+
+    async def _register_command_menu(self, app: Application) -> None:
+        """Populate the Telegram "/" command menu on startup so the bot's
+        commands are discoverable (previously the menu was empty). Everyone gets
+        a short essentials list; the operator's own chat gets the fuller admin
+        list. Best-effort — a menu API hiccup must never block the bot starting.
+        """
+        from bot.skills.command_menu import admin_commands, default_commands
+        try:
+            await app.bot.set_my_commands(
+                [BotCommand(n, d) for n, d in default_commands()],
+                scope=BotCommandScopeDefault())
+        except Exception as exc:
+            system_log.warning("Default command menu registration failed: %s", exc)
+        admin_menu = [BotCommand(n, d) for n, d in admin_commands()]
+        for cid in self._operator_chat_ids():
+            try:
+                await app.bot.set_my_commands(
+                    admin_menu, scope=BotCommandScopeChat(chat_id=int(cid)))
+            except Exception as exc:
+                system_log.debug("Admin command menu for %s failed: %s", cid, exc)
 
     # ── Centralized send ──────────────────────────────────────
 
