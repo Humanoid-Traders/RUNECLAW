@@ -812,11 +812,23 @@ class Analyzer:
 
         # ── Volume Profile ──
         try:
-            vp = compute_volume_profile(
-                highs, lows, closes, volumes,
-                num_bins=CONFIG.analyzer.volume_profile_bins,
-                current_price=signal.price,
-            )
+            # Reuse the histogram _compute_indicators already built when the
+            # parameters are equivalent (default 50 bins; ticker within 0.1%
+            # of the last close, so the categorical fields match). Otherwise
+            # recompute with the configured bins — behavior identical.
+            _vp_cached = indicators.get("_vp_basic")
+            _lc = float(closes[-1]) if len(closes) else 0.0
+            if (_vp_cached is not None
+                    and CONFIG.analyzer.volume_profile_bins == 50
+                    and _lc > 0
+                    and abs(signal.price - _lc) / _lc < 0.001):
+                vp = _vp_cached
+            else:
+                vp = compute_volume_profile(
+                    highs, lows, closes, volumes,
+                    num_bins=CONFIG.analyzer.volume_profile_bins,
+                    current_price=signal.price,
+                )
             if vp is not None:
                 indicators["volume_profile"] = {
                     "poc": vp.poc, "vah": vp.vah, "val": vp.val,
@@ -2115,6 +2127,9 @@ class Analyzer:
         if volumes is not None and len(volumes) >= 10:
             vp = compute_volume_profile(highs, lows, closes, volumes)
             if vp is not None:
+                # Cache for analyze()'s VP block (audit: the full 50-bin
+                # histogram ran twice per symbol per scan).
+                results["_vp_basic"] = vp
                 results["poc_price"] = vp.poc
                 results["value_area_high"] = vp.vah
                 results["value_area_low"] = vp.val

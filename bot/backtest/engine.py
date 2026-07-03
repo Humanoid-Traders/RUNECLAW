@@ -297,8 +297,16 @@ class BacktestEngine:
         # lookahead into an unfinished higher-TF candle). Live fetches these
         # timeframes from the exchange; the backtest derives them from the
         # primary series so the same MTF voters fire in both.
+        # Gate parity with live (audit): the live engine builds mtf_candles
+        # when EITHER flag is on (engine.py fetch gate) — the backtest
+        # matching only mtf_confluence_enabled meant an ELLIOTT_MTF_ENABLED-
+        # only config fired timeframe-matched Elliott live but never in
+        # backtest. NOTE: 15m stays live-only — it cannot be resampled from a
+        # 1h base — so scalp-horizon Elliott is unbacktestable on 1h data by
+        # construction (documented limitation, not silent divergence).
         mtf_candles = None
-        if CONFIG.analyzer.mtf_confluence_enabled:
+        if (CONFIG.analyzer.mtf_confluence_enabled
+                or CONFIG.analyzer.elliott_mtf_enabled):
             all_raw = getattr(self, "_all_raw", None)
             if all_raw:
                 from bot.utils.candles import resample_ohlcv

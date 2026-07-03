@@ -278,7 +278,14 @@ async def _fetch_ohlcv(symbol: str, timeframe: str = "1h", limit: int = 100) -> 
     async with _EXCHANGE_SEMAPHORE:
         try:
             exchange = await engine.get_exchange()
-            return await exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
+            ohlcv = await exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
+            # Closed bars only (audit): /scan and /analyze read closes[-1],
+            # and an in-progress bar made the dashboard repaint intrabar and
+            # disagree with the engine/executor, which analyze closed bars.
+            if ohlcv:
+                from bot.utils.candles import drop_forming_candle
+                ohlcv = drop_forming_candle(ohlcv, timeframe)
+            return ohlcv
         except Exception:
             return None
 
