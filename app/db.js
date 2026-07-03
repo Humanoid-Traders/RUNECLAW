@@ -170,9 +170,39 @@ class MemoryDB {
       if (exists) {
         const err = new Error('Duplicate entry'); err.code = 'ER_DUP_ENTRY'; throw err;
       }
-      const user = { id: this._nextUserId++, email: params[0], password_hash: params[1], plan: 'free', telegram_linked: false, link_token: null, link_token_expires: null, created_at: new Date() };
+      const user = { id: this._nextUserId++, email: params[0], password_hash: null,
+        google_id: null, telegram_id: null, avatar_url: null, plan: 'free',
+        telegram_linked: false, link_token: null, link_token_expires: null, created_at: new Date() };
+      // Column order varies: email/password vs the OAuth passwordless inserts.
+      if (cmd.includes('PASSWORD_HASH')) {
+        user.password_hash = params[1];
+      } else if (cmd.includes('GOOGLE_ID')) {
+        user.google_id = params[1]; user.avatar_url = params[2]; user.telegram_linked = !!params[3];
+      } else if (cmd.includes('TELEGRAM_ID')) {
+        user.telegram_id = params[1]; user.avatar_url = params[2]; user.telegram_linked = !!params[3];
+      }
       this.users.push(user);
       return [{ insertId: user.id }, []];
+    }
+
+    if (cmd.includes('FROM USERS WHERE GOOGLE_ID')) {
+      return [this.users.filter(u => u.google_id === params[0]), []];
+    }
+
+    if (cmd.includes('FROM USERS WHERE TELEGRAM_ID')) {
+      return [this.users.filter(u => String(u.telegram_id) === String(params[0])), []];
+    }
+
+    if (cmd.startsWith('UPDATE USERS SET GOOGLE_ID')) {
+      const user = this.users.find(u => u.id === params[1]);
+      if (user) user.google_id = params[0];
+      return [{ affectedRows: user ? 1 : 0 }, []];
+    }
+
+    if (cmd.startsWith('UPDATE USERS SET TELEGRAM_ID')) {
+      const user = this.users.find(u => u.id === params[1]);
+      if (user) user.telegram_id = params[0];
+      return [{ affectedRows: user ? 1 : 0 }, []];
     }
 
     if (cmd.includes('FROM USERS WHERE EMAIL')) {
@@ -392,6 +422,17 @@ async function migrate() {
     try {
       await pool.execute('ALTER TABLE users ADD COLUMN telegram_id VARCHAR(32) DEFAULT NULL');
     } catch (e) { /* column already exists — fine */ }
+    // OAuth: google_id + avatar_url, and password_hash must be nullable
+    // (OAuth accounts have no password). Each guarded — ignore if present.
+    try {
+      await pool.execute('ALTER TABLE users ADD COLUMN google_id VARCHAR(64) DEFAULT NULL');
+    } catch (e) { /* exists */ }
+    try {
+      await pool.execute('ALTER TABLE users ADD COLUMN avatar_url VARCHAR(512) DEFAULT NULL');
+    } catch (e) { /* exists */ }
+    try {
+      await pool.execute('ALTER TABLE users MODIFY COLUMN password_hash VARCHAR(255) NULL');
+    } catch (e) { /* already nullable */ }
     await pool.execute(`
       CREATE TABLE IF NOT EXISTS trades (
         id INT AUTO_INCREMENT PRIMARY KEY,

@@ -19,6 +19,34 @@ if (!JWT_SECRET || JWT_SECRET.length < 32) {
 // want shorter-lived tokens can set JWT_EXPIRY (e.g. '12h', '7d') in the env.
 const JWT_EXPIRY = process.env.JWT_EXPIRY || '30d';
 
+// OAuth providers (optional; each endpoint 503s cleanly when its secret is
+// unset, so the site runs fine with only email/password until configured).
+const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || process.env.BOT_TOKEN || '';
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '';
+const TELEGRAM_AUTH_MAX_AGE_S = 86400; // reject widget payloads older than 24h
+
+// Verify a Telegram Login Widget payload (pure; exported for tests).
+// Per core.telegram.org/widgets/login#checking-authorization:
+//   secret = SHA256(bot_token);  hash = HMAC_SHA256(data_check_string, secret)
+// where data_check_string is the sorted "key=value" lines (excluding hash).
+function verifyTelegramAuth(data, botToken, nowSec) {
+  if (!data || !data.hash || !botToken) return false;
+  const now = nowSec || Math.floor(Date.now() / 1000);
+  const authDate = parseInt(data.auth_date, 10);
+  if (!Number.isFinite(authDate) || now - authDate > TELEGRAM_AUTH_MAX_AGE_S) return false;
+  const checkString = Object.keys(data)
+    .filter((k) => k !== 'hash')
+    .sort()
+    .map((k) => `${k}=${data[k]}`)
+    .join('\n');
+  const secret = crypto.createHash('sha256').update(botToken).digest();
+  const hmac = crypto.createHmac('sha256', secret).update(checkString).digest('hex');
+  // Constant-time compare to avoid timing leaks.
+  const a = Buffer.from(hmac, 'hex');
+  const b = Buffer.from(String(data.hash), 'hex');
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
 // Rate limiting: per-IP sliding window
 const loginAttempts = new Map(); // ip -> { count, firstAttempt, lockedUntil }
 const RATE_LIMIT_WINDOW = 15 * 60 * 1000; // 15 min
@@ -263,4 +291,93 @@ router.post('/validate-token', async (req, res) => {
   }
 });
 
-module.exports = { router, authMiddleware };
+// -- OAuth: find-or-create by provider identity --
+// 1) match the provider id; 2) else link to an existing email account;
+// 3) else create a passwordless account. Returns the user row (id, email, plan).
+async function findOrCreateOAuthUser({ provider, providerId, email, avatarUrl }) {
+  const idCol = provider === 'google' ? 'google_id' : 'telegram_id';
+  const [byId] = await pool.execute(
+    `SELECT id, email, plan FROM users WHERE ${idCol} = ? LIMIT 1`, [providerId]);
+  if (byId.length) return byId[0];
+
+  if (email) {
+    const [byEmail] = await pool.execute(
+      'SELECT id, email, plan FROM users WHERE email = ? LIMIT 1', [email]);
+    if (byEmail.length) {
+      await pool.execute(`UPDATE users SET ${idCol} = ? WHERE id = ?`,
+        [providerId, byEmail[0].id]);
+      return byEmail[0];
+    }
+  }
+  // Telegram gives no email — synthesize a unique, non-routable placeholder so
+  // the NOT-NULL/UNIQUE email column is satisfied; the user can add a real one.
+  const finalEmail = email || `tg-${providerId}@telegram.runeclaw.local`;
+  const [result] = await pool.execute(
+    `INSERT INTO users (email, ${idCol}, avatar_url, telegram_linked) VALUES (?, ?, ?, ?)`,
+    [finalEmail, providerId, avatarUrl || null, provider === 'telegram']);
+  return { id: result.insertId, email: finalEmail, plan: 'free' };
+}
+
+// -- Public provider config (no secrets) so the login page knows what to show --
+router.get('/config', (_req, res) => {
+  res.json({
+    google_client_id: GOOGLE_CLIENT_ID || null,
+    // Telegram widget needs the bot USERNAME (public). Set TELEGRAM_BOT_USERNAME
+    // (without @). Only advertise Telegram login when the verifying token exists.
+    telegram_bot: (TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_BOT_USERNAME) || null,
+  });
+});
+
+// -- Login / register with Telegram (Login Widget) --
+router.post('/telegram', async (req, res) => {
+  try {
+    if (!TELEGRAM_BOT_TOKEN) return res.status(503).json({ error: 'Telegram login not configured' });
+    const data = req.body || {};
+    if (!verifyTelegramAuth(data, TELEGRAM_BOT_TOKEN)) {
+      return res.status(401).json({ error: 'Telegram verification failed' });
+    }
+    const user = await findOrCreateOAuthUser({
+      provider: 'telegram', providerId: String(data.id).slice(0, 32),
+      email: null, avatarUrl: data.photo_url,
+    });
+    const token = signToken(user);
+    const equity = await getUserEquity(user.id);
+    res.json({ token, user_id: user.id, email: user.email, plan: user.plan || 'free',
+               telegram_linked: true, equity });
+  } catch (err) {
+    console.error('Telegram auth error:', err.message);
+    res.status(500).json({ error: 'Telegram login failed' });
+  }
+});
+
+// -- Login / register with Google (Identity Services credential) --
+router.post('/google', async (req, res) => {
+  try {
+    if (!GOOGLE_CLIENT_ID) return res.status(503).json({ error: 'Google login not configured' });
+    const { credential } = req.body || {};
+    if (!credential) return res.status(400).json({ error: 'Missing credential' });
+    // Verify the ID token with Google (dep-free: the tokeninfo endpoint checks
+    // signature + expiry for us; we still assert audience + verified email).
+    const resp = await fetch(
+      `https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(credential)}`);
+    if (!resp.ok) return res.status(401).json({ error: 'Google verification failed' });
+    const info = await resp.json();
+    if (info.aud !== GOOGLE_CLIENT_ID) return res.status(401).json({ error: 'Token audience mismatch' });
+    if (info.email_verified !== 'true' && info.email_verified !== true) {
+      return res.status(401).json({ error: 'Google email not verified' });
+    }
+    const user = await findOrCreateOAuthUser({
+      provider: 'google', providerId: String(info.sub),
+      email: String(info.email).trim().toLowerCase(), avatarUrl: info.picture,
+    });
+    const token = signToken(user);
+    const equity = await getUserEquity(user.id);
+    res.json({ token, user_id: user.id, email: user.email, plan: user.plan || 'free',
+               telegram_linked: false, equity });
+  } catch (err) {
+    console.error('Google auth error:', err.message);
+    res.status(500).json({ error: 'Google login failed' });
+  }
+});
+
+module.exports = { router, authMiddleware, verifyTelegramAuth, findOrCreateOAuthUser };
