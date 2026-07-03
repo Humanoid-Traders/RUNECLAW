@@ -48,10 +48,11 @@ def test_falls_back_to_ccxt_when_no_tick_info():
     assert out == "123.45"  # unchanged ccxt value when no tick to snap to
 
 
-def test_price_to_precision_failure_still_snaps_raw_price():
+def test_price_to_precision_failure_returns_none_for_caller_fallback():
+    # When ccxt can't price (market data unavailable) the contract is None so
+    # the caller uses its own heuristic — unchanged by the tick-snap addition.
     class _Boom(_FakeExchange):
         def price_to_precision(self, symbol, price):
             raise RuntimeError("ccxt precision unavailable")
     ex = _Boom("1", "1", None)
-    out = LiveExecutor._round_price_to_market(ex, "BTC/USDT:USDT", 61750.37)
-    assert float(out) == 61750.4  # snapped from the raw price
+    assert LiveExecutor._round_price_to_market(ex, "BTC/USDT:USDT", 61750.37) is None

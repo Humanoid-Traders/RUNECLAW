@@ -838,9 +838,12 @@ class LiveExecutor:
         try:
             ccxt_str = exchange.price_to_precision(symbol, price)
         except Exception as exc:  # noqa: BLE001
+            # Venue/market data unavailable — return None so the caller falls
+            # back to its own heuristic (unchanged contract).
             logger.debug("price_to_precision failed for %s @ %s: %s", symbol, price, exc)
-            ccxt_str = None
-        base = float(ccxt_str) if ccxt_str is not None else float(price)
+            return None
+        # ccxt succeeded but can still emit an off-tick price (it mis-parses
+        # Bitget's pricePlace/priceEndStep pair). Snap it onto the real grid.
         market = None
         try:
             market = exchange.market(symbol)
@@ -854,7 +857,7 @@ class LiveExecutor:
         # tick snap never raises into the caller.
         if not isinstance(market, dict):
             market = None
-        snapped = LiveExecutor._bitget_tick_safety_net(market, base)
+        snapped = LiveExecutor._bitget_tick_safety_net(market, float(ccxt_str))
         if snapped and snapped > 0:
             # Clean numeric string — no sci-notation / float noise.
             s = f"{snapped:.10f}".rstrip("0").rstrip(".")
