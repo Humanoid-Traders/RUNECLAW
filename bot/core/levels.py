@@ -44,6 +44,11 @@ class Level:
 _KIND_BASE_SCORE = {
     "swing": 1.0, "poc": 1.6, "vah": 1.2, "val": 1.2,
     "pdh": 1.4, "pdl": 1.4, "round": 0.8,
+    # The bot's own derived objectives (audit upgrade): fib retracements of
+    # the dominant leg and Elliott wave-projected targets — the levels the
+    # strategy itself reasons about now also shape where its stops hide and
+    # its targets land.
+    "fib": 1.1, "ew_target": 1.2,
 }
 
 
@@ -67,8 +72,13 @@ def gather_levels(
     times: Optional[np.ndarray] = None,
     vp: Optional[dict] = None,
     fractal: int = 3,
+    extra_levels: Optional[list] = None,
 ) -> list[Level]:
-    """Collect + cluster + score candidate S/R levels from CLOSED bars."""
+    """Collect + cluster + score candidate S/R levels from CLOSED bars.
+
+    ``extra_levels`` — optional ``[(price, kind), ...]`` of externally derived
+    levels (fib retracements, Elliott targets); unknown kinds score as swing.
+    """
     if len(closes) < 2 * fractal + 3 or atr <= 0:
         return []
     price = float(closes[-1])
@@ -106,6 +116,15 @@ def gather_levels(
     # Round numbers bracketing the current price.
     for rp in _round_levels_near(price):
         raw.append(Level(rp, "round"))
+
+    # Externally derived levels (fib / Elliott targets from the analyzer).
+    for item in (extra_levels or []):
+        try:
+            lp, kind = float(item[0]), str(item[1])
+            if lp > 0 and math.isfinite(lp):
+                raw.append(Level(lp, kind if kind in _KIND_BASE_SCORE else "swing"))
+        except Exception:
+            continue
 
     if not raw:
         return []

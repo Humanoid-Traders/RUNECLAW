@@ -777,6 +777,11 @@ class Analyzer:
                     indicators["elliott_pattern"] = p
                 elif "Fibonacci" in name and "ext" in name.lower():
                     indicators["fib_extensions"] = p
+                elif "Liquidity Sweep" in name:
+                    # Fallback evidence for the sweep voter when the
+                    # dedicated module detects nothing (audit: this result
+                    # was excluded from the aggregate AND had no consumer).
+                    indicators["chart_sweep"] = p
 
         # ── Advanced Elliott: structural ATR-ZigZag pivots (gated, default ON) ──
         # Replaces the fixed 5-bar fractal Elliott read with one built on
@@ -1542,10 +1547,30 @@ class Analyzer:
         if CONFIG.analyzer.level_aware_sltp_enabled and atr > 0:
             try:
                 from bot.core.levels import gather_levels, snap_sl_tp
+                # Feed the bot's own derived objectives into the level map
+                # (audit upgrade): fib retracements of the dominant leg and
+                # the Elliott impulse's projected targets are real magnets —
+                # the SL/TP snap should know about them.
+                _extras = []
+                for _fk in ("fib_382", "fib_500", "fib_618"):
+                    _fv = indicators.get(_fk)
+                    if _fv:
+                        _extras.append((float(_fv), "fib"))
+                _imp = indicators.get("elliott_impulse")
+                if _imp:
+                    try:
+                        from bot.core.elliott import project_targets
+                        _t = project_targets(_imp) or {}
+                        for _tk in ("tp1", "tp2"):
+                            if _t.get(_tk):
+                                _extras.append((float(_t[_tk]), "ew_target"))
+                    except Exception:
+                        pass
                 _lvls = gather_levels(
                     highs, lows, closes, atr,
                     times=times,
-                    vp=indicators.get("volume_profile"))
+                    vp=indicators.get("volume_profile"),
+                    extra_levels=_extras)
                 _sl2, _tp2, _note = snap_sl_tp(
                     direction.value, entry, stop_loss, take_profit, _lvls, atr)
                 if _note:
@@ -2810,19 +2835,19 @@ class Analyzer:
         vp = indicators.get("_vp_result")
         if vp is not None:
             try:
-                # Use net bullish/bearish vote based on price vs POC
-                vp_vote = 0.0
-                if hasattr(vp, 'price_vs_poc'):
-                    if vp.price_vs_poc == "above":
-                        vp_vote = 0.5   # price above POC → bullish bias
-                    elif vp.price_vs_poc == "below":
-                        vp_vote = -0.5  # price below POC → bearish bias
-                if hasattr(vp, 'price_in_value_area') and vp.price_in_value_area:
-                    # Inside value area = mean-reversion zone, dampen signal
-                    vp_vote *= 0.5
-                if abs(vp_vote) > 0:
-                    votes.append(vp_vote)
-                    aw(0.6, "volume_profile")
+                # Direction-aware VP votes (audit: the richer
+                # volume_profile_to_confluence was dead code while this path
+                # used a crude above/below-POC bias that ignored VAH/VAL and
+                # the momentum-vs-contrarian split). Direction approximated
+                # from the running vote sum, same convention as the
+                # supply/demand voter below.
+                from bot.core.volume_profile import volume_profile_to_confluence
+                _pre = sum(v * w for v, w in zip(votes, weights))
+                vp_v, vp_w = volume_profile_to_confluence(
+                    vp, "LONG" if _pre >= 0 else "SHORT")
+                votes.extend(vp_v)
+                weights.extend(_lw(w, "volume_profile") for w in vp_w)
+                names.extend(["volume_profile"] * len(vp_w))
             except Exception as _vp_exc:
                 logger.warning("Volume profile confluence vote failed: %s", _vp_exc)
 
@@ -3054,6 +3079,28 @@ class Analyzer:
             votes.extend(sweep_v)
             weights.extend(_lw(w, "liquidity_sweep") for w in sweep_w)
             names.extend(["liquidity_sweep"] * len(sweep_w))
+        else:
+            # Fallback (audit: detected-then-dropped): the chart-pattern
+            # sweep detector was excluded from the aggregate because sweeps
+            # have a dedicated voter — but when the dedicated module found
+            # nothing, its evidence vanished entirely. Vote it here under the
+            # SAME name so the pattern family cap treats it as one sweep
+            # source and the two can never stack.
+            _cs = indicators.get("chart_sweep")
+            if _cs and _cs.get("signal") in ("bullish", "bearish"):
+                votes.append(1.0 if _cs["signal"] == "bullish" else -1.0)
+                aw(_lw(0.6 * float(_cs.get("confidence", 0.5)),
+                       "liquidity_sweep"), "liquidity_sweep")
+
+        # Fibonacci extensions voter (audit: detected-then-dropped). The
+        # detector fires when an impulse + retracement projects extension
+        # targets ahead — a mild continuation vote in the impulse direction,
+        # weighted by the detector's own confidence. Skip-don't-dilute.
+        _fx = indicators.get("fib_extensions")
+        if _fx and _fx.get("signal") in ("bullish", "bearish"):
+            votes.append(1.0 if _fx["signal"] == "bullish" else -1.0)
+            aw(_lw(0.4 * float(_fx.get("confidence", 0.6)) / 0.6,
+                   "fib_extension"), "fib_extension")
 
         # Smart-money-concept voters (audit Tier 3, default ON):
         #   fvg      — nearest UNFILLED fair value gap within 1 ATR acts as a
