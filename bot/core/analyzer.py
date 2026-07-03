@@ -4123,6 +4123,99 @@ class Analyzer:
         result["_parsed"] = parsed_fields >= 2 and result["direction"] is not None
         return result
 
+    async def scan_read(self, signal: MarketSignal,
+                        candles: list) -> Optional[dict]:
+        """Directional read for the market SCANNER, driven by the SAME engine
+        that decides trades — real indicators, regime detection, the full
+        confluence electorate and the analyzer's own rule-based thesis — so the
+        /scan card's direction and score agree with the per-asset analysis
+        instead of a divergent naive RSI heuristic.
+
+        Deliberately runs WITHOUT the LLM (fast, free, deterministic — it calls
+        _rule_based_thesis directly, exactly the fallback the live analyzer uses
+        when no LLM is configured) and WITHOUT side effects: no audit rows, no
+        _record_no_trade, no _last_rejection_diag mutation, no learning writes.
+        The only stateful call, _detect_regime, mutates per-symbol smoothing
+        state the LIVE path relies on, so its two containers are snapshotted and
+        restored — the scan leaves zero footprint on the trading analyzer.
+
+        Returns {direction, score, regime, confluence} (direction may be None
+        when the thesis is ambiguous), or None on insufficient/invalid data.
+        Fail-safe: any error returns None so the caller falls back to its own
+        heuristic rather than dropping the symbol.
+        """
+        try:
+            if not candles or len(candles) < CONFIG.analyzer.min_candles:
+                return None
+            arr = np.asarray(candles, dtype=float)
+            if arr.ndim != 2 or arr.shape[1] < 6:
+                return None
+            times = arr[:, 0]; opens = arr[:, 1]; highs = arr[:, 2]
+            lows = arr[:, 3]; closes = arr[:, 4]; volumes = arr[:, 5]
+
+            indicators = self._compute_indicators(
+                highs, lows, closes, volumes, opens=opens, times=times)
+            if indicators is None:
+                return None
+
+            # Same candlestick + geometric pattern enrichment the full pipeline
+            # feeds to the confluence voters and the thesis (these are among the
+            # most influential voters, so omitting them would reintroduce drift).
+            try:
+                cp = _detect_candlestick_patterns(opens, highs, lows, closes)
+                if cp:
+                    indicators["candle_patterns"] = cp
+                    bull = [k for k, v in cp.items() if v == "bullish"]
+                    bear = [k for k, v in cp.items() if v == "bearish"]
+                    indicators["candle_bullish_count"] = len(bull)
+                    indicators["candle_bearish_count"] = len(bear)
+                    indicators["candle_bullish_strength"] = round(
+                        sum(_CANDLE_STRENGTH.get(k, 1.0) for k in bull), 2)
+                    indicators["candle_bearish_strength"] = round(
+                        sum(_CANDLE_STRENGTH.get(k, 1.0) for k in bear), 2)
+            except Exception:
+                pass
+            try:
+                gp = scan_all_chart_patterns(opens, highs, lows, closes)
+                if gp:
+                    indicators["chart_patterns_geo"] = gp
+            except Exception:
+                pass
+
+            # Regime: snapshot + restore the smoothing state so the scanner
+            # never perturbs the live analyzer's per-symbol regime history.
+            _hist_snapshot = list(self._regime_history)
+            _regimes_snapshot = dict(self._current_regimes)
+            try:
+                regime = self._detect_regime(indicators, signal.symbol)
+            finally:
+                self._regime_history = _hist_snapshot
+                self._current_regimes = _regimes_snapshot
+            indicators["regime"] = regime.value
+
+            confluence = self._score_confluence(indicators, regime, signal)
+            indicators["confluence"] = confluence
+
+            thesis = self._rule_based_thesis(signal, indicators)
+            score_from_confluence = round(abs(confluence - 0.5) * 2, 3)
+            if not thesis or not thesis.get("direction"):
+                return {"direction": None, "score": score_from_confluence,
+                        "regime": regime.value, "confluence": round(confluence, 3)}
+
+            direction = thesis["direction"]
+            conf = float(thesis.get("confidence", score_from_confluence))
+            # Same counter-trend awareness the analyzer applies to confidence:
+            # fading a strong trend is penalised (analyze() lines ~1118-1129).
+            if (regime == Regime.TREND_UP and direction == "SHORT") or \
+               (regime == Regime.TREND_DOWN and direction == "LONG"):
+                conf *= 0.5
+            return {"direction": direction,
+                    "score": round(max(0.0, min(1.0, conf)), 3),
+                    "regime": regime.value, "confluence": round(confluence, 3)}
+        except Exception as exc:
+            system_log.debug("scan_read failed for %s: %s", signal.symbol, exc)
+            return None
+
     @staticmethod
     def _rule_based_thesis(signal: MarketSignal, ind: dict) -> dict:
         """

@@ -182,6 +182,32 @@ class TestLimitOrderAdoptionGraceWindow:
         assert executor._positions == {}
 
     @pytest.mark.asyncio
+    async def test_bot_own_order_reclaimed_quietly_not_flagged_external(self):
+        """An order carrying the bot's own 'rc' clientOid prefix must NEVER be
+        surfaced as an EXTERNAL 'previous-session' orphan, even when local
+        tracking lost it and it is past the freshness window (the reported TRX
+        recurrence). It is reclaimed under its real trade_id and kept out of the
+        adopted-notification list."""
+        import time as _t
+        order = _synthetic_ex_limit_order(oid="TRX-OWN")
+        order["symbol"] = "TRX/USDT:USDT"
+        order["timestamp"] = int((_t.time() - 3600) * 1000)  # 1h old, past grace
+        order["info"] = {"clientOid": "rcTIabcd1234"}         # the bot placed it
+        executor = LiveExecutor()
+        executor._exchange = _mock_exchange()
+        executor._exchange.fetch_open_orders = AsyncMock(return_value=[order])
+        assert executor._recent_local_opens == {}  # nothing tracked locally
+
+        with patch.object(type(live_executor_mod.CONFIG), "is_live", return_value=True):
+            adopted = await executor.adopt_exchange_limit_orders()
+
+        # No external-orphan alarm...
+        assert adopted == []
+        # ...but the order IS tracked, under its reconstructed real trade_id.
+        assert "TI-abcd1234" in executor._positions
+        assert executor._positions["TI-abcd1234"].limit_order_id == "TRX-OWN"
+
+    @pytest.mark.asyncio
     async def test_old_exchange_order_still_adopted_past_freshness_window(self):
         """A genuine orphan — the exchange reports it created well past the grace
         window — is adopted exactly as before, even with empty local maps."""
