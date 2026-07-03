@@ -799,6 +799,23 @@ async def insight(symbol: str, timeframe: str = "1h", limit: int = 200,
     except Exception:
         confluence = 0.5
 
+    # Regime ribbon: the SAME detector the bot trades with, replayed at a
+    # coarse stride over the window (each sample sees only bars up to its
+    # own close — no lookahead). ~40 samples bounds the cost; the client
+    # paints forward from each sample to the next.
+    regime_series: list = []
+    try:
+        n_bars = len(closes)
+        stride = max(5, n_bars // 40)
+        for i in range(60, n_bars + 1, stride):
+            ind_i = Analyzer._compute_indicators(
+                highs[:i], lows[:i], closes[:i], volumes[:i],
+                opens=opens[:i], times=times[:i])
+            r_i = engine.analyzer._detect_regime(ind_i, symbol)
+            regime_series.append({"t": int(times[i - 1]), "regime": r_i.value})
+    except Exception:
+        regime_series = []
+
     cvd = None
     try:
         tape = engine.ws_feed.get_cvd(symbol) if engine.ws_feed else None
@@ -813,7 +830,8 @@ async def insight(symbol: str, timeframe: str = "1h", limit: int = 200,
     return {
         "symbol": symbol, "timeframe": timeframe,
         "price": float(closes[-1]), "atr": atr,
-        "regime": regime.value, "confluence": round(float(confluence), 4),
+        "regime": regime.value, "regime_series": regime_series,
+        "confluence": round(float(confluence), 4),
         "levels": [{"price": lv.price, "kind": lv.kind, "touches": lv.touches,
                     "score": round(lv.score, 2)} for lv in levels],
         "fvgs": [{"kind": g.kind, "top": g.top, "bottom": g.bottom,
