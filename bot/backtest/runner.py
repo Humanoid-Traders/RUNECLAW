@@ -257,6 +257,7 @@ async def _run_backtest(args: argparse.Namespace) -> None:
 
     # Display results
     print(_format_result_summary(result))
+    print(_attribution_report(result))
     if used_synthetic:
         print("  ⚠️  These numbers come from SYNTHETIC data "
               f"(data_source={data_source}) — NOT a real backtest.")
@@ -380,6 +381,72 @@ def main() -> None:
 
 
 
+def _group_stats(trades, key_fn):
+    """Aggregate net PnL / win-rate / profit-factor per group. Returns a dict
+    {group: {trades, net_pnl, win_rate, profit_factor}} sorted by net_pnl."""
+    groups: dict = {}
+    for t in trades:
+        k = key_fn(t) or "(unknown)"
+        g = groups.setdefault(k, {"trades": 0, "net_pnl": 0.0, "wins": 0,
+                                  "gross_win": 0.0, "gross_loss": 0.0})
+        g["trades"] += 1
+        g["net_pnl"] += t.net_pnl_usd
+        if t.net_pnl_usd > 0:
+            g["wins"] += 1
+            g["gross_win"] += t.net_pnl_usd
+        else:
+            g["gross_loss"] += abs(t.net_pnl_usd)
+    out = {}
+    for k, g in groups.items():
+        pf = (g["gross_win"] / g["gross_loss"]) if g["gross_loss"] > 0 else float("inf")
+        out[k] = {"trades": g["trades"], "net_pnl": round(g["net_pnl"], 2),
+                  "win_rate": g["wins"] / g["trades"] if g["trades"] else 0.0,
+                  "profit_factor": pf}
+    return dict(sorted(out.items(), key=lambda kv: kv[1]["net_pnl"], reverse=True))
+
+
+def _risk_adjusted(result) -> dict:
+    """Sortino + Calmar from the trade series and equity curve. Sharpe already
+    lives on the result. Sortino uses downside deviation of per-trade net PnL;
+    Calmar = total return % / max drawdown %."""
+    pnls = [t.net_pnl_usd for t in result.trades]
+    sortino = 0.0
+    if len(pnls) >= 2:
+        import statistics
+        mean = statistics.mean(pnls)
+        downside = [p for p in pnls if p < 0]
+        dd = (statistics.pstdev(downside) if len(downside) >= 2 else
+              (abs(downside[0]) if downside else 0.0))
+        sortino = (mean / dd) if dd > 0 else 0.0
+    max_dd = getattr(result, "max_drawdown_pct", 0.0) or 0.0
+    calmar = (result.total_return_pct / max_dd) if max_dd > 0 else 0.0
+    return {"sortino": round(sortino, 2), "calmar": round(calmar, 2)}
+
+
+def _attribution_report(result) -> str:
+    """Where the edge lives: per-regime and per-setup P&L breakdown + the
+    risk-adjusted metrics the aggregate return can't show. This is the
+    go/no-go evidence for gating entries to profitable regimes/setups."""
+    if not result.trades:
+        return ""
+    lines = ["", "  ── EDGE ATTRIBUTION " + "─" * 48]
+    ra = _risk_adjusted(result)
+    lines.append(f"  Risk-adjusted: Sharpe {getattr(result, 'sharpe_ratio', 0.0):.2f}"
+                 f" | Sortino {ra['sortino']:.2f} | Calmar {ra['calmar']:.2f}")
+    for title, key_fn in (("By regime (at entry)", lambda t: t.entry_regime),
+                          ("By setup", lambda t: t.setup)):
+        stats = _group_stats(result.trades, key_fn)
+        if not stats or (len(stats) == 1 and "(unknown)" in stats):
+            continue
+        lines.append(f"  {title}:")
+        for k, g in stats.items():
+            pf = "inf" if g["profit_factor"] == float("inf") else f"{g['profit_factor']:.2f}"
+            sign = "+" if g["net_pnl"] >= 0 else ""
+            lines.append(f"    {k:<14} {g['trades']:>3} tr  net {sign}${g['net_pnl']:>8,.2f}"
+                         f"  win {g['win_rate']:.0%}  PF {pf}")
+    return "\n".join(lines)
+
+
 def _narrative(result, per_symbol: dict | None = None) -> str:
     """Plain-language verdict for a run — deterministic (no LLM), so every
     measurement ships with a summary a human can read at a glance."""
@@ -456,6 +523,7 @@ async def _run_portfolio(args: argparse.Namespace) -> None:
     for sym, row in sorted(pb.per_symbol.items()):
         print(f"    {sym:<16} {row['trades']:>3} trades  net ${row['net_pnl']:>9,.2f}  "
               f"win {row['win_rate']:.0%}")
+    print(_attribution_report(result))
     print(_narrative(result, pb.per_symbol))
     if args.output:
         out_path = Path(args.output)
