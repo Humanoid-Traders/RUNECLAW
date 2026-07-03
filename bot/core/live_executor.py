@@ -825,17 +825,42 @@ class LiveExecutor:
 
     @staticmethod
     def _round_price_to_market(exchange: "ccxt.Exchange", symbol: str, price: float) -> Optional[str]:
-        """Round a price onto the symbol's tick grid using ccxt's market filters.
+        """Round a price onto the symbol's tick grid.
 
-        Uses the exchange's own ``price_to_precision`` (which respects tick size
-        and rounding mode) rather than a decimal-places heuristic. Returns None
-        if the venue/market data is unavailable so the caller can fall back.
+        ccxt's ``price_to_precision`` respects the rounding mode but can mis-parse
+        Bitget's pricePlace/priceEndStep precision pair and emit a price the venue
+        rejects with 45115 ("price should be a multiple of X"). So this applies
+        the authoritative Bitget tick snap (``_bitget_tick_safety_net``) as the
+        LAST step on top of ccxt — matching the entry-order path — so SL/TP and
+        trailing-stop triggers land on the real grid too. Returns None if the
+        price is unusable so the caller can fall back.
         """
         try:
-            return cast(str, exchange.price_to_precision(symbol, price))
+            ccxt_str = exchange.price_to_precision(symbol, price)
         except Exception as exc:  # noqa: BLE001
             logger.debug("price_to_precision failed for %s @ %s: %s", symbol, price, exc)
-            return None
+            ccxt_str = None
+        base = float(ccxt_str) if ccxt_str is not None else float(price)
+        market = None
+        try:
+            market = exchange.market(symbol)
+        except Exception:  # noqa: BLE001
+            try:
+                market = (getattr(exchange, "markets", {}) or {}).get(symbol)
+            except Exception:  # noqa: BLE001
+                market = None
+        # ccxt's market() is synchronous and returns a dict; guard against any
+        # non-dict (e.g. a coroutine from a mocked/misbehaving client) so the
+        # tick snap never raises into the caller.
+        if not isinstance(market, dict):
+            market = None
+        snapped = LiveExecutor._bitget_tick_safety_net(market, base)
+        if snapped and snapped > 0:
+            # Clean numeric string — no sci-notation / float noise.
+            s = f"{snapped:.10f}".rstrip("0").rstrip(".")
+            if s:
+                return s
+        return cast(Optional[str], ccxt_str)
 
     @staticmethod
     def _bitget_tick_safety_net(market: Optional[dict], limit_price: float) -> float:
@@ -858,7 +883,7 @@ class LiveExecutor:
         pair) if pricePlace/priceEndStep aren't both present. Returns
         ``limit_price`` unchanged if no usable tick info is found.
         """
-        if not market:
+        if not isinstance(market, dict):
             return limit_price
         info = market.get("info", {}) or {}
         price_place = info.get("pricePlace")
@@ -2356,6 +2381,11 @@ class LiveExecutor:
                             "before submission (upstream rounding didn't match market precision)",
                             symbol, limit_price, _final_price)
                     limit_price = _final_price
+                    # AUTHORITATIVE final snap: price_to_precision above can
+                    # UN-snap a tick-aligned price when ccxt mis-parses Bitget's
+                    # pricePlace/priceEndStep pair — the exact 45115 rejection.
+                    # Apply the real tick as the LAST word before submission.
+                    limit_price = self._bitget_tick_safety_net(market, limit_price)
                     logger.info(
                         "Submitting %s limit order @ %s (pricePlace=%s priceEndStep=%s)",
                         symbol, limit_price,
