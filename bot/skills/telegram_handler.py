@@ -270,6 +270,7 @@ class TelegramHandler:
             ("approve", self._cmd_approve), ("revoke", self._cmd_revoke),
             ("users", self._cmd_users), ("accounts", self._cmd_accounts),
             ("setcap", self._cmd_setcap),
+            ("drawdownlimit", self._cmd_drawdownlimit),
             ("grant_live", self._cmd_grant_live), ("revoke_live", self._cmd_revoke_live),
             ("set_tier", self._cmd_set_tier),
             # Marketing / channel forwarder
@@ -2143,6 +2144,87 @@ class TelegramHandler:
         await self._send(update,
             f"🟢 Margin cap set: <code>{target_id}</code> may commit at most "
             f"<b>${usd:,.2f}</b> margin per live trade (still bounded by the global cap).")
+
+    async def _cmd_drawdownlimit(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """Admin only: /drawdownlimit <pct | off | status> — temporarily override
+        the LIVE max-drawdown breaker limit at runtime, without a redeploy.
+
+        Purpose: after the account has drawn down past the default live cap the
+        drawdown breaker keeps re-tripping (correctly). To keep testing live with
+        tiny size, an admin can loosen the cap here. Bounded hard in config
+        (never disables the breaker); 'off' reverts to the configured default.
+        This does NOT itself resume — run /resume after loosening.
+        """
+        if not self._is_admin(update):
+            await self._send(update, f"\U0001f512 {t('admin_only', self._lang(update))}")
+            return
+        from bot.config import RUNTIME, CONFIG as _CFG
+
+        def _status_lines() -> list:
+            st = {}
+            try:
+                st = self.engine.risk.drawdown_status()
+            except Exception:
+                st = {}
+            lines = ["📉 <b>Live drawdown backstop</b>"]
+            if st:
+                lines.append(f"• Current drawdown: <b>{st['drawdown_pct']:.1f}%</b>")
+                lines.append(f"• Limit in force: <b>{st['effective_limit_pct']:.1f}%</b>")
+                ov = st.get("override_pct")
+                lines.append(
+                    f"• Override: <b>{ov:.1f}%</b> (default {st['config_live_limit_pct']:.1f}%)"
+                    if ov is not None else
+                    f"• Override: <b>none</b> (default {st['config_live_limit_pct']:.1f}%)")
+                if not st.get("live_hardening"):
+                    lines.append("• ⚠️ Live hardening OFF — override only bites on live.")
+            return lines
+
+        args = ctx.args or []
+        if not args or args[0].strip().lower() in ("status", "show"):
+            lines = _status_lines()
+            lines.append("")
+            lines.append("Usage: <code>/drawdownlimit 15</code> · "
+                         "<code>/drawdownlimit off</code>")
+            lines.append(f"Bounded {RUNTIME.LIVE_DRAWDOWN_OVERRIDE_MIN:.0f}–"
+                         f"{RUNTIME.LIVE_DRAWDOWN_OVERRIDE_MAX:.0f}%. "
+                         "Loosening accepts larger real losses before the bot halts.")
+            await self._send(update, "\n".join(lines))
+            return
+
+        raw = args[0].strip().lower()
+        if raw in ("off", "none", "clear", "default", "reset"):
+            RUNTIME.clear_live_drawdown_override()
+            audit(system_log, "Live drawdown override cleared via /drawdownlimit",
+                  action="drawdown_override", result="CLEARED")
+            lines = ["🟢 Live drawdown override <b>cleared</b> — back to the "
+                     f"configured {_CFG.risk.live_max_drawdown_pct:.1f}% cap.", ""]
+            lines += _status_lines()
+            await self._send(update, "\n".join(lines))
+            return
+
+        try:
+            pct = float(raw)
+        except ValueError:
+            await self._send(update,
+                "🔴 Value must be a number (percent), <code>off</code>, or "
+                "<code>status</code>.")
+            return
+
+        lo, hi = RUNTIME.LIVE_DRAWDOWN_OVERRIDE_MIN, RUNTIME.LIVE_DRAWDOWN_OVERRIDE_MAX
+        RUNTIME.live_drawdown_override_pct = pct
+        applied = RUNTIME.live_drawdown_override_pct
+        clamped = abs(applied - pct) > 1e-9
+        audit(system_log, "Live drawdown override set via /drawdownlimit",
+              action="drawdown_override", result="SET",
+              data={"requested_pct": pct, "applied_pct": applied})
+        lines = [f"🟠 Live drawdown limit override set to <b>{applied:.1f}%</b>."]
+        if clamped:
+            lines.append(f"   (clamped into the {lo:.0f}–{hi:.0f}% safe band)")
+        lines += ["", *_status_lines(), "",
+                  "⚠️ Real money is down — a looser cap means the bot tolerates "
+                  "<b>more loss</b> before halting. Pair with tiny per-trade margin. "
+                  "Run <code>/resume</code> to lift the current halt."]
+        await self._send(update, "\n".join(lines))
 
     # ── Mode switching ────────────────────────────────────────
 
