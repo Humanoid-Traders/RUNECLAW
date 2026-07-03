@@ -4385,9 +4385,11 @@ class LiveExecutor:
                       data={"trade_id": trade_id, "fill_price": fill_price,
                             "quantity": filled_qty})
 
-                sl_info = f" | SL: {sl_id}" if sl_id else ""
-                tp_info = f" | TP: {tp_id}" if tp_id else ""
-                trail_info = " | Trailing: armed" if pos.trailing_state else ""
+                # Show the SL/TP PRICE levels, not the raw exchange order ids.
+                # (Regression: this printed sl_id/tp_id — 19-digit order ids —
+                # where the operator expects the price, e.g. "SL: 0.32808".)
+                protection = self._fmt_fill_protection(
+                    pos.stop_loss, pos.take_profit, sl_id, tp_id, pos.trailing_state)
                 st_label = getattr(pos, 'strategy_type', 'swing').upper()
                 sl_tp_warn = ""
                 if sl_id is None:
@@ -4396,7 +4398,7 @@ class LiveExecutor:
                     sl_tp_warn = "\n⚠️ STOP-LOSS not placed — position unprotected (monitoring active)!"
                 return (
                     f"LIMIT FILLED: {pos.direction} {pos.symbol} [{st_label}]\n"
-                    f"Fill: ${fill_price:,.4f} | Qty: {filled_qty:.6f}{sl_info}{tp_info}{trail_info}{sl_tp_warn}"
+                    f"Fill: ${fill_price:,.4f} | Qty: {filled_qty:.6f}{protection}{sl_tp_warn}"
                 )
 
             elif order_status in ("canceled", "cancelled", "rejected", "expired"):
@@ -5695,6 +5697,22 @@ class LiveExecutor:
             pos.symbol, raw_symbol,
         )
         return None
+
+    @staticmethod
+    def _fmt_fill_protection(stop_loss: float, take_profit: float,
+                            sl_id, tp_id, trailing) -> str:
+        """The ' | SL: .. | TP: .. | Trailing: armed' suffix for a fill notice.
+
+        Shows the PRICE levels the stop/target sit at — NOT the exchange order
+        ids. A fill card that printed the 19-digit order id where the operator
+        expects a price ("SL: 1456972736727867394") is the regression this
+        guards. The id truthiness still gates the field: no id -> the protective
+        order was not placed, so its price is omitted.
+        """
+        sl = f" | SL: {stop_loss:.6g}" if (sl_id and stop_loss) else ""
+        tp = f" | TP: {take_profit:.6g}" if (tp_id and take_profit) else ""
+        tr = " | Trailing: armed" if trailing else ""
+        return f"{sl}{tp}{tr}"
 
     def _infer_close_reason(self, pos: "LivePosition", exit_price: float) -> str:
         """Infer whether TP or SL was hit based on exit price proximity.
