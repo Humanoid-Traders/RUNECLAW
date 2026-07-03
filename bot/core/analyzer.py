@@ -1000,6 +1000,13 @@ class Analyzer:
             strategy_type=strategy_type,
             breakdown=_confluence_votes,
         )
+        # Voter-grounded thesis (audit UX item): expose the top signed votes
+        # to the LLM prompt so the narrative cites the actual electorate that
+        # drove the score instead of re-deriving (or inventing) its own read.
+        if _confluence_votes:
+            indicators["_top_votes"] = sorted(
+                ((n, v, w) for n, v, w in _confluence_votes if abs(v * w) > 1e-9),
+                key=lambda t: abs(t[1] * t[2]), reverse=True)[:6]
 
         indicators["regime"] = regime.value
         indicators["confluence"] = confluence
@@ -3798,6 +3805,15 @@ class Analyzer:
             f"VWAP={indicators.get('vwap', 'N/A')} OBV={indicators.get('obv_trend', 'N/A')}",
             f"Fib: zone={indicators.get('fib_zone', 'N/A')} 618={indicators.get('fib_618', 'N/A')} 382={indicators.get('fib_382', 'N/A')}",
         ]
+
+        # Ground the thesis in the actual confluence electorate: the top
+        # signed votes (name, vote, weight) that drove the score. The model
+        # is told to cite these rather than invent its own indicator reads.
+        _tv = indicators.get("_top_votes") or []
+        if _tv:
+            parts.append("TopVotes: " + " | ".join(
+                f"{n} {v:+.2f}x{w:.2f}" for n, v, w in _tv))
+            parts.append("Cite TopVotes names when reasoning; do not contradict their signs without saying why.")
 
         candle_patterns = indicators.get("candle_patterns", {})
         if candle_patterns:

@@ -230,6 +230,13 @@ class RiskEngine:
         self._circuit_trip_day: str = ""          # UTC YYYY-MM-DD of the trip
         self._total_checks = 0
         self._total_rejections = 0
+        # Gate telemetry + strangle-watchdog counters (see gate_stats() /
+        # eval_stats()): per-gate pass/fail/skip buckets, cumulative
+        # evaluated/approved totals, and when something last passed.
+        self._gate_stats: dict[str, dict[str, int]] = {}
+        self._eval_total = 0
+        self._approved_total = 0
+        self._last_approval_time: Optional[float] = None
         # C2-45 FIX: deque with maxlen auto-prunes, no manual size checks needed
         self._rejection_history: deque[dict] = deque(maxlen=50)
         self._lock = threading.RLock()
@@ -357,6 +364,35 @@ class RiskEngine:
         evaluations — the evidence base for tuning gate thresholds."""
         return {k: dict(v) for k, v in sorted(
             getattr(self, "_gate_stats", {}).items())}
+
+    def eval_stats(self) -> dict:
+        """Cumulative idea-evaluation counters for the strangle watchdog:
+        total evaluated, total approved, and when something last passed."""
+        return {
+            "evaluated": getattr(self, "_eval_total", 0),
+            "approved": getattr(self, "_approved_total", 0),
+            "last_approval_time": getattr(self, "_last_approval_time", None),
+        }
+
+    def streak_state(self) -> dict:
+        """Loss-streak / probe posture for operator surfaces (/status,
+        dashboard). probe_in describes the half-open recovery: seconds until
+        a probe trade is allowed (0 = allowed now, None = gate not latched
+        or probing disabled)."""
+        soft = self._soft_loss_streak_limit(CONFIG.risk.max_consecutive_losses)
+        latched = self._consecutive_losses >= soft
+        probe_in = None
+        probe_s = CONFIG.risk.loss_streak_probe_hours * 3600.0
+        if latched and probe_s > 0 and self._last_loss_time is not None:
+            probe_in = max(0.0, probe_s - (self._now() - self._last_loss_time))
+        return {
+            "consecutive_losses": self._consecutive_losses,
+            "soft_limit": soft,
+            "hard_limit": CONFIG.risk.max_consecutive_losses,
+            "latched": latched,
+            "probe_in_seconds": probe_in,
+            "circuit_breaker_open": self._circuit_open,
+        }
 
     @property
     def stats(self) -> dict:
@@ -977,9 +1013,27 @@ class RiskEngine:
             # 9. Consecutive loss streak
             # C2-35 FIX: soft limit derived from config, not hardcoded to 3.
             # Always strictly below the hard circuit-breaker limit (see helper).
+            # Half-open recovery: the streak only decays on a WIN, so without
+            # a probe path this gate is a permanent latch (blocked trading ->
+            # no wins -> blocked forever, silently, below the visible hard
+            # breaker). After loss_streak_probe_hours since the last loss, ONE
+            # probe trade is allowed at a time (only while flat). A losing
+            # probe re-arms the gate via _last_loss_time; a winning probe
+            # decays the streak. Unknown last-loss time fails closed.
             soft_limit = self._soft_loss_streak_limit(CONFIG.risk.max_consecutive_losses)
             if self._consecutive_losses >= soft_limit:
-                failed.append(f"LOSS_STREAK: {self._consecutive_losses} consecutive losses (>= {soft_limit})")
+                probe_s = CONFIG.risk.loss_streak_probe_hours * 3600.0
+                _open_ct = (live_open_count if live_open_count is not None
+                            else state.open_positions)
+                if (probe_s > 0 and self._last_loss_time is not None
+                        and self._now() - self._last_loss_time >= probe_s
+                        and _open_ct == 0):
+                    _cool_h = (self._now() - self._last_loss_time) / 3600.0
+                    passed.append(
+                        f"LOSS_STREAK: {self._consecutive_losses} losses, "
+                        f"probe allowed after {_cool_h:.1f}h cool-off")
+                else:
+                    failed.append(f"LOSS_STREAK: {self._consecutive_losses} consecutive losses (>= {soft_limit})")
             else:
                 passed.append(f"LOSS_STREAK: {self._consecutive_losses} OK")
         except Exception as exc:
@@ -1297,14 +1351,20 @@ class RiskEngine:
         # -- Verdict --
         verdict = RiskVerdict.APPROVED if len(failed) == 0 else RiskVerdict.REJECTED
 
+        # Strangle-watchdog inputs: cumulative evaluated/approved counts and
+        # the time of the last approval (engine time, sim-aware). The
+        # proactive monitor diffs these to detect "ideas flow but nothing is
+        # ever approved" — the failure shape of a silently latched gate.
+        self._eval_total += 1
+        if verdict == RiskVerdict.APPROVED:
+            self._approved_total += 1
+            self._last_approval_time = self._now()
+
         # Gate telemetry: per-check pass/fail/skip counters so newly-wired
         # gates (taker 3-bar, book dominance, ...) can be threshold-tuned on
         # live evidence instead of judgment. Prefix before ':' is the gate
         # name; "skipped"/"fail-open" entries count as skips, not passes.
-        try:
-            stats = self._gate_stats
-        except AttributeError:
-            stats = self._gate_stats = {}
+        stats = self._gate_stats
         for entry in passed:
             name_key = entry.split(":", 1)[0].strip()
             low = entry.lower()

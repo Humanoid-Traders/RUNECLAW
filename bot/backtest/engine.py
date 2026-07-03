@@ -389,7 +389,18 @@ class BacktestEngine:
 
         # Create a slippage-adjusted copy of the idea for portfolio
         slipped_idea = idea.model_copy(update={"entry_price": round(adjusted_entry, 6)})
-        trade = self.portfolio.open_position(slipped_idea, size_usd)
+        # Balance-exhaustion race: the size was approved against balance at
+        # scan time, but fills since then (other streams in portfolio mode, or
+        # the bar gap in next_open mode) may have consumed the margin.
+        # open_position rejects-not-clamps by contract; live catches this in
+        # confirm_trade, so the backtest must too — skip the fill, not the run.
+        try:
+            trade = self.portfolio.open_position(slipped_idea, size_usd)
+        except ValueError as exc:
+            self._ideas_rejected_risk += 1
+            audit(trade_log, f"[BT] Fill REJECTED at execution: {exc}",
+                  action="backtest_fill", result="REJECTED")
+            return
 
         # STRATEGY: trailing stop after 1R profit -- use shared utility
         initial_risk = abs(idea.entry_price - idea.stop_loss)

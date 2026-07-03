@@ -172,6 +172,28 @@ class RiskLimits:
     signal_display_min_confidence: float = _env_float_bounded(
         "SIGNAL_DISPLAY_MIN_CONFIDENCE", 0.70, 0.1, 1.0)
     max_consecutive_losses: int = int(_env_float_bounded("MAX_CONSECUTIVE_LOSSES", 5, 1, 50))
+    # Half-open recovery for the SOFT loss-streak gate (risk check #9). The
+    # soft gate rejects new ideas at (hard - 2) consecutive losses, but the
+    # streak only decays on a WIN — with trading blocked no win can ever
+    # happen, so the gate was a PERMANENT silent latch two losses below the
+    # visible circuit breaker (production-data backtest: 3 early losses froze
+    # the strategy for the remaining ~8 months; live freezes the same way,
+    # the operator just sees a bot that scans but never trades). After this
+    # cool-off since the last loss, ONE probe trade is allowed at a time
+    # (only while flat): a losing probe re-arms the gate and walks the streak
+    # toward the hard breaker (still manual-reset); a winning probe decays
+    # it. 0 disables probing (legacy permanent latch).
+    loss_streak_probe_hours: float = _env_float_bounded(
+        "LOSS_STREAK_PROBE_HOURS", 24.0, 0.0, 720.0)
+    # Silent-strangle watchdog (proactive monitor): WARN the operator when
+    # ideas keep flowing but NOTHING is approved for a whole window — the
+    # failure shape of a silently latched gate (the loss-streak latch ran a
+    # production backtest dry for ~8 months with zero operator-visible
+    # signal). Names the top rejecting gate from gate telemetry. 0 = off.
+    strangle_alert_hours: float = _env_float_bounded(
+        "STRANGLE_ALERT_HOURS", 12.0, 0.0, 168.0)
+    strangle_min_ideas: int = int(_env_float_bounded(
+        "STRANGLE_MIN_IDEAS", 10, 1, 10000))
     cooldown_after_loss_seconds: int = int(_env_float("COOLDOWN_AFTER_LOSS_SEC", 120))
     # Per-SYMBOL loss-streak cooldown. The account-wide streak above decays on
     # ANY win, so a chronically-losing symbol keeps getting re-entered as long
@@ -788,9 +810,12 @@ class AnalyzerConfig:
 
     # Smart-money-concept voters (default OFF — measured): fair value gaps,
     # equal-highs/lows liquidity pools and premium/discount positioning
-    # (bot/core/smc.py). On the 10-symbol honest benchmark these voters cut
-    # trade flow roughly in half and turned the period negative, so they
-    # ship dark until a configuration measures non-harmful.
+    # (bot/core/smc.py). Production-venue re-measurement (jointly with the
+    # MFI + vol-spike voters): full-period +1.44%/PF 1.53 vs baseline
+    # +0.07%/1.02 — but 6-fold walk-forward 0/6 profitable, mean OOS -1.27%
+    # vs baseline's -1.14%. The full-period gain doesn't survive the
+    # stricter OOS standard, so these stay dark until live evidence or a
+    # WF-positive configuration.
     smc_voters_enabled: bool = _env_bool("SMC_VOTERS_ENABLED", False)
 
     # Strategy-mode confidence floor (default ON): a SPECIFIC selected
@@ -799,16 +824,26 @@ class AnalyzerConfig:
     # catch-all default is exempt — applying its bar to every uncertain
     # scan measurably collapsed trade flow. These per-mode bars existed in
     # MODE_CONFIGS since day one but were dead — nothing ever read them.
-    mode_min_confidence_enabled: bool = _env_bool("MODE_MIN_CONFIDENCE_ENABLED", True)
+    # MEASURED default OFF: even scoped to specific modes, the per-mode bars
+    # (BREAKOUT 0.65 / TURTLE 0.60) suppress exactly the Donchian-driven
+    # trades the Tier 2 fixes unlocked — and those trades measured
+    # PROFITABLE (floor alone cost ~1.7pp and ~13 trades on the benchmark;
+    # combined with the structure trail it collapsed flow to 12 trades).
+    # Production-venue re-validation is AMBIGUOUS: the clean 10-symbol arm
+    # measured +0.22%/31/PF 1.07 vs baseline +0.07%/24/1.02, but a 9-symbol
+    # variant of the same arm measured -0.86%/7/PF 0.34 — universe-
+    # composition sensitivity, not robust benefit. Stays dark pending live
+    # evidence.
+    mode_min_confidence_enabled: bool = _env_bool("MODE_MIN_CONFIDENCE_ENABLED", False)
 
     # MFI voter (default OFF — measured): the MFI(14) indicator is always
-    # computed; the VOTER measurably suppressed portfolio trade flow on the
-    # honest benchmark even in skip-neutral form, so it ships dark.
+    # computed; the VOTER ships dark. Production re-measurement (jointly
+    # with SMC + vol-spike): full-period positive but walk-forward 0/6 and
+    # worse than baseline — see the smc_voters_enabled note.
     mfi_voter_enabled: bool = _env_bool("MFI_VOTER_ENABLED", False)
     # Per-bar volume-spike voter upgrade (default OFF — measured): the
-    # bar-level spike indicator is always computed; using it as the voter
-    # trigger changed flow measurably negative in combination testing, so
-    # the voter keeps the legacy scanner flag until re-measured alone.
+    # bar-level spike indicator is always computed; the voter trigger ships
+    # dark on the same joint production measurement as SMC/MFI above.
     vol_spike_bar_vote_enabled: bool = _env_bool("VOL_SPIKE_BAR_VOTE_ENABLED", False)
 
     # Advanced VWAP (bot/core/vwap.py). Default ON at the operator's request;
@@ -1118,7 +1153,12 @@ class TrailingStopConfig:
     # top of whichever ATR rule is active. Applied identically in the
     # backtest (bar window per position) and live (closed 1h candles,
     # cached, fail-open).
-    structure_trail_enabled: bool = _env_bool("STRUCTURE_TRAIL_ENABLED", True)
+    # MEASURED default OFF: on the honest 10-perp benchmark the ratchet cut
+    # winners short and compounded with the mode floor (together: 44 -> 12
+    # trades, +3.66% -> -0.22%; trail alone cost ~1.3pp and ~17 trades).
+    # Fully built and env-flippable for re-tuning (wider fractal / later
+    # activation are the obvious knobs).
+    structure_trail_enabled: bool = _env_bool("STRUCTURE_TRAIL_ENABLED", False)
     structure_trail_buffer_atr: float = _env_float("STRUCTURE_TRAIL_BUFFER_ATR", 0.25)
 
 

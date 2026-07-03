@@ -83,13 +83,15 @@ class DataLoader:
         within one page behaves exactly like the old single-call fetch.
         """
         import ccxt.async_support as ccxt
-        from bot.config import CONFIG
 
+        # Historical OHLCV is PUBLIC data from the venue the live bot trades
+        # on. Never inherit CONFIG.exchange.sandbox here: Bitget's demo
+        # environment is a separate matching engine whose candles differ on
+        # every bar (different wicks/volume) and whose market list is a small
+        # subset of production perps — backtests against it measure the wrong
+        # market. No credentials needed for public candles.
         exchange = ccxt.bitget({
-            "apiKey": CONFIG.exchange.api_key,
-            "secret": CONFIG.exchange.api_secret,
-            "password": CONFIG.exchange.passphrase,
-            "sandbox": CONFIG.exchange.sandbox,
+            "sandbox": False,
             "enableRateLimit": True,
             # Honor standard proxy env vars (HTTPS_PROXY + CA bundle) so real
             # data fetches work behind egress proxies (e.g. Claude Code cloud
