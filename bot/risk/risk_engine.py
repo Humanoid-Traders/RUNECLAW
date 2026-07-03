@@ -833,6 +833,29 @@ class RiskEngine:
                   data={"tripped_day": _prev_day, "today": _today_utc})
             self._save_state()
 
+        # Streak-breaker self-recovery (opt-in, default OFF). A consecutive-
+        # loss trip is manual-reset only, so an unattended live bot latches
+        # PAUSED. When STREAK_BREAKER_AUTORESET_HOURS > 0, clear it (and zero
+        # the streak, exactly like /resume) once that many hours have elapsed
+        # since the last loss. Only the STREAK cause — daily-loss/drawdown/
+        # manual keep their own paths, so account-drain protection is intact.
+        _sbh = CONFIG.risk.streak_breaker_autoreset_hours
+        if (_sbh > 0 and self._circuit_open
+                and self._circuit_trip_cause == "streak"
+                and self._last_loss_time is not None
+                and self._now() - self._last_loss_time >= _sbh * 3600.0):
+            self._circuit_open = False
+            self._circuit_trip_cause = ""
+            self._circuit_trip_day = ""
+            self._consecutive_losses = 0
+            _cool_h = (self._now() - self._last_loss_time) / 3600.0
+            audit(risk_log,
+                  f"Streak circuit breaker auto-recovered after {_cool_h:.1f}h "
+                  f"cool-off (>= {_sbh}h)",
+                  action="circuit_breaker", result="AUTO_RESET",
+                  data={"cause": "streak", "cool_off_hours": round(_cool_h, 2)})
+            self._save_state()
+
         # ── Individual checks — each wrapped so a raised exception → REJECTED ──
         # This is the fail-closed contract: if ANY check cannot be evaluated,
         # the trade is REJECTED.  No silent pass-through on errors.

@@ -319,6 +319,16 @@ defaults:
     env_var: DAILY_LOSS_BREAKER_AUTORESET
     description: "Auto-reset a daily-loss circuit-breaker trip at UTC day rollover (drawdown/streak/manual stay manual)"
 
+  streak_breaker_autoreset_hours:
+    value: 0.0
+    env_var: STREAK_BREAKER_AUTORESET_HOURS
+    description: >
+      Hours after the last loss to auto-clear a CONSECUTIVE-LOSS breaker trip
+      (resets the streak to 0, like /resume) so an unattended live bot resumes
+      instead of latching PAUSED. Only the streak cause; daily-loss/drawdown/
+      manual keep their own paths. 0 = OFF (manual-reset only). Automates
+      resuming — the drawdown breaker remains the account-drain backstop.
+
   max_drawdown_pct:
     value: 10.0
     env_var: MAX_DRAWDOWN_PCT
