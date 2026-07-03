@@ -1532,6 +1532,13 @@ class RuntimeState:
         self._strategy_mode: str = "balanced"
         self._live_mode: bool = False  # toggled by /golive CONFIRM
         self._auto_confirm_threshold: float = CONFIG.auto_confirm_threshold
+        # Runtime override for the LIVE max-drawdown backstop. None => use the
+        # configured CONFIG.risk.live_max_drawdown_pct. Set by an admin to
+        # temporarily loosen (or tighten) the live drawdown cap WITHOUT a
+        # redeploy — e.g. to keep testing live after the account has drawn down
+        # past the default cap. Bounded hard in the setter so it can never be
+        # disabled outright. Only consulted on LIVE; paper/backtest ignore it.
+        self._live_drawdown_override_pct: float | None = None
 
     @property
     def live_mode(self) -> bool:
@@ -1578,6 +1585,33 @@ class RuntimeState:
     def auto_confirm_threshold(self, value: float) -> None:
         with self._lock:
             self._auto_confirm_threshold = max(0.0, min(1.0, value))
+
+    # Hard bounds for the live drawdown override. The ceiling is a real
+    # backstop: no operator command can push the live drawdown cap past this,
+    # so the account can never be left with the drawdown breaker effectively
+    # disabled. The floor allows tightening below the default if desired.
+    LIVE_DRAWDOWN_OVERRIDE_MIN = 1.0
+    LIVE_DRAWDOWN_OVERRIDE_MAX = 30.0
+
+    @property
+    def live_drawdown_override_pct(self) -> float | None:
+        with self._lock:
+            return self._live_drawdown_override_pct
+
+    @live_drawdown_override_pct.setter
+    def live_drawdown_override_pct(self, value: float | None) -> None:
+        with self._lock:
+            if value is None:
+                self._live_drawdown_override_pct = None
+                return
+            self._live_drawdown_override_pct = max(
+                self.LIVE_DRAWDOWN_OVERRIDE_MIN,
+                min(self.LIVE_DRAWDOWN_OVERRIDE_MAX, float(value)))
+
+    def clear_live_drawdown_override(self) -> None:
+        """Revert the live drawdown cap to the configured default."""
+        with self._lock:
+            self._live_drawdown_override_pct = None
 
 
 RUNTIME = RuntimeState()

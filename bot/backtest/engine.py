@@ -417,6 +417,14 @@ class BacktestEngine:
         canonical_atr = initial_risk / sl_mult if initial_risk > 0 else idea.entry_price * 0.02
         trailing = make_trailing_state(adjusted_entry, idea.direction.value, initial_risk, canonical_atr)
         trailing["entry_price"] = adjusted_entry
+        # Capture the entry regime for P&L attribution (which regimes actually
+        # make money — see the report's regime breakdown). Best-effort.
+        _entry_regime = ""
+        try:
+            _reg = self.analyzer._current_regimes.get(idea.asset)
+            _entry_regime = getattr(_reg, "value", "") or ""
+        except Exception:
+            _entry_regime = ""
         self._open_bt_positions[idea.id] = {
             "entry_time": bar.timestamp,
             "adjusted_entry": adjusted_entry,
@@ -424,6 +432,7 @@ class BacktestEngine:
             "slippage_entry": slippage * trade.quantity,
             "idea": idea,
             "risk_verdict": risk_check.verdict.value,
+            "entry_regime": _entry_regime,
             **trailing,
         }
 
@@ -613,6 +622,9 @@ class BacktestEngine:
             risk_verdict=bt_meta["risk_verdict"],
             reasoning=idea.reasoning,
             signals_used=idea.signals_used,
+            entry_regime=bt_meta.get("entry_regime", ""),
+            setup=getattr(idea, "strategy_type", ""),
+            signal_type=getattr(idea, "signal_type", ""),
         )
         self._trades.append(bt_trade)
 
@@ -786,6 +798,9 @@ class BacktestEngine:
             risk_verdict=bt_meta["risk_verdict"],
             reasoning=idea.reasoning,
             signals_used=idea.signals_used,
+            entry_regime=bt_meta.get("entry_regime", ""),
+            setup=getattr(idea, "strategy_type", ""),
+            signal_type=getattr(idea, "signal_type", ""),
         )
         self._trades.append(bt_trade)
 

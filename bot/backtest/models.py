@@ -92,6 +92,9 @@ class BacktestTrade(BaseModel):
     risk_verdict: str                       # "APPROVED" or "REJECTED"
     reasoning: str = ""
     signals_used: list[str] = Field(default_factory=list)
+    entry_regime: str = ""                   # market regime at entry (attribution)
+    setup: str = ""                          # strategy_type: scalp/intraday/swing/position
+    signal_type: str = ""                    # momentum_confluence / vwap_reversion / ...
 
 
 class EquityPoint(BaseModel):

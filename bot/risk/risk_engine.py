@@ -2111,8 +2111,22 @@ class RiskEngine:
 
     def _effective_max_drawdown_pct(self) -> float:
         """The max-drawdown limit in force: the tighter live cap when live
-        hardening is active, otherwise the standard paper limit."""
+        hardening is active, otherwise the standard paper limit.
+
+        On live, an admin may temporarily override the live cap at runtime
+        (RUNTIME.live_drawdown_override_pct) — e.g. to keep testing live after
+        the account has drawn down past the default. The override is bounded in
+        its setter (never disables the breaker) and only ever consulted on live.
+        Paper/backtest are unaffected. Fail-safe: any error falls back to the
+        configured live cap."""
         if self._live_hardening():
+            try:
+                from bot.config import RUNTIME
+                override = RUNTIME.live_drawdown_override_pct
+                if override is not None:
+                    return float(override)
+            except Exception:
+                pass
             return CONFIG.risk.live_max_drawdown_pct
         return CONFIG.risk.max_drawdown_pct
 
@@ -2311,6 +2325,23 @@ class RiskEngine:
             audit(risk_log, "Circuit breaker manually reset",
                   action="circuit_breaker", result="RESET")
             self._save_state()
+
+    def drawdown_status(self) -> dict:
+        """Read-only snapshot for operator control: current drawdown %, the
+        effective live/paper max-drawdown limit in force, and whether a runtime
+        override is active. Best-effort; returns empty on any error."""
+        try:
+            state = self._portfolio.snapshot()
+            from bot.config import RUNTIME
+            return {
+                "drawdown_pct": float(state.max_drawdown_pct),
+                "effective_limit_pct": float(self._effective_max_drawdown_pct()),
+                "config_live_limit_pct": float(CONFIG.risk.live_max_drawdown_pct),
+                "override_pct": RUNTIME.live_drawdown_override_pct,
+                "live_hardening": self._live_hardening(),
+            }
+        except Exception:
+            return {}
 
     def pending_retrip_reason(self) -> Optional[str]:
         """Why the just-reset breaker would RE-TRIP on the next evaluation, or
