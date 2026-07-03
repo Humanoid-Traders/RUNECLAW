@@ -230,6 +230,13 @@ class RiskEngine:
         self._circuit_trip_day: str = ""          # UTC YYYY-MM-DD of the trip
         self._total_checks = 0
         self._total_rejections = 0
+        # Gate telemetry + strangle-watchdog counters (see gate_stats() /
+        # eval_stats()): per-gate pass/fail/skip buckets, cumulative
+        # evaluated/approved totals, and when something last passed.
+        self._gate_stats: dict[str, dict[str, int]] = {}
+        self._eval_total = 0
+        self._approved_total = 0
+        self._last_approval_time: Optional[float] = None
         # C2-45 FIX: deque with maxlen auto-prunes, no manual size checks needed
         self._rejection_history: deque[dict] = deque(maxlen=50)
         self._lock = threading.RLock()
@@ -1348,19 +1355,16 @@ class RiskEngine:
         # the time of the last approval (engine time, sim-aware). The
         # proactive monitor diffs these to detect "ideas flow but nothing is
         # ever approved" — the failure shape of a silently latched gate.
-        self._eval_total = getattr(self, "_eval_total", 0) + 1
+        self._eval_total += 1
         if verdict == RiskVerdict.APPROVED:
-            self._approved_total = getattr(self, "_approved_total", 0) + 1
+            self._approved_total += 1
             self._last_approval_time = self._now()
 
         # Gate telemetry: per-check pass/fail/skip counters so newly-wired
         # gates (taker 3-bar, book dominance, ...) can be threshold-tuned on
         # live evidence instead of judgment. Prefix before ':' is the gate
         # name; "skipped"/"fail-open" entries count as skips, not passes.
-        try:
-            stats = self._gate_stats
-        except AttributeError:
-            stats = self._gate_stats = {}
+        stats = self._gate_stats
         for entry in passed:
             name_key = entry.split(":", 1)[0].strip()
             low = entry.lower()
