@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
+import os
 import re
 import uuid
 from datetime import datetime
@@ -2601,6 +2602,19 @@ class Analyzer:
         return opposition, of_conf, of_dir
 
     @staticmethod
+    def _ablated_voters() -> frozenset:
+        """Voter names to mute this process (ABLATE_VOTERS env, comma-list).
+        Cached on first read; re-read when the env value changes so an
+        ablation sweep that sets it per-run picks up each new value."""
+        raw = os.getenv("ABLATE_VOTERS", "")
+        cache = getattr(Analyzer, "_ablate_cache", None)
+        if cache is None or cache[0] != raw:
+            parsed = frozenset(n.strip() for n in raw.split(",") if n.strip())
+            Analyzer._ablate_cache = (raw, parsed)
+            return parsed
+        return cache[1]
+
+    @staticmethod
     def _score_confluence(indicators: dict, regime: Regime, signal: MarketSignal,
                           order_flow=None, mtf_result=None, smart_money_score=None,
                           mode_config=None, sentiment_engine=None,
@@ -3315,6 +3329,17 @@ class Analyzer:
                         _scale = _cap / _wsum
                         for i in _active:
                             weights[i] *= _scale
+
+        # Voter ablation hook (measurement only; default no-op). ABLATE_VOTERS
+        # is a comma-list of voter names whose weight is zeroed here, so the
+        # ablation harness can measure each voter's marginal out-of-sample
+        # contribution (drop-one) without touching any voter's code. Empty/
+        # unset → byte-identical to normal scoring. Parsed once and cached.
+        _ablate = Analyzer._ablated_voters()
+        if _ablate and len(names) == len(weights):
+            for i, n in enumerate(names):
+                if n in _ablate:
+                    weights[i] = 0.0
 
         # Phase B: emit the named per-voter breakdown (best-effort; only when
         # fully aligned). Does not affect the confluence value.
