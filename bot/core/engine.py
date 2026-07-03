@@ -228,6 +228,10 @@ class RuneClawEngine:
         self._adopt_notify_callback: Optional[Callable] = None
         self._auto_confirm_notify_callback: Optional[Callable] = None
         self._pending_ideas: dict[str, TradeIdea] = {}
+        # Per-symbol entry lock: serializes confirm_trade for the same symbol so
+        # two overlapping auto-confirm cycles can't each pass the (analysis-time)
+        # duplicate guard and place two orders for one setup (TOCTOU).
+        self._symbol_entry_locks: dict[str, "asyncio.Lock"] = {}
         self._last_confirmed_idea: Optional[TradeIdea] = None
         self._pending_atr: dict[str, Optional[float]] = {}  # H1: store ATR for re-check
         self._pending_pyramid: dict[str, bool] = {}  # Track pyramid add flags
@@ -2500,6 +2504,38 @@ class RuneClawEngine:
         )
 
     async def confirm_trade(self, trade_id: str, user_id: str = "") -> str:
+        """Serialize execution per symbol so concurrent/overlapping cycles can't
+        double-place the same setup, then delegate to the real logic.
+
+        The duplicate-symbol guard runs at ANALYSIS time; two overlapping
+        auto-confirm cycles can both clear it before either order lands (TOCTOU),
+        producing two live orders for one signal. A per-symbol lock plus a
+        re-check of live open/pending orders here — under the lock — closes that
+        window: the second confirmation sees the first's order and is suppressed
+        (unless it's a deliberately-flagged pyramid add).
+        """
+        idea = self._pending_ideas.get(trade_id, None)
+        if idea is None:
+            return "Trade not found or expired."
+        key = normalize_symbol(idea.asset)
+        lock = self._symbol_entry_locks.setdefault(key, asyncio.Lock())
+        async with lock:
+            if (CONFIG.is_live() and hasattr(self, "live_executor")
+                    and not self._pending_pyramid.get(trade_id)):
+                for lp in self.live_executor.open_positions:  # open + pending_fill
+                    if normalize_symbol(lp.symbol) == key:
+                        self._pending_ideas.pop(trade_id, None)
+                        self._pending_atr.pop(trade_id, None)
+                        audit(trade_log,
+                              f"Duplicate entry suppressed for {idea.asset} — an "
+                              f"open/pending order already exists",
+                              action="dup_entry", result="SUPPRESSED",
+                              data={"trade_id": trade_id, "symbol": idea.asset})
+                        return (f"⏭️ Skipped {idea.asset}: already have an "
+                                f"open/pending order for it (duplicate suppressed).")
+            return await self._confirm_trade_inner(trade_id, user_id)
+
+    async def _confirm_trade_inner(self, trade_id: str, user_id: str = "") -> str:
         """
         Human confirms a pending trade idea.  This is the ONLY path to execution.
         If user_id is provided, the trade is recorded in that user's isolated portfolio.
