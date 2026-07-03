@@ -195,6 +195,29 @@ def _recompute_elliott_indicators(indicators: dict, highs, lows, closes,
     _run_elliott_detectors(indicators, highs, lows, closes, swings)
 
 
+def _apply_scalp_session_vwap(indicators: dict, strategy_type: str,
+                              mtf_candles: dict) -> None:
+    """For scalp/intraday setups, rebuild ``vwap_session`` from the 15m series
+    (audit follow-up). The primary 1h session VWAP is a UTC-day average of
+    <=24 hourly points — too coarse for a scalp; the 15m series gives ~96
+    intraday points. No-op (fail-open) for higher-horizon setups or when 15m
+    isn't supplied. Mutates ``indicators``.
+    """
+    if strategy_type not in ("scalp", "intraday"):
+        return
+    series = (mtf_candles or {}).get("15m")
+    if not series or len(series) < 8:
+        return
+    arr = np.asarray(series, dtype=float)
+    highs, lows, closes, volumes = arr[:, 2], arr[:, 3], arr[:, 4], arr[:, 5]
+    times = arr[:, 0]
+    tp = (highs + lows + closes) / 3.0
+    sv = Analyzer._session_vwap(tp, volumes, times)
+    if sv is not None and sv > 0:
+        indicators["vwap_session"] = round(float(sv), 6)
+        indicators["vwap_session_tf"] = "15m"  # observability
+
+
 def _apply_vwap_setup_anchoring(indicators: dict, strategy_type: str) -> None:
     """Re-point the ``vwap`` value consumers read to the anchor whose horizon
     matches this setup (scalp/intraday→session, swing→rolling-50, position→full
@@ -1007,6 +1030,15 @@ class Analyzer:
                 _apply_timeframe_matched_elliott(indicators, strategy_type, mtf_candles)
             except Exception as exc:
                 system_log.debug("Timeframe-matched Elliott skipped: %s", exc)
+
+        # ── Scalp session VWAP from 15m (gated, default ON) ─────────────
+        # Rebuild the session anchor scalps read from the 15m series BEFORE
+        # setup anchoring re-points "vwap" to it. Fail-open to the 1h session.
+        if (CONFIG.analyzer.scalp_session_vwap_enabled and mtf_candles):
+            try:
+                _apply_scalp_session_vwap(indicators, strategy_type, mtf_candles)
+            except Exception as exc:
+                system_log.debug("Scalp session VWAP skipped: %s", exc)
 
         # ── Setup-matched VWAP anchoring (gated, default ON) ────────────
         # Re-point the "vwap" consumers read (confluence vote, S/R candidate,
@@ -3297,6 +3329,36 @@ class Analyzer:
         weighted_sum = sum(v * w for v, w in zip(votes, weights))
         # Normalize to [0, 1]: -total_weight → 0, +total_weight → 1
         confluence = (weighted_sum / total_weight + 1) / 2
+
+        # Cross-layer confirmation bonus (gated, default OFF — measured). The
+        # weighted average captures vote MAGNITUDE but not BREADTH: three
+        # independent families each nudging +0.5 average to the same net
+        # contribution as one strong vote, yet three independent confirmations
+        # are more robust. When >=2 distinct families (liquidity / price-action
+        # / structure / order-flow) agree with the net direction, nudge a
+        # small bounded amount toward it. The family caps already prevent
+        # SAME-concept stacking, so this can't re-introduce double-count.
+        if (CONFIG.analyzer.cross_layer_confirmation_enabled
+                and len(names) == len(votes) and abs(confluence - 0.5) > 1e-6):
+            net_dir = 1.0 if confluence > 0.5 else -1.0
+            _fam_map = {
+                "liquidity": ("liquidity_sweep",),
+                "price_action": ("candlestick", "reversal", "chart_patterns"),
+                "structure": ("mtf_bos", "mtf_structure", "mtf_choch"),
+                "order_flow": ("of_cvd_trend", "of_book_imbalance",
+                               "of_whale_bias", "taker"),
+            }
+            agreeing = 0
+            for _members in _fam_map.values():
+                fam_vote = sum(votes[i] for i, n in enumerate(names)
+                               if n in _members)
+                if fam_vote * net_dir > 1e-9:
+                    agreeing += 1
+            if agreeing >= 2:
+                # +0.03 per agreeing family beyond the first, capped at +0.09.
+                bonus = min(0.09, 0.03 * (agreeing - 1)) * net_dir
+                confluence += bonus
+
         return round(max(0.0, min(1.0, confluence)), 4)
 
     # -- LLM Reasoning --

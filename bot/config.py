@@ -877,6 +877,20 @@ class AnalyzerConfig:
     vwap_slope_vote_enabled: bool = _env_bool("VWAP_SLOPE_VOTE_ENABLED", True)
     vwap_setup_anchoring_enabled: bool = _env_bool("VWAP_SETUP_ANCHORING_ENABLED", True)
     vwap_anchored_pivot_enabled: bool = _env_bool("VWAP_ANCHORED_PIVOT_ENABLED", True)
+    # Scalp/intraday session VWAP built from the 15m series (default ON;
+    # audit follow-up). A UTC-day session VWAP of <=24 HOURLY points is coarse
+    # for a scalp; when mtf_candles supplies "15m", recompute vwap_session on
+    # it so the session anchor scalps read has real intraday granularity.
+    # Fail-open: falls back to the 1h session VWAP when 15m is absent.
+    scalp_session_vwap_enabled: bool = _env_bool("SCALP_SESSION_VWAP_ENABLED", True)
+    # Cross-layer confirmation bonus (default OFF — MEASURED). The family caps
+    # stop the SAME concept double-counting; this rewards genuinely
+    # INDEPENDENT confirmation — when >=2 distinct signal families (liquidity
+    # sweep / reversal candle / structure break / order-flow aggression) agree
+    # with the net confluence direction, nudge confidence a bounded amount
+    # toward it (breadth the weighted average alone can't see). Ships dark
+    # until it measures non-harmful on the honest benchmark.
+    cross_layer_confirmation_enabled: bool = _env_bool("CROSS_LAYER_CONFIRMATION_ENABLED", False)
 
     # Direction-aware Fibonacci (default ON; audit fix #4). The legacy fib
     # module force-fit every market into a bullish low->high retracement and
