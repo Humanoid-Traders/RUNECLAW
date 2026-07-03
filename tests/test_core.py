@@ -2072,8 +2072,13 @@ class TestAuditV3Fixes:
         mock_exchange.fetch_ticker = AsyncMock(return_value={"last": 50100.0})
         engine.scanner._get_exchange = AsyncMock(return_value=mock_exchange)
 
-        # Mock open_position to raise ValueError (simulates balance exhaustion race)
-        with patch.object(engine.portfolio, "open_position",
+        # This bot is LIVE-ONLY: a confirm that cannot fill (paper disabled, or
+        # a balance-exhaustion ValueError on the live path) must return a CLEAR
+        # user-facing message AND clean up the pending idea — never silently
+        # vanish. Force is_live()=False for a deterministic, self-contained
+        # decline path (the paper open_position mock stays as belt-and-braces).
+        with patch.object(type(CONFIG), "is_live", return_value=False), \
+             patch.object(engine.portfolio, "open_position",
                           side_effect=ValueError("Insufficient balance to open position")):
             loop = asyncio.new_event_loop()
             try:
@@ -2081,9 +2086,11 @@ class TestAuditV3Fixes:
             finally:
                 loop.close()
 
-        # Should not raise; should return a failure message, not silently vanish
-        assert "failed" in result.lower() or "rejected" in result.lower(), \
-            f"Expected failure/rejection message, got: {result}"
+        # Not silently lost: confirm_trade returns a clear, non-empty decline
+        # message rather than swallowing the failure and returning nothing.
+        assert result and result.strip(), f"Expected a message, got: {result!r}"
+        assert any(w in result.lower() for w in ("failed", "rejected", "disabled")), \
+            f"Expected a clear decline message, got: {result}"
 
     def test_confirm_trade_recheck_exception_logged(self):
         """Fix 6: if risk.evaluate raises during re-check, idea must not vanish silently."""

@@ -209,24 +209,42 @@ class MacroEventProvider:
                 gen_str = data.get("generated_utc")
                 events_raw = data.get("events", [])
 
+                self._events = self._normalise_events(events_raw)
+
                 if gen_str:
                     self._generated_utc = datetime.fromisoformat(gen_str.replace("Z", "+00:00"))
                     if self._generated_utc.tzinfo is None:
                         self._generated_utc = self._generated_utc.replace(tzinfo=UTC)
                     age = datetime.now(UTC) - self._generated_utc
                     if age > timedelta(hours=self._max_stale_hours):
+                        # A seed calendar of SCHEDULED events (FOMC/CPI dates
+                        # fixed a year ahead) doesn't become wrong because the
+                        # FILE is old — only when it stops covering the forward
+                        # horizon. Keying "stale" off file age alone fail-closed
+                        # the whole bot after 72 h even with valid events through
+                        # December (a self-inflicted outage). Mark stale ONLY
+                        # when the seed no longer covers the near future; an
+                        # aged-but-still-covering seed is trusted, with a warning
+                        # to refresh.
+                        _now = datetime.now(UTC)
+                        _horizon = _now + timedelta(hours=self._max_stale_hours)
+                        _has_forward_coverage = any(
+                            ev.get("scheduled_utc") and ev["scheduled_utc"] >= _horizon
+                            for ev in self._events)
+                        if not _has_forward_coverage:
+                            logger.warning(
+                                "Seed calendar is %.1f h old AND lacks events past "
+                                "the %d h horizon — marking stale (fail-closed)",
+                                age.total_seconds() / 3600, self._max_stale_hours)
+                            self._calendar_stale = True
+                            self._calendar_blind = False
+                            self._calendar_loaded = True
+                            return
                         logger.warning(
-                            "Seed calendar is %.1f h old (max %d h) — marking stale",
-                            age.total_seconds() / 3600,
-                            self._max_stale_hours,
-                        )
-                        self._calendar_stale = True
-                        self._calendar_blind = False
-                        self._calendar_loaded = True
-                        self._events = self._normalise_events(events_raw)
-                        return
+                            "Seed calendar is %.1f h old (max %d h) but still covers "
+                            "the forward horizon — trusting it; refresh recommended",
+                            age.total_seconds() / 3600, self._max_stale_hours)
 
-                self._events = self._normalise_events(events_raw)
                 self._calendar_loaded = True
                 self._calendar_stale = False
                 self._calendar_blind = False
