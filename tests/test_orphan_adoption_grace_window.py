@@ -156,6 +156,47 @@ class TestLimitOrderAdoptionGraceWindow:
 
         assert adopted == ["XPT/USDT:USDT"]
 
+    @pytest.mark.asyncio
+    async def test_fresh_exchange_order_not_adopted_even_with_empty_local_maps(self):
+        """The reported ALGO incident: a limit order placed THIS session was
+        re-adopted ~1 min later with a false 'SL/TP may not be set' alarm. The
+        local grace map / exact-match guards can all miss (order-id format drift
+        between place and fetch, a second executor instance whose _recent_local_
+        opens is empty, stale in-memory _positions). The exchange's OWN creation
+        timestamp is immune: an order it says is seconds old cannot be a
+        prior-session orphan. Here local tracking is entirely empty — only the
+        freshness guard can save it."""
+        import time as _t
+        order = _synthetic_ex_limit_order(oid="ALGO-FRESH")
+        order["symbol"] = "ALGO/USDT:USDT"
+        order["timestamp"] = int((_t.time() - 60) * 1000)  # created 60s ago
+        executor = LiveExecutor()
+        executor._exchange = _mock_exchange()
+        executor._exchange.fetch_open_orders = AsyncMock(return_value=[order])
+        assert executor._recent_local_opens == {}  # nothing tracked locally
+
+        with patch.object(type(live_executor_mod.CONFIG), "is_live", return_value=True):
+            adopted = await executor.adopt_exchange_limit_orders()
+
+        assert adopted == []
+        assert executor._positions == {}
+
+    @pytest.mark.asyncio
+    async def test_old_exchange_order_still_adopted_past_freshness_window(self):
+        """A genuine orphan — the exchange reports it created well past the grace
+        window — is adopted exactly as before, even with empty local maps."""
+        import time as _t
+        order = _synthetic_ex_limit_order(oid="XPT-OLD")
+        order["timestamp"] = int((_t.time() - _RECENT_LOCAL_OPEN_GRACE - 3600) * 1000)
+        executor = LiveExecutor()
+        executor._exchange = _mock_exchange()
+        executor._exchange.fetch_open_orders = AsyncMock(return_value=[order])
+
+        with patch.object(type(live_executor_mod.CONFIG), "is_live", return_value=True):
+            adopted = await executor.adopt_exchange_limit_orders()
+
+        assert adopted == ["XPT/USDT:USDT"]
+
 
 def _full_mock_exchange() -> AsyncMock:
     """Mirrors tests/test_live_executor.py's _mock_exchange — enough surface

@@ -1620,6 +1620,31 @@ class LiveExecutor:
                 if not raw_sym or price <= 0 or amount <= 0:
                     continue
 
+                # Freshness guard (instance- and normalization-proof): if the
+                # EXCHANGE itself reports this order was created within the grace
+                # window, it is almost certainly one just placed this session —
+                # by the bot or the operator — not a genuine orphan from a prior
+                # session. The local-open grace above relies on this executor's
+                # in-memory _recent_local_opens and an exact symbol/price/id
+                # match; if any of those disagree (order-id format drift between
+                # place and fetch, a second executor instance whose map is empty,
+                # a stale in-memory _positions), a freshly-placed order falls
+                # through and gets re-"adopted" seconds later with a false
+                # "SL/TP may not be set" alarm — the exact incident this guards.
+                # The order's own creation timestamp is immune to all of those.
+                # A REAL orphan from a previous session is hours old and sails
+                # past this window, so it is unaffected.
+                order_ts = o.get("timestamp")
+                if isinstance(order_ts, (int, float)) and order_ts > 0:
+                    age_s = time.time() - (order_ts / 1000.0)
+                    if 0 <= age_s < _RECENT_LOCAL_OPEN_GRACE:
+                        logger.info(
+                            "Skipping adoption of fresh limit order %s for %s %s "
+                            "— exchange created it %ds ago (grace %ds); too new to "
+                            "be a prior-session orphan",
+                            oid, raw_sym, side, int(age_s), _RECENT_LOCAL_OPEN_GRACE)
+                        continue
+
                 direction = "LONG" if side == "BUY" else "SHORT"
                 trade_id = f"ORPHAN-{oid[:8]}"
 
