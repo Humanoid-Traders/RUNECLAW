@@ -2190,6 +2190,7 @@ class RiskEngine:
             self._circuit_breaker_trips = data.get("circuit_breaker_trips", 0)
             self._circuit_trip_cause = data.get("circuit_trip_cause", "")
             self._circuit_trip_day = data.get("circuit_trip_day", "")
+            self._restore_dd_override(data)
             if self._circuit_open:
                 audit(risk_log, "Circuit breaker state restored from disk: ACTIVE",
                       action="state_restore", result="LOADED")
@@ -2240,6 +2241,16 @@ class RiskEngine:
 
     def _export_state_dict(self) -> dict:
         """C2-34: Extract risk state as a dict without writing to disk."""
+        # Persist the admin live-drawdown override so it survives restarts —
+        # an operator who loosened the cap via /drawdownlimit to keep testing
+        # live should not have it silently snap back to the default the next
+        # time the bot is redeployed. Best-effort; None when unset.
+        _dd_override = None
+        try:
+            from bot.config import RUNTIME
+            _dd_override = RUNTIME.live_drawdown_override_pct
+        except Exception:
+            pass
         return {
             "circuit_open": self._circuit_open,
             "consecutive_losses": self._consecutive_losses,
@@ -2247,8 +2258,21 @@ class RiskEngine:
             "circuit_breaker_trips": self._circuit_breaker_trips,
             "circuit_trip_cause": self._circuit_trip_cause,
             "circuit_trip_day": self._circuit_trip_day,
+            "live_drawdown_override_pct": _dd_override,
             "saved_at": datetime.now(UTC).isoformat(),
         }
+
+    @staticmethod
+    def _restore_dd_override(data: dict) -> None:
+        """Reapply a persisted admin live-drawdown override to RUNTIME on load.
+        The setter re-clamps into the safe band, so a tampered/out-of-range
+        value can never disable the breaker. Best-effort."""
+        try:
+            from bot.config import RUNTIME
+            val = data.get("live_drawdown_override_pct")
+            RUNTIME.live_drawdown_override_pct = val  # setter handles None + clamp
+        except Exception:
+            pass
 
     def _load_from_state_dict(self, data: dict) -> None:
         """C2-34: Restore risk state from a dict (no file I/O).
@@ -2259,6 +2283,7 @@ class RiskEngine:
         self._circuit_breaker_trips = data.get("circuit_breaker_trips", 0)
         self._circuit_trip_cause = data.get("circuit_trip_cause", "")
         self._circuit_trip_day = data.get("circuit_trip_day", "")
+        self._restore_dd_override(data)
         if self._circuit_open:
             audit(risk_log, "Circuit breaker state restored from combined state: ACTIVE",
                   action="state_restore", result="LOADED")

@@ -2145,6 +2145,16 @@ class TelegramHandler:
             f"🟢 Margin cap set: <code>{target_id}</code> may commit at most "
             f"<b>${usd:,.2f}</b> margin per live trade (still bounded by the global cap).")
 
+    def _persist_drawdown_override(self) -> None:
+        """Flush the risk state so the admin live-drawdown override survives a
+        restart (it is serialized into the risk state file and reloaded on
+        boot). Best-effort — the in-memory override still applies this session
+        even if the disk write fails."""
+        try:
+            self.engine.risk._save_state()
+        except Exception as exc:
+            system_log.debug("drawdown override persist failed: %s", exc)
+
     async def _cmd_drawdownlimit(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """Admin only: /drawdownlimit <pct | off | status> — temporarily override
         the LIVE max-drawdown breaker limit at runtime, without a redeploy.
@@ -2194,6 +2204,7 @@ class TelegramHandler:
         raw = args[0].strip().lower()
         if raw in ("off", "none", "clear", "default", "reset"):
             RUNTIME.clear_live_drawdown_override()
+            self._persist_drawdown_override()
             audit(system_log, "Live drawdown override cleared via /drawdownlimit",
                   action="drawdown_override", result="CLEARED")
             lines = ["🟢 Live drawdown override <b>cleared</b> — back to the "
@@ -2214,6 +2225,7 @@ class TelegramHandler:
         RUNTIME.live_drawdown_override_pct = pct
         applied = RUNTIME.live_drawdown_override_pct
         clamped = abs(applied - pct) > 1e-9
+        self._persist_drawdown_override()
         audit(system_log, "Live drawdown override set via /drawdownlimit",
               action="drawdown_override", result="SET",
               data={"requested_pct": pct, "applied_pct": applied})
