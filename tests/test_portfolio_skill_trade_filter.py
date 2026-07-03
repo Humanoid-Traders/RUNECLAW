@@ -36,6 +36,10 @@ class _FakeEngine:
     def __init__(self, closed):
         self.live_executor = _FakeExecutor(closed)
 
+    def viewer_executor(self, user_id=""):
+        # Single-account (per-user off) → the shared operator executor.
+        return self.live_executor
+
     async def get_effective_equity_async(self, user_id):
         return 100.0
 
