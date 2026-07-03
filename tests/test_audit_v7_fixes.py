@@ -224,7 +224,7 @@ class TestSimVetoOrdering:
         # and the pyramid SL->breakeven _update_exchange_sl side effect.
         import inspect
         from bot.core.engine import RuneClawEngine
-        src = inspect.getsource(RuneClawEngine.confirm_trade)
+        src = inspect.getsource(RuneClawEngine.confirm_trade) + inspect.getsource(RuneClawEngine._confirm_trade_inner)
         veto_idx = src.index("_live_execution_vetoed_by_simulation")
         exec_idx = src.index('AgentState.EXECUTING, f"executing LIVE trade')
         # Match the actual call (not the explanatory comment that mentions it).
@@ -322,7 +322,7 @@ class TestLivePolicyFailClosed:
         # auto-confirm-live opt-in; otherwise the token is left unminted.
         import inspect
         from bot.core.engine import RuneClawEngine
-        src = inspect.getsource(RuneClawEngine.confirm_trade)
+        src = inspect.getsource(RuneClawEngine.confirm_trade) + inspect.getsource(RuneClawEngine._confirm_trade_inner)
         assert "if human or CONFIG.auto_confirm_live_enabled:" in src
         assert "Lock 5 NOT minted" in src
 
@@ -330,7 +330,7 @@ class TestLivePolicyFailClosed:
         # F-13: a critique exception in LIVE mode rejects rather than proceeding.
         import inspect
         from bot.core.engine import RuneClawEngine
-        src = inspect.getsource(RuneClawEngine.confirm_trade)
+        src = inspect.getsource(RuneClawEngine.confirm_trade) + inspect.getsource(RuneClawEngine._confirm_trade_inner)
         assert "ERROR_FAILCLOSED" in src
         # The fail-closed branch is guarded by live mode.
         idx = src.index("ERROR_FAILCLOSED")

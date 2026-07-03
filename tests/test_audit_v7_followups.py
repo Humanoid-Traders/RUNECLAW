@@ -100,7 +100,7 @@ class TestManualMarginDoubleLeverage:
     def test_engine_source_no_longer_premultiplies(self):
         import inspect
         from bot.core.engine import RuneClawEngine
-        src = inspect.getsource(RuneClawEngine.confirm_trade)
+        src = inspect.getsource(RuneClawEngine.confirm_trade) + inspect.getsource(RuneClawEngine._confirm_trade_inner)
         # The pre-multiply form must be gone.
         assert "size_usd = manual_margin * leverage" not in src
         assert "size_usd = manual_margin" in src
