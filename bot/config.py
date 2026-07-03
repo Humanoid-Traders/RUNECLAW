@@ -810,9 +810,12 @@ class AnalyzerConfig:
 
     # Smart-money-concept voters (default OFF — measured): fair value gaps,
     # equal-highs/lows liquidity pools and premium/discount positioning
-    # (bot/core/smc.py). On the 10-symbol honest benchmark these voters cut
-    # trade flow roughly in half and turned the period negative, so they
-    # ship dark until a configuration measures non-harmful.
+    # (bot/core/smc.py). Production-venue re-measurement (jointly with the
+    # MFI + vol-spike voters): full-period +1.44%/PF 1.53 vs baseline
+    # +0.07%/1.02 — but 6-fold walk-forward 0/6 profitable, mean OOS -1.27%
+    # vs baseline's -1.14%. The full-period gain doesn't survive the
+    # stricter OOS standard, so these stay dark until live evidence or a
+    # WF-positive configuration.
     smc_voters_enabled: bool = _env_bool("SMC_VOTERS_ENABLED", False)
 
     # Strategy-mode confidence floor (default ON): a SPECIFIC selected
@@ -829,13 +832,13 @@ class AnalyzerConfig:
     mode_min_confidence_enabled: bool = _env_bool("MODE_MIN_CONFIDENCE_ENABLED", False)
 
     # MFI voter (default OFF — measured): the MFI(14) indicator is always
-    # computed; the VOTER measurably suppressed portfolio trade flow on the
-    # honest benchmark even in skip-neutral form, so it ships dark.
+    # computed; the VOTER ships dark. Production re-measurement (jointly
+    # with SMC + vol-spike): full-period positive but walk-forward 0/6 and
+    # worse than baseline — see the smc_voters_enabled note.
     mfi_voter_enabled: bool = _env_bool("MFI_VOTER_ENABLED", False)
     # Per-bar volume-spike voter upgrade (default OFF — measured): the
-    # bar-level spike indicator is always computed; using it as the voter
-    # trigger changed flow measurably negative in combination testing, so
-    # the voter keeps the legacy scanner flag until re-measured alone.
+    # bar-level spike indicator is always computed; the voter trigger ships
+    # dark on the same joint production measurement as SMC/MFI above.
     vol_spike_bar_vote_enabled: bool = _env_bool("VOL_SPIKE_BAR_VOTE_ENABLED", False)
 
     # Advanced VWAP (bot/core/vwap.py). Default ON at the operator's request;
