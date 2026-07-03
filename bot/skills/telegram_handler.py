@@ -3992,10 +3992,14 @@ class TelegramHandler:
                     f"SL: <code>${idea.stop_loss:,.4f}</code> | TP: <code>${idea.take_profit:,.4f}</code>",
                     "",
                 ]
-                # Add result preview
+                # Add result preview. The executor's line already carries HTML
+                # (<b>\u2026</b>); html.escape() would turn those into literal "<b>"
+                # text in the card. Strip the tags first, then escape the plain
+                # text so it renders cleanly under parse_mode=HTML.
                 first_line = result_msg.strip().split("\n")[0] if result_msg else ""
                 if first_line:
-                    card_lines.append(f"\u2192 {html.escape(first_line)}")
+                    _plain = re.sub(r"<[^>]+>", "", first_line)
+                    card_lines.append(f"\u2192 {html.escape(_plain)}")
                 card_lines.extend([
                     "",
                     "\u2500" * 28,
