@@ -187,6 +187,14 @@
         <div class="sep">or</div>
         <button class="btn btn-ghost btn-block" onclick="switchTab('register')">New here? Create account</button>
       </div>
+
+      <!-- Social sign-in / sign-up: same buttons create OR log in an account. -->
+      <div id="social-auth" style="display:none;margin-top:14px">
+        <div class="sep">or continue with</div>
+        <div class="err" id="social-err" style="font-size:12px;color:var(--red);min-height:18px;margin-bottom:6px;text-align:center"></div>
+        <div id="google-btn" style="display:flex;justify-content:center;margin-bottom:10px"></div>
+        <div id="telegram-btn" style="display:flex;justify-content:center"></div>
+      </div>
     </div>
 
     <div class="card" id="account">
@@ -300,6 +308,45 @@ function copyToken(){
   navigator.clipboard.writeText(tok.textContent.trim());
   tok.classList.add('copied');setTimeout(()=>tok.classList.remove('copied'),2000);
 }
+// --- Social sign-in (Google + Telegram); buttons both CREATE and LOG IN ---
+async function socialLogin(path,body){
+  setErr('social-err','');
+  const res=await apiCall(path,body);
+  if(res.error){setErr('social-err',res.error);return;}
+  SESSION=res;showAccount(res);
+}
+// Google Identity Services callback (global — GIS calls it by name).
+function handleGoogleCredential(resp){
+  if(resp&&resp.credential)socialLogin('/auth/google',{credential:resp.credential});
+}
+// Telegram Login Widget callback (global — the widget calls it by name).
+function onTelegramAuth(user){ if(user)socialLogin('/auth/telegram',user); }
+(async()=>{
+  let cfg={};
+  try{cfg=await fetch(API+'/auth/config').then(r=>r.json());}catch{return;}
+  if(!cfg.google_client_id&&!cfg.telegram_bot)return; // nothing configured
+  document.getElementById('social-auth').style.display='block';
+  if(cfg.google_client_id){
+    const s=document.createElement('script');
+    s.src='https://accounts.google.com/gsi/client';s.async=true;
+    s.onload=()=>{
+      try{
+        google.accounts.id.initialize({client_id:cfg.google_client_id,callback:handleGoogleCredential});
+        google.accounts.id.renderButton(document.getElementById('google-btn'),
+          {theme:'filled_black',size:'large',shape:'pill',text:'continue_with',width:320});
+      }catch(e){/* GIS blocked/offline: leave email login working */}
+    };
+    document.head.appendChild(s);
+  }
+  if(cfg.telegram_bot){
+    const s=document.createElement('script');
+    s.src='https://telegram.org/js/telegram-widget.js?22';s.async=true;
+    s.setAttribute('data-telegram-login',cfg.telegram_bot);
+    s.setAttribute('data-size','large');s.setAttribute('data-radius','20');
+    s.setAttribute('data-onauth','onTelegramAuth(user)');s.setAttribute('data-request-access','write');
+    document.getElementById('telegram-btn').appendChild(s);
+  }
+})();
 (async()=>{
   const saved=localStorage.getItem('rc_session');
   if(!saved)return;
