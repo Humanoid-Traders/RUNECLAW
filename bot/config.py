@@ -154,6 +154,19 @@ class RiskLimits:
     # day is also bad, the daily-loss check re-trips immediately. Default ON;
     # disable to keep the breaker fully manual.
     daily_loss_breaker_autoreset_enabled: bool = _env_bool("DAILY_LOSS_BREAKER_AUTORESET", True)
+    # Streak-breaker self-recovery (default 0 = OFF, opt-in). The consecutive-
+    # loss breaker (trips at max_consecutive_losses) is manual-reset only, so a
+    # live bot sits PAUSED until a human runs /resume — and re-pauses the next
+    # time it loses a streak. Set this to a positive number of hours to let the
+    # streak breaker auto-clear that many hours after the LAST loss (resets the
+    # streak counter to 0, exactly like /resume), so an unattended admin
+    # account keeps trading instead of latching. Daily-loss and DRAWDOWN
+    # breakers are unaffected — those protect the account balance and still
+    # need their own recovery. NOTE: this automates resuming; if the strategy
+    # is losing, it resumes INTO more losses — the drawdown breaker remains the
+    # backstop. 0 keeps the safe manual-only behavior.
+    streak_breaker_autoreset_hours: float = _env_float_bounded(
+        "STREAK_BREAKER_AUTORESET_HOURS", 0.0, 0.0, 168.0)
     # CFG-2: clamp risk-gate limits so an operator typo or a negative value
     # (which would invert the `>`/`<` comparisons and silently disable the guard)
     # cannot load. Bounds are generous enough to never reject a legitimate value.
