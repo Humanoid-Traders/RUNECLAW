@@ -220,6 +220,63 @@ class OrderFlowAnalyzer:
         (deduped, gap-free) instead of overlapping REST windows."""
         self._ws_feed = feed
 
+    def warm_oi_history(self, path: str = "data/learning/order_flow_snapshots.jsonl",
+                        max_age_hours: float = 24.0) -> int:
+        """Reload per-symbol OI/price history from recorded OF snapshots so the
+        OI-trend and OI-price-divergence classifiers survive restarts instead
+        of re-warming over N live scans (each scan is minutes apart, so a
+        restart used to blind them for roughly an hour). Reads only the tail
+        of the snapshot file, keeps snapshots younger than ``max_age_hours``
+        (stale OI is worse than no OI), and returns the number of symbols
+        warmed. Best-effort fail-open: any error returns 0 and live scanning
+        proceeds with cold history exactly as before."""
+        import json as _json
+        from datetime import datetime as _dt
+
+        try:
+            from pathlib import Path as _Path
+            p = _Path(path)
+            if not p.exists():
+                return 0
+            # Tail-read: snapshots append forever; only the recent end matters.
+            lines = p.read_text(errors="replace").splitlines()[-4000:]
+            now = _dt.now(UTC)
+            per_symbol: dict[str, list[tuple[float, float]]] = {}
+            for line in lines:
+                try:
+                    rec = _json.loads(line)
+                    sig = rec.get("signal") or {}
+                    oi = sig.get("open_interest_usd")
+                    px = sig.get("mid_price") or 0.0
+                    ts = _dt.fromisoformat(rec.get("ts", ""))
+                    if oi is None or float(oi) <= 0:
+                        continue
+                    if (now - ts).total_seconds() > max_age_hours * 3600:
+                        continue
+                    sym = rec.get("symbol") or sig.get("symbol") or ""
+                    if sym:
+                        per_symbol.setdefault(sym, []).append((float(oi), float(px)))
+                except Exception:
+                    continue
+            warmed = 0
+            with self._lock:
+                for sym, rows in per_symbol.items():
+                    if not rows:
+                        continue
+                    oi_hist = self._oi_val_history.setdefault(
+                        sym, deque(maxlen=self.config.cvd_history_len))
+                    px_hist = self._price_snap_history.setdefault(
+                        sym, deque(maxlen=self.config.cvd_history_len))
+                    for oi, px in rows:
+                        oi_hist.append(oi)
+                        if px > 0:
+                            px_hist.append(px)
+                    self._oi_history[sym] = rows[-1][0]
+                    warmed += 1
+            return warmed
+        except Exception:
+            return 0
+
     async def analyze(
         self,
         exchange,
