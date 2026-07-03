@@ -82,3 +82,32 @@ A clean thematic split:
    a flag (default = current), ship, and A/B on the honest benchmark.
 
 No voter weights are changed by this run — it is measurement only.
+
+## Validation result — the lead did NOT survive walk-forward (VERDICT: do not ship)
+
+Combined mute of all five "harmful" voters
+(`ABLATE_VOTERS=harmonic,chart_patterns,candlestick,poc_magnet,reversal`) vs
+baseline, on a fresh fetch, both in-sample and on the 6-fold walk-forward:
+
+| | in-sample return | in-sample PF | in-sample Sharpe | win% |
+|---|---|---|---|---|
+| baseline | +1.24% | 1.47 | −0.87 | 71% |
+| 5 muted | **+1.63%** | **1.78** | −0.73 | 75% |
+
+| | WF profitable folds | WF mean OOS | WF worst |
+|---|---|---|---|
+| baseline | **1/6** | **−1.04%** | −1.98% |
+| 5 muted | 0/6 | −1.22% | −1.56% |
+
+**In-sample the mute looks like a clear win; out-of-sample it is WORSE** (0/6
+folds vs 1/6, mean OOS −1.22% vs −1.04%). The single-window ablation "edge" was
+**window-fitting** — the walk-forward, the actual generalization test, refutes
+it.
+
+**Decision: keep all five voters. No weights darked.** The ablation was a valid
+lead-generator; the OOS check did its job and killed the lead before it could
+overfit the live strategy. (Note both arms are negative OOS — consistent with
+the strategy's long-standing weak walk-forward; removing voters does not fix
+that.) Baseline also drifted +0.39% → +1.24% between the sweep and this run on
+the same nominal window — the fetch-window sensitivity that is exactly why
+walk-forward, not any single fetch, is the arbiter.

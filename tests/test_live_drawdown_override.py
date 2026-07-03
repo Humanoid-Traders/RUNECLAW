@@ -82,3 +82,52 @@ class TestEffectiveLimitWiring:
         # Even a huge request is clamped by the setter, so the effective limit
         # can never exceed the hard ceiling.
         assert eng._effective_max_drawdown_pct() == RUNTIME.LIVE_DRAWDOWN_OVERRIDE_MAX
+
+
+class TestPersistenceAcrossRestart:
+    """The admin override must survive a restart: it is serialized into the
+    risk state file and reapplied to RUNTIME on load (so it doesn't snap back
+    to the default when the bot is redeployed mid-testing)."""
+
+    def teardown_method(self):
+        RUNTIME.clear_live_drawdown_override()
+
+    def _engine(self, state_file):
+        from bot.risk.portfolio import PortfolioTracker
+        from bot.risk.risk_engine import RiskEngine
+        return RiskEngine(PortfolioTracker(initial_balance=10_000.0),
+                          state_file=str(state_file))
+
+    def test_override_round_trips_through_state_file(self, tmp_path):
+        sf = tmp_path / "risk_state.json"
+        eng = self._engine(sf)
+        RUNTIME.live_drawdown_override_pct = 16.0
+        eng._save_state()
+        # Simulate a restart: clear in-memory, build a fresh engine on the same
+        # file, and confirm the override is reapplied.
+        RUNTIME.clear_live_drawdown_override()
+        assert RUNTIME.live_drawdown_override_pct is None
+        eng2 = self._engine(sf)
+        eng2._load_state()
+        assert RUNTIME.live_drawdown_override_pct == 16.0
+
+    def test_cleared_override_round_trips_as_none(self, tmp_path):
+        sf = tmp_path / "risk_state.json"
+        eng = self._engine(sf)
+        RUNTIME.live_drawdown_override_pct = 12.0
+        eng._save_state()
+        RUNTIME.clear_live_drawdown_override()
+        eng._save_state()  # persist the cleared state
+        RUNTIME.live_drawdown_override_pct = 25.0  # dirty in-memory
+        self._engine(sf)._load_state()
+        assert RUNTIME.live_drawdown_override_pct is None
+
+    def test_persisted_override_reclamped_on_load(self, tmp_path):
+        import json
+        sf = tmp_path / "risk_state.json"
+        # A hand-tampered file with an out-of-band value must be re-clamped on
+        # load — persistence can never be a backdoor around the safe ceiling.
+        sf.write_text(json.dumps({"circuit_open": False,
+                                  "live_drawdown_override_pct": 999.0}))
+        self._engine(sf)._load_state()
+        assert RUNTIME.live_drawdown_override_pct == RUNTIME.LIVE_DRAWDOWN_OVERRIDE_MAX
