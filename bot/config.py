@@ -829,6 +829,11 @@ class AnalyzerConfig:
     # trades the Tier 2 fixes unlocked — and those trades measured
     # PROFITABLE (floor alone cost ~1.7pp and ~13 trades on the benchmark;
     # combined with the structure trail it collapsed flow to 12 trades).
+    # Production-venue re-validation is AMBIGUOUS: the clean 10-symbol arm
+    # measured +0.22%/31/PF 1.07 vs baseline +0.07%/24/1.02, but a 9-symbol
+    # variant of the same arm measured -0.86%/7/PF 0.34 — universe-
+    # composition sensitivity, not robust benefit. Stays dark pending live
+    # evidence.
     mode_min_confidence_enabled: bool = _env_bool("MODE_MIN_CONFIDENCE_ENABLED", False)
 
     # MFI voter (default OFF — measured): the MFI(14) indicator is always
