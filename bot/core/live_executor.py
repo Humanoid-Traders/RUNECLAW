@@ -1557,6 +1557,7 @@ class LiveExecutor:
         Returns list of adopted symbol names.
         """
         adopted: list[str] = []
+        reclaimed_any = False  # True once a bot-placed order is quietly reclaimed
         if not CONFIG.is_live():
             return adopted
         try:
@@ -1596,21 +1597,31 @@ class LiveExecutor:
                 # e.g. clientOid="rcTIf6798581" → trade_id="TI-f6798581"
                 raw_info = o.get("info", {})
                 client_oid = raw_info.get("clientOid", "") or o.get("clientOrderId", "")
-                if client_oid.startswith("rc"):
+                # Ownership: an "rc"-prefixed clientOid means THE BOT placed this
+                # order. That fact is age- and local-state-independent — it holds
+                # even after a restart that lost the local record, and even when
+                # the order-id echo drifts. A bot-placed order must never be
+                # surfaced as an EXTERNAL "opened in a previous session — SL/TP
+                # may not be set" orphan (the reported false alarm). We still
+                # adopt it so it's tracked, but under its real trade_id and
+                # WITHOUT the external-orphan notification.
+                own_order = client_oid.startswith("rc")
+                own_tid = ""
+                if own_order:
                     # Reconstruct trade_id: "rcTIf6798581" → "TI-f6798581"
-                    possible_tid = client_oid[2:]  # strip "rc"
+                    own_tid = client_oid[2:]  # strip "rc"
                     # Insert hyphen after "TI" if missing: "TIf6798581" → "TI-f6798581"
-                    if possible_tid.startswith("TI") and not possible_tid.startswith("TI-"):
-                        possible_tid = "TI-" + possible_tid[2:]
-                    if possible_tid in tracked_trade_ids:
+                    if own_tid.startswith("TI") and not own_tid.startswith("TI-"):
+                        own_tid = "TI-" + own_tid[2:]
+                    if own_tid in tracked_trade_ids:
                         # Already tracked — just link the order ID
                         for p in self._positions.values():
-                            if p.trade_id == possible_tid and not p.limit_order_id:
+                            if p.trade_id == own_tid and not p.limit_order_id:
                                 p.limit_order_id = oid
                                 self._save_positions()
                         continue
 
-                # This is an orphaned limit order — adopt it
+                # This is an untracked limit order — adopt it
                 raw_sym = o.get("symbol") or ""
                 side = (o.get("side") or "").upper()
                 price = float(o.get("price") or 0)
@@ -1646,7 +1657,10 @@ class LiveExecutor:
                         continue
 
                 direction = "LONG" if side == "BUY" else "SHORT"
-                trade_id = f"ORPHAN-{oid[:8]}"
+                # A bot-placed order (own_order) is reclaimed under its real
+                # trade_id and NOT reported as an external orphan. A genuinely
+                # external order keeps the ORPHAN- prefix and is surfaced.
+                trade_id = own_tid if own_order else f"ORPHAN-{oid[:8]}"
 
                 # Skip if we already have a position for this trade_id
                 if trade_id in self._positions:
@@ -1722,20 +1736,30 @@ class LiveExecutor:
                     limit_order_id=oid,
                 )
                 self._positions[trade_id] = pos
-                adopted.append(raw_sym)
+                reclaimed_any = reclaimed_any or own_order
+                # Only EXTERNAL orders drive the "Adopted Exchange Positions —
+                # opened in a previous session, SL/TP may not be set" alarm. A
+                # reclaimed bot-placed order is tracked silently — it is ours,
+                # its SL/TP is handled by the normal post-fill path, and it must
+                # not read as a stranger to the operator.
+                if not own_order:
+                    adopted.append(raw_sym)
 
                 audit(trade_log,
-                      f"Adopted orphan limit order: {raw_sym} {direction} "
-                      f"@ ${price:.4f} qty={amount} lev={leverage}x "
+                      (f"Reclaimed own limit order: {raw_sym} {direction} "
+                       if own_order else
+                       f"Adopted orphan limit order: {raw_sym} {direction} ")
+                      + f"@ ${price:.4f} qty={amount} lev={leverage}x "
                       f"margin=${margin:.2f} marginMode={margin_mode} (order {oid})",
-                      action="adopt_limit_order", result="OK",
+                      action=("reclaim_limit_order" if own_order else "adopt_limit_order"),
+                      result="OK",
                       data={"trade_id": trade_id, "symbol": raw_sym,
                             "order_id": oid, "price": price, "amount": amount,
                             "leverage": leverage, "margin": margin,
                             "margin_mode": margin_mode,
-                            "client_oid": client_oid})
+                            "client_oid": client_oid, "own_order": own_order})
 
-            if adopted:
+            if adopted or reclaimed_any:
                 self._save_positions()
 
         except Exception as exc:
