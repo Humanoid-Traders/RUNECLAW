@@ -89,10 +89,14 @@ class TestFetchBitgetCloseDataPnlIsNetFlag:
     @pytest.mark.asyncio
     async def test_position_history_with_nonzero_net_profit_is_flagged_net(self):
         executor = self._executor()
+        # v2 field names ONLY (openAvgPrice/pnl) — a payload keyed the way Bitget
+        # actually returns it. Reading the v1 names (openPrice/achievedProfits)
+        # off this yields 0 -> no match -> None, the TI-a4ba8a82 root cause. This
+        # fixture would FAIL against the pre-fix code, so it is a real guard.
         executor._exchange.privateMixGetV2MixPositionHistoryPosition = AsyncMock(
             return_value={"data": {"list": [{
-                "openPrice": "100000", "closeAvgPrice": "105000",
-                "achievedProfits": "50", "openFee": "1", "closeFee": "1",
+                "openAvgPrice": "100000", "closeAvgPrice": "105000",
+                "pnl": "50", "openFee": "1", "closeFee": "1",
                 "netProfit": "48", "closeType": "normal",
             }]}})
         result = await executor._fetch_bitget_close_data(self._pos())
@@ -105,8 +109,8 @@ class TestFetchBitgetCloseDataPnlIsNetFlag:
         executor = self._executor()
         executor._exchange.privateMixGetV2MixPositionHistoryPosition = AsyncMock(
             return_value={"data": {"list": [{
-                "openPrice": "100000", "closeAvgPrice": "105000",
-                "achievedProfits": "50", "openFee": "1", "closeFee": "1",
+                "openAvgPrice": "100000", "closeAvgPrice": "105000",
+                "pnl": "50", "openFee": "1", "closeFee": "1",
                 "netProfit": "0", "closeType": "normal",
             }]}})
         result = await executor._fetch_bitget_close_data(self._pos())

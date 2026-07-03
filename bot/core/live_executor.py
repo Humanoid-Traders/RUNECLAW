@@ -33,6 +33,7 @@ from bot.config import CONFIG
 from bot.utils.logger import audit, trade_log, system_log
 from bot.utils.models import Direction, TradeIdea
 from bot.utils.trailing import make_trailing_state, update_trailing_stop
+from bot.utils.close_reason import stop_exit_label
 from bot.core.order_rules import (
     is_market_open, is_weekend_queued, adjust_sl_for_gap_risk,
     adjust_size_for_weekend, should_defer_tp_sl,
@@ -276,6 +277,15 @@ class LivePosition:
     commission: Optional[float] = None
     # Reason the position was closed (e.g. "SL", "TP", "manual", error status)
     close_reason: Optional[str] = None
+    # Provenance (forensic aid — TI-a4ba8a82 was unrecoverable without it):
+    #   origin      — how the position began: "executed" (normal signal),
+    #                 "adopted" (orphan on exchange), "reclaimed" (own limit
+    #                 order re-tracked).
+    #   fill_source — how the CLOSE record was sourced:
+    #                 "bitget_position_history"/"exchange_fill_*"/"closed_order"
+    #                 (authoritative) vs "ticker_fallback" (inferred, not truth).
+    origin: str = "executed"
+    fill_source: Optional[str] = None
 
 
 class LiveExecutor:
@@ -1423,6 +1433,7 @@ class LiveExecutor:
                     is_spot=False,
                     opened_at=opened_at,
                     status="open",
+                    origin="adopted",
                 )
 
                 # Read SL/TP directly from v2 position data (exchange is source of truth)
@@ -1762,6 +1773,7 @@ class LiveExecutor:
                     status="pending_fill",
                     order_type="limit",
                     limit_order_id=oid,
+                    origin="reclaimed" if own_order else "adopted",
                 )
                 self._positions[trade_id] = pos
                 reclaimed_any = reclaimed_any or own_order
@@ -5517,7 +5529,12 @@ class LiveExecutor:
 
         # ── 1. Bitget position history endpoint (most accurate) ────────
         # GET /api/v2/mix/position/history-position
-        # Returns: openPrice, closeAvgPrice, achievedProfits, openFee, closeFee
+        # Returns (v2 field names): openAvgPrice, closeAvgPrice, pnl (gross),
+        # netProfit (fee-adjusted), openFee, closeFee. NOTE: the v1 endpoint used
+        # openPrice/achievedProfits — reading those v1 names off a v2 response
+        # yields None -> 0, which silently skipped every row (entry_price_hist<=0
+        # -> continue) and made this authoritative lookup always return None,
+        # forcing the ticker/inference fallback (incident TI-a4ba8a82).
         #
         # Try with progressively wider time windows:
         #   Pass 1: from 5 min before position opened (tight)
@@ -5550,7 +5567,10 @@ class LiveExecutor:
                 best_match = None
                 best_price_diff = float("inf")
                 for entry in entries:
-                    entry_price_hist = float(entry.get("openPrice", 0) or 0)
+                    # v2 name is openAvgPrice; keep the v1 openPrice as a
+                    # defensive fallback so a legacy payload still matches.
+                    entry_price_hist = float(
+                        entry.get("openAvgPrice") or entry.get("openPrice") or 0)
                     if entry_price_hist <= 0:
                         continue
                     price_diff = abs(entry_price_hist - pos.entry_price) / pos.entry_price
@@ -5561,18 +5581,33 @@ class LiveExecutor:
                 if best_match:
                     entry = best_match
                     close_price = float(entry.get("closeAvgPrice", 0) or 0)
-                    pnl = float(entry.get("achievedProfits", 0) or 0)
+                    # v2 name is pnl (gross); keep achievedProfits (v1) as fallback.
+                    pnl = float(entry.get("pnl") or entry.get("achievedProfits") or 0)
                     open_fee = abs(float(entry.get("openFee", 0) or 0))
                     close_fee = abs(float(entry.get("closeFee", 0) or 0))
                     total_fees = open_fee + close_fee
                     net_profit = float(entry.get("netProfit", 0) or 0)
+                    # Leverage as the exchange applied it. Not present on every
+                    # history payload; captured best-effort so the caller can
+                    # reconcile a stale/config-derived pos.leverage when available.
+                    hist_leverage = int(float(
+                        entry.get("leverage") or entry.get("openLeverage") or 0))
 
                     if close_price > 0:
+                        final_pnl = net_profit if net_profit != 0 else pnl
                         close_type = (entry.get("closeType") or "").lower()
                         if "tp" in close_type or "take" in close_type:
                             reason = "TP HIT (exchange)"
                         elif "sl" in close_type or "stop" in close_type:
-                            reason = "SL HIT (exchange)"
+                            # A trailing/breakeven stop that ratcheted onto the
+                            # profit side fills at a GAIN — never label that a loss.
+                            reason = stop_exit_label(
+                                pos.direction == "LONG", pos.entry_price,
+                                pos.stop_loss, close_price,
+                                bool(pos.trailing_state
+                                     and pos.trailing_state.get("trailing_active")),
+                                final_pnl,
+                            ) + " (exchange)"
                         elif "liquidat" in close_type:
                             reason = "LIQUIDATED"
                         else:
@@ -5582,11 +5617,9 @@ class LiveExecutor:
                             # close — say so honestly instead of asserting "MANUAL".
                             reason = "CLOSED (unknown)"
 
-                        final_pnl = net_profit if net_profit != 0 else pnl
-
                         logger.info(
-                            "Bitget position history for %s: close=%.4f, pnl=%.4f, fees=%.4f (price_diff=%.4f%%)",
-                            pos.symbol, close_price, final_pnl, total_fees, best_price_diff * 100,
+                            "Bitget position history for %s: close=%.4f, pnl=%.4f, fees=%.4f, lev=%dx (price_diff=%.4f%%)",
+                            pos.symbol, close_price, final_pnl, total_fees, hist_leverage, best_price_diff * 100,
                         )
                         return {
                             "close_price": close_price,
@@ -5594,6 +5627,7 @@ class LiveExecutor:
                             "fees": total_fees,
                             "reason": reason,
                             "source": "bitget_position_history",
+                            "leverage": hist_leverage,
                             # netProfit is fee-adjusted (fees here already sum
                             # BOTH openFee+closeFee); the achievedProfits
                             # fallback used when netProfit==0 is gross, same
@@ -5639,7 +5673,13 @@ class LiveExecutor:
                         if matched_order == pos.tp_order_id:
                             reason = "TP HIT (exchange)"
                         elif matched_order == pos.sl_order_id:
-                            reason = "SL HIT (exchange)"
+                            reason = stop_exit_label(
+                                pos.direction == "LONG", pos.entry_price,
+                                pos.stop_loss, fill_price,
+                                bool(pos.trailing_state
+                                     and pos.trailing_state.get("trailing_active")),
+                                total_profit,
+                            ) + " (exchange)"
                         else:
                             # Close-side fill not tied to our SL/TP order IDs —
                             # mechanism unknown (manual, ADL, partial ladder, …).
@@ -5712,7 +5752,15 @@ class LiveExecutor:
                             continue
                         avg = o.get("average") or o.get("price")
                         if avg and float(avg) > 0:
-                            reason = "TP HIT (exchange)" if o["id"] == pos.tp_order_id else "SL HIT (exchange)"
+                            if o["id"] == pos.tp_order_id:
+                                reason = "TP HIT (exchange)"
+                            else:
+                                reason = stop_exit_label(
+                                    pos.direction == "LONG", pos.entry_price,
+                                    pos.stop_loss, float(avg),
+                                    bool(pos.trailing_state
+                                         and pos.trailing_state.get("trailing_active")),
+                                ) + " (exchange)"
                             return {
                                 "close_price": float(avg),
                                 "pnl": None,  # Not available from orders
@@ -5774,22 +5822,31 @@ class LiveExecutor:
             tp_hit = exit_price <= pos.take_profit * 1.002
             sl_hit = exit_price >= pos.stop_loss * 0.998
 
+        # A stop that ratcheted onto the profit side of entry (trailing/breakeven)
+        # fills at a GAIN — label it "TRAILING SL HIT", never a bare "SL HIT"
+        # (which every dashboard/win-loss tally reads as a loss). Incident
+        # TI-a4ba8a82: LONG entry 0.5638, trailing stop 0.5679, exit a profit.
+        sl_label = stop_exit_label(
+            pos.direction == "LONG", pos.entry_price, pos.stop_loss, exit_price,
+            bool(pos.trailing_state and pos.trailing_state.get("trailing_active")),
+        ) + " (inferred)"
+
         if tp_hit and not sl_hit:
             return "TP HIT (inferred)"
         elif sl_hit and not tp_hit:
-            return "SL HIT (inferred)"
+            return sl_label
         elif tp_hit and sl_hit:
             # Both triggered (very tight range) — pick closer
             if dist_to_tp < dist_to_sl:
                 return "TP HIT (inferred)"
             else:
-                return "SL HIT (inferred)"
+                return sl_label
 
         # Exit price is between SL and TP — check if it's close to either
         if dist_to_tp <= proximity_threshold:
             return "TP HIT (inferred)"
         elif dist_to_sl <= proximity_threshold:
-            return "SL HIT (inferred)"
+            return sl_label
 
         # Exit sits between SL and TP and near neither — most likely a deliberate
         # close, but we can't prove it was the user vs ADL/partial-fill, so report
@@ -5815,6 +5872,16 @@ class LiveExecutor:
             reason = close_data["reason"]
             fill_source = close_data["source"]
             exchange_reported_pnl = close_data["pnl"]  # may be None for closed_order source
+            # Reconcile leverage from the exchange record when it carries one
+            # (belt-and-suspenders: the position-history payload does not always
+            # include leverage — the periodic sync_positions_from_exchange keeps
+            # pos.leverage current while OPEN so the record is right at close).
+            hist_lev = int(close_data.get("leverage") or 0)
+            if hist_lev > 0 and hist_lev != pos.leverage:
+                logger.warning(
+                    "Leverage reconcile on close %s: tracked=%dx, exchange=%dx",
+                    pos.symbol, pos.leverage, hist_lev)
+                pos.leverage = hist_lev
         else:
             # All exchange lookups failed — use current ticker (real price, not SL/TP)
             try:
@@ -5862,6 +5929,10 @@ class LiveExecutor:
         pos.commission = round(commission, 4)
         pos.pnl_usd = round(net_pnl, 4)
         pos.closed_at = datetime.now(UTC)
+        # Provenance: how this close was sourced — "ticker_fallback" flags a
+        # record whose exit/PnL are inferred, not exchange-authoritative, so a
+        # future forensic pass can tell a fabricated record from a real fill.
+        pos.fill_source = fill_source
 
         self._append_closed_trade(pos)
         self._save_positions()
@@ -6462,6 +6533,8 @@ class LiveExecutor:
                     "closed_at": pos.closed_at.isoformat() if pos.closed_at else None,
                     "status": "closed",
                     "close_reason": pos.close_reason,
+                    "origin": pos.origin,
+                    "fill_source": pos.fill_source,
                 })
             path = Path(self._closed_trades_file)
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -6504,6 +6577,8 @@ class LiveExecutor:
                     closed_at=closed_at,
                     status="closed",
                     close_reason=item.get("close_reason"),
+                    origin=item.get("origin") or "executed",
+                    fill_source=item.get("fill_source"),
                 )
                 self._closed_trades.append(pos)
             # ── Dedup on load: keep last record per trade_id ──
