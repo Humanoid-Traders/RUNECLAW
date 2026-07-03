@@ -18,10 +18,10 @@
   <img src="https://img.shields.io/badge/python-3.11+-blue?logo=python&logoColor=white" alt="Python 3.11+">
   <img src="https://img.shields.io/badge/license-AGPL--3.0-blue" alt="License AGPL-3.0">
   <a href="https://github.com/Humanoid-Traders/RUNECLAW/actions/workflows/ci.yml"><img src="https://github.com/Humanoid-Traders/RUNECLAW/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
-  <img src="https://img.shields.io/badge/tests-862%20test%20functions%20defined-brightgreen" alt="862 Test Functions Defined">
+  <img src="https://img.shields.io/badge/tests-2644%20test%20functions%20%7C%20227%20files-brightgreen" alt="2644 Test Functions | 227 Files">
   <img src="https://img.shields.io/badge/security%20tests-29%20passing-blueviolet" alt="29 Security Tests">
   <img src="https://img.shields.io/badge/red%20team-28%20scenarios%20%7C%20framework%20included-critical" alt="Red Team 28 Scenarios | Framework Included">
-  <img src="https://img.shields.io/badge/risk%20checks-21%20(16%20strict%20%2B%205%20advisory)-red" alt="21 Risk Checks">
+  <img src="https://img.shields.io/badge/risk%20checks-23%20(16%20strict%20%2B%207%20advisory)-red" alt="23 Risk Checks">
   <img src="https://img.shields.io/badge/mode-live%20trading-green" alt="Live Trading">
   <img src="https://img.shields.io/badge/exchange-Bitget-blue" alt="Bitget">
   <img src="https://img.shields.io/badge/bot-LIVE%20%40HTRUNECLAW__bot-26a5e4?logo=telegram" alt="Live Telegram Bot">
@@ -59,7 +59,7 @@
 
 **RUNECLAW** is an AI trading command system built by **Humanoid Traders** for the Bitget AI Base Camp · Hackathon S1. It merges multi-timeframe analysis, confluence scoring, regime detection, order-flow microstructure, and risk-first logic into a disciplined framework -- all controllable through a Telegram bot interface.
 
-The system operates in **simulation-first mode by default**. Every trade idea must pass 21 pre-trade risk checks (16 strict fail-closed gates + 1 fail-open liquidity guard + 4 advisory checks that skip when data is unavailable), an adversarial self-critique gate, and receive explicit human confirmation before execution.
+The system operates in **simulation-first mode by default**. Every trade idea must pass 23 pre-trade risk checks (16 strict fail-closed gates + 1 fail-open liquidity guard + 6 advisory checks that skip when data is unavailable), an adversarial self-critique gate, and receive explicit human confirmation before execution.
 
 > **Shield risk engine available as MCP server -- any GetClaw agent can call it.** See `bot/mcp/server.py`.
 
@@ -131,7 +131,49 @@ Set `ASSET_UNIVERSE=solana` in `.env` or use `/mode solana` to prioritize 15 Sol
 - **Ecosystem correlation group**: Non-meme Solana tokens (JUP, JTO, PYTH, RAY, etc.) are grouped as `SOLANA_ECO` -- the risk engine limits concentrated bets across correlated assets
 - **Live mode switching**: `/mode solana` and `/mode all` switch scanner focus without restart
 
-### Natural Language Interface (NEW)
+### Advanced Elliott Wave Analysis (NEW)
+Multi-degree Elliott Wave with ZigZag detection, wave-position awareness, Fibonacci targets, and MTF alignment. Enabled by default (#236, #237). Features:
+- **Multi-degree waves** -- detects impulse (1-5) and corrective (A-B-C) patterns at multiple degrees simultaneously
+- **Wave-position aware** -- identifies current wave position for entry timing (e.g., Wave 3 extensions, Wave 5 termination)
+- **Fibonacci targets** -- auto-computed extension targets (1.618, 2.618) for active impulse waves
+- **ZigZag filtering** -- noise-robust swing detection via configurable threshold
+
+### Advanced VWAP Analysis (NEW)
+Session-anchored VWAP with band-reversion and slope-aware voting (#238):
+- **Band reversion** -- mean-reversion signals from VWAP ±1σ/±2σ bands
+- **Slope-aware votes** -- VWAP slope direction strengthens/weakens directional thesis
+- **Anchored VWAP (AVWAP)** -- setup-anchored VWAP from significant swing points
+- **Session anchoring** -- VWAP resets at session boundaries for intraday accuracy
+
+### Portfolio Backtester (NEW)
+Multi-symbol shared-risk backtests with realistic portfolio constraints (#248):
+- **Shared capital** -- multiple symbols compete for the same equity pool
+- **Cross-position risk** -- portfolio-level drawdown and exposure limits applied during backtest
+- **Breaker reset bars** -- configurable circuit breaker auto-reset prevents long backtests from halting permanently (#245)
+
+### Level-Aware SL/TP (NEW)
+Stop-loss and take-profit placement that respects market structure (#251):
+- **Support/resistance awareness** -- SL placed beyond the nearest support/resistance level, not at a fixed ATR multiple
+- **Swing-level snapping** -- TP snaps to nearest Fibonacci extension or swing target
+- **Detector math fixes** -- corrected calculation errors in anomaly detector scoring (#251)
+
+### Ops Hardening (NEW)
+Production operations improvements (#240, #241, #246):
+- **Reconcile-close lock** -- prevents double-close race conditions during position reconciliation
+- **Dead-man's-switch ping** -- periodic health pings to detect silent failures
+- **Deep-history Bitget fetch** -- paginate past the per-call candle cap for longer backtests (#244)
+- **Proxy env support** -- honors HTTP_PROXY/HTTPS_PROXY in all ccxt Bitget clients (#242)
+- **Live hardening defaults** -- stage-1/2 hardening flags enabled by default (#241)
+- **External sentiment default** -- Fear & Greed index enabled by default (#247)
+
+### Learning Readiness Automation (NEW)
+Automated learning module readiness tracking with chart regime ribbon and trade annotations (#255):
+- **Readiness dashboard** -- shows which learners have enough data to activate
+- **Chart regime ribbon** -- visual regime overlay on equity curve
+- **Trade annotations** -- marks entry/exit points with win/loss coloring on charts
+- **OI warm-start** -- open interest data pre-fetched at startup for immediate derivative analysis
+
+
 Talk to RUNECLAW in plain English instead of memorizing commands:
 - **Intent routing**: "how's Bitcoin?" dispatches to `/analyze BTC`, "what's moving?" triggers `/scan`
 - **Symbol extraction**: understands tickers (`$ETH`), names (`Solana`), and pairs (`BTC/USDT`)
@@ -318,7 +360,7 @@ A closed-loop backstop on top of the pre-trade checks (gated `LIVE_PERFORMANCE_G
 - Designed to support MiCA-style decision auditability
 
 ### Risk Engine (Fail-Closed)
-- **21 pre-trade checks** -- 16 strict fail-closed (one failure = rejection), 1 fail-open (#17 LIQUIDITY: no order-book data = pass), 4 advisory/skip (#18 MACRO, #19 MTF, #20 PCA, #21 VaR: skip when data unavailable). See `config/risk_manifest.yaml` for the authoritative list.
+- **21-check risk gate** -- 16 strict fail-closed (one failure = rejection), 1 fail-open (#17 LIQUIDITY: no order-book data = pass), 4 advisory/skip (#18 MACRO, #19 MTF, #20 PCA, #21 VaR: skip when data unavailable), plus 2 additional advisory gates (#22 Taker 3-bar, #23 Bid dominance). See `config/risk_manifest.yaml` for the authoritative list.
 - Circuit breaker halts trading on daily loss or drawdown breach
 - Fixed-fractional position sizing: risk budget (2% of equity) divided by stop distance, capped at 20% notional
 - Max open positions limit
@@ -575,7 +617,7 @@ runeclaw/
 |   |-- test_live_executor.py   # 7 live executor tests
 |   |-- test_telegram_commands.py  # Telegram command tests
 |   |-- selftest_upgrade.py     # Self-test upgrade harness
-|   |-- (862 total test functions)
+|   |-- (2644 total test functions across 227 files)
 |-- docs/
 |   |-- gitbook/                # Full GitBook documentation
 |   |-- SUBMISSION.md           # Hackathon submission document
@@ -606,7 +648,7 @@ runeclaw/
 RUNECLAW is designed with a **fail-closed** philosophy:
 
 - **Simulation by default.** Live trading requires two explicit environment flags.
-- **Every trade passes 21 checks.** 16 strict fail-closed, 1 fail-open (liquidity), 4 advisory/skip. See `config/risk_manifest.yaml` for details.
+- **Every trade passes 23 checks.** 16 strict fail-closed, 1 fail-open (liquidity), 6 advisory/skip. See `config/risk_manifest.yaml` for details.
 - **Circuit breaker.** Auto-halts on daily loss (5%) or max drawdown (10%).
 - **Human-in-the-loop.** No trade executes without explicit confirmation.
 - **Re-check on confirm.** Risk is re-evaluated at confirmation time because market conditions change.
@@ -744,7 +786,7 @@ python run_realdata_backtest.py --llm --output results.json
 
 | Capability | RUNECLAW | Typical Hackathon Bot |
 |------------|:--------:|:---------------------:|
-| Pre-trade risk checks | **21 checks (16 strict + 5 advisory)** | 0-3 basic checks |
+| Pre-trade risk checks | **23 checks (16 strict + 7 advisory)** | 0-3 basic checks |
 | Fail-closed design | **Yes** -- any failure = rejection | Fail-open (errors skip checks) |
 | Circuit breaker | **Auto-halt** on daily loss / drawdown | None or manual only |
 | Human confirmation | **Required** via Telegram keyboard | Auto-execute or no gate |
