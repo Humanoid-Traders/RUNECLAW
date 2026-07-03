@@ -803,6 +803,24 @@ class RuneClawEngine:
                 pass
         return False
 
+    def viewer_executor(self, user_id: str = ""):
+        """The LiveExecutor whose positions/closed-trades THIS caller may VIEW —
+        the single source of truth for every status/portfolio card so they never
+        disagree about which account they describe.
+
+        Mirrors ``_executor_for`` but adds the view-layer isolation guard: with
+        per-user live ON, a non-operator caller whose resolution only *falls
+        back* to the shared operator executor gets ``None`` instead — they must
+        never see another account's book. With per-user OFF this is always the
+        operator executor (byte-identical to single-account behaviour).
+        """
+        ex = self._executor_for(user_id)
+        if not getattr(CONFIG, "per_user_live_enabled", False):
+            return ex
+        if ex is self.live_executor and not self._is_operator_user(user_id):
+            return None
+        return ex
+
     def risk_for(self, user_id: str = ""):
         """Return the RiskEngine whose stateful safety breakers apply to THIS caller.
 
