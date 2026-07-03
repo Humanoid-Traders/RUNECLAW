@@ -199,3 +199,26 @@ class TestApplyVwapSetupAnchoring:
         _apply_vwap_setup_anchoring(ind, "swing")
         assert ind["vwap"] == 100.0
         assert "vwap_anchor_kind" not in ind
+
+
+class TestBandRecenterOnAnchorSwap:
+    def test_bands_follow_the_setup_anchor(self):
+        # Audit batch 3: re-pointing vwap to the swing anchor must move the
+        # σ-bands with it (same half-width) — the band-reversion voter and
+        # the directional vote must reference ONE VWAP.
+        from bot.core.analyzer import _apply_vwap_setup_anchoring
+        ind = {"vwap": 100.0, "vwap_session": 100.0, "vwap_50": 104.0,
+               "vwap_full": 106.0, "vwap_upper_1": 101.5, "vwap_lower_1": 98.5,
+               "vwap_upper_2": 103.0, "vwap_lower_2": 97.0}
+        _apply_vwap_setup_anchoring(ind, "swing")
+        assert ind["vwap"] == 104.0 and ind["vwap_anchor_kind"] == "rolling50"
+        assert ind["vwap_upper_1"] == 105.5 and ind["vwap_lower_1"] == 102.5
+        assert ind["vwap_upper_2"] == 107.0 and ind["vwap_lower_2"] == 101.0
+
+    def test_same_anchor_leaves_bands_untouched(self):
+        from bot.core.analyzer import _apply_vwap_setup_anchoring
+        ind = {"vwap": 100.0, "vwap_session": 100.0, "vwap_50": 104.0,
+               "vwap_full": 106.0, "vwap_upper_1": 101.5, "vwap_lower_1": 98.5}
+        _apply_vwap_setup_anchoring(ind, "scalp")   # scalp keeps session
+        assert ind["vwap"] == 100.0
+        assert ind["vwap_upper_1"] == 101.5

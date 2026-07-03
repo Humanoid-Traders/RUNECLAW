@@ -211,6 +211,21 @@ def _apply_vwap_setup_anchoring(indicators: dict, strategy_type: str) -> None:
     }
     val, kind = select_setup_anchor(strategy_type, anchors)
     if val is not None:
+        # Re-center the σ-bands on the new anchor (audit: bands were built
+        # around the session VWAP in _compute_indicators; re-pointing the
+        # center without moving the bands left the band-reversion voter and
+        # the directional vote referencing two different VWAPs). The band
+        # half-width (dispersion) is preserved — only the center moves.
+        _old_center = indicators.get("vwap")
+        _old_u1 = indicators.get("vwap_upper_1")
+        if (_old_center is not None and _old_u1 is not None
+                and val != _old_center):
+            _dev = float(_old_u1) - float(_old_center)
+            if _dev > 0:
+                indicators["vwap_upper_1"] = round(val + _dev, 6)
+                indicators["vwap_lower_1"] = round(val - _dev, 6)
+                indicators["vwap_upper_2"] = round(val + 2 * _dev, 6)
+                indicators["vwap_lower_2"] = round(val - 2 * _dev, 6)
         indicators["vwap"] = val
         indicators["vwap_anchor_kind"] = kind
 
