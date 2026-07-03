@@ -86,7 +86,27 @@ def _analyze_structure(highs: np.ndarray, lows: np.ndarray, closes: np.ndarray, 
         choch: True if change of character detected
         bias: float [-1, 1]
     """
-    swings = _find_swings(highs, lows, lookback)
+    # ATR-ZigZag swings (audit batch 4, gated default ON): the strict 5-bar
+    # fractal starves on 30-bar HTF windows (<=2-3 swings -> HH/HL/BOS/CHoCH
+    # fell back to "ranging") and its strict >/< misses equal highs/lows
+    # entirely. The reversal-threshold ZigZag — the same engine Elliott
+    # already trusts — registers plateaus and yields usable structure on
+    # short windows. Falls back to the fractal whenever it can't produce two
+    # swings per side, so behavior only ever improves coverage.
+    swings = None
+    try:
+        from bot.config import CONFIG as _CFG
+        if getattr(_CFG.analyzer, "structure_zigzag_enabled", False):
+            from bot.core.elliott import atr_zigzag_pivots
+            zz = atr_zigzag_pivots(
+                highs, lows, closes,
+                atr_mult=_CFG.analyzer.elliott_zigzag_atr_mult)
+            if len(zz["swing_highs"]) >= 2 and len(zz["swing_lows"]) >= 2:
+                swings = zz
+    except Exception:
+        swings = None
+    if swings is None:
+        swings = _find_swings(highs, lows, lookback)
     sh = swings["swing_highs"]
     sl = swings["swing_lows"]
 

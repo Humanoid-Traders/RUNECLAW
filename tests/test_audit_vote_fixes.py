@@ -130,3 +130,21 @@ class TestFamilyCaps:
                     weights[i] *= scale
         assert abs(sum(weights[:3]) - 1.5) < 1e-9   # structure capped
         assert abs(sum(weights[3:]) - 1.0) < 1e-9   # aggression capped
+
+
+class TestZigZagStructure:
+    def test_htf_short_window_resolves_structure(self):
+        # 30-bar HTF window with a clear rising zigzag: the 5-bar fractal
+        # yields <=2 swings ("ranging"); the ATR-ZigZag must resolve it.
+        i = np.arange(34, dtype=float)
+        base = 100 + i * 0.35 + 2.2 * np.sin(i * 2 * np.pi / 8)
+        res = _analyze_structure(base + 0.3, base - 0.3, base,
+                                 lookback=min(5, len(base) // 6))
+        assert res["structure"] == "bullish"
+
+    def test_fractal_fallback_when_flat(self):
+        # Dead-flat series: ZigZag has no reversals -> falls back to the
+        # fractal path without raising; structure is "ranging".
+        flat = np.full(40, 100.0)
+        res = _analyze_structure(flat + 0.1, flat - 0.1, flat)
+        assert res["structure"] == "ranging"

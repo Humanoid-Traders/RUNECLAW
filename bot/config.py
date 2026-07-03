@@ -807,6 +807,12 @@ class AnalyzerConfig:
     # module was dead code — no caller ever supplied candles_4h/candles_1d.
     # Backtests resample the primary bars into closed 4h/1d groups for parity.
     mtf_confluence_enabled: bool = _env_bool("MTF_CONFLUENCE_ENABLED", True)
+    # ATR-ZigZag swings for HH/HL/BOS/CHoCH structure (default ON): the 5-bar
+    # fractal starved on 30-bar HTF windows and missed equal highs/lows; the
+    # reversal-threshold ZigZag (same engine Elliott uses) resolves structure
+    # on short windows and registers plateaus. Fractal fallback whenever the
+    # ZigZag can't produce two swings per side.
+    structure_zigzag_enabled: bool = _env_bool("STRUCTURE_ZIGZAG_ENABLED", True)
 
     # Level-aware SL/TP (default ON): snap the ATR stop just beyond the
     # nearest scored support/resistance (swing wicks, POC/VAH/VAL, prior-day
