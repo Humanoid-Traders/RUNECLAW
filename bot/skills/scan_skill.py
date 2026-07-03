@@ -443,8 +443,15 @@ def _score_bar(score: float) -> str:
     return _BARS[min(int(score * len(_BARS)), len(_BARS) - 1)] * 4
 
 
-async def _scan_symbol(exchange, symbol: str) -> Optional[dict]:
-    """Fetch OHLCV and compute scan metrics for one symbol."""
+async def _scan_symbol(exchange, symbol: str, analyzer=None) -> Optional[dict]:
+    """Fetch OHLCV and compute scan metrics for one symbol.
+
+    When ``analyzer`` is supplied and CONFIG enables it, direction + score come
+    from the REAL trade-deciding engine (Analyzer.scan_read: same indicators,
+    regime, confluence electorate and rule-based thesis) so the scan card no
+    longer contradicts the per-asset analysis. The lightweight momentum
+    heuristic below remains the fail-safe fallback.
+    """
     try:
         ohlcv = await exchange.fetch_ohlcv(symbol, "4h", limit=100)
     except Exception:
@@ -461,6 +468,7 @@ async def _scan_symbol(exchange, symbol: str) -> Optional[dict]:
     vol_ratio = float(v[-1] / vm) if vm > 0 else 1.0
     sma20 = float(np.mean(c[-20:])) if len(c) >= 20 else price
     sma50 = float(np.mean(c[-50:])) if len(c) >= 50 else sma20
+    # Heuristic direction/score — the fail-safe fallback.
     if rsi < 40 and price < sma20:       direction = "SHORT"
     elif rsi > 60 and price > sma20:     direction = "LONG"
     elif price > sma50:                  direction = "LONG"
@@ -468,6 +476,24 @@ async def _scan_symbol(exchange, symbol: str) -> Optional[dict]:
     mom = abs(rsi - 50.0) / 50.0
     trend_s = min(abs(price - sma50) / sma50 * 10, 1.0) if sma50 > 0 else 0
     score = round(mom * 0.4 + trend_s * 0.3 + min(vol_ratio / 3, 1.0) * 0.3, 3)
+    engine_dir = None
+    # ── Unify with the real analyzer (default ON) ──────────────────────
+    from bot.config import CONFIG
+    if analyzer is not None and getattr(CONFIG.analyzer, "scan_use_analyzer_engine", True):
+        try:
+            change_now = (((price - float(c[-7])) / float(c[-7])) * 100.0
+                          if len(c) >= 7 and c[-7] > 0 else 0.0)
+            sig = MarketSignal(
+                symbol=symbol, price=price, change_pct_24h=round(change_now, 2),
+                volume_usd_24h=float(price * v[-1]) if v[-1] > 0 else 0.0,
+                timestamp=datetime.now(UTC))
+            read = await analyzer.scan_read(sig, ohlcv)
+            if read and read.get("direction"):
+                direction = read["direction"]
+                score = round(float(read.get("score", score)), 3)
+                engine_dir = read.get("regime")
+        except Exception:
+            pass
     patterns = scan_all_chart_patterns(o, h, l, c)
     # 24h change (~6 bars of 4h) for the scan display. The formatters already
     # read "change_pct"; without this it was always 0 → the %-change was never
@@ -477,7 +503,7 @@ async def _scan_symbol(exchange, symbol: str) -> Optional[dict]:
     return {"sym": symbol, "price": price, "dir": direction, "score": score,
             "rsi": round(rsi, 1), "atr": round(atr, 4),
             "vol_ratio": round(vol_ratio, 2), "sma20": round(sma20, 4),
-            "change_pct": round(change_pct, 2),
+            "change_pct": round(change_pct, 2), "regime": engine_dir,
             "patterns": patterns}
 
 
@@ -549,7 +575,8 @@ async def _scan_batch(update: Update, context: ContextTypes.DEFAULT_TYPE,
                       engine, top_n: int, patterns: bool, ai: bool) -> None:
     msg = await update.message.reply_text("\u23f3 Scanning market...")
     exchange = await engine.scanner._get_exchange()
-    raw = await asyncio.gather(*[_scan_symbol(exchange, s) for s in UNIVERSE])
+    _analyzer = getattr(engine, "analyzer", None)
+    raw = await asyncio.gather(*[_scan_symbol(exchange, s, _analyzer) for s in UNIVERSE])
     results = sorted((r for r in raw if r), key=lambda x: x["score"], reverse=True)[:top_n]
     if not results:
         await msg.edit_text("No scannable symbols found."); return
@@ -713,7 +740,8 @@ async def _scan_filtered(update: Update, context: ContextTypes.DEFAULT_TYPE,
                          engine, filter_type: str) -> None:
     msg = await update.message.reply_text(f"\u23f3 Running {filter_type} scan...")
     exchange = await engine.scanner._get_exchange()
-    raw = await asyncio.gather(*[_scan_symbol(exchange, s) for s in UNIVERSE])
+    _analyzer = getattr(engine, "analyzer", None)
+    raw = await asyncio.gather(*[_scan_symbol(exchange, s, _analyzer) for s in UNIVERSE])
     results = [r for r in raw if r is not None]
     if filter_type == "swing":
         results = [r for r in results if 30 <= r["rsi"] <= 55 and r["dir"] == "LONG" and r["score"] >= 0.3]
@@ -739,7 +767,7 @@ async def _scan_single(update: Update, context: ContextTypes.DEFAULT_TYPE,
 
     # Fetch rich analysis data
     data = await fetch_analysis_data(exchange, symbol, timeframe="1h")
-    result = await _scan_symbol(exchange, symbol)
+    result = await _scan_symbol(exchange, symbol, getattr(engine, "analyzer", None))
 
     if data is None and result is None:
         await msg.edit_text(f"Could not fetch data for {symbol}.")

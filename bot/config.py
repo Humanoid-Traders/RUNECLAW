@@ -905,6 +905,15 @@ class AnalyzerConfig:
     # until it measures non-harmful on the honest benchmark.
     cross_layer_confirmation_enabled: bool = _env_bool("CROSS_LAYER_CONFIRMATION_ENABLED", False)
 
+    # Unify /scan with the real analyzer (default ON — correctness). When set,
+    # the market scanner derives each symbol's direction + score from
+    # Analyzer.scan_read (the same indicators, regime, confluence electorate and
+    # rule-based thesis the trade decision uses) instead of a lightweight RSI/SMA
+    # heuristic that could show the OPPOSITE direction from the per-asset
+    # analysis. LLM-free and side-effect-free; falls back to the heuristic on any
+    # error. Set false to restore the old fast heuristic.
+    scan_use_analyzer_engine: bool = _env_bool("SCAN_USE_ANALYZER_ENGINE", True)
+
     # Direction-aware Fibonacci (default ON; audit fix #4). The legacy fib
     # module force-fit every market into a bullish low->high retracement and
     # its voter could only lean long. When ON, the dominant leg is inferred
