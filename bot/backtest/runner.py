@@ -427,6 +427,23 @@ def _group_stats(trades, key_fn):
     return dict(sorted(out.items(), key=lambda kv: kv[1]["net_pnl"], reverse=True))
 
 
+def _trend_alignment(trade) -> str:
+    """Classify a trade as trading WITH or AGAINST the entry regime's trend.
+
+    Only TREND_UP / TREND_DOWN carry a directional bias; RANGE/CHOP/BREAKOUT/
+    EXPANSION have no trend to be counter to, so they bucket as neutral. This is
+    the lens that isolates the counter-trend fade bleed the audit flagged: a
+    SHORT into TREND_UP (or LONG into TREND_DOWN) fights the dominant move.
+    """
+    regime = (getattr(trade, "entry_regime", "") or "").upper()
+    direction = (getattr(trade, "direction", "") or "").upper()
+    if regime == "TREND_UP":
+        return "with-trend" if direction == "LONG" else "counter-trend"
+    if regime == "TREND_DOWN":
+        return "with-trend" if direction == "SHORT" else "counter-trend"
+    return "neutral (non-trending)"
+
+
 def _risk_adjusted(result) -> dict:
     """Sortino + Calmar from the trade series and equity curve. Sharpe already
     lives on the result. Sortino uses downside deviation of per-trade net PnL;
@@ -446,9 +463,12 @@ def _risk_adjusted(result) -> dict:
 
 
 def _attribution_report(result) -> str:
-    """Where the edge lives: per-regime and per-setup P&L breakdown + the
-    risk-adjusted metrics the aggregate return can't show. This is the
-    go/no-go evidence for gating entries to profitable regimes/setups."""
+    """Where the edge lives: P&L broken down by regime, setup, signal type, and
+    trend alignment, plus the risk-adjusted metrics the aggregate return can't
+    show. This is the go/no-go evidence for gating entries to the profitable
+    buckets — the signal-type and trend-alignment cuts specifically isolate the
+    PF<1 bleed (which signal families lose, and whether counter-trend fades are
+    the drag)."""
     if not result.trades:
         return ""
     lines = ["", "  ── EDGE ATTRIBUTION " + "─" * 48]
@@ -456,7 +476,9 @@ def _attribution_report(result) -> str:
     lines.append(f"  Risk-adjusted: Sharpe {getattr(result, 'sharpe_ratio', 0.0):.2f}"
                  f" | Sortino {ra['sortino']:.2f} | Calmar {ra['calmar']:.2f}")
     for title, key_fn in (("By regime (at entry)", lambda t: t.entry_regime),
-                          ("By setup", lambda t: t.setup)):
+                          ("By setup", lambda t: t.setup),
+                          ("By signal type", lambda t: t.signal_type),
+                          ("By trend alignment", _trend_alignment)):
         stats = _group_stats(result.trades, key_fn)
         if not stats or (len(stats) == 1 and "(unknown)" in stats):
             continue

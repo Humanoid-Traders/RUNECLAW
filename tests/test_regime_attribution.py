@@ -5,20 +5,26 @@ regimes — the go/no-go evidence the aggregate return can't provide."""
 from datetime import datetime, timedelta
 
 from bot.backtest.models import BacktestTrade
-from bot.backtest.runner import _attribution_report, _group_stats, _risk_adjusted
+from bot.backtest.runner import (
+    _attribution_report,
+    _group_stats,
+    _risk_adjusted,
+    _trend_alignment,
+)
 from bot.compat import UTC
 
 
-def _trade(net, regime="TREND_UP", setup="swing"):
+def _trade(net, regime="TREND_UP", setup="swing", direction="LONG",
+           signal_type="momentum_confluence"):
     t0 = datetime(2025, 1, 1, tzinfo=UTC)
     return BacktestTrade(
-        trade_id="x", symbol="BTC/USDT", direction="LONG",
+        trade_id="x", symbol="BTC/USDT", direction=direction,
         entry_price=100.0, exit_price=101.0, entry_time=t0,
         exit_time=t0 + timedelta(hours=1), quantity=1.0, size_usd=100.0,
         pnl_usd=net, pnl_pct=net, commission_usd=0.0, slippage_usd=0.0,
         net_pnl_usd=net, exit_reason="TP" if net > 0 else "SL",
         confidence=0.7, risk_verdict="APPROVED",
-        entry_regime=regime, setup=setup)
+        entry_regime=regime, setup=setup, signal_type=signal_type)
 
 
 class TestGroupStats:
@@ -67,3 +73,48 @@ class TestAttributionReport:
         class _R:
             trades = []
         assert _attribution_report(_R()) == ""
+
+    def test_report_shows_signal_type_and_trend_alignment(self):
+        class _R:
+            trades = [_trade(10, "TREND_UP", "swing", "LONG", "momentum_confluence"),
+                      _trade(-8, "TREND_UP", "scalp", "SHORT", "vwap_reversion"),
+                      _trade(12, "TREND_DOWN", "swing", "SHORT", "momentum_confluence")]
+            total_return_pct = 1.4
+            max_drawdown_pct = 1.0
+            sharpe_ratio = 1.0
+        out = _attribution_report(_R())
+        assert "By signal type" in out
+        assert "momentum_confluence" in out and "vwap_reversion" in out
+        assert "By trend alignment" in out
+        assert "with-trend" in out and "counter-trend" in out
+
+
+class TestTrendAlignment:
+    def test_long_in_uptrend_is_with_trend(self):
+        assert _trend_alignment(_trade(1, "TREND_UP", direction="LONG")) == "with-trend"
+
+    def test_short_in_uptrend_is_counter_trend(self):
+        assert _trend_alignment(_trade(1, "TREND_UP", direction="SHORT")) == "counter-trend"
+
+    def test_short_in_downtrend_is_with_trend(self):
+        assert _trend_alignment(_trade(1, "TREND_DOWN", direction="SHORT")) == "with-trend"
+
+    def test_long_in_downtrend_is_counter_trend(self):
+        assert _trend_alignment(_trade(1, "TREND_DOWN", direction="LONG")) == "counter-trend"
+
+    def test_non_trending_regime_is_neutral(self):
+        for regime in ("RANGE", "CHOP", "BREAKOUT", "EXPANSION", "", "UNKNOWN"):
+            assert "neutral" in _trend_alignment(_trade(1, regime, direction="LONG"))
+
+    def test_case_insensitive(self):
+        assert _trend_alignment(_trade(1, "trend_up", direction="long")) == "with-trend"
+
+    def test_counter_trend_bleed_isolated_in_group_stats(self):
+        # The lens that matters: with-trend wins, counter-trend bleeds.
+        trades = [_trade(10, "TREND_UP", direction="LONG"),
+                  _trade(8, "TREND_DOWN", direction="SHORT"),
+                  _trade(-12, "TREND_UP", direction="SHORT"),
+                  _trade(-9, "TREND_DOWN", direction="LONG")]
+        g = _group_stats(trades, _trend_alignment)
+        assert g["with-trend"]["net_pnl"] == 18.0
+        assert g["counter-trend"]["net_pnl"] == -21.0
