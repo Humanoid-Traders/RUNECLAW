@@ -87,6 +87,23 @@ _ELLIOTT_KEYS = ("elliott_impulse", "elliott_corrective", "elliott_diagonal",
 _ANALYSIS_VERSION = "2026.07-audit25"
 
 
+def _floor_stop_distance(entry: float, stop_loss: float, direction,
+                         min_frac: float) -> float:
+    """Widen a too-tight stop to a minimum placeable distance from entry.
+
+    ``|entry - stop_loss|`` is floored to ``min_frac * entry`` (safety —
+    prevents an ATR stop that the venue rejects or noise trips instantly).
+    Never tightens; a stop already beyond the floor is returned unchanged.
+    ``min_frac <= 0`` disables it. See ``AnalyzerConfig.min_stop_distance_pct``.
+    """
+    if min_frac <= 0 or entry <= 0:
+        return stop_loss
+    min_dist = min_frac * entry
+    if abs(entry - stop_loss) >= min_dist:
+        return stop_loss
+    return (entry - min_dist) if direction == Direction.LONG else (entry + min_dist)
+
+
 def _apply_elliott_wave_targets(direction, entry: float, stop_loss: float,
                                 take_profit: float, indicators: dict) -> tuple:
     """Wave-anchor the stop and (optionally) extend the target using the
@@ -1722,6 +1739,19 @@ class Analyzer:
         signal_type = self._classify_signal_type(
             indicators, signal, regime, thesis.get("source", "")
         )
+
+        # ── Minimum stop-distance floor (safety, MIN_STOP_DISTANCE_PCT) ──
+        # A pathologically-tight ATR stop (low-vol / low-priced asset) gets
+        # rejected by the venue as a conditional order (position left UNPROTECTED,
+        # the live TAG case) or is tripped instantly by noise. Widen |entry - SL|
+        # to a sane, placeable floor here — after every tighten-only adjustment
+        # (leverage cap, structure snap) and before sizing, so position sizing
+        # measures risk on the real (floored) stop. Never tightens; leaves TP,
+        # so a stop that has to be widened to be placeable naturally lowers R:R
+        # and the risk engine can reject it — a trade needing an un-placeable
+        # stop for good R:R is a bad trade.
+        stop_loss = _floor_stop_distance(
+            entry, stop_loss, direction, CONFIG.analyzer.min_stop_distance_pct)
 
         # Guard: on very-low-priced assets the ATR-derived stop/target distance
         # can fall below tick precision, so rounding collapses SL/TP onto the
