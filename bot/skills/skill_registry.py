@@ -268,23 +268,18 @@ class ScanMarketSkill(BaseSkill):
         now = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
         top = signals[:10]
 
-        from bot.core.market_scanner import CATEGORY_META
+        from bot.core.market_scanner import group_by_category, category_icon
 
         lines = [
             f"\U0001f50e <b>MARKET SCANNER</b>\n{SEP}",
             f"<i>\u23f0 {now}  \u2022  {len(signals)} pairs detected</i>\n",
         ]
 
-        # Group by category
-        by_cat: dict[str, list] = {}
-        for s in top:
-            by_cat.setdefault(s.asset_category, []).append(s)
+        # Group by category (shared helper \u2014 identical ordering everywhere)
+        by_cat = group_by_category(top, lambda s: s.asset_category)
 
-        sorted_cats = sorted(by_cat.keys(),
-                             key=lambda c: CATEGORY_META.get(c, ("", 99))[1])
-
-        for cat in sorted_cats:
-            cat_icon = CATEGORY_META.get(cat, ("\U0001f4b0", 99))[0]
+        for cat in by_cat:
+            cat_icon = category_icon(cat)
             cat_sigs = by_cat[cat]
             lines.append(f"{cat_icon} <b>{cat}</b>")
             lines.append("<pre>")
@@ -1840,20 +1835,14 @@ class ProScanSkill(BaseSkill):
         top = signals[:cfg["top_n"]]
 
         # ── Categorized Live Tickers ──
-        from bot.core.market_scanner import CATEGORY_META
+        from bot.core.market_scanner import group_by_category, category_icon
         ticker_lines = ["\U0001f4e1 <b>Live Tickers</b>"]
 
-        # Group signals by category
-        by_cat: dict[str, list] = {}
-        for s in top:
-            by_cat.setdefault(s.asset_category, []).append(s)
+        # Group signals by category (shared helper — identical ordering everywhere)
+        by_cat = group_by_category(top, lambda s: s.asset_category)
 
-        # Sort categories by display priority
-        sorted_cats = sorted(by_cat.keys(),
-                             key=lambda c: CATEGORY_META.get(c, ("", 99))[1])
-
-        for cat in sorted_cats:
-            cat_icon = CATEGORY_META.get(cat, ("\U0001f4b0", 99))[0]
+        for cat in by_cat:
+            cat_icon = category_icon(cat)
             cat_sigs = by_cat[cat]
             ticker_lines.append(f"\n{cat_icon} <b>{cat}</b>")
             ticker_lines.append("<pre>")
@@ -2736,7 +2725,21 @@ class DeepScanSkill(BaseSkill):
             return "\n".join(lines)
 
         # ── Results ─────────────────────────────────────────
+        # Reorder hits into asset-category groups (shared helper) and emit a
+        # category header whenever the category changes — so /deepscan results
+        # read grouped (Crypto, Metal, Stock, …) like the other scan commands.
+        from bot.core.market_scanner import (
+            group_by_category, category_icon, category_for_symbol,
+        )
+        top = [h for _hits in
+               group_by_category(top, lambda x: category_for_symbol(x["symbol"])).values()
+               for h in _hits]
+        _last_cat = None
         for h in top:
+            _cat = category_for_symbol(h["symbol"])
+            if _cat != _last_cat:
+                lines.append(f"{category_icon(_cat)} <b>{_cat}</b>")
+                _last_cat = _cat
             arrow = _spark(h["chg"])
             rsi_val = h["rsi"]
             rsi_tag = " OB" if rsi_val > 70 else " OS" if rsi_val < 30 else ""

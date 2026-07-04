@@ -131,30 +131,41 @@ class SignalTracker:
                 "<i>No signals recorded yet.</i>"
             )
 
+        # Group per-pair stats by asset category (Crypto, Metal, Stock, …), a
+        # <pre> table per category. Within a category, keep the sort by signal
+        # count. Shared grouping helper so /signals matches the scan commands.
+        from bot.core.market_scanner import (
+            group_by_category, category_icon, category_for_symbol,
+        )
+        entries = sorted(
+            all_stats.items(), key=lambda x: x[1]["total_signals"], reverse=True
+        )
+        grouped = group_by_category(entries, lambda e: category_for_symbol(e[0]))
+
         lines = [
             "<b>📊 SIGNAL HISTORY</b>",
             "━━━━━━━━━━━━━━━━━━━━━",
             "",
-            "<pre>",
-            f" {'PAIR':<12}{'SIG':>4}{'W':>4}{'L':>4}{'WR':>7}{'AVG':>9}",
-            f" {'─'*12}{'─'*4}{'─'*4}{'─'*4}{'─'*7}{'─'*9}",
         ]
-
-        for sym, stats in sorted(
-            all_stats.items(), key=lambda x: x[1]["total_signals"], reverse=True
-        ):
-            short = sym.replace("/USDT", "").replace("/", "")
-            wr = stats["win_rate"]
-            # Win rate bar: 5 chars
-            filled = round(wr * 5)
-            bar = "█" * filled + "░" * (5 - filled)
+        for cat, cat_entries in grouped.items():
+            lines.append(f"{category_icon(cat)} <b>{cat}</b>")
+            lines.append("<pre>")
             lines.append(
-                f" {short:<12}{stats['total_signals']:>4}"
-                f"{stats['wins']:>4}{stats['losses']:>4}"
-                f"  {bar}"
-                f" ${stats['avg_pnl']:>+7.2f}"
+                f" {'PAIR':<12}{'SIG':>4}{'W':>4}{'L':>4}{'WR':>7}{'AVG':>9}"
             )
-
-        lines.append("</pre>")
+            lines.append(f" {'─'*12}{'─'*4}{'─'*4}{'─'*4}{'─'*7}{'─'*9}")
+            for sym, stats in cat_entries:
+                short = sym.replace("/USDT", "").replace("/", "")
+                wr = stats["win_rate"]
+                # Win rate bar: 5 chars
+                filled = round(wr * 5)
+                bar = "█" * filled + "░" * (5 - filled)
+                lines.append(
+                    f" {short:<12}{stats['total_signals']:>4}"
+                    f"{stats['wins']:>4}{stats['losses']:>4}"
+                    f"  {bar}"
+                    f" ${stats['avg_pnl']:>+7.2f}"
+                )
+            lines.append("</pre>")
 
         return "\n".join(lines)

@@ -657,8 +657,22 @@ async def _scan_batch(update: Update, context: ContextTypes.DEFAULT_TYPE,
     except Exception as exc:
         log.warning("Scan card render failed: %s", exc, exc_info=True)
 
+    # Group setups by asset category (shared helper) with a header per category
+    # so /fullscan reads grouped (Crypto, Metal, Stock, …) like every other
+    # scan command. Global numbering is preserved across groups.
+    from bot.core.market_scanner import (
+        group_by_category, category_icon, category_for_symbol,
+    )
+    top_setups = [r for _grp in
+                  group_by_category(top_setups, lambda x: category_for_symbol(x["sym"])).values()
+                  for r in _grp]
     setup_lines = []
+    _last_cat = None
     for i, r in enumerate(top_setups, 1):
+        _cat = category_for_symbol(r["sym"])
+        if _cat != _last_cat:
+            setup_lines.append(f"{category_icon(_cat)} <b>{_cat}</b>")
+            _last_cat = _cat
         sym = r["sym"].replace("/USDT", "")
         entry = r["entry"]
         sl = r["sl"]
