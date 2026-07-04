@@ -182,8 +182,8 @@ async def _load_bars(args: argparse.Namespace, config) -> tuple[list, bool, str]
     # construction — the whole point is that repeated runs read identical bars.
     if getattr(args, "dataset", None):
         from bot.backtest import snapshot as _snap
-        man = _snap.load_manifest(args.dataset)
-        bars = _snap.load_symbol(args.dataset, config.symbol, man)
+        man = _snap.load_manifest_multi(args.dataset)
+        bars = _snap.load_symbol_multi(args.dataset, config.symbol, man)
         print(f"  Loaded {len(bars)} FROZEN bars for {config.symbol} from "
               f"{args.dataset} (dataset_hash={man['dataset_hash'][:12]}…)")
         return bars, False, f"frozen_snapshot:{man['dataset_hash']}"
@@ -428,7 +428,7 @@ def main() -> None:
     # portfolio — the canonical one-liner benchmark.
     if getattr(args, "dataset", None) and not args.symbols.strip():
         from bot.backtest import snapshot as _snap
-        args.symbols = ",".join(_snap.load_manifest(args.dataset).get("symbols", {}))
+        args.symbols = ",".join(_snap.load_manifest_multi(args.dataset).get("symbols", {}))
     if args.symbols.strip():
         asyncio.run(_run_portfolio(args))
         return
@@ -609,12 +609,12 @@ async def _run_portfolio(args: argparse.Namespace) -> None:
         # symbol missing from the snapshot is a hard error, never a silent skip —
         # dropping a symbol would change the universe and thus the measured system.
         from bot.backtest import snapshot as _snap
-        man = _snap.load_manifest(args.dataset)
+        man = _snap.load_manifest_multi(args.dataset)
         print(f"\n  Portfolio backtest: {len(symbols)} symbols from FROZEN dataset "
               f"{args.dataset} (dataset_hash={man['dataset_hash'][:12]}…)")
         for sym in symbols:
             try:
-                data[sym] = _snap.load_symbol(args.dataset, sym, man)
+                data[sym] = _snap.load_symbol_multi(args.dataset, sym, man)
                 print(f"  loaded {sym}: {len(data[sym])} frozen bars")
             except KeyError as exc:
                 print(f"  ERROR: {exc}")

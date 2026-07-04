@@ -180,6 +180,64 @@ def load_dataset(out_dir: str | Path) -> dict[str, list[BacktestBar]]:
     return {sym: load_symbol(out_dir, sym, man) for sym in man.get("symbols", {})}
 
 
+def split_dataset_arg(dataset: str) -> list[str]:
+    """Split a `--dataset` CLI value into one or more snapshot directories.
+    Comma-separated combines multiple frozen snapshots into one universe (e.g.
+    `majors_1h,alts_1h`) for a combined-universe A/B — a single dir is just a
+    one-element list, so every caller can use the multi-aware functions below
+    unconditionally."""
+    return [d.strip() for d in str(dataset).split(",") if d.strip()]
+
+
+def load_manifest_multi(dataset: str) -> dict:
+    """Load and merge manifests across one or more comma-separated snapshot
+    dirs. A symbol present in more than one dir is ambiguous and raises —
+    silently picking one would make the A/B depend on dict iteration order.
+    Each merged symbol entry carries ``_dir`` so `load_symbol_multi` knows
+    which snapshot to read it from. The merged `dataset_hash` is the same
+    order-independent function as a single snapshot's, so it changes iff the
+    underlying candles change (across any of the combined dirs)."""
+    dirs = split_dataset_arg(dataset)
+    merged: dict[str, dict] = {}
+    hashes: dict[str, str] = {}
+    for d in dirs:
+        man = load_manifest(d)
+        for sym, entry in man.get("symbols", {}).items():
+            if sym in merged:
+                raise ValueError(
+                    f"symbol {sym!r} present in multiple dataset dirs "
+                    f"({merged[sym]['_dir']!r} and {d!r}) — ambiguous combined universe")
+            e = dict(entry)
+            e["_dir"] = d
+            merged[sym] = e
+            hashes[sym] = entry["sha256"]
+    if not merged:
+        raise FileNotFoundError(f"no symbols found across dataset dirs: {dirs}")
+    return {
+        "version": SNAPSHOT_VERSION,
+        "dataset_hash": dataset_hash(hashes),
+        "symbols": dict(sorted(merged.items())),
+        "_dirs": dirs,
+    }
+
+
+def load_symbol_multi(dataset: str, symbol: str, manifest: dict | None = None) -> list[BacktestBar]:
+    """Load one symbol from a (possibly multi-dir) `--dataset` value."""
+    man = manifest or load_manifest_multi(dataset)
+    entry = man.get("symbols", {}).get(symbol)
+    if entry is None:
+        raise KeyError(
+            f"symbol {symbol!r} not in dataset {dataset!r} "
+            f"(have: {', '.join(sorted(man.get('symbols', {})))})")
+    return load_symbol(entry["_dir"], symbol)
+
+
+def load_dataset_multi(dataset: str) -> dict[str, list[BacktestBar]]:
+    """Load every symbol across a (possibly multi-dir) `--dataset` value."""
+    man = load_manifest_multi(dataset)
+    return {sym: load_symbol_multi(dataset, sym, man) for sym in man["symbols"]}
+
+
 def verify_dataset(out_dir: str | Path) -> tuple[bool, list[str]]:
     """Recompute every content hash and the dataset hash from the files on disk
     and compare to the manifest. Returns ``(ok, problems)``. This is the
