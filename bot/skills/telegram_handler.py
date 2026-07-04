@@ -25,6 +25,24 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 
+def _leveraged_pnl_usd(entry: float, last: float, direction: str,
+                       cost_usd: float, leverage: float) -> float:
+    """Real unrealized USD P&L for a leveraged futures position.
+
+    = price-move-fraction × leverage × margin  (equivalently: ROE × margin, or
+    price-move × notional). The live position cards previously computed this as
+    price-move × *margin* only — dropping the leverage factor — so a 10x position
+    showing a −28.6% ROE reported just −$0.43 instead of the real −$4.3. The
+    percentage (ROE) and the dollar were on different bases; this puts them on the
+    same one so a leveraged % can never sit beside an unleveraged $ again.
+    """
+    if entry <= 0 or last <= 0 or cost_usd <= 0:
+        return 0.0
+    raw = ((last - entry) / entry) if direction == "LONG" else ((entry - last) / entry)
+    lev = leverage if (leverage and leverage > 0) else 1.0
+    return raw * lev * cost_usd
+
+
 def _closed_on_utc_date(pos, day) -> bool:
     """True if a closed position's ``closed_at`` falls on the given UTC date.
 
@@ -3639,7 +3657,7 @@ class TelegramHandler:
                 if cur > 0 and p.entry_price > 0:
                     raw = ((cur - p.entry_price) if p.direction == "LONG"
                            else (p.entry_price - cur)) / p.entry_price
-                    pnl_usd = raw * cost
+                    pnl_usd = _leveraged_pnl_usd(p.entry_price, cur, p.direction, cost, lev)
                     pnl_pct = raw * 100 * lev
                 hold = ""
                 if getattr(p, "opened_at", None):
@@ -5932,16 +5950,17 @@ class TelegramHandler:
                     last_price = prices.get(pos.symbol, pos.entry_price)
                     if pos.direction == "LONG":
                         pnl_pct_raw = ((last_price - pos.entry_price) / pos.entry_price) * 100
-                        upnl_usd = (last_price - pos.entry_price) * pos.quantity
                     else:
                         pnl_pct_raw = ((pos.entry_price - last_price) / pos.entry_price) * 100
-                        upnl_usd = (pos.entry_price - last_price) * pos.quantity
                     from datetime import datetime, timezone
                     hold_h = (datetime.now(timezone.utc) - pos.opened_at).total_seconds() / 3600
                     cost = pos.cost_usd if pos.cost_usd > 0 else pos.entry_price * pos.quantity
                     notional = last_price * pos.quantity
                     leverage = getattr(pos, 'leverage', 0) or (notional / cost if cost > 0 else 1.0)
                     pnl_pct = pnl_pct_raw * leverage
+                    # Dollar P&L on the SAME (leveraged) basis as pnl_pct — the old
+                    # (last-entry)*quantity understated it by the leverage multiple.
+                    upnl_usd = _leveraged_pnl_usd(pos.entry_price, last_price, pos.direction, cost, leverage)
                     sl_dist = abs(last_price - pos.stop_loss) / last_price * 100 if last_price else 0
                     tp_dist = abs(pos.take_profit - last_price) / last_price * 100 if last_price else 0
                     risk_left = abs(last_price - pos.stop_loss) if pos.stop_loss else 0
@@ -7016,7 +7035,7 @@ class TelegramHandler:
                     pnl_pct = -pnl_pct
                 sz = _cost
                 exit_notional = _qty * last_px
-                pnl_usd = (_qty * (last_px - _entry)) if _dir == "LONG" else (_qty * (_entry - last_px))
+                pnl_usd = 0.0  # real leveraged value set below once leverage is known
                 d_emoji = "\U0001f7e2" if _dir == "LONG" else "\U0001f534"
                 pnl_emoji = "\U0001f7e2" if pnl_pct >= 0 else "\U0001f534"
                 sl_dist = abs(last_px - _sl) / last_px * 100 if last_px else 0
@@ -7034,6 +7053,10 @@ class TelegramHandler:
                 else:
                     _stored_lev = getattr(pos_match, 'leverage', 0) if not is_live_pos else 0
                     leverage = float(_stored_lev) if _stored_lev and _stored_lev > 1 else (notional_now / sz if sz > 0 else 1.0)
+
+                # Real leveraged dollar P&L (was _qty×price-delta, which understated
+                # it by the leverage multiple for a margin-based quantity).
+                pnl_usd = _leveraged_pnl_usd(_entry, last_px, _dir, sz, leverage)
 
                 # Fee calculations
                 comm_pct = CONFIG.risk.commission_pct
