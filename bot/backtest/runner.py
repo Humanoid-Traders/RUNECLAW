@@ -462,6 +462,32 @@ def _risk_adjusted(result) -> dict:
     return {"sortino": round(sortino, 2), "calmar": round(calmar, 2)}
 
 
+_ATTRIB_DIMENSIONS = (
+    ("By regime (at entry)", lambda t: t.entry_regime),
+    ("By setup", lambda t: t.setup),
+    ("By signal type", lambda t: t.signal_type),
+    ("By trend alignment", _trend_alignment),
+)
+
+
+def _bucket_lines(trades) -> list[str]:
+    """Render the per-dimension P&L buckets (regime / setup / signal type /
+    trend alignment) for a trade set. Shared by the single-run report and the
+    pooled walk-forward report so both surface the same cuts."""
+    lines: list[str] = []
+    for title, key_fn in _ATTRIB_DIMENSIONS:
+        stats = _group_stats(trades, key_fn)
+        if not stats or (len(stats) == 1 and "(unknown)" in stats):
+            continue
+        lines.append(f"  {title}:")
+        for k, g in stats.items():
+            pf = "inf" if g["profit_factor"] == float("inf") else f"{g['profit_factor']:.2f}"
+            sign = "+" if g["net_pnl"] >= 0 else ""
+            lines.append(f"    {k:<24} {g['trades']:>3} tr  net {sign}${g['net_pnl']:>8,.2f}"
+                         f"  win {g['win_rate']:.0%}  PF {pf}")
+    return lines
+
+
 def _attribution_report(result) -> str:
     """Where the edge lives: P&L broken down by regime, setup, signal type, and
     trend alignment, plus the risk-adjusted metrics the aggregate return can't
@@ -475,19 +501,28 @@ def _attribution_report(result) -> str:
     ra = _risk_adjusted(result)
     lines.append(f"  Risk-adjusted: Sharpe {getattr(result, 'sharpe_ratio', 0.0):.2f}"
                  f" | Sortino {ra['sortino']:.2f} | Calmar {ra['calmar']:.2f}")
-    for title, key_fn in (("By regime (at entry)", lambda t: t.entry_regime),
-                          ("By setup", lambda t: t.setup),
-                          ("By signal type", lambda t: t.signal_type),
-                          ("By trend alignment", _trend_alignment)):
-        stats = _group_stats(result.trades, key_fn)
-        if not stats or (len(stats) == 1 and "(unknown)" in stats):
-            continue
-        lines.append(f"  {title}:")
-        for k, g in stats.items():
-            pf = "inf" if g["profit_factor"] == float("inf") else f"{g['profit_factor']:.2f}"
-            sign = "+" if g["net_pnl"] >= 0 else ""
-            lines.append(f"    {k:<14} {g['trades']:>3} tr  net {sign}${g['net_pnl']:>8,.2f}"
-                         f"  win {g['win_rate']:.0%}  PF {pf}")
+    lines.extend(_bucket_lines(result.trades))
+    return "\n".join(lines)
+
+
+def _pooled_attribution_report(trades, *, label: str) -> str:
+    """Attribution over a POOLED trade set (e.g. every walk-forward OOS fold's
+    trades merged). A single full-window backtest halts on the circuit breaker
+    after a few early losses, so its 13-trade sample is anecdotal; the pooled
+    OOS set is the honest, breaker-reset-per-fold sample the buckets need to be
+    diagnostic. Pooled gross-win/gross-loss PF is shown per bucket; no Sharpe/
+    Calmar here (those need a single continuous equity curve)."""
+    if not trades:
+        return ""
+    gross_win = sum(t.net_pnl_usd for t in trades if t.net_pnl_usd > 0)
+    gross_loss = sum(-t.net_pnl_usd for t in trades if t.net_pnl_usd <= 0)
+    wins = sum(1 for t in trades if t.net_pnl_usd > 0)
+    pooled_pf = (gross_win / gross_loss) if gross_loss > 0 else float("inf")
+    pf_str = "inf" if pooled_pf == float("inf") else f"{pooled_pf:.2f}"
+    lines = ["", f"  ── EDGE ATTRIBUTION ({label}) " + "─" * 30,
+             f"  Pooled: {len(trades)} trades  net ${sum(t.net_pnl_usd for t in trades):+,.2f}"
+             f"  win {wins / len(trades):.0%}  PF {pf_str}"]
+    lines.extend(_bucket_lines(trades))
     return "\n".join(lines)
 
 
@@ -573,6 +608,11 @@ async def _run_portfolio(args: argparse.Namespace) -> None:
         rets = [f["return_pct"] for f in folds]
         print(f"  => profitable folds {prof}/{len(folds)} | mean OOS ret "
               f"{sum(rets)/len(rets):+.2f}% | worst {min(rets):+.2f}%")
+        # Pool every fold's OOS trades so the attribution buckets run on the
+        # full breaker-reset-per-fold sample (a single full-window pass halts on
+        # the circuit breaker after a few losses — too thin to diagnose).
+        pooled = [t for f in folds for t in f.get("_trades", [])]
+        print(_pooled_attribution_report(pooled, label=f"{args.walk_forward}-fold OOS pooled"))
         return
 
     pb = PortfolioBacktester(config, symbols=list(data))

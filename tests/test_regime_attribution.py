@@ -8,6 +8,7 @@ from bot.backtest.models import BacktestTrade
 from bot.backtest.runner import (
     _attribution_report,
     _group_stats,
+    _pooled_attribution_report,
     _risk_adjusted,
     _trend_alignment,
 )
@@ -118,3 +119,25 @@ class TestTrendAlignment:
         g = _group_stats(trades, _trend_alignment)
         assert g["with-trend"]["net_pnl"] == 18.0
         assert g["counter-trend"]["net_pnl"] == -21.0
+
+
+class TestPooledAttribution:
+    def test_pools_trades_and_shows_all_buckets(self):
+        trades = [_trade(10, "TREND_UP", "swing", "LONG", "momentum_confluence"),
+                  _trade(-6, "TREND_UP", "scalp", "SHORT", "vwap_reversion"),
+                  _trade(4, "TREND_DOWN", "swing", "SHORT", "regime_trend")]
+        out = _pooled_attribution_report(trades, label="6-fold OOS pooled")
+        assert "6-fold OOS pooled" in out
+        assert "Pooled: 3 trades" in out
+        # All four dimensions present.
+        for section in ("By regime", "By setup", "By signal type", "By trend alignment"):
+            assert section in out
+
+    def test_empty_pool_is_blank(self):
+        assert _pooled_attribution_report([], label="x") == ""
+
+    def test_pooled_pf_matches_gross_ratio(self):
+        # gross win 12, gross loss 6 -> PF 2.00
+        trades = [_trade(8), _trade(4), _trade(-6)]
+        out = _pooled_attribution_report(trades, label="x")
+        assert "PF 2.00" in out
