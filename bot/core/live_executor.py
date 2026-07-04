@@ -4822,7 +4822,22 @@ class LiveExecutor:
         # Futures-only mode: all positions are futures
         old_sl_id = pos.sl_order_id
         direction = Direction.LONG if pos.direction == "LONG" else Direction.SHORT
+        # Resolve UTA mode BEFORE choosing the path. If it isn't cached yet, probe
+        # (mirrors _place_sl_tp) — never default to the classic ccxt triggerPrice
+        # path on an unresolved account: on a UTA account that path executes as an
+        # IMMEDIATE market order and flat-closes the position on a trailing update.
         use_v3 = self._is_uta if self._is_uta is not None else False
+        if self._is_uta is None:
+            try:
+                await exchange.privateMixGetV2MixAccountAccount(
+                    {"symbol": "BTCUSDT", "productType": "USDT-FUTURES"})
+                self._is_uta = False  # v2 account call worked -> classic account
+            except Exception as exc:
+                if "40085" in str(exc):
+                    use_v3 = True
+                    self._is_uta = True
+                else:
+                    self._is_uta = False
 
         # Step 1: Place new SL at tightened level FIRST
         new_sl_id = None
@@ -4843,13 +4858,19 @@ class LiveExecutor:
         else:
             # Classic mode: place trigger order
             close_side = "sell" if direction == Direction.LONG else "buy"
+            # Snap the trigger to the market tick grid — an unrounded triggerPrice
+            # is rejected by Bitget (45115) and the SL update silently fails,
+            # leaving the LOOSER old stop in place (audit: classic path missed the
+            # rounding the v3 path already does).
+            _sl_r = self._round_price_to_market(exchange, pos.symbol, new_sl)
+            sl_trigger = float(_sl_r) if _sl_r else new_sl
             # Always send tradeSide=close + reduceOnly for SL/TP to prevent reverse opens
             extra_params = {"productType": "USDT-FUTURES", "tradeSide": "close", "reduceOnly": True}
             try:
                 sl_order = await exchange.create_order(
                     symbol=pos.symbol, type="market", side=close_side,
                     amount=pos.quantity,
-                    params={"triggerPrice": new_sl, "triggerType": "last", **extra_params},
+                    params={"triggerPrice": sl_trigger, "triggerType": "last", **extra_params},
                 )
                 new_sl_id = sl_order.get("id")
             except Exception as exc:
