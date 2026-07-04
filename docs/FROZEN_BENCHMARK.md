@@ -84,8 +84,32 @@ it (1.1 MB gzipped for 10 symbols × ~6000 bars) means a fresh sandbox runs the
 >
 > ¹ with the #291 min-stop floor in place. **The bot is backtest-profitable on
 > this window when measured honestly.** `--honest` now enables partial-TP by
-> default so the benchmark reflects live; **+0.31% / PF 1.14 is the baseline all
-> future A/Bs beat.**
+> default so the benchmark reflects live; **superseded again below** — two more
+> live-fidelity gaps (time-stop, fee model) were closed after this table.
+
+## Current baseline: full live fidelity (time-stop + real fee)
+
+Two more benchmark-vs-live gaps, found the same way as partial-TP: live runs a
+**time-stop** (`TIME_STOP_ENABLED` defaults True — cuts a stale, non-profitable
+position at its per-strategy horizon) that the backtest defaulted OFF
+(`BACKTEST_TIME_STOP`), and the plain `--commission` default (0.1%) was stale
+against the live risk engine's modeled taker rate (`CONFIG.risk.taker_fee_pct`,
+**0.06%**). A 4-arm A/B on the frozen data (majors_1h, `--honest --walk-forward
+6`) isolates each:
+
+| time-stop | fee | mean OOS | net | win | PF |
+|---|---:|---:|---:|---:|---:|
+| off | 0.10% (old) | +0.31% | +$188 | 64% | 1.14 |
+| **on** | 0.10% | +0.38% | +$230 | 63% | 1.18 |
+| off | **0.06% (real)** | +0.42% | +$250 | 64% | 1.19 |
+| **on** | **0.06%** | **+0.49%** | **+$294** | 63% | **1.24** |
+
+Both fixes independently improve the result and stack cleanly. `--honest` now
+enables the time-stop and uses the live-modeled fee by default (both still
+override-able via `BACKTEST_TIME_STOP=0` / `--commission`).
+
+**+0.49% OOS / PF 1.24 is the current baseline — every future A/B beats this
+number, not the +0.31% one above.**
 
 ## Where the bleed is (pooled OOS attribution)
 
@@ -177,6 +201,58 @@ under 1.14 is the signal that execution — not the strategy — is the leak.
   the only run-to-run differences are wall-clock metadata (`duration_seconds`,
   the result `timestamp`, and each trade's random id), none of which affect an
   A/B comparison.
+
+## Second snapshot: the alt-coin universe (`data/benchmark/alts_1h/`)
+
+The majors snapshot answers "is the strategy sound." It doesn't answer "should
+the scanner be trading the symbols live actually holds" — TAG, BLESS, and
+similar low-cap/newer-listing perps are a structurally different universe
+(thinner books, wider spreads, younger listings) from BTC/ETH/SOL. A second
+frozen snapshot, `alts_1h`, covers the universe live actually trades:
+
+| | |
+|---|---|
+| Universe | 12 alt/meme perps (TAG BLESS HOME SYRUP TRUMP PENGU WIF PEPE FLOKI SEI APT ARB) |
+| Bars | 5,994 × 1h per symbol |
+| `dataset_hash` | `232d1946e469…` |
+| Size | ~1 MB (gzipped CSV + `manifest.json`) |
+
+```bash
+python -m bot.backtest.runner --dataset data/benchmark/alts_1h --honest --walk-forward 6
+```
+
+**Result, full live fidelity (time-stop + real fee, same settings as the +0.49%
+majors baseline): mean OOS −0.74%, 1/6 profitable folds, worst −4.51% (8.5%
+maxDD). Pooled: 117 trades, net −$444, win 53%, PF 0.73.**
+
+| Fold | Trades | OOS Return | Win | maxDD | PF |
+|-----:|-------:|-----------:|----:|------:|----:|
+| 0 | 27 | −4.51% | 48% | 8.50% | 0.42 |
+| 1 | 12 | −0.27% | 33% | 0.91% | 0.85 |
+| 2 | 30 | +1.01% | 67% | 0.93% | 1.57 |
+| 3 | 8 | −0.00% | 38% | 0.85% | 1.00 |
+| 4 | 29 | −0.04% | 62% | 2.38% | 0.99 |
+| 5 | 11 | −0.63% | 36% | 0.85% | 0.54 |
+
+Pooled attribution — **every** regime and setup bucket is negative:
+
+| Dimension | Worst | Best |
+|---|---|---|
+| Regime | `TREND_DOWN` −$217 (n=70) · `TREND_UP` −$100 · `EXPANSION` −$87 | `RANGE` −$40 (least bad, still negative) |
+| Setup | `swing` −$329 (n=94) · `intraday` −$87 · `scalp` −$29 | none positive |
+| Signal | `regime_trend` −$259 (n=63) · `momentum_confluence` −$185 | `volume_spike` +$18 (n=12, thin) |
+
+**Same strategy, same fidelity settings, same walk-forward — majors: +$294 / PF
+1.24; alts: −$444 / PF 0.73.** This is not noise from a couple of bad trades: it
+is negative across every regime, every setup, and every signal family bar one
+thin bucket. The live TAG/BLESS losses are consistent with trading a
+structurally negative-edge universe, not with a strategy bug.
+
+**Implication (not yet acted on):** this is evidence for restricting the live
+scanner/auto-trade universe away from this alt-coin class, or applying much
+stricter gating specifically to it — a policy change, not a code bug, so it's
+recorded here rather than shipped silently. `CONFIG.top_movers_count` and the
+scanner's category allocation are the levers if this warrants a change.
 
 ## Refreshing the snapshot
 
