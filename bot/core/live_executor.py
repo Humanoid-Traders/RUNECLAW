@@ -5025,9 +5025,31 @@ class LiveExecutor:
             net_pnl = gross_pnl - commission
         return gross_pnl, net_pnl, commission
 
+    def _resolve_trade_id(self, ident: str) -> Optional[str]:
+        """Resolve a user-supplied id to an internal trade_id.
+
+        Accepts the internal trade_id directly, OR an exchange order id — the
+        "Order IDs (for cancel)" list and the Open-Orders card surface the
+        exchange order id (limit/SL/TP), not the internal TI-… id, so a user who
+        copies the id the bot showed them would otherwise get "not found". Match
+        those exchange ids back to the owning position. Returns None if unknown.
+        """
+        if not ident:
+            return None
+        if ident in self._positions:
+            return ident
+        for tid, p in self._positions.items():
+            if ident in (getattr(p, "limit_order_id", None),
+                         getattr(p, "sl_order_id", None),
+                         getattr(p, "tp_order_id", None)):
+                return tid
+        return None
+
     async def close_position(self, trade_id: str, reason: str = "bot_auto",
                               close_price: float = 0) -> str:
         """Close a live position by placing the opposite order."""
+        # Accept an exchange order id too, not just the internal trade_id.
+        trade_id = self._resolve_trade_id(trade_id) or trade_id
         # C2-02 FIX: Per-trade lock prevents double-close race.
         lock = self._close_locks.setdefault(trade_id, asyncio.Lock())
         async with lock:
