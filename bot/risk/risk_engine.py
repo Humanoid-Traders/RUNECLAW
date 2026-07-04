@@ -853,6 +853,21 @@ class RiskEngine:
             _cap_pct = CONFIG.risk.max_position_pct
 
         max_notional_usd = sizing_equity * (_cap_pct / 100.0)
+        # Volatility-targeted cap (opt-in, default OFF; tighten-only). The notional
+        # cap binds on ~every crypto trade, so the engine effectively runs flat
+        # margin — realized per-trade risk = margin×lev×stop% ∝ ATR%, scaling UP
+        # with volatility (the inverse of risk parity). Float the binding cap
+        # INVERSELY with ATR% so per-trade dollar risk is normalized toward
+        # vol_target_atr_pct. Fail-open (mult=1.0) on missing/zero ATR or entry;
+        # clamped to [floor, 1.0] so it only ever REDUCES the cap (preserves the
+        # check #2 hard-cap invariant).
+        if (CONFIG.risk.vol_target_sizing_enabled and atr and atr > 0
+                and idea.entry_price > 0):
+            _cur_atr_pct = atr / idea.entry_price * 100.0
+            if _cur_atr_pct > 0:
+                _vt = CONFIG.risk.vol_target_atr_pct / _cur_atr_pct
+                _vt = max(CONFIG.risk.vol_target_floor, min(1.0, _vt))
+                max_notional_usd *= _vt
         if max_notional_usd > 0 and position_usd > max_notional_usd:
             position_usd = max_notional_usd
 

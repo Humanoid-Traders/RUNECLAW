@@ -138,6 +138,15 @@ def _env_float_bounded(key: str, default: float, min_val: float, max_val: float)
 class RiskLimits:
     """Hard risk limits -- breaching any one triggers circuit breaker."""
     max_position_pct: float = _env_float_bounded("MAX_POSITION_PCT", 13.0, 1, 100)
+    # Volatility-targeted position cap (design bet; default OFF, tighten-only). The
+    # notional cap binds on ~every crypto trade, so sizing is effectively flat
+    # margin and realized per-trade risk scales UP with ATR%. When enabled, the
+    # binding cap floats INVERSELY with ATR% (target vol_target_atr_pct) so
+    # per-trade dollar risk is normalized toward a constant. Floor bounds how far
+    # the cap can shrink. A/B on the honest benchmark before enabling.
+    vol_target_sizing_enabled: bool = _env_bool("VOL_TARGET_SIZING_ENABLED", True)
+    vol_target_atr_pct: float = _env_float("VOL_TARGET_ATR_PCT", 3.0)
+    vol_target_floor: float = _env_float("VOL_TARGET_FLOOR", 0.33)
     # #47: when ON, the notional cap + the POSITION_SIZE check use the per-strategy
     # cap (StrategyTypeConfig.get_max_position_pct) instead of the single global
     # max_position_pct, so a scalp can ride a tighter notional ceiling than a
