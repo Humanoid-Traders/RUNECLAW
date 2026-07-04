@@ -350,9 +350,9 @@ defaults:
     description: "Minimum risk-reward ratio required for trade approval"
 
   min_confidence:
-    value: 0.55
+    value: 0.60
     env_var: MIN_CONFIDENCE
-    description: "Minimum analyzer confidence score (sweet spot: filters weak setups)"
+    description: "Minimum analyzer confidence score (raised 0.55->0.60: frozen-benchmark A/B, docs/FROZEN_BENCHMARK.md)"
 
   signal_display_min_confidence:
     value: 0.70

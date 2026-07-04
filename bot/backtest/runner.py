@@ -346,6 +346,12 @@ Examples:
                              help="Commission %% (default: 0.1%%; under --honest, the live-modeled "
                                   "taker rate, CONFIG.risk.taker_fee_pct, currently 0.06%%)")
     trade_group.add_argument("--slippage", type=float, default=0.05, help="Slippage %% (default: 0.05)")
+    trade_group.add_argument("--confidence-threshold", type=float, default=0.0,
+                             help="Extra minimum-confidence entry gate on top of the analyzer's "
+                                  "own thresholds (0.0 = no extra gate, default). Fewer, "
+                                  "higher-conviction trades -> less commission churn; A/B against "
+                                  "the frozen benchmark to see if it's worth the lost trade count. "
+                                  "Wired into --symbols/--dataset portfolio runs.")
     trade_group.add_argument("--fill-mode", choices=("close", "next_open"), default="close",
                              help="Entry fill convention: same-bar close (legacy, optimistic) "
                                   "or next-bar open (conservative; audit fix #15). Run both "
@@ -602,6 +608,7 @@ async def _run_portfolio(args: argparse.Namespace) -> None:
         use_llm=args.use_llm, use_recorded_llm=args.use_recorded_llm,
         use_recorded_order_flow=args.use_recorded_order_flow,
         recorded_order_flow_path=args.of_snapshot_path,
+        confidence_threshold=getattr(args, "confidence_threshold", 0.0) or 0.0,
     )
     data = {}
     if getattr(args, "dataset", None):

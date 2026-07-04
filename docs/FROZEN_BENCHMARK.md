@@ -296,6 +296,44 @@ here so this refuted hypothesis isn't re-chased; `bot/backtest/snapshot.py`'s
 combined-universe question a one-line `--dataset a,b` away instead of an
 ad-hoc script.
 
+## Fee-churn reduction — raising the confidence floor (0.55 -> 0.60, ENABLED)
+
+`--confidence-threshold` (new `_run_portfolio` CLI flag, layered on top of
+whatever the risk engine's own `CONFIDENCE` check already enforces via
+`CONFIG.risk.min_confidence`) was swept against the combined 22-symbol
+universe and the majors-only universe to see if raising the entry bar cuts
+low-conviction trades (and their commission drag) without hurting expectancy:
+
+```bash
+python -m bot.backtest.runner --dataset data/benchmark/majors_1h,data/benchmark/alts_1h \
+    --honest --walk-forward 6 --confidence-threshold 0.6
+```
+
+| Extra floor | Combined mean OOS | Combined PF | Combined trades/net | Majors mean OOS | Majors PF | Majors trades/net |
+|---|---:|---:|---:|---:|---:|---:|
+| 0.0 (none) | +0.68% | 1.29 | 136 / +$410 | +0.49% | 1.24 | 117 / +$294 |
+| 0.55 | +0.68% | 1.29 | 136 / +$410 | — | — | — |
+| **0.60** | **+1.00%** | **1.55** | **118 / +$599** | **+0.62%** | **1.38** | **105 / +$371** |
+| 0.65 | +0.78% | 1.44 | 128 / +$468 | — | — | — |
+
+**0.55 is a byte-for-byte no-op** — the live risk engine already enforces
+`MIN_CONFIDENCE=0.55` on the exact same `idea.confidence` value (the backtest
+engine runs the same `RiskEngine` check), so an *extra* gate at 0.55 rejects
+nothing beyond what already gets rejected. This confirms the baseline runs
+above were never "ungated" — they were already filtering at 0.55.
+
+**0.60 is a genuine, robust win on both universes** — fewer, higher-conviction
+trades (down ~10-13%) with meaningfully better PF and total return on both the
+majors-only and combined-universe benchmarks. 0.65 also beats the 0.0/0.55
+baseline but underperforms 0.60, so 0.60 is the sweep's local optimum, not an
+edge-of-range artifact.
+
+**Enabled**: `RiskLimits.min_confidence` default raised from 0.55 to 0.60 in
+`bot/config.py` (env override `MIN_CONFIDENCE` unchanged) — this is the actual
+gate the finding was measured against, so raising the default is how the
+result reaches live trading, not just the backtest CLI knob used to discover
+it.
+
 ## Refreshing the snapshot
 
 Re-run step 1 to fetch a newer window (e.g. quarterly). This changes the

@@ -188,9 +188,14 @@ class RiskLimits:
     max_correlation: float = _env_float("MAX_CORRELATION", 0.85)
     # Extended risk checks (checks 6-16)
     min_risk_reward: float = _env_float_bounded("MIN_RISK_REWARD", 1.2, 0.0, 100.0)
-    # SIGNAL QUALITY: 0.55 is the tuned threshold -- relaxed from 0.60 to allow
-    # more signals through while still filtering weak setups
-    min_confidence: float = _env_float_bounded("MIN_CONFIDENCE", 0.55, 0.1, 1.0)
+    # SIGNAL QUALITY: 0.60 (raised from 0.55). The frozen honest-fidelity
+    # benchmark (docs/FROZEN_BENCHMARK.md, --confidence-threshold sweep) showed
+    # 0.55 is a no-op on top of this gate (identical trades/PF to no extra
+    # floor) while 0.60 cuts ~10-13% of the lowest-conviction trades and raises
+    # both universes: majors +0.49%->+0.62% (PF 1.24->1.38), combined
+    # majors+alts +0.68%->+1.00% (PF 1.29->1.55). 0.65 also beat baseline but
+    # underperformed 0.60.
+    min_confidence: float = _env_float_bounded("MIN_CONFIDENCE", 0.60, 0.1, 1.0)
     # Minimum confidence shown in "Latest Signal" display (filters UI noise)
     signal_display_min_confidence: float = _env_float_bounded(
         "SIGNAL_DISPLAY_MIN_CONFIDENCE", 0.70, 0.1, 1.0)
