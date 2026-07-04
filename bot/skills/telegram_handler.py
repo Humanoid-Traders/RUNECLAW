@@ -5117,18 +5117,24 @@ class TelegramHandler:
     @guard("deepscan")
     async def _cmd_deepscan(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """Deep scan 67+ symbols with chart + candle patterns."""
-        # Parse optional timeframe from args: /deepscan 1h
+        # Parse optional timeframe from args: /deepscan 1h  (or /deepscan all
+        # to sweep every timeframe 5m→1d in one pass).
+        from bot.utils.candles import SUPPORTED_TIMEFRAMES
         tf = "4h"
         if ctx.args:
             arg = ctx.args[0].lower().strip()
-            if arg in ("5m", "15m", "1h", "4h", "1d"):
+            if arg == "all" or arg in SUPPORTED_TIMEFRAMES:
                 tf = arg
-        await self._send(update, f"🔬 <i>Deep scanning {tf.upper()} — this may take a minute...</i>")
+        _multi = tf == "all"
+        _tf_label = "ALL TIMEFRAMES (5m→1d)" if _multi else tf.upper()
+        await self._send(update, f"🔬 <i>Deep scanning {_tf_label} — this may take a minute...</i>")
         try:
             result = await asyncio.wait_for(
                 self.registry.dispatch("deepscan",
                     self.engine, timeframe=tf),
-                timeout=120,  # 2 minute max
+                # A full multi-timeframe sweep does ~5× the fetches, so give it
+                # proportionally longer before timing out.
+                timeout=300 if _multi else 120,
             )
             if result:
                 # Try to render a card image from structured hits
