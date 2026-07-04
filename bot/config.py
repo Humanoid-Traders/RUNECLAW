@@ -1486,7 +1486,16 @@ class AppConfig:
 
     # -- Scan settings --
     scan_interval_seconds: int = int(_env_float("SCAN_INTERVAL", 60))
-    top_movers_count: int = int(_env_float("TOP_MOVERS_COUNT", 80))
+    # How many (volume-filtered) symbols the scanner emits for analysis each
+    # cycle. Raised 80 -> 200 for a wide sweep of the whole liquid universe; the
+    # analysis loop bounds concurrency (scan_analysis_concurrency) so a wider
+    # universe can't fan out hundreds of simultaneous exchange calls. Lower it
+    # (TOP_MOVERS_COUNT) to trim always-on cost/latency.
+    top_movers_count: int = int(_env_float("TOP_MOVERS_COUNT", 200))
+    # Max symbols analyzed concurrently per scan (semaphore bound over the
+    # OHLCV + order-flow + MTF + analyzer work). Keeps a wide universe from
+    # overwhelming the exchange rate limiter / event loop.
+    scan_analysis_concurrency: int = int(_env_float("SCAN_ANALYSIS_CONCURRENCY", 12))
     # All-markets slot allocation for the non-Crypto (TradFi) categories.
     # When full-coverage is ON (default), EVERY present TradFi perp (metals,
     # stocks, ETFs, commodities, pre-IPO) is guaranteed a scan slot — the whole
