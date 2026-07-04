@@ -1342,7 +1342,17 @@ class LiveExecutor:
             tracked = {
                 (normalize_symbol(p.symbol), p.direction)
                 for p in self._positions.values()
-                if p.status in ("open", "pending_fill")
+                # Include "closing": a position mid-close must NOT be re-adopted
+                # as an orphan (TOCTOU with a concurrent close → duplicate record,
+                # double-counted PnL, and stray safety SL/TP on a dead position).
+                if p.status in ("open", "pending_fill", "closing")
+            }
+            # Also cover the window after close_position() takes the per-trade
+            # close lock but before it flips the status to "closing".
+            tracked |= {
+                (normalize_symbol(p.symbol), p.direction)
+                for p in self._positions.values()
+                if p.trade_id in self._close_locks and self._close_locks[p.trade_id].locked()
             }
 
             for p in ex_positions or []:

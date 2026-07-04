@@ -224,7 +224,12 @@ class TestSimVetoOrdering:
         # and the pyramid SL->breakeven _update_exchange_sl side effect.
         import inspect
         from bot.core.engine import RuneClawEngine
-        src = inspect.getsource(RuneClawEngine.confirm_trade) + inspect.getsource(RuneClawEngine._confirm_trade_inner)
+        # The pyramid SL->breakeven mutation now lives in a helper called only
+        # from the post-fill success branch (so a blocked/failed add never moves
+        # the existing stop). Include it so the ordering invariant still resolves.
+        src = (inspect.getsource(RuneClawEngine.confirm_trade)
+               + inspect.getsource(RuneClawEngine._confirm_trade_inner)
+               + inspect.getsource(RuneClawEngine._pyramid_move_existing_sl_to_breakeven))
         veto_idx = src.index("_live_execution_vetoed_by_simulation")
         exec_idx = src.index('AgentState.EXECUTING, f"executing LIVE trade')
         # Match the actual call (not the explanatory comment that mentions it).

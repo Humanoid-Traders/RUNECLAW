@@ -2560,6 +2560,29 @@ class RuneClawEngine:
                                 f"open/pending order for it (duplicate suppressed).")
             return await self._confirm_trade_inner(trade_id, user_id)
 
+    async def _pyramid_move_existing_sl_to_breakeven(
+            self, executor, asset: str, new_trade_id: str) -> None:
+        """Move the EXISTING same-symbol position's SL to breakeven after a
+        pyramid add has filled. Called only from the success branch so a blocked
+        or failed add never touches the existing winner's stop. Best-effort: a
+        local SL move stands even if the exchange update fails (the monitor
+        closes at the new level)."""
+        symbol_key = normalize_symbol(asset)
+        for lp in executor.open_positions:
+            if normalize_symbol(lp.symbol) == symbol_key and lp.trade_id != new_trade_id:
+                old_sl = lp.stop_loss
+                lp.stop_loss = lp.entry_price  # breakeven
+                audit(trade_log,
+                      f"Pyramid: moved {lp.symbol} SL to breakeven ${lp.entry_price:.4f} (was ${old_sl:.4f})",
+                      action="pyramid_sl_breakeven", result="MOVED")
+                try:
+                    exchange = await executor._get_exchange()
+                    await executor._update_exchange_sl(exchange, lp, lp.entry_price)
+                except Exception as exc:
+                    logger.debug("Failed to update exchange SL to BE: %s", exc)
+                executor._save_positions()
+                break
+
     async def _confirm_trade_inner(self, trade_id: str, user_id: str = "") -> str:
         """
         Human confirms a pending trade idea.  This is the ONLY path to execution.
@@ -2897,9 +2920,9 @@ class RuneClawEngine:
         # A user who has opted into practice mode (and the feature is enabled)
         # has THEIR confirmed trade SIMULATED into their paper portfolio instead
         # of sent to the exchange. This branch runs BEFORE the EXECUTING
-        # transition, the pyramid SL move (which mutates an exchange stop), and
-        # live_executor.execute() — so a paper trade can NEVER place or modify a
-        # real order. Default OFF and per-user, so live users are unaffected.
+        # transition, live_executor.execute(), and the post-fill pyramid SL move
+        # (which mutates an exchange stop) — so a paper trade can NEVER place or
+        # modify a real order. Default OFF and per-user, so live users unaffected.
         if (CONFIG.paper_sim_opt_in_enabled and user_id
                 and self._user_store is not None
                 and self._user_store.sim_opt_in(user_id)):
@@ -2914,11 +2937,11 @@ class RuneClawEngine:
 
         # ── RC-AUD-018 / Audit F-14: SIMULATION_MODE hard veto ──
         # Final, independent fail-closed gate. It must run BEFORE the EXECUTING
-        # transition and before any exchange-mutating side-effect (the pyramid
-        # SL→breakeven below calls _update_exchange_sl on a *different* live
-        # position). Previously the veto sat just before execute(), so a vetoed
-        # confirm could still have modified another position's stop on the
-        # exchange. This guard never enables execution — it only ever blocks it.
+        # transition and before any exchange-mutating side-effect (execute() and
+        # the post-fill pyramid SL→breakeven move on a *different* live position).
+        # Previously the veto sat just before execute(), so a vetoed confirm could
+        # still have modified another position's stop on the exchange. This guard
+        # never enables execution — it only ever blocks it.
         if self._live_execution_vetoed_by_simulation():
             self._pending_pyramid.pop(trade_id, None)
             audit(trade_log,
@@ -2956,35 +2979,20 @@ class RuneClawEngine:
         # trade routes to THEIR own linked account.
         executor = self._executor_for(user_id)
 
-        # ── Pyramid add: half size + move existing SL to breakeven ──
+        # ── Pyramid add: half size now; the existing winner's SL is moved to
+        # breakeven ONLY after this add actually fills (see the success branch
+        # below). Moving it here — BEFORE execute() — left the existing position
+        # damaged at breakeven whenever the add was blocked (the executor's
+        # duplicate-symbol preflight blocks a same-symbol add) with no rollback.
+        _is_pyramid_add = False
         _pending_pyramid = getattr(self, '_pending_pyramid', {})
         if _pending_pyramid.pop(trade_id, False):
+            _is_pyramid_add = True
             original_size = size_usd
             size_usd = size_usd * 0.5
             audit(trade_log,
                   f"Pyramid add: half size ${original_size:.2f} -> ${size_usd:.2f}",
                   action="pyramid_half_size", result="APPLIED")
-
-            # Move existing position's SL to breakeven (within the SAME executor's
-            # account — a user only ever pyramids onto their own positions).
-            symbol_key = normalize_symbol(idea.asset)
-            for lp in executor.open_positions:
-                lp_key = normalize_symbol(lp.symbol)
-                if lp_key == symbol_key and lp.trade_id != trade_id:
-                    old_sl = lp.stop_loss
-                    lp.stop_loss = lp.entry_price  # breakeven
-                    audit(trade_log,
-                          f"Pyramid: moved {lp.symbol} SL to breakeven ${lp.entry_price:.4f} (was ${old_sl:.4f})",
-                          action="pyramid_sl_breakeven", result="MOVED")
-                    # Update exchange SL
-                    try:
-                        exchange = await executor._get_exchange()
-                        await executor._update_exchange_sl(
-                            exchange, lp, lp.entry_price)
-                    except Exception as exc:
-                        logger.debug("Failed to update exchange SL to BE: %s", exc)
-                    executor._save_positions()
-                    break
 
         # LIVE FIX: Cap position size at actual exchange equity to prevent
         # InsufficientFunds errors.  The risk engine sizes based on paper
@@ -3070,6 +3078,12 @@ class RuneClawEngine:
             # C-05 FIX: only remove idea and ATR after successful execution
             self._pending_ideas.pop(trade_id, None)
             self._pending_atr.pop(trade_id, None)
+            # Pyramid add filled — NOW move the existing position's SL to breakeven
+            # (deferred from before execute() so a blocked/failed add never leaves
+            # the existing winner sitting at breakeven with no rollback).
+            if _is_pyramid_add:
+                await self._pyramid_move_existing_sl_to_breakeven(
+                    executor, idea.asset, trade_id)
             # Cache VWAP at entry for VWAP reversion exit monitoring
             if hasattr(idea, 'signal_type') and idea.signal_type == "vwap_reversion":
                 # Extract VWAP from the idea's signals_used/indicators (stored at analysis time)
