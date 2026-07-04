@@ -784,6 +784,14 @@ class AnalyzerConfig:
     high_vol_tp_mult: float = 3.8       # was 4.5 -- tightened for reachable TPs
     low_vol_sl_mult: float = 2.0        # tighter stops in low vol
     low_vol_tp_mult: float = 3.0        # R:R = 1.5
+    # Minimum stop-distance floor (safety). An ATR-derived stop can fall below a
+    # sane, venue-placeable distance on low-vol or low-priced assets — Bitget then
+    # rejects the conditional order (position left UNPROTECTED) or market noise
+    # trips it instantly. Floor |entry - SL| to this fraction of entry, widening
+    # the stop away from entry BEFORE sizing (so risk is measured on the real
+    # stop). 0.4% sits well below a normal ATR stop on liquid majors, so it only
+    # engages on pathologically-tight stops. 0 disables.
+    min_stop_distance_pct: float = _env_float_bounded("MIN_STOP_DISTANCE_PCT", 0.004, 0.0, 0.5)
     # Regime-specific overrides
     range_sl_mult: float = 1.5
     range_tp_mult: float = 2.5
