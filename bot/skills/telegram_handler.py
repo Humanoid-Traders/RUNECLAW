@@ -5591,8 +5591,7 @@ class TelegramHandler:
 
             # Rate limit: avoid flooding Telegram
             if i < len(pending):
-                import asyncio
-                await asyncio.sleep(0.3)
+                await asyncio.sleep(0.3)  # asyncio is module-level imported
 
     @staticmethod
     def _synth_order_from_tracked(p) -> dict:
