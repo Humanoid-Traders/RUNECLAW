@@ -235,6 +235,16 @@ class RuneClawEngine:
         self._last_confirmed_idea: Optional[TradeIdea] = None
         self._pending_atr: dict[str, Optional[float]] = {}  # H1: store ATR for re-check
         self._pending_pyramid: dict[str, bool] = {}  # Track pyramid add flags
+        # Single-flight scan lock. With PTB concurrent_updates ON, two Telegram
+        # updates (two 'Latest Signal' taps, or a tap + /forcescan) can enter
+        # force_scan concurrently; both would clear+repopulate _pending_ideas. This
+        # serializes force_scan against itself and against the periodic tick scan.
+        self._scan_lock: asyncio.Lock = asyncio.Lock()
+        # Hard kill-switch flag. Set by emergency_halt_all, cleared on resume, and
+        # re-checked fail-closed just before executor.execute() so a confirm that
+        # passed its risk gate BEFORE /halt tripped can never land an order after
+        # the flatten (a race newly reachable once updates run concurrently).
+        self._halted: bool = False
         self._user_store = None  # Set by TelegramHandler for role-based execution
         self._cooldown_until: float = 0.0
         # Per-symbol cooldown after SL hit — prevents immediate re-entry
@@ -1041,6 +1051,9 @@ class RuneClawEngine:
         Returns a structured summary for the caller to render.
         """
         engines_halted = 0
+        # Raise the hard kill flag FIRST so any confirm already past its risk gate
+        # is rejected at the pre-execute re-check before this flatten completes.
+        self._halted = True
         try:
             self.risk.emergency_halt(reason)
             engines_halted += 1
@@ -1075,6 +1088,7 @@ class RuneClawEngine:
         reset. Fail-open per engine. Default (per-user OFF) → just the shared
         engine, identical to a bare reset_circuit_breaker()."""
         reset = 0
+        self._halted = False  # resume: allow execution again
         try:
             self.risk.reset_circuit_breaker()
             reset += 1
@@ -1653,6 +1667,17 @@ class RuneClawEngine:
             self._transition(AgentState.MONITORING, "checking positions (scan skipped, pending confirms)")
             await self._check_open_positions()
             self._transition(AgentState.IDLE, "tick cycle complete (scan skipped)")
+            return
+
+        # Don't scan while a Telegram-triggered force_scan holds the scan lock —
+        # both mutate _pending_ideas and run auto-confirm. Monitor positions (SL/TP
+        # protection unaffected) and bail; the in-flight force_scan produces this
+        # cycle's ideas. Same-symbol double orders are separately impossible via
+        # the per-symbol entry locks in confirm_trade.
+        if self._scan_lock.locked():
+            self._transition(AgentState.MONITORING, "checking positions (force_scan in progress)")
+            await self._check_open_positions()
+            self._transition(AgentState.IDLE, "tick cycle complete (scan in progress)")
             return
 
         self._transition(AgentState.SCANNING, "beginning scan cycle")
@@ -3012,6 +3037,17 @@ class RuneClawEngine:
             self._transition(AgentState.IDLE, f"no ATR for {trade_id}")
             return "Trade REJECTED: no valid ATR available — cannot compute safe SL distance"
 
+        # Kill-switch fail-closed re-check. With concurrent updates, /halt
+        # (emergency_halt_all) or a circuit-breaker trip can land AFTER this
+        # confirm passed its risk gate above but BEFORE the order is placed.
+        # Re-check here — under the per-symbol entry lock — so no position can
+        # survive the kill switch. (This is the whole reason concurrent_updates
+        # is safe on the money path.)
+        if self._halted or self.risk.circuit_breaker_active:
+            self._pending_pyramid.pop(trade_id, None)
+            self._transition(AgentState.IDLE, f"halted before execute {trade_id}")
+            return "Trade REJECTED: engine halted (kill-switch) before execution."
+
         result = await executor.execute(
             idea, size_usd,
             order_type=idea.order_type,
@@ -3091,6 +3127,25 @@ class RuneClawEngine:
         return "Trade not found."
 
     async def force_scan(self) -> dict:
+        """Single-flight guard around a force-scan cycle.
+
+        With PTB concurrent_updates ON, two Telegram updates can enter here at
+        once (two 'Latest Signal' taps, or a tap + /forcescan). Both would clear
+        and repopulate _pending_ideas and double the scan/LLM/exchange load, so
+        the second caller returns immediately. The .locked() check and the
+        ``async with`` acquire have no await between them, so the guard is atomic
+        on single-threaded asyncio.
+        """
+        if self._scan_lock.locked():
+            audit(system_log, "Force scan skipped — scan already in progress",
+                  action="force_scan", result="SKIPPED_INFLIGHT")
+            return {"signals": 0, "ideas": 0, "auto_confirmed": 0,
+                    "pending": len(self._pending_ideas), "cleared_pending": 0,
+                    "skipped": "scan_already_running"}
+        async with self._scan_lock:
+            return await self._force_scan_locked()
+
+    async def _force_scan_locked(self) -> dict:
         """Force an immediate scan cycle, bypassing cooldown and pending gates.
 
         Called by /forcescan command. Clears pending ideas, resets cooldown,

@@ -234,8 +234,15 @@ class TelegramHandler:
         self.forwarder = ChannelForwarder()
 
     def build_app(self) -> Application:
+        # concurrent_updates(True): dispatch each Telegram update in its own
+        # asyncio task instead of one-at-a-time. Without it, a long handler (a
+        # scan can run for many seconds) head-of-line-blocks EVERY other update —
+        # commands and inline buttons get no reply until the scan finishes. The
+        # money path stays correct under concurrency via the engine's per-symbol
+        # entry locks + close locks + the kill-switch re-check before execute().
         app = (Application.builder()
                .token(CONFIG.telegram.bot_token)
+               .concurrent_updates(True)
                .post_init(self._register_command_menu)
                .build())
         # Store engine in bot_data so standalone skill handlers can access it
