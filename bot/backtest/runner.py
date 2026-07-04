@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -388,6 +389,14 @@ def main() -> None:
     if args.honest:
         args.strict_data = True
         args.fill_mode = "next_open"
+        # The honest benchmark must measure the SAME exit strategy that runs live.
+        # Live uses the partial-TP ladder (PARTIAL_TP_ENABLED defaults True); the
+        # backtest gates it behind BACKTEST_PARTIAL_TP, which defaults False for
+        # single-exit reproducibility. A single-exit benchmark badly misreads live:
+        # on majors_1h it shows −0.72% / PF 0.72, while the real (partial-TP) exit
+        # is +0.31% / PF 1.14. Under --honest, turn the ladder on so the number
+        # reflects live — unless the operator pinned BACKTEST_PARTIAL_TP explicitly.
+        os.environ.setdefault("BACKTEST_PARTIAL_TP", "1")
     # `--dataset DIR` with no --symbols runs the snapshot's FULL universe as a
     # portfolio — the canonical one-liner benchmark.
     if getattr(args, "dataset", None) and not args.symbols.strip():
