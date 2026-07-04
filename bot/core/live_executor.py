@@ -2090,6 +2090,19 @@ class LiveExecutor:
             # leverage used to SIZE the order matches the leverage SET on the
             # exchange in _ensure_leverage (they had diverged: deep-audit medium).
             leverage_mult = self._compute_target_leverage(symbol)
+            # Honor the risk engine's margin-risk-capped leverage. When SL distance
+            # × leverage would exceed max_margin_risk_pct, RiskEngine.evaluate()
+            # reduces leverage and writes idea._adjusted_leverage "for the executor"
+            # — but it was never read, so orders sized at full leverage and blew
+            # through the very cap the engine reported enforcing. Clamp reduce-only:
+            # this can only LOWER the sized leverage, never raise it, so it is a
+            # no-op whenever the risk gate left leverage unchanged.
+            _risk_lev = getattr(idea, "_adjusted_leverage", None)
+            if _risk_lev:
+                try:
+                    leverage_mult = min(int(leverage_mult), int(_risk_lev))
+                except (TypeError, ValueError):
+                    pass
             quantity = (size_usd * leverage_mult) / current_price
 
             # Determine side
