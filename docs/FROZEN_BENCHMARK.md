@@ -141,6 +141,26 @@ worse trades fill them. The `SKIP_SIGNAL_TYPES` lever exists (default empty, no
 behavior change) but the benchmark says leave it empty on this universe. Recorded
 so it isn't re-chased.
 
+## Is live tracking the benchmark? (`bot.backtest.parity`)
+
+The benchmark says the strategy is profitable here; the parity report closes the
+loop against reality. It reads the LIVE realized trades and reports the same lens
+— realized PF / win / net, **fee parity** (realized round-trip fee rate vs the
+modeled `commission_pct`), and per-signal-type / per-setup / per-exit-reason
+breakdowns — so a fills/fees/slippage gap between live and the +0.31% backtest
+shows up directly:
+
+```bash
+python -m bot.backtest.parity          # reads data/closed_trades.json
+python -m bot.backtest.parity --file <path.json>
+```
+
+Pure, read-only (no exchange calls). The point isn't to reproduce backtest P&L
+trade-for-trade (live and backtest take different trades) but to answer: are live
+*fills and fees* as good as the model assumes, and is live realized edge in the
+same ballpark as the benchmark? A `fee_vs_model > 1.25×` or a realized PF well
+under 1.14 is the signal that execution — not the strategy — is the leak.
+
 ## Integrity guarantees (locked by `tests/test_benchmark_snapshot.py`)
 
 - gzip CSV round-trips preserve the exact candles (`DataLoader.content_hash`
