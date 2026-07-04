@@ -84,8 +84,32 @@ it (1.1 MB gzipped for 10 symbols × ~6000 bars) means a fresh sandbox runs the
 >
 > ¹ with the #291 min-stop floor in place. **The bot is backtest-profitable on
 > this window when measured honestly.** `--honest` now enables partial-TP by
-> default so the benchmark reflects live; **+0.31% / PF 1.14 is the baseline all
-> future A/Bs beat.**
+> default so the benchmark reflects live; **superseded again below** — two more
+> live-fidelity gaps (time-stop, fee model) were closed after this table.
+
+## Current baseline: full live fidelity (time-stop + real fee)
+
+Two more benchmark-vs-live gaps, found the same way as partial-TP: live runs a
+**time-stop** (`TIME_STOP_ENABLED` defaults True — cuts a stale, non-profitable
+position at its per-strategy horizon) that the backtest defaulted OFF
+(`BACKTEST_TIME_STOP`), and the plain `--commission` default (0.1%) was stale
+against the live risk engine's modeled taker rate (`CONFIG.risk.taker_fee_pct`,
+**0.06%**). A 4-arm A/B on the frozen data (majors_1h, `--honest --walk-forward
+6`) isolates each:
+
+| time-stop | fee | mean OOS | net | win | PF |
+|---|---:|---:|---:|---:|---:|
+| off | 0.10% (old) | +0.31% | +$188 | 64% | 1.14 |
+| **on** | 0.10% | +0.38% | +$230 | 63% | 1.18 |
+| off | **0.06% (real)** | +0.42% | +$250 | 64% | 1.19 |
+| **on** | **0.06%** | **+0.49%** | **+$294** | 63% | **1.24** |
+
+Both fixes independently improve the result and stack cleanly. `--honest` now
+enables the time-stop and uses the live-modeled fee by default (both still
+override-able via `BACKTEST_TIME_STOP=0` / `--commission`).
+
+**+0.49% OOS / PF 1.24 is the current baseline — every future A/B beats this
+number, not the +0.31% one above.**
 
 ## Where the bleed is (pooled OOS attribution)
 

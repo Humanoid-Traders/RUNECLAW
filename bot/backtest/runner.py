@@ -223,6 +223,7 @@ async def _load_bars(args: argparse.Namespace, config) -> tuple[list, bool, str]
 
 async def _run_backtest(args: argparse.Namespace) -> None:
     """Execute a backtest with the given CLI arguments."""
+    _apply_honest_fidelity(args)
     config = BacktestConfig(
         symbol=args.symbol,
         timeframe=args.timeframe,
@@ -341,7 +342,9 @@ Examples:
                                   "Overrides --symbol; real data only.")
     trade_group.add_argument("--timeframe", type=str, default="1h", help="Candle timeframe (default: 1h)")
     trade_group.add_argument("--balance", type=float, default=10000.0, help="Starting balance (default: 10000)")
-    trade_group.add_argument("--commission", type=float, default=0.1, help="Commission %% (default: 0.1)")
+    trade_group.add_argument("--commission", type=float, default=None,
+                             help="Commission %% (default: 0.1%%; under --honest, the live-modeled "
+                                  "taker rate, CONFIG.risk.taker_fee_pct, currently 0.06%%)")
     trade_group.add_argument("--slippage", type=float, default=0.05, help="Slippage %% (default: 0.05)")
     trade_group.add_argument("--fill-mode", choices=("close", "next_open"), default="close",
                              help="Entry fill convention: same-bar close (legacy, optimistic) "
@@ -384,9 +387,14 @@ Examples:
     return parser
 
 
-def main() -> None:
-    args = build_parser().parse_args()
-    if args.honest:
+def _apply_honest_fidelity(args: argparse.Namespace) -> None:
+    """Make --honest measure the SAME strategy live actually runs, and resolve
+    the --commission sentinel. Idempotent (safe to call multiple times) and
+    safe to call directly on any parsed ``args`` — every ``_run_*`` entry point
+    calls this itself rather than relying on ``main()`` having run first, since
+    tests (and any future embedding) invoke them directly.
+    """
+    if getattr(args, "honest", False):
         args.strict_data = True
         args.fill_mode = "next_open"
         # The honest benchmark must measure the SAME exit strategy that runs live.
@@ -397,6 +405,25 @@ def main() -> None:
         # is +0.31% / PF 1.14. Under --honest, turn the ladder on so the number
         # reflects live — unless the operator pinned BACKTEST_PARTIAL_TP explicitly.
         os.environ.setdefault("BACKTEST_PARTIAL_TP", "1")
+        # Same class of fix: live also runs the time-stop (TIME_STOP_ENABLED
+        # defaults True — cuts a stale, non-profitable position at its per-
+        # strategy horizon), which the backtest gates OFF by default
+        # (BACKTEST_TIME_STOP). Turn it on under --honest too.
+        os.environ.setdefault("BACKTEST_TIME_STOP", "1")
+        # And the fee model: the plain --commission default (0.1%) is stale
+        # relative to the live risk engine's modeled taker rate
+        # (CONFIG.risk.taker_fee_pct, 0.06%). Use the live rate unless the
+        # operator passed --commission explicitly.
+        if getattr(args, "commission", None) is None:
+            from bot.config import CONFIG as _CFG
+            args.commission = _CFG.risk.taker_fee_pct
+    if getattr(args, "commission", None) is None:
+        args.commission = 0.1
+
+
+def main() -> None:
+    args = build_parser().parse_args()
+    _apply_honest_fidelity(args)
     # `--dataset DIR` with no --symbols runs the snapshot's FULL universe as a
     # portfolio — the canonical one-liner benchmark.
     if getattr(args, "dataset", None) and not args.symbols.strip():
@@ -563,6 +590,7 @@ def _narrative(result, per_symbol: dict | None = None) -> str:
 
 async def _run_portfolio(args: argparse.Namespace) -> None:
     """Portfolio backtest across --symbols with shared risk state."""
+    _apply_honest_fidelity(args)
     from bot.backtest.portfolio_engine import PortfolioBacktester, portfolio_walk_forward
 
     symbols = [s.strip() for s in args.symbols.split(",") if s.strip()]
@@ -645,6 +673,7 @@ async def _run_portfolio(args: argparse.Namespace) -> None:
 
 async def _run_walk_forward(args: argparse.Namespace) -> None:
     """Execute walk-forward analysis with the given CLI arguments."""
+    _apply_honest_fidelity(args)
     from bot.backtest.walk_forward import run_walk_forward
     config = BacktestConfig(
         symbol=args.symbol, timeframe=args.timeframe, initial_balance=args.balance,

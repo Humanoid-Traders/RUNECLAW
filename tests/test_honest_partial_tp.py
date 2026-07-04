@@ -12,9 +12,11 @@ from bot.backtest import runner
 
 
 def test_honest_enables_partial_tp_ladder():
-    src = inspect.getsource(runner.main)
-    honest_ix = src.index("args.honest")
-    # The partial-TP enable sits inside the --honest branch.
+    # Moved into _apply_honest_fidelity (tests/test_honest_fidelity.py covers
+    # the full behavior, incl. every _run_* entry point calling it); this
+    # source check stays as a locator for the specific env var.
+    src = inspect.getsource(runner._apply_honest_fidelity)
+    honest_ix = src.index("honest")
     assert "BACKTEST_PARTIAL_TP" in src[honest_ix:]
     # setdefault (not hard-set) so `BACKTEST_PARTIAL_TP=0` still yields a
     # single-exit run for controlled comparisons.
