@@ -2590,6 +2590,15 @@ class DeepScanSkill(BaseSkill):
         timeframe = kwargs.get("timeframe", "4h")
         max_results = int(kwargs.get("max_results", 15))
 
+        # Multi-timeframe on-demand sweep: "all" expands to every supported
+        # timeframe (5m\u21921d); a single tf scans just that one. Bounded by the
+        # same Semaphore below so the tf-product stays batched.
+        from bot.utils.candles import resolve_timeframes
+        tf_list = resolve_timeframes(timeframe) or ["4h"]
+        multi_tf = len(tf_list) > 1
+        tf_label = "ALL TIMEFRAMES" if multi_tf else tf_list[0].upper()
+        tf_desc = "5m\u21921d" if multi_tf else tf_list[0]
+
         now = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
 
         # Build full universe: crypto spot + TradFi perpetuals
@@ -2598,8 +2607,8 @@ class DeepScanSkill(BaseSkill):
         full_universe = list(DEEPSCAN_UNIVERSE) + list(TRADFI_PERPETUALS)
 
         lines: list[str] = []
-        lines.append(_header("\U0001f52c", f"DEEP SCAN \u2014 {timeframe.upper()}"))
-        lines.append(f"  {len(full_universe)} symbols \u00b7 {timeframe} \u00b7 chart + candle patterns")
+        lines.append(_header("\U0001f52c", f"DEEP SCAN \u2014 {tf_label}"))
+        lines.append(f"  {len(full_universe)} symbols \u00b7 {tf_desc} \u00b7 chart + candle patterns")
         lines.append("")
 
         spot_exchange = await engine.scanner._get_exchange()
@@ -2609,27 +2618,30 @@ class DeepScanSkill(BaseSkill):
         errors = 0
         scanned = 0
 
-        # Parallel OHLCV fetch with rate limiting
+        # Parallel OHLCV fetch with rate limiting. The semaphore is shared across
+        # timeframes so the whole (symbol × timeframe) sweep stays bounded.
         sem = asyncio.Semaphore(10)  # max 10 concurrent
 
-        async def _fetch_one(sym):
+        async def _fetch_one(sym, tf):
             async with sem:
                 try:
                     ex = futures_exchange if _cls_sym(sym) != "Crypto" else spot_exchange
                     ohlcv = await asyncio.wait_for(
-                        ex.fetch_ohlcv(sym, timeframe, limit=100),
+                        ex.fetch_ohlcv(sym, tf, limit=100),
                         timeout=15,  # 15s per symbol max
                     )
                     return sym, ohlcv
                 except (asyncio.TimeoutError, Exception):
                     return sym, None
 
-        fetch_results = await asyncio.gather(
-            *[_fetch_one(s) for s in full_universe],
-            return_exceptions=True,
-        )
+        from bot.utils.candles import drop_forming_candle
+        for _tf in tf_list:
+          fetch_results = await asyncio.gather(
+              *[_fetch_one(s, _tf) for s in full_universe],
+              return_exceptions=True,
+          )
 
-        for result in fetch_results:
+          for result in fetch_results:
             # Handle return_exceptions=True — skip any exceptions
             if isinstance(result, Exception):
                 errors += 1
@@ -2638,8 +2650,7 @@ class DeepScanSkill(BaseSkill):
             # Repaint guard (audit fix): patterns computed on the in-progress
             # candle can vanish at bar close — same policy as the live path.
             if ohlcv:
-                from bot.utils.candles import drop_forming_candle
-                ohlcv = drop_forming_candle(ohlcv, timeframe)
+                ohlcv = drop_forming_candle(ohlcv, _tf)
             if ohlcv is None or len(ohlcv) < 30:
                 if ohlcv is None:
                     errors += 1
@@ -2699,6 +2710,7 @@ class DeepScanSkill(BaseSkill):
                     "chart_patterns": chart_patterns,
                     "candle_patterns": candle_patterns,
                     "score": score,
+                    "tf": _tf,
                 })
 
         # Sort by score
@@ -2714,7 +2726,7 @@ class DeepScanSkill(BaseSkill):
         def _ds_kv(k: str, v: str, w: int = 22) -> str:
             dots = "\u00b7" * max(1, w - len(k) - len(str(v)))
             return f"  {k} {dots} {v}"
-        lines.append(_ds_kv("Scanned", f"{scanned}/{len(DEEPSCAN_UNIVERSE)}"))
+        lines.append(_ds_kv("Scanned", f"{scanned}/{len(full_universe) * len(tf_list)}"))
         lines.append(_ds_kv("Hits", str(len(hits))))
         lines.append(_ds_kv("Errors", str(errors)))
         lines.append("</pre>")
@@ -2747,9 +2759,12 @@ class DeepScanSkill(BaseSkill):
             spike = " \U0001f4a5" if h["vol_spike"] else ""
 
             sym_clean = h["symbol"].replace("/USDT", "")
+            # Timeframe badge — only shown on a multi-timeframe ("all") sweep so
+            # the user can see which timeframe each setup fired on.
+            tf_badge = f" <code>[{h['tf']}]</code>" if multi_tf and h.get("tf") else ""
             # Symbol header line
             lines.append(
-                f"{arrow} <b>{_esc(sym_clean)}</b>  "
+                f"{arrow} <b>{_esc(sym_clean)}</b>{tf_badge}  "
                 f"<code>${h['price']:,.4f}</code>  {h['chg']:+.1f}%  "
                 f"{rsi_icon} RSI <code>{rsi_val:.0f}{rsi_tag}</code>{spike}"
             )

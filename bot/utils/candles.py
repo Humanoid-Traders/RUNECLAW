@@ -10,6 +10,29 @@ from __future__ import annotations
 import time
 
 
+# Canonical set of scan/analysis timeframes, ascending by duration. The single
+# source of truth for "which timeframes does the bot understand" — command arg
+# validation and the multi-timeframe on-demand sweep both read this instead of
+# inlining their own lists.
+SUPPORTED_TIMEFRAMES: list[str] = ["5m", "15m", "1h", "4h", "1d"]
+
+
+def is_supported_timeframe(timeframe: str) -> bool:
+    """True if ``timeframe`` is one the bot scans/analyzes."""
+    return timeframe in SUPPORTED_TIMEFRAMES
+
+
+def resolve_timeframes(timeframe: str) -> list[str]:
+    """Expand a timeframe argument to the concrete list to scan.
+
+    ``"all"`` -> every SUPPORTED_TIMEFRAMES; a single supported tf -> just that
+    one; anything else -> empty list (caller reports an invalid argument).
+    """
+    if timeframe == "all":
+        return list(SUPPORTED_TIMEFRAMES)
+    return [timeframe] if timeframe in SUPPORTED_TIMEFRAMES else []
+
+
 def timeframe_to_ms(timeframe: str) -> int:
     """Parse a ccxt timeframe ('5m','1h','4h','1d','1w') to milliseconds; 0 if
     unparseable."""
