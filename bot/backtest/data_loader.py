@@ -6,13 +6,15 @@ Supports: Bitget API fetch, Binance public API, CSV file load, and synthetic dat
 from __future__ import annotations
 
 import csv
+import gzip
+import hashlib
 import logging
 import math
 import random
 from datetime import datetime, timedelta
 from bot.compat import UTC
 from pathlib import Path
-from typing import Optional
+from typing import IO, Optional, cast
 
 import numpy as np
 
@@ -21,18 +23,38 @@ logger = logging.getLogger(__name__)
 from bot.backtest.models import BacktestBar
 
 
+def _open_text(path: str, mode: str) -> IO[str]:
+    """Open a CSV path for text I/O, transparently gzip-decoding/encoding a
+    ``.gz`` suffix. Lets the committed benchmark snapshot stay compact on disk
+    while every other code path keeps reading plain CSV unchanged.
+
+    Gzip *writes* pin ``mtime=0`` so re-snapshotting identical candles produces
+    byte-identical files instead of a spurious git diff on the header timestamp.
+    """
+    if str(path).endswith(".gz"):
+        if "w" in mode:
+            import io
+            # mtime=0 → re-snapshotting identical candles to the same path
+            # yields byte-identical files (clean git diffs, no header churn).
+            # GzipFile owns the file it opens, so closing the wrapper closes it.
+            gz = gzip.GzipFile(filename=path, mode="wb", mtime=0)
+            return io.TextIOWrapper(gz, newline="", encoding="utf-8")
+        return cast("IO[str]", gzip.open(path, mode + "t", newline="", encoding="utf-8"))
+    return open(path, mode, newline="", encoding="utf-8")
+
+
 class DataLoader:
     """Load or generate OHLCV candle data for backtesting."""
 
     @staticmethod
     def from_csv(path: str) -> list[BacktestBar]:
         """
-        Load OHLCV data from a CSV file.
+        Load OHLCV data from a CSV file (plain or ``.csv.gz``).
         Expected columns: timestamp, open, high, low, close, volume
         Timestamp can be ISO format or Unix milliseconds.
         """
         bars: list[BacktestBar] = []
-        with open(path, newline="") as f:
+        with _open_text(path, "r") as f:
             reader = csv.DictReader(f)
             for row in reader:
                 ts_raw = row.get("timestamp", row.get("date", ""))
@@ -51,6 +73,25 @@ class DataLoader:
                 ))
         bars.sort(key=lambda b: b.timestamp)
         return bars
+
+    @staticmethod
+    def content_hash(bars: list[BacktestBar]) -> str:
+        """Deterministic sha256 over a bar series' OHLCV values.
+
+        Format-independent: hashing the ``repr`` of each float means
+        ``content_hash(bars) == content_hash(from_csv(save_csv(bars)))`` because
+        the CSV round-trip reloads byte-identical floats. This is the integrity
+        anchor for the frozen benchmark snapshot — any drift in the underlying
+        candles changes the hash, so an A/B can prove both arms read the same
+        data.
+        """
+        h = hashlib.sha256()
+        for b in sorted(bars, key=lambda x: x.timestamp):
+            h.update(
+                f"{b.timestamp.isoformat()},{b.open!r},{b.high!r},"
+                f"{b.low!r},{b.close!r},{b.volume!r}\n".encode()
+            )
+        return h.hexdigest()
 
     @staticmethod
     def from_ohlcv_list(raw: list[list], symbol: str = "BTC/USDT") -> list[BacktestBar]:
@@ -322,10 +363,10 @@ class DataLoader:
 
     @staticmethod
     def save_csv(bars: list[BacktestBar], path: str) -> None:
-        """Save bar data to CSV for reuse."""
+        """Save bar data to CSV for reuse (``.gz`` suffix → gzip-compressed)."""
         p = Path(path)
         p.parent.mkdir(parents=True, exist_ok=True)
-        with open(p, "w", newline="") as f:
+        with _open_text(str(p), "w") as f:
             writer = csv.writer(f)
             writer.writerow(["timestamp", "open", "high", "low", "close", "volume"])
             for bar in bars:

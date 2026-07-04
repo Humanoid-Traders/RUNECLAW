@@ -177,6 +177,16 @@ async def _load_bars(args: argparse.Namespace, config) -> tuple[list, bool, str]
             bars=args.bars, start_price=args.start_price,
             volatility=args.volatility, trend=args.trend, seed=args.seed)
 
+    # Highest precedence: a frozen benchmark snapshot. Reproducible by
+    # construction — the whole point is that repeated runs read identical bars.
+    if getattr(args, "dataset", None):
+        from bot.backtest import snapshot as _snap
+        man = _snap.load_manifest(args.dataset)
+        bars = _snap.load_symbol(args.dataset, config.symbol, man)
+        print(f"  Loaded {len(bars)} FROZEN bars for {config.symbol} from "
+              f"{args.dataset} (dataset_hash={man['dataset_hash'][:12]}…)")
+        return bars, False, f"frozen_snapshot:{man['dataset_hash']}"
+
     if args.csv:
         bars = DataLoader.from_csv(args.csv)
         print(f"  Loaded {len(bars)} bars from {args.csv}")
@@ -295,6 +305,13 @@ Examples:
 
     # Data source
     data_group = parser.add_argument_group("data source")
+    data_group.add_argument("--dataset", type=str, metavar="DIR",
+                            help="Read bars from a FROZEN benchmark snapshot dir "
+                                 "(see bot.backtest.snapshot) instead of fetching live. "
+                                 "Every run reads byte-identical candles, so an A/B delta "
+                                 "is attributable to the code change, not to data drift. "
+                                 "With --dataset and no --symbols, the snapshot's full "
+                                 "universe is run as a portfolio.")
     data_group.add_argument("--csv", type=str, help="Path to OHLCV CSV file")
     data_group.add_argument("--fetch", action="store_true",
                             help="(deprecated: real data is the default) Fetch from Bitget API")
@@ -371,6 +388,11 @@ def main() -> None:
     if args.honest:
         args.strict_data = True
         args.fill_mode = "next_open"
+    # `--dataset DIR` with no --symbols runs the snapshot's FULL universe as a
+    # portfolio — the canonical one-liner benchmark.
+    if getattr(args, "dataset", None) and not args.symbols.strip():
+        from bot.backtest import snapshot as _snap
+        args.symbols = ",".join(_snap.load_manifest(args.dataset).get("symbols", {}))
     if args.symbols.strip():
         asyncio.run(_run_portfolio(args))
         return
@@ -487,17 +509,33 @@ async def _run_portfolio(args: argparse.Namespace) -> None:
         use_recorded_order_flow=args.use_recorded_order_flow,
         recorded_order_flow_path=args.of_snapshot_path,
     )
-    print(f"\n  Portfolio backtest: {len(symbols)} symbols, fetching {args.limit} bars each...")
     data = {}
-    for sym in symbols:
-        try:
-            bars = await DataLoader.from_bitget(symbol=sym, timeframe=args.timeframe,
-                                                limit=args.limit)
-            if bars:
-                data[sym] = bars
-                print(f"  fetched {sym}: {len(bars)} REAL bars")
-        except Exception as exc:
-            print(f"  {sym}: fetch failed ({exc}) — skipped")
+    if getattr(args, "dataset", None):
+        # Frozen snapshot: every A/B arm reads byte-identical bars. A requested
+        # symbol missing from the snapshot is a hard error, never a silent skip —
+        # dropping a symbol would change the universe and thus the measured system.
+        from bot.backtest import snapshot as _snap
+        man = _snap.load_manifest(args.dataset)
+        print(f"\n  Portfolio backtest: {len(symbols)} symbols from FROZEN dataset "
+              f"{args.dataset} (dataset_hash={man['dataset_hash'][:12]}…)")
+        for sym in symbols:
+            try:
+                data[sym] = _snap.load_symbol(args.dataset, sym, man)
+                print(f"  loaded {sym}: {len(data[sym])} frozen bars")
+            except KeyError as exc:
+                print(f"  ERROR: {exc}")
+                sys.exit(1)
+    else:
+        print(f"\n  Portfolio backtest: {len(symbols)} symbols, fetching {args.limit} bars each...")
+        for sym in symbols:
+            try:
+                bars = await DataLoader.from_bitget(symbol=sym, timeframe=args.timeframe,
+                                                    limit=args.limit)
+                if bars:
+                    data[sym] = bars
+                    print(f"  fetched {sym}: {len(bars)} REAL bars")
+            except Exception as exc:
+                print(f"  {sym}: fetch failed ({exc}) — skipped")
     if not data:
         print("  ERROR: no data fetched for any symbol. Aborting.")
         sys.exit(1)
