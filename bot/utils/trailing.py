@@ -17,12 +17,29 @@ The trail only tightens, never widens.
 
 from __future__ import annotations
 
+import os
+
+
+def _stage_mult(stage: int, default: float) -> float:
+    """Per-stage trailing ATR multiplier, env-overridable.
+
+    The multi-stage trail TIGHTENS as profit grows (2.0 -> 1.5 -> 1.0 xATR by
+    default), which can choke a big runner into a small trailing exit. These
+    knobs let the late-stage distance be widened so winners breathe. Defaults
+    reproduce the original table exactly (baseline byte-identical).
+    """
+    try:
+        return float(os.getenv(f"TRAIL_STAGE{stage}_ATR_MULT", str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
 # Stage definitions: (R-threshold to enter, SL floor in R-units, ATR trail multiplier)
 _STAGES: dict[int, dict[str, float | None]] = {
     0: {"r_threshold": 0.0, "floor_r": None, "atr_mult": None},
-    1: {"r_threshold": 1.0, "floor_r": 0.0,  "atr_mult": 2.0},
-    2: {"r_threshold": 2.0, "floor_r": 0.5,  "atr_mult": 1.5},
-    3: {"r_threshold": 3.0, "floor_r": 1.5,  "atr_mult": 1.0},
+    1: {"r_threshold": 1.0, "floor_r": 0.0,  "atr_mult": _stage_mult(1, 2.0)},
+    2: {"r_threshold": 2.0, "floor_r": 0.5,  "atr_mult": _stage_mult(2, 1.5)},
+    3: {"r_threshold": 3.0, "floor_r": 1.5,  "atr_mult": _stage_mult(3, 1.0)},
 }
 
 
