@@ -494,6 +494,21 @@ defaults:
     env_var: EQUITY_CURVE_BREAKER_ENABLED
     description: "Feed record_equity_snapshot() from evaluate() to drive the equity-curve breaker (opt-in; adds a pause/de-risk condition)"
 
+  vol_target_sizing_enabled:
+    value: true
+    env_var: VOL_TARGET_SIZING_ENABLED
+    description: "Float the binding notional cap inversely with ATR% so per-trade dollar risk is vol-targeted, not flat-margin (tighten-only; A/B-validated, default ON, disable with VOL_TARGET_SIZING_ENABLED=0)"
+
+  vol_target_atr_pct:
+    value: 3.0
+    env_var: VOL_TARGET_ATR_PCT
+    description: "Target ATR% the volatility-target cap normalizes per-trade risk toward"
+
+  vol_target_floor:
+    value: 0.33
+    env_var: VOL_TARGET_FLOOR
+    description: "Floor on the vol-target multiplier — how far the notional cap may shrink"
+
   drawdown_recovery_conf_min:
     value: 0.85
     env_var: DRAWDOWN_RECOVERY_CONF_MIN
