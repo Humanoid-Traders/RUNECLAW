@@ -5478,7 +5478,23 @@ class TelegramHandler:
             f"\U0001f4a1 <b>{len(pending)} Trade Setup{'s' if len(pending) > 1 else ''} Found</b>\n"
             f"{'━' * 28}")
 
+        # Cluster pending ideas by asset category (Crypto, Metal, Stock, …) so
+        # /latest_signal reads grouped like the scan commands. TradeIdea has no
+        # asset_category field, so derive it from the symbol via the shared
+        # classifier. A lightweight header is sent when the category changes.
+        from bot.core.market_scanner import (
+            group_by_category, category_icon, category_for_symbol,
+        )
+        pending = [idea for _grp in
+                   group_by_category(pending, lambda x: category_for_symbol(x.asset)).values()
+                   for idea in _grp]
+        _last_cat = None
+
         for i, idea in enumerate(pending, 1):
+            _cat = category_for_symbol(idea.asset)
+            if _cat != _last_cat:
+                await self._send(update, f"{category_icon(_cat)} <b>{_cat}</b>")
+                _last_cat = _cat
             kb = InlineKeyboardMarkup([[
                 InlineKeyboardButton(t("btn_take_it", self._lang(update)), callback_data=f"confirm:{idea.id}:{uid}"),
                 InlineKeyboardButton(t("lbl_limit", self._lang(update)), callback_data=f"setlimit:{idea.id}:{uid}"),

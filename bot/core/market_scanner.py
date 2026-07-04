@@ -81,6 +81,39 @@ CATEGORY_META: dict[str, tuple[str, int]] = {
     "Stock":     ("\U0001f4c8", 5),
 }
 
+_DEFAULT_CATEGORY_ICON = "\U0001f4b0"  # \ud83d\udcb0 (crypto), fallback for unknown cats
+
+
+def category_icon(category: str) -> str:
+    """Display emoji for an asset category (fallback = crypto coin)."""
+    return CATEGORY_META.get(category, (_DEFAULT_CATEGORY_ICON, 99))[0]
+
+
+def category_sort_key(category: str) -> int:
+    """Display-order priority for a category (Crypto=0 \u2026 Stock=5, unknown=99)."""
+    return CATEGORY_META.get(category, ("", 99))[1]
+
+
+def category_for_symbol(symbol: str) -> str:
+    """Asset category for a raw symbol string (e.g. a TradeIdea.asset that has
+    no asset_category field). Delegates to the scanner's classifier."""
+    return _classify_symbol(symbol)
+
+
+def group_by_category(items: list, key: Any) -> "dict[str, list]":
+    """Group ``items`` into an insertion-stable dict ``category -> [items]``,
+    with categories ordered by their CATEGORY_META display priority.
+
+    ``key`` maps an item to its category string \u2014 e.g. ``lambda s: s.asset_category``
+    for MarketSignals, or ``lambda i: category_for_symbol(i.asset)`` for
+    TradeIdeas. The single shared primitive every scan/signal renderer uses so
+    category grouping is identical everywhere.
+    """
+    by_cat: dict[str, list] = {}
+    for it in items:
+        by_cat.setdefault(key(it), []).append(it)
+    return {c: by_cat[c] for c in sorted(by_cat, key=category_sort_key)}
+
 
 class MarketScanner:
     """Scans the Bitget spot + futures markets for actionable signals."""
