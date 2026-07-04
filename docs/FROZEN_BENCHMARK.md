@@ -70,9 +70,22 @@ it (1.1 MB gzipped for 10 symbols × ~6000 bars) means a fresh sandbox runs the
 | 4 | 26 | −1.29% | 50% | 1.33% | 0.34 |
 | 5 | 13 | −0.94% | 46% | 1.22% | 0.25 |
 
-**Mean OOS −0.90%, 0/6 folds profitable, PF < 1 throughout.** This is the honest,
-reproducible baseline the edge work must beat. **Every future signal/money A/B is
-measured as a delta against this number, on this data.**
+> **⚠️ Superseded — this table was single-exit, which live never runs.** The
+> numbers above (mean OOS −0.90%, PF < 1) were produced with the backtest's
+> *single full-exit* default (`BACKTEST_PARTIAL_TP=0`). The **live bot uses the
+> partial-TP ladder** (`PARTIAL_TP_ENABLED` defaults True: bank 50% @1.5R →
+> stop to breakeven, 30% @2.5R). Measuring the exit strategy live *actually
+> runs* flips the result:
+>
+> | exit model | mean OOS | net | win | PF | profitable folds |
+> |---|---:|---:|---:|---:|---:|
+> | single-exit (old default) | −0.72%¹ | −$433 | 57% | 0.72 | 0/6 |
+> | **partial-TP (= live)** | **+0.31%** | **+$188** | **64%** | **1.14** | **2/6** |
+>
+> ¹ with the #291 min-stop floor in place. **The bot is backtest-profitable on
+> this window when measured honestly.** `--honest` now enables partial-TP by
+> default so the benchmark reflects live; **+0.31% / PF 1.14 is the baseline all
+> future A/Bs beat.**
 
 ## Where the bleed is (pooled OOS attribution)
 
@@ -89,10 +102,12 @@ trades, so this pooled cut — fresh breaker/equity per fold — is the diagnost
 
 Two findings the frozen benchmark makes trustworthy:
 
-1. **55% win rate but PF 0.67 → this is a reward/risk problem, not a hit-rate
-   problem.** The bot is right more often than not; its losers are simply bigger
-   than its winners. That points at the **exit engine** (stop distance / trail /
-   TP capture), not at entry selection.
+1. **55% win rate but PF 0.67 → a reward/risk problem, not a hit-rate problem.**
+   The bot is right more often than not; its losers were bigger than its winners.
+   That pointed at the **exit engine** — and it was the answer: the live
+   partial-TP ladder (bank early + stop-to-breakeven) lifts PF **0.72 → 1.14**
+   and the return **−0.72% → +0.31%**. The single-exit backtest was measuring an
+   exit strategy the bot never uses; most of the "bleed" was that artifact.
 2. **Counter-trend fades are NOT the culprit — only 1 of 152 trades is
    counter-trend.** The audit's counter-trend hypothesis is *refuted* by the
    data; the loss lives in *with-trend* `swing` entries (late trend-following
