@@ -232,7 +232,8 @@ class PortfolioState(BaseModel):
     total_gross_pnl: float = 0.0
     total_commission: float = 0.0
     daily_pnl: float = 0.0
-    max_drawdown_pct: float = 0.0
+    max_drawdown_pct: float = 0.0        # monotonic peak-to-trough ever (never recovers)
+    current_drawdown_pct: float = 0.0    # live peak-vs-current equity (recovers as equity does)
     # Reserved — not currently populated by _snapshot_locked()
     portfolio_exposure_pct: float = 0.0
     # Operating costs (LLM + infra) — separate from trade PnL

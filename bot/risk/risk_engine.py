@@ -928,15 +928,24 @@ class RiskEngine:
 
         try:
             # 4. Drawdown — the live-hardened cap is tighter when live + opted in.
+            # Gate on CURRENT drawdown (live peak-vs-current equity), NOT the
+            # monotonic historical-max: max_drawdown_pct never recovers, so a
+            # single deep dip latched this gate forever — the breaker re-tripped
+            # on every evaluation and /resume could never clear it ("still paused
+            # after reset"). Current drawdown falls as equity recovers, so once
+            # the account climbs back under the limit the gate passes and a manual
+            # /resume actually sticks. The account-protection intent is preserved:
+            # while drawdown is genuinely >= the cap, it still trips and rejects.
             _max_dd = self._effective_max_drawdown_pct()
-            if state.max_drawdown_pct >= _max_dd:
-                failed.append(f"DRAWDOWN: {state.max_drawdown_pct:.1f}% >= {_max_dd}%")
+            _cur_dd = getattr(state, "current_drawdown_pct", state.max_drawdown_pct)
+            if _cur_dd >= _max_dd:
+                failed.append(f"DRAWDOWN: {_cur_dd:.1f}% >= {_max_dd}%")
                 # C-05 FIX: trip circuit breaker AND reject the CURRENT trade
                 self._trip_circuit_breaker("max drawdown breached", cause="drawdown")
                 if "CIRCUIT_BREAKER: tripped during evaluation" not in failed:
                     failed.append("CIRCUIT_BREAKER: tripped during evaluation — current trade rejected")
             else:
-                passed.append(f"DRAWDOWN: {state.max_drawdown_pct:.1f}% OK")
+                passed.append(f"DRAWDOWN: {_cur_dd:.1f}% OK")
         except Exception as exc:
             failed.append(f"DRAWDOWN: evaluation error ({exc})")
 
@@ -2359,7 +2368,10 @@ class RiskEngine:
             state = self._portfolio.snapshot()
             from bot.config import RUNTIME
             return {
-                "drawdown_pct": float(state.max_drawdown_pct),
+                # "drawdown_pct" is the LIVE (recoverable) drawdown the breaker
+                # actually gates on; max_drawdown_pct is the monotonic worst-ever.
+                "drawdown_pct": float(getattr(state, "current_drawdown_pct", state.max_drawdown_pct)),
+                "max_drawdown_pct": float(state.max_drawdown_pct),
                 "effective_limit_pct": float(self._effective_max_drawdown_pct()),
                 "config_live_limit_pct": float(CONFIG.risk.live_max_drawdown_pct),
                 "override_pct": RUNTIME.live_drawdown_override_pct,
@@ -2391,8 +2403,9 @@ class RiskEngine:
                             f"re-trips on the next trade check until equity recovers "
                             f"or the UTC day rolls over")
             _max_dd = self._effective_max_drawdown_pct()
-            if state.max_drawdown_pct >= _max_dd:
-                return (f"drawdown {state.max_drawdown_pct:.1f}% still >= "
+            _cur_dd = getattr(state, "current_drawdown_pct", state.max_drawdown_pct)
+            if _cur_dd >= _max_dd:
+                return (f"drawdown {_cur_dd:.1f}% still >= "
                         f"{_max_dd}% limit — the breaker re-trips on the next "
                         f"trade check until equity recovers")
         except Exception:

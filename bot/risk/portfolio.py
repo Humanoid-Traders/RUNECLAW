@@ -448,6 +448,7 @@ class PortfolioTracker:
             total_commission=total_commission,
             daily_pnl=round(daily_pnl, 2),
             max_drawdown_pct=round(max_drawdown, 2),
+            current_drawdown_pct=round(current_drawdown, 2),
         )
 
     @property
