@@ -337,6 +337,12 @@ class LiveExecutor:
         # settling (SL/TP placement, fill confirmation, etc. all take multiple
         # await points after the position/order is first recorded).
         self._recent_local_opens: dict[str, float] = {}
+        # Last SL/TP placement rejection per symbol (Bitget code + msg), so the
+        # UNPROTECTED-position operator alert can say WHY the stop couldn't land
+        # (precision/min-distance/no-position/etc.) instead of a bare "could not
+        # be placed". Diagnostic only — never gates any order logic. Cleared on a
+        # successful placement.
+        self._last_sltp_error: dict[str, str] = {}
         # Trade IDs whose "closing" status was reset to "open" by
         # _load_positions()'s startup recovery (see there for why). Their
         # true state is ambiguous — a close order may have already reached
@@ -1554,7 +1560,12 @@ class LiveExecutor:
                     if sl_id is None:
                         # UNPROTECTED adopted position — alert loudly, do NOT close.
                         setattr(lp, "unprotected", True)  # runtime marker (not persisted schema)
-                        _err_suffix = f": {_place_exc}" if _place_exc is not None else ""
+                        # _place_sl_tp swallows venue errors and returns (None, None),
+                        # so _place_exc is usually None — fall back to the recorded
+                        # per-symbol rejection so the alert names the real reason.
+                        _reason = (str(_place_exc) if _place_exc is not None
+                                   else self._last_sltp_reason(sym))
+                        _err_suffix = f": {_reason}" if _reason else ""
                         logger.critical(
                             "UNPROTECTED ADOPTED POSITION (%s %s): safety stop-loss "
                             "could not be placed%s — position adopted with NO stop. "
@@ -3117,6 +3128,27 @@ class LiveExecutor:
         except Exception as exc:
             return f"side-check error: {exc}"
 
+    def _note_sltp_error(self, symbol: str, reason: str) -> None:
+        """Record the latest SL/TP placement rejection for a symbol so the
+        unprotected-position alert can name the venue reason. Diagnostic only —
+        never gates order logic; never raises."""
+        try:
+            self._last_sltp_error[normalize_symbol(symbol)] = str(reason)[:180]
+        except Exception:
+            pass
+
+    def _clear_sltp_error(self, symbol: str) -> None:
+        try:
+            self._last_sltp_error.pop(normalize_symbol(symbol), None)
+        except Exception:
+            pass
+
+    def _last_sltp_reason(self, symbol: str) -> str:
+        try:
+            return self._last_sltp_error.get(normalize_symbol(symbol), "")
+        except Exception:
+            return ""
+
     async def _place_sl_tp(
         self, exchange: ccxt.Exchange, symbol: str,
         direction: Direction, quantity: float,
@@ -3262,11 +3294,14 @@ class LiveExecutor:
                     },
                 )
                 sl_id = sl_order.get("id")
+                if sl_id:
+                    self._clear_sltp_error(symbol)
                 audit(trade_log, f"SL order placed: {sl_id}",
                       action="sl_order", result="OK",
                       data={"symbol": symbol, "trigger": stop_loss, "futures": True})
             except Exception as exc:
                 logger.warning("SL order failed for %s: %s", symbol, exc)
+                self._note_sltp_error(symbol, str(exc))
                 audit(trade_log, f"SL order not placed: {exc}",
                       action="sl_order", result="SKIP",
                       data={"symbol": symbol, "reason": str(exc)[:200]})
@@ -3573,6 +3608,7 @@ class LiveExecutor:
                     # trigger order existed, and cancel_order("v3-strategy") would
                     # fail on close. Leave sl_id/tp_id = None ⇒ caller retries/flattens.
                     if not order_id:
+                        self._note_sltp_error(symbol, "success code but no order id returned")
                         logger.warning(
                             "v3 SL/TP returned success code but NO order id for %s "
                             "— treating as failure (audit F-9): %s",
@@ -3585,6 +3621,7 @@ class LiveExecutor:
                         break  # no usable stop — exit with sl_id/tp_id = None
                     sl_id = order_id
                     tp_id = order_id
+                    self._clear_sltp_error(symbol)
                     retry_note = f" (attempt {attempt + 1})" if attempt > 0 else ""
                     audit(trade_log, f"v3 SL/TP strategy order placed: order={order_id}{retry_note}",
                           action="sl_tp_v3", result="OK",
@@ -3665,6 +3702,7 @@ class LiveExecutor:
                         await _asyncio.sleep(delay)
                         continue  # Retry
 
+                    self._note_sltp_error(symbol, f"{error_code}: {error_msg}")
                     logger.warning("v3 strategy order failed (code=%s): %s", error_code, error_msg)
                     audit(trade_log, f"v3 SL/TP failed: {error_msg}",
                           action="sl_tp_v3", result="FAIL",
@@ -3678,6 +3716,7 @@ class LiveExecutor:
                 if attempt < _MAX_31008_RETRIES:
                     await _asyncio.sleep(2)
                     continue
+                self._note_sltp_error(symbol, f"exception: {exc}")
                 audit(trade_log, f"v3 SL/TP error: {exc}",
                       action="sl_tp_v3", result="ERROR",
                       data={"symbol": bitget_symbol, "error": str(exc)[:200]})
@@ -4185,10 +4224,12 @@ class LiveExecutor:
                               data={"trade_id": trade_id, "symbol": pos.symbol,
                                     "stop_loss": pos.stop_loss, "price": price})
                         self._record_warning("unprotected_persist")
+                        _why = self._last_sltp_reason(pos.symbol)
+                        _why_line = f"\nVenue reason: <code>{_why}</code>" if _why else ""
                         closed_messages.append(
                             f"🚨 <b>UNPROTECTED POSITION — {pos.symbol} {pos.direction}</b>\n"
                             f"No exchange stop-loss could be placed (still retrying each "
-                            f"scan; price-monitored locally as a backstop).\n"
+                            f"scan; price-monitored locally as a backstop).{_why_line}\n"
                             f"Stop level: <code>${pos.stop_loss:.4f}</code> — place a stop "
                             f"on Bitget manually."
                         )
