@@ -78,7 +78,14 @@ docker-compose.override.yml
 # -- Project-specific --
 *.db
 *.sqlite3
-data/
+# Ignore data/ contents via data/* (not data/) so the negation below can
+# re-include a subtree — git prunes a directory excluded as `data/` before it
+# ever considers a re-include.
+data/*
+# ...except the FROZEN benchmark snapshot: committing it makes every A/B read
+# byte-identical candles and survives ephemeral container rebuilds (see
+# bot/backtest/snapshot.py). Runtime state under data/ stays ignored.
+!data/benchmark/
 # Auto-generated auth secret (never commit; regenerated per-deployment if absent)
 **/.jwt_secret
 # .github/ is intentionally tracked now (CI workflows live here). Only the
