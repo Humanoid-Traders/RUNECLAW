@@ -5594,7 +5594,23 @@ class LiveExecutor:
                         entry.get("leverage") or entry.get("openLeverage") or 0))
 
                     if close_price > 0:
-                        final_pnl = net_profit if net_profit != 0 else pnl
+                        # netProfit is the fee-adjusted figure. When it is 0 the
+                        # field is (almost always) just unpopulated, not a true
+                        # break-even, so fall back to gross `pnl`. But total_fees
+                        # here is the FULL round trip (openFee+closeFee), so derive
+                        # net locally and flag it NET — otherwise the caller's
+                        # _reconcile_exchange_close_pnl adds a SECOND estimated
+                        # entry fee on top of fees that already include the open
+                        # leg (entry-fee double-count).
+                        if net_profit != 0:
+                            final_pnl = net_profit
+                            _pnl_is_net = True
+                        elif total_fees > 0:
+                            final_pnl = pnl - total_fees
+                            _pnl_is_net = True
+                        else:
+                            final_pnl = pnl
+                            _pnl_is_net = False
                         close_type = (entry.get("closeType") or "").lower()
                         if "tp" in close_type or "take" in close_type:
                             reason = "TP HIT (exchange)"
@@ -5628,11 +5644,10 @@ class LiveExecutor:
                             "reason": reason,
                             "source": "bitget_position_history",
                             "leverage": hist_leverage,
-                            # netProfit is fee-adjusted (fees here already sum
-                            # BOTH openFee+closeFee); the achievedProfits
-                            # fallback used when netProfit==0 is gross, same
-                            # as the per-fill "profit" paths below.
-                            "pnl_is_net": net_profit != 0,
+                            # True when pnl is already fee-adjusted: either
+                            # netProfit was populated, or we derived net locally
+                            # from the full round-trip fees above.
+                            "pnl_is_net": _pnl_is_net,
                         }
             except Exception as e:
                 logger.debug("Bitget position history lookup failed for %s (window=%s): %s",
@@ -5908,11 +5923,19 @@ class LiveExecutor:
 
         # Commission calculation
         if exchange_reported_pnl is not None:
-            net_pnl = exchange_reported_pnl
-            commission = gross_pnl - net_pnl
-            if commission < 0:
-                commission = 0
-                gross_pnl = net_pnl
+            # Honor whether the exchange PnL is gross or net (pnl_is_net) rather
+            # than assuming net — a gross value (netProfit==0 fallback / fetch_my
+            # _trades paths) otherwise dropped the fees and overstated realized
+            # PnL. Mirrors _close_position_inner.
+            is_limit_entry = getattr(pos, 'order_type', '') == 'limit'
+            entry_fee_pct = CONFIG.risk.maker_fee_pct if is_limit_entry else CONFIG.risk.taker_fee_pct
+            gross_pnl, net_pnl, commission = self._reconcile_exchange_close_pnl(
+                exchange_reported_pnl,
+                float((close_data or {}).get("fees", 0.0) or 0.0),
+                bool((close_data or {}).get("pnl_is_net", False)),
+                entry_notional=pos.entry_price * pos.quantity,
+                entry_fee_pct=entry_fee_pct,
+            )
         else:
             entry_notional = pos.entry_price * pos.quantity
             exit_notional = est_exit * pos.quantity
@@ -6770,17 +6793,19 @@ class LiveExecutor:
 
                             # ── Use exchange-reported PnL when available (most accurate) ──
                             if exchange_reported_pnl is not None:
-                                # Bitget's profit field already accounts for fees
-                                net_pnl = exchange_reported_pnl
-                                # Estimate gross/commission split for display
-                                if pos.direction == "LONG":
-                                    gross_pnl = (est_exit - pos.entry_price) * pos.quantity
-                                else:
-                                    gross_pnl = (pos.entry_price - est_exit) * pos.quantity
-                                commission = gross_pnl - net_pnl
-                                if commission < 0:
-                                    commission = 0
-                                    gross_pnl = net_pnl
+                                # Honor pnl_is_net (gross vs net) instead of
+                                # assuming net — otherwise fees are dropped and
+                                # net PnL overstated on SL/TP-triggered closes.
+                                # Mirrors _close_position_inner.
+                                _is_limit = getattr(pos, 'order_type', '') == 'limit'
+                                _entry_fee_pct = CONFIG.risk.maker_fee_pct if _is_limit else CONFIG.risk.taker_fee_pct
+                                gross_pnl, net_pnl, commission = self._reconcile_exchange_close_pnl(
+                                    exchange_reported_pnl,
+                                    float((close_data or {}).get("fees", 0.0) or 0.0),
+                                    bool((close_data or {}).get("pnl_is_net", False)),
+                                    entry_notional=pos.entry_price * pos.quantity,
+                                    entry_fee_pct=_entry_fee_pct,
+                                )
                                 pnl = gross_pnl
                                 logger.info("Using exchange-reported PnL for %s: $%.4f",
                                             pos.symbol, net_pnl)

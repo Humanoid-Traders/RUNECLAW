@@ -101,7 +101,9 @@ class TestFetchBitgetCloseDataV2Fields:
         result = await ex._fetch_bitget_close_data(self._pos())
         assert result is not None
         assert result["close_price"] == pytest.approx(0.5703)
-        assert result["pnl"] == pytest.approx(4.55)  # netProfit==0 -> gross pnl
+        # netProfit==0 with fees present -> net derived = 4.55 gross - 0.04 fees.
+        assert result["pnl"] == pytest.approx(4.51)
+        assert result["pnl_is_net"] is True
 
 
 # ── 3. Close-reason inference on the ticker-fallback path ────────────────
