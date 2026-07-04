@@ -3770,6 +3770,13 @@ class TelegramHandler:
     async def start_monitor(self, bot) -> None:
         """Start the proactive monitor background task.
         Called from main.py after the Telegram app is initialized."""
+        # Restore the persisted /watch list and auto-enroll the operator if it's
+        # empty, so CRITICAL safety alerts survive restarts (previously the watch
+        # list was in-memory only and every restart muted them until /watch on).
+        try:
+            self.monitor.hydrate()
+        except Exception as exc:
+            system_log.debug("proactive monitor hydrate skipped: %s", exc)
         # Wire up channel forwarder
         self.forwarder.set_bot(bot)
         async def _send_fn(chat_id: str, text: str) -> None:
@@ -5486,19 +5493,29 @@ class TelegramHandler:
         # Filter to only show ideas above the display threshold (default 70%)
         from bot.config import CONFIG
         _display_min = CONFIG.risk.signal_display_min_confidence
-        pending = [i for i in self.engine.pending_ideas if i.confidence >= _display_min]
+        all_pending = list(self.engine.pending_ideas)
+        pending = [i for i in all_pending if i.confidence >= _display_min]
 
-        # If nothing pending above threshold, auto-trigger a scan first. Use the
-        # INTERACTIVE cap + a hard timeout so the button stays responsive: the
-        # full ~200-symbol universe runs in the background loop, but a tap only
-        # analyzes the top-N so it can't hang the handler for minutes (and so the
-        # resulting ideas are fresh, not aged past the staleness guard).
+        # If nothing clears the display threshold but the BACKGROUND loop already
+        # found lower-confidence setups (full analysis), show those instantly
+        # instead of triggering a slow interactive re-scan. Only re-scan when
+        # there is genuinely nothing pending at all.
+        below_note = ""
+        if not pending and all_pending:
+            pending = sorted(all_pending, key=lambda i: i.confidence, reverse=True)[:5]
+            below_note = (f"ℹ️ <i>Best current setups (below the "
+                          f"{_display_min:.0%} high-confidence line):</i>")
+
         if not pending:
             await self._send(update,
-                "\U0001f50d <b>No signals queued — running fresh scan...</b>")
+                "\U0001f50d <b>No signals queued — running a quick scan...</b>")
             try:
+                # Lightweight: skip the order-flow + multi-timeframe fetches so a
+                # tap returns in seconds even under exchange throttling (the full
+                # pipeline still runs in the background loop for auto-trading).
                 result = await asyncio.wait_for(
-                    self.engine.force_scan(max_symbols=CONFIG.interactive_scan_count),
+                    self.engine.force_scan(
+                        max_symbols=CONFIG.interactive_scan_count, lightweight=True),
                     timeout=CONFIG.interactive_scan_timeout_sec,
                 )
                 pending = [i for i in self.engine.pending_ideas if i.confidence >= _display_min]
@@ -5530,9 +5547,11 @@ class TelegramHandler:
         uid = update.effective_user.id if update.effective_user else ""
 
         # Show ALL pending ideas, not just the last one
-        await self._send(update,
-            f"\U0001f4a1 <b>{len(pending)} Trade Setup{'s' if len(pending) > 1 else ''} Found</b>\n"
-            f"{'━' * 28}")
+        _header = (f"\U0001f4a1 <b>{len(pending)} Trade Setup"
+                   f"{'s' if len(pending) > 1 else ''} Found</b>\n{'━' * 28}")
+        if below_note:
+            _header = f"{below_note}\n{_header}"
+        await self._send(update, _header)
 
         # Cluster pending ideas by asset category (Crypto, Metal, Stock, …) so
         # /latest_signal reads grouped like the scan commands. TradeIdea has no

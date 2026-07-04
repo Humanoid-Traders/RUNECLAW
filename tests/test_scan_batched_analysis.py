@@ -87,3 +87,24 @@ async def test_timeframe_is_threaded_through():
         assert seen == ["4h"]
     finally:
         object.__setattr__(CONFIG, "scan_analysis_concurrency", old)
+
+
+@pytest.mark.asyncio
+async def test_lightweight_flag_is_threaded_through():
+    old = _set_concurrency(4)
+    try:
+        seen = []
+
+        async def fake_analyze(sig, *, timeframe="1h", lightweight=False, **kw):
+            seen.append(lightweight)
+            return sig
+
+        stub = SimpleNamespace(_analyze_signal=fake_analyze)
+        await RuneClawEngine._analyze_signals_batched(stub, ["X"], lightweight=True)
+        assert seen == [True]
+        # Default is full analysis.
+        seen.clear()
+        await RuneClawEngine._analyze_signals_batched(stub, ["Y"])
+        assert seen == [False]
+    finally:
+        object.__setattr__(CONFIG, "scan_analysis_concurrency", old)

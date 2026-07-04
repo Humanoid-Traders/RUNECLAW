@@ -30,9 +30,10 @@ class _FakeScanEngine:
         self._pending_ideas = {}
         self.body_calls = 0
 
-    async def _force_scan_locked(self, max_symbols=None):
+    async def _force_scan_locked(self, max_symbols=None, lightweight=False):
         self.body_calls += 1
         self.last_max_symbols = max_symbols
+        self.last_lightweight = lightweight
         await asyncio.sleep(0.05)  # hold the lock so a racing caller collides
         return {"signals": 3, "ideas": 1, "auto_confirmed": 0}
 

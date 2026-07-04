@@ -1477,6 +1477,15 @@ class AppConfig:
     # -- Paper trading --
     paper_balance_usd: float = _env_float("PAPER_BALANCE_USD", 10_000.0)
     portfolio_state_file: str = _env("PORTFOLIO_STATE_FILE", "data/portfolio_state.json")
+    # Proactive-alert watch list persistence. The set of chats with /watch on is
+    # saved here so it survives restarts — previously it was in-memory only, so
+    # every deploy/watchdog restart SILENCED CRITICAL safety alerts (position
+    # unprotected, circuit-breaker) until someone re-ran /watch on.
+    proactive_watch_state_file: str = _env("PROACTIVE_WATCH_STATE_FILE", "data/proactive_watch.json")
+    # Auto-enroll the operator chat (TELEGRAM_CHAT_ID) into proactive alerts when
+    # the persisted watch list is empty (fresh deploy), so safety alerts always
+    # reach the operator by default. The operator can /watch off (which persists).
+    proactive_auto_enroll_admin: bool = _env_bool("PROACTIVE_AUTO_ENROLL_ADMIN", True)
     # Per-user PAPER (sim) opt-in. When enabled (default OFF), a user who has
     # opted in via /paper has THEIR confirmed trades SIMULATED into their paper
     # portfolio instead of sent to the exchange — risk-free practice on a live
