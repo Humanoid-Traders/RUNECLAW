@@ -1,0 +1,93 @@
+{
+  "version": 1,
+  "timeframe": "1h",
+  "limit": 6000,
+  "created_at": "2026-07-04T19:30:01.688694+00:00",
+  "dataset_hash": "232d1946e46961d7f80ef7c9c97ef85e33684e434607c1fbe87697291e39a7f4",
+  "symbols": {
+    "APT/USDT:USDT": {
+      "file": "APT_USDT_USDT.csv.gz",
+      "bars": 5994,
+      "first": "2025-10-27T20:00:00+00:00",
+      "last": "2026-07-04T19:00:00+00:00",
+      "sha256": "b12c6af3f694758e532b1093596ac031766c58eddfc2ca5251804317ea6c5ec1"
+    },
+    "ARB/USDT:USDT": {
+      "file": "ARB_USDT_USDT.csv.gz",
+      "bars": 5994,
+      "first": "2025-10-27T20:00:00+00:00",
+      "last": "2026-07-04T19:00:00+00:00",
+      "sha256": "09c87a467ad85e7d20e2776384b4b21f65319855452bcd95fee040f36e519a18"
+    },
+    "BLESS/USDT:USDT": {
+      "file": "BLESS_USDT_USDT.csv.gz",
+      "bars": 5994,
+      "first": "2025-10-27T20:00:00+00:00",
+      "last": "2026-07-04T19:00:00+00:00",
+      "sha256": "973f0729df73f99d9067830c6fc03abc3bcb53d8ef65aae4a81206f8fc7feef8"
+    },
+    "FLOKI/USDT:USDT": {
+      "file": "FLOKI_USDT_USDT.csv.gz",
+      "bars": 5994,
+      "first": "2025-10-27T20:00:00+00:00",
+      "last": "2026-07-04T19:00:00+00:00",
+      "sha256": "1ba771c938891b077c7b7d04cde237ea1e23dc358ff804d3af1aaa8419b7ff1b"
+    },
+    "HOME/USDT:USDT": {
+      "file": "HOME_USDT_USDT.csv.gz",
+      "bars": 5994,
+      "first": "2025-10-27T20:00:00+00:00",
+      "last": "2026-07-04T19:00:00+00:00",
+      "sha256": "05ed87c1d18671fd87e3de1cc5443e85c4984ef46204c0244d96f0ce5e5e7270"
+    },
+    "PENGU/USDT:USDT": {
+      "file": "PENGU_USDT_USDT.csv.gz",
+      "bars": 5994,
+      "first": "2025-10-27T20:00:00+00:00",
+      "last": "2026-07-04T19:00:00+00:00",
+      "sha256": "d6a4d829ef517186678630fda9cf1a132207e795a7fe53a4d1733388386b467a"
+    },
+    "PEPE/USDT:USDT": {
+      "file": "PEPE_USDT_USDT.csv.gz",
+      "bars": 5994,
+      "first": "2025-10-27T20:00:00+00:00",
+      "last": "2026-07-04T19:00:00+00:00",
+      "sha256": "6124a9e29f0bcde0dfb8ff29971206ed533a56af0da5bf10980cf12d5fa906aa"
+    },
+    "SEI/USDT:USDT": {
+      "file": "SEI_USDT_USDT.csv.gz",
+      "bars": 5994,
+      "first": "2025-10-27T20:00:00+00:00",
+      "last": "2026-07-04T19:00:00+00:00",
+      "sha256": "a51608cba26f0001ac05be55090868eb3d9092f90f7a58a4e5dd424e26d3d0dc"
+    },
+    "SYRUP/USDT:USDT": {
+      "file": "SYRUP_USDT_USDT.csv.gz",
+      "bars": 5994,
+      "first": "2025-10-27T20:00:00+00:00",
+      "last": "2026-07-04T19:00:00+00:00",
+      "sha256": "74bfd4832aa13e38d65ba431a851788abc83dd58f30ba6cca10bb1c0aca18a48"
+    },
+    "TAG/USDT:USDT": {
+      "file": "TAG_USDT_USDT.csv.gz",
+      "bars": 5994,
+      "first": "2025-10-27T20:00:00+00:00",
+      "last": "2026-07-04T19:00:00+00:00",
+      "sha256": "f216f904d936236bc52ccea5911b9119c84162876ecfe1d7021d51a42e1fa271"
+    },
+    "TRUMP/USDT:USDT": {
+      "file": "TRUMP_USDT_USDT.csv.gz",
+      "bars": 5994,
+      "first": "2025-10-27T20:00:00+00:00",
+      "last": "2026-07-04T19:00:00+00:00",
+      "sha256": "e1b5114b7c43cc0319179db93e8671359959485d5f89e39d33bf50a3f864aa4f"
+    },
+    "WIF/USDT:USDT": {
+      "file": "WIF_USDT_USDT.csv.gz",
+      "bars": 5994,
+      "first": "2025-10-27T20:00:00+00:00",
+      "last": "2026-07-04T19:00:00+00:00",
+      "sha256": "f6a1f0224a9c7a1bddfd61561ed2e82dd34a81328abd4e646b5f11c8886931a1"
+    }
+  }
+}
