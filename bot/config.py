@@ -138,12 +138,13 @@ def _env_float_bounded(key: str, default: float, min_val: float, max_val: float)
 class RiskLimits:
     """Hard risk limits -- breaching any one triggers circuit breaker."""
     max_position_pct: float = _env_float_bounded("MAX_POSITION_PCT", 13.0, 1, 100)
-    # Volatility-targeted position cap (design bet; default OFF, tighten-only). The
+    # Volatility-targeted position cap (design bet; default ON, tighten-only). The
     # notional cap binds on ~every crypto trade, so sizing is effectively flat
-    # margin and realized per-trade risk scales UP with ATR%. When enabled, the
-    # binding cap floats INVERSELY with ATR% (target vol_target_atr_pct) so
-    # per-trade dollar risk is normalized toward a constant. Floor bounds how far
-    # the cap can shrink. A/B on the honest benchmark before enabling.
+    # margin and realized per-trade risk scales UP with ATR%. The binding cap
+    # floats INVERSELY with ATR% (target vol_target_atr_pct) so per-trade dollar
+    # risk is normalized toward a constant. Floor bounds how far the cap can
+    # shrink. A/B-validated on the honest benchmark (mean OOS -1.14%->-0.91%,
+    # worst fold -4.12%->-2.72%, zero downside); disable with =0.
     vol_target_sizing_enabled: bool = _env_bool("VOL_TARGET_SIZING_ENABLED", True)
     vol_target_atr_pct: float = _env_float("VOL_TARGET_ATR_PCT", 3.0)
     vol_target_floor: float = _env_float("VOL_TARGET_FLOOR", 0.33)
