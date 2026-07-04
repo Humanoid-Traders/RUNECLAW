@@ -235,31 +235,53 @@ class MarketScanner:
         Smart slot allocation with priority symbol guarantee.
 
         Allocation order:
-          1. Priority symbols (from PRIORITY_SYMBOLS) always included first
-          2. Each remaining category gets at least 2 slots
-          3. Remaining slots filled by strongest movers overall
+          1. Non-Crypto category minimums are RESERVED first (metals, stocks,
+             ETFs, …) so the crypto-heavy priority list can't crowd them out
+          2. Priority symbols (from PRIORITY_SYMBOLS) — capped to leave the
+             reserved TradFi slots intact
+          3. Fill the reserved category minimums (≥2 per present category)
+          4. Remaining slots filled by strongest movers overall
+
+        Bug fix: previously priority symbols were added first with no cap and
+        the final ``result[:max_total]`` truncation cut whatever was appended
+        last — which was exactly the category-minimum entries. Once the crypto
+        PRIORITY_SYMBOLS list grew toward ``top_movers_count`` (80), every
+        metal/stock/ETF slot was silently truncated to zero, so those markets
+        never reached analysis. The minimums are now reserved up front.
         """
         max_total = CONFIG.top_movers_count
+        min_per_cat = 2
 
-        result: list[MarketSignal] = []
-        used: set[str] = set()
-
-        # 1. Priority symbols first — always included regardless of momentum
-        for s in signals:
-            if s.symbol in _PRIORITY_SET and s.symbol not in used:
-                result.append(s)
-                used.add(s.symbol)
-
-        # 2. Category minimums for non-priority symbols
         by_cat: dict[str, list[MarketSignal]] = {}
         for s in signals:
             by_cat.setdefault(s.asset_category, []).append(s)
 
-        min_per_cat = 2
-        for cat in sorted(by_cat, key=lambda c: CATEGORY_META.get(c, ("", 99))[1]):
-            cat_signals = by_cat[cat]
+        # 1. Reserve minimum slots for each PRESENT non-Crypto category. Crypto
+        #    is deliberately excluded — it is already saturated by the priority
+        #    list and the fill pass, so it needs no reservation.
+        non_crypto_cats = sorted(
+            (c for c in by_cat if c != "Crypto"),
+            key=lambda c: CATEGORY_META.get(c, ("", 99))[1],
+        )
+        reserved = sum(min(min_per_cat, len(by_cat[c])) for c in non_crypto_cats)
+        priority_budget = max(0, max_total - reserved)
+
+        result: list[MarketSignal] = []
+        used: set[str] = set()
+
+        # 2. Priority symbols — always included, but capped at priority_budget so
+        #    the reserved TradFi slots survive the final truncation.
+        for s in signals:
+            if len(result) >= priority_budget:
+                break
+            if s.symbol in _PRIORITY_SET and s.symbol not in used:
+                result.append(s)
+                used.add(s.symbol)
+
+        # 3. Fill the reserved non-Crypto category minimums.
+        for cat in non_crypto_cats:
             count = 0
-            for s in cat_signals:
+            for s in by_cat[cat]:
                 if s.symbol not in used:
                     result.append(s)
                     used.add(s.symbol)
@@ -267,7 +289,7 @@ class MarketScanner:
                     if count >= min_per_cat:
                         break
 
-        # 3. Fill remaining from overall top movers
+        # 4. Fill remaining from overall top movers (crypto + any leftover TradFi)
         if len(result) < max_total:
             for s in signals:
                 if s.symbol not in used:
