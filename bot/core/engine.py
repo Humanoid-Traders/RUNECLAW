@@ -1724,16 +1724,12 @@ class RuneClawEngine:
 
         self._transition(AgentState.ANALYZING, "signals detected")
 
-        # Analyze all scanner-selected signals concurrently (scanner already caps via slot allocation)
-        async def _safe_analyze(sig):
-            try:
-                return await self._analyze_signal(sig)
-            except Exception as e:
-                logger.debug("Signal analysis error for %s: %s", sig.symbol, e)
-                return None
-
-        tasks = [_safe_analyze(sig) for sig in signals]
-        results = await asyncio.gather(*tasks)
+        # Analyze scanner-selected signals with BOUNDED concurrency. The scanner
+        # now emits a wide (~200) volume-filtered universe, so an unbounded
+        # gather would fan out hundreds of simultaneous OHLCV/order-flow/MTF
+        # fetches and hammer the exchange rate limiter. The semaphore caps
+        # in-flight analyses at CONFIG.scan_analysis_concurrency.
+        results = await self._analyze_signals_batched(signals)
         _synced_ideas = []
         for idea in results:
             if idea:
@@ -2022,6 +2018,36 @@ class RuneClawEngine:
             logger.debug("MTF refinement failed for %s: %s", idea.asset, exc)
 
         return idea
+
+    async def _analyze_signals_batched(
+        self, signals, *, timeframe: str = "1h",
+    ) -> list:
+        """Analyze a list of scanner signals with BOUNDED concurrency.
+
+        The scanner emits a wide (~200) volume-filtered universe, so an
+        unbounded ``asyncio.gather`` would fan out hundreds of simultaneous
+        OHLCV + order-flow + MTF fetches and overwhelm the exchange rate
+        limiter. A semaphore caps in-flight analyses at
+        ``CONFIG.scan_analysis_concurrency`` (default 12) — the same bounded
+        pattern DeepScan already uses. Each analysis is wrapped so one failure
+        never sinks the batch; the result list preserves input order with
+        ``None`` for any signal that failed or produced no idea.
+        """
+        limit = max(1, int(CONFIG.scan_analysis_concurrency))
+        sem = asyncio.Semaphore(limit)
+
+        async def _one(sig):
+            async with sem:
+                try:
+                    return await self._analyze_signal(sig, timeframe=timeframe)
+                except Exception as exc:
+                    logger.debug("Signal analysis error for %s: %s",
+                                 getattr(sig, "symbol", "?"), exc)
+                    return None
+
+        if not signals:
+            return []
+        return await asyncio.gather(*[_one(s) for s in signals])
 
     async def _analyze_signal(self, signal: MarketSignal, *, timeframe: str = "1h", is_admin: bool = False, user_id=None, user_tier=None) -> Optional[TradeIdea]:
         """Run full analysis pipeline on a single signal.
@@ -3187,17 +3213,9 @@ class RuneClawEngine:
             self._transition(AgentState.IDLE, "force scan: no signals")
             return {"signals": 0, "ideas": 0, "cleared_pending": old_pending}
 
-        # Analyze
+        # Analyze (bounded concurrency, same as the autonomous tick)
         self._transition(AgentState.ANALYZING, "force scan analyzing")
-
-        async def _safe_analyze(sig):
-            try:
-                return await self._analyze_signal(sig)
-            except Exception:
-                return None
-
-        tasks = [_safe_analyze(sig) for sig in signals]
-        results = await asyncio.gather(*tasks)
+        results = await self._analyze_signals_batched(signals)
 
         ideas_found = 0
         for idea in results:
