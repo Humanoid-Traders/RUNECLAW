@@ -2020,7 +2020,7 @@ class RuneClawEngine:
         return idea
 
     async def _analyze_signals_batched(
-        self, signals, *, timeframe: str = "1h",
+        self, signals, *, timeframe: str = "1h", lightweight: bool = False,
     ) -> list:
         """Analyze a list of scanner signals with BOUNDED concurrency.
 
@@ -2039,7 +2039,7 @@ class RuneClawEngine:
         async def _one(sig):
             async with sem:
                 try:
-                    return await self._analyze_signal(sig, timeframe=timeframe)
+                    return await self._analyze_signal(sig, timeframe=timeframe, lightweight=lightweight)
                 except Exception as exc:
                     logger.debug("Signal analysis error for %s: %s",
                                  getattr(sig, "symbol", "?"), exc)
@@ -2049,12 +2049,18 @@ class RuneClawEngine:
             return []
         return await asyncio.gather(*[_one(s) for s in signals])
 
-    async def _analyze_signal(self, signal: MarketSignal, *, timeframe: str = "1h", is_admin: bool = False, user_id=None, user_tier=None) -> Optional[TradeIdea]:
+    async def _analyze_signal(self, signal: MarketSignal, *, timeframe: str = "1h", is_admin: bool = False, user_id=None, user_tier=None, lightweight: bool = False) -> Optional[TradeIdea]:
         """Run full analysis pipeline on a single signal.
 
         Args:
             signal: Market signal to analyze.
             timeframe: OHLCV timeframe to fetch (e.g. "5m", "15m", "1h", "4h").
+            lightweight: skip the order-flow (4 calls) and multi-timeframe (4
+                calls) fetches, leaving just the 1 primary OHLCV fetch. Used by
+                the INTERACTIVE force-scan so a Telegram tap returns in seconds
+                even under exchange throttling. Confidence is computed from
+                technicals only; the entry/SL/TP/risk math is unchanged, and the
+                background loop still runs the full pipeline for auto-trading.
         """
         # ── Per-symbol cooldown after SL hit OR a loss streak (checked FIRST) ─
         # #32: short-circuit a cooling symbol BEFORE the expensive OHLCV +
@@ -2095,9 +2101,15 @@ class RuneClawEngine:
                     and signal.symbol.endswith("/USDT")):
                 of_deriv = f"{signal.symbol}:USDT"
             ohlcv_task = self._cached_ohlcv(exchange, signal.symbol, timeframe, limit=100)
-            of_task = self.order_flow.analyze(exchange, signal.symbol,
-                                              derivatives_symbol=of_deriv)
-            results = await asyncio.gather(ohlcv_task, of_task, return_exceptions=True)
+            if lightweight:
+                # Interactive fast path: only the primary OHLCV; skip the 4
+                # order-flow fetches (funding/OI/book/trades).
+                results = list(await asyncio.gather(ohlcv_task, return_exceptions=True))
+                results.append(None)
+            else:
+                of_task = self.order_flow.analyze(exchange, signal.symbol,
+                                                  derivatives_symbol=of_deriv)
+                results = list(await asyncio.gather(ohlcv_task, of_task, return_exceptions=True))
             ohlcv = results[0] if not isinstance(results[0], Exception) else None
             of_signal = results[1] if not isinstance(results[1], Exception) else None
 
@@ -2105,7 +2117,7 @@ class RuneClawEngine:
             # replay the same microstructure path (gated OF_RECORD_SNAPSHOTS, now
             # default ON). Write-only, best-effort, fail-open — never breaks the
             # scan path. Set OF_RECORD_SNAPSHOTS=0 to disable.
-            if of_signal is not None and \
+            if of_signal is not None and not isinstance(of_signal, BaseException) and \
                     os.getenv("OF_RECORD_SNAPSHOTS", "1").strip().lower() in ("1", "true", "yes", "on"):
                 try:
                     from bot.backtest.recorded_order_flow import record_snapshot
@@ -2145,7 +2157,7 @@ class RuneClawEngine:
         # so it can read the wave structure appropriate to the setup. Cached and
         # fail-open — a fetch failure just omits that timeframe (analyzer no-ops).
         mtf_candles = None
-        if CONFIG.analyzer.elliott_mtf_enabled or CONFIG.analyzer.mtf_confluence_enabled:
+        if not lightweight and (CONFIG.analyzer.elliott_mtf_enabled or CONFIG.analyzer.mtf_confluence_enabled):
             mtf_candles = {}
             for _tf, _lim in (("15m", 200), ("1h", 200), ("4h", 200), ("1d", 200)):
                 try:
@@ -3180,7 +3192,7 @@ class RuneClawEngine:
             return "Trade REJECTED."
         return "Trade not found."
 
-    async def force_scan(self, max_symbols: int | None = None) -> dict:
+    async def force_scan(self, max_symbols: int | None = None, lightweight: bool = False) -> dict:
         """Single-flight guard around a force-scan cycle.
 
         ``max_symbols`` caps how many scanned signals get ANALYZED this cycle.
@@ -3204,9 +3216,9 @@ class RuneClawEngine:
                     "pending": len(self._pending_ideas), "cleared_pending": 0,
                     "skipped": "scan_already_running"}
         async with self._scan_lock:
-            return await self._force_scan_locked(max_symbols=max_symbols)
+            return await self._force_scan_locked(max_symbols=max_symbols, lightweight=lightweight)
 
-    async def _force_scan_locked(self, max_symbols: int | None = None) -> dict:
+    async def _force_scan_locked(self, max_symbols: int | None = None, lightweight: bool = False) -> dict:
         """Force an immediate scan cycle, bypassing cooldown and pending gates.
 
         Called by /forcescan command. Clears pending ideas, resets cooldown,
@@ -3244,7 +3256,7 @@ class RuneClawEngine:
 
         # Analyze (bounded concurrency, same as the autonomous tick)
         self._transition(AgentState.ANALYZING, "force scan analyzing")
-        results = await self._analyze_signals_batched(signals)
+        results = await self._analyze_signals_batched(signals, lightweight=lightweight)
 
         ideas_found = 0
         for idea in results:
