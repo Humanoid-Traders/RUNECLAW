@@ -119,6 +119,28 @@ were TREND_DOWN), so regime-specific numbers are window-dependent. The
 reward/risk (exit) signal and the swing-setup concentration are the robust
 takeaways; the next A/B targets those against this baseline.
 
+## Attribution under the LIVE exit (partial-TP) — and a refuted gate
+
+Re-run with the exit live actually uses (`BACKTEST_PARTIAL_TP=1`, now the
+`--honest` default), the pooled **115-trade** picture is very different from the
+single-exit table above — most families flip positive:
+
+| Signal type | net | PF | | Setup | net | PF |
+|---|---:|---:|---|---|---:|---:|
+| `regime_trend` | +$215 | 1.25 | | `intraday` | +$181 | 5.19 |
+| `vwap_reversion` | +$150 | ∞ | | `swing` | +$75 | 1.06 |
+| `volume_spike` (n=7) | −$29 | 0.61 | | `scalp` (n=4) | −$67 | 0.00 |
+| `momentum_confluence` | **−$147** | 0.62 | | | | |
+
+**Refuted: gating `momentum_confluence`.** It's the one meaningful-sample
+negative-edge family (34 tr, PF 0.62), so the obvious move is to skip it. A
+controlled A/B says **don't** — skipping it drops the benchmark **+0.31% →
+−0.26%** (net +$188 → −$153) and *raises* trade count 115 → 144. Per-family PnL
+is **not additive** in a portfolio: freeing a family's position slots just lets
+worse trades fill them. The `SKIP_SIGNAL_TYPES` lever exists (default empty, no
+behavior change) but the benchmark says leave it empty on this universe. Recorded
+so it isn't re-chased.
+
 ## Integrity guarantees (locked by `tests/test_benchmark_snapshot.py`)
 
 - gzip CSV round-trips preserve the exact candles (`DataLoader.content_hash`

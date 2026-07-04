@@ -792,6 +792,11 @@ class AnalyzerConfig:
     # stop). 0.4% sits well below a normal ATR stop on liquid majors, so it only
     # engages on pathologically-tight stops. 0 disables.
     min_stop_distance_pct: float = _env_float_bounded("MIN_STOP_DISTANCE_PCT", 0.004, 0.0, 0.5)
+    # Skip these signal-type families entirely (comma-separated). For gating a
+    # family the frozen-benchmark attribution shows is a persistent negative-edge
+    # drag under the LIVE (partial-TP) exit. Evidence, not intuition — set only
+    # from a benchmark A/B. Empty = trade every family (the historical behavior).
+    skip_signal_types: str = _env("SKIP_SIGNAL_TYPES", "")
     # Regime-specific overrides
     range_sl_mult: float = 1.5
     range_tp_mult: float = 2.5

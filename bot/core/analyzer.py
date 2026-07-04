@@ -87,6 +87,15 @@ _ELLIOTT_KEYS = ("elliott_impulse", "elliott_corrective", "elliott_diagonal",
 _ANALYSIS_VERSION = "2026.07-audit25"
 
 
+def _is_gated_signal_type(signal_type: str, skip_config: str) -> bool:
+    """True if ``signal_type`` is in the comma-separated ``SKIP_SIGNAL_TYPES``
+    set — an evidence-gated skip for a negative-edge family. Empty config skips
+    nothing (trade every family)."""
+    if not skip_config:
+        return False
+    return signal_type in {s.strip() for s in skip_config.split(",") if s.strip()}
+
+
 def _floor_stop_distance(entry: float, stop_loss: float, direction,
                          min_frac: float) -> float:
     """Widen a too-tight stop to a minimum placeable distance from entry.
@@ -1739,6 +1748,15 @@ class Analyzer:
         signal_type = self._classify_signal_type(
             indicators, signal, regime, thesis.get("source", "")
         )
+
+        # ── Evidence-gated signal-family skip (SKIP_SIGNAL_TYPES) ──
+        # The frozen-benchmark attribution under the LIVE partial-TP exit can flag
+        # a family as a persistent drag; skip it rather than trade known-negative
+        # edge. Default empty = trade all families.
+        if _is_gated_signal_type(signal_type, CONFIG.analyzer.skip_signal_types):
+            self._record_no_trade(signal.symbol, "signal_type",
+                                  f"{signal_type} gated (SKIP_SIGNAL_TYPES)")
+            return None
 
         # ── Minimum stop-distance floor (safety, MIN_STOP_DISTANCE_PCT) ──
         # A pathologically-tight ATR stop (low-vol / low-priced asset) gets
