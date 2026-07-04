@@ -1496,6 +1496,15 @@ class AppConfig:
     # OHLCV + order-flow + MTF + analyzer work). Keeps a wide universe from
     # overwhelming the exchange rate limiter / event loop.
     scan_analysis_concurrency: int = int(_env_float("SCAN_ANALYSIS_CONCURRENCY", 12))
+    # How many symbols an INTERACTIVE force-scan analyzes (the "Latest Signal"
+    # button). The full ~200 universe is analyzed by the background loop, but a
+    # button tap must stay responsive: each analyzed symbol fires ~9 rate-limited
+    # exchange calls, so analyzing 200 inline hangs the handler for minutes. Cap
+    # the interactive path to the top-N ranked signals.
+    interactive_scan_count: int = int(_env_float("INTERACTIVE_SCAN_COUNT", 40))
+    # Hard timeout (seconds) on an interactive force-scan so the Telegram handler
+    # can never hang unbounded; on timeout we show whatever pending ideas exist.
+    interactive_scan_timeout_sec: int = int(_env_float("INTERACTIVE_SCAN_TIMEOUT_SEC", 45))
     # All-markets slot allocation for the non-Crypto (TradFi) categories.
     # When full-coverage is ON (default), EVERY present TradFi perp (metals,
     # stocks, ETFs, commodities, pre-IPO) is guaranteed a scan slot — the whole
