@@ -1487,6 +1487,14 @@ class AppConfig:
     # -- Scan settings --
     scan_interval_seconds: int = int(_env_float("SCAN_INTERVAL", 60))
     top_movers_count: int = int(_env_float("TOP_MOVERS_COUNT", 80))
+    # All-markets slot allocation for the non-Crypto (TradFi) categories.
+    # When full-coverage is ON (default), EVERY present TradFi perp (metals,
+    # stocks, ETFs, commodities, pre-IPO) is guaranteed a scan slot — the whole
+    # curated TradFi universe (~32 symbols) is reserved before the crypto
+    # priority list fills the rest. Turn it off to fall back to the per-category
+    # minimum below. These only affect ASSET_UNIVERSE=all_markets.
+    scan_tradfi_full_coverage: bool = _env_bool("SCAN_TRADFI_FULL_COVERAGE", True)
+    scan_min_per_category: int = int(_env_float("SCAN_MIN_PER_CATEGORY", 2))
 
     # -- Sub-configs --
     risk: RiskLimits = field(default_factory=RiskLimits)
