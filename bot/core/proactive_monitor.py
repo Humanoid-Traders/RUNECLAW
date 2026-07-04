@@ -80,6 +80,9 @@ class ProactiveMonitor:
     def __init__(self, engine) -> None:
         self.engine = engine
         self._enabled_chats: Set[str] = set()   # Chat IDs with /watch on
+        # NOTE: the persisted watch list is loaded (and the operator auto-
+        # enrolled) by hydrate(), called from start_monitor — NOT here — so a
+        # bare ProactiveMonitor(engine) in tests stays empty and deterministic.
         self._running = False
         self._dedup_cache: dict[str, float] = {}  # dedup_key -> last_alert_time
 
@@ -117,15 +120,101 @@ class ProactiveMonitor:
 
     def enable_chat(self, chat_id: str) -> None:
         """Enable proactive alerts for a chat."""
-        self._enabled_chats.add(chat_id)
+        self._enabled_chats.add(str(chat_id))
+        self._save_enabled_chats()
         audit(system_log, f"Proactive alerts enabled for chat {chat_id}",
               action="watch_on", data={"chat_id": chat_id})
 
     def disable_chat(self, chat_id: str) -> None:
         """Disable proactive alerts for a chat."""
-        self._enabled_chats.discard(chat_id)
+        self._enabled_chats.discard(str(chat_id))
+        self._save_enabled_chats()
         audit(system_log, f"Proactive alerts disabled for chat {chat_id}",
               action="watch_off", data={"chat_id": chat_id})
+
+    # ── Watch-list persistence + admin auto-enroll ────────────────
+    # The watch list was in-memory only, so every restart silenced CRITICAL
+    # safety alerts until someone re-ran /watch on. Persist it and, on a fresh
+    # deploy with an empty list, auto-enroll the operator so alerts flow by
+    # default. All best-effort / fail-open — a persistence hiccup must never
+    # break the monitor.
+
+    def hydrate(self) -> None:
+        """Load the persisted watch list and auto-enroll the operator if empty.
+
+        Called once at startup (start_monitor). Kept out of __init__ so a bare
+        monitor constructed in tests is deterministically empty.
+        """
+        self._load_enabled_chats()
+        self._maybe_auto_enroll_admin()
+
+    def _watch_state_path(self) -> str:
+        try:
+            from bot.config import CONFIG
+            return CONFIG.proactive_watch_state_file
+        except Exception:
+            return "data/proactive_watch.json"
+
+    def _load_enabled_chats(self) -> None:
+        import json
+        import os
+        path = self._watch_state_path()
+        # Whether a state file already exists distinguishes a FRESH deploy (no
+        # file -> auto-enroll the operator) from an operator who explicitly
+        # emptied the list (file present but empty -> respect their choice, do
+        # NOT re-enroll on every restart).
+        self._watch_state_existed = os.path.exists(path)
+        try:
+            if not self._watch_state_existed:
+                return
+            with open(path, "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+            chats = data.get("enabled_chats", []) if isinstance(data, dict) else data
+            if isinstance(chats, list):
+                self._enabled_chats = {str(c) for c in chats if c not in (None, "")}
+        except Exception as exc:
+            logger.debug("proactive watch-list load skipped: %s", exc)
+
+    def _save_enabled_chats(self) -> None:
+        import json
+        import os
+        path = self._watch_state_path()
+        try:
+            d = os.path.dirname(path)
+            if d:
+                os.makedirs(d, exist_ok=True)
+            tmp = f"{path}.tmp"
+            with open(tmp, "w", encoding="utf-8") as fh:
+                json.dump({"enabled_chats": sorted(self._enabled_chats)}, fh)
+            os.replace(tmp, path)  # atomic
+        except Exception as exc:
+            logger.debug("proactive watch-list save skipped: %s", exc)
+
+    def _maybe_auto_enroll_admin(self) -> None:
+        """When nobody is watching on a FRESH deploy, enroll the operator chat
+        so CRITICAL safety alerts still reach them. Bounded: only fires when no
+        state file existed yet (never when the operator explicitly emptied the
+        list) and only if TELEGRAM_CHAT_ID is configured."""
+        if self._enabled_chats:
+            return
+        # Operator has interacted before (file present) — respect their empty
+        # list instead of re-enrolling every restart.
+        if getattr(self, "_watch_state_existed", False):
+            return
+        try:
+            from bot.config import CONFIG
+            if not CONFIG.proactive_auto_enroll_admin:
+                return
+            admin = str(CONFIG.telegram.chat_id or "").strip()
+            if admin:
+                self._enabled_chats.add(admin)
+                self._save_enabled_chats()
+                audit(system_log,
+                      f"Proactive alerts auto-enrolled operator chat {admin} "
+                      f"(empty watch list on startup)",
+                      action="watch_auto_enroll", data={"chat_id": admin})
+        except Exception as exc:
+            logger.debug("proactive admin auto-enroll skipped: %s", exc)
 
     def is_enabled(self, chat_id: str) -> bool:
         return chat_id in self._enabled_chats

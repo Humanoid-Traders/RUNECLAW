@@ -3770,6 +3770,13 @@ class TelegramHandler:
     async def start_monitor(self, bot) -> None:
         """Start the proactive monitor background task.
         Called from main.py after the Telegram app is initialized."""
+        # Restore the persisted /watch list and auto-enroll the operator if it's
+        # empty, so CRITICAL safety alerts survive restarts (previously the watch
+        # list was in-memory only and every restart muted them until /watch on).
+        try:
+            self.monitor.hydrate()
+        except Exception as exc:
+            system_log.debug("proactive monitor hydrate skipped: %s", exc)
         # Wire up channel forwarder
         self.forwarder.set_bot(bot)
         async def _send_fn(chat_id: str, text: str) -> None:
