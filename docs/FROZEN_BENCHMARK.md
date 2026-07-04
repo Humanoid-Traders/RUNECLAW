@@ -245,14 +245,56 @@ Pooled attribution — **every** regime and setup bucket is negative:
 **Same strategy, same fidelity settings, same walk-forward — majors: +$294 / PF
 1.24; alts: −$444 / PF 0.73.** This is not noise from a couple of bad trades: it
 is negative across every regime, every setup, and every signal family bar one
-thin bucket. The live TAG/BLESS losses are consistent with trading a
-structurally negative-edge universe, not with a strategy bug.
+thin bucket. Standalone, alts looks like a structurally negative-edge universe —
+**but see below: that conclusion is refuted once the two are combined.**
 
-**Implication (not yet acted on):** this is evidence for restricting the live
-scanner/auto-trade universe away from this alt-coin class, or applying much
-stricter gating specifically to it — a policy change, not a code bug, so it's
-recorded here rather than shipped silently. `CONFIG.top_movers_count` and the
-scanner's category allocation are the levers if this warrants a change.
+## Combined-universe A/B — the "restrict to majors" hypothesis is REFUTED
+
+The natural next move from the alts result is "restrict the live scanner to
+majors only." `--dataset` now accepts a **comma-separated list of snapshot
+dirs**, merging them into one combined universe — built specifically to test
+this:
+
+```bash
+python -m bot.backtest.runner --dataset data/benchmark/majors_1h,data/benchmark/alts_1h \
+    --honest --walk-forward 6
+```
+
+**Result (22 symbols, `dataset_hash=062a1919310d…`): mean OOS +0.68%, 3/6
+profitable folds, worst −1.95%. Pooled: 136 trades, net +$410, win 60%, PF
+1.29 — BEATS majors-only (+0.49% / PF 1.24), not just alts-only.**
+
+| Universe | Mean OOS | Net | Win | PF | Profitable folds |
+|---|---:|---:|---:|---:|---:|
+| Majors only (10 symbols) | +0.49% | +$294 | 63% | 1.24 | 2/6 |
+| Alts only (12 symbols) | −0.74% | −$444 | 53% | 0.73 | 1/6 |
+| **Combined (22 symbols)** | **+0.68%** | **+$410** | 60% | **1.29** | 3/6 |
+
+And within the *same* combined run, the per-universe roles **flip** from their
+standalone results — majors become the weaker side, alts the stronger:
+
+| | Alone | In the combined mix |
+|---|---:|---:|
+| Majors | +$294 / PF 1.24 | **−$136 / PF 0.84** |
+| Alts | −$444 / PF 0.73 | **+$493 / PF 1.86** |
+
+**This is not noise — it's the same lesson as the refuted `SKIP_SIGNAL_TYPES`
+gate (#293): per-symbol/per-family attribution is not additive in a
+portfolio.** The shared risk engine (position-count caps, correlation/VaR
+limits, the daily-loss breaker) means which trades actually clear and how
+they're sized depends on the *entire* universe in play, not on each symbol in
+isolation. A losing streak that would halt trading in an alts-only run gets
+diluted by majors' steadier signal flow in the combined book (and vice versa),
+changing the realized trade set on both sides.
+
+**Conclusion: do NOT restrict the live universe to majors-only** — that
+"obvious" fix would, by this evidence, make things *worse*. The standalone
+alts number is real but doesn't predict the mixed-universe outcome; only the
+combined backtest does, and it favors the status quo (scan both). Recorded
+here so this refuted hypothesis isn't re-chased; `bot/backtest/snapshot.py`'s
+`load_manifest_multi`/`load_symbol_multi`/`load_dataset_multi` make any future
+combined-universe question a one-line `--dataset a,b` away instead of an
+ad-hoc script.
 
 ## Refreshing the snapshot
 
