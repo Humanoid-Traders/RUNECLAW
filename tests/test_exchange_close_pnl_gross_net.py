@@ -105,7 +105,7 @@ class TestFetchBitgetCloseDataPnlIsNetFlag:
         assert result["fees"] == pytest.approx(2.0)
 
     @pytest.mark.asyncio
-    async def test_position_history_with_zero_net_profit_falls_back_to_gross(self):
+    async def test_position_history_zero_netprofit_derives_net_from_fees(self):
         executor = self._executor()
         executor._exchange.privateMixGetV2MixPositionHistoryPosition = AsyncMock(
             return_value={"data": {"list": [{
@@ -114,8 +114,12 @@ class TestFetchBitgetCloseDataPnlIsNetFlag:
                 "netProfit": "0", "closeType": "normal",
             }]}})
         result = await executor._fetch_bitget_close_data(self._pos())
-        assert result["pnl_is_net"] is False
-        assert result["pnl"] == pytest.approx(50.0)
+        # netProfit==0 is unpopulated, not a true zero — with the full round-trip
+        # fees present we derive net = gross - fees and flag it net, so the caller
+        # never adds a SECOND entry-fee estimate (audit bug 25).
+        assert result["pnl_is_net"] is True
+        assert result["pnl"] == pytest.approx(48.0)
+        assert result["fees"] == pytest.approx(2.0)
 
     @pytest.mark.asyncio
     async def test_fetch_my_trades_sltp_match_is_flagged_gross(self):
