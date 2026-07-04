@@ -489,6 +489,11 @@ defaults:
     env_var: EQUITY_CURVE_PAUSE_STDDEV
     description: "Std-dev band below the equity MA that halves position sizes"
 
+  equity_curve_breaker_enabled:
+    value: false
+    env_var: EQUITY_CURVE_BREAKER_ENABLED
+    description: "Feed record_equity_snapshot() from evaluate() to drive the equity-curve breaker (opt-in; adds a pause/de-risk condition)"
+
   drawdown_recovery_conf_min:
     value: 0.85
     env_var: DRAWDOWN_RECOVERY_CONF_MIN
@@ -498,6 +503,11 @@ defaults:
     value: 0.5
     env_var: DRAWDOWN_RECOVERY_SIZE_MULT
     description: "Position-size multiplier applied while in drawdown-recovery mode"
+
+  drawdown_recovery_enabled:
+    value: false
+    env_var: DRAWDOWN_RECOVERY_ENABLED
+    description: "Drive check_drawdown_recovery() from evaluate() so recovery mode can activate (opt-in; adds a higher-confidence + reduced-size restriction)"
 
   min_book_depth_usd:
     value: 2000.0

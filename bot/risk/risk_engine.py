@@ -341,6 +341,29 @@ class RiskEngine:
                       action="warning_rate_breaker", result="CLEARED",
                       data={"key": key, "count": count})
 
+    def _refresh_warning_rate_breaker(self) -> None:
+        """Time-based auto-clear for the warning-rate breaker.
+
+        record_warning()'s inline clear only fires on a FRESH event of the tripped
+        key — so a transient burst that simply STOPS would latch the breaker
+        forever (nothing re-evaluates once the key goes quiet). Called on every
+        evaluate(): prune events out of the window and clear the breaker when the
+        tripped key's rate has genuinely subsided below threshold.
+        """
+        if not self._warning_rate_tripped:
+            return
+        cutoff = self._now() - self._warning_rate_window
+        while self._warning_events and self._warning_events[0][0] < cutoff:
+            self._warning_events.popleft()
+        key = self._warning_rate_trip_key
+        count = sum(1 for _, k in self._warning_events if k == key)
+        if count <= self._warning_rate_threshold:
+            self._warning_rate_tripped = False
+            audit(risk_log,
+                  f"Warning rate breaker auto-cleared: '{key}' rate subsided to {count}",
+                  action="warning_rate_breaker", result="AUTO_CLEARED",
+                  data={"key": key, "count": count})
+
     def warning_rate_summary(self) -> dict[str, int]:
         """Return counts of each warning key in the current window."""
         now = time.time()
@@ -631,6 +654,27 @@ class RiskEngine:
                 checks_failed=[f"PORTFOLIO_STATE: {exc}"],
                 timestamp=datetime.now(UTC),
             )
+
+        # ── Drive the previously-inert breaker feeders ───────────────────
+        # Bug 20 (always on): time-based auto-clear so a stopped warning burst
+        # can't latch the warning-rate breaker forever.
+        self._refresh_warning_rate_breaker()
+        # Bug 9 (opt-in): feed the equity-curve breaker. Its feeder was never
+        # called, so the breaker was permanently inert. Gated — it adds a pause.
+        if CONFIG.risk.equity_curve_breaker_enabled:
+            try:
+                self.record_equity_snapshot(state.equity_usd)
+            except Exception:
+                pass
+        # Bug 21 (opt-in): update drawdown-recovery mode from the LIVE (recoverable)
+        # drawdown so it can actually activate/deactivate. Gated — it adds a
+        # higher-confidence + reduced-size restriction while underwater.
+        if CONFIG.risk.drawdown_recovery_enabled:
+            try:
+                self.check_drawdown_recovery(
+                    getattr(state, "current_drawdown_pct", state.max_drawdown_pct))
+            except Exception:
+                pass
 
         # LIVE FIX: In LIVE mode, use actual exchange equity for sizing
         # instead of paper portfolio equity.  This prevents sizing $2K

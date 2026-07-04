@@ -281,9 +281,17 @@ class RiskLimits:
     # Equity curve circuit breaker: if equity drops below its N-period MA, halve sizes
     equity_curve_ma_period: int = int(_env_float("EQUITY_CURVE_MA_PERIOD", 20))
     equity_curve_pause_stddev: float = _env_float("EQUITY_CURVE_PAUSE_STDDEV", 2.0)
+    # Feeds record_equity_snapshot() from evaluate() so the equity-curve breaker
+    # is actually driven. Default OFF: it ADDS a de-risk/pause condition, so it is
+    # opt-in (its feeder was never called, leaving the breaker permanently inert).
+    equity_curve_breaker_enabled: bool = _env_bool("EQUITY_CURVE_BREAKER_ENABLED", False)
     # Drawdown recovery mode: after hitting max DD, enter conservative mode
     drawdown_recovery_conf_min: float = _env_float("DRAWDOWN_RECOVERY_CONF_MIN", 0.85)
     drawdown_recovery_size_mult: float = _env_float("DRAWDOWN_RECOVERY_SIZE_MULT", 0.5)
+    # Feeds check_drawdown_recovery() from evaluate() so recovery mode can actually
+    # activate. Default OFF: it ADDS a higher-confidence + reduced-size restriction,
+    # so it is opt-in (its feeder was never called, leaving recovery mode inert).
+    drawdown_recovery_enabled: bool = _env_bool("DRAWDOWN_RECOVERY_ENABLED", False)
     # Kelly-criterion sizing (default ON; runbook stage 2, tighten-only). evaluate() also
     # derives a half-Kelly size from realized trade history and takes the SMALLER
     # of {fixed-fractional, Kelly}: Kelly can only TIGHTEN size, never grow it, and
