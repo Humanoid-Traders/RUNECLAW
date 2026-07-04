@@ -266,5 +266,8 @@ async def portfolio_walk_forward(
             "max_dd_pct": res.max_drawdown_pct,
             "profit_factor": res.profit_factor,
             "per_symbol": dict(pb.per_symbol),
+            # Full OOS trade objects for pooled attribution across folds. The
+            # runner merges these; excluded from any JSON dump (leading "_").
+            "_trades": list(res.trades),
         })
     return out

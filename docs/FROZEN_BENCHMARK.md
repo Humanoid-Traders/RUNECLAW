@@ -71,9 +71,38 @@ it (1.1 MB gzipped for 10 symbols × ~6000 bars) means a fresh sandbox runs the
 | 5 | 13 | −0.94% | 46% | 1.22% | 0.25 |
 
 **Mean OOS −0.90%, 0/6 folds profitable, PF < 1 throughout.** This is the honest,
-reproducible baseline the edge work must beat. It is consistent with the audit's
-diagnosis (fee churn + counter-trend fades dragging PF below 1). **Every future
-signal/money A/B is measured as a delta against this number, on this data.**
+reproducible baseline the edge work must beat. **Every future signal/money A/B is
+measured as a delta against this number, on this data.**
+
+## Where the bleed is (pooled OOS attribution)
+
+`--honest --walk-forward 6` pools **152 OOS trades: net −$540, win 55%, PF 0.67**
+(`_pooled_attribution_report`). The single-run report is drawdown-locked to ~13
+trades, so this pooled cut — fresh breaker/equity per fold — is the diagnostic one.
+
+| Dimension | Bleeds | Earns |
+|---|---|---|
+| **Setup** | `swing` 120 tr, **−$534, PF 0.65** (≈99% of the loss) | `scalp` +$9 PF 1.24 · `intraday` −$15 PF 0.84 |
+| **Signal type** | `volume_spike` 32 tr **PF 0.43** · `regime_trend` 74 tr −$280 PF 0.73 | `vwap_reversion` +$7 PF 1.26 (n=5) |
+| **Regime** | `TREND_UP` PF 0.15 (29% win) · `TREND_DOWN` −$351 (n=87) · `RANGE` PF 0.56 | `EXPANSION` +$33 **PF 1.35** |
+| **Trend align** | `with-trend` 100 tr −$495 PF 0.64 | — |
+
+Two findings the frozen benchmark makes trustworthy:
+
+1. **55% win rate but PF 0.67 → this is a reward/risk problem, not a hit-rate
+   problem.** The bot is right more often than not; its losers are simply bigger
+   than its winners. That points at the **exit engine** (stop distance / trail /
+   TP capture), not at entry selection.
+2. **Counter-trend fades are NOT the culprit — only 1 of 152 trades is
+   counter-trend.** The audit's counter-trend hypothesis is *refuted* by the
+   data; the loss lives in *with-trend* `swing` entries (late trend-following
+   that gives back on the exit). This is exactly the false lead the frozen
+   benchmark exists to catch before it becomes a wasted "fix."
+
+Caveat: one macro window (Oct 2025 → Jul 2026, trend-down-heavy — 87/152 trades
+were TREND_DOWN), so regime-specific numbers are window-dependent. The
+reward/risk (exit) signal and the swing-setup concentration are the robust
+takeaways; the next A/B targets those against this baseline.
 
 ## Integrity guarantees (locked by `tests/test_benchmark_snapshot.py`)
 
