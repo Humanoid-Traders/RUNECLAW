@@ -232,38 +232,49 @@ class MarketScanner:
 
     def _allocate_slots(self, signals: list[MarketSignal]) -> list[MarketSignal]:
         """
-        Smart slot allocation with priority symbol guarantee.
+        Smart slot allocation that guarantees TradFi coverage.
 
         Allocation order:
-          1. Non-Crypto category minimums are RESERVED first (metals, stocks,
-             ETFs, …) so the crypto-heavy priority list can't crowd them out
+          1. Non-Crypto (TradFi) slots are RESERVED first (metals, stocks, ETFs,
+             commodities, pre-IPO) so the crypto-heavy priority list can't crowd
+             them out. With ``scan_tradfi_full_coverage`` ON (default) EVERY
+             present TradFi perp is reserved; otherwise ``scan_min_per_category``
+             per category.
           2. Priority symbols (from PRIORITY_SYMBOLS) — capped to leave the
-             reserved TradFi slots intact
-          3. Fill the reserved category minimums (≥2 per present category)
-          4. Remaining slots filled by strongest movers overall
+             reserved TradFi slots intact.
+          3. Fill the reserved TradFi slots.
+          4. Remaining slots filled by strongest movers overall.
 
         Bug fix: previously priority symbols were added first with no cap and
         the final ``result[:max_total]`` truncation cut whatever was appended
-        last — which was exactly the category-minimum entries. Once the crypto
+        last — which was exactly the category entries. Once the crypto
         PRIORITY_SYMBOLS list grew toward ``top_movers_count`` (80), every
         metal/stock/ETF slot was silently truncated to zero, so those markets
-        never reached analysis. The minimums are now reserved up front.
+        never reached analysis. TradFi is now reserved up front.
         """
         max_total = CONFIG.top_movers_count
-        min_per_cat = 2
+        full_coverage = CONFIG.scan_tradfi_full_coverage
+        min_per_cat = max(1, CONFIG.scan_min_per_category)
 
         by_cat: dict[str, list[MarketSignal]] = {}
         for s in signals:
             by_cat.setdefault(s.asset_category, []).append(s)
 
-        # 1. Reserve minimum slots for each PRESENT non-Crypto category. Crypto
-        #    is deliberately excluded — it is already saturated by the priority
-        #    list and the fill pass, so it needs no reservation.
+        # 1. Reserve slots for each PRESENT non-Crypto category. Crypto is
+        #    deliberately excluded — it is already saturated by the priority
+        #    list and the fill pass, so it needs no reservation. Full-coverage
+        #    reserves the entire (small, curated) TradFi universe; the reserve
+        #    is still bounded by max_total so crypto keeps whatever is left.
         non_crypto_cats = sorted(
             (c for c in by_cat if c != "Crypto"),
             key=lambda c: CATEGORY_META.get(c, ("", 99))[1],
         )
-        reserved = sum(min(min_per_cat, len(by_cat[c])) for c in non_crypto_cats)
+
+        def _cat_quota(cat: str) -> int:
+            n = len(by_cat[cat])
+            return n if full_coverage else min(min_per_cat, n)
+
+        reserved = min(max_total, sum(_cat_quota(c) for c in non_crypto_cats))
         priority_budget = max(0, max_total - reserved)
 
         result: list[MarketSignal] = []
@@ -278,15 +289,19 @@ class MarketScanner:
                 result.append(s)
                 used.add(s.symbol)
 
-        # 3. Fill the reserved non-Crypto category minimums.
+        # 3. Fill the reserved TradFi slots (full universe or per-category min),
+        #    never exceeding max_total.
         for cat in non_crypto_cats:
+            quota = _cat_quota(cat)
             count = 0
             for s in by_cat[cat]:
+                if len(result) >= max_total:
+                    break
                 if s.symbol not in used:
                     result.append(s)
                     used.add(s.symbol)
                     count += 1
-                    if count >= min_per_cat:
+                    if count >= quota:
                         break
 
         # 4. Fill remaining from overall top movers (crypto + any leftover TradFi)

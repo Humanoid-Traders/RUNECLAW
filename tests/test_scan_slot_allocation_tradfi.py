@@ -91,3 +91,54 @@ def test_all_crypto_universe_is_unaffected(monkeypatch):
     top = scanner._allocate_slots(signals)
     assert len(top) == CONFIG.top_movers_count
     assert all(s.asset_category == "Crypto" for s in top)
+
+
+def _set_config(field: str, value):
+    """CONFIG is a frozen dataclass; set/restore via object.__setattr__."""
+    old = getattr(CONFIG, field)
+    object.__setattr__(CONFIG, field, value)
+    return field, old
+
+
+def test_full_coverage_reserves_the_entire_tradfi_universe(monkeypatch):
+    """With scan_tradfi_full_coverage ON (default), every present TradFi perp
+    gets a slot even when the crypto priority list alone would fill the scan."""
+    assert CONFIG.scan_tradfi_full_coverage is True  # ship default
+    max_total = CONFIG.top_movers_count
+    scanner = MarketScanner()
+
+    pri = [f"PRI{i}/USDT" for i in range(max_total + 10)]
+    monkeypatch.setattr(ms, "_PRIORITY_SET", set(pri))
+    signals = [_mk(s, "Crypto", 0.9 - i * 0.001) for i, s in enumerate(pri)]
+    tradfi = {"Metal": 6, "Stock": 15, "ETF": 6, "Commodity": 3, "Pre-IPO": 2}
+    for cat, n in tradfi.items():
+        signals += [_mk(f"{cat[:3].upper()}{i}/USDT:USDT", cat, 0.5) for i in range(n)]
+    signals.sort(key=lambda x: abs(x.momentum_score), reverse=True)
+
+    cats = _by_cat(scanner._allocate_slots(signals))
+    for cat, n in tradfi.items():
+        assert cats.get(cat, 0) == n, (cat, cats)
+    # The rest is crypto — full TradFi universe (32) reserved, crypto gets the rest.
+    assert cats["Crypto"] == max_total - sum(tradfi.values())
+
+
+def test_coverage_knob_off_falls_back_to_per_category_minimum(monkeypatch):
+    """Turning full coverage off reverts to scan_min_per_category per category."""
+    max_total = CONFIG.top_movers_count
+    f1, old1 = _set_config("scan_tradfi_full_coverage", False)
+    f2, old2 = _set_config("scan_min_per_category", 2)
+    try:
+        scanner = MarketScanner()
+        pri = [f"PRI{i}/USDT" for i in range(max_total + 10)]
+        monkeypatch.setattr(ms, "_PRIORITY_SET", set(pri))
+        signals = [_mk(s, "Crypto", 0.9 - i * 0.001) for i, s in enumerate(pri)]
+        signals += [_mk(f"MET{i}/USDT:USDT", "Metal", 0.5) for i in range(6)]
+        signals += [_mk(f"STK{i}/USDT:USDT", "Stock", 0.5) for i in range(15)]
+        signals.sort(key=lambda x: abs(x.momentum_score), reverse=True)
+
+        cats = _by_cat(scanner._allocate_slots(signals))
+        assert cats.get("Metal", 0) == 2, cats
+        assert cats.get("Stock", 0) == 2, cats
+    finally:
+        object.__setattr__(CONFIG, f1, old1)
+        object.__setattr__(CONFIG, f2, old2)
