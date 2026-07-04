@@ -2758,6 +2758,20 @@ class RuneClawEngine:
                     return (f"Trade REJECTED: price ${current_price:,.4f} already above "
                             f"recalculated SL ${idea.stop_loss:,.4f} — would be instantly stopped out.")
 
+        # STALE_DATA fix: idea.timestamp was stamped when this symbol's analysis
+        # COMPLETED during the scan. A wide (~200-symbol) scan plus the human's
+        # confirm delay can push that past the staleness window even though we
+        # just re-fetched a LIVE price above (the drift / past-SL / R:R guards,
+        # which fail-closed and return "unable to verify current price" if the
+        # exchange is unreachable). Refresh the timestamp to this confirm-time
+        # re-validation so the STALE_DATA guard measures freshness from NOW, not
+        # from scan time. Gated on a successful live fetch (current_price > 0) so
+        # it can NEVER mask a stale/unreachable exchange — that path already
+        # returned above. The guard stays fully active for the autonomous /
+        # auto-confirm paths, which do not re-fetch a live price here.
+        if current_price > 0:
+            idea = idea.model_copy(update={"timestamp": datetime.now(UTC)})
+
         # Re-check risk (portfolio state may have changed -- new positions, daily PnL, drawdown.
         # HONEST LIMITATION: price drift is now checked above (F-05 fix).
         # Stale-data check #12 guards against time drift (>300s = reject).
@@ -3166,8 +3180,15 @@ class RuneClawEngine:
             return "Trade REJECTED."
         return "Trade not found."
 
-    async def force_scan(self) -> dict:
+    async def force_scan(self, max_symbols: int | None = None) -> dict:
         """Single-flight guard around a force-scan cycle.
+
+        ``max_symbols`` caps how many scanned signals get ANALYZED this cycle.
+        Interactive callers (the "Latest Signal" button) pass a small cap so the
+        heavy per-symbol analysis (OHLCV + order-flow + MTF fetches, serialized
+        by the exchange rate limiter) can't hang the Telegram handler for
+        minutes on the wide ~200-symbol universe. None = analyze all (the
+        background/operator deep scan).
 
         With PTB concurrent_updates ON, two Telegram updates can enter here at
         once (two 'Latest Signal' taps, or a tap + /forcescan). Both would clear
@@ -3183,13 +3204,15 @@ class RuneClawEngine:
                     "pending": len(self._pending_ideas), "cleared_pending": 0,
                     "skipped": "scan_already_running"}
         async with self._scan_lock:
-            return await self._force_scan_locked()
+            return await self._force_scan_locked(max_symbols=max_symbols)
 
-    async def _force_scan_locked(self) -> dict:
+    async def _force_scan_locked(self, max_symbols: int | None = None) -> dict:
         """Force an immediate scan cycle, bypassing cooldown and pending gates.
 
         Called by /forcescan command. Clears pending ideas, resets cooldown,
-        and runs a full scan-analyze cycle. Returns a summary dict.
+        and runs a full scan-analyze cycle. Returns a summary dict. ``max_symbols``
+        caps the number of signals analyzed (interactive callers pass a small
+        value to stay responsive on the wide universe).
         """
         audit(system_log, "Force scan triggered", action="force_scan", result="START")
 
@@ -3212,6 +3235,12 @@ class RuneClawEngine:
         if not signals:
             self._transition(AgentState.IDLE, "force scan: no signals")
             return {"signals": 0, "ideas": 0, "cleared_pending": old_pending}
+
+        # Interactive cap: analyze only the top-N (scanner already ranked by
+        # allocation), keeping the button responsive. The full sweep still runs
+        # in the autonomous loop.
+        if max_symbols and max_symbols > 0 and len(signals) > max_symbols:
+            signals = signals[:max_symbols]
 
         # Analyze (bounded concurrency, same as the autonomous tick)
         self._transition(AgentState.ANALYZING, "force scan analyzing")

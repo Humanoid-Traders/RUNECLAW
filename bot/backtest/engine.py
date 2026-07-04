@@ -132,6 +132,14 @@ class BacktestEngine:
         # reflects live. Gated by its own env flag (NOT CONFIG.partial_tp.enabled,
         # which defaults TRUE for live) to keep default backtests unchanged.
         self._partial_tp_enabled = _env_bool("BACKTEST_PARTIAL_TP", False)
+        # Backtest time-stop (mirrors the LIVE time-stop, which was previously
+        # unmeasurable here). When on, an open position that has been held for
+        # its per-strategy time-close horizon AND is not in profit is closed at
+        # the bar close (reason TIME_STOP) — cutting stale losers that drift
+        # without hitting SL. Profit-gated exactly like live (winners ride).
+        # Its own env flag (NOT CONFIG.time_stop.enabled, which is TRUE for
+        # live) so default backtests stay byte-identical.
+        self._time_stop_enabled = _env_bool("BACKTEST_TIME_STOP", False)
 
     @staticmethod
     def _below_confidence_gate(confidence: float, threshold: float) -> bool:
@@ -469,6 +477,18 @@ class BacktestEngine:
 
             bt_meta = self._open_bt_positions[tid]
 
+            # Time-stop (gated; mirrors live). Count bars held, then if the
+            # per-strategy time-close horizon is exceeded AND the position is not
+            # in profit, close at the bar close. Checked BEFORE the SL/TP path so
+            # a stale drifter is cut here; a position already at its SL/TP this
+            # bar still exits below at the (pessimistic) SL-first level because
+            # the time-stop only fires once the horizon is genuinely exceeded.
+            if self._time_stop_enabled:
+                bt_meta["bars_held"] = bt_meta.get("bars_held", 0) + 1
+                if self._time_stop_hit(bt_meta, pos, bar):
+                    self._close_position(tid, bar.close, bar, "TIME_STOP")
+                    continue
+
             # #18: positions opened under the partial-TP ladder are driven
             # entirely by the ladder (scale-outs + ladder-owned stop). Only
             # reached when BACKTEST_PARTIAL_TP is on, so the default single-exit
@@ -542,6 +562,33 @@ class BacktestEngine:
                 )
                 sl = self._maybe_structure_ratchet(bt_meta, sl, direction.value)
                 pos.stop_loss = sl
+
+    def _time_stop_hit(self, bt_meta: dict, pos, bar: BacktestBar) -> bool:
+        """True when a position has exceeded its per-strategy time-close horizon
+        and is NOT in profit — the backtest mirror of the live time-stop.
+
+        Horizon comes from CONFIG.strategy_types.get_time_close_hours() for the
+        idea's strategy_type, converted to bars via the run timeframe. The
+        profit gate (winners ride, only losers/flat are cut) matches live.
+        """
+        from bot.utils.candles import timeframe_to_ms
+        bar_hours = timeframe_to_ms(self.config.timeframe) / 3_600_000.0
+        if bar_hours <= 0:
+            return False
+        idea = bt_meta.get("idea")
+        strat = getattr(idea, "strategy_type", "") or "intraday"
+        close_hours = CONFIG.strategy_types.get_time_close_hours(strat)
+        if close_hours <= 0:
+            return False
+        max_bars = max(1, int(round(close_hours / bar_hours)))
+        if bt_meta.get("bars_held", 0) < max_bars:
+            return False
+        adj_entry = bt_meta.get("adjusted_entry", pos.entry_price)
+        if pos.direction == Direction.LONG:
+            in_profit = bar.close > adj_entry
+        else:
+            in_profit = bar.close < adj_entry
+        return not in_profit
 
     @staticmethod
     def _maybe_structure_ratchet(bt_meta: dict, sl: float, direction: str) -> float:

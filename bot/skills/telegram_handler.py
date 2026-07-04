@@ -24,6 +24,29 @@ from typing import Optional
 # without these being in scope — latent NameErrors (flagged by ruff F821).
 logger = logging.getLogger(__name__)
 
+
+def _closed_on_utc_date(pos, day) -> bool:
+    """True if a closed position's ``closed_at`` falls on the given UTC date.
+
+    Handles both LivePosition objects and dict rows, and closed_at as a
+    datetime or an ISO string. Used to make LIVE "Daily PnL" genuinely daily
+    (closed_positions holds ALL closed trades ever).
+    """
+    ca = pos.get("closed_at") if isinstance(pos, dict) else getattr(pos, "closed_at", None)
+    if ca is None:
+        return False
+    if isinstance(ca, str):
+        try:
+            ca = datetime.fromisoformat(ca)
+        except Exception:
+            return False
+    try:
+        if ca.tzinfo is None:
+            ca = ca.replace(tzinfo=UTC)
+        return ca.astimezone(UTC).date() == day
+    except Exception:
+        return False
+
 from telegram import (
     BotCommand,
     BotCommandScopeChat,
@@ -4550,7 +4573,7 @@ class TelegramHandler:
                 f"- {t('lbl_equity', lang)}: <code>${display_equity:,.2f}</code>",
                 f"- {t('lbl_cash', lang)}: <code>${state.balance_usd:,.2f}</code>",
                 f"- {t('lbl_open_positions', lang)}: <code>{state.open_positions}</code>",
-                f"- {t('lbl_daily_pnl', lang)}: <code>{'+' if state.daily_pnl >= 0 else ''}{state.daily_pnl:.2f}%</code> {'🟢' if state.daily_pnl >= 0 else '🔴'}",
+                f"- {t('lbl_daily_pnl', lang)}: <code>{'+' if state.daily_pnl >= 0 else '-'}${abs(state.daily_pnl):.2f}</code> {'🟢' if state.daily_pnl >= 0 else '🔴'}",
                 f"- {t('lbl_drawdown', lang)}: <code>{state.max_drawdown_pct:.2f}%</code>",
             ]
 
@@ -4829,20 +4852,32 @@ class TelegramHandler:
                 equity = state.equity_usd
             executor = self.engine.live_executor
             open_count = len(executor.open_positions)
-            live_closed = executor.closed_positions
-            daily_pnl = round(sum((t.pnl_usd or 0) for t in live_closed), 2) if live_closed else 0.0
+            # BUGFIX: closed_positions is ALL closed trades ever, so summing it
+            # made "Daily PnL" an all-time cumulative figure that never reset.
+            # Filter to positions closed TODAY (UTC) so it's genuinely daily.
+            _today = datetime.now(UTC).date()
+            daily_pnl = round(sum(
+                (t.pnl_usd or 0) for t in (executor.closed_positions or [])
+                if _closed_on_utc_date(t, _today)
+            ), 2)
         else:
             equity = state.equity_usd if hasattr(state, "equity_usd") else 10_000.0
             open_count = state.open_positions
             daily_pnl = round(state.daily_pnl, 2) if hasattr(state, "daily_pnl") else 0.0
         drawdown = round(state.max_drawdown_pct, 2) if state.max_drawdown_pct else 0.0
 
+        # BUGFIX: the status card renders daily_pnl through a percent formatter
+        # (appends "%"), and the adjacent "/ +X% limit" is a percent-of-equity
+        # daily-loss cap — so daily_pnl must be a PERCENT, not raw dollars.
+        # Previously a −$56 daily figure printed as "−56.0%". Convert here.
+        daily_pnl_pct = (daily_pnl / equity * 100.0) if equity and equity > 0 else 0.0
+
         msg = render_status_card(
             mode=mode,
             active=not cb,
             equity=equity,
             open_positions=open_count,
-            daily_pnl=daily_pnl,
+            daily_pnl=round(daily_pnl_pct, 2),
             drawdown=drawdown,
             max_drawdown=CONFIG.risk.max_daily_loss_pct,
             market_bias=macro.state.value.replace("_", " ").title(),
@@ -5453,12 +5488,19 @@ class TelegramHandler:
         _display_min = CONFIG.risk.signal_display_min_confidence
         pending = [i for i in self.engine.pending_ideas if i.confidence >= _display_min]
 
-        # If nothing pending above threshold, auto-trigger a scan first
+        # If nothing pending above threshold, auto-trigger a scan first. Use the
+        # INTERACTIVE cap + a hard timeout so the button stays responsive: the
+        # full ~200-symbol universe runs in the background loop, but a tap only
+        # analyzes the top-N so it can't hang the handler for minutes (and so the
+        # resulting ideas are fresh, not aged past the staleness guard).
         if not pending:
             await self._send(update,
                 "\U0001f50d <b>No signals queued — running fresh scan...</b>")
             try:
-                result = await self.engine.force_scan()
+                result = await asyncio.wait_for(
+                    self.engine.force_scan(max_symbols=CONFIG.interactive_scan_count),
+                    timeout=CONFIG.interactive_scan_timeout_sec,
+                )
                 pending = [i for i in self.engine.pending_ideas if i.confidence >= _display_min]
                 if not pending:
                     sig_count = result.get("signals", 0)
@@ -5471,6 +5513,14 @@ class TelegramHandler:
                         msg += " but none passed confidence threshold."
                     msg += "\n\nTry <code>/fullscan</code> for deep multi-symbol analysis."
                     await self._send(update, msg)
+                    return
+            except asyncio.TimeoutError:
+                pending = [i for i in self.engine.pending_ideas if i.confidence >= _display_min]
+                if not pending:
+                    await self._send(update,
+                        "⏳ <b>Scan is taking longer than usual.</b> Try "
+                        "<code>/latest_signal</code> again in a moment, or "
+                        "<code>/fullscan</code> for the deep sweep.")
                     return
             except Exception as exc:
                 await self._send(update,
@@ -5541,8 +5591,7 @@ class TelegramHandler:
 
             # Rate limit: avoid flooding Telegram
             if i < len(pending):
-                import asyncio
-                await asyncio.sleep(0.3)
+                await asyncio.sleep(0.3)  # asyncio is module-level imported
 
     @staticmethod
     def _synth_order_from_tracked(p) -> dict:

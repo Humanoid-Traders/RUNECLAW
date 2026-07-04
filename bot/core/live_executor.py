@@ -2045,8 +2045,20 @@ class LiveExecutor:
                 swap_sym = idea.asset if ":USDT" in idea.asset else f"{idea.asset}:USDT"
                 await self._ensure_leverage(swap_sym)
 
-            # Convert symbol for futures if needed
-            symbol = idea.asset
+            # Convert symbol to the perpetual/swap format for the futures order
+            # path so the market lookup, price rounding, tick snap and
+            # create_order all use the FUTURES market's real tick grid.
+            # idea.asset is spot format ("HOME/USDT"); for sub-cent tokens the
+            # spot tick (e.g. 1e-6) is FINER than the perp tick (1e-5), so a
+            # spot-rounded price like 0.016815 is off the perp's 0.00001 grid
+            # and Bitget rejects the order with 45115. ccxt re-applies
+            # price_to_precision on the order's symbol, so the ORDER symbol
+            # itself must be the perp form. The recorded position still uses
+            # idea.asset (spot format) below, so reconciliation is unchanged.
+            if is_futures:
+                symbol = idea.asset if ":USDT" in idea.asset else f"{idea.asset}:USDT"
+            else:
+                symbol = idea.asset
 
             # Futures-only: always use the main swap exchange
             active_exchange = exchange
