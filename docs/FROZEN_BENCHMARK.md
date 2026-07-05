@@ -439,6 +439,40 @@ position after both partial-TP legs have already banked profit — its exact
 trail distance just doesn't move the portfolio needle much either way. No
 value beats the default, so nothing to ship — keeping `PARTIAL_RUNNER_TRAIL_ATR=0.8`.
 
+## Per-strategy-type confidence floor — REFUTED
+
+Round 3's third item tested whether letting the risk engine use
+`StrategyTypeConfig`'s existing per-type confidence floors (scalp 0.65 /
+intraday 0.55 / swing 0.50 / position 0.45 — already enforced by the analyzer
+at idea-generation time) instead of the flat global `min_confidence` (0.60,
+shipped in round 2 item 3) would beat the flat floor.
+
+**Methodology note**: the first sweep attempt included the backtest's extra
+`--confidence-threshold 0.6` CLI flag out of habit (carried over from earlier
+round-3 items) — this flag is a *separate*, still-flat 0.6 gate applied before
+the idea even reaches the risk engine, so it silently masked the per-type
+floors and made the "on" run byte-identical to "off". Removed the flag (which
+is genuinely redundant with the now-0.60 global default when the per-strategy
+flag is off, but not when it's on) for a valid test.
+
+**Result: clearly refuted on both universes** — three of four per-type floors
+(swing 0.50, intraday 0.55, position 0.45) sit below the proven 0.60 global
+default, so enabling this reopens exactly the low-conviction trades that
+round 2 item 3's bump was designed to filter out:
+
+| | Combined OFF | Combined ON | Majors OFF | Majors ON |
+|---|---:|---:|---:|---:|
+| Mean OOS | +1.13% | +0.40% | +0.67% | +0.42% |
+| PF | 1.67 | 1.17 | 1.43 | 1.20 |
+| Trades | 126 | 142 | 104 | 125 |
+| Worst fold | -1.54% | -1.93% | -0.85% | -1.06% |
+
+Worse return, worse PF, more (weaker) trades, worse worst-case drawdown —
+consistently, on both universes. **Not shipped**: `per_strategy_confidence_
+floor_enabled` stays default OFF (the lever exists, gated, for anyone who
+wants to re-test it against a future snapshot, but should not be flipped on
+based on this evidence).
+
 ## Refreshing the snapshot
 
 Re-run step 1 to fetch a newer window (e.g. quarterly). This changes the
