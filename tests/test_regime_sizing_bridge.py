@@ -160,29 +160,31 @@ class TestTrendUpSizeMultOverride:
             assert _mult(risk) == 1.2
 
 
-class TestTrendUpCapTightening:
+class TestRegimeCapTightening:
     """The fixed-fractional pre-cap position_usd routinely exceeds the
     notional cap ("binds on ~every crypto trade" — see vol_target_sizing's
     docstring), so multiplying that already-oversized value by a sub-1.0
-    regime mult was previously a no-op: still clamped to the same cap. A
-    TREND_UP_SIZE_MULT<1.0 must also tighten max_notional_usd itself, scoped
-    to TREND_UP only so CHOP/RANGE's already-shipped, already-measured
-    behavior (both also no-ops before this fix) stays unchanged."""
+    regime mult was previously a no-op: still clamped to the same cap. This
+    silently neutered EVERY regime reduction (CHOP 0.5x, RANGE 0.7x, and
+    TREND_UP once A/B'd down to 0.7x) in both live and backtest. Frozen-
+    benchmark A/B'd for all three with no downside on either universe
+    (docs/FROZEN_BENCHMARK.md), so ANY regime_mult<1.0 now tightens
+    max_notional_usd itself, mirroring vol_target_sizing's tighten-only
+    pattern — not scoped to a single regime name."""
 
-    def test_trend_up_reduce_tightens_the_cap(self):
+    def test_any_reduce_regime_tightens_the_cap(self):
         import inspect
         src = inspect.getsource(RiskEngine._evaluate_locked)
-        assert '_current_regime.upper() == "TREND_UP"' in src
+        assert "if regime_mult < 1.0:" in src
         mult = src.index("max_notional_usd *= regime_mult")
         clamp = src.index("position_usd = max_notional_usd")
         assert mult < clamp
 
-    def test_other_reduce_regimes_stay_untouched(self):
-        # CHOP (0.5x) and RANGE (0.7x) are NOT gated into the cap-tighten —
-        # only TREND_UP is, per the scoped fix above.
+    def test_boost_regimes_stay_cap_only_not_exceeding(self):
+        # regime_mult>=1.0 (TREND_DOWN/EXPANSION boosts) must never widen the
+        # cap itself -- only the pre-cap position_usd -- per C2-29.
         import inspect
         src = inspect.getsource(RiskEngine._evaluate_locked)
-        segment = src[src.index('if self._current_regime.upper() == "TREND_UP"'):
+        segment = src[src.index("if regime_mult < 1.0:\n            max_notional_usd"):
                        src.index("if max_notional_usd > 0 and position_usd > max_notional_usd")]
-        assert "CHOP" not in segment
-        assert "RANGE" not in segment
+        assert ">= 1.0" not in segment
