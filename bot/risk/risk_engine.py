@@ -868,18 +868,20 @@ class RiskEngine:
                 _vt = CONFIG.risk.vol_target_atr_pct / _cur_atr_pct
                 _vt = max(CONFIG.risk.vol_target_floor, min(1.0, _vt))
                 max_notional_usd *= _vt
-        # TREND_UP down-sizing also tightens the CAP, not just pre-cap
+        # Regime down-sizing also tightens the CAP, not just pre-cap
         # position_usd. The fixed-fractional formula routinely produces sizes
         # far above the notional cap (see comment above), so the cap is
         # binding on ~every trade — multiplying the already-oversized pre-cap
-        # position_usd by trend_up_size_mult<1.0 was previously a no-op (still
-        # clamped to the same cap). Scoped to TREND_UP only (the regime this
-        # was A/B'd against, docs/FROZEN_BENCHMARK.md) rather than every
-        # sub-1.0 regime multiplier (CHOP/RANGE), to avoid silently changing
-        # already-shipped, already-measured behavior for regimes this A/B
-        # didn't test. TREND_UP>=1.0 stays cap-only-not-exceeding, per C2-29
-        # above — boosts must never let a trade exceed the hard cap.
-        if self._current_regime.upper() == "TREND_UP" and regime_mult < 1.0:
+        # position_usd by a sub-1.0 regime_mult was previously a no-op (still
+        # clamped to the same cap): this silently neutered EVERY regime
+        # reduction (CHOP 0.5x, RANGE 0.7x, and TREND_UP once A/B'd down to
+        # 0.7x), not just one. Frozen-benchmark A/B'd for all three
+        # (docs/FROZEN_BENCHMARK.md) with no downside on either universe, so
+        # this now applies generally rather than being scoped to a single
+        # regime name. regime_mult>=1.0 (TREND_DOWN/EXPANSION boosts) stays
+        # cap-only-not-exceeding, per C2-29 above — boosts must never let a
+        # trade exceed the hard cap.
+        if regime_mult < 1.0:
             max_notional_usd *= regime_mult
         if max_notional_usd > 0 and position_usd > max_notional_usd:
             position_usd = max_notional_usd

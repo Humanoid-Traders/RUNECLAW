@@ -380,6 +380,26 @@ a clear win (+12% relative return, PF +0.12, 8 more trades at smaller size
 each); majors-only is a wash on return but strictly better on PF and worst-
 fold drawdown (-1.06% vs -1.22%) — no universe got worse, so shipped.
 
+## Extending the cap-tightening fix to CHOP/RANGE
+
+The TREND_UP cap-tightening fix above was deliberately scoped narrowly (only
+TREND_UP) to avoid silently changing CHOP (0.5x) and RANGE (0.7x)'s already-
+shipped, already-measured behavior in the same PR. Round 3 revisited that
+scope: since ANY sub-1.0 regime multiplier was equally a no-op (not just
+TREND_UP's), CHOP and RANGE's reductions had also never actually applied in
+either live or backtest. Generalized the fix (`if regime_mult < 1.0:` with no
+regime-name gate) and re-swept both frozen benchmarks:
+
+| | Before (TREND_UP-only) | After (all reduce-regimes) |
+|---|---:|---:|
+| Combined mean OOS / PF / trades | +1.12% / 1.67 / 126 | +1.13% / 1.67 / 126 |
+| Majors mean OOS / PF / worst fold | +0.62% / 1.39 / -1.06% | **+0.67% / 1.43 / -0.85%** |
+
+Combined universe barely moved (CHOP/RANGE trades are a small slice of that
+mix); majors-only improved meaningfully on both return and worst-case
+drawdown. No universe got worse, so the general fix ships — `regime_mult<1.0`
+now tightens the cap regardless of which regime it came from.
+
 ## Refreshing the snapshot
 
 Re-run step 1 to fetch a newer window (e.g. quarterly). This changes the
