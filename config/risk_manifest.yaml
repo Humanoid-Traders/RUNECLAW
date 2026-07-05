@@ -594,11 +594,23 @@ defaults:
     value: true
     env_var: REGIME_SIZING_ENABLED
     description: >
-      Opt-in (default OFF). Bridges the analyzer's per-symbol market regime into
+      Default ON. Bridges the analyzer's per-symbol market regime into
       the risk engine before each evaluate(), so the per-regime position-size
       multiplier actually applies (CHOP 0.5× / RANGE 0.7× reduce; TREND 1.2× /
       EXPANSION 1.3× increase). The notional/margin cap stays the final
       authority. OFF → regime stays UNKNOWN → 1.0× (byte-identical).
+
+  trend_up_size_mult:
+    value: 0.7
+    env_var: TREND_UP_SIZE_MULT
+    description: >
+      TREND_UP position-size multiplier override (down from the static
+      table's 1.2× boost — frozen-benchmark A/B, docs/FROZEN_BENCHMARK.md).
+      Also tightens the notional cap itself when <1.0 (not just the pre-cap
+      value), since the fixed-fractional pre-cap size routinely exceeds the
+      cap and a sub-1.0 mult on the pre-cap value alone was previously a
+      no-op. Scoped to TREND_UP only; CHOP/RANGE keep their static-table
+      values unchanged.
 
   live_performance_governor_enabled:
     value: true

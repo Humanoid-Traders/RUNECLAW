@@ -348,7 +348,7 @@ class RiskLimits:
     # OPEN = normal sizing). Distinct from the equity-curve breaker (equity vs MA)
     # and the consecutive-loss breaker (streak): this reads realized win rate + net
     # PnL of the most recent trades. Default OFF → byte-identical until enabled.
-    # Regime-aware position sizing (opt-in, default OFF). The analyzer already
+    # Regime-aware position sizing (default ON). The analyzer already
     # classifies a per-symbol market regime (TREND_UP/TREND_DOWN/EXPANSION/RANGE/
     # CHOP), but it was never bridged into the risk engine, so _current_regime
     # stayed "UNKNOWN" and the per-regime size multipliers were always 1.0×. When
@@ -358,6 +358,19 @@ class RiskLimits:
     # The notional/margin cap stays the final authority, so increases can never
     # exceed it. Default ON; when disabled regime stays UNKNOWN (1.0×).
     regime_sizing_enabled: bool = _env_bool("REGIME_SIZING_ENABLED", True)
+    # TREND_UP position-size multiplier override (default 0.7, DOWN from the
+    # static table's 1.2x boost). Frozen-benchmark attribution repeatedly
+    # showed TREND_UP as the weakest/most inconsistent regime bucket (e.g.
+    # majors-only PF 0.22-0.29 vs TREND_DOWN's 1.25-1.74). A/B on both
+    # benchmarks (docs/FROZEN_BENCHMARK.md): combined majors+alts +1.12% vs
+    # +1.00% baseline (PF 1.67 vs 1.55); majors-only a wash on return (+0.62%
+    # both) but better PF (1.39 vs 1.38) and better worst fold (-1.06% vs
+    # -1.22%). No universe got worse -> enabled. 0.75-0.8 tested slightly
+    # higher on the combined universe but landed on a sharp, noisy trade-
+    # count discontinuity (overfit risk on a single window); 0.7 sits solidly
+    # inside the improved basin. Overrides only TREND_UP; every other regime
+    # keeps its static-table value.
+    trend_up_size_mult: float = _env_float_bounded("TREND_UP_SIZE_MULT", 0.7, 0.1, 3.0)
     live_performance_governor_enabled: bool = _env_bool("LIVE_PERFORMANCE_GOVERNOR_ENABLED", True)
     # Rolling window of most-recent CLOSED trades the governor scores.
     live_perf_window: int = int(_env_float_bounded("LIVE_PERF_WINDOW", 20, 2, 100000))

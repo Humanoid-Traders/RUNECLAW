@@ -14,6 +14,7 @@ import tempfile
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from bot.config import CONFIG
 from bot.core.engine import RuneClawEngine
 from bot.core.analyzer import Regime
 from bot.risk.risk_engine import RiskEngine
@@ -64,13 +65,15 @@ class TestRegimeBridge:
         finally:
             p.stop()
 
-    def test_trend_increases_size(self):
+    def test_trend_up_applies_the_configured_mult(self):
+        # TREND_UP no longer boosts by default -- see TestTrendUpSizeMultOverride
+        # below for the frozen-benchmark A/B behind the 0.7 default.
         p = _cfg(enabled=True)
         try:
             risk = _risk()
             _engine({"ETH/USDT": Regime.TREND_UP})._apply_regime_to(risk, "ETH/USDT")
             assert risk._current_regime == "TREND_UP"
-            assert _mult(risk) == 1.2
+            assert _mult(risk) == CONFIG.risk.trend_up_size_mult
         finally:
             p.stop()
 
@@ -129,3 +132,57 @@ class TestRegimeBridge:
             assert risk._current_regime == "UNKNOWN"   # untouched, no raise
         finally:
             p.stop()
+
+
+class TestTrendUpSizeMultOverride:
+    """`TREND_UP_SIZE_MULT` lets the TREND_UP entry be A/B'd independently of
+    the hardcoded table — frozen-benchmark attribution showed TREND_UP as the
+    weakest/most inconsistent regime bucket, unlike TREND_DOWN which stays
+    untouched here. Default is now 0.7 (down from the static table's 1.2x
+    boost): combined-universe A/B win (+1.12% vs +1.00% baseline, PF 1.67 vs
+    1.55), majors-only a wash on return but better PF/worst-fold — no
+    universe got worse. See docs/FROZEN_BENCHMARK.md."""
+
+    def test_default_is_the_frozen_benchmark_winner(self):
+        risk = _risk()
+        risk.set_regime("TREND_UP", "NORMAL")
+        assert _mult(risk) == 0.7
+
+    def test_override_applies_to_trend_up_only(self):
+        from unittest.mock import patch as _patch
+        with _patch("bot.risk.risk_engine.CONFIG") as m:
+            m.risk.trend_up_size_mult = 0.7
+            risk = _risk()
+            risk.set_regime("TREND_UP", "NORMAL")
+            assert _mult(risk) == 0.7
+            # TREND_DOWN keeps its static-table value, unaffected by the override.
+            risk.set_regime("TREND_DOWN", "NORMAL")
+            assert _mult(risk) == 1.2
+
+
+class TestTrendUpCapTightening:
+    """The fixed-fractional pre-cap position_usd routinely exceeds the
+    notional cap ("binds on ~every crypto trade" — see vol_target_sizing's
+    docstring), so multiplying that already-oversized value by a sub-1.0
+    regime mult was previously a no-op: still clamped to the same cap. A
+    TREND_UP_SIZE_MULT<1.0 must also tighten max_notional_usd itself, scoped
+    to TREND_UP only so CHOP/RANGE's already-shipped, already-measured
+    behavior (both also no-ops before this fix) stays unchanged."""
+
+    def test_trend_up_reduce_tightens_the_cap(self):
+        import inspect
+        src = inspect.getsource(RiskEngine._evaluate_locked)
+        assert '_current_regime.upper() == "TREND_UP"' in src
+        mult = src.index("max_notional_usd *= regime_mult")
+        clamp = src.index("position_usd = max_notional_usd")
+        assert mult < clamp
+
+    def test_other_reduce_regimes_stay_untouched(self):
+        # CHOP (0.5x) and RANGE (0.7x) are NOT gated into the cap-tighten —
+        # only TREND_UP is, per the scoped fix above.
+        import inspect
+        src = inspect.getsource(RiskEngine._evaluate_locked)
+        segment = src[src.index('if self._current_regime.upper() == "TREND_UP"'):
+                       src.index("if max_notional_usd > 0 and position_usd > max_notional_usd")]
+        assert "CHOP" not in segment
+        assert "RANGE" not in segment

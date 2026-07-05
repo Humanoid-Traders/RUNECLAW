@@ -334,6 +334,52 @@ gate the finding was measured against, so raising the default is how the
 result reaches live trading, not just the backtest CLI knob used to discover
 it.
 
+## Regime-aware sizing: TREND_UP down-size (0.7x, ENABLED) + a cap-tightening bug fix
+
+Round 2's last item targeted the regime-conditional position-size multiplier
+(`RiskEngine._REGIME_MULTIPLIERS`, default ON) — attribution across this
+session's sweeps repeatedly showed TREND_UP as the weakest/most inconsistent
+regime bucket (majors-only PF as low as 0.22-0.29 vs TREND_DOWN's reliable
+1.25-1.74), unlike every other regime. Added `TREND_UP_SIZE_MULT` (default
+matched the existing 1.2x boost) to A/B it independently of the static table.
+
+**First sweep found nothing — because the multiplier was already a no-op.**
+1.2/1.0/0.8/0.7/0.5 all produced byte-identical results. Root cause: the
+fixed-fractional pre-cap `position_usd` routinely exceeds the notional cap by
+a wide margin ("binds on ~every crypto trade" — same reason `vol_target_sizing`
+exists), so multiplying an already-oversized value by anything in the 0.5-1.5x
+range still gets clamped to the exact same `max_notional_usd` — the regime
+multiplier had no effect on the actual executed size for ANY regime, boost or
+reduce, live or backtest, since this has always been the sizing order.
+
+**Fix**: TREND_UP-scoped only (not CHOP/RANGE, to avoid silently changing
+already-shipped, already-measured behavior for regimes this A/B didn't test) —
+`TREND_UP_SIZE_MULT<1.0` now also tightens `max_notional_usd` itself, mirroring
+`vol_target_sizing`'s tighten-only pattern. `>=1.0` (a boost) still only
+affects the uncapped pre-cap value, per the original C2-29 fix (a boost must
+never let a trade exceed the hard cap).
+
+With the fix in place, re-swept against both frozen benchmarks:
+
+| TREND_UP_SIZE_MULT | Combined mean OOS | Combined PF | Combined trades/net | Majors mean OOS | Majors PF | Majors trades/net |
+|---|---:|---:|---:|---:|---:|---:|
+| 1.2 (old default) | +1.00% | 1.55 | 118 / +$599 | +0.62% | 1.38 | 105 / +$371 |
+| 0.8 | +0.94% | 1.53 | 118 / +$566 | — | — | — |
+| **0.7** | **+1.12%** | **1.67** | **126 / +$673** | **+0.62%** | **1.39** | **104 / +$370** |
+| 0.5 | +1.01% | 1.60 | 126 / +$605 | — | — | — |
+| 0.3 | +0.90% | 1.53 | 126 / +$538 | — | — | — |
+
+0.75-0.79 tested slightly higher on the combined universe (+1.15% at 0.75) but
+sits on a sharp, noisy trade-count discontinuity (0.77 fell back to the
+118-trade bucket while 0.75/0.78 landed in the 126-trade bucket) — a hallmark
+of overfitting to this single window rather than a real edge, so **0.7** was
+picked: solidly inside the improved basin on both sides, not chasing the peak.
+
+**Enabled**: `RiskLimits.trend_up_size_mult` default 0.7. Combined universe is
+a clear win (+12% relative return, PF +0.12, 8 more trades at smaller size
+each); majors-only is a wash on return but strictly better on PF and worst-
+fold drawdown (-1.06% vs -1.22%) — no universe got worse, so shipped.
+
 ## Refreshing the snapshot
 
 Re-run step 1 to fetch a newer window (e.g. quarterly). This changes the
