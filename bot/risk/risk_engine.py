@@ -1092,9 +1092,17 @@ class RiskEngine:
             passed.append("CONFIDENCE: skipped (manual trade)")
         else:
             try:
-                # 7. Confidence threshold
-                if idea.confidence < CONFIG.risk.min_confidence:
-                    failed.append(f"CONFIDENCE: {idea.confidence} < {CONFIG.risk.min_confidence} minimum")
+                # 7. Confidence threshold. Per-strategy-type when enabled (the
+                # analyzer already gated idea generation on this same per-type
+                # floor; this stops it being silently overridden by a flat
+                # global re-gate), else the single global min_confidence.
+                if CONFIG.risk.per_strategy_confidence_floor_enabled:
+                    _conf_strategy = getattr(idea, "strategy_type", "swing")
+                    min_conf = CONFIG.strategy_types.get_min_confidence(_conf_strategy)
+                else:
+                    min_conf = CONFIG.risk.min_confidence
+                if idea.confidence < min_conf:
+                    failed.append(f"CONFIDENCE: {idea.confidence} < {min_conf} minimum")
                 else:
                     passed.append(f"CONFIDENCE: {idea.confidence} OK")
             except Exception as exc:

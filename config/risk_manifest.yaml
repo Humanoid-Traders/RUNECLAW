@@ -309,6 +309,15 @@ defaults:
     env_var: PER_STRATEGY_NOTIONAL_CAP_ENABLED
     description: "Use the per-strategy notional cap (StrategyTypeConfig) instead of the global max_position_pct for the size cap + POSITION_SIZE check"
 
+  per_strategy_confidence_floor_enabled:
+    value: false
+    env_var: PER_STRATEGY_CONFIDENCE_FLOOR_ENABLED
+    description: >
+      Use the per-strategy-type confidence floor (StrategyTypeConfig.get_min_confidence:
+      scalp 0.65 / intraday 0.55 / swing 0.50 / position 0.45) instead of the
+      global min_confidence for the CONFIDENCE check. Frozen-benchmark A/B'd
+      (docs/FROZEN_BENCHMARK.md).
+
   max_daily_loss_pct:
     value: 5.0
     env_var: MAX_DAILY_LOSS_PCT

@@ -153,6 +153,16 @@ class RiskLimits:
     # max_position_pct, so a scalp can ride a tighter notional ceiling than a
     # position trade. Default ON; disable to fall back to max_position_pct.
     per_strategy_notional_cap_enabled: bool = _env_bool("PER_STRATEGY_NOTIONAL_CAP_ENABLED", True)
+    # When ON, the CONFIDENCE check uses the per-strategy-type floor
+    # (StrategyTypeConfig.get_min_confidence: scalp 0.65/intraday 0.55/swing
+    # 0.50/position 0.45) instead of the single global min_confidence. The
+    # analyzer already gates idea generation on these per-type floors
+    # (bot/core/analyzer.py), but the risk engine re-gates on the flat global
+    # value downstream -- for swing/intraday/position (floors below the
+    # global default) that flat re-gate silently rejects trades the analyzer
+    # already approved at its own tuned threshold. Frozen-benchmark A/B'd;
+    # see docs/FROZEN_BENCHMARK.md. Default OFF; disable to keep the flat gate.
+    per_strategy_confidence_floor_enabled: bool = _env_bool("PER_STRATEGY_CONFIDENCE_FLOOR_ENABLED", False)
     max_daily_loss_pct: float = _env_float_bounded("MAX_DAILY_LOSS_PCT", 5.0, 0.1, 50)
     # Auto-reset a DAILY-LOSS circuit-breaker trip at UTC day rollover (opt-in,
     # default OFF; deep-audit medium). The daily-loss limit is a per-day guard,
