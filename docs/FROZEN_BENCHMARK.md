@@ -400,6 +400,45 @@ mix); majors-only improved meaningfully on both return and worst-case
 drawdown. No universe got worse, so the general fix ships — `regime_mult<1.0`
 now tightens the cap regardless of which regime it came from.
 
+## Trailing-stop tuning — explored, no actionable edge found
+
+Round 3's second item swept the trailing-stop's parameters against the
+combined frozen benchmark. Two things worth recording so they aren't
+re-chased:
+
+**The multi-stage ATR knobs are dead code under `--honest`.** The first
+sweep attempt (`TRAIL_STAGE{1,2,3}_ATR_MULT`, the per-stage trail distance in
+`bot/utils/trailing.py`'s `update_trailing_stop`) produced byte-identical
+results across 4 very different configurations. Root cause: `--honest` sets
+`BACKTEST_PARTIAL_TP=1`, and once a position has a `ptp_state`,
+`bot/backtest/engine.py:492-498` routes it entirely through
+`_check_ladder_intrabar` — the multi-stage trail (`update_trailing_stop`) is
+never reached for any position. This mirrors live, where `PARTIAL_TP_ENABLED`
+is also default True, so the ladder is the actually-operative exit mechanism
+in both places — not a fidelity mismatch, just a discoverability gap in which
+knob is real. The runner (final 20% after both TP legs bank profit) is
+trailed by a *different* parameter: `PARTIAL_RUNNER_TRAIL_ATR`
+(`bot/config.py`, default `0.8`).
+
+**`PARTIAL_RUNNER_TRAIL_ATR` itself has negligible sensitivity.** Swept
+0.5/0.6/0.8/1.0/1.2/1.5 on the combined majors+alts benchmark
+(`--honest --walk-forward 6 --confidence-threshold 0.6`):
+
+| Value | Mean OOS | PF | Trades | Net |
+|---|---:|---:|---:|---:|
+| 0.5 | +1.13% | 1.67 | 126 | +$677.00 |
+| 0.6 | +1.13% | 1.67 | 126 | +$676.91 |
+| 0.8 (default) | +1.13% | 1.67 | 126 | +$676.74 |
+| 1.0 | +1.13% | 1.67 | 126 | +$676.41 |
+| 1.2 | +1.13% | 1.67 | 126 | +$675.45 |
+| 1.5 | +1.12% | 1.67 | 126 | +$672.97 |
+
+Same trade count and PF at every value; net PnL varies by <1% across the
+whole 0.5-1.5 range. Makes sense given the runner is only the last 20% of a
+position after both partial-TP legs have already banked profit — its exact
+trail distance just doesn't move the portfolio needle much either way. No
+value beats the default, so nothing to ship — keeping `PARTIAL_RUNNER_TRAIL_ATR=0.8`.
+
 ## Refreshing the snapshot
 
 Re-run step 1 to fetch a newer window (e.g. quarterly). This changes the
