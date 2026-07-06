@@ -416,6 +416,12 @@ def _apply_honest_fidelity(args: argparse.Namespace) -> None:
         # strategy horizon), which the backtest gates OFF by default
         # (BACKTEST_TIME_STOP). Turn it on under --honest too.
         os.environ.setdefault("BACKTEST_TIME_STOP", "1")
+        # And the per-symbol loss-streak cooldown: live benches a symbol for
+        # SYMBOL_LOSS_STREAK_COOLDOWN_SEC (12h) after SYMBOL_LOSS_STREAK_
+        # THRESHOLD (3) consecutive losing positions on it (SYMBOL_LOSS_
+        # STREAK_ENABLED defaults True); the backtest never modeled that, so
+        # the honest number kept trading symbols live would have blocked.
+        os.environ.setdefault("BACKTEST_SYMBOL_LOSS_STREAK", "1")
         # And the fee model: the plain --commission default (0.1%) is stale
         # relative to the live risk engine's modeled taker rate
         # (CONFIG.risk.taker_fee_pct, 0.06%). Use the live rate unless the

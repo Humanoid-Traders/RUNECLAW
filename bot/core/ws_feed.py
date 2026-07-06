@@ -42,6 +42,11 @@ BITGET_WS_URL = "wss://ws.bitget.com/v3/ws/public"
 PING_INTERVAL_S = 25
 RECONNECT_BASE_S = 1
 RECONNECT_MAX_S = 60
+# A connection must survive this long before the reconnect backoff resets to
+# base. Resetting at connect time (the old behavior) meant a link that opens
+# fine but drops seconds later re-armed the 1s delay every cycle — an endless
+# ~1-2s reconnect storm exactly matching what ops observed live.
+STABLE_CONNECTION_S = 60
 WS_IDLE_POLL_S = 5.0  # how often the idle watchdog checks the last-message age
 
 
@@ -116,6 +121,7 @@ class BitgetWSFeed:
         self._task: asyncio.Task | None = None
         self._stop_event = asyncio.Event()
         self._reconnect_delay = RECONNECT_BASE_S
+        self._conn_started_at: float | None = None
         self._last_msg_ts: float = 0.0
         # WS trade-tape CVD (WS_CVD_ENABLED): true aggressor-side cumulative
         # volume delta per symbol, deduped by trade id. Buckets are per-minute
@@ -300,6 +306,7 @@ class BitgetWSFeed:
     async def _run_loop(self) -> None:
         """Outer loop: connect, subscribe, read messages, reconnect."""
         while not self._stop_event.is_set():
+            self._conn_started_at = None
             try:
                 await self._connect_and_listen()
             except asyncio.CancelledError:
@@ -316,6 +323,13 @@ class BitgetWSFeed:
 
             if self._stop_event.is_set():
                 break
+
+            # Reset the backoff only after a PROVEN-stable connection (survived
+            # STABLE_CONNECTION_S). Resetting at connect time re-armed the 1s
+            # delay on every open-then-drop cycle → reconnect storm.
+            if (self._conn_started_at is not None
+                    and time.time() - self._conn_started_at >= STABLE_CONNECTION_S):
+                self._reconnect_delay = RECONNECT_BASE_S
 
             # Exponential backoff
             audit(
@@ -344,7 +358,9 @@ class BitgetWSFeed:
         ) as ws:
             self._ws = ws
             self._connected = True
-            self._reconnect_delay = RECONNECT_BASE_S
+            # NOT resetting _reconnect_delay here: the outer loop resets it
+            # only after this connection survives STABLE_CONNECTION_S.
+            self._conn_started_at = time.time()
             # Seed the last-message clock at connect so the idle watchdog measures
             # the grace period from now (not from a stale prior-connection value).
             self._last_msg_ts = time.time()

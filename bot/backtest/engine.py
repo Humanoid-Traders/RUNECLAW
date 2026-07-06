@@ -140,6 +140,18 @@ class BacktestEngine:
         # Its own env flag (NOT CONFIG.time_stop.enabled, which is TRUE for
         # live) so default backtests stay byte-identical.
         self._time_stop_enabled = _env_bool("BACKTEST_TIME_STOP", False)
+        # Per-symbol loss-streak cooldown parity. Live (bot/core/engine.py's
+        # close hook, SYMBOL_LOSS_STREAK_ENABLED default True) blocks a symbol
+        # for a long cooldown after N consecutive losing POSITIONS on it — the
+        # backtest never modeled that, so the honest benchmark kept trading
+        # symbols live would have benched. Bar-time based here (live uses
+        # monotonic wall-clock). Own env flag, default OFF for byte-identical
+        # default backtests; --honest enables it via _apply_honest_fidelity.
+        self._symbol_streak_enabled = (
+            _env_bool("BACKTEST_SYMBOL_LOSS_STREAK", False)
+            and CONFIG.risk.symbol_loss_streak_enabled)
+        self._symbol_loss_streaks: dict[str, int] = {}
+        self._symbol_cooldown_until: dict[str, object] = {}
 
     @staticmethod
     def _below_confidence_gate(confidence: float, threshold: float) -> bool:
@@ -284,6 +296,14 @@ class BacktestEngine:
         # 1. Build a MarketSignal from bar context
         signal = self._bar_to_signal(bar, window)
         self._signals_generated += 1
+
+        # Per-symbol loss-streak cooldown (parity with live's pre-analysis
+        # guard in _analyze_signal): a benched symbol produces no new entries
+        # until its cooldown expires in BAR time.
+        if self._symbol_streak_enabled:
+            _cd_until = self._symbol_cooldown_until.get(signal.symbol)
+            if _cd_until is not None and bar.timestamp < _cd_until:
+                return
 
         # 2. Build OHLCV array for analyzer (ccxt format)
         candles = [
@@ -689,6 +709,39 @@ class BacktestEngine:
               action="backtest_close", result=reason,
               data={"trade_id": trade_id, "pnl": net_pnl, "duration_h": duration_hours})
 
+        # Per-symbol loss-streak tracking. Uses the position's TOTAL realized
+        # PnL (runner residual + banked partial-TP legs), matching live's
+        # one-outcome-per-position semantics.
+        if self._symbol_streak_enabled:
+            self._update_symbol_streak(
+                idea.asset, net_pnl + bt_meta.get("banked_net_pnl", 0.0),
+                bar.timestamp)
+
+    def _update_symbol_streak(self, symbol: str, total_pnl: float, bar_ts) -> None:
+        """Mirror bot/core/engine.py's live per-symbol loss-streak hook exactly:
+        +1 per losing position, decay -1 per winner, breakeven unchanged; at
+        threshold arm the long cooldown (bar time, max-merged with any existing
+        one) and reset the streak so re-tripping takes a fresh run of losses."""
+        from datetime import timedelta
+        if total_pnl < 0:
+            streak = self._symbol_loss_streaks.get(symbol, 0) + 1
+            self._symbol_loss_streaks[symbol] = streak
+            if streak >= CONFIG.risk.symbol_loss_streak_threshold:
+                until = bar_ts + timedelta(
+                    seconds=CONFIG.risk.symbol_loss_streak_cooldown_seconds)
+                prev = self._symbol_cooldown_until.get(symbol)
+                self._symbol_cooldown_until[symbol] = (
+                    max(prev, until) if prev is not None else until)
+                self._symbol_loss_streaks[symbol] = 0
+                audit(trade_log,
+                      f"[BT] Symbol loss-streak cooldown armed: {symbol} "
+                      f"({streak} consecutive losses)",
+                      action="backtest_symbol_streak", result="COOLDOWN_ARMED",
+                      data={"symbol": symbol, "streak": streak})
+        elif total_pnl > 0:
+            self._symbol_loss_streaks[symbol] = max(
+                0, self._symbol_loss_streaks.get(symbol, 0) - 1)
+
     def _check_ladder_intrabar(
         self, tid: str, pos, bt_meta: dict, bar: BacktestBar
     ) -> None:
@@ -815,6 +868,10 @@ class BacktestEngine:
         except Exception:
             pass
         pos.quantity = round(pos.quantity - close_qty, 10)
+        # Accumulate banked-leg PnL so the loss-streak hook at final close sees
+        # the POSITION's total realized outcome (live counts one outcome per
+        # position, not per scale-out leg).
+        bt_meta["banked_net_pnl"] = bt_meta.get("banked_net_pnl", 0.0) + net_pnl
 
         # Attribute this fill's share of entry slippage; shrink the residual's so
         # _close_position doesn't re-charge the whole entry slippage to the runner.
