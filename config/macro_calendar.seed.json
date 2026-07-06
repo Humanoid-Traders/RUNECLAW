@@ -1,189 +1,231 @@
 {
-  "version": "2026-07-refresh",
-  "generated_utc": "2026-07-03T00:00:00Z",
+  "version": "2026-07-06-refresh",
+  "generated_utc": "2026-07-06T00:00:00Z",
   "max_stale_hours": 720,
   "events": [
     {
       "type": "NFP_RELEASE",
-      "label": "Non-Farm Payrolls \u2014 January 2026",
-      "scheduled_utc": "2026-01-10T12:30:00Z",
+      "label": "Nonfarm Payrolls - January 2026",
+      "scheduled_utc": "2026-01-09T13:30:00Z",
       "severity": "HIGH",
-      "date_confidence": "confirmed"
+      "date_confidence": "estimated"
     },
     {
       "type": "CPI_RELEASE",
-      "label": "CPI Report \u2014 January 2026",
-      "scheduled_utc": "2026-01-14T12:30:00Z",
+      "label": "CPI Release - January 2026",
+      "scheduled_utc": "2026-01-14T13:30:00Z",
       "severity": "HIGH",
       "date_confidence": "estimated"
     },
     {
       "type": "FOMC_DECISION",
-      "label": "FOMC Rate Decision \u2014 January 2026",
+      "label": "FOMC Rate Decision - January 2026",
       "scheduled_utc": "2026-01-28T19:00:00Z",
       "severity": "CRITICAL",
       "date_confidence": "confirmed"
     },
     {
       "type": "NFP_RELEASE",
-      "label": "Non-Farm Payrolls \u2014 February 2026",
-      "scheduled_utc": "2026-02-07T12:30:00Z",
+      "label": "Nonfarm Payrolls - February 2026",
+      "scheduled_utc": "2026-02-06T13:30:00Z",
       "severity": "HIGH",
-      "date_confidence": "confirmed"
+      "date_confidence": "estimated"
     },
     {
       "type": "CPI_RELEASE",
-      "label": "CPI Report \u2014 February 2026",
-      "scheduled_utc": "2026-02-12T12:30:00Z",
+      "label": "CPI Release - February 2026",
+      "scheduled_utc": "2026-02-11T13:30:00Z",
       "severity": "HIGH",
       "date_confidence": "estimated"
     },
     {
       "type": "NFP_RELEASE",
-      "label": "Non-Farm Payrolls \u2014 March 2026",
-      "scheduled_utc": "2026-03-07T12:30:00Z",
+      "label": "Nonfarm Payrolls - March 2026",
+      "scheduled_utc": "2026-03-06T13:30:00Z",
       "severity": "HIGH",
-      "date_confidence": "confirmed"
+      "date_confidence": "estimated"
     },
     {
       "type": "CPI_RELEASE",
-      "label": "CPI Report \u2014 March 2026",
-      "scheduled_utc": "2026-03-12T12:30:00Z",
+      "label": "CPI Release - March 2026",
+      "scheduled_utc": "2026-03-11T12:30:00Z",
       "severity": "HIGH",
       "date_confidence": "estimated"
     },
     {
       "type": "FOMC_DECISION",
-      "label": "FOMC Rate Decision \u2014 March 2026",
+      "label": "FOMC Rate Decision - March 2026",
       "scheduled_utc": "2026-03-18T18:00:00Z",
       "severity": "CRITICAL",
       "date_confidence": "confirmed"
     },
     {
       "type": "NFP_RELEASE",
-      "label": "Non-Farm Payrolls \u2014 April 2026",
-      "scheduled_utc": "2026-04-04T12:30:00Z",
+      "label": "Nonfarm Payrolls - April 2026",
+      "scheduled_utc": "2026-04-03T12:30:00Z",
       "severity": "HIGH",
-      "date_confidence": "confirmed"
+      "date_confidence": "estimated"
     },
     {
       "type": "CPI_RELEASE",
-      "label": "CPI Report \u2014 April 2026",
-      "scheduled_utc": "2026-04-10T12:30:00Z",
+      "label": "CPI Release - April 2026",
+      "scheduled_utc": "2026-04-14T12:30:00Z",
+      "severity": "HIGH",
+      "date_confidence": "estimated"
+    },
+    {
+      "type": "NFP_RELEASE",
+      "label": "Nonfarm Payrolls - May 2026",
+      "scheduled_utc": "2026-05-01T12:30:00Z",
       "severity": "HIGH",
       "date_confidence": "estimated"
     },
     {
       "type": "FOMC_DECISION",
-      "label": "FOMC Rate Decision \u2014 April 2026",
-      "scheduled_utc": "2026-04-29T18:00:00Z",
+      "label": "FOMC Rate Decision - May 2026",
+      "scheduled_utc": "2026-05-07T18:00:00Z",
       "severity": "CRITICAL",
       "date_confidence": "confirmed"
     },
     {
-      "type": "NFP_RELEASE",
-      "label": "Non-Farm Payrolls \u2014 May 2026",
-      "scheduled_utc": "2026-05-02T12:30:00Z",
-      "severity": "HIGH",
-      "date_confidence": "confirmed"
-    },
-    {
       "type": "CPI_RELEASE",
-      "label": "CPI Report \u2014 May 2026",
-      "scheduled_utc": "2026-05-13T12:30:00Z",
+      "label": "CPI Release - May 2026",
+      "scheduled_utc": "2026-05-12T12:30:00Z",
       "severity": "HIGH",
       "date_confidence": "estimated"
     },
     {
       "type": "NFP_RELEASE",
-      "label": "Non-Farm Payrolls \u2014 June 2026",
-      "scheduled_utc": "2026-06-06T12:30:00Z",
+      "label": "Nonfarm Payrolls - June 2026",
+      "scheduled_utc": "2026-06-05T12:30:00Z",
       "severity": "HIGH",
-      "date_confidence": "confirmed"
+      "date_confidence": "estimated"
     },
     {
       "type": "CPI_RELEASE",
-      "label": "CPI Report \u2014 June 2026",
+      "label": "CPI Release - June 2026",
       "scheduled_utc": "2026-06-10T12:30:00Z",
       "severity": "HIGH",
       "date_confidence": "estimated"
     },
     {
       "type": "FOMC_DECISION",
-      "label": "FOMC Rate Decision \u2014 June 2026",
+      "label": "FOMC Rate Decision - June 2026",
       "scheduled_utc": "2026-06-17T18:00:00Z",
       "severity": "CRITICAL",
       "date_confidence": "confirmed"
     },
     {
       "type": "NFP_RELEASE",
-      "label": "Non-Farm Payrolls \u2014 July 2026",
+      "label": "Nonfarm Payrolls - July 2026",
       "scheduled_utc": "2026-07-03T12:30:00Z",
       "severity": "HIGH",
       "date_confidence": "estimated"
     },
     {
       "type": "CPI_RELEASE",
-      "label": "CPI Report \u2014 July 2026",
+      "label": "CPI Release - July 2026",
       "scheduled_utc": "2026-07-14T12:30:00Z",
       "severity": "HIGH",
       "date_confidence": "estimated"
     },
     {
       "type": "FOMC_DECISION",
-      "label": "FOMC Rate Decision \u2014 July 2026",
+      "label": "FOMC Rate Decision - July 2026",
       "scheduled_utc": "2026-07-29T18:00:00Z",
       "severity": "CRITICAL",
       "date_confidence": "confirmed"
     },
     {
       "type": "NFP_RELEASE",
-      "label": "Non-Farm Payrolls \u2014 August 2026",
-      "scheduled_utc": "2026-08-08T12:30:00Z",
+      "label": "Nonfarm Payrolls - August 2026",
+      "scheduled_utc": "2026-08-07T12:30:00Z",
       "severity": "HIGH",
       "date_confidence": "estimated"
     },
     {
       "type": "CPI_RELEASE",
-      "label": "CPI Report \u2014 August 2026",
+      "label": "CPI Release - August 2026",
       "scheduled_utc": "2026-08-12T12:30:00Z",
       "severity": "HIGH",
       "date_confidence": "estimated"
     },
     {
       "type": "NFP_RELEASE",
-      "label": "Non-Farm Payrolls \u2014 September 2026",
-      "scheduled_utc": "2026-09-05T12:30:00Z",
+      "label": "Nonfarm Payrolls - September 2026",
+      "scheduled_utc": "2026-09-04T12:30:00Z",
       "severity": "HIGH",
       "date_confidence": "estimated"
     },
     {
       "type": "CPI_RELEASE",
-      "label": "CPI Report \u2014 September 2026",
-      "scheduled_utc": "2026-09-10T12:30:00Z",
+      "label": "CPI Release - September 2026",
+      "scheduled_utc": "2026-09-11T12:30:00Z",
       "severity": "HIGH",
       "date_confidence": "estimated"
     },
     {
       "type": "FOMC_DECISION",
-      "label": "FOMC Rate Decision \u2014 September 2026",
+      "label": "FOMC Rate Decision - September 2026",
       "scheduled_utc": "2026-09-16T18:00:00Z",
       "severity": "CRITICAL",
       "date_confidence": "confirmed"
     },
     {
+      "type": "NFP_RELEASE",
+      "label": "Nonfarm Payrolls - October 2026",
+      "scheduled_utc": "2026-10-02T12:30:00Z",
+      "severity": "HIGH",
+      "date_confidence": "estimated"
+    },
+    {
+      "type": "CPI_RELEASE",
+      "label": "CPI Release - October 2026",
+      "scheduled_utc": "2026-10-14T12:30:00Z",
+      "severity": "HIGH",
+      "date_confidence": "estimated"
+    },
+    {
       "type": "FOMC_DECISION",
-      "label": "FOMC Rate Decision \u2014 October 2026",
+      "label": "FOMC Rate Decision - October 2026",
       "scheduled_utc": "2026-10-28T18:00:00Z",
       "severity": "CRITICAL",
       "date_confidence": "confirmed"
     },
     {
+      "type": "NFP_RELEASE",
+      "label": "Nonfarm Payrolls - November 2026",
+      "scheduled_utc": "2026-11-06T13:30:00Z",
+      "severity": "HIGH",
+      "date_confidence": "estimated"
+    },
+    {
+      "type": "CPI_RELEASE",
+      "label": "CPI Release - November 2026",
+      "scheduled_utc": "2026-11-10T13:30:00Z",
+      "severity": "HIGH",
+      "date_confidence": "estimated"
+    },
+    {
+      "type": "NFP_RELEASE",
+      "label": "Nonfarm Payrolls - December 2026",
+      "scheduled_utc": "2026-12-04T13:30:00Z",
+      "severity": "HIGH",
+      "date_confidence": "estimated"
+    },
+    {
       "type": "FOMC_DECISION",
-      "label": "FOMC Rate Decision \u2014 December 2026",
+      "label": "FOMC Rate Decision - December 2026",
       "scheduled_utc": "2026-12-09T19:00:00Z",
       "severity": "CRITICAL",
       "date_confidence": "confirmed"
+    },
+    {
+      "type": "CPI_RELEASE",
+      "label": "CPI Release - December 2026",
+      "scheduled_utc": "2026-12-10T13:30:00Z",
+      "severity": "HIGH",
+      "date_confidence": "estimated"
     },
     {
       "type": "FOMC_DECISION",
