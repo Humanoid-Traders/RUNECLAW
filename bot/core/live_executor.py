@@ -367,6 +367,10 @@ class LiveExecutor:
         self._api_error_count: int = 0
         # Warning rate circuit breaker: reference to risk engine (set by engine.py)
         self._risk_engine: Optional[Any] = None
+        # Real-time price feed handle (set by engine.py). When present,
+        # check_degradation reads the feed's true last-message age instead of the
+        # coarse _ws_last_seen shadow clock. None in paper/tests → shadow clock.
+        self._ws_feed: Optional[Any] = None
         # F-07 FIX: Load persisted positions on startup
         self._load_positions()
         # F-14 FIX: Load persisted closed trades on startup
@@ -390,8 +394,25 @@ class LiveExecutor:
         """Check if execution should be degraded. Returns mode: 'normal', 'reduce_only', 'paused'."""
         now = time.time()
 
-        # WebSocket disconnect check
+        # WebSocket freshness check. Prefer the feed's REAL last-message age over
+        # the _ws_last_seen shadow clock. The shadow is refreshed only once per
+        # engine scan tick (engine._tick), and in a calm market smart-scan
+        # stretches that tick to ~90s (scan_interval × 1.5) — longer than the
+        # ws_disconnect_pause_sec (60s default) threshold. Reading the shadow
+        # alone therefore falsely reports "disconnected" during the tail of every
+        # quiet cycle even while the socket streams a tick every second, blocking
+        # market orders spuriously (observed live: AAVE LONG "feed disconnected").
+        # seconds_since_last_msg() is the authoritative price-staleness signal the
+        # pause is meant to guard. Fail-safe: any error falls back to the shadow.
         ws_gap = now - self._ws_last_seen
+        feed = self._ws_feed
+        if feed is not None:
+            try:
+                age = feed.seconds_since_last_msg()
+                if age is not None:
+                    ws_gap = age
+            except Exception:
+                pass
         ws_pause = getattr(getattr(CONFIG, 'execution', None), 'ws_disconnect_pause_sec', 120)
         if ws_gap > ws_pause:
             if not self._degraded_mode:

@@ -164,6 +164,10 @@ class RuneClawEngine:
         self.live_executor.on_position_closed = lambda pos: self._on_live_position_closed(pos)
         # Wire risk engine for warning rate circuit breaker
         self.live_executor._risk_engine = self.risk
+        # Wire the shared WS feed so degradation reads true price-staleness, not
+        # the coarse per-tick shadow clock (avoids false "feed disconnected"
+        # pauses during calm-market cycles where the scan tick > pause threshold).
+        self.live_executor._ws_feed = self.ws_feed
         # Per-user live executors (PER_USER_LIVE_ENABLED, default OFF): keyed by
         # telegram user_id, each bound to that user's OWN linked Bitget account.
         # Empty + unused while the flag is off, so the operator path is unchanged.
@@ -785,6 +789,9 @@ class RuneClawEngine:
             ex = LiveExecutor(user_id=user_id, credentials=creds)
             ex.on_position_closed = lambda pos: self._on_live_position_closed(pos)
             ex._risk_engine = self.risk
+            # Share the same WS feed as the operator executor (market data is not
+            # per-user) so degradation uses real price-staleness, not the shadow clock.
+            ex._ws_feed = self.ws_feed
             # Record realized slippage into the shared tracker (no-op until set).
             ex._slippage_tracker = getattr(self, "slippage", None)
             self._user_executors[key] = ex
