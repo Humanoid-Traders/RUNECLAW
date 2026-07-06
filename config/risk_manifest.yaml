@@ -438,6 +438,16 @@ defaults:
     env_var: MAX_UNMAPPED_CORRELATED
     description: "Max concurrent positions in the shared unmapped-alt bucket (symbols not in the correlation map). Set high to disable."
 
+  correlation_forward_intents_enabled:
+    value: false
+    env_var: CORRELATION_FORWARD_INTENTS_ENABLED
+    description: "Round 7 Phase 1: count approved-but-not-yet-filled intents in the per-group correlation cap so a correlated same-bar cluster can't all bypass it. Default OFF pending A/B validation."
+
+  correlation_intent_ttl_sec:
+    value: 7200.0
+    env_var: CORRELATION_INTENT_TTL_SEC
+    description: "Safety TTL (seconds) for a pending correlation intent; backstops a leaked intent so the ledger can't latch the cap. Explicit clear on fill/cancel is primary."
+
   volatility_guard_atr_pct:
     value: 7.0
     env_var: VOLATILITY_GUARD_ATR_PCT

@@ -273,6 +273,13 @@ class RiskEngine:
         # #49: (timestamp, price) points so cross-asset returns align on a common
         # time grid, not by list position. In-memory only (not persisted).
         self._price_history: dict[str, list[tuple[float, float]]] = {}
+        # Round 7 Phase 1: forward-looking correlation cap. Approved-but-not-yet-
+        # filled entries keyed by idea id → (correlation_group, direction, ts).
+        # Registered by the caller (backtest/live) between risk approval and fill;
+        # _check_correlation counts them alongside OPEN positions so a correlated
+        # same-bar cluster can't all pass the per-group cap. Empty (and unused)
+        # while correlation_forward_intents_enabled is off → byte-identical.
+        self._pending_intents: dict[str, tuple[str, str, float]] = {}
         # Feature: Warning rate circuit breaker
         # Tracks infrastructure warnings (EXCEPTION/CRITICAL_FAIL audit events).
         # If any single warning key fires > threshold times in the sliding window,
@@ -2132,6 +2139,53 @@ class RiskEngine:
         key = asset if "/" in asset else f"{asset}/USDT"
         return _CORRELATION_GROUPS.get(key, _UNMAPPED_GROUP)
 
+    # ── Round 7 Phase 1: forward-looking correlation cap ─────────────
+
+    def register_pending_intent(self, idea: TradeIdea) -> None:
+        """Record an APPROVED-but-not-yet-filled entry so the per-group
+        correlation cap counts it (see CORRELATION_FORWARD_INTENTS_ENABLED).
+        Called by the caller between risk approval and fill. No-op when the flag
+        is off, so the ledger stays empty and behaviour is byte-identical.
+        Fail-safe: never raises."""
+        if not CONFIG.risk.correlation_forward_intents_enabled:
+            return
+        try:
+            with self._lock:
+                self._pending_intents[idea.id] = (
+                    self._correlation_group(idea.asset),
+                    getattr(idea.direction, "value", str(idea.direction)),
+                    self._now(),
+                )
+        except Exception:
+            pass
+
+    def clear_pending_intent(self, idea_id: str) -> None:
+        """Drop a pending intent once its entry has filled or been cancelled.
+        Idempotent; safe even when the flag is off or the id is absent."""
+        try:
+            with self._lock:
+                self._pending_intents.pop(idea_id, None)
+        except Exception:
+            pass
+
+    def _prune_expired_intents(self, now: float) -> None:
+        """Remove intents older than the safety TTL so a leaked intent (a missed
+        clear) can't latch the cap. Caller holds self._lock."""
+        ttl = float(getattr(CONFIG.risk, "correlation_intent_ttl_sec", 7200.0) or 0.0)
+        if ttl <= 0 or not self._pending_intents:
+            return
+        stale = [k for k, (_g, _d, ts) in self._pending_intents.items()
+                 if now - ts > ttl]
+        for k in stale:
+            self._pending_intents.pop(k, None)
+
+    def _pending_intent_group_count(self, group: str, exclude_id: str) -> int:
+        """Live pending intents in ``group`` (excluding the idea being evaluated).
+        Prunes expired intents first. Caller holds self._lock."""
+        self._prune_expired_intents(self._now())
+        return sum(1 for iid, (g, _d, _ts) in self._pending_intents.items()
+                   if g == group and iid != exclude_id)
+
     def _check_correlation(self, idea: TradeIdea) -> Optional[str]:
         """Prevent concentrated bets in the same correlation group."""
         new_group = self._correlation_group(idea.asset)
@@ -2141,6 +2195,12 @@ class RiskEngine:
         ]
 
         group_count = open_groups.count(new_group)
+        # Round 7 Phase 1: make the cap FORWARD-LOOKING. Also count approved-but-
+        # not-yet-filled intents in this group so a correlated same-bar cluster
+        # can't all pass while each sees zero OPEN group members (the cluster fills
+        # next bar and blows past max_correlation_per_group). Gated OFF by default.
+        if CONFIG.risk.correlation_forward_intents_enabled:
+            group_count += self._pending_intent_group_count(new_group, exclude_id=idea.id)
         # The shared unmapped-alt bucket gets its own, more generous cap (its
         # members aren't all mutually correlated); mapped groups keep the
         # tighter per-group cap.
