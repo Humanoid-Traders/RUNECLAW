@@ -448,6 +448,11 @@ defaults:
     env_var: CORRELATION_INTENT_TTL_SEC
     description: "Safety TTL (seconds) for a pending correlation intent; backstops a leaked intent so the ledger can't latch the cap. Explicit clear on fill/cancel is primary."
 
+  correlation_perp_group_mapping_enabled:
+    value: false
+    env_var: CORRELATION_PERP_GROUP_MAPPING_ENABLED
+    description: "Round 7: strip the ccxt ':SETTLE' suffix so perp symbols map to their real correlation group (ALT_L1/MEME/DEFI) instead of pooling into one unmapped bucket. Default OFF — correct per-group caps loosen aggregate exposure and raised drawdown on the dense A/B; enable only with a global correlated cap."
+
   volatility_guard_atr_pct:
     value: 7.0
     env_var: VOLATILITY_GUARD_ATR_PCT

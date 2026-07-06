@@ -2136,17 +2136,28 @@ class RiskEngine:
         (_UNMAPPED_GROUP) instead of each becoming its own singleton group — so
         a basket of unmapped alts cannot collectively dodge the per-group cap.
 
-        Round 7: strip the ccxt perp settle suffix (":USDT"/":USDC") BEFORE
-        lookup. The bot trades USDT-perps whose ccxt id is "SOL/USDT:USDT"; the
-        map keys are spot-style "SOL/USDT". Without this strip every futures
-        symbol missed the map and fell through to _UNMAPPED_GROUP — silently
-        neutralizing the entire ALT_L1/MEME/DEFI/BTC/ETH taxonomy on the live
-        path, leaving the pooled unmapped cap as the only correlation limit in
-        force. Stripping the suffix restores the intended per-group caps.
+        Round 7: the bot trades USDT-perps whose ccxt id is "SOL/USDT:USDT"; the
+        map keys are spot-style "SOL/USDT". Without stripping the ":SETTLE" suffix
+        every futures symbol missed the map and fell through to _UNMAPPED_GROUP,
+        pooling ALL alts into one bucket. That pooling is a BUG (the ALT_L1/MEME/
+        DEFI taxonomy never applied), but it accidentally acted as a global
+        correlated-exposure cap (max_unmapped_correlated across everything). On a
+        dense multi-group benchmark, switching to correct per-group caps LOOSENS
+        aggregate exposure (per-group budgets sum higher than the one pooled cap)
+        and materially raised max drawdown. So the corrected mapping is gated
+        behind correlation_perp_group_mapping_enabled (default OFF) to preserve
+        the tighter live behaviour until it's paired with a global correlated cap.
         """
         key = asset if "/" in asset else f"{asset}/USDT"
-        if ":" in key:  # ccxt perp "BASE/QUOTE:SETTLE" -> spot-style "BASE/QUOTE"
-            key = key.split(":", 1)[0]
+        # Gated: only strip the perp suffix (→ correct per-group mapping) when the
+        # operator opts in. Default OFF keeps the current pooled behaviour, which
+        # bounds total correlated exposure more tightly (lower drawdown on the
+        # dense A/B). Fail-safe: any error leaves the suffix in place (pooled).
+        try:
+            if ":" in key and CONFIG.risk.correlation_perp_group_mapping_enabled:
+                key = key.split(":", 1)[0]
+        except Exception:
+            pass
         return _CORRELATION_GROUPS.get(key, _UNMAPPED_GROUP)
 
     # ── Round 7 Phase 1: forward-looking correlation cap ─────────────
