@@ -195,5 +195,58 @@ regardless of its value — a correlated cluster all evaluate against zero open
 members. Lowering the number changes nothing until the counting is
 forward-looking. Phase 1 is the prerequisite that gives *any* correlation cap
 real authority on same-bar clusters.
-```
-```
+
+---
+
+## 9. Empirical results & disposition (what actually happened)
+
+Phase 1 shipped (#310, forward-looking cap, gated OFF). A/B on the majors/alts
+v2 snapshots was thin and mixed — and, tellingly, **every rejection logged as
+`UNMAPPED_ALT`**, even for mapped symbols. That pointed to the real issue.
+
+### 9.1 The regime stand-down was chasing a bug, not a missing feature
+
+`_correlation_group` never stripped the ccxt perp settle suffix. The bot trades
+USDT-perps (`SOL/USDT:USDT`); the `_CORRELATION_GROUPS` keys are spot-style
+(`SOL/USDT`). So **every futures symbol missed the map and pooled into one
+`_UNMAPPED_GROUP` bucket** — the ALT_L1/MEME/DEFI/BTC/ETH taxonomy has been dead
+on the live path, with the pooled `max_unmapped_correlated` (default 3) as the
+only correlation limit actually in force. This also explains why Phase 1 kept
+measuring as a near no-op: it was making a pooled bucket forward-looking, not
+the intended per-group caps.
+
+### 9.2 Fixing the mapping *loosens* aggregate risk (counterintuitive)
+
+Built a dense, group-concentrated benchmark (`corr_dense_1h`: 11 ALT_L1 + 5 MEME
++ 5 DEFI, ~500 days) so the caps actually bind, and A/B'd pooled (bug) vs
+per-group (fix):
+
+| dense benchmark | pooled (current) | per-group (fixed) |
+|---|---|---|
+| Return | +1.40% | +1.53% |
+| Profit factor | 1.87 | 1.83 |
+| Win rate | 40% | 57% |
+| **Max drawdown** | **1.49%** | **3.11%** |
+| **Calmar** | **0.94** | **0.49** |
+| Sortino | 0.62 | 0.36 |
+
+The pooling bug **accidentally acted as a global correlated-exposure cap** (≤3
+correlated positions total). Correct per-group caps (2 ALT_L1 + 2 MEME + 2 DEFI
++ 2 unmapped = up to 8) *loosen* aggregate exposure, roughly **doubling max
+drawdown**. So the naïve correctness fix is net-negative for risk.
+
+### 9.3 Disposition
+
+- **Perp-mapping fix: gated OFF** (`correlation_perp_group_mapping_enabled`).
+  Default preserves the tighter pooled behaviour on the live account.
+- **Forward-looking cap (Phase 1): stays OFF.** Thin/mixed; no evidence to flip.
+- **Regime/correlation hard stand-down (original Phase 2): not built.** The
+  evidence says the lever isn't a regime gate — it's **aggregate correlated
+  exposure**, which the pooling already bounds.
+- **Real next step (revised Phase 2):** correct per-group mapping **paired with a
+  global concurrent-correlated-position cap**, so exposure is bounded *and*
+  correctly attributed. A/B that combination on `corr_dense_1h` before enabling.
+
+All caveats stand: <15 trades per run, single period — directional, not
+conclusive. The dense benchmark is committed so this is reproducible and the
+revised Phase 2 can be measured rather than assumed.

@@ -271,6 +271,16 @@ class RiskLimits:
     # fill) so the ledger can never latch the cap. Generous so it never prunes a
     # legitimately-pending next-bar fill.
     correlation_intent_ttl_sec: float = _env_float_bounded("CORRELATION_INTENT_TTL_SEC", 7200.0, 1.0, 604800.0)
+    # Round 7: correct per-group correlation mapping for ccxt perp symbols.
+    # _correlation_group never stripped the ":SETTLE" suffix, so every futures
+    # symbol ("SOL/USDT:USDT") missed the spot-keyed map and pooled into ONE
+    # unmapped bucket — a bug, but one that accidentally bounded TOTAL correlated
+    # exposure (the pooled cap applied across all alts). Enabling the strip
+    # restores the intended ALT_L1/MEME/DEFI per-group caps, but on a dense
+    # multi-group A/B that LOOSENS aggregate exposure and roughly doubled max
+    # drawdown. Default OFF preserves the tighter pooled behaviour until the
+    # corrected mapping is paired with a global correlated-position cap.
+    correlation_perp_group_mapping_enabled: bool = _env_bool("CORRELATION_PERP_GROUP_MAPPING_ENABLED", False)
     # Volatility guard: reject trades when ATR exceeds this % of price.
     # BTC hourly ATR is typically 1-4%; 7% allows for elevated-vol periods
     # while blocking extreme conditions.

@@ -52,6 +52,32 @@ class TestCorrelationGroupMapping:
         assert eng._correlation_group("WEIRDCOIN/USDT") == _UNMAPPED_GROUP
         assert eng._correlation_group("ZZZ") == _UNMAPPED_GROUP
 
+    def test_ccxt_perp_default_pools_into_unmapped_bucket(self):
+        # Round 7: perp ids ("SOL/USDT:USDT") don't match the spot-keyed map.
+        # The corrected per-group mapping is gated OFF by default (it loosens
+        # aggregate correlated exposure and raised drawdown on the dense A/B),
+        # so by default every perp still pools into the one unmapped bucket —
+        # which bounds TOTAL correlated exposure. Lock in that default.
+        eng = _engine([])
+        with patch("bot.risk.risk_engine.CONFIG") as cfg:
+            cfg.risk.correlation_perp_group_mapping_enabled = False
+            for s in ("SOL/USDT:USDT", "AAVE/USDT:USDT", "DOGE/USDT:USDT",
+                      "BTC/USDT:USDT", "ETH/USDT:USDT"):
+                assert eng._correlation_group(s) == _UNMAPPED_GROUP
+
+    def test_ccxt_perp_maps_to_group_when_enabled(self):
+        # With the opt-in flag on, the ':SETTLE' suffix is stripped and each perp
+        # resolves to its real group; a genuinely unmapped perp still pools.
+        eng = _engine([])
+        with patch("bot.risk.risk_engine.CONFIG") as cfg:
+            cfg.risk.correlation_perp_group_mapping_enabled = True
+            assert eng._correlation_group("SOL/USDT:USDT") == "ALT_L1"
+            assert eng._correlation_group("AAVE/USDT:USDT") == "DEFI"
+            assert eng._correlation_group("DOGE/USDT:USDT") == "MEME"
+            assert eng._correlation_group("BTC/USDT:USDT") == "BTC"
+            assert eng._correlation_group("ETH/USDT:USDT") == "ETH"
+            assert eng._correlation_group("WEIRDCOIN/USDT:USDT") == _UNMAPPED_GROUP
+
 
 class TestUnmappedBucketCap:
     def test_basket_of_unmapped_alts_is_capped(self):

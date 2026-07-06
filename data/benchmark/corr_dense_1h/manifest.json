@@ -1,0 +1,156 @@
+{
+  "version": 1,
+  "timeframe": "1h",
+  "limit": 12000,
+  "created_at": "2026-07-06T11:29:53.973286+00:00",
+  "dataset_hash": "a31786a7c04937362794142fe1e8f420e2336cd9b028bbac285e97a75ffc5e93",
+  "symbols": {
+    "AAVE/USDT:USDT": {
+      "file": "AAVE_USDT_USDT.csv.gz",
+      "bars": 11994,
+      "first": "2025-02-21T12:00:00+00:00",
+      "last": "2026-07-06T11:00:00+00:00",
+      "sha256": "d8fa374d9e7466c97a56936f9c53bb2cb8e76ca5cb14e7a84f918347400eda17"
+    },
+    "ADA/USDT:USDT": {
+      "file": "ADA_USDT_USDT.csv.gz",
+      "bars": 11994,
+      "first": "2025-02-21T12:00:00+00:00",
+      "last": "2026-07-06T11:00:00+00:00",
+      "sha256": "880595b0c944d4999815fd8cdedc8c4d8c17a0a53b25a373b468bbccd249ec33"
+    },
+    "APT/USDT:USDT": {
+      "file": "APT_USDT_USDT.csv.gz",
+      "bars": 11994,
+      "first": "2025-02-21T12:00:00+00:00",
+      "last": "2026-07-06T11:00:00+00:00",
+      "sha256": "7c514f230893fc75630307086e5c812a620b861d15ca6cd6042345c7b0de8e7f"
+    },
+    "ATOM/USDT:USDT": {
+      "file": "ATOM_USDT_USDT.csv.gz",
+      "bars": 11994,
+      "first": "2025-02-21T12:00:00+00:00",
+      "last": "2026-07-06T11:00:00+00:00",
+      "sha256": "1b6fc5d5606fe93e6d7171455054860867ea7e37f6cad83a1fb6efe76e37376d"
+    },
+    "AVAX/USDT:USDT": {
+      "file": "AVAX_USDT_USDT.csv.gz",
+      "bars": 11994,
+      "first": "2025-02-21T12:00:00+00:00",
+      "last": "2026-07-06T11:00:00+00:00",
+      "sha256": "73d50553b50e3e1e3604543f2fcf0a74d264557b1f6e33958b9fb8da89982a9f"
+    },
+    "CRV/USDT:USDT": {
+      "file": "CRV_USDT_USDT.csv.gz",
+      "bars": 11994,
+      "first": "2025-02-21T12:00:00+00:00",
+      "last": "2026-07-06T11:00:00+00:00",
+      "sha256": "907e153f1d1df5a721db27e84734ae17525ec83aca21f23ff387b93e0ddacdef"
+    },
+    "DOGE/USDT:USDT": {
+      "file": "DOGE_USDT_USDT.csv.gz",
+      "bars": 11994,
+      "first": "2025-02-21T12:00:00+00:00",
+      "last": "2026-07-06T11:00:00+00:00",
+      "sha256": "3402a3a1dd80955e3dba071e7558fc936b0c16120a90a9d2ad13c1a79cb542b8"
+    },
+    "DOT/USDT:USDT": {
+      "file": "DOT_USDT_USDT.csv.gz",
+      "bars": 11994,
+      "first": "2025-02-21T12:00:00+00:00",
+      "last": "2026-07-06T11:00:00+00:00",
+      "sha256": "1d906c84eded1211cdec873b1f9b8b0104d9d375f85d3d47d7afc13a9ab849db"
+    },
+    "FLOKI/USDT:USDT": {
+      "file": "FLOKI_USDT_USDT.csv.gz",
+      "bars": 11994,
+      "first": "2025-02-21T12:00:00+00:00",
+      "last": "2026-07-06T11:00:00+00:00",
+      "sha256": "f266d511b89910929b87f40e02a69238fe4638519175493af1bc7b6c60f105b2"
+    },
+    "INJ/USDT:USDT": {
+      "file": "INJ_USDT_USDT.csv.gz",
+      "bars": 11994,
+      "first": "2025-02-21T12:00:00+00:00",
+      "last": "2026-07-06T11:00:00+00:00",
+      "sha256": "6ef12e042da82da3a6737e9885212efc8677182ae185517f31e73775c92e2727"
+    },
+    "LDO/USDT:USDT": {
+      "file": "LDO_USDT_USDT.csv.gz",
+      "bars": 11994,
+      "first": "2025-02-21T12:00:00+00:00",
+      "last": "2026-07-06T11:00:00+00:00",
+      "sha256": "2fa85be98b04ae4f3f02e70717921c4caa2bce8497edbdeb4edc8b9a78b22d65"
+    },
+    "LINK/USDT:USDT": {
+      "file": "LINK_USDT_USDT.csv.gz",
+      "bars": 11994,
+      "first": "2025-02-21T12:00:00+00:00",
+      "last": "2026-07-06T11:00:00+00:00",
+      "sha256": "92f78b7d420807c105e0cc553ce6cf879bd7ca74d93997fbb32ae2b50708fbf9"
+    },
+    "NEAR/USDT:USDT": {
+      "file": "NEAR_USDT_USDT.csv.gz",
+      "bars": 11994,
+      "first": "2025-02-21T12:00:00+00:00",
+      "last": "2026-07-06T11:00:00+00:00",
+      "sha256": "8d82f3193f67fe3676575ad84a570096e25a232cb89322f1f39646e0721a3215"
+    },
+    "PEPE/USDT:USDT": {
+      "file": "PEPE_USDT_USDT.csv.gz",
+      "bars": 11994,
+      "first": "2025-02-21T12:00:00+00:00",
+      "last": "2026-07-06T11:00:00+00:00",
+      "sha256": "9d9712a9e8e829bd9df42e4ac2313a9c6be2a6a03a00456078bd98554ade2976"
+    },
+    "SEI/USDT:USDT": {
+      "file": "SEI_USDT_USDT.csv.gz",
+      "bars": 11994,
+      "first": "2025-02-21T12:00:00+00:00",
+      "last": "2026-07-06T11:00:00+00:00",
+      "sha256": "d6a94d02de155fc7684c28edbfe49327199f6f679dd1d66f619e3c8a14dff893"
+    },
+    "SHIB/USDT:USDT": {
+      "file": "SHIB_USDT_USDT.csv.gz",
+      "bars": 11994,
+      "first": "2025-02-21T12:00:00+00:00",
+      "last": "2026-07-06T11:00:00+00:00",
+      "sha256": "2312abd31ae58894631fc79219de733b3f15323a960fca475569332239d9832e"
+    },
+    "SOL/USDT:USDT": {
+      "file": "SOL_USDT_USDT.csv.gz",
+      "bars": 11994,
+      "first": "2025-02-21T12:00:00+00:00",
+      "last": "2026-07-06T11:00:00+00:00",
+      "sha256": "3db65a0f70273827401b1b8742d06a5afe33fed820d04d46f218fd65ad84f897"
+    },
+    "SUI/USDT:USDT": {
+      "file": "SUI_USDT_USDT.csv.gz",
+      "bars": 11994,
+      "first": "2025-02-21T12:00:00+00:00",
+      "last": "2026-07-06T11:00:00+00:00",
+      "sha256": "f32a5e2d78a0d2b6e1edad62110b0ac2c1b7b22e9968090ee888cfb306fdc370"
+    },
+    "TRX/USDT:USDT": {
+      "file": "TRX_USDT_USDT.csv.gz",
+      "bars": 11994,
+      "first": "2025-02-21T12:00:00+00:00",
+      "last": "2026-07-06T11:00:00+00:00",
+      "sha256": "541d1473e78a34ae4217935510b24c53773cc8466c32747036f9952978216e09"
+    },
+    "UNI/USDT:USDT": {
+      "file": "UNI_USDT_USDT.csv.gz",
+      "bars": 11994,
+      "first": "2025-02-21T12:00:00+00:00",
+      "last": "2026-07-06T11:00:00+00:00",
+      "sha256": "bbaf292d7df459af9fdbd41e34d665110da723729e94af4831046ae9c16de70a"
+    },
+    "WIF/USDT:USDT": {
+      "file": "WIF_USDT_USDT.csv.gz",
+      "bars": 11994,
+      "first": "2025-02-21T12:00:00+00:00",
+      "last": "2026-07-06T11:00:00+00:00",
+      "sha256": "afe55ad5b70a7e405e169811a5df0f88bb73b591e5a29e0c8a52e8756545cd69"
+    }
+  }
+}
