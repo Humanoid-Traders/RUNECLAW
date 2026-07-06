@@ -473,6 +473,16 @@ defaults:
     env_var: FEE_AWARE_SLIPPAGE_PCT
     description: "Per-side slippage estimate (%) used in the fee-aware gate's round-trip cost (2x entry + exit)."
 
+  reentry_cooldown_enabled:
+    value: false
+    env_var: REENTRY_COOLDOWN_ENABLED
+    description: "Throttle a fresh entry on a symbol within reentry_cooldown_seconds of the last REAL fill on that symbol (curbs fee churn; complements the loss-only cooldown). Default OFF; skips manual trades."
+
+  reentry_cooldown_seconds:
+    value: 0.0
+    env_var: REENTRY_COOLDOWN_SECONDS
+    description: "Seconds to block same-symbol re-entry after the last fill on that symbol. 0 or flag OFF = no-op."
+
   volatility_guard_atr_pct:
     value: 7.0
     env_var: VOLATILITY_GUARD_ATR_PCT

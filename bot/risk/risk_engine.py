@@ -217,6 +217,12 @@ class RiskEngine:
         self._circuit_open = False
         self._consecutive_losses = 0
         self._last_loss_time: Optional[float] = None  # epoch seconds
+        # Re-entry cooldown ledger: last REAL fill time per symbol (epoch/sim
+        # seconds), stamped by note_symbol_entry() at the actual open. Read by
+        # the REENTRY_COOLDOWN check in _evaluate_locked. In-memory only (a
+        # restart clears it — fail-open for a short-horizon churn guard). Stays
+        # empty when REENTRY_COOLDOWN_ENABLED is off, so behaviour is unchanged.
+        self._last_entry_by_symbol: dict[str, float] = {}
         # Backtests pin this to the replayed bar time (epoch seconds) so
         # time-based guards measure SIMULATED elapsed time, not wall-clock —
         # a replay covers months of bars in seconds of wall time, so a
@@ -1280,6 +1286,32 @@ class RiskEngine:
         except Exception as exc:
             failed.append(f"COOLDOWN: evaluation error ({exc})")
 
+        # Re-entry cooldown: throttle rapid same-symbol re-entries to curb fee
+        # churn. Unlike check #13 (loss-only), this fires after ANY close and
+        # measures from the last REAL fill on this symbol (note_symbol_entry),
+        # on the same simulated/live clock. Read-only here — the stamp happens
+        # at the actual open, so /whynot correctly reports it as a reason.
+        # Skips manual trades (deliberate). No-op when the flag is off, the
+        # window is 0, or no prior entry is recorded. Fail-safe.
+        try:
+            if (CONFIG.risk.reentry_cooldown_enabled is True and not is_manual
+                    and getattr(self, "_last_entry_by_symbol", None)):
+                _cd = float(CONFIG.risk.reentry_cooldown_seconds)
+                _last_entry_ts = self._last_entry_by_symbol.get(idea.asset)
+                if _cd > 0 and _last_entry_ts is not None:
+                    _now_epoch = as_of.timestamp() if as_of is not None else self._now()
+                    _elapsed = _now_epoch - _last_entry_ts
+                    if _elapsed < _cd:
+                        failed.append(
+                            f"REENTRY_COOLDOWN: {(_cd - _elapsed):.0f}s remaining "
+                            f"on {idea.asset} (churn guard)")
+                    else:
+                        passed.append(f"REENTRY_COOLDOWN: {idea.asset} cooldown elapsed")
+                else:
+                    passed.append("REENTRY_COOLDOWN: no recent same-symbol entry")
+        except Exception as exc:
+            passed.append(f"REENTRY_COOLDOWN: skipped (eval error {exc})")
+
         margin_equiv_position_usd = 0.0
 
         try:
@@ -2202,6 +2234,24 @@ class RiskEngine:
                     getattr(idea.direction, "value", str(idea.direction)),
                     self._now(),
                 )
+        except Exception:
+            pass
+
+    def note_symbol_entry(self, symbol: str, as_of: Optional[datetime] = None) -> None:
+        """Stamp the time of a REAL fill on ``symbol`` so the re-entry cooldown
+        (REENTRY_COOLDOWN_ENABLED) can throttle same-symbol churn. Called at the
+        actual open — backtest ``_execute_fill`` / live post-execute success —
+        NOT at evaluation, because ``evaluate()`` runs twice per trade (scan +
+        confirm-recheck) and stamping there would self-trip the cooldown. Uses
+        the same simulated/live clock as the loss cooldown (pass the bar time as
+        ``as_of`` under replay). No-op when the flag is off, so the ledger stays
+        empty and behaviour is byte-identical. Fail-safe: never raises."""
+        if getattr(CONFIG.risk, "reentry_cooldown_enabled", False) is not True:
+            return
+        try:
+            ts = as_of.timestamp() if as_of is not None else self._now()
+            with self._lock:
+                self._last_entry_by_symbol[str(symbol)] = float(ts)
         except Exception:
             pass
 

@@ -3134,6 +3134,13 @@ class RuneClawEngine:
             # Exchange is single source of truth — no paper duplicate.
             # Position count comes from get_exchange_position_count().
             invalidate_position_count_cache()
+            # Re-entry cooldown: stamp the real fill on the SAME engine that
+            # evaluates this user's next trade (risk_for routes per-user; shared
+            # operator engine in default mode). No-op when the flag is off.
+            try:
+                self.risk_for(user_id).note_symbol_entry(idea.asset)
+            except Exception:
+                pass
             # C-05 FIX: only remove idea and ATR after successful execution
             self._pending_ideas.pop(trade_id, None)
             self._pending_atr.pop(trade_id, None)
