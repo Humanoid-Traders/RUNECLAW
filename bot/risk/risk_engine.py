@@ -2154,7 +2154,7 @@ class RiskEngine:
         # bounds total correlated exposure more tightly (lower drawdown on the
         # dense A/B). Fail-safe: any error leaves the suffix in place (pooled).
         try:
-            if ":" in key and CONFIG.risk.correlation_perp_group_mapping_enabled:
+            if ":" in key and CONFIG.risk.correlation_perp_group_mapping_enabled is True:
                 key = key.split(":", 1)[0]
         except Exception:
             pass
@@ -2246,6 +2246,34 @@ class RiskEngine:
                 f"CORRELATION: already {group_count} positions in {where} "
                 f"(max {max_per_group})"
             )
+
+        # Round 7 (revised Phase 2): global correlated-exposure cap. Per-group
+        # caps don't bound TOTAL exposure (each group has its own budget), so a
+        # market-wide move can still stack many same-direction correlated bets —
+        # the tail the pooled-bucket bug was accidentally bounding. Cap concurrent
+        # SAME-DIRECTION positions across ALL correlated groups (open + pending
+        # intents). Gated: only when the perp mapping is enabled AND the cap is
+        # >0. Fail-safe: any error skips the cap (no spurious reject).
+        try:
+            cap_total = int(getattr(CONFIG.risk, "max_correlated_same_dir_positions", 0) or 0)
+            # `is True` (not truthiness) so a wholesale-mocked CONFIG — whose
+            # attrs are truthy Mocks — can't spuriously activate this gate.
+            if CONFIG.risk.correlation_perp_group_mapping_enabled is True and cap_total > 0:
+                new_dir = getattr(idea.direction, "value", str(idea.direction))
+                same_dir = sum(
+                    1 for pos in self._portfolio.open_positions
+                    if getattr(pos.direction, "value", str(pos.direction)) == new_dir)
+                if CONFIG.risk.correlation_forward_intents_enabled and getattr(self, "_pending_intents", None):
+                    same_dir += sum(
+                        1 for iid, (_g, d, _ts) in self._pending_intents.items()
+                        if d == new_dir and iid != idea.id)
+                if same_dir >= cap_total:
+                    return (
+                        f"CORRELATION_TOTAL: {same_dir} concurrent {new_dir} "
+                        f"correlated positions (max {cap_total})"
+                    )
+        except Exception:
+            pass
 
         # V2: Rolling return correlation check
         # If we have price history, compute actual pairwise correlation

@@ -281,6 +281,15 @@ class RiskLimits:
     # drawdown. Default OFF preserves the tighter pooled behaviour until the
     # corrected mapping is paired with a global correlated-position cap.
     correlation_perp_group_mapping_enabled: bool = _env_bool("CORRELATION_PERP_GROUP_MAPPING_ENABLED", False)
+    # Round 7 (revised Phase 2): global correlated-exposure cap. Correct per-group
+    # mapping alone doesn't bound TOTAL correlated exposure — each group carries
+    # its own budget, so a market-wide move can still stack many same-direction
+    # correlated bets (up to max_open_positions), which is exactly the tail the
+    # pooled-bucket bug was accidentally bounding. This caps concurrent SAME-
+    # DIRECTION positions across ALL correlated groups (open + pending intents),
+    # restoring the aggregate bound while keeping correct per-group attribution.
+    # Only active when the perp mapping is enabled. 0 = disabled (default).
+    max_correlated_same_dir_positions: int = int(_env_float_bounded("MAX_CORRELATED_SAME_DIR_POSITIONS", 0, 0, 100))
     # Volatility guard: reject trades when ATR exceeds this % of price.
     # BTC hourly ATR is typically 1-4%; 7% allows for elevated-vol periods
     # while blocking extreme conditions.
