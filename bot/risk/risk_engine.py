@@ -2135,8 +2135,18 @@ class RiskEngine:
         before lookup. Symbols not in the map are pooled into ONE shared bucket
         (_UNMAPPED_GROUP) instead of each becoming its own singleton group — so
         a basket of unmapped alts cannot collectively dodge the per-group cap.
+
+        Round 7: strip the ccxt perp settle suffix (":USDT"/":USDC") BEFORE
+        lookup. The bot trades USDT-perps whose ccxt id is "SOL/USDT:USDT"; the
+        map keys are spot-style "SOL/USDT". Without this strip every futures
+        symbol missed the map and fell through to _UNMAPPED_GROUP — silently
+        neutralizing the entire ALT_L1/MEME/DEFI/BTC/ETH taxonomy on the live
+        path, leaving the pooled unmapped cap as the only correlation limit in
+        force. Stripping the suffix restores the intended per-group caps.
         """
         key = asset if "/" in asset else f"{asset}/USDT"
+        if ":" in key:  # ccxt perp "BASE/QUOTE:SETTLE" -> spot-style "BASE/QUOTE"
+            key = key.split(":", 1)[0]
         return _CORRELATION_GROUPS.get(key, _UNMAPPED_GROUP)
 
     # ── Round 7 Phase 1: forward-looking correlation cap ─────────────

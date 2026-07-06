@@ -52,6 +52,20 @@ class TestCorrelationGroupMapping:
         assert eng._correlation_group("WEIRDCOIN/USDT") == _UNMAPPED_GROUP
         assert eng._correlation_group("ZZZ") == _UNMAPPED_GROUP
 
+    def test_ccxt_perp_symbols_map_to_their_group(self):
+        # Round 7 regression: the bot trades USDT-perps whose ccxt id carries a
+        # ":SETTLE" suffix ("SOL/USDT:USDT"). Before the suffix strip these all
+        # missed the map and fell through to _UNMAPPED_GROUP, silently killing
+        # the whole taxonomy on the live path. Each must resolve to its group.
+        eng = _engine([])
+        assert eng._correlation_group("SOL/USDT:USDT") == "ALT_L1"
+        assert eng._correlation_group("AAVE/USDT:USDT") == "DEFI"
+        assert eng._correlation_group("DOGE/USDT:USDT") == "MEME"
+        assert eng._correlation_group("BTC/USDT:USDT") == "BTC"
+        assert eng._correlation_group("ETH/USDT:USDT") == "ETH"
+        # A genuinely unmapped USDT-perp still pools into the shared bucket.
+        assert eng._correlation_group("WEIRDCOIN/USDT:USDT") == _UNMAPPED_GROUP
+
 
 class TestUnmappedBucketCap:
     def test_basket_of_unmapped_alts_is_capped(self):
