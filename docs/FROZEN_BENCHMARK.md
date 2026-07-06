@@ -588,6 +588,79 @@ need structural work, not parameter tuning: a longer/fresher snapshot (which
 also unlocks the parked sweeps), live-parity feedback from production
 `closed_trades.json`, or new capability (e.g. the Hyperliquid plan).
 
+## ⚠️ Out-of-sample validation (v2 snapshot) — the edge is REGIME-SPECIFIC, not robust
+
+Every number above was measured on a single ~250-day window
+(`majors_1h`/`alts_1h`, Oct 2025 → Jul 2026). Round 5 fetched a fresh,
+**2× longer** snapshot to test whether the shipped defaults hold up
+out-of-sample:
+
+- `data/benchmark/majors_1h_v2` — 10 majors, `05074080c0a3`, **2025-02-21 →
+  2026-07-06** (11994 bars each).
+- `data/benchmark/alts_1h_v2` — 8 alts (APT ARB FLOKI PENGU PEPE SEI TRUMP
+  WIF; the 4 newest — BLESS HOME SYRUP TAG — have no pre-2025 history and
+  were excluded), `2163470036e8`, same window.
+
+The extra ~250 days (Feb → Oct 2025) is genuinely out-of-sample: every
+default this project tuned was fitted on the Oct-2025+ window and had never
+seen the earlier data.
+
+**Result: the edge collapses out-of-sample.** Combined universe, current
+shipped defaults, `--honest --walk-forward 6`:
+
+| | Original (Oct'25–Jul'26) | Fresh OOS (Feb'25–Jul'26) |
+|---|---:|---:|
+| Mean OOS return | **+1.13%** | **−1.58%** |
+| Profit factor | 1.67 | 0.23 |
+| Win rate | 62% | 32% |
+| Trades | 126 | 73 |
+
+The fold-by-fold breakdown shows exactly why — the edge lives **only in the
+most recent fold**:
+
+| Fold (chronological) | Trades | Return | Win% | PF |
+|---|---:|---:|---:|---:|
+| 0 | 10 | −1.78% | 0% | 0.00 |
+| 1 | 11 | −0.80% | 27% | 0.42 |
+| 2 | 6 | −1.33% | 0% | 0.00 |
+| 3 | 9 | −5.30% | 0% | 0.00 |
+| 4 | 13 | −0.72% | 38% | 0.53 |
+| **5 (most recent)** | **24** | **+0.45%** | **62%** | **1.44** |
+
+Fold 5 reproduces the original benchmark's exact signature (+0.45%, 62% win,
+PF 1.44) because it overlaps that window. Every earlier 2025 fold loses,
+three at a 0% win rate. This is the textbook signature of a strategy fitted
+to a favorable recent regime — **the +1.13% headline was regime-luck, not a
+durable edge.** By regime, TREND_DOWN (51 tr, PF 0.30), TREND_UP (17 tr, PF
+0.14) and EXPANSION (5 tr, PF 0.00) all bled — the strategy had no positive
+expectancy in any regime bucket on the earlier data.
+
+**What this does and doesn't change:**
+- It does NOT retroactively invalidate the shipped changes. Each was a real
+  improvement *on its measured window*, and the correctness/fidelity/safety
+  fixes (partial-TP modeling, WS reconnect, cap-tightening, parity harness)
+  are regime-independent and stay.
+- Two shipped tuning decisions were re-A/B'd OOS: **TREND_UP down-size 0.7
+  held up** (OOS −1.58% vs the old 1.2's −1.80% — better across both
+  regimes, kept). **The MIN_CONFIDENCE 0.55→0.60 bump did not** (OOS −1.58%
+  vs the old 0.55's −1.35% — the bump helped recently but slightly hurt on
+  the longer window). Neither is universally optimal; **defaults are left
+  unchanged** rather than overfit to this single (adverse) OOS window — the
+  same discipline that refused to chase the earlier knife-edge points.
+- It DOES mean the live bot has **no demonstrated edge outside the recent
+  trend regime.** The current live regime (mid-2026) matches fold 5, which is
+  still positive — but if the market rotates to an early-2025-style regime,
+  this evidence says the strategy bleeds. That is a material risk to weigh
+  before scaling live size.
+
+**The honest state of the benchmark:** the strategy is profitable in the
+current regime and correctly/safely implemented, but its edge is not proven
+to be regime-robust. The single highest-value next step is not more parameter
+tuning (round 4 already showed that surface is exhausted) — it is either a
+structural signal change that earns expectancy in trendless/adverse regimes,
+or a regime-detector that stands the bot down when conditions leave its
+proven-favorable band.
+
 ## Refreshing the snapshot
 
 Re-run step 1 to fetch a newer window (e.g. quarterly). This changes the

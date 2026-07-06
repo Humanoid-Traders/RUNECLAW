@@ -1,0 +1,79 @@
+{
+  "version": 1,
+  "timeframe": "1h",
+  "limit": 12000,
+  "created_at": "2026-07-06T07:06:20.822294+00:00",
+  "dataset_hash": "05074080c0a3efa71cee534af27f25811b8d1d5304ced45b41630d72c141049f",
+  "symbols": {
+    "ADA/USDT:USDT": {
+      "file": "ADA_USDT_USDT.csv.gz",
+      "bars": 11994,
+      "first": "2025-02-21T08:00:00+00:00",
+      "last": "2026-07-06T07:00:00+00:00",
+      "sha256": "f377e67293d14f73e95f888e77ab87ecd325b663e57f98509d0d3f07c4bf14e2"
+    },
+    "AVAX/USDT:USDT": {
+      "file": "AVAX_USDT_USDT.csv.gz",
+      "bars": 11994,
+      "first": "2025-02-21T08:00:00+00:00",
+      "last": "2026-07-06T07:00:00+00:00",
+      "sha256": "842c1382b664a3f23659835bf9c4de10aeb7dbf4f288b300064949b50574db26"
+    },
+    "BNB/USDT:USDT": {
+      "file": "BNB_USDT_USDT.csv.gz",
+      "bars": 11994,
+      "first": "2025-02-21T08:00:00+00:00",
+      "last": "2026-07-06T07:00:00+00:00",
+      "sha256": "0d7de4cd39ffd00c2b1e620095516947d1eb73414fc73d847cc4d28a15bfd9d0"
+    },
+    "BTC/USDT:USDT": {
+      "file": "BTC_USDT_USDT.csv.gz",
+      "bars": 11994,
+      "first": "2025-02-21T08:00:00+00:00",
+      "last": "2026-07-06T07:00:00+00:00",
+      "sha256": "63132d9d751a9cffd67e38dd55bc55782820cd73dd42e8537bdeca8ad6a51326"
+    },
+    "DOGE/USDT:USDT": {
+      "file": "DOGE_USDT_USDT.csv.gz",
+      "bars": 11994,
+      "first": "2025-02-21T08:00:00+00:00",
+      "last": "2026-07-06T07:00:00+00:00",
+      "sha256": "840b36f6227544a7e752e595a7d7c90c92605a5c16afca24eb8ca5973c242ea8"
+    },
+    "ETH/USDT:USDT": {
+      "file": "ETH_USDT_USDT.csv.gz",
+      "bars": 11994,
+      "first": "2025-02-21T08:00:00+00:00",
+      "last": "2026-07-06T07:00:00+00:00",
+      "sha256": "696934fa7e233ce447c0a826bb474d533a99ffcc2995d72577e25fe2a1dd56ae"
+    },
+    "LINK/USDT:USDT": {
+      "file": "LINK_USDT_USDT.csv.gz",
+      "bars": 11994,
+      "first": "2025-02-21T08:00:00+00:00",
+      "last": "2026-07-06T07:00:00+00:00",
+      "sha256": "6d94c670d5f1ac0ae50ff8fff82c6319daa02097965e77494fabbd09f23edfb7"
+    },
+    "LTC/USDT:USDT": {
+      "file": "LTC_USDT_USDT.csv.gz",
+      "bars": 11994,
+      "first": "2025-02-21T08:00:00+00:00",
+      "last": "2026-07-06T07:00:00+00:00",
+      "sha256": "af0618cc8a57bce09b782bfb11d774a789d70d9ad829395d00569b701bd7a0d2"
+    },
+    "SOL/USDT:USDT": {
+      "file": "SOL_USDT_USDT.csv.gz",
+      "bars": 11994,
+      "first": "2025-02-21T08:00:00+00:00",
+      "last": "2026-07-06T07:00:00+00:00",
+      "sha256": "cb1674c5f1f1a851b9fec4d89383a9341c6b30219fd287a21c0915748c56b843"
+    },
+    "XRP/USDT:USDT": {
+      "file": "XRP_USDT_USDT.csv.gz",
+      "bars": 11994,
+      "first": "2025-02-21T08:00:00+00:00",
+      "last": "2026-07-06T07:00:00+00:00",
+      "sha256": "0c84190eabf9bcd8ce268d25ee26a0de21b13387ab9ef973aa3d29ffbf438d20"
+    }
+  }
+}
