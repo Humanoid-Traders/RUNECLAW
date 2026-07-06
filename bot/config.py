@@ -1335,6 +1335,13 @@ class LimitOrderConfig:
     drift_market_fallback: bool = _env_bool("LIMIT_DRIFT_MARKET_FALLBACK", True)
     # Minimum ADX to consider momentum "strong enough" for market fallback
     drift_market_min_adx: float = _env_float("LIMIT_DRIFT_MARKET_MIN_ADX", 20.0)
+    # Model/route take-profits as MAKER (post-only limit) instead of taker market.
+    # Default OFF. In the backtest this charges the TP-exit leg at maker_fee_pct
+    # instead of commission_pct (quantifies the fee saving); the live executor
+    # wiring (resting reduce-only limit TPs) is a separate, carefully-scoped change
+    # — this flag alone does NOT alter live order placement. Entry legs and non-TP
+    # exits (SL/trailing/time) are unchanged. Byte-identical to today when OFF.
+    maker_take_profit_enabled: bool = _env_bool("MAKER_TAKE_PROFIT_ENABLED", False)
 
 
 @dataclass(frozen=True)

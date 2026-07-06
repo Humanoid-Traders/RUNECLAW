@@ -865,7 +865,15 @@ class BacktestEngine:
 
         size_usd = pos.entry_price * close_qty
         exit_notional = adjusted_exit * close_qty
-        commission = (size_usd + exit_notional) * (self.config.commission_pct / 100.0)
+        # Partial scale-outs ARE take-profits (the TP1/TP2 ladder). When maker
+        # take-profits are modelled, the EXIT leg posts as a maker limit
+        # (maker_fee_pct) instead of a taker market close (commission_pct); the
+        # entry leg and everything else are unchanged. OFF → byte-identical.
+        if CONFIG.limit_orders.maker_take_profit_enabled:
+            commission = (size_usd * (self.config.commission_pct / 100.0)
+                          + exit_notional * (CONFIG.risk.maker_fee_pct / 100.0))
+        else:
+            commission = (size_usd + exit_notional) * (self.config.commission_pct / 100.0)
         net_pnl = pnl - commission
         lev = getattr(pos, "leverage", 1) or 1
         margin = size_usd / lev
