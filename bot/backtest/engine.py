@@ -449,6 +449,11 @@ class BacktestEngine:
                   action="backtest_fill", result="REJECTED")
             return
 
+        # Re-entry cooldown: stamp the real fill so a same-symbol re-entry within
+        # REENTRY_COOLDOWN_SECONDS is throttled. Pass the bar time so the guard
+        # measures SIMULATED elapsed seconds. No-op when the flag is off.
+        self.risk.note_symbol_entry(idea.asset, as_of=bar.timestamp)
+
         # STRATEGY: trailing stop after 1R profit -- use shared utility
         initial_risk = abs(idea.entry_price - idea.stop_loss)
         # M2 fix: read sl_mult from config instead of hardcoding

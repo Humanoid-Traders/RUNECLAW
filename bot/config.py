@@ -300,6 +300,15 @@ class RiskLimits:
     fee_aware_min_multiple: float = _env_float_bounded("FEE_AWARE_MIN_MULTIPLE", 2.0, 1.0, 100.0)
     # Per-side slippage estimate (%) used in the round-trip cost (2× entry+exit).
     fee_aware_slippage_pct: float = _env_float_bounded("FEE_AWARE_SLIPPAGE_PCT", 0.05, 0.0, 100.0)
+    # Re-entry cooldown (opt-in, default OFF). The existing cooldown-after-loss
+    # (check #13) only fires after a LOSS; it does nothing to stop rapid
+    # re-entry churn on the SAME symbol after a win/flat close. Each such
+    # round-trip pays 2×(fee+slip). This throttles a fresh entry on a symbol
+    # within reentry_cooldown_seconds of the last REAL fill on that symbol,
+    # measured on the same simulated/live clock as the loss cooldown. Skips
+    # manual trades (deliberate). 0s or flag OFF = no-op (byte-identical).
+    reentry_cooldown_enabled: bool = _env_bool("REENTRY_COOLDOWN_ENABLED", False)
+    reentry_cooldown_seconds: float = _env_float_bounded("REENTRY_COOLDOWN_SECONDS", 0.0, 0.0, 604800.0)
     # Volatility guard: reject trades when ATR exceeds this % of price.
     # BTC hourly ATR is typically 1-4%; 7% allows for elevated-vol periods
     # while blocking extreme conditions.
