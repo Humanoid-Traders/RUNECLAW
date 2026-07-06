@@ -385,7 +385,16 @@ class RiskLimits:
     # Rolling window of most-recent CLOSED trades the governor scores.
     live_perf_window: int = int(_env_float_bounded("LIVE_PERF_WINDOW", 20, 2, 100000))
     # Minimum closed trades before the governor acts (below this → full size).
-    live_perf_min_samples: int = int(_env_float_bounded("LIVE_PERF_MIN_SAMPLES", 10, 1, 100000))
+    # Lowered 10→5 after Round-6 OOS A/B (docs/FROZEN_BENCHMARK.md): on the 2×-
+    # longer v2 window the governor was blind for the first 10 closes of every
+    # walk-forward fold, so the fold-3/4 drawdowns ran unchecked. At 5 the
+    # governor engages a fold sooner: combined v2 OOS −1.58%→−1.42% (PF 0.23→
+    # 0.25), and BYTE-IDENTICAL on the original in-sample window (+1.13%/PF 1.67
+    # unchanged) — a strict OOS improvement with zero in-sample cost. Tightening
+    # window/pause/reduce alongside it (min5+window10+pause35+reduce50) added no
+    # further OOS gain, so only this single, realized-outcome-driven parameter
+    # moved rather than an overfit 4-param combo.
+    live_perf_min_samples: int = int(_env_float_bounded("LIVE_PERF_MIN_SAMPLES", 5, 1, 100000))
     # Win rate at/below which the window counts as underperforming → reduce.
     live_perf_reduce_winrate: float = _env_float_bounded("LIVE_PERF_REDUCE_WINRATE", 0.40, 0.0, 1.0)
     # Win rate at/below which (AND net-negative) the governor pauses trading.

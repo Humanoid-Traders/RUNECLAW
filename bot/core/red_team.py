@@ -98,6 +98,22 @@ class RedTeamEngine:
         self._engine = risk_engine
         self._portfolio = portfolio
 
+    def _isolate_engine_state(self) -> None:
+        """Wipe cross-scenario state so a scenario testing ONE guard (e.g.
+        position-count) is not contaminated by earlier ones.
+
+        Scenarios share a single risk engine, so realized closes from prior
+        categories (flash-crash, correlated-selloff) accumulate in the live-
+        performance governor's rolling window. Once the governor's min-sample
+        floor is small enough, that history makes it pause trading here — a
+        false REJECTED on scenarios that expect APPROVED. Reset the breaker,
+        clear the governor window, and close any leftover positions.
+        """
+        self._engine.reset_circuit_breaker()
+        self._engine.reset_performance_window()
+        for pos in list(self._portfolio.open_positions):
+            self._portfolio.close_position(pos.trade_id, pos.entry_price)
+
     # -- placeholder: scenario generators --
     # SECTION: _generate_scenarios
     # SECTION: _run_scenario
@@ -599,13 +615,11 @@ class RedTeamEngine:
 
             def _pre_setup(idx=i, assets_list=assets) -> None:
                 """Ensure all positions before this index are open."""
-                # Reset risk engine state (prior circuit-breaker tests may have
-                # tripped it) -- we only care about position-count checks here.
+                # Reset risk engine state (prior tests may have tripped the
+                # breaker or seeded the governor window) -- we only care about
+                # position-count checks here.
                 if idx == 0:
-                    self._engine.reset_circuit_breaker()
-                    # Close any positions left from correlated-selloff tests
-                    for pos in list(self._portfolio.open_positions):
-                        self._portfolio.close_position(pos.trade_id, pos.entry_price)
+                    self._isolate_engine_state()
                 for j in range(idx):
                     a, p = assets_list[j]
                     if not any(pos.asset == a for pos in self._portfolio.open_positions):
@@ -645,9 +659,7 @@ class RedTeamEngine:
         future-dated timestamp (negative age silently passed the stale guard).
         """
         def _reset() -> None:
-            self._engine.reset_circuit_breaker()
-            for pos in list(self._portfolio.open_positions):
-                self._portfolio.close_position(pos.trade_id, pos.entry_price)
+            self._isolate_engine_state()
 
         return [
             {

@@ -661,6 +661,45 @@ structural signal change that earns expectancy in trendless/adverse regimes,
 or a regime-detector that stands the bot down when conditions leave its
 proven-favorable band.
 
+## Round 6 — the one governor knob that survives OOS (`LIVE_PERF_MIN_SAMPLES` 10→5, ENABLED)
+
+Before the structural work, one existing safety circuit was re-A/B'd against
+the adverse v2 window: the **live-performance governor**. It scores realized
+closed-trade win-rate/PnL over a rolling window and de-risks when the strategy
+is actually losing — but it is a **no-op below `live_perf_min_samples` closed
+trades** (fails open = full size). On the v2 walk-forward that warm-up is the
+problem: risk state effectively resets each fold, so at `min_samples=10` the
+governor was blind for the first 10 closes of **every** fold — long enough that
+the fold-3 −5.30% and fold-4 −0.72% drawdowns ran entirely unchecked.
+
+Lowering the floor to 5 lets it engage a fold sooner. A/B, `--honest
+--walk-forward 6`:
+
+| Config | v2 OOS combined | PF | Trades | Original in-sample |
+|---|---:|---:|---:|---:|
+| `min_samples=10` (old default) | −1.58% | 0.23 | 73 | +1.13% / PF 1.67 |
+| **`min_samples=5` (shipped)** | **−1.42%** | **0.25** | **69** | **+1.13% / PF 1.67 (byte-identical)** |
+| `min5`+`window10`+`pause0.35`+`reduce0.5` (full combo) | −1.42% | 0.25 | 69 | +1.18% / PF 1.72 |
+
+`min_samples=5` is a **strict OOS improvement at zero in-sample cost** — the
+original window is byte-identical because it never trips the earlier floor.
+Fold 4 flips positive (+0.26%) and the earlier folds shrink their losses; the
+fold-3 −5.30% still lands, because it is a **same-bar simultaneous
+multi-symbol** drawdown — every position opens and craters inside one fold
+before *any* trade closes, so a close-driven circuit cannot see it coming
+(neither can the equity-curve breaker, which needs 20 equity snapshots and was
+a measured no-op here). Tightening `window`/`pause`/`reduce` alongside it added
+in-sample PF but **zero** further OOS gain, so only the single, realized-
+outcome-driven parameter moved — not an overfit 4-param combo.
+
+This does not fix the regime problem (OOS is still deeply negative); it makes
+the existing backstop react one fold faster, which is a pure safety win given
+the regime-fragility above. **The fold-3 signature — correlated multi-symbol
+entries that all lose before the first close — is the concrete target for the
+structural next step: a regime/correlation stand-down that gates entries *up
+front*, since every lagging close/equity circuit is blind to it by
+construction.**
+
 ## Refreshing the snapshot
 
 Re-run step 1 to fetch a newer window (e.g. quarterly). This changes the

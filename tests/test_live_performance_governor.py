@@ -206,8 +206,42 @@ class TestGovernorIntegration:
 
     def test_cold_start_does_not_reject(self):
         eng = _make_engine()
-        eng._realized_pnl_window.extend([-100.0] * 5)  # below min_samples=10
+        eng._realized_pnl_window.extend([-100.0] * 4)  # below min_samples=5
         cfg = _CfgProxy(**_GOV_ON)
         with patch("bot.risk.risk_engine.CONFIG", cfg):
             rc = eng.evaluate(_make_idea(), atr=1.0)
         assert not any("LIVE_PERF_GOVERNOR" in f for f in rc.checks_failed)
+
+
+class TestGovernorShippedDefault:
+    """Round-6 ship: the governor warm-up floor was lowered 10→5 so it engages
+    a walk-forward fold sooner (docs/FROZEN_BENCHMARK.md). Pin the default so a
+    silent revert to 10 is caught."""
+
+    def test_min_samples_default_is_five(self):
+        assert REAL_CONFIG.risk.live_perf_min_samples == 5
+
+
+class TestResetPerformanceWindow:
+    """reset_performance_window() clears the governor's rolling realized-PnL
+    window without disturbing the circuit breaker — the hook the red-team
+    harness (and operators after a manual intervention) use to restart the
+    governor from a clean warm-up."""
+
+    def test_clears_window_but_not_breaker(self):
+        eng = _make_engine()
+        eng._realized_pnl_window.extend([-100.0] * 8)
+        eng._consecutive_losses = 3
+        eng._circuit_open = True
+        eng.reset_performance_window()
+        assert len(eng._realized_pnl_window) == 0
+        # Circuit-breaker state is deliberately untouched.
+        assert eng._consecutive_losses == 3
+        assert eng._circuit_open is True
+
+    def test_after_reset_governor_is_full_size_again(self):
+        eng = _make_engine()
+        eng._realized_pnl_window.extend([-100.0] * 8)  # governor would de-risk
+        eng.reset_performance_window()
+        # Empty window is below any min-sample floor → fails open to full size.
+        assert eng.live_performance_size_multiplier == 1.0

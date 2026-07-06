@@ -2444,6 +2444,19 @@ class RiskEngine:
                   action="circuit_breaker", result="RESET")
             self._save_state()
 
+    def reset_performance_window(self) -> None:
+        """Clear the live-performance governor's rolling realized-PnL window.
+
+        The governor de-risks off recent CLOSED-trade outcomes; that window is
+        deliberately lagging. After a manual intervention or a config change
+        that invalidates the recent history (or in the red-team harness, to
+        isolate one scenario from another's closes), an operator can wipe it so
+        the governor restarts from a clean warm-up instead of penalising future
+        trades for a superseded losing streak. Does not touch the circuit
+        breaker or consecutive-loss counter."""
+        with self._lock:
+            self._realized_pnl_window.clear()
+
     def drawdown_status(self) -> dict:
         """Read-only snapshot for operator control: current drawdown %, the
         effective live/paper max-drawdown limit in force, and whether a runtime
