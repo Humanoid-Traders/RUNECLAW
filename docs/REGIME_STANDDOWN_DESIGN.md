@@ -250,3 +250,28 @@ drawdown**. So the naïve correctness fix is net-negative for risk.
 All caveats stand: <15 trades per run, single period — directional, not
 conclusive. The dense benchmark is committed so this is reproducible and the
 revised Phase 2 can be measured rather than assumed.
+
+### 9.4 Revised Phase 2 measured — hypothesis falsified, keep everything OFF
+
+Built the global same-direction correlated cap (`max_correlated_same_dir_positions`,
+gated, paired with the mapping) and swept it on `corr_dense_1h`:
+
+| config | Max DD | Return | PF | Calmar | Win |
+|---|---|---|---|---|---|
+| **pooled (current live)** | **1.49%** | **+1.40%** | **1.87** | **0.94** | 40% |
+| per-group mapping only | 3.11% | +1.53% | 1.83 | 0.49 | 57% |
+| mapping + same-dir cap 3 | 2.25% | +0.46% | 1.25 | 0.20 | 44% |
+| mapping + same-dir cap 2 | 1.85% | −1.73% | 0.19 | −0.94 | 14% |
+
+The global cap *does* pull drawdown back down from per-group's 3.11%, but at a
+return cost that worsens every risk-adjusted metric; the tightest cap (2)
+over-blocks into outright negative. **The current pooled behaviour is the best
+correlation control of the lot** — best PF, best Calmar, best return.
+
+**Final Round 7 disposition: keep the entire correlation bundle OFF by default.**
+The pooling the mapping bug produces is empirically near-optimal for this
+strategy/universe. The mapping fix, the forward-looking cap, and the global
+same-direction cap are all shipped as correct, tested, *opt-in* controls (default
+OFF) — useful on a different universe or with re-tuned limits, but not a proven
+default flip here. The hypothesis that "correct/tighter correlation control
+improves risk-adjusted return" is falsified on this benchmark.

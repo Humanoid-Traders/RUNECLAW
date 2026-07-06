@@ -453,6 +453,11 @@ defaults:
     env_var: CORRELATION_PERP_GROUP_MAPPING_ENABLED
     description: "Round 7: strip the ccxt ':SETTLE' suffix so perp symbols map to their real correlation group (ALT_L1/MEME/DEFI) instead of pooling into one unmapped bucket. Default OFF — correct per-group caps loosen aggregate exposure and raised drawdown on the dense A/B; enable only with a global correlated cap."
 
+  max_correlated_same_dir_positions:
+    value: 0
+    env_var: MAX_CORRELATED_SAME_DIR_POSITIONS
+    description: "Round 7 revised Phase 2: cap on concurrent SAME-DIRECTION positions across all correlated groups (open + pending intents). Restores an aggregate exposure bound when per-group mapping is enabled. 0 = disabled (default); only active with correlation_perp_group_mapping_enabled."
+
   volatility_guard_atr_pct:
     value: 7.0
     env_var: VOLATILITY_GUARD_ATR_PCT
