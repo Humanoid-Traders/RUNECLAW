@@ -1061,6 +1061,31 @@ class RiskEngine:
             except Exception as exc:
                 failed.append(f"RISK_REWARD: evaluation error ({exc})")
 
+        # Fee-aware entry gate (opt-in, default OFF). min-RR is a ratio and can
+        # pass a tight-stop trade whose absolute TP distance barely clears fees.
+        # Reject unless reward-to-TP >= fee_aware_min_multiple × round-trip cost
+        # (entry+exit fees + entry+exit slippage). Skips manual trades. Fail-open.
+        if CONFIG.risk.fee_aware_entry_gate_enabled and not is_manual:
+            try:
+                entry_px = float(idea.entry_price)
+                tp_px = float(idea.take_profit)
+                if entry_px > 0 and tp_px > 0:
+                    reward_pct = abs(tp_px - entry_px) / entry_px
+                    taker = CONFIG.risk.taker_fee_pct / 100.0
+                    slip = CONFIG.risk.fee_aware_slippage_pct / 100.0
+                    round_trip = 2.0 * taker + 2.0 * slip
+                    k = float(CONFIG.risk.fee_aware_min_multiple)
+                    if reward_pct < k * round_trip:
+                        failed.append(
+                            f"FEE_AWARE: TP {reward_pct*100:.2f}% < {k:.1f}x round-trip "
+                            f"cost {round_trip*100:.2f}% (fees+slippage) — fee-losing edge")
+                    else:
+                        passed.append(
+                            f"FEE_AWARE: TP {reward_pct*100:.2f}% clears {k:.1f}x cost "
+                            f"{round_trip*100:.2f}% OK")
+            except Exception as exc:
+                passed.append(f"FEE_AWARE: skipped (eval error {exc})")
+
         try:
             # 6b. Leverage-aware margin risk cap
             # SL distance % × leverage must not exceed max_margin_risk_pct

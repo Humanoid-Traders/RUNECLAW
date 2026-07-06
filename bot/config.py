@@ -290,6 +290,16 @@ class RiskLimits:
     # restoring the aggregate bound while keeping correct per-group attribution.
     # Only active when the perp mapping is enabled. 0 = disabled (default).
     max_correlated_same_dir_positions: int = int(_env_float_bounded("MAX_CORRELATED_SAME_DIR_POSITIONS", 0, 0, 100))
+    # Fee-aware entry gate (opt-in, default OFF). The min-RR gate is a RATIO — it
+    # can pass a tight-stop scalp whose absolute take-profit distance barely
+    # exceeds round-trip cost. This rejects an entry unless the reward to the TP
+    # clears (round-trip fees + slippage) by fee_aware_min_multiple. Kills
+    # fee-losing trades directly. Skips manual trades (operator chose the levels).
+    fee_aware_entry_gate_enabled: bool = _env_bool("FEE_AWARE_ENTRY_GATE_ENABLED", False)
+    # Safety multiple: the TP reward must be at least this × the round-trip cost.
+    fee_aware_min_multiple: float = _env_float_bounded("FEE_AWARE_MIN_MULTIPLE", 2.0, 1.0, 100.0)
+    # Per-side slippage estimate (%) used in the round-trip cost (2× entry+exit).
+    fee_aware_slippage_pct: float = _env_float_bounded("FEE_AWARE_SLIPPAGE_PCT", 0.05, 0.0, 100.0)
     # Volatility guard: reject trades when ATR exceeds this % of price.
     # BTC hourly ATR is typically 1-4%; 7% allows for elevated-vol periods
     # while blocking extreme conditions.
