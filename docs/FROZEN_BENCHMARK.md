@@ -473,6 +473,59 @@ floor_enabled` stays default OFF (the lever exists, gated, for anyone who
 wants to re-test it against a future snapshot, but should not be flipped on
 based on this evidence).
 
+## Volatility-guard tightening — REFUTED (keep 7.0)
+
+Round 4's first item tested whether tightening `VOLATILITY_GUARD_ATR_PCT`
+(default 7.0 — risk-engine check #16 hard-rejects entries whose ATR% exceeds
+it; meme-classified symbols like DOGE/PEPE/FLOKI/WIF stay floored at 10%
+regardless) prunes structurally-worse high-volatility entries.
+
+**Majors-only: the guard never binds at all.** 5.0/5.5/6.0/6.5/7.0 all
+byte-identical (+0.67%, PF 1.43) — no major's 1h ATR reaches even 5% at any
+entry in this window.
+
+**Combined majors+alts:**
+
+| VOLATILITY_GUARD_ATR_PCT | Mean OOS | PF | Trades | Worst fold |
+|---|---:|---:|---:|---:|
+| 7.0 (default) / 6.5 / 6.0 / 5.5 | +1.13% | 1.67 | 126 | -1.54% |
+| 5.0 | +1.22% | 1.71 | 135 | -1.95% |
+| 4.5 | +0.88% | 1.46 | 139 | -2.33% |
+
+5.0's outperformance is an isolated knife-edge point: 5.5 is a no-op and 4.5
+is clearly worse, so the "improvement" comes from blocking a handful of
+trades in the 5.0-5.5% ATR band that happened to lose on this window — the
+overfit signature (same as the TREND_UP 0.75-0.79 discontinuity, not chased
+then either). More damningly, worst-fold drawdown *monotonically degrades*
+as the guard tightens (-1.54% → -1.95% → -2.33%), the opposite of the
+risk-reduction hypothesis — blocked high-vol entries get replaced (via
+position-slot competition, trade count *rises* 126→135→139) by trades with
+worse tail behavior. **Not shipped; default stays 7.0.**
+
+## Per-symbol loss-streak cooldown — fidelity layer added; unmeasurable here
+
+Round 4's second item planned to sweep `SYMBOL_LOSS_STREAK_THRESHOLD` (3) /
+`SYMBOL_LOSS_STREAK_COOLDOWN_SEC` (12h) — live's per-symbol bench for repeat
+losers. Investigation first: the mechanism lives only in the LIVE engine
+(`bot/core/engine.py` close hook, wall-clock based) — the backtest never
+modeled it, so sweeping the env vars against the benchmark would have been
+another dead-knob no-op (the same trap as the trailing-stop stage knobs).
+
+Fixed the fidelity gap instead: `BACKTEST_SYMBOL_LOSS_STREAK` (default OFF,
+enabled under `--honest` like partial-TP/time-stop) gives the backtest engine
+the same state machine, bar-time based — +1 per losing position (total
+realized PnL incl. banked partial-TP legs), decay −1 per winner, at threshold
+arm the cooldown and reset.
+
+**Result: byte-identical on both benchmarks, zero cooldowns armed.** With
+~126 trades across 22 symbols and 6 folds (~1 trade per symbol-fold) and
+streak state living within a fold, no symbol ever strings 3 consecutive
+losses inside one fold window. So the threshold/cooldown sweep is
+unmeasurable on this data — parked until a longer-window snapshot exists.
+The fidelity layer ships anyway (parity-by-construction: it engages
+automatically if folds lengthen or losing clusters appear, and it prevents a
+future "sweep" of these env vars from silently measuring nothing).
+
 ## Refreshing the snapshot
 
 Re-run step 1 to fetch a newer window (e.g. quarterly). This changes the
