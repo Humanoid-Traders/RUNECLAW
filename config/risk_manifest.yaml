@@ -458,6 +458,21 @@ defaults:
     env_var: MAX_CORRELATED_SAME_DIR_POSITIONS
     description: "Round 7 revised Phase 2: cap on concurrent SAME-DIRECTION positions across all correlated groups (open + pending intents). Restores an aggregate exposure bound when per-group mapping is enabled. 0 = disabled (default); only active with correlation_perp_group_mapping_enabled."
 
+  fee_aware_entry_gate_enabled:
+    value: false
+    env_var: FEE_AWARE_ENTRY_GATE_ENABLED
+    description: "Reject an entry unless reward-to-TP >= fee_aware_min_multiple x round-trip cost (fees + slippage). Complements min-RR (a ratio) by enforcing an ABSOLUTE fee-clearing edge. Default OFF pending A/B; skips manual trades."
+
+  fee_aware_min_multiple:
+    value: 2.0
+    env_var: FEE_AWARE_MIN_MULTIPLE
+    description: "Safety multiple for the fee-aware entry gate: TP reward must be at least this x the round-trip cost."
+
+  fee_aware_slippage_pct:
+    value: 0.05
+    env_var: FEE_AWARE_SLIPPAGE_PCT
+    description: "Per-side slippage estimate (%) used in the fee-aware gate's round-trip cost (2x entry + exit)."
+
   volatility_guard_atr_pct:
     value: 7.0
     env_var: VOLATILITY_GUARD_ATR_PCT
