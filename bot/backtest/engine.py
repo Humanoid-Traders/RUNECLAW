@@ -402,6 +402,12 @@ class BacktestEngine:
                   action="backtest_risk", result="REJECTED")
             return
 
+        # Round 7 Phase 1: register the approved entry as a pending intent so a
+        # later same-bar correlated idea (next symbol in portfolio mode) sees it
+        # and the per-group cap binds forward-looking. Cleared in _execute_fill.
+        # No-op when the flag is off.
+        self.risk.register_pending_intent(idea)
+
         # 5. Execute (no human confirmation in backtest). With
         # fill_mode="next_open" (audit fix #15) the approved idea is queued and
         # filled at the NEXT bar's open instead of this bar's close.
@@ -413,6 +419,11 @@ class BacktestEngine:
     def _execute_fill(self, idea, risk_check, fill_price: float, bar) -> None:
         """Open the position at ``fill_price`` (bar close in legacy mode, next
         bar's open in next_open mode) with slippage/commission applied."""
+        # Round 7 Phase 1: the intent's job ends the moment we attempt the fill —
+        # it either becomes a real OPEN position (counted directly) or is rejected
+        # (nothing). Clear it here either way so it isn't double-counted. No-op
+        # when the flag is off / id absent.
+        self.risk.clear_pending_intent(idea.id)
         size_usd = risk_check.position_size_usd
 
         # Apply entry slippage BEFORE opening portfolio position so the

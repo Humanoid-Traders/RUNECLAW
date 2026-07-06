@@ -256,6 +256,21 @@ class RiskLimits:
     # into ONE shared "unmapped alt" bucket with its own, more generous cap
     # (unmapped symbols aren't all mutually correlated). Set high to disable.
     max_unmapped_correlated: int = int(_env_float_bounded("MAX_UNMAPPED_CORRELATED", 3, 1, 100))
+    # Round 7 Phase 1: make the per-group correlation cap FORWARD-LOOKING. The cap
+    # counts only already-OPEN positions, so a correlated cluster that all signal
+    # on the same bar each see zero open group members and all pass — silently
+    # bypassing max_correlation_per_group exactly when correlation risk is highest
+    # (a synchronized, market-wide move). When enabled, the risk engine also counts
+    # APPROVED-but-not-yet-filled intents (registered by the caller between risk
+    # approval and fill), so the Nth correlated same-bar entry is blocked. Default
+    # OFF pending A/B validation on the frozen benchmarks.
+    correlation_forward_intents_enabled: bool = _env_bool("CORRELATION_FORWARD_INTENTS_ENABLED", False)
+    # Safety TTL for a pending intent (seconds; sim-time in backtest via
+    # set_sim_time, wall-time live). Explicit clear on fill/cancel is primary —
+    # this only backstops a leaked intent (e.g. an exception between register and
+    # fill) so the ledger can never latch the cap. Generous so it never prunes a
+    # legitimately-pending next-bar fill.
+    correlation_intent_ttl_sec: float = _env_float_bounded("CORRELATION_INTENT_TTL_SEC", 7200.0, 1.0, 604800.0)
     # Volatility guard: reject trades when ATR exceeds this % of price.
     # BTC hourly ATR is typically 1-4%; 7% allows for elevated-vol periods
     # while blocking extreme conditions.
