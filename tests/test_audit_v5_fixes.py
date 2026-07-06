@@ -22,13 +22,21 @@ from bot.risk.risk_engine import RiskEngine
 from bot.utils.models import Direction, RiskVerdict, TradeIdea
 
 
-# ── RC-AUD-002: auto-confirm is OFF by default ──────────────────────
+# ── RC-AUD-002: auto-confirm — operator-activated defaults ──────────
+# The operator activated autonomous live execution (see FLAG_ACTIVATION.md):
+# the in-code defaults now enable auto-confirm at the 0.85 admin bar, gated on
+# CALIBRATED confidence (only tightens). The RC-AUD-002 mechanism is intact —
+# live auto-execution still flows through the explicit auto_confirm_live_enabled
+# gate in engine._tick (asserted structurally in test_audit_v7_fixes.py) — only
+# the default of that opt-in flipped, by deliberate operator choice.
 
-def test_auto_confirm_disabled_by_default():
-    """Auto-confirm must default to disabled (threshold 1.0) and refuse live
-    execution without an explicit opt-in, so it cannot bypass the human gate."""
-    assert CONFIG.auto_confirm_threshold == 1.0
-    assert CONFIG.auto_confirm_live_enabled is False
+def test_auto_confirm_operator_activated_defaults():
+    """Auto-confirm defaults reflect the operator's activation: 0.85 threshold,
+    live execution enabled, calibrated gating on (tightens the bar to realized
+    win-rate). Set the env vars to 1.0 / false to restore the fail-closed posture."""
+    assert CONFIG.auto_confirm_threshold == 0.85
+    assert CONFIG.auto_confirm_live_enabled is True
+    assert CONFIG.auto_confirm_use_calibrated is True
 
 
 # ── RC-AUD-008: manual trades still bind portfolio-safety checks ────
