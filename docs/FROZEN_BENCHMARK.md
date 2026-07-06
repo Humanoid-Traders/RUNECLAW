@@ -562,6 +562,32 @@ Three structural findings:
 Nothing shipped except the env plumbing — the defaults are confirmed where
 they should be.
 
+## Confidence-blend weights — unmeasurable on the benchmark (by construction)
+
+Round 4's last item swept `LLM_BLEND_WEIGHT`/`CONFLUENCE_BLEND_WEIGHT`
+(default 0.6/0.4). All four configurations tested (0.4/0.6, 0.5/0.5,
+0.6/0.4, 0.7/0.3) were **byte-identical** on the combined benchmark.
+
+Structural reason, not a sparse-data accident: backtests force
+`confidence_calibration_enabled` OFF (engine ctor, for reproducibility), and
+with calibration off the `uncalibrated_llm_weight_cap` (0.4) clamps the LLM
+weight and shifts the remainder to confluence — so every blend with
+llm_weight ≥ 0.4 collapses to an effective 0.4/0.6, and 0.4/0.6 is that same
+point. The knob genuinely matters only live, once a fitted calibration curve
+exists; the frozen benchmark cannot see it. Defaults unchanged.
+
+## Round 4 wrap-up — the sweepable parameter surface is exhausted
+
+Round 4's meta-finding, across all four items: the easily-sweepable knobs are
+done. Defaults are at or near their local optima (swing SL 2.5, vol-guard
+7.0, `MIN_CONFIDENCE` 0.60, TREND_UP sizing 0.7x), and every remaining knob
+tested is either dead under the honest exit model (swing TP, multi-stage
+trail stages), unmeasurable on fold-sized windows (loss-streak cooldown), or
+structurally inert in backtest mode (blend weights). Further expectancy gains
+need structural work, not parameter tuning: a longer/fresher snapshot (which
+also unlocks the parked sweeps), live-parity feedback from production
+`closed_trades.json`, or new capability (e.g. the Hyperliquid plan).
+
 ## Refreshing the snapshot
 
 Re-run step 1 to fetch a newer window (e.g. quarterly). This changes the
