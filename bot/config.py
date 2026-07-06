@@ -1539,25 +1539,25 @@ class AppConfig:
 
     # -- Auto-confirmation --
     # Signals with blended confidence >= this threshold auto-execute without
-    # waiting for a human button press. Default 1.0 = DISABLED (require manual
-    # confirm for all trades). Range: 0.0–1.0.
-    # SECURITY (RC-AUD-002): auto-confirm bypasses the human-decision gate, so it
-    # is OFF by default. Lowering the threshold permits PAPER auto-execution only;
-    # placing LIVE orders with no human press additionally requires the explicit
-    # AUTO_CONFIRM_LIVE_ENABLED opt-in below (fail-closed).
-    auto_confirm_threshold: float = _env_float("AUTO_CONFIRM_THRESHOLD", 1.0)
+    # waiting for a human button press. OPERATOR-ACTIVATED default 0.85 (the admin
+    # auto-trade bar); set to 1.0 to DISABLE and require manual confirm. Range: 0-1.
+    # SECURITY (RC-AUD-002): auto-confirm bypasses the human-decision gate. The
+    # live-execution path is still fail-closed behind AUTO_CONFIRM_LIVE_ENABLED
+    # below; set that to 0 (or threshold to 1.0) to restore manual confirmation.
+    auto_confirm_threshold: float = _env_float("AUTO_CONFIRM_THRESHOLD", 0.85)
     # Allow auto-confirm to place LIVE (real-money) orders with no human press.
-    # Even with a low threshold, auto-confirm cannot trade live unless this is set.
-    auto_confirm_live_enabled: bool = _env_bool("AUTO_CONFIRM_LIVE_ENABLED", False)
-    # Gate auto-confirm on CALIBRATED confidence (opt-in, default OFF). When ON
-    # AND a fitted confidence calibrator exists, the auto-confirm threshold is
-    # tested against min(raw, calibrated) confidence — so a real-money auto-trade
+    # OPERATOR-ACTIVATED default ON. Set AUTO_CONFIRM_LIVE_ENABLED=0 to require a
+    # human tap for every live trade (the fail-closed posture).
+    auto_confirm_live_enabled: bool = _env_bool("AUTO_CONFIRM_LIVE_ENABLED", True)
+    # Gate auto-confirm on CALIBRATED confidence (OPERATOR-ACTIVATED default ON).
+    # When ON AND a fitted confidence calibrator exists, the auto-confirm threshold
+    # is tested against min(raw, calibrated) confidence — so a real-money auto-trade
     # requires BOTH the raw blend AND the measured (calibrated) win-rate to clear
     # the bar. This can only TIGHTEN auto-confirm, never loosen it: with no
     # calibration data the calibrator is identity, so it is a no-op until evidence
     # shows the raw confidence is over-optimistic. Makes the 0.85 admin auto-trade
     # mean "~85% realized win rate", not a raw LLM+voter blend.
-    auto_confirm_use_calibrated: bool = _env_bool("AUTO_CONFIRM_USE_CALIBRATED", False)
+    auto_confirm_use_calibrated: bool = _env_bool("AUTO_CONFIRM_USE_CALIBRATED", True)
     # TTL for pending ideas in seconds (default 300 = 5 min)
     pending_idea_ttl: int = int(_env_float("PENDING_IDEA_TTL", 300))
 

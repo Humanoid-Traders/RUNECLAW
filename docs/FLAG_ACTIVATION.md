@@ -144,3 +144,34 @@ python -m bot.backtest.runner --use-recorded-order-flow --walk-forward 5  # also
 
 *This file is the human-readable companion to the `/flags` command, which reads
 the same effective configuration.*
+
+---
+
+## 8. Autonomous live execution — ✅ operator-activated (2026-07)
+
+The operator enabled hands-off live trading. In-code defaults now:
+
+```dotenv
+AUTO_CONFIRM_THRESHOLD=0.85        # auto-execute signals at/above the 0.85 admin bar
+AUTO_CONFIRM_LIVE_ENABLED=1        # allow real-money auto-execution (no human tap)
+AUTO_CONFIRM_USE_CALIBRATED=1      # gate the 0.85 on CALIBRATED confidence (only tightens)
+```
+
+The extra protective breakers (`EQUITY_CURVE_BREAKER_ENABLED`,
+`DRAWDOWN_RECOVERY_ENABLED`) were considered but left **OFF**: they are unproven
+and too conservative for auto-trading (drawdown-recovery imposes a 0.85
+confidence floor whenever the account is even slightly underwater, blocking
+legitimate entries — it fails the red-team position-flood scenarios). Enable them
+in `.env` only if you specifically want that behaviour.
+
+**Security note:** the RC-AUD-002 live gate is unchanged — real-money auto-execution
+still flows through the explicit `auto_confirm_live_enabled` check in
+`engine._tick`; only its default flipped, by deliberate operator choice. To
+return to fail-closed (manual confirmation), set `AUTO_CONFIRM_LIVE_ENABLED=0`
+(or `AUTO_CONFIRM_THRESHOLD=1.0`) in `.env` and restart.
+
+**Bounded by:** the calibrated 0.85 bar, per-strategy risk sizing, daily-loss +
+max-drawdown circuit breakers, the volatility guard, correlation caps, and
+loss-streak cooldown already in force. These bound downside; they do not create
+edge — OOS validation (#221) found the benchmark edge regime-specific, so monitor
+live P&L and disable if it bleeds.
