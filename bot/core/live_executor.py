@@ -2013,7 +2013,14 @@ class LiveExecutor:
                 else:
                     audit(trade_log, "Order blocked: system degraded (paused)",
                           action="execute", result="DEGRADED")
-                    return "EXECUTION BLOCKED: system is in degraded mode (paused) — WebSocket disconnected"
+                    return (
+                        "EXECUTION BLOCKED: real-time price feed disconnected "
+                        "(degraded mode, paused) — market orders are held so none "
+                        "fires into a stale price. This auto-resumes once the feed "
+                        "reconnects (usually within ~60s). To trade right now, "
+                        "resend as a LIMIT order — limit orders don't need the live "
+                        "feed and are not blocked."
+                    )
             if deg_mode == "reduce_only":
                 # Only allow closing positions, not opening new ones
                 audit(trade_log, "Order blocked: reduce-only mode",

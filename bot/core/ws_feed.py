@@ -379,6 +379,13 @@ class BitgetWSFeed:
             # timeout is 0). If the feed goes silent it closes the socket, which
             # ends the read loop below and triggers a reconnect + resubscribe.
             watchdog = asyncio.create_task(self._idle_watchdog())
+            # App-level heartbeat: Bitget's v3 server expects a client-originated
+            # "ping" and can drop an otherwise-idle connection without it. The
+            # transport ping (ping_interval above) demonstrably keeps the link up
+            # on its own, but sending Bitget's documented text "ping" too is
+            # belt-and-suspenders for flakier links — and completes the pong
+            # handler in _handle_message, which previously had no ping to answer.
+            keepalive = asyncio.create_task(self._keepalive())
             try:
                 # Message read loop
                 async for raw in ws:
@@ -396,10 +403,32 @@ class BitgetWSFeed:
                         )
             finally:
                 watchdog.cancel()
-                try:
-                    await watchdog
-                except (asyncio.CancelledError, Exception):
-                    pass
+                keepalive.cancel()
+                for _t in (watchdog, keepalive):
+                    try:
+                        await _t
+                    except (asyncio.CancelledError, Exception):
+                        pass
+
+    async def _keepalive(self) -> None:
+        """Send Bitget's app-level heartbeat (the literal text ``"ping"``) every
+        PING_INTERVAL_S. Bitget replies ``"pong"`` (consumed in
+        ``_handle_message``); some endpoints drop an idle-looking socket without
+        this even while the transport-level ping keeps it technically open.
+        Fail-quiet: a send error just returns — the read loop surfaces the dead
+        socket and the outer loop reconnects."""
+        while self._connected and not self._stop_event.is_set():
+            try:
+                await asyncio.wait_for(self._stop_event.wait(), timeout=PING_INTERVAL_S)
+                return  # stop requested during the wait
+            except asyncio.TimeoutError:
+                pass
+            if self._ws is None:
+                return
+            try:
+                await self._ws.send("ping")
+            except Exception:
+                return
 
     # ------------------------------------------------------------------
     # Internal: subscribe / unsubscribe helpers

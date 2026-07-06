@@ -66,7 +66,11 @@ def _make_update_and_context(result_text):
 async def test_degraded_mode_block_is_not_announced_as_executed(monkeypatch):
     monkeypatch.setattr(np, "array", np.array)  # sanity no-op, keeps numpy real
     update, context = _make_update_and_context(
-        "EXECUTION BLOCKED: system is in degraded mode (paused) — WebSocket disconnected"
+        "EXECUTION BLOCKED: real-time price feed disconnected (degraded mode, "
+        "paused) — market orders are held so none fires into a stale price. This "
+        "auto-resumes once the feed reconnects (usually within ~60s). To trade "
+        "right now, resend as a LIMIT order — limit orders don't need the live "
+        "feed and are not blocked."
     )
 
     await scan_skill.callback_confirm_reject(update, context)
