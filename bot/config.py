@@ -808,8 +808,11 @@ class AnalyzerConfig:
     # Volatility-adaptive SL/TP overrides (audit C8: externalized from analyzer.py)
     high_vol_threshold: float = 0.03    # ATR/price above this = high volatility
     low_vol_threshold: float = 0.01     # ATR/price below this = low volatility
-    high_vol_sl_mult: float = 3.0       # wider stops in high vol
-    high_vol_tp_mult: float = 3.8       # was 4.5 -- tightened for reachable TPs
+    # Env-tunable so the high-vol widening can be A/B'd against the frozen
+    # benchmark (round 4: the global swing-SL sweep showed 3.0 worse than 2.5,
+    # raising the question whether this override's widening helps or hurts).
+    high_vol_sl_mult: float = _env_float("HIGH_VOL_SL_MULT", 3.0)
+    high_vol_tp_mult: float = _env_float("HIGH_VOL_TP_MULT", 3.8)
     low_vol_sl_mult: float = 2.0        # tighter stops in low vol
     low_vol_tp_mult: float = 3.0        # R:R = 1.5
     # Minimum stop-distance floor (safety). An ATR-derived stop can fall below a
