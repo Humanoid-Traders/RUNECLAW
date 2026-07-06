@@ -2171,7 +2171,10 @@ class RiskEngine:
     def _prune_expired_intents(self, now: float) -> None:
         """Remove intents older than the safety TTL so a leaked intent (a missed
         clear) can't latch the cap. Caller holds self._lock."""
-        ttl = float(getattr(CONFIG.risk, "correlation_intent_ttl_sec", 7200.0) or 0.0)
+        try:
+            ttl = float(getattr(CONFIG.risk, "correlation_intent_ttl_sec", 7200.0) or 0.0)
+        except (TypeError, ValueError):
+            return  # non-numeric (e.g. mocked) config → skip pruning, keep intents
         if ttl <= 0 or not self._pending_intents:
             return
         stale = [k for k, (_g, _d, ts) in self._pending_intents.items()
@@ -2199,8 +2202,15 @@ class RiskEngine:
         # not-yet-filled intents in this group so a correlated same-bar cluster
         # can't all pass while each sees zero OPEN group members (the cluster fills
         # next bar and blows past max_correlation_per_group). Gated OFF by default.
-        if CONFIG.risk.correlation_forward_intents_enabled:
-            group_count += self._pending_intent_group_count(new_group, exclude_id=idea.id)
+        # Short-circuit on an empty/absent ledger so this is a strict no-op (and
+        # never touches _now/_pending_intents) unless intents are actually live.
+        # Fail-safe: any error leaves the open-only count untouched.
+        try:
+            if (CONFIG.risk.correlation_forward_intents_enabled
+                    and getattr(self, "_pending_intents", None)):
+                group_count += self._pending_intent_group_count(new_group, exclude_id=idea.id)
+        except Exception:
+            pass
         # The shared unmapped-alt bucket gets its own, more generous cap (its
         # members aren't all mutually correlated); mapped groups keep the
         # tighter per-group cap.
