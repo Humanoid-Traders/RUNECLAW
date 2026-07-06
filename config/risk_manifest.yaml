@@ -640,11 +640,14 @@ defaults:
       scores for win rate and net PnL.
 
   live_perf_min_samples:
-    value: 10
+    value: 5
     env_var: LIVE_PERF_MIN_SAMPLES
     description: >
       Minimum closed trades before the governor acts. Below this the window is
-      too small to judge, so the governor is a no-op (full size).
+      too small to judge, so the governor is a no-op (full size). Lowered 10→5
+      after Round-6 OOS A/B (docs/FROZEN_BENCHMARK.md): engaging a fold sooner
+      improved combined v2 OOS −1.58%→−1.42% (PF 0.23→0.25) with a byte-
+      identical original in-sample window.
 
   live_perf_reduce_winrate:
     value: 0.40
