@@ -526,6 +526,42 @@ The fidelity layer ships anyway (parity-by-construction: it engages
 automatically if folds lengthen or losing clusters appear, and it prevents a
 future "sweep" of these env vars from silently measuring nothing).
 
+## SL/TP geometry (per-type ATR mults + high-vol overrides) — defaults confirmed optimal
+
+Round 4's third item swept the largest untouched surface: the per-strategy-
+type SL/TP ATR multipliers (swing dominates — ~110 of 126 combined-universe
+trades) and the volatility-adaptive overrides. Combined universe,
+`--honest --walk-forward 6`:
+
+| Config | Mean OOS | PF | Net |
+|---|---:|---:|---:|
+| Baseline (swing SL 2.5 / TP 3.5) | +1.13% | 1.67 | +$677 |
+| SWING_TP_ATR_MULT 3.0 or 4.0 | **byte-identical** | 1.67 | +$677 |
+| SWING_SL_ATR_MULT 2.0 | +1.10% | 1.65 | +$661 |
+| SWING_SL_ATR_MULT 3.0 | +1.05% | 1.62 | +$631 |
+| HIGH_VOL_SL_MULT 2.5 or 2.0 | **byte-identical** | 1.67 | +$677 |
+
+Three structural findings:
+
+1. **The swing TP multiplier is a dead knob under the honest exit model.**
+   The partial-TP ladder (1.5R / 2.5R / runner-trail) governs every exit, so
+   the analyzer's nominal TP price never fires. (It still feeds the entry-
+   time risk-reward check, but 3.0/2.5 = 1.2 R:R still passes the 1.2 floor,
+   so no entries changed either.)
+2. **The swing SL multiplier matters (it defines 1R for the ladder and the
+   fixed-fractional sizing) and the default 2.5 is already the local
+   optimum** — both 2.0 (stopped out more) and 3.0 (worse dollars-per-unit-
+   risk) lose money vs 2.5.
+3. **The high-vol SL/TP overrides never bind on this benchmark** — no entry
+   carries ATR/price > 3% at signal time (consistent with the vol-guard
+   finding above). They also apply as `max(per-type, override)`, so they can
+   only widen, never tighten. Made them env-tunable (`HIGH_VOL_SL_MULT`,
+   `HIGH_VOL_TP_MULT`) so a future higher-vol snapshot can sweep them
+   without a code change.
+
+Nothing shipped except the env plumbing — the defaults are confirmed where
+they should be.
+
 ## Refreshing the snapshot
 
 Re-run step 1 to fetch a newer window (e.g. quarterly). This changes the
