@@ -483,6 +483,11 @@ defaults:
     env_var: REENTRY_COOLDOWN_SECONDS
     description: "Seconds to block same-symbol re-entry after the last fill on that symbol. 0 or flag OFF = no-op."
 
+  mtf_alignment_gate_enabled:
+    value: false
+    env_var: MTF_ALIGNMENT_GATE_ENABLED
+    description: "Reject counter-trend entries using the analyzer's higher-timeframe trend (EMA20/50 across 1h/4h/1d, daily-weighted, carried on idea.htf_trend): LONG blocked when HTF bearish, SHORT when HTF bullish. Neutral/unknown = skip. Default OFF (revives the previously-dead gate #19)."
+
   volatility_guard_atr_pct:
     value: 7.0
     env_var: VOLATILITY_GUARD_ATR_PCT

@@ -1792,6 +1792,19 @@ class Analyzer:
                                   entry=_r_entry, sl=_r_sl, tp=_r_tp)
             return None
 
+        # Candle-pattern entry veto (opt-in, default OFF). When a PULLBACK LIMIT
+        # is about to be placed and the last closed bar prints a strong reversal
+        # OPPOSING the trade, skip — the "pullback" may be a breakdown through
+        # the fill zone. Only for limit entries; market orders are unaffected.
+        if (getattr(CONFIG.analyzer, "candle_entry_veto_enabled", False) is True
+                and order_type == "limit"):
+            _veto = candle_entry_veto(candle_patterns, direction)
+            if _veto:
+                audit(trade_log, f"Idea vetoed by candle pattern: {_veto}",
+                      action="analyze", result="SKIP", data={"symbol": signal.symbol})
+                self._record_no_trade(signal.symbol, "candle_veto", _veto)
+                return None
+
         self._no_trade_reasons.pop(signal.symbol, None)
         idea = TradeIdea(
             id=f"TI-{uuid.uuid4().hex[:8]}",
@@ -1807,6 +1820,9 @@ class Analyzer:
                 f"{mtf_tag}{sm_tag}] {thesis.get('reasoning', '')}"
             ),
             signals_used=list(indicators.keys()),
+            # Higher-timeframe trend (daily-weighted) for the risk MTF gate.
+            # "" when no MTF data was fed this bar (gate then skips).
+            htf_trend=(mtf_result.htf_trend if mtf_result is not None else ""),
             timestamp=datetime.now(UTC),
             order_type=order_type,
             strategy_type=strategy_type,
@@ -4650,5 +4666,33 @@ def _detect_candlestick_patterns(
             patterns["three_black_crows"] = "bearish"
 
     return patterns
+
+
+# Strong single/two-bar reversal patterns that oppose a pullback-limit entry.
+# Kept deliberately narrow (engulfing + pin bar + directional doji + marubozu)
+# — the classic "reversal at the fill zone" shapes the veto targets.
+_CANDLE_VETO_LONG = ("bearish_engulfing", "shooting_star", "gravestone_doji")
+_CANDLE_VETO_SHORT = ("bullish_engulfing", "hammer", "dragonfly_doji")
+
+
+def candle_entry_veto(patterns: dict, direction) -> Optional[str]:
+    """Return a veto reason when the last closed bar prints a strong reversal
+    pattern OPPOSING a pullback-limit entry, else None. Pure + harness-sweepable
+    — takes the pattern dict from ``_detect_candlestick_patterns`` and the trade
+    direction. LONG is vetoed by bearish reversals (and a bearish marubozu);
+    SHORT by the bullish mirror. Empty/None patterns → no veto."""
+    if not patterns:
+        return None
+    is_long = getattr(direction, "value", str(direction)).upper() == "LONG"
+    opposing = _CANDLE_VETO_LONG if is_long else _CANDLE_VETO_SHORT
+    hits = [p for p in opposing if p in patterns]
+    maru = patterns.get("marubozu")
+    if is_long and maru == "bearish":
+        hits.append("bearish_marubozu")
+    elif (not is_long) and maru == "bullish":
+        hits.append("bullish_marubozu")
+    if hits:
+        return f"CANDLE_VETO: opposing reversal {', '.join(sorted(hits))}"
+    return None
 
 

@@ -1734,26 +1734,49 @@ class RiskEngine:
             return False, f"no alignment: {counts} across {total} timeframes"
 
     def _check_mtf_alignment(self, idea: TradeIdea) -> Optional[str]:
-        """Internal check for multi-timeframe alignment in risk flow.
+        """Higher-timeframe alignment gate (opt-in, MTF_ALIGNMENT_GATE_ENABLED).
 
-        Reads MTF trends from the idea's signals_used if available.
-        Gracefully skips (returns None = pass) when no MTF data present.
+        Rejects a COUNTER-TREND entry — a LONG when the higher-timeframe trend
+        is bearish, or a SHORT when it is bullish. The HTF trend comes from the
+        analyzer's MTF confluence (EMA20/50 across 1h/4h/1d, daily-weighted),
+        carried on ``idea.htf_trend``. A legacy "MTF:1h=UP" convention in
+        ``signals_used`` is honored as a fallback source. Neutral / unknown HTF
+        → no opinion (skip). Off → byte-identical to the legacy dead-skip: the
+        gate always returned None because nothing ever produced the MTF: tags it
+        used to parse.
         """
-        # Look for MTF data attached to the idea via signals_used
-        mtf_trends: dict[str, str] = {}
-        for sig in idea.signals_used:
-            # Convention: "MTF:1h=UP", "MTF:4h=DOWN", etc.
-            if sig.upper().startswith("MTF:"):
-                parts = sig[4:].split("=", 1)
-                if len(parts) == 2:
-                    mtf_trends[parts[0].strip()] = parts[1].strip()
+        # Disabled → behave exactly as before (the gate was effectively dead).
+        if CONFIG.risk.mtf_alignment_gate_enabled is not True:
+            return None
 
-        if len(mtf_trends) < 2:
-            return None  # No MTF data — graceful skip
+        htf = str(getattr(idea, "htf_trend", "") or "").lower()
 
-        aligned, reason = self.check_timeframe_alignment(mtf_trends)
-        if not aligned:
-            return f"MTF_ALIGNMENT: {reason}"
+        # Fallback: derive a direction from legacy "MTF:1h=UP" tags in
+        # signals_used when the analyzer didn't stamp htf_trend.
+        if htf not in ("bullish", "bearish"):
+            mtf_trends: dict[str, str] = {}
+            for sig in idea.signals_used:
+                if sig.upper().startswith("MTF:"):
+                    parts = sig[4:].split("=", 1)
+                    if len(parts) == 2:
+                        mtf_trends[parts[0].strip()] = parts[1].strip()
+            if len(mtf_trends) >= 2:
+                vals = [v.upper() for v in mtf_trends.values()]
+                ups, downs = vals.count("UP"), vals.count("DOWN")
+                if ups > downs:
+                    htf = "bullish"
+                elif downs > ups:
+                    htf = "bearish"
+
+        if htf not in ("bullish", "bearish"):
+            return None  # no clear HTF trend → no opinion
+
+        direction = getattr(idea.direction, "value", str(idea.direction)).upper()
+        is_long = ("LONG" in direction) or (direction == "BUY")
+        if htf == "bearish" and is_long:
+            return "MTF_ALIGNMENT: higher-timeframe trend BEARISH opposes LONG entry"
+        if htf == "bullish" and not is_long:
+            return "MTF_ALIGNMENT: higher-timeframe trend BULLISH opposes SHORT entry"
         return None
 
     # ── Feature #3: Regime-Aware Risk Parameters ─────────────────────

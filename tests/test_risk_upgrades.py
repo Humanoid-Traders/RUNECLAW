@@ -152,22 +152,48 @@ class TestMultiTimeframeAlignment:
         result = engine._check_mtf_alignment(idea)
         assert result is None  # graceful skip
 
+    def test_mtf_check_disabled_by_default_is_skip(self):
+        """The MTF gate defaults OFF: even a counter-trend idea passes (the gate
+        used to be dead — nothing produced the MTF: tags it parsed — so OFF must
+        stay byte-identical to that always-skip behaviour)."""
+        engine = _make_engine()
+        idea = _make_idea(  # LONG into two bearish HTFs
+            direction=Direction.LONG,
+            signals_used=["MTF:4h=DOWN", "MTF:1d=DOWN"],
+        )
+        assert engine._check_mtf_alignment(idea) is None
+
     def test_mtf_check_with_signals(self):
-        """_check_mtf_alignment should parse MTF: signals and check alignment."""
+        """Enabled + with-trend (legacy MTF: fallback): 2-of-3 UP → bullish HTF,
+        a LONG is aligned → no rejection."""
+        from bot.config import CONFIG
         engine = _make_engine()
         idea = _make_idea(
-            signals_used=["MTF:1h=UP", "MTF:4h=UP", "MTF:1d=DOWN"]
+            direction=Direction.LONG,
+            signals_used=["MTF:1h=UP", "MTF:4h=UP", "MTF:1d=DOWN"],
         )
-        result = engine._check_mtf_alignment(idea)
-        assert result is None  # 2 of 3 aligned
+        old = CONFIG.risk.mtf_alignment_gate_enabled
+        object.__setattr__(CONFIG.risk, "mtf_alignment_gate_enabled", True)
+        try:
+            assert engine._check_mtf_alignment(idea) is None
+        finally:
+            object.__setattr__(CONFIG.risk, "mtf_alignment_gate_enabled", old)
 
     def test_mtf_check_misaligned(self):
-        """_check_mtf_alignment should reject when no alignment."""
+        """Enabled + counter-trend: a LONG into a bearish HTF (2-of-3 DOWN via
+        the legacy MTF: fallback) is rejected."""
+        from bot.config import CONFIG
         engine = _make_engine()
         idea = _make_idea(
-            signals_used=["MTF:1h=UP", "MTF:4h=DOWN", "MTF:1d=SIDEWAYS"]
+            direction=Direction.LONG,
+            signals_used=["MTF:1h=UP", "MTF:4h=DOWN", "MTF:1d=DOWN"],
         )
-        result = engine._check_mtf_alignment(idea)
+        old = CONFIG.risk.mtf_alignment_gate_enabled
+        object.__setattr__(CONFIG.risk, "mtf_alignment_gate_enabled", True)
+        try:
+            result = engine._check_mtf_alignment(idea)
+        finally:
+            object.__setattr__(CONFIG.risk, "mtf_alignment_gate_enabled", old)
         assert result is not None
         assert "MTF_ALIGNMENT" in result
 
