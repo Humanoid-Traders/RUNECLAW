@@ -3904,6 +3904,17 @@ class TelegramHandler:
             try:
                 # Try to render a styled PNG close card
                 close_data = getattr(self.engine.live_executor, '_last_close_data', None)
+                # Consistency guard (live incident 2026-07-07): _last_close_data
+                # is a shared last-write-wins slot. With 2+ closes in one sweep,
+                # THIS message's close may not be the slot's occupant — rendering
+                # it would caption/card the WRONG position. Only trust the slot
+                # when its symbol actually appears in this message.
+                if close_data:
+                    _cd_sym = str(close_data.get("symbol", "")).replace(
+                        "/", "").replace(":USDT", "").upper()
+                    _msg_norm = msg.replace("/", "").replace(":USDT", "").upper()
+                    if _cd_sym and _cd_sym not in _msg_norm:
+                        close_data = None  # mismatched close — fall to text from msg
                 close_png = None
                 if close_data:
                     try:
@@ -7297,8 +7308,29 @@ class TelegramHandler:
                         try:
                             result = await executor.close_position(lp.trade_id, "manual_nlp")
                             live_closed = True
-                            # Render styled PNG close card
+                            # Live incident 2026-07-07: this block used to render
+                            # a SUCCESS card unconditionally \u2014 a FAILED VET close
+                            # (position reverted to open) still rendered a card
+                            # from _last_close_data, which held ANOTHER symbol's
+                            # close ("VETUSDT CLOSED" caption over a BTC card).
+                            # 1) honor close_position's failure result;
+                            if isinstance(result, str) and "CLOSE FAILED" in result:
+                                await self._send(
+                                    update,
+                                    f"\u274c Close failed for <b>{html.escape(pair)}</b> "
+                                    f"\u2014 the position is still open.\n"
+                                    f"<code>{html.escape(result[:300])}</code>",
+                                    edit=True)
+                                break
+                            # 2) only trust _last_close_data if it is THIS
+                            #    position's close (another close finishing in the
+                            #    same window can overwrite the shared slot).
                             close_data = getattr(executor, '_last_close_data', None)
+                            if close_data:
+                                _cd_sym = str(close_data.get("symbol", "")).replace(
+                                    "/", "").replace(":USDT", "")
+                                if _cd_sym != pair:
+                                    close_data = None  # fall to per-position text
                             close_png = None
                             if close_data:
                                 try:
@@ -7308,10 +7340,12 @@ class TelegramHandler:
                                     pass
 
                             if close_png:
+                                from bot.formatters.signal_card import humanize_close_reason
                                 pnl_val = close_data.get("pnl_usd", 0)
-                                pnl_emoji = "\u2705" if pnl_val >= 0 else "\u274c"
+                                pnl_emoji, reason_short = humanize_close_reason(
+                                    close_data.get("reason", "manual"), pnl_val)
                                 cap = (f"{pnl_emoji} <b>{html.escape(pair)}</b> CLOSED\n"
-                                       f"PnL: ${pnl_val:+,.2f} | {html.escape(close_data.get('reason', 'manual'))}")
+                                       f"PnL: ${pnl_val:+,.2f} | {html.escape(reason_short)}")
                                 await self._send_photo(update, close_png, cap)
                             else:
                                 # Fallback to text
