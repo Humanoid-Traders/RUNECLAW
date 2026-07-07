@@ -2192,13 +2192,13 @@ class LiveExecutor:
                 except (TypeError, ValueError):
                     _step = 0.0
                 _floor = max(float(_min_amt or 0), _step)
-                _min_cost = (_limits.get("cost", {}) or {}).get("min")
+                _min_cost = float((_limits.get("cost", {}) or {}).get("min") or 0.0)
                 _too_small = (_floor > 0 and quantity < _floor)
-                _too_cheap = bool(_min_cost) and (quantity * current_price) < float(_min_cost)
+                _too_cheap = _min_cost > 0 and (quantity * current_price) < _min_cost
                 if _too_small or _too_cheap:
                     _need_notional = max(
                         (_floor * current_price) if _floor > 0 else 0.0,
-                        float(_min_cost or 0.0))
+                        _min_cost)
                     _need_margin = _need_notional / max(int(leverage_mult or 1), 1)
                     audit(trade_log,
                           f"BLOCKED: {symbol} size below exchange minimum "
