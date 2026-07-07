@@ -309,6 +309,14 @@ class RiskLimits:
     # manual trades (deliberate). 0s or flag OFF = no-op (byte-identical).
     reentry_cooldown_enabled: bool = _env_bool("REENTRY_COOLDOWN_ENABLED", False)
     reentry_cooldown_seconds: float = _env_float_bounded("REENTRY_COOLDOWN_SECONDS", 0.0, 0.0, 604800.0)
+    # MTF-alignment gate (opt-in, default OFF). The analyzer already computes a
+    # higher-timeframe trend (EMA20/50 confluence across 1h/4h/1d, daily-weighted)
+    # and feeds it as a confluence VOTER, but the hard risk gate #19 was dead — it
+    # parsed "MTF:1h=UP" strings from signals_used that nothing ever produced, so
+    # it skipped every trade. When ON, this gate rejects a COUNTER-TREND entry:
+    # a LONG when the HTF trend is bearish, or a SHORT when it is bullish. Neutral
+    # / unknown HTF → no opinion (skip). Off = byte-identical to the legacy skip.
+    mtf_alignment_gate_enabled: bool = _env_bool("MTF_ALIGNMENT_GATE_ENABLED", False)
     # Volatility guard: reject trades when ATR exceeds this % of price.
     # BTC hourly ATR is typically 1-4%; 7% allows for elevated-vol periods
     # while blocking extreme conditions.

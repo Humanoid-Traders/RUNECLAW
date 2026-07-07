@@ -1807,6 +1807,9 @@ class Analyzer:
                 f"{mtf_tag}{sm_tag}] {thesis.get('reasoning', '')}"
             ),
             signals_used=list(indicators.keys()),
+            # Higher-timeframe trend (daily-weighted) for the risk MTF gate.
+            # "" when no MTF data was fed this bar (gate then skips).
+            htf_trend=(mtf_result.htf_trend if mtf_result is not None else ""),
             timestamp=datetime.now(UTC),
             order_type=order_type,
             strategy_type=strategy_type,

@@ -88,6 +88,11 @@ class TradeIdea(BaseModel):
     blended_confidence_raw: Optional[float] = None
     reasoning: str
     signals_used: list[str] = Field(default_factory=list)
+    # Higher-timeframe trend from the analyzer's MTF confluence (daily-weighted):
+    # "bullish" | "bearish" | "neutral" | "" (unknown). Carried so the risk
+    # engine's MTF-alignment gate can reject counter-trend entries without
+    # re-deriving it. "" when no MTF data was available.
+    htf_trend: str = ""
     source: str = "unknown"
     timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
     order_type: str = "market"  # "market" or "limit"
