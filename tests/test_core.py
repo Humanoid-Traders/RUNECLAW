@@ -1351,6 +1351,64 @@ class TestEngineFSM:
         assert idea.id not in engine._pending_atr
         assert engine.state == AgentState.IDLE
 
+    def test_manual_trade_no_pending_atr_not_rejected_on_volatility(self):
+        """Regression: a manual /trade registers a pending idea but never
+        populates _pending_atr, so the confirm-time risk re-check used to get
+        atr=None and the volatility guard fail-closed ("VOLATILITY: ATR data
+        unavailable"), rejecting a valid manual trade BEFORE the synthetic-ATR
+        fallback ran. The fix derives the synthetic ATR from the SL distance
+        before the re-check, so the trade drives to execution. Reproduces the
+        exact reported case: /trade short BTC 63105 sl 63231 tp 59000."""
+        from types import SimpleNamespace
+
+        engine = self._make_engine()
+        idea = TradeIdea(
+            id="TI-MANUAL-BTC", asset="BTC/USDT", direction=Direction.SHORT,
+            entry_price=63105, stop_loss=63231, take_profit=59000,
+            confidence=1.0, reasoning="Manual trade placed by user",
+            signals_used=["manual"], source="manual", order_type="limit",
+            timestamp=datetime.now(UTC),
+        )
+        engine._pending_ideas[idea.id] = idea
+        # Deliberately DO NOT set engine._pending_atr[idea.id] — this is exactly
+        # what the manual /trade path does (it never stores an ATR).
+        assert idea.id not in engine._pending_atr
+
+        engine._cooldown_until = 0.0
+        engine.risk._cooldown_until = 0.0
+        engine.risk._last_loss_time = None
+        engine.portfolio.balance = 50000.0
+        engine.portfolio._peak_equity = 50000.0
+        engine._live_balance_cache = {}
+
+        mock_exchange = AsyncMock()
+        mock_exchange.fetch_ticker = AsyncMock(return_value={"last": idea.entry_price})
+        engine.scanner._get_exchange = AsyncMock(return_value=mock_exchange)
+        engine.scanner._get_futures_exchange = AsyncMock(return_value=mock_exchange)
+
+        engine.live_executor._positions = {}
+        engine.live_executor.execute = AsyncMock(
+            return_value="✅ LIVE order placed: BTC/USDT SHORT"
+        )
+        engine.compliance.issue_approval_token = MagicMock(return_value="tok-123")
+        engine.compliance.authorize = MagicMock(return_value=SimpleNamespace(
+            granted=True, reasons=[], locks_failed=[], locks_passed=["L1", "L5"],
+        ))
+        engine._live_execution_vetoed_by_simulation = lambda: False
+
+        with patch.object(type(CONFIG), "is_live", return_value=True), \
+             patch("bot.core.engine.get_exchange_position_count",
+                   new=AsyncMock(return_value=0)), \
+             patch("bot.core.engine.invalidate_position_count_cache"):
+            result = self._run(engine.confirm_trade(idea.id))
+
+        # The core assertion: the manual trade is NOT rejected for a missing ATR.
+        assert "ATR data unavailable" not in result
+        assert "VOLATILITY" not in result
+        # And it drives all the way to live execution.
+        assert result == "✅ LIVE order placed: BTC/USDT SHORT"
+        engine.live_executor.execute.assert_awaited_once()
+
     def test_confirm_trade_not_found(self):
         engine = self._make_engine()
         result = self._run(engine.confirm_trade("TI-GHOST"))
