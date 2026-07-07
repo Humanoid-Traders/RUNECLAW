@@ -3563,23 +3563,41 @@ class RuneClawEngine:
 
                         audit(trade_log, f"Live position auto-closed: {msg}",
                               action="live_auto_close", result="CLOSED")
-                        # C-08 FIX: trigger cooldown on live losses
-                        last_close = getattr(_ex, '_last_close_data', None)
-                        if last_close and last_close.get('pnl_usd', 0) < 0:
-                            self._cooldown_until = (
-                                time.monotonic() + CONFIG.risk.cooldown_after_loss_seconds
-                            )
-                            self._transition(
-                                AgentState.COOLING_DOWN,
-                                f"live loss on {last_close.get('symbol', '?')} "
-                                f"(PnL=${last_close['pnl_usd']}), "
-                                f"cooling down {CONFIG.risk.cooldown_after_loss_seconds}s",
-                            )
                         if self._close_notify_callback:
                             try:
                                 await self._close_notify_callback(msg)
                             except Exception as exc:
                                 logger.debug("Close notify failed: %s", exc)
+                    # C-08 FIX: trigger cooldown on live losses. Read the losses
+                    # from the executor's closed-trade ledger for THIS tick
+                    # instead of _last_close_data per message — that shared slot
+                    # is last-write-wins, so with 2+ closes in one sweep every
+                    # message saw only the final close (a winning last close
+                    # masked an earlier loss, and the cooldown reason named the
+                    # wrong symbol). Only scanned when this tick closed something.
+                    if any(not self._is_fill_message(m) for m in live_closed):
+                        try:
+                            _now_utc = datetime.now(UTC)
+                            _tick_losses = [
+                                t for t in getattr(_ex, '_closed_trades', [])
+                                if (t.pnl_usd or 0) < 0 and t.closed_at is not None
+                                and (_now_utc - (t.closed_at if t.closed_at.tzinfo
+                                                 else t.closed_at.replace(tzinfo=UTC))
+                                     ).total_seconds() <= 120
+                            ]
+                            if _tick_losses:
+                                _worst = min(_tick_losses, key=lambda t: t.pnl_usd or 0)
+                                self._cooldown_until = (
+                                    time.monotonic() + CONFIG.risk.cooldown_after_loss_seconds
+                                )
+                                self._transition(
+                                    AgentState.COOLING_DOWN,
+                                    f"live loss on {_worst.symbol} "
+                                    f"(PnL=${_worst.pnl_usd}), "
+                                    f"cooling down {CONFIG.risk.cooldown_after_loss_seconds}s",
+                                )
+                        except Exception as exc:
+                            logger.debug("Loss-cooldown scan failed: %s", exc)
                 except Exception as exc:
                     audit(system_log, f"Live position monitor error: {exc}",
                           action="live_monitor", result="ERROR")

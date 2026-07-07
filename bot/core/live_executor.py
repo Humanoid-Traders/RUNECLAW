@@ -4036,6 +4036,17 @@ class LiveExecutor:
                 if pos.status != "open":
                     continue
 
+                # ── Duplicate-record guard (live incident 2026-07-07) ──
+                # A second internal record for an already-booked close (adoption
+                # sweeps mint different trade_ids for one exchange position) must
+                # be suppressed BEFORE local SL/TP monitoring: otherwise its SL
+                # breach fires a close against a flat book → 25227 → a second
+                # booking with a second notification, double-counted PnL, and a
+                # double-fed learning store. Silent by design (audit-logged).
+                if self._is_duplicate_close_booking(pos):
+                    self._suppress_duplicate_record(pos)
+                    continue
+
                 # ── Defer startup-recovered "closing" positions to reconcile ──
                 # This position's true state is ambiguous (see
                 # _recovered_from_closing's docstring) -- a close order may
@@ -5957,6 +5968,66 @@ class LiveExecutor:
         tr = " | Trailing: armed" if trailing else ""
         return f"{sl}{tp}{tr}"
 
+    def _is_duplicate_close_booking(self, pos: "LivePosition") -> bool:
+        """True when ``pos`` looks like a SECOND internal record of a close that
+        is already booked in ``_closed_trades`` under a DIFFERENT trade_id.
+
+        Live incident 2026-07-07: the adoption sweeps can mint a second record
+        (``TI-adopted-…`` / ``ORPHAN-…`` / drifted clientOid reconstruction) for
+        one exchange position. When the real close was booked under the original
+        trade_id, every downstream guard compared trade_id strings only, so the
+        duplicate record was re-booked ~1 minute later (second notification;
+        realized PnL / trade count / loss streak / learning store all counted
+        twice). Signature: same normalized symbol + same direction + entry
+        within 0.05% + the existing booking closed within the last 10 minutes.
+        Two genuinely distinct fills at the same price to 0.05% within 10 min
+        are near-impossible on this bot's cadence; a false positive costs one
+        suppressed stat row, a false negative double-counts money. Fail-safe:
+        errors return False (never blocks a legitimate booking).
+        """
+        try:
+            def _norm(sym: str) -> str:
+                return (sym or "").replace("/", "").replace(":USDT", "").upper()
+
+            sym = _norm(pos.symbol)
+            entry = float(pos.entry_price or 0.0)
+            if not sym or entry <= 0:
+                return False
+            now = datetime.now(UTC)
+            for ct in self._closed_trades:
+                if ct.trade_id == pos.trade_id:
+                    continue  # same-id replacement is handled (and allowed)
+                if _norm(ct.symbol) != sym or ct.direction != pos.direction:
+                    continue
+                ct_entry = float(ct.entry_price or 0.0)
+                if ct_entry <= 0 or abs(ct_entry - entry) / entry > 0.0005:
+                    continue
+                if ct.closed_at is None:
+                    continue
+                ct_closed = ct.closed_at
+                if ct_closed.tzinfo is None:
+                    ct_closed = ct_closed.replace(tzinfo=UTC)
+                if abs((now - ct_closed).total_seconds()) <= 600:
+                    return True
+        except Exception:
+            return False
+        return False
+
+    def _suppress_duplicate_record(self, pos: "LivePosition") -> None:
+        """Mark a duplicate record closed WITHOUT booking it: no _closed_trades
+        row, no _fire_position_closed (learning/streaks), no _last_close_data
+        write. _save_positions() then prunes it from the open dict."""
+        pos.status = "closed"
+        pos.close_reason = "duplicate_suppressed"
+        pos.closed_at = datetime.now(UTC)
+        self._save_positions()
+        audit(trade_log,
+              f"Duplicate close suppressed: {pos.symbol} {pos.direction} "
+              f"(trade {pos.trade_id}) — same close already booked under another id",
+              action="duplicate_close", result="SUPPRESSED",
+              data={"trade_id": pos.trade_id, "symbol": pos.symbol,
+                    "entry": pos.entry_price})
+
     def _infer_close_reason(self, pos: "LivePosition", exit_price: float) -> str:
         """Infer whether TP or SL was hit based on exit price proximity.
 
@@ -6023,6 +6094,18 @@ class LiveExecutor:
 
         Returns close message string if successful, None if lookup fails.
         """
+        # ── Cross-record duplicate guard (live incident 2026-07-07) ──
+        # This handler used to book UNCONDITIONALLY (it never consulted
+        # _closed_trades), so a second internal record for an already-booked
+        # close produced a second "SL HIT (inferred)" booking with a
+        # ticker-estimated exit. Suppress instead — and return a message (not
+        # None) so the caller does NOT revert the record to "open" and retry
+        # this dead close forever.
+        if self._is_duplicate_close_booking(pos):
+            self._suppress_duplicate_record(pos)
+            return (f"Position {pos.symbol} already booked closed — "
+                    f"duplicate record suppressed (no PnL re-counted)")
+
         exchange = await self._get_exchange()
         ccxt_symbol = pos.symbol if ":USDT" in pos.symbol else f"{pos.symbol}:USDT"
 
@@ -6674,6 +6757,17 @@ class LiveExecutor:
             self._closed_trades[existing_idx] = pos
             logger.info("Replaced existing closed trade record: %s", pos.trade_id)
         else:
+            # ── Cross-record backstop (live incident 2026-07-07) ──
+            # trade_id-only dedup misses a second record for the SAME close
+            # minted under a different id (adoption sweeps / clientOid drift).
+            # The booking sites guard this upstream; keep a last-resort check
+            # here so no future path can persist a double-counted PnL row.
+            if self._is_duplicate_close_booking(pos):
+                logger.info(
+                    "Skipped duplicate closed-trade row: %s %s (trade %s) — "
+                    "same close already recorded under another id",
+                    pos.symbol, pos.direction, pos.trade_id)
+                return
             self._closed_trades.append(pos)
         # Cap to prevent unbounded growth
         if len(self._closed_trades) > _MAX_CLOSED_TRADES:
@@ -6880,6 +6974,16 @@ class LiveExecutor:
                                 # Remove from open positions — it's already tracked as closed
                                 pos.status = "closed"
                                 self._save_positions()
+                                continue
+
+                            # ── Cross-record duplicate guard ──
+                            # The trade_id check above misses a SECOND record for
+                            # the same exchange position minted under a different
+                            # id (adoption sweeps / clientOid drift). Booking it
+                            # here re-uses the same Bitget history row (matched
+                            # by entry price) and double-counts everything.
+                            if self._is_duplicate_close_booking(pos):
+                                self._suppress_duplicate_record(pos)
                                 continue
 
                             # Position no longer on exchange — get real close data from Bitget
