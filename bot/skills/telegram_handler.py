@@ -3680,8 +3680,26 @@ class TelegramHandler:
                     pos_pngs.append(png)
             if pos_pngs:
                 combined = _composite_pngs(pos_pngs) if len(pos_pngs) > 1 else pos_pngs[0]
-                if combined and await self._send_photo(
-                        update, combined, f"\U0001f4c8 <b>ACTIVE POSITIONS ({len(pos_pngs)})</b>"):
+                # Surface WHY a stop is bot-managed (live incident follow-up):
+                # the card shows the [bot-managed] label but not the venue's
+                # rejection reason, so a persistent SL placement failure looked
+                # like a design choice. Pull the recorded per-symbol reason.
+                _why_lines = []
+                for p in filled_pos:
+                    if not getattr(p, "sl_order_id", None):
+                        try:
+                            _why = executor._last_sltp_reason(p.symbol)
+                        except Exception:
+                            _why = ""
+                        if _why:
+                            _sym_short = p.symbol.replace("/", "").replace(":USDT", "")
+                            _why_lines.append(
+                                f"⚠️ {html.escape(_sym_short)} SL bot-managed — venue said: "
+                                f"<code>{html.escape(_why[:120])}</code>")
+                _cap = f"\U0001f4c8 <b>ACTIVE POSITIONS ({len(pos_pngs)})</b>"
+                if _why_lines:
+                    _cap += "\n" + "\n".join(_why_lines[:4])
+                if combined and await self._send_photo(update, combined, _cap):
                     sent_any = True
 
             # ── Pending limit orders card ──
