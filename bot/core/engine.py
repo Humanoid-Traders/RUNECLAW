@@ -2647,6 +2647,25 @@ class RuneClawEngine:
         # the idea's entry price. Prevents executing at stale levels.
         # Skip price drift check for manual trades — user specified exact entry
         is_manual = getattr(idea, 'source', '') == 'manual'
+
+        # Manual-ATR ordering fix: a manual /trade (telegram_handler) registers a
+        # pending idea but NEVER populates _pending_atr, so stored_atr is None
+        # here. The risk re-check below runs the volatility guard, which
+        # fail-closes on a missing ATR ("VOLATILITY: ATR data unavailable") and
+        # REJECTS the trade — BEFORE the synthetic-ATR fallback further down (at
+        # execution time) ever runs. Derive the synthetic ATR from the SL
+        # distance (the stop the user themselves set) HERE, so a manual trade
+        # with valid explicit levels passes the re-check instead of being
+        # rejected as "ATR data unavailable". Mirrors the executor-stage fallback
+        # (kept below as defense-in-depth; it's a no-op once this sets stored_atr).
+        if is_manual and (not stored_atr or stored_atr <= 0):
+            _sl = getattr(idea, 'stop_loss', 0) or 0
+            if idea.entry_price > 0 and _sl > 0:
+                stored_atr = abs(idea.entry_price - _sl)
+                audit(trade_log,
+                      f"Manual trade: synthetic ATR={stored_atr:.4f} from SL distance (pre-recheck)",
+                      action="manual_atr_synthetic", result="OK")
+
         try:
             idea_category = _classify_symbol(idea.asset)
             exchange = await self.get_exchange(idea_category)
