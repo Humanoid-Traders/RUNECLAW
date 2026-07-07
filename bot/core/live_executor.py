@@ -2162,8 +2162,71 @@ class LiveExecutor:
             # Load markets for precision rounding
             markets = await active_exchange.load_markets()
             market = markets.get(symbol)
+
+            # ── Pre-flight exchange-minimum check (live incident: XPT) ──
+            # A risk-sized position on a small account meeting a high-priced
+            # asset (optionally at low leverage) can produce a quantity below
+            # the venue's minimum amount step. ccxt's amount_to_precision then
+            # RAISES ("amount ... must be greater than minimum amount precision
+            # of X") and the operator saw a raw exchange error. Check the
+            # market's minimums FIRST and skip with an actionable message. We
+            # deliberately do NOT bump the size up to the venue minimum — the
+            # risk engine approved size_usd as a ceiling, and silently
+            # exceeding it to satisfy the exchange would trade more than the
+            # approved risk.
             if market:
-                _rounded = active_exchange.amount_to_precision(symbol, quantity)
+                _limits = market.get("limits", {}) or {}
+                _min_amt = (_limits.get("amount", {}) or {}).get("min")
+                _prec_amt = (market.get("precision", {}) or {}).get("amount")
+                # precision.amount is a STEP under ccxt TICK_SIZE mode (bitget:
+                # e.g. 0.001) but DECIMAL PLACES on older builds (e.g. 3).
+                # Interpret defensively: <=1 → already a step; integer >1 →
+                # decimal places → 10^-n. Never let a misread inflate the floor.
+                _step = 0.0
+                try:
+                    _p = float(_prec_amt) if _prec_amt is not None else 0.0
+                    if 0 < _p <= 1:
+                        _step = _p
+                    elif _p > 1 and _p.is_integer():
+                        _step = 10.0 ** -int(_p)
+                except (TypeError, ValueError):
+                    _step = 0.0
+                _floor = max(float(_min_amt or 0), _step)
+                _min_cost = (_limits.get("cost", {}) or {}).get("min")
+                _too_small = (_floor > 0 and quantity < _floor)
+                _too_cheap = bool(_min_cost) and (quantity * current_price) < float(_min_cost)
+                if _too_small or _too_cheap:
+                    _need_notional = max(
+                        (_floor * current_price) if _floor > 0 else 0.0,
+                        float(_min_cost or 0.0))
+                    _need_margin = _need_notional / max(int(leverage_mult or 1), 1)
+                    audit(trade_log,
+                          f"BLOCKED: {symbol} size below exchange minimum "
+                          f"(qty {quantity:.8f} < min {_floor:.8f} / notional "
+                          f"${quantity * current_price:.2f} < min ${_need_notional:.2f})",
+                          action="live_execute", result="BELOW_EXCHANGE_MIN",
+                          data={"asset": symbol, "size_usd": round(size_usd, 4),
+                                "leverage": leverage_mult, "price": current_price,
+                                "qty": quantity, "min_amount": _floor,
+                                "min_cost": _min_cost})
+                    return (f"BLOCKED: {symbol} position too small for the exchange — "
+                            f"sized ${size_usd * leverage_mult:.2f} notional at "
+                            f"{leverage_mult}x, but Bitget requires ≥ "
+                            f"${_need_notional:.2f} notional (≈ ${_need_margin:.2f} "
+                            f"margin at {leverage_mult}x). Skipped — not worth "
+                            f"exceeding the risk-approved size.")
+                try:
+                    _rounded = active_exchange.amount_to_precision(symbol, quantity)
+                except Exception as _prec_exc:
+                    # Defense-in-depth: never surface a raw venue precision
+                    # error — classify it as a clean skip.
+                    audit(trade_log,
+                          f"BLOCKED: {symbol} amount precision rejected: {_prec_exc}",
+                          action="live_execute", result="BELOW_EXCHANGE_MIN",
+                          data={"asset": symbol, "qty": quantity,
+                                "error": str(_prec_exc)[:200]})
+                    return (f"BLOCKED: {symbol} position too small for the "
+                            f"exchange's precision rules ({quantity:.8f}). Skipped.")
                 if _rounded is None:
                     return f"EXECUTION FAILED: exchange returned no precision data for {symbol}"
                 quantity = float(_rounded)
