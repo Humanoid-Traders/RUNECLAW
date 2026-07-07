@@ -152,16 +152,35 @@ class TestMultiTimeframeAlignment:
         result = engine._check_mtf_alignment(idea)
         assert result is None  # graceful skip
 
-    def test_mtf_check_disabled_by_default_is_skip(self):
-        """The MTF gate defaults OFF: even a counter-trend idea passes (the gate
-        used to be dead — nothing produced the MTF: tags it parsed — so OFF must
-        stay byte-identical to that always-skip behaviour)."""
+    def test_mtf_check_enabled_by_default_rejects_counter_trend(self):
+        """The MTF gate now defaults ON (operator-activated after a positive
+        A/B): a counter-trend idea is rejected out of the box."""
+        from bot.config import CONFIG
+        assert CONFIG.risk.mtf_alignment_gate_enabled is True
         engine = _make_engine()
         idea = _make_idea(  # LONG into two bearish HTFs
             direction=Direction.LONG,
             signals_used=["MTF:4h=DOWN", "MTF:1d=DOWN"],
         )
-        assert engine._check_mtf_alignment(idea) is None
+        result = engine._check_mtf_alignment(idea)
+        assert result is not None and "MTF_ALIGNMENT" in result
+
+    def test_mtf_check_disabled_is_skip(self):
+        """With the gate explicitly disabled, even a counter-trend idea passes —
+        byte-identical to the historically-dead gate (which parsed MTF: tags
+        nothing produced, so it skipped every trade)."""
+        from bot.config import CONFIG
+        engine = _make_engine()
+        idea = _make_idea(  # LONG into two bearish HTFs
+            direction=Direction.LONG,
+            signals_used=["MTF:4h=DOWN", "MTF:1d=DOWN"],
+        )
+        old = CONFIG.risk.mtf_alignment_gate_enabled
+        object.__setattr__(CONFIG.risk, "mtf_alignment_gate_enabled", False)
+        try:
+            assert engine._check_mtf_alignment(idea) is None
+        finally:
+            object.__setattr__(CONFIG.risk, "mtf_alignment_gate_enabled", old)
 
     def test_mtf_check_with_signals(self):
         """Enabled + with-trend (legacy MTF: fallback): 2-of-3 UP → bullish HTF,

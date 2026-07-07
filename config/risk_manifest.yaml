@@ -484,9 +484,9 @@ defaults:
     description: "Seconds to block same-symbol re-entry after the last fill on that symbol. 0 or flag OFF = no-op."
 
   mtf_alignment_gate_enabled:
-    value: false
+    value: true
     env_var: MTF_ALIGNMENT_GATE_ENABLED
-    description: "Reject counter-trend entries using the analyzer's higher-timeframe trend (EMA20/50 across 1h/4h/1d, daily-weighted, carried on idea.htf_trend): LONG blocked when HTF bearish, SHORT when HTF bullish. Neutral/unknown = skip. Default OFF (revives the previously-dead gate #19)."
+    description: "Reject counter-trend entries using the analyzer's higher-timeframe trend (EMA20/50 across 1h/4h/1d, daily-weighted, carried on idea.htf_trend): LONG blocked when HTF bearish, SHORT when HTF bullish. Neutral/unknown = skip. Default ON (operator-activated after a positive A/B: PF 1.87->2.23 on corr_dense_1h; set 0 to disable)."
 
   volatility_guard_atr_pct:
     value: 7.0

@@ -175,3 +175,29 @@ max-drawdown circuit breakers, the volatility guard, correlation caps, and
 loss-streak cooldown already in force. These bound downside; they do not create
 edge — OOS validation (#221) found the benchmark edge regime-specific, so monitor
 live P&L and disable if it bleeds.
+
+---
+
+## 9. MTF-alignment gate — ✅ operator-activated (2026-07)
+
+```dotenv
+MTF_ALIGNMENT_GATE_ENABLED=1   # reject counter-trend entries vs the daily-weighted HTF trend (default ON)
+```
+
+Risk gate #19 was historically **dead** (it parsed `MTF:1h=UP` tags that nothing
+produced, so it skipped every trade). It was revived direction-aware: reject a
+LONG when the higher-timeframe EMA20/50 trend (1h/4h/1d, daily-weighted) is
+bearish, a SHORT when it is bullish; neutral/unknown → no opinion.
+
+**Why ON:** A/B on `corr_dense_1h` (`--honest`, 16-month): removed exactly one
+counter-trend loser and kept all six winners — +1.40%→+1.66%, PF 1.87→**2.23**.
+Neutral on `alts_1h_v2` (no counter-trend entries in that sample). Evidence is
+thin (single-loser delta) but strictly non-harmful in both tests and the
+mechanism is principled (don't fight the daily trend).
+
+**Not activated from the same batch** (A/B **inert** — byte-identical results,
+left OFF): `CANDLE_ENTRY_VETO_ENABLED`, `STRUCTURE_TRAIL_ENABLED`,
+`REENTRY_COOLDOWN_ENABLED`, `FEE_AWARE_ENTRY_GATE_ENABLED` (the latter two bite
+only on scalp-heavy churn; see `docs/FEE_REDUCTION.md`).
+
+To disable: `MTF_ALIGNMENT_GATE_ENABLED=0` in `.env` and restart.
