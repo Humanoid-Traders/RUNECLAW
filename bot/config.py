@@ -485,6 +485,18 @@ class ExchangeConfig:
     max_leverage: int = int(_env_float_bounded("MAX_LEVERAGE", 10, 1, 125))
     # Margin mode: "isolated" mandatory (GetClaw rule: prevents runaway losses on gap-risk assets)
     margin_mode: str = _env("MARGIN_MODE", "isolated")
+    # Exchange-minimum round-up (operator-requested). When a risk-sized order
+    # falls just below the venue's minimum amount step / min-notional (common on
+    # a small account meeting a high-priced asset — the XPT incident), round the
+    # quantity UP to the minimum instead of skipping — BUT only when the minimum
+    # is within exchange_min_roundup_max_mult of the risk-approved quantity, so a
+    # "just below the step" case fills while a "triple the size to hit min
+    # notional" case still skips (that would trade materially more than the risk
+    # engine approved). The downstream notional-ceiling block and INSUFFICIENT
+    # FUNDS classification remain as backstops. Set enabled=false to restore the
+    # always-skip behaviour.
+    exchange_min_roundup_enabled: bool = _env_bool("EXCHANGE_MIN_ROUNDUP_ENABLED", True)
+    exchange_min_roundup_max_mult: float = _env_float_bounded("EXCHANGE_MIN_ROUNDUP_MAX_MULT", 1.5, 1.0, 10.0)
     # C2-57: Configurable hold mode probe symbol (used for account mode detection)
     hold_mode_probe_symbol: str = _env("HOLD_MODE_PROBE_SYMBOL", "BTCUSDT")
 
