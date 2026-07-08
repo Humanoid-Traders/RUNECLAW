@@ -130,3 +130,25 @@ def test_build_insight_unknown_symbol_errors_cleanly():
         build_alpha_insight(engine, "NOPE/USDT:USDT"))
     assert "error" in d
     assert "unavailable" in format_alpha_card(d)
+
+
+# ── PNG renderer (RUNECLAW style) ────────────────────────────────────
+def test_render_alpha_card_full_png():
+    from bot.formatters.signal_card import render_alpha_card
+    png = render_alpha_card(_full_data())
+    assert png.startswith(b"\x89PNG"), "must be a valid PNG"
+    assert len(png) > 5000
+
+
+def test_render_alpha_card_minimal_png():
+    """Price-only data still renders (sections skipped, canvas cropped)."""
+    from bot.formatters.signal_card import render_alpha_card
+    png = render_alpha_card({"symbol": "XPT/USDT:USDT", "price": 1640.92,
+                             "change_24h_pct": -0.5})
+    assert png.startswith(b"\x89PNG")
+
+
+def test_render_alpha_card_error_returns_empty():
+    """Error data → b'' so the caller falls back to the text card."""
+    from bot.formatters.signal_card import render_alpha_card
+    assert render_alpha_card({"symbol": "Z", "error": "unknown"}) == b""

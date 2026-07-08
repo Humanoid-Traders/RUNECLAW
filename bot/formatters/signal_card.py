@@ -1697,3 +1697,240 @@ def render_stats_card(data: Dict[str, Any]) -> bytes:
     _buf = io.BytesIO()
     img.save(_buf, format="PNG", optimize=True)
     return _buf.getvalue()
+
+
+def render_alpha_card(data: Dict[str, Any]) -> bytes:
+    """Render the Daily Alpha insight (bot/core/alpha_card.build_alpha_insight
+    output) as a RUNECLAW-styled PNG: gold accent, trend badge with per-TF
+    dots, support/resistance cells, MACD/RSI/ADX strength tags, a long/short
+    ratio bar (the crypto-native "general rating"), and sentiment footer.
+    Sections whose data is missing are skipped, and the canvas is cropped to
+    the drawn height. Returns b"" if Pillow is unavailable or on error data.
+    """
+    try:
+        from PIL import Image, ImageDraw, ImageFont
+    except ImportError:
+        log.warning("Pillow not installed, cannot render alpha card")
+        return b""
+    if data.get("error"):
+        return b""
+
+    W = 520
+    PAD = 20
+    CANVAS_H = 900  # tall working canvas; cropped to the final y at the end
+
+    img = Image.new("RGB", (W, CANVAS_H), _BG)
+    draw = ImageDraw.Draw(img)
+
+    def _font(size: int, bold: bool = False):
+        for path in [
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold
+            else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf" if bold
+            else "/usr/share/fonts/TTF/DejaVuSans.ttf",
+        ]:
+            try:
+                return ImageFont.truetype(path, size)
+            except (OSError, IOError):
+                continue
+        return ImageFont.load_default()
+
+    f_title = _font(20, bold=True)
+    f_badge = _font(12, bold=True)
+    f_label = _font(10)
+    f_value = _font(14, bold=True)
+    f_small = _font(10)
+    f_hero = _font(26, bold=True)
+
+    def _fmt(price: float) -> str:
+        if price == 0:
+            return "—"
+        if price >= 1000:
+            return f"{price:,.2f}"
+        if price >= 1:
+            return f"{price:,.4f}"
+        return f"{price:.6f}"
+
+    symbol = str(data.get("symbol", "???")).replace("/USDT", "").replace(":USDT", "")
+    price = float(data.get("price") or 0)
+    chg = float(data.get("change_24h_pct") or 0)
+    chg_color = _GREEN if chg >= 0 else _RED
+
+    # ── Top stripe (gold = insight, not P&L) ──
+    draw.rectangle([0, 0, W, 4], fill=_ACCENT_GOLD)
+    y = PAD
+
+    # ── Header: SYMBOL [DAILY ALPHA] ──
+    draw.text((PAD, y), symbol, fill=_WHITE, font=f_title)
+    sym_w = draw.textlength(symbol, font=f_title)
+    badge_x = PAD + sym_w + 12
+    badge_text = " DAILY ALPHA "
+    badge_tw = draw.textlength(badge_text, font=f_badge)
+    draw.rounded_rectangle([badge_x, y + 2, badge_x + badge_tw + 4, y + 22],
+                           radius=4, fill=_ACCENT_GOLD)
+    draw.text((badge_x + 2, y + 5), badge_text, fill=(0, 0, 0), font=f_badge)
+    gen = data.get("generated")
+    if gen is not None:
+        try:
+            ts = gen.strftime("%Y-%m-%d %H:%M UTC")
+            ts_w = draw.textlength(ts, font=f_small)
+            draw.text((W - PAD - ts_w, y + 7), ts, fill=_GRAY, font=f_small)
+        except Exception:
+            pass
+    y += 34
+
+    # ── Price hero ──
+    draw.text((PAD, y), f"${_fmt(price)}", fill=_WHITE, font=f_hero)
+    p_w = draw.textlength(f"${_fmt(price)}", font=f_hero)
+    draw.text((PAD + p_w + 10, y + 10), f"{chg:+.2f}% 24h", fill=chg_color, font=f_value)
+    y += 40
+    draw.line([(PAD, y), (W - PAD, y)], fill=_BORDER, width=1)
+    y += 12
+
+    # ── Trend badge + per-TF dots ──
+    label = str(data.get("trend_label") or "")
+    if not label:
+        # Derive lazily so callers can pass either the label or the raw parts.
+        try:
+            from bot.core.alpha_card import overall_trend_label
+            label = overall_trend_label(
+                data.get("htf_trend", ""), int(data.get("bos_dir", 0)),
+                int(data.get("choch_dir", 0)))
+        except Exception:
+            label = "Range / Mixed"
+    draw.text((PAD, y), "OVERALL TREND", fill=_GRAY, font=f_label)
+    y += 16
+    draw.text((PAD, y), label, fill=_CYAN, font=f_value)
+    # per-TF dots to the right of the label
+    per_tf = data.get("per_tf") or {}
+    dot_x = PAD + draw.textlength(label, font=f_value) + 24
+    _dot_color = {"up": _GREEN, "down": _RED, "flat": _GRAY}
+    for tf in ("1d", "4h", "1h"):
+        if tf not in per_tf:
+            continue
+        c = _dot_color.get(per_tf[tf], _GRAY)
+        draw.ellipse([dot_x, y + 4, dot_x + 9, y + 13], fill=c)
+        draw.text((dot_x + 13, y + 2), tf.upper(), fill=_GRAY, font=f_label)
+        dot_x += 13 + draw.textlength(tf.upper(), font=f_label) + 14
+    y += 28
+
+    # ── Support / Resistance cells ──
+    lv = data.get("levels") or {}
+    sups = lv.get("supports") or []
+    ress = lv.get("resistances") or []
+    if sups or ress:
+        CELL_W = (W - PAD * 3) // 2
+        CELL_H = 30 + 16 * max(len(sups), len(ress), 1)
+        c1, c2 = PAD, PAD + CELL_W + 10
+        for x, title, vals, color in ((c1, "SUPPORT", sups, _GREEN),
+                                      (c2, "RESISTANCE", ress, _RED)):
+            draw.rounded_rectangle([x, y, x + CELL_W, y + CELL_H],
+                                   radius=6, fill=_CARD_BG, outline=_BORDER)
+            draw.text((x + 10, y + 6), title, fill=_GRAY, font=f_label)
+            yy = y + 22
+            for v in vals[:3]:
+                draw.text((x + 10, yy), _fmt(float(v)), fill=color, font=_font(12, bold=True))
+                yy += 16
+            if not vals:
+                draw.text((x + 10, yy), "—", fill=_DIM, font=f_value)
+        y += CELL_H + 10
+
+    # ── Strength row ──
+    st = data.get("strength") or {}
+    if st:
+        draw.text((PAD, y), "STRENGTH", fill=_GRAY, font=f_label)
+        y += 16
+        xx = PAD
+        def _tag(text: str, good: bool):
+            nonlocal xx
+            color = _GREEN if good else _RED
+            tw = draw.textlength(text, font=f_badge)
+            draw.rounded_rectangle([xx, y, xx + tw + 10, y + 20],
+                                   radius=4, outline=color)
+            draw.text((xx + 5, y + 3), text, fill=color, font=f_badge)
+            xx += tw + 20
+        if "macd_1d" in st:
+            _tag(f"MACD 1D {'Buy' if st['macd_1d'] > 0 else 'Sell'}", st["macd_1d"] > 0)
+        if "macd_4h" in st:
+            _tag(f"MACD 4H {'Buy' if st['macd_4h'] > 0 else 'Sell'}", st["macd_4h"] > 0)
+        y += 26
+        parts = []
+        if "rsi_1h" in st:
+            r = st["rsi_1h"]
+            zone = "oversold" if r < 30 else ("overbought" if r > 70 else "neutral")
+            parts.append(f"RSI(1H) {r:.1f} ({zone})")
+        if "adx_1h" in st:
+            a = st["adx_1h"]
+            parts.append(f"ADX(1H) {a:.1f} ({'trending' if a >= 20 else 'weak'})")
+        if parts:
+            draw.text((PAD, y), "  |  ".join(parts), fill=_WHITE, font=f_small)
+            y += 20
+        y += 4
+
+    # ── Positioning ──
+    has_pos = any(k in data for k in
+                  ("funding_rate", "open_interest_usd", "long_short_ratio"))
+    if has_pos:
+        draw.text((PAD, y), "POSITIONING", fill=_GRAY, font=f_label)
+        y += 16
+        row = []
+        if "funding_rate" in data:
+            f = data["funding_rate"] * 100
+            payer = "longs pay" if f > 0 else ("shorts pay" if f < 0 else "flat")
+            row.append(f"Funding {f:+.4f}% ({payer})")
+        if data.get("open_interest_usd"):
+            oi = data["open_interest_usd"]
+            oi_s = (f"${oi / 1e9:.2f}B" if oi >= 1e9 else
+                    f"${oi / 1e6:.1f}M" if oi >= 1e6 else f"${oi:,.0f}")
+            row.append(f"OI {oi_s}")
+        if row:
+            draw.text((PAD, y), "   ".join(row), fill=_WHITE, font=f_value)
+            y += 24
+        # Long/short ratio bar — the crypto-native "general rating" bar.
+        if data.get("long_short_ratio"):
+            r = float(data["long_short_ratio"])
+            long_frac = r / (1 + r)
+            bar_w = W - PAD * 2
+            bar_y = y + 4
+            split = int(bar_w * (1 - long_frac))  # shorts (red) on the left
+            draw.rounded_rectangle([PAD, bar_y, PAD + bar_w, bar_y + 8],
+                                   radius=4, fill=_DIM)
+            if split > 6:
+                draw.rounded_rectangle([PAD, bar_y, PAD + split, bar_y + 8],
+                                       radius=4, fill=_RED)
+            if bar_w - split > 6:
+                draw.rounded_rectangle([PAD + split, bar_y, PAD + bar_w, bar_y + 8],
+                                       radius=4, fill=_GREEN)
+            y = bar_y + 14
+            draw.text((PAD, y), f"Short {100 - long_frac * 100:.0f}%",
+                      fill=_RED, font=f_small)
+            lbl = f"Long {long_frac * 100:.0f}%"
+            draw.text((W - PAD - draw.textlength(lbl, font=f_small), y),
+                      lbl, fill=_GREEN, font=f_small)
+            y += 20
+        y += 2
+
+    # ── Sentiment footer line ──
+    if data.get("fear_greed"):
+        regime = str(data.get("sentiment_regime", "") or "")
+        draw.text((PAD, y),
+                  f"Fear&Greed {data['fear_greed']:.0f}"
+                  + (f" ({regime})" if regime else ""),
+                  fill=_YELLOW, font=f_small)
+        y += 18
+
+    draw.text((PAD, y), "Same data the bot trades on — not investment advice.",
+              fill=_DIM, font=f_small)
+    y += 22
+
+    # ── Bottom stripe + watermark, then crop ──
+    H = y + 10
+    draw.rectangle([0, H - 4, W, H], fill=_ACCENT_GOLD)
+    wm = "RUNECLAW"
+    wm_w = draw.textlength(wm, font=f_small)
+    draw.text((W - PAD - wm_w, H - 22), wm, fill=_DIM, font=f_small)
+    img = img.crop((0, 0, W, H))
+
+    _buf = io.BytesIO()
+    img.save(_buf, format="PNG", optimize=True)
+    return _buf.getvalue()

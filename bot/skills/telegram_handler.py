@@ -4989,6 +4989,19 @@ class TelegramHandler:
         await self._send(update, f"📡 Building alpha card for <b>{html.escape(symbol.replace('/USDT:USDT', ''))}</b>…")
         try:
             data = await build_alpha_insight(self.engine, symbol)
+            # RUNECLAW-styled PNG first; fall back to the HTML text card if
+            # rendering is unavailable (no Pillow / error data / send failure).
+            png = b""
+            try:
+                from bot.formatters.signal_card import render_alpha_card
+                png = render_alpha_card(data)
+            except Exception:
+                png = b""
+            if png:
+                sym_short = html.escape(symbol.replace("/USDT:USDT", ""))
+                cap = f"📡 <b>{sym_short} Daily Alpha</b> — same data the bot trades on"
+                if await self._send_photo(update, png, cap):
+                    return
             await self._send(update, format_alpha_card(data))
         except Exception as exc:
             await self._send(update, f"⚠️ Alpha card failed: {html.escape(str(exc)[:160])}")
