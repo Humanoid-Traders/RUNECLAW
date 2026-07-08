@@ -298,6 +298,7 @@ class TelegramHandler:
             ("rejected", self._cmd_rejected), ("halt", self._cmd_halt),
             ("reset", self._cmd_reset), ("macro", self._cmd_macro),
             ("whynot", self._cmd_whynot),
+            ("alpha", self._cmd_alpha),
             ("gates", self._cmd_gates), ("readiness", self._cmd_readiness),
             ("backtest", self._cmd_backtest), ("walkforward", self._cmd_walkforward),
             ("journal", self._cmd_journal), ("costs", self._cmd_costs),
@@ -4971,6 +4972,39 @@ class TelegramHandler:
         result = await self.registry.dispatch("whynot",
             self.engine, symbol=symbol)
         await self._send(update, result)
+
+    async def _cmd_alpha(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """/alpha <symbol> — Daily Alpha insight card (exchange-style panel
+        built entirely from the bot's own analysis + Bitget public data:
+        MTF trend, key levels, MACD/RSI/ADX strength, funding/OI/long-short
+        positioning, Fear&Greed)."""
+        args = ctx.args or []
+        raw = args[0] if args else "BTC"
+        if not _SYMBOL_RE.match(raw.upper().strip().replace("/USDT", "").replace(":USDT", "")):
+            await self._send(update, t("invalid_symbol_format", self._lang(update)))
+            return
+        from bot.core.alpha_card import (build_alpha_insight, format_alpha_card,
+                                         normalize_alpha_symbol)
+        symbol = normalize_alpha_symbol(raw)
+        await self._send(update, f"📡 Building alpha card for <b>{html.escape(symbol.replace('/USDT:USDT', ''))}</b>…")
+        try:
+            data = await build_alpha_insight(self.engine, symbol)
+            # RUNECLAW-styled PNG first; fall back to the HTML text card if
+            # rendering is unavailable (no Pillow / error data / send failure).
+            png = b""
+            try:
+                from bot.formatters.signal_card import render_alpha_card
+                png = render_alpha_card(data)
+            except Exception:
+                png = b""
+            if png:
+                sym_short = html.escape(symbol.replace("/USDT:USDT", ""))
+                cap = f"📡 <b>{sym_short} Daily Alpha</b> — same data the bot trades on"
+                if await self._send_photo(update, png, cap):
+                    return
+            await self._send(update, format_alpha_card(data))
+        except Exception as exc:
+            await self._send(update, f"⚠️ Alpha card failed: {html.escape(str(exc)[:160])}")
 
     async def _cmd_readiness(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """/readiness — is the learning loop validated enough to apply?"""
