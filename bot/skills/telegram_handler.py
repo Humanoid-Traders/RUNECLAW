@@ -4213,10 +4213,31 @@ class TelegramHandler:
         )
         status = BYOK.status(env_config)
         SEP = "─" * 16
+        # Live brain-health line: is the analyzer actually getting LLM answers,
+        # or silently running on the rule engine? (Mirrors the proactive
+        # LLM-degraded alert; lets the operator check on demand.) Best-effort.
+        health_line = ""
+        try:
+            analyzer = getattr(self.engine, "analyzer", None)
+            if analyzer is not None and hasattr(analyzer, "llm_health"):
+                h = analyzer.llm_health()
+                streak = int(h.get("degraded_streak", 0) or 0)
+                if streak > 0:
+                    mins = float(h.get("degraded_seconds", 0.0) or 0.0) / 60.0
+                    health_line = (
+                        f"\n🚨 <b>Brain: DEGRADED</b> — every provider has failed "
+                        f"{streak} analyses in a row"
+                        + (f" (~{mins:.0f} min)" if mins >= 1 else "")
+                        + "; running on the rule engine. Add/rotate an LLM key.")
+                else:
+                    health_line = "\n✅ <b>Brain: healthy</b> — LLM answering."
+        except Exception:
+            health_line = ""
         await self._send(update,
             f"🤖 {t('llm_status_title', self._lang(update))}\n"
             f"{SEP}\n"
-            f"<pre>{html.escape(status)}</pre>")
+            f"<pre>{html.escape(status)}</pre>"
+            f"{health_line}")
 
     @guard("mode")
     async def _cmd_llmreset(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:

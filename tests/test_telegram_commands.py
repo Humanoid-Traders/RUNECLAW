@@ -280,6 +280,28 @@ async def test_llmstatus_shows_provider():
 
 
 @pytest.mark.asyncio
+async def test_llmstatus_shows_healthy_brain_by_default():
+    """A fresh analyzer (no failures) reports the brain as healthy."""
+    handler = _make_handler()
+    update, ctx = _make_update(text="/llmstatus")
+    await handler._cmd_llmstatus(update, ctx)
+    assert _any_reply_contains(update, "Brain: healthy")
+
+
+@pytest.mark.asyncio
+async def test_llmstatus_shows_degraded_brain_after_provider_failures():
+    """After the analyzer records consecutive all-provider failures, /llmstatus
+    surfaces the DEGRADED brain line (mirrors the proactive alert)."""
+    handler = _make_handler()
+    handler.engine.analyzer._note_llm_degraded()
+    handler.engine.analyzer._note_llm_degraded()
+    update, ctx = _make_update(text="/llmstatus")
+    await handler._cmd_llmstatus(update, ctx)
+    assert _any_reply_contains(update, "Brain: DEGRADED")
+    assert _any_reply_contains(update, "2 analyses")
+
+
+@pytest.mark.asyncio
 async def test_setllm_changes_provider():
     """/setllm groq switches the LLM provider."""
     from bot.llm.provider import BYOK
