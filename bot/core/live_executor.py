@@ -124,6 +124,55 @@ _EXECUTION_FAILURE_TOKENS = (
 )
 
 
+def min_amount_step(precision_amount: Any) -> float:
+    """Interpret ccxt ``market['precision']['amount']`` as an amount STEP.
+
+    Bitget (TICK_SIZE mode) reports the step directly (e.g. 0.001); older ccxt
+    builds report DECIMAL PLACES (e.g. 3 → 10**-3). Defensive: values in (0, 1]
+    are treated as an already-a-step; integers > 1 as decimal places; anything
+    else → 0.0 (unknown, never inflate the floor)."""
+    try:
+        p = float(precision_amount) if precision_amount is not None else 0.0
+    except (TypeError, ValueError):
+        return 0.0
+    if 0 < p <= 1:
+        return p
+    if p > 1 and p.is_integer():
+        return 10.0 ** -int(p)
+    return 0.0
+
+
+def resolve_exchange_min_quantity(
+    quantity: float, floor: float, step: float, min_cost: float, price: float,
+    roundup_enabled: bool, max_mult: float,
+) -> tuple[Optional[float], float, float]:
+    """Decide what to do with a quantity that is below the venue minimum.
+
+    Returns ``(resolved_qty, q_min, mult)``:
+      * ``resolved_qty`` is the quantity to use (== ``q_min``) when the overshoot
+        is small enough to round UP, or ``None`` when the trade should be
+        SKIPPED (round-up disabled, or overshoot beyond ``max_mult``).
+      * ``q_min`` is the smallest quantity clearing both the amount floor and the
+        min-notional, snapped up to the step grid.
+      * ``mult`` is ``q_min / quantity`` (the overshoot ratio; inf if qty ≤ 0).
+
+    Pure — no config/exchange access, so the round-up policy is unit-testable.
+    """
+    import math as _math
+    q_min = float(floor or 0.0)
+    if min_cost > 0 and price > 0:
+        need = min_cost / price
+        if step > 0:
+            need = _math.ceil(need / step - 1e-9) * step
+        q_min = max(q_min, need)
+    if step > 0 and q_min > 0:
+        q_min = _math.ceil(q_min / step - 1e-9) * step
+    mult = (q_min / quantity) if quantity > 0 else float("inf")
+    if roundup_enabled and q_min > 0 and quantity > 0 and mult <= float(max_mult):
+        return q_min, q_min, mult
+    return None, q_min, mult
+
+
 def recalc_sl_tp_for_shifted_entry(
     entry_price: float,
     stop_loss: float,
@@ -2169,11 +2218,10 @@ class LiveExecutor:
             # the venue's minimum amount step. ccxt's amount_to_precision then
             # RAISES ("amount ... must be greater than minimum amount precision
             # of X") and the operator saw a raw exchange error. Check the
-            # market's minimums FIRST and skip with an actionable message. We
-            # deliberately do NOT bump the size up to the venue minimum — the
-            # risk engine approved size_usd as a ceiling, and silently
-            # exceeding it to satisfy the exchange would trade more than the
-            # approved risk.
+            # market's minimums FIRST. Operator-requested: round the quantity UP
+            # to the minimum when the overshoot is SMALL (within
+            # exchange_min_roundup_max_mult of the approved quantity); otherwise
+            # skip cleanly with an actionable message.
             if market:
                 _limits = market.get("limits", {}) or {}
                 _min_amt = (_limits.get("amount", {}) or {}).get("min")
@@ -2182,39 +2230,54 @@ class LiveExecutor:
                 # e.g. 0.001) but DECIMAL PLACES on older builds (e.g. 3).
                 # Interpret defensively: <=1 → already a step; integer >1 →
                 # decimal places → 10^-n. Never let a misread inflate the floor.
-                _step = 0.0
-                try:
-                    _p = float(_prec_amt) if _prec_amt is not None else 0.0
-                    if 0 < _p <= 1:
-                        _step = _p
-                    elif _p > 1 and _p.is_integer():
-                        _step = 10.0 ** -int(_p)
-                except (TypeError, ValueError):
-                    _step = 0.0
+                _step = min_amount_step(_prec_amt)
                 _floor = max(float(_min_amt or 0), _step)
                 _min_cost = float((_limits.get("cost", {}) or {}).get("min") or 0.0)
                 _too_small = (_floor > 0 and quantity < _floor)
                 _too_cheap = _min_cost > 0 and (quantity * current_price) < _min_cost
                 if _too_small or _too_cheap:
-                    _need_notional = max(
-                        (_floor * current_price) if _floor > 0 else 0.0,
-                        _min_cost)
+                    _roundup_on = getattr(
+                        CONFIG.exchange, "exchange_min_roundup_enabled", False) is True
+                    _max_mult = float(getattr(
+                        CONFIG.exchange, "exchange_min_roundup_max_mult", 1.5))
+                    _resolved, _q_min, _mult = resolve_exchange_min_quantity(
+                        quantity, _floor, _step, _min_cost, current_price,
+                        _roundup_on, _max_mult)
+                    _need_notional = max((_floor * current_price) if _floor > 0 else 0.0,
+                                         _min_cost)
                     _need_margin = _need_notional / max(int(leverage_mult or 1), 1)
-                    audit(trade_log,
-                          f"BLOCKED: {symbol} size below exchange minimum "
-                          f"(qty {quantity:.8f} < min {_floor:.8f} / notional "
-                          f"${quantity * current_price:.2f} < min ${_need_notional:.2f})",
-                          action="live_execute", result="BELOW_EXCHANGE_MIN",
-                          data={"asset": symbol, "size_usd": round(size_usd, 4),
-                                "leverage": leverage_mult, "price": current_price,
-                                "qty": quantity, "min_amount": _floor,
-                                "min_cost": _min_cost})
-                    return (f"BLOCKED: {symbol} position too small for the exchange — "
-                            f"sized ${size_usd * leverage_mult:.2f} notional at "
-                            f"{leverage_mult}x, but Bitget requires ≥ "
-                            f"${_need_notional:.2f} notional (≈ ${_need_margin:.2f} "
-                            f"margin at {leverage_mult}x). Skipped — not worth "
-                            f"exceeding the risk-approved size.")
+                    if _resolved is not None:
+                        _old_qty = quantity
+                        quantity = _resolved
+                        audit(trade_log,
+                              f"Rounded {symbol} UP to exchange minimum: "
+                              f"qty {_old_qty:.8f} -> {quantity:.8f} "
+                              f"({_mult:.2f}x approved, notional "
+                              f"~${quantity * current_price:.2f})",
+                              action="live_execute", result="ROUNDED_TO_MIN",
+                              data={"asset": symbol, "old_qty": _old_qty,
+                                    "new_qty": quantity, "mult": round(_mult, 3),
+                                    "min_amount": _floor, "min_cost": _min_cost,
+                                    "price": current_price})
+                        # Falls through to amount_to_precision + the notional
+                        # ceiling hard-block below (which still bounds the result).
+                    else:
+                        _why = ("round-up disabled" if not _roundup_on
+                                else f"overshoot {_mult:.1f}x exceeds {_max_mult:.1f}x cap")
+                        audit(trade_log,
+                              f"BLOCKED: {symbol} size below exchange minimum "
+                              f"(qty {quantity:.8f} < min {_q_min:.8f}; {_why})",
+                              action="live_execute", result="BELOW_EXCHANGE_MIN",
+                              data={"asset": symbol, "size_usd": round(size_usd, 4),
+                                    "leverage": leverage_mult, "price": current_price,
+                                    "qty": quantity, "min_amount": _floor,
+                                    "min_cost": _min_cost, "mult": round(_mult, 3)})
+                        return (f"BLOCKED: {symbol} position too small for the exchange — "
+                                f"sized ${size_usd * leverage_mult:.2f} notional at "
+                                f"{leverage_mult}x, but Bitget requires ≥ "
+                                f"${_need_notional:.2f} notional (≈ ${_need_margin:.2f} "
+                                f"margin at {leverage_mult}x). Skipped ({_why}) — not "
+                                f"worth exceeding the risk-approved size.")
                 try:
                     _rounded = active_exchange.amount_to_precision(symbol, quantity)
                 except Exception as _prec_exc:

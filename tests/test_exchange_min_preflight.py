@@ -46,61 +46,96 @@ MARKETS = {
 }
 
 
-def _preflight(ex, exchange, quantity, price, size_usd, leverage):
-    """Drive just the preflight logic the way execute() does (unit-level:
-    the full execute() needs a live account; the preflight block is pure
-    given market/limits/qty)."""
+from bot.core.live_executor import (min_amount_step,  # noqa: E402
+                                    resolve_exchange_min_quantity)
+
+
+def _too_small_or_cheap(quantity, price):
     market = MARKETS[SYMBOL]
-    _limits = market.get("limits", {}) or {}
-    _min_amt = (_limits.get("amount", {}) or {}).get("min")
-    _prec_amt = (market.get("precision", {}) or {}).get("amount")
-    _step = 0.0
-    _p = float(_prec_amt) if _prec_amt is not None else 0.0
-    if 0 < _p <= 1:
-        _step = _p
-    elif _p > 1 and _p.is_integer():
-        _step = 10.0 ** -int(_p)
-    _floor = max(float(_min_amt or 0), _step)
-    _min_cost = (_limits.get("cost", {}) or {}).get("min")
-    _too_small = (_floor > 0 and quantity < _floor)
-    _too_cheap = bool(_min_cost) and (quantity * price) < float(_min_cost)
-    return _too_small or _too_cheap
+    _limits = market["limits"]
+    _step = min_amount_step(market["precision"]["amount"])
+    _floor = max(float(_limits["amount"]["min"] or 0), _step)
+    _min_cost = float((_limits.get("cost", {}) or {}).get("min") or 0.0)
+    return (_floor > 0 and quantity < _floor) or (
+        _min_cost > 0 and quantity * price < _min_cost)
 
 
+# ── flagging (below-minimum detection) ───────────────────────────────
 def test_xpt_incident_quantity_flagged():
     """$1.50 margin at 1x on a $1,640 asset → qty 0.00091 < 0.001 → flagged."""
-    ex, exchange = _mk_executor(MARKETS, 1640.92)
     qty = (1.50 * 1) / 1640.92
     assert qty < 0.001
-    assert _preflight(ex, exchange, qty, 1640.92, 1.50, 1) is True
+    assert _too_small_or_cheap(qty, 1640.92) is True
 
 
 def test_min_cost_also_flags():
     """Quantity above the step but notional under Bitget's $5 min cost."""
-    ex, exchange = _mk_executor(MARKETS, 1640.92)
-    qty = 0.002  # $3.28 notional — above step, below $5 min cost
-    assert _preflight(ex, exchange, qty, 1640.92, 3.28, 1) is True
+    assert _too_small_or_cheap(0.002, 1640.92) is True  # $3.28 < $5
 
 
 def test_normal_size_passes():
     """The BTC-class trade ($9.47 margin at 10x) sails through."""
-    ex, exchange = _mk_executor(MARKETS, 1640.92)
     qty = (9.47 * 10) / 1640.92  # 0.0577
-    assert _preflight(ex, exchange, qty, 1640.92, 9.47, 10) is False
+    assert _too_small_or_cheap(qty, 1640.92) is False
 
 
 def test_decimal_places_precision_not_misread_as_step():
-    """precision.amount = 3 (decimal places) must mean step 0.001, not 3.0 —
-    otherwise every sane quantity would be blocked."""
-    markets = {
-        SYMBOL: {
-            "precision": {"amount": 3, "price": 0.01},
-            "limits": {"amount": {"min": None}, "cost": {"min": None}},
-        }
-    }
-    _p = float(markets[SYMBOL]["precision"]["amount"])
-    _step = _p if 0 < _p <= 1 else (10.0 ** -int(_p) if _p > 1 and _p.is_integer() else 0.0)
-    assert _step == pytest.approx(0.001)
+    """precision.amount = 3 (decimal places) must mean step 0.001, not 3.0."""
+    assert min_amount_step(3) == pytest.approx(0.001)
+    assert min_amount_step(0.001) == pytest.approx(0.001)
+    assert min_amount_step(None) == 0.0
+
+
+# ── round-up policy (operator-requested) ─────────────────────────────
+def test_roundup_small_overshoot_rounds_to_step():
+    """XPT case: 0.00091 just below the 0.001 step (1.1x) → round UP to 0.001."""
+    qty = 1.50 / 1640.92  # 0.000914
+    resolved, q_min, mult = resolve_exchange_min_quantity(
+        qty, floor=0.001, step=0.001, min_cost=0.0, price=1640.92,
+        roundup_enabled=True, max_mult=1.5)
+    assert q_min == pytest.approx(0.001)
+    assert resolved == pytest.approx(0.001)
+    assert mult < 1.2
+
+
+def test_roundup_large_overshoot_skips():
+    """Min-cost $5 vs a $1.64 trade is a >3x overshoot → SKIP (None) even ON."""
+    qty = 1.0 / 1640.92  # ~0.00061, notional ~$1.00
+    resolved, q_min, mult = resolve_exchange_min_quantity(
+        qty, floor=0.001, step=0.001, min_cost=5.0, price=1640.92,
+        roundup_enabled=True, max_mult=1.5)
+    assert q_min == pytest.approx(0.004)      # ceil($5/1640.92 → 0.00305) to step
+    assert mult > 1.5
+    assert resolved is None                   # overshoot beyond the cap → skip
+
+
+def test_roundup_disabled_always_skips():
+    """Flag OFF → even a tiny overshoot skips (legacy behaviour)."""
+    qty = 1.50 / 1640.92
+    resolved, q_min, mult = resolve_exchange_min_quantity(
+        qty, floor=0.001, step=0.001, min_cost=0.0, price=1640.92,
+        roundup_enabled=False, max_mult=1.5)
+    assert resolved is None
+    assert q_min == pytest.approx(0.001)
+
+
+def test_roundup_respects_min_cost_and_step_grid():
+    """q_min must clear BOTH the amount floor AND the min-notional, snapped up
+    to the step grid."""
+    # price 100, step 0.01, min_cost $2 → need 0.02; floor 0.001 → q_min 0.02.
+    resolved, q_min, mult = resolve_exchange_min_quantity(
+        quantity=0.015, floor=0.001, step=0.01, min_cost=2.0, price=100.0,
+        roundup_enabled=True, max_mult=2.0)
+    assert q_min == pytest.approx(0.02)
+    assert resolved == pytest.approx(0.02)
+
+
+def test_roundup_zero_quantity_is_infinite_mult_skip():
+    resolved, q_min, mult = resolve_exchange_min_quantity(
+        0.0, floor=0.001, step=0.001, min_cost=0.0, price=100.0,
+        roundup_enabled=True, max_mult=1.5)
+    assert resolved is None
+    assert mult == float("inf")
 
 
 def test_blocked_message_is_classified_failure():
