@@ -30,7 +30,22 @@ from dotenv import load_dotenv
 # os.environ.
 _PRE_DOTENV_ENV_KEYS: frozenset[str] = frozenset(os.environ.keys())
 
-load_dotenv(override=False)
+# Deployment robustness: resolve .env from the REPO ROOT (parent of bot/)
+# rather than relying on the process CWD. Bare load_dotenv() only searches from
+# the current working directory upward, so a bot started from any other
+# directory silently loads NO .env — the exact fragility flagged in the deploy
+# report (config relied on CWD being the repo dir at startup). We pass an
+# explicit path when the repo-root .env exists, and fall back to the default
+# CWD search otherwise so env-var-only / alternate-location deployments (e.g. a
+# systemd unit that injects vars directly, or a .env placed elsewhere) still
+# work exactly as before.
+from pathlib import Path as _Path  # noqa: E402
+
+_REPO_ROOT_ENV = _Path(__file__).resolve().parent.parent / ".env"
+if _REPO_ROOT_ENV.is_file():
+    load_dotenv(dotenv_path=_REPO_ROOT_ENV, override=False)
+else:
+    load_dotenv(override=False)
 
 # Safety switches whose accidental inheritance from the process environment is
 # dangerous enough to warn about at import time.
