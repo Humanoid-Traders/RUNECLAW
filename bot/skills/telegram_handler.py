@@ -990,7 +990,7 @@ class TelegramHandler:
         ]
         if is_admin:
             _FALLBACK_PROVIDERS.insert(
-                1, (LLMProvider.ANTHROPIC, "ANTHROPIC_API_KEY", "claude-haiku-4-5"))
+                1, (LLMProvider.ANTHROPIC, "ANTHROPIC_API_KEY", "claude-haiku-4-5-20251001"))
         for provider, key_env, model in _FALLBACK_PROVIDERS:
             api_key = os.getenv(key_env, "")
             if api_key and not any(

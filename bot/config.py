@@ -1653,6 +1653,16 @@ class AppConfig:
 
     # -- Scan settings --
     scan_interval_seconds: int = int(_env_float("SCAN_INTERVAL", 60))
+    # Minimum 24h quote volume (USD) for a symbol to enter the scan universe.
+    # Defaults preserve the historical hardcoded floors (byte-identical): $50k
+    # for crypto, $5k for the lower-volume TradFi perpetuals. RAISE the crypto
+    # floor (e.g. 2_000_000) to drop thin-book meme coins BEFORE analysis — on a
+    # small account they can't clear the execution liquidity guard anyway
+    # (thin-book rejections waste analysis + scarce LLM quota + emit
+    # un-executable ideas). This is a cheap volume proxy for tradeability; the
+    # exact order-book depth check still runs at execution.
+    min_crypto_volume_usd: float = _env_float_bounded("MIN_CRYPTO_VOLUME_USD", 50_000, 0, 1e12)
+    min_tradfi_volume_usd: float = _env_float_bounded("MIN_TRADFI_VOLUME_USD", 5_000, 0, 1e12)
     # How many (volume-filtered) symbols the scanner emits for analysis each
     # cycle. Raised 80 -> 200 for a wide sweep of the whole liquid universe; the
     # analysis loop bounds concurrency (scan_analysis_concurrency) so a wider

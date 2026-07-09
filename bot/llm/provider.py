@@ -54,8 +54,8 @@ PROVIDER_CATALOG: dict[LLMProvider, dict] = {
     },
     LLMProvider.ANTHROPIC: {
         "base_url": "https://api.anthropic.com",
-        "default_model": "claude-sonnet-4-6",
-        "recommended_models": ["claude-opus-4-8", "claude-opus-4-6", "claude-sonnet-4-6", "claude-haiku-4-5-20251001"],
+        "default_model": "claude-sonnet-5",
+        "recommended_models": ["claude-opus-4-8", "claude-sonnet-5", "claude-haiku-4-5-20251001"],
         "sdk": "anthropic",
         "free_tier": False,
         "speed": "medium",
@@ -134,9 +134,9 @@ PROVIDER_CATALOG: dict[LLMProvider, dict] = {
     },
     LLMProvider.OPENROUTER: {
         "base_url": "https://openrouter.ai/api/v1",
-        "default_model": "anthropic/claude-sonnet-4-6",
+        "default_model": "anthropic/claude-sonnet-5",
         "recommended_models": [
-            "anthropic/claude-sonnet-4-6",
+            "anthropic/claude-sonnet-5",
             "openai/gpt-4o",
             "google/gemini-2.0-flash-001",
             "meta-llama/llama-3.1-70b-instruct:free",
@@ -226,22 +226,22 @@ DEFAULT_TIER_ROUTING: dict[LLMTier, dict] = {
 ADMIN_TIER_ROUTING: dict[LLMTier, dict] = {
     LLMTier.SCAN: {
         "provider": LLMProvider.ANTHROPIC,
-        "model": "claude-sonnet-4-6",
+        "model": "claude-sonnet-5",
         "reason": "Admin premium: full Sonnet reasoning for scan analysis",
     },
     LLMTier.THESIS: {
         "provider": LLMProvider.ANTHROPIC,
-        "model": "claude-sonnet-4-6",
+        "model": "claude-sonnet-5",
         "reason": "Admin premium: Sonnet for trade thesis generation",
     },
     LLMTier.LEARNING: {
         "provider": LLMProvider.ANTHROPIC,
-        "model": "claude-sonnet-4-6",
+        "model": "claude-sonnet-5",
         "reason": "Admin premium: Sonnet for deep reflection and learning",
     },
     LLMTier.CHAT: {
         "provider": LLMProvider.ANTHROPIC,
-        "model": "claude-sonnet-4-6",
+        "model": "claude-sonnet-5",
         "reason": "Admin premium: Sonnet for user Q&A — best quality responses",
     },
 }

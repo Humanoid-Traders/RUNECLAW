@@ -218,7 +218,7 @@ class MarketScanner:
                 if self._futures_symbols and symbol not in self._futures_symbols:
                     filtered_count += 1
                     continue
-                sig = self._process_ticker(symbol, tick, min_vol=50_000)
+                sig = self._process_ticker(symbol, tick, min_vol=CONFIG.min_crypto_volume_usd)
                 if sig:
                     seen_symbols.add(symbol)
                     signals.append(sig)
@@ -235,7 +235,7 @@ class MarketScanner:
             for symbol, tick in futures_result.items():
                 if symbol not in _TRADFI_SET:
                     continue
-                sig = self._process_ticker(symbol, tick, min_vol=5_000)
+                sig = self._process_ticker(symbol, tick, min_vol=CONFIG.min_tradfi_volume_usd)
                 if sig:
                     seen_symbols.add(symbol)
                     signals.append(sig)
@@ -365,7 +365,7 @@ class MarketScanner:
         for symbol, tick in tickers.items():
             if not symbol.endswith("/USDT"):
                 continue
-            sig = self._process_ticker(symbol, tick, min_vol=50_000)
+            sig = self._process_ticker(symbol, tick, min_vol=CONFIG.min_crypto_volume_usd)
             if sig:
                 seen_symbols.add(symbol)
                 signals.append(sig)
@@ -410,7 +410,7 @@ class MarketScanner:
         for symbol, tick in tickers.items():
             if symbol not in symbol_filter:
                 continue
-            sig = self._process_ticker(symbol, tick, min_vol=5_000)
+            sig = self._process_ticker(symbol, tick, min_vol=CONFIG.min_tradfi_volume_usd)
             if sig:
                 seen_symbols.add(symbol)
                 signals.append(sig)

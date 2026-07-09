@@ -65,7 +65,7 @@ class TestMaybeTierClient:
     def test_premium_tier_routes(self):
         p = self._cfg(enabled=True)
         from types import SimpleNamespace
-        fake_cfg = SimpleNamespace(provider=SimpleNamespace(value="anthropic"), model="claude-sonnet-4-6")
+        fake_cfg = SimpleNamespace(provider=SimpleNamespace(value="anthropic"), model="claude-sonnet-5")
         sentinel = object()
         a = self._analyzer()
         try:
@@ -74,7 +74,7 @@ class TestMaybeTierClient:
                 client, cfg, model = a._maybe_tier_client("elite", True)
             assert client is sentinel
             assert cfg is fake_cfg
-            assert model == "claude-sonnet-4-6"
+            assert model == "claude-sonnet-5"
         finally:
             p.stop()
 
