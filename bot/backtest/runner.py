@@ -44,6 +44,26 @@ def _format_result_summary(result) -> str:
     # Equity curve sparkline (terminal-safe)
     sparkline = _ascii_equity_curve(result.equity_curve)
 
+    # Gate-rejection breakdown. STATEFUL gates (breaker/governor/loss-streak/…)
+    # are path-dependent on prior-trade outcomes, so a diff there between two
+    # A/B runs means they took a different trade SET — the metric change is
+    # trade-selection drift, not the parameter under test. Flag them with ⚠.
+    from bot.backtest.engine import STATEFUL_RISK_GATES
+    gate_items = sorted((getattr(result, "rejections_by_gate", None) or {}).items(),
+                        key=lambda kv: (-kv[1], kv[0]))
+    if gate_items:
+        _gl = []
+        for gate, cnt in gate_items:
+            flag = " ⚠ stateful (path-dependent)" if gate in STATEFUL_RISK_GATES else ""
+            _gl.append(f"    {gate:<22} {cnt:>4}{flag}")
+        _sr = getattr(result, "stateful_rejections", 0)
+        _gl.append(f"    {'—' * 22}")
+        _gl.append(f"    stateful total        {_sr:>4}  "
+                   f"(if this differs across an A/B, the runs are NOT comparable)")
+        gate_rejections = "\n".join(_gl)
+    else:
+        gate_rejections = "    (no risk rejections)"
+
     return f"""
 ╔══════════════════════════════════════════════════════════════════════════╗
 ║                    RUNECLAW BACKTEST REPORT                             ║
@@ -91,6 +111,10 @@ def _format_result_summary(result) -> str:
   Rejected (Risk):  {result.total_ideas_rejected_risk}
   Rejected (Conf):  {result.total_ideas_rejected_confidence}
   Execution Rate:   {(result.total_trades / result.total_ideas_generated * 100) if result.total_ideas_generated > 0 else 0:.1f}% of ideas executed
+
+── GATE REJECTIONS (A/B comparability) ─────────────────────────────────────
+
+{gate_rejections}
 
 ── EQUITY CURVE ───────────────────────────────────────────────────────────
 

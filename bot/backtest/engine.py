@@ -25,6 +25,24 @@ from bot.utils.models import Direction, MarketSignal, RiskVerdict
 from bot.utils.trailing import make_trailing_state, update_trailing_stop
 
 
+# Risk gates whose firing depends on PRIOR-TRADE OUTCOMES (cumulative PnL, loss
+# streaks, drawdown) rather than only the current bar/idea. When an A/B run's
+# rejection tally diverges on these, the two runs took a different trade SET —
+# so any metric change is trade-selection drift, not the parameter under test.
+# Everything else (RSI, MTF_ALIGNMENT, CONFIDENCE, RISK_REWARD, VOLATILITY, …)
+# is stateless w.r.t. trade history and reproduces across A/B variants.
+STATEFUL_RISK_GATES = frozenset({
+    "CIRCUIT_BREAKER", "LIVE_PERF_GOVERNOR", "LOSS_STREAK", "COOLDOWN",
+    "DAILY_LOSS", "DRAWDOWN", "WARNING_RATE_BREAKER",
+})
+
+
+def _gate_token(check_str: str) -> str:
+    """Extract the gate name from a checks_failed entry like
+    'CIRCUIT_BREAKER: system halted …' -> 'CIRCUIT_BREAKER'."""
+    return (check_str.split(":", 1)[0] or "").strip()
+
+
 def _env_bool(key: str, default: bool = False) -> bool:
     """Read a boolean env flag. Truthy = {1,true,yes,on} (case-insensitive)."""
     raw = os.getenv(key)
@@ -120,6 +138,10 @@ class BacktestEngine:
         self._ideas_generated = 0
         self._ideas_rejected_risk = 0
         self._ideas_rejected_confidence = 0
+        # Per-gate risk-rejection tally (gate token -> count). Makes A/B
+        # path-dependence visible: a diff in the STATEFUL gates below means two
+        # runs took a different trade SET (not the parameter under test).
+        self._rejections_by_gate: dict[str, int] = {}
 
         # Open position tracking with backtest metadata
         self._open_bt_positions: dict[str, dict] = {}
@@ -398,6 +420,11 @@ class BacktestEngine:
         risk_check = self.risk.evaluate(idea, atr=atr_value, as_of=bar.timestamp)
         if risk_check.verdict == RiskVerdict.REJECTED:
             self._ideas_rejected_risk += 1
+            for _chk in (risk_check.checks_failed or []):
+                _tok = _gate_token(_chk)
+                if _tok:
+                    self._rejections_by_gate[_tok] = (
+                        self._rejections_by_gate.get(_tok, 0) + 1)
             audit(trade_log, f"[BT] Trade REJECTED: {risk_check.reason}",
                   action="backtest_risk", result="REJECTED")
             return
@@ -1099,6 +1126,10 @@ class BacktestEngine:
             total_ideas_generated=self._ideas_generated,
             total_ideas_rejected_risk=self._ideas_rejected_risk,
             total_ideas_rejected_confidence=self._ideas_rejected_confidence,
+            rejections_by_gate=dict(self._rejections_by_gate),
+            stateful_rejections=sum(
+                c for g, c in self._rejections_by_gate.items()
+                if g in STATEFUL_RISK_GATES),
             # Projected LLM cost (when use_llm=False, estimate from signal count)
             projected_llm_cost_usd=round(self._signals_generated * CONFIG.llm.est_cost_per_analysis, 4),
             est_cost_per_analysis=CONFIG.llm.est_cost_per_analysis,

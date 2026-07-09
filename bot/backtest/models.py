@@ -151,6 +151,14 @@ class BacktestResult(BaseModel):
     total_ideas_rejected_risk: int
     total_ideas_rejected_confidence: int
 
+    # Per-gate risk-rejection tally (gate name -> count) so an A/B diff can SEE
+    # which gates diverged. `stateful_rejections` sums the path-dependent gates
+    # (breaker / governor / loss-streak / cooldown / daily-loss / drawdown) whose
+    # firing depends on prior-trade outcomes — divergence there means an A/B
+    # metric change came from a different trade SET, not the parameter under test.
+    rejections_by_gate: dict = Field(default_factory=dict)
+    stateful_rejections: int = 0
+
     # Projected operating costs (when use_llm=False, estimated from signal count)
     projected_llm_cost_usd: float = 0.0
     est_cost_per_analysis: float = 0.0
