@@ -87,7 +87,7 @@ class TestBudgetGuard:
         monkeypatch.setenv("GEMINI_API_KEY", "test-key")
         monkeypatch.setattr(th_mod, "CONFIG", _budget_config(daily_call_limit=1))
         cost = CostTracker()
-        cost.record_llm(model="claude-haiku-4-5", prompt_tokens=10, completion_tokens=10)
+        cost.record_llm(model="claude-haiku-4-5-20251001", prompt_tokens=10, completion_tokens=10)
         assert cost.snapshot().llm_calls == 1
 
         create_client_mock = AsyncMock()
@@ -102,7 +102,7 @@ class TestBudgetGuard:
         monkeypatch.setenv("GEMINI_API_KEY", "test-key")
         monkeypatch.setattr(th_mod, "CONFIG", _budget_config(daily_budget_usd=0.01))
         cost = CostTracker()
-        cost.record_llm(model="claude-sonnet-4-6", prompt_tokens=1_000_000, completion_tokens=0)
+        cost.record_llm(model="claude-sonnet-5", prompt_tokens=1_000_000, completion_tokens=0)
         assert cost.snapshot().llm_cost_usd >= 0.01
 
         create_client_mock = AsyncMock()
