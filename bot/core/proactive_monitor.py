@@ -99,6 +99,7 @@ class ProactiveMonitor:
         self._ws_down_since: float = 0.0           # monotonic ts WS first seen down
         self._last_warn_rate: bool = False         # last warning-rate-breaker state
         self._last_tick_degraded: bool = False     # last tick-failure alert state
+        self._last_llm_degraded: bool = False       # last LLM-brain-offline state
         # Strangle watchdog: rolling (wall_ts, evaluated, approved, fails_by_gate)
         # snapshots of the risk engine's cumulative counters, plus our own
         # last-alert time (the condition PERSISTS, so the generic 5-min dedup
@@ -252,6 +253,7 @@ class ProactiveMonitor:
         alerts.extend(self._check_drawdown_tiers())
         alerts.extend(self._check_tick_failures())
         alerts.extend(self._check_warning_rate_breaker())
+        alerts.extend(self._check_llm_degraded())
         alerts.extend(self._check_ws_health())
         alerts.extend(self._check_stale_balance())
         alerts.extend(self._check_macro_calendar_stale())
@@ -542,6 +544,57 @@ class ProactiveMonitor:
             self._last_warn_rate = tripped
         except Exception as exc:
             system_log.debug("warning-rate check failed: %s", exc)
+        return alerts
+
+    def _check_llm_degraded(self) -> list[Alert]:
+        """Alert when the LLM brain has gone offline — every provider failed for
+        N consecutive theses and the analyzer is running on the rule engine. This
+        is the live "free-tier quota exhausted" signature that was previously
+        silent: the bot keeps trading, but blind, on the rule engine only. Fires
+        once when the streak crosses the threshold, and once more (INFO) when a
+        live provider answers again. Rule-engine-by-design never trips it."""
+        alerts: list[Alert] = []
+        try:
+            if not CONFIG.analyzer.llm_degraded_alert_enabled:
+                return alerts
+            analyzer = getattr(self.engine, "analyzer", None)
+            if analyzer is None or not hasattr(analyzer, "llm_health"):
+                return alerts
+            health = analyzer.llm_health()
+            streak = int(health.get("degraded_streak", 0) or 0)
+            min_streak = int(getattr(
+                CONFIG.analyzer, "llm_degraded_alert_min_streak", 3) or 3)
+            degraded = streak >= min_streak
+            if degraded and not self._last_llm_degraded:
+                mins = float(health.get("degraded_seconds", 0.0) or 0.0) / 60.0
+                alerts.append(Alert(
+                    alert_type="LLM_DEGRADED", severity="CRITICAL",
+                    title="LLM brain offline",
+                    body=(
+                        "\U0001f6a8 <b>LLM BRAIN OFFLINE — RUNNING ON RULES</b>\n"
+                        "────────────────\n"
+                        f"Every LLM provider has failed for <b>{streak}</b> "
+                        "analyses in a row"
+                        + (f" (~{mins:.0f} min)" if mins >= 1 else "") + ".\n"
+                        "The bot is still scanning and trading, but on the "
+                        "<b>rule engine only</b> — no AI thesis, weaker signals.\n\n"
+                        "Usual cause: free-tier API quota exhausted (429 / "
+                        "RESOURCE_EXHAUSTED) across every provider.\n"
+                        "────────────────\n"
+                        "\U0001f449 Add or rotate an LLM API key (paid tier "
+                        "avoids the daily quota wall).\n"
+                        "\U0001f449 /llmstatus — current provider + key"),
+                    dedup_key="llm_degraded"))
+            elif not degraded and self._last_llm_degraded:
+                alerts.append(Alert(
+                    alert_type="LLM_RESTORED", severity="INFO",
+                    title="LLM brain restored",
+                    body="✅ <b>LLM brain restored</b> — a provider answered "
+                         "again. AI theses are back online.",
+                    dedup_key="llm_restored"))
+            self._last_llm_degraded = degraded
+        except Exception as exc:
+            system_log.debug("llm-degraded check failed: %s", exc)
         return alerts
 
     def _check_ws_health(self) -> list[Alert]:
