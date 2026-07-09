@@ -21,6 +21,7 @@ any gate.
 from __future__ import annotations
 
 import asyncio
+import html as _html
 import logging
 import time
 from collections import deque
@@ -704,6 +705,18 @@ class ProactiveMonitor:
                     tid = getattr(pos, "trade_id", sym)
                     sl = getattr(pos, "stop_loss", 0.0) or 0.0
                     direction = getattr(pos, "direction", "")
+                    # Surface the LAST venue rejection reason for this symbol so
+                    # the operator can tell a transient retry apart from a hard
+                    # rejection (min-size / wrong-symbol / bad tick) that needs a
+                    # different manual fix — not just "it's naked". Best-effort.
+                    reason = ""
+                    try:
+                        _r = ex._last_sltp_reason(sym)
+                        if _r:
+                            reason = (f"- Venue rejected the stop: "
+                                      f"<code>{_html.escape(str(_r)[:160])}</code>\n")
+                    except Exception:
+                        reason = ""
                     alerts.append(Alert(
                         alert_type="POSITION_UNPROTECTED", severity="CRITICAL",
                         title=f"Unprotected: {sym}",
@@ -713,6 +726,7 @@ class ProactiveMonitor:
                             f"- {sym} <b>{direction}</b> "
                             f"open <code>{age/60:.0f} min</code> with NO venue stop-loss.\n"
                             f"- Intended stop: <code>${sl:,.4f}</code>\n"
+                            + reason +
                             "- Self-heal keeps retrying and the local price check is the "
                             "only backstop — a gap/outage could run it unbounded.\n"
                             "────────────────\n"

@@ -32,8 +32,9 @@ def _pos(**kw):
     return SimpleNamespace(**base)
 
 
-def _mon(positions):
-    ex = SimpleNamespace(open_positions=list(positions))
+def _mon(positions, sltp_reason=""):
+    ex = SimpleNamespace(open_positions=list(positions),
+                         _last_sltp_reason=lambda sym: sltp_reason)
     engine = SimpleNamespace(_all_live_executors=lambda: [ex], live_executor=ex)
     return ProactiveMonitor(engine)
 
@@ -61,6 +62,23 @@ class TestAlerts:
 
     def test_non_open_status_skipped(self, live):
         assert _mon([_pos(status="pending_fill")])._check_unprotected_positions() == []
+
+    def test_alert_includes_venue_rejection_reason(self, live):
+        """The CRITICAL push alert surfaces the last venue error code so the
+        operator can tell a transient retry from a hard rejection."""
+        a = _mon([_pos()], sltp_reason="40808: minimum amount precision")._check_unprotected_positions()
+        assert len(a) == 1
+        assert "Venue rejected the stop" in a[0].body
+        assert "40808" in a[0].body
+
+    def test_alert_escapes_reason_html(self, live):
+        """A reason containing angle brackets must not break Telegram HTML."""
+        a = _mon([_pos()], sltp_reason="price < min <tick>")._check_unprotected_positions()
+        assert "&lt;" in a[0].body and "<tick>" not in a[0].body
+
+    def test_alert_quiet_reason_when_none(self, live):
+        a = _mon([_pos()], sltp_reason="")._check_unprotected_positions()
+        assert "Venue rejected the stop" not in a[0].body
 
     def test_only_offending_position_alerts(self, live):
         a = _mon([
