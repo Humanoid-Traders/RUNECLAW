@@ -887,6 +887,16 @@ class AnalyzerConfig:
     # flips an application flag by itself.
     learning_readiness_alert_enabled: bool = _env_bool(
         "LEARNING_READINESS_ALERT_ENABLED", True)
+    # LLM-degraded alerting: the proactive monitor warns the operator when the
+    # analyzer has fallen through EVERY provider to the rule engine for N theses
+    # in a row — the live "free-tier quota exhausted → bot trading brain-dead on
+    # rules" signature, which was previously silent. Rule-engine-by-design (tier
+    # 1, no LLM call attempted) never trips this. Streak-based so a single
+    # transient 429 doesn't alert; only sustained degradation does.
+    llm_degraded_alert_enabled: bool = _env_bool(
+        "LLM_DEGRADED_ALERT_ENABLED", True)
+    llm_degraded_alert_min_streak: int = int(_env_float_bounded(
+        "LLM_DEGRADED_ALERT_MIN_STREAK", 3, 1, 1000))
     # Drop the in-progress (unclosed) candle before computing indicators/patterns.
     # Live OHLCV from the exchange includes the current forming bar as the last
     # element; reading closes[-1] on it makes every voter flicker pre-close

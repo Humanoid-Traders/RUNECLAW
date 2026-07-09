@@ -22,6 +22,7 @@ import logging
 import math
 import os
 import re
+import time
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -460,6 +461,15 @@ class Analyzer:
         self._llm_calls_today: int = 0
         self._llm_day: str = ""  # YYYY-MM-DD, reset counter on new day
         self._cost = cost_tracker
+        # LLM health tracking (proactive-monitor degrade alert). A thesis that
+        # ATTEMPTED the LLM but exhausted every provider and fell to the rule
+        # engine (RULE_ENGINE_FALLBACK) is the live "quota exhausted → brain
+        # offline" signature. Rule-engine-by-design (tier 1, never called the
+        # LLM) does NOT touch these counters, so the streak only rises on real
+        # provider failure. The streak resets to 0 on the next LLM success.
+        self._llm_degraded_streak: int = 0        # consecutive all-provider fails
+        self._llm_last_ok_monotonic: float = 0.0  # last successful LLM thesis
+        self._llm_degraded_since_monotonic: float = 0.0  # when the streak began
         # Async rate limiter: prevent 429s without blocking the event loop
         from bot.utils.rate_limiter import AsyncRateLimiter
         # #43: cap RPM from the dedicated per-provider config, NOT the daily
@@ -3814,6 +3824,7 @@ class Analyzer:
             # ── Cache the LLM response ──
             self._llm_cache.put(cache_key, result, signal.symbol)
 
+            self._note_llm_ok()
             return result
         except Exception as exc:
             audit(trade_log, f"LLM error on primary provider, trying fallback: {exc}",
@@ -3835,12 +3846,49 @@ class Analyzer:
                 fallback_result["source"] = f"LLM_FALLBACK_{fallback_result.get('_fallback_provider', 'UNKNOWN')}"
                 fallback_result.pop("_fallback_provider", None)
                 self._llm_cache.put(cache_key, fallback_result, signal.symbol)
+                self._note_llm_ok()   # a fallback provider answered — brain is up
                 return fallback_result
+            # Every provider failed and we're running on the rule engine — the
+            # live "quota exhausted → brain offline" signature. Record it so the
+            # proactive monitor can alert once the streak crosses the threshold.
+            self._note_llm_degraded()
             result = self._rule_based_thesis(signal, indicators)
             if result is None:
                 return None
             result["source"] = "RULE_ENGINE_FALLBACK"
             return result
+
+    # ── LLM health tracking (proactive degrade alert) ────────────────
+    def _note_llm_ok(self) -> None:
+        """A live LLM (primary or fallback provider) answered. Clears the
+        degrade streak so the monitor sees the brain as healthy again."""
+        self._llm_degraded_streak = 0
+        self._llm_degraded_since_monotonic = 0.0
+        self._llm_last_ok_monotonic = time.monotonic()
+
+    def _note_llm_degraded(self) -> None:
+        """Every provider failed for one thesis and we fell to the rule engine.
+        Advance the consecutive-fail streak; stamp when it began."""
+        if self._llm_degraded_streak == 0:
+            self._llm_degraded_since_monotonic = time.monotonic()
+        self._llm_degraded_streak += 1
+
+    def llm_health(self) -> dict:
+        """Snapshot of LLM brain health for the proactive monitor / /status.
+
+        degraded_streak: consecutive theses where every provider failed and the
+        rule engine answered instead (0 = healthy or LLM-by-design-off).
+        degraded_seconds: how long the current all-fail streak has persisted.
+        """
+        now = time.monotonic()
+        since = self._llm_degraded_since_monotonic
+        return {
+            "degraded_streak": self._llm_degraded_streak,
+            "degraded_seconds": (now - since) if since > 0 else 0.0,
+            "last_ok_seconds_ago": (
+                (now - self._llm_last_ok_monotonic)
+                if self._llm_last_ok_monotonic > 0 else None),
+        }
 
     async def _try_llm_fallback(
         self,
