@@ -229,6 +229,7 @@ class RuneClawEngine:
         self._confirm_callback: Optional[Callable] = None
         self._close_notify_callback: Optional[Callable] = None
         self._fill_notify_callback: Optional[Callable] = None
+        self._sync_notify_callback: Optional[Callable] = None
         self._adopt_notify_callback: Optional[Callable] = None
         self._auto_confirm_notify_callback: Optional[Callable] = None
         self._pending_ideas: dict[str, TradeIdea] = {}
@@ -1314,6 +1315,11 @@ class RuneClawEngine:
     def set_fill_notify_callback(self, cb: Callable) -> None:
         """Register a callback to notify users when a limit order is filled (opened)."""
         self._fill_notify_callback = cb
+
+    def set_sync_notify_callback(self, cb: Callable) -> None:
+        """Register a callback for periodic exchange-sync adoption notices
+        ("SYNC: Adopted untracked …") — informational, NOT closes."""
+        self._sync_notify_callback = cb
 
     def set_adopt_notify_callback(self, cb: Callable) -> None:
         """Register a callback to notify users when an exchange position is adopted."""
@@ -3497,6 +3503,16 @@ class RuneClawEngine:
         first = (msg or "").split("\n", 1)[0]
         return first.startswith("LIMIT FILLED:") or "MARKET FALLBACK:" in first
 
+    @staticmethod
+    def _is_sync_message(msg: str) -> bool:
+        """True for the periodic exchange-sync adoption notices the executor
+        emits through the same monitor-message channel ("SYNC: Adopted
+        untracked position/limit order …"). These are informational — the
+        position is now TRACKED, nothing closed — and were previously
+        misrouted to the close path and shown as "❌ Closed" (live incident:
+        'Closed — SYNC: Adopted untracked position B from exchange')."""
+        return (msg or "").split("\n", 1)[0].startswith("SYNC:")
+
     async def _check_open_positions(self) -> None:
         """Monitor open positions for SL/TP hits."""
         positions = self.portfolio.open_positions
@@ -3561,6 +3577,20 @@ class RuneClawEngine:
                                     logger.debug("Fill notify failed: %s", exc)
                             continue
 
+                        # Periodic-sync adoption notices are informational —
+                        # the position is now tracked, nothing closed. Route
+                        # them to the sync callback (info card), never the
+                        # close card, and skip the loss-cooldown scan below.
+                        if self._is_sync_message(msg):
+                            audit(trade_log, f"Exchange sync: {msg}",
+                                  action="exchange_sync_notify", result="ADOPTED")
+                            if self._sync_notify_callback:
+                                try:
+                                    await self._sync_notify_callback(msg)
+                                except Exception as exc:
+                                    logger.debug("Sync notify failed: %s", exc)
+                            continue
+
                         audit(trade_log, f"Live position auto-closed: {msg}",
                               action="live_auto_close", result="CLOSED")
                         if self._close_notify_callback:
@@ -3575,7 +3605,8 @@ class RuneClawEngine:
                     # message saw only the final close (a winning last close
                     # masked an earlier loss, and the cooldown reason named the
                     # wrong symbol). Only scanned when this tick closed something.
-                    if any(not self._is_fill_message(m) for m in live_closed):
+                    if any(not self._is_fill_message(m)
+                           and not self._is_sync_message(m) for m in live_closed):
                         try:
                             _now_utc = datetime.now(UTC)
                             _tick_losses = [

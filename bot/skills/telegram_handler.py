@@ -4022,6 +4022,32 @@ class TelegramHandler:
 
         self.engine.set_fill_notify_callback(_on_limit_filled)
 
+        # Register periodic-sync adoption notification callback. These are
+        # informational — the position/order is now TRACKED, nothing closed —
+        # and were previously misrouted to the close path and rendered as
+        # "❌ Closed — SYNC: Adopted untracked position B from exchange".
+        async def _on_exchange_sync(msg: str) -> None:
+            if not _notify_chat_ids:
+                return
+            try:
+                card = "\U0001f504 <b>EXCHANGE SYNC</b>\n"
+                card += "─" * 28 + "\n\n"
+                for line in msg.strip().split("\n"):
+                    card += f"{html.escape(line)}\n"
+                card += ("\nThe bot found this on the exchange and is now "
+                         "tracking it (SL/TP monitoring active).")
+                for _cid in _notify_chat_ids:
+                    try:
+                        await bot.send_message(
+                            chat_id=_cid, text=card.strip(),
+                            parse_mode="HTML")
+                    except Exception:
+                        pass
+            except Exception as exc:
+                system_log.debug("Sync notify send failed: %s", exc)
+
+        self.engine.set_sync_notify_callback(_on_exchange_sync)
+
         # ── Adoption notification ─────────────────────────────────
         async def _on_positions_adopted(adopted_symbols: list[str]) -> None:
             """Notify admin when exchange positions are adopted on startup."""
