@@ -1804,6 +1804,25 @@ class LiveExecutor:
                         "Skipping duplicate limit order %s for %s %s @ %.4f — already tracked",
                         oid, raw_sym, direction, price)
                     continue
+                # Tolerant fallback: the combo above is EXACT-match (price to
+                # 4dp), so the maker-limit reprice feature (or any float drift
+                # in the exchange echo) moves the price off the combo and the
+                # bot's own order gets re-adopted as a duplicate (live incident:
+                # UNI double-tracked → double fill notification → double close
+                # booking). Same symbol + direction with price within 0.1% of a
+                # tracked pending/open record is the bot's own order.
+                _dup = False
+                for (_ts, _td, _tp) in tracked_combos:
+                    if (_ts == normalize_symbol(raw_sym) and _td == direction
+                            and _tp > 0 and abs(_tp - price) / _tp <= 0.001):
+                        _dup = True
+                        break
+                if _dup:
+                    logger.info(
+                        "Skipping near-duplicate limit order %s for %s %s @ %.4f "
+                        "— tracked at a price within 0.1%% (repriced/echo drift)",
+                        oid, raw_sym, direction, price)
+                    continue
 
                 # Grace window: skip symbols the bot itself just placed an order
                 # for. Real incident: a bot-placed pending limit order ("XPT
@@ -4602,6 +4621,34 @@ class LiveExecutor:
                 fill_price = float(order.get("average", 0) or order.get("price", 0) or pos.entry_price)
                 filled_qty = float(order.get("filled", 0) or pos.quantity)
 
+                # ── Duplicate-fill guard (live incident: UNI double "TRADE
+                # OPENED"). The adoption sweep can mint a SECOND pending_fill
+                # record for an order the bot already tracks (order-id echo
+                # drift / clientOid loss / reprice moving the price off the
+                # exact-match combo). Both records then transition on the SAME
+                # exchange fill: two fill notifications, one of them racing SL
+                # placement (the plan-order cleanup cancels the other's stop),
+                # and later two close bookings. If another record already went
+                # OPEN on this symbol+direction at this entry (±0.05%), this
+                # record is a duplicate tracker of the same fill — retire it
+                # quietly instead of double-tracking. Same signature + trade-off
+                # as _is_duplicate_close_booking (a real second fill at the
+                # identical price within the same sweep is near-impossible).
+                if self._is_duplicate_fill(pos, fill_price):
+                    pos.status = "closed"
+                    pos.closed_at = datetime.now(UTC)
+                    pos.pnl_usd = 0.0
+                    pos.close_reason = "duplicate_fill_suppressed"
+                    pos.limit_order_id = None
+                    self._save_positions()
+                    audit(trade_log,
+                          f"Duplicate fill suppressed: {pos.symbol} {pos.direction} "
+                          f"@ ${fill_price:,.4f} — another record already tracks this fill",
+                          action="duplicate_fill_guard", result="SUPPRESSED",
+                          data={"trade_id": trade_id, "symbol": pos.symbol,
+                                "fill_price": fill_price})
+                    return None
+
                 # GETCLAW: partially_filled = some qty matched, rest still open.
                 # Use actual filled qty, not original order size.
                 if order_status == "partially_filled" and filled_qty > 0:
@@ -6094,6 +6141,38 @@ class LiveExecutor:
         tr = " | Trailing: armed" if trailing else ""
         return f"{sl}{tp}{tr}"
 
+    def _is_duplicate_fill(self, pos: "LivePosition", fill_price: float) -> bool:
+        """True when another OPEN record (different trade_id) already tracks a
+        fill on the same normalized symbol + direction at this entry (±0.05%).
+
+        Live incident (UNI): the adoption sweep minted a second pending_fill
+        record for an order the bot already tracked; both transitioned on the
+        same exchange fill → double "TRADE OPENED", racing SL placement (the
+        plan-order cleanup cancels the other record's stop), and later two
+        close bookings. Same signature + trade-off as
+        _is_duplicate_close_booking; fail-safe: errors return False.
+        """
+        try:
+            sym = normalize_symbol(pos.symbol)
+            price = float(fill_price or 0.0)
+            if not sym or price <= 0:
+                return False
+            for other in self._positions.values():
+                if other.trade_id == pos.trade_id:
+                    continue
+                if other.status != "open":
+                    continue
+                if normalize_symbol(other.symbol) != sym:
+                    continue
+                if other.direction != pos.direction:
+                    continue
+                o_entry = float(other.entry_price or 0.0)
+                if o_entry > 0 and abs(o_entry - price) / price <= 0.0005:
+                    return True
+        except Exception:
+            return False
+        return False
+
     def _is_duplicate_close_booking(self, pos: "LivePosition") -> bool:
         """True when ``pos`` looks like a SECOND internal record of a close that
         is already booked in ``_closed_trades`` under a DIFFERENT trade_id.
@@ -6105,11 +6184,18 @@ class LiveExecutor:
         duplicate record was re-booked ~1 minute later (second notification;
         realized PnL / trade count / loss streak / learning store all counted
         twice). Signature: same normalized symbol + same direction + entry
-        within 0.05% + the existing booking closed within the last 10 minutes.
-        Two genuinely distinct fills at the same price to 0.05% within 10 min
-        are near-impossible on this bot's cadence; a false positive costs one
-        suppressed stat row, a false negative double-counts money. Fail-safe:
-        errors return False (never blocks a legitimate booking).
+        within 0.05% + the existing booking closed within the window below.
+
+        Window: 2 hours (was 10 min). Live incident (UNI, 2026-07-11): the
+        duplicate record's close was booked by a reconcile sweep 30 MINUTES
+        after the first booking — outside the old window — so the operator got
+        an identical second close card. Two genuinely distinct fills at the
+        same entry to 0.05% within 2h remain near-impossible (the re-entry
+        cooldown spaces same-symbol entries, and a real re-entry fills at a
+        different price); partial closes of the SAME position share the
+        trade_id and are exempted above. A false positive costs one suppressed
+        stat row, a false negative double-counts money. Fail-safe: errors
+        return False (never blocks a legitimate booking).
         """
         try:
             def _norm(sym: str) -> str:
@@ -6133,7 +6219,7 @@ class LiveExecutor:
                 ct_closed = ct.closed_at
                 if ct_closed.tzinfo is None:
                     ct_closed = ct_closed.replace(tzinfo=UTC)
-                if abs((now - ct_closed).total_seconds()) <= 600:
+                if abs((now - ct_closed).total_seconds()) <= 7200:
                     return True
         except Exception:
             return False
