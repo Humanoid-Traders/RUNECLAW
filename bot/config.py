@@ -939,6 +939,20 @@ class AnalyzerConfig:
     # transient 429 doesn't alert; only sustained degradation does.
     llm_degraded_alert_enabled: bool = _env_bool(
         "LLM_DEGRADED_ALERT_ENABLED", True)
+    # Run the ENGINE's own autonomous analyses in ADMIN context (default ON).
+    # Live incident 2026-07-11: the operator pointed every tier at their paid
+    # Anthropic key, but the autonomous scan path defaulted to is_admin=False —
+    # and the non-admin guard in resolve_tier_config deliberately SKIPS any
+    # step resolving to Anthropic (it protects the operator's Claude key from
+    # OTHER USERS), so the bot's own trading brain could never reach the paid
+    # key: routing fell to the cheap default chain (Alibaba/Gemini), both
+    # exhausted, and the bot ran on the rule engine. The autonomous engine IS
+    # the operator's own process running the operator's keys — admin context is
+    # the correct identity for it. Set OFF to restore cheap-tier-only scans.
+    # NOTE: with this ON, autonomous analyses use ADMIN_TIER_ROUTING (Sonnet on
+    # every tier) and spend real money — the LLM_DAILY_BUDGET_USD guard binds.
+    engine_analysis_as_admin: bool = _env_bool(
+        "ENGINE_ANALYSIS_AS_ADMIN", True)
     llm_degraded_alert_min_streak: int = int(_env_float_bounded(
         "LLM_DEGRADED_ALERT_MIN_STREAK", 3, 1, 1000))
     # Drop the in-progress (unclosed) candle before computing indicators/patterns.

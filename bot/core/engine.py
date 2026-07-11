@@ -2049,10 +2049,19 @@ class RuneClawEngine:
         limit = max(1, int(CONFIG.scan_analysis_concurrency))
         sem = asyncio.Semaphore(limit)
 
+        # The autonomous engine runs under the OPERATOR's identity and keys —
+        # admin context — so tier routing can reach the operator's Anthropic
+        # key (the non-admin guard otherwise skips it; live incident
+        # 2026-07-11: paid key unreachable, bot on rule engine). Flag-gated:
+        # ENGINE_ANALYSIS_AS_ADMIN=false restores cheap-tier-only scans.
+        _as_admin = bool(getattr(CONFIG.analyzer, "engine_analysis_as_admin", True))
+
         async def _one(sig):
             async with sem:
                 try:
-                    return await self._analyze_signal(sig, timeframe=timeframe, lightweight=lightweight)
+                    return await self._analyze_signal(
+                        sig, timeframe=timeframe, lightweight=lightweight,
+                        is_admin=_as_admin)
                 except Exception as exc:
                     logger.debug("Signal analysis error for %s: %s",
                                  getattr(sig, "symbol", "?"), exc)

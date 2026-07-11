@@ -4282,6 +4282,21 @@ class TelegramHandler:
                         f"{streak} analyses in a row"
                         + (f" (~{mins:.0f} min)" if mins >= 1 else "")
                         + "; running on the rule engine. Add/rotate an LLM key.")
+                    # WHY it's failing (401 bad key / 404 model / 429 quota) —
+                    # the live incident showed the streak without the cause.
+                    _err = str(h.get("last_error", "") or "")
+                    if _err:
+                        health_line += (f"\nLast error: "
+                                        f"<code>{html.escape(_err[:160])}</code>")
+                elif h.get("last_ok_seconds_ago") is None:
+                    # streak==0 but no success recorded either: nothing has been
+                    # attempted since restart. Don't claim "answering" — the
+                    # live incident showed "healthy" at 18:07 then 18 failures
+                    # at 18:08 because the first status simply pre-dated any
+                    # LLM call.
+                    health_line = ("\n⚪ <b>Brain: untested</b> — no LLM "
+                                   "analysis attempted since restart; state "
+                                   "will confirm on the first scan.")
                 else:
                     health_line = "\n✅ <b>Brain: healthy</b> — LLM answering."
         except Exception:

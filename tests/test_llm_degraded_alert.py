@@ -23,6 +23,7 @@ def _fresh_analyzer():
     a._llm_degraded_streak = 0
     a._llm_last_ok_monotonic = 0.0
     a._llm_degraded_since_monotonic = 0.0
+    a._llm_last_error = ""
     return a
 
 
@@ -46,6 +47,19 @@ class TestAnalyzerHealth:
 
     def test_healthy_baseline_reports_zero(self):
         assert _fresh_analyzer().llm_health()["degraded_streak"] == 0
+
+    def test_failure_reason_captured_and_cleared(self):
+        """Live incident: /llmstatus showed the streak without the CAUSE. The
+        primary provider's error is now captured (truncated) and cleared on
+        the next success."""
+        a = _fresh_analyzer()
+        a._note_llm_degraded("Error code: 401 - invalid x-api-key")
+        h = a.llm_health()
+        assert h["last_error"] == "Error code: 401 - invalid x-api-key"
+        a._note_llm_degraded("x" * 500)          # truncated to 200
+        assert len(a.llm_health()["last_error"]) == 200
+        a._note_llm_ok()
+        assert a.llm_health()["last_error"] == ""
 
 
 # ── monitor alert ────────────────────────────────────────────────────

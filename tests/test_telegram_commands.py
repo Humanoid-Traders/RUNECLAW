@@ -280,12 +280,39 @@ async def test_llmstatus_shows_provider():
 
 
 @pytest.mark.asyncio
-async def test_llmstatus_shows_healthy_brain_by_default():
-    """A fresh analyzer (no failures) reports the brain as healthy."""
+async def test_llmstatus_fresh_analyzer_reports_untested():
+    """A fresh analyzer (no attempts yet) must NOT claim "healthy — LLM
+    answering": live incident showed "healthy" at 18:07 then 18 failures at
+    18:08 because the first status simply pre-dated any LLM call. It now
+    reports the honest "untested" state."""
     handler = _make_handler()
     update, ctx = _make_update(text="/llmstatus")
     await handler._cmd_llmstatus(update, ctx)
+    assert _any_reply_contains(update, "Brain: untested")
+
+
+@pytest.mark.asyncio
+async def test_llmstatus_healthy_after_a_success():
+    """Once an LLM call has actually succeeded, the healthy line appears."""
+    handler = _make_handler()
+    handler.engine.analyzer._note_llm_ok()
+    update, ctx = _make_update(text="/llmstatus")
+    await handler._cmd_llmstatus(update, ctx)
     assert _any_reply_contains(update, "Brain: healthy")
+
+
+@pytest.mark.asyncio
+async def test_llmstatus_degraded_shows_last_error():
+    """The degraded line must include WHY it's failing (the live incident
+    showed the streak without the cause)."""
+    handler = _make_handler()
+    handler.engine.analyzer._note_llm_degraded("Error 401 - invalid x-api-key")
+    handler.engine.analyzer._note_llm_degraded("Error 401 - invalid x-api-key")
+    handler.engine.analyzer._note_llm_degraded("Error 401 - invalid x-api-key")
+    update, ctx = _make_update(text="/llmstatus")
+    await handler._cmd_llmstatus(update, ctx)
+    assert _any_reply_contains(update, "Last error")
+    assert _any_reply_contains(update, "401")
 
 
 @pytest.mark.asyncio
