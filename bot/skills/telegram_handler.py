@@ -43,6 +43,33 @@ def _leveraged_pnl_usd(entry: float, last: float, direction: str,
     return raw * lev * cost_usd
 
 
+def _scan_timeout_hint(analyzer) -> str:
+    """One diagnostic line for the interactive-scan timeout message.
+
+    The quick scan analyzes up to INTERACTIVE_SCAN_COUNT symbols inside a
+    fixed deadline; when the LLM brain is degraded (every provider failing —
+    e.g. a bad model id or exhausted quota), each analysis burns through the
+    fallback chain and the deadline blows every time. Without this hint the
+    operator sees only "taking longer than usual" and can't tell LLM failure
+    from exchange throttling (live incident: two consecutive timeouts right
+    after a model-id change). Best-effort — returns "" on any error.
+    """
+    try:
+        if analyzer is None or not hasattr(analyzer, "llm_health"):
+            return ""
+        h = analyzer.llm_health()
+        streak = int(h.get("degraded_streak", 0) or 0)
+        if streak > 0:
+            return ("\n\n🚨 <b>Likely cause: LLM brain degraded</b> — every "
+                    f"provider has failed {streak} analyses in a row, so each "
+                    "symbol burns through the fallback chain. Check "
+                    "<code>/llmstatus</code> and the configured model id.")
+        return ("\n\nℹ️ LLM brain is healthy — the slowness is likely "
+                "exchange/data latency, not the AI.")
+    except Exception:
+        return ""
+
+
 def _closed_on_utc_date(pos, day) -> bool:
     """True if a closed position's ``closed_at`` falls on the given UTC date.
 
@@ -5665,7 +5692,8 @@ class TelegramHandler:
                     await self._send(update,
                         "⏳ <b>Scan is taking longer than usual.</b> Try "
                         "<code>/latest_signal</code> again in a moment, or "
-                        "<code>/fullscan</code> for the deep sweep.")
+                        "<code>/fullscan</code> for the deep sweep."
+                        + _scan_timeout_hint(getattr(self.engine, "analyzer", None)))
                     return
             except Exception as exc:
                 await self._send(update,
