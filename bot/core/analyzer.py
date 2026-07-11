@@ -470,6 +470,7 @@ class Analyzer:
         self._llm_degraded_streak: int = 0        # consecutive all-provider fails
         self._llm_last_ok_monotonic: float = 0.0  # last successful LLM thesis
         self._llm_degraded_since_monotonic: float = 0.0  # when the streak began
+        self._llm_last_error: str = ""            # last primary-provider error
         # Async rate limiter: prevent 429s without blocking the event loop
         from bot.utils.rate_limiter import AsyncRateLimiter
         # #43: cap RPM from the dedicated per-provider config, NOT the daily
@@ -3851,7 +3852,7 @@ class Analyzer:
             # Every provider failed and we're running on the rule engine — the
             # live "quota exhausted → brain offline" signature. Record it so the
             # proactive monitor can alert once the streak crosses the threshold.
-            self._note_llm_degraded()
+            self._note_llm_degraded(str(exc))
             result = self._rule_based_thesis(signal, indicators)
             if result is None:
                 return None
@@ -3864,14 +3865,21 @@ class Analyzer:
         degrade streak so the monitor sees the brain as healthy again."""
         self._llm_degraded_streak = 0
         self._llm_degraded_since_monotonic = 0.0
+        self._llm_last_error = ""
         self._llm_last_ok_monotonic = time.monotonic()
 
-    def _note_llm_degraded(self) -> None:
+    def _note_llm_degraded(self, reason: str = "") -> None:
         """Every provider failed for one thesis and we fell to the rule engine.
-        Advance the consecutive-fail streak; stamp when it began."""
+        Advance the consecutive-fail streak; stamp when it began. ``reason`` is
+        the primary provider's error — surfaced in /llmstatus and the degraded
+        alert so the operator sees WHY (401 bad key / 404 model / 429 quota),
+        not just that it failed (live incident: key swapped by the .env
+        precedence flip, and nothing showed the auth error)."""
         if self._llm_degraded_streak == 0:
             self._llm_degraded_since_monotonic = time.monotonic()
         self._llm_degraded_streak += 1
+        if reason:
+            self._llm_last_error = str(reason)[:200]
 
     def llm_health(self) -> dict:
         """Snapshot of LLM brain health for the proactive monitor / /status.
@@ -3888,6 +3896,7 @@ class Analyzer:
             "last_ok_seconds_ago": (
                 (now - self._llm_last_ok_monotonic)
                 if self._llm_last_ok_monotonic > 0 else None),
+            "last_error": self._llm_last_error,
         }
 
     async def _try_llm_fallback(

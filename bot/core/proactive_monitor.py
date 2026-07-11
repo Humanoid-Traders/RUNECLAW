@@ -579,9 +579,13 @@ class ProactiveMonitor:
                         + (f" (~{mins:.0f} min)" if mins >= 1 else "") + ".\n"
                         "The bot is still scanning and trading, but on the "
                         "<b>rule engine only</b> — no AI thesis, weaker signals.\n\n"
-                        "Usual cause: free-tier API quota exhausted (429 / "
-                        "RESOURCE_EXHAUSTED) across every provider.\n"
-                        "────────────────\n"
+                        + (("Last error: <code>"
+                            + _html.escape(str(health.get("last_error", ""))[:160])
+                            + "</code>\n")
+                           if health.get("last_error") else
+                           "Usual cause: free-tier API quota exhausted (429 / "
+                           "RESOURCE_EXHAUSTED) across every provider.\n")
+                        + "────────────────\n"
                         "\U0001f449 Add or rotate an LLM API key (paid tier "
                         "avoids the daily quota wall).\n"
                         "\U0001f449 /llmstatus — current provider + key"),
