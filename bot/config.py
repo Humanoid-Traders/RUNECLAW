@@ -15,20 +15,32 @@ import os
 from dataclasses import dataclass, field
 from dotenv import load_dotenv
 
-# ── Env precedence (RC-AUD-019) ───────────────────────────────────────────
-# We call load_dotenv(override=False), which means a variable already present
-# in the PROCESS/OS environment WINS over the value in .env. Precedence is:
-#     process/OS env  >  .env file  >  in-code default
-# For the safety switches (SIMULATION_MODE / LIVE_TRADING_ENABLED /
-# BITGET_SANDBOX) this is a footgun: an inherited SIMULATION_MODE=false or
-# LIVE_TRADING_ENABLED=true silently overrides what the operator wrote in .env.
-# We do NOT change the precedence (keep override=False for backward compat),
-# but we surface a clear WARNING when a safety switch comes from the inherited
-# environment. To tell "inherited from the process env" apart from "loaded from
-# .env", we must snapshot os.environ BEFORE load_dotenv — afterwards the two
-# sources are indistinguishable because load_dotenv injects .env keys into
-# os.environ.
-_PRE_DOTENV_ENV_KEYS: frozenset[str] = frozenset(os.environ.keys())
+# ── Env precedence (RC-AUD-019, flipped 2026-07-11) ─────────────────────────
+# .env is now the SOURCE OF TRUTH: load_dotenv(override=True), so a key present
+# in .env replaces any value inherited from the process/OS environment.
+#     .env file  >  process/OS env  >  in-code default
+#
+# Live incident (2026-07-11): the operator edited the LLM_TIER_* model ids in
+# .env, but stale exports inherited from the shell/supervisor silently WON
+# (the old override=False precedence), so every tier kept calling a dead model
+# id and the bot ran on the rule engine while looking configured. The operator
+# edits exactly one file — .env — and that file must take effect on restart.
+#
+# Escape hatch: set RUNECLAW_ENV_INHERIT=1 in the PROCESS environment to keep
+# the old behaviour (process env wins) for deployments that deliberately inject
+# config via the environment (docker/systemd/CI). Note that keys NOT present in
+# .env are never touched under either mode, so one-off CLI exports for A/B runs
+# (e.g. RSI_OVERSOLD_BLOCK=32 python -m bot.backtest.runner) keep working as
+# long as the key is not also set in .env.
+#
+# To tell "inherited from the process env" apart from "loaded from .env" we
+# snapshot os.environ BEFORE load_dotenv — afterwards the two sources are
+# indistinguishable because load_dotenv injects .env keys into os.environ.
+_ENV_INHERIT_MODE: bool = (
+    os.environ.get("RUNECLAW_ENV_INHERIT", "").strip().lower()
+    in ("1", "true", "yes", "on"))
+_PRE_DOTENV_ENV: dict[str, str] = dict(os.environ)
+_PRE_DOTENV_ENV_KEYS: frozenset[str] = frozenset(_PRE_DOTENV_ENV)
 
 # Deployment robustness: resolve .env from the REPO ROOT (parent of bot/)
 # rather than relying on the process CWD. Bare load_dotenv() only searches from
@@ -42,10 +54,27 @@ _PRE_DOTENV_ENV_KEYS: frozenset[str] = frozenset(os.environ.keys())
 from pathlib import Path as _Path  # noqa: E402
 
 _REPO_ROOT_ENV = _Path(__file__).resolve().parent.parent / ".env"
+_DOTENV_OVERRIDE: bool = not _ENV_INHERIT_MODE
 if _REPO_ROOT_ENV.is_file():
-    load_dotenv(dotenv_path=_REPO_ROOT_ENV, override=False)
+    load_dotenv(dotenv_path=_REPO_ROOT_ENV, override=_DOTENV_OVERRIDE)
 else:
-    load_dotenv(override=False)
+    load_dotenv(override=_DOTENV_OVERRIDE)
+
+
+def _detect_replaced_inherited_keys(
+        pre_env: dict, post_env: dict) -> list[str]:
+    """Keys whose inherited process-env value was REPLACED by .env under
+    override mode. Pure function of the two snapshots — testable without
+    touching the ambient environment. Sorted for deterministic logging."""
+    return sorted(
+        k for k, v in pre_env.items()
+        if k in post_env and post_env[k] != v)
+
+
+# Inherited keys that .env replaced (empty in inherit mode, where .env never
+# overrides). Logged at startup so a precedence flip is never silent.
+_REPLACED_INHERITED_KEYS: list[str] = _detect_replaced_inherited_keys(
+    _PRE_DOTENV_ENV, dict(os.environ))
 
 # Safety switches whose accidental inheritance from the process environment is
 # dangerous enough to warn about at import time.
@@ -72,19 +101,34 @@ _INHERITED_SAFETY_SWITCHES: list[str] = _detect_inherited_safety_switches(_PRE_D
 
 
 def _warn_inherited_safety_switches() -> None:
-    """RC-AUD-019: warn when a safety switch was inherited from the process
-    environment and thus overrides .env (load_dotenv(override=False))."""
-    if not _INHERITED_SAFETY_SWITCHES:
-        return
+    """RC-AUD-019 (updated for the precedence flip): warn when a safety
+    switch's EFFECTIVE value comes from the inherited process environment.
+
+    Under the new default (.env wins), an inherited safety switch only
+    governs when .env did not replace it — i.e. the key is absent from .env,
+    or RUNECLAW_ENV_INHERIT=1 keeps the old precedence. Also logs every
+    inherited key that .env replaced, so the precedence flip is never silent.
+    """
     import logging as _logging
     _log = _logging.getLogger(__name__)
-    for _key in _INHERITED_SAFETY_SWITCHES:
+    if _REPLACED_INHERITED_KEYS:
         _log.warning(
-            "Safety switch %s=%r came from the INHERITED process environment and "
-            "OVERRIDES any value in .env (precedence: process env > .env because "
-            "load_dotenv(override=False)). If this was not intended, unset it in the "
-            "process/container environment so the .env value takes effect.",
+            ".env OVERRODE %d inherited process-env key(s): %s "
+            "(precedence: .env > process env; set RUNECLAW_ENV_INHERIT=1 to "
+            "keep inherited values instead).",
+            len(_REPLACED_INHERITED_KEYS), ", ".join(_REPLACED_INHERITED_KEYS),
+        )
+    for _key in _INHERITED_SAFETY_SWITCHES:
+        if _key in _REPLACED_INHERITED_KEYS:
+            continue  # .env replaced it — the operator's file governs.
+        _log.warning(
+            "Safety switch %s=%r comes from the INHERITED process environment "
+            "(not replaced by .env — the key is absent from .env%s). If this "
+            "was not intended, unset it in the process/container environment "
+            "or set it explicitly in .env.",
             _key, os.environ.get(_key, ""),
+            " or RUNECLAW_ENV_INHERIT=1 is keeping inherited values"
+            if _ENV_INHERIT_MODE else "",
         )
 
 
