@@ -1053,7 +1053,11 @@ def render_close_card(data: Dict[str, Any]) -> bytes:
     reason = reason.upper()
     entry = data.get("entry", 0)
     exit_px = data.get("exit", 0)
-    pnl_pct = data.get("pnl_pct", 0)
+    # Hero %: prefer the LEVERAGED (margin) return so the close card matches
+    # the live position card's basis. Live incident (TRIA 10x): the live card
+    # showed +22.69% (margin) and the close card +2.66% (raw price move) for
+    # the same winning trade — reading like the gain evaporated at close.
+    pnl_pct = data.get("pnl_pct_margin", data.get("pnl_pct", 0))
     fees = data.get("fees", 0)
     size_usd = data.get("size_usd", 0)
     leverage = data.get("leverage", 1)

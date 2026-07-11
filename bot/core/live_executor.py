@@ -7316,6 +7316,7 @@ class LiveExecutor:
                                 "entry": pos.entry_price,
                                 "exit": est_exit,
                                 "pnl_pct": pnl_pct,
+                                "pnl_pct_margin": pnl_pct * (pos.leverage or 1),
                                 "pnl_usd": round(net_pnl, 4),
                                 "gross_pnl": round(gross_pnl, 4),
                                 "fees": round(commission, 4),
