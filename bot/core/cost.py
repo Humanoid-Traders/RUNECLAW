@@ -25,6 +25,7 @@ from __future__ import annotations
 import threading
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
+from typing import Optional
 
 from bot.utils.logger import audit, system_log
 
@@ -39,7 +40,40 @@ LLM_PRICING: dict[str, dict[str, float]] = {
     "claude-opus-4-8":     {"in": 15.00, "out": 75.00},
     "claude-haiku-4-5-20251001":    {"in": 0.80,  "out": 4.00},
     "claude-3-5-sonnet-20241022": {"in": 3.00, "out": 15.00},
+    "claude-sonnet-4-20250514":   {"in": 3.00, "out": 15.00},
 }
+
+# Family-prefix fallback (checked in order, first prefix match wins) for model
+# IDs not in the exact table above. The operator can point any tier at any
+# model via env; the exact table will always lag behind dated IDs like
+# "claude-sonnet-4-20250514". An unmatched PAID model previously booked $0.00
+# (UNPRICED), which silently DISARMED the daily dollar-budget guard — with a
+# paid key on every tier that meant unbounded spend up to the call limit
+# (live incident 2026-07-11: all 4 tiers set to claude-sonnet-4-20250514,
+# not in the table). Family pricing is an approximation — Anthropic has kept
+# per-family pricing stable across versions — and an approximate cost that
+# arms the budget guard beats an exact $0 that doesn't.
+LLM_PRICING_FAMILIES: list[tuple[str, dict[str, float]]] = [
+    ("claude-opus-",   {"in": 15.00, "out": 75.00}),
+    ("claude-sonnet-", {"in": 3.00,  "out": 15.00}),
+    ("claude-haiku-",  {"in": 0.80,  "out": 4.00}),
+    ("claude-3-",      {"in": 3.00,  "out": 15.00}),
+    ("gpt-4o-mini",    {"in": 0.15,  "out": 0.60}),
+    ("gpt-4",          {"in": 2.50,  "out": 10.00}),
+]
+
+
+def resolve_llm_price(model: str) -> tuple[Optional[dict], bool]:
+    """Price for a model id: (price, exact). Exact table first, then the
+    family-prefix fallback; (None, False) when nothing matches."""
+    price = LLM_PRICING.get(model)
+    if price is not None:
+        return price, True
+    m = (model or "").lower()
+    for prefix, fam_price in LLM_PRICING_FAMILIES:
+        if m.startswith(prefix):
+            return fam_price, False
+    return None, False
 
 # Categories for per-bucket cost tracking
 COST_CATEGORIES = ("scan", "analyze", "thesis", "risk_decision", "other")
@@ -119,7 +153,7 @@ class CostTracker:
 
         category: one of scan / analyze / thesis / risk_decision / other.
         """
-        price = LLM_PRICING.get(model)
+        price, _exact = resolve_llm_price(model)
         priced = price is not None
         cost = (
             (prompt_tokens / 1_000_000) * price["in"]

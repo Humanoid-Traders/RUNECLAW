@@ -113,6 +113,39 @@ class TestBudgetGuard:
         assert "budget" in answer.lower()
         create_client_mock.assert_not_called()
 
+    def test_dated_anthropic_id_arms_the_dollar_budget(self, monkeypatch):
+        """Live incident 2026-07-11: operator set all 4 tiers to
+        claude-sonnet-4-20250514 (a dated ID not in the exact price table).
+        Every call booked $0.00 UNPRICED, silently DISARMING the daily dollar
+        budget — with a paid key that meant unbounded spend up to the call
+        limit. The family-prefix fallback must price it so the guard binds."""
+        monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+        monkeypatch.setattr(th_mod, "CONFIG", _budget_config(daily_budget_usd=0.01))
+        cost = CostTracker()
+        cost.record_llm(model="claude-sonnet-4-20250514",
+                        prompt_tokens=1_000_000, completion_tokens=0)
+        snap = cost.snapshot()
+        assert snap.llm_cost_usd >= 0.01      # priced, not $0
+        assert snap.unpriced_calls == 0       # no longer counted as unknown
+
+        create_client_mock = AsyncMock()
+        monkeypatch.setattr(th_mod, "create_llm_client", create_client_mock)
+        answer = _run(H._llm_chat(_stub(cost), "hello"))
+        assert "budget" in answer.lower()
+        create_client_mock.assert_not_called()
+
+    def test_family_fallback_prices_unknown_dated_ids(self):
+        from bot.core.cost import resolve_llm_price
+        # Any future dated Anthropic ID prices by family, never $0.
+        for mid, lo in (("claude-sonnet-4-5-20250929", 3.0),
+                        ("claude-opus-4-7-20260105", 15.0),
+                        ("claude-haiku-4-5-20251001", 0.8)):
+            price, _ = resolve_llm_price(mid)
+            assert price is not None and price["in"] == lo
+        # Genuinely unknown models stay unpriced (tracked as unknown-cost).
+        price, exact = resolve_llm_price("llama-3.3-70b-versatile")
+        assert price is None and exact is False
+
     def test_calls_through_when_under_budget(self, monkeypatch):
         monkeypatch.setenv("GEMINI_API_KEY", "test-key")
         monkeypatch.setattr(th_mod, "CONFIG", _budget_config())
