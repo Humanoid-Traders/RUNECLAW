@@ -88,13 +88,81 @@ def test_different_entry_price_not_duplicate():
 
 
 def test_old_booking_outside_window_not_duplicate():
-    """The same-price signature only binds near-in-time (10 min window)."""
+    """The same-price signature only binds near-in-time (2h window)."""
     ex = _executor()
     ex._closed_trades.append(_pos(
         trade_id="TI-orig", status="closed",
-        closed_at=datetime.now(UTC) - timedelta(hours=2)))
+        closed_at=datetime.now(UTC) - timedelta(hours=3)))
     later = _pos(trade_id="TI-new")
     assert ex._is_duplicate_close_booking(later) is False
+
+
+def test_sweep_lag_duplicate_30min_is_caught():
+    """Live incident (UNI, 2026-07-11): the duplicate record's close was booked
+    by a reconcile sweep 30 MINUTES after the first booking — outside the old
+    10-min window, so the operator got an identical second close card. The
+    widened 2h window must catch it."""
+    ex = _executor()
+    ex._closed_trades.append(_pos(
+        trade_id="TI-orig", symbol="UNI/USDT", direction="LONG",
+        entry=3.5270, status="closed",
+        closed_at=datetime.now(UTC) - timedelta(minutes=30), pnl=-0.11))
+    dup = _pos(trade_id="TI-adopted-UNI-1", symbol="UNI/USDT:USDT",
+               direction="LONG", entry=3.5270)
+    assert ex._is_duplicate_close_booking(dup) is True
+
+
+# ── fill-time duplicate guard (UNI double "TRADE OPENED") ────────────
+def test_duplicate_fill_detected_across_symbol_formats():
+    """The bot's record (UNI/USDT) went open; the adopted duplicate
+    (UNI/USDT:USDT) fills on the same exchange order → duplicate."""
+    ex = _executor()
+    ex._positions["TI-orig"] = _pos(
+        trade_id="TI-orig", symbol="UNI/USDT", direction="LONG",
+        entry=3.5270, status="open")
+    dup = _pos(trade_id="ORPHAN-abc123", symbol="UNI/USDT:USDT",
+               direction="LONG", entry=3.5270, status="pending_fill")
+    assert ex._is_duplicate_fill(dup, 3.5270) is True
+
+
+def test_fill_on_different_price_not_duplicate():
+    ex = _executor()
+    ex._positions["TI-orig"] = _pos(
+        trade_id="TI-orig", symbol="UNI/USDT", direction="LONG",
+        entry=3.5270, status="open")
+    other = _pos(trade_id="TI-new", symbol="UNI/USDT:USDT",
+                 direction="LONG", entry=3.60, status="pending_fill")
+    assert ex._is_duplicate_fill(other, 3.60) is False
+
+
+def test_fill_different_direction_not_duplicate():
+    ex = _executor()
+    ex._positions["TI-orig"] = _pos(
+        trade_id="TI-orig", symbol="UNI/USDT", direction="SHORT",
+        entry=3.5270, status="open")
+    other = _pos(trade_id="TI-new", symbol="UNI/USDT:USDT",
+                 direction="LONG", entry=3.5270, status="pending_fill")
+    assert ex._is_duplicate_fill(other, 3.5270) is False
+
+
+def test_fill_ignores_non_open_records():
+    """Only records already OPEN count — a closed record at the same entry
+    (e.g. yesterday's trade) must not suppress a legitimate new fill."""
+    ex = _executor()
+    ex._positions["TI-old"] = _pos(
+        trade_id="TI-old", symbol="UNI/USDT", direction="LONG",
+        entry=3.5270, status="closed")
+    fresh = _pos(trade_id="TI-new", symbol="UNI/USDT:USDT",
+                 direction="LONG", entry=3.5270, status="pending_fill")
+    assert ex._is_duplicate_fill(fresh, 3.5270) is False
+
+
+def test_fill_same_trade_id_not_duplicate():
+    ex = _executor()
+    p = _pos(trade_id="TI-orig", symbol="UNI/USDT", direction="LONG",
+             entry=3.5270, status="open")
+    ex._positions["TI-orig"] = p
+    assert ex._is_duplicate_fill(p, 3.5270) is False
 
 
 def test_empty_ledger_not_duplicate():
