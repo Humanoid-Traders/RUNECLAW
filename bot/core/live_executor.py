@@ -752,12 +752,22 @@ class LiveExecutor:
                 target = min(target, int(max_lev))
         except Exception:
             pass  # market not loaded yet — set call below will surface issues
+        if self._venue.margin_mode_call_first:
+            # Venues that set margin mode independently of leverage
+            # (Bybit v5, BingX). "already set" responses are expected.
+            try:
+                await exchange.set_margin_mode(cfg.margin_mode, sym)
+            except Exception as exc:
+                exc_str = str(exc).lower()
+                if not any(t in exc_str for t in ("already", "same", "not modified")):
+                    logger.debug("Margin mode set for %s on %s: %s",
+                                 sym, self._venue.id, exc)
         try:
             await exchange.set_leverage(
-                target, sym, params={"marginMode": cfg.margin_mode})
+                target, sym, params=self._venue.leverage_params(cfg.margin_mode))
         except Exception as exc:
             exc_str = str(exc).lower()
-            if "already" in exc_str or "same" in exc_str:
+            if any(t in exc_str for t in ("already", "same", "not modified")):
                 pass
             else:
                 logger.warning("Leverage/margin set failed for %s on %s: %s",

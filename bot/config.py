@@ -541,6 +541,12 @@ class ExchangeConfig:
     hyperliquid_wallet_address: str = _env("HYPERLIQUID_WALLET_ADDRESS")
     hyperliquid_private_key: str = _env("HYPERLIQUID_PRIVATE_KEY")
     hyperliquid_testnet: bool = _env_bool("HYPERLIQUID_TESTNET", False)
+    # Bybit venue credentials (USDT linear perps). One-way position mode.
+    bybit_api_key: str = _env("BYBIT_API_KEY")
+    bybit_api_secret: str = _env("BYBIT_API_SECRET")
+    # BingX venue credentials (USDT perps, $2 min order). One-way mode.
+    bingx_api_key: str = _env("BINGX_API_KEY")
+    bingx_api_secret: str = _env("BINGX_API_SECRET")
     # Asset universe filter: "all" scans everything, "solana" adds Solana ecosystem priority
     asset_universe: str = _env("ASSET_UNIVERSE", "all_markets")  # all_markets | all | solana | metals | tradfi | etc.
     # Trading mode: "spot" for no leverage, "futures" for USDT-M perpetual
