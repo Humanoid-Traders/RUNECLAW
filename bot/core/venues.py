@@ -307,7 +307,7 @@ class HyperliquidVenue(Venue):
         # Hyperliquid cloid must be a 128-bit hex string. md5 is exactly
         # 128 bits; deterministic so retry dedup still holds. (Not a
         # security context — just an id-width transform.)
-        return "0x" + hashlib.md5(oid.encode()).hexdigest()
+        return "0x" + hashlib.md5(oid.encode(), usedforsecurity=False).hexdigest()
 
     def order_id_params(self, coid: str) -> dict:
         # No Bitget-style "clientOid" — ccxt hyperliquid does not omit
