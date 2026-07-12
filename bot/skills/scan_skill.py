@@ -72,7 +72,16 @@ def _fetch_live_exchange_data() -> Optional[dict]:
             "closed_at": t.get("closed_at", t.get("timestamp", "")),
         })
 
-    # 2. Fetch real balance + positions from Bitget via ccxt (sync)
+    # 2. Fetch real balance + positions from Bitget via ccxt (sync).
+    # Venue-gated: when the operator trades on another venue (/venue), this
+    # Bitget-keyed readout would show the WRONG account — skip it and let
+    # the executor-backed displays (/livebalance, /status) be the truth.
+    try:
+        from bot.core.venues import get_venue
+        if get_venue().id != "bitget":
+            return result
+    except Exception:
+        pass
     try:
         import ccxt as ccxt_sync
         exchange = ccxt_sync.bitget({

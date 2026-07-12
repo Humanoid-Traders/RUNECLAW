@@ -34,12 +34,21 @@ encoded here:
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
+import os
 from typing import Any, Optional
 
 import ccxt.async_support as ccxt
 
 logger = logging.getLogger(__name__)
+
+# Runtime venue override — set by the admin /venue command, survives
+# restarts, and takes precedence over the VENUE env var so switching
+# venues never requires editing .env. Removing the file (or /venue clear)
+# reverts to the env-configured venue.
+_STATE_DIR = os.environ.get("RUNECLAW_STATE_DIR", "data")
+VENUE_OVERRIDE_FILE = os.path.join(_STATE_DIR, "venue_override.json")
 
 
 class Venue:
@@ -321,10 +330,58 @@ _VENUES: dict[str, Venue] = {
 }
 
 
+def valid_venue_ids() -> list[str]:
+    return sorted(_VENUES)
+
+
+def get_venue_override() -> Optional[str]:
+    """The persisted runtime venue override, or None. Any unreadable /
+    invalid file content is treated as no-override (fail-safe)."""
+    try:
+        with open(VENUE_OVERRIDE_FILE, encoding="utf-8") as f:
+            data = json.load(f)
+        vid = str(data.get("venue", "")).strip().lower()
+        if vid in _VENUES:
+            return vid
+        if vid:
+            logger.warning("venue_override.json names unknown venue '%s' "
+                           "— ignoring", vid)
+    except FileNotFoundError:
+        pass
+    except Exception as exc:  # noqa: BLE001 — corrupt file must never trade-block
+        logger.warning("venue_override.json unreadable (%s) — ignoring", exc)
+    return None
+
+
+def set_venue_override(venue_id: Optional[str]) -> None:
+    """Persist (or clear, with None) the runtime venue override.
+    Atomic write so a crash mid-save can't leave a corrupt file."""
+    if venue_id is None:
+        try:
+            os.remove(VENUE_OVERRIDE_FILE)
+        except FileNotFoundError:
+            pass
+        return
+    vid = venue_id.strip().lower()
+    if vid not in _VENUES:
+        raise ValueError(f"unknown venue '{venue_id}' "
+                         f"(valid: {', '.join(sorted(_VENUES))})")
+    os.makedirs(os.path.dirname(VENUE_OVERRIDE_FILE) or ".", exist_ok=True)
+    tmp = VENUE_OVERRIDE_FILE + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump({"venue": vid}, f)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, VENUE_OVERRIDE_FILE)
+
+
 def get_venue(venue_id: Optional[str] = None) -> Venue:
-    """Resolve a venue spec. No id -> the operator-configured venue
-    (CONFIG.exchange.venue). Unknown ids fall back to Bitget with a
-    critical log rather than crashing the trading loop."""
+    """Resolve a venue spec. No id -> runtime override (set by /venue,
+    persisted across restarts) > VENUE env (CONFIG.exchange.venue).
+    Unknown ids fall back to Bitget with a critical log rather than
+    crashing the trading loop."""
+    if venue_id is None:
+        venue_id = get_venue_override()
     if venue_id is None:
         from bot.config import CONFIG
         venue_id = getattr(CONFIG.exchange, "venue", "bitget")

@@ -23,7 +23,7 @@ from bot.core.cost import CostTracker
 from bot.core.system_health import SystemHealthMonitor
 from bot.core.exchange_flow import ExchangeFlowProvider
 from bot.core.macro_events import MacroEventProvider
-from bot.core.live_executor import LiveExecutor, normalize_symbol
+from bot.core.live_executor import LiveExecutor, display_symbol, normalize_symbol
 from bot.core.exchange_sync import sync_portfolio_with_exchange, get_exchange_position_count, invalidate_position_count_cache
 from bot.core.market_scanner import MarketScanner, _classify_symbol
 from bot.core.order_flow import OrderFlowAnalyzer
@@ -805,6 +805,72 @@ class RuneClawEngine:
         so the next trade rebuilds it from the current stored credentials. Safe to
         call when none exists. Never touches the shared operator executor."""
         self._user_executors.pop(str(user_id), None)
+
+    async def switch_venue(self, venue_id: str) -> str:
+        """Hot-swap the shared operator executor onto another trading venue.
+
+        Called by the admin /venue command AFTER it has preflighted the
+        target venue's credentials. Refuses while any live position or
+        pending entry is open — position records carry venue-native
+        symbols and the monitoring/close paths would route them to the
+        wrong exchange. The override is persisted (data/venue_override.json)
+        so the choice survives restarts; per-user executors stay Bitget.
+
+        Every consumer reads self.live_executor live (no captured refs —
+        verified), so replacing the attribute plus re-running the four
+        wiring lines from __init__ is a complete swap. On any failure the
+        old executor stays active and the override is rolled back.
+        Returns a short human-readable result string.
+        """
+        from bot.core.venues import get_venue, set_venue_override
+
+        target = get_venue(venue_id)
+        old_exec = self.live_executor
+        current = old_exec._venue.id
+        if target.id == current:
+            return f"already trading on {target.display_name}"
+
+        open_positions = [p for p in old_exec.open_positions]
+        if open_positions:
+            syms = ", ".join(display_symbol(p.symbol) for p in open_positions[:5])
+            return (f"REFUSED: {len(open_positions)} open/pending position(s) "
+                    f"on {old_exec._venue.display_name} ({syms}). Close them "
+                    f"first — venue switch with live positions would orphan "
+                    f"their monitoring.")
+
+        prev_override_needed_rollback = False
+        try:
+            set_venue_override(target.id)
+            prev_override_needed_rollback = True
+            new_exec = LiveExecutor()  # reads get_venue() -> the new override
+            # Re-run the __init__ wiring (see engine startup: on_position_closed,
+            # _risk_engine, _ws_feed, _slippage_tracker).
+            new_exec.on_position_closed = lambda pos: self._on_live_position_closed(pos)
+            new_exec._risk_engine = self.risk
+            new_exec._ws_feed = self.ws_feed
+            new_exec._slippage_tracker = getattr(self, "slippage", None)
+            self.live_executor = new_exec
+        except Exception as exc:
+            if prev_override_needed_rollback:
+                try:
+                    set_venue_override(current if current != getattr(
+                        CONFIG.exchange, "venue", "bitget") else None)
+                except Exception:
+                    pass
+            audit(system_log, f"Venue switch to {target.id} FAILED: {exc}",
+                  action="venue_switch", result="FAIL",
+                  data={"from": current, "to": target.id, "error": str(exc)[:200]})
+            return f"FAILED: {exc} — still trading on {old_exec._venue.display_name}"
+
+        try:
+            await old_exec.close()
+        except Exception:
+            pass  # old connection cleanup is best-effort
+        audit(system_log,
+              f"Venue switched: {current} -> {target.id} (operator executor)",
+              action="venue_switch", result="OK",
+              data={"from": current, "to": target.id})
+        return f"switched: {current} → {target.id}"
 
     def _is_operator_user(self, user_id) -> bool:
         """True if this user trades on the OPERATOR account — i.e. an admin or a

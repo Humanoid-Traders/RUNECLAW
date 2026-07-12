@@ -357,6 +357,7 @@ class TelegramHandler:
             ("users", self._cmd_users), ("accounts", self._cmd_accounts),
             ("setcap", self._cmd_setcap),
             ("drawdownlimit", self._cmd_drawdownlimit),
+            ("venue", self._cmd_venue),
             ("grant_live", self._cmd_grant_live), ("revoke_live", self._cmd_revoke_live),
             ("set_tier", self._cmd_set_tier),
             # Marketing / channel forwarder
@@ -2353,6 +2354,135 @@ class TelegramHandler:
                   "<b>more loss</b> before halting. Pair with tiny per-trade margin. "
                   "Run <code>/resume</code> to lift the current halt."]
         await self._send(update, "\n".join(lines))
+
+    # ── Trading venue switching ───────────────────────────────
+
+    def _venue_status_lines(self) -> list:
+        """Status block for /venue: active venue, source, per-venue
+        credential readiness, and the open-position switch blocker."""
+        from bot.core.venues import get_venue, get_venue_override, valid_venue_ids
+        try:
+            active = self.engine.live_executor._venue
+        except Exception:
+            active = get_venue()
+        override = get_venue_override()
+        lines = ["🏦 <b>Trading venue</b>",
+                 f"• Active: <b>{active.display_name}</b> "
+                 f"({active.quote}-margined perps)",
+                 "• Source: " + ("runtime override (set via /venue)"
+                                 if override else ".env VENUE setting")]
+        for vid in valid_venue_ids():
+            v = get_venue(vid)
+            ready = v.has_operator_credentials(CONFIG.exchange)
+            mark = "🟢 credentials ready" if ready else "⚪ no credentials"
+            cur = " ← active" if v.id == active.id else ""
+            lines.append(f"• {v.display_name}: {mark} · "
+                         f"min order ${v.min_notional_usd:.0f}{cur}")
+        try:
+            open_count = len(self.engine.live_executor.open_positions)
+            if open_count:
+                lines.append(f"• ⚠️ {open_count} open position(s) — switching "
+                             "is blocked until they are closed.")
+        except Exception:
+            pass
+        return lines
+
+    async def _cmd_venue(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """Admin only: /venue [bitget | hyperliquid | status] — show or switch
+        the live trading venue at runtime. No .env edit, no restart: the
+        switch preflights the target venue with a read-only balance call,
+        hot-swaps the operator executor, and persists the choice across
+        restarts. Blocked while positions are open. Per-user (/connect)
+        executors always stay on Bitget.
+        """
+        if not self._is_admin(update):
+            await self._send(update, f"\U0001f512 {t('admin_only', self._lang(update))}")
+            return
+        from bot.core.venues import (get_venue, set_venue_override,
+                                     valid_venue_ids)
+
+        args = ctx.args or []
+        raw = (args[0].strip().lower() if args else "")
+        if not raw or raw in ("status", "show"):
+            lines = self._venue_status_lines()
+            lines += ["", "Usage: <code>/venue hyperliquid</code> · "
+                          "<code>/venue bitget</code>",
+                      "Switching preflights the target venue and refuses "
+                      "while positions are open."]
+            await self._send(update, "\n".join(lines))
+            return
+
+        if raw in ("clear", "env", "default", "reset"):
+            raw = getattr(CONFIG.exchange, "venue", "bitget").strip().lower()
+
+        if raw not in valid_venue_ids():
+            await self._send(update,
+                             "🔴 Unknown venue <code>" + raw + "</code>. "
+                             "Valid: " + ", ".join(
+                                 f"<code>{v}</code>" for v in valid_venue_ids()))
+            return
+
+        target = get_venue(raw)
+        active = self.engine.live_executor._venue
+        if target.id == active.id:
+            await self._send(update,
+                             f"✅ Already trading on <b>{target.display_name}</b>.")
+            return
+
+        if not target.has_operator_credentials(CONFIG.exchange):
+            await self._send(update,
+                             f"🔴 <b>{target.display_name}</b> has no credentials "
+                             f"configured.\n{target.missing_credentials_error(False)}")
+            return
+
+        # ── Preflight: read-only balance call against the TARGET venue ──
+        free = total = None
+        coin = target.balance_coin
+        probe = None
+        try:
+            probe = target.create_exchange(CONFIG.exchange)
+            try:
+                bal = await probe.fetch_balance(target.balance_fetch_params())
+            except Exception:
+                bal = await probe.fetch_balance()
+            acct = bal.get(coin, {}) if isinstance(bal, dict) else {}
+            if isinstance(acct, dict):
+                free = float(acct.get("free") or 0)
+                total = float(acct.get("total") or 0)
+        except Exception as exc:
+            await self._send(update,
+                             f"🔴 <b>Preflight failed</b> — {target.display_name} "
+                             f"did not accept the credentials:\n<code>"
+                             f"{str(exc)[:200]}</code>\nVenue NOT switched — "
+                             f"still on {active.display_name}.")
+            return
+        finally:
+            if probe is not None:
+                try:
+                    await probe.close()
+                except Exception:
+                    pass
+
+        result = await self.engine.switch_venue(target.id)
+        if not result.startswith("switched"):
+            await self._send(update, f"🔴 {result}")
+            return
+        # Switching back to the .env-configured venue clears the override so
+        # .env stays the single source of truth when they agree.
+        if target.id == getattr(CONFIG.exchange, "venue", "bitget").strip().lower():
+            try:
+                set_venue_override(None)
+            except Exception:
+                pass
+        bal_line = (f"\n• Balance: <b>{total:,.2f} {coin}</b> "
+                    f"(free {free:,.2f})" if total is not None else "")
+        await self._send(update,
+                         f"🟢 <b>Venue switched: {active.display_name} → "
+                         f"{target.display_name}</b>{bal_line}\n"
+                         f"• Min order notional: ${target.min_notional_usd:.0f}\n"
+                         f"• Persisted — survives restarts. "
+                         f"<code>/venue {active.id}</code> switches back.\n"
+                         f"• Per-user /connect accounts remain on Bitget.")
 
     # ── Mode switching ────────────────────────────────────────
 
@@ -5081,6 +5211,15 @@ class TelegramHandler:
             pending_ideas=len(self.engine.pending_ideas) if hasattr(self.engine, "pending_ideas") else 0,
             lang=self._lang(update),
         )
+        # Venue visibility: which exchange live orders route to right now
+        # (admins switch with /venue; non-default venues matter to see).
+        if mode == "LIVE":
+            try:
+                _v = self.engine.live_executor._venue
+                msg += (f"\n🏦 Venue: <b>{_v.display_name}</b> "
+                        f"({_v.quote}-margined) — /venue to switch")
+            except Exception:
+                pass
         # Strangle visibility: when the soft loss-streak gate is latched the
         # bot scans but cannot trade — say so instead of looking merely idle.
         try:
