@@ -685,6 +685,10 @@ ETF_PERPETUALS: list[str] = [
     "SGOV/USDT:USDT",    # iShares 0-3M Treasury ETF
     "EWH/USDT:USDT",     # iShares MSCI Hong Kong ETF
     "INDA/USDT:USDT",    # iShares MSCI India ETF
+    # Universe expansion 2026-07-12 (catalog-verified live on Bitget):
+    "QQQ/USDT:USDT",     # Invesco QQQ (Nasdaq-100) — $1.1M/day
+    "SPY/USDT:USDT",     # SPDR S&P 500
+    "TQQQ/USDT:USDT",    # ProShares UltraPro QQQ 3X
 ]
 
 # ── Stock Perpetual Contracts ────────────────────────────────────
@@ -706,6 +710,19 @@ STOCK_PERPETUALS: list[str] = [
     "ARM/USDT:USDT",     # ARM Holdings
     "MRVL/USDT:USDT",    # Marvell
     "INTC/USDT:USDT",    # Intel
+    # Universe expansion 2026-07-12 (catalog-verified live on Bitget):
+    "CRCL/USDT:USDT",      # Circle — $4.7M/day, top new listing
+    "ORCL/USDT:USDT",      # Oracle
+    "NFLX/USDT:USDT",      # Netflix
+    "OPEN/USDT:USDT",      # Opendoor
+    "MCD/USDT:USDT",       # McDonald's
+    "GME/USDT:USDT",       # GameStop
+    "QNTSTOCK/USDT:USDT",  # Quantum Computing Inc
+    "BBSTOCK/USDT:USDT",   # BlackBerry
+    "STXSTOCK/USDT:USDT",  # Seagate
+    "NOKSTOCK/USDT:USDT",  # Nokia
+    "RTXSTOCK/USDT:USDT",  # RTX Corp
+    "DIASTOCK/USDT:USDT",  # SPDR Dow Jones Industrial Average
 ]
 
 # ── Combined TradFi Universe ────────────────────────────────────

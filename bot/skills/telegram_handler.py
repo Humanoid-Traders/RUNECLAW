@@ -358,6 +358,7 @@ class TelegramHandler:
             ("setcap", self._cmd_setcap),
             ("drawdownlimit", self._cmd_drawdownlimit),
             ("venue", self._cmd_venue),
+            ("classpf", self._cmd_classpf),
             ("grant_live", self._cmd_grant_live), ("revoke_live", self._cmd_revoke_live),
             ("set_tier", self._cmd_set_tier),
             # Marketing / channel forwarder
@@ -2483,6 +2484,48 @@ class TelegramHandler:
                          f"• Persisted — survives restarts. "
                          f"<code>/venue {active.id}</code> switches back.\n"
                          f"• Per-user /connect accounts remain on Bitget.")
+
+    # ── Per-asset-class performance ───────────────────────────
+
+    async def _cmd_classpf(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """Live performance bucketed by asset class (Crypto / Metal /
+        Commodity / ETF / Pre-IPO / Stock) — the evidence base for growing
+        or pruning the non-crypto universe. Computed from the executor's
+        closed trades; nothing surfaced this breakdown before."""
+        from bot.core.market_scanner import category_for_symbol, category_icon
+
+        trades = list(self.engine.live_executor.closed_positions or [])
+        if not trades:
+            await self._send(update, "📊 No closed live trades yet — "
+                                     "per-class stats appear after the first close.")
+            return
+
+        buckets: dict[str, list[float]] = {}
+        for tr in trades:
+            try:
+                pnl = float(getattr(tr, "pnl_usd", 0) or 0)
+                cat = category_for_symbol(getattr(tr, "symbol", "") or "")
+            except Exception:
+                continue
+            buckets.setdefault(cat, []).append(pnl)
+
+        lines = ["📊 <b>Live performance by asset class</b>",
+                 f"(all {len(trades)} closed trades, net PnL)"]
+        for cat in sorted(buckets, key=lambda c: -sum(buckets[c])):
+            pnls = buckets[cat]
+            wins = [p for p in pnls if p > 0]
+            losses = [-p for p in pnls if p < 0]
+            gw, gl = sum(wins), sum(losses)
+            pf = (gw / gl) if gl > 0 else (float("inf") if gw > 0 else 0.0)
+            pf_s = "∞" if pf == float("inf") else f"{pf:.2f}"
+            wr = 100.0 * len(wins) / len(pnls) if pnls else 0.0
+            lines.append(
+                f"{category_icon(cat)} <b>{cat}</b>: {len(pnls)} trades · "
+                f"PF <b>{pf_s}</b> · WR {wr:.0f}% · net ${sum(pnls):+.2f}")
+        lines.append("")
+        lines.append("PF &gt; 1 = profitable class. Small samples lie — "
+                     "judge classes on 20+ trades.")
+        await self._send(update, "\n".join(lines))
 
     # ── Mode switching ────────────────────────────────────────
 
