@@ -40,6 +40,7 @@ from bot.core.order_rules import (
 )
 from bot.core.limit_entry import calculate_entry
 from bot.core.market_scanner import _classify_symbol
+from bot.core.venues import get_venue
 
 logger = logging.getLogger(__name__)
 
@@ -356,6 +357,10 @@ class LiveExecutor:
         # is {"api_key", "api_secret", "passphrase"} (from the encrypted store).
         self.user_id = user_id
         self._credentials = credentials
+        # Venue spec (bot/core/venues.py). Per-user executors are always
+        # Bitget — the /connect credential store has no venue field; VENUE
+        # selects the venue for the operator's shared executor only.
+        self._venue = get_venue("bitget") if credentials else get_venue()
         self._positions_file = _user_state_path(_POSITIONS_FILE, state_dir, user_id)
         self._closed_trades_file = _user_state_path(_CLOSED_TRADES_FILE, state_dir, user_id)
         self._exchange: Optional[ccxt.Exchange] = None
@@ -497,45 +502,18 @@ class LiveExecutor:
         self._api_error_count = 0
 
     async def _get_exchange(self) -> ccxt.Exchange:
-        """Get authenticated Bitget exchange instance."""
+        """Get the authenticated exchange instance for this executor's venue."""
         if self._exchange is None:
             cfg = CONFIG.exchange
             # Per-user executors authenticate with the user's OWN linked keys
             # (decrypted from the credential store); the shared operator executor
             # uses CONFIG.exchange exactly as before. Non-credential settings
             # (trade_mode, sandbox, leverage, margin) remain operator-configured.
-            if self._credentials:
-                api_key = self._credentials.get("api_key") or ""
-                api_secret = self._credentials.get("api_secret") or ""
-                passphrase = self._credentials.get("passphrase") or ""
-            else:
-                api_key, api_secret, passphrase = cfg.api_key, cfg.api_secret, cfg.passphrase
-            if not api_key or not api_secret:
-                raise RuntimeError(
-                    "BITGET_API_KEY and BITGET_API_SECRET required for live trading. "
-                    "Set them in .env and restart."
-                    if not self._credentials else
-                    "This user has no linked Bitget credentials. Use /connect to "
-                    "link an account before trading live."
-                )
-            is_futures = cfg.trade_mode == "futures"
-            self._exchange = ccxt.bitget({
-                "aiohttp_trust_env": True,  # honor HTTPS_PROXY/CA env (no-op without proxy)
-                "apiKey": api_key,
-                "secret": api_secret,
-                "password": passphrase,
-                "sandbox": cfg.sandbox,
-                "timeout": 30000,
-                "enableRateLimit": True,
-                "options": {
-                    "defaultType": "swap" if is_futures else "spot",
-                    "uta": True,  # Support Bitget Unified Trading Account
-                },
-            })
+            self._exchange = self._venue.create_exchange(cfg, self._credentials)
             # Set leverage and margin mode for futures
-            if is_futures:
-                logger.info("Futures mode: leverage=%dx, margin=%s",
-                            cfg.default_leverage, cfg.margin_mode)
+            if cfg.trade_mode == "futures":
+                logger.info("Futures mode (%s): leverage=%dx, margin=%s",
+                            self._venue.id, cfg.default_leverage, cfg.margin_mode)
         return self._exchange
 
     def _compute_target_leverage(self, symbol: str) -> int:
@@ -594,12 +572,19 @@ class LiveExecutor:
             return
         exchange = await self._get_exchange()
 
+        # Non-Bitget venues take the generic ccxt path — the rest of this
+        # method is Bitget account topology (UTA probes, v2 verification
+        # endpoints, crossed/cross quirk) that does not exist elsewhere.
+        if self._venue.id != "bitget":
+            await self._ensure_leverage_generic(exchange, symbol)
+            return
+
         # ── Set margin mode (best-effort; the verification read below is the
         #    authority on whether it actually applied) ──
         try:
             await exchange.set_margin_mode(
                 cfg.margin_mode, symbol,
-                params={"productType": "USDT-FUTURES"})
+                params=self._venue.futures_params())
         except Exception as exc:
             exc_str = str(exc)
             # Some errors are expected (e.g., already in the desired mode).
@@ -663,7 +648,7 @@ class LiveExecutor:
                 try:
                     ccxt_sym = symbol if ":USDT" in symbol else f"{symbol}:USDT"
                     positions = await exchange.fetch_positions(
-                        [ccxt_sym], params={"productType": "USDT-FUTURES"})
+                        [ccxt_sym], params=self._venue.futures_params())
                     for p in positions:
                         info = p.get("info", {})
                         actual_margin = (info.get("marginMode") or p.get("marginMode") or "").lower()
@@ -694,13 +679,13 @@ class LiveExecutor:
         try:
             await exchange.set_leverage(
                 _target_leverage, symbol,
-                params={"productType": "USDT-FUTURES"})
+                params=self._venue.futures_params())
         except Exception as exc:
             logger.warning("Leverage set failed for %s (may use exchange default): %s", symbol, exc)
 
         # C2-04 FIX: Verify leverage was actually applied — retry once if mismatch
         try:
-            lev_info = await exchange.fetch_leverage(symbol, params={"productType": "USDT-FUTURES"})
+            lev_info = await exchange.fetch_leverage(symbol, params=self._venue.futures_params())
             actual_lev = None
             if isinstance(lev_info, dict):
                 actual_lev = lev_info.get("longLeverage") or lev_info.get("leverage") or lev_info.get("long")
@@ -722,7 +707,7 @@ class LiveExecutor:
                     pass
                 # Re-verify after retry
                 try:
-                    lev_info2 = await exchange.fetch_leverage(symbol, params={"productType": "USDT-FUTURES"})
+                    lev_info2 = await exchange.fetch_leverage(symbol, params=self._venue.futures_params())
                     if isinstance(lev_info2, dict):
                         actual_lev2 = lev_info2.get("longLeverage") or lev_info2.get("leverage") or lev_info2.get("long")
                         if actual_lev2 is not None:
@@ -748,6 +733,55 @@ class LiveExecutor:
         if self._hedge_mode is None:
             await self._detect_hold_mode()
 
+    async def _ensure_leverage_generic(self, exchange: ccxt.Exchange,
+                                       symbol: str) -> None:
+        """Venue-neutral margin-mode + leverage setup via plain ccxt.
+
+        Used for venues without Bitget's account-topology special cases
+        (currently Hyperliquid: one-way only, no UTA split). Clamps the
+        target to the market's max leverage — Hyperliquid caps differ per
+        symbol (e.g. BTC 40x, many alts 10x) and an over-cap set call
+        would fail and leave the venue default in place."""
+        cfg = CONFIG.exchange
+        target = self._compute_target_leverage(symbol)
+        sym = self._venue.swap_symbol(symbol)
+        try:
+            market = exchange.market(sym)
+            max_lev = ((market.get("limits") or {}).get("leverage") or {}).get("max")
+            if max_lev:
+                target = min(target, int(max_lev))
+        except Exception:
+            pass  # market not loaded yet — set call below will surface issues
+        try:
+            await exchange.set_leverage(
+                target, sym, params={"marginMode": cfg.margin_mode})
+        except Exception as exc:
+            exc_str = str(exc).lower()
+            if "already" in exc_str or "same" in exc_str:
+                pass
+            else:
+                logger.warning("Leverage/margin set failed for %s on %s: %s",
+                               sym, self._venue.id, exc)
+        # One-way venues have no hedge/UTA topology to detect.
+        if not self._venue.supports_hedge_mode:
+            self._hedge_mode = False
+            self._is_uta = False
+
+    async def _venue_market_price(self, exchange: ccxt.Exchange,
+                                  symbol: str) -> Optional[float]:
+        """Reference price for venues whose market orders need one
+        (Hyperliquid: slippage-bounded IOC). Returns None on Bitget so
+        every existing call site stays byte-identical (price=None)."""
+        if not self._venue.market_order_needs_price:
+            return None
+        try:
+            ticker = await exchange.fetch_ticker(self._venue.order_symbol(symbol))
+            last = ticker.get("last") or ticker.get("close")
+            return float(last) if last else None
+        except Exception as exc:
+            logger.warning("Reference price fetch failed for %s: %s", symbol, exc)
+            return None
+
     async def _detect_hold_mode(self) -> None:
         """Detect Bitget account position hold mode (one-way vs hedge).
 
@@ -758,6 +792,12 @@ class LiveExecutor:
         endpoint for UTA accounts.
         """
         exchange = await self._get_exchange()
+
+        # Venues without hedge mode have nothing to detect (one-way always).
+        if not self._venue.supports_hedge_mode:
+            self._hedge_mode = False
+            self._is_uta = False
+            return
 
         # ── Attempt 1: v2 API (classic accounts) ──
         try:
@@ -1013,6 +1053,10 @@ class LiveExecutor:
                      every query failed (e.g. outage) and absence is UNVERIFIED;
                      callers must then fail-closed (RC-AUD-006).
         """
+        # The venue may transform the internal key into its own legal id
+        # format (Hyperliquid: 128-bit hex) — match what was actually sent.
+        coid = self._venue.client_oid(coid)
+
         def _matches(o: dict) -> bool:
             if not isinstance(o, dict):
                 return False
@@ -1060,8 +1104,10 @@ class LiveExecutor:
              lookup confirms the order is absent do we re-raise.
         """
         params = dict(params or {})
-        params.setdefault("clientOid", coid)       # Bitget raw param
-        params.setdefault("clientOrderId", coid)   # ccxt unified alias
+        # Venue-legal id params (Bitget: clientOid + clientOrderId with the
+        # raw key; Hyperliquid: clientOrderId only, as 128-bit hex).
+        for _k, _v in self._venue.order_id_params(coid).items():
+            params.setdefault(_k, _v)
         try:
             return cast(dict, await exchange.create_order(
                 symbol=symbol, type=type, side=side, amount=amount,
@@ -1289,7 +1335,7 @@ class LiveExecutor:
             exchange = await self._get_exchange()
             try:
                 ex_positions = await exchange.fetch_positions(
-                    params={"productType": "USDT-FUTURES"})
+                    params=self._venue.futures_params())
             except Exception as exc:  # noqa: BLE001
                 report["errors"].append(f"fetch_positions failed: {exc}")
                 return report
@@ -1413,7 +1459,7 @@ class LiveExecutor:
         try:
             exchange = await self._get_exchange()
             ex_positions = await exchange.fetch_positions(
-                params={"productType": "USDT-FUTURES"})
+                params=self._venue.futures_params())
 
             tracked = {
                 (normalize_symbol(p.symbol), p.direction)
@@ -1693,7 +1739,7 @@ class LiveExecutor:
         try:
             exchange = await self._get_exchange()
             ex_orders = await exchange.fetch_open_orders(
-                params={"productType": "USDT-FUTURES"})
+                params=self._venue.futures_params())
 
             # Only consider limit orders (not SL/TP trigger orders)
             limit_orders = [
@@ -2126,12 +2172,9 @@ class LiveExecutor:
             symbol = idea.asset
             if is_futures:
                 markets = await exchange.load_markets()
-                # ccxt uses "SYMBOL/USDT:USDT" for swap markets
-                # Don't double-append :USDT if already present
-                if ":USDT" in symbol:
-                    swap_symbol = symbol
-                else:
-                    swap_symbol = symbol.replace("/USDT", "/USDT:USDT")
+                # Venue-mapped perp symbol (Bitget "X/USDT:USDT",
+                # Hyperliquid "X/USDC:USDC") — never double-append.
+                swap_symbol = self._venue.swap_symbol(symbol)
                 has_futures = swap_symbol in markets or any(
                     m.get("swap") and m.get("symbol") == swap_symbol
                     for m in markets.values()
@@ -2149,7 +2192,7 @@ class LiveExecutor:
             # Set leverage for this symbol (futures only)
             if is_futures:
                 # AUDIT-FIX: Use swap symbol format for leverage API calls
-                swap_sym = idea.asset if ":USDT" in idea.asset else f"{idea.asset}:USDT"
+                swap_sym = self._venue.swap_symbol(idea.asset)
                 await self._ensure_leverage(swap_sym)
 
             # Convert symbol to the perpetual/swap format for the futures order
@@ -2163,7 +2206,7 @@ class LiveExecutor:
             # itself must be the perp form. The recorded position still uses
             # idea.asset (spot format) below, so reconciliation is unchanged.
             if is_futures:
-                symbol = idea.asset if ":USDT" in idea.asset else f"{idea.asset}:USDT"
+                symbol = self._venue.swap_symbol(idea.asset)
             else:
                 symbol = idea.asset
 
@@ -2531,18 +2574,21 @@ class LiveExecutor:
 
                 # Pre-check: verify balance is accessible
                 # UTA accounts pool all margin — try swap first, fall back to default
+                _bal_coin = self._venue.balance_coin
                 try:
                     bal_free = 0.0
                     try:
-                        fut_bal = await exchange.fetch_balance({"type": "swap"})
-                        fut_usdt = fut_bal.get("USDT", {})
+                        fut_bal = await exchange.fetch_balance(
+                            self._venue.balance_fetch_params())
+                        fut_usdt = fut_bal.get(_bal_coin, {})
                         bal_free = float(fut_usdt.get("free", 0) if isinstance(fut_usdt, dict) else 0)
                     except Exception:
                         # UTA mode: fetch_balance without type returns unified balance
                         uni_bal = await exchange.fetch_balance()
-                        uni_usdt = uni_bal.get("USDT", {})
+                        uni_usdt = uni_bal.get(_bal_coin, {})
                         bal_free = float(uni_usdt.get("free", 0) if isinstance(uni_usdt, dict) else 0)
-                    logger.info("Balance pre-check: free=%.2f USDT for %s", bal_free, symbol)
+                    logger.info("Balance pre-check: free=%.2f %s for %s",
+                                bal_free, _bal_coin, symbol)
                     if bal_free < size_usd:
                         audit(trade_log,
                               f"Low balance warning: ${bal_free:.2f} available, need ~${size_usd:.2f} margin for {symbol}",
@@ -2551,15 +2597,11 @@ class LiveExecutor:
                 except Exception as exc:
                     logger.debug("Balance pre-check failed: %s", exc)
 
-                futures_params = {
-                    "productType": "USDT-FUTURES",
-                    "marginMode": CONFIG.exchange.margin_mode,
-                    "leverage": str(leverage),
-                }
-                if self._hedge_mode:
-                    futures_params["tradeSide"] = "open"
-                else:
+                futures_params = self._venue.entry_params(
+                    CONFIG.exchange.margin_mode, leverage)
+                if self._venue.id == "bitget":
                     # Even in one-way mode, explicitly set tradeSide for safety
+                    # (hedge mode requires it; one-way tolerates it).
                     futures_params["tradeSide"] = "open"
 
                 # NOTE: v3 UTA Place Order supports inline takeProfit/stopLoss
@@ -2578,15 +2620,19 @@ class LiveExecutor:
                     asset_class = _classify_symbol(symbol)
                     if asset_class in ("Metal", "Commodity", "Stock", "Pre-IPO"):
                         # GTC: stays live through session close/reopen
-                        futures_params["timeInForce"] = "GTC"
+                        futures_params.update(self._venue.gtc_params())
                     elif CONFIG.limit_orders.post_only:
                         # POST_ONLY: maker-only, rejects if would fill as taker
-                        futures_params["timeInForce"] = "post_only"
+                        futures_params.update(self._venue.post_only_params())
 
                 create_kwargs: dict[str, Any] = {
                     "symbol": symbol, "type": otype, "side": side,
                     "amount": quantity, "coid": coid, "params": futures_params,
                 }
+                if otype == "market" and self._venue.market_order_needs_price:
+                    # Hyperliquid market orders are slippage-bounded IOC
+                    # orders — ccxt requires the reference price.
+                    create_kwargs["price"] = current_price
                 if use_limit and limit_price:
                     # FINAL authoritative re-validation, right at the point of
                     # submission. Multiple upstream paths can produce
@@ -2720,11 +2766,11 @@ class LiveExecutor:
                                 _prec_price = active_exchange.price_to_precision(symbol, limit_price)
                                 limit_price = float(_prec_price) if _prec_price is not None else limit_price
                                 create_kwargs["price"] = limit_price
-                                # Generate new coid for retry
+                                # Generate new coid for retry (venue-legal)
                                 retry_coid = coid + "-r1"
                                 create_kwargs["coid"] = retry_coid
-                                create_kwargs["params"]["clientOid"] = retry_coid
-                                create_kwargs["params"]["clientOrderId"] = retry_coid
+                                create_kwargs["params"].update(
+                                    self._venue.order_id_params(retry_coid))
                                 order = await self._create_order_idempotent(exchange, **create_kwargs)
                     else:
                         raise  # Not a POST_ONLY rejection — propagate
@@ -3358,10 +3404,15 @@ class LiveExecutor:
 
         # GETCLAW: Check and cancel existing plan orders before placing new ones.
         # Prevents duplicate SL/TP orders that can cause double-closes.
-        ccxt_sym = symbol if ":USDT" in symbol else f"{symbol}:USDT"
+        ccxt_sym = self._venue.swap_symbol(symbol)
         try:
             existing_plans = await exchange.fetch_open_orders(
-                ccxt_sym, params={"productType": "USDT-FUTURES", "isPlan": "plan_order"})
+                ccxt_sym, params=self._venue.plan_order_query_params())
+            # Venues without a server-side plan filter return ALL open orders;
+            # keep only SL/TP triggers so a resting entry limit never gets
+            # cancelled by this cleanup.
+            existing_plans = [p for p in (existing_plans or [])
+                              if self._venue.is_plan_order(p)]
             if existing_plans:
                 cancelled = 0
                 for plan in existing_plans:
@@ -3383,8 +3434,10 @@ class LiveExecutor:
 
         # Use cached UTA detection result instead of making an extra API call.
         # _detect_hold_mode already ran during _ensure_leverage and set _is_uta.
-        use_v3 = self._is_uta if self._is_uta is not None else False
-        if self._is_uta is None:
+        # The v3 strategy-order channel and the UTA probe are Bitget-only.
+        use_v3 = (self._is_uta if self._is_uta is not None else False) \
+            if self._venue.supports_native_triggers else False
+        if self._is_uta is None and self._venue.supports_native_triggers:
             # First call — haven't detected yet; probe once
             try:
                 await exchange.privateMixGetV2MixAccountAccount(
@@ -3405,7 +3458,7 @@ class LiveExecutor:
             # Get tick size from exchange markets for proper price precision
             price_precision = None
             # Try both spot and swap symbol formats for market lookup
-            swap_symbol = symbol if ":USDT" in symbol else f"{symbol}:USDT"
+            swap_symbol = self._venue.swap_symbol(symbol)
             lookup_symbols = [symbol, swap_symbol]
             try:
                 if not exchange.markets:
@@ -3433,9 +3486,9 @@ class LiveExecutor:
                 sl_str=sl_rounded, tp_str=tp_rounded,
             )
         else:
-            # Classic mode: use ccxt trigger orders
-            # Always send tradeSide=close + reduceOnly for SL/TP to prevent reverse opens
-            extra_params = {"productType": "USDT-FUTURES", "tradeSide": "close", "reduceOnly": True}
+            # Classic mode: use ccxt trigger orders (params via venue dialect:
+            # Bitget classic sends tradeSide=close + reduceOnly + productType;
+            # Hyperliquid sends reduceOnly and distinguishes tp/sl trigger kind)
 
             # Audit fix #21: round trigger prices onto the symbol's tick grid —
             # previously only the v3 path applied precision and the classic path
@@ -3453,18 +3506,21 @@ class LiveExecutor:
                 except (TypeError, ValueError):
                     pass
 
+            # Some venues (Hyperliquid) require a reference price on
+            # trigger-market orders to bound slippage; the trigger level
+            # itself is the natural bound.
+            _needs_px = self._venue.market_order_needs_price
+            _order_sym = self._venue.order_symbol(symbol)
+
             # Stop-loss
             try:
                 sl_order = await exchange.create_order(
-                    symbol=symbol,
+                    symbol=_order_sym,
                     type="market",
                     side=close_side,
                     amount=quantity,
-                    params={
-                        "triggerPrice": stop_loss,
-                        "triggerType": "last",
-                        **extra_params,
-                    },
+                    price=stop_loss if _needs_px else None,
+                    params=self._venue.trigger_params("sl", stop_loss),
                 )
                 sl_id = sl_order.get("id")
                 if sl_id:
@@ -3482,15 +3538,12 @@ class LiveExecutor:
             # Take-profit
             try:
                 tp_order = await exchange.create_order(
-                    symbol=symbol,
+                    symbol=_order_sym,
                     type="market",
                     side=close_side,
                     amount=quantity,
-                    params={
-                        "triggerPrice": take_profit,
-                        "triggerType": "last",
-                        **extra_params,
-                    },
+                    price=take_profit if _needs_px else None,
+                    params=self._venue.trigger_params("tp", take_profit),
                 )
                 tp_id = tp_order.get("id")
                 audit(trade_log, f"TP order placed: {tp_id}",
@@ -3511,7 +3564,11 @@ class LiveExecutor:
         Returns list of raw position dicts.  Handles both response shapes:
         ``{"data": [...]}`` and ``{"data": {"list": [...]}}``.
         Synchronous — callers must wrap in ``asyncio.to_thread``.
+        Bitget-only channel: other venues return [] (callers fall back to
+        ccxt position data).
         """
+        if get_venue().id != "bitget":
+            return []
         from bot.core.bitget_v3_client import BitgetV3Client
         client = BitgetV3Client.from_config()
         if not client.has_credentials:
@@ -3911,12 +3968,13 @@ class LiveExecutor:
         if qty <= 0:
             return 0.0
         close_side = "sell" if pos.direction == "LONG" else "buy"
-        params = {"productType": "USDT-FUTURES", "reduceOnly": True}
-        if not getattr(self, "_is_uta", False):
-            params["tradeSide"] = "close"
+        params = self._venue.close_params(getattr(self, "_is_uta", False))
         await exchange.create_order(
-            symbol=pos.symbol, type="market", side=close_side,
-            amount=qty, params=params,
+            symbol=self._venue.order_symbol(pos.symbol),
+            type="market", side=close_side,
+            amount=qty,
+            price=await self._venue_market_price(exchange, pos.symbol),
+            params=params,
         )
         return qty
 
@@ -4986,7 +5044,7 @@ class LiveExecutor:
 
             order = await exchange.create_order(
                 pos.symbol, "market", side, qty,
-                params={"productType": "USDT-FUTURES"})
+                params=self._venue.futures_params())
 
             fill_price = float(order.get("average", 0) or order.get("price", 0) or cur_price)
             filled_qty = float(order.get("filled", 0) or qty)
@@ -5114,8 +5172,9 @@ class LiveExecutor:
         # (mirrors _place_sl_tp) — never default to the classic ccxt triggerPrice
         # path on an unresolved account: on a UTA account that path executes as an
         # IMMEDIATE market order and flat-closes the position on a trailing update.
-        use_v3 = self._is_uta if self._is_uta is not None else False
-        if self._is_uta is None:
+        use_v3 = (self._is_uta if self._is_uta is not None else False) \
+            if self._venue.supports_native_triggers else False
+        if self._is_uta is None and self._venue.supports_native_triggers:
             try:
                 await exchange.privateMixGetV2MixAccountAccount(
                     {"symbol": "BTCUSDT", "productType": "USDT-FUTURES"})
@@ -5131,7 +5190,7 @@ class LiveExecutor:
         new_sl_id = None
         if use_v3:
             # Round to tick grid
-            swap_symbol = pos.symbol if ":USDT" in pos.symbol else f"{pos.symbol}:USDT"
+            swap_symbol = self._venue.swap_symbol(pos.symbol)
             sl_rounded = self._round_price_to_market(exchange, swap_symbol, new_sl)
             if sl_rounded is None:
                 sl_rounded = self._round_price_to_market(exchange, pos.symbol, new_sl)
@@ -5152,13 +5211,15 @@ class LiveExecutor:
             # rounding the v3 path already does).
             _sl_r = self._round_price_to_market(exchange, pos.symbol, new_sl)
             sl_trigger = float(_sl_r) if _sl_r else new_sl
-            # Always send tradeSide=close + reduceOnly for SL/TP to prevent reverse opens
-            extra_params = {"productType": "USDT-FUTURES", "tradeSide": "close", "reduceOnly": True}
+            # Venue trigger dialect (Bitget classic: tradeSide=close +
+            # reduceOnly + productType; Hyperliquid: reduceOnly + price bound)
             try:
                 sl_order = await exchange.create_order(
-                    symbol=pos.symbol, type="market", side=close_side,
+                    symbol=self._venue.order_symbol(pos.symbol),
+                    type="market", side=close_side,
                     amount=pos.quantity,
-                    params={"triggerPrice": sl_trigger, "triggerType": "last", **extra_params},
+                    price=sl_trigger if self._venue.market_order_needs_price else None,
+                    params=self._venue.trigger_params("sl", sl_trigger),
                 )
                 new_sl_id = sl_order.get("id")
             except Exception as exc:
@@ -5294,7 +5355,7 @@ class LiveExecutor:
                 try:
                     order_info = await exchange.fetch_order(
                         pos.limit_order_id, pos.symbol,
-                        params={"productType": "USDT-FUTURES"})
+                        params=self._venue.futures_params())
                     status = (order_info.get("status") or "").lower()
                     filled = float(order_info.get("filled") or 0)
                     if status in ("canceled", "cancelled", "expired", "closed"):
@@ -5343,9 +5404,9 @@ class LiveExecutor:
                     # Check if it filled
                     try:
                         exchange = await self._get_exchange()
-                        ccxt_sym = pos.symbol if ":USDT" in pos.symbol else f"{pos.symbol}:USDT"
+                        ccxt_sym = self._venue.swap_symbol(pos.symbol)
                         ex_positions = await exchange.fetch_positions(
-                            [ccxt_sym], params={"productType": "USDT-FUTURES"})
+                            [ccxt_sym], params=self._venue.futures_params())
                         has_pos = any(
                             abs(float(p.get("contracts", 0) or 0)) > 0 for p in ex_positions
                         )
@@ -5430,18 +5491,13 @@ class LiveExecutor:
             # position's actual margin mode.  Sending the wrong mode
             # (e.g. "isolated" when position is "crossed") causes the
             # exchange to miss the position and open a new SHORT instead.
-            close_params = {
-                "productType": "USDT-FUTURES",
-                "reduceOnly": True,
-            }
-            # Only add tradeSide for non-UTA (v2 classic) accounts
-            if not self._is_uta:
-                close_params["tradeSide"] = "close"
+            close_params = self._venue.close_params(self._is_uta)
             order = await exchange.create_order(
-                symbol=pos.symbol,
+                symbol=self._venue.order_symbol(pos.symbol),
                 type="market",
                 side=close_side,
                 amount=pos.quantity,
+                price=await self._venue_market_price(exchange, pos.symbol),
                 params=close_params,
             )
             close_order_id = str(order.get("id", ""))
@@ -5789,9 +5845,9 @@ class LiveExecutor:
             if "25227" in exc_str or "No position available" in exc_str:
                 try:
                     verify_exchange = await self._get_exchange()
-                    ccxt_sym = pos.symbol if ":USDT" in pos.symbol else f"{pos.symbol}:USDT"
+                    ccxt_sym = self._venue.swap_symbol(pos.symbol)
                     ex_positions = await verify_exchange.fetch_positions(
-                        [ccxt_sym], params={"productType": "USDT-FUTURES"})
+                        [ccxt_sym], params=self._venue.futures_params())
                     still_open = any(
                         abs(float(p.get("contracts", 0) or 0)) > 0 for p in ex_positions
                     )
@@ -5849,9 +5905,13 @@ class LiveExecutor:
 
         This is the authoritative source — Bitget's own closed-position
         record with the real fill price, realized PnL, and fees.
+        Bitget-only channel (v2 history endpoint): other venues return None
+        and the caller falls back to order-fill / ticker close data.
         """
+        if self._venue.id != "bitget":
+            return None
         exchange = await self._get_exchange()
-        ccxt_symbol = pos.symbol if ":USDT" in pos.symbol else f"{pos.symbol}:USDT"
+        ccxt_symbol = self._venue.swap_symbol(pos.symbol)
         # Bitget raw symbol: strip /USDT:USDT → e.g. "BTCUSDT"
         # Handle all possible formats: "BZ/USDT:USDT" → "BZUSDT", "BZUSDT" stays
         raw_symbol = pos.symbol.split(":")[0].replace("/", "")
@@ -5995,7 +6055,7 @@ class LiveExecutor:
                     since_ms_trades = None
                 trades = await exchange.fetch_my_trades(
                     ccxt_symbol, since=since_ms_trades, limit=50,
-                    params={"productType": "USDT-FUTURES"},
+                    params=self._venue.futures_params(),
                 )
 
                 # First try matching by SL/TP order IDs
@@ -6088,7 +6148,7 @@ class LiveExecutor:
             try:
                 closed_orders = await exchange.fetch_closed_orders(
                     ccxt_symbol, limit=20,
-                    params={"productType": "USDT-FUTURES"},
+                    params=self._venue.futures_params(),
                 )
                 for o in closed_orders:
                     if o.get("id") in (pos.sl_order_id, pos.tp_order_id):
@@ -6199,7 +6259,7 @@ class LiveExecutor:
         """
         try:
             def _norm(sym: str) -> str:
-                return (sym or "").replace("/", "").replace(":USDT", "").upper()
+                return (sym or "").split(":")[0].replace("/", "").upper()
 
             sym = _norm(pos.symbol)
             entry = float(pos.entry_price or 0.0)
@@ -6319,7 +6379,7 @@ class LiveExecutor:
                     f"duplicate record suppressed (no PnL re-counted)")
 
         exchange = await self._get_exchange()
-        ccxt_symbol = pos.symbol if ":USDT" in pos.symbol else f"{pos.symbol}:USDT"
+        ccxt_symbol = self._venue.swap_symbol(pos.symbol)
 
         # ── Get real close data from Bitget ──────────────────────────
         close_data = await self._fetch_bitget_close_data(pos)
@@ -6477,6 +6537,9 @@ class LiveExecutor:
 
         from bot.core.bitget_v3_client import BitgetV3Client
 
+        if self._venue.id != "bitget":
+            return None  # v3 flash-close is a Bitget channel; caller falls back
+
         bitget_symbol = pos.symbol.replace("/USDT", "USDT").replace(":USDT", "")
         pos_side = "long" if pos.direction == "LONG" else "short"
 
@@ -6536,9 +6599,9 @@ class LiveExecutor:
         """
         try:
             exchange = await self._get_exchange()
-            ccxt_sym = pos.symbol if ":USDT" in pos.symbol else f"{pos.symbol}:USDT"
+            ccxt_sym = self._venue.swap_symbol(pos.symbol)
             positions = await exchange.fetch_positions(
-                [ccxt_sym], params={"productType": "USDT-FUTURES"})
+                [ccxt_sym], params=self._venue.futures_params())
 
             for p in positions:
                 if abs(float(p.get("contracts", 0) or 0)) <= 0:
@@ -6586,7 +6649,7 @@ class LiveExecutor:
         try:
             exchange = await self._get_exchange()
             balance = await exchange.fetch_balance()
-            usdt = balance.get("USDT", {})
+            usdt = balance.get(self._venue.balance_coin, {})
 
             # ── Extract equity from raw Bitget response ──
             # Bitget USDT-FUTURES returns equity/usdtEquity/accountEquity in
@@ -6621,7 +6684,7 @@ class LiveExecutor:
                 if asset in ("info", "free", "used", "total", "timestamp", "datetime"):
                     continue
                 total_val = float(info.get("total", 0) if isinstance(info, dict) else 0)
-                if total_val > 0 and asset != "USDT":
+                if total_val > 0 and asset != self._venue.balance_coin:
                     holdings.append({
                         "asset": asset,
                         "total": total_val,
@@ -6697,15 +6760,17 @@ class LiveExecutor:
         except Exception as exc:
             logger.debug("_live_protective_order_ids: no exchange for %s: %s", pos.symbol, exc)
             return None
-        ccxt_sym = pos.symbol if ":USDT" in pos.symbol else f"{pos.symbol}:USDT"
+        ccxt_sym = self._venue.swap_symbol(pos.symbol)
         ids: set[str] = set()
         plan_ok = False
         pos_ok = False
         # Open plan/trigger orders (classic two-order SL/TP).
         try:
             plans = await exchange.fetch_open_orders(
-                ccxt_sym, params={"productType": "USDT-FUTURES", "isPlan": "plan_order"})
+                ccxt_sym, params=self._venue.plan_order_query_params())
             for o in (plans or []):
+                if not self._venue.is_plan_order(o):
+                    continue
                 oid = o.get("id") or (o.get("info", {}) or {}).get("orderId")
                 if oid:
                     ids.add(str(oid))
@@ -6715,7 +6780,7 @@ class LiveExecutor:
         # Position-attached SL/TP IDs (accounts that attach protection to the position).
         try:
             positions = await exchange.fetch_positions(
-                [ccxt_sym], params={"productType": "USDT-FUTURES"})
+                [ccxt_sym], params=self._venue.futures_params())
             for p in (positions or []):
                 info = p.get("info", {}) or {}
                 for k in ("stopLossId", "takeProfitId"):
@@ -7125,10 +7190,10 @@ class LiveExecutor:
 
                 try:
                     # Check if position still exists on exchange
-                    ccxt_symbol = pos.symbol if ":USDT" in pos.symbol else f"{pos.symbol}:USDT"
+                    ccxt_symbol = self._venue.swap_symbol(pos.symbol)
                     positions = await exchange.fetch_positions(
                         [ccxt_symbol],
-                        params={"productType": "USDT-FUTURES"},
+                        params=self._venue.futures_params(),
                     )
                     if self._hedge_mode:
                         # Hedge mode: the account can hold BOTH a long and a short
