@@ -527,11 +527,20 @@ class RiskLimits:
 
 @dataclass(frozen=True)
 class ExchangeConfig:
-    """Bitget API credentials and trading mode."""
+    """Exchange venue selection, API credentials and trading mode."""
+    # Live trading venue: "bitget" (default) or "hyperliquid". Applies to the
+    # operator's shared executor; per-user (/connect) executors are Bitget-only.
+    venue: str = _env("VENUE", "bitget")
     api_key: str = _env("BITGET_API_KEY")
     api_secret: str = _env("BITGET_API_SECRET")
     passphrase: str = _env("BITGET_PASSPHRASE")
     sandbox: bool = _env_bool("BITGET_SANDBOX", True)  # Sandbox by default; override via env
+    # Hyperliquid venue credentials (USDC perps DEX): API wallet address +
+    # private key. Use a dedicated API wallet (agent wallet), NOT the main
+    # wallet key. HYPERLIQUID_TESTNET=true routes to the testnet.
+    hyperliquid_wallet_address: str = _env("HYPERLIQUID_WALLET_ADDRESS")
+    hyperliquid_private_key: str = _env("HYPERLIQUID_PRIVATE_KEY")
+    hyperliquid_testnet: bool = _env_bool("HYPERLIQUID_TESTNET", False)
     # Asset universe filter: "all" scans everything, "solana" adds Solana ecosystem priority
     asset_universe: str = _env("ASSET_UNIVERSE", "all_markets")  # all_markets | all | solana | metals | tradfi | etc.
     # Trading mode: "spot" for no leverage, "futures" for USDT-M perpetual

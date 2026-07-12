@@ -95,6 +95,8 @@ def _fetch_v3_positions_direct() -> list[dict[str, Any]]:
     This is a synchronous call — callers must wrap in asyncio.to_thread.
     """
     cfg = CONFIG.exchange
+    if getattr(cfg, "venue", "bitget") != "bitget":
+        return []  # Bitget-only channel; ccxt fetch_positions covers other venues
     if not cfg.api_key or not cfg.api_secret:
         return []
 

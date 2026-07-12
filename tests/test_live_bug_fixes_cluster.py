@@ -29,9 +29,11 @@ def test_futures_entry_normalizes_to_swap_symbol():
     # The entry path must convert idea.asset to the perp/swap form when futures,
     # so price_to_precision / create_order use the FUTURES market's real tick.
     assert 'if is_futures:' in src
-    assert 'f"{idea.asset}:USDT"' in src
+    # Venue-mapped perp form (Bitget "X/USDT:USDT" — byte-identical to the
+    # old f"{idea.asset}:USDT" idiom; Hyperliquid "X/USDC:USDC").
+    assert 'symbol = self._venue.swap_symbol(idea.asset)' in src
     # And it must happen before the order price pipeline (create_order).
-    conv = src.index('f"{idea.asset}:USDT"')
+    conv = src.index('symbol = self._venue.swap_symbol(idea.asset)')
     # the old buggy line (bare assignment with the misleading comment) is gone
     assert 'Convert symbol to the perpetual/swap format' in src
     assert conv < src.index('active_exchange = exchange')
