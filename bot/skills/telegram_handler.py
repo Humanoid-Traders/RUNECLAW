@@ -360,6 +360,7 @@ class TelegramHandler:
             ("venue", self._cmd_venue),
             ("classpf", self._cmd_classpf),
             ("funding", self._cmd_funding),
+            ("parity", self._cmd_parity),
             ("grant_live", self._cmd_grant_live), ("revoke_live", self._cmd_revoke_live),
             ("set_tier", self._cmd_set_tier),
             # Marketing / channel forwarder
@@ -2527,6 +2528,51 @@ class TelegramHandler:
         lines.append("PF &gt; 1 = profitable class. Small samples lie — "
                      "judge classes on 20+ trades.")
         await self._send(update, "\n".join(lines))
+
+    # ── Live↔backtest parity ──────────────────────────────────
+
+    async def _cmd_parity(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """Admin only: /parity — the live↔backtest parity report, on demand
+        from Telegram (previously shell-only: bot/backtest/parity.py). Live
+        realized PF/fees vs the modeled benchmark, bucketed by signal type,
+        setup, exit reason, AND asset class — the tool for dissecting the
+        crypto bleed the /classpf card surfaced."""
+        if not self._is_admin(update):
+            await self._send(update, f"\U0001f512 {t('admin_only', self._lang(update))}")
+            return
+        import asyncio as _aio
+        import html as _html
+        from bot.backtest.parity import (_bucket_lines, _group,
+                                         format_report, load_closed_trades,
+                                         parity_summary)
+        from bot.core.market_scanner import category_for_symbol
+
+        path = self.engine.live_executor._closed_trades_file
+        try:
+            trades = await _aio.to_thread(load_closed_trades, path)
+        except Exception as exc:
+            await self._send(update,
+                             f"🔴 Could not read closed trades ({str(exc)[:120]})")
+            return
+        if not trades:
+            await self._send(update, "📏 No closed live trades yet — the parity "
+                                     "report needs at least a few closes.")
+            return
+        summary = await _aio.to_thread(parity_summary, trades,
+                                       CONFIG.risk.commission_pct)
+        report = format_report(summary)
+        # Evidence extension: the per-asset-class bucket (classpf's view,
+        # inside the parity framing).
+        for tr in trades:
+            tr["asset_class"] = category_for_symbol(tr.get("symbol", "") or "")
+        cls_lines = _bucket_lines("By asset class",
+                                  _group(trades, "asset_class"))
+        if cls_lines:
+            report += "\n" + "\n".join(cls_lines)
+        text = f"📏 <b>Live ↔ backtest parity</b>\n<pre>{_html.escape(report)}</pre>"
+        if len(text) > 4000:
+            text = text[:3990] + "\n…</pre>"
+        await self._send(update, text)
 
     # ── Cross-venue funding ───────────────────────────────────
 

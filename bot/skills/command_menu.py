@@ -43,6 +43,7 @@ ADMIN_EXTRA_MENU: List[Tuple[str, str]] = [
     ("venue", "🏦 Show or switch the trading venue"),
     ("classpf", "📊 Live PnL by asset class"),
     ("funding", "📡 Funding rates across venues"),
+    ("parity", "📏 Live vs backtest parity report"),
     ("golive", "🔥 Arm live trading"),
     ("livebalance", "💰 Live exchange balance"),
     ("livepositions", "📌 Live exchange positions"),
