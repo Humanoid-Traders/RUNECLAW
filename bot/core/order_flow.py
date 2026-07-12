@@ -99,6 +99,14 @@ class OrderFlowConfig:
     # calls per ~10 min for the WHOLE universe), fail-open, and pure
     # observability — no rule vote or confidence impact.
     cross_venue_funding: bool = _env_bool("OF_CROSS_VENUE_FUNDING", True)
+    # Divergence VOTE (default OFF — enable only after the recorded-data
+    # A/B validates it; see scripts/ab_cross_venue_vote.py). When the home
+    # venue's funding is more crowded than the cross-venue mean, lean
+    # contrarian: delta = home_rate - mean(other venues), normalized by
+    # funding_extreme, capped +-1, weighted w_cross_venue. OFF keeps
+    # scoring byte-identical to the enrichment-only behavior.
+    cross_venue_vote_enabled: bool = _env_bool("OF_CROSS_VENUE_VOTE_ENABLED", False)
+    w_cross_venue: float = _env_float("OF_W_CROSS_VENUE", 0.3)
     # Large-cap symbols that should always require $10K+ book depth
     LARGE_CAP_SYMBOLS: frozenset = frozenset({
         "BTC/USDT", "ETH/USDT", "SOL/USDT",
@@ -785,6 +793,19 @@ class OrderFlowAnalyzer:
             fnorm = float(np.clip(sig.funding_rate / c.funding_extreme, -1, 1))
             contribs.append((-fnorm, c.w_funding))
 
+        # Cross-venue divergence vote (OF_CROSS_VENUE_VOTE_ENABLED, default
+        # OFF — pending the recorded-data A/B in scripts/ab_cross_venue_vote
+        # .py). Home funding above the cross-venue mean = the LOCAL crowd is
+        # the crowded side = contrarian bearish lean, and vice versa.
+        if (c.cross_venue_vote_enabled
+                and sig.funding_rate is not None
+                and sig.cross_venue_funding):
+            mean_other = (sum(sig.cross_venue_funding.values())
+                          / len(sig.cross_venue_funding))
+            delta = sig.funding_rate - mean_other
+            dnorm = float(np.clip(delta / c.funding_extreme, -1, 1))
+            contribs.append((-dnorm, c.w_cross_venue))
+
         wsum = sum(w for _, w in contribs)
         if wsum > 0:
             sig.smart_money_score = round(
@@ -792,6 +813,8 @@ class OrderFlowAnalyzer:
 
         # Confidence = share of total possible weight that actually resolved
         max_weight = (c.w_book + c.w_aggressor + c.w_cvd_trend + c.w_whale + c.w_funding)
+        if c.cross_venue_vote_enabled:
+            max_weight += c.w_cross_venue
         sig.confidence = round(min(1.0, wsum / max_weight), 3) if max_weight > 0 else 0.0
 
     # -- Integration helpers --

@@ -49,7 +49,12 @@ class CrossVenueFunding:
     def __init__(self, ttl_seconds: float = 600.0) -> None:
         self.ttl = ttl_seconds
         self._maps: dict[str, dict[str, float]] = {}      # venue -> base -> rate
-        self._fetched_at: dict[str, float] = {}
+        # venue -> monotonic time of last fetch attempt. Absent = never
+        # fetched. NEVER use 0.0 as the sentinel here: time.monotonic()
+        # counts from boot, so on a freshly restarted host (CI runner, a
+        # rebooted trading VPS) now-0.0 < ttl and the empty map would look
+        # "fresh" until uptime exceeds the TTL.
+        self._fetched_at: dict[str, Optional[float]] = {}
         self._locks: dict[str, asyncio.Lock] = {}
         self._exchanges: dict[str, object] = {}
 
@@ -94,15 +99,17 @@ class CrossVenueFunding:
                 continue
         return out
 
+    def _is_fresh(self, venue_id: str) -> bool:
+        last = self._fetched_at.get(venue_id)
+        return last is not None and (time.monotonic() - last) < self.ttl
+
     async def _venue_map(self, venue_id: str) -> dict[str, float]:
-        now = time.monotonic()
-        if now - self._fetched_at.get(venue_id, 0.0) < self.ttl:
+        if self._is_fresh(venue_id):
             return self._maps.get(venue_id, {})
         lock = self._locks.setdefault(venue_id, asyncio.Lock())
         async with lock:
             # Re-check under the lock — a concurrent caller may have filled it.
-            now = time.monotonic()
-            if now - self._fetched_at.get(venue_id, 0.0) < self.ttl:
+            if self._is_fresh(venue_id):
                 return self._maps.get(venue_id, {})
             try:
                 ex = await self._exchange(venue_id)

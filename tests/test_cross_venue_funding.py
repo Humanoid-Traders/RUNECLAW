@@ -95,6 +95,26 @@ async def test_venue_failure_is_fail_open(monkeypatch):
     assert rates == {"hyperliquid": -0.0004}   # partial map, no raise
 
 
+@pytest.mark.asyncio
+async def test_fetches_on_freshly_booted_host(monkeypatch):
+    """Regression (caught by CI): time.monotonic() counts from BOOT. With a
+    0.0 'never fetched' sentinel, a host up for < TTL seconds (fresh CI
+    runner, rebooted trading VPS) made the empty cache look fresh and the
+    provider returned {} until uptime exceeded the TTL."""
+    import bot.core.cross_venue as cvmod
+    monkeypatch.setattr(cvmod.time, "monotonic", lambda: 42.0)  # < ttl
+    cv = CrossVenueFunding(ttl_seconds=600)
+    fake = _FakeEx({"BTC/USDT:USDT": {"fundingRate": 0.0003}})
+
+    async def _ex(venue_id):
+        return fake
+
+    monkeypatch.setattr(cv, "_exchange", _ex)
+    rates = await cv.rates_for("BTC/USDT")
+    assert rates.get("bybit") == 0.0003        # fetched despite uptime < ttl
+    assert fake.calls >= 1
+
+
 # ── divergence math ──────────────────────────────────────────────────
 def test_divergence_needs_two_venues():
     assert CrossVenueFunding.divergence({}) is None
@@ -121,12 +141,44 @@ def test_orderflow_enrichment_wired_and_flagged():
     assert OrderFlowConfig().cross_venue_funding is True  # enrichment default ON
 
 
-def test_enrichment_does_not_touch_votes_or_confidence():
-    """The composite scorer must still draw from the same fixed weight set —
-    cross-venue data is display/LLM context, not a vote."""
-    from bot.core.order_flow import OrderFlowAnalyzer
-    src = inspect.getsource(OrderFlowAnalyzer._fill_composite)
-    assert "cross_venue" not in src
+def _scored_signal(analyzer, cross_venue=None):
+    from bot.core.order_flow import OrderFlowSignal
+    sig = OrderFlowSignal(symbol="BTC/USDT:USDT")
+    sig.book_imbalance = 0.4
+    sig.funding_rate = 0.0004          # home longs paying
+    sig.cross_venue_funding = cross_venue
+    analyzer._fill_composite(sig, ok=["book"])
+    return sig
+
+
+def test_vote_off_is_byte_identical_scoring():
+    """Default (OF_CROSS_VENUE_VOTE_ENABLED off): the composite score and
+    confidence must be IDENTICAL whether or not cross-venue data is
+    attached — enrichment stays observability-only until the A/B."""
+    from bot.core.order_flow import OrderFlowAnalyzer, OrderFlowConfig
+    cfg = OrderFlowConfig()
+    assert cfg.cross_venue_vote_enabled is False   # shipped default
+    a = OrderFlowAnalyzer(cfg)
+    bare = _scored_signal(a, cross_venue=None)
+    rich = _scored_signal(a, cross_venue={"bybit": 0.0001,
+                                          "hyperliquid": -0.0002})
+    assert rich.smart_money_score == bare.smart_money_score
+    assert rich.confidence == bare.confidence
+
+
+def test_vote_on_leans_contrarian_to_home_crowding():
+    """Enabled: home funding ABOVE the cross-venue mean = local longs are
+    the crowded side = the score must move bearish vs. vote-off."""
+    import dataclasses
+    from bot.core.order_flow import OrderFlowAnalyzer, OrderFlowConfig
+    off = OrderFlowConfig()
+    on = dataclasses.replace(OrderFlowConfig(), cross_venue_vote_enabled=True)
+    cheap_elsewhere = {"bybit": 0.0000, "hyperliquid": -0.0001}
+    s_off = _scored_signal(OrderFlowAnalyzer(off), cheap_elsewhere)
+    s_on = _scored_signal(OrderFlowAnalyzer(on), cheap_elsewhere)
+    assert s_on.smart_money_score < s_off.smart_money_score
+    # confidence denominator includes the extra weight only when enabled
+    assert s_on.confidence != s_off.confidence or s_on.confidence == 1.0
 
 
 # ── /funding command ─────────────────────────────────────────────────
