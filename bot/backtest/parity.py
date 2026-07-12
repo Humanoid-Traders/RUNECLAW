@@ -95,7 +95,17 @@ def parity_summary(trades: list[dict], modeled_commission_pct: float) -> dict:
 
     ``modeled_commission_pct`` is the per-side % the backtest charges
     (``CONFIG.risk.commission_pct``); a round trip models ~2× that.
+
+    Never-filled records (expired/canceled/price_drift/stale_pending with
+    zero PnL) are EXCLUDED from every stat — no capital was at risk, and
+    the live report showed 75 of them among 292 "trades" diluting the
+    headline win rate. The excluded count is reported.
     """
+    from bot.utils.close_reason import is_filled_close
+    total_records = len(trades)
+    trades = [t for t in trades
+              if is_filled_close(t.get("close_reason"), _net(t))]
+    excluded = total_records - len(trades)
     nets = [_net(t) for t in trades]
     fees = sum(_fees(t) for t in trades)
     notional = sum(_notional(t) for t in trades)
@@ -108,6 +118,7 @@ def parity_summary(trades: list[dict], modeled_commission_pct: float) -> dict:
     gross_win = sum(n for n in nets if n > 0)
     return {
         "trades": n,
+        "excluded_non_fills": excluded,
         "win_rate": (wins / n) if n else 0.0,
         "net_pnl": round(sum(nets), 2),
         "gross_pnl": round(gross, 2),
@@ -146,7 +157,9 @@ def format_report(s: dict) -> str:
                 "report against data/closed_trades.json.")
     lines = ["", "  ── LIVE ↔ BACKTEST PARITY " + "─" * 42,
              f"  Live realized: {s['trades']} trades  net ${s['net_pnl']:+,.2f}"
-             f"  win {s['win_rate']:.0%}  PF {_pf_str(s['pf'])}",
+             f"  win {s['win_rate']:.0%}  PF {_pf_str(s['pf'])}"
+             + (f"  ({s['excluded_non_fills']} never-filled records excluded)"
+                if s.get("excluded_non_fills") else ""),
              "  Backtest benchmark (majors_1h, --honest): +0.31% / PF 1.14 — "
              "is live in the same ballpark?"]
     # Fee parity — the concrete fills/fees gap.
