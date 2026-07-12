@@ -64,6 +64,19 @@ def _is_stock_suffix_base(symbol: str) -> bool:
     return len(base) > 5 and base.endswith("STOCK")
 
 
+def _class_scan_enabled(category: str) -> bool:
+    """Per-class TradFi toggle for the all_markets scan (evidence-driven —
+    see the SCAN_CLASS_* config comments). Crypto and unknown categories
+    are always on; explicit single-category universes bypass this."""
+    return {
+        "Commodity": CONFIG.scan_class_commodities,
+        "Stock": CONFIG.scan_class_stocks,
+        "Metal": CONFIG.scan_class_metals,
+        "ETF": CONFIG.scan_class_etfs,
+        "Pre-IPO": CONFIG.scan_class_pre_ipo,
+    }.get(category, True)
+
+
 def _classify_symbol(symbol: str) -> str:
     """Return the asset category for a given symbol."""
     if symbol in _METAL_SET:
@@ -278,6 +291,8 @@ class MarketScanner:
         if isinstance(futures_result, dict):
             for symbol, tick in futures_result.items():
                 if symbol not in _TRADFI_SET and not _is_stock_suffix_base(symbol):
+                    continue
+                if not _class_scan_enabled(_classify_symbol(symbol)):
                     continue
                 sig = self._process_ticker(symbol, tick, min_vol=CONFIG.min_tradfi_volume_usd)
                 if sig:

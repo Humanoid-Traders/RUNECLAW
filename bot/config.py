@@ -1773,6 +1773,19 @@ class AppConfig:
     # "spot" restores the legacy behavior: spot volume gating + spot-listing
     # requirement. The floor value above applies to whichever source is set.
     scan_volume_source: str = _env("SCAN_VOLUME_SOURCE", "futures")
+    # Per-class TradFi toggles for the all_markets scan — evidence-driven
+    # (live /classpf 2026-07-12, 292 closed trades): Commodity PF 2.30 (32
+    # trades) and Stock PF 1.23 (18) earn their slots; Pre-IPO PF 0.24 (10)
+    # on $40–100k/day books is spread-bleed and ships DISABLED. Metals and
+    # ETFs stay ON — their samples (9 / 7 trades) are too small to condemn;
+    # /classpf keeps scoring them. Explicit single-category universes
+    # (ASSET_UNIVERSE=pre_ipo etc.) bypass these — an operator asking for a
+    # class by name gets it.
+    scan_class_commodities: bool = _env_bool("SCAN_CLASS_COMMODITIES", True)
+    scan_class_stocks: bool = _env_bool("SCAN_CLASS_STOCKS", True)
+    scan_class_metals: bool = _env_bool("SCAN_CLASS_METALS", True)
+    scan_class_etfs: bool = _env_bool("SCAN_CLASS_ETFS", True)
+    scan_class_pre_ipo: bool = _env_bool("SCAN_CLASS_PRE_IPO", False)
     # How many (volume-filtered) symbols the scanner emits for analysis each
     # cycle. Raised 80 -> 200 for a wide sweep of the whole liquid universe; the
     # analysis loop bounds concurrency (scan_analysis_concurrency) so a wider
