@@ -325,6 +325,33 @@ def resolve_tier_config(
 
     tier_upper = tier.value.upper()
 
+    # Admin + Anthropic route: resolve the KEY through key_health's
+    # deterministic candidate order (runtime BYOK > ANTHROPIC_API_KEY >
+    # primary .env), skipping keys marked invalid by a real 401. This fixes
+    # two recurring failure shapes (live incident 2026-07-11):
+    #   1. the old step-2 guard skipped the admin table whenever the PRIMARY
+    #      provider was also Anthropic, silently binding every tier to the
+    #      primary/BYOK slot — whichever key happened to live there;
+    #   2. one stale key in any slot captured the call path forever, with no
+    #      path to the other (valid) keys. Now a 401 condemns only that key
+    #      and the resolver auto-heals onto the next candidate.
+    if is_admin and routing_override is None:
+        _route = routing.get(tier, {})
+        if _route.get("provider") == LLMProvider.ANTHROPIC:
+            from bot.llm import key_health as _kh
+            _src, _key = _kh.pick_anthropic_key(
+                primary_config, BYOK._runtime_config)
+            if _key:
+                _catalog = PROVIDER_CATALOG.get(LLMProvider.ANTHROPIC, {})
+                return LLMConfig(
+                    provider=LLMProvider.ANTHROPIC,
+                    api_key=_key,
+                    model=_route.get("model",
+                                     _catalog.get("default_model", "")),
+                    base_url=_catalog.get("base_url", ""),
+                )
+            # No Anthropic key anywhere → fall through to the generic steps.
+
     # For non-admin without an explicit override: check explicit tier env override
     if not use_table_directly:
         tier_provider_str = os.getenv(f"LLM_TIER_{tier_upper}_PROVIDER", "")

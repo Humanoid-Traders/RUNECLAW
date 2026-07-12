@@ -3853,6 +3853,19 @@ class Analyzer:
             # live "quota exhausted → brain offline" signature. Record it so the
             # proactive monitor can alert once the streak crosses the threshold.
             self._note_llm_degraded(str(exc))
+            # Auth failures condemn the KEY, not the provider: mark this
+            # config's key invalid in the key-health registry so the next
+            # tier resolution auto-heals onto the next candidate key instead
+            # of failing forever (recurring live incident 2026-07-11).
+            try:
+                from bot.llm import key_health as _kh
+                if (_kh.looks_like_auth_error(str(exc))
+                        and active_cfg is not None
+                        and getattr(active_cfg, "api_key", "")):
+                    _kh.mark_invalid(active_cfg.api_key, str(exc),
+                                     source="runtime-call")
+            except Exception:
+                pass
             result = self._rule_based_thesis(signal, indicators)
             if result is None:
                 return None
