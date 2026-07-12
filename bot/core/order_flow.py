@@ -94,6 +94,19 @@ class OrderFlowConfig:
     # the guard byte-identical (25-level sum only).
     book_top_levels: int = _env_int("OF_BOOK_TOP_LEVELS", 5)
     guard_top_depth_enabled: bool = _env_bool("OF_GUARD_TOP_DEPTH_ENABLED", True)
+    # Cross-venue funding enrichment (bot/core/cross_venue.py): attach what
+    # Bybit/Hyperliquid perps pay for the same base. Bulk-cached (2 HTTP
+    # calls per ~10 min for the WHOLE universe), fail-open, and pure
+    # observability — no rule vote or confidence impact.
+    cross_venue_funding: bool = _env_bool("OF_CROSS_VENUE_FUNDING", True)
+    # Divergence VOTE (default OFF — enable only after the recorded-data
+    # A/B validates it; see scripts/ab_cross_venue_vote.py). When the home
+    # venue's funding is more crowded than the cross-venue mean, lean
+    # contrarian: delta = home_rate - mean(other venues), normalized by
+    # funding_extreme, capped +-1, weighted w_cross_venue. OFF keeps
+    # scoring byte-identical to the enrichment-only behavior.
+    cross_venue_vote_enabled: bool = _env_bool("OF_CROSS_VENUE_VOTE_ENABLED", False)
+    w_cross_venue: float = _env_float("OF_W_CROSS_VENUE", 0.3)
     # Large-cap symbols that should always require $10K+ book depth
     LARGE_CAP_SYMBOLS: frozenset = frozenset({
         "BTC/USDT", "ETH/USDT", "SOL/USDT",
@@ -175,6 +188,12 @@ class OrderFlowSignal(BaseModel):
     funding_rate: Optional[float] = None
     open_interest_usd: Optional[float] = None
     oi_change_pct: Optional[float] = None
+
+    # Cross-venue funding (bot/core/cross_venue.py): what OTHER venues'
+    # perps pay for the same base. Observability-first — carried on the
+    # signal and surfaced to the operator/LLM, no rule-vote impact yet.
+    cross_venue_funding: Optional[dict[str, float]] = None
+    cross_venue_spread: Optional[float] = None
 
     # Spot vs Futures divergence
     spot_volume_usd: float = 0.0         # total spot trade volume in window
@@ -336,6 +355,27 @@ class OrderFlowAnalyzer:
                     ok.append("funding")
             except Exception as exc:  # noqa: BLE001
                 sig.notes.append(f"funding processing error: {exc}")
+
+        # 3b. Cross-venue funding enrichment (bulk-cached, ~free per symbol;
+        # fail-open — a down venue just means fewer entries in the map).
+        if self.config.cross_venue_funding:
+            try:
+                from bot.core.cross_venue import CROSS_VENUE
+                xr = await CROSS_VENUE.rates_for(deriv_sym)
+                if xr:
+                    sig.cross_venue_funding = xr
+                    div = CROSS_VENUE.divergence(xr, home_rate=sig.funding_rate)
+                    if div is not None:
+                        sig.cross_venue_spread = div["spread"]
+                        parts = ", ".join(f"{v} {r * 100:+.4f}%"
+                                          for v, r in sorted(xr.items()))
+                        sig.notes.append(
+                            f"cross-venue funding: {parts} "
+                            f"(spread {div['spread'] * 100:.4f}% across "
+                            f"{div['venues']} venues)")
+                        ok.append("cross_venue_funding")
+            except Exception as exc:  # noqa: BLE001
+                sig.notes.append(f"cross-venue funding n/a: {str(exc)[:120]}")
 
         # 4. Derivatives: open interest
         if isinstance(oi_result, Exception):
@@ -753,6 +793,19 @@ class OrderFlowAnalyzer:
             fnorm = float(np.clip(sig.funding_rate / c.funding_extreme, -1, 1))
             contribs.append((-fnorm, c.w_funding))
 
+        # Cross-venue divergence vote (OF_CROSS_VENUE_VOTE_ENABLED, default
+        # OFF — pending the recorded-data A/B in scripts/ab_cross_venue_vote
+        # .py). Home funding above the cross-venue mean = the LOCAL crowd is
+        # the crowded side = contrarian bearish lean, and vice versa.
+        if (c.cross_venue_vote_enabled
+                and sig.funding_rate is not None
+                and sig.cross_venue_funding):
+            mean_other = (sum(sig.cross_venue_funding.values())
+                          / len(sig.cross_venue_funding))
+            delta = sig.funding_rate - mean_other
+            dnorm = float(np.clip(delta / c.funding_extreme, -1, 1))
+            contribs.append((-dnorm, c.w_cross_venue))
+
         wsum = sum(w for _, w in contribs)
         if wsum > 0:
             sig.smart_money_score = round(
@@ -760,6 +813,8 @@ class OrderFlowAnalyzer:
 
         # Confidence = share of total possible weight that actually resolved
         max_weight = (c.w_book + c.w_aggressor + c.w_cvd_trend + c.w_whale + c.w_funding)
+        if c.cross_venue_vote_enabled:
+            max_weight += c.w_cross_venue
         sig.confidence = round(min(1.0, wsum / max_weight), 3) if max_weight > 0 else 0.0
 
     # -- Integration helpers --

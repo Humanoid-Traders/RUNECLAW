@@ -359,6 +359,7 @@ class TelegramHandler:
             ("drawdownlimit", self._cmd_drawdownlimit),
             ("venue", self._cmd_venue),
             ("classpf", self._cmd_classpf),
+            ("funding", self._cmd_funding),
             ("grant_live", self._cmd_grant_live), ("revoke_live", self._cmd_revoke_live),
             ("set_tier", self._cmd_set_tier),
             # Marketing / channel forwarder
@@ -2525,6 +2526,60 @@ class TelegramHandler:
         lines.append("")
         lines.append("PF &gt; 1 = profitable class. Small samples lie — "
                      "judge classes on 20+ trades.")
+        await self._send(update, "\n".join(lines))
+
+    # ── Cross-venue funding ───────────────────────────────────
+
+    async def _cmd_funding(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """/funding [SYMBOL] — live funding rates for a perp across every
+        connected venue (Bitget home rate + Bybit + Hyperliquid), with the
+        cross-venue spread. Positive funding = longs pay shorts = crowded
+        longs. Default symbol: BTC."""
+        from bot.core.cross_venue import CROSS_VENUE, base_of
+
+        args = ctx.args or []
+        raw = (args[0].strip().upper() if args else "BTC")
+        base = base_of(raw)
+        deriv = f"{base}/USDT:USDT"
+
+        rates: dict[str, float] = {}
+        # Home venue (Bitget market data) — per-symbol fetch, best-effort.
+        try:
+            fut_ex = await self.engine.scanner._get_futures_exchange()
+            fr = await fut_ex.fetch_funding_rate(deriv)
+            home = fr.get("fundingRate") if isinstance(fr, dict) else None
+            if home is not None:
+                rates["bitget"] = float(home)
+        except Exception:
+            pass
+        # Cross-venue map (bulk-cached, keyless).
+        try:
+            rates.update(await CROSS_VENUE.rates_for(base))
+        except Exception:
+            pass
+
+        if not rates:
+            await self._send(update,
+                             f"📡 No funding data found for <b>{base}</b> on "
+                             "any connected venue — check the symbol.")
+            return
+
+        lines = [f"📡 <b>{base} funding across venues</b>",
+                 "(8h rate · annualized · positive = longs pay)"]
+        for venue, r in sorted(rates.items(), key=lambda kv: kv[1], reverse=True):
+            ann = r * 3 * 365 * 100  # 8h rate -> annualized %
+            crowd = "🔴 longs crowded" if r >= 0.0005 else \
+                    "🟢 shorts crowded" if r <= -0.0005 else "⚪ balanced"
+            lines.append(f"• <b>{venue}</b>: {r * 100:+.4f}% "
+                         f"(≈{ann:+.1f}%/yr) {crowd}")
+        div = CROSS_VENUE.divergence(rates)
+        if div is not None:
+            lines.append("")
+            lines.append(f"Spread across {div['venues']} venues: "
+                         f"<b>{div['spread'] * 100:.4f}%</b>")
+            if div["spread"] >= 0.0005:
+                lines.append("⚠️ Wide divergence — positioning is venue-"
+                             "concentrated; expect funding-driven flows.")
         await self._send(update, "\n".join(lines))
 
     # ── Mode switching ────────────────────────────────────────
