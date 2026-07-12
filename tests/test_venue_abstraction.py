@@ -13,12 +13,14 @@ from types import SimpleNamespace
 
 import pytest
 
-from bot.core.venues import (BitgetVenue, HyperliquidVenue, Venue,  # noqa: F401
-                             get_venue)
+from bot.core.venues import (BingxVenue, BitgetVenue, BybitVenue,  # noqa: F401
+                             HyperliquidVenue, Venue, get_venue)
 
 
 BG = BitgetVenue()
 HL = HyperliquidVenue()
+BY = BybitVenue()
+BX = BingxVenue()
 
 
 # ── factory ──────────────────────────────────────────────────────────
@@ -27,6 +29,8 @@ def test_get_venue_defaults_to_bitget():
     assert get_venue("bitget").id == "bitget"
     assert get_venue("hyperliquid").id == "hyperliquid"
     assert get_venue("HYPERLIQUID ").id == "hyperliquid"
+    assert get_venue("bybit").id == "bybit"
+    assert get_venue("bingx").id == "bingx"
 
 
 def test_get_venue_unknown_falls_back_to_bitget():
@@ -149,6 +153,100 @@ def test_hl_capabilities_and_constants():
     assert HL.entry_params("isolated", 5) == {}
     assert HL.close_params(None) == {"reduceOnly": True}
     assert HL.balance_fetch_params() == {}
+
+
+# ── Bybit + BingX adapters (USDT linear perps, coin amounts) ─────────
+@pytest.mark.parametrize("v", [BY, BX], ids=["bybit", "bingx"])
+def test_usdt_venue_order_symbol_maps_to_perp_form(v):
+    """Both venues list spot AND swap markets — a bare "BTC/USDT" would
+    resolve to SPOT. order_symbol must always hand ccxt the perp form."""
+    assert v.order_symbol("BTC/USDT") == "BTC/USDT:USDT"
+    assert v.order_symbol("BTC/USDT:USDT") == "BTC/USDT:USDT"
+    assert v.swap_symbol("UNI/USDT") == "UNI/USDT:USDT"
+
+
+@pytest.mark.parametrize("v", [BY, BX], ids=["bybit", "bingx"])
+def test_usdt_venue_trigger_dialect(v):
+    """SL/TP via stopLossPrice/takeProfitPrice so ccxt derives the trigger
+    direction — raw triggerPrice would need a manual triggerDirection on
+    Bybit and could create a wrong-way trigger."""
+    sl = v.trigger_params("sl", 100.0)
+    tp = v.trigger_params("tp", 120.0)
+    assert sl == {"stopLossPrice": 100.0, "reduceOnly": True}
+    assert tp == {"takeProfitPrice": 120.0, "reduceOnly": True}
+    for p in (sl, tp):
+        assert "productType" not in p and "triggerType" not in p
+
+
+@pytest.mark.parametrize("v", [BY, BX], ids=["bybit", "bingx"])
+def test_usdt_venue_plan_filter_is_client_side(v):
+    """No trusted server-side plan filter — cleanup must never cancel a
+    resting entry limit order."""
+    assert v.is_plan_order({"triggerPrice": 1.0}) is True
+    assert v.is_plan_order({"stopLossPrice": 1.0}) is True
+    assert v.is_plan_order({"info": {"stopOrderType": "Stop"}}) is True
+    assert v.is_plan_order({"id": "1", "type": "limit"}) is False
+
+
+@pytest.mark.parametrize("v", [BY, BX], ids=["bybit", "bingx"])
+def test_usdt_venue_capabilities(v):
+    assert v.quote == "USDT" and v.balance_coin == "USDT"
+    assert v.supports_hedge_mode is False
+    assert v.supports_native_triggers is False
+    assert v.market_order_needs_price is False
+    assert v.margin_mode_call_first is True
+    # ids pass through untouched (both accept <=36-char alphanumeric ids)
+    assert v.client_oid("rcABC123") == "rcABC123"
+    assert v.order_id_params("rcX") == {"clientOrderId": "rcX"}
+
+
+def test_min_notionals_per_venue():
+    assert BG.min_notional_usd == 5.0
+    assert HL.min_notional_usd == 10.0
+    assert BY.min_notional_usd == 5.0
+    assert BX.min_notional_usd == 2.0   # the small-account venue
+
+
+def test_bingx_leverage_needs_side_both():
+    assert BX.leverage_params("isolated") == {
+        "marginMode": "isolated", "side": "BOTH"}
+    assert BY.leverage_params("isolated") == {}          # v5 sets separately
+    assert BG.leverage_params("isolated") == {"marginMode": "isolated"}
+
+
+def test_bybit_create_exchange_and_missing_creds():
+    cfg = SimpleNamespace(bybit_api_key="bk", bybit_api_secret="bs")
+    ex = BY.create_exchange(cfg)
+    try:
+        assert ex.id == "bybit"
+        assert ex.apiKey == "bk" and ex.secret == "bs"
+        assert ex.options["defaultType"] == "swap"
+    finally:
+        _close(ex)
+    empty = SimpleNamespace(bybit_api_key="", bybit_api_secret="")
+    with pytest.raises(RuntimeError, match="BYBIT_API_KEY"):
+        BY.create_exchange(empty)
+
+
+def test_bingx_create_exchange_and_missing_creds():
+    cfg = SimpleNamespace(bingx_api_key="xk", bingx_api_secret="xs")
+    ex = BX.create_exchange(cfg)
+    try:
+        assert ex.id == "bingx"
+        assert ex.apiKey == "xk" and ex.secret == "xs"
+    finally:
+        _close(ex)
+    empty = SimpleNamespace(bingx_api_key="", bingx_api_secret="")
+    with pytest.raises(RuntimeError, match="BINGX_API_KEY"):
+        BX.create_exchange(empty)
+
+
+def test_generic_leverage_path_uses_venue_hooks():
+    import inspect
+    from bot.core.live_executor import LiveExecutor
+    src = inspect.getsource(LiveExecutor._ensure_leverage_generic)
+    assert "margin_mode_call_first" in src
+    assert "self._venue.leverage_params(" in src
 
 
 # ── exchange construction ────────────────────────────────────────────

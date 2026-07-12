@@ -126,6 +126,14 @@ class Venue:
         trigger (venues without a server-side filter need a client check)."""
         return True
 
+    # ── leverage/margin setup (generic ccxt path) ─────────────────
+    # Some venues want an explicit set_margin_mode call before leverage;
+    # some need extra params on set_leverage (BingX: side=BOTH in one-way).
+    margin_mode_call_first: bool = False
+
+    def leverage_params(self, margin_mode: str) -> dict:
+        return {"marginMode": margin_mode}
+
     # ── idempotency ───────────────────────────────────────────────
     def client_oid(self, oid: str) -> str:
         """Venue-legal client order id from an internal idempotency key.
@@ -324,9 +332,173 @@ class HyperliquidVenue(Venue):
         return {"clientOrderId": self.client_oid(coid)}
 
 
+def _is_trigger_order(order: dict) -> bool:
+    """Client-side trigger/conditional detection for venues whose
+    fetch_open_orders has no reliable server-side plan filter — SL/TP
+    cleanup must never cancel a resting entry limit order."""
+    if order.get("triggerPrice") or order.get("stopPrice") \
+            or order.get("stopLossPrice") or order.get("takeProfitPrice"):
+        return True
+    info = order.get("info") or {}
+    if isinstance(info, dict):
+        return bool(info.get("triggerPrice") or info.get("stopOrderType")
+                    or info.get("stopPrice") or info.get("isTrigger"))
+    return False
+
+
+class BybitVenue(Venue):
+    """Bybit USDT linear perpetuals via ccxt.
+
+    Near drop-in: USDT-quoted "X/USDT:USDT" symbols, coin-denominated
+    amounts, ~$5 min notional, resting conditional orders. Differences
+    encoded here:
+      - order_symbol MUST map to the perp form — Bybit loads spot AND
+        swap markets, and a bare "BTC/USDT" resolves to SPOT
+      - SL/TP via stopLossPrice/takeProfitPrice params (ccxt derives the
+        trigger direction; raw triggerPrice would need triggerDirection)
+      - one-way position mode assumed (Bybit's default); hedge-mode
+        accounts must be switched to one-way before going live
+    """
+
+    id = "bybit"
+    display_name = "Bybit"
+    quote = "USDT"
+    balance_coin = "USDT"
+    min_notional_usd = 5.0
+    supports_hedge_mode = False
+    supports_native_triggers = False
+    market_order_needs_price = False
+    margin_mode_call_first = True
+
+    def create_exchange(self, cfg: Any,
+                        credentials: Optional[dict] = None) -> ccxt.Exchange:
+        api_key = getattr(cfg, "bybit_api_key", "") or ""
+        api_secret = getattr(cfg, "bybit_api_secret", "") or ""
+        if not api_key or not api_secret:
+            raise RuntimeError(
+                self.missing_credentials_error(per_user=bool(credentials)))
+        return ccxt.bybit({
+            "aiohttp_trust_env": True,
+            "apiKey": api_key,
+            "secret": api_secret,
+            "timeout": 30000,
+            "enableRateLimit": True,
+            "options": {
+                "defaultType": "swap",
+            },
+        })
+
+    def missing_credentials_error(self, per_user: bool) -> str:
+        if per_user:
+            return ("Per-user live trading is Bitget-only; the Bybit venue "
+                    "trades the operator account configured in .env.")
+        return ("BYBIT_API_KEY and BYBIT_API_SECRET required for live "
+                "trading on Bybit. Set them in .env and restart. Account "
+                "must be in ONE-WAY position mode.")
+
+    def has_operator_credentials(self, cfg: Any) -> bool:
+        return bool(getattr(cfg, "bybit_api_key", "")
+                    and getattr(cfg, "bybit_api_secret", ""))
+
+    def order_symbol(self, symbol: str) -> str:
+        # Bybit resolves "BTC/USDT" to the SPOT market — always perp form.
+        return self.swap_symbol(symbol)
+
+    def leverage_params(self, margin_mode: str) -> dict:
+        # v5 set-leverage takes buyLeverage/sellLeverage (ccxt fills them
+        # from the leverage argument); marginMode is set separately.
+        return {}
+
+    def trigger_params(self, kind: str, trigger_price: float) -> dict:
+        if kind == "tp":
+            return {"takeProfitPrice": trigger_price, "reduceOnly": True}
+        return {"stopLossPrice": trigger_price, "reduceOnly": True}
+
+    def is_plan_order(self, order: dict) -> bool:
+        return _is_trigger_order(order)
+
+    def order_id_params(self, coid: str) -> dict:
+        # Bybit orderLinkId (<=36 chars) via ccxt's clientOrderId alias;
+        # no Bitget-style raw "clientOid" key.
+        return {"clientOrderId": coid}
+
+
+class BingxVenue(Venue):
+    """BingX USDT perpetuals via ccxt.
+
+    The small-account venue: $2 min order notional (vs $5 Bitget /
+    $10 Hyperliquid), 700+ USDT perps, coin-denominated amounts.
+    Quirks encoded here:
+      - order_symbol maps to the perp form (spot+swap both listed)
+      - set_leverage requires a side param — "BOTH" in one-way mode
+      - SL/TP via stopLossPrice/takeProfitPrice params, client-side
+        trigger filtering on open-order queries
+    """
+
+    id = "bingx"
+    display_name = "BingX"
+    quote = "USDT"
+    balance_coin = "USDT"
+    min_notional_usd = 2.0
+    supports_hedge_mode = False
+    supports_native_triggers = False
+    market_order_needs_price = False
+    margin_mode_call_first = True
+
+    def create_exchange(self, cfg: Any,
+                        credentials: Optional[dict] = None) -> ccxt.Exchange:
+        api_key = getattr(cfg, "bingx_api_key", "") or ""
+        api_secret = getattr(cfg, "bingx_api_secret", "") or ""
+        if not api_key or not api_secret:
+            raise RuntimeError(
+                self.missing_credentials_error(per_user=bool(credentials)))
+        return ccxt.bingx({
+            "aiohttp_trust_env": True,
+            "apiKey": api_key,
+            "secret": api_secret,
+            "timeout": 30000,
+            "enableRateLimit": True,
+            "options": {
+                "defaultType": "swap",
+            },
+        })
+
+    def missing_credentials_error(self, per_user: bool) -> str:
+        if per_user:
+            return ("Per-user live trading is Bitget-only; the BingX venue "
+                    "trades the operator account configured in .env.")
+        return ("BINGX_API_KEY and BINGX_API_SECRET required for live "
+                "trading on BingX. Set them in .env and restart. Account "
+                "must be in ONE-WAY position mode.")
+
+    def has_operator_credentials(self, cfg: Any) -> bool:
+        return bool(getattr(cfg, "bingx_api_key", "")
+                    and getattr(cfg, "bingx_api_secret", ""))
+
+    def order_symbol(self, symbol: str) -> str:
+        return self.swap_symbol(symbol)
+
+    def leverage_params(self, margin_mode: str) -> dict:
+        # One-way mode: BingX requires side=BOTH on set-leverage.
+        return {"marginMode": margin_mode, "side": "BOTH"}
+
+    def trigger_params(self, kind: str, trigger_price: float) -> dict:
+        if kind == "tp":
+            return {"takeProfitPrice": trigger_price, "reduceOnly": True}
+        return {"stopLossPrice": trigger_price, "reduceOnly": True}
+
+    def is_plan_order(self, order: dict) -> bool:
+        return _is_trigger_order(order)
+
+    def order_id_params(self, coid: str) -> dict:
+        return {"clientOrderId": coid}
+
+
 _VENUES: dict[str, Venue] = {
     "bitget": BitgetVenue(),
     "hyperliquid": HyperliquidVenue(),
+    "bybit": BybitVenue(),
+    "bingx": BingxVenue(),
 }
 
 
