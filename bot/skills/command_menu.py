@@ -42,6 +42,7 @@ ADMIN_EXTRA_MENU: List[Tuple[str, str]] = [
     ("drawdownlimit", "📉 Adjust the live drawdown cap"),
     ("venue", "🏦 Show or switch the trading venue"),
     ("classpf", "📊 Live PnL by asset class"),
+    ("funding", "📡 Funding rates across venues"),
     ("golive", "🔥 Arm live trading"),
     ("livebalance", "💰 Live exchange balance"),
     ("livepositions", "📌 Live exchange positions"),

@@ -94,6 +94,11 @@ class OrderFlowConfig:
     # the guard byte-identical (25-level sum only).
     book_top_levels: int = _env_int("OF_BOOK_TOP_LEVELS", 5)
     guard_top_depth_enabled: bool = _env_bool("OF_GUARD_TOP_DEPTH_ENABLED", True)
+    # Cross-venue funding enrichment (bot/core/cross_venue.py): attach what
+    # Bybit/Hyperliquid perps pay for the same base. Bulk-cached (2 HTTP
+    # calls per ~10 min for the WHOLE universe), fail-open, and pure
+    # observability — no rule vote or confidence impact.
+    cross_venue_funding: bool = _env_bool("OF_CROSS_VENUE_FUNDING", True)
     # Large-cap symbols that should always require $10K+ book depth
     LARGE_CAP_SYMBOLS: frozenset = frozenset({
         "BTC/USDT", "ETH/USDT", "SOL/USDT",
@@ -175,6 +180,12 @@ class OrderFlowSignal(BaseModel):
     funding_rate: Optional[float] = None
     open_interest_usd: Optional[float] = None
     oi_change_pct: Optional[float] = None
+
+    # Cross-venue funding (bot/core/cross_venue.py): what OTHER venues'
+    # perps pay for the same base. Observability-first — carried on the
+    # signal and surfaced to the operator/LLM, no rule-vote impact yet.
+    cross_venue_funding: Optional[dict[str, float]] = None
+    cross_venue_spread: Optional[float] = None
 
     # Spot vs Futures divergence
     spot_volume_usd: float = 0.0         # total spot trade volume in window
@@ -336,6 +347,27 @@ class OrderFlowAnalyzer:
                     ok.append("funding")
             except Exception as exc:  # noqa: BLE001
                 sig.notes.append(f"funding processing error: {exc}")
+
+        # 3b. Cross-venue funding enrichment (bulk-cached, ~free per symbol;
+        # fail-open — a down venue just means fewer entries in the map).
+        if self.config.cross_venue_funding:
+            try:
+                from bot.core.cross_venue import CROSS_VENUE
+                xr = await CROSS_VENUE.rates_for(deriv_sym)
+                if xr:
+                    sig.cross_venue_funding = xr
+                    div = CROSS_VENUE.divergence(xr, home_rate=sig.funding_rate)
+                    if div is not None:
+                        sig.cross_venue_spread = div["spread"]
+                        parts = ", ".join(f"{v} {r * 100:+.4f}%"
+                                          for v, r in sorted(xr.items()))
+                        sig.notes.append(
+                            f"cross-venue funding: {parts} "
+                            f"(spread {div['spread'] * 100:.4f}% across "
+                            f"{div['venues']} venues)")
+                        ok.append("cross_venue_funding")
+            except Exception as exc:  # noqa: BLE001
+                sig.notes.append(f"cross-venue funding n/a: {str(exc)[:120]}")
 
         # 4. Derivatives: open interest
         if isinstance(oi_result, Exception):
