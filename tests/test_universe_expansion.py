@@ -139,7 +139,7 @@ async def test_classpf_buckets_by_asset_class(monkeypatch):
     text = _replies(update)
     assert "by asset class" in text
     assert "Crypto" in text and "Metal" in text and "Stock" in text and "ETF" in text
-    assert "PF" in text and "5 closed trades" in text
+    assert "PF" in text and "5 filled trades" in text
 
 
 @pytest.mark.asyncio

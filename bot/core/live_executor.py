@@ -4084,14 +4084,23 @@ class LiveExecutor:
             return False, ""
         trailing = bool(pos.trailing_state and pos.trailing_state.get("trailing_active"))
         sl, tp = pos.stop_loss, pos.take_profit
+        # stop_exit_label (not the bare trailing flag): a breakeven-ratcheted
+        # stop sits on the PROFIT side of entry even when trailing_active is
+        # unset (adopted positions) — closing there is a profit-lock, and a
+        # bare "SL HIT" would book it as a loss in every tally (the live
+        # parity report showed winners inside the SL bucket).
         if pos.direction == "LONG":
             if sl > 0 and price <= sl:
-                return True, "TRAILING SL HIT" if trailing else "SL HIT"
+                return True, stop_exit_label(True, pos.entry_price, sl,
+                                             exit_price=price,
+                                             trailing_active=trailing)
             if tp > 0 and price >= tp:
                 return True, "TP HIT"
         else:  # SHORT
             if sl > 0 and price >= sl:
-                return True, "TRAILING SL HIT" if trailing else "SL HIT"
+                return True, stop_exit_label(False, pos.entry_price, sl,
+                                             exit_price=price,
+                                             trailing_active=trailing)
             if tp > 0 and price <= tp:
                 return True, "TP HIT"
         return False, ""
@@ -4523,17 +4532,23 @@ class LiveExecutor:
                 should_close = False
                 reason = ""
 
+                _trail_on = bool(pos.trailing_state
+                                 and pos.trailing_state.get("trailing_active"))
                 if pos.direction == "LONG":
                     if price <= pos.stop_loss:
                         should_close = True
-                        reason = "TRAILING SL HIT" if (pos.trailing_state and pos.trailing_state.get("trailing_active")) else "SL HIT"
+                        reason = stop_exit_label(True, pos.entry_price,
+                                                 pos.stop_loss, exit_price=price,
+                                                 trailing_active=_trail_on)
                     elif price >= pos.take_profit:
                         should_close = True
                         reason = "TP HIT"
                 else:  # SHORT
                     if price >= pos.stop_loss:
                         should_close = True
-                        reason = "TRAILING SL HIT" if (pos.trailing_state and pos.trailing_state.get("trailing_active")) else "SL HIT"
+                        reason = stop_exit_label(False, pos.entry_price,
+                                                 pos.stop_loss, exit_price=price,
+                                                 trailing_active=_trail_on)
                     elif price <= pos.take_profit:
                         should_close = True
                         reason = "TP HIT"
@@ -7086,6 +7101,13 @@ class LiveExecutor:
                     "close_reason": pos.close_reason,
                     "origin": pos.origin,
                     "fill_source": pos.fill_source,
+                    # Provenance for the parity/attribution buckets — the
+                    # fields lived on LivePosition since the strategy-type
+                    # work but were never serialized, so the live parity
+                    # report's "By setup"/"By signal type" sections stayed
+                    # empty for every trade ever closed.
+                    "strategy_type": pos.strategy_type,
+                    "signal_type": pos.signal_type,
                 })
             path = Path(self._closed_trades_file)
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -7130,6 +7152,8 @@ class LiveExecutor:
                     close_reason=item.get("close_reason"),
                     origin=item.get("origin") or "executed",
                     fill_source=item.get("fill_source"),
+                    strategy_type=item.get("strategy_type") or "swing",
+                    signal_type=item.get("signal_type") or "momentum_confluence",
                 )
                 self._closed_trades.append(pos)
             # ── Dedup on load: keep last record per trade_id ──

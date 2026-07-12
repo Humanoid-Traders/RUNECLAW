@@ -2502,17 +2502,26 @@ class TelegramHandler:
                                      "per-class stats appear after the first close.")
             return
 
+        from bot.utils.close_reason import is_filled_close
+
         buckets: dict[str, list[float]] = {}
+        skipped_non_fills = 0
         for tr in trades:
             try:
                 pnl = float(getattr(tr, "pnl_usd", 0) or 0)
+                if not is_filled_close(getattr(tr, "close_reason", None), pnl):
+                    skipped_non_fills += 1
+                    continue  # never filled — no capital was at risk
                 cat = category_for_symbol(getattr(tr, "symbol", "") or "")
             except Exception:
                 continue
             buckets.setdefault(cat, []).append(pnl)
 
+        n_filled = sum(len(v) for v in buckets.values())
         lines = ["📊 <b>Live performance by asset class</b>",
-                 f"(all {len(trades)} closed trades, net PnL)"]
+                 f"({n_filled} filled trades, net PnL"
+                 + (f"; {skipped_non_fills} never-filled records excluded)"
+                    if skipped_non_fills else ")")]
         for cat in sorted(buckets, key=lambda c: -sum(buckets[c])):
             pnls = buckets[cat]
             wins = [p for p in pnls if p > 0]

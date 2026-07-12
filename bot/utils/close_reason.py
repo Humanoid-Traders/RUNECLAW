@@ -56,6 +56,29 @@ def is_profit_locking_stop(
     return False
 
 
+# Close reasons that mean the order NEVER FILLED — no capital was ever at
+# risk. The live parity report counted 75 of these (expired / canceled /
+# price_drift / stale_pending, all $0 PnL) among 292 "trades", diluting the
+# headline win rate from ~48% of real fills down to 36%. Performance stats
+# must exclude them; trade-history views may still show them.
+NON_FILL_CLOSE_REASONS = frozenset({
+    "expired", "canceled", "cancelled", "price_drift", "stale_pending",
+    "duplicate_fill_suppressed",
+})
+
+
+def is_filled_close(close_reason: Optional[str], pnl: Optional[float]) -> bool:
+    """True when a closed-trade record represents a REAL fill (capital was
+    deployed). Zero-PnL records whose close reason is a non-fill marker are
+    order-lifecycle noise, not trades. Non-zero PnL always counts — even
+    under a non-fill label — so a mislabeled real trade can never be
+    silently dropped from the stats."""
+    reason = (close_reason or "").strip().lower()
+    if reason in NON_FILL_CLOSE_REASONS and abs(pnl or 0.0) < 1e-9:
+        return False
+    return True
+
+
 def stop_exit_label(
     is_long: bool,
     entry_price: float,
