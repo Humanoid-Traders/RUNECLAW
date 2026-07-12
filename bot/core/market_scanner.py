@@ -170,6 +170,11 @@ class MarketScanner:
         # Venue-native data client (non-Bitget active venue only)
         self._venue_data_exchange: Optional[ccxt.Exchange] = None
         self._venue_data_exchange_id: Optional[str] = None
+        # New-listing detection (bot/core/catalog_watch.py) — diffs the
+        # futures catalog each scan against a persisted seen-set; the
+        # proactive monitor drains and alerts.
+        from bot.core.catalog_watch import CatalogWatch
+        self._catalog_watch = CatalogWatch()
 
     async def _get_exchange(self) -> ccxt.Exchange:
         """Spot exchange for crypto/stock scanning."""
@@ -277,6 +282,11 @@ class MarketScanner:
                 # Strip :USDT suffix to match spot format
                 spot_fmt = fs.split(":")[0] if ":" in fs else fs
                 self._futures_symbols.add(spot_fmt)
+            # New-listing detection — reuses this cycle's tickers, no
+            # extra API calls; fail-open inside.
+            if getattr(CONFIG, "catalog_watch_enabled", True):
+                self._catalog_watch.observe(self._futures_symbols_raw,
+                                            futures_result)
 
         # ── Crypto discovery ─────────────────────────────────────────
         # FUTURES-FIRST (default): the crypto universe is gated on the

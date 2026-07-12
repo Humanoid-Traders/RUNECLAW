@@ -268,6 +268,7 @@ class ProactiveMonitor:
         alerts.extend(self._check_time_stops())
         alerts.extend(self._check_signal_strangle())
         alerts.extend(self._check_learning_readiness())
+        alerts.extend(self._check_new_listings())
         return alerts
 
     def _check_learning_readiness(self) -> list[Alert]:
@@ -309,6 +310,58 @@ class ProactiveMonitor:
                       "\n\n\U0001f449 /readiness — full report"),
                 dedup_key=f"learning_ready_{name}",
             ))
+        return alerts
+
+    _CLASS_ICON = {
+        "Crypto": "\U0001fa99", "Stock": "\U0001f4c8", "ETF": "\U0001f4ca",
+        "Commodity": "\U0001f6e2", "Metal": "⚙️",
+        "Pre-IPO": "\U0001f680", "Forex": "\U0001f4b1",
+    }
+
+    def _check_new_listings(self) -> list[Alert]:
+        """Surface new exchange listings the catalog watch queued during
+        scans. New crypto / *STOCK perps already trade automatically; the
+        point here is telling the operator the catalog changed — above all
+        for bare-ticker TradFi listings that the classifier can only call
+        Crypto until a config entry names them."""
+        alerts: list[Alert] = []
+        try:
+            watch = getattr(getattr(self.engine, "scanner", None),
+                            "_catalog_watch", None)
+            if watch is None:
+                return alerts
+            events = watch.drain_pending()
+            if not events:
+                return alerts
+            lines = []
+            for ev in events[:25]:
+                sym = str(ev.get("symbol", "?"))
+                cat = str(ev.get("category", "Crypto"))
+                icon = self._CLASS_ICON.get(cat, "\U0001fa99")
+                vol = float(ev.get("vol_usd", 0.0) or 0.0)
+                vol_s = f" · ${vol/1e6:.1f}M/day" if vol > 0 else ""
+                lines.append(f"{icon} <code>{sym}</code> — {cat}{vol_s}")
+            more = len(events) - 25
+            if more > 0:
+                lines.append(f"…and {more} more")
+            syms = sorted(str(ev.get("symbol", "")) for ev in events)
+            alerts.append(Alert(
+                alert_type="NEW_LISTINGS",
+                severity="INFO",
+                title=f"{len(events)} new exchange listing(s)",
+                body=("\U0001f195 <b>NEW EXCHANGE LISTINGS</b>\n"
+                      "────────────────\n"
+                      + "\n".join(lines) +
+                      "\n────────────────\n"
+                      "New crypto and *STOCK perps join the scan universe "
+                      "automatically. If a name above is really a stock/"
+                      "commodity/ETF but shows as Crypto, it needs a config "
+                      "entry to get the right volume floor and session "
+                      "sizing — say the word and I'll add it."),
+                dedup_key="new_listings_" + ",".join(syms)[:120],
+            ))
+        except Exception as exc:
+            logger.debug("new-listings check failed: %s", exc)
         return alerts
 
     def _check_signal_strangle(self) -> list[Alert]:

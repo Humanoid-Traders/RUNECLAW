@@ -1791,6 +1791,12 @@ class AppConfig:
     # Hyperliquid: the XYZ- builder perps — WTI, S&P 500, gold, natgas —
     # plus HL-only crypto). No-op while trading on Bitget.
     scan_venue_native_markets: bool = _env_bool("SCAN_VENUE_NATIVE_MARKETS", True)
+    # Catalog watch: diff the exchange futures catalog each scan cycle and
+    # alert the operator on new listings. New crypto / *STOCK / HL-builder
+    # perps already enter the universe automatically — this adds visibility,
+    # especially for bare-ticker TradFi listings that classify as Crypto
+    # until a config entry names them.
+    catalog_watch_enabled: bool = _env_bool("CATALOG_WATCH_ENABLED", True)
     # How many (volume-filtered) symbols the scanner emits for analysis each
     # cycle. Raised 80 -> 200 for a wide sweep of the whole liquid universe; the
     # analysis loop bounds concurrency (scan_analysis_concurrency) so a wider
