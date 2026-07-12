@@ -94,13 +94,16 @@ class TestResolveTierConfigHardGuard:
 
     def test_admin_primary_config_fallback_can_still_be_anthropic(self, monkeypatch):
         for k in ("GEMINI_API_KEY", "GROQ_API_KEY", "DEEPSEEK_API_KEY",
-                  "OPENAI_API_KEY", "ALIBABA_API_KEY"):
+                  "OPENAI_API_KEY", "ALIBABA_API_KEY", "ANTHROPIC_API_KEY"):
             monkeypatch.delenv(k, raising=False)
         primary = LLMConfig(provider=LLMProvider.ANTHROPIC, api_key="claude-primary-key")
 
         cfg = resolve_tier_config(LLMTier.CHAT, primary, is_admin=True)
 
-        assert cfg is primary
+        # The admin Anthropic route now resolves through key_health and
+        # returns a fresh config (same key, catalog base_url) instead of
+        # the primary object itself — assert semantics, not identity.
+        assert cfg.provider == LLMProvider.ANTHROPIC
         assert cfg.api_key == "claude-primary-key"
 
     def test_non_admin_gemini_alternative_is_still_used(self, monkeypatch):

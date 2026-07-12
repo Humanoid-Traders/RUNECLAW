@@ -4231,6 +4231,30 @@ class TelegramHandler:
         await self._send(update,
             f"⚠️ {t('llm_security_warning', self._lang(update))}")
 
+        # Preflight: validate an Anthropic key with ONE real 1-token call
+        # BEFORE storing it. Recurring live incident (2026-07-11): a typo'd/
+        # stale key pasted via /setllm was accepted silently and then 401'd
+        # on every analysis. Reject invalid keys at set time instead.
+        if provider_str == "anthropic" and api_key:
+            from bot.llm import key_health as _kh
+            _status, _detail = await asyncio.to_thread(
+                _kh.validate_anthropic_key, api_key,
+                model or "claude-sonnet-4-6")
+            if _status == _kh.INVALID:
+                await self._send(update,
+                    "🔴 <b>Key REJECTED — preflight failed.</b>\n"
+                    f"<code>{html.escape(_detail[:160])}</code>\n\n"
+                    "The key was NOT stored. Copy a fresh key from "
+                    "console.anthropic.com and retry.")
+                try:
+                    await update.message.delete()
+                except Exception:
+                    pass
+                return
+            if _status == _kh.VALID:
+                await self._send(update,
+                    "🟢 Key preflight OK — the key answered a live call.")
+
         ok, msg = BYOK.set_provider(provider_str, api_key=api_key, model=model)
         if ok:
             # Refresh the analyzer's LLM client to use new provider
@@ -4301,11 +4325,40 @@ class TelegramHandler:
                     health_line = "\n✅ <b>Brain: healthy</b> — LLM answering."
         except Exception:
             health_line = ""
+        # Key slots: every candidate Anthropic key the resolver can pick from,
+        # with its health state, plus which key each ADMIN tier resolves to
+        # RIGHT NOW. Recurring live incident (2026-07-11): multiple writable
+        # key slots (runtime BYOK / ANTHROPIC_API_KEY / primary .env) and no
+        # way to see which one the autonomous calls actually used.
+        slots_block = ""
+        try:
+            from bot.llm import key_health as _kh
+            from bot.llm.provider import LLMTier, resolve_tier_config
+            active_cfg = BYOK.get_active_config(env_config)
+            lines = []
+            for _src, _key in _kh.anthropic_candidates(
+                    env_config, BYOK._runtime_config):
+                _st = _kh.status_of(_key)
+                _icon = {"valid": "🟢", "invalid": "🔴"}.get(_st, "⚪")
+                lines.append(f"{_icon} {_src}: {_kh.fp(_key)} [{_st}]")
+            tier_bits = []
+            for _tier in (LLMTier.SCAN, LLMTier.THESIS):
+                _cfg = resolve_tier_config(_tier, active_cfg, is_admin=True)
+                tier_bits.append(
+                    f"{_tier.value}: {_cfg.key_fingerprint()}")
+            if lines:
+                slots_block = (
+                    "\n\n<b>Anthropic key slots</b>\n<pre>"
+                    + html.escape("\n".join(lines))
+                    + "\n— engine uses → " + html.escape(" | ".join(tier_bits))
+                    + "</pre>")
+        except Exception:
+            slots_block = ""
         await self._send(update,
             f"🤖 {t('llm_status_title', self._lang(update))}\n"
             f"{SEP}\n"
             f"<pre>{html.escape(status)}</pre>"
-            f"{health_line}")
+            f"{health_line}{slots_block}")
 
     @guard("mode")
     async def _cmd_llmreset(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
