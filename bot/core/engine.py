@@ -2174,9 +2174,14 @@ class RuneClawEngine:
             # Use futures exchange for non-Crypto categories (metals,
             # commodities, etc.) AND for perp-only crypto listings, whose
             # futures-form symbol ("X/USDT:USDT") has no spot market to
-            # fetch from (futures-first discovery).
+            # fetch from (futures-first discovery). Venue-native symbols
+            # (":USDC", from the non-Bitget venue overlay) only exist on
+            # the active venue — route their data there.
             category = getattr(signal, "asset_category", "Crypto") or "Crypto"
-            if category != "Crypto" or ":" in signal.symbol:
+            if ":USDC" in signal.symbol:
+                exchange = (await self.scanner._get_venue_data_exchange()
+                            or await self.scanner._get_futures_exchange())
+            elif category != "Crypto" or ":" in signal.symbol:
                 exchange = await self.scanner._get_futures_exchange()
             else:
                 exchange = await self.scanner._get_exchange()
