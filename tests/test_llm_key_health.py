@@ -123,7 +123,68 @@ def test_non_admin_still_blocked(monkeypatch):
     assert cfg.provider != LLMProvider.ANTHROPIC
 
 
-# ── validator classification (mocked SDK) ────────────────────────────
+# ── validator: Models API path (free, checks account model list) ─────
+def _fake_models_sdk(monkeypatch, model_ids=None, list_exc=None):
+    """Install a fake anthropic SDK whose client.models.list() returns the
+    given model ids (or raises list_exc)."""
+    import sys
+    import types
+
+    class _Model:
+        def __init__(self, mid):
+            self.id = mid
+
+    class _Models:
+        @staticmethod
+        def list(**kw):
+            if list_exc is not None:
+                raise list_exc
+            page = types.SimpleNamespace()
+            page.data = [_Model(m) for m in (model_ids or [])]
+            return page
+
+    class _Client:
+        def __init__(self, **kw):
+            self.models = _Models()
+
+    fake = types.ModuleType("anthropic")
+    fake.Anthropic = _Client
+    monkeypatch.setitem(sys.modules, "anthropic", fake)
+
+
+def test_validator_models_api_success(monkeypatch):
+    _fake_models_sdk(monkeypatch, model_ids=["claude-sonnet-4-6",
+                                             "claude-opus-4-8"])
+    status, detail = kh.validate_anthropic_key(
+        "sk-ant-good", model="claude-sonnet-4-6")
+    assert status == kh.VALID
+    assert kh.status_of("sk-ant-good") == kh.VALID
+
+
+def test_validator_models_api_model_not_on_account(monkeypatch):
+    """The claude-sonnet-4-20250514 incident: key authenticates but the
+    configured model does not exist on this account. Config is refused
+    (INVALID) but the KEY is not condemned — it's fine with a real model."""
+    _fake_models_sdk(monkeypatch, model_ids=["claude-sonnet-4-6"])
+    status, detail = kh.validate_anthropic_key(
+        "sk-ant-good", model="claude-sonnet-4-20250514")
+    assert status == kh.INVALID
+    assert "not available" in detail
+    assert "claude-sonnet-4-6" in detail          # shows what IS available
+    assert kh.is_known_invalid("sk-ant-good") is False
+    assert kh.status_of("sk-ant-good") == kh.VALID
+
+
+def test_validator_models_api_auth_error(monkeypatch):
+    _fake_models_sdk(monkeypatch, list_exc=Exception(
+        "Error code: 401 - {'type': 'authentication_error', "
+        "'message': 'invalid x-api-key'}"))
+    status, _ = kh.validate_anthropic_key("sk-ant-bad")
+    assert status == kh.INVALID
+    assert kh.is_known_invalid("sk-ant-bad") is True
+
+
+# ── validator classification (old SDK fallback: messages.create) ─────
 def test_validator_classifies_auth_error(monkeypatch):
     class _Boom:
         def __init__(self, **kw): ...

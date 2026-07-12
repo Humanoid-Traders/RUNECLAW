@@ -102,23 +102,42 @@ def reset() -> None:
 
 def validate_anthropic_key(key: str, model: str = "claude-sonnet-4-6",
                            timeout: float = 15.0) -> tuple[str, str]:
-    """Preflight a key with ONE real 1-output-token call.
+    """Preflight a key against the Models API (GET /v1/models) — free, and
+    it returns the models actually available on the account, so a valid key
+    paired with a model id the account does not have (the
+    claude-sonnet-4-20250514 incident) is caught here too.
 
-    Returns (status, detail): "valid" (answered), "invalid" (auth/model
-    rejected — safe to refuse storing this key), or "unchecked" (transient/
-    network — do NOT condemn the key). Records the outcome in the registry.
-    Costs ~$0.0001; blocking — call via asyncio.to_thread from async code.
+    Returns (status, detail): "valid" (key authenticated and model
+    available), "invalid" (auth rejected, or model not on this account —
+    safe to refuse storing this config), or "unchecked" (transient/network
+    — do NOT condemn the key). Records KEY health in the registry: a key
+    that authenticates but has the wrong model is marked VALID (the key is
+    fine; the config is not). Falls back to a 1-output-token message call
+    on SDKs without models.list. Blocking — call via asyncio.to_thread
+    from async code.
     """
     if not key:
         return UNCHECKED, "no key"
     try:
         import anthropic
         client = anthropic.Anthropic(api_key=key, timeout=timeout)
-        client.messages.create(
-            model=model, max_tokens=1,
-            messages=[{"role": "user", "content": "ping"}])
+        try:
+            page = client.models.list(limit=100)
+        except AttributeError:
+            # Old SDK without the Models API — fall back to one real call.
+            client.messages.create(
+                model=model, max_tokens=1,
+                messages=[{"role": "user", "content": "ping"}])
+            mark_valid(key, source="preflight")
+            return VALID, "key answered"
+        ids = [getattr(m, "id", "") for m in getattr(page, "data", [])]
+        if model and ids and model not in ids:
+            mark_valid(key, source="preflight")  # key authenticated
+            return INVALID, (
+                f"key OK but model '{model}' is not available on this "
+                f"account. Available: {', '.join(ids[:10])}")[:300]
         mark_valid(key, source="preflight")
-        return VALID, "key answered"
+        return VALID, "key authenticated; model available"
     except Exception as exc:  # noqa: BLE001 — classify by shape, never raise
         err = str(exc)
         low = err.lower()
@@ -126,9 +145,10 @@ def validate_anthropic_key(key: str, model: str = "claude-sonnet-4-6",
             mark_invalid(key, err, source="preflight")
             return INVALID, err[:200]
         if "not_found" in low or "404" in low:
-            # Key may be fine but the MODEL id is wrong — still unusable as
-            # configured; report invalid so the operator fixes it now.
-            mark_invalid(key, err, source="preflight")
+            # messages.create fallback path: auth passed (a bad key 401s
+            # before the model is looked up) but the model id is wrong —
+            # the key is fine, the config is not.
+            mark_valid(key, source="preflight")
             return INVALID, err[:200]
         # Rate limit / network / SDK missing: unknown, not condemned.
         return UNCHECKED, err[:200]
