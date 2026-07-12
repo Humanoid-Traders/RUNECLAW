@@ -218,8 +218,39 @@ class MarketScanner:
                 spot_fmt = fs.split(":")[0] if ":" in fs else fs
                 self._futures_symbols.add(spot_fmt)
 
-        # Process spot tickers (crypto) — only include symbols with futures markets
-        if isinstance(spot_result, dict):
+        # ── Crypto discovery ─────────────────────────────────────────
+        # FUTURES-FIRST (default): the crypto universe is gated on the
+        # USDT-FUTURES perp's 24h volume — the market this bot actually
+        # trades. The legacy spot path measured SPOT volume (systematically
+        # different liquidity) and silently excluded perp-only listings.
+        # Symbols with a spot pair are emitted in spot form so every
+        # existing analysis path is unchanged; perp-only symbols are
+        # emitted in futures form ("X/USDT:USDT") and the engine routes
+        # their data fetches to the futures exchange.
+        _vol_source = str(getattr(CONFIG, "scan_volume_source", "futures")).lower()
+        if _vol_source != "spot" and isinstance(futures_result, dict):
+            spot_symbols = set(spot_result.keys()) if isinstance(spot_result, dict) else set()
+            perp_only = 0
+            for symbol, tick in futures_result.items():
+                if symbol in _TRADFI_SET or _is_stock_suffix_base(symbol):
+                    continue  # TradFi handled by its own pass below
+                spot_fmt = symbol.split(":")[0] if ":" in symbol else symbol
+                if not spot_fmt.endswith("/USDT"):
+                    continue
+                emit_symbol = spot_fmt if spot_fmt in spot_symbols else symbol
+                if emit_symbol == symbol:
+                    perp_only += 1
+                sig = self._process_ticker(emit_symbol, tick,
+                                           min_vol=CONFIG.min_crypto_volume_usd)
+                if sig:
+                    seen_symbols.add(emit_symbol)
+                    signals.append(sig)
+            if perp_only > 0:
+                audit(system_log,
+                      f"Futures-first scan: {perp_only} perp-only listings included",
+                      action="scan_filter", result="OK")
+        elif isinstance(spot_result, dict):
+            # Legacy spot-volume path (SCAN_VOLUME_SOURCE=spot)
             filtered_count = 0
             for symbol, tick in spot_result.items():
                 if not symbol.endswith("/USDT"):
