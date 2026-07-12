@@ -40,6 +40,7 @@ ADMIN_EXTRA_MENU: List[Tuple[str, str]] = [
     ("resume", "▶️ Resume trading (clear the breaker)"),
     ("pause", "⏸ Pause trading now"),
     ("drawdownlimit", "📉 Adjust the live drawdown cap"),
+    ("venue", "🏦 Show or switch the trading venue"),
     ("golive", "🔥 Arm live trading"),
     ("livebalance", "💰 Live exchange balance"),
     ("livepositions", "📌 Live exchange positions"),
