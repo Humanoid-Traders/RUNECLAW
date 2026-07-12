@@ -1767,6 +1767,12 @@ class AppConfig:
     # thinner, so their floor stays lower ($5k unchanged).
     min_crypto_volume_usd: float = _env_float_bounded("MIN_CRYPTO_VOLUME_USD", 1_500_000, 0, 1e12)
     min_tradfi_volume_usd: float = _env_float_bounded("MIN_TRADFI_VOLUME_USD", 5_000, 0, 1e12)
+    # Which market's 24h volume gates the CRYPTO universe in all_markets:
+    # "futures" (default) measures the USDT-FUTURES perp — the market this
+    # bot actually trades — and admits perp-only listings (no spot pair).
+    # "spot" restores the legacy behavior: spot volume gating + spot-listing
+    # requirement. The floor value above applies to whichever source is set.
+    scan_volume_source: str = _env("SCAN_VOLUME_SOURCE", "futures")
     # How many (volume-filtered) symbols the scanner emits for analysis each
     # cycle. Raised 80 -> 200 for a wide sweep of the whole liquid universe; the
     # analysis loop bounds concurrency (scan_analysis_concurrency) so a wider

@@ -2171,9 +2171,12 @@ class RuneClawEngine:
             self._symbol_cooldowns.pop(symbol_key, None)
 
         try:
-            # Use futures exchange for non-Crypto categories (metals, commodities, etc.)
+            # Use futures exchange for non-Crypto categories (metals,
+            # commodities, etc.) AND for perp-only crypto listings, whose
+            # futures-form symbol ("X/USDT:USDT") has no spot market to
+            # fetch from (futures-first discovery).
             category = getattr(signal, "asset_category", "Crypto") or "Crypto"
-            if category != "Crypto":
+            if category != "Crypto" or ":" in signal.symbol:
                 exchange = await self.scanner._get_futures_exchange()
             else:
                 exchange = await self.scanner._get_exchange()
