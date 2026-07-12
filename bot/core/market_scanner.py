@@ -77,8 +77,24 @@ def _class_scan_enabled(category: str) -> bool:
     }.get(category, True)
 
 
+# Hyperliquid builder-market classification (bases are "XYZ-<NAME>").
+# HL-native cross-asset perps (WTI $120M/day, S&P 500, gold, natgas,
+# memory-sector equities…) that exist on no CEX — discoverable only via
+# the venue-native scan overlay when the active trading venue is
+# Hyperliquid. Unknown XYZ- names default to Stock (equities dominate
+# the builder listings).
+_HL_BUILDER_CLASS: dict[str, str] = {
+    "CL": "Commodity", "BRENTOIL": "Commodity", "NATGAS": "Commodity",
+    "GOLD": "Metal", "SILVER": "Metal",
+    "SP500": "ETF", "XYZ100": "ETF", "EWY": "ETF",
+}
+
+
 def _classify_symbol(symbol: str) -> str:
     """Return the asset category for a given symbol."""
+    base = symbol.split("/")[0]
+    if base.startswith("XYZ-"):
+        return _HL_BUILDER_CLASS.get(base[4:], "Stock")
     if symbol in _METAL_SET:
         return "Metal"
     if symbol in _COMMODITY_SET:
@@ -151,6 +167,9 @@ class MarketScanner:
         # Spot symbols not in this set are filtered out before analysis.
         self._futures_symbols: set[str] = set()
         self._futures_symbols_raw: set[str] = set()  # raw exchange format
+        # Venue-native data client (non-Bitget active venue only)
+        self._venue_data_exchange: Optional[ccxt.Exchange] = None
+        self._venue_data_exchange_id: Optional[str] = None
 
     async def _get_exchange(self) -> ccxt.Exchange:
         """Spot exchange for crypto/stock scanning."""
@@ -176,6 +195,34 @@ class MarketScanner:
                 },
             })
         return self._futures_exchange
+
+    async def _get_venue_data_exchange(self) -> Optional[ccxt.Exchange]:
+        """Public (keyless) market-data client for the ACTIVE trading venue
+        when it is not Bitget — the data path for venue-native symbols the
+        venue overlay discovers. None on Bitget; cached per venue id and
+        rebuilt automatically after a /venue switch."""
+        from bot.core.venues import get_venue
+        venue = get_venue()
+        if venue.id == "bitget":
+            return None
+        if self._venue_data_exchange_id != venue.id:
+            old = self._venue_data_exchange
+            self._venue_data_exchange = None
+            self._venue_data_exchange_id = None
+            if old is not None:
+                try:
+                    await old.close()
+                except Exception:
+                    pass
+        if self._venue_data_exchange is None:
+            self._venue_data_exchange = getattr(ccxt, venue.id)({
+                "aiohttp_trust_env": True,
+                "timeout": 30000,
+                "enableRateLimit": True,
+                "options": {"defaultType": "swap"},
+            })
+            self._venue_data_exchange_id = venue.id
+        return self._venue_data_exchange
 
     # ── Main scan entry point ────────────────────────────────────
 
@@ -302,6 +349,19 @@ class MarketScanner:
             audit(system_log, f"Futures fetch error: {futures_result}",
                   action="scan", result="PARTIAL")
 
+        # Venue-native overlay: when the ACTIVE trading venue is not Bitget,
+        # also scan the venue's own catalog — markets Bitget cannot see
+        # (Hyperliquid builder perps: WTI, S&P 500, gold, natgas…). Bases
+        # already discovered on Bitget are skipped (same underlying).
+        try:
+            venue_sigs = await self._scan_active_venue_extra(seen_symbols)
+            for sig in venue_sigs:
+                seen_symbols.add(sig.symbol)
+            signals.extend(venue_sigs)
+        except Exception as exc:
+            audit(system_log, f"Venue-native overlay failed: {exc}",
+                  action="scan", result="PARTIAL")
+
         if not signals:
             audit(system_log, "All-markets scan: no signals",
                   action="scan", result="EMPTY")
@@ -321,6 +381,54 @@ class MarketScanner:
               action="scan", result="OK",
               data={"count": len(top), "categories": cats})
         return top
+
+    async def _scan_active_venue_extra(
+            self, seen_symbols: set[str]) -> list[MarketSignal]:
+        """Venue-native market discovery (SCAN_VENUE_NATIVE_MARKETS).
+
+        Only active when the operator's trading venue is NOT Bitget: pulls
+        the active venue's own tickers and admits markets whose base is not
+        already in the universe — on Hyperliquid that is the XYZ- builder
+        perps (classified via _HL_BUILDER_CLASS) and HL-only crypto. Floors:
+        min_tradfi_volume_usd for TradFi classes, min_crypto_volume_usd for
+        crypto. Fail-open: any venue error returns [] and the Bitget scan
+        stands alone. Zero-cost no-op while trading on Bitget.
+        """
+        if not getattr(CONFIG, "scan_venue_native_markets", True):
+            return []
+        exchange = await self._get_venue_data_exchange()
+        if exchange is None:
+            return []  # Bitget active — its own scan already covers it
+        try:
+            tickers = await exchange.fetch_tickers()
+        except Exception as exc:
+            audit(system_log, f"Venue-native tickers failed: {exc}",
+                  action="scan", result="PARTIAL")
+            return []
+
+        seen_bases = {s.split("/")[0].split(":")[0] for s in seen_symbols}
+        out: list[MarketSignal] = []
+        for symbol, tick in (tickers or {}).items():
+            base = symbol.split("/")[0]
+            if base in seen_bases:
+                continue  # same underlying already discovered on Bitget
+            category = _classify_symbol(symbol)
+            if category != "Crypto" and not _class_scan_enabled(category):
+                continue
+            min_vol = (CONFIG.min_crypto_volume_usd if category == "Crypto"
+                       else CONFIG.min_tradfi_volume_usd)
+            sig = self._process_ticker(symbol, tick, min_vol=min_vol)
+            if sig:
+                out.append(sig)
+        if out:
+            cats: dict[str, int] = {}
+            for s in out:
+                cats[s.asset_category] = cats.get(s.asset_category, 0) + 1
+            audit(system_log,
+                  f"Venue-native overlay: {len(out)} extra market(s) from the "
+                  f"active venue", action="scan", result="OK",
+                  data={"count": len(out), "categories": cats})
+        return out
 
     def _allocate_slots(self, signals: list[MarketSignal]) -> list[MarketSignal]:
         """

@@ -1786,6 +1786,11 @@ class AppConfig:
     scan_class_metals: bool = _env_bool("SCAN_CLASS_METALS", True)
     scan_class_etfs: bool = _env_bool("SCAN_CLASS_ETFS", True)
     scan_class_pre_ipo: bool = _env_bool("SCAN_CLASS_PRE_IPO", False)
+    # Venue-native discovery: when the active trading venue is NOT Bitget,
+    # also scan that venue's own catalog for markets Bitget lacks (on
+    # Hyperliquid: the XYZ- builder perps — WTI, S&P 500, gold, natgas —
+    # plus HL-only crypto). No-op while trading on Bitget.
+    scan_venue_native_markets: bool = _env_bool("SCAN_VENUE_NATIVE_MARKETS", True)
     # How many (volume-filtered) symbols the scanner emits for analysis each
     # cycle. Raised 80 -> 200 for a wide sweep of the whole liquid universe; the
     # analysis loop bounds concurrency (scan_analysis_concurrency) so a wider
