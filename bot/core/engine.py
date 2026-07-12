@@ -3153,6 +3153,43 @@ class RuneClawEngine:
                   f"Pyramid add: half size ${original_size:.2f} -> ${size_usd:.2f}",
                   action="pyramid_half_size", result="APPLIED")
 
+        # Universe expansion: session-aware sizing for US-equity perps.
+        # Tokenized stock/ETF/pre-IPO perps trade 24/7 on the venue but track
+        # an underlying that doesn't — off-hours books are thin and weekend/
+        # overnight gaps blow through stops. StockTradingConfig defined these
+        # controls but get_stock_risk_params was never imported anywhere;
+        # this wires the session multiplier into the money path.
+        try:
+            from bot.core.market_scanner import category_for_symbol
+            _cat = category_for_symbol(idea.asset)
+        except Exception:
+            _cat = "Crypto"
+        if _cat in ("Stock", "ETF", "Pre-IPO"):
+            from bot.core.stock_trading import get_market_session
+            _sess = get_market_session()
+            if _sess.size_multiplier <= 0.0:
+                audit(trade_log,
+                      f"BLOCKED: {idea.asset} — US markets {_sess.session_name} "
+                      f"(opens in {_sess.hours_until_open:.1f}h) and "
+                      f"STOCK_BLOCK_OUTSIDE_HOURS is on",
+                      action="stock_session_gate", result="BLOCKED",
+                      data={"symbol": idea.asset, "session": _sess.session_name})
+                self._pending_pyramid.pop(trade_id, None)
+                self._transition(AgentState.IDLE, f"stock session gate {trade_id}")
+                return (f"Trade REJECTED: US markets are {_sess.session_name} "
+                        f"(open in {_sess.hours_until_open:.1f}h) — equity perp "
+                        f"entries are blocked outside regular hours.")
+            if _sess.size_multiplier < 1.0:
+                _orig = size_usd
+                size_usd = round(size_usd * _sess.size_multiplier, 2)
+                audit(trade_log,
+                      f"Stock session sizing: {idea.asset} {_sess.session_name} "
+                      f"x{_sess.size_multiplier:.2f} — ${_orig:.2f} -> ${size_usd:.2f}",
+                      action="stock_session_sizing", result="REDUCED",
+                      data={"symbol": idea.asset, "session": _sess.session_name,
+                            "multiplier": _sess.size_multiplier,
+                            "from": round(_orig, 2), "to": round(size_usd, 2)})
+
         # LIVE FIX: Cap position size at actual exchange equity to prevent
         # InsufficientFunds errors.  The risk engine sizes based on paper
         # portfolio equity; in LIVE mode the real account may be smaller.

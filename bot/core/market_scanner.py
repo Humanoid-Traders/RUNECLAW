@@ -56,6 +56,14 @@ def has_futures_market(scanner_instance, symbol: str) -> bool:
     return spot_fmt in scanner_instance._futures_symbols
 
 
+def _is_stock_suffix_base(symbol: str) -> bool:
+    """Bitget's own naming convention for tokenized-equity perps it lists
+    without a bare-ticker name: base ends in "STOCK" (QNTSTOCK, RTXSTOCK…).
+    Lets NEW stock listings enter the universe between config updates."""
+    base = symbol.split("/")[0]
+    return len(base) > 5 and base.endswith("STOCK")
+
+
 def _classify_symbol(symbol: str) -> str:
     """Return the asset category for a given symbol."""
     if symbol in _METAL_SET:
@@ -68,6 +76,8 @@ def _classify_symbol(symbol: str) -> str:
         return "ETF"
     if symbol in _STOCK_PERP_SET or symbol in _STOCK_SET:
         return "Stock"
+    if _is_stock_suffix_base(symbol):
+        return "Stock"  # auto-discovered *STOCK listing not yet in config
     return "Crypto"
 
 
@@ -230,10 +240,13 @@ class MarketScanner:
             audit(system_log, f"Spot fetch error: {spot_result}",
                   action="scan", result="PARTIAL")
 
-        # Process futures tickers (TradFi perpetuals)
+        # Process futures tickers (TradFi perpetuals). Curated lists plus
+        # auto-discovery of Bitget's *STOCK-suffix equity listings, so a
+        # new stock perp enters the universe without a config release
+        # (still gated by min_tradfi_volume_usd and slot allocation).
         if isinstance(futures_result, dict):
             for symbol, tick in futures_result.items():
-                if symbol not in _TRADFI_SET:
+                if symbol not in _TRADFI_SET and not _is_stock_suffix_base(symbol):
                     continue
                 sig = self._process_ticker(symbol, tick, min_vol=CONFIG.min_tradfi_volume_usd)
                 if sig:
