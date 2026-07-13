@@ -878,6 +878,16 @@ def _pattern_zones_overlay(df, price_ax, t):
         _placed_label_ys: list = []
         _min_label_gap = 0.05 * span
 
+        # Pattern visuals are LOCAL structures: the detectors look at the
+        # recent swings, so shade only that window. A bare axhspan spans the
+        # full chart width and a wide wedge (upper≈high, lower≈low) tinted
+        # the entire upper half of the image edge-to-edge (live report:
+        # "renders look weird", PENGU 1h). axhspan's xmin/xmax are axes
+        # fractions; the candle x-range is ~[-0.5, n-0.5], so index/n is
+        # close enough.
+        _x0_frac = max(0.0, 1.0 - min(45, n) / n)
+        _badge_x = _x0_frac * n + max(1.0, n * 0.01)
+
         for pat in patterns:
             name = pat.get("name", "")
             kl = pat.get("key_levels", {})
@@ -900,7 +910,7 @@ def _pattern_zones_overlay(df, price_ax, t):
 
                 if head is not None and neckline is not None:
                     # Shade zone between neckline and head
-                    price_ax.axhspan(neckline, head, color=shade_color,
+                    price_ax.axhspan(neckline, head, xmin=_x0_frac, color=shade_color,
                                      alpha=shade_alpha, zorder=0)
                     # Neckline as dashed line
                     price_ax.axhline(neckline, color=shade_color, lw=1.0,
@@ -924,7 +934,7 @@ def _pattern_zones_overlay(df, price_ax, t):
                 top_vals = [v for v in top_vals if v is not None]
                 if neckline is not None and top_vals:
                     extreme = max(top_vals) if not is_bull else min(top_vals)
-                    price_ax.axhspan(neckline, extreme, color=shade_color,
+                    price_ax.axhspan(neckline, extreme, xmin=_x0_frac, color=shade_color,
                                      alpha=shade_alpha, zorder=0)
                     price_ax.axhline(neckline, color=shade_color, lw=0.9,
                                      ls="--", alpha=0.5, zorder=2)
@@ -959,7 +969,7 @@ def _pattern_zones_overlay(df, price_ax, t):
                                           color=shade_color, lw=0.9, ls="--",
                                           alpha=0.5, zorder=2)
                     # Light shading between current upper/lower
-                    price_ax.axhspan(lower, upper, color=shade_color,
+                    price_ax.axhspan(lower, upper, xmin=_x0_frac, color=shade_color,
                                      alpha=shade_alpha * 0.7, zorder=0)
 
             # ── Wedges (rising / falling) ──
@@ -989,7 +999,7 @@ def _pattern_zones_overlay(df, price_ax, t):
                             price_ax.plot(lx + [n - 1], ly + [ext_y],
                                           color=shade_color, lw=0.9, ls="--",
                                           alpha=0.5, zorder=2)
-                    price_ax.axhspan(lower, upper, color=shade_color,
+                    price_ax.axhspan(lower, upper, xmin=_x0_frac, color=shade_color,
                                      alpha=shade_alpha * 0.7, zorder=0)
 
             # ── Flags (bull / bear) ──
@@ -1015,7 +1025,7 @@ def _pattern_zones_overlay(df, price_ax, t):
                         price_ax.plot([flag_start, n - 1], [ch_bot, ch_bot],
                                       color=shade_color, lw=0.8, ls="--",
                                       alpha=0.45, zorder=2)
-                        price_ax.axhspan(ch_bot, ch_top, color=shade_color,
+                        price_ax.axhspan(ch_bot, ch_top, xmin=_x0_frac, color=shade_color,
                                          alpha=shade_alpha, zorder=0)
 
             # ── Cup and Handle ──
@@ -1026,7 +1036,8 @@ def _pattern_zones_overlay(df, price_ax, t):
                 if left_lip is not None and cup_bottom is not None and right_lip is not None:
                     # Shade the cup zone
                     price_ax.axhspan(cup_bottom, max(left_lip, right_lip),
-                                     color=shade_color, alpha=shade_alpha, zorder=0)
+                                     xmin=_x0_frac, color=shade_color,
+                                     alpha=shade_alpha, zorder=0)
                     # Breakout level
                     price_ax.axhline(right_lip, color=shade_color, lw=0.8,
                                      ls="--", alpha=0.5, zorder=2)
@@ -1036,7 +1047,7 @@ def _pattern_zones_overlay(df, price_ax, t):
                 support = kl.get("support")
                 resistance = kl.get("resistance")
                 if support is not None and resistance is not None:
-                    price_ax.axhspan(support, resistance, color=t["muted"],
+                    price_ax.axhspan(support, resistance, xmin=_x0_frac, color=t["muted"],
                                      alpha=shade_alpha, zorder=0)
                     price_ax.axhline(support, color=t["muted"], lw=0.7,
                                      ls=":", alpha=0.4, zorder=2)
@@ -1067,7 +1078,7 @@ def _pattern_zones_overlay(df, price_ax, t):
                 mid_y = min(mid_y, _yhi - _ymargin)
                 _placed_label_ys.append(mid_y)
                 price_ax.text(
-                    n * 0.05, mid_y, name, color="#ffffff", fontsize=6.5,
+                    _badge_x, mid_y, name, color="#ffffff", fontsize=6.5,
                     fontweight="bold", ha="left", va="center",
                     bbox=dict(boxstyle="round,pad=0.14", fc=shade_color,
                               ec="none", alpha=0.80),
@@ -1309,14 +1320,30 @@ async def send_idea_charts_multi(bot, chat_id, candles_by_tf: dict, idea,
 
 
 async def _send_single_photo(bot, chat_id, png: bytes, caption: str) -> bool:
-    """Send one PNG with HTML caption + plain-caption fallback."""
+    """Send one PNG with HTML caption + plain-caption fallback.
+
+    This body was truncated since its first commit: it sent the photo but
+    fell off the end (returning None) and the "retrying plain" branch did
+    buf.seek(0) and nothing else — so every single-photo send reported
+    failure to its caller even when the photo delivered, and an HTML
+    caption error silently dropped the chart entirely.
+    """
     buf = io.BytesIO(png); buf.name = "chart.png"
     try:
         await bot.send_photo(chat_id=int(chat_id), photo=buf,
                              caption=caption[:_CAPTION_LIMIT], parse_mode="HTML")
+        return True
     except Exception as exc:  # noqa: BLE001
         logger.debug("send_photo HTML failed (%s) — retrying plain", exc)
         buf.seek(0)
+        try:
+            await bot.send_photo(chat_id=int(chat_id), photo=buf,
+                                 caption=_strip_html(caption)[:_CAPTION_LIMIT])
+            return True
+        except Exception as exc2:  # noqa: BLE001
+            logger.debug("send_photo plain retry failed for chat %s: %s",
+                         chat_id, exc2)
+            return False
 
 
 def _composite_pngs(png_list: list[bytes]) -> Optional[bytes]:
