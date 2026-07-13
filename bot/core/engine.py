@@ -2573,9 +2573,17 @@ class RuneClawEngine:
             try:
                 if getattr(CONFIG, "shadow_book_enabled", False):
                     from bot.core.shadow_book import SHADOW_BOOK
+                    _sb_regime = ""
+                    try:
+                        _sb_r = getattr(self.analyzer, "_current_regimes",
+                                        {}).get(idea.asset)
+                        _sb_regime = getattr(_sb_r, "value", "") or ""
+                    except Exception:
+                        _sb_regime = ""
                     SHADOW_BOOK.record_rejection(
                         idea, risk_check.checks_failed, risk_check.reason,
-                        ref_price=float(getattr(signal, "price", 0) or 0))
+                        ref_price=float(getattr(signal, "price", 0) or 0),
+                        regime=_sb_regime)
             except Exception as _sb_exc:
                 system_log.debug("shadow book record skipped: %s", _sb_exc)
             return None
