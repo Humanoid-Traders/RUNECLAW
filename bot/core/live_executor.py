@@ -413,6 +413,8 @@ class LiveExecutor:
         self._recovered_from_closing: set[str] = set()
         # Dynamic leverage: ATR-based volatility ratios per symbol
         self._last_atr_pct: dict[str, float] = {}  # symbol -> ATR/price ratio
+        # Symbols already warned about unverifiable leverage (once per process)
+        self._lev_unverified_warned: set[str] = set()
         # Slippage tracker: set by engine
         self._slippage_tracker = None  # set by engine
         # Graceful degradation state
@@ -682,8 +684,22 @@ class LiveExecutor:
                 params=self._venue.futures_params())
         except Exception as exc:
             logger.warning("Leverage set failed for %s (may use exchange default): %s", symbol, exc)
+            # Bitget isolated margin can reject a bare set-leverage (holdSide
+            # required). Retry per-side IMMEDIATELY — previously this retry
+            # only ran when the verification read below succeeded, so a
+            # symbol whose fetch_leverage also failed silently traded at
+            # Bitget's own 20x default for never-configured symbols (live
+            # incident: XPT/FIL opened 20x while every card said 10x).
+            for _side in ("long", "short"):
+                try:
+                    await exchange.set_leverage(
+                        _target_leverage, symbol,
+                        params={"productType": "USDT-FUTURES", "holdSide": _side})
+                except Exception:
+                    pass
 
         # C2-04 FIX: Verify leverage was actually applied — retry once if mismatch
+        _lev_verified = False
         try:
             lev_info = await exchange.fetch_leverage(symbol, params=self._venue.futures_params())
             actual_lev = None
@@ -691,6 +707,8 @@ class LiveExecutor:
                 actual_lev = lev_info.get("longLeverage") or lev_info.get("leverage") or lev_info.get("long")
                 if actual_lev is not None:
                     actual_lev = int(float(actual_lev))
+            if actual_lev is not None:
+                _lev_verified = True
             if actual_lev is not None and actual_lev != _target_leverage:
                 # Retry: set both long and short leverage explicitly
                 logger.warning(
@@ -728,6 +746,23 @@ class LiveExecutor:
             raise  # propagate leverage abort
         except Exception:
             logger.debug("Could not verify leverage for %s (fetch_leverage unavailable)", symbol)
+
+        # Unverifiable leverage is how the 20x drift stayed invisible: the
+        # set call failed, the verify read failed, and the order proceeded
+        # at the exchange's sticky per-symbol setting with only debug logs.
+        # Surface it in the audit trail (once per symbol per process).
+        if not _lev_verified:
+            if symbol not in self._lev_unverified_warned:
+                self._lev_unverified_warned.add(symbol)
+                audit(trade_log,
+                      f"Leverage UNVERIFIED for {symbol}: wanted "
+                      f"{_target_leverage}x but the exchange did not confirm — "
+                      f"order proceeds; position sync will true up after fill",
+                      action="leverage_unverified", result="WARNING",
+                      data={"symbol": symbol, "target": _target_leverage})
+                logger.warning(
+                    "Leverage UNVERIFIED for %s (wanted %dx) — exchange may "
+                    "apply its own per-symbol default", symbol, _target_leverage)
 
         # Detect hold mode (one-way vs hedge) on first call
         if self._hedge_mode is None:
@@ -2954,6 +2989,16 @@ class LiveExecutor:
 
             # F-07 FIX: persist after opening
             self._save_positions()
+
+            # Market fills: true up leverage/margin against the exchange NOW
+            # (see the identical call on the limit-fill path) — a silently
+            # failed set-leverage otherwise leaves cards showing the sized
+            # leverage while the exchange runs its per-symbol default.
+            if not is_pending_limit:
+                try:
+                    await self.sync_positions_from_exchange()
+                except Exception as _sync_exc:
+                    logger.debug("Post-open leverage sync failed: %s", _sync_exc)
             # F-13 FIX: prune order history
             self._prune_order_history()
 
@@ -4791,6 +4836,16 @@ class LiveExecutor:
                 pos.tp_order_id = tp_id
 
                 self._save_positions()
+
+                # True up leverage/margin against the exchange NOW, not at the
+                # next restart: when set-leverage silently failed at placement
+                # the exchange applies its own per-symbol default (Bitget: 20x
+                # on never-configured symbols) and every card shows the wrong
+                # leverage and margin until sync_positions_from_exchange runs.
+                try:
+                    await self.sync_positions_from_exchange()
+                except Exception as _sync_exc:
+                    logger.debug("Post-fill leverage sync failed: %s", _sync_exc)
 
                 if sl_id is None and tp_id is None:
                     audit(trade_log,
