@@ -209,6 +209,46 @@ def _apply_timeframe_matched_elliott(indicators: dict, strategy_type: str,
     indicators["elliott_degree_tf"] = tf  # observability: which TF the waves came from
 
 
+def _apply_mtf_elliott_alignment(indicators: dict, mtf_candles: dict) -> None:
+    """Run the wave detectors on EVERY supplied timeframe and store the
+    cross-degree alignment map as ``indicators["elliott_mtf"]``.
+
+    The degree-matched read (_apply_timeframe_matched_elliott) answers
+    "what wave is THIS setup's degree in?"; this answers "do the degrees
+    AGREE?" — nested with-trend structure across 15m/1h/4h/1d is the
+    textbook Elliott entry, while a terminal higher-degree wave argues
+    against chasing a lower-degree signal. Uses only the series already
+    fetched for mtf (zero extra API calls). Fail-open; mutates
+    ``indicators`` only on success.
+    """
+    from bot.core.elliott import atr_zigzag_pivots, mtf_wave_map
+    from bot.core.multi_timeframe import _find_swings
+
+    patterns_by_tf: dict = {}
+    for tf, series in (mtf_candles or {}).items():
+        if not series or len(series) < 30:
+            continue
+        try:
+            arr = np.asarray(series, dtype=float)
+            highs, lows, closes = arr[:, 2], arr[:, 3], arr[:, 4]
+            if CONFIG.analyzer.elliott_zigzag_enabled:
+                swings = atr_zigzag_pivots(
+                    highs, lows, closes,
+                    atr_mult=CONFIG.analyzer.elliott_zigzag_atr_mult)
+                if not (swings["swing_highs"] or swings["swing_lows"]):
+                    swings = _find_swings(highs, lows, 5)
+            else:
+                swings = _find_swings(highs, lows, 5)
+            scratch: dict = {}
+            _run_elliott_detectors(scratch, highs, lows, closes, swings)
+            patterns_by_tf[tf] = scratch.get("elliott_pattern")
+        except Exception:  # noqa: BLE001 — one bad series never voids the map
+            continue
+    ew_map = mtf_wave_map(patterns_by_tf)
+    if ew_map.get("n_timeframes", 0) >= 2:
+        indicators["elliott_mtf"] = ew_map
+
+
 def _recompute_elliott_indicators(indicators: dict, highs, lows, closes,
                                    atr_mult: float) -> None:
     """Recompute the elliott_* indicators from structural ATR-ZigZag pivots,
@@ -1068,6 +1108,16 @@ class Analyzer:
                 _apply_timeframe_matched_elliott(indicators, strategy_type, mtf_candles)
             except Exception as exc:
                 system_log.debug("Timeframe-matched Elliott skipped: %s", exc)
+
+        # ── Cross-degree Elliott alignment (gated, default ON) ──────────
+        # Run the wave detectors across ALL fetched timeframes and expose the
+        # degree-agreement map; _score_confluence adds one bounded vote from
+        # it. Zero extra API calls (reuses mtf_candles). Fail-open.
+        if CONFIG.analyzer.elliott_mtf_alignment_enabled and mtf_candles:
+            try:
+                _apply_mtf_elliott_alignment(indicators, mtf_candles)
+            except Exception as exc:
+                system_log.debug("MTF Elliott alignment skipped: %s", exc)
 
         # ── Scalp session VWAP from 15m (gated, default ON) ─────────────
         # Rebuild the session anchor scalps read from the 15m series BEFORE
@@ -3180,6 +3230,21 @@ class Analyzer:
                 else:
                     votes.append(0.0)
                     aw(0.3, "elliott")
+
+        # Cross-degree Elliott alignment vote (gated, default ON). One
+        # bounded vote from the all-timeframes wave map: agreement of nested
+        # degrees (15m/1h/4h/1d, higher degrees weighted more) votes its
+        # signed strength; a terminal 4h/1d structure (wave 5 / ending
+        # diagonal) HALVES the weight — degree agreement into higher-degree
+        # exhaustion is precisely where trend-continuation entries die.
+        _ew_mtf = indicators.get("elliott_mtf")
+        if _ew_mtf and abs(float(_ew_mtf.get("alignment", 0.0) or 0.0)) > 0.05:
+            _align = max(-1.0, min(1.0, float(_ew_mtf["alignment"])))
+            _w_align = 0.6
+            if _ew_mtf.get("higher_degree_terminal"):
+                _w_align *= 0.5
+            votes.append(_align)
+            aw(_boost(_w_align, "ew_mtf_align"), "ew_mtf_align")
 
         # Order flow votes (if available)
         if order_flow is not None:

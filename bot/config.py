@@ -1074,6 +1074,15 @@ class AnalyzerConfig:
     elliott_wave_action_enabled: bool = _env_bool("ELLIOTT_WAVE_ACTION_ENABLED", True)
     elliott_fib_targets_enabled: bool = _env_bool("ELLIOTT_FIB_TARGETS_ENABLED", True)
     elliott_mtf_enabled: bool = _env_bool("ELLIOTT_MTF_ENABLED", True)
+    #   mtf_alignment: run the wave detectors on EVERY fetched timeframe
+    #                (15m/1h/4h/1d — already in memory for mtf, zero extra API
+    #                calls) and add ONE bounded cross-degree agreement vote:
+    #                nested with-trend structure across degrees boosts, a
+    #                terminal 4h/1d wave 5 / ending diagonal halves the vote
+    #                (don't chase a lower-degree entry into higher-degree
+    #                exhaustion). Map exposed as indicators["elliott_mtf"].
+    elliott_mtf_alignment_enabled: bool = _env_bool(
+        "ELLIOTT_MTF_ALIGNMENT_ENABLED", True)
 
     # Multi-timeframe confluence (default ON): feed the engine's already
     # fetched 4h/1d candles into MTFConfluence so the HH/HL/BOS/CHoCH
