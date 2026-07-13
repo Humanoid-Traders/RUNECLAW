@@ -164,6 +164,16 @@ class BacktestEngine:
         # receives the tighten-only trailing/ratchet updates each bar. OFF
         # reproduces the old (non-parity) replay exactly.
         self._ladder_trailing_enabled = _env_bool("BACKTEST_LADDER_TRAILING", True)
+        # Entry-timing engine (CONFIG.execution.entry_timing_enabled, default
+        # OFF): armed setups awaiting sub-degree confirmation + a rolling
+        # closed-bar window (the run TF doubles as the trigger series here)
+        # + audit counters for the A/B report.
+        self._armed_setups: list[dict] = []
+        self._et_bar_win: list[tuple[float, float, float, float]] = []
+        self._et_armed = 0
+        self._et_fired = 0
+        self._et_disarmed_invalidated = 0
+        self._et_disarmed_expired = 0
         # Backtest time-stop (mirrors the LIVE time-stop, which was previously
         # unmeasurable here). When on, an open position that has been held for
         # its per-strategy time-close horizon AND is not in profit is closed at
@@ -445,6 +455,20 @@ class BacktestEngine:
         # No-op when the flag is off.
         self.risk.register_pending_intent(idea)
 
+        # Entry-timing engine (gated, default OFF): a qualified idea ARMS
+        # instead of executing. It fires only when the sub-degree confirms
+        # the turn (evaluated per bar in _check_stops_intrabar), disarms
+        # silently when its own stop level is touched first or the window
+        # expires. In the single-timeframe backtest the run TF doubles as
+        # the sub-degree trigger series.
+        if CONFIG.execution.entry_timing_enabled:
+            self._armed_setups.append({
+                "idea": idea, "risk_check": risk_check,
+                "armed_ts": bar.timestamp.timestamp(),
+            })
+            self._et_armed += 1
+            return
+
         # 5. Execute (no human confirmation in backtest). With
         # fill_mode="next_open" (audit fix #15) the approved idea is queued and
         # filled at the NEXT bar's open instead of this bar's close.
@@ -545,6 +569,15 @@ class BacktestEngine:
         a stop-loss at $66,000 should trigger if the low was $65,800
         even if the close was $67,000.
         """
+        # Entry-timing engine: maintain the trigger-series window and
+        # evaluate armed setups every bar (called once per bar in BOTH the
+        # single-symbol and portfolio loops). No-op when nothing is armed.
+        self._et_bar_win.append((bar.open, bar.high, bar.low, bar.close))
+        if len(self._et_bar_win) > 40:
+            del self._et_bar_win[0]
+        if self._armed_setups:
+            self._evaluate_armed_setups(bar)
+
         for tid, pos in list(self.portfolio._positions.items()):
             if tid not in self._open_bt_positions:
                 continue
@@ -812,6 +845,57 @@ class BacktestEngine:
         elif total_pnl > 0:
             self._symbol_loss_streaks[symbol] = max(
                 0, self._symbol_loss_streaks.get(symbol, 0) - 1)
+
+    def _evaluate_armed_setups(self, bar: BacktestBar) -> None:
+        """One per-bar tick of the entry-timing engine (gated by the caller).
+
+        Pessimistic order per setup: invalidation (its own stop touched
+        while armed) -> expiry -> confirmation. A FIRE executes at this
+        bar's close — confirmation is only knowable at bar close, matching
+        how live would market in on the trigger candle's close.
+        """
+        from bot.core.entry_timing import (DISARM_EXPIRED,
+                                           DISARM_INVALIDATED, FIRE,
+                                           evaluate_armed)
+        if len(self._et_bar_win) < 10:
+            return
+        opens = [w[0] for w in self._et_bar_win]
+        highs = [w[1] for w in self._et_bar_win]
+        lows = [w[2] for w in self._et_bar_win]
+        closes = [w[3] for w in self._et_bar_win]
+        now_ts = bar.timestamp.timestamp()
+        still_armed: list[dict] = []
+        for setup in self._armed_setups:
+            idea = setup["idea"]
+            verdict, reason = evaluate_armed(
+                idea.direction.value, float(idea.stop_loss or 0),
+                setup["armed_ts"], now_ts,
+                CONFIG.execution.entry_timing_max_wait_sec,
+                bar.high, bar.low, highs, lows, closes, opens=opens,
+            )
+            if verdict == FIRE:
+                self._et_fired += 1
+                audit(trade_log, f"[BT] Entry timing FIRED: {idea.asset} — {reason}",
+                      action="entry_timing", result="FIRED",
+                      data={"trade_id": idea.id})
+                self._execute_fill(idea, setup["risk_check"], bar.close, bar)
+            elif verdict == DISARM_INVALIDATED:
+                self._et_disarmed_invalidated += 1
+                self.risk.clear_pending_intent(idea.id)
+                audit(trade_log,
+                      f"[BT] Entry timing DISARMED (invalidated): {idea.asset}",
+                      action="entry_timing", result="DISARMED_INVALIDATED",
+                      data={"trade_id": idea.id})
+            elif verdict == DISARM_EXPIRED:
+                self._et_disarmed_expired += 1
+                self.risk.clear_pending_intent(idea.id)
+                audit(trade_log,
+                      f"[BT] Entry timing DISARMED (expired): {idea.asset}",
+                      action="entry_timing", result="DISARMED_EXPIRED",
+                      data={"trade_id": idea.id})
+            else:
+                still_armed.append(setup)
+        self._armed_setups = still_armed
 
     def _apply_ladder_trailing(self, bt_meta: dict, pos, bar: BacktestBar) -> None:
         """Parity overlay: apply the multistage trail + structure/wave ratchet
