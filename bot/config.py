@@ -1320,6 +1320,16 @@ class AdaptiveConfig:
 @dataclass(frozen=True)
 class ExecutionConfig:
     """Execution quality and order management settings."""
+    # Entry-timing engine (degree-nested confirmation, default OFF pending
+    # the frozen-benchmark A/B). A qualified idea ARMS instead of executing;
+    # it fires only when the sub-degree confirms the turn (confirmed ZigZag
+    # pullback pivot + trigger candle), disarms silently when its own stop
+    # level is touched first (a trade that never happened instead of a
+    # stop-out that did) or when the window expires. Attacks the measured
+    # bleed: live SL bucket -$264 vs TP +$167 = entries fire early.
+    entry_timing_enabled: bool = _env_bool("ENTRY_TIMING_ENABLED", False)
+    entry_timing_max_wait_sec: float = _env_float_bounded(
+        "ENTRY_TIMING_MAX_WAIT_SEC", 14400.0, 60.0, 172800.0)  # default 4h
     # Slippage guard
     slippage_guard_enabled: bool = _env_bool("SLIPPAGE_GUARD_ENABLED", True)
     max_slippage_edge_ratio: float = _env_float("MAX_SLIPPAGE_EDGE_RATIO", 0.30)
