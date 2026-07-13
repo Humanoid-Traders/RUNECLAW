@@ -1870,6 +1870,17 @@ class AppConfig:
     # blocked trades netting POSITIVE R means the gate is eating edge.
     # Never places or influences a real order. /shadow renders the board.
     shadow_book_enabled: bool = _env_bool("SHADOW_BOOK_ENABLED", True)
+    # Fable-5 round 3 — nightly LLM self-audit (ADVISORY ONLY). Once a night
+    # the bot reads its own closed trades + shadow-book gate price tags +
+    # governor/throttle state, asks the LLM for changes to an ALLOWLISTED set
+    # of env flags (bounded values), MEASURES each proposal on a frozen
+    # benchmark, and sends the evidence + exact env diff to Telegram. Nothing
+    # is ever applied automatically — the operator is the merge gate. Skips
+    # silently when no LLM is configured. /audit shows the last report.
+    self_audit_enabled: bool = _env_bool("SELF_AUDIT_ENABLED", True)
+    self_audit_hour_utc: int = int(_env_float_bounded("SELF_AUDIT_HOUR_UTC", 4, 0, 23))
+    self_audit_max_proposals: int = int(_env_float_bounded("SELF_AUDIT_MAX_PROPOSALS", 2, 1, 5))
+    self_audit_dataset: str = _env("SELF_AUDIT_DATASET", "alts_1h")
     # How many (volume-filtered) symbols the scanner emits for analysis each
     # cycle. Raised 80 -> 200 for a wide sweep of the whole liquid universe; the
     # analysis loop bounds concurrency (scan_analysis_concurrency) so a wider

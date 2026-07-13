@@ -269,6 +269,7 @@ class ProactiveMonitor:
         alerts.extend(self._check_signal_strangle())
         alerts.extend(self._check_learning_readiness())
         alerts.extend(self._check_new_listings())
+        alerts.extend(self._check_self_audit())
         return alerts
 
     def _check_learning_readiness(self) -> list[Alert]:
@@ -362,6 +363,28 @@ class ProactiveMonitor:
             ))
         except Exception as exc:
             logger.debug("new-listings check failed: %s", exc)
+        return alerts
+
+    def _check_self_audit(self) -> list[Alert]:
+        """Deliver the nightly self-audit report the moment a run finishes.
+        The audit itself runs in the engine (background task); this check
+        only drains its queue — same pattern as the new-listings watch."""
+        alerts: list[Alert] = []
+        try:
+            from bot.core.self_audit import SELF_AUDIT
+            for item in SELF_AUDIT.drain_pending():
+                report = str(item.get("report", "")).strip()
+                if not report:
+                    continue
+                alerts.append(Alert(
+                    alert_type="SELF_AUDIT",
+                    severity="INFO",
+                    title="Nightly self-audit report",
+                    body=report + "\n\n\U0001f449 /audit — re-show this report",
+                    dedup_key=f"self_audit_{int(item.get('ts', 0))}",
+                ))
+        except Exception as exc:
+            logger.debug("self-audit check failed: %s", exc)
         return alerts
 
     def _check_signal_strangle(self) -> list[Alert]:

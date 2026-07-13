@@ -361,6 +361,7 @@ class TelegramHandler:
             ("classpf", self._cmd_classpf),
             ("funding", self._cmd_funding),
             ("parity", self._cmd_parity), ("shadow", self._cmd_shadow),
+            ("audit", self._cmd_audit),
             ("grant_live", self._cmd_grant_live), ("revoke_live", self._cmd_revoke_live),
             ("set_tier", self._cmd_set_tier),
             # Marketing / channel forwarder
@@ -2561,6 +2562,40 @@ class TelegramHandler:
         lines.append("PF &gt; 1 = profitable class. Small samples lie — "
                      "judge classes on 20+ trades.")
         await self._send(update, "\n".join(lines))
+
+    async def _cmd_audit(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """Admin only: /audit — show the last nightly self-audit report;
+        /audit run — trigger an audit now (background; the report arrives
+        via the proactive monitor when the benchmark runs finish)."""
+        if not self._is_admin(update):
+            await self._send(update, f"\U0001f512 {t('admin_only', self._lang(update))}")
+            return
+        try:
+            from bot.core.self_audit import SELF_AUDIT
+            args = [a.lower() for a in (ctx.args or [])]
+            if args and args[0] == "run":
+                if SELF_AUDIT._running:
+                    await self._send(update, "\U0001f9fe Self-audit already running.")
+                    return
+                import asyncio as _aio
+                _aio.get_running_loop().create_task(SELF_AUDIT.run(self.engine))
+                await self._send(
+                    update,
+                    "\U0001f9fe Self-audit started — evidence → LLM proposals "
+                    "→ benchmark measurement. Report arrives here when the "
+                    "runs finish (a few minutes). Nothing is auto-applied.")
+                return
+            report = SELF_AUDIT.last_report()
+            if report:
+                await self._send(update, report)
+            else:
+                await self._send(
+                    update,
+                    "\U0001f9fe No self-audit report yet. It runs nightly at "
+                    f"{CONFIG.self_audit_hour_utc:02d}:00 UTC, or start one "
+                    "now with /audit run.")
+        except Exception as exc:
+            await self._send(update, f"Self-audit unavailable: {exc}")
 
     # ── Live↔backtest parity ──────────────────────────────────
 
