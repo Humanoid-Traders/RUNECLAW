@@ -69,6 +69,23 @@ def test_parity_summary_no_exclusion_line_when_clean():
     assert "excluded" not in format_report(s)
 
 
+def test_legacy_manual_close_label_merges_into_unknown():
+    """Pre-#52 records carry "MANUAL CLOSE" — the old catch-all for ANY
+    unattributable close (nothing proved a user close; operator closes
+    have their own labels). The report merges it into the honest
+    "CLOSED (unknown)" bucket instead of resurrecting the misnomer."""
+    from bot.backtest.parity import parity_summary
+    trades = [
+        _trade("MANUAL CLOSE", -3.0),          # legacy label
+        _trade("CLOSED (unknown)", -2.0),      # modern label
+        _trade("TP HIT", 10.0),
+    ]
+    buckets = parity_summary(trades, 0.06)["by_exit_reason"]
+    assert "MANUAL CLOSE" not in buckets
+    assert buckets["CLOSED (unknown)"]["trades"] == 2
+    assert buckets["CLOSED (unknown)"]["net"] == -5.0
+
+
 # ── 2. provenance round trip ─────────────────────────────────────────
 def test_closed_trade_provenance_round_trips(tmp_path):
     from datetime import datetime, timezone
