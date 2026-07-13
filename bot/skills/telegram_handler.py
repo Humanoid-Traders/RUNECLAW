@@ -6174,6 +6174,57 @@ class TelegramHandler:
             return list(per_symbol_orders), False
         return [TelegramHandler._synth_order_from_tracked(p) for p in tracked_pending], True
 
+    async def _resolve_desync_orders(self, exchange, tracked_pending):
+        """Resolve an open-orders desync definitively instead of guessing.
+
+        When fetch_open_orders (account-wide AND per-symbol) shows nothing
+        but the bot still tracks pending limits, the truth is one
+        fetch_order call away: open-order queries exclude filled/cancelled
+        orders BY DESIGN, so "exchange shows nothing" usually just means
+        "it filled seconds ago" (live case 2026-07-13: a SHORT limit below
+        market — marketable, cannot rest — showed as a scary desync when
+        it had simply filled). Query each tracked order by id and report
+        what actually happened.
+
+        Returns ``(notes, synth_orders)``: human-readable resolution lines,
+        and ccxt-shaped dicts for records that still merit rendering as
+        open (order genuinely resting, or status unverifiable).
+        """
+        notes: list = []
+        synths: list = []
+        for p in tracked_pending:
+            oid = getattr(p, "limit_order_id", None)
+            sym = display_symbol(getattr(p, "symbol", ""))
+            side = getattr(p, "direction", "") or "?"
+            order = None
+            status = None
+            if oid:
+                try:
+                    order = await exchange.fetch_order(oid, p.symbol)
+                    status = (order.get("status") or "").lower()
+                except Exception:
+                    status = None
+            if status in ("closed", "filled"):
+                avg = float((order.get("average") or order.get("price") or 0)
+                            if order else 0)
+                notes.append(
+                    f"✅ {side} {sym} limit <b>FILLED</b>"
+                    + (f" @ ${avg:,.4f}" if avg > 0 else "")
+                    + " — the bot books the fill on its next check tick.")
+            elif status in ("canceled", "cancelled", "rejected", "expired"):
+                notes.append(
+                    f"❌ {side} {sym} limit <b>{status.upper()}</b> on the "
+                    "exchange — the bot clears it on its next check tick.")
+            elif status == "open":
+                # Genuinely resting — the open-orders queries missed it.
+                synths.append(self._synth_order_from_tracked(p))
+            else:
+                synths.append(self._synth_order_from_tracked(p))
+                notes.append(
+                    f"⚠️ {side} {sym}: order status could not be verified — "
+                    "possible desync; the bot reconciles on its next tick.")
+        return notes, synths
+
     @guard("portfolio")
     async def _cmd_orders(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """Show open/pending orders on Bitget exchange."""
@@ -6220,12 +6271,17 @@ class TelegramHandler:
                 open_orders, tracked_pending, per_symbol_orders)
 
             if _desync:
-                await self._send(update,
-                    "⚠️ <b>Possible desync</b>\n\n"
-                    "Bitget returned no resting orders, but the bot is still "
-                    "tracking the pending limit order(s) below. They may have "
-                    "just filled or been cancelled — verify on Bitget (the "
-                    "bot reconciles on its next tick).")
+                # Don't guess ("may have filled or been cancelled — verify
+                # on Bitget"): fetch each tracked order by id and say what
+                # actually happened. Filled/cancelled orders drop out of the
+                # open-orders rendering — they are not open.
+                notes, still_open = await self._resolve_desync_orders(
+                    exchange, tracked_pending)
+                open_orders = still_open
+                if notes:
+                    await self._send(update,
+                        "🔎 <b>Pending order status</b>\n\n"
+                        + "\n".join(notes))
 
             if not open_orders:
                 await self._send(update,

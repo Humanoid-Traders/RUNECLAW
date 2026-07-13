@@ -4649,26 +4649,26 @@ class LiveExecutor:
 
         Returns a message string if status changed, else None.
         """
-        if not pos.limit_order_id:
-            return None
-
         # ── HARD TIMEOUT: stale pending_fill safety net ──
         # If a pending_fill position has been stuck for 2x the normal expiry
         # (e.g. 8 hours by default), force-close it regardless of exchange
         # state.  This prevents positions from being stuck forever when
         # fetch_order keeps failing or the exchange silently cancelled the
-        # order.
+        # order. Checked BEFORE the order-id guard: a pending record whose
+        # limit_order_id was lost (empty placement echo) has no other exit —
+        # with the guard first it sat in _positions forever, invisibly.
         hard_timeout = 2 * CONFIG.limit_orders.expire_seconds
         stale_age = (datetime.now(UTC) - pos.opened_at).total_seconds() if pos.opened_at else 0
         if stale_age > hard_timeout:
             # Best-effort cancel on exchange
-            try:
-                await exchange.cancel_order(pos.limit_order_id, pos.symbol)
-            except Exception as cancel_exc:
-                logger.warning(
-                    "Stale pending hard-timeout: cancel attempt failed for %s order %s: %s",
-                    pos.symbol, pos.limit_order_id, cancel_exc,
-                )
+            if pos.limit_order_id:
+                try:
+                    await exchange.cancel_order(pos.limit_order_id, pos.symbol)
+                except Exception as cancel_exc:
+                    logger.warning(
+                        "Stale pending hard-timeout: cancel attempt failed for %s order %s: %s",
+                        pos.symbol, pos.limit_order_id, cancel_exc,
+                    )
 
             pos.status = "closed"
             pos.closed_at = datetime.now(UTC)
@@ -4694,6 +4694,9 @@ class LiveExecutor:
                 f"STALE PENDING CLOSED: {pos.direction} {pos.symbol} — "
                 f"stuck for {stale_age / 3600:.1f}h (hard timeout {hard_timeout / 3600:.1f}h)"
             )
+
+        if not pos.limit_order_id:
+            return None
 
         try:
             order = await exchange.fetch_order(pos.limit_order_id, pos.symbol)
