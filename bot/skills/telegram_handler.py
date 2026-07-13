@@ -1622,6 +1622,11 @@ class TelegramHandler:
         state = user_portfolio.snapshot()
         cb_active = self.engine.risk.circuit_breaker_active
 
+        # Displayed counts — defined for BOTH branches (the paper branch
+        # previously never set them and the template references both).
+        _filled_count = 0
+        _pending_count = 0
+
         # LIVE FIX: show real exchange equity in LIVE mode
         if mode_str == "LIVE":
             live_eq = await self.engine.get_effective_equity_async(tg_id)
@@ -1657,15 +1662,20 @@ class TelegramHandler:
                 except Exception:
                     pass  # Fall back to internal count
 
-            # Fallback: if no locally-tracked positions, check exchange directly
-            # This catches orphan positions (opened but lost from local state)
-            if open_pos == 0 and executor:
+            # Fallback: if no locally-tracked positions, check exchange directly.
+            # This catches orphan positions (opened but lost from local state).
+            # Live incident (LTC, 2026-07-13): this fallback used to correct
+            # `open_pos` — a variable the card never displays — while the
+            # template shows `_filled_count`, so /start said "Open positions: 0"
+            # with a live position on the exchange. Correct the DISPLAYED count.
+            if _filled_count == 0 and executor:
                 try:
                     _ex = await executor._get_exchange()
                     _ex_pos = await _ex.fetch_positions()
                     _ex_open = [p for p in (_ex_pos or [])
                                 if isinstance(p, dict) and float(p.get("contracts") or 0) > 0]
                     if _ex_open:
+                        _filled_count = len(_ex_open)
                         open_pos = len(_ex_open)
                 except Exception:
                     pass
@@ -1683,6 +1693,7 @@ class TelegramHandler:
         else:
             display_equity = state.equity_usd
             open_pos = state.open_positions
+            _filled_count = state.open_positions   # paper: template shows this
             win_rate = f"{state.win_rate:.0%}".replace("%", "")
 
         SEP = "\u2500" * 16
