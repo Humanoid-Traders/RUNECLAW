@@ -1501,6 +1501,16 @@ class RuneClawEngine:
                 # fail-open, throttled; guarded so it never touches another
                 # account's positions.
                 await self._maybe_flatten_web_requests()
+                # Nightly LLM self-audit (advisory-only, human merge gate):
+                # spawns as a background task at the configured quiet hour,
+                # at most once per ~24h; the proactive monitor delivers the
+                # report. Fail-open — a broken audit never touches trading.
+                try:
+                    if getattr(CONFIG, "self_audit_enabled", False):
+                        from bot.core.self_audit import SELF_AUDIT
+                        SELF_AUDIT.maybe_spawn(self)
+                except Exception as _sa_exc:
+                    system_log.debug("self-audit spawn skipped: %s", _sa_exc)
             except Exception as exc:
                 _consecutive_failures += 1
                 self._tick_consecutive_failures = _consecutive_failures
