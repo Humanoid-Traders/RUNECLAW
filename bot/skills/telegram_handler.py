@@ -2225,6 +2225,19 @@ class TelegramHandler:
                     f"{icon} <code>{acct[:10]}</code> {g['status']} "
                     f"(×{g['multiplier']:.2f} · win {g['win_rate']*100:.0f}% · "
                     f"net ${g['net_pnl']:,.0f} · n={g['samples']})")
+        # 🎛 Continuous equity throttle — same quiet-unless-acting rule.
+        pf_throttled = []
+        for r in rows:
+            th = r.get("throttle")
+            if th and th.get("status") == "THROTTLED":
+                pf_throttled.append((r["account"], th))
+        if pf_throttled:
+            lines.append("\n🎛 <b>Equity throttle:</b>")
+            for acct, th in pf_throttled:
+                pf_s = f"{th['pf']:.2f}" if th.get("pf") is not None else "—"
+                lines.append(
+                    f"🔻 <code>{acct[:10]}</code> ×{th['multiplier']:.2f} "
+                    f"(rolling PF {pf_s} · n={th['samples']})")
         # 🎚 Per-user margin caps (/setcap) — show only accounts that have one set.
         capped = [(r["account"], r["cap_usd"]) for r in rows
                   if r.get("cap_usd") and r["cap_usd"] > 0]

@@ -1058,7 +1058,7 @@ class RuneClawEngine:
                 "account": str(uid or "operator"), "user_id": uid,
                 "equity_usd": None, "open_positions": 0, "exposure_usd": 0.0,
                 "circuit_open": False, "consecutive_losses": 0,
-                "governor": None, "cap_usd": None, "error": None,
+                "governor": None, "throttle": None, "cap_usd": None, "error": None,
             }
             try:
                 positions = list(getattr(ex, "open_positions", []) or [])
@@ -1083,6 +1083,10 @@ class RuneClawEngine:
                         row["governor"] = eng.live_performance_state()
                     except Exception:
                         row["governor"] = None
+                    try:
+                        row["throttle"] = eng.equity_throttle_state()
+                    except Exception:
+                        row["throttle"] = None
             except Exception as exc:
                 row["error"] = str(exc)
                 logger.warning("Account overview: %s failed: %s", row["account"], exc)
