@@ -1683,12 +1683,34 @@ class LiveExecutor:
                 # Fallback: if position data didn't have SL/TP, try open orders
                 if lp.stop_loss <= 0 or lp.take_profit <= 0:
                     try:
-                        open_orders = await exchange.fetch_open_orders(raw_sym)
-                        for o in (open_orders or []):
+                        open_orders = list(await exchange.fetch_open_orders(raw_sym) or [])
+                        # Classic SL/TP legs live on the PLAN-order channel,
+                        # which plain fetch_open_orders does NOT return on
+                        # Bitget. The replace path (_place_sl_tp) queries that
+                        # channel and CANCELS whatever it finds — so if the
+                        # read here can't see those legs, an adopted position's
+                        # real stops get silently swapped for 3%/6% safety
+                        # defaults. Query the plan channel with the same params
+                        # the replace path uses.
+                        try:
+                            _plans = await exchange.fetch_open_orders(
+                                self._venue.swap_symbol(raw_sym),
+                                params=self._venue.plan_order_query_params())
+                            open_orders += [p for p in (_plans or [])
+                                            if self._venue.is_plan_order(p)]
+                        except Exception as _plan_exc:
+                            logger.debug("Plan-order read during adoption of %s failed: %s",
+                                         raw_sym, _plan_exc)
+                        for o in open_orders:
                             trigger = float(o.get("triggerPrice") or o.get("stopPrice") or 0)
                             if trigger <= 0:
                                 continue
-                            otype = (o.get("type") or "").lower()
+                            _oinfo = o.get("info") or {}
+                            # planType (loss_plan/profit_plan/pos_loss/pos_profit)
+                            # classifies Bitget plan orders whose ccxt `type` is
+                            # just market/limit.
+                            otype = (f"{o.get('type') or ''} "
+                                     f"{_oinfo.get('planType') or ''}").lower()
                             if ("stop" in otype or "loss" in otype) and lp.stop_loss <= 0:
                                 lp.stop_loss = trigger
                                 lp.sl_order_id = o.get("id")
@@ -3139,6 +3161,7 @@ class LiveExecutor:
             position_confirmed = pos_verify["confirmed"]
 
             # Update position with exchange-verified data
+            _lev_mismatch: Optional[tuple[int, int]] = None
             if position_confirmed:
                 if pos_verify["exchange_entry"] > 0:
                     position.entry_price = pos_verify["exchange_entry"]
@@ -3147,6 +3170,24 @@ class LiveExecutor:
                     position.quantity = pos_verify["exchange_qty"]
                     filled_qty = pos_verify["exchange_qty"]
                 if pos_verify["leverage"] > 0:
+                    # Venue's actual leverage disagreeing with what we requested
+                    # means the set-leverage call was silently ignored (Bitget
+                    # sticky per-symbol setting; live incident: ASTER filled 20x
+                    # against a 10x target). The display below trues up either
+                    # way — but the OPERATOR must hear about it, not discover it
+                    # on the position card.
+                    if int(pos_verify["leverage"]) != int(leverage):
+                        _lev_mismatch = (int(leverage), int(pos_verify["leverage"]))
+                        audit(trade_log,
+                              f"LEVERAGE MISMATCH on fill: {idea.asset} requested "
+                              f"{int(leverage)}x, venue filled at "
+                              f"{int(pos_verify['leverage'])}x (sticky per-symbol "
+                              f"setting survived set_leverage)",
+                              action="leverage_mismatch_on_fill", result="MISMATCH",
+                              level=logging.WARNING,
+                              data={"trade_id": idea.id, "symbol": idea.asset,
+                                    "requested": int(leverage),
+                                    "actual": int(pos_verify["leverage"])})
                     position.leverage = pos_verify["leverage"]
                     leverage = pos_verify["leverage"]
 
@@ -3344,6 +3385,11 @@ class LiveExecutor:
             sl_tp_warn = ""
             if sl_id is None and tp_id is None:
                 sl_tp_warn = "\n⚠️ SL/TP FAILED — position unprotected!"
+            if _lev_mismatch is not None:
+                sl_tp_warn += (
+                    f"\n⚠️ LEVERAGE: venue filled at <b>{_lev_mismatch[1]}x</b>, "
+                    f"target was {_lev_mismatch[0]}x (sticky per-symbol setting). "
+                    f"Margin/liquidation math follows {_lev_mismatch[1]}x.")
 
             st_label = getattr(idea, 'strategy_type', 'swing').upper()
 
