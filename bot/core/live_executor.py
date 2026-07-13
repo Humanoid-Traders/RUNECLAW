@@ -1467,6 +1467,58 @@ class LiveExecutor:
             self._save_positions()
         return messages
 
+    def _find_adoption_level_donor(self, symbol: str, direction: str,
+                                   entry_price: float):
+        """Find the local record an adopted position most plausibly came
+        from, to inherit its INTENDED stop/target instead of generic safety
+        defaults. Match: same normalized symbol + direction, entry within
+        0.5%, and a protective-side stop (LONG: SL below entry; SHORT: SL
+        above — within 25%). Searched newest-intent-first: live pending/open
+        records (the tracker whose fill report lagged), then records closed
+        as never-filled (canceled/expired/stale) within the last 24h — the
+        exact shape of the LTC incident, where the record was booked
+        "canceled" moments before the sweep adopted its fill."""
+        from bot.utils.close_reason import NON_FILL_CLOSE_REASONS
+        if entry_price <= 0:
+            return None
+        want = normalize_symbol(symbol)
+        is_long = direction == "LONG"
+
+        def _match(rec) -> bool:
+            try:
+                if normalize_symbol(rec.symbol) != want:
+                    return False
+                if rec.direction != direction:
+                    return False
+                sl = float(rec.stop_loss or 0)
+                if sl <= 0:
+                    return False
+                e = float(rec.entry_price or 0)
+                if e <= 0 or abs(e - entry_price) / entry_price > 0.005:
+                    return False
+                # Protective-side sanity: never inherit an inverted stop.
+                if is_long:
+                    return entry_price * 0.75 <= sl <= entry_price * 1.02
+                return entry_price * 0.98 <= sl <= entry_price * 1.25
+            except Exception:  # noqa: BLE001
+                return False
+
+        for rec in self._positions.values():
+            if rec.status in ("pending_fill", "open", "closing") and _match(rec):
+                return rec
+        now = datetime.now(UTC)
+        best = None
+        for rec in self._closed_trades[-50:]:
+            reason = (rec.close_reason or "").lower()
+            if reason not in NON_FILL_CLOSE_REASONS or not _match(rec):
+                continue
+            closed_at = rec.closed_at
+            if closed_at is not None and closed_at.tzinfo is None:
+                closed_at = closed_at.replace(tzinfo=UTC)
+            if closed_at is None or (now - closed_at).total_seconds() < 86400:
+                best = rec  # list is chronological — keep the newest match
+        return best
+
     async def adopt_exchange_positions(self) -> list[str]:
         """Adopt any exchange positions not tracked locally into _positions.
 
@@ -1646,6 +1698,36 @@ class LiveExecutor:
                     except Exception as _sltp_adopt_exc:
                         logger.warning("SL/TP extraction failed during adoption of %s: %s",
                                        raw_sym, _sltp_adopt_exc)  # position adopted without SL/TP
+
+                # ── Inherit the INTENDED levels from the local record this
+                # position came from (live incident: an LTC limit filled
+                # on-exchange, the fill report lagged, the sweep adopted the
+                # position and the local record was booked "canceled" — the
+                # bot knew the strategy's stops all along but adopted with
+                # generic defaults 3.4x wider). Match: same symbol+direction,
+                # entry within 0.5%, protective-side stop — pending/open
+                # records first, then records just closed as never-filled.
+                if lp.stop_loss <= 0 or lp.take_profit <= 0:
+                    try:
+                        donor = self._find_adoption_level_donor(
+                            raw_sym, side, entry_price)
+                        if donor is not None:
+                            if lp.stop_loss <= 0 and donor.stop_loss > 0:
+                                lp.stop_loss = donor.stop_loss
+                            if lp.take_profit <= 0 and donor.take_profit > 0:
+                                lp.take_profit = donor.take_profit
+                            lp.strategy_type = getattr(
+                                donor, "strategy_type", lp.strategy_type)
+                            lp.signal_type = getattr(
+                                donor, "signal_type", lp.signal_type)
+                            audit(trade_log,
+                                  f"Adoption inherited levels from local record "
+                                  f"{donor.trade_id}: SL={lp.stop_loss} TP={lp.take_profit}",
+                                  action="adoption_inherit_levels", result="INHERITED",
+                                  data={"adopted": trade_id, "donor": donor.trade_id,
+                                        "sl": lp.stop_loss, "tp": lp.take_profit})
+                    except Exception as _don_exc:
+                        logger.debug("adoption level inheritance skipped: %s", _don_exc)
 
                 # If SL or TP missing, calculate safety defaults (3% SL, 6% TP)
                 need_sl = lp.stop_loss <= 0 and entry_price > 0
