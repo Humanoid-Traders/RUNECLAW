@@ -154,6 +154,16 @@ class BacktestEngine:
         # reflects live. Gated by its own env flag (NOT CONFIG.partial_tp.enabled,
         # which defaults TRUE for live) to keep default backtests unchanged.
         self._partial_tp_enabled = _env_bool("BACKTEST_PARTIAL_TP", False)
+        # Parity fix (found by the wave-trail A/B, PR #356): LIVE runs the
+        # multistage trail + structure/wave ratchets ON TOP of the ladder
+        # (check_positions updates every open position's stop; the ladder is
+        # an additive overlay), but the backtest's ladder branch skipped all
+        # trailing — so live tightened to breakeven at 1R while replay sat on
+        # the original stop until TP1 (1.5R), and NO trailing change was
+        # measurable in any ladder-on backtest. When ON, the ladder stop also
+        # receives the tighten-only trailing/ratchet updates each bar. OFF
+        # reproduces the old (non-parity) replay exactly.
+        self._ladder_trailing_enabled = _env_bool("BACKTEST_LADDER_TRAILING", True)
         # Backtest time-stop (mirrors the LIVE time-stop, which was previously
         # unmeasurable here). When on, an open position that has been held for
         # its per-strategy time-close horizon AND is not in profit is closed at
@@ -508,9 +518,10 @@ class BacktestEngine:
         }
 
         # #18: when the partial-TP ladder is enabled, create the SAME state object
-        # live uses so the backtest scales out identically. The ladder then owns the
-        # stop (breakeven after TP1, lock-1R after TP2, ATR-trail for the runner);
-        # the legacy single-exit trailing path above is skipped for this position.
+        # live uses so the backtest scales out identically. The ladder owns the
+        # scale-outs (breakeven after TP1, lock-1R after TP2, ATR-trail for the
+        # runner); the multistage trail + ratchets ALSO overlay the ladder stop
+        # (tighten-only) via _apply_ladder_trailing — mirroring live.
         if self._partial_tp_enabled:
             from bot.core.partial_tp import create_partial_tp_state
             self._open_bt_positions[idea.id]["ptp_state"] = create_partial_tp_state(
@@ -552,25 +563,34 @@ class BacktestEngine:
                     self._close_position(tid, bar.close, bar, "TIME_STOP")
                     continue
 
-            # #18: positions opened under the partial-TP ladder are driven
-            # entirely by the ladder (scale-outs + ladder-owned stop). Only
-            # reached when BACKTEST_PARTIAL_TP is on, so the default single-exit
-            # path below is byte-identical when the flag is off.
+            # Structure trailing: per-position rolling window of CLOSED bar
+            # extremes (this bar included — by the time stops are checked the
+            # bar is complete in replay, matching live's closed-candle fetch).
+            # Built BEFORE the ladder branch so ladder positions accumulate it
+            # too (the parity trailing overlay needs it for the ratchets).
+            _sw = bt_meta.setdefault("struct_win", [])
+            _sw.append((bar.high, bar.low, bar.close))
+            if len(_sw) > 40:
+                del _sw[0]
+
+            # #18: positions opened under the partial-TP ladder run the ladder
+            # (scale-outs + ladder-owned stop) — PLUS, with the parity fix, the
+            # same tighten-only trailing/ratchet overlay live applies (live's
+            # check_positions trails every open position; the ladder is
+            # additive there). Only reached when BACKTEST_PARTIAL_TP is on, so
+            # the default single-exit path below is byte-identical when off.
             if self._partial_tp_enabled and "ptp_state" in bt_meta:
                 self._check_ladder_intrabar(tid, pos, bt_meta, bar)
+                # Overlay AFTER the ladder's own stop check (same deferred
+                # convention as the ladder's runner trail: this bar's
+                # favorable extreme tightens the stop for the NEXT bar).
+                if self._ladder_trailing_enabled and tid in self._open_bt_positions:
+                    self._apply_ladder_trailing(bt_meta, pos, bar)
                 continue
 
             direction = pos.direction
             sl = pos.stop_loss
             tp = pos.take_profit
-
-            # Structure trailing: per-position rolling window of CLOSED bar
-            # extremes (this bar included — by the time stops are checked the
-            # bar is complete in replay, matching live's closed-candle fetch).
-            _sw = bt_meta.setdefault("struct_win", [])
-            _sw.append((bar.high, bar.low, bar.close))
-            if len(_sw) > 40:
-                del _sw[0]
 
             # C2-38 FIX: Check SL against adverse extreme FIRST, before updating
             # trailing with the favorable extreme.  Previously, trailing was updated
@@ -792,6 +812,28 @@ class BacktestEngine:
         elif total_pnl > 0:
             self._symbol_loss_streaks[symbol] = max(
                 0, self._symbol_loss_streaks.get(symbol, 0) - 1)
+
+    def _apply_ladder_trailing(self, bt_meta: dict, pos, bar: BacktestBar) -> None:
+        """Parity overlay: apply the multistage trail + structure/wave ratchet
+        to a LADDER position's stop, tighten-only — mirroring live, where
+        check_positions trails EVERY open position and the ladder is an
+        additive overlay. The trailing candidate can only TIGHTEN the ladder
+        stop (never loosen a breakeven/lock-1R move the ladder already made).
+        """
+        state = bt_meta["ptp_state"]
+        direction = pos.direction
+        is_long = direction == Direction.LONG
+        check_price = bar.high if is_long else bar.low
+        sl, _ = update_trailing_stop(
+            bt_meta, check_price, state.current_sl, direction.value,
+            rule=CONFIG.trailing.trail_rule,
+            playbook_atr_mult=CONFIG.trailing.playbook_atr_mult,
+        )
+        sl = self._maybe_structure_ratchet(bt_meta, sl, direction.value)
+        new_sl = max(state.current_sl, sl) if is_long else min(state.current_sl, sl)
+        if new_sl != state.current_sl:
+            state.current_sl = new_sl
+            pos.stop_loss = new_sl
 
     def _check_ladder_intrabar(
         self, tid: str, pos, bt_meta: dict, bar: BacktestBar
