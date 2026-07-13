@@ -1849,6 +1849,12 @@ class AppConfig:
     # especially for bare-ticker TradFi listings that classify as Crypto
     # until a config entry names them.
     catalog_watch_enabled: bool = _env_bool("CATALOG_WATCH_ENABLED", True)
+    # Counterfactual shadow book (recording-only, default ON): every idea a
+    # gate rejects becomes a paper trade filled/exited off the tickers the
+    # scanner already fetches, so each gate carries a live price tag —
+    # blocked trades netting POSITIVE R means the gate is eating edge.
+    # Never places or influences a real order. /shadow renders the board.
+    shadow_book_enabled: bool = _env_bool("SHADOW_BOOK_ENABLED", True)
     # How many (volume-filtered) symbols the scanner emits for analysis each
     # cycle. Raised 80 -> 200 for a wide sweep of the whole liquid universe; the
     # analysis loop bounds concurrency (scan_analysis_concurrency) so a wider

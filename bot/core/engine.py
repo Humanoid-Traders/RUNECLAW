@@ -2553,6 +2553,17 @@ class RuneClawEngine:
                 confluence_votes=getattr(idea, "_confluence_votes", []),
             )
             self.learning.review_rejection(decision)
+            # Counterfactual shadow book (recording-only): the rejected idea
+            # becomes a paper trade so this gate's decision gets a measured
+            # outcome instead of a theoretical one. Fail-open, never trades.
+            try:
+                if getattr(CONFIG, "shadow_book_enabled", False):
+                    from bot.core.shadow_book import SHADOW_BOOK
+                    SHADOW_BOOK.record_rejection(
+                        idea, risk_check.checks_failed, risk_check.reason,
+                        ref_price=float(getattr(signal, "price", 0) or 0))
+            except Exception as _sb_exc:
+                system_log.debug("shadow book record skipped: %s", _sb_exc)
             return None
 
         # N-03 FIX: removed _transition(CONFIRMING) — runs in parallel, parent manages state

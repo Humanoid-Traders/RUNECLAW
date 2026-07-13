@@ -287,6 +287,15 @@ class MarketScanner:
             if getattr(CONFIG, "catalog_watch_enabled", True):
                 self._catalog_watch.observe(self._futures_symbols_raw,
                                             futures_result)
+            # Counterfactual shadow book tick — same free ticker map;
+            # advances paper fills/exits of gate-rejected ideas so every
+            # gate carries a measured price tag. Fail-open.
+            if getattr(CONFIG, "shadow_book_enabled", False):
+                try:
+                    from bot.core.shadow_book import SHADOW_BOOK
+                    SHADOW_BOOK.update(futures_result)
+                except Exception as _sb_exc:
+                    system_log.debug("shadow book tick skipped: %s", _sb_exc)
 
         # ── Crypto discovery ─────────────────────────────────────────
         # FUTURES-FIRST (default): the crypto universe is gated on the
