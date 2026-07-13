@@ -1223,6 +1223,16 @@ class AnalyzerConfig:
     # fill zone. Honest expectation: weak literature; expected to be a marginal
     # or negative A/B. Off = byte-identical (no idea is ever vetoed).
     candle_entry_veto_enabled: bool = _env_bool("CANDLE_ENTRY_VETO_ENABLED", False)
+    # All-timeframes candles (default ON): run the candlestick detector on
+    # EVERY fetched timeframe (15m/1h/4h/1d — already in memory for the
+    # Elliott/MTF work, zero extra API calls) and add ONE bounded
+    # cross-degree agreement vote (higher degrees weighted more: a 1d
+    # engulfing summarizes 24x the order flow of a 1h one). The map also
+    # feeds the entry veto: when the veto feature above is ON, a veto-grade
+    # opposing reversal on the 4h/1d last CLOSED bar also vetoes a pullback
+    # limit — the degree ABOVE the trade saying "reversal" is stronger
+    # evidence than the primary bar alone. Map: indicators["candle_mtf"].
+    candle_mtf_enabled: bool = _env_bool("CANDLE_MTF_ENABLED", True)
     # Voter dilution fix (default ON; audit fix #16). The five always-vote
     # voters (rsi/macd/bb/adx/volume_spike) appended a 0-vote even when their
     # input was missing or neutral-by-default, inflating the denominator and
@@ -1487,6 +1497,25 @@ class TrailingStopConfig:
     # activation are the obvious knobs).
     structure_trail_enabled: bool = _env_bool("STRUCTURE_TRAIL_ENABLED", False)
     structure_trail_buffer_atr: float = _env_float("STRUCTURE_TRAIL_BUFFER_ATR", 0.25)
+    # Wave-anchored trailing — the structure-trail retune the measured-OFF
+    # note above invited. Same tighten-only ratchet, but pivots come from the
+    # ATR-normalized ZigZag (the Elliott pivot engine): a pivot registers only
+    # after a >= zigzag_atr_mult*ATR reversal, so the stop trails genuine wave
+    # lows/highs, not the 3-bar wiggles that cut winners short. Live trails
+    # the SUB-DEGREE of the entry (swing/4h entry -> 1h sub-wave pivots);
+    # the backtest applies the same pivot engine on the run timeframe.
+    # Takes precedence over structure_trail when both are on. Buffer reuses
+    # structure_trail_buffer_atr. MEASURED (2026-07-13, v1+v2 frozen
+    # benchmarks, ladder on AND off): zero delta vs baseline in every cell —
+    # the multistage ATR trail + stage floors are almost always tighter than
+    # a confirmed ZigZag pivot, so the wave anchor rarely binds. Default ON:
+    # provably non-harmful, tighten-only behind CONFIRMED structure, and it
+    # becomes the binding stop exactly when the ATR trail is loosened
+    # (TRAIL_STAGE*_ATR_MULT up) or in early stage-1 trailing on choppy
+    # trends. Note: the same A/B found the backtest LADDER path skips all
+    # trailing (parity gap) — see PR #356.
+    wave_trail_enabled: bool = _env_bool("WAVE_TRAIL_ENABLED", True)
+    wave_trail_zigzag_atr_mult: float = _env_float("WAVE_TRAIL_ZIGZAG_ATR_MULT", 1.5)
 
 
 @dataclass(frozen=True)

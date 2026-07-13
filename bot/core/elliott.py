@@ -83,7 +83,7 @@ def atr_zigzag_pivots(
     behaves like the fractal version.
     """
     n = len(closes)
-    empty = {"swing_highs": [], "swing_lows": []}
+    empty: dict = {"swing_highs": [], "swing_lows": []}
     if n < 3:
         return empty
 
@@ -146,6 +146,22 @@ _DEFAULT_TF_FOR_STRATEGY = {
     "swing": "4h",
     "position": "1d",
 }
+
+
+# Sub-degree map for wave-anchored trailing: a position entered on degree X
+# trails behind the confirmed wave pivots of the degree BELOW it (a swing
+# entered on 4h waves exits leg-by-leg on the 1h sub-waves).
+_SUBDEGREE_TF = {
+    "scalp": "5m",
+    "intraday": "15m",
+    "swing": "1h",
+    "position": "4h",
+}
+
+
+def subdegree_timeframe(strategy_type: str) -> str:
+    """Candle timeframe of the wave degree BELOW ``strategy_type``'s degree."""
+    return _SUBDEGREE_TF.get(strategy_type, "1h")
 
 
 def timeframe_for_strategy(strategy_type: str, overrides: Optional[dict] = None) -> str:
@@ -341,7 +357,7 @@ def project_targets(pattern: Optional[dict]) -> dict:
         w1_top = levels.get("w1_top")
         w2_low = levels.get("w2_low")
         w3_top = levels.get("w3_top")
-        if None in (w1_start, w1_top, w2_low):
+        if w1_start is None or w1_top is None or w2_low is None:
             return {}
         w1_len = w1_top - w1_start
         if w1_len <= 0:
@@ -361,7 +377,7 @@ def project_targets(pattern: Optional[dict]) -> dict:
         w1_low = levels.get("w1_low")
         w2_high = levels.get("w2_high")
         w3_low = levels.get("w3_low")
-        if None in (w1_start, w1_low, w2_high):
+        if w1_start is None or w1_low is None or w2_high is None:
             return {}
         w1_len = w1_start - w1_low
         if w1_len <= 0:

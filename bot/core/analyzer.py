@@ -1119,6 +1119,16 @@ class Analyzer:
             except Exception as exc:
                 system_log.debug("MTF Elliott alignment skipped: %s", exc)
 
+        # ── All-timeframes candlestick map (gated, default ON) ──────────
+        # Candle formations on every fetched degree (a 1d engulfing outranks
+        # a 15m one); one bounded agreement vote + HTF veto input. Zero
+        # extra API calls (reuses mtf_candles). Fail-open.
+        if getattr(CONFIG.analyzer, "candle_mtf_enabled", False) and mtf_candles:
+            try:
+                _apply_mtf_candles(indicators, mtf_candles)
+            except Exception as exc:
+                system_log.debug("MTF candle map skipped: %s", exc)
+
         # ── Scalp session VWAP from 15m (gated, default ON) ─────────────
         # Rebuild the session anchor scalps read from the 15m series BEFORE
         # setup anchoring re-points "vwap" to it. Fail-open to the 1h session.
@@ -1860,6 +1870,14 @@ class Analyzer:
         if (getattr(CONFIG.analyzer, "candle_entry_veto_enabled", False) is True
                 and order_type == "limit"):
             _veto = candle_entry_veto(candle_patterns, direction)
+            # Higher-degree extension: a veto-grade opposing reversal on the
+            # 4h/1d last CLOSED bar (from the all-timeframes candle map) also
+            # vetoes — the degree ABOVE the trade printing "reversal" is
+            # stronger evidence than the primary bar alone. Only active when
+            # the map exists (candle_mtf_enabled) and the veto feature is on.
+            if not _veto:
+                _htf = (indicators.get("candle_mtf") or {}).get("htf_veto") or {}
+                _veto = _htf.get(direction.value)
             if _veto:
                 audit(trade_log, f"Idea vetoed by candle pattern: {_veto}",
                       action="analyze", result="SKIP", data={"symbol": signal.symbol})
@@ -2985,6 +3003,16 @@ class Analyzer:
         elif bull_count > 0 or bear_count > 0:
             votes.append(0.0)
             aw(0.4, "candlestick")
+
+        # Cross-degree candlestick vote (gated, default ON). One bounded
+        # vote from the all-timeframes candle map: degree agreement (15m/1h/
+        # 4h/1d, higher degrees weighted more) votes its signed strength.
+        # Dead-zone below |0.05| so mixed/neutral maps never vote.
+        _cmtf = indicators.get("candle_mtf")
+        if _cmtf and abs(float(_cmtf.get("alignment", 0.0) or 0.0)) > 0.05:
+            _calign = max(-1.0, min(1.0, float(_cmtf["alignment"])))
+            votes.append(_calign)
+            aw(_boost(0.5, "candles_mtf"), "candles_mtf")
 
         # Fibonacci zone vote (weight 0.5 — mean-reversion near key levels).
         # Direction-aware (audit fix #4): the zone means "how deep price has
@@ -4670,6 +4698,12 @@ def _detect_candlestick_patterns(
         # Doji: body < 10% of range
         if body_pct < 0.10:
             patterns["doji"] = "neutral"
+            # Long-legged doji: violent two-sided auction (both wicks long).
+            # Neutral like the plain doji (display/LLM context, no vote) but
+            # named — on higher degrees it marks a battle zone, not drift.
+            if (last_upper >= 0.35 * last_range
+                    and last_lower >= 0.35 * last_range):
+                patterns["long_legged_doji"] = "neutral"
 
         # Directional doji (audit fix): a plain doji is neutral (display only),
         # but the dragonfly/gravestone variants carry direction — a dragonfly
@@ -4829,5 +4863,72 @@ def candle_entry_veto(patterns: dict, direction) -> Optional[str]:
     if hits:
         return f"CANDLE_VETO: opposing reversal {', '.join(sorted(hits))}"
     return None
+
+
+# Higher wave degrees carry more evidential weight for candle formations too:
+# a 1d engulfing summarizes 24x the order flow of a 1h one.
+_CANDLE_DEGREE_WEIGHT = {"15m": 0.7, "1h": 1.0, "4h": 1.3, "1d": 1.5}
+
+
+def mtf_candle_map(mtf_candles: dict) -> dict:
+    """Run the candlestick detector on the last CLOSED bars of EVERY supplied
+    timeframe and produce a cross-degree agreement read.
+
+    Per timeframe: net = strength-weighted (bull − bear) / (bull + bear)
+    using ``_CANDLE_STRENGTH`` — the same normalization the primary-degree
+    confluence vote uses. Degrees are then combined with
+    ``_CANDLE_DEGREE_WEIGHT`` (a 1d formation outranks a 15m one) into an
+    ``alignment`` in [-1, 1].
+
+    Also records, for the HIGHER degrees (4h/1d), any veto-grade opposing
+    reversal via ``candle_entry_veto`` so the entry veto can consult the
+    degree above the trade, not just the primary bar.
+
+    Returns ``{"by_tf": {tf: {"patterns", "net"}}, "alignment", "n_timeframes",
+    "htf_veto": {"LONG": reason|None, "SHORT": reason|None}}``.
+    Pure math; never raises; empty input yields a neutral map.
+    """
+    by_tf: dict = {}
+    num = 0.0
+    den = 0.0
+    htf_veto: dict = {"LONG": None, "SHORT": None}
+    for tf, series in (mtf_candles or {}).items():
+        try:
+            if not series or len(series) < 12:
+                continue
+            arr = np.asarray(series, dtype=float)
+            opens, highs = arr[:, 1], arr[:, 2]
+            lows, closes = arr[:, 3], arr[:, 4]
+            pats = _detect_candlestick_patterns(opens, highs, lows, closes)
+            if not pats:
+                continue
+            bull = sum(_CANDLE_STRENGTH.get(k, 1.0)
+                       for k, v in pats.items() if v == "bullish")
+            bear = sum(_CANDLE_STRENGTH.get(k, 1.0)
+                       for k, v in pats.items() if v == "bearish")
+            net = (bull - bear) / max(bull + bear, 1e-9) if (bull or bear) else 0.0
+            w = _CANDLE_DEGREE_WEIGHT.get(tf, 1.0)
+            num += w * net
+            den += w
+            by_tf[tf] = {"patterns": pats, "net": round(net, 4)}
+            if tf in ("4h", "1d"):
+                for _dir in ("LONG", "SHORT"):
+                    if htf_veto[_dir] is None:
+                        _v = candle_entry_veto(pats, _dir)
+                        if _v:
+                            htf_veto[_dir] = f"{tf}: {_v}"
+        except Exception:  # noqa: BLE001 — one bad series never voids the map
+            continue
+    alignment = max(-1.0, min(1.0, (num / den) if den > 0 else 0.0))
+    return {"by_tf": by_tf, "alignment": round(alignment, 4),
+            "n_timeframes": len(by_tf), "htf_veto": htf_veto}
+
+
+def _apply_mtf_candles(indicators: dict, mtf_candles: dict) -> None:
+    """Store the cross-degree candle map as ``indicators["candle_mtf"]`` when
+    at least two degrees resolved. Fail-open; mutates only on success."""
+    cmap = mtf_candle_map(mtf_candles)
+    if cmap.get("n_timeframes", 0) >= 2:
+        indicators["candle_mtf"] = cmap
 
 

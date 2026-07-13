@@ -4467,10 +4467,33 @@ class LiveExecutor:
                         rule=CONFIG.trailing.trail_rule,
                         playbook_atr_mult=CONFIG.trailing.playbook_atr_mult,
                     )
+                    # Wave-anchored ratchet (mirrors the backtest): once
+                    # trailing is active, tighten behind the newest CONFIRMED
+                    # ZigZag wave pivot of the SUB-DEGREE of this setup (a
+                    # swing entered on 4h waves exits leg-by-leg on 1h
+                    # sub-wave pivots). Takes precedence over the fractal
+                    # structure ratchet. Closed candles only, cached, fail-open.
+                    if (CONFIG.trailing.wave_trail_enabled and trailing_active):
+                        try:
+                            from bot.core.elliott import subdegree_timeframe
+                            _tf = subdegree_timeframe(pos_strategy)
+                            _hlc = await self._struct_candles(
+                                exchange, pos.symbol, _tf)
+                            if _hlc:
+                                from bot.utils.trailing import wave_ratchet
+                                _buf = (CONFIG.trailing.structure_trail_buffer_atr
+                                        * float(pos.trailing_state.get("atr") or 0.0))
+                                new_sl = wave_ratchet(
+                                    _hlc[0], _hlc[1], _hlc[2], pos.direction,
+                                    new_sl, _buf,
+                                    zigzag_atr_mult=CONFIG.trailing.wave_trail_zigzag_atr_mult)
+                        except Exception as _wv_exc:
+                            logger.debug("wave ratchet skipped for %s: %s",
+                                         pos.symbol, _wv_exc)
                     # Structure ratchet (mirrors the backtest): once trailing
                     # is active, tighten behind the newest CONFIRMED 1h swing.
                     # Closed candles only, cached 5 min, fail-open.
-                    if (CONFIG.trailing.structure_trail_enabled and trailing_active):
+                    elif (CONFIG.trailing.structure_trail_enabled and trailing_active):
                         try:
                             _hl = await self._struct_candles(exchange, pos.symbol)
                             if _hl:
@@ -5270,29 +5293,32 @@ class LiveExecutor:
                   data={"trade_id": trade_id, "error": str(exc)})
             return None
 
-    async def _struct_candles(self, exchange, symbol: str):
-        """Last ~40 CLOSED 1h bar (highs, lows) for the structure ratchet,
-        cached 5 minutes per symbol. Returns (highs, lows) or None."""
+    async def _struct_candles(self, exchange, symbol: str, timeframe: str = "1h"):
+        """Last ~40 CLOSED bars (highs, lows, closes) of ``timeframe`` for the
+        structure/wave ratchets, cached 5 minutes per (symbol, timeframe).
+        Returns (highs, lows, closes) or None."""
         cache = getattr(self, "_struct_cache", None)
         if cache is None:
             cache = {}
             self._struct_cache = cache
         now = time.time()
-        hit = cache.get(symbol)
+        key = (symbol, timeframe)
+        hit = cache.get(key)
         if hit and now - hit[0] < 300:
             return hit[1]
         try:
-            ohlcv = await exchange.fetch_ohlcv(symbol, "1h", limit=45)
+            ohlcv = await exchange.fetch_ohlcv(symbol, timeframe, limit=45)
             from bot.utils.candles import drop_forming_candle
-            ohlcv = drop_forming_candle(ohlcv, "1h")
+            ohlcv = drop_forming_candle(ohlcv, timeframe)
             if not ohlcv or len(ohlcv) < 8:
                 return None
-            hl = ([float(c[2]) for c in ohlcv[-40:]],
-                  [float(c[3]) for c in ohlcv[-40:]])
-            cache[symbol] = (now, hl)
+            hlc = ([float(c[2]) for c in ohlcv[-40:]],
+                   [float(c[3]) for c in ohlcv[-40:]],
+                   [float(c[4]) for c in ohlcv[-40:]])
+            cache[key] = (now, hlc)
             if len(cache) > 50:
                 cache.pop(next(iter(cache)))
-            return hl
+            return hlc
         except Exception:
             return None
 
