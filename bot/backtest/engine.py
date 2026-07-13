@@ -568,7 +568,7 @@ class BacktestEngine:
             # extremes (this bar included — by the time stops are checked the
             # bar is complete in replay, matching live's closed-candle fetch).
             _sw = bt_meta.setdefault("struct_win", [])
-            _sw.append((bar.high, bar.low))
+            _sw.append((bar.high, bar.low, bar.close))
             if len(_sw) > 40:
                 del _sw[0]
 
@@ -657,18 +657,26 @@ class BacktestEngine:
     def _maybe_structure_ratchet(bt_meta: dict, sl: float, direction: str) -> float:
         """Ratchet the stop behind the newest confirmed swing once trailing
         is active (>=1R) — tighten-only, on top of the ATR trail. Mirrors the
-        live executor's closed-candle ratchet."""
-        if not CONFIG.trailing.structure_trail_enabled:
+        live executor's closed-candle ratchet. Wave-anchored (ZigZag pivots)
+        takes precedence over the fractal ratchet when both flags are on."""
+        _wave_on = CONFIG.trailing.wave_trail_enabled
+        if not (_wave_on or CONFIG.trailing.structure_trail_enabled):
             return sl
         if not bt_meta.get("trailing_active"):
             return sl
         win = bt_meta.get("struct_win") or []
         if len(win) < 7:
             return sl
-        from bot.utils.trailing import structure_ratchet
         highs = [w[0] for w in win]
         lows = [w[1] for w in win]
         buf = CONFIG.trailing.structure_trail_buffer_atr * float(bt_meta.get("atr") or 0.0)
+        if _wave_on:
+            from bot.utils.trailing import wave_ratchet
+            closes = [w[2] for w in win]
+            return wave_ratchet(
+                highs, lows, closes, direction, sl, buf,
+                zigzag_atr_mult=CONFIG.trailing.wave_trail_zigzag_atr_mult)
+        from bot.utils.trailing import structure_ratchet
         return structure_ratchet(highs, lows, direction, sl, buf)
 
     def _close_position(

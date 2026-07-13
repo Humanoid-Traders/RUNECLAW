@@ -1487,6 +1487,18 @@ class TrailingStopConfig:
     # activation are the obvious knobs).
     structure_trail_enabled: bool = _env_bool("STRUCTURE_TRAIL_ENABLED", False)
     structure_trail_buffer_atr: float = _env_float("STRUCTURE_TRAIL_BUFFER_ATR", 0.25)
+    # Wave-anchored trailing — the structure-trail retune the measured-OFF
+    # note above invited. Same tighten-only ratchet, but pivots come from the
+    # ATR-normalized ZigZag (the Elliott pivot engine): a pivot registers only
+    # after a >= zigzag_atr_mult*ATR reversal, so the stop trails genuine wave
+    # lows/highs, not the 3-bar wiggles that cut winners short. Live trails
+    # the SUB-DEGREE of the entry (swing/4h entry -> 1h sub-wave pivots);
+    # the backtest applies the same pivot engine on the run timeframe.
+    # Takes precedence over structure_trail when both are on. Buffer reuses
+    # structure_trail_buffer_atr. Default set by the frozen-benchmark A/B
+    # (see the wave-trail PR); env-flippable either way.
+    wave_trail_enabled: bool = _env_bool("WAVE_TRAIL_ENABLED", True)
+    wave_trail_zigzag_atr_mult: float = _env_float("WAVE_TRAIL_ZIGZAG_ATR_MULT", 1.5)
 
 
 @dataclass(frozen=True)

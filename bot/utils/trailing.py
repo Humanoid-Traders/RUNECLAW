@@ -293,6 +293,59 @@ def _legacy_update(
     return sl, state["trailing_active"]
 
 
+def wave_ratchet(
+    highs: list[float],
+    lows: list[float],
+    closes: list[float],
+    direction: str,
+    current_sl: float,
+    buffer: float,
+    zigzag_atr_mult: float = 1.5,
+) -> float:
+    """Ratchet the stop just beyond the newest STRUCTURAL wave pivot.
+
+    Same tighten-only contract as ``structure_ratchet``, but the pivots
+    come from the ATR-normalized ZigZag (the Elliott pivot engine): a
+    pivot only registers once price reverses >= ``zigzag_atr_mult``·ATR
+    from the running extreme — confirmed by construction, no repaint. So
+    the stop trails genuine wave lows/highs instead of the 3-bar noise
+    wiggles that made the fractal ratchet cut winners short (measured:
+    ~1.3pp and ~17 trades on the honest benchmark — the reason
+    STRUCTURE_TRAIL_ENABLED defaulted OFF).
+
+    For LONG: newest ZigZag swing low − ``buffer``, adopted only if
+    TIGHTER than ``current_sl``. SHORT mirrors with swing highs.
+    Fail-open: any error returns ``current_sl`` unchanged.
+    """
+    try:
+        import numpy as np
+
+        from bot.core.elliott import atr_zigzag_pivots
+
+        n = len(closes)
+        if n < 8 or buffer < 0 or len(highs) != n or len(lows) != n:
+            return current_sl
+        piv = atr_zigzag_pivots(
+            np.asarray(highs, dtype=float),
+            np.asarray(lows, dtype=float),
+            np.asarray(closes, dtype=float),
+            atr_mult=zigzag_atr_mult,
+        )
+        if direction == "LONG":
+            swing_lows = piv.get("swing_lows") or []
+            if not swing_lows:
+                return current_sl
+            candidate = float(swing_lows[-1][1]) - buffer
+            return max(current_sl, candidate)
+        swing_highs = piv.get("swing_highs") or []
+        if not swing_highs:
+            return current_sl
+        candidate = float(swing_highs[-1][1]) + buffer
+        return min(current_sl, candidate)
+    except Exception:  # noqa: BLE001 — a trailing helper must never raise
+        return current_sl
+
+
 def structure_ratchet(
     highs: list[float],
     lows: list[float],
