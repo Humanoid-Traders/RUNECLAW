@@ -360,7 +360,7 @@ class TelegramHandler:
             ("venue", self._cmd_venue),
             ("classpf", self._cmd_classpf),
             ("funding", self._cmd_funding),
-            ("parity", self._cmd_parity),
+            ("parity", self._cmd_parity), ("shadow", self._cmd_shadow),
             ("grant_live", self._cmd_grant_live), ("revoke_live", self._cmd_revoke_live),
             ("set_tier", self._cmd_set_tier),
             # Marketing / channel forwarder
@@ -2550,6 +2550,19 @@ class TelegramHandler:
         await self._send(update, "\n".join(lines))
 
     # ── Live↔backtest parity ──────────────────────────────────
+
+    async def _cmd_shadow(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """Admin only: /shadow — the counterfactual shadow book scoreboard.
+        Every gate-rejected idea trades on paper; a gate whose blocked
+        trades net POSITIVE R is eating edge, negative is saving money."""
+        if not self._is_admin(update):
+            await self._send(update, f"\U0001f512 {t('admin_only', self._lang(update))}")
+            return
+        try:
+            from bot.core.shadow_book import SHADOW_BOOK
+            await self._send(update, SHADOW_BOOK.render_report())
+        except Exception as exc:
+            await self._send(update, f"Shadow book unavailable: {exc}")
 
     async def _cmd_parity(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """Admin only: /parity — the live↔backtest parity report, on demand
