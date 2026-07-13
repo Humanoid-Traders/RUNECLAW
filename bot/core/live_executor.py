@@ -3423,6 +3423,20 @@ class LiveExecutor:
         except Exception:
             return ""
 
+    @staticmethod
+    def _sl_reject_means_breached(reason: str) -> bool:
+        """True when the venue's stop-loss rejection says the trigger price
+        is already on the wrong side of the market — i.e. the stop level is
+        ALREADY BREACHED (Bitget 25588: "the stop-loss trigger price must be
+        greater/less than the latest price"). Retrying placement is futile;
+        the position must be closed as a stop hit. Requires the stop-loss
+        leg to be named so a TP-side price rejection never force-closes."""
+        r = (reason or "").lower()
+        if "stop" not in r:
+            return False
+        return ("25588" in r
+                or ("trigger price must be" in r and "latest price" in r))
+
     async def _place_sl_tp(
         self, exchange: ccxt.Exchange, symbol: str,
         direction: Direction, quantity: float,
@@ -4418,13 +4432,29 @@ class LiveExecutor:
                 ):
                     _ts = (tickers.get(pos.symbol) or {}).get("timestamp")
                     _age = time.time() - float(_ts) / 1000.0 if _ts else -1.0
+                    if pos.sl_order_id:
+                        audit(trade_log,
+                              f"Stale ticker for {pos.symbol} ({_age:.0f}s old) — skipping "
+                              f"local SL/TP this cycle; exchange stop still active",
+                              action="ticker_stale", result="SKIPPED", level=logging.WARNING,
+                              data={"symbol": pos.symbol, "age_sec": round(_age, 1),
+                                    "max_age": CONFIG.execution.live_ticker_max_age_sec})
+                        continue
+                    # UNPROTECTED position (no exchange stop): skipping on a
+                    # stale ticker leaves it with NO protection at all. Thin
+                    # TradFi perps trade sparsely, so their tickers are stale
+                    # most cycles — live incident XPD: the venue rejected the
+                    # stop as already-breached (25588) and this skip kept the
+                    # local backstop from ever running while price sat past
+                    # the stop for 40+ minutes. A stale price is a better
+                    # guardian than no price — monitor anyway.
                     audit(trade_log,
-                          f"Stale ticker for {pos.symbol} ({_age:.0f}s old) — skipping "
-                          f"local SL/TP this cycle; exchange stop still active",
-                          action="ticker_stale", result="SKIPPED", level=logging.WARNING,
+                          f"Stale ticker for {pos.symbol} ({_age:.0f}s old) but position "
+                          f"is UNPROTECTED — running local SL/TP on the stale price",
+                          action="ticker_stale", result="MONITORING_UNPROTECTED",
+                          level=logging.WARNING,
                           data={"symbol": pos.symbol, "age_sec": round(_age, 1),
                                 "max_age": CONFIG.execution.live_ticker_max_age_sec})
-                    continue
 
                 # ── Trailing stop update ──
                 if CONFIG.trailing.enabled and pos.trailing_state is not None:
@@ -4504,6 +4534,35 @@ class LiveExecutor:
                                   data={"trade_id": trade_id, "sl_id": sl_id, "tp_id": tp_id})
                     except Exception as exc:
                         logger.debug("SL/TP retry failed for %s: %s", pos.symbol, exc)
+
+                # ── Breach-by-rejection: the venue just TOLD us the stop is hit ──
+                # When the retry above still could not place the stop and the
+                # recorded rejection is the 25588 family ("trigger price must
+                # be greater/less than the latest price"), the market is
+                # ALREADY past the stop level — the venue validated against a
+                # fresher price than our ticker. Close as a stop hit NOW
+                # instead of retrying a placement that can never succeed
+                # (live incident XPD: 40+ minutes past the stop, unprotected,
+                # while placement was retried every tick).
+                if not pos.sl_order_id and pos.stop_loss > 0:
+                    _rej = self._last_sltp_reason(pos.symbol)
+                    if self._sl_reject_means_breached(_rej):
+                        _trail = bool(pos.trailing_state
+                                      and pos.trailing_state.get("trailing_active"))
+                        reason = stop_exit_label(
+                            pos.direction == "LONG", pos.entry_price,
+                            pos.stop_loss, exit_price=price,
+                            trailing_active=_trail)
+                        audit(trade_log,
+                              f"Stop breach confirmed by venue rejection for {pos.symbol}: "
+                              f"closing as {reason} (rejection: {_rej[:120]})",
+                              action="sl_reject_breach_close", result="CLOSING",
+                              data={"trade_id": trade_id, "symbol": pos.symbol,
+                                    "stop_loss": pos.stop_loss, "price": price,
+                                    "rejection": _rej[:180]})
+                        msg = await self.close_position(trade_id, reason, price)
+                        closed_messages.append(msg)
+                        continue
 
                 # ── Escalate a persistently-unprotected position ──
                 # If the per-tick retry above STILL could not place an exchange
