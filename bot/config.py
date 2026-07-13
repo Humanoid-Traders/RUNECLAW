@@ -1490,11 +1490,15 @@ class TrailingStopConfig:
     # top of whichever ATR rule is active. Applied identically in the
     # backtest (bar window per position) and live (closed 1h candles,
     # cached, fail-open).
-    # MEASURED default OFF: on the honest 10-perp benchmark the ratchet cut
-    # winners short and compounded with the mode floor (together: 44 -> 12
-    # trades, +3.66% -> -0.22%; trail alone cost ~1.3pp and ~17 trades).
-    # Fully built and env-flippable for re-tuning (wider fractal / later
-    # activation are the obvious knobs).
+    # MEASURED default OFF. History: the original measurement (pre-ladder
+    # replay) showed the fractal ratchet cutting winners short (~1.3pp).
+    # RE-MEASURED 2026-07-13 under the corrected parity replay (ladder +
+    # trailing composed like live): the ratchet is INERT — identical results
+    # in all 9 cells across v1/v2 alts+majors — because the multistage
+    # trail's stage floors (breakeven at 1R, lock at 2R) are almost always
+    # tighter than a 3-bar swing low. OFF stays the default: it does
+    # nothing under current settings and only re-binds if the ATR trail is
+    # loosened. Env-flippable either way.
     structure_trail_enabled: bool = _env_bool("STRUCTURE_TRAIL_ENABLED", False)
     structure_trail_buffer_atr: float = _env_float("STRUCTURE_TRAIL_BUFFER_ATR", 0.25)
     # Wave-anchored trailing — the structure-trail retune the measured-OFF
