@@ -1223,6 +1223,16 @@ class AnalyzerConfig:
     # fill zone. Honest expectation: weak literature; expected to be a marginal
     # or negative A/B. Off = byte-identical (no idea is ever vetoed).
     candle_entry_veto_enabled: bool = _env_bool("CANDLE_ENTRY_VETO_ENABLED", False)
+    # All-timeframes candles (default ON): run the candlestick detector on
+    # EVERY fetched timeframe (15m/1h/4h/1d — already in memory for the
+    # Elliott/MTF work, zero extra API calls) and add ONE bounded
+    # cross-degree agreement vote (higher degrees weighted more: a 1d
+    # engulfing summarizes 24x the order flow of a 1h one). The map also
+    # feeds the entry veto: when the veto feature above is ON, a veto-grade
+    # opposing reversal on the 4h/1d last CLOSED bar also vetoes a pullback
+    # limit — the degree ABOVE the trade saying "reversal" is stronger
+    # evidence than the primary bar alone. Map: indicators["candle_mtf"].
+    candle_mtf_enabled: bool = _env_bool("CANDLE_MTF_ENABLED", True)
     # Voter dilution fix (default ON; audit fix #16). The five always-vote
     # voters (rsi/macd/bb/adx/volume_spike) appended a 0-vote even when their
     # input was missing or neutral-by-default, inflating the denominator and
