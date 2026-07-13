@@ -1495,8 +1495,15 @@ class TrailingStopConfig:
     # the SUB-DEGREE of the entry (swing/4h entry -> 1h sub-wave pivots);
     # the backtest applies the same pivot engine on the run timeframe.
     # Takes precedence over structure_trail when both are on. Buffer reuses
-    # structure_trail_buffer_atr. Default set by the frozen-benchmark A/B
-    # (see the wave-trail PR); env-flippable either way.
+    # structure_trail_buffer_atr. MEASURED (2026-07-13, v1+v2 frozen
+    # benchmarks, ladder on AND off): zero delta vs baseline in every cell —
+    # the multistage ATR trail + stage floors are almost always tighter than
+    # a confirmed ZigZag pivot, so the wave anchor rarely binds. Default ON:
+    # provably non-harmful, tighten-only behind CONFIRMED structure, and it
+    # becomes the binding stop exactly when the ATR trail is loosened
+    # (TRAIL_STAGE*_ATR_MULT up) or in early stage-1 trailing on choppy
+    # trends. Note: the same A/B found the backtest LADDER path skips all
+    # trailing (parity gap) — see PR #356.
     wave_trail_enabled: bool = _env_bool("WAVE_TRAIL_ENABLED", True)
     wave_trail_zigzag_atr_mult: float = _env_float("WAVE_TRAIL_ZIGZAG_ATR_MULT", 1.5)
 
