@@ -76,6 +76,23 @@ def _pf(nets: list[float]) -> float:
     return (gross_win / gross_loss) if gross_loss > 0 else float("inf")
 
 
+# Pre-#52 close records carry labels the current code no longer writes.
+# "MANUAL CLOSE" was the catch-all asserted for ANY unattributable close
+# (unclassified Bitget closeType, close fill not matching tracked SL/TP
+# order ids, exit between SL and TP) — none of which prove a user close;
+# genuine operator closes travel their own paths (manual_telegram /
+# manual_nlp). Same semantics as today's honest "CLOSED (unknown)", so
+# the report merges them rather than resurrecting the misnomer.
+_LEGACY_REASON_ALIASES = {
+    "MANUAL CLOSE": "CLOSED (unknown)",
+}
+
+
+def _exit_reason(t: dict) -> str:
+    r = str(t.get("close_reason") or "(unknown)")
+    return _LEGACY_REASON_ALIASES.get(r, r)
+
+
 def _group(trades: list[dict], key: str) -> dict[str, dict]:
     groups: dict[str, list[float]] = {}
     for t in trades:
@@ -132,7 +149,9 @@ def parity_summary(trades: list[dict], modeled_commission_pct: float) -> dict:
         "inferred_fills": sum(1 for t in trades if t.get("fill_source") == "ticker_fallback"),
         "by_signal_type": _group(trades, "signal_type"),
         "by_setup": _group(trades, "strategy_type"),
-        "by_exit_reason": _group(trades, "close_reason"),
+        "by_exit_reason": _group(
+            [{**t, "close_reason": _exit_reason(t)} for t in trades],
+            "close_reason"),
     }
 
 
