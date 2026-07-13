@@ -231,6 +231,82 @@ def wave_action(pattern: Optional[dict]) -> dict:
     return {"action": "wait", "bias": "neutral", "weight_mult": 1.0, "reason": "unclassified wave"}
 
 
+# ── 3b. Cross-degree (all-timeframes) wave alignment ────────────────────
+
+# Higher wave degrees carry more weight: a 1d structure outranks a 15m one.
+_DEGREE_WEIGHT = {"15m": 0.7, "1h": 1.0, "4h": 1.3, "1d": 1.5}
+_TERMINAL_DEGREES = ("4h", "1d")   # terminal structure here = exhaustion risk
+
+
+def mtf_wave_map(patterns_by_tf: dict) -> dict:
+    """Cross-degree Elliott alignment across every supplied timeframe.
+
+    ``patterns_by_tf`` maps a timeframe string ("15m"/"1h"/"4h"/"1d") to the
+    best detected Elliott pattern on that series (or None). Each pattern's
+    raw signal is converted to an EFFECTIVE signed vote using the same
+    doctrine the confluence voter applies on the primary degree:
+
+      - completed corrective (ABC/WXY, bias "with", action "enter") votes
+        the RESUMPTION direction — the flip of the correction's own label;
+      - wave_action's weight_mult scales conviction (terminal W5 / ending
+        diagonal contributes little; W3 contributes most);
+      - higher degrees outrank lower ones (_DEGREE_WEIGHT).
+
+    Returns::
+
+        {"by_tf": {tf: {"name", "signal", "action", "bias",
+                        "weight_mult", "effective"}},
+         "alignment": float,             # [-1, 1], + = bullish agreement
+         "dominant_bias": "bullish" | "bearish" | "neutral",
+         "higher_degree_terminal": bool, # 4h/1d in W5/ending diag/truncated
+         "n_timeframes": int}
+
+    Pure math, never raises; empty/None input yields a neutral map.
+    """
+    by_tf: dict = {}
+    num = 0.0
+    den = 0.0
+    terminal = False
+    for tf, pat in (patterns_by_tf or {}).items():
+        if not pat:
+            continue
+        try:
+            act = wave_action(pat)
+            sig = str(pat.get("signal", "neutral"))
+            conf = float(pat.get("confidence", 0.5) or 0.5)
+            raw = conf if sig == "bullish" else -conf if sig == "bearish" else 0.0
+            name = str(pat.get("name", ""))
+            # Completed corrective doctrine: the tradeable direction is the
+            # RESUMPTION of the prior trend — flip the correction's label.
+            corrective = ("ABC" in name or "WXY" in name or "WXYXZ" in name)
+            if (corrective and act.get("bias") == "with"
+                    and act.get("action") == "enter"):
+                raw = -raw
+            effective = raw * float(act.get("weight_mult", 1.0))
+            if tf in _TERMINAL_DEGREES and (
+                    "Ending Diagonal" in name or "Truncated" in name
+                    or (act.get("action") in ("exit", "avoid"))):
+                terminal = True
+            w = _DEGREE_WEIGHT.get(tf, 1.0)
+            num += w * effective
+            den += w
+            by_tf[tf] = {"name": name, "signal": sig,
+                         "action": act.get("action", "wait"),
+                         "bias": act.get("bias", "neutral"),
+                         "weight_mult": round(float(act.get("weight_mult", 1.0)), 3),
+                         "effective": round(effective, 4)}
+        except Exception:  # noqa: BLE001 — one bad pattern never voids the map
+            continue
+    alignment = (num / den) if den > 0 else 0.0
+    alignment = max(-1.0, min(1.0, alignment))
+    dominant = ("bullish" if alignment > 0.15
+                else "bearish" if alignment < -0.15 else "neutral")
+    return {"by_tf": by_tf, "alignment": round(alignment, 4),
+            "dominant_bias": dominant,
+            "higher_degree_terminal": terminal,
+            "n_timeframes": len(by_tf)}
+
+
 def _infer_current_wave(pattern: dict) -> str:
     """Best-effort current-wave label when the detector didn't embed one."""
     desc = str(pattern.get("description", ""))
