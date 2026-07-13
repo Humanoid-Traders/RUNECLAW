@@ -583,6 +583,60 @@ class RiskEngine:
         except Exception:
             return 1.0
 
+    @property
+    def equity_throttle_multiplier(self) -> float:
+        """Continuous size multiplier from the rolling-PF equity throttle.
+
+        Maps the profit factor of the most recent ``equity_throttle_window``
+        realized closes to [floor_mult, 1.0] via a linear ramp (see
+        bot/risk/equity_throttle.py). Fails OPEN to 1.0 below
+        ``equity_throttle_min_samples``, when PF is undefined (no losses in
+        the window), or on any error. Tighten-only; never pauses.
+        """
+        try:
+            from bot.risk.equity_throttle import (
+                rolling_profit_factor, throttle_multiplier)
+            cfg = CONFIG.risk
+            recent = list(self._realized_pnl_window)[-cfg.equity_throttle_window:]
+            if len(recent) < cfg.equity_throttle_min_samples:
+                return 1.0
+            pf = rolling_profit_factor(recent)
+            return throttle_multiplier(
+                pf, pf_full=cfg.equity_throttle_pf_full,
+                pf_floor=cfg.equity_throttle_pf_floor,
+                floor_mult=cfg.equity_throttle_floor_mult)
+        except Exception:
+            return 1.0
+
+    def equity_throttle_state(self) -> dict:
+        """Read-only diagnostic snapshot of the equity throttle.
+
+        Returns ``{enabled, samples, pf, multiplier, status}`` where status is
+        ``OFF``, ``WARMUP``, ``OK`` (full size), or ``THROTTLED``. PF is None
+        while undefined (no losses in the window). Pure and fail-safe."""
+        try:
+            from bot.risk.equity_throttle import rolling_profit_factor
+            cfg = CONFIG.risk
+            enabled = bool(cfg.equity_throttle_enabled)
+            recent = list(self._realized_pnl_window)[-cfg.equity_throttle_window:]
+            n = len(recent)
+            pf = rolling_profit_factor(recent) if n else None
+            mult = self.equity_throttle_multiplier
+            if not enabled:
+                status = "OFF"
+            elif n < cfg.equity_throttle_min_samples:
+                status = "WARMUP"
+            elif mult < 1.0:
+                status = "THROTTLED"
+            else:
+                status = "OK"
+            return {"enabled": enabled, "samples": n,
+                    "pf": round(pf, 3) if pf is not None else None,
+                    "multiplier": round(mult, 3), "status": status}
+        except Exception:
+            return {"enabled": False, "samples": 0, "pf": None,
+                    "multiplier": 1.0, "status": "OFF"}
+
     def live_performance_state(self) -> dict:
         """Read-only diagnostic snapshot of the live-performance governor.
 
@@ -815,6 +869,18 @@ class RiskEngine:
                 else:
                     position_usd *= _gov_mult
 
+        # Continuous equity throttle (opt-in, default OFF): scale size off the
+        # rolling PF of recent realized closes — proportional degradation as
+        # performance drifts, instead of waiting for a discrete breaker step.
+        # Never pauses (floor > 0): reduced-size trades keep the window
+        # refreshing so the throttle can observe recovery and re-scale.
+        if CONFIG.risk.equity_throttle_enabled:
+            _thr_mult = self.equity_throttle_multiplier
+            if _thr_mult < 1.0:
+                position_usd *= _thr_mult
+                passed.append(f"EQUITY_THROTTLE: size×{_thr_mult:.2f} "
+                              "(rolling PF below full-size band)")
+
         # Drawdown recovery mode: require higher confidence, reduce size
         if self._in_drawdown_recovery:
             if idea.confidence < CONFIG.risk.drawdown_recovery_conf_min:
@@ -896,6 +962,14 @@ class RiskEngine:
         # trade exceed the hard cap.
         if regime_mult < 1.0:
             max_notional_usd *= regime_mult
+        # Equity throttle tightens the CAP as well as pre-cap size — the cap
+        # binds on ~every trade (see the regime_mult note above), so a pre-cap
+        # multiplication alone would be silently clamped away. Net effect:
+        # final size = throttle × min(pre-cap size, cap).
+        if CONFIG.risk.equity_throttle_enabled:
+            _thr_cap_mult = self.equity_throttle_multiplier
+            if _thr_cap_mult < 1.0:
+                max_notional_usd *= _thr_cap_mult
         if max_notional_usd > 0 and position_usd > max_notional_usd:
             position_usd = max_notional_usd
 

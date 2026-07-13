@@ -523,6 +523,21 @@ class RiskLimits:
     live_perf_pause_winrate: float = _env_float_bounded("LIVE_PERF_PAUSE_WINRATE", 0.25, 0.0, 1.0)
     # Size multiplier applied while in the reduce zone.
     live_perf_reduce_mult: float = _env_float_bounded("LIVE_PERF_REDUCE_MULT", 0.5, 0.05, 1.0)
+    # Fable-5 round 2 — CONTINUOUS equity-curve throttle. Scales size off the
+    # rolling profit factor of the most recent closed trades: PF >= pf_full →
+    # full size, PF <= pf_floor → floor_mult, linear ramp between. Unlike the
+    # step-function governor above it degrades size proportionally as PF
+    # drifts, and it NEVER pauses (floor > 0) — trades keep flowing at reduced
+    # size so the window keeps refreshing and the throttle can re-scale on
+    # recovery (a pause starves itself of the data needed to recover).
+    # Tighten-only, fail-open below min samples. Default OFF pending the
+    # pre-registered frozen-benchmark A/B.
+    equity_throttle_enabled: bool = _env_bool("EQUITY_THROTTLE_ENABLED", False)
+    equity_throttle_window: int = int(_env_float_bounded("EQUITY_THROTTLE_WINDOW", 20, 2, 100000))
+    equity_throttle_min_samples: int = int(_env_float_bounded("EQUITY_THROTTLE_MIN_SAMPLES", 10, 2, 100000))
+    equity_throttle_pf_full: float = _env_float_bounded("EQUITY_THROTTLE_PF_FULL", 1.2, 0.1, 10.0)
+    equity_throttle_pf_floor: float = _env_float_bounded("EQUITY_THROTTLE_PF_FLOOR", 0.8, 0.0, 10.0)
+    equity_throttle_floor_mult: float = _env_float_bounded("EQUITY_THROTTLE_FLOOR_MULT", 0.25, 0.05, 1.0)
 
 
 @dataclass(frozen=True)

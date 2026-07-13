@@ -720,6 +720,51 @@ defaults:
     description: >
       Size multiplier applied while the governor is in the reduce zone.
 
+  equity_throttle_enabled:
+    value: false
+    env_var: EQUITY_THROTTLE_ENABLED
+    description: >
+      Continuous equity-curve throttle: scales position size off the rolling
+      profit factor of recent realized closes via a linear ramp, instead of
+      the governor's discrete steps. Tighten-only; never pauses (the floor
+      keeps trades flowing so the window refreshes and recovery is
+      observable). Default OFF pending the frozen-benchmark A/B.
+
+  equity_throttle_window:
+    value: 20
+    env_var: EQUITY_THROTTLE_WINDOW
+    description: >
+      Rolling window of most-recent closed trades whose profit factor drives
+      the throttle.
+
+  equity_throttle_min_samples:
+    value: 10
+    env_var: EQUITY_THROTTLE_MIN_SAMPLES
+    description: >
+      Minimum closed trades before the throttle acts (below this it fails
+      open to full size — never penalise a cold start).
+
+  equity_throttle_pf_full:
+    value: 1.2
+    env_var: EQUITY_THROTTLE_PF_FULL
+    description: >
+      Rolling PF at/above which the throttle allows full size.
+
+  equity_throttle_pf_floor:
+    value: 0.8
+    env_var: EQUITY_THROTTLE_PF_FLOOR
+    description: >
+      Rolling PF at/below which the throttle sits at its minimum multiplier;
+      between floor and full the multiplier ramps linearly.
+
+  equity_throttle_floor_mult:
+    value: 0.25
+    env_var: EQUITY_THROTTLE_FLOOR_MULT
+    description: >
+      Minimum size multiplier — deliberately above zero so a losing streak
+      reduces exposure without stopping the flow of closed trades needed to
+      demonstrate recovery.
+
   macro_calendar_fail_closed_when_stale:
     value: true
     env_var: MACRO_CALENDAR_FAIL_CLOSED_WHEN_STALE
