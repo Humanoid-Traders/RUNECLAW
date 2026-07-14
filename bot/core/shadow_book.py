@@ -92,12 +92,16 @@ class ShadowBook:
     # ── recording ─────────────────────────────────────────────────
     def record_rejection(self, idea, gates, reason: str,
                          ref_price: float = 0.0,
-                         now_ts: Optional[float] = None) -> Optional[dict]:
+                         now_ts: Optional[float] = None,
+                         regime: str = "") -> Optional[dict]:
         """Enter a rejected idea into the ledger. Never raises.
 
         ``gates`` is the risk check's failed-gate list; the FIRST entry is
-        the primary gate charged with the outcome. Degenerate ideas
-        (missing/inverted levels) are skipped — nothing to simulate.
+        the primary gate charged with the outcome. ``regime`` tags the
+        market regime at rejection time so the scoreboard can answer
+        "does this gate earn in THIS regime?" — the raw material for
+        regime-conditional gating. Degenerate ideas (missing/inverted
+        levels) are skipped — nothing to simulate.
         """
         try:
             self._load()
@@ -123,6 +127,7 @@ class ShadowBook:
                 "entry": entry, "sl": sl, "tp": tp,
                 "gate": gate_list[0], "gates": gate_list,
                 "reason": str(reason or "")[:160],
+                "regime": str(regime or "").strip().upper()[:24],
                 "strategy_type": str(getattr(idea, "strategy_type", "") or ""),
                 "created_ts": now,
                 "status": "pending",   # fills only if price touches entry
@@ -242,6 +247,23 @@ class ShadowBook:
         return dict(sorted(out.items(), key=lambda kv: kv[1]["net_r"],
                            reverse=True))
 
+    def gate_regime_report(self) -> dict:
+        """Per-(gate, regime) scoreboard over CLOSED shadow trades — the raw
+        material for regime-conditional gating. Same sign convention as
+        gate_report(): net_r > 0 means the gate blocked winners IN THAT
+        REGIME. Trades recorded before regime tagging land in UNKNOWN."""
+        self._load()
+        out: dict[str, dict[str, dict]] = {}
+        for tr in self._trades:
+            if tr["status"] != "closed" or tr.get("r") is None:
+                continue
+            reg = str(tr.get("regime") or "") or "UNKNOWN"
+            g = out.setdefault(tr["gate"], {}).setdefault(
+                reg, {"n": 0, "net_r": 0.0})
+            g["n"] += 1
+            g["net_r"] = round(g["net_r"] + float(tr["r"]), 3)
+        return out
+
     def counts(self) -> dict:
         self._load()
         c: dict[str, int] = {}
@@ -263,12 +285,26 @@ class ShadowBook:
                          "as gates reject ideas.")
             return "\n".join(lines)
         lines.append("net R > 0 = the gate is BLOCKING winners:")
+        by_regime = self.gate_regime_report()
         for gate, g in list(rep.items())[:12]:
             icon = "\U0001f7e5" if g["net_r"] > 0.5 else (
                 "\U0001f7e9" if g["net_r"] < -0.5 else "⬜")
             lines.append(
                 f"{icon} <code>{gate[:32]}</code> — {g['n']}tr · "
                 f"net {g['net_r']:+.1f}R · avg {g['avg_r']:+.2f}R")
+            # Regime split: shown only when the gate's verdict actually
+            # DIFFERS by regime — the case regime-conditional gating exists
+            # for. A gate that's uniformly good/bad stays a single line.
+            regs = by_regime.get(gate) or {}
+            known = {k: v for k, v in regs.items() if k != "UNKNOWN"}
+            if len(known) >= 2:
+                nets = [v["net_r"] for v in known.values()]
+                if max(nets) > 0 > min(nets):
+                    split = " · ".join(
+                        f"{reg[:10]} {v['net_r']:+.1f}R({v['n']})"
+                        for reg, v in sorted(known.items(),
+                                             key=lambda kv: -kv[1]["net_r"]))
+                    lines.append(f"   └ by regime: {split}")
         return "\n".join(lines)
 
 

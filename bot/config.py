@@ -1343,6 +1343,13 @@ class ExecutionConfig:
     # stop-out that did) or when the window expires. Attacks the measured
     # bleed: live SL bucket -$264 vs TP +$167 = entries fire early.
     entry_timing_enabled: bool = _env_bool("ENTRY_TIMING_ENABLED", False)
+    # Fable-5 round 4 — regime-conditional entry timing. PR #359's A/B split
+    # cleanly by regime (timing helped losing/choppy cells, hurt trending
+    # ones), so instead of the all-or-nothing global flag above, list the
+    # regimes where the confirmation gate should be ACTIVE (csv, matched
+    # against the analyzer's per-symbol regime). Empty = never (unless the
+    # global flag is on). Default set pending the frozen-benchmark A/B.
+    entry_timing_regimes: str = _env("ENTRY_TIMING_REGIMES", "")
     entry_timing_max_wait_sec: float = _env_float_bounded(
         "ENTRY_TIMING_MAX_WAIT_SEC", 14400.0, 60.0, 172800.0)  # default 4h
     # Slippage guard

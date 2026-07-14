@@ -196,7 +196,10 @@ def test_backtest_wait_keeps_setup_armed():
 def test_engine_wiring_pins():
     from bot.backtest.engine import BacktestEngine
     src = inspect.getsource(BacktestEngine._process_bar)
-    assert "entry_timing_enabled" in src and "_armed_setups.append" in src
+    # Round 4: the arming condition moved from the raw flag read to
+    # timing_active(), which honors both the global flag AND the
+    # regime-conditional set (ENTRY_TIMING_REGIMES).
+    assert "timing_active" in src and "_armed_setups.append" in src
     src2 = inspect.getsource(BacktestEngine._check_stops_intrabar)
     assert "_evaluate_armed_setups" in src2
     assert "_et_bar_win" in src2

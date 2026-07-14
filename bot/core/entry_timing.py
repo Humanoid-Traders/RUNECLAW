@@ -39,6 +39,26 @@ DISARM_INVALIDATED = "disarm_invalidated"
 DISARM_EXPIRED = "disarm_expired"
 
 
+def timing_active(regime: str = "") -> bool:
+    """Whether entry-timing confirmation gates ideas in this market regime.
+
+    True when the global flag is ON (all regimes), or when ``regime`` is in
+    the ENTRY_TIMING_REGIMES set (csv). PR #359's pre-registered A/B split
+    cleanly by regime — timing HELPED the losing/choppy cells and HURT the
+    winning/trending ones — so the regime-conditional variant enables the
+    confirmation gate only where it measured well, instead of the
+    all-or-nothing global flag. Empty regime string only matches the
+    global flag (never a regime set)."""
+    from bot.config import CONFIG
+    if CONFIG.execution.entry_timing_enabled:
+        return True
+    regs = str(getattr(CONFIG.execution, "entry_timing_regimes", "") or "")
+    if not regs or not regime:
+        return False
+    return regime.strip().upper() in {
+        r.strip().upper() for r in regs.split(",") if r.strip()}
+
+
 def subdegree_turn_confirmed(
     direction: str,
     highs: Sequence[float],

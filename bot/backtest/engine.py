@@ -460,8 +460,18 @@ class BacktestEngine:
         # the turn (evaluated per bar in _check_stops_intrabar), disarms
         # silently when its own stop level is touched first or the window
         # expires. In the single-timeframe backtest the run TF doubles as
-        # the sub-degree trigger series.
-        if CONFIG.execution.entry_timing_enabled:
+        # the sub-degree trigger series. Regime-conditional variant (round
+        # 4): timing_active() also arms when the idea's market regime is in
+        # ENTRY_TIMING_REGIMES — the PR #359 A/B showed timing helps chop
+        # and hurts trend, so the gate can be scoped to where it earns.
+        from bot.core.entry_timing import timing_active
+        _et_regime = ""
+        try:
+            _et_r = self.analyzer._current_regimes.get(idea.asset)
+            _et_regime = getattr(_et_r, "value", "") or ""
+        except Exception:
+            _et_regime = ""
+        if timing_active(_et_regime):
             self._armed_setups.append({
                 "idea": idea, "risk_check": risk_check,
                 "armed_ts": bar.timestamp.timestamp(),
