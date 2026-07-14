@@ -1880,7 +1880,12 @@ class AppConfig:
     # class by name gets it.
     scan_class_commodities: bool = _env_bool("SCAN_CLASS_COMMODITIES", True)
     scan_class_stocks: bool = _env_bool("SCAN_CLASS_STOCKS", True)
-    scan_class_metals: bool = _env_bool("SCAN_CLASS_METALS", True)
+    # Metals default OFF (2026-07-14 parity evidence): 14 live trades,
+    # 14% win rate, PF 0.10, net −$33.72 — the worst class on the book by
+    # every measure (XPT/XPD were the leverage/stop incident symbols too).
+    # Commodities (PF 2.30) and Stocks (PF 1.23) keep their slots. Re-enable
+    # via SCAN_CLASS_METALS=1 if a future sample says otherwise.
+    scan_class_metals: bool = _env_bool("SCAN_CLASS_METALS", False)
     scan_class_etfs: bool = _env_bool("SCAN_CLASS_ETFS", True)
     scan_class_pre_ipo: bool = _env_bool("SCAN_CLASS_PRE_IPO", False)
     # Venue-native discovery: when the active trading venue is NOT Bitget,
