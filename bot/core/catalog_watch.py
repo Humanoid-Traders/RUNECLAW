@@ -45,6 +45,7 @@ class CatalogWatch:
         self.state_file = state_file or DEFAULT_STATE_FILE
         self._seen: set[str] = set()
         self._pending: list[dict] = []   # new-listing events awaiting alert
+        self._recent: list[dict] = []    # last N events, kept AFTER drain (dashboard view)
         self._loaded = False
 
     # ── persistence ───────────────────────────────────────────────
@@ -57,6 +58,7 @@ class CatalogWatch:
                 data = json.load(f)
             self._seen = set(data.get("seen", []))
             self._pending = list(data.get("pending", []))
+            self._recent = list(data.get("recent", []))
         except FileNotFoundError:
             pass
         except Exception as exc:  # corrupt state must never break the scan
@@ -68,7 +70,8 @@ class CatalogWatch:
             tmp = self.state_file + ".tmp"
             with open(tmp, "w", encoding="utf-8") as f:
                 json.dump({"seen": sorted(self._seen),
-                           "pending": self._pending[-100:]}, f)
+                           "pending": self._pending[-100:],
+                           "recent": self._recent[-20:]}, f)
                 f.flush()
                 os.fsync(f.fileno())
             os.replace(tmp, self.state_file)
@@ -110,6 +113,7 @@ class CatalogWatch:
                                "vol_usd": vol})
             self._seen |= set(new)
             self._pending.extend(events)
+            self._recent = (self._recent + events)[-20:]
             self._save()
             logger.info("catalog watch: %d new listing(s): %s",
                         len(new), ", ".join(new[:10]))
@@ -127,5 +131,15 @@ class CatalogWatch:
             if out:
                 self._save()
             return out
+        except Exception:
+            return []
+
+    def recent(self, n: int = 10) -> list[dict]:
+        """Non-destructive view of the most recent new-listing events (kept
+        after drain) — the website dashboard reads this without stealing the
+        proactive monitor's alert queue. Never raises."""
+        try:
+            self._load()
+            return list(self._recent[-n:])
         except Exception:
             return []

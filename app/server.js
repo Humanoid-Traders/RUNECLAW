@@ -53,6 +53,8 @@ const insightRouter = require('./routes/insight');
 const signalsRouter = require('./routes/signals');
 const credentialsRouter = require('./routes/credentials');
 const controlsRouter = require('./routes/controls');
+const chatRouter = require('./routes/chat');
+const webtradeRouter = require('./routes/webtrade');
 const { router: streamRouter } = require('./routes/stream');
 
 const app = express();
@@ -77,6 +79,8 @@ app.use('/api/insight', insightRouter);
 app.use('/api/signals', signalsRouter);
 app.use('/api/credentials', credentialsRouter);
 app.use('/api/controls', controlsRouter);
+app.use('/api/chat', chatRouter);
+app.use('/api/trade', webtradeRouter);
 app.use('/api/stream', streamRouter);
 
 // SPA fallback - serve index.html for non-API routes

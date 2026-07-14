@@ -79,7 +79,8 @@ function pruneRateLimits() {
   _pruneAttemptMap(loginAttempts);
   _pruneAttemptMap(accountAttempts);
 }
-setInterval(pruneRateLimits, 60000);
+const _pruneTimer = setInterval(pruneRateLimits, 60000);
+if (_pruneTimer.unref) _pruneTimer.unref(); // don't hold the event loop open (matches lib/rate_limit.js)
 
 function checkRateLimit(ip) {
   const now = Date.now();

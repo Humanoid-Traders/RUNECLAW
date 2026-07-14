@@ -1,6 +1,6 @@
 """RUNECLAW Deep Scan Skill — Telegram /scan command module."""
 from __future__ import annotations
-import asyncio, logging
+import asyncio, logging, time
 from datetime import datetime
 from typing import Optional
 import numpy as np
@@ -367,8 +367,79 @@ def _build_scan_payload(results: list[dict], engine=None) -> dict:
         "symbols": symbols,
         "entry_cards": entry_cards,
         "key_call": key_call,
+        "features": _build_features_block(engine),
         "timestamp": now.strftime("%Y-%m-%d %H:%M UTC"),
     }
+
+
+def _build_features_block(engine=None) -> dict:
+    """Engine-module telemetry for the website dashboard (fail-open).
+
+    Surfaces the newer bot features (venue, funding clock, equity throttle,
+    entry timing, shadow book, catalog watch) so the web UI can render live
+    panels. Every sub-dict is built in its own try/except: a missing attr on
+    a partial engine (tests, early startup) yields an absent key, never an
+    exception — the payload rides the existing scan sync verbatim.
+    """
+    from bot.config import CONFIG
+
+    features: dict = {}
+
+    try:
+        venue = getattr(getattr(engine, "live_executor", None), "_venue", None)
+        if venue is not None:
+            features["venue"] = {
+                "id": getattr(venue, "id", "unknown"),
+                "name": getattr(venue, "display_name", None) or getattr(venue, "id", "unknown"),
+            }
+    except Exception:
+        pass
+
+    try:
+        from bot.risk.funding_clock import seconds_to_settlement
+        features["funding_clock"] = {
+            "enabled": bool(CONFIG.risk.funding_clock_gate_enabled),
+            "seconds_to_settlement": int(seconds_to_settlement(time.time())),
+            "window_min": CONFIG.risk.funding_clock_window_min,
+        }
+    except Exception:
+        pass
+
+    try:
+        features["equity_throttle"] = engine.risk.equity_throttle_state()
+    except Exception:
+        pass
+
+    try:
+        regimes = str(getattr(CONFIG.execution, "entry_timing_regimes", "") or "")
+        features["entry_timing"] = {
+            "enabled": bool(CONFIG.execution.entry_timing_enabled),
+            "regimes": [r.strip() for r in regimes.split(",") if r.strip()],
+        }
+    except Exception:
+        pass
+
+    try:
+        if getattr(CONFIG, "shadow_book_enabled", False):
+            from bot.core.shadow_book import SHADOW_BOOK
+            report = SHADOW_BOOK.gate_report()
+            features["shadow_book"] = {
+                "counts": SHADOW_BOOK.counts(),
+                # Cap rows — scan_cache is one JSON blob.
+                "gates": [{"gate": g, **stats}
+                          for g, stats in list(report.items())[:12]],
+            }
+    except Exception:
+        pass
+
+    try:
+        watch = getattr(getattr(engine, "scanner", None), "_catalog_watch", None)
+        if watch is not None and getattr(CONFIG, "catalog_watch_enabled", False):
+            features["catalog_watch"] = {"recent": watch.recent(10)}
+    except Exception:
+        pass
+
+    return features
 
 
 def _scan_signal_rows(payload: dict) -> list[dict]:

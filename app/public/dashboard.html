@@ -348,6 +348,45 @@ a{color:var(--gold);text-decoration:none}
 .notif-btn .icon{width:14px;height:14px;color:inherit}
 
 /* === TOASTS === */
+/* ── Chat drawer (RUNECLAW assistant) ─────────────────────────── */
+.chat-fab{position:fixed;bottom:18px;left:18px;z-index:95;width:48px;height:48px;border-radius:50%;
+  background:var(--gold-dim);border:1px solid var(--gold);color:var(--gold);font-size:20px;cursor:pointer;
+  box-shadow:0 4px 18px rgba(0,0,0,.45)}
+.chat-fab:hover{background:var(--gold);color:var(--bg)}
+.chat-drawer{position:fixed;bottom:18px;left:18px;z-index:96;width:min(400px,calc(100vw - 36px));
+  height:min(540px,calc(100vh - 90px));display:flex;flex-direction:column;background:var(--bg2);
+  border:1px solid var(--border2);border-radius:10px;box-shadow:0 10px 40px rgba(0,0,0,.6);overflow:hidden}
+.chat-head{display:flex;align-items:center;justify-content:space-between;padding:10px 12px;
+  font-family:var(--mono);font-size:11.5px;letter-spacing:.6px;color:var(--gold);
+  border-bottom:1px solid var(--border2);background:var(--bg3)}
+.chat-x{background:none;border:none;color:var(--text3);font-size:18px;cursor:pointer;line-height:1}
+.chat-x:hover{color:var(--text)}
+.chat-body{flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:8px}
+.chat-msg{max-width:86%;padding:8px 11px;border-radius:9px;font-size:13px;line-height:1.45;
+  word-wrap:break-word;white-space:pre-wrap}
+.chat-msg.user{align-self:flex-end;background:var(--gold-dim);border:1px solid var(--gold);color:var(--text)}
+.chat-msg.bot{align-self:flex-start;background:var(--bg3);border:1px solid var(--border2);color:var(--text2)}
+.chat-msg.bot code{font-family:var(--mono);font-size:12px;color:var(--gold2)}
+.chat-msg.bot pre{font-family:var(--mono);font-size:11.5px;overflow-x:auto;margin:4px 0}
+.chat-msg.pending{opacity:.55}
+.chat-inputrow{display:flex;gap:6px;padding:10px;border-top:1px solid var(--border2);background:var(--bg3)}
+.chat-inputrow .cred-in{flex:1}
+.chat-tradecard{align-self:stretch;background:var(--bg3);border:1px solid var(--gold);border-radius:9px;padding:10px}
+.chat-tradecard .row{display:flex;justify-content:space-between;font-family:var(--mono);font-size:12px;padding:2px 0}
+/* ── Trade confirm modal ──────────────────────────────────────── */
+.trade-modal{position:fixed;inset:0;z-index:98;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;padding:16px}
+.trade-modal-card{background:var(--bg2);border:1px solid var(--border2);border-radius:10px;padding:16px;width:min(420px,100%)}
+.trade-mode-badge{display:inline-block;font-family:var(--mono);font-size:13px;font-weight:700;letter-spacing:1px;
+  padding:4px 12px;border-radius:6px;margin-bottom:8px}
+.trade-mode-badge.paper{color:var(--orange);background:var(--orange-dim);border:1px solid var(--orange)}
+.trade-mode-badge.live{color:var(--red);background:var(--red-dim);border:1px solid var(--red)}
+.trade-row{display:flex;justify-content:space-between;font-family:var(--mono);font-size:12.5px;padding:3px 0;border-bottom:1px dashed var(--border)}
+/* ── Engine modules / feature rows ────────────────────────────── */
+.feat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px}
+.feat-tile{background:var(--bg3);border:1px solid var(--border2);border-radius:8px;padding:10px}
+.feat-tile .k{font-family:var(--mono);font-size:10.5px;letter-spacing:.6px;color:var(--text3);margin-bottom:4px}
+.feat-tile .v{font-family:var(--mono);font-size:14px;color:var(--text)}
+.feat-tile .s{font-size:11px;color:var(--text3);margin-top:3px}
 .toast-container{position:fixed;bottom:18px;right:18px;z-index:100;display:flex;flex-direction:column;gap:8px;
   max-width:320px}
 .toast{background:var(--bg2);border:1px solid var(--border2);border-left:3px solid var(--gold);
@@ -396,6 +435,34 @@ a{color:var(--gold);text-decoration:none}
   </div>
   <div class="nav-acct"><span id="acctChip"></span><button id="notifBtn" class="notif-btn" onclick="toggleNotifications()" title="Enable trade notifications"><svg class="icon"><use href="#icon-bell"></use></svg></button><span id="connHealth" class="live">&#9679; LIVE</span> <span id="headerTime">--:--</span></div>
 </nav>
+<!-- ========== CHAT DRAWER (RUNECLAW assistant — admin/operator only) ========== -->
+<button id="chatFab" class="chat-fab" style="display:none" onclick="toggleChat()" aria-label="Open RUNECLAW chat">&#9876;</button>
+<div id="chatDrawer" class="chat-drawer" style="display:none" role="dialog" aria-label="RUNECLAW chat">
+  <div class="chat-head">
+    <span>&#9876; RUNECLAW &mdash; AI TRADING ANALYST</span>
+    <button class="chat-x" onclick="toggleChat()" aria-label="Close chat">&times;</button>
+  </div>
+  <div id="chatBody" class="chat-body"></div>
+  <div class="chat-inputrow">
+    <input id="chatInput" class="cred-in" type="text" maxlength="2000"
+           placeholder='Ask anything — or "buy SOL 71 sl 70 tp 76"'>
+    <button id="chatSend" class="cred-btn" onclick="sendChat()">Send</button>
+  </div>
+</div>
+
+<!-- ========== TRADE CONFIRM MODAL ========== -->
+<div id="tradeModal" class="trade-modal" style="display:none" role="dialog" aria-label="Confirm trade">
+  <div class="trade-modal-card">
+    <div class="panel-title" style="margin-bottom:8px">CONFIRM TRADE</div>
+    <div id="tradeModalBody"></div>
+    <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
+      <button class="cred-btn" id="tradeModalConfirm">&#9989; Confirm</button>
+      <button class="cred-btn cred-danger" id="tradeModalCancel">&#10060; Cancel</button>
+    </div>
+    <div id="tradeModalMsg" class="cred-note"></div>
+  </div>
+</div>
+
 <div class="toast-container" id="toastContainer"></div>
 <div class="war-room" id="app">
   <div class="agent-ticker" id="agentTicker"><span class="at-dot"></span><svg class="icon"><use href="#icon-sparkle"></use></svg><span class="at-text" id="agentTickerText">Booting agent loop&hellip;</span></div>
@@ -426,6 +493,7 @@ a{color:var(--gold);text-decoration:none}
     <div class="panel" id="portfolioPanel"><div class="panel-title"><svg class="icon"><use href="#icon-coin"></use></svg> PORTFOLIO</div><div id="portfolioContent"><div class="skel-wrap"><div class="skel skel-row"></div><div class="skel skel-row"></div><div class="skel skel-row"></div></div></div></div>
     <div class="panel" id="keyCallPanel"><div class="panel-title"><svg class="icon icon-ai"><use href="#icon-sparkle"></use></svg> KEY CALL</div><div id="keyCallContent"><div class="empty-msg">Run /getclaw in Telegram for market call</div></div></div>
   </div>
+  <div class="panel" id="enginePanel" data-view="command"><div class="panel-title"><svg class="icon"><use href="#icon-bolt"></use></svg> ENGINE MODULES</div><div id="engineContent"><div class="empty-msg">Engine telemetry arrives with the next scan sync.</div></div></div>
 
   <!-- ========== MARKETS ========== -->
   <div class="grid-main" data-view="markets">
@@ -469,8 +537,10 @@ a{color:var(--gold);text-decoration:none}
     <div class="panel" id="depthPanel"><div class="panel-title"><svg class="icon"><use href="#icon-chart"></use></svg> ORDER BOOK</div><div id="depthContent"><div class="empty-msg">Loading order book&hellip;</div></div></div>
     <div class="panel" id="fundingPanel"><div class="panel-title"><svg class="icon"><use href="#icon-bolt"></use></svg> FUNDING RATE</div><div id="fundingContent"><div class="empty-msg">Loading funding rate&hellip;</div></div></div>
   </div>
+  <div class="panel" id="listingsPanel" data-view="markets"><div class="panel-title"><svg class="icon"><use href="#icon-rocket"></use></svg> NEW LISTINGS RADAR</div><div id="listingsContent"><div class="empty-msg">No new exchange listings detected yet &mdash; the bot diffs the futures catalog every scan.</div></div></div>
 
   <!-- ========== SIGNALS ========== -->
+  <div class="panel" id="shadowPanel" data-view="signals"><div class="panel-title"><svg class="icon"><use href="#icon-shield"></use></svg> SHADOW BOOK &mdash; WHAT THE GATES COST</div><div id="shadowContent"><div class="empty-msg">No closed shadow trades yet &mdash; the ledger fills as risk gates reject ideas and their counterfactual outcomes resolve.</div></div></div>
   <div class="panel" id="insightsPanel" data-view="signals"><div class="panel-title"><svg class="icon"><use href="#icon-chart"></use></svg> SIGNAL INSIGHTS</div><div id="insightsContent"><div class="skel-wrap"><div class="skel skel-row"></div><div class="skel skel-row"></div><div class="skel skel-row"></div></div></div></div>
   <div class="panel" id="signalsPanel" data-view="signals"><div class="panel-title"><svg class="icon"><use href="#icon-radar"></use></svg> SIGNAL STREAM <span id="signalsStats" style="font-family:var(--mono);font-size:11px;color:var(--text3);font-weight:400"></span></div>
     <div class="sig-filters">
@@ -481,6 +551,7 @@ a{color:var(--gold);text-decoration:none}
     <div id="signalsContent"><div class="loading"><div class="spinner"></div><br>Loading signals...</div></div></div>
 
   <!-- ========== PORTFOLIO ========== -->
+  <div class="panel" id="tradePanel" data-view="portfolio"><div class="panel-title"><svg class="icon"><use href="#icon-target"></use></svg> PLACE A TRADE</div><div id="tradeContent"><div class="empty-msg">Log in to place manual trades.</div></div></div>
   <div class="panel" id="heatmapPanel" data-view="portfolio"><div class="panel-title"><svg class="icon"><use href="#icon-chart"></use></svg> PNL CALENDAR</div><div id="heatmapContent"><div class="empty-msg">Log in to see your day-by-day PnL.</div></div></div>
   <div class="panel" id="journalPanel" data-view="portfolio"><div class="panel-title"><svg class="icon"><use href="#icon-coin"></use></svg> TRADE JOURNAL</div><div id="journalContent"><div class="empty-msg">Log in to journal your trades.</div></div></div>
   <div class="panel" id="activityPanel" data-view="portfolio"><div class="panel-title"><svg class="icon"><use href="#icon-radar"></use></svg> ACTIVITY LOG</div><div id="activityContent"><div class="empty-msg">Log in to see your activity log.</div></div></div>
@@ -637,7 +708,7 @@ async function fetchScan() {
   try {
     const r = await fetch('/api/bot/sync/scan');
     const d = await r.json();
-    if (d.scan) { scanData = d.scan; renderRegime(); renderCircuit(); renderEntryCards(); renderKeyCall(); renderUniverse(); renderPortfolio(); }
+    if (d.scan) { scanData = d.scan; _featFetchedAt = Date.now(); renderRegime(); renderCircuit(); renderEntryCards(); renderKeyCall(); renderUniverse(); renderPortfolio(); renderFeatures(); }
   } catch(e) {}
 }
 
@@ -2230,6 +2301,315 @@ function renderKeyCall() {
 // Real-time push: nudges an immediate re-fetch on bot-side sync events
 // instead of waiting for the next poll tick. Polling stays on as a fallback
 // (fail-open if SSE is blocked/unsupported/disconnects).
+// === ENGINE FEATURE PANELS (fed by scan.features from the bot) ===
+let _featFetchedAt = 0;
+function renderFeatures() {
+  renderEngineModules(); renderShadowBook(); renderListings();
+}
+function renderEngineModules() {
+  const el = document.getElementById('engineContent');
+  if (!el) return;
+  const f = scanData?.features;
+  if (!f || !Object.keys(f).length) { return; }
+  const tiles = [];
+  if (f.venue) {
+    tiles.push(`<div class="feat-tile"><div class="k">TRADING VENUE</div>
+      <div class="v" style="color:var(--gold2)">${escHtml(String(f.venue.name || f.venue.id).toUpperCase())}</div>
+      <div class="s">Multi-venue: Bitget / Hyperliquid / Bybit / BingX</div></div>`);
+  }
+  if (f.funding_clock) {
+    const elapsed = _featFetchedAt ? (Date.now() - _featFetchedAt) / 1000 : 0;
+    const secs = Math.max(0, (f.funding_clock.seconds_to_settlement || 0) - elapsed);
+    const h = Math.floor(secs / 3600), m = Math.floor((secs % 3600) / 60);
+    tiles.push(`<div class="feat-tile"><div class="k">FUNDING CLOCK ${f.funding_clock.enabled ? '<span class="pos">GATE ON</span>' : 'GATE OFF'}</div>
+      <div class="v">${h}h ${String(m).padStart(2, '0')}m</div>
+      <div class="s">to next settlement (00/08/16 UTC) &middot; blocks paying-side entries in the last ${fmt(f.funding_clock.window_min, 0)}m on extreme rates</div></div>`);
+  }
+  if (f.equity_throttle) {
+    const t = f.equity_throttle;
+    const col = t.status === 'THROTTLED' ? 'var(--orange)' : t.status === 'OK' ? 'var(--green)' : 'var(--text3)';
+    tiles.push(`<div class="feat-tile"><div class="k">EQUITY THROTTLE</div>
+      <div class="v" style="color:${col}">${escHtml(t.status || '--')}${t.multiplier != null && t.multiplier < 1 ? ` &middot; ${Math.round(t.multiplier * 100)}% size` : ''}</div>
+      <div class="s">rolling PF ${t.pf != null ? fmt(t.pf, 2) : '--'} over last ${t.samples ?? 0} closes &middot; size scales with performance</div></div>`);
+  }
+  if (f.entry_timing) {
+    const regs = (f.entry_timing.regimes || []).join(', ');
+    tiles.push(`<div class="feat-tile"><div class="k">ENTRY TIMING</div>
+      <div class="v">${f.entry_timing.enabled ? '<span class="pos">ALL REGIMES</span>' : regs ? escHtml(regs.toUpperCase()) : '<span style="color:var(--text3)">OFF</span>'}</div>
+      <div class="s">degree-nested confirmation before entries fire</div></div>`);
+  }
+  if (f.shadow_book && f.shadow_book.counts) {
+    const c = f.shadow_book.counts;
+    tiles.push(`<div class="feat-tile"><div class="k">SHADOW BOOK</div>
+      <div class="v">${(c.closed || 0)} closed &middot; ${(c.open || 0) + (c.pending || 0)} tracked</div>
+      <div class="s">every gate rejection gets a live counterfactual price tag</div></div>`);
+  }
+  if (tiles.length) el.innerHTML = `<div class="feat-grid">${tiles.join('')}</div>`;
+}
+function renderShadowBook() {
+  const el = document.getElementById('shadowContent');
+  if (!el) return;
+  const sb = scanData?.features?.shadow_book;
+  if (!sb || !(sb.gates || []).length) return;
+  const rows = sb.gates.map(g => {
+    const col = g.net_r > 0.5 ? 'var(--red)' : g.net_r < -0.5 ? 'var(--green)' : 'var(--text3)';
+    return `<div class="trade-row"><span style="font-family:var(--mono)">${escHtml(String(g.gate).slice(0, 36))}</span>
+      <span>${g.n}tr &middot; <b style="color:${col}">${g.net_r > 0 ? '+' : ''}${fmt(g.net_r, 1)}R</b> &middot; avg ${g.avg_r > 0 ? '+' : ''}${fmt(g.avg_r, 2)}R</span></div>`;
+  }).join('');
+  const c = sb.counts || {};
+  el.innerHTML = `<div class="cred-note" style="margin-bottom:6px">net R &gt; 0 = the gate is BLOCKING winners; &lt; 0 = it saved money.
+    Tracked: ${c.pending || 0} pending &middot; ${c.open || 0} open &middot; ${c.closed || 0} closed &middot; ${c.never_filled || 0} never filled</div>${rows}`;
+}
+function renderListings() {
+  const el = document.getElementById('listingsContent');
+  if (!el) return;
+  const recent = scanData?.features?.catalog_watch?.recent;
+  if (!recent || !recent.length) return;
+  el.innerHTML = recent.slice().reverse().map(ev =>
+    `<div class="trade-row"><span style="font-family:var(--mono);color:var(--gold2)">${escHtml(baseCoin(ev.symbol))}</span>
+     <span>${escHtml(ev.category || 'Crypto')} &middot; vol $${fmtK(ev.vol_usd)}</span></div>`).join('');
+}
+
+// === WEB TRADING (propose -> confirm modal -> engine.confirm_trade) ===
+let _pendingWebTrade = null;
+function escHtml(s) { return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+function renderTradePanel() {
+  const el = document.getElementById('tradeContent');
+  if (!el) return;
+  if (!LOGGED_IN) { el.innerHTML = '<div class="empty-msg">Log in to place manual trades.</div>'; return; }
+  if (el.dataset.built) return;
+  el.dataset.built = '1';
+  el.innerHTML = `
+    <div class="cred-form" style="margin-bottom:8px">
+      <select class="cred-in" id="wtDir" style="max-width:110px"><option value="LONG">LONG</option><option value="SHORT">SHORT</option></select>
+      <input class="cred-in" id="wtSymbol" type="text" maxlength="15" placeholder="Symbol (e.g. SOL)" style="max-width:150px;text-transform:uppercase">
+      <input class="cred-in" id="wtEntry" type="number" step="any" min="0" placeholder="Entry price">
+      <input class="cred-in" id="wtSl" type="number" step="any" min="0" placeholder="Stop loss">
+      <input class="cred-in" id="wtTp" type="number" step="any" min="0" placeholder="Take profit">
+      <input class="cred-in" id="wtMargin" type="number" step="any" min="0" placeholder="Margin $ (optional)" style="max-width:150px">
+    </div>
+    <div id="wtPreview" class="cred-note">Enter direction, symbol, entry, SL and TP. Limit order &mdash; same path and risk gates as the Telegram /trade command.</div>
+    <div style="display:flex;gap:8px;margin-top:8px">
+      <button class="cred-btn" onclick="proposeTrade()">Propose Trade</button>
+    </div>
+    <div id="wtMsg" class="cred-note"></div>
+    <div class="cred-note">Trades are paper by default. Live execution additionally requires your live toggle (Connect view) AND operator approval &mdash; the same gate as Telegram.</div>`;
+  ['wtDir', 'wtEntry', 'wtSl', 'wtTp'].forEach(id => {
+    const inp = document.getElementById(id);
+    if (inp) inp.addEventListener('input', updateTradePreview);
+    if (inp) inp.addEventListener('change', updateTradePreview);
+  });
+}
+function updateTradePreview() {
+  const out = document.getElementById('wtPreview');
+  if (!out) return;
+  const dir = document.getElementById('wtDir')?.value;
+  const entry = parseFloat(document.getElementById('wtEntry')?.value);
+  const sl = parseFloat(document.getElementById('wtSl')?.value);
+  const tp = parseFloat(document.getElementById('wtTp')?.value);
+  if (!entry || !sl || !tp) { out.innerHTML = 'Enter direction, symbol, entry, SL and TP. Limit order &mdash; same path and risk gates as the Telegram /trade command.'; return; }
+  const risk = Math.abs(entry - sl), reward = Math.abs(tp - entry);
+  const rr = risk > 0 ? (reward / risk) : 0;
+  const sideOk = dir === 'LONG' ? (sl < entry && tp > entry) : (sl > entry && tp < entry);
+  out.innerHTML = sideOk
+    ? `R:R <b style="color:var(--gold2)">${rr.toFixed(2)}</b> &middot; SL ${fmt(risk / entry * 100, 1)}% &middot; TP ${fmt(reward / entry * 100, 1)}%`
+    : `<span class="neg">&#9888; ${dir === 'LONG' ? 'LONG needs SL below entry and TP above.' : 'SHORT needs SL above entry and TP below.'}</span>`;
+}
+async function proposeTrade() {
+  const msg = document.getElementById('wtMsg');
+  const body = {
+    direction: document.getElementById('wtDir').value,
+    symbol: document.getElementById('wtSymbol').value.trim().toUpperCase(),
+    entry: parseFloat(document.getElementById('wtEntry').value),
+    sl: parseFloat(document.getElementById('wtSl').value),
+    tp: parseFloat(document.getElementById('wtTp').value),
+  };
+  const marginRaw = document.getElementById('wtMargin').value.trim();
+  if (marginRaw !== '') body.margin = Number(marginRaw);
+  if (!body.symbol || !body.entry || !body.sl || !body.tp) { msg.textContent = 'Fill in symbol, entry, SL and TP.'; return; }
+  msg.textContent = 'Proposing…';
+  try {
+    const r = await fetch('/api/trade/propose', { method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const j = await r.json();
+    if (r.status === 409) { msg.textContent = ''; showToast('Link your Telegram first (Connect view).', 'warn'); goView('connect'); return; }
+    if (!r.ok) { msg.innerHTML = `<span class="neg">${escHtml(j.detail || j.error || 'Proposal rejected.')}</span>`; return; }
+    msg.textContent = '';
+    openTradeModal(j.pending_trade);
+  } catch (e) { msg.textContent = 'Network error.'; }
+}
+function openTradeModal(pt, onDone) {
+  _pendingWebTrade = pt;
+  const modal = document.getElementById('tradeModal');
+  const body = document.getElementById('tradeModalBody');
+  const msg = document.getElementById('tradeModalMsg');
+  msg.textContent = '';
+  const live = pt.mode === 'LIVE';
+  body.innerHTML = `
+    <span class="trade-mode-badge ${live ? 'live' : 'paper'}">${live ? '&#128308; LIVE — REAL MONEY' : '&#128220; PAPER'}</span>
+    <div class="trade-row"><span>Pair</span><b>${escHtml(pt.symbol)}/USDT ${escHtml(pt.direction)}</b></div>
+    <div class="trade-row"><span>Entry (limit)</span><b>$${fmt(pt.entry, 4)}</b></div>
+    <div class="trade-row"><span>Stop loss</span><b>$${fmt(pt.sl, 4)} (${fmt(pt.sl_pct, 1)}%)</b></div>
+    <div class="trade-row"><span>Take profit</span><b>$${fmt(pt.tp, 4)} (+${fmt(pt.tp_pct, 1)}%)</b></div>
+    <div class="trade-row"><span>R:R</span><b>${fmt(pt.rr, 2)}</b></div>
+    <div class="trade-row"><span>Margin</span><b>${pt.margin_usd ? '$' + fmt(pt.margin_usd, 0) : 'auto (risk-sized)'}</b></div>
+    ${live ? '' : '<div class="cred-note">Executes on the paper portfolio. The risk engine re-checks everything at confirm time.</div>'}`;
+  document.getElementById('tradeModalConfirm').onclick = () => confirmTradeWeb(pt.trade_id, onDone);
+  document.getElementById('tradeModalCancel').onclick = () => cancelTradeWeb(pt.trade_id, onDone);
+  modal.style.display = 'flex';
+}
+function closeTradeModal() { document.getElementById('tradeModal').style.display = 'none'; _pendingWebTrade = null; }
+async function confirmTradeWeb(tradeId, onDone) {
+  const msg = document.getElementById('tradeModalMsg');
+  msg.textContent = 'Executing…';
+  try {
+    const r = await fetch('/api/trade/confirm', { method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify({ trade_id: tradeId }) });
+    const j = await r.json();
+    if (!r.ok) {
+      const reason = j.error === 'live_not_enabled' ? 'Live trading not enabled for your account (needs your toggle + operator approval).' : (j.detail || j.error || 'Confirm failed.');
+      msg.innerHTML = `<span class="neg">${escHtml(reason)}</span>`;
+      return;
+    }
+    const result = sanitizeBotHtml(j.result_html || 'Executed.');
+    showToast('Trade confirmed — see result in the panel.', 'success');
+    closeTradeModal();
+    const wtMsg = document.getElementById('wtMsg');
+    if (wtMsg) wtMsg.innerHTML = result;
+    if (typeof onDone === 'function') onDone(result);
+    fetchPortfolio(); fetchPublicPortfolio();
+  } catch (e) { msg.textContent = 'Network error.'; }
+}
+async function cancelTradeWeb(tradeId, onDone) {
+  try {
+    await fetch('/api/trade/cancel', { method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify({ trade_id: tradeId }) });
+  } catch (e) { /* best-effort */ }
+  closeTradeModal();
+  if (typeof onDone === 'function') onDone(null);
+}
+
+// === CHAT DRAWER (admin/operator-only RUNECLAW assistant) ===
+let _chatOpen = false, _chatBusy = false, _chatLinkCta = false;
+// Render bot replies from Telegram-HTML through a strict whitelist — only
+// b/i/code/pre/br survive; every other node is flattened to escaped text.
+function sanitizeBotHtml(html) {
+  const ALLOWED = { B: 'b', I: 'i', CODE: 'code', PRE: 'pre' };
+  let doc;
+  try { doc = new DOMParser().parseFromString(`<div>${html}</div>`, 'text/html'); }
+  catch (e) { return escHtml(html); }
+  const walk = (node) => {
+    let out = '';
+    node.childNodes.forEach(ch => {
+      if (ch.nodeType === Node.TEXT_NODE) out += escHtml(ch.textContent);
+      else if (ch.nodeType === Node.ELEMENT_NODE) {
+        if (ch.tagName === 'BR') out += '<br>';
+        else if (ALLOWED[ch.tagName]) out += `<${ALLOWED[ch.tagName]}>${walk(ch)}</${ALLOWED[ch.tagName]}>`;
+        else out += walk(ch);
+      }
+    });
+    return out;
+  };
+  return walk(doc.body.firstChild || doc.body);
+}
+function toggleChat() {
+  _chatOpen = !_chatOpen;
+  document.getElementById('chatDrawer').style.display = _chatOpen ? 'flex' : 'none';
+  document.getElementById('chatFab').style.display = _chatOpen ? 'none' : 'block';
+  if (_chatOpen) {
+    if (_chatLinkCta) appendChatMsg('bot', 'Link your Telegram account first (Connect view) so I know who you are — then we can talk trades here.');
+    const inp = document.getElementById('chatInput');
+    if (inp) { inp.focus(); }
+  }
+}
+function appendChatMsg(role, html, cls) {
+  const body = document.getElementById('chatBody');
+  const div = document.createElement('div');
+  div.className = `chat-msg ${role}${cls ? ' ' + cls : ''}`;
+  div.innerHTML = role === 'user' ? escHtml(html) : html;
+  body.appendChild(div);
+  body.scrollTop = body.scrollHeight;
+  return div;
+}
+function appendChatTradeCard(pt) {
+  const body = document.getElementById('chatBody');
+  const div = document.createElement('div');
+  div.className = 'chat-tradecard';
+  const live = pt.mode === 'LIVE';
+  div.innerHTML = `
+    <span class="trade-mode-badge ${live ? 'live' : 'paper'}" style="margin-bottom:6px">${live ? '&#128308; LIVE' : '&#128220; PAPER'}</span>
+    <div class="row"><span>${escHtml(pt.symbol)}/USDT ${escHtml(pt.direction)}</span><b>R:R ${fmt(pt.rr, 2)}</b></div>
+    <div class="row"><span>Entry $${fmt(pt.entry, 4)}</span><span>SL $${fmt(pt.sl, 4)} &middot; TP $${fmt(pt.tp, 4)}</span></div>
+    <div style="display:flex;gap:6px;margin-top:8px">
+      <button class="cred-btn" style="flex:1">&#9989; Confirm</button>
+      <button class="cred-btn cred-danger" style="flex:1">&#10060; Cancel</button>
+    </div>`;
+  const [okBtn, noBtn] = div.querySelectorAll('button');
+  const done = (resultHtml) => {
+    okBtn.disabled = noBtn.disabled = true;
+    if (resultHtml) appendChatMsg('bot', resultHtml);
+    else appendChatMsg('bot', 'Cancelled.');
+  };
+  okBtn.onclick = async () => {
+    okBtn.disabled = noBtn.disabled = true;
+    try {
+      const r = await fetch('/api/trade/confirm', { method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify({ trade_id: pt.trade_id }) });
+      const j = await r.json();
+      if (!r.ok) appendChatMsg('bot', `<b>Blocked:</b> ${escHtml(j.detail || j.error || 'confirm failed')}`);
+      else { appendChatMsg('bot', sanitizeBotHtml(j.result_html || 'Executed.')); fetchPortfolio(); fetchPublicPortfolio(); }
+    } catch (e) { appendChatMsg('bot', 'Network error confirming.'); okBtn.disabled = noBtn.disabled = false; }
+  };
+  noBtn.onclick = async () => {
+    try { await fetch('/api/trade/cancel', { method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify({ trade_id: pt.trade_id }) }); } catch (e) {}
+    done(null);
+  };
+  body.appendChild(div);
+  body.scrollTop = body.scrollHeight;
+}
+async function sendChat() {
+  if (_chatBusy) return;
+  const inp = document.getElementById('chatInput');
+  const text = inp.value.trim();
+  if (!text) return;
+  inp.value = '';
+  appendChatMsg('user', text);
+  const typing = appendChatMsg('bot', 'Thinking…', 'pending');
+  _chatBusy = true;
+  document.getElementById('chatSend').disabled = true;
+  try {
+    const r = await fetch('/api/chat', { method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify({ text }) });
+    const j = await r.json();
+    typing.remove();
+    if (r.status === 409) { appendChatMsg('bot', 'Link your Telegram first (Connect view), then chat here.'); }
+    else if (r.status === 403 && j.error === 'chat_admin_only') { appendChatMsg('bot', 'Web chat is operator-only for now.'); }
+    else if (r.status === 429) { appendChatMsg('bot', 'Slow down a little — rate limit hit.'); }
+    else if (!r.ok) { appendChatMsg('bot', `<b>Error:</b> ${escHtml(j.detail || j.error || 'chat unavailable')}`); }
+    else if (j.pending_trade) { appendChatTradeCard(j.pending_trade); }
+    else { appendChatMsg('bot', sanitizeBotHtml(j.reply_html || '…')); }
+  } catch (e) {
+    typing.remove();
+    appendChatMsg('bot', 'Network error — try again.');
+  } finally {
+    _chatBusy = false;
+    document.getElementById('chatSend').disabled = false;
+  }
+}
+async function initChat() {
+  if (!LOGGED_IN) return; // chat requires an account (and operator status)
+  try {
+    const r = await fetch('/api/chat/history?limit=30', { headers: authHeaders() });
+    if (r.status === 409) { _chatLinkCta = true; document.getElementById('chatFab').style.display = 'block'; return; }
+    if (!r.ok) return; // 403 admin-only / 503 unconfigured -> stay hidden
+    const j = await r.json();
+    (j.messages || []).forEach(m => {
+      if (m.role === 'user') appendChatMsg('user', m.content);
+      else appendChatMsg('bot', sanitizeBotHtml(m.content));
+    });
+    document.getElementById('chatFab').style.display = 'block';
+  } catch (e) { /* keep hidden */ }
+}
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && e.target && e.target.id === 'chatInput') sendChat();
+  if (e.key === 'Escape' && _chatOpen) toggleChat();
+});
+
 function connectStream() {
   if (typeof EventSource === 'undefined') return;
   try {
@@ -2271,6 +2651,8 @@ async function init() {
   const uniSearch = document.getElementById('uniSearch');
   if (uniSearch) uniSearch.addEventListener('input', renderUniverse);
   renderCalculator();
+  renderTradePanel();
+  initChat();
   updateNotifBtn();
   await fetchTickers();
   await Promise.all([fetchScan(), fetchPublicPortfolio(), fetchPortfolio(), fetchSignals(), fetchCreds(), fetchControls(), fetchCandles(), fetchInsight(), fetchHeatmap(), fetchDepth(), fetchFunding(), fetchJournal(), fetchActivity()]);
