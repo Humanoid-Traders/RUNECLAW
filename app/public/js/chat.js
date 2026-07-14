@@ -23,8 +23,12 @@
 
   function setOpen(v) {
     open = v;
+    // Toggle BOTH the class and the native attribute: the attribute keeps the
+    // overlay out of the page even if the stylesheet ever fails to load.
     drawer.classList.toggle('hidden', !open);
+    drawer.hidden = !open;
     fab.classList.toggle('hidden', open);
+    fab.hidden = open;
     if (open) {
       if (!hydrated) hydrate();
       input.focus();
@@ -124,6 +128,7 @@
     const r = await fetchJSON('/api/chat/history?limit=1').catch(() => null);
     if (r && (r.status === 503 || r.status === 401)) return;
     fab.classList.remove('hidden');
+    fab.hidden = false;
   }
 
   fab.addEventListener('click', () => setOpen(true));

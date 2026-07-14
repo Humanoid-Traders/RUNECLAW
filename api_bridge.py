@@ -29,7 +29,7 @@ from fastapi import FastAPI, HTTPException, Depends, Security, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse  # noqa: F401 (FileResponse kept for future static routes)
 from pydantic import BaseModel
 
 from bot.config import CONFIG
@@ -870,34 +870,38 @@ async def risk_halt(_token: str = Depends(require_dashboard_token), _rl: None = 
 
 
 # ── Static website serving ──────────────────────────────────────
-# Serve website/ directory for dashboard, warroom, live-signals, register
-# This must be LAST so API routes take priority over static file catchall
+# The legacy hackathon dashboards (warroom, dashboard-pro, live-signals, …)
+# were retired: the product's one face is the app/ web platform. website/
+# keeps only the gateway landing page, privacy, the archived hackathon
+# submission, and media assets. Old page URLs redirect so bookmarks land on
+# the gateway page instead of a 404.
+# This must be LAST so API routes take priority over the static catchall.
 
 _WEBSITE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "website")
+
+
+@app.get("/platform-url")
+async def platform_url():
+    """The app platform's base URL (operator-config WEBSITE_URL, empty if
+    unset). The gateway landing page uses this to render its CTA."""
+    return {"url": os.environ.get("WEBSITE_URL", "").rstrip("/")}
+
+
 if os.path.isdir(_WEBSITE_DIR):
     @app.get("/warroom")
     @app.get("/warroom.html")
-    async def serve_warroom():
-        return FileResponse(os.path.join(_WEBSITE_DIR, "warroom.html"))
-
     @app.get("/live-signals")
     @app.get("/live-signals.html")
-    async def serve_live_signals():
-        return FileResponse(os.path.join(_WEBSITE_DIR, "live-signals.html"))
-
     @app.get("/register")
     @app.get("/register.html")
-    async def serve_register():
-        return FileResponse(os.path.join(_WEBSITE_DIR, "register.html"))
-
     @app.get("/dashboard")
-    async def serve_dashboard():
-        _dash = os.path.join(_WEBSITE_DIR, "dashboard-pro.html")
-        if os.path.exists(_dash):
-            return FileResponse(_dash)
-        return FileResponse(os.path.join(_WEBSITE_DIR, "index.html"))
+    async def legacy_page_redirect():
+        # Bookmarked legacy dashboards -> the platform when configured,
+        # else the gateway landing page.
+        target = os.environ.get("WEBSITE_URL", "").rstrip("/") or "/"
+        return RedirectResponse(target, status_code=302)
 
-    # Mount static assets (JS, CSS, images) — must be after named routes
+    # Mount static assets (landing page, privacy, submission archive, media)
     app.mount("/", StaticFiles(directory=_WEBSITE_DIR, html=True), name="website")
 
 

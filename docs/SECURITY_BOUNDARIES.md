@@ -13,7 +13,7 @@ architectural boundary, not a defect.
 - **Transport**: HTTPS (Mule Pages TLS)
 
 ### Python FastAPI Stack (`api_bridge.py`)
-- **Audience**: Single operator (dashboard-pro, Telegram bot)
+- **Audience**: Single operator (gateway landing page, Telegram bot)
 - **Deployment**: Docker Compose behind nginx (VPS)
 - **Auth**: Bearer token (`DASHBOARD_TOKEN` env var, constant-time HMAC)
 - **Tokens**: Static secret, not JWT — incompatible by design

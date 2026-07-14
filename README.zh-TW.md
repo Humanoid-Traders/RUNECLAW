@@ -584,8 +584,8 @@ runeclaw/
 |   |-- sample_risk_check.json  # Example risk check
 |   |-- sample_portfolio.json   # Example portfolio state
 |-- website/
-|   |-- index.html              # Landing page
-|   |-- dashboard-pro.html      # 3-tab command center dashboard
+|   |-- index.html              # Gateway landing page (platform lives in app/)
+|   |-- submission.html         # Hackathon submission (archive)
 |-- .github/
 |   |-- workflows/
 |       |-- ci.yml                 # CI/CD: planned (not yet active)
