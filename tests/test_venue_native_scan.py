@@ -89,7 +89,10 @@ async def _overlay(monkeypatch, tickers=VENUE_TICKERS, seen=None, **cfg_over):
 
 @pytest.mark.asyncio
 async def test_overlay_admits_venue_native_markets(monkeypatch):
-    sigs, _ = await _overlay(monkeypatch)
+    # metals enabled explicitly: XYZ-GOLD classifies as Metal, and since
+    # 2026-07-14 metals are off by default (parity evidence) — overlay
+    # MECHANICS are what's under test here, not class policy.
+    sigs, _ = await _overlay(monkeypatch, scan_class_metals=True)
     syms = {s.symbol for s in sigs}
     assert "XYZ-CL/USDC:USDC" in syms         # commodity (tradfi floor)
     assert "XYZ-SP500/USDC:USDC" in syms
