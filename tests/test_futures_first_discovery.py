@@ -58,9 +58,13 @@ async def _run_scan(monkeypatch, source):
     # async (pytest-asyncio) rather than asyncio.run(): a bare run() closes
     # the policy loop and breaks suite-mates that still use the legacy
     # asyncio.get_event_loop() pattern.
+    # scan_class_metals=True: these tests exercise DISCOVERY mechanics with
+    # XAU as the TradFi fixture; since 2026-07-14 metals are off by default
+    # (parity evidence), which is class policy, not what's under test here.
     scanner = MarketScanner()
     monkeypatch.setattr(ms, "CONFIG",
-                        _CfgProxy(ms.CONFIG, scan_volume_source=source))
+                        _CfgProxy(ms.CONFIG, scan_volume_source=source,
+                                  scan_class_metals=True))
 
     async def _spot():
         return dict(SPOT)

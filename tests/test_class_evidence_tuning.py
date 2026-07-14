@@ -40,7 +40,9 @@ def test_shipped_defaults_match_the_evidence():
     from bot.config import CONFIG
     assert CONFIG.scan_class_commodities is True   # PF 2.30 / 32 trades
     assert CONFIG.scan_class_stocks is True        # PF 1.23 / 18 trades
-    assert CONFIG.scan_class_metals is True        # small sample — keep scoring
+    # Metals flipped OFF 2026-07-14: the sample matured to 14 trades at
+    # 14% win / PF 0.10 / net −$33.72 — worst class on the book.
+    assert CONFIG.scan_class_metals is False
     assert CONFIG.scan_class_etfs is True          # small sample — keep scoring
     assert CONFIG.scan_class_pre_ipo is False      # PF 0.24 + illiquid books
 
@@ -86,10 +88,12 @@ async def _scan(monkeypatch, **cfg_over):
 
 @pytest.mark.asyncio
 async def test_pre_ipo_gated_out_of_all_markets_by_default(monkeypatch):
-    signals = await _scan(monkeypatch)
+    # metals enabled explicitly: this test is about the PRE-IPO gate, and
+    # since 2026-07-14 metals are off by default (parity evidence).
+    signals = await _scan(monkeypatch, scan_class_metals=True)
     syms = {s.symbol for s in signals}
     assert "CL/USDT:USDT" in syms            # commodity still in
-    assert "XAU/USDT:USDT" in syms           # metal still in
+    assert "XAU/USDT:USDT" in syms           # metal in when enabled
     assert "OPENAI/USDT:USDT" not in syms    # pre-IPO gated
     assert "ANTHROPIC/USDT:USDT" not in syms
 

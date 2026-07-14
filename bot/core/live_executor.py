@@ -4766,8 +4766,11 @@ class LiveExecutor:
                             in_profit = price < pos.entry_price
                         if not in_profit:
                             # Time-stop: no profit after threshold → close
+                            # :g keeps sub-hour thresholds honest — scalp's
+                            # 0.5h rendered "0h max" under :.0f (parity report
+                            # confusion, 2026-07-14).
                             msg = await self.close_position(
-                                trade_id, f"TIME_STOP ({hold_hours:.1f}h/{close_threshold:.0f}h max, {pos_strategy}, no profit)", price)
+                                trade_id, f"TIME_STOP ({hold_hours:.1f}h/{close_threshold:g}h max, {pos_strategy}, no profit)", price)
                             closed_messages.append(msg)
                             audit(trade_log,
                                   f"Time-stop triggered: {pos.symbol} held {hold_hours:.1f}h ({pos_strategy} max={close_threshold:.0f}h) with no profit",
@@ -6299,26 +6302,15 @@ class LiveExecutor:
                             final_pnl = pnl
                             _pnl_is_net = False
                         close_type = (entry.get("closeType") or "").lower()
-                        if "tp" in close_type or "take" in close_type:
-                            reason = "TP HIT (exchange)"
-                        elif "sl" in close_type or "stop" in close_type:
-                            # A trailing/breakeven stop that ratcheted onto the
-                            # profit side fills at a GAIN — never label that a loss.
-                            reason = stop_exit_label(
-                                pos.direction == "LONG", pos.entry_price,
-                                pos.stop_loss, close_price,
-                                bool(pos.trailing_state
-                                     and pos.trailing_state.get("trailing_active")),
-                                final_pnl,
-                            ) + " (exchange)"
-                        elif "liquidat" in close_type:
-                            reason = "LIQUIDATED"
-                        else:
-                            # Bitget reported a closeType we don't classify (could
-                            # be a user close on the app, an ADL, a partial-ladder
-                            # reduceOnly, etc.). It is NOT necessarily a manual
-                            # close — say so honestly instead of asserting "MANUAL".
-                            reason = "CLOSED (unknown)"
+                        reason = self._close_reason_from_type(
+                            pos, close_type, close_price, final_pnl)
+                        if reason is None:
+                            # closeType carried no mechanism (bare market
+                            # close / unclassified). Fall back to price
+                            # inference against the stored levels — a fill
+                            # sitting AT the stop or target is a trigger
+                            # Bitget reported oddly, not an unknown.
+                            reason = self._infer_close_reason(pos, close_price)
 
                         logger.info(
                             "Bitget position history for %s: close=%.4f, pnl=%.4f, fees=%.4f, lev=%dx (price_diff=%.4f%%)",
@@ -6372,7 +6364,16 @@ class LiveExecutor:
                             if isinstance(fee_detail, dict):
                                 total_fees += abs(float(fee_detail.get("totalFee", 0) or 0))
                         matched_order = relevant[-1].get("order")
-                        if matched_order == pos.tp_order_id:
+                        if pos.sl_order_id and pos.sl_order_id == pos.tp_order_id:
+                            # v3 COMBINED TPSL: one order id serves BOTH legs,
+                            # so id-matching cannot tell which leg fired — the
+                            # old tp-first check labeled every combined stop
+                            # fill "TP HIT". Decide by the fill price against
+                            # the stored levels instead.
+                            reason = self._infer_close_reason(
+                                pos, fill_price).replace(
+                                "(inferred)", "(exchange, combined TPSL)")
+                        elif matched_order == pos.tp_order_id:
                             reason = "TP HIT (exchange)"
                         elif matched_order == pos.sl_order_id:
                             reason = stop_exit_label(
@@ -6384,8 +6385,8 @@ class LiveExecutor:
                             ) + " (exchange)"
                         else:
                             # Close-side fill not tied to our SL/TP order IDs —
-                            # mechanism unknown (manual, ADL, partial ladder, …).
-                            reason = "CLOSED (unknown)"
+                            # infer from price before conceding unknown.
+                            reason = self._infer_close_reason(pos, fill_price)
                         if fill_price > 0 and total_profit != 0:
                             return {
                                 "close_price": fill_price,
@@ -6421,8 +6422,9 @@ class LiveExecutor:
                             "close_price": fill_price,
                             "pnl": profit,
                             "fees": total_fees,
-                            # Unrecognized close-side fill — see note above.
-                            "reason": "CLOSED (unknown)",
+                            # Unrecognized close-side fill — infer from the
+                            # fill price before conceding unknown.
+                            "reason": self._infer_close_reason(pos, fill_price),
                             "source": "exchange_fill_recent",
                             # Gross, close-side fee only — see exchange_fill_sltp note.
                             "pnl_is_net": False,
@@ -6595,6 +6597,41 @@ class LiveExecutor:
               action="duplicate_close", result="SUPPRESSED",
               data={"trade_id": pos.trade_id, "symbol": pos.symbol,
                     "entry": pos.entry_price})
+
+    def _close_reason_from_type(self, pos: "LivePosition", close_type: str,
+                                close_price: float,
+                                pnl: float = 0.0) -> Optional[str]:
+        """Classify a venue-reported closeType string, or None when the
+        string carries no mechanism (caller should fall back to price
+        inference instead of booking a flat unknown — parity showed 89
+        realized trades, net −$73, sitting unattributed in that bucket).
+
+        Coverage beyond tp/sl: Bitget uses "burst" for liquidations, "adl"
+        for auto-deleveraging, and "track" for trailing/track orders; a
+        bare "close"/"offset" is just a market close (bot, app, or NLP —
+        indistinguishable here) and returns None for inference."""
+        ct = (close_type or "").lower()
+        if not ct:
+            return None
+        if "tp" in ct or "take" in ct:
+            return "TP HIT (exchange)"
+        if "sl" in ct or "stop" in ct or "track" in ct or "trail" in ct:
+            # A trailing/breakeven stop that ratcheted onto the profit side
+            # fills at a GAIN — never label that a loss.
+            return stop_exit_label(
+                pos.direction == "LONG", pos.entry_price, pos.stop_loss,
+                close_price,
+                bool(pos.trailing_state
+                     and pos.trailing_state.get("trailing_active")),
+                pnl,
+            ) + " (exchange)"
+        if "burst" in ct or "liquidat" in ct:
+            return "LIQUIDATED"
+        if "adl" in ct:
+            return "ADL (exchange auto-deleverage)"
+        if "delivery" in ct:
+            return "DELIVERY (exchange)"
+        return None
 
     def _infer_close_reason(self, pos: "LivePosition", exit_price: float) -> str:
         """Infer whether TP or SL was hit based on exit price proximity.
