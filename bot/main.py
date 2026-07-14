@@ -27,7 +27,9 @@ _PID_FILE = os.path.join(os.environ.get("RUNECLAW_STATE_DIR", "data"), "runeclaw
 
 
 def _banner() -> str:
-    return (
+    bitget_env = ("DEMO trading (BITGET_SANDBOX=true)"
+                  if CONFIG.exchange.sandbox else "PRODUCTION")
+    banner = (
         "\n"
         "  ╔══════════════════════════════════════╗\n"
         "  ║   RUNECLAW  --  AI Trading Core      ║\n"
@@ -35,8 +37,19 @@ def _banner() -> str:
         "  ╚══════════════════════════════════════╝\n"
         f"  Mode: {'SIMULATION' if CONFIG.simulation_mode else 'LIVE'}\n"
         f"  Live Trading: {'ENABLED' if CONFIG.live_trading_enabled else 'DISABLED'}\n"
+        f"  Bitget environment: {bitget_env}\n"
         f"  Paper Balance: ${CONFIG.paper_balance_usd:,.2f}\n"
     )
+    if CONFIG.exchange.sandbox and CONFIG.is_live():
+        banner += (
+            "\n"
+            "  ⚠️  WARNING: LIVE trading is enabled with BITGET_SANDBOX=true.\n"
+            "  All orders go to Bitget DEMO trading — live production keys\n"
+            "  will fail (40006 Invalid ACCESS_KEY / 40099 wrong environment)\n"
+            "  and NO real orders or stop-losses will be placed. If this bot\n"
+            "  should trade real money, set BITGET_SANDBOX=false and restart.\n"
+        )
+    return banner
 
 
 def run_telegram() -> None:
@@ -86,6 +99,11 @@ def run_telegram() -> None:
     app = handler.build_app()
 
     audit(system_log, "Starting Telegram bot", action="startup", result="TELEGRAM")
+    audit(system_log,
+          "Bitget environment: "
+          + ("DEMO trading (BITGET_SANDBOX=true)"
+             if CONFIG.exchange.sandbox else "PRODUCTION"),
+          action="startup", result="ENV")
     print(_banner())
     print("  Telegram bot is running. Press Ctrl+C to stop.\n")
 

@@ -169,6 +169,7 @@ class TestValidateEnvironmentMismatch:
             ec.validate_bitget_credentials("k", "s", "p", sandbox=False))
         assert ok is False
         assert "DEMO-trading" in detail and "trades LIVE" in detail
+        assert "PRODUCTION" in detail  # names the bot's environment
         assert calls == [False, True]  # diagnosed against the opposite env
 
     def test_live_key_on_demo_bot_gets_inverse_message(self, monkeypatch):
@@ -182,6 +183,9 @@ class TestValidateEnvironmentMismatch:
             ec.validate_bitget_credentials("k", "s", "p", sandbox=True))
         assert ok is False
         assert "LIVE Bitget keys" in detail and "DEMO" in detail
+        # Names the config cause so the operator knows exactly what to change.
+        assert "BITGET_SANDBOX=true" in detail
+        assert "BITGET_SANDBOX=false" in detail
 
     def test_40099_both_ways_returns_raw_error(self, monkeypatch):
         import asyncio

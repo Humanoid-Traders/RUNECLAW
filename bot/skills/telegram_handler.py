@@ -3522,10 +3522,13 @@ class TelegramHandler:
         from bot.core.exchange_credentials import get_credential_store
         tg_id = self._get_tg_id(update)
         store = get_credential_store()
+        bitget_env = ("DEMO trading (BITGET_SANDBOX=true)"
+                      if CONFIG.exchange.sandbox else "PRODUCTION")
         if not store.has(tg_id):
             await self._send(update,
                 "<b>Your exchange link</b>\n\n"
-                "Status: <code>not connected</code>\n\n"
+                "Status: <code>not connected</code>\n"
+                f"Environment: <code>{bitget_env}</code>\n\n"
                 "Link your own Bitget account with\n"
                 "<code>/connect &lt;api_key&gt; &lt;api_secret&gt; &lt;passphrase&gt;</code>")
             return
@@ -3535,6 +3538,7 @@ class TelegramHandler:
             "<b>Your exchange link</b>\n\n"
             "Status: <code>connected</code>\n"
             f"Key: <code>{store.fingerprint(tg_id)}</code>\n"
+            f"Environment: <code>{bitget_env}</code>\n"
             f"Per-user live trading: <code>{live_state}</code>\n\n"
             "Use <code>/disconnect</code> to remove your keys.")
 

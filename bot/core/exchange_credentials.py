@@ -265,13 +265,15 @@ async def validate_bitget_credentials(
         if sandbox:
             return False, (
                 "These are LIVE Bitget keys, but this bot runs in DEMO "
-                "(paper) trading. Create the API keys inside Bitget demo "
-                "trading, with USDT-M futures read + trade permission.")
+                "(paper) trading (BITGET_SANDBOX=true in the bot's .env). "
+                "Create the API keys inside Bitget demo trading, with "
+                "USDT-M futures read + trade permission — or ask the "
+                "operator to set BITGET_SANDBOX=false for production.")
         return False, (
-            "These are DEMO-trading Bitget keys, but this bot trades LIVE. "
-            "Create the API keys in your main Bitget account (API "
-            "Management, not demo trading), with USDT-M futures read + "
-            "trade permission.")
+            "These are DEMO-trading Bitget keys, but this bot trades LIVE "
+            "(bot environment: PRODUCTION). Create the API keys in your "
+            "main Bitget account (API Management, not demo trading), with "
+            "USDT-M futures read + trade permission.")
     return False, detail
 
 
