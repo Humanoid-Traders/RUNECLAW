@@ -1431,6 +1431,11 @@ class TelegramHandler:
         allowlist is configured (demo/paper), it falls back to the UserStore flag
         — identical to the prior behaviour.
         """
+        # Web-only identities ("web:<id>", provisioned by the web gateway) are
+        # structurally paper-only — no store flag or allowlist state can ever
+        # make them live.
+        if str(tg_id).startswith("web:"):
+            return False
         allow = self._allowlist_ids()
         if allow and str(tg_id) not in allow:
             return False

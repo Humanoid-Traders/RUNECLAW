@@ -268,6 +268,10 @@ class UserStore:
         'can_trade_live' flag override this. Non-admins always get
         paper execution even when the bot is in live mode.
         """
+        # Web-only identities ("web:<id>", provisioned by the web gateway)
+        # are structurally paper-only — even an explicit flag can't override.
+        if str(telegram_id).startswith("web:"):
+            return False
         user = self.get(telegram_id)
         if not user or not user.get("authorized", False):
             return False
