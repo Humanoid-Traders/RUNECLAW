@@ -574,6 +574,18 @@ class RuneClawEngine:
                 )
         except Exception as _lo_exc:
             logger.debug("Learning outcome record skipped: %s", _lo_exc)
+        # ── Feed the ACCOUNT-LEVEL loss breakers (audit CRITICAL) ──────────
+        # In pure-live mode the paper portfolio is never updated, so the
+        # consecutive-loss breaker, live-performance governor, equity throttle
+        # and the daily-loss / drawdown gates would never see real losses.
+        # Route each live realized close into the risk engine's live-close
+        # accounting so those account-level protections actually engage.
+        try:
+            _rpnl = getattr(pos, "pnl_usd", None)
+            if _rpnl is not None:
+                self.risk.record_live_trade_result(float(_rpnl))
+        except Exception as _rr_exc:
+            logger.debug("Live risk-result record skipped: %s", _rr_exc)
         # Auto-refit the learners every N closed outcomes (gated, fail-open).
         # Keeps calibration/voter/expectancy fresh without a manual /calibration
         # refit. Only updates persisted learner state — never changes a decision

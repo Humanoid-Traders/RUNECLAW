@@ -275,6 +275,17 @@ class RiskEngine:
         # like _equity_history; the governor fails OPEN until min_samples accrue,
         # which is safe because it only ever REDUCES size, never grows it.
         self._realized_pnl_window: deque[float] = deque(maxlen=100_000)
+        # LIVE account-level loss tracking. In pure-live mode the paper
+        # portfolio is never updated (the exchange is the source of truth),
+        # so the daily-loss and drawdown breakers — which read the paper
+        # snapshot — could never trip on real losses. These accumulate the
+        # LIVE realized PnL (fed by record_live_trade_result from the live
+        # close callback) and the LIVE equity high-water mark, so the same
+        # breakers protect a live account. UTC-day reset; in-memory (rebuild
+        # after restart is safe — a fresh day starts flat).
+        self._live_daily_pnl: float = 0.0
+        self._live_daily_day: str = ""      # "YYYY-MM-DD" the accumulator is for
+        self._live_equity_peak: float = 0.0  # high-water mark for live drawdown
         # Feature: Rolling return correlation (V2)
         # #49: (timestamp, price) points so cross-asset returns align on a common
         # time grid, not by list position. In-memory only (not persisted).
@@ -457,6 +468,26 @@ class RiskEngine:
         """Track consecutive losses for streak-based circuit breaker."""
         with self._lock:
             self._record_trade_result_locked(pnl)
+
+    def record_live_trade_result(self, pnl: float) -> None:
+        """Record a LIVE realized close into every account-level protection.
+
+        The live close callback calls this instead of record_trade_result so
+        that, in pure-live mode (paper portfolio never updated), the
+        consecutive-loss breaker, live-performance governor, and equity
+        throttle all see real outcomes — AND the daily-loss breaker gets a
+        live daily-PnL accumulator to gate on (see the DAILY_LOSS check).
+        UTC-day roll resets the accumulator. Never raises."""
+        try:
+            with self._lock:
+                self._record_trade_result_locked(float(pnl))
+                day = time.strftime("%Y-%m-%d", time.gmtime(int(self._now())))
+                if day != self._live_daily_day:
+                    self._live_daily_day = day
+                    self._live_daily_pnl = 0.0
+                self._live_daily_pnl += float(pnl)
+        except Exception as exc:  # never let accounting break the close path
+            risk_log.debug("record_live_trade_result skipped: %s", exc)
 
     def _record_trade_result_locked(self, pnl: float) -> None:
         # Live-performance governor: record EVERY realized close (win/loss/flat)
@@ -1069,11 +1100,21 @@ class RiskEngine:
 
         daily_loss_pct = 0.0
         try:
-            # 3. Daily loss (realized + unrealized) — measured against equity, not free cash
-            loss_base = min(sizing_equity, state.equity_usd) if sizing_equity > 0 and state.equity_usd > 0 else max(sizing_equity, state.equity_usd)
-            daily_loss_pct = abs(state.daily_pnl / loss_base * 100) if loss_base > 0 else 0
+            # 3. Daily loss (realized + unrealized) — measured against equity, not free cash.
+            # LIVE mode (live_equity passed): the paper snapshot's daily_pnl is
+            # ~0 because live fills never touch the paper portfolio, so gate on
+            # the LIVE daily-PnL accumulator (fed by record_live_trade_result)
+            # against live equity. Without this the daily-loss breaker could
+            # never trip on real losses (audit CRITICAL, 2026-07-14).
+            if live_equity is not None and live_equity > 0:
+                _daily_pnl = self._live_daily_pnl
+                loss_base = live_equity
+            else:
+                _daily_pnl = state.daily_pnl
+                loss_base = min(sizing_equity, state.equity_usd) if sizing_equity > 0 and state.equity_usd > 0 else max(sizing_equity, state.equity_usd)
+            daily_loss_pct = abs(_daily_pnl / loss_base * 100) if loss_base > 0 else 0
             self._last_known_daily_loss_pct = daily_loss_pct  # C2-42: persist for fallback
-            if state.daily_pnl < 0 and daily_loss_pct >= CONFIG.risk.max_daily_loss_pct:
+            if _daily_pnl < 0 and daily_loss_pct >= CONFIG.risk.max_daily_loss_pct:
                 failed.append(f"DAILY_LOSS: {daily_loss_pct:.1f}% >= {CONFIG.risk.max_daily_loss_pct}%")
                 # C-05 FIX: trip circuit breaker AND reject the CURRENT trade
                 self._trip_circuit_breaker("daily loss limit breached", cause="daily_loss")
@@ -1098,7 +1139,16 @@ class RiskEngine:
             # /resume actually sticks. The account-protection intent is preserved:
             # while drawdown is genuinely >= the cap, it still trips and rejects.
             _max_dd = self._effective_max_drawdown_pct()
-            _cur_dd = getattr(state, "current_drawdown_pct", state.max_drawdown_pct)
+            # LIVE mode: derive current drawdown from the live equity
+            # high-water mark (updated each live evaluation), not the paper
+            # snapshot which never moves in pure-live mode (audit CRITICAL).
+            if live_equity is not None and live_equity > 0:
+                if live_equity > self._live_equity_peak:
+                    self._live_equity_peak = live_equity
+                _cur_dd = (100.0 * (self._live_equity_peak - live_equity)
+                           / self._live_equity_peak) if self._live_equity_peak > 0 else 0.0
+            else:
+                _cur_dd = getattr(state, "current_drawdown_pct", state.max_drawdown_pct)
             if _cur_dd >= _max_dd:
                 failed.append(f"DRAWDOWN: {_cur_dd:.1f}% >= {_max_dd}%")
                 # C-05 FIX: trip circuit breaker AND reject the CURRENT trade
