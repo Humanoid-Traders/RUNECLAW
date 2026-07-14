@@ -73,18 +73,28 @@ async def _credential_preflight(engine, bot) -> None:
                     "BITGET_API_SECRET are empty — the bot cannot place or "
                     "protect live orders. Check your .env.")
         else:
+            # Call fetch_balance DIRECTLY — get_live_equity swallows the venue
+            # error and returns None, so its exception (and this function's
+            # whole 40006 diagnosis) was previously unreachable (audit HIGH).
+            # fetch_balance returns {"error": "..."} on auth failure, which we
+            # classify here.
             try:
-                bal = await engine.get_live_equity()
-                if bal and float(bal.get("total", 0) or 0) >= 0:
-                    audit(system_log,
-                          "Credential preflight OK — venue authenticated",
-                          action="cred_preflight", result="OK")
-                    return
-                _msg = ("\U0001f6a8 <b>STARTUP: venue returned no balance</b>\n"
-                        "Authenticated but got an empty balance — check the "
-                        "account and sandbox flag.")
+                bal = await engine.live_executor.fetch_balance()
             except Exception as _auth_exc:
-                _e = str(_auth_exc)
+                bal = {"error": str(_auth_exc)}
+            _err = bal.get("error") if isinstance(bal, dict) else None
+            if not _err and isinstance(bal, dict) and float(bal.get("total", 0) or 0) > 0:
+                audit(system_log,
+                      "Credential preflight OK — venue authenticated",
+                      action="cred_preflight", result="OK")
+                return
+            if not _err:
+                _msg = ("\U0001f6a8 <b>STARTUP: venue returned an empty "
+                        "balance</b>\nAuthenticated but equity is 0 — check "
+                        "the account is funded and the sandbox flag matches "
+                        "the key.")
+            else:
+                _e = str(_err)
                 _hint = ""
                 if "40006" in _e or "ACCESS_KEY" in _e.upper():
                     _hint = ("\n<b>40006 = venue rejects the API key.</b> Check, "
@@ -95,6 +105,11 @@ async def _credential_preflight(engine, bot) -> None:
                              "a LIVE key needs it <code>false</code>; a demo "
                              "key needs it <code>true</code>.\n"
                              "3. The key wasn't regenerated/deleted on Bitget.")
+                elif "40099" in _e or "environment" in _e.lower():
+                    _hint = ("\n<b>40099 = wrong environment.</b> The key type "
+                             "and BITGET_SANDBOX disagree — a production key "
+                             f"needs BITGET_SANDBOX=false (currently "
+                             f"{CONFIG.exchange.sandbox}).")
                 elif "passphrase" in _e.lower() or "40012" in _e:
                     _hint = ("\n<b>Passphrase mismatch.</b> BITGET_PASSPHRASE "
                              "must match the one set when the key was created.")
