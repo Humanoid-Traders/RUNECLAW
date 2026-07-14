@@ -561,7 +561,13 @@ class ExchangeConfig:
     api_key: str = _env("BITGET_API_KEY")
     api_secret: str = _env("BITGET_API_SECRET")
     passphrase: str = _env("BITGET_PASSPHRASE")
-    sandbox: bool = _env_bool("BITGET_SANDBOX", True)  # Sandbox by default; override via env
+    # Bitget demo trading (PAPTRADING header). Default FALSE: the old True
+    # default was dead config — ccxt ignored the constructor key it fed, so
+    # every real deployment has always hit production. Now that the flag is
+    # honored end-to-end (venue + key validation), defaulting True would
+    # silently flip live deployments into demo mode. Set BITGET_SANDBOX=true
+    # explicitly to trade Bitget demo (requires demo-trading API keys).
+    sandbox: bool = _env_bool("BITGET_SANDBOX", False)
     # Hyperliquid venue credentials (USDC perps DEX): API wallet address +
     # private key. Use a dedicated API wallet (agent wallet), NOT the main
     # wallet key. HYPERLIQUID_TESTNET=true routes to the testnet.

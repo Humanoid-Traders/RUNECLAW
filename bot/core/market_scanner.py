@@ -177,22 +177,29 @@ class MarketScanner:
         self._catalog_watch = CatalogWatch()
 
     async def _get_exchange(self) -> ccxt.Exchange:
-        """Spot exchange for crypto/stock scanning."""
+        """Spot exchange for crypto/stock scanning.
+
+        Market data is ALWAYS production: Bitget demo trading is a separate
+        matching engine whose candles/liquidity measure the wrong market (see
+        tests/test_data_loader_venue.py), so scanning must never opt into it
+        even when order execution runs in demo mode.
+        """
         if self._exchange is None:
             self._exchange = ccxt.bitget({
                 "aiohttp_trust_env": True,  # honor HTTPS_PROXY/CA env (no-op without proxy)
-                "sandbox": CONFIG.exchange.sandbox,
                 "timeout": 30000,
                 "enableRateLimit": True,
             })
         return self._exchange
 
     async def _get_futures_exchange(self) -> ccxt.Exchange:
-        """Futures (swap) exchange for TradFi perpetuals scanning."""
+        """Futures (swap) exchange for TradFi perpetuals scanning.
+
+        Always production for the same reason as _get_exchange.
+        """
         if self._futures_exchange is None:
             self._futures_exchange = ccxt.bitget({
                 "aiohttp_trust_env": True,  # honor HTTPS_PROXY/CA env (no-op without proxy)
-                "sandbox": CONFIG.exchange.sandbox,
                 "timeout": 30000,
                 "enableRateLimit": True,
                 "options": {

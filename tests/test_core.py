@@ -2199,13 +2199,19 @@ class TestAuditV3Fixes:
     # -- F-06: sandbox flag from env --
 
     def test_sandbox_flag_configurable(self):
-        """ExchangeConfig.sandbox should be True by default (when env is clean)."""
+        """ExchangeConfig.sandbox defaults to False (production).
+
+        The old True default was dead config (older ccxt ignored the
+        constructor key, so deployments always hit production). Now that the
+        flag is honored end-to-end, a True default would silently flip live
+        deployments into demo trading — so production is the code default and
+        demo is an explicit opt-in.
+        """
         import os
         from bot.config import _env_bool
-        # The default is True, but .env may override it.  Verify the code default.
         saved = os.environ.pop("BITGET_SANDBOX", None)
         try:
-            assert _env_bool("BITGET_SANDBOX", True) is True, "Sandbox should default to True"
+            assert _env_bool("BITGET_SANDBOX", False) is False, "Sandbox must default to False (production)"
         finally:
             if saved is not None:
                 os.environ["BITGET_SANDBOX"] = saved

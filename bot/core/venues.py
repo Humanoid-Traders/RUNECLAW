@@ -177,12 +177,11 @@ class BitgetVenue(Venue):
             raise RuntimeError(
                 self.missing_credentials_error(per_user=bool(credentials)))
         is_futures = cfg.trade_mode == "futures"
-        return ccxt.bitget({
+        exchange = ccxt.bitget({
             "aiohttp_trust_env": True,  # honor HTTPS_PROXY/CA env (no-op without proxy)
             "apiKey": api_key,
             "secret": api_secret,
             "password": passphrase,
-            "sandbox": cfg.sandbox,
             "timeout": 30000,
             "enableRateLimit": True,
             "options": {
@@ -190,6 +189,13 @@ class BitgetVenue(Venue):
                 "uta": True,  # Support Bitget Unified Trading Account
             },
         })
+        # Explicit demo-trading activation (PAPTRADING header). The previous
+        # constructor "sandbox" key was silently ignored by older ccxt, which
+        # made BITGET_SANDBOX dead config; set_sandbox_mode is version-stable
+        # and matches the key-validation path in exchange_credentials.
+        if cfg.sandbox:
+            exchange.set_sandbox_mode(True)
+        return exchange
 
     def missing_credentials_error(self, per_user: bool) -> str:
         if per_user:
