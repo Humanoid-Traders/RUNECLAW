@@ -532,6 +532,17 @@ class RiskLimits:
     # recovery (a pause starves itself of the data needed to recover).
     # Tighten-only, fail-open below min samples. Default OFF pending the
     # pre-registered frozen-benchmark A/B.
+    # Fable-5 round 5 — funding-clock gate. Blocks an entry ONLY when it
+    # would enter on the PAYING side of an extreme funding rate within the
+    # pre-settlement window (Bitget USDT perps settle 00/08/16 UTC) — the
+    # trade pays immediately and extreme funding marks crowded positioning
+    # that unwinds around the settle. Narrow by construction; fail-open on
+    # missing funding data; every block is priced by the shadow book, so
+    # /shadow answers whether it earns. Live-only in practice (backtests
+    # carry no funding stream, so the gate self-skips there).
+    funding_clock_gate_enabled: bool = _env_bool("FUNDING_CLOCK_GATE_ENABLED", True)
+    funding_clock_window_min: float = _env_float_bounded("FUNDING_CLOCK_WINDOW_MIN", 30, 5, 120)
+    funding_clock_extreme_rate: float = _env_float_bounded("FUNDING_CLOCK_EXTREME_RATE", 0.0005, 0.0001, 0.01)
     equity_throttle_enabled: bool = _env_bool("EQUITY_THROTTLE_ENABLED", False)
     equity_throttle_window: int = int(_env_float_bounded("EQUITY_THROTTLE_WINDOW", 20, 2, 100000))
     equity_throttle_min_samples: int = int(_env_float_bounded("EQUITY_THROTTLE_MIN_SAMPLES", 10, 2, 100000))
@@ -1238,6 +1249,17 @@ class AnalyzerConfig:
     # fill zone. Honest expectation: weak literature; expected to be a marginal
     # or negative A/B. Off = byte-identical (no idea is ever vetoed).
     candle_entry_veto_enabled: bool = _env_bool("CANDLE_ENTRY_VETO_ENABLED", False)
+    # Fable-5 round 5 — liquidation-cascade chase veto. A bar whose range
+    # AND volume both explode (forced liquidations flushing a pool) is a
+    # terrible bar to CHASE: with-flush entries fill at the extreme of a
+    # move that mean-reverts once the forced flow is spent. Vetoes
+    # with-cascade-direction ideas for a few bars after the flush; fading
+    # the cascade stays allowed. OHLCV-only so it backtests — default OFF
+    # pending the pre-registered frozen-benchmark A/B.
+    cascade_veto_enabled: bool = _env_bool("CASCADE_VETO_ENABLED", False)
+    cascade_range_atr_mult: float = _env_float_bounded("CASCADE_RANGE_ATR_MULT", 2.5, 1.5, 6.0)
+    cascade_vol_mult: float = _env_float_bounded("CASCADE_VOL_MULT", 3.0, 1.5, 10.0)
+    cascade_recent_bars: int = int(_env_float_bounded("CASCADE_RECENT_BARS", 3, 1, 12))
     # All-timeframes candles (default ON): run the candlestick detector on
     # EVERY fetched timeframe (15m/1h/4h/1d — already in memory for the
     # Elliott/MTF work, zero extra API calls) and add ONE bounded

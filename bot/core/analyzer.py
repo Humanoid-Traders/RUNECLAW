@@ -1884,6 +1884,30 @@ class Analyzer:
                 self._record_no_trade(signal.symbol, "candle_veto", _veto)
                 return None
 
+        # Liquidation-cascade chase veto (opt-in, default OFF pending A/B).
+        # A recent bar whose range AND volume both exploded is forced-flow
+        # territory: entering IN the flush direction fills at the extreme of
+        # a move that mean-reverts once the liquidations are spent. Fading
+        # the cascade is never vetoed. Applies to both order types — chasing
+        # is bad at market and worse as a limit that fills on continuation.
+        if getattr(CONFIG.analyzer, "cascade_veto_enabled", False) is True:
+            try:
+                from bot.risk.funding_clock import cascade_state, cascade_veto
+                _cs = cascade_state(
+                    highs, lows, closes, volumes, atr=atr_val,
+                    range_atr_mult=CONFIG.analyzer.cascade_range_atr_mult,
+                    vol_mult=CONFIG.analyzer.cascade_vol_mult,
+                    recent_bars=CONFIG.analyzer.cascade_recent_bars)
+                _cv = cascade_veto(direction.value, _cs)
+                if _cv:
+                    audit(trade_log, f"Idea vetoed by cascade: {_cv}",
+                          action="analyze", result="SKIP",
+                          data={"symbol": signal.symbol})
+                    self._record_no_trade(signal.symbol, "cascade_veto", _cv)
+                    return None
+            except Exception as _cs_exc:
+                logger.debug("cascade veto skipped: %s", _cs_exc)
+
         self._no_trade_reasons.pop(signal.symbol, None)
         idea = TradeIdea(
             id=f"TI-{uuid.uuid4().hex[:8]}",
