@@ -1,17 +1,20 @@
 """
 Web user gateway (bot/web/user_gateway.py) — the website's chat + manual-trade
-surface inside the bot process.
++ portfolio surface inside the bot process.
 
 Pins the trust model:
   * fail-closed service auth (no/short/wrong WEB_GATEWAY_SECRET -> 403)
-  * web chat is admin/operator-only (v1 product decision)
-  * user re-authorization mirrors TelegramHandler._guard (registered +
-    authorized + role permission + allowlist)
+  * chat is open to ALL authorized users; the LLM `is_admin` flag reflects the
+    caller's REAL role (non-admins must never inherit admin LLM routing)
+  * web-only identities ("web:<id>"): auto-provisioned as paper-only traders,
+    bypass the Telegram allowlist (they are JWT-authenticated upstream), and
+    are STRUCTURALLY locked out of live trading — even a tampered users.json
+    entry can't open a live path
+  * Telegram-shaped ids keep the exact prior semantics (allowlist, registered
+    + authorized, role permission)
   * trades ride the exact Telegram path: shared parser -> pending idea ->
-    engine.confirm_trade; the gateway adds proposer isolation so a web user
-    can only confirm/cancel their OWN manual proposals
-  * live mode requires _can_trade_live (web can never bypass the operator
-    allowlist)
+    engine.confirm_trade; proposer isolation
+  * /portfolio returns the caller's own paper snapshot
 """
 
 import contextlib
@@ -28,18 +31,36 @@ HDRS = {"X-Gateway-Secret": SECRET}
 # ── Fakes ────────────────────────────────────────────────────────────────────
 
 class FakeUsers:
+    """Mirrors UserStore semantics used by the gateway: get/register/
+    has_permission/can_trade_live. register() auto-approves as trader
+    (paper-only), never overwrites existing records."""
+
     def __init__(self, users=None, perms=True, live=False):
         self._users = dict(users or {})
         self._perms = perms
         self._live = live
+        self.register_calls = []
 
     def get(self, tg):
         return self._users.get(str(tg))
+
+    def register(self, tg, name="", auto_role=""):
+        key = str(tg)
+        self.register_calls.append((key, name))
+        if key not in self._users:
+            self._users[key] = {"authorized": True, "role": "trader",
+                                "can_trade_live": False, "name": name}
+        return self._users[key]
 
     def has_permission(self, tg, cmd):
         return self._perms
 
     def can_trade_live(self, tg):
+        if str(tg).startswith("web:"):
+            return False
+        u = self._users.get(str(tg))
+        if u and "can_trade_live" in u:
+            return bool(u["can_trade_live"])
         return self._live
 
 
@@ -82,6 +103,7 @@ class FakeHandler:
         self.registry = SimpleNamespace(get=lambda name: (skills or {}).get(name))
         self.conversations = FakeConvos()
         self._allowlist = set(map(str, allowlist))
+        self.llm_calls = []  # (question, user_id, is_admin)
 
     def _allowlist_ids(self):
         return self._allowlist
@@ -90,7 +112,23 @@ class FakeHandler:
         return self.users.can_trade_live(tg)
 
     async def _llm_chat(self, q, user_id="", user_name="", is_admin=False):
+        self.llm_calls.append((q, user_id, is_admin))
         return "llm answer"
+
+
+class FakePortfolio:
+    def snapshot(self):
+        return SimpleNamespace(equity_usd=10_000.0, balance_usd=9_500.0,
+                               total_pnl=120.5, daily_pnl=10.0,
+                               win_rate=55.0, total_trades=4)
+
+    @property
+    def open_positions(self):
+        return []
+
+    @property
+    def trade_history(self):
+        return []
 
 
 class FakeEngine:
@@ -99,6 +137,7 @@ class FakeEngine:
         self._manual_margin_override = {}
         self._ops = set(map(str, operator_ids))
         self.confirm_calls = []
+        self.user_portfolios = SimpleNamespace(get=lambda uid: FakePortfolio())
 
     def _is_operator_user(self, uid):
         return str(uid) in self._ops
@@ -151,63 +190,67 @@ async def test_wrong_secret_is_403(monkeypatch):
         assert r2.status == 403
 
 
-# ── Chat: admin-only + user auth + routing ──────────────────────────────────
+# ── Chat: open to all authorized users ──────────────────────────────────────
 
-async def test_chat_non_admin_is_403(monkeypatch):
+async def test_chat_open_to_regular_authorized_user(monkeypatch):
     monkeypatch.setattr(ug, "_GATEWAY_SECRET", SECRET)
-    engine = FakeEngine(operator_ids=())  # "7" is NOT an operator
-    async with gateway_client(engine, FakeHandler(users=AUTHED)) as c:
-        r = await c.post("/chat", json={"telegram_id": "7", "text": "hi"},
+    engine = FakeEngine(operator_ids=())  # "7" is NOT an operator/admin
+    handler = FakeHandler(users=AUTHED)
+    async with gateway_client(engine, handler) as c:
+        r = await c.post("/chat", json={"telegram_id": "7", "text": "how are you"},
                          headers=HDRS)
-        assert r.status == 403
-        assert (await r.json())["error"] == "chat_admin_only"
+        assert r.status == 200
+        assert (await r.json())["reply_html"] == "llm answer"
 
 
-async def test_chat_unregistered_operator_is_403(monkeypatch):
+async def test_chat_unregistered_telegram_id_is_403(monkeypatch):
     monkeypatch.setattr(ug, "_GATEWAY_SECRET", SECRET)
-    engine = FakeEngine(operator_ids=["7"])
-    async with gateway_client(engine, FakeHandler(users={})) as c:
+    async with gateway_client(FakeEngine(), FakeHandler(users={})) as c:
         r = await c.post("/chat", json={"telegram_id": "7", "text": "hi"},
                          headers=HDRS)
         assert r.status == 403
         assert (await r.json())["error"] == "not_authorized"
 
 
+async def test_chat_passes_real_admin_flag_to_llm(monkeypatch):
+    monkeypatch.setattr(ug, "_GATEWAY_SECRET", SECRET)
+    monkeypatch.setattr(ug, "CONFIG", SimpleNamespace(
+        telegram=SimpleNamespace(admin_ids="99"),
+        is_live=lambda: False))
+    users = {"7": {"authorized": True, "role": "trader"},
+             "99": {"authorized": True, "role": "admin"}}
+    handler = FakeHandler(users=users)
+    async with gateway_client(FakeEngine(), handler) as c:
+        r = await c.post("/chat", json={"telegram_id": "7", "text": "hello there"},
+                         headers=HDRS)
+        assert r.status == 200
+        r = await c.post("/chat", json={"telegram_id": "99", "text": "hello there"},
+                         headers=HDRS)
+        assert r.status == 200
+    admin_flags = {uid: is_admin for _, uid, is_admin in handler.llm_calls}
+    assert admin_flags == {"7": False, "99": True}
+
+
 async def test_chat_intent_dispatches_to_skill(monkeypatch):
     monkeypatch.setattr(ug, "_GATEWAY_SECRET", SECRET)
-    engine = FakeEngine(operator_ids=["7"])
     handler = FakeHandler(users=AUTHED,
                           intent=FakeIntent("get_portfolio", 1.0),
                           skills={"get_portfolio": FakeSkill()})
-    async with gateway_client(engine, handler) as c:
+    async with gateway_client(FakeEngine(), handler) as c:
         r = await c.post("/chat", json={"telegram_id": "7", "text": "my portfolio"},
                          headers=HDRS)
         assert r.status == 200
         data = await r.json()
         assert data["intent"] == "get_portfolio"
         assert data["reply_html"] == "<b>portfolio reply</b>"
-        roles = [(role) for _, role, _ in handler.conversations.appended]
+        roles = [role for _, role, _ in handler.conversations.appended]
         assert roles == ["user", "assistant"]
-
-
-async def test_chat_falls_back_to_llm(monkeypatch):
-    monkeypatch.setattr(ug, "_GATEWAY_SECRET", SECRET)
-    engine = FakeEngine(operator_ids=["7"])
-    handler = FakeHandler(users=AUTHED)  # no intent match
-    async with gateway_client(engine, handler) as c:
-        r = await c.post("/chat", json={"telegram_id": "7", "text": "how are you"},
-                         headers=HDRS)
-        assert r.status == 200
-        data = await r.json()
-        assert data == {"reply_html": "llm answer", "intent": "chat"}
-        assert len(handler.conversations.appended) == 2
 
 
 async def test_chat_manual_trade_text_returns_pending_trade(monkeypatch):
     monkeypatch.setattr(ug, "_GATEWAY_SECRET", SECRET)
-    engine = FakeEngine(operator_ids=["7"])
-    handler = FakeHandler(users=AUTHED)
-    async with gateway_client(engine, handler) as c:
+    engine = FakeEngine()
+    async with gateway_client(engine, FakeHandler(users=AUTHED)) as c:
         r = await c.post("/chat",
                          json={"telegram_id": "7",
                                "text": "buy SOL 71 sl 70 tp 76"},
@@ -220,18 +263,136 @@ async def test_chat_manual_trade_text_returns_pending_trade(monkeypatch):
         assert pt["trade_id"] in engine._pending_ideas
 
 
-async def test_chat_allowlist_blocks_stranger(monkeypatch):
+async def test_chat_allowlist_still_blocks_telegram_stranger(monkeypatch):
     monkeypatch.setattr(ug, "_GATEWAY_SECRET", SECRET)
-    engine = FakeEngine(operator_ids=["7"])
     handler = FakeHandler(users=AUTHED, allowlist=["1", "2"])  # "7" not listed
-    async with gateway_client(engine, handler) as c:
+    async with gateway_client(FakeEngine(), handler) as c:
         r = await c.post("/chat", json={"telegram_id": "7", "text": "hi"},
                          headers=HDRS)
         assert r.status == 403
         assert (await r.json())["error"] == "not_allowlisted"
 
 
-# ── Trade: propose / confirm / cancel ───────────────────────────────────────
+async def test_history_open_to_regular_user(monkeypatch):
+    monkeypatch.setattr(ug, "_GATEWAY_SECRET", SECRET)
+    handler = FakeHandler(users=AUTHED)
+    handler.conversations.get_recent = lambda uid, limit=None: [
+        SimpleNamespace(role="user", content="hi", timestamp=1.0)]
+    async with gateway_client(FakeEngine(), handler) as c:
+        r = await c.get("/chat/history?telegram_id=7", headers=HDRS)
+        assert r.status == 200
+        msgs = (await r.json())["messages"]
+        assert msgs == [{"role": "user", "content": "hi", "timestamp": 1.0}]
+
+
+# ── Web-only identities ("web:<id>") ────────────────────────────────────────
+
+async def test_chat_web_id_auto_provisions(monkeypatch):
+    monkeypatch.setattr(ug, "_GATEWAY_SECRET", SECRET)
+    handler = FakeHandler(users={})  # unknown user
+    async with gateway_client(FakeEngine(), handler) as c:
+        r = await c.post("/chat", json={"telegram_id": "web:42", "text": "hi",
+                                        "name": "alice"},
+                         headers=HDRS)
+        assert r.status == 200
+        assert ("web:42", "alice") in handler.users.register_calls
+        assert handler.users.get("web:42")["role"] == "trader"
+
+
+async def test_web_id_bypasses_allowlist_but_stranger_does_not(monkeypatch):
+    monkeypatch.setattr(ug, "_GATEWAY_SECRET", SECRET)
+    handler = FakeHandler(users=AUTHED, allowlist=["1"])
+    async with gateway_client(FakeEngine(), handler) as c:
+        r = await c.post("/chat", json={"telegram_id": "web:42", "text": "hi"},
+                         headers=HDRS)
+        assert r.status == 200  # web id: JWT-authenticated upstream
+        r2 = await c.post("/chat", json={"telegram_id": "7", "text": "hi"},
+                          headers=HDRS)
+        assert r2.status == 403  # telegram-shaped stranger still allowlisted out
+        assert (await r2.json())["error"] == "not_allowlisted"
+
+
+async def test_malformed_web_id_rejected(monkeypatch):
+    monkeypatch.setattr(ug, "_GATEWAY_SECRET", SECRET)
+    async with gateway_client(FakeEngine(), FakeHandler(users={})) as c:
+        for bad in ("web:abc", "web:", "web:1x", "web:-3"):
+            r = await c.post("/chat", json={"telegram_id": bad, "text": "hi"},
+                             headers=HDRS)
+            assert r.status == 400, bad
+            assert (await r.json())["error"] == "invalid_web_id"
+
+
+async def test_web_id_propose_is_always_paper(monkeypatch):
+    monkeypatch.setattr(ug, "_GATEWAY_SECRET", SECRET)
+    monkeypatch.setattr(ug, "CONFIG", SimpleNamespace(
+        telegram=SimpleNamespace(admin_ids=""),
+        is_live=lambda: True))
+    # Even with a (bogus) live-enabled store entry, web ids stay paper.
+    users = {"web:9": {"authorized": True, "role": "trader", "can_trade_live": True}}
+    handler = FakeHandler(users=users, live=True)
+    async with gateway_client(FakeEngine(), handler) as c:
+        r = await c.post("/trade/propose",
+                         json={"telegram_id": "web:9", "direction": "LONG",
+                               "symbol": "SOL", "entry": 71.0, "sl": 70.0,
+                               "tp": 76.0},
+                         headers=HDRS)
+        assert r.status == 200
+        pt = (await r.json())["pending_trade"]
+        assert pt["mode"] == "PAPER"
+        assert pt["live_allowed"] is False
+
+
+async def test_web_id_confirm_live_blocked_even_with_stale_admin_flag(monkeypatch):
+    monkeypatch.setattr(ug, "_GATEWAY_SECRET", SECRET)
+    engine = FakeEngine()
+    # Tampered store: web id claims admin + live. Must still be blocked.
+    users = {"web:9": {"authorized": True, "role": "admin", "can_trade_live": True}}
+    handler = FakeHandler(users=users, live=True)
+    async with gateway_client(engine, handler) as c:
+        tid = await _propose(c, tg="web:9")
+        monkeypatch.setattr(ug, "CONFIG", SimpleNamespace(
+            telegram=SimpleNamespace(admin_ids=""),
+            is_live=lambda: True))
+        r = await c.post("/trade/confirm",
+                         json={"telegram_id": "web:9", "trade_id": tid},
+                         headers=HDRS)
+        assert r.status == 403
+        assert (await r.json())["error"] == "live_not_enabled"
+        assert engine.confirm_calls == []
+
+
+async def test_web_id_confirm_executes_paper_when_not_live(monkeypatch):
+    monkeypatch.setattr(ug, "_GATEWAY_SECRET", SECRET)
+    engine = FakeEngine()
+    async with gateway_client(engine, FakeHandler(users={})) as c:
+        tid = await _propose(c, tg="web:42")
+        r = await c.post("/trade/confirm",
+                         json={"telegram_id": "web:42", "trade_id": tid},
+                         headers=HDRS)
+        assert r.status == 200
+        assert engine.confirm_calls == [(tid, "web:42")]
+
+
+def test_real_can_trade_live_blocks_web_ids():
+    """The real single authority (TelegramHandler._can_trade_live and
+    UserStore.can_trade_live) must refuse web ids even with a live flag set
+    and no allowlist configured."""
+    from bot.utils.user_store import UserStore
+    import tempfile, os
+    with tempfile.TemporaryDirectory() as d:
+        store = UserStore(path=os.path.join(d, "users.json"))
+        store.register("web:1")
+        store._users["web:1"]["can_trade_live"] = True  # tampered flag
+        assert store.can_trade_live("web:1") is False
+    # TelegramHandler._can_trade_live is exercised unbound with a stub self.
+    from bot.skills.telegram_handler import TelegramHandler
+    stub = SimpleNamespace(
+        _allowlist_ids=lambda: set(),
+        users=SimpleNamespace(can_trade_live=lambda tg: True))
+    assert TelegramHandler._can_trade_live(stub, "web:1") is False
+
+
+# ── Trade: propose / confirm / cancel (telegram ids unchanged) ──────────────
 
 async def test_propose_structured_registers_pending_idea(monkeypatch):
     monkeypatch.setattr(ug, "_GATEWAY_SECRET", SECRET)
@@ -358,23 +519,22 @@ async def test_cancel_removes_own_manual_idea(monkeypatch):
         assert tid not in engine._pending_ideas
 
 
-async def test_history_is_admin_only(monkeypatch):
-    monkeypatch.setattr(ug, "_GATEWAY_SECRET", SECRET)
-    engine = FakeEngine(operator_ids=())
-    async with gateway_client(engine, FakeHandler(users=AUTHED)) as c:
-        r = await c.get("/chat/history?telegram_id=7", headers=HDRS)
-        assert r.status == 403
-        assert (await r.json())["error"] == "chat_admin_only"
+# ── Portfolio snapshot ───────────────────────────────────────────────────────
 
-
-async def test_history_returns_messages_for_admin(monkeypatch):
+async def test_portfolio_returns_user_snapshot(monkeypatch):
     monkeypatch.setattr(ug, "_GATEWAY_SECRET", SECRET)
-    engine = FakeEngine(operator_ids=["7"])
-    handler = FakeHandler(users=AUTHED)
-    handler.conversations.get_recent = lambda uid, limit=None: [
-        SimpleNamespace(role="user", content="hi", timestamp=1.0)]
-    async with gateway_client(engine, handler) as c:
-        r = await c.get("/chat/history?telegram_id=7", headers=HDRS)
+    async with gateway_client(FakeEngine(), FakeHandler(users={})) as c:
+        r = await c.get("/portfolio?telegram_id=web:42", headers=HDRS)
         assert r.status == 200
-        msgs = (await r.json())["messages"]
-        assert msgs == [{"role": "user", "content": "hi", "timestamp": 1.0}]
+        data = await r.json()
+        assert data["equity"] == 10_000.0
+        assert data["mode"] == "PAPER"
+        assert data["open_positions"] == []
+        assert data["closed_trades"] == []
+
+
+async def test_portfolio_requires_identity(monkeypatch):
+    monkeypatch.setattr(ug, "_GATEWAY_SECRET", SECRET)
+    async with gateway_client(FakeEngine(), FakeHandler(users={})) as c:
+        r = await c.get("/portfolio", headers=HDRS)
+        assert r.status == 400

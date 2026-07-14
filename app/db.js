@@ -246,6 +246,9 @@ class MemoryDB {
         // Delete one open trade by symbol
         const idx = this.trades.findIndex(t => t.user_id === params[0] && t.symbol === params[1] && t.status === 'OPEN');
         if (idx >= 0) this.trades.splice(idx, 1);
+      } else if (cmd.includes("STATUS = 'OPEN'")) {
+        // Delete only the user's OPEN rows (portfolio write-through refresh)
+        this.trades = this.trades.filter(t => !(t.user_id === params[0] && t.status === 'OPEN'));
       } else {
         this.trades = this.trades.filter(t => t.user_id !== params[0]);
       }

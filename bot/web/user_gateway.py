@@ -4,19 +4,22 @@ RUNECLAW — Web User Gateway
 aiohttp sub-app (mounted at /gateway by dashboard_server.create_app) that lets
 the website (app/ Express platform) talk to the LIVE bot process:
 
-  POST /gateway/chat           — chatbot on the web (admin/operator only)
+  POST /gateway/chat           — chatbot on the web (all authorized users)
   GET  /gateway/chat/history   — hydrate the web chat drawer
+  GET  /gateway/portfolio      — caller's own PAPER portfolio snapshot
   POST /gateway/trade/propose  — manual trade -> pending idea (same as /trade)
   POST /gateway/trade/confirm  — engine.confirm_trade (THE single execution path)
   POST /gateway/trade/cancel   — withdraw own pending manual idea
 
-Trust model: requests come ONLY from the Express server (app/routes/chat.js,
-app/routes/webtrade.js), which authenticates the browser user with JWT and
-injects the linked telegram_id server-side. This gateway re-authenticates the
-service channel with X-Gateway-Secret (WEB_GATEWAY_SECRET, >=32 chars,
-constant-time compare, fail-closed 403 when unset) and re-authorizes the USER
-on every call against the bot's own UserStore + allowlist + live gate — the
-website can never grant access the operator hasn't already granted.
+Trust model: requests come ONLY from the Express server (app/routes/*.js),
+which authenticates the browser user with JWT and injects the identity
+server-side — the linked telegram_id, or "web:<user_id>" for web-only
+accounts (auto-provisioned here as paper-only traders; structurally unable
+to trade live). This gateway re-authenticates the service channel with
+X-Gateway-Secret (WEB_GATEWAY_SECRET, >=32 chars, constant-time compare,
+fail-closed 403 when unset) and re-authorizes the USER on every call against
+the bot's own UserStore + allowlist + live gate — the website can never grant
+live access the operator hasn't already granted.
 
 No new execution code: trades ride the exact Telegram path
 (parse_manual_trade -> build_manual_idea -> engine._pending_ideas ->
@@ -29,6 +32,8 @@ from __future__ import annotations
 import hmac
 import html as _html
 import os
+import re
+from datetime import datetime, timezone
 
 from aiohttp import web
 
@@ -65,6 +70,18 @@ async def secret_middleware(request: web.Request, handler):
 
 # ── User authorization (mirrors TelegramHandler._guard, sans Update) ────────
 
+# Web-only identities: "web:<website user id>". Provisioned automatically on
+# first gateway request (paper-only trader), because the caller is already
+# authenticated by the Express server's JWT layer. Real Telegram ids are
+# numeric, and MultiUserPortfolio's key sanitizer strips ":" (web:5 -> web5),
+# so these can never collide with a Telegram user's records.
+_WEB_ID_RE = re.compile(r"^web:\d{1,20}$")
+
+
+def _is_web_id(tg_id: str) -> bool:
+    return bool(_WEB_ID_RE.match(tg_id))
+
+
 def _is_admin_id(tg_handler, tg_id: str) -> bool:
     """TelegramHandler._is_admin semantics keyed by raw telegram id."""
     user = tg_handler.users.get(tg_id)
@@ -76,21 +93,34 @@ def _is_admin_id(tg_handler, tg_id: str) -> bool:
     return False
 
 
-def _guard_user(tg_handler, tg_id: str, command: str = ""):
+def _guard_user(tg_handler, tg_id: str, command: str = "", name: str = ""):
     """Auth + role + rate limit for a web-originated request.
 
     Returns None when allowed, or a web.json_response error. Mirrors
     TelegramHandler._guard: allowlist -> registered+authorized -> role
     permission -> rate limit.
+
+    Web-only identities ("web:<id>"): the Telegram allowlist does not apply
+    (the Express JWT layer already authenticated the caller, and web ids are
+    structurally locked out of live trading — see _can_trade_live guards);
+    unknown web ids are auto-provisioned as paper-only traders via
+    UserStore.register. Telegram-shaped ids keep the exact prior semantics.
     """
     if not tg_id:
         return web.json_response({"error": "telegram_id required"}, status=400)
-    allow = tg_handler._allowlist_ids()
-    if allow and tg_id not in allow:
-        return web.json_response(
-            {"error": "not_allowlisted",
-             "detail": "This bot is locked to its configured operator."},
-            status=403)
+    if tg_id.startswith("web:") and not _is_web_id(tg_id):
+        return web.json_response({"error": "invalid_web_id"}, status=400)
+    if _is_web_id(tg_id):
+        # Auto-provision (or refresh last_seen for the 24h staleness check).
+        # register() never overwrites role/tier on existing users.
+        tg_handler.users.register(tg_id, name=name)
+    else:
+        allow = tg_handler._allowlist_ids()
+        if allow and tg_id not in allow:
+            return web.json_response(
+                {"error": "not_allowlisted",
+                 "detail": "This bot is locked to its configured operator."},
+                status=403)
     user = tg_handler.users.get(tg_id)
     if not user or not user.get("authorized", False):
         return web.json_response(
@@ -115,7 +145,7 @@ async def _json_body(request: web.Request) -> dict:
         return {}
 
 
-# ── Chat (admin/operator only in v1) ────────────────────────────────────────
+# ── Chat (all authorized users; LLM tier follows the caller's real role) ────
 
 async def handle_chat(request: web.Request) -> web.Response:
     engine = request.app["engine"]
@@ -130,11 +160,7 @@ async def handle_chat(request: web.Request) -> web.Response:
     if len(text) > _MAX_TEXT_LEN:
         return web.json_response({"error": "message too long"}, status=400)
 
-    # v1 product decision: web chat is admin/operator only.
-    if not (engine._is_operator_user(tg_id) or _is_admin_id(tg_handler, tg_id)):
-        return web.json_response({"error": "chat_admin_only"}, status=403)
-
-    err = _guard_user(tg_handler, tg_id)
+    err = _guard_user(tg_handler, tg_id, name=name)
     if err is not None:
         return err
 
@@ -145,7 +171,8 @@ async def handle_chat(request: web.Request) -> web.Response:
         trade_text = trade_text[6:].strip()
     if (any(trade_text.startswith(p) for p in ("buy ", "long ", "short ", "sell "))
             and " sl " in trade_text):
-        return _propose_from_text(request.app, tg_handler, engine, tg_id, trade_text)
+        return _propose_from_text(request.app, tg_handler, engine, tg_id,
+                                  trade_text, name=name)
 
     # Intent routing — same threshold as Telegram (confidence >= 0.8).
     intent = tg_handler.intent_router.classify_rules(text)
@@ -174,9 +201,12 @@ async def handle_chat(request: web.Request) -> web.Response:
     tg_handler.conversations.append(tg_id, "user", text,
                                     metadata={"intent": intent.skill or "chat",
                                               "surface": "web"})
+    # is_admin MUST reflect the caller's real role: resolve_tier_config's
+    # non-admin guard (operator Anthropic key stays admin-only) and the
+    # fallback-chain gate in _llm_chat both key off this flag.
     answer = await tg_handler._llm_chat(
         sanitize_chat_input(text), user_id=tg_id, user_name=name,
-        is_admin=True)
+        is_admin=_is_admin_id(tg_handler, tg_id))
     tg_handler.conversations.append(tg_id, "assistant", answer,
                                     metadata={"surface": "web"})
     return web.json_response({"reply_html": answer, "intent": "chat"})
@@ -191,8 +221,6 @@ async def handle_chat_history(request: web.Request) -> web.Response:
     except ValueError:
         limit = 30
 
-    if not (engine._is_operator_user(tg_id) or _is_admin_id(tg_handler, tg_id)):
-        return web.json_response({"error": "chat_admin_only"}, status=403)
     err = _guard_user(tg_handler, tg_id)
     if err is not None:
         return err
@@ -217,7 +245,14 @@ def _remember_proposer(app, trade_id: str, tg_id: str) -> None:
 
 
 def _trade_mode(tg_handler, tg_id: str) -> tuple[str, bool]:
-    """(mode, live_allowed) exactly as the Telegram gate decides it."""
+    """(mode, live_allowed) exactly as the Telegram gate decides it.
+
+    Web-only identities are structurally paper-only: even a tampered
+    users.json entry (web:N with role=admin / can_trade_live=true) never
+    yields LIVE here.
+    """
+    if _is_web_id(tg_id):
+        return "PAPER", False
     live_allowed = bool(_is_admin_id(tg_handler, tg_id)
                         or tg_handler._can_trade_live(tg_id))
     mode = "LIVE" if (CONFIG.is_live() and live_allowed) else "PAPER"
@@ -244,10 +279,11 @@ def _idea_payload(app, tg_handler, tg_id: str, idea, margin_usd) -> dict:
     }
 
 
-def _propose_from_text(app, tg_handler, engine, tg_id: str, text: str) -> web.Response:
+def _propose_from_text(app, tg_handler, engine, tg_id: str, text: str,
+                       name: str = "") -> web.Response:
     from bot.skills.manual_trade import (parse_manual_trade, build_manual_idea,
                                          register_manual_idea)
-    err = _guard_user(tg_handler, tg_id, command="trade")
+    err = _guard_user(tg_handler, tg_id, command="trade", name=name)
     if err is not None:
         return err
     parsed = parse_manual_trade(text)
@@ -276,6 +312,7 @@ async def handle_trade_propose(request: web.Request) -> web.Response:
     tg_handler = request.app["tg_handler"]
     body = await _json_body(request)
     tg_id = str(body.get("telegram_id") or "").strip()
+    name = str(body.get("name") or "").strip()[:64]
     if not tg_id:
         return web.json_response({"error": "telegram_id required"}, status=400)
 
@@ -301,7 +338,8 @@ async def handle_trade_propose(request: web.Request) -> web.Response:
                 {"error": "invalid_trade", "detail": "direction must be LONG or SHORT"},
                 status=400)
         text = f"{direction} {symbol} {entry} sl {sl} tp {tp}{margin_txt}"
-    return _propose_from_text(request.app, tg_handler, engine, tg_id, text)
+    return _propose_from_text(request.app, tg_handler, engine, tg_id, text,
+                              name=name)
 
 
 async def handle_trade_confirm(request: web.Request) -> web.Response:
@@ -321,6 +359,11 @@ async def handle_trade_confirm(request: web.Request) -> web.Response:
     # another user's proposal.
     if request.app["proposers"].get(trade_id) != tg_id:
         return web.json_response({"error": "not_proposer"}, status=403)
+    # Web-only identities can NEVER confirm in live mode. This check runs
+    # BEFORE the _is_admin_id bypass on purpose: a tampered users.json entry
+    # (web:N with role=admin) must not open a live path.
+    if CONFIG.is_live() and _is_web_id(tg_id):
+        return web.json_response({"error": "live_not_enabled"}, status=403)
     # Live gate — same H-18 check as the Telegram confirm path.
     if CONFIG.is_live() and not _is_admin_id(tg_handler, tg_id):
         if not tg_handler._can_trade_live(tg_id):
@@ -357,6 +400,63 @@ async def handle_trade_cancel(request: web.Request) -> web.Response:
     return web.json_response({"cancelled": True})
 
 
+# ── Per-user portfolio snapshot ──────────────────────────────────────────────
+
+def _trade_row(t) -> dict:
+    """Serialize a TradeExecution for the website (paper portfolio)."""
+    return {
+        "trade_id": t.trade_id,
+        "symbol": t.asset,
+        "direction": t.direction.value if hasattr(t.direction, "value") else str(t.direction),
+        "entry_price": t.entry_price,
+        "exit_price": t.exit_price,
+        "quantity": t.quantity,
+        "size_usd": round(t.entry_price * t.quantity, 2),
+        "stop_loss": t.stop_loss,
+        "take_profit": t.take_profit,
+        "leverage": t.leverage,
+        "pnl": t.pnl,
+        "commission": t.commission,
+        "strategy_type": t.strategy_type,
+        "opened_at": t.opened_at.isoformat() if t.opened_at else None,
+        "closed_at": t.closed_at.isoformat() if t.closed_at else None,
+    }
+
+
+async def handle_portfolio(request: web.Request) -> web.Response:
+    """GET /gateway/portfolio?telegram_id=... — the caller's own PAPER
+    portfolio truth (equity, open positions, recent closed trades) from
+    engine.user_portfolios. This is what the website's per-user dashboard
+    renders; the operator sync channel stays untouched."""
+    engine = request.app["engine"]
+    tg_handler = request.app["tg_handler"]
+    tg_id = str(request.query.get("telegram_id") or "").strip()
+    err = _guard_user(tg_handler, tg_id)
+    if err is not None:
+        return err
+    try:
+        tracker = engine.user_portfolios.get(tg_id)
+        snap = tracker.snapshot()
+        open_rows = [_trade_row(t) for t in tracker.open_positions]
+        closed_rows = [_trade_row(t) for t in tracker.trade_history[-100:]]
+    except Exception as exc:
+        audit(system_log, f"Web portfolio read failed for {tg_id}: {exc}",
+              action="web_portfolio", result="ERROR")
+        return web.json_response({"error": "portfolio_unavailable"}, status=503)
+    return web.json_response({
+        "mode": "PAPER" if not CONFIG.is_live() or _is_web_id(tg_id) else "MIXED",
+        "equity": snap.equity_usd,
+        "balance": snap.balance_usd,
+        "total_pnl": snap.total_pnl,
+        "daily_pnl": snap.daily_pnl,
+        "win_rate": snap.win_rate,
+        "total_trades": snap.total_trades,
+        "open_positions": open_rows,
+        "closed_trades": closed_rows,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    })
+
+
 # ── App factory ──────────────────────────────────────────────────────────────
 
 def build_gateway(engine, tg_handler) -> web.Application:
@@ -367,6 +467,7 @@ def build_gateway(engine, tg_handler) -> web.Application:
     app["proposers"] = {}
     app.router.add_post("/chat", handle_chat)
     app.router.add_get("/chat/history", handle_chat_history)
+    app.router.add_get("/portfolio", handle_portfolio)
     app.router.add_post("/trade/propose", handle_trade_propose)
     app.router.add_post("/trade/confirm", handle_trade_confirm)
     app.router.add_post("/trade/cancel", handle_trade_cancel)

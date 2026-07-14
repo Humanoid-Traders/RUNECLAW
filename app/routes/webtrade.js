@@ -9,14 +9,15 @@
  *   (operator env allowlist AND user-store flag). The gateway also enforces
  *   proposer isolation: a web user can only confirm/cancel their own proposals.
  *
- * The telegram_id is resolved server-side from the JWT user's linked account
- * (409 when not linked — same pattern as routes/controls.js).
+ * Identity is resolved server-side (lib/identity.js): linked telegram_id, or
+ * "web:<user_id>" for web-only accounts — which the gateway auto-provisions
+ * as PAPER-ONLY traders (structurally locked out of live execution).
  */
 
 const express = require('express');
-const { pool } = require('../db');
 const { authMiddleware } = require('../auth');
 const { rateLimit, userKey } = require('../lib/rate_limit');
+const { resolveBotIdentity } = require('../lib/identity');
 const gateway = require('../lib/gateway');
 
 const router = express.Router();
@@ -30,18 +31,6 @@ const TRADE_ID_RE = /^[A-Za-z0-9:_\/-]{1,64}$/;
 function secLog(event, req, extra) {
   const uid = req.user && req.user.user_id;
   console.log(`[SECURITY] ${event} user=${uid}${extra ? ' ' + extra : ''}`);
-}
-
-async function linkedTelegram(req, res) {
-  const uid = req.user.user_id;
-  const [rows] = await pool.execute(
-    'SELECT telegram_id, telegram_linked FROM users WHERE id = ?', [uid]);
-  const u = rows[0];
-  if (!u || !u.telegram_linked || !u.telegram_id) {
-    res.status(409).json({ error: 'Link your Telegram first.' });
-    return null;
-  }
-  return u;
 }
 
 function finitePositive(v) {
@@ -73,11 +62,11 @@ router.post('/propose', tradeLimit, async (req, res) => {
     if (entry === null || sl === null || tp === null) {
       return res.status(400).json({ error: 'entry, sl, tp must be positive numbers' });
     }
-    const u = await linkedTelegram(req, res);
-    if (!u) return;
+    const ident = await resolveBotIdentity(req);
     secLog('WEB_TRADE_PROPOSE', req, `${direction} ${symbol} entry=${entry} sl=${sl} tp=${tp}`);
     const r = await gateway.postGateway('/trade/propose', {
-      telegram_id: String(u.telegram_id),
+      telegram_id: ident.id,
+      name: String(ident.email || '').split('@')[0],
       direction, symbol, entry, sl, tp,
       ...(margin !== undefined ? { margin } : {}),
     });
@@ -96,11 +85,10 @@ router.post('/confirm', tradeLimit, async (req, res) => {
     }
     const tradeId = String((req.body || {}).trade_id || '').trim();
     if (!TRADE_ID_RE.test(tradeId)) return res.status(400).json({ error: 'Invalid trade_id' });
-    const u = await linkedTelegram(req, res);
-    if (!u) return;
+    const ident = await resolveBotIdentity(req);
     secLog('WEB_TRADE_CONFIRM', req, `trade_id=${tradeId}`);
     const r = await gateway.postGateway('/trade/confirm', {
-      telegram_id: String(u.telegram_id), trade_id: tradeId,
+      telegram_id: ident.id, trade_id: tradeId,
     }, 30000);
     return gateway.relay(res, r);
   } catch (err) {
@@ -117,11 +105,10 @@ router.post('/cancel', tradeLimit, async (req, res) => {
     }
     const tradeId = String((req.body || {}).trade_id || '').trim();
     if (!TRADE_ID_RE.test(tradeId)) return res.status(400).json({ error: 'Invalid trade_id' });
-    const u = await linkedTelegram(req, res);
-    if (!u) return;
+    const ident = await resolveBotIdentity(req);
     secLog('WEB_TRADE_CANCEL', req, `trade_id=${tradeId}`);
     const r = await gateway.postGateway('/trade/cancel', {
-      telegram_id: String(u.telegram_id), trade_id: tradeId,
+      telegram_id: ident.id, trade_id: tradeId,
     });
     return gateway.relay(res, r);
   } catch (err) {

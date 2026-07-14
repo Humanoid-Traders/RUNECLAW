@@ -62,7 +62,7 @@ router.post('/', ctlLimit, async (req, res) => {
     const [u] = await pool.execute(
       'SELECT telegram_linked, telegram_id FROM users WHERE id = ?', [uid]);
     if (!u[0] || !u[0].telegram_linked || !u[0].telegram_id) {
-      return res.status(409).json({ error: 'Link your Telegram first.' });
+      return res.status(409).json({ error: 'telegram_required', detail: 'Live trading and exchange keys require a linked Telegram account. Paper trading works without it.' });
     }
     const b = req.body || {};
     // Normalise: undefined/missing -> NULL (leave unchanged). Validate types.
@@ -102,7 +102,7 @@ router.post('/stop', stopLimit, async (req, res) => {
     const [u] = await pool.execute(
       'SELECT telegram_linked, telegram_id FROM users WHERE id = ?', [uid]);
     if (!u[0] || !u[0].telegram_linked || !u[0].telegram_id) {
-      return res.status(409).json({ error: 'Link your Telegram first.' });
+      return res.status(409).json({ error: 'telegram_required', detail: 'Live trading and exchange keys require a linked Telegram account. Paper trading works without it.' });
     }
     const tg = String(u[0].telegram_id);
     // Flag changes: live off + paused. (max_margin left unchanged = NULL.)

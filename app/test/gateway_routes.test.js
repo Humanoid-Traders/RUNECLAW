@@ -47,6 +47,14 @@ function startMockGateway() {
         } else if (req.url === '/gateway/trade/confirm') {
           res.statusCode = 403;
           res.end(JSON.stringify({ error: 'not_proposer' }));
+        } else if (req.url.startsWith('/gateway/portfolio')) {
+          res.end(JSON.stringify({
+            mode: 'PAPER', equity: 10000, balance: 9500, total_pnl: 12.5,
+            daily_pnl: 0, win_rate: 100, total_trades: 1,
+            open_positions: [{ symbol: 'SOL/USDT:USDT', direction: 'LONG', entry_price: 71, size_usd: 100, commission: 0.1, stop_loss: 70, take_profit: 76, opened_at: '2026-07-14T00:00:00Z' }],
+            closed_trades: [{ symbol: 'ETH/USDT:USDT', direction: 'SHORT', entry_price: 1721, exit_price: 1642, size_usd: 200, pnl: 12.5, commission: 0.2, opened_at: '2026-07-13T00:00:00Z', closed_at: '2026-07-13T06:00:00Z' }],
+            updated_at: '2026-07-14T01:00:00Z',
+          }));
         } else {
           res.end(JSON.stringify({ ok: true }));
         }
@@ -76,7 +84,7 @@ function request(method, path, { token, body } = {}) {
   });
 }
 
-let jwt, pool, signLinked, signUnlinked;
+let jwt, pool, signLinked, signUnlinked, unlinkedId;
 
 test.before(async () => {
   const gwPort = await startMockGateway();
@@ -104,12 +112,15 @@ test.before(async () => {
 
   signLinked = jwt.sign({ user_id: linked.id, email: linked.email }, process.env.JWT_SECRET);
   signUnlinked = jwt.sign({ user_id: unlinked.id, email: unlinked.email }, process.env.JWT_SECRET);
+  unlinkedId = unlinked.id;
 
   const express = require('express');
   const app = express();
   app.use(express.json());
   app.use('/api/chat', require('../routes/chat'));
   app.use('/api/trade', require('../routes/webtrade'));
+  app.use('/api/portfolio', require('../routes/portfolio'));
+  app.use('/api/controls', require('../routes/controls'));
   await new Promise((resolve) => {
     appServer = app.listen(0, '127.0.0.1', resolve);
   });
@@ -126,9 +137,52 @@ test('chat requires JWT', async () => {
   assert.strictEqual(r.status, 401);
 });
 
-test('chat 409s for unlinked telegram', async () => {
+test('unlinked chat forwards web:<uid> identity (no 409)', async () => {
+  seen.length = 0;
   const r = await request('POST', '/api/chat', { token: signUnlinked, body: { text: 'hi' } });
+  assert.strictEqual(r.status, 200);
+  assert.match(seen[0].body.telegram_id, /^web:\d+$/);
+  assert.strictEqual(seen[0].body.name, 'unlinked');
+});
+
+test('unlinked trade propose forwards web:<uid> identity', async () => {
+  seen.length = 0;
+  const r = await request('POST', '/api/trade/propose', {
+    token: signUnlinked,
+    body: { direction: 'LONG', symbol: 'SOL', entry: 71, sl: 70, tp: 76 },
+  });
+  assert.strictEqual(r.status, 200);
+  assert.match(seen[0].body.telegram_id, /^web:\d+$/);
+});
+
+test('controls stay telegram-gated for unlinked users', async () => {
+  const r = await request('POST', '/api/controls', {
+    token: signUnlinked, body: { paused: true },
+  });
   assert.strictEqual(r.status, 409);
+  assert.strictEqual(r.data.error, 'telegram_required');
+});
+
+test('portfolio proxies gateway and write-throughs to DB', async () => {
+  seen.length = 0;
+  const r = await request('GET', '/api/portfolio', { token: signUnlinked });
+  assert.strictEqual(r.status, 200);
+  assert.strictEqual(r.data.equity, 10000);
+  assert.strictEqual(r.data.stale, false);
+  assert.match(seen[0].url, /^\/gateway\/portfolio\?telegram_id=web%3A\d+$/);
+  // Write-through: snapshot + closed + open rows landed under the JWT user
+  const [snaps] = await pool.execute(
+    'SELECT equity FROM equity_snapshots WHERE user_id = ? ORDER BY snapshot_at DESC LIMIT 1', [unlinkedId]);
+  assert.strictEqual(parseFloat(snaps[0].equity), 10000);
+  const [open] = await pool.execute(
+    "SELECT * FROM trades WHERE user_id = ? AND status = 'OPEN' ORDER BY opened_at DESC", [unlinkedId]);
+  assert.strictEqual(open.length, 1);
+  assert.strictEqual(open[0].symbol, 'SOL/USDT:USDT');
+  // Second call must not duplicate the closed trade (upsert by key)
+  await request('GET', '/api/portfolio', { token: signUnlinked });
+  const [closed] = await pool.execute(
+    "SELECT symbol, closed_at, pnl FROM trades WHERE user_id = ? AND status = 'CLOSED' ORDER BY closed_at DESC LIMIT ?", [unlinkedId, 500]);
+  assert.strictEqual(closed.length, 1);
 });
 
 test('chat forwards with server-side telegram_id and secret', async () => {
