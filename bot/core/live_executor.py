@@ -807,6 +807,82 @@ class LiveExecutor:
             else:
                 logger.warning("Leverage/margin set failed for %s on %s: %s",
                                sym, self._venue.id, exc)
+        # ── Verify leverage + margin actually applied (audit HIGH) ─────────
+        # The Bitget path reads back leverage and ABORTS the order on a stuck
+        # mismatch; without the same guard here a non-Bitget venue could
+        # silently trade at its sticky default leverage (wrong risk sizing) or
+        # run CROSS margin while config says isolated (whole-account
+        # liquidation exposure). Best-effort: verify+abort where the venue
+        # supports read-back; loudly flag "unverified" where it doesn't.
+        try:
+            _lev_info = await exchange.fetch_leverage(
+                sym, params=self._venue.futures_params())
+            _actual = None
+            if isinstance(_lev_info, dict):
+                _actual = (_lev_info.get("longLeverage") or _lev_info.get("leverage")
+                           or _lev_info.get("long"))
+                _actual = int(float(_actual)) if _actual is not None else None
+            if _actual is None:
+                if symbol not in self._lev_unverified_warned:
+                    self._lev_unverified_warned.add(symbol)
+                    audit(trade_log,
+                          f"Leverage UNVERIFIED on {self._venue.id} for {symbol} "
+                          f"(target {target}x) — venue read-back unavailable; "
+                          f"trading at venue-reported leverage without confirmation",
+                          action="leverage_unverified", result="WARNING",
+                          level=logging.WARNING)
+            elif _actual != target:
+                logger.warning("LEVERAGE MISMATCH for %s on %s: wanted %dx, venue "
+                               "reports %dx — retrying", sym, self._venue.id, target, _actual)
+                try:
+                    await exchange.set_leverage(
+                        target, sym, params=self._venue.leverage_params(cfg.margin_mode))
+                    _lev_info2 = await exchange.fetch_leverage(
+                        sym, params=self._venue.futures_params())
+                    _actual2 = (_lev_info2.get("longLeverage") or _lev_info2.get("leverage")
+                                or _lev_info2.get("long")) if isinstance(_lev_info2, dict) else None
+                    _actual2 = int(float(_actual2)) if _actual2 is not None else None
+                    if _actual2 is not None and _actual2 != target:
+                        logger.critical(
+                            "LEVERAGE STILL MISMATCHED for %s on %s: wanted %dx, venue "
+                            "reports %dx — ABORTING order", sym, self._venue.id, target, _actual2)
+                        raise RuntimeError(
+                            f"Cannot set leverage to {target}x for {symbol} on "
+                            f"{self._venue.id} (stuck at {_actual2}x). Aborting order.")
+                except RuntimeError:
+                    raise
+                except Exception:
+                    pass  # retry read failed — proceed with the warning above
+        except RuntimeError:
+            raise  # propagate the abort
+        except Exception as _lev_exc:
+            if symbol not in self._lev_unverified_warned:
+                self._lev_unverified_warned.add(symbol)
+                logger.warning("Leverage verify unavailable for %s on %s: %s",
+                               sym, self._venue.id, _lev_exc)
+        # Margin-mode read-back: CROSS while config says isolated is
+        # whole-account liquidation exposure — alert loudly (mirrors Bitget).
+        try:
+            _positions = await exchange.fetch_positions(
+                [sym], params=self._venue.futures_params())
+            for _p in (_positions or []):
+                _mm = str((_p.get("marginMode") or (_p.get("info") or {}).get("marginMode")
+                           or "")).lower()
+                _want = "cross" if cfg.margin_mode in ("cross", "crossed") else "isolated"
+                if _mm and _mm not in (_want, "crossed" if _want == "cross" else _want):
+                    logger.critical(
+                        "MARGIN MODE MISMATCH for %s on %s: venue=%s config=%s — "
+                        "cross margin exposes the whole account to liquidation",
+                        sym, self._venue.id, _mm, _want)
+                    audit(trade_log,
+                          f"MARGIN MODE MISMATCH: {symbol} is {_mm}, config {_want}",
+                          action="margin_mode_mismatch", result="CRITICAL",
+                          level=logging.ERROR,
+                          data={"symbol": symbol, "venue": self._venue.id,
+                                "actual": _mm, "expected": _want})
+                break
+        except Exception:
+            pass  # margin-mode read-back best-effort
         # One-way venues have no hedge/UTA topology to detect.
         if not self._venue.supports_hedge_mode:
             self._hedge_mode = False
@@ -4921,7 +4997,7 @@ class LiveExecutor:
             # Best-effort cancel on exchange
             if pos.limit_order_id:
                 try:
-                    await exchange.cancel_order(pos.limit_order_id, pos.symbol)
+                    await exchange.cancel_order(pos.limit_order_id, self._venue.order_symbol(pos.symbol))
                 except Exception as cancel_exc:
                     logger.warning(
                         "Stale pending hard-timeout: cancel attempt failed for %s order %s: %s",
@@ -5010,7 +5086,7 @@ class LiveExecutor:
                 # M-01 FIX: Cancel remaining unfilled quantity to prevent untracked fills
                 if order_status == "partially_filled" and pos.limit_order_id:
                     try:
-                        await exchange.cancel_order(pos.limit_order_id, pos.symbol)
+                        await exchange.cancel_order(pos.limit_order_id, self._venue.order_symbol(pos.symbol))
                         audit(trade_log, f"Cancelled remaining limit order after partial fill: {pos.symbol}",
                               action="partial_cancel", result="OK")
                     except Exception as cancel_exc:
@@ -5167,7 +5243,7 @@ class LiveExecutor:
                     # Cancel the limit order
                     cancel_confirmed = False
                     try:
-                        await exchange.cancel_order(pos.limit_order_id, pos.symbol)
+                        await exchange.cancel_order(pos.limit_order_id, self._venue.order_symbol(pos.symbol))
                         cancel_confirmed = True
                     except Exception as exc:
                         logger.warning("Failed to cancel %s limit order %s: %s",
@@ -5318,7 +5394,7 @@ class LiveExecutor:
         try:
             # 1. Cancel the existing limit order
             try:
-                await exchange.cancel_order(pos.limit_order_id, pos.symbol)
+                await exchange.cancel_order(pos.limit_order_id, self._venue.order_symbol(pos.symbol))
             except Exception as cancel_exc:
                 # Check if it filled during cancellation
                 try:
@@ -5530,7 +5606,7 @@ class LiveExecutor:
             self._save_positions()
             if old_sl_id:
                 try:
-                    await exchange.cancel_order(old_sl_id, pos.symbol)
+                    await exchange.cancel_order(old_sl_id, self._venue.order_symbol(pos.symbol))
                 except Exception as exc:
                     logger.debug("Cancel old SL order %s failed (new SL active): %s", old_sl_id, exc)
         else:
@@ -5647,7 +5723,7 @@ class LiveExecutor:
             self._save_positions()
             try:
                 exchange = await self._get_exchange()
-                await exchange.cancel_order(pos.limit_order_id, pos.symbol)
+                await exchange.cancel_order(pos.limit_order_id, self._venue.order_symbol(pos.symbol))
 
                 # Verify the order is actually cancelled
                 cancelled = False
@@ -5750,7 +5826,7 @@ class LiveExecutor:
                     is_sl = (oid == pos.sl_order_id)
                     order_label = "SL" if is_sl else "TP"
                     try:
-                        cancel_resp = await exchange.cancel_order(oid, pos.symbol)
+                        cancel_resp = await exchange.cancel_order(oid, self._venue.order_symbol(pos.symbol))
                         cancel_status = cancel_resp.get("status", "") if isinstance(cancel_resp, dict) else ""
                         if cancel_status and cancel_status not in ("canceled", "cancelled", "closed"):
                             # Verify it is actually cancelled
@@ -6045,14 +6121,14 @@ class LiveExecutor:
             if cancel_failed:
                 for stale_oid in cancel_failed:
                     try:
-                        await exchange.cancel_order(stale_oid, pos.symbol)
+                        await exchange.cancel_order(stale_oid, self._venue.order_symbol(pos.symbol))
                     except Exception:
                         pass  # Best-effort cleanup
                 try:
                     open_orders = await exchange.fetch_open_orders(pos.symbol)
                     for oo in open_orders:
                         try:
-                            await exchange.cancel_order(oo["id"], pos.symbol)
+                            await exchange.cancel_order(oo["id"], self._venue.order_symbol(pos.symbol))
                             logger.info("Post-close cleanup: cancelled orphan order %s on %s", oo["id"], pos.symbol)
                         except Exception:
                             pass
@@ -6970,6 +7046,31 @@ class LiveExecutor:
             logger.debug("_sync_sl_tp_from_exchange failed for %s: %s", pos.symbol, exc)
         return False
 
+    async def _stop_live_on_exchange(self, pos: "LivePosition") -> Optional[bool]:
+        """Whether the exchange position currently carries a live stop-loss.
+
+        True = a stop is attached (position protected); False = the exchange
+        reports NO stop (genuinely unprotected); None = could not verify.
+        Used by the periodic self-heal to avoid cancel-then-replacing a
+        HEALTHY v3 combined stop (audit HIGH): _place_sl_tp cancels existing
+        plan orders before placing, so re-placing a working stop opens a
+        naked window every cycle. Gate re-placement on a POSITIVE False."""
+        try:
+            exchange = await self._get_exchange()
+            ccxt_sym = self._venue.swap_symbol(pos.symbol)
+            positions = await exchange.fetch_positions(
+                [ccxt_sym], params=self._venue.futures_params())
+            for p in positions:
+                if abs(float(p.get("contracts", 0) or 0)) <= 0:
+                    continue
+                info = p.get("info", {}) or {}
+                return float(info.get("stopLoss") or 0) > 0
+            return None  # no matching open position on the exchange
+        except Exception as exc:
+            logger.debug("_stop_live_on_exchange check failed for %s: %s",
+                         pos.symbol, exc)
+            return None
+
     # ── Account info ─────────────────────────────────────────────
 
     async def fetch_balance(self) -> dict:
@@ -7130,10 +7231,11 @@ class LiveExecutor:
     async def verify_and_fix_sltp(self) -> None:
         """Verify all open positions have SL/TP on exchange and re-place if missing.
 
-        Called on startup and periodically. For each open position, attempts
-        to place SL/TP if the stored order IDs look invalid (same ID for both,
-        or empty). The v3 place-strategy-order is idempotent — placing over
-        an existing order just returns the existing order ID.
+        Called on startup and periodically. For each open position, re-places
+        SL/TP only when the stops are CONFIRMED missing — empty stored ids, or
+        a v3 combined id whose stop the exchange reports as absent. A healthy
+        v3 stop is left alone: _place_sl_tp cancels-then-places, so blindly
+        re-placing would open a naked window every cycle (audit HIGH).
         """
         open_pos = [p for p in self._positions.values() if p.status == "open"]
         if not open_pos:
@@ -7149,10 +7251,24 @@ class LiveExecutor:
             elif pos.stop_loss <= 0 or pos.take_profit <= 0:
                 continue  # No SL/TP levels to place
             elif pos.sl_order_id == pos.tp_order_id:
-                # Same ID for both is normal for v3 combined orders — but re-place
-                # to ensure they're actually on exchange (could be stale from a
-                # restart). The v3 API is idempotent so this is safe.
-                needs_fix = True
+                # v3 combined order: one id serves both legs. Do NOT blindly
+                # re-place — _place_sl_tp cancels-then-places, so re-placing a
+                # HEALTHY stop opens a naked window every self-heal cycle, and
+                # a failed re-place leaves the position unprotected where it
+                # was protected moments earlier (audit HIGH; the old "v3 is
+                # idempotent" comment was wrong — placement cancels first).
+                # Verify against the exchange; re-place ONLY when the venue
+                # positively confirms no stop is attached. Present or
+                # unverifiable → trust the stored id and leave the live stop
+                # alone (the local price-monitor is the backstop either way).
+                _stop_live = await self._stop_live_on_exchange(pos)
+                if _stop_live is False:
+                    needs_fix = True
+                    audit(trade_log,
+                          f"v3 stop confirmed MISSING on exchange for {pos.symbol} "
+                          f"— re-placing",
+                          action="startup_sltp_verify", result="V3_MISSING",
+                          data={"trade_id": pos.trade_id, "symbol": pos.symbol})
             elif getattr(CONFIG.execution, "verify_classic_sltp_on_restart", False):
                 # Distinct, present classic IDs (two SEPARATE orders). The stored
                 # IDs alone don't prove the legs are still live — a leg lost while
