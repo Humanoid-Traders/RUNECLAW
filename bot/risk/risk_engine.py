@@ -1600,6 +1600,38 @@ class RiskEngine:
         except Exception as exc:
             failed.append(f"BID_DOMINANCE: evaluation error ({exc})")
 
+        # -- Funding clock (default ON, narrow by construction) --
+        # Blocks ONLY an entry that would sit on the PAYING side of an
+        # extreme funding rate inside the pre-settlement window (Bitget
+        # settles 00/08/16 UTC): the position pays immediately, and extreme
+        # funding marks crowded positioning that unwinds around the settle.
+        # Fail-open on missing/stale/wrong-symbol funding data — backtests
+        # carry no funding stream, so the gate self-skips there. Every
+        # block is priced by the shadow book (/shadow shows whether the
+        # gate earns or eats edge).
+        try:
+            if CONFIG.risk.funding_clock_gate_enabled:
+                from bot.risk.funding_clock import funding_clock_verdict
+                _fc_sig = self._last_of_signal
+                _fc_rate = None
+                if (_fc_sig is not None
+                        and getattr(_fc_sig, "symbol", None) == idea.asset):
+                    _fc_rate = getattr(_fc_sig, "funding_rate", None)
+                _dir = (idea.direction.value
+                        if hasattr(idea.direction, "value")
+                        else str(idea.direction))
+                _blocked, _fc_reason = funding_clock_verdict(
+                    _dir, _fc_rate, self._now(),
+                    window_sec=CONFIG.risk.funding_clock_window_min * 60.0,
+                    extreme_rate=CONFIG.risk.funding_clock_extreme_rate)
+                if _blocked:
+                    failed.append(f"FUNDING_CLOCK: {_fc_reason}")
+                else:
+                    passed.append(f"FUNDING_CLOCK: {_fc_reason}")
+        except Exception as exc:
+            # Fail-open: a broken clock must never block trading.
+            passed.append(f"FUNDING_CLOCK: skipped (error: {exc})")
+
         # -- Verdict --
         verdict = RiskVerdict.APPROVED if len(failed) == 0 else RiskVerdict.REJECTED
 

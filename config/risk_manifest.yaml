@@ -720,6 +720,29 @@ defaults:
     description: >
       Size multiplier applied while the governor is in the reduce zone.
 
+  funding_clock_gate_enabled:
+    value: true
+    env_var: FUNDING_CLOCK_GATE_ENABLED
+    description: >
+      Funding-clock gate: blocks an entry only when it would sit on the
+      PAYING side of an extreme funding rate inside the pre-settlement
+      window (Bitget USDT perps settle 00/08/16 UTC). Narrow by
+      construction, fail-open on missing funding data, and every block is
+      priced by the shadow book.
+
+  funding_clock_window_min:
+    value: 30
+    env_var: FUNDING_CLOCK_WINDOW_MIN
+    description: >
+      Minutes before a funding settlement during which the gate is armed.
+
+  funding_clock_extreme_rate:
+    value: 0.0005
+    env_var: FUNDING_CLOCK_EXTREME_RATE
+    description: >
+      Absolute 8h funding rate at/above which the rate counts as extreme
+      (0.0005 = 0.05% per interval).
+
   equity_throttle_enabled:
     value: false
     env_var: EQUITY_THROTTLE_ENABLED
