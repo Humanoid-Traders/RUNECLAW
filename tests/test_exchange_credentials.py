@@ -239,7 +239,13 @@ class TestValidateEnvironmentMismatch:
                 return c
 
         import sys
+        # `import ccxt.async_support as ccxt` resolves through the parent
+        # package attribute when ccxt was already imported by an earlier test,
+        # so patch BOTH sys.modules and the parent attribute.
         monkeypatch.setitem(sys.modules, "ccxt.async_support", FakeCcxt)
+        if "ccxt" in sys.modules:
+            monkeypatch.setattr(sys.modules["ccxt"], "async_support", FakeCcxt,
+                                raising=False)
         ok, detail = asyncio.new_event_loop().run_until_complete(
             ec._bitget_balance_probe("k", "s", "p", sandbox=True))
         assert ok is True and detail == "7.50 USDT free"
