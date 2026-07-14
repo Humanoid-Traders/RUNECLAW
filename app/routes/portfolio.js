@@ -36,6 +36,52 @@ const pfLimit = rateLimit({ windowMs: 60000, max: 30, key: userKey });
 
 const SNAPSHOT_MIN_INTERVAL_MS = 15 * 60 * 1000;
 
+// The operator's website account: the bot's sync channel (routes/sync.js)
+// writes this user's LIVE account data directly into the DB. For this user the
+// gateway paper portfolio must never be fetched or written through — it would
+// pollute the live equity curve with paper-tracker numbers.
+const BOT_USER_ID = parseInt(process.env.BOT_USER_ID) || 1;
+
+async function operatorPortfolio(userId) {
+  const [snaps] = await pool.execute(
+    'SELECT equity, snapshot_at FROM equity_snapshots WHERE user_id = ? ORDER BY snapshot_at DESC LIMIT 1',
+    [userId]);
+  const [open] = await pool.execute(
+    "SELECT * FROM trades WHERE user_id = ? AND status = 'OPEN' ORDER BY opened_at DESC",
+    [userId]);
+  const [pnlRows] = await pool.execute(
+    'SELECT COALESCE(SUM(pnl), 0) as net_pnl, COALESCE(SUM(fees), 0) as total_fees, COUNT(*) as total_trades FROM trades WHERE user_id = ? AND status = ?',
+    [userId, 'CLOSED']);
+  const [winRows] = await pool.execute(
+    'SELECT COUNT(*) as wins FROM trades WHERE user_id = ? AND status = ? AND pnl > 0',
+    [userId, 'CLOSED']);
+  // Live/paper mode from the bot's own scan payload (circuit_breaker.live_mode).
+  let live = false;
+  try {
+    const [rows] = await pool.execute('SELECT scan_json, updated_at FROM scan_cache WHERE id = 1');
+    if (rows.length && rows[0].scan_json) {
+      live = !!(JSON.parse(rows[0].scan_json).circuit_breaker || {}).live_mode;
+    }
+  } catch (e) { /* mode stays PAPER */ }
+  const total = parseInt(pnlRows[0]?.total_trades || 0);
+  const wins = parseInt(winRows[0]?.wins || 0);
+  const snap = snaps[0];
+  const fresh = snap && (Date.now() - new Date(snap.snapshot_at).getTime()) < 30 * 60 * 1000;
+  return {
+    mode: live ? 'LIVE' : 'PAPER',
+    source: 'sync',
+    equity: snap ? parseFloat(snap.equity) : null,
+    total_pnl: parseFloat(pnlRows[0]?.net_pnl || 0),
+    daily_pnl: null, // not tracked on the sync path
+    win_rate: total > 0 ? (wins / total) * 100 : null,
+    total_trades: total,
+    open_positions: open,
+    closed_trades: [],
+    linked: true,
+    stale: !fresh,
+  };
+}
+
 async function writeThrough(userId, pf) {
   // 1. Equity snapshot (only on change or staleness)
   if (pf.equity != null) {
@@ -106,6 +152,11 @@ async function dbFallback(userId) {
 router.get('/', pfLimit, async (req, res) => {
   const userId = req.user.user_id;
   try {
+    if (userId === BOT_USER_ID) {
+      // Operator: authoritative live data from the sync channel, never the
+      // gateway paper portfolio (and never a paper write-through).
+      return res.json(await operatorPortfolio(userId));
+    }
     if (!gateway.isConfigured()) {
       const fb = await dbFallback(userId);
       return res.json({ ...fb, mode: 'PAPER' });

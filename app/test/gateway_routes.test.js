@@ -245,3 +245,25 @@ test('trade requires JWT', async () => {
   });
   assert.strictEqual(r.status, 401);
 });
+
+test('operator portfolio uses sync data: no gateway call, no paper write-through, LIVE mode', async () => {
+  // The linked user was created first -> id 1 === default BOT_USER_ID.
+  // Seed the bot-sync state: a live-mode scan payload + a live equity snapshot.
+  await pool.execute('REPLACE INTO scan_cache (id, scan_json) VALUES (1, ?)',
+    [JSON.stringify({ circuit_breaker: { live_mode: true } })]);
+  await pool.execute(
+    'INSERT INTO equity_snapshots (user_id, equity, snapshot_at) VALUES (?, ?, ?)',
+    [1, 8829.96, new Date()]);
+  seen.length = 0;
+  const r = await request('GET', '/api/portfolio', { token: signLinked });
+  assert.strictEqual(r.status, 200);
+  assert.strictEqual(r.data.source, 'sync');
+  assert.strictEqual(r.data.mode, 'LIVE');
+  assert.strictEqual(r.data.equity, 8829.96);
+  assert.strictEqual(r.data.stale, false);
+  assert.strictEqual(seen.length, 0); // gateway NEVER consulted for the operator
+  // And no paper snapshot was written through on top of the live one.
+  const [snaps] = await pool.execute(
+    'SELECT equity FROM equity_snapshots WHERE user_id = ? ORDER BY snapshot_at DESC LIMIT 1', [1]);
+  assert.strictEqual(parseFloat(snaps[0].equity), 8829.96);
+});
