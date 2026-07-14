@@ -169,63 +169,19 @@ class RateLimiter:
             return True
 
 
-# AG-H1: Prompt-injection sanitizer for free-form user text sent to LLM
-_INJECTION_PATTERNS = re.compile(
-    r"(ignore\s+(all\s+)?previous\s+instructions"
-    r"|ignore\s+above"
-    r"|disregard\s+(all\s+)?previous"
-    r"|system\s*:"
-    r"|<\|?(system|im_start|endoftext)\|?>"
-    r"|you\s+are\s+now\s+"
-    r"|act\s+as\s+if"
-    r"|pretend\s+you\s+are"
-    r"|new\s+instructions?\s*:"
-    r"|override\s+(previous\s+)?instructions"
-    r"|forget\s+(all\s+)?previous"
-    r"|do\s+not\s+follow\s+(the\s+)?(above|previous))",
-    re.IGNORECASE,
+# AG-H1 / RC-AUD-014: prompt-injection sanitizers. Shared with the web user
+# gateway, so they live in bot/nlp/sanitize.py; re-exported here under the
+# original private names for existing imports/tests.
+from bot.nlp.sanitize import (
+    INJECTION_PATTERNS as _INJECTION_PATTERNS,
+    MAX_CHAT_INPUT_LEN as _MAX_CHAT_INPUT_LEN,
+    sanitize_chat_input as _sanitize_chat_input,
+    sanitize_history_for_llm as _sanitize_history_for_llm,
 )
-
-_MAX_CHAT_INPUT_LEN = 500
 
 # Prefixes for orphan-adopted and diagnostic-injected trades.
 # Used throughout handlers to exclude these from user-facing stats.
 _ORPHAN_PREFIXES = ("TI-adopted", "TI-injected")
-
-
-def _sanitize_chat_input(text: str) -> str:
-    """Sanitize free-form user text before sending to LLM.
-
-    - Strips prompt-injection patterns FIRST
-    - Then truncates to 500 characters
-
-    DEFENSE-IN-DEPTH ONLY (RC-AUD-014): this denylist is thin and trivially
-    bypassable. It is NOT a security boundary. The real boundary is the
-    execution gate — LLM chat output has no execution authority; trades still
-    require confirm_trade -> compliance -> executor with numeric re-validation.
-    Keep it light so it never blocks legitimate trading commands.
-    """
-    sanitized = _INJECTION_PATTERNS.sub("[filtered]", text)
-    truncated = sanitized[:_MAX_CHAT_INPUT_LEN]
-    return truncated.strip()
-
-
-def _sanitize_history_for_llm(history: list[dict]) -> list[dict]:
-    """Sanitize replayed USER turns before they reach the LLM.
-
-    RC-AUD-014: conversation-memory replay (``get_recent_as_llm_messages``)
-    returns raw user text that was stored unsanitized. This closes that path by
-    applying the same sanitizer to ``role == "user"`` turns on read; assistant
-    turns are left intact. Defense-in-depth only — see ``_sanitize_chat_input``;
-    the real boundary remains the execution gate.
-    """
-    out: list[dict] = []
-    for m in history:
-        if isinstance(m, dict) and m.get("role") == "user":
-            out.append({**m, "content": _sanitize_chat_input(m.get("content", ""))})
-        else:
-            out.append(m)
-    return out
 
 
 # ── War Room main menu keyboard ─────────────────────────────
@@ -5222,35 +5178,18 @@ class TelegramHandler:
             return
 
         direction, symbol, entry, sl, tp, margin_usd = parsed
-        pair = f"{symbol}/USDT:USDT"
         display_pair = f"{symbol}/USDT"
 
-        # Build TradeIdea
-        from bot.utils.models import TradeIdea, Direction
+        # Build + register TradeIdea via the shared helpers (same code path as
+        # the web gateway)
+        from bot.skills.manual_trade import build_manual_idea, register_manual_idea
         try:
-            idea = TradeIdea(
-                asset=pair,
-                direction=Direction.LONG if direction == "LONG" else Direction.SHORT,
-                entry_price=entry,
-                stop_loss=sl,
-                take_profit=tp,
-                confidence=1.0,
-                reasoning="Manual trade placed by user",
-                signals_used=["manual"],
-                source="manual",
-                order_type="limit",
-            )
+            idea = build_manual_idea(direction, symbol, entry, sl, tp)
         except ValueError as e:
             await self._send(update, f"\u26a0\ufe0f {t('trade_invalid', lang, detail=html.escape(str(e)))}")
             return
 
-        # Register as pending idea in engine
-        self.engine._pending_ideas[idea.id] = idea
-        # Store margin override if specified
-        if margin_usd and margin_usd > 0:
-            if not hasattr(self.engine, '_manual_margin_override'):
-                self.engine._manual_margin_override = {}
-            self.engine._manual_margin_override[idea.id] = margin_usd
+        register_manual_idea(self.engine, idea, margin_usd)
 
         # Calculate R:R
         rr = idea.risk_reward_ratio
@@ -5282,62 +5221,13 @@ class TelegramHandler:
               action="manual_trade_created", result="PENDING")
 
     def _parse_manual_trade(self, text: str):
-        """Parse manual trade text. Returns (direction, symbol, entry, sl, tp, margin) or error string."""
-        # Normalize
-        text = text.strip().upper()
-        # Pattern: BUY/LONG/SHORT/SELL SYMBOL PRICE SL PRICE TP PRICE [MARGIN AMOUNT]
-        pattern = re.compile(
-            r'^(BUY|LONG|SHORT|SELL)\s+'
-            r'([A-Z0-9]{1,15})\s+'
-            r'(\$?[\d,]+\.?\d*)\s+'
-            r'SL\s+(\$?[\d,]+\.?\d*)\s+'
-            r'TP\s+(\$?[\d,]+\.?\d*)'
-            r'(?:\s+MARGIN\s+(\$?[\d,]+\.?\d*))?',
-            re.IGNORECASE
-        )
-        m = pattern.match(text)
-        if not m:
-            return ("Invalid format. Use:\n"
-                    "<code>buy SOL 71.42 sl 70.05 tp 76.42</code>\n"
-                    "<code>short ETH 1721 sl 1695 tp 1842 margin 250</code>")
+        """Parse manual trade text. Returns (direction, symbol, entry, sl, tp, margin) or error string.
 
-        side = m.group(1).upper()
-        direction = "LONG" if side in ("BUY", "LONG") else "SHORT"
-        symbol = m.group(2).upper()
-
-        def parse_price(s):
-            return float(s.replace("$", "").replace(",", ""))
-
-        try:
-            entry = parse_price(m.group(3))
-            sl = parse_price(m.group(4))
-            tp = parse_price(m.group(5))
-            margin = parse_price(m.group(6)) if m.group(6) else None
-        except (ValueError, TypeError):
-            return "Could not parse prices. Use numbers like <code>71.42</code>"
-
-        if entry <= 0 or sl <= 0 or tp <= 0:
-            return "All prices must be positive."
-        if margin is not None and margin <= 0:
-            return "Margin must be positive."
-
-        # Validate direction
-        if direction == "LONG":
-            if sl >= entry:
-                return f"LONG: SL (${sl:,.4f}) must be below entry (${entry:,.4f})"
-            if tp <= entry:
-                return f"LONG: TP (${tp:,.4f}) must be above entry (${entry:,.4f})"
-        else:
-            if sl <= entry:
-                return f"SHORT: SL (${sl:,.4f}) must be above entry (${entry:,.4f})"
-            if tp >= entry:
-                return f"SHORT: TP (${tp:,.4f}) must be below entry (${entry:,.4f})"
-
-        # Symbol sanity
-        if not re.match(r'^[A-Z0-9]{1,15}$', symbol):
-            return f"Invalid symbol: {symbol}"
-
-        return (direction, symbol, entry, sl, tp, margin)
+        Delegates to the shared parser (bot/skills/manual_trade.py) used by both
+        Telegram and the web user gateway, so the two surfaces can't drift.
+        """
+        from bot.skills.manual_trade import parse_manual_trade
+        return parse_manual_trade(text)
 
     @guard("risk")
     async def _cmd_risk(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:

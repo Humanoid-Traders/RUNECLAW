@@ -101,7 +101,9 @@ def run_telegram() -> None:
         try:
             from aiohttp import web as _web
             from bot.web.dashboard_server import create_app as _create_dash
-            dashboard_app = _create_dash(engine)
+            # Pass the Telegram handler so the web user gateway (/gateway/* —
+            # website chat + manual trades) mounts alongside the dashboard.
+            dashboard_app = _create_dash(engine, tg_handler=handler)
             dashboard_runner = _web.AppRunner(dashboard_app)
             await dashboard_runner.setup()
             # RC-AUD-017: the dashboard /api/* surface exposes AGGREGATE

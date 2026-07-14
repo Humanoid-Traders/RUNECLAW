@@ -448,12 +448,18 @@ async def cors_middleware(request: web.Request, handler):
 
 # ── App Factory ──────────────────────────────────────────────
 
-def create_app(engine) -> web.Application:
+def create_app(engine, tg_handler=None) -> web.Application:
     """Create the dashboard web application.
 
     Args:
         engine: RuneClawEngine instance (or any object with
                 portfolio, risk, cost, state attributes).
+        tg_handler: optional TelegramHandler; when provided, the web user
+                gateway (/gateway/* — website chat + manual trades) is
+                mounted as a sub-app with its own fail-closed
+                WEB_GATEWAY_SECRET auth (the Bearer auth_middleware here
+                only guards /api/*, so the sub-app's own middleware is the
+                sole gate on /gateway/*).
     """
     app = web.Application(middlewares=[cors_middleware, auth_middleware])
     app["engine"] = engine
@@ -468,4 +474,11 @@ def create_app(engine) -> web.Application:
     app.router.add_get("/health", handle_health)
     app.router.add_get("/ready", handle_ready)
     app.router.add_get("/metrics", handle_metrics)
+    if tg_handler is not None:
+        try:
+            from bot.web.user_gateway import build_gateway
+            app.add_subapp("/gateway", build_gateway(engine, tg_handler))
+        except Exception as exc:  # never let the gateway break the dashboard
+            import logging
+            logging.getLogger(__name__).warning("Web gateway not mounted: %s", exc)
     return app
