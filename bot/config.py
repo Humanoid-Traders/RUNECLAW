@@ -532,23 +532,24 @@ class RiskLimits:
     # recovery (a pause starves itself of the data needed to recover).
     # Tighten-only, fail-open below min samples. Default OFF pending the
     # pre-registered frozen-benchmark A/B.
-    # Fable-5 round 5 — funding-clock gate. Blocks an entry ONLY when it
-    # would enter on the PAYING side of an extreme funding rate within the
-    # pre-settlement window (Bitget USDT perps settle 00/08/16 UTC) — the
-    # trade pays immediately and extreme funding marks crowded positioning
-    # that unwinds around the settle. Narrow by construction; fail-open on
-    # missing funding data; every block is priced by the shadow book, so
-    # /shadow answers whether it earns. Live-only in practice (backtests
-    # carry no funding stream, so the gate self-skips there).
-    funding_clock_gate_enabled: bool = _env_bool("FUNDING_CLOCK_GATE_ENABLED", True)
-    funding_clock_window_min: float = _env_float_bounded("FUNDING_CLOCK_WINDOW_MIN", 30, 5, 120)
-    funding_clock_extreme_rate: float = _env_float_bounded("FUNDING_CLOCK_EXTREME_RATE", 0.0005, 0.0001, 0.01)
     equity_throttle_enabled: bool = _env_bool("EQUITY_THROTTLE_ENABLED", False)
     equity_throttle_window: int = int(_env_float_bounded("EQUITY_THROTTLE_WINDOW", 20, 2, 100000))
     equity_throttle_min_samples: int = int(_env_float_bounded("EQUITY_THROTTLE_MIN_SAMPLES", 10, 2, 100000))
     equity_throttle_pf_full: float = _env_float_bounded("EQUITY_THROTTLE_PF_FULL", 1.2, 0.1, 10.0)
     equity_throttle_pf_floor: float = _env_float_bounded("EQUITY_THROTTLE_PF_FLOOR", 0.8, 0.0, 10.0)
     equity_throttle_floor_mult: float = _env_float_bounded("EQUITY_THROTTLE_FLOOR_MULT", 0.25, 0.05, 1.0)
+    # Fable-5 round 5 — funding-clock gate (default ON). Blocks an entry
+    # ONLY when it would enter on the PAYING side of an extreme funding
+    # rate within the pre-settlement window (Bitget USDT perps settle
+    # 00/08/16 UTC) — the trade pays immediately and extreme funding marks
+    # crowded positioning that unwinds around the settle. Narrow by
+    # construction; fail-open on missing funding data; every block is
+    # priced by the shadow book, so /shadow answers whether it earns.
+    # Live-only in practice (backtests carry no funding stream, so the
+    # gate self-skips there).
+    funding_clock_gate_enabled: bool = _env_bool("FUNDING_CLOCK_GATE_ENABLED", True)
+    funding_clock_window_min: float = _env_float_bounded("FUNDING_CLOCK_WINDOW_MIN", 30, 5, 120)
+    funding_clock_extreme_rate: float = _env_float_bounded("FUNDING_CLOCK_EXTREME_RATE", 0.0005, 0.0001, 0.01)
 
 
 @dataclass(frozen=True)
