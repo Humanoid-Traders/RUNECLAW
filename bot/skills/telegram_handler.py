@@ -173,8 +173,8 @@ class RateLimiter:
 # gateway, so they live in bot/nlp/sanitize.py; re-exported here under the
 # original private names for existing imports/tests.
 from bot.nlp.sanitize import (
-    INJECTION_PATTERNS as _INJECTION_PATTERNS,
-    MAX_CHAT_INPUT_LEN as _MAX_CHAT_INPUT_LEN,
+    INJECTION_PATTERNS as _INJECTION_PATTERNS,  # noqa: F401  (re-export for tests)
+    MAX_CHAT_INPUT_LEN as _MAX_CHAT_INPUT_LEN,  # noqa: F401  (re-export for tests)
     sanitize_chat_input as _sanitize_chat_input,
     sanitize_history_for_llm as _sanitize_history_for_llm,
 )
