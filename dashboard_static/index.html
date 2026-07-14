@@ -3,220 +3,107 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>RUNECLAW — Beta Trading Dashboard</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<meta name="description" content="RUNECLAW — the AI trading engine you can talk to. Scan 800+ symbols, chat with the engine, and place risk-gated trades. Paper by default.">
+<meta name="author" content="Humanoid Traders">
+<meta property="og:title" content="RUNECLAW — AI Trading, Paper to Live">
+<meta property="og:description" content="An AI trading engine you can watch, chat with, and trade alongside. 23 fail-closed risk checks, human-in-the-loop confirmation, simulation-first.">
+<meta property="og:type" content="website">
+<meta property="og:image" content="og_image_1200x630.jpg">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="RUNECLAW — AI Trading, Paper to Live">
+<meta name="twitter:description" content="An AI trading engine you can watch, chat with, and trade alongside. Simulation-first, risk-gated, human-in-the-loop.">
+<meta name="twitter:image" content="og_image_1200x630.jpg">
+<link rel="icon" type="image/png" sizes="256x256" href="app_icon_256.png">
+<link rel="icon" type="image/png" sizes="512x512" href="app_icon_512.png">
+<link rel="apple-touch-icon" href="app_icon_512.png">
+<meta name="google-site-verification" content="IcG28X1xg9HFbxYubMHnk2cIr6YAKRo9V5AUEd-Ws7U" />
+<meta name="google-site-verification" content="bp37kdQKB4qmgSO6gt66OaUKuNP9enunEyZ_LCWnjys" />
+<title>RUNECLAW — AI Trading, Paper to Live</title>
 <style>
-:root{--bg:#06080f;--bg1:#0c1019;--bg2:#131a2b;--bg3:#1a2540;--border:#1e2d4a;--border2:#2a3f6a;--t1:#f1f5f9;--t2:#94a3b8;--t3:#64748b;--green:#10b981;--green2:#059669;--green-bg:rgba(16,185,129,.08);--red:#ef4444;--red2:#dc2626;--red-bg:rgba(239,68,68,.08);--blue:#3b82f6;--blue-bg:rgba(59,130,246,.1);--amber:#f59e0b;--amber-bg:rgba(245,158,11,.08);--purple:#a78bfa;--cyan:#22d3ee;--f:Inter,-apple-system,sans-serif;--mono:'JetBrains Mono',monospace;--r:10px;--r2:14px}
-*{margin:0;padding:0;box-sizing:border-box}
-body{background:var(--bg);color:var(--t1);font-family:var(--f);font-size:14px;overflow-x:hidden}
-::selection{background:var(--blue);color:#fff}
-::-webkit-scrollbar{width:6px}::-webkit-scrollbar-track{background:var(--bg1)}::-webkit-scrollbar-thumb{background:var(--border2);border-radius:3px}
-
-.nav{position:sticky;top:0;z-index:100;background:rgba(12,16,25,.85);backdrop-filter:blur(20px);border-bottom:1px solid var(--border);padding:0 32px;height:56px;display:flex;align-items:center;justify-content:space-between}
-.nav-l{display:flex;align-items:center;gap:14px}
-.logo{width:34px;height:34px;border-radius:9px;background:linear-gradient(135deg,#3b82f6 0%,#8b5cf6 50%,#ec4899 100%);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:15px;color:#fff;box-shadow:0 0 20px rgba(59,130,246,.3)}
-.nav h1{font-size:17px;font-weight:700;letter-spacing:-.4px;color:var(--t1)}
-.nav h1 span{color:var(--t3);font-weight:400;font-size:12px;margin-left:6px;letter-spacing:0}
-.nav-r{display:flex;align-items:center;gap:14px}
-.dot{width:7px;height:7px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green);animation:blink 2.5s infinite}
-@keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
-.chip{padding:3px 10px;border-radius:20px;font-size:10.5px;font-weight:600;letter-spacing:.8px;text-transform:uppercase}
-.chip-paper{background:var(--amber-bg);color:var(--amber);border:1px solid rgba(245,158,11,.2)}
-.chip-ver{background:var(--blue-bg);color:var(--blue);border:1px solid rgba(59,130,246,.15)}
-.ts{font-size:11px;color:var(--t3);font-family:var(--mono)}
-
-.main{max-width:1440px;margin:0 auto;padding:24px 32px 60px}
-
-/* Overview */
-.overview{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:28px}
-.ov{background:var(--bg1);border:1px solid var(--border);border-radius:var(--r2);padding:18px 20px;position:relative;overflow:hidden}
-.ov::before{content:'';position:absolute;top:0;left:0;right:0;height:2px}
-.ov-eq::before{background:linear-gradient(90deg,var(--blue),var(--purple))}
-.ov-pnl::before{background:linear-gradient(90deg,var(--green),var(--cyan))}
-.ov-tr::before{background:linear-gradient(90deg,var(--amber),#f97316)}
-.ov-pos::before{background:linear-gradient(90deg,var(--purple),var(--pink,#ec4899))}
-.ov-fee::before{background:linear-gradient(90deg,var(--red),var(--amber))}
-.ov-label{font-size:11px;color:var(--t3);text-transform:uppercase;letter-spacing:.7px;margin-bottom:6px;font-weight:500}
-.ov-val{font-size:24px;font-weight:700;font-family:var(--mono);letter-spacing:-.5px;line-height:1.2}
-.ov-sub{font-size:11.5px;color:var(--t3);margin-top:4px;font-family:var(--mono)}
-.up{color:var(--green)}.dn{color:var(--red)}.nt{color:var(--t2)}
-
-/* Leaderboard */
-.lb{background:var(--bg1);border:1px solid var(--border);border-radius:var(--r2);margin-bottom:28px;overflow:hidden}
-.lb-hdr{padding:18px 24px 14px;display:flex;align-items:center;gap:10px;border-bottom:1px solid var(--border)}
-.lb-hdr h2{font-size:15px;font-weight:700}
-.lb-row{display:grid;grid-template-columns:48px 1.5fr 1fr 1fr 100px 100px;align-items:center;padding:12px 24px;border-bottom:1px solid rgba(30,45,74,.5);transition:background .15s}
-.lb-row:hover{background:rgba(59,130,246,.04)}
-.lb-row:last-child{border-bottom:none}
-.lb-head{font-size:10.5px;text-transform:uppercase;letter-spacing:.7px;color:var(--t3);font-weight:600;background:var(--bg2);padding:10px 24px}
-.lb-head:hover{background:var(--bg2)}
-.lb-rank{font-weight:700;font-size:15px;color:var(--t3)}
-.lb-rank.g{color:var(--amber);text-shadow:0 0 12px rgba(245,158,11,.4)}
-.lb-name{font-weight:600;display:flex;align-items:center;gap:10px}
-.av{width:30px;height:30px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:12px;color:#fff;flex-shrink:0}
-.lb-mono{font-family:var(--mono);font-weight:500;font-size:13px}
-
-/* Trader cards */
-.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(440px,1fr));gap:16px;margin-bottom:28px}
-.card{background:var(--bg1);border:1px solid var(--border);border-radius:var(--r2);overflow:hidden;transition:border-color .2s}
-.card:hover{border-color:var(--border2)}
-.card-top{padding:16px 20px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border)}
-.card-name{font-weight:700;font-size:14px;display:flex;align-items:center;gap:10px}
-.card-pnl{font-family:var(--mono);font-weight:600;font-size:15px}
-.card-body{padding:16px 20px}
-.card-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:16px}
-.cs{text-align:center;padding:8px 4px;background:var(--bg2);border-radius:var(--r);border:1px solid transparent}
-.cs-l{font-size:9.5px;text-transform:uppercase;letter-spacing:.6px;color:var(--t3);margin-bottom:3px}
-.cs-v{font-size:13px;font-weight:600;font-family:var(--mono)}
-
-/* Positions */
-.sec-h{font-size:10.5px;text-transform:uppercase;letter-spacing:.8px;color:var(--t3);font-weight:600;margin-bottom:8px;display:flex;align-items:center;gap:6px}
-.pos{display:flex;align-items:center;justify-content:space-between;padding:10px 12px;background:var(--bg2);border-radius:var(--r);margin-bottom:5px;border:1px solid transparent;transition:border-color .15s}
-.pos:hover{border-color:var(--border2)}
-.pos-l{display:flex;align-items:center;gap:8px}
-.dir{font-weight:700;font-size:10px;padding:2px 7px;border-radius:4px;letter-spacing:.3px}
-.dir-l{background:var(--green-bg);color:var(--green);border:1px solid rgba(16,185,129,.15)}
-.dir-s{background:var(--red-bg);color:var(--red);border:1px solid rgba(239,68,68,.15)}
-.pos-pair{font-weight:600;font-size:13px}
-.pos-info{font-size:11px;color:var(--t3);font-family:var(--mono)}
-.pos-r{text-align:right}
-.pos-pnl{font-family:var(--mono);font-weight:600;font-size:13px}
-.pos-sz{font-size:10.5px;color:var(--t3);font-family:var(--mono)}
-
-.trades-sec{margin-top:14px}
-.tr{display:flex;align-items:center;justify-content:space-between;padding:7px 0;border-bottom:1px solid rgba(30,45,74,.4);font-size:12px}
-.tr:last-child{border-bottom:none}
-
-/* Loading */
-.loading{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:60vh;gap:16px}
-.loading-icon{width:40px;height:40px;border:3px solid var(--border);border-top-color:var(--blue);border-radius:50%;animation:spin 1s linear infinite}
-@keyframes spin{to{transform:rotate(360deg)}}
-.loading p{color:var(--t3);font-size:13px}
-
-/* Empty */
-.empty{text-align:center;padding:80px 20px}
-.empty h2{font-size:20px;margin-bottom:8px;background:linear-gradient(135deg,var(--blue),var(--purple));-webkit-background-clip:text;-webkit-text-fill-color:transparent}
-.empty p{color:var(--t3);font-size:13px;line-height:1.6}
-
-/* Footer */
-.foot{text-align:center;padding:20px;color:var(--t3);font-size:11px;border-top:1px solid var(--border);margin-top:40px}
-
-@media(max-width:900px){.overview{grid-template-columns:repeat(2,1fr)}.grid{grid-template-columns:1fr}.lb-row{grid-template-columns:36px 1fr 80px 80px}.lb-row>:nth-child(5),.lb-row>:nth-child(6){display:none}.nav{padding:0 16px}.main{padding:16px}}
-@media(max-width:500px){.overview{grid-template-columns:1fr}.card-stats{grid-template-columns:repeat(2,1fr)}.lb-row{grid-template-columns:30px 1fr 70px}}
+  /* Self-contained: this page is served standalone (nginx / api_bridge /
+     dashboard_api) without the app platform's assets. Tokens mirror
+     app/public/styles.css so the whole product reads as one surface. */
+  :root {
+    --bg: #0a0b10; --surface: #12141c; --surface-2: #181b25;
+    --line: #232838; --line-2: #313950;
+    --gold: #cbb06a; --gold-bright: #e8d391;
+    --up: #2fbf71; --text: #edeef2; --text-2: #a9b1c1; --text-3: #8f99ab;
+    --font-brand: Georgia, 'Times New Roman', serif;
+    --font-ui: system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    --font-data: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--bg); color: var(--text);
+    font-family: var(--font-ui); font-size: 15px; line-height: 1.55;
+    min-height: 100vh; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; padding: 24px;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--gold); text-decoration: none; }
+  a:hover { color: var(--gold-bright); }
+  :focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+  .card {
+    width: min(560px, 100%); background: var(--surface);
+    border: 1px solid var(--line-2); border-top: 2px solid var(--gold);
+    border-radius: 14px; padding: 40px 32px; text-align: center;
+    box-shadow: 0 1px 2px rgba(0,0,0,.45), 0 10px 30px rgba(0,0,0,.3);
+  }
+  .brand {
+    font-family: var(--font-brand); font-weight: 700; font-size: 26px;
+    letter-spacing: .12em; margin-bottom: 6px;
+  }
+  .eyebrow {
+    font-family: var(--font-data); font-size: 12px; letter-spacing: .12em;
+    text-transform: uppercase; color: var(--up); margin-bottom: 20px;
+  }
+  h1 { font-size: 22px; font-weight: 600; margin-bottom: 12px; text-wrap: balance; }
+  p { color: var(--text-2); max-width: 46ch; margin: 0 auto 12px; }
+  .btns { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; margin-top: 24px; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 7px;
+    font-size: 14px; font-weight: 600; padding: 11px 20px; border-radius: 8px;
+    border: 1px solid var(--line-2); background: var(--surface-2); color: var(--text);
+  }
+  .btn:hover { border-color: var(--gold); color: var(--gold-bright); }
+  .btn--primary { background: var(--gold); border-color: var(--gold); color: #14120a; }
+  .btn--primary:hover { background: var(--gold-bright); color: #14120a; }
+  .foot { margin-top: 28px; font-size: 12px; color: var(--text-3); }
+  .foot a { color: var(--text-3); text-decoration: underline; }
+  [hidden] { display: none !important; }
 </style>
 </head>
 <body>
-<div id="app">
-  <nav class="nav" id="nav"></nav>
-  <main class="main" id="main">
-    <div class="loading">
-      <div class="loading-icon"></div>
-      <p>Connecting to RUNECLAW...</p>
-    </div>
-  </main>
-</div>
+<main class="card">
+  <div class="brand">RUNECLAW</div>
+  <div class="eyebrow">● AI trading · Bitget USDT-M futures</div>
+  <h1>The platform has a new home.</h1>
+  <p>RUNECLAW is now a full web platform: register in a minute, chat with the engine, paper-trade through the real risk gate, and follow the autonomous scanner live.</p>
+  <div class="btns">
+    <a class="btn btn--primary" id="platformBtn" href="#" hidden>Open the RUNECLAW platform →</a>
+    <a class="btn" href="https://t.me/HTRUNECLAW_bot" target="_blank" rel="noopener">Telegram bot</a>
+    <a class="btn" href="https://humanoid-traders-1.gitbook.io/humanoid-traders-ai" target="_blank" rel="noopener">Docs</a>
+  </div>
+  <div class="foot">
+    Built by Humanoid Traders · <a href="privacy.html">Privacy</a> · <a href="submission.html">Hackathon submission (archive)</a>
+  </div>
+</main>
 <script>
-const POLL=5000,C=['#3b82f6','#a78bfa','#10b981','#f59e0b','#ef4444','#ec4899','#14b8a6','#f97316'];
-const f=(n,d=2)=>n!=null?n.toLocaleString('en-US',{minimumFractionDigits:d,maximumFractionDigits:d}):'—';
-const fp=n=>(n>=0?'+':'')+f(n);
-const pc=n=>n>0?'up':n<0?'dn':'nt';
-const esc=s=>{const d=document.createElement('div');d.textContent=s||'';return d.innerHTML};
-function ago(iso){if(!iso)return'—';const s=Math.floor((Date.now()-new Date(iso))/1e3);if(s<60)return s+'s';if(s<3600)return Math.floor(s/60)+'m';if(s<86400)return Math.floor(s/3600)+'h';return Math.floor(s/86400)+'d'}
-
-function nav(d){
-  const m=d.mode||'PAPER';
-  document.getElementById('nav').innerHTML=`
-    <div class="nav-l"><div class="logo">R</div><h1>RUNECLAW<span>Beta Dashboard</span></h1></div>
-    <div class="nav-r"><div class="dot"></div><span class="chip chip-paper">${m}</span><span class="chip chip-ver">v${d.bot_version||'4.0'}</span><span class="ts">${ago(d.received_at||d.timestamp)} ago</span></div>`;
-}
-
-function overview(d){
-  const t=d.traders||[],eq=t.reduce((s,x)=>s+x.equity,0),pnl=t.reduce((s,x)=>s+x.total_pnl,0),
-    op=d.total_open_positions||0,tt=(d.system||{}).total_trades||t.reduce((s,x)=>s+x.total_trades,0),
-    fees=t.reduce((s,x)=>s+x.total_commission,0),aw=t.length?(t.reduce((s,x)=>s+x.win_rate,0)/t.length):0;
-  return`<div class="overview">
-    <div class="ov ov-eq"><div class="ov-label">Combined Equity</div><div class="ov-val">$${f(eq)}</div><div class="ov-sub">${t.length} trader${t.length!==1?'s':''} active</div></div>
-    <div class="ov ov-pnl"><div class="ov-label">Total PNL</div><div class="ov-val ${pc(pnl)}">${fp(pnl)}</div><div class="ov-sub">${f(aw,1)}% avg win rate</div></div>
-    <div class="ov ov-tr"><div class="ov-label">Total Trades</div><div class="ov-val">${tt}</div><div class="ov-sub">${op} position${op!==1?'s':''} open</div></div>
-    <div class="ov ov-pos"><div class="ov-label">Open Positions</div><div class="ov-val">${op}</div><div class="ov-sub">across ${t.length} portfolio${t.length!==1?'s':''}</div></div>
-    <div class="ov ov-fee"><div class="ov-label">Total Fees</div><div class="ov-val" style="color:var(--amber)">$${f(fees)}</div><div class="ov-sub">commission + funding</div></div>
-  </div>`;
-}
-
-function leaderboard(ts){
-  if(!ts.length)return'';
-  const s=[...ts].sort((a,b)=>b.total_pnl-a.total_pnl);
-  const medals=['&#x1f947;','&#x1f948;','&#x1f949;'];
-  let rows=s.map((t,i)=>{
-    const c=C[i%C.length];
-    return`<div class="lb-row">
-      <div class="lb-rank${i<1?' g':''}">${medals[i]||i+1}</div>
-      <div class="lb-name"><div class="av" style="background:${c}">${esc(t.name||'?')[0]}</div>${esc(t.name)}</div>
-      <div class="lb-mono ${pc(t.total_pnl)}">${fp(t.total_pnl)}</div>
-      <div class="lb-mono">$${f(t.equity)}</div>
-      <div class="lb-mono">${f(t.win_rate,1)}%</div>
-      <div class="lb-mono">${t.total_trades}</div>
-    </div>`;
-  }).join('');
-  return`<div class="lb"><div class="lb-hdr"><span style="font-size:18px">&#x1f3c6;</span><h2>Leaderboard</h2></div>
-    <div class="lb-row lb-head"><div>#</div><div>Trader</div><div>PNL</div><div>Equity</div><div>Win %</div><div>Trades</div></div>${rows}</div>`;
-}
-
-function traderCard(t,i){
-  const c=C[i%C.length];
-  let posH='';
-  if(t.positions&&t.positions.length){
-    posH=t.positions.map(p=>{
-      const dc=p.direction==='LONG'?'dir-l':'dir-s';
-      return`<div class="pos"><div class="pos-l"><span class="dir ${dc}">${p.direction}</span><span class="pos-pair">${esc(p.asset.replace('/USDT',''))}</span><span class="pos-info">${p.entry} &#8594; ${p.current}</span></div>
-        <div class="pos-r"><div class="pos-pnl ${pc(p.pnl_pct)}">${fp(p.pnl_pct)}%&nbsp;<span style="font-size:11px">($${f(p.pnl_usd)})</span></div><div class="pos-sz">$${f(p.size_usd)} &middot; ${f(p.hold_hours,1)}h</div></div></div>`;
-    }).join('');
-  }else{posH='<div style="color:var(--t3);font-size:12px;padding:6px 0;font-style:italic">No open positions</div>';}
-
-  let trH='';
-  if(t.recent_trades&&t.recent_trades.length){
-    const last=t.recent_trades.slice(-5).reverse();
-    trH='<div class="trades-sec"><div class="sec-h">Recent Trades</div>'+last.map(r=>{
-      const dc=r.direction==='LONG'?'dir-l':'dir-s';
-      return`<div class="tr"><div><span class="dir ${dc}" style="font-size:9px">${r.direction}</span> ${esc(r.asset.replace('/USDT',''))}</div><div class="lb-mono ${pc(r.pnl)}">${fp(r.pnl)}</div><div style="color:var(--t3)">${ago(r.closed_at)}</div></div>`;
-    }).join('')+'</div>';
-  }
-
-  const dd=t.max_drawdown||0;
-  return`<div class="card"><div class="card-top"><div class="card-name"><div class="av" style="background:${c}">${esc(t.name||'?')[0]}</div>${esc(t.name)}</div><div class="card-pnl ${pc(t.total_pnl)}">${fp(t.total_pnl)}</div></div>
-    <div class="card-body"><div class="card-stats">
-      <div class="cs"><div class="cs-l">Equity</div><div class="cs-v">$${f(t.equity)}</div></div>
-      <div class="cs"><div class="cs-l">Balance</div><div class="cs-v">$${f(t.balance)}</div></div>
-      <div class="cs"><div class="cs-l">Win Rate</div><div class="cs-v">${f(t.win_rate,1)}%</div></div>
-      <div class="cs"><div class="cs-l">Drawdown</div><div class="cs-v ${dd>3?'dn':'nt'}">${f(dd,1)}%</div></div>
-    </div>
-    <div class="sec-h"><span style="font-size:12px">&#x1f4c8;</span> Open Positions (${t.open_count})</div>${posH}${trH}</div></div>`;
-}
-
-function render(d){
-  nav(d);
-  const t=d.traders||[];
-  if(!t.length){
-    document.getElementById('main').innerHTML=`<div class="main">${overview(d)}<div class="empty"><h2>Awaiting Traders</h2><p>Dashboard updates automatically every 5 seconds.<br>Positions will appear here when beta testers start trading.</p></div></div>`;
-    return;
-  }
-  document.getElementById('main').innerHTML=`<div class="main">${overview(d)}${leaderboard(t)}<div class="grid">${t.map((x,i)=>traderCard(x,i)).join('')}</div><div class="foot">RUNECLAW v${d.bot_version||'4.0'} Beta &middot; Paper Trading &middot; Real-time data</div></div>`;
-}
-
-let errCount=0;
-async function poll(){
-  try{
-    const r=await fetch('/api/snapshot');
-    if(r.ok){const d=await r.json();render(d);errCount=0;}
-    else errCount++;
-  }catch(e){errCount++;
-    if(errCount>3){nav({mode:'PAPER',bot_version:'4.0'});
-      document.getElementById('main').innerHTML=`<div class="main"><div class="empty"><h2>Connection Lost</h2><p>Unable to reach the bot API. Retrying every 5 seconds...</p></div></div>`;
+  // The platform runs as a separate deployment; its URL is operator-config
+  // (WEBSITE_URL). Ask whichever backend serves this page — api_bridge
+  // exposes /platform-url directly, nginx proxies it under /api/.
+  (async () => {
+    const btn = document.getElementById('platformBtn');
+    for (const path of ['/platform-url', '/api/platform-url']) {
+      try {
+        const r = await fetch(path);
+        if (!r.ok) continue;
+        const d = await r.json();
+        if (d && d.url) { btn.href = d.url; btn.hidden = false; return; }
+      } catch (e) { /* try next */ }
     }
-  }
-}
-poll();setInterval(poll,POLL);
+    // No platform URL configured: Telegram/Docs stay as the CTAs.
+  })();
 </script>
 </body>
 </html>

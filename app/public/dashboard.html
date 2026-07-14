@@ -11,7 +11,7 @@
 <link rel="manifest" href="/manifest.json">
 <meta name="theme-color" content="#0a0b10">
 <link rel="preload" href="/fonts/cinzel-700.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/styles.css?v=2">
 </head>
 <body>
 <a class="skip-link" href="#view-root">Skip to content</a>
@@ -40,10 +40,10 @@
 <nav class="tabbar" id="tabbarNav" aria-label="Dashboard sections"></nav>
 
 <!-- Chat -->
-<button id="chatFab" class="chat-fab hidden" aria-label="Open RUNECLAW chat">
+<button id="chatFab" class="chat-fab hidden" hidden aria-label="Open RUNECLAW chat">
   <svg class="icon" aria-hidden="true"><use href="#icon-chat"></use></svg>
 </button>
-<section id="chatDrawer" class="chat-drawer hidden" role="dialog" aria-label="RUNECLAW chat">
+<section id="chatDrawer" class="chat-drawer hidden" hidden role="dialog" aria-label="RUNECLAW chat">
   <div class="chat-head">
     <span class="t"><svg class="icon" aria-hidden="true"><use href="#icon-sparkle"></use></svg>RUNECLAW — AI ANALYST</span>
     <button class="chat-close" id="chatClose" aria-label="Close chat">&times;</button>
@@ -60,7 +60,7 @@
 </section>
 
 <!-- Trade confirm modal -->
-<div id="tradeModal" class="modal hidden" role="dialog" aria-modal="true" aria-label="Confirm trade">
+<div id="tradeModal" class="modal hidden" hidden role="dialog" aria-modal="true" aria-label="Confirm trade">
   <div class="modal-card">
     <h2>Confirm trade</h2>
     <div id="tradeModalBody"></div>
@@ -72,10 +72,10 @@
   </div>
 </div>
 
-<script src="/js/icons.js"></script>
-<script src="/js/app.js"></script>
-<script src="/js/chat.js" defer></script>
-<script src="/js/dashboard.js" defer></script>
+<script src="/js/icons.js?v=2"></script>
+<script src="/js/app.js?v=2"></script>
+<script src="/js/chat.js?v=2" defer></script>
+<script src="/js/dashboard.js?v=2" defer></script>
 <script>if('serviceWorker' in navigator){navigator.serviceWorker.register('/sw.js').catch(()=>{});}</script>
 </body>
 </html>

@@ -61,7 +61,17 @@ const { router: streamRouter } = require('./routes/stream');
 const app = express();
 
 app.use(express.json({ limit: '1mb' })); // Cap payload size
-app.use(express.static(path.join(__dirname, 'public')));
+// Cache policy: HTML must never be cached (deploys ship new markup that
+// references version-tagged assets, e.g. /styles.css?v=2) — a cached HTML +
+// stale-CSS mix renders the dashboard completely unstyled. Assets get a
+// moderate cache; the ?v= query busts them on every deploy that changes them.
+app.use(express.static(path.join(__dirname, 'public'), {
+  maxAge: '1h',
+  setHeaders: (res, filePath) => {
+    if (filePath.endsWith('.html')) res.setHeader('Cache-Control', 'no-cache');
+    else if (/\.(css|js|woff2)$/.test(filePath)) res.setHeader('Cache-Control', 'public, max-age=86400');
+  },
+}));
 
 // Security headers
 app.use((req, res, next) => {
@@ -93,9 +103,9 @@ if (!process.env.BOT_GATEWAY_URL && String(process.env.PORT || 8080) === '8080')
 }
 app.use('/api/stream', streamRouter);
 
-// SPA fallback - serve index.html for non-API routes
-app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
-app.get('/dashboard', (req, res) => res.sendFile(path.join(__dirname, 'public', 'dashboard.html')));
+// SPA fallback - serve index.html for non-API routes (never cached: see above)
+app.get('/', (req, res) => { res.setHeader('Cache-Control', 'no-cache'); res.sendFile(path.join(__dirname, 'public', 'index.html')); });
+app.get('/dashboard', (req, res) => { res.setHeader('Cache-Control', 'no-cache'); res.sendFile(path.join(__dirname, 'public', 'dashboard.html')); });
 
 // Error handler
 app.use((err, req, res, next) => {
