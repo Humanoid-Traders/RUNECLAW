@@ -139,6 +139,28 @@ def _env(key: str, default: str = "") -> str:
     return os.getenv(key, default)
 
 
+def _env_secret(key: str, default: str = "") -> str:
+    """Load a credential env var, stripping the two things a hand-edited
+    .env silently gets wrong and that a venue then rejects as an invalid
+    key (Bitget 40006):
+
+      - surrounding whitespace / trailing newline (BITGET_API_KEY=abc␣)
+      - a matched pair of surrounding quotes (BITGET_API_KEY="abc")
+
+    A key wearing quotes or a stray space is sent verbatim to the exchange
+    and fails auth — which, on a redeploy that wiped .env and forced a
+    hand re-entry, left a live position unprotected (2026-07-14 incident).
+    Interior characters are never touched; a value that is only quotes/
+    whitespace collapses to empty, same as unset."""
+    raw = os.getenv(key, default)
+    if raw is None:
+        return default
+    v = raw.strip()
+    if len(v) >= 2 and v[0] == v[-1] and v[0] in ("'", '"'):
+        v = v[1:-1].strip()
+    return v
+
+
 def _env_bool(key: str, default: bool = False) -> bool:
     raw = _env(key, "").strip().lower()
     if raw in ("", "false", "0", "no"):
@@ -558,9 +580,9 @@ class ExchangeConfig:
     # Live trading venue: "bitget" (default) or "hyperliquid". Applies to the
     # operator's shared executor; per-user (/connect) executors are Bitget-only.
     venue: str = _env("VENUE", "bitget")
-    api_key: str = _env("BITGET_API_KEY")
-    api_secret: str = _env("BITGET_API_SECRET")
-    passphrase: str = _env("BITGET_PASSPHRASE")
+    api_key: str = _env_secret("BITGET_API_KEY")
+    api_secret: str = _env_secret("BITGET_API_SECRET")
+    passphrase: str = _env_secret("BITGET_PASSPHRASE")
     # Bitget demo trading (PAPTRADING header). Default FALSE: the old True
     # default was dead config — ccxt ignored the constructor key it fed, so
     # every real deployment has always hit production. Now that the flag is
@@ -571,15 +593,15 @@ class ExchangeConfig:
     # Hyperliquid venue credentials (USDC perps DEX): API wallet address +
     # private key. Use a dedicated API wallet (agent wallet), NOT the main
     # wallet key. HYPERLIQUID_TESTNET=true routes to the testnet.
-    hyperliquid_wallet_address: str = _env("HYPERLIQUID_WALLET_ADDRESS")
-    hyperliquid_private_key: str = _env("HYPERLIQUID_PRIVATE_KEY")
+    hyperliquid_wallet_address: str = _env_secret("HYPERLIQUID_WALLET_ADDRESS")
+    hyperliquid_private_key: str = _env_secret("HYPERLIQUID_PRIVATE_KEY")
     hyperliquid_testnet: bool = _env_bool("HYPERLIQUID_TESTNET", False)
     # Bybit venue credentials (USDT linear perps). One-way position mode.
-    bybit_api_key: str = _env("BYBIT_API_KEY")
-    bybit_api_secret: str = _env("BYBIT_API_SECRET")
+    bybit_api_key: str = _env_secret("BYBIT_API_KEY")
+    bybit_api_secret: str = _env_secret("BYBIT_API_SECRET")
     # BingX venue credentials (USDT perps, $2 min order). One-way mode.
-    bingx_api_key: str = _env("BINGX_API_KEY")
-    bingx_api_secret: str = _env("BINGX_API_SECRET")
+    bingx_api_key: str = _env_secret("BINGX_API_KEY")
+    bingx_api_secret: str = _env_secret("BINGX_API_SECRET")
     # Asset universe filter: "all" scans everything, "solana" adds Solana ecosystem priority
     asset_universe: str = _env("ASSET_UNIVERSE", "all_markets")  # all_markets | all | solana | metals | tradfi | etc.
     # Trading mode: "spot" for no leverage, "futures" for USDT-M perpetual
@@ -821,7 +843,7 @@ except Exception:
 @dataclass(frozen=True)
 class TelegramConfig:
     """Telegram bot settings."""
-    bot_token: str = _env("TELEGRAM_BOT_TOKEN")
+    bot_token: str = _env_secret("TELEGRAM_BOT_TOKEN")
     chat_id: str = _env("TELEGRAM_CHAT_ID")
     admin_ids: str = _env("ADMIN_TELEGRAM_IDS", "")  # Comma-separated admin user IDs — get premium LLM routing
     # Comma-separated Telegram IDs allowed to trade LIVE on their OWN linked

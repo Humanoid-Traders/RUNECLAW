@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import logging
 import os
 import signal
 import sys
@@ -50,6 +51,75 @@ def _banner() -> str:
             "  should trade real money, set BITGET_SANDBOX=false and restart.\n"
         )
     return banner
+
+
+async def _credential_preflight(engine, bot) -> None:
+    """Authenticate against the venue at boot and alert loudly on failure.
+
+    Live trading needs valid exchange credentials to place the stops that
+    protect open positions. On 2026-07-14 a redeploy wiped .env; the keys
+    were re-entered with quotes/whitespace (or the wrong sandbox flag), so
+    auth failed 40006 and a live AMD position sat unprotected — the failure
+    only surfaced when a stop couldn't be placed, minutes later. This runs
+    an authenticated balance fetch at startup and, on failure, sends the
+    exact actionable diagnosis to the admin chat. Never raises; never
+    blocks startup (a broken-cred bot must still monitor open positions)."""
+    try:
+        if CONFIG.simulation_mode or not CONFIG.live_trading_enabled:
+            return  # paper/sim: no venue auth to check
+        if not (CONFIG.exchange.api_key and CONFIG.exchange.api_secret):
+            _msg = ("\U0001f6a8 <b>STARTUP: no exchange API key configured</b>\n"
+                    "Live trading is enabled but BITGET_API_KEY / "
+                    "BITGET_API_SECRET are empty — the bot cannot place or "
+                    "protect live orders. Check your .env.")
+        else:
+            try:
+                bal = await engine.get_live_equity()
+                if bal and float(bal.get("total", 0) or 0) >= 0:
+                    audit(system_log,
+                          "Credential preflight OK — venue authenticated",
+                          action="cred_preflight", result="OK")
+                    return
+                _msg = ("\U0001f6a8 <b>STARTUP: venue returned no balance</b>\n"
+                        "Authenticated but got an empty balance — check the "
+                        "account and sandbox flag.")
+            except Exception as _auth_exc:
+                _e = str(_auth_exc)
+                _hint = ""
+                if "40006" in _e or "ACCESS_KEY" in _e.upper():
+                    _hint = ("\n<b>40006 = venue rejects the API key.</b> Check, "
+                             "in order:\n"
+                             "1. No quotes/spaces around the key in .env "
+                             "(BITGET_API_KEY=abc, not \"abc\").\n"
+                             f"2. BITGET_SANDBOX is {CONFIG.exchange.sandbox} — "
+                             "a LIVE key needs it <code>false</code>; a demo "
+                             "key needs it <code>true</code>.\n"
+                             "3. The key wasn't regenerated/deleted on Bitget.")
+                elif "passphrase" in _e.lower() or "40012" in _e:
+                    _hint = ("\n<b>Passphrase mismatch.</b> BITGET_PASSPHRASE "
+                             "must match the one set when the key was created.")
+                _msg = (f"\U0001f6a8 <b>STARTUP: exchange auth FAILED</b>\n"
+                        f"Live trading is on but the venue rejected "
+                        f"authentication — open positions cannot be "
+                        f"protected until this is fixed.\n"
+                        f"Venue said: <code>{_e[:160]}</code>{_hint}")
+        audit(system_log, f"Credential preflight FAILED: {_msg[:200]}",
+              action="cred_preflight", result="FAIL", level=logging.CRITICAL)
+        _admin = CONFIG.telegram.chat_id or ""
+        _ids = [i.strip() for i in
+                (CONFIG.telegram.admin_ids or "").split(",") if i.strip()]
+        for _target in ([_admin] if _admin else []) + _ids:
+            try:
+                await bot.send_message(chat_id=_target, text=_msg,
+                                       parse_mode="HTML")
+            except Exception:
+                continue
+    except Exception as exc:
+        try:
+            audit(system_log, f"Credential preflight error: {exc}",
+                  action="cred_preflight", result="ERROR")
+        except Exception:
+            pass
 
 
 def run_telegram() -> None:
@@ -146,6 +216,12 @@ def run_telegram() -> None:
             await app.updater.start_polling(drop_pending_updates=True)
             # Start proactive alert monitor (Move 2)
             await handler.start_monitor(app.bot)
+            # Credential preflight: authenticate ONCE at boot so a bad key
+            # (Bitget 40006 — the 2026-07-14 env-wipe incident) screams here
+            # instead of silently surfacing only when a stop fails to place.
+            # Fail-open: never blocks startup — a live position still needs
+            # monitoring even with broken creds — but it MUST alert loudly.
+            await _credential_preflight(engine, app.bot)
 
             # Keep running forever — restart engine if it crashes
             while True:
