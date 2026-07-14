@@ -105,8 +105,13 @@ router.get('/portfolio-summary', async (req, res) => {
     const [winRows] = await pool.execute(
       "SELECT COUNT(*) as wins FROM trades WHERE status = 'CLOSED' AND pnl > 0"
     );
-    const equity = snapRows.length > 0 ? parseFloat(snapRows[0].equity) : 800;
+    // No invented balances: with no snapshot and no trades there is simply no
+    // portfolio yet — the UI renders a real empty state, not a phantom number.
     const total = tradeRows[0]?.total || 0;
+    if (snapRows.length === 0 && total === 0) {
+      return res.json({ portfolio: null });
+    }
+    const equity = snapRows.length > 0 ? parseFloat(snapRows[0].equity) : null;
     const netPnl = parseFloat(tradeRows[0]?.net_pnl || 0);
     const openCount = openRows[0]?.open_count || 0;
     const wins = winRows[0]?.wins || 0;
@@ -119,7 +124,7 @@ router.get('/portfolio-summary', async (req, res) => {
     };
     res.json({ portfolio: latestPortfolio });
   } catch (err) {
-    res.json({ portfolio: { equity: 800, open_count: 0, net_pnl: 0, total_trades: 0, win_rate: 0 } });
+    res.json({ portfolio: null });
   }
 });
 

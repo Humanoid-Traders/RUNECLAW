@@ -55,6 +55,7 @@ const credentialsRouter = require('./routes/credentials');
 const controlsRouter = require('./routes/controls');
 const chatRouter = require('./routes/chat');
 const webtradeRouter = require('./routes/webtrade');
+const portfolioRouter = require('./routes/portfolio');
 const { router: streamRouter } = require('./routes/stream');
 
 const app = express();
@@ -81,6 +82,15 @@ app.use('/api/credentials', credentialsRouter);
 app.use('/api/controls', controlsRouter);
 app.use('/api/chat', chatRouter);
 app.use('/api/trade', webtradeRouter);
+app.use('/api/portfolio', portfolioRouter);
+
+// Single-host dev foot-gun: Express and the bot's gateway both default to
+// port 8080. Warn loudly if they would collide.
+if (!process.env.BOT_GATEWAY_URL && String(process.env.PORT || 8080) === '8080') {
+  console.warn('WARNING: BOT_GATEWAY_URL is unset and PORT is 8080 — the bot gateway '
+    + 'default (http://localhost:8080) points at THIS server. Set BOT_GATEWAY_URL '
+    + 'to the bot process (aiohttp dashboard) address.');
+}
 app.use('/api/stream', streamRouter);
 
 // SPA fallback - serve index.html for non-API routes

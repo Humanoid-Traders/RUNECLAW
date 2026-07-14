@@ -47,7 +47,9 @@ router.get('/stats', async (req, res) => {
       'SELECT equity FROM equity_snapshots WHERE user_id = ? ORDER BY snapshot_at DESC LIMIT 1',
       [uid]
     );
-    const equity = snapRows.length > 0 ? parseFloat(snapRows[0].equity) : (10000 + netPnl);
+    // No snapshot yet -> equity is genuinely unknown; return null so the UI
+    // renders a "no data yet" state instead of an invented starting balance.
+    const equity = snapRows.length > 0 ? parseFloat(snapRows[0].equity) : null;
 
     // Compute Sharpe from trade returns
     let sharpe = 0;
@@ -65,7 +67,7 @@ router.get('/stats', async (req, res) => {
     const profitFactor = grossLosses > 0 ? grossWins / grossLosses : grossWins > 0 ? 999 : 0;
 
     res.json({
-      equity: Math.round(equity * 100) / 100,
+      equity: equity != null ? Math.round(equity * 100) / 100 : null,
       net_pnl: Math.round(netPnl * 100) / 100,
       total_fees: Math.round(totalFees * 100) / 100,
       total_trades: totalTrades,

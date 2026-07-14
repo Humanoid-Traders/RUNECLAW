@@ -70,7 +70,7 @@ router.post('/', credLimit, async (req, res) => {
     const uid = req.user.user_id;
     const u = await _userRow(uid);
     if (!u || !u.telegram_linked || !u.telegram_id) {
-      return res.status(409).json({ error: 'Link your Telegram first, then connect your exchange.' });
+      return res.status(409).json({ error: 'telegram_required', detail: 'Live trading and exchange keys require a linked Telegram account. Paper trading works without it.' });
     }
     const { api_key, api_secret, passphrase } = req.body || {};
     if (!api_key || !api_secret || !passphrase) {
