@@ -187,14 +187,17 @@ class ExchangeCredentialStore:
         return f"BG-{h[:4]}…{h[-2:]}"
 
 
-async def validate_bitget_credentials(
-    api_key: str, api_secret: str, passphrase: str, sandbox: bool = False
-) -> tuple[bool, str]:
-    """Functionally validate Bitget credentials with a READ-ONLY balance fetch.
+# Bitget error for API keys that belong to the OTHER environment: a
+# demo-trading key hitting the live API (or a live key hitting demo).
+_WRONG_ENV_CODE = "40099"
 
-    Returns (ok, detail). ``detail`` is a short free USDT summary on success or a
-    trimmed error string on failure. Proves the keys authenticate before we store
-    them and before any order is ever placed. Never places an order.
+
+async def _bitget_balance_probe(api_key: str, api_secret: str,
+                                passphrase: str, sandbox: bool) -> tuple[bool, str]:
+    """One read-only balance fetch against ONE Bitget environment.
+
+    ``sandbox=True`` activates Bitget demo trading via ccxt's
+    set_sandbox_mode (sends the PAPTRADING=1 header). Returns (ok, detail).
     """
     client = None
     try:
@@ -206,7 +209,6 @@ async def validate_bitget_credentials(
             "apiKey": api_key,
             "secret": api_secret,
             "password": passphrase,
-            "sandbox": sandbox,
             "timeout": 15000,
             "enableRateLimit": True,
             "options": {
@@ -214,6 +216,13 @@ async def validate_bitget_credentials(
                 "uta": True,  # Support Bitget Unified Trading Account
             },
         })
+        # Explicit and version-stable: for bitget this toggles the demo-trading
+        # header rather than relying on a constructor key.
+        try:
+            client.set_sandbox_mode(sandbox)
+        except Exception:
+            if sandbox:
+                raise
         bal = await client.fetch_balance({"type": "swap"})
         free = 0.0
         try:
@@ -229,6 +238,41 @@ async def validate_bitget_credentials(
                 await client.close()
             except Exception:
                 pass
+
+
+async def validate_bitget_credentials(
+    api_key: str, api_secret: str, passphrase: str, sandbox: bool = False
+) -> tuple[bool, str]:
+    """Functionally validate Bitget credentials with a READ-ONLY balance fetch.
+
+    Returns (ok, detail). ``detail`` is a short free USDT summary on success or a
+    trimmed error string on failure. Proves the keys authenticate before we store
+    them and before any order is ever placed. Never places an order.
+
+    Bitget code 40099 ("exchange environment is incorrect") means the key
+    belongs to the OTHER environment (demo vs live). We retry once against the
+    opposite environment purely to diagnose, and if the key authenticates
+    there, return a precise actionable message instead of the raw JSON —
+    without ever storing a wrong-environment key.
+    """
+    ok, detail = await _bitget_balance_probe(api_key, api_secret, passphrase, sandbox)
+    if ok or _WRONG_ENV_CODE not in detail:
+        return ok, detail
+    # 40099: diagnose which environment the key actually belongs to.
+    other_ok, _ = await _bitget_balance_probe(api_key, api_secret, passphrase,
+                                              not sandbox)
+    if other_ok:
+        if sandbox:
+            return False, (
+                "These are LIVE Bitget keys, but this bot runs in DEMO "
+                "(paper) trading. Create the API keys inside Bitget demo "
+                "trading, with USDT-M futures read + trade permission.")
+        return False, (
+            "These are DEMO-trading Bitget keys, but this bot trades LIVE. "
+            "Create the API keys in your main Bitget account (API "
+            "Management, not demo trading), with USDT-M futures read + "
+            "trade permission.")
+    return False, detail
 
 
 _STORE: Optional["ExchangeCredentialStore"] = None

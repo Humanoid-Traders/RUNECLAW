@@ -136,3 +136,112 @@ def test_basic_key_format_ok():
     assert basic_key_format_ok("has space key here", API_SECRET, PASSPHRASE) is False
     assert basic_key_format_ok(API_KEY, API_SECRET, "") is False           # empty passphrase
     assert basic_key_format_ok(API_KEY + "\n", API_SECRET, PASSPHRASE) is False  # newline
+
+
+# ── validate_bitget_credentials: environment-mismatch (Bitget 40099) ────────
+
+class TestValidateEnvironmentMismatch:
+    """Bitget 40099 = key belongs to the other environment (demo vs live).
+    Validation must diagnose the mismatch and return an actionable message
+    instead of the raw JSON — and honor set_sandbox_mode explicitly."""
+
+    @staticmethod
+    def _patch_probe(monkeypatch, results):
+        """Patch the single-environment probe. `results` maps sandbox->(ok, detail)."""
+        import bot.core.exchange_credentials as ec
+        calls = []
+
+        async def fake_probe(api_key, api_secret, passphrase, sandbox):
+            calls.append(sandbox)
+            return results[sandbox]
+
+        monkeypatch.setattr(ec, "_bitget_balance_probe", fake_probe)
+        return calls
+
+    def test_demo_key_on_live_bot_gets_actionable_message(self, monkeypatch):
+        import asyncio
+        import bot.core.exchange_credentials as ec
+        calls = self._patch_probe(monkeypatch, {
+            False: (False, 'bitget {"code":"40099","msg":"exchange environment is incorrect"}'),
+            True: (True, "12.00 USDT free"),
+        })
+        ok, detail = asyncio.new_event_loop().run_until_complete(
+            ec.validate_bitget_credentials("k", "s", "p", sandbox=False))
+        assert ok is False
+        assert "DEMO-trading" in detail and "trades LIVE" in detail
+        assert calls == [False, True]  # diagnosed against the opposite env
+
+    def test_live_key_on_demo_bot_gets_inverse_message(self, monkeypatch):
+        import asyncio
+        import bot.core.exchange_credentials as ec
+        calls = self._patch_probe(monkeypatch, {
+            True: (False, 'bitget {"code":"40099","msg":"exchange environment is incorrect"}'),
+            False: (True, "12.00 USDT free"),
+        })
+        ok, detail = asyncio.new_event_loop().run_until_complete(
+            ec.validate_bitget_credentials("k", "s", "p", sandbox=True))
+        assert ok is False
+        assert "LIVE Bitget keys" in detail and "DEMO" in detail
+
+    def test_40099_both_ways_returns_raw_error(self, monkeypatch):
+        import asyncio
+        import bot.core.exchange_credentials as ec
+        raw = 'bitget {"code":"40099","msg":"exchange environment is incorrect"}'
+        self._patch_probe(monkeypatch, {False: (False, raw), True: (False, raw)})
+        ok, detail = asyncio.new_event_loop().run_until_complete(
+            ec.validate_bitget_credentials("k", "s", "p", sandbox=False))
+        assert ok is False and detail == raw
+
+    def test_success_path_no_retry(self, monkeypatch):
+        import asyncio
+        import bot.core.exchange_credentials as ec
+        calls = self._patch_probe(monkeypatch, {False: (True, "50.00 USDT free")})
+        ok, detail = asyncio.new_event_loop().run_until_complete(
+            ec.validate_bitget_credentials("k", "s", "p", sandbox=False))
+        assert ok is True and detail == "50.00 USDT free"
+        assert calls == [False]
+
+    def test_non_40099_error_no_retry(self, monkeypatch):
+        import asyncio
+        import bot.core.exchange_credentials as ec
+        calls = self._patch_probe(monkeypatch, {
+            False: (False, 'bitget {"code":"40012","msg":"apikey/password is incorrect"}')})
+        ok, detail = asyncio.new_event_loop().run_until_complete(
+            ec.validate_bitget_credentials("k", "s", "p", sandbox=False))
+        assert ok is False and "40012" in detail
+        assert calls == [False]
+
+    def test_probe_activates_sandbox_mode(self, monkeypatch):
+        import asyncio
+        import bot.core.exchange_credentials as ec
+
+        class FakeClient:
+            def __init__(self, cfg):
+                self.cfg = cfg
+                self.sandbox_calls = []
+
+            def set_sandbox_mode(self, enabled):
+                self.sandbox_calls.append(enabled)
+
+            async def fetch_balance(self, params=None):
+                return {"USDT": {"free": 7.5}}
+
+            async def close(self):
+                pass
+
+        created = []
+
+        class FakeCcxt:
+            @staticmethod
+            def bitget(cfg):
+                c = FakeClient(cfg)
+                created.append(c)
+                return c
+
+        import sys
+        monkeypatch.setitem(sys.modules, "ccxt.async_support", FakeCcxt)
+        ok, detail = asyncio.new_event_loop().run_until_complete(
+            ec._bitget_balance_probe("k", "s", "p", sandbox=True))
+        assert ok is True and detail == "7.50 USDT free"
+        assert created[0].sandbox_calls == [True]
+        assert "sandbox" not in created[0].cfg  # explicit call, not constructor key

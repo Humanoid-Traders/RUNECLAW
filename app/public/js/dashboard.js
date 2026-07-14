@@ -71,6 +71,12 @@
     const el = document.getElementById('modeChip');
     if (!el || !pf) return;
     el.classList.remove('hidden');
+    if (pf.stale && pf.source !== 'sync') {
+      // Bot unreachable and no live feed: mode is unknown — don't assert PAPER.
+      el.textContent = 'MODE ?';
+      el.className = 'chip chip--offline';
+      return;
+    }
     const live = pf.mode === 'LIVE' || pf.mode === 'MIXED';
     el.textContent = live ? 'LIVE' : 'PAPER';
     el.className = 'chip ' + (live ? 'chip--live' : 'chip--paper');
@@ -140,14 +146,19 @@
         return stateBlock({ icon: 'icon-coin', text: 'No portfolio yet — place your first paper trade and your equity shows up here.', cta: { label: 'Place a paper trade', href: '#trade' } });
       }
       const daily = pf.daily_pnl, total = pf.total_pnl;
+      // 'sync' source IS the live feed (operator account) — only label offline
+      // when the data is genuinely stale.
+      const offline = pf.stale ? '<span class="chip chip--offline">bot offline — last known</span>'
+        : pf.source === 'sync' && pf.mode === 'LIVE' ? '<span class="chip chip--live">LIVE ACCOUNT</span>' : '';
+      const dailyPart = daily != null ? `<span class="${pnlClass(daily)}">${signed(daily)} today</span> · ` : '';
       return `<div class="row" style="justify-content:space-between;align-items:flex-start">
         <div class="stat">
-          <div class="k">My equity ${pf.stale ? '<span class="chip chip--offline">bot offline — last known</span>' : ''}</div>
+          <div class="k">My equity ${offline}</div>
           <div class="v big">${fmtMoney(pf.equity)}</div>
-          <div class="d num ${pnlClass(daily)}">${signed(daily)} today · <span class="${pnlClass(total)}">${signed(total)} all-time</span></div>
+          <div class="d num">${dailyPart}<span class="${pnlClass(total)}">${total != null ? signed(total) + ' all-time' : ''}</span></div>
         </div>
         <div class="stat-row" style="flex:1;max-width:420px">
-          <div class="stat"><div class="k">Win rate</div><div class="v">${fmt(pf.win_rate, 1)}%</div></div>
+          <div class="stat"><div class="k">Win rate</div><div class="v">${pf.win_rate != null ? fmt(pf.win_rate, 1) + '%' : '—'}</div></div>
           <div class="stat"><div class="k">Trades</div><div class="v">${pf.total_trades ?? 0}</div></div>
           <div class="stat"><div class="k">Open</div><div class="v">${(pf.open_positions || []).length}</div></div>
         </div>

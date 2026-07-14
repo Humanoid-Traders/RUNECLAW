@@ -77,7 +77,11 @@
     if (n == null || !isFinite(n)) return '--';
     return (Number(n) >= 0 ? '+' : '') + Number(n).toFixed(d);
   }
-  function pnlClass(n) { return Number(n) >= 0 ? 'pos' : 'neg'; }
+  function pnlClass(n) {
+    const v = Number(n);
+    if (n == null || !isFinite(v)) return '';  // unknown -> muted, never red
+    return v >= 0 ? 'pos' : 'neg';
+  }
   function fmtAgo(iso) {
     if (!iso) return '--';
     const s = (Date.now() - new Date(iso).getTime()) / 1000;

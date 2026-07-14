@@ -1,38 +1,29 @@
 const crypto = require('crypto');
-const fs = require('fs');
 const path = require('path');
 
-// Auto-generate JWT_SECRET ONLY in ephemeral/dev mode.
-// In production (or any deployment without EPHEMERAL=true), JWT_SECRET MUST be set
-// via environment variables. auth.js will refuse to start if it's missing or < 32 chars.
+// JWT_SECRET resolution, most-stable-first:
+//   1. Explicit JWT_SECRET env (recommended; required for multi-replica).
+//   2. Derived deterministically from BOT_SYNC_SECRET (already a required
+//      >=32-char env). Same env -> same secret on EVERY restart/redeploy, even
+//      on hosts with ephemeral disks. This fixes the "site keeps logging me
+//      out" failure mode: the previous file-persisted secret (data/.jwt_secret)
+//      was wiped on every restart of an ephemeral host, minting a new secret
+//      and invalidating every session.
+//   3. Ephemeral random (dev only, when BOT_SYNC_SECRET is also missing —
+//      the fatal check below exits shortly after anyway).
 if (!process.env.JWT_SECRET) {
-  if (process.env.EPHEMERAL === 'true' || process.env.NODE_ENV !== 'production') {
-    // Persist the auto-generated secret to the data volume and reuse it on the
-    // next boot. Regenerating a fresh random secret on every process start (the
-    // previous behaviour) invalidated ALL existing sessions on every restart /
-    // redeploy -- the main reason the app "kept logging users out". Persisting
-    // it keeps sessions valid across restarts wherever the data dir survives.
-    const secretFile = path.join(__dirname, 'data', '.jwt_secret');
-    let secret = null;
-    try {
-      secret = fs.readFileSync(secretFile, 'utf8').trim() || null;
-    } catch (e) { /* not created yet */ }
-    if (!secret || secret.length < 32) {
-      secret = crypto.randomBytes(48).toString('hex');
-      try {
-        fs.mkdirSync(path.dirname(secretFile), { recursive: true });
-        fs.writeFileSync(secretFile, secret, { mode: 0o600 });
-        console.log('JWT_SECRET auto-generated and persisted to data/.jwt_secret (ephemeral).');
-      } catch (e) {
-        console.log('WARNING: JWT_SECRET auto-generated but could NOT be persisted (%s). Sessions will reset on restart. Set JWT_SECRET in env for stable auth.', e.message);
-      }
-    } else {
-      console.log('JWT_SECRET loaded from data/.jwt_secret (ephemeral) — sessions survive restarts.');
-    }
-    process.env.JWT_SECRET = secret;
-    console.log('NOTE: For clustered/multi-replica deployments, set a shared JWT_SECRET in env instead.');
+  if (process.env.BOT_SYNC_SECRET && process.env.BOT_SYNC_SECRET.length >= 32) {
+    process.env.JWT_SECRET = crypto
+      .createHmac('sha256', process.env.BOT_SYNC_SECRET)
+      .update('runeclaw-jwt-signing-v1')
+      .digest('hex');
+    console.log('JWT_SECRET derived from BOT_SYNC_SECRET — sessions survive restarts. '
+      + 'Set an explicit JWT_SECRET for multi-replica deployments.');
+  } else if (process.env.EPHEMERAL === 'true' || process.env.NODE_ENV !== 'production') {
+    process.env.JWT_SECRET = crypto.randomBytes(48).toString('hex');
+    console.log('WARNING: JWT_SECRET auto-generated (ephemeral) — sessions reset on restart.');
   }
-  // If production without EPHEMERAL=true, let auth.js enforce the fatal exit.
+  // If production without a derivable secret, auth.js enforces the fatal exit.
 }
 // RC-AUD-015: never ship a hardcoded sync secret — it grants write access to the
 // /api/bot/sync endpoints (which overwrite trade/equity data). Require it to be
