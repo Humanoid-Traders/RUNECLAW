@@ -2,256 +2,165 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>RUNECLAW — AI Trading Platform</title>
-<meta name="description" content="RUNECLAW is an autonomous AI trading agent for Bitget USDT-M futures — full market scan, LLM-reasoned signals, a hard risk engine, and portfolio tracking in paper or live.">
-<meta property="og:title" content="RUNECLAW — AI Trading Platform">
-<meta property="og:description" content="An autonomous AI trading agent for Bitget USDT-M futures. Scan, signal, risk-gate, execute.">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>RUNECLAW — AI Trading, Paper to Live</title>
+<meta name="description" content="RUNECLAW: an AI trading engine you can watch, chat with, and trade alongside. Register in a minute and paper-trade instantly — no Telegram required.">
+<meta property="og:title" content="RUNECLAW — AI Trading, Paper to Live">
+<meta property="og:description" content="Scan 800+ symbols, chat with the engine, and place risk-gated trades from your browser. Paper by default, live only with explicit approval.">
 <meta property="og:image" content="/og_image_1200x630.jpg">
-<meta property="og:type" content="website">
-<meta name="theme-color" content="#090a0e">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <link rel="icon" type="image/png" sizes="256x256" href="/app_icon_256.png">
 <link rel="apple-touch-icon" href="/app_icon_512.png">
 <link rel="manifest" href="/manifest.json">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-title" content="RUNECLAW">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<meta name="theme-color" content="#0a0b10">
+<link rel="preload" href="/fonts/cinzel-700.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/styles.css">
 <style>
-/* ---- Landing-specific ---- */
-.wrap{width:100%;max-width:var(--maxw);margin:0 auto;padding:0 20px}
-.hero{text-align:center;padding:72px 20px 32px}
-.hero .eyebrow{display:inline-flex;align-items:center;gap:7px;font-family:var(--mono);font-size:12px;
-  color:var(--gold);background:var(--gold-dim);border:1px solid rgba(203,176,106,.25);
-  padding:5px 12px;border-radius:20px;margin-bottom:22px}
-.hero h1{font-size:clamp(30px,5.2vw,52px);font-weight:700;line-height:1.1;letter-spacing:-.5px;margin-bottom:16px}
-.hero h1 span{color:var(--gold)}
-.hero p{font-size:17px;color:var(--text2);max-width:560px;margin:0 auto 30px;line-height:1.6}
-.hero-cta{display:flex;gap:12px;justify-content:center;flex-wrap:wrap}
-.metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;
-  max-width:900px;margin:48px auto 0}
-.metric{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:18px 16px;text-align:center}
-.metric .n{font-family:var(--mono);font-size:24px;font-weight:700;color:var(--gold2)}
-.metric .l{font-size:12px;color:var(--text3);margin-top:4px;letter-spacing:.4px}
-
-.section{padding:20px 0 8px}
-.section-head{text-align:center;margin-bottom:26px}
-.section-head h2{font-family:var(--head);font-size:22px;letter-spacing:1px;color:var(--gold)}
-.section-head p{color:var(--text3);font-size:14px;margin-top:6px}
-.feature-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px}
-.feature{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:18px}
-.feature .fi{margin-bottom:10px}
-.feature h3{font-size:15px;font-weight:600;margin-bottom:6px}
-.feature p{font-size:13px;color:var(--text2);line-height:1.6}
-
-.pipeline{display:flex;align-items:center;justify-content:center;gap:6px;flex-wrap:wrap;max-width:900px;margin:0 auto}
-.pipe-step{display:flex;flex-direction:column;align-items:center;gap:8px;background:var(--bg2);
-  border:1px solid var(--border);border-radius:var(--r);padding:16px 18px;min-width:130px;flex:1}
-.pipe-step .icon{width:22px;height:22px}
-.pipe-step .pl{font-size:12.5px;font-weight:600;color:var(--text)}
-.pipe-step .ps{font-size:10.5px;color:var(--text3);font-family:var(--mono);letter-spacing:.3px}
-.pipe-step.ai{border-color:rgba(203,176,106,.35);background:linear-gradient(160deg,var(--gold-dim),var(--bg2) 70%)}
-.pipe-arrow{color:var(--text3);font-size:16px;flex-shrink:0}
-@media(max-width:768px){.pipe-arrow{transform:rotate(90deg)}}
-
-.auth-wrap{display:flex;justify-content:center;padding:44px 16px 64px}
-.auth-card{width:100%;max-width:440px}
-.tab-row{display:flex;gap:6px;margin-bottom:22px;background:var(--bg3);padding:5px;border-radius:var(--r-sm)}
-.tab-btn{flex:1;padding:9px;border-radius:var(--r-sm);border:none;background:transparent;color:var(--text2);
-  cursor:pointer;font-family:var(--ui);font-size:13.5px;font-weight:600;transition:.15s}
-.tab-btn.active{background:var(--gold);color:#0a0b0e}
-.step{display:none}.step.active{display:block}
-.sep{display:flex;align-items:center;gap:10px;margin:16px 0;color:var(--text3);font-size:12px}
-.sep::before,.sep::after{content:'';flex:1;height:1px;background:var(--border)}
-
-#account{display:none}
-.acct-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px}
-.acct-head h2{font-family:var(--head);font-size:19px;letter-spacing:.5px}
-.acct-head h2 span{color:var(--gold)}
-.stats{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:18px}
-.stat{background:var(--bg3);border:1px solid var(--border);border-radius:var(--r-sm);padding:13px}
-.stat-label{font-size:11px;color:var(--text3);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px}
-.stat-val{font-size:20px;font-weight:700}
-.link-box{background:var(--bg3);border:1px solid var(--border);border-radius:var(--r);padding:18px;margin-bottom:16px}
-.link-box h3{font-size:14px;font-weight:700;margin-bottom:12px}
-.steps-list{list-style:none;counter-reset:steps}
-.steps-list li{counter-increment:steps;display:flex;align-items:flex-start;gap:10px;font-size:13.5px;
-  color:var(--text2);margin-bottom:9px;line-height:1.5}
-.steps-list li::before{content:counter(steps);min-width:22px;height:22px;border-radius:50%;
-  background:var(--gold-dim);color:var(--gold);font-size:11px;font-weight:700;display:flex;
-  align-items:center;justify-content:center;flex-shrink:0;margin-top:1px}
-.token-display{font-family:var(--mono);font-size:13px;background:var(--bg);border:1px solid var(--border);
-  border-radius:var(--r-sm);padding:11px 12px;word-break:break-all;color:var(--gold2);margin:10px 0;
-  cursor:pointer;position:relative}
-.token-display::after{content:'click to copy';position:absolute;right:10px;top:50%;transform:translateY(-50%);
-  font-size:10px;color:var(--text3);font-family:var(--ui)}
-.token-display.copied::after{content:'copied!';color:var(--green)}
-.linked-ok{background:var(--green-dim);border:1px solid rgba(34,197,94,.25);border-radius:var(--r-sm);
-  padding:12px 14px;font-size:13.5px;color:var(--green);margin-bottom:16px;display:flex;align-items:center;gap:8px}
+  /* Page-local composition only — all tokens/components come from styles.css */
+  .btn-block { width: 100%; }
+  .step { display: none; }
+  .step.active { display: flex; flex-direction: column; gap: var(--s3); }
+  .form-err { font-size: var(--fs-xs); color: var(--down); min-height: 18px; }
+  .sep { display: flex; align-items: center; gap: var(--s3); color: var(--text-3); font-size: var(--fs-xs); margin: var(--s3) 0; }
+  .sep::before, .sep::after { content: ''; flex: 1; height: 1px; background: var(--line); }
+  .token-display { font-family: var(--font-data); font-size: var(--fs-base); letter-spacing: .06em; background: var(--bg); border: 1px dashed var(--gold); border-radius: var(--radius-sm); padding: var(--s3); text-align: center; cursor: pointer; }
+  .token-display.copied { border-color: var(--up); color: var(--up); }
+  .acct-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s4); margin-bottom: var(--s4); }
+  .steps-list { margin: var(--s2) 0 0 18px; color: var(--text-2); font-size: var(--fs-sm); display: flex; flex-direction: column; gap: 6px; }
+  .nav-links { display: flex; align-items: center; gap: var(--s2); }
+  .nav-links a { color: var(--text-2); font-size: var(--fs-sm); font-weight: 500; padding: 7px 11px; border-radius: var(--radius-sm); }
+  .nav-links a:hover { color: var(--text); background: var(--surface-2); }
+  @media (max-width: 639px) { .nav-links a:not(.btn) { display: none; } }
 </style>
 </head>
 <body>
-<svg id="icon-sprite" style="display:none" aria-hidden="true">
-  <symbol id="brand-mark" viewBox="0 0 32 32">
-    <circle cx="16" cy="16" r="12.5" fill="none" stroke="var(--gold)" stroke-width="1.3" opacity=".55"/>
-    <circle cx="16" cy="16" r="9" fill="none" stroke="var(--cyan)" stroke-width="1.1" opacity=".55"/>
-    <text x="16" y="21.5" font-family="Georgia,serif" font-size="17" fill="var(--gold2)" text-anchor="middle">&#5169;</text>
-    <circle class="brand-core" cx="16" cy="5.2" r="1.5" fill="var(--green)"/>
-  </symbol>
-  <symbol id="icon-radar" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5.3"/><circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"/><path d="M12 12 18 6"/></g></symbol>
-  <symbol id="icon-chart" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V11"/><path d="M10 20V6"/><path d="M16 20V13.5"/><path d="M20 20V4"/></g></symbol>
-  <symbol id="icon-shield" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v6c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z"/><path d="M9 12l2 2 4-4"/></g></symbol>
-  <symbol id="icon-wallet" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="18" height="13" rx="2.2"/><path d="M3 10.5h18"/><circle cx="17" cy="14.7" r="1.1" fill="currentColor" stroke="none"/></g></symbol>
-  <symbol id="icon-rocket" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2c3 2 5 6 5 10 0 2-.7 3.8-1.6 5.2L12 22l-3.4-4.8C7.7 15.8 7 14 7 12c0-4 2-8 5-10z"/><circle cx="12" cy="10.5" r="2"/><path d="M8.3 16.6 5.5 19.4M15.7 16.6l2.8 2.8"/></g></symbol>
-  <symbol id="icon-globe" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><ellipse cx="12" cy="12" rx="4" ry="9"/><path d="M3 12h18"/></g></symbol>
-  <symbol id="icon-bolt" viewBox="0 0 24 24"><path d="M13 2 4 14h6l-1 8 9-12h-6l1-8z" fill="currentColor"/></symbol>
-  <symbol id="icon-target" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.3" fill="currentColor" stroke="none"/></g></symbol>
-  <symbol id="icon-coin" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v10M9.3 9.3c0-1.3 1.2-2.3 2.7-2.3s2.7 1 2.7 2.3c0 2.5-5.4 1.9-5.4 4.4 0 1.3 1.2 2.3 2.7 2.3s2.7-1 2.7-2.3"/></g></symbol>
-  <symbol id="icon-sparkle" viewBox="0 0 24 24"><g fill="currentColor"><path d="M12 3l1.6 4.4L18 9l-4.4 1.6L12 15l-1.6-4.4L6 9l4.4-1.6L12 3z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8L19 15z"/></g></symbol>
-  <symbol id="icon-menu" viewBox="0 0 24 24"><g stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></g></symbol>
-</svg>
+<a class="skip-link" href="#main-content">Skip to content</a>
 
-<nav class="topnav">
-  <a href="/" class="brand"><svg class="brand-mark"><use href="#brand-mark"></use></svg>RUNECLAW</a>
-  <button class="nav-toggle" id="navToggle" onclick="toggleNav()" aria-label="Menu"><svg class="icon"><use href="#icon-menu"></use></svg></button>
-  <div class="nav-links" id="navLinks">
+<nav class="topbar" aria-label="Main">
+  <a class="brand" href="/"><svg class="brand-mark" aria-hidden="true"><use href="#brand-mark"></use></svg>RUNECLAW</a>
+  <div class="spacer"></div>
+  <div class="nav-links">
     <a href="/dashboard">Dashboard</a>
-    <a href="https://t.me/HTRUNECLAW_bot" target="_blank" rel="noopener">Telegram</a>
     <a href="https://humanoid-traders-1.gitbook.io/humanoid-traders-ai" target="_blank" rel="noopener">Docs</a>
-    <a href="#auth-panel" class="cta" onclick="scrollToAuth()">Get Started</a>
+    <a class="btn btn--primary btn--sm" href="#auth-panel">Get started</a>
   </div>
 </nav>
 
-<section class="hero">
-  <div class="eyebrow">&#9679; Live &middot; Bitget USDT-M Futures</div>
-  <h1>AI trading system.<br><span>Built for everyone.</span></h1>
-  <p>Register once, link your Telegram, and get personal access to RUNECLAW — full market scan, signals, a hard risk engine, and portfolio tracking, in paper or live.</p>
+<header class="hero">
+  <div class="eyebrow"><svg class="icon" style="width:12px;height:12px" aria-hidden="true"><use href="#icon-bolt"></use></svg> Live · Bitget USDT-M futures</div>
+  <h1>An AI trading engine<br>you can <span>talk to.</span></h1>
+  <p>RUNECLAW scans 800+ symbols around the clock, explains every decision, and refuses anything its risk engine doesn't like. Create an account and paper-trade in your browser within a minute — chat with the engine, place risk-checked trades, and go live only when you choose to.</p>
   <div class="hero-cta">
-    <a href="#auth-panel" class="btn btn-primary" onclick="scrollToAuth()">Create free account</a>
-    <a href="/dashboard" class="btn btn-ghost">View live dashboard</a>
+    <a class="btn btn--primary" href="#auth-panel">Create free account</a>
+    <a class="btn" href="/dashboard">View the dashboard</a>
   </div>
-  <div class="metrics">
-    <div class="metric"><div class="n">819</div><div class="l">symbols scanned</div></div>
-    <div class="metric"><div class="n">23</div><div class="l">risk checks enforced</div></div>
-    <div class="metric"><div class="n">10+</div><div class="l">indicator confluence</div></div>
-    <div class="metric"><div class="n">Live + Paper</div><div class="l">trading modes</div></div>
-  </div>
-</section>
+</header>
 
-<section class="wrap section">
-  <div class="section-head"><h2>What you get</h2><p>The same engine that runs the war room, scoped to your account.</p></div>
+<section class="section" aria-labelledby="features-h">
+  <div class="section-head">
+    <h2 id="features-h">Everything the bot does, on the web</h2>
+    <p>The same engine that runs the autonomous scanner, scoped to your account.</p>
+  </div>
   <div class="feature-grid">
-    <div class="feature"><div class="fi"><svg class="icon icon-lg"><use href="#icon-radar"></use></svg></div><h3>Signal stream</h3><p>Every generated setup — taken or not — with pattern, confidence, entry, stop, and target.</p></div>
-    <div class="feature"><div class="fi"><svg class="icon icon-lg"><use href="#icon-chart"></use></svg></div><h3>Performance insights</h3><p>Win-rate by pattern, symbol and confidence; PnL by symbol, drawdown and expectancy.</p></div>
-    <div class="feature"><div class="fi"><svg class="icon icon-lg"><use href="#icon-shield"></use></svg></div><h3>Hard risk engine</h3><p>23 pre-trade checks, circuit breakers, funding-clock gate, equity throttle and per-trade margin caps you control.</p></div>
-    <div class="feature"><div class="fi"><svg class="icon icon-lg"><use href="#icon-wallet"></use></svg></div><h3>Your wallet</h3><p>Connect withdrawal-disabled Bitget keys, encrypted at rest. Live toggle and emergency stop.</p></div>
-    <div class="feature"><div class="fi"><svg class="icon icon-lg"><use href="#icon-target"></use></svg></div><h3>Trade from the web</h3><p>Place manual trades right on the dashboard — proposed, risk-checked and confirmed through the exact same gates as the Telegram bot. Paper by default.</p></div>
-    <div class="feature"><div class="fi"><svg class="icon icon-lg"><use href="#icon-sparkle"></use></svg></div><h3>Chat with the Claw</h3><p>The RUNECLAW assistant lives on the site too — scan markets, check your portfolio or queue a trade in plain language, with shared memory across web and Telegram.</p></div>
-    <div class="feature"><div class="fi"><svg class="icon icon-lg"><use href="#icon-globe"></use></svg></div><h3>Multi-venue engine</h3><p>Bitget, Hyperliquid, Bybit and BingX adapters with live venue switching, new-listing radar and shadow-book gate analytics on the dashboard.</p></div>
+    <div class="feature"><svg class="icon" aria-hidden="true"><use href="#icon-chat"></use></svg><h3>Chat with the engine</h3><p>Ask for a scan, your portfolio, or type "buy SOL 71 sl 70 tp 76" — the assistant shares memory with the Telegram bot and proposes trades you confirm or cancel.</p></div>
+    <div class="feature"><svg class="icon" aria-hidden="true"><use href="#icon-target"></use></svg><h3>Trade from the dashboard</h3><p>A clean order ticket with risk/reward preview. Every trade runs the full 23-check risk gate. Paper by default; live needs your toggle and operator approval.</p></div>
+    <div class="feature"><svg class="icon" aria-hidden="true"><use href="#icon-radar"></use></svg><h3>Signal stream</h3><p>Every setup the engine generates — taken or not — with pattern, confidence, entry, stop, and target.</p></div>
+    <div class="feature"><svg class="icon" aria-hidden="true"><use href="#icon-chart"></use></svg><h3>Your portfolio, tracked</h3><p>Equity curve, win-rate, PnL calendar, and a trade journal — built from your actual fills, never invented numbers.</p></div>
+    <div class="feature"><svg class="icon" aria-hidden="true"><use href="#icon-shield"></use></svg><h3>Hard risk engine</h3><p>Circuit breakers, funding-clock gate, equity throttle, and margin caps you control. The engine's shadow book even audits what its own rejections cost.</p></div>
+    <div class="feature"><svg class="icon" aria-hidden="true"><use href="#icon-globe"></use></svg><h3>Multi-venue engine</h3><p>Bitget, Hyperliquid, Bybit, and BingX adapters, a new-listing radar, and full engine telemetry on the dashboard's Engine view.</p></div>
   </div>
 </section>
 
-<section class="wrap section">
-  <div class="section-head"><h2>How the agent thinks</h2><p>One loop, running continuously — not a static screener.</p></div>
-  <div class="pipeline">
-    <div class="pipe-step"><svg class="icon icon-lg"><use href="#icon-radar"></use></svg><div class="pl">Scan</div><div class="ps">819 symbols</div></div>
-    <span class="pipe-arrow">&rarr;</span>
-    <div class="pipe-step ai"><svg class="icon icon-lg icon-ai"><use href="#icon-sparkle"></use></svg><div class="pl">Analyze</div><div class="ps">LLM reasoning</div></div>
-    <span class="pipe-arrow">&rarr;</span>
-    <div class="pipe-step"><svg class="icon icon-lg"><use href="#icon-shield"></use></svg><div class="pl">Risk gate</div><div class="ps">23 checks</div></div>
-    <span class="pipe-arrow">&rarr;</span>
-    <div class="pipe-step"><svg class="icon icon-lg"><use href="#icon-target"></use></svg><div class="pl">Execute</div><div class="ps">paper or live</div></div>
+<section class="section" aria-labelledby="how-h">
+  <div class="section-head">
+    <h2 id="how-h">One loop, running continuously</h2>
+    <p>Scan → analyze with LLM reasoning → risk gate → execute (paper or live). Not a static screener.</p>
   </div>
 </section>
 
 <main class="auth-wrap" id="main-content">
-  <div class="auth-card">
-    <div class="card" id="auth-panel">
-      <div class="tab-row">
-        <button class="tab-btn active" onclick="switchTab('register')">Create account</button>
-        <button class="tab-btn" onclick="switchTab('login')">Log in</button>
-      </div>
-      <div id="step-register" class="step active">
-        <div class="field"><label>Email</label><input class="input" type="email" id="reg-email" placeholder="you@example.com" autocomplete="email"></div>
-        <div class="field"><label>Password</label><input class="input" type="password" id="reg-pass" placeholder="min 8 characters" autocomplete="new-password"></div>
-        <div class="field"><label>Confirm password</label><input class="input" type="password" id="reg-pass2" placeholder="repeat password"></div>
-        <div class="err" id="reg-err" style="font-size:12px;color:var(--red);min-height:18px;margin-bottom:6px"></div>
-        <button class="btn btn-primary btn-block" onclick="doRegister()">Create free account</button>
-        <div class="sep">or</div>
-        <button class="btn btn-ghost btn-block" onclick="switchTab('login')">Already have an account? Log in</button>
-      </div>
-      <div id="step-login" class="step">
-        <div class="field"><label>Email</label><input class="input" type="email" id="login-email" placeholder="you@example.com" autocomplete="email"></div>
-        <div class="field"><label>Password</label><input class="input" type="password" id="login-pass" placeholder="your password" autocomplete="current-password"></div>
-        <div class="err" id="login-err" style="font-size:12px;color:var(--red);min-height:18px;margin-bottom:6px"></div>
-        <button class="btn btn-primary btn-block" onclick="doLogin()">Log in</button>
-        <div class="sep">or</div>
-        <button class="btn btn-ghost btn-block" onclick="switchTab('register')">New here? Create account</button>
-      </div>
-
-      <!-- Social sign-in / sign-up: same buttons create OR log in an account. -->
-      <div id="social-auth" style="display:none;margin-top:14px">
-        <div class="sep">or continue with</div>
-        <div class="err" id="social-err" style="font-size:12px;color:var(--red);min-height:18px;margin-bottom:6px;text-align:center"></div>
-        <div id="google-btn" style="display:flex;justify-content:center;margin-bottom:10px"></div>
-        <div id="telegram-btn" style="display:flex;justify-content:center"></div>
-      </div>
+  <div class="card" id="auth-panel">
+    <div class="tab-row" role="tablist">
+      <button class="tab-btn active" id="tab-register" role="tab" aria-selected="true" onclick="switchTab('register')">Create account</button>
+      <button class="tab-btn" id="tab-login" role="tab" aria-selected="false" onclick="switchTab('login')">Log in</button>
+    </div>
+    <div id="step-register" class="step active">
+      <div class="field"><label for="reg-email">Email</label><input class="input" type="email" id="reg-email" placeholder="you@example.com" autocomplete="email"></div>
+      <div class="field"><label for="reg-pass">Password</label><input class="input" type="password" id="reg-pass" placeholder="Min 8 characters" autocomplete="new-password"></div>
+      <div class="field"><label for="reg-pass2">Confirm password</label><input class="input" type="password" id="reg-pass2" placeholder="Repeat password" autocomplete="new-password"></div>
+      <div class="form-err" id="reg-err" aria-live="polite"></div>
+      <button class="btn btn--primary btn-block" onclick="doRegister()">Create free account</button>
+      <p class="muted small">Paper trading works immediately — no Telegram, no exchange keys.</p>
+    </div>
+    <div id="step-login" class="step">
+      <div class="field"><label for="login-email">Email</label><input class="input" type="email" id="login-email" placeholder="you@example.com" autocomplete="email"></div>
+      <div class="field"><label for="login-pass">Password</label><input class="input" type="password" id="login-pass" placeholder="Your password" autocomplete="current-password"></div>
+      <div class="form-err" id="login-err" aria-live="polite"></div>
+      <button class="btn btn--primary btn-block" onclick="doLogin()">Log in</button>
     </div>
 
-    <div class="card" id="account">
-      <div class="acct-head">
-        <h2>Your <span>Account</span></h2>
-        <button class="logout-btn" onclick="doLogout()" style="font-family:var(--mono);font-size:12px;color:var(--text2);background:none;border:none;cursor:pointer">Log out</button>
-      </div>
-      <div class="stats">
-        <div class="stat"><div class="stat-label">Account</div><div class="stat-val" id="d-email" style="font-size:13px;word-break:break-all">-</div></div>
-        <div class="stat"><div class="stat-label">Plan</div><div class="stat-val" id="d-plan">-</div></div>
-        <div class="stat"><div class="stat-label">Paper equity</div><div class="stat-val pos" id="d-equity">$10,000</div></div>
-        <div class="stat"><div class="stat-label">Telegram</div><div class="stat-val" id="d-tg-status">-</div></div>
-      </div>
-      <div class="linked-ok" id="linked-ok" style="display:none">&#10003; Telegram linked — you have full bot access</div>
-      <div class="link-box" id="link-box">
-        <h3>Link your Telegram</h3>
-        <ol class="steps-list">
-          <li>Open <a href="https://t.me/HTRUNECLAW_bot" target="_blank" rel="noopener">@HTRUNECLAW_bot</a> on Telegram</li>
-          <li>Generate your personal link token below</li>
-          <li>Send the bot: <code>/link &lt;token&gt;</code></li>
-        </ol>
-        <div id="token-area">
-          <button class="btn btn-primary btn-sm" style="margin-top:10px" onclick="getToken()">Generate link token</button>
-        </div>
-      </div>
-      <a href="/dashboard" class="btn btn-primary btn-block">Open trading dashboard &rarr;</a>
+    <!-- Social sign-in / sign-up: same buttons create OR log in an account. -->
+    <div id="social-auth" class="hidden">
+      <div class="sep">or continue with</div>
+      <div class="form-err" id="social-err" style="text-align:center" aria-live="polite"></div>
+      <div id="google-btn" style="display:flex;justify-content:center;margin-bottom:10px"></div>
+      <div id="telegram-btn" style="display:flex;justify-content:center"></div>
     </div>
+  </div>
+
+  <div class="card hidden" id="account">
+    <div class="row mb-4" style="justify-content:space-between">
+      <h2 style="font-family:var(--font-brand);font-size:var(--fs-md);letter-spacing:.06em">Your account</h2>
+      <button class="btn btn--ghost btn--sm" onclick="doLogout()">Log out</button>
+    </div>
+    <div class="acct-grid">
+      <div class="stat"><div class="k">Account</div><div class="v" style="font-family:var(--font-ui);font-size:var(--fs-sm);word-break:break-all" id="d-email">–</div></div>
+      <div class="stat"><div class="k">Telegram</div><div class="v" style="font-size:var(--fs-sm)" id="d-tg-status">–</div></div>
+    </div>
+    <div class="section-note hidden" id="linked-ok" style="border-style:solid;border-color:var(--up);color:var(--up)">
+      <svg class="icon" aria-hidden="true"><use href="#icon-check"></use></svg>
+      Telegram linked — live trading and exchange keys unlocked.
+    </div>
+    <div id="link-box">
+      <h3 style="font-size:var(--fs-base);margin-bottom:var(--s1)">Link Telegram <span class="muted small">(optional)</span></h3>
+      <p class="muted small">Unlocks live trading and exchange-key management. Paper trading and chat already work without it.</p>
+      <ol class="steps-list">
+        <li>Open <a href="https://t.me/HTRUNECLAW_bot" target="_blank" rel="noopener">@HTRUNECLAW_bot</a> on Telegram</li>
+        <li>Generate your personal link token below</li>
+        <li>Send the bot: <code>/link &lt;token&gt;</code></li>
+      </ol>
+      <div id="token-area" class="mt-3">
+        <button class="btn btn--sm" onclick="getToken()">Generate link token</button>
+      </div>
+    </div>
+    <a href="/dashboard" class="btn btn--primary btn-block mt-4">Open trading dashboard →</a>
   </div>
 </main>
 
 <footer class="site-footer">
   <div class="inner">
-    <div class="brand" style="font-size:15px"><svg class="brand-mark"><use href="#brand-mark"></use></svg>RUNECLAW</div>
-    <div class="foot-links">
+    <a class="brand" href="/" style="font-size:15px"><svg class="brand-mark" aria-hidden="true"><use href="#brand-mark"></use></svg>RUNECLAW</a>
+    <div class="links">
       <a href="/dashboard">Dashboard</a>
-      <a href="https://t.me/HTRUNECLAW_bot" target="_blank" rel="noopener">Telegram Bot</a>
+      <a href="https://t.me/HTRUNECLAW_bot" target="_blank" rel="noopener">Telegram bot</a>
       <a href="https://humanoid-traders-1.gitbook.io/humanoid-traders-ai" target="_blank" rel="noopener">Docs</a>
     </div>
   </div>
   <div class="risk">Trading futures involves substantial risk of loss and is not suitable for every investor. RUNECLAW is a trading tool, not financial advice. Use withdrawal-disabled API keys and never risk more than you can afford to lose.</div>
 </footer>
 
+<script src="/js/icons.js"></script>
 <script>
 const API='/api';
 let SESSION=null;
-function scrollToAuth(){
-  document.getElementById('navLinks').classList.remove('open');
-  document.getElementById('auth-panel').scrollIntoView({behavior:'smooth'});
-}
-function toggleNav(){document.getElementById('navLinks').classList.toggle('open');}
 function switchTab(t){
-  document.querySelectorAll('.tab-btn').forEach((b,i)=>b.classList.toggle('active',i===(t==='register'?0:1)));
-  document.getElementById('step-register').classList.toggle('active',t==='register');
-  document.getElementById('step-login').classList.toggle('active',t==='login');
+  const isReg = t==='register';
+  document.getElementById('tab-register').classList.toggle('active',isReg);
+  document.getElementById('tab-register').setAttribute('aria-selected',isReg);
+  document.getElementById('tab-login').classList.toggle('active',!isReg);
+  document.getElementById('tab-login').setAttribute('aria-selected',!isReg);
+  document.getElementById('step-register').classList.toggle('active',isReg);
+  document.getElementById('step-login').classList.toggle('active',!isReg);
 }
 function setErr(id,msg){document.getElementById(id).textContent=msg;}
 async function apiCall(path,body){
@@ -281,19 +190,19 @@ async function doLogin(){
 }
 function doLogout(){
   SESSION=null;localStorage.removeItem('rc_session');localStorage.removeItem('token');
-  document.getElementById('auth-panel').style.display='block';
-  document.getElementById('account').style.display='none';
+  document.getElementById('auth-panel').classList.remove('hidden');
+  document.getElementById('account').classList.add('hidden');
 }
 function showAccount(data){
-  document.getElementById('auth-panel').style.display='none';
-  document.getElementById('account').style.display='block';
-  document.getElementById('d-email').textContent=data.email||'-';
-  document.getElementById('d-plan').textContent=data.plan||'free';
-  document.getElementById('d-equity').textContent='$'+(data.equity||10000).toLocaleString('en-US');
+  document.getElementById('auth-panel').classList.add('hidden');
+  document.getElementById('account').classList.remove('hidden');
+  document.getElementById('d-email').textContent=data.email||'–';
   const linked=!!data.telegram_linked;
-  document.getElementById('d-tg-status').innerHTML=linked?'<span class="badge badge-green">Linked</span>':'<span class="badge badge-orange">Not linked</span>';
-  document.getElementById('linked-ok').style.display=linked?'flex':'none';
-  document.getElementById('link-box').style.display=linked?'none':'block';
+  document.getElementById('d-tg-status').innerHTML=linked
+    ?'<span class="chip chip--up">✓ Linked</span>'
+    :'<span class="chip">Not linked</span>';
+  document.getElementById('linked-ok').classList.toggle('hidden',!linked);
+  document.getElementById('link-box').classList.toggle('hidden',linked);
   localStorage.setItem('rc_session',JSON.stringify({token:data.token||SESSION?.token,user_id:data.user_id}));
 }
 async function getToken(){
@@ -301,10 +210,10 @@ async function getToken(){
   const res=await fetch(API+'/auth/link-token',{method:'POST',headers:{'Authorization':'Bearer '+SESSION.token,'Content-Type':'application/json'}}).then(r=>r.json());
   if(res.error){alert(res.error);return;}
   document.getElementById('token-area').innerHTML=`
-    <p style="font-size:12px;color:var(--text3);margin-bottom:4px">Your link token (valid 10 min):</p>
+    <p class="muted small" style="margin-bottom:4px">Your link token (valid 10 min) — click to copy:</p>
     <div class="token-display" id="tok-box" onclick="copyToken()">${res.token}</div>
-    <p style="font-size:11px;color:var(--text3);margin-top:6px">Send to Telegram bot: <code>/link ${res.token}</code></p>
-    <button class="btn btn-ghost btn-sm" style="margin-top:10px" onclick="getToken()">Generate new token</button>`;
+    <p class="muted small" style="margin-top:6px">Send to the bot: <code>/link ${res.token}</code></p>
+    <button class="btn btn--ghost btn--sm mt-2" onclick="getToken()">Generate new token</button>`;
 }
 function copyToken(){
   const tok=document.getElementById('tok-box');
@@ -328,7 +237,7 @@ function onTelegramAuth(user){ if(user)socialLogin('/auth/telegram',user); }
   let cfg={};
   try{cfg=await fetch(API+'/auth/config').then(r=>r.json());}catch{return;}
   if(!cfg.google_client_id&&!cfg.telegram_bot)return; // nothing configured
-  document.getElementById('social-auth').style.display='block';
+  document.getElementById('social-auth').classList.remove('hidden');
   if(cfg.google_client_id){
     const s=document.createElement('script');
     s.src='https://accounts.google.com/gsi/client';s.async=true;
@@ -358,8 +267,7 @@ function onTelegramAuth(user){ if(user)socialLogin('/auth/telegram',user); }
   try{
     const r=await fetch(API+'/auth/me',{headers:{'Authorization':'Bearer '+s.token}});
     // Only clear the saved session on a genuine auth failure (401/403). A
-    // transient network error or a 5xx must NOT log the user out -- keep the
-    // session so it works again once connectivity returns.
+    // transient network error or a 5xx must NOT log the user out.
     if(r.status===401||r.status===403){localStorage.removeItem('rc_session');return;}
     if(!r.ok)return; // transient server issue: keep session, try again next load
     const res=await r.json();
