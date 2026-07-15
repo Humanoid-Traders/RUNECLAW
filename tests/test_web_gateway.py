@@ -82,6 +82,19 @@ class FakeSkill:
         return "<b>portfolio reply</b>"
 
 
+class FakeIdeaSkill:
+    """analyze_asset-like skill: registers a concrete idea in the engine's
+    pending map (as the real analyzer does) and returns an HTML analysis."""
+    async def execute(self, engine, **kw):
+        idea = SimpleNamespace(
+            id="TI-analyzed99", asset="SOL/USDT",
+            direction=SimpleNamespace(value="LONG"),
+            entry_price=71.0, stop_loss=70.0, take_profit=76.0,
+            risk_reward_ratio=5.0, confidence=0.82)
+        engine._pending_ideas[idea.id] = idea
+        return "<b>analysis</b>"
+
+
 class FakeConvos:
     def __init__(self):
         self.appended = []
@@ -246,6 +259,63 @@ async def test_chat_intent_dispatches_to_skill(monkeypatch):
         assert data["reply_html"] == "<b>portfolio reply</b>"
         roles = [role for _, role, _ in handler.conversations.appended]
         assert roles == ["user", "assistant"]
+
+
+async def test_chat_analyze_returns_readonly_setup_hint(monkeypatch):
+    # An analysis that produces a concrete setup returns a READ-ONLY `setup`
+    # hint alongside the reply — for the web's one-tap "Trade this".
+    monkeypatch.setattr(ug, "_GATEWAY_SECRET", SECRET)
+    engine = FakeEngine()
+    handler = FakeHandler(users=AUTHED,
+                          intent=FakeIntent("analyze_asset", 1.0),
+                          skills={"analyze_asset": FakeIdeaSkill()})
+    async with gateway_client(engine, handler) as c:
+        r = await c.post("/chat", json={"telegram_id": "7", "text": "analyze SOL"},
+                         headers=HDRS)
+        assert r.status == 200
+        data = await r.json()
+        assert data["intent"] == "analyze_asset"
+        assert data["reply_html"] == "<b>analysis</b>"
+        s = data["setup"]
+        assert s["symbol"] == "SOL" and s["direction"] == "LONG"
+        assert s["entry"] == 71.0 and s["sl"] == 70.0 and s["tp"] == 76.0
+        assert s["rr"] == 5.0 and s["confidence"] == 0.82
+
+        # SAFETY: the hint did NOT make the analyzed idea confirmable. It was
+        # never registered as a proposer, so a direct confirm is rejected —
+        # only a re-propose through /trade/propose can arm it.
+        r2 = await c.post("/trade/confirm",
+                          json={"telegram_id": "7", "trade_id": "TI-analyzed99"},
+                          headers=HDRS)
+        assert r2.status == 403
+        assert (await r2.json())["error"] == "not_proposer"
+        assert engine.confirm_calls == []
+
+
+async def test_chat_skill_without_new_idea_has_no_setup(monkeypatch):
+    monkeypatch.setattr(ug, "_GATEWAY_SECRET", SECRET)
+    handler = FakeHandler(users=AUTHED,
+                          intent=FakeIntent("get_portfolio", 1.0),
+                          skills={"get_portfolio": FakeSkill()})
+    async with gateway_client(FakeEngine(), handler) as c:
+        r = await c.post("/chat", json={"telegram_id": "7", "text": "my portfolio"},
+                         headers=HDRS)
+        assert r.status == 200
+        assert "setup" not in (await r.json())
+
+
+async def test_public_chat_never_returns_a_setup(monkeypatch):
+    # The public path never dispatches skills, so it can never surface a
+    # tradeable setup — anonymous visitors cannot trade from chat.
+    monkeypatch.setattr(ug, "_GATEWAY_SECRET", SECRET)
+    handler = FakeHandler(users={},
+                          intent=FakeIntent("analyze_asset", 1.0),
+                          skills={"analyze_asset": FakeIdeaSkill()})
+    async with gateway_client(FakeEngine(), handler) as c:
+        r = await c.post("/chat/public", json={"text": "analyze SOL"}, headers=HDRS)
+        assert r.status == 200
+        data = await r.json()
+        assert "setup" not in data and "pending_trade" not in data
 
 
 async def test_chat_manual_trade_text_returns_pending_trade(monkeypatch):

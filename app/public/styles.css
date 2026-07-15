@@ -378,6 +378,17 @@ code { font-family: var(--font-data); font-size: .9em; background: var(--surface
 .chat-msg { animation: chat-in .18s ease-out; }
 @keyframes chat-in { from { opacity: 0; transform: translateY(4px); } }
 .chat-card { align-self: stretch; background: var(--surface-2); border: 1px solid var(--gold); border-radius: var(--radius); padding: var(--s3); }
+/* A "Trade this" setup hint — dashed gold so it reads as a suggestion, not a
+   confirmed order (the confirmable card keeps the solid gold border). */
+.chat-setup { border-style: dashed; }
+/* Live portfolio strip under the chat header (logged-in only). */
+.chat-meta { display: flex; align-items: center; flex-wrap: wrap; gap: var(--s2) var(--s3); padding: var(--s2) var(--s4); border-bottom: 1px solid var(--line); background: var(--surface); font-size: var(--fs-xs); }
+.chat-meta[hidden] { display: none; }
+.chat-meta-item { display: inline-flex; align-items: baseline; gap: 5px; }
+.chat-meta-item .k { color: var(--text-3); text-transform: uppercase; letter-spacing: .06em; font-size: 10px; }
+.chat-meta-item b { font-family: var(--font-data); color: var(--text); }
+.chat-meta-item b.up { color: var(--up); }
+.chat-meta-item b.down { color: var(--down); }
 .chat-inputrow { display: flex; gap: var(--s2); padding: var(--s3); border-top: 1px solid var(--line); background: var(--surface-2); }
 .chat-inputrow .input { flex: 1; }
 

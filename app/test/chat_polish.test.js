@@ -37,6 +37,25 @@ test('chat wires suggestion chips + animated typing dots', () => {
   assert.ok(!/appendMsg\('bot', 'Thinking…'/.test(CHAT), 'static "Thinking…" replaced');
 });
 
+test('chat wires place-trade-from-chat + live portfolio strip (#256)', () => {
+  // A "Trade this" hint renders and re-proposes through the manual rails.
+  assert.match(CHAT, /function appendSetupAction/, 'setup-action renderer present');
+  assert.match(CHAT, /'\/api\/trade\/propose'/, '"Trade this" re-proposes via the manual propose route');
+  assert.match(CHAT, /r\.data\.setup/, 'send() renders the setup hint when present');
+  // The live portfolio strip in the chat header.
+  assert.match(CHAT, /function loadMeta/, 'portfolio strip loader present');
+  assert.match(CHAT, /'\/api\/portfolio'/, 'strip reads the portfolio snapshot');
+  assert.match(CHAT, /rc:portfolio-changed/, 'strip refreshes after a trade');
+  // Anonymous visitors can never trade from chat.
+  assert.match(CHAT, /if \(PUBLIC[^)]*\)\s*return;/, 'appendSetupAction is public-guarded');
+});
+
+test('CSS ships the setup-hint + portfolio-strip rules (#256)', () => {
+  assert.match(CSS, /\.chat-setup\s*{[^}]*dashed/, 'setup hint uses a dashed border');
+  assert.match(CSS, /\.chat-meta\s*{/, 'portfolio strip style');
+  assert.match(CSS, /\.chat-meta\[hidden\]\s*{\s*display:\s*none/, 'strip hides when empty');
+});
+
 test('CSS ships the typing/chip/badge/micro-interaction rules', () => {
   assert.match(CSS, /\.typing-dots span\s*{[^}]*animation:\s*typing-bounce/,
     'typing dots animate');
