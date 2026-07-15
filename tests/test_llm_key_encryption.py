@@ -48,7 +48,7 @@ class TestHelpers:
 
 class TestRoundTripThroughDb:
     def test_save_get_round_trips_plaintext(self, models):
-        uid = models.create_user("a@x.io", "password1")
+        uid = models.create_user("a@x.io", "password12")
         models.save_user_settings(
             models.UserSettings(user_id=uid, llm_provider="anthropic", llm_api_key="sk-ant-xyz"))
         got = models.get_user_settings(uid)
@@ -56,7 +56,7 @@ class TestRoundTripThroughDb:
         assert got.llm_provider == "anthropic"
 
     def test_stored_column_is_ciphertext(self, models):
-        uid = models.create_user("b@x.io", "password1")
+        uid = models.create_user("b@x.io", "password12")
         models.save_user_settings(
             models.UserSettings(user_id=uid, llm_api_key="sk-plaintext-secret"))
         with models.get_db() as db:
@@ -68,6 +68,6 @@ class TestRoundTripThroughDb:
         assert models._decrypt_llm_key(raw) == "sk-plaintext-secret"
 
     def test_empty_key_round_trips(self, models):
-        uid = models.create_user("c@x.io", "password1")
+        uid = models.create_user("c@x.io", "password12")
         models.save_user_settings(models.UserSettings(user_id=uid, llm_api_key=""))
         assert models.get_user_settings(uid).llm_api_key == ""
