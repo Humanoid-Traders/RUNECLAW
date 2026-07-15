@@ -1014,6 +1014,7 @@
       <div class="stack">
         <section class="panel" id="p-aprof"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-user"></use></svg>Profile</h2><div id="c-aprof"><div class="skel"></div></div></section>
         <section class="panel" id="p-atg"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-link"></use></svg>Telegram link <span class="right muted small">optional — unlocks live trading</span></h2><div id="c-atg"><div class="skel"></div></div></section>
+        <section class="panel" id="p-ainvite"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-user"></use></svg>Invite friends</h2><div id="c-ainvite"><div class="skel"></div></div></section>
         <section class="panel" id="p-akeys"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-wallet"></use></svg>Exchange keys</h2><div id="c-akeys"><div class="skel"></div></div></section>
         <section class="panel" id="p-actl"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-shield"></use></svg>Live controls</h2><div id="c-actl"><div class="skel"></div></div></section>
       </div>`);
@@ -1077,7 +1078,34 @@
           setTimeout(() => tokEl.classList.remove('copied'), 1500);
         } catch { /* clipboard blocked — the token is still visible to copy manually */ }
       }
+      // Copy the invite link (same idiom as the Telegram token).
+      const refEl = e.target.id === 'refLink' ? e.target : e.target.closest?.('#refLink');
+      if (refEl) {
+        try {
+          await navigator.clipboard.writeText(refEl.textContent.trim());
+          refEl.classList.add('copied');
+          toast('Invite link copied.');
+          setTimeout(() => refEl.classList.remove('copied'), 1500);
+        } catch { /* clipboard blocked — the link is still visible to copy manually */ }
+      }
     });
+
+    // Invite friends — the user's own share link + a live count of who joined.
+    renderPanel(C('ainvite'), async () => {
+      const r = await fetchJSON('/api/auth/referrals');
+      if (!r.ok || !r.data?.code) return null;
+      const link = `${location.origin}/?ref=${encodeURIComponent(r.data.code)}`;
+      const count = r.data.count || 0;
+      const share = encodeURIComponent(link);
+      const text = encodeURIComponent('Trade alongside an autonomous AI on RUNECLAW:');
+      return `<p class="small mb-2" style="color:var(--text-2)">Share your link — anyone who signs up through it is credited to you.</p>
+        <div class="token-display" id="refLink" role="button" tabindex="0" title="Copy invite link">${esc(link)}</div>
+        <div class="row mt-3" style="gap:var(--s2);flex-wrap:wrap">
+          <a class="btn btn--sm" href="https://t.me/share/url?url=${share}&text=${text}" target="_blank" rel="noopener">Share on Telegram</a>
+          <a class="btn btn--sm" href="https://twitter.com/intent/tweet?url=${share}&text=${text}" target="_blank" rel="noopener">Share on X</a>
+        </div>
+        <div class="kv-row mt-3"><span>Friends joined</span><b>${count}</b></div>`;
+    }, { empty: { text: 'Your invite link will appear here shortly.' } });
 
     // Venue catalog (from /config) shared by the panel + submit handler. The
     // form is data-driven: each venue declares its own fields, so adding a venue

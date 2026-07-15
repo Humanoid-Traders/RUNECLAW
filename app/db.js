@@ -177,7 +177,8 @@ class MemoryDB {
         avatar_url: null, plan: 'free',
         telegram_linked: false, link_token: null, link_token_expires: null,
         email_verified: false, verify_token: null, verify_token_expires: null,
-        reset_token: null, reset_token_expires: null, created_at: new Date() };
+        reset_token: null, reset_token_expires: null,
+        referral_code: null, referred_by: null, created_at: new Date() };
       // Column order varies: email/password vs the OAuth passwordless inserts.
       if (cmd.includes('PASSWORD_HASH')) {
         user.password_hash = params[1];
@@ -232,6 +233,24 @@ class MemoryDB {
       const user = this.users.find(u => u.id === params[1]);
       if (user) user.x_id = params[0];
       return [{ affectedRows: user ? 1 : 0 }, []];
+    }
+
+    // -- Referral / invite --
+    if (cmd.startsWith('UPDATE USERS SET REFERRAL_CODE')) {
+      const user = this.users.find(u => u.id === params[1]);
+      if (user) user.referral_code = params[0];
+      return [{ affectedRows: user ? 1 : 0 }, []];
+    }
+    if (cmd.startsWith('UPDATE USERS SET REFERRED_BY')) {
+      const user = this.users.find(u => u.id === params[1]);
+      if (user) user.referred_by = params[0];
+      return [{ affectedRows: user ? 1 : 0 }, []];
+    }
+    if (cmd.includes('FROM USERS WHERE REFERRAL_CODE')) {
+      return [this.users.filter(u => u.referral_code != null && u.referral_code === params[0]), []];
+    }
+    if (cmd.includes('FROM USERS WHERE REFERRED_BY')) {
+      return [this.users.filter(u => u.referred_by === params[0]), []];
     }
 
     if (cmd.includes('FROM USERS WHERE EMAIL')) {
@@ -529,6 +548,16 @@ async function migrate() {
     try {
       await pool.execute('ALTER TABLE users ADD COLUMN reset_token_expires TIMESTAMP NULL');
     } catch (e) { /* exists */ }
+    // Invite / referral: each user's own share code + who referred them.
+    try {
+      await pool.execute('ALTER TABLE users ADD COLUMN referral_code VARCHAR(16) DEFAULT NULL');
+    } catch (e) { /* exists */ }
+    try {
+      await pool.execute('ALTER TABLE users ADD COLUMN referred_by INT DEFAULT NULL');
+    } catch (e) { /* exists */ }
+    try {
+      await pool.execute('CREATE UNIQUE INDEX idx_users_referral_code ON users (referral_code)');
+    } catch (e) { /* index exists */ }
     await pool.execute(`
       CREATE TABLE IF NOT EXISTS trades (
         id INT AUTO_INCREMENT PRIMARY KEY,
