@@ -47,6 +47,42 @@ class TestSeedAndRestore:
         assert os.environ["BITGET_API_KEY"] == "AKEY123456789"
         assert os.environ["BITGET_PASSPHRASE"] == "s3cret-pass"
 
+    def test_store_secrets_persists_and_sets_env(self, tmp_path, monkeypatch):
+        # Operator supplies a passphrase at runtime (admin /setexchange). It must
+        # land in os.environ immediately AND persist encrypted so a later boot
+        # with a wiped .env restores it.
+        _isolate(monkeypatch, tmp_path)
+        stored = sv.store_secrets({
+            "BITGET_API_KEY": "OPKEY-123456",
+            "BITGET_API_SECRET": "OPSEC-abcdef",
+            "BITGET_PASSPHRASE": "op-pass-phrase",
+        })
+        assert set(stored) == {"BITGET_API_KEY", "BITGET_API_SECRET", "BITGET_PASSPHRASE"}
+        assert os.environ["BITGET_PASSPHRASE"] == "op-pass-phrase"
+        assert (tmp_path / "secrets_vault.enc").exists()
+
+        # Simulate a redeploy that wiped the .env — the passphrase self-heals.
+        for k in ("BITGET_API_KEY", "BITGET_API_SECRET", "BITGET_PASSPHRASE"):
+            monkeypatch.delenv(k, raising=False)
+        restored = sv.seed_and_restore()["restored"]
+        assert "BITGET_PASSPHRASE" in restored
+        assert os.environ["BITGET_PASSPHRASE"] == "op-pass-phrase"
+
+    def test_store_secrets_skips_blanks(self, tmp_path, monkeypatch):
+        _isolate(monkeypatch, tmp_path)
+        stored = sv.store_secrets({"BITGET_API_KEY": "  ", "BITGET_PASSPHRASE": "real"})
+        assert stored == ["BITGET_PASSPHRASE"]
+        assert "BITGET_API_KEY" not in os.environ
+
+    def test_store_secrets_sets_env_even_when_disabled(self, tmp_path, monkeypatch):
+        # Disabled vault: the current process still recovers (env set), but nothing
+        # is persisted to disk.
+        _isolate(monkeypatch, tmp_path, enabled="false")
+        stored = sv.store_secrets({"BITGET_PASSPHRASE": "live-only"})
+        assert stored == ["BITGET_PASSPHRASE"]
+        assert os.environ["BITGET_PASSPHRASE"] == "live-only"
+        assert not (tmp_path / "secrets_vault.enc").exists()
+
     def test_master_key_survives_env_wipe(self, tmp_path, monkeypatch):
         from cryptography.fernet import Fernet
         _isolate(monkeypatch, tmp_path)
