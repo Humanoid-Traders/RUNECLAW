@@ -7,7 +7,7 @@
  */
 (function () {
   'use strict';
-  const { LOGGED_IN, fetchJSON, esc, fmt, sanitizeBotHtml, toast } = window.RC;
+  const { LOGGED_IN, fetchJSON, esc, fmt, sanitizeBotHtml, toast, modalA11y } = window.RC;
 
   const fab = document.getElementById('chatFab');
   const drawer = document.getElementById('chatDrawer');
@@ -20,18 +20,24 @@
   let open = false;
   let busy = false;
   let hydrated = false;
+  const a11y = modalA11y(drawer);
 
   function setOpen(v) {
+    if (v === open) return;
     open = v;
     // Toggle BOTH the class and the native attribute: the attribute keeps the
     // overlay out of the page even if the stylesheet ever fails to load.
-    drawer.classList.toggle('hidden', !open);
-    drawer.hidden = !open;
-    fab.classList.toggle('hidden', open);
-    fab.hidden = open;
     if (open) {
+      drawer.classList.remove('hidden'); drawer.hidden = false;
+      // a11y.open captures the FAB (still focused/visible) as the return target,
+      // makes the rest of the page inert, traps Tab, and focuses the input.
+      a11y.open(input);
+      fab.classList.add('hidden'); fab.hidden = true;
       if (!hydrated) hydrate();
-      input.focus();
+    } else {
+      drawer.classList.add('hidden'); drawer.hidden = true;
+      fab.classList.remove('hidden'); fab.hidden = false;
+      a11y.close();  // release inert/trap + return focus to the FAB
     }
   }
 
@@ -95,26 +101,41 @@
     }
   }
 
-  async function send() {
+  // Append a bot error bubble with a one-tap Retry, and restore the user's
+  // text to the composer so a failed turn never loses what they typed.
+  function appendFailure(html, text) {
+    const div = appendMsg('bot', html + ' ');
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn btn--sm';
+    btn.textContent = 'Retry';
+    btn.style.marginTop = '6px';
+    btn.addEventListener('click', () => { div.remove(); send(text); });
+    div.appendChild(btn);
+    if (!input.value.trim()) input.value = text;  // don't clobber new typing
+    body.scrollTop = body.scrollHeight;
+  }
+
+  async function send(retryText) {
     if (busy) return;
-    const text = input.value.trim();
+    const isRetry = retryText != null;
+    const text = isRetry ? retryText : input.value.trim();
     if (!text) return;
-    input.value = '';
-    appendMsg('user', text);
+    if (!isRetry) { input.value = ''; appendMsg('user', text); }
     const typing = appendMsg('bot', 'Thinking…', 'pending');
     busy = true;
     sendBtn.disabled = true;
     try {
       const r = await fetchJSON('/api/chat', { method: 'POST', body: { text }, timeoutMs: 50000 });
       typing.remove();
-      if (r.status === 429) appendMsg('bot', 'Rate limit hit — give it a few seconds.');
+      if (r.status === 429) appendFailure('Rate limit hit — give it a few seconds.', text);
       else if (r.status === 503) appendMsg('bot', 'Chat isn\'t configured on this deployment yet.');
-      else if (!r.ok) appendMsg('bot', `<b>Error:</b> ${esc(r.data?.detail || r.data?.error || 'chat unavailable')}`);
+      else if (!r.ok) appendFailure(`<b>Error:</b> ${esc(r.data?.detail || r.data?.error || 'chat unavailable')}`, text);
       else if (r.data.pending_trade) appendTradeCard(r.data.pending_trade);
       else appendMsg('bot', sanitizeBotHtml(r.data.reply_html || '…'));
     } catch (e) {
       typing.remove();
-      appendMsg('bot', 'Network error — try again.');
+      appendFailure('Network error.', text);
     } finally {
       busy = false;
       sendBtn.disabled = false;
