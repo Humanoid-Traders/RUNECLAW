@@ -54,6 +54,10 @@ def _stub(*, is_live: bool, live_open_positions=None, paper_open_positions=None)
         live_executor=executor,
         risk=SimpleNamespace(circuit_breaker_active=False),
         get_effective_equity=lambda uid: 100.0,
+        # Truthful-equity resolver used by _build_chat_system_prompt: returns
+        # (equity, source). "live" when live, "paper" otherwise.
+        resolve_display_equity_sync=lambda uid: (
+            100.0, "live" if is_live else "paper"),
     )
     conversations = SimpleNamespace(build_context_prompt=lambda *a, **kw: "")
     return SimpleNamespace(
