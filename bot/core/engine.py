@@ -3505,7 +3505,20 @@ class RuneClawEngine:
         # Re-check here — under the per-symbol entry lock — so no position can
         # survive the kill switch. (This is the whole reason concurrent_updates
         # is safe on the money path.)
-        if self._halted or self.risk.circuit_breaker_active:
+        #
+        # C4: the last-mile re-check must consult the EXECUTING account's engine,
+        # not only the shared operator's. A per-user breaker/kill that trips in
+        # this race window (e.g. that user hit their own daily-loss limit) only
+        # opens THEIR engine's breaker; checking self.risk alone would miss it and
+        # place the order. risk_for(user_id) is the shared engine for the
+        # operator/default path (byte-identical) and the user's own engine
+        # otherwise.
+        _user_breaker = False
+        try:
+            _user_breaker = self.risk_for(user_id).circuit_breaker_active
+        except Exception:
+            _user_breaker = self.risk.circuit_breaker_active  # fail-closed to shared
+        if self._halted or self.risk.circuit_breaker_active or _user_breaker:
             self._pending_pyramid.pop(trade_id, None)
             self._transition(AgentState.IDLE, f"halted before execute {trade_id}")
             return "Trade REJECTED: engine halted (kill-switch) before execution."
