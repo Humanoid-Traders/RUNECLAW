@@ -164,6 +164,15 @@ async function getUserEquity(userId) {
 
 router.post('/register', async (req, res) => {
   try {
+    // Rate-limit registration per IP (reuses the login limiter) so the
+    // endpoint can't be used for automated mass account creation — it was
+    // the only unthrottled auth route (deep-audit finding).
+    const clientIp = req.ip || req.socket.remoteAddress || 'unknown';
+    if (!checkRateLimit(clientIp)) {
+      return res.status(429).json({ error: 'Too many attempts. Try again later.' });
+    }
+    recordAttempt(clientIp);
+
     const { email, password } = req.body;
     if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
     // Validate email format

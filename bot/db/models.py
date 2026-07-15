@@ -128,8 +128,8 @@ class User:
 
 def create_user(email: str, password: str) -> int:
     """Create a new user. Returns user_id. Raises ValueError on duplicate or short password."""
-    if len(password) < 8:
-        raise ValueError("Password must be at least 8 characters")
+    if len(password) < 10:
+        raise ValueError("Password must be at least 10 characters")
     with get_db() as db:
         try:
             cur = db.execute(
