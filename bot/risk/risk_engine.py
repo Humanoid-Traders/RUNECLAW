@@ -2833,7 +2833,18 @@ class RiskEngine:
             # cap, so the breaker re-tripped on the very next evaluate() and a
             # manual /resume never stuck — the "still halted after reset" report.
             self._live_equity_peak = 0.0
-            audit(risk_log, "Circuit breaker manually reset (live peak re-seeded)",
+            # ALSO clear the DAILY-LOSS condition, for the same reason: a manual
+            # reset is a deliberate operator override, but the day's realized
+            # loss stays on the books, so the daily-loss check re-trips on the
+            # very next evaluate() ("after breaker reset it keeps falling back").
+            # Re-seed the LIVE daily-PnL accumulator to a fresh budget for the
+            # current UTC day and clear the cached loss %, mirroring the peak
+            # re-seed. Losses that accrue after the reset accumulate from zero and
+            # will trip the breaker again — so protection is refreshed, not lost.
+            self._live_daily_pnl = 0.0
+            self._live_daily_day = time.strftime("%Y-%m-%d", time.gmtime(int(self._now())))
+            self._last_known_daily_loss_pct = 0.0
+            audit(risk_log, "Circuit breaker manually reset (live peak + daily-loss re-seeded)",
                   action="circuit_breaker", result="RESET")
             self._save_state()
 
