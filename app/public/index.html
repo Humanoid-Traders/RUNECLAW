@@ -189,7 +189,30 @@
   <div class="risk">Trading futures involves substantial risk of loss and is not suitable for every investor. RUNECLAW is a trading tool, not financial advice. Use withdrawal-disabled API keys and never risk more than you can afford to lose.</div>
 </footer>
 
+<!-- Chat — anonymous visitors get the account-free public assistant -->
+<button id="chatFab" class="chat-fab hidden" hidden aria-label="Open RUNECLAW chat">
+  <svg class="icon" aria-hidden="true"><use href="#icon-chat"></use></svg>
+</button>
+<section id="chatDrawer" class="chat-drawer hidden" hidden role="dialog" aria-label="RUNECLAW chat">
+  <div class="chat-head">
+    <span class="t"><svg class="icon" aria-hidden="true"><use href="#icon-sparkle"></use></svg>RUNECLAW — AI ANALYST</span>
+    <button class="chat-close" id="chatClose" aria-label="Close chat">&times;</button>
+  </div>
+  <div id="chatBody" class="chat-body" aria-live="polite"></div>
+  <div id="chatChips" class="chat-chips" aria-label="Suggested prompts"></div>
+  <form class="chat-inputrow" id="chatForm">
+    <label class="visually-hidden" for="chatInput">Message the RUNECLAW assistant</label>
+    <input id="chatInput" class="input" type="text" maxlength="2000" autocomplete="off"
+           placeholder="Ask about crypto, markets, or how RUNECLAW works">
+    <button class="btn btn--primary" id="chatSend" type="submit" aria-label="Send message">
+      <svg class="icon" style="width:16px;height:16px" aria-hidden="true"><use href="#icon-send"></use></svg>
+    </button>
+  </form>
+</section>
+
 <script src="/js/icons.js?v=3"></script>
+<script src="/js/app.js?v=3"></script>
+<script src="/js/chat.js?v=4" defer></script>
 <script>
 const API='/api';
 let SESSION=null;

@@ -212,6 +212,39 @@ async def handle_chat(request: web.Request) -> web.Response:
     return web.json_response({"reply_html": answer, "intent": "chat"})
 
 
+# ── Public chat (anonymous website visitors; market Q&A only) ───────────────
+#
+# SAFETY BOUNDARY. This path is intentionally account-free and is the ONLY
+# gateway endpoint reachable without a resolved user identity. It:
+#   * NEVER calls _guard_user / users.register  → no user is provisioned;
+#   * NEVER runs the manual-trade intercept       → no pending trade is created;
+#   * NEVER dispatches an intent/skill            → no account/portfolio/order
+#                                                    data and no engine action;
+#   * only asks the LLM via _llm_chat(public=True), which uses a STATIC
+#     market-only system prompt with no portfolio context, no conversation
+#     history, and no admin-only provider.
+# So no account data or trade action is reachable from this endpoint regardless
+# of what the anonymous client sends. Skills/quick-actions for signed-in users
+# stay on handle_chat. The Express side (routes/public_chat.js) rate-limits per
+# IP; the LLM daily-budget guard inside _llm_chat bounds spend.
+
+async def handle_public_chat(request: web.Request) -> web.Response:
+    tg_handler = request.app["tg_handler"]
+    body = await _json_body(request)
+    text = str(body.get("text") or "").strip()
+
+    if not text:
+        return web.json_response({"error": "text required"}, status=400)
+    if len(text) > _MAX_TEXT_LEN:
+        return web.json_response({"error": "message too long"}, status=400)
+
+    from bot.nlp.sanitize import sanitize_chat_input
+    answer = await tg_handler._llm_chat(
+        sanitize_chat_input(text), user_id="", user_name="",
+        is_admin=False, public=True)
+    return web.json_response({"reply_html": answer, "intent": "chat"})
+
+
 async def handle_chat_history(request: web.Request) -> web.Response:
     engine = request.app["engine"]
     tg_handler = request.app["tg_handler"]
@@ -466,6 +499,7 @@ def build_gateway(engine, tg_handler) -> web.Application:
     app["tg_handler"] = tg_handler
     app["proposers"] = {}
     app.router.add_post("/chat", handle_chat)
+    app.router.add_post("/chat/public", handle_public_chat)
     app.router.add_get("/chat/history", handle_chat_history)
     app.router.add_get("/portfolio", handle_portfolio)
     app.router.add_post("/trade/propose", handle_trade_propose)

@@ -52,6 +52,7 @@ const signalsRouter = require('./routes/signals');
 const credentialsRouter = require('./routes/credentials');
 const controlsRouter = require('./routes/controls');
 const chatRouter = require('./routes/chat');
+const publicChatRouter = require('./routes/public_chat');
 const webtradeRouter = require('./routes/webtrade');
 const portfolioRouter = require('./routes/portfolio');
 const { router: streamRouter } = require('./routes/stream');
@@ -89,6 +90,7 @@ app.use('/api/signals', signalsRouter);
 app.use('/api/credentials', credentialsRouter);
 app.use('/api/controls', controlsRouter);
 app.use('/api/chat', chatRouter);
+app.use('/api/public/chat', publicChatRouter);
 app.use('/api/trade', webtradeRouter);
 app.use('/api/portfolio', portfolioRouter);
 
