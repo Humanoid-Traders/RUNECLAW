@@ -172,6 +172,13 @@ class RuneClawEngine:
         # telegram user_id, each bound to that user's OWN linked Bitget account.
         # Empty + unused while the flag is off, so the operator path is unchanged.
         self._user_executors: dict[str, LiveExecutor] = {}
+        # Read-only per-user executors for the /livebalance VIEW only, keyed by
+        # telegram user_id. Viewing your own linked account is read-only and must
+        # work as soon as you /connect — independent of PER_USER_LIVE_ENABLED
+        # (which gates order PLACEMENT). Cached SEPARATELY from _user_executors so
+        # a view-only account is never enrolled in the trading monitoring /
+        # reconciliation / close loops (all_executors()).
+        self._balance_view_executors: dict[str, LiveExecutor] = {}
         # Per-user RiskEngines (PER_USER_LIVE_ENABLED, default OFF): keyed by
         # telegram user_id, each bound to that user's OWN portfolio + persisted
         # to data/risk_state_{user_id}.json.  Isolates the stateful safety
@@ -812,11 +819,55 @@ class RuneClawEngine:
                   action="per_user_executor", result="BOUND", data={"user": key})
         return ex
 
+    def balance_view_executor(self, user_id: str = ""):
+        """Return the LiveExecutor for a READ-ONLY balance view of the caller's
+        OWN account (used by /livebalance).
+
+        Unlike _executor_for — which gates on PER_USER_LIVE_ENABLED because it
+        places orders — viewing your own balance is read-only and must work the
+        moment you /connect (it is the very same read-only balance check that
+        /connect itself runs to validate the keys). So this resolver ignores the
+        live-trading flag:
+
+          - caller has decryptable linked (/connect) credentials -> a per-user
+            executor bound to THEIR account (their explicit choice to link it);
+          - otherwise -> the shared operator executor (unchanged behaviour for
+            the operator/admin, who view the global CONFIG.exchange account).
+
+        These view-only executors are cached in a dedicated dict, NOT in
+        _user_executors, so they are never picked up by all_executors() (the
+        monitoring / reconciliation / close loops). A view-only account has no
+        bot-placed positions to manage while per-user live trading is off.
+        """
+        if not user_id or user_id in ("auto", ""):
+            return self.live_executor
+        try:
+            from bot.core.exchange_credentials import get_credential_store
+            creds = get_credential_store().get(str(user_id))
+        except Exception as exc:
+            logger.warning("balance_view_executor: credential lookup failed for "
+                           "%s: %s — using operator executor", user_id, exc)
+            creds = None
+        if not creds:
+            return self.live_executor
+        key = str(user_id)
+        ex = self._balance_view_executors.get(key)
+        # Rebuild if absent or the user's api_key changed (e.g. re-/connect).
+        if ex is None or (ex._credentials or {}).get("api_key") != creds.get("api_key"):
+            ex = LiveExecutor(user_id=user_id, credentials=creds)
+            # Share the operator WS feed (market data is not per-user). No
+            # on_position_closed / risk wiring: this executor never trades.
+            ex._ws_feed = self.ws_feed
+            self._balance_view_executors[key] = ex
+        return ex
+
     def invalidate_user_executor(self, user_id: str) -> None:
         """Drop any cached per-user executor (e.g. after /connect or /disconnect)
-        so the next trade rebuilds it from the current stored credentials. Safe to
-        call when none exists. Never touches the shared operator executor."""
+        so the next trade — and the next balance view — rebuilds it from the
+        current stored credentials. Safe to call when none exists. Never touches
+        the shared operator executor."""
         self._user_executors.pop(str(user_id), None)
+        self._balance_view_executors.pop(str(user_id), None)
 
     async def switch_venue(self, venue_id: str) -> str:
         """Hot-swap the shared operator executor onto another trading venue.

@@ -3588,9 +3588,21 @@ class TelegramHandler:
     async def _cmd_livebalance(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """/livebalance — check real USDT balance + spot holdings on Bitget."""
         try:
-            bal = await self.engine.live_executor.fetch_balance()
+            # Route to the CALLER's own account: if they linked one via /connect,
+            # /livebalance must show THAT account's balance — not the shared
+            # operator account (which is what a linked user would otherwise see as
+            # $0.00). Viewing your own balance is read-only, so this works
+            # regardless of PER_USER_LIVE_ENABLED (that flag gates order
+            # placement, not balance viewing). Falls back to the operator
+            # executor when the caller has no linked account.
+            tg_id = self._get_tg_id(update)
+            balance_exec = self.engine.balance_view_executor(tg_id)
+            is_operator_view = balance_exec is self.engine.live_executor
+            bal = await balance_exec.fetch_balance()
             # LIVE FIX: update engine's cached balance so /status shows fresh data
-            if "error" not in bal or bal.get("total", 0) > 0:
+            # — but ONLY for the operator account, never a per-user linked one
+            # (that cache feeds operator-account equity/telemetry).
+            if is_operator_view and ("error" not in bal or bal.get("total", 0) > 0):
                 self.engine._live_balance_cache = bal
                 self.engine._live_balance_cache_ts = time.time()
             total = bal.get("total", 0)
@@ -3599,7 +3611,7 @@ class TelegramHandler:
             holdings = bal.get("holdings", [])
 
             # Fetch prices and compute portfolio value
-            exchange = await self.engine.live_executor._get_exchange()
+            exchange = await balance_exec._get_exchange()
             spot_items = []
             total_usd = total
             for h in sorted(holdings, key=lambda x: x["asset"]):
@@ -3617,8 +3629,8 @@ class TelegramHandler:
                     pass
                 spot_items.append({"asset": asset, "qty": qty, "price": price, "usd": usd_val})
 
-            # Live executor stats
-            executor = self.engine.live_executor
+            # Live executor stats — same account the balance was read from.
+            executor = balance_exec
             open_pos = executor.open_positions
             closed_pos = executor.closed_positions
             # Filter out adopted/injected trades and never-filled orders (canceled/
@@ -3643,10 +3655,20 @@ class TelegramHandler:
             # Show the higher of exchange-reported or bot-tracked exposure for accuracy.
             used_display = max(used, exposure)
 
-            # Header
+            # Header — name WHICH account this is so a linked user isn't
+            # confused about seeing their own balance vs the operator's.
+            account_label = "BITGET PORTFOLIO"
+            if not is_operator_view:
+                try:
+                    from bot.core.exchange_credentials import get_credential_store
+                    _fp = get_credential_store().fingerprint(tg_id)
+                except Exception:
+                    _fp = ""
+                account_label = (f"YOUR BITGET ACCOUNT · {_fp}" if _fp
+                                 else "YOUR BITGET ACCOUNT")
             SEP = "─" * 16
             lines = [
-                "💰 <b>BITGET PORTFOLIO</b>",
+                f"💰 <b>{account_label}</b>",
                 f"{SEP}",
                 f"   {pnl_icon}  Net PnL: <code>${pnl_sign}{realized_pnl:.2f}</code> (fees: ${total_fees:.2f})",
                 "",
