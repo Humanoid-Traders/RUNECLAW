@@ -312,6 +312,19 @@ class RiskEngine:
         return self._circuit_open
 
     @property
+    def circuit_trip_cause(self) -> str:
+        """Why the breaker is currently open: 'daily_loss' | 'drawdown' |
+        'streak' | 'manual' | '' (not tripped). Lets alerts state the real
+        reason instead of guessing."""
+        return self._circuit_trip_cause
+
+    @property
+    def last_known_daily_loss_pct(self) -> float:
+        """Most recent computed daily-loss percentage (persists across a failed
+        recompute). For truthful breaker alerts."""
+        return self._last_known_daily_loss_pct
+
+    @property
     def consecutive_losses(self) -> int:
         return self._consecutive_losses
 
@@ -2813,7 +2826,14 @@ class RiskEngine:
             self._last_loss_time = None
             self._circuit_trip_cause = ""
             self._circuit_trip_day = ""
-            audit(risk_log, "Circuit breaker manually reset",
+            # Re-seed the live drawdown high-water mark from the NEXT live
+            # evaluation's current equity. Without this a peak corrupted by a
+            # transient too-high equity reading (e.g. a stale/paper-fallback
+            # balance during an auth blip) kept current-drawdown pinned above the
+            # cap, so the breaker re-tripped on the very next evaluate() and a
+            # manual /resume never stuck — the "still halted after reset" report.
+            self._live_equity_peak = 0.0
+            audit(risk_log, "Circuit breaker manually reset (live peak re-seeded)",
                   action="circuit_breaker", result="RESET")
             self._save_state()
 
