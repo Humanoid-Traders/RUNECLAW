@@ -274,6 +274,15 @@ class RiskLimits:
     # see docs/FROZEN_BENCHMARK.md. Default OFF; disable to keep the flat gate.
     per_strategy_confidence_floor_enabled: bool = _env_bool("PER_STRATEGY_CONFIDENCE_FLOOR_ENABLED", False)
     max_daily_loss_pct: float = _env_float_bounded("MAX_DAILY_LOSS_PCT", 5.0, 0.1, 50)
+    # Absolute-dollar floor on the daily-loss breaker (default 0 = pure %
+    # behaviour, no change). The daily-loss breaker trips only when the day's
+    # loss exceeds BOTH max_daily_loss_pct AND this many USD. On a tiny live
+    # account the % cap is a few dollars (5% of $128 = $6.40), so a couple of
+    # normal stop-outs + fees halt the whole day; set e.g.
+    # DAILY_LOSS_BREAKER_MIN_USD=25 so noise on a micro account doesn't trip it.
+    # Self-scaling: on a funded account the % cap dominates (5% of $10k = $500),
+    # so any small floor is a no-op and protection is unchanged.
+    daily_loss_breaker_min_usd: float = _env_float_bounded("DAILY_LOSS_BREAKER_MIN_USD", 0.0, 0.0, 1_000_000)
     # Auto-reset a DAILY-LOSS circuit-breaker trip at UTC day rollover (opt-in,
     # default OFF; deep-audit medium). The daily-loss limit is a per-day guard,
     # but the breaker is a single latch with no record of why it tripped, so a

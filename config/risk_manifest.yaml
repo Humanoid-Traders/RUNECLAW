@@ -323,6 +323,11 @@ defaults:
     env_var: MAX_DAILY_LOSS_PCT
     description: "Max daily loss as % of equity before circuit breaker trips"
 
+  daily_loss_breaker_min_usd:
+    value: 0.0
+    env_var: DAILY_LOSS_BREAKER_MIN_USD
+    description: "Absolute-USD floor on the daily-loss breaker (0 = pure %); the breaker trips only when the day's loss exceeds BOTH the % cap and this dollar amount (stops micro-account noise from halting the day)"
+
   daily_loss_breaker_autoreset_enabled:
     value: true
     env_var: DAILY_LOSS_BREAKER_AUTORESET
