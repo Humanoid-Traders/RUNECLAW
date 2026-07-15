@@ -1127,7 +1127,12 @@ class RiskEngine:
                 loss_base = min(sizing_equity, state.equity_usd) if sizing_equity > 0 and state.equity_usd > 0 else max(sizing_equity, state.equity_usd)
             daily_loss_pct = abs(_daily_pnl / loss_base * 100) if loss_base > 0 else 0
             self._last_known_daily_loss_pct = daily_loss_pct  # C2-42: persist for fallback
-            if _daily_pnl < 0 and daily_loss_pct >= CONFIG.risk.max_daily_loss_pct:
+            # Absolute-dollar floor: on a micro account the % cap is only a few
+            # dollars, so require a meaningful $ loss too before halting the day.
+            # Default floor 0 → pure % behaviour; large accounts unaffected.
+            _min_usd = CONFIG.risk.daily_loss_breaker_min_usd
+            if (_daily_pnl < 0 and daily_loss_pct >= CONFIG.risk.max_daily_loss_pct
+                    and abs(_daily_pnl) >= _min_usd):
                 failed.append(f"DAILY_LOSS: {daily_loss_pct:.1f}% >= {CONFIG.risk.max_daily_loss_pct}%")
                 # C-05 FIX: trip circuit breaker AND reject the CURRENT trade
                 self._trip_circuit_breaker("daily loss limit breached", cause="daily_loss")
@@ -2898,7 +2903,8 @@ class RiskEngine:
             base = state.equity_usd
             if base and base > 0 and state.daily_pnl < 0:
                 daily_loss_pct = abs(state.daily_pnl / base * 100)
-                if daily_loss_pct >= CONFIG.risk.max_daily_loss_pct:
+                if (daily_loss_pct >= CONFIG.risk.max_daily_loss_pct
+                        and abs(state.daily_pnl) >= CONFIG.risk.daily_loss_breaker_min_usd):
                     return (f"daily loss {daily_loss_pct:.1f}% still >= "
                             f"{CONFIG.risk.max_daily_loss_pct}% limit — the breaker "
                             f"re-trips on the next trade check until equity recovers "
