@@ -18,24 +18,30 @@ you approve users one at a time and everyone else stays paper-only.
    keys (encrypted at rest). Without them their live trade is rejected, never
    silently placed on the operator account.
 
-### Connecting a venue (Bitget or Hyperliquid)
+### Connecting a venue (Bitget, Bybit, BingX, or Hyperliquid)
 
-Per-user connect is **multi-venue**. A user links exactly one venue at a time;
-their live executor is built for that venue.
+Per-user connect is **multi-venue** — all four adapters the engine supports are
+connectable. A user links exactly one venue at a time; their live executor is
+built for that venue. Each path is available via Telegram `/connect` **and** the
+web Account → Exchange keys form (venue selector).
 
-- **Bitget** — Telegram `/connect <api_key> <api_secret> <passphrase>`, or the
-  web Account → Exchange keys form (venue = Bitget). Needs USDT-M futures
+- **Bitget** — `/connect <api_key> <api_secret> <passphrase>`. USDT-M futures
   read + trade permission; withdrawals disabled.
-- **Hyperliquid** — Telegram `/connect hyperliquid <wallet_address>
-  <agent_private_key>`, or the web form (venue = Hyperliquid). Use an **API
-  (agent) wallet** key, never the main wallet key.
+- **Bybit** — `/connect bybit <api_key> <api_secret>`. Derivatives trade
+  permission; account in **ONE-WAY** position mode.
+- **BingX** — `/connect bingx <api_key> <api_secret>`. Perpetual-futures trade
+  permission; account in **ONE-WAY** position mode ($2 min notional).
+- **Hyperliquid** — `/connect hyperliquid <wallet_address> <agent_private_key>`.
+  Use an **API (agent) wallet** key, never the main wallet key.
 
-Both paths read-only-validate the keys (a balance probe) before storing, and the
-web submission is AES-256-GCM encrypted, pulled by the bot over the shared-secret
-channel, and re-stored in the bot's Fernet store keyed by Telegram id. The venue
-travels with the record end-to-end, so a Hyperliquid-connected user's executor
-builds a `ccxt.hyperliquid` client from their own wallet. Re-connecting a
-different venue rebuilds the executor on the new venue.
+Every path read-only-validates the credentials (a balance probe) before storing,
+and the web submission is AES-256-GCM encrypted, pulled by the bot over the
+shared-secret channel, and re-stored in the bot's Fernet store keyed by Telegram
+id. The venue travels with the record end-to-end, so a user's executor builds the
+right `ccxt` client (e.g. `ccxt.bybit`) from their own credentials. Re-connecting
+a different venue rebuilds the executor on the new venue. The web venue list is
+served from `/config` (single source of truth: `app/lib/venues.js` ↔ the bot's
+`_VENUE_FIELDS`), so the connect form always matches what the bot accepts.
 
 The website trade path (`app/routes/webtrade.js` → bot gateway → `_can_trade_live`)
 routes through the **same** gate, so the bot and the web behave identically.

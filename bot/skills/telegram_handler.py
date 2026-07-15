@@ -3496,11 +3496,18 @@ class TelegramHandler:
             return
 
         from bot.core.exchange_credentials import (
-            get_credential_store, validate_bitget_credentials, basic_key_format_ok,
-            validate_hyperliquid_credentials, basic_hl_format_ok, valid_venue_ids,
+            get_credential_store, validate_venue_credentials, basic_venue_format_ok,
+            valid_venue_ids, _VENUE_FIELDS,
         )
+        from bot.core.venues import get_venue
 
-        # Optional leading venue token; default Bitget so the legacy 3-arg form
+        def _venue_label(v: str) -> str:
+            try:
+                return getattr(get_venue(v), "display_name", None) or v.title()
+            except Exception:
+                return v.title()
+
+        # Optional leading venue token; default Bitget so the legacy form
         # (/connect <key> <secret> <pass>) is byte-identical.
         args = list(ctx.args or [])
         venue = "bitget"
@@ -3508,95 +3515,59 @@ class TelegramHandler:
             venue = args[0].lower()
             args = args[1:]
 
-        if venue == "bitget":
-            if len(args) != 3:
-                await self._send(update,
-                    "<b>Link your own exchange account</b>\n\n"
-                    "<b>Bitget</b> — create API keys with <b>USDT-M futures "
-                    "(read + trade)</b> permission, then send:\n"
-                    "<code>/connect &lt;api_key&gt; &lt;api_secret&gt; &lt;passphrase&gt;</code>\n\n"
-                    "<b>Hyperliquid</b> — create an API (agent) wallet, then send:\n"
-                    "<code>/connect hyperliquid &lt;wallet_address&gt; &lt;agent_private_key&gt;</code>\n\n"
-                    "• Keys are <b>encrypted at rest</b> and never logged.\n"
-                    "• This message is deleted immediately after you send it.\n"
-                    "• Use <code>/exchange</code> to check status, "
-                    "<code>/disconnect</code> to remove.")
-                return
-
-            api_key, api_secret, passphrase = (
-                args[0].strip(), args[1].strip(), args[2].strip())
-            if not basic_key_format_ok(api_key, api_secret, passphrase):
-                await self._send(update,
-                    "🔴 Those don't look like valid Bitget keys "
-                    "(empty, contain spaces, or too short). Nothing was stored.")
-                return
-
+        required = _VENUE_FIELDS.get(venue, ())
+        if len(args) != len(required):
+            # Data-driven usage across every connectable venue.
+            def _usage(v: str) -> str:
+                fields = " ".join(f"&lt;{f}&gt;" for f in _VENUE_FIELDS[v])
+                cmd = "/connect" if v == "bitget" else f"/connect {v}"
+                return f"<b>{_venue_label(v)}</b> — <code>{cmd} {fields}</code>"
+            lines = "\n".join(_usage(v) for v in valid_venue_ids())
             await self._send(update,
-                "⏳ Validating your Bitget keys (read-only balance check)…")
-            ok, detail = await validate_bitget_credentials(
-                api_key, api_secret, passphrase, sandbox=CONFIG.exchange.sandbox)
-            if not ok:
-                await self._send(update,
-                    "🔴 Could not authenticate with Bitget. Nothing was stored.\n"
-                    f"<code>{html.escape(detail)}</code>\n\n"
-                    "Check the key / secret / passphrase and that the key has "
-                    "USDT-M futures permission.")
-                return
+                "<b>Link your own exchange account</b>\n\n" + lines + "\n\n"
+                "• Bitget keys need USDT-M futures (read + trade); Bybit/BingX "
+                "must be in ONE-WAY mode; Hyperliquid uses an <b>agent</b> "
+                "(API) wallet key — never your main wallet key.\n"
+                "• Keys are <b>encrypted at rest</b> and never logged.\n"
+                "• This message is deleted immediately after you send it.\n"
+                "• Use <code>/exchange</code> to check status, "
+                "<code>/disconnect</code> to remove.")
+            return
 
-            tg_id = self._get_tg_id(update)
-            store = get_credential_store()
-            store.set(tg_id, api_key, api_secret, passphrase)
-            venue_label, balance_hint = "Bitget", ""
-        else:  # hyperliquid
-            if len(args) != 2:
-                await self._send(update,
-                    "<b>Link your Hyperliquid account</b>\n\n"
-                    "Create an <b>API (agent) wallet</b> at Hyperliquid, then send:\n"
-                    "<code>/connect hyperliquid &lt;wallet_address&gt; &lt;agent_private_key&gt;</code>\n\n"
-                    "• Use the <b>agent</b> wallet key, never your main wallet key.\n"
-                    "• Keys are <b>encrypted at rest</b> and never logged; this "
-                    "message is deleted immediately.")
-                return
-
-            wallet_address, agent_private_key = args[0].strip(), args[1].strip()
-            if not basic_hl_format_ok(wallet_address, agent_private_key):
-                await self._send(update,
-                    "🔴 That doesn't look like a valid wallet address (0x + 40 hex) "
-                    "and agent key (0x + 64 hex). Nothing was stored.")
-                return
-
+        fields = {k: args[i].strip() for i, k in enumerate(required)}
+        label = _venue_label(venue)
+        if not basic_venue_format_ok(venue, fields):
             await self._send(update,
-                "⏳ Validating your Hyperliquid agent key (read-only balance check)…")
-            ok, detail = await validate_hyperliquid_credentials(
-                wallet_address, agent_private_key, sandbox=CONFIG.exchange.sandbox)
-            if not ok:
-                await self._send(update,
-                    "🔴 Could not authenticate with Hyperliquid. Nothing was stored.\n"
-                    f"<code>{html.escape(detail)}</code>\n\n"
-                    "Check the wallet address and that the agent key is authorized "
-                    "for it.")
-                return
+                f"🔴 Those don't look like valid {label} credentials "
+                "(empty, contain spaces, or wrong shape). Nothing was stored.")
+            return
 
-            tg_id = self._get_tg_id(update)
-            store = get_credential_store()
-            store.set_venue(tg_id, "hyperliquid", {
-                "wallet_address": wallet_address,
-                "agent_private_key": agent_private_key,
-            })
-            venue_label, balance_hint = "Hyperliquid", ""
+        await self._send(update,
+            f"⏳ Validating your {label} credentials (read-only balance check)…")
+        ok, detail = await validate_venue_credentials(
+            venue, fields, sandbox=CONFIG.exchange.sandbox)
+        if not ok:
+            await self._send(update,
+                f"🔴 Could not authenticate with {label}. Nothing was stored.\n"
+                f"<code>{html.escape(detail)}</code>\n\n"
+                "Check the credentials and their trading permissions.")
+            return
 
+        tg_id = self._get_tg_id(update)
+        store = get_credential_store()
+        store.set_venue(tg_id, venue, fields)
         # Drop any cached executor so the next trade rebuilds with the new keys.
         try:
             self.engine.invalidate_user_executor(tg_id)
         except Exception:
             pass
-        audit(system_log, f"User linked own {venue_label} account via /connect",
+        audit(system_log, f"User linked own {label} account via /connect",
               action="connect", result="OK",
               data={"user": tg_id, "venue": venue, "fingerprint": store.fingerprint(tg_id)})
         await self._send(update,
-            f"🟢 <b>{venue_label} account linked</b>\n\n"
+            f"🟢 <b>{label} account linked</b>\n\n"
             f"Key: <code>{store.fingerprint(tg_id)}</code>\n"
-            f"Balance: {html.escape(detail)}{balance_hint}\n\n"
+            f"Balance: {html.escape(detail)}\n\n"
             "Your keys are encrypted at rest. Per-user live trading is not yet "
             "enabled — you'll be notified when it goes live. Use "
             "<code>/exchange</code> to review or <code>/disconnect</code> to remove.")

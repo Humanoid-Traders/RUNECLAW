@@ -103,6 +103,26 @@ def test_hyperliquid_user_trading_executor_routes_to_hyperliquid(tmp_path):
     assert ex._venue.id == "hyperliquid"
 
 
+def test_bybit_user_routes_to_bybit_with_keysecret(tmp_path):
+    (tmp_path / ".key").write_bytes(Fernet.generate_key())
+    store = _real_store(tmp_path)
+    store.set_venue("frank", "bybit", {"api_key": "BY" + "K" * 14, "api_secret": "BY" + "S" * 14})
+
+    eng = _engine()
+    with _patch(store):
+        ex = eng.balance_view_executor("frank")
+    assert ex._venue.id == "bybit"
+    assert ex._credentials["api_key"] == "BY" + "K" * 14
+    # The venue builds a ccxt.bybit client from the user's key.
+    from bot.config import CONFIG
+    exch = ex._venue.create_exchange(CONFIG.exchange, ex._credentials)
+    import asyncio
+    try:
+        assert exch.apiKey == "BY" + "K" * 14
+    finally:
+        asyncio.get_event_loop().run_until_complete(exch.close())
+
+
 def test_bitget_user_still_routes_to_bitget(tmp_path):
     (tmp_path / ".key").write_bytes(Fernet.generate_key())
     store = _real_store(tmp_path)
