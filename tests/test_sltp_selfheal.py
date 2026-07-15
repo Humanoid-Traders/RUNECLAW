@@ -58,13 +58,37 @@ async def test_protected_position_untouched(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_same_sl_tp_id_is_reverified(tmp_path, monkeypatch):
-    # v3 combined order can share an id; re-verify (idempotent) to be sure it's live.
+async def test_combined_id_replaced_only_when_confirmed_missing(tmp_path, monkeypatch):
+    # v3 combined order shares one id. The self-heal must NOT blindly
+    # re-place (that cancels-then-places = a naked window every cycle). It
+    # re-places ONLY when the exchange positively confirms the stop is gone.
     e, calls = _exec(tmp_path, monkeypatch, place_result=("X", "X"))
+
+    async def _stop_missing(pos):
+        return False  # exchange confirms NO stop attached
+
+    monkeypatch.setattr(e, "_stop_live_on_exchange", _stop_missing)
     p = _pos(sl_id="X", tp_id="X")
     e._positions[p.trade_id] = p
     await e.verify_and_fix_sltp()
     assert calls["place"] == 1
+
+
+@pytest.mark.asyncio
+async def test_combined_id_left_alone_when_stop_live(tmp_path, monkeypatch):
+    # A healthy combined stop (exchange confirms present, or can't verify)
+    # must be left untouched — no cancel-then-replace naked window.
+    for _verdict in (True, None):
+        e, calls = _exec(tmp_path, monkeypatch, place_result=("X", "X"))
+
+        async def _stop_state(pos, _v=_verdict):
+            return _v
+
+        monkeypatch.setattr(e, "_stop_live_on_exchange", _stop_state)
+        p = _pos(sl_id="X", tp_id="X")
+        e._positions[p.trade_id] = p
+        await e.verify_and_fix_sltp()
+        assert calls["place"] == 0, f"re-placed despite verdict={_verdict}"
 
 
 @pytest.mark.asyncio
