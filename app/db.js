@@ -171,7 +171,8 @@ class MemoryDB {
         const err = new Error('Duplicate entry'); err.code = 'ER_DUP_ENTRY'; throw err;
       }
       const user = { id: this._nextUserId++, email: params[0], password_hash: null,
-        google_id: null, telegram_id: null, avatar_url: null, plan: 'free',
+        google_id: null, telegram_id: null, discord_id: null, x_id: null,
+        avatar_url: null, plan: 'free',
         telegram_linked: false, link_token: null, link_token_expires: null,
         email_verified: false, verify_token: null, verify_token_expires: null,
         reset_token: null, reset_token_expires: null, created_at: new Date() };
@@ -182,6 +183,10 @@ class MemoryDB {
         user.google_id = params[1]; user.avatar_url = params[2]; user.telegram_linked = !!params[3];
       } else if (cmd.includes('TELEGRAM_ID')) {
         user.telegram_id = params[1]; user.avatar_url = params[2]; user.telegram_linked = !!params[3];
+      } else if (cmd.includes('DISCORD_ID')) {
+        user.discord_id = params[1]; user.avatar_url = params[2]; user.telegram_linked = !!params[3];
+      } else if (cmd.includes('X_ID')) {
+        user.x_id = params[1]; user.avatar_url = params[2]; user.telegram_linked = !!params[3];
       }
       this.users.push(user);
       return [{ insertId: user.id }, []];
@@ -195,6 +200,14 @@ class MemoryDB {
       return [this.users.filter(u => String(u.telegram_id) === String(params[0])), []];
     }
 
+    if (cmd.includes('FROM USERS WHERE DISCORD_ID')) {
+      return [this.users.filter(u => String(u.discord_id) === String(params[0])), []];
+    }
+
+    if (cmd.includes('FROM USERS WHERE X_ID')) {
+      return [this.users.filter(u => String(u.x_id) === String(params[0])), []];
+    }
+
     if (cmd.startsWith('UPDATE USERS SET GOOGLE_ID')) {
       const user = this.users.find(u => u.id === params[1]);
       if (user) user.google_id = params[0];
@@ -204,6 +217,18 @@ class MemoryDB {
     if (cmd.startsWith('UPDATE USERS SET TELEGRAM_ID')) {
       const user = this.users.find(u => u.id === params[1]);
       if (user) user.telegram_id = params[0];
+      return [{ affectedRows: user ? 1 : 0 }, []];
+    }
+
+    if (cmd.startsWith('UPDATE USERS SET DISCORD_ID')) {
+      const user = this.users.find(u => u.id === params[1]);
+      if (user) user.discord_id = params[0];
+      return [{ affectedRows: user ? 1 : 0 }, []];
+    }
+
+    if (cmd.startsWith('UPDATE USERS SET X_ID')) {
+      const user = this.users.find(u => u.id === params[1]);
+      if (user) user.x_id = params[0];
       return [{ affectedRows: user ? 1 : 0 }, []];
     }
 
@@ -473,6 +498,13 @@ async function migrate() {
     } catch (e) { /* exists */ }
     try {
       await pool.execute('ALTER TABLE users ADD COLUMN avatar_url VARCHAR(512) DEFAULT NULL');
+    } catch (e) { /* exists */ }
+    // Social OAuth expansion: Discord + X (Twitter) provider identities.
+    try {
+      await pool.execute('ALTER TABLE users ADD COLUMN discord_id VARCHAR(64) DEFAULT NULL');
+    } catch (e) { /* exists */ }
+    try {
+      await pool.execute('ALTER TABLE users ADD COLUMN x_id VARCHAR(64) DEFAULT NULL');
     } catch (e) { /* exists */ }
     try {
       await pool.execute('ALTER TABLE users MODIFY COLUMN password_hash VARCHAR(255) NULL');
