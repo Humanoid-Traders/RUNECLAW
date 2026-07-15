@@ -796,8 +796,11 @@ class TelegramHandler:
 
             # LIVE FIX: use real equity and live executor stats in LIVE mode
             if is_live:
-                eff_equity = self.engine.get_effective_equity(user_id)
-                eq_display = eff_equity if eff_equity > 0 else state.equity_usd
+                # Truthful equity for the AI context: never feed the model the
+                # paper $10k baseline in LIVE mode — if the balance is unknown,
+                # say so, so the AI can't tell the user a fabricated figure.
+                _eq_val, _eq_src = self.engine.resolve_display_equity_sync(user_id)
+                eq_display = _eq_val
                 # Use live executor stats (actual exchange trades)
                 live_closed_all = executor.closed_positions if executor else []
                 live_open = executor.open_positions if executor else []
@@ -812,9 +815,11 @@ class TelegramHandler:
                 win_rate_val = wins / total_trades if total_trades > 0 else 0
                 total_pnl = sum(t.pnl_usd or 0 for t in live_closed)
                 total_fees = sum(t.commission or 0 for t in live_closed)
+                _eq_ctx = (f"~${eq_display:,.2f}" if eq_display is not None
+                           else "unavailable (live balance temporarily unreadable)")
                 portfolio_summary = (
                     f"{len(live_open)} open positions, "
-                    f"equity ~${eq_display:,.2f}, "
+                    f"equity {_eq_ctx}, "
                     f"net PnL ${total_pnl:+,.2f} (fees ${total_fees:.2f}), "
                     f"win rate {win_rate_val:.0%}, "
                     f"total trades {total_trades}"
@@ -1632,8 +1637,10 @@ class TelegramHandler:
 
         # LIVE FIX: show real exchange equity in LIVE mode
         if mode_str == "LIVE":
-            live_eq = await self.engine.get_effective_equity_async(tg_id)
-            display_equity = live_eq if live_eq > 0 else state.equity_usd
+            # Truthful equity: never fake paper $10k when the live balance can't
+            # be read. resolve_display_equity returns (None, "unavailable") in
+            # that case so the card says so instead of the paper baseline.
+            display_equity, _eq_source = await self.engine.resolve_display_equity(tg_id)
             # Per-user isolation: route through the CALLER's executor so this
             # status card reflects the SAME account /positions and /performance
             # use (resolves to the shared operator executor when
@@ -1703,7 +1710,11 @@ class TelegramHandler:
         status_icon = "\U0001f7e2" if not cb_active else "\U0001f534"
         status_label = "Active" if not cb_active else "Paused"
         mode = mode_str
-        equity = f"{display_equity:,.2f}"
+        # display_equity is None only in LIVE mode when the balance is
+        # unreadable \u2014 show that plainly, never the paper baseline. The
+        # template renders {equity} verbatim (no hardcoded "$") so the
+        # "unavailable" word isn't prefixed with a dollar sign.
+        equity = f"${display_equity:,.2f}" if display_equity is not None else "unavailable"
         time = now
 
         # Show user's tier and trading mode
@@ -5022,9 +5033,11 @@ class TelegramHandler:
 
         if mode_str == "LIVE":
             # ── LIVE MODE: show real exchange data ──
-            display_equity = await self.engine.get_effective_equity_async(user_id)
-            if display_equity <= 0:
-                display_equity = state.equity_usd
+            # Truthful equity: None means the live balance is unreadable —
+            # render "unavailable", never the paper baseline.
+            display_equity, _eq_source = await self.engine.resolve_display_equity(user_id)
+            _eq_str = (f"${display_equity:,.2f}" if display_equity is not None
+                       else "unavailable")
 
             executor = self.engine.live_executor
             live_open = executor.open_positions
@@ -5063,7 +5076,7 @@ class TelegramHandler:
                 f"\U0001f4bc <b>{t('portfolio_title', lang)}</b> (LIVE)",
                 sep,
                 "",
-                f"- {t('lbl_equity', lang)}: <code>${display_equity:,.2f}</code>",
+                f"- {t('lbl_equity', lang)}: <code>{_eq_str}</code>",
                 f"- {t('lbl_open_positions', lang)}: <code>{_pos_display}</code>",
                 f"- {t('lbl_exposure', lang)}: <code>${live_exposure:,.2f}</code>",
                 f"- {t('lbl_net_pnl', lang)}: <code>${live_total_pnl:+,.2f}</code> {'🟢' if live_total_pnl >= 0 else '🔴'}",
@@ -5203,7 +5216,10 @@ class TelegramHandler:
             _png = render_stats_card({
                 "title": t("portfolio_card_title", lang),
                 "subtitle": f"{mode_str} · {datetime.now(UTC).strftime('%H:%M')} UTC",
-                "hero": {"label": t("lbl_equity", lang), "value": f"${display_equity:,.2f}", "color": "white"},
+                "hero": {"label": t("lbl_equity", lang),
+                         "value": (f"${display_equity:,.2f}" if display_equity is not None
+                                   else "unavailable"),
+                         "color": "white"},
                 "tiles": [
                     {"label": t("lbl_realized_pnl", lang), "value": f"${_pnl:+,.2f}",
                      "color": "green" if _pnl >= 0 else "red"},
@@ -5359,11 +5375,11 @@ class TelegramHandler:
         cb = self.engine.risk.circuit_breaker_active
         macro = self.engine.macro_calendar.evaluate()
         mode = "PAPER" if CONFIG.simulation_mode else "LIVE"
-        # LIVE FIX: show real exchange equity and live position count
+        # LIVE FIX: show real exchange equity and live position count.
+        # Truthful equity: None in LIVE mode means the balance is unreadable —
+        # the status card renders "unavailable" rather than the paper baseline.
         if mode == "LIVE":
-            equity = await self.engine.get_effective_equity_async(user_id)
-            if equity <= 0:
-                equity = state.equity_usd
+            equity, _eq_source = await self.engine.resolve_display_equity(user_id)
             executor = self.engine.live_executor
             open_count = len(executor.open_positions)
             # BUGFIX: closed_positions is ALL closed trades ever, so summing it

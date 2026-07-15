@@ -13,7 +13,7 @@ import os
 import time
 from datetime import datetime
 from bot.compat import UTC
-from typing import Callable, Optional
+from typing import Callable, Optional, Tuple
 
 from pathlib import Path
 
@@ -1360,6 +1360,50 @@ class RuneClawEngine:
                 return self._live_balance_cache.get("total", 0.0)
         portfolio = self.user_portfolios.get(user_id) if user_id else self.portfolio
         return portfolio.snapshot().equity_usd
+
+    async def resolve_display_equity(
+        self, user_id: str = ""
+    ) -> Tuple[Optional[float], str]:
+        """Truthful equity for user-facing status cards.
+
+        Returns ``(equity, source)`` where ``source`` is:
+          - ``"live"``        real exchange equity for the account this user's
+                              trades execute on (the shared operator account by
+                              default), possibly a still-valid cached value.
+          - ``"paper"``       genuine paper-mode portfolio equity.
+          - ``"unavailable"`` LIVE mode, but the balance could not be read and
+                              no cache exists.
+
+        The whole point: in LIVE mode a failed balance read returns
+        ``(None, "unavailable")`` — callers MUST render "unavailable" and MUST
+        NOT substitute the paper $10k baseline (the recurring "bot shows $10,000
+        in live mode" bug). A truthful $0.00 for a genuinely empty account is
+        preserved because ``get_user_live_equity`` returns a dict (truthy) even
+        when its ``total`` is 0.
+        """
+        if CONFIG.is_live():
+            bal = await self.get_user_live_equity(user_id)
+            if bal:
+                return float(bal.get("total", 0.0) or 0.0), "live"
+            return None, "unavailable"
+        portfolio = self.user_portfolios.get(user_id) if user_id else self.portfolio
+        return portfolio.snapshot().equity_usd, "paper"
+
+    def resolve_display_equity_sync(
+        self, user_id: str = ""
+    ) -> Tuple[Optional[float], str]:
+        """Sync counterpart of :meth:`resolve_display_equity` (cache-only).
+
+        For sync call sites (e.g. building the chat system prompt) that cannot
+        await a fresh fetch. In LIVE mode it reads the live-balance cache only;
+        an empty cache yields ``(None, "unavailable")`` rather than paper $10k.
+        """
+        if CONFIG.is_live():
+            if self._live_balance_cache:
+                return self._live_balance_cache.get("total", 0.0), "live"
+            return None, "unavailable"
+        portfolio = self.user_portfolios.get(user_id) if user_id else self.portfolio
+        return portfolio.snapshot().equity_usd, "paper"
 
     # -- C2-34: Combined State Persistence --
 
