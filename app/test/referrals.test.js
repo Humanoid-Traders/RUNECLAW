@@ -91,3 +91,23 @@ test('/referrals requires auth', async () => {
   const r = await req('GET', '/api/auth/referrals');
   assert.strictEqual(r.status, 401);
 });
+
+test('reward tier advances with referral count', async () => {
+  const a = await reg();
+  // Zero referrals → Starter tier, next milestone is Connector at 1.
+  let refs = await req('GET', '/api/auth/referrals', { token: a.data.token });
+  assert.strictEqual(refs.data.count, 0);
+  assert.strictEqual(refs.data.tier.name, 'Starter');
+  assert.strictEqual(refs.data.tier.index, 0);
+  assert.strictEqual(refs.data.next.name, 'Connector');
+  assert.strictEqual(refs.data.next.at, 1);
+  assert.strictEqual(refs.data.next.remaining, 1);
+
+  // One friend joins → Connector tier, next is Advocate at 3 (2 to go).
+  await reg({ ref: a.data.referral_code });
+  refs = await req('GET', '/api/auth/referrals', { token: a.data.token });
+  assert.strictEqual(refs.data.count, 1);
+  assert.strictEqual(refs.data.tier.name, 'Connector');
+  assert.strictEqual(refs.data.next.name, 'Advocate');
+  assert.strictEqual(refs.data.next.remaining, 2);
+});
