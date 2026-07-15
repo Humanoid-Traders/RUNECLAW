@@ -15,6 +15,7 @@ const express = require('express');
 const { pool } = require('../db');
 const { authMiddleware } = require('../auth');
 const creds = require('../lib/creds_crypto');
+const { isVenue, venueFields } = require('../lib/venues');
 const { rateLimit, userKey } = require('../lib/rate_limit');
 
 const router = express.Router();
@@ -46,13 +47,16 @@ router.get('/status', async (req, res) => {
     const uid = req.user.user_id;
     const u = await _userRow(uid);
     const [st] = await pool.execute(
-      'SELECT connected FROM exchange_status WHERE user_id = ?', [uid]);
+      'SELECT connected, exchange FROM exchange_status WHERE user_id = ?', [uid]);
     const [pend] = await pool.execute(
-      'SELECT action FROM pending_credentials WHERE user_id = ?', [uid]);
+      'SELECT action, exchange FROM pending_credentials WHERE user_id = ?', [uid]);
     res.json({
       linked: !!(u && u.telegram_linked),
       connected: st.length > 0 ? !!st[0].connected : false,
+      // Which venue is connected / being applied, so the UI can label it.
+      venue: st.length > 0 ? (st[0].exchange || 'bitget') : null,
       pending: pend.length > 0 ? pend[0].action : null,
+      pending_venue: pend.length > 0 ? (pend[0].exchange || 'bitget') : null,
       crypto_ready: creds.isConfigured(),
     });
   } catch (err) {
@@ -61,7 +65,9 @@ router.get('/status', async (req, res) => {
   }
 });
 
-// POST /api/credentials  body: { api_key, api_secret, passphrase }
+// POST /api/credentials  body: { venue?, ...venue-specific fields }
+//   bitget:      { api_key, api_secret, passphrase }
+//   hyperliquid: { wallet_address, agent_private_key }
 router.post('/', credLimit, async (req, res) => {
   try {
     if (!creds.isConfigured()) {
@@ -72,28 +78,35 @@ router.post('/', credLimit, async (req, res) => {
     if (!u || !u.telegram_linked || !u.telegram_id) {
       return res.status(409).json({ error: 'telegram_required', detail: 'Live trading and exchange keys require a linked Telegram account. Paper trading works without it.' });
     }
-    const { api_key, api_secret, passphrase } = req.body || {};
-    if (!api_key || !api_secret || !passphrase) {
-      return res.status(400).json({ error: 'api_key, api_secret and passphrase are required.' });
+    const body = req.body || {};
+    const venue = String(body.venue || 'bitget').toLowerCase();
+    if (!isVenue(venue)) {
+      return res.status(400).json({ error: 'Unknown venue.' });
     }
-    if ([api_key, api_secret, passphrase].some(v => typeof v !== 'string' || v.length > MAX_FIELD)) {
-      return res.status(400).json({ error: 'Credential fields are malformed or too long.' });
+    // Collect exactly the venue's required fields; reject missing/malformed.
+    const fields = venueFields(venue);
+    const plain = { venue };
+    for (const f of fields) {
+      const v = body[f];
+      if (!v || typeof v !== 'string' || v.length > MAX_FIELD) {
+        return res.status(400).json({ error: `Missing or malformed field: ${f}.` });
+      }
+      plain[f] = String(v);
     }
-    // Encrypt the secret material at rest immediately. Never logged.
-    const payload = creds.encryptJSON({
-      api_key: String(api_key), api_secret: String(api_secret),
-      passphrase: String(passphrase),
-    });
+    // Encrypt the secret material at rest immediately (venue rides along so the
+    // bot's pull imports it into the right venue). Never logged.
+    const payload = creds.encryptJSON(plain);
     await pool.execute(
       `INSERT INTO pending_credentials (user_id, telegram_id, exchange, action, encrypted_payload)
-       VALUES (?, ?, 'bitget', 'connect', ?)
+       VALUES (?, ?, ?, 'connect', ?)
        ON DUPLICATE KEY UPDATE telegram_id = VALUES(telegram_id),
-         action = 'connect', encrypted_payload = VALUES(encrypted_payload),
+         exchange = VALUES(exchange), action = 'connect',
+         encrypted_payload = VALUES(encrypted_payload),
          created_at = CURRENT_TIMESTAMP`,
-      [uid, String(u.telegram_id), payload]
+      [uid, String(u.telegram_id), venue, payload]
     );
-    secLog('exchange_connect_submitted', req);
-    res.json({ ok: true, pending: 'connect' });
+    secLog('exchange_connect_submitted', req, `venue=${venue}`);
+    res.json({ ok: true, pending: 'connect', venue });
   } catch (err) {
     console.error('Cred submit error:', err.message); // never logs the body
     res.status(500).json({ error: 'Failed to submit credentials' });
@@ -106,12 +119,17 @@ router.delete('/', credLimit, async (req, res) => {
     const uid = req.user.user_id;
     const u = await _userRow(uid);
     const tg = u && u.telegram_id ? String(u.telegram_id) : '';
+    // Preserve the connected venue on the disconnect row (cosmetic — the bot's
+    // store.delete is venue-agnostic, but this keeps the status label honest).
+    const [st] = await pool.execute(
+      'SELECT exchange FROM exchange_status WHERE user_id = ?', [uid]);
+    const venue = st.length > 0 ? (st[0].exchange || 'bitget') : 'bitget';
     await pool.execute(
       `INSERT INTO pending_credentials (user_id, telegram_id, exchange, action, encrypted_payload)
-       VALUES (?, ?, 'bitget', 'disconnect', NULL)
-       ON DUPLICATE KEY UPDATE action = 'disconnect', encrypted_payload = NULL,
-         created_at = CURRENT_TIMESTAMP`,
-      [uid, tg]
+       VALUES (?, ?, ?, 'disconnect', NULL)
+       ON DUPLICATE KEY UPDATE exchange = VALUES(exchange), action = 'disconnect',
+         encrypted_payload = NULL, created_at = CURRENT_TIMESTAMP`,
+      [uid, tg, venue]
     );
     secLog('exchange_disconnect_requested', req);
     res.json({ ok: true, pending: 'disconnect' });

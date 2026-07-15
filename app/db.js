@@ -82,12 +82,13 @@ class MemoryDB {
 
     // -- PENDING CREDENTIALS / EXCHANGE STATUS --
     if (cmd.includes('INSERT INTO PENDING_CREDENTIALS')) {
-      // params: user_id, telegram_id, [encrypted_payload] — action is a literal
-      // in the SQL ('connect'/'disconnect'). UPSERT by user_id.
+      // params: user_id, telegram_id, exchange(venue), [encrypted_payload] —
+      // action is a literal in the SQL ('connect'/'disconnect'). UPSERT by user_id.
       const action = cmd.includes("'DISCONNECT'") ? 'disconnect' : 'connect';
       const row = {
-        user_id: params[0], telegram_id: params[1], exchange: 'bitget', action,
-        encrypted_payload: action === 'disconnect' ? null : params[2],
+        user_id: params[0], telegram_id: params[1],
+        exchange: params[2] || 'bitget', action,
+        encrypted_payload: action === 'disconnect' ? null : params[3],
         created_at: new Date(),
       };
       const i = this.pendingCreds.findIndex(p => p.user_id === row.user_id);
@@ -106,12 +107,13 @@ class MemoryDB {
       return [[...this.pendingCreds].sort((a, b) => a.created_at - b.created_at), []];
     }
     if (cmd.includes('INSERT INTO EXCHANGE_STATUS')) {
-      this.exchangeStatus[params[0]] = { connected: !!params[1] };
+      // params: user_id, exchange(venue), connected
+      this.exchangeStatus[params[0]] = { exchange: params[1] || 'bitget', connected: !!params[2] };
       return [{ affectedRows: 1 }, []];
     }
     if (cmd.includes('FROM EXCHANGE_STATUS')) {
       const s = this.exchangeStatus[params[0]];
-      return [s ? [{ connected: s.connected }] : [], []];
+      return [s ? [{ connected: s.connected, exchange: s.exchange || 'bitget' }] : [], []];
     }
 
     // -- PENDING CONTROLS / USER CONTROLS --

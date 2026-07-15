@@ -5,6 +5,7 @@ const crypto = require('crypto');
 const { pool } = require('./db');
 const mailer = require('./lib/mailer');
 const oauth2 = require('./lib/oauth2');
+const { VENUES } = require('./lib/venues');
 
 const router = express.Router();
 
@@ -427,6 +428,9 @@ router.get('/config', (_req, res) => {
       discord: process.env.SOCIAL_DISCORD_URL || null,
       telegram: process.env.SOCIAL_TELEGRAM_URL || 'https://t.me/HTRUNECLAW_bot',
     },
+    // Connectable exchange venues + their field specs, so the Account UI renders
+    // the right connect form per venue (public: field names/types, no secrets).
+    venues: VENUES,
   });
 });
 
