@@ -66,3 +66,7 @@ if [ ! -e "$PERSIST_DIR/.env" ]; then
 fi
 
 echo "Done. .env and data/ now survive redeploys."
+echo ""
+echo "  ✔  Secrets vault active: the bot mirrors operator keys (encrypted) into"
+echo "     data/secrets_vault.enc and restores them if .env is ever wiped — so"
+echo "     long as data/ persists (which it now does), a wiped .env self-heals."
