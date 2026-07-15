@@ -38,7 +38,9 @@ function startMockGateway() {
         };
         seen.push(record);
         res.setHeader('Content-Type', 'application/json');
-        if (req.url === '/gateway/chat') {
+        if (req.url === '/gateway/chat/public') {
+          res.end(JSON.stringify({ reply_html: 'public pong', intent: 'chat' }));
+        } else if (req.url === '/gateway/chat') {
           res.end(JSON.stringify({ reply_html: 'pong', intent: 'chat' }));
         } else if (req.url.startsWith('/gateway/chat/history')) {
           res.end(JSON.stringify({ messages: [] }));
@@ -118,6 +120,7 @@ test.before(async () => {
   const app = express();
   app.use(express.json());
   app.use('/api/chat', require('../routes/chat'));
+  app.use('/api/public/chat', require('../routes/public_chat'));
   app.use('/api/trade', require('../routes/webtrade'));
   app.use('/api/portfolio', require('../routes/portfolio'));
   app.use('/api/controls', require('../routes/controls'));
@@ -199,6 +202,26 @@ test('chat forwards with server-side telegram_id and secret', async () => {
 
 test('chat rejects empty text', async () => {
   const r = await request('POST', '/api/chat', { token: signLinked, body: {} });
+  assert.strictEqual(r.status, 400);
+});
+
+test('public chat works with NO auth and forwards only { text }', async () => {
+  seen.length = 0;
+  const r = await request('POST', '/api/public/chat', { body: { text: 'what is runeclaw?' } });
+  assert.strictEqual(r.status, 200);
+  assert.strictEqual(r.data.reply_html, 'public pong');
+  assert.strictEqual(seen.length, 1);
+  assert.strictEqual(seen[0].url, '/gateway/chat/public');
+  assert.strictEqual(seen[0].secret, process.env.WEB_GATEWAY_SECRET);
+  // No identity crosses to the bot — the body carries ONLY the text.
+  assert.deepStrictEqual(seen[0].body, { text: 'what is runeclaw?' });
+  assert.strictEqual(seen[0].body.telegram_id, undefined);
+});
+
+test('public chat rejects empty and oversized text', async () => {
+  let r = await request('POST', '/api/public/chat', { body: {} });
+  assert.strictEqual(r.status, 400);
+  r = await request('POST', '/api/public/chat', { body: { text: 'x'.repeat(2001) } });
   assert.strictEqual(r.status, 400);
 });
 

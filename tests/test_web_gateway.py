@@ -103,7 +103,7 @@ class FakeHandler:
         self.registry = SimpleNamespace(get=lambda name: (skills or {}).get(name))
         self.conversations = FakeConvos()
         self._allowlist = set(map(str, allowlist))
-        self.llm_calls = []  # (question, user_id, is_admin)
+        self.llm_calls = []  # (question, user_id, is_admin, public)
 
     def _allowlist_ids(self):
         return self._allowlist
@@ -111,8 +111,9 @@ class FakeHandler:
     def _can_trade_live(self, tg):
         return self.users.can_trade_live(tg)
 
-    async def _llm_chat(self, q, user_id="", user_name="", is_admin=False):
-        self.llm_calls.append((q, user_id, is_admin))
+    async def _llm_chat(self, q, user_id="", user_name="", is_admin=False,
+                        public=False):
+        self.llm_calls.append((q, user_id, is_admin, public))
         return "llm answer"
 
 
@@ -227,7 +228,7 @@ async def test_chat_passes_real_admin_flag_to_llm(monkeypatch):
         r = await c.post("/chat", json={"telegram_id": "99", "text": "hello there"},
                          headers=HDRS)
         assert r.status == 200
-    admin_flags = {uid: is_admin for _, uid, is_admin in handler.llm_calls}
+    admin_flags = {uid: is_admin for _, uid, is_admin, _pub in handler.llm_calls}
     assert admin_flags == {"7": False, "99": True}
 
 
@@ -538,3 +539,71 @@ async def test_portfolio_requires_identity(monkeypatch):
     async with gateway_client(FakeEngine(), FakeHandler(users={})) as c:
         r = await c.get("/portfolio", headers=HDRS)
         assert r.status == 400
+
+
+# ── Public (anonymous) chat: account-free, LLM-only ─────────────────────────
+#
+# The security invariant: /chat/public accepts ONLY {text}, never provisions a
+# user, never dispatches a skill, never creates a pending trade, and always
+# calls _llm_chat with public=True, user_id="", is_admin=False — so no account
+# data or trade action is reachable no matter what the anonymous client sends.
+
+async def test_public_chat_llm_only_no_account_no_registration(monkeypatch):
+    monkeypatch.setattr(ug, "_GATEWAY_SECRET", SECRET)
+    # A skill + a matching intent are wired: the public path must IGNORE both.
+    handler = FakeHandler(users={},
+                          intent=FakeIntent("get_portfolio", 1.0),
+                          skills={"get_portfolio": FakeSkill()},
+                          allowlist=["1"])  # allowlist must be irrelevant here
+    engine = FakeEngine()
+    async with gateway_client(engine, handler) as c:
+        r = await c.post("/chat/public", json={"text": "what is runeclaw?"},
+                         headers=HDRS)
+        assert r.status == 200
+        data = await r.json()
+        assert data == {"reply_html": "llm answer", "intent": "chat"}
+    # LLM was called in public mode, anonymously, non-admin.
+    assert handler.llm_calls == [("what is runeclaw?", "", False, True)]
+    # No user was ever provisioned, and nothing was dispatched/stored.
+    assert handler.users.register_calls == []
+    assert handler.conversations.appended == []
+    assert engine.confirm_calls == []
+
+
+async def test_public_chat_ignores_trade_text(monkeypatch):
+    monkeypatch.setattr(ug, "_GATEWAY_SECRET", SECRET)
+    handler = FakeHandler(users={})
+    engine = FakeEngine()
+    async with gateway_client(engine, handler) as c:
+        r = await c.post("/chat/public",
+                         json={"text": "buy SOL 71 sl 70 tp 76"}, headers=HDRS)
+        assert r.status == 200
+        data = await r.json()
+        # Trade-shaped text is treated as an ordinary question — NO pending trade.
+        assert "pending_trade" not in data
+        assert data["intent"] == "chat"
+    assert engine._pending_ideas == {}
+    assert handler.llm_calls[0][3] is True  # public=True
+
+
+async def test_public_chat_validates_text(monkeypatch):
+    monkeypatch.setattr(ug, "_GATEWAY_SECRET", SECRET)
+    handler = FakeHandler(users={})
+    async with gateway_client(FakeEngine(), handler) as c:
+        r = await c.post("/chat/public", json={}, headers=HDRS)
+        assert r.status == 400
+        assert (await r.json())["error"] == "text required"
+        r = await c.post("/chat/public", json={"text": "x" * 2001}, headers=HDRS)
+        assert r.status == 400
+        assert (await r.json())["error"] == "message too long"
+    assert handler.llm_calls == []
+
+
+async def test_public_chat_still_requires_service_secret(monkeypatch):
+    monkeypatch.setattr(ug, "_GATEWAY_SECRET", SECRET)
+    async with gateway_client(FakeEngine(), FakeHandler(users={})) as c:
+        r = await c.post("/chat/public", json={"text": "hi"},
+                         headers={"X-Gateway-Secret": "x" * 32})
+        assert r.status == 403
+        r2 = await c.post("/chat/public", json={"text": "hi"})
+        assert r2.status == 403

@@ -9,6 +9,12 @@
   'use strict';
   const { LOGGED_IN, fetchJSON, esc, fmt, sanitizeBotHtml, toast, modalA11y } = window.RC;
 
+  // Anonymous visitors (landing page, not signed in) get the SAME drawer wired
+  // to the account-free public endpoint: general market/product Q&A only, no
+  // history, no portfolio, no trade cards. Signed-in users keep the full path.
+  const PUBLIC = !LOGGED_IN;
+  const ENDPOINT = PUBLIC ? '/api/public/chat' : '/api/chat';
+
   const fab = document.getElementById('chatFab');
   const drawer = document.getElementById('chatDrawer');
   const body = document.getElementById('chatBody');
@@ -90,6 +96,13 @@
 
   async function hydrate() {
     hydrated = true;
+    if (PUBLIC) {
+      // Anonymous: no server-side history (nothing is stored). Just a welcome.
+      if (!body.children.length) {
+        appendMsg('bot', 'Hey — I\'m <b>RUNECLAW</b>, the AI trading agent. Ask me anything about crypto, markets, or how RUNECLAW works. <b>Sign in</b> and connect an exchange to unlock live scans and your own portfolio.');
+      }
+      return;
+    }
     const r = await fetchJSON('/api/chat/history?limit=30').catch(() => null);
     if (r && r.ok && r.data?.messages?.length) {
       r.data.messages.forEach(m => {
@@ -103,7 +116,12 @@
 
   // Suggestion chips — quick prompts that mirror the Telegram quick actions.
   // Shown when the conversation is fresh; hidden once the user is chatting.
-  const CHIP_PROMPTS = [
+  // Anonymous visitors get market/education prompts only (no account actions).
+  const CHIP_PROMPTS = PUBLIC ? [
+    'What is RUNECLAW?', 'How does it manage risk?',
+    'What is a liquidity sweep?', 'How does leverage work?',
+    'Which exchanges are supported?',
+  ] : [
     'Scan the market', 'Show my positions', "What's my risk?",
     "How's my PnL?", 'Analyze BTC',
   ];
@@ -153,7 +171,7 @@
     busy = true;
     sendBtn.disabled = true;
     try {
-      const r = await fetchJSON('/api/chat', { method: 'POST', body: { text }, timeoutMs: 50000 });
+      const r = await fetchJSON(ENDPOINT, { method: 'POST', body: { text }, timeoutMs: 50000 });
       typing.remove();
       if (r.status === 429) appendFailure('Rate limit hit — give it a few seconds.', text);
       else if (r.status === 503) appendMsg('bot', 'Chat isn\'t configured on this deployment yet.');
@@ -169,10 +187,17 @@
     }
   }
 
-  // Availability: any logged-in user gets the FAB; hide only when the
-  // deployment has no gateway configured (503) or the user isn't authed.
+  // Availability:
+  //  - Anonymous visitors get the FAB unconditionally (the public endpoint is
+  //    a POST — there's nothing cheap to probe; a 503 surfaces on first send).
+  //  - Signed-in users get it unless the deployment has no gateway (503) or the
+  //    session isn't valid (401).
   async function init() {
-    if (!LOGGED_IN) return;
+    if (PUBLIC) {
+      fab.classList.remove('hidden');
+      fab.hidden = false;
+      return;
+    }
     const r = await fetchJSON('/api/chat/history?limit=1').catch(() => null);
     if (r && (r.status === 503 || r.status === 401)) return;
     fab.classList.remove('hidden');
