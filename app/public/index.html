@@ -217,6 +217,15 @@
 <script>
 const API='/api';
 let SESSION=null;
+// Invite link capture: ?ref=CODE credits the friend who invited you. Persisted
+// so it survives an OAuth round-trip (Google/Telegram sign-in redirects).
+const REF=(new URLSearchParams(location.search).get('ref')||localStorage.getItem('rc_ref')||'').trim().slice(0,32);
+if(REF){
+  try{localStorage.setItem('rc_ref',REF);}catch(e){}
+  // Warm welcome for invited visitors (the #step-register markup is above this script).
+  const _rs=document.getElementById('step-register');
+  if(_rs){const _n=document.createElement('p');_n.className='muted small';_n.style.marginBottom='var(--s2)';_n.textContent='🎁 A friend invited you — create your account to get started.';_rs.insertBefore(_n,_rs.firstChild);}
+}
 function switchTab(t){
   const isReg = t==='register';
   document.getElementById('tab-register').classList.toggle('active',isReg);
@@ -253,8 +262,9 @@ async function doRegister(){
   if(!email||!pass){setErr('reg-err','Email and password required.');return;}
   if(pass!==pass2){setErr('reg-err','Passwords do not match.');return;}
   if(pass.length<10){setErr('reg-err','Password must be at least 10 characters.');return;}
-  const res=await apiCall('/auth/register',{email,password:pass});
+  const res=await apiCall('/auth/register',{email,password:pass,ref:REF});
   if(res.error){setErr('reg-err',res.error);return;}
+  try{localStorage.removeItem('rc_ref');}catch(e){}  // consumed
   SESSION=res;showAccount(res);
 }
 async function doLogin(){

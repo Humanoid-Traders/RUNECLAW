@@ -181,7 +181,7 @@ async function getUserEquity(userId) {
 // callback's provider/linked markers).
 async function sessionResponse(user, extra = {}) {
   const [rows] = await pool.execute(
-    'SELECT id, email, plan, telegram_linked, email_verified FROM users WHERE id = ?',
+    'SELECT id, email, plan, telegram_linked, email_verified, referral_code FROM users WHERE id = ?',
     [user.id]);
   const u = rows[0] || user;
   const token = signToken({ id: u.id, email: u.email });
@@ -189,8 +189,15 @@ async function sessionResponse(user, extra = {}) {
   return {
     token, user_id: u.id, email: u.email, plan: u.plan || 'free',
     telegram_linked: !!u.telegram_linked, email_verified: !!u.email_verified,
+    referral_code: u.referral_code || null,
     equity, ...extra,
   };
+}
+
+// A short, URL-safe, non-enumerable invite code (8 chars). Random rather than
+// derived from the user id so a code never leaks the account id or count.
+function genReferralCode() {
+  return crypto.randomBytes(6).toString('base64url');
 }
 
 // -- Account-management helpers (email verification + password reset) --
@@ -244,7 +251,7 @@ router.post('/register', async (req, res) => {
     }
     recordAttempt(clientIp);
 
-    const { email, password } = req.body;
+    const { email, password, ref } = req.body;
     if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
     // Validate email format
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ error: 'Invalid email format' });
@@ -257,6 +264,27 @@ router.post('/register', async (req, res) => {
       [normalizedEmail, hash]
     );
     const userId = result.insertId;
+
+    // Invite / referral bookkeeping. Best-effort — a referral hiccup must never
+    // fail account creation. Mint this user's own share code, and if they
+    // arrived via a valid ?ref= code, credit the referrer (self-referral and
+    // unknown codes are ignored).
+    try {
+      await pool.execute('UPDATE users SET referral_code = ? WHERE id = ?',
+        [genReferralCode(), userId]);
+      const refCode = typeof ref === 'string' ? ref.trim() : '';
+      if (refCode) {
+        const [refRows] = await pool.execute(
+          'SELECT id FROM users WHERE referral_code = ?', [refCode]);
+        const referrerId = refRows[0] && refRows[0].id;
+        if (referrerId && referrerId !== userId) {
+          await pool.execute('UPDATE users SET referred_by = ? WHERE id = ?',
+            [referrerId, userId]);
+        }
+      }
+    } catch (e) {
+      console.error('Referral bookkeeping failed:', e.message);
+    }
 
     // Best-effort verification email (no-op when SMTP unconfigured). Fired
     // before responding so the token is persisted; never blocks on delivery
@@ -314,17 +342,38 @@ router.post('/login', async (req, res) => {
 
 router.get('/me', authMiddleware, async (req, res) => {
   try {
-    const [rows] = await pool.execute('SELECT id, email, plan, telegram_linked, email_verified, password_hash FROM users WHERE id = ?', [req.user.user_id]);
+    const [rows] = await pool.execute('SELECT id, email, plan, telegram_linked, email_verified, password_hash, referral_code FROM users WHERE id = ?', [req.user.user_id]);
     if (rows.length === 0) return res.status(404).json({ error: 'User not found' });
     const user = rows[0];
     const equity = await getUserEquity(user.id);
     res.json({ user_id: user.id, email: user.email, plan: user.plan,
                telegram_linked: !!user.telegram_linked,
                email_verified: !!user.email_verified,
+               referral_code: user.referral_code || null,
                has_password: !!user.password_hash, equity });
   } catch (err) {
     console.error('Me error:', err.message);
     res.status(500).json({ error: 'Failed to fetch user' });
+  }
+});
+
+// Invite friends — the caller's own share code + how many signed up with it.
+// Back-fills a code for accounts created before referrals existed.
+router.get('/referrals', authMiddleware, async (req, res) => {
+  try {
+    const uid = req.user.user_id;
+    const [rows] = await pool.execute('SELECT referral_code FROM users WHERE id = ?', [uid]);
+    if (rows.length === 0) return res.status(404).json({ error: 'User not found' });
+    let code = rows[0].referral_code;
+    if (!code) {
+      code = genReferralCode();
+      await pool.execute('UPDATE users SET referral_code = ? WHERE id = ?', [code, uid]);
+    }
+    const [joined] = await pool.execute('SELECT id FROM users WHERE referred_by = ?', [uid]);
+    res.json({ code, count: joined.length });
+  } catch (err) {
+    console.error('Referrals error:', err.message);
+    res.status(500).json({ error: 'Failed to load referrals' });
   }
 });
 
