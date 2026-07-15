@@ -33,7 +33,7 @@
       // makes the rest of the page inert, traps Tab, and focuses the input.
       a11y.open(input);
       fab.classList.add('hidden'); fab.hidden = true;
-      if (!hydrated) hydrate();
+      if (!hydrated) hydrate().then(renderChips); else renderChips();
     } else {
       drawer.classList.add('hidden'); drawer.hidden = true;
       fab.classList.remove('hidden'); fab.hidden = false;
@@ -101,6 +101,29 @@
     }
   }
 
+  // Suggestion chips — quick prompts that mirror the Telegram quick actions.
+  // Shown when the conversation is fresh; hidden once the user is chatting.
+  const CHIP_PROMPTS = [
+    'Scan the market', 'Show my positions', "What's my risk?",
+    "How's my PnL?", 'Analyze BTC',
+  ];
+  const chipsEl = document.getElementById('chatChips');
+  function hideChips() { if (chipsEl) chipsEl.innerHTML = ''; }
+  function renderChips() {
+    if (!chipsEl) return;
+    // Only offer chips on an essentially-empty conversation (welcome only).
+    if (body.querySelector('.chat-msg.user')) { hideChips(); return; }
+    chipsEl.innerHTML = '';
+    CHIP_PROMPTS.forEach((p) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'chip chat-chip';
+      b.textContent = p;
+      b.addEventListener('click', () => { send(p); });
+      chipsEl.appendChild(b);
+    });
+  }
+
   // Append a bot error bubble with a one-tap Retry, and restore the user's
   // text to the composer so a failed turn never loses what they typed.
   function appendFailure(html, text) {
@@ -122,7 +145,11 @@
     const text = isRetry ? retryText : input.value.trim();
     if (!text) return;
     if (!isRetry) { input.value = ''; appendMsg('user', text); }
-    const typing = appendMsg('bot', 'Thinking…', 'pending');
+    // Animated typing indicator (three-dot) instead of a static "Thinking…".
+    const typing = appendMsg('bot',
+      '<span class="typing-dots" aria-label="Assistant is typing"><span></span><span></span><span></span></span>',
+      'pending');
+    hideChips();
     busy = true;
     sendBtn.disabled = true;
     try {
