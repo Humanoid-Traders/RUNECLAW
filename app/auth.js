@@ -162,6 +162,29 @@ async function getUserEquity(userId) {
   return 10000 + parseFloat(rows[0].total_pnl || 0);
 }
 
+// The single place that turns a user into the session JSON the SPA stores after
+// ANY successful auth — register, login, Telegram/Google widget, OAuth callback.
+// Each of those used to hand-build this object and had drifted: telegram_linked
+// was hardcoded `false` by register/google, `true` by telegram, and OMITTED
+// entirely by the OAuth callback — so a Google/Discord user who HAD linked
+// Telegram looked unlinked to the app (and lost access to live controls). Always
+// read the authoritative flags back from the row so every entry point agrees.
+// `extra` carries per-route additions (register's email_pending, the OAuth
+// callback's provider/linked markers).
+async function sessionResponse(user, extra = {}) {
+  const [rows] = await pool.execute(
+    'SELECT id, email, plan, telegram_linked, email_verified FROM users WHERE id = ?',
+    [user.id]);
+  const u = rows[0] || user;
+  const token = signToken({ id: u.id, email: u.email });
+  const equity = await getUserEquity(u.id);
+  return {
+    token, user_id: u.id, email: u.email, plan: u.plan || 'free',
+    telegram_linked: !!u.telegram_linked, email_verified: !!u.email_verified,
+    equity, ...extra,
+  };
+}
+
 // -- Account-management helpers (email verification + password reset) --
 
 // Tokens are stored HASHED in the DB; only the raw token travels in the email
@@ -227,15 +250,12 @@ router.post('/register', async (req, res) => {
     );
     const userId = result.insertId;
 
-    const token = signToken({ id: userId, email: normalizedEmail });
-    const equity = await getUserEquity(userId);
     // Best-effort verification email (no-op when SMTP unconfigured). Fired
     // before responding so the token is persisted; never blocks on delivery
     // errors (sendVerificationEmail swallows them).
     await sendVerificationEmail(userId, normalizedEmail);
-    res.json({ token, user_id: userId, email: normalizedEmail, plan: 'free',
-               telegram_linked: false, email_verified: false,
-               email_pending: mailer.isConfigured(), equity });
+    res.json(await sessionResponse({ id: userId, email: normalizedEmail },
+      { email_pending: mailer.isConfigured() }));
   } catch (err) {
     // Uniform response to prevent user enumeration (don't reveal ER_DUP_ENTRY)
     if (err.code === 'ER_DUP_ENTRY') return res.status(400).json({ error: 'Registration failed. Please try a different email.' });
@@ -277,11 +297,7 @@ router.post('/login', async (req, res) => {
 
     // Successful login — clear this account's failure counter.
     clearAccountFailures(normalizedEmail);
-    const token = signToken(user);
-    const equity = await getUserEquity(user.id);
-    res.json({ token, user_id: user.id, email: user.email, plan: user.plan,
-               telegram_linked: !!user.telegram_linked,
-               email_verified: !!user.email_verified, equity });
+    res.json(await sessionResponse(user));
   } catch (err) {
     console.error('Login error:', err.message);
     res.status(500).json({ error: 'Login failed' });
@@ -419,10 +435,7 @@ router.post('/telegram', async (req, res) => {
       provider: 'telegram', providerId: String(data.id).slice(0, 32),
       email: null, avatarUrl: data.photo_url,
     });
-    const token = signToken(user);
-    const equity = await getUserEquity(user.id);
-    res.json({ token, user_id: user.id, email: user.email, plan: user.plan || 'free',
-               telegram_linked: true, equity });
+    res.json(await sessionResponse(user));
   } catch (err) {
     console.error('Telegram auth error:', err.message);
     res.status(500).json({ error: 'Telegram login failed' });
@@ -449,10 +462,7 @@ router.post('/google', async (req, res) => {
       provider: 'google', providerId: String(info.sub),
       email: String(info.email).trim().toLowerCase(), avatarUrl: info.picture,
     });
-    const token = signToken(user);
-    const equity = await getUserEquity(user.id);
-    res.json({ token, user_id: user.id, email: user.email, plan: user.plan || 'free',
-               telegram_linked: false, equity });
+    res.json(await sessionResponse(user));
   } catch (err) {
     console.error('Google auth error:', err.message);
     res.status(500).json({ error: 'Google login failed' });
@@ -690,12 +700,9 @@ router.get('/oauth/:provider/callback', async (req, res) => {
     }
     if (!user) return fail('could not complete login');
 
-    const token = signToken(user);
-    const equity = await getUserEquity(user.id);
-    const payload = Buffer.from(JSON.stringify({
-      token, user_id: user.id, email: user.email, plan: user.plan || 'free',
-      equity, provider, linked: Boolean(flow.linkUserId),
-    })).toString('base64');
+    const payload = Buffer.from(JSON.stringify(
+      await sessionResponse(user, { provider, linked: Boolean(flow.linkUserId) })
+    )).toString('base64');
     res.redirect(`/#oauth=${payload}`);
   } catch (err) {
     console.error(`OAuth ${provider} callback error:`, err.message);
@@ -705,4 +712,5 @@ router.get('/oauth/:provider/callback', async (req, res) => {
 
 module.exports = {
   router, authMiddleware, verifyTelegramAuth, findOrCreateOAuthUser, sendVerificationEmail,
+  sessionResponse,
 };

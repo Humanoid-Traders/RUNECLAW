@@ -864,7 +864,7 @@
       const f = scan?.features;
       if (!f || !Object.keys(f).length) return null;
       const tiles = [];
-      if (f.venue) tiles.push(tile('Trading venue', esc(String(f.venue.name || f.venue.id).toUpperCase()), 'Bitget · Hyperliquid · Bybit · BingX adapters'));
+      if (f.venue) tiles.push(tile('Trading venue', esc(String(f.venue.name || f.venue.id).toUpperCase()), 'Live on Bitget USDT-M · Hyperliquid adapter available'));
       if (f.funding_clock) {
         const secs = Math.max(0, f.funding_clock.seconds_to_settlement || 0);
         tiles.push(tile(`Funding clock ${f.funding_clock.enabled ? '· gate on' : '· gate off'}`,
@@ -966,11 +966,48 @@
       if (linked) {
         return `<div class="section-note" style="border-style:solid;border-color:var(--up);color:var(--up)">
           <svg class="icon" aria-hidden="true"><use href="#icon-check"></use></svg>
-          Telegram linked — live trading and exchange keys are unlocked.</div>`;
+          Telegram linked — exchange-key management and your live controls are unlocked (going live still needs operator approval).</div>`;
       }
-      return `<p class="small" style="color:var(--text-2)">Paper trading and chat already work without Telegram. Linking your Telegram account unlocks <b>live trading</b> and <b>exchange-key management</b>, and gets you the bot's alerts in Telegram.</p>
-        <a class="btn btn--sm mt-3" href="/">Link Telegram on the account page →</a>`;
+      return `<p class="small" style="color:var(--text-2)">Paper trading and chat already work without Telegram. Linking unlocks <b>exchange-key management</b> and your <b>live-trading controls</b> (going live also needs operator approval), and sends the bot's alerts to your Telegram.</p>
+        <ol class="steps-list mt-2">
+          <li>Open <a href="https://t.me/HTRUNECLAW_bot" target="_blank" rel="noopener">@HTRUNECLAW_bot</a> on Telegram</li>
+          <li>Generate your personal link token below</li>
+          <li>Send the bot <code>/link &lt;token&gt;</code></li>
+        </ol>
+        <div class="row mt-3" style="gap:8px;flex-wrap:wrap">
+          <button class="btn btn--primary btn--sm" id="tgGenTok" type="button">Generate link token</button>
+          <a class="btn btn--ghost btn--sm" href="https://t.me/HTRUNECLAW_bot" target="_blank" rel="noopener">Open @HTRUNECLAW_bot ↗</a>
+        </div>
+        <div id="tgTokArea" class="mt-3" aria-live="polite"></div>`;
     }, { empty: { text: '' } });
+    // The link flow lives HERE now (it used to bounce the user back to the
+    // landing page): generate a 10-min token, show it with copy-to-clipboard and
+    // the exact /link command to paste into the bot.
+    container.addEventListener('click', async (e) => {
+      if (e.target.id === 'tgGenTok') {
+        const area = document.getElementById('tgTokArea');
+        e.target.disabled = true;
+        const r = await fetchJSON('/api/auth/link-token', { method: 'POST' }).catch(() => ({ ok: false }));
+        e.target.disabled = false;
+        if (!r.ok || !r.data?.token) {
+          area.innerHTML = `<span class="small" style="color:var(--down)">${esc(r.data?.error || 'Could not generate a token — try again.')}</span>`;
+          return;
+        }
+        const tok = String(r.data.token);
+        area.innerHTML = `<p class="muted small mb-1">Your link token (valid 10 min) — tap to copy:</p>
+          <div class="token-display" id="tgTok" role="button" tabindex="0" title="Copy">${esc(tok)}</div>
+          <p class="muted small mt-2">Send the bot: <code>/link ${esc(tok)}</code></p>`;
+      }
+      const tokEl = e.target.id === 'tgTok' ? e.target : e.target.closest?.('#tgTok');
+      if (tokEl) {
+        try {
+          await navigator.clipboard.writeText(tokEl.textContent.trim());
+          tokEl.classList.add('copied');
+          toast('Link token copied.');
+          setTimeout(() => tokEl.classList.remove('copied'), 1500);
+        } catch { /* clipboard blocked — the token is still visible to copy manually */ }
+      }
+    });
 
     renderPanel(C('akeys'), async () => {
       const r = await fetchJSON('/api/credentials/status');

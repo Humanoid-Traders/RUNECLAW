@@ -435,3 +435,10 @@ code { font-family: var(--font-data); font-size: .9em; background: var(--surface
 .row { display: flex; align-items: center; gap: var(--s3); flex-wrap: wrap; }
 .hidden { display: none !important; }
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+/* Telegram link token + steps — shared by the landing account card and the
+   dashboard Account panel (the dashboard's Telegram-link flow moved here from
+   the landing page, so these must live in the shared sheet, not inline). */
+.token-display { font-family: var(--font-data); font-size: var(--fs-base); letter-spacing: .06em; background: var(--bg); border: 1px dashed var(--gold); border-radius: var(--radius-sm); padding: var(--s3); text-align: center; cursor: pointer; word-break: break-all; }
+.token-display.copied { border-color: var(--up); color: var(--up); }
+.steps-list { margin: var(--s2) 0 0 18px; color: var(--text-2); font-size: var(--fs-sm); display: flex; flex-direction: column; gap: 6px; }
