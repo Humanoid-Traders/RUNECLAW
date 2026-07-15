@@ -136,7 +136,7 @@
         <section class="panel panel--primary" id="p-hero"><div id="c-hero"><div class="skel"></div><div class="skel"></div></div></section>
         <div class="grid grid-main">
           <section class="panel" id="p-hpos"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-coin"></use></svg>Open positions</h2><div id="c-hpos"><div class="skel"></div><div class="skel"></div></div></section>
-          <section class="panel" id="p-next"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-rocket"></use></svg>Next step</h2><div id="c-next"><div class="skel"></div></div></section>
+          <section class="panel" id="p-next"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-rocket"></use></svg>Getting started</h2><div id="c-next"><div class="skel"></div></div></section>
         </div>
         <section class="panel" id="p-hsig"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-radar"></use></svg>Latest engine signals</h2><div id="c-hsig"><div class="skel"></div><div class="skel"></div></div></section>
       </div>`);
@@ -191,16 +191,64 @@
         fetchJSON('/api/auth/me'), fetchJSON('/api/credentials/status'),
         fetchJSON('/api/controls/status'), getPortfolio(),
       ]);
+      // Every state comes from real endpoints — no invented progress.
+      const verified = !!me.data?.email_verified;
       const linked = !!me.data?.telegram_linked;
       const connected = !!creds.data?.connected;
+      const credsPending = creds.data?.pending === 'connect';
       const traded = (pf?.total_trades || 0) > 0 || (pf?.open_positions || []).length > 0;
-      let step;
-      if (!traded) step = { text: 'Place your first paper trade — real risk gate, zero risk.', cta: { label: 'Place a paper trade', href: '#trade' } };
-      else if (!linked) step = { text: 'Optional: link Telegram to unlock live trading and exchange keys.', cta: { label: 'Link Telegram', href: '/' } };
-      else if (!connected) step = { text: 'Connect your exchange keys (Bitget or Hyperliquid) to prepare live trading.', cta: { label: 'Connect exchange', href: '#account' } };
-      else if (!(ctl.data?.live_enabled && ctl.data?.allowlisted)) step = { text: 'Everything is connected. Live trading needs your toggle + operator approval.', cta: { label: 'Review live controls', href: '#account' } };
-      else step = { text: 'Fully set up. Watch the engine or manage your risk caps any time.', cta: { label: 'Open Engine telemetry', href: '#engine' } };
-      return `<p class="small mb-3" style="color:var(--text-2)">${esc(step.text)}</p><a class="btn btn--primary btn--sm" href="${step.cta.href}">${esc(step.cta.label)}</a>`;
+      const liveReady = !!(ctl.data?.live_enabled && ctl.data?.allowlisted);
+      const paused = !!ctl.data?.paused;
+
+      // Ordered onboarding ladder. `locked` steps can't be started until an
+      // earlier prerequisite is met (Go live needs connected keys).
+      const steps = [
+        { done: verified, label: 'Verify your email',
+          hint: 'Confirm your address to secure the account and enable recovery.',
+          cta: { label: 'Resend verification', href: '#account' } },
+        { done: traded, label: 'Place a paper trade',
+          hint: 'Real 23-check risk gate, zero risk — watch the engine execute.',
+          cta: { label: 'Open the trade ticket', href: '#trade' } },
+        { done: connected, pending: credsPending, label: 'Connect an exchange',
+          hint: 'Link Bitget, Bybit, BingX or Hyperliquid keys to prepare live trading.',
+          cta: { label: credsPending ? 'Finish connecting' : 'Connect exchange', href: '#account' } },
+        { done: linked, label: 'Link Telegram',
+          hint: 'Get trade alerts and chat with the agent from Telegram too.',
+          cta: { label: 'Link Telegram', href: '#account' } },
+        { done: liveReady, locked: !connected, label: 'Go live',
+          hint: liveReady ? 'Live trading is enabled for your account.'
+            : 'Needs connected keys, your live toggle, and operator approval.',
+          cta: { label: 'Review live controls', href: '#account' } },
+      ];
+      const doneN = steps.filter((s) => s.done).length;
+      const pct = Math.round(doneN / steps.length * 100);
+      const banner = paused
+        ? `<div class="onboard-banner mb-3">Trading is paused — everything routes to paper. <a href="#account">Resume in controls</a>.</div>`
+        : '';
+
+      // Fully set up: collapse to a compact confirmation so veterans aren't nagged.
+      if (doneN === steps.length) {
+        return `${banner}<div class="chk-done"><span class="chip chip--up">✓ All set</span>`
+          + `<p class="small" style="color:var(--text-2)">You're fully set up. Watch the engine or manage your risk caps any time.</p>`
+          + `<a class="btn btn--sm" href="#engine">Open Engine telemetry</a></div>`;
+      }
+
+      const rows = steps.map((s) => {
+        const status = s.done ? '<span class="chip chip--up">Done</span>'
+          : s.pending ? '<span class="chip chip--warn">Pending</span>'
+          : s.locked ? '<span class="chip chip--offline">Locked</span>'
+          : '<span class="chip chip--gold">To do</span>';
+        const cta = (!s.done && !s.locked)
+          ? `<a class="btn btn--sm" href="${s.cta.href}">${esc(s.cta.label)}</a>` : '';
+        return `<li class="chk-item${s.done ? ' is-done' : ''}">`
+          + `<div class="chk-head"><span class="chk-label">${esc(s.label)}</span>${status}</div>`
+          + `<div class="chk-hint">${esc(s.hint)}</div>${cta}</li>`;
+      }).join('');
+
+      return `${banner}`
+        + `<div class="chk-progress"><div class="chk-progressbar"><span style="width:${pct}%"></span></div>`
+        + `<span class="chk-progress-label">${doneN} of ${steps.length} · ${pct}%</span></div>`
+        + `<ol class="checklist">${rows}</ol>`;
     }, { empty: { text: 'All set.' } });
 
     renderPanel(C('hsig'), async () => {
