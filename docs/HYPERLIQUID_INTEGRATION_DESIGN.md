@@ -117,13 +117,16 @@ interface, never ccxt directly. **Acceptance: zero behavior change** — full
 test suite green, frozen benchmark reproduces the exact current numbers,
 `git diff` on trading outcomes is empty.
 
-**Phase 2 — credential-store schema generalization**
-Extend `exchange_credentials.py`'s encrypted store to hold a discriminated
-union: `{"exchange": "bitget", "key", "secret", "passphrase"}` vs
-`{"exchange": "hyperliquid", "wallet_address", "agent_private_key"}`. Encrypted
-at rest exactly as today (Fernet). `/connect` gains an exchange-select step.
-Still Bitget-only in practice — this phase just widens the schema so Phase 4
-doesn't need a migration.
+**Phase 2 — credential-store schema generalization** ✅ SHIPPED
+`exchange_credentials.py`'s encrypted store now holds a discriminated union by
+venue: Bitget `{api_key, api_secret, passphrase}` vs Hyperliquid
+`{wallet_address, agent_private_key}`, encrypted at rest as before (Fernet).
+Legacy flat records normalize to Bitget (no migration). `/connect hyperliquid
+<wallet_address> <agent_private_key>` and the web venue selector both work;
+the web→bot pull and the per-user `LiveExecutor` are venue-aware, so a
+Hyperliquid-connected user's executor builds a `ccxt.hyperliquid` client from
+their own wallet keys. Per-user live trading remains gated behind
+`PER_USER_LIVE_ENABLED` (nothing new trades until the operator flips it).
 
 **Phase 3 — `HyperliquidExchange` adapter, market-data only**
 Implement the read side of the interface (`fetch_ticker`, `fetch_ohlcv`,

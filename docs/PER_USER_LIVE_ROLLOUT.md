@@ -14,9 +14,28 @@ you approve users one at a time and everyone else stays paper-only.
    Enforced at execution in `engine.per_user_live_eligibility` (fail-closed: if
    the user store is unavailable, the trade is denied). Operators/admins are
    always allowed and trade the operator account.
-3. **Linked keys** — the user must have `/connect`ed their own valid Bitget keys
-   (encrypted at rest). Without them their live trade is rejected, never silently
-   placed on the operator account.
+3. **Linked keys** — the user must have `/connect`ed their own valid exchange
+   keys (encrypted at rest). Without them their live trade is rejected, never
+   silently placed on the operator account.
+
+### Connecting a venue (Bitget or Hyperliquid)
+
+Per-user connect is **multi-venue**. A user links exactly one venue at a time;
+their live executor is built for that venue.
+
+- **Bitget** — Telegram `/connect <api_key> <api_secret> <passphrase>`, or the
+  web Account → Exchange keys form (venue = Bitget). Needs USDT-M futures
+  read + trade permission; withdrawals disabled.
+- **Hyperliquid** — Telegram `/connect hyperliquid <wallet_address>
+  <agent_private_key>`, or the web form (venue = Hyperliquid). Use an **API
+  (agent) wallet** key, never the main wallet key.
+
+Both paths read-only-validate the keys (a balance probe) before storing, and the
+web submission is AES-256-GCM encrypted, pulled by the bot over the shared-secret
+channel, and re-stored in the bot's Fernet store keyed by Telegram id. The venue
+travels with the record end-to-end, so a Hyperliquid-connected user's executor
+builds a `ccxt.hyperliquid` client from their own wallet. Re-connecting a
+different venue rebuilds the executor on the new venue.
 
 The website trade path (`app/routes/webtrade.js` → bot gateway → `_can_trade_live`)
 routes through the **same** gate, so the bot and the web behave identically.
