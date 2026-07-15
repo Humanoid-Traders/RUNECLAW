@@ -864,7 +864,7 @@
       const f = scan?.features;
       if (!f || !Object.keys(f).length) return null;
       const tiles = [];
-      if (f.venue) tiles.push(tile('Trading venue', esc(String(f.venue.name || f.venue.id).toUpperCase()), 'Bitget · Hyperliquid · Bybit · BingX adapters'));
+      if (f.venue) tiles.push(tile('Trading venue', esc(String(f.venue.name || f.venue.id).toUpperCase()), 'Live on Bitget USDT-M · Hyperliquid adapter available'));
       if (f.funding_clock) {
         const secs = Math.max(0, f.funding_clock.seconds_to_settlement || 0);
         tiles.push(tile(`Funding clock ${f.funding_clock.enabled ? '· gate on' : '· gate off'}`,
