@@ -272,6 +272,24 @@ def test_bitget_create_exchange_missing_creds_raises():
                           sandbox=True, trade_mode="futures")
     with pytest.raises(RuntimeError, match="BITGET_API_KEY"):
         BG.create_exchange(cfg)
+
+
+def test_bitget_create_exchange_missing_passphrase_fails_loud():
+    # Key+secret present but NO passphrase: ccxt would otherwise build the client
+    # and throw a cryptic `bitget requires "password" credential` on the first
+    # private call (the live "auth FAILED / unprotected positions" incident).
+    # We fail loud at build time, naming the missing input.
+    cfg = SimpleNamespace(api_key="k", api_secret="s", passphrase="",
+                          sandbox=True, trade_mode="futures")
+    with pytest.raises(RuntimeError, match="BITGET_PASSPHRASE"):
+        BG.create_exchange(cfg)
+
+
+def test_bitget_per_user_missing_passphrase_points_to_connect():
+    cfg = SimpleNamespace(api_key="x", api_secret="x", passphrase="x",
+                          sandbox=True, trade_mode="futures")
+    with pytest.raises(RuntimeError, match="/connect"):
+        BG.create_exchange(cfg, {"api_key": "k", "api_secret": "s", "passphrase": ""})
     with pytest.raises(RuntimeError, match="/connect"):
         BG.create_exchange(cfg, credentials={"api_key": "", "api_secret": ""})
 

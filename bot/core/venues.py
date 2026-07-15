@@ -176,6 +176,20 @@ class BitgetVenue(Venue):
         if not api_key or not api_secret:
             raise RuntimeError(
                 self.missing_credentials_error(per_user=bool(credentials)))
+        # Bitget REQUIRES a passphrase ("password" credential). Without it ccxt
+        # builds the client fine but throws a cryptic `bitget requires "password"
+        # credential` on the FIRST private call — which surfaced as "exchange
+        # auth FAILED" at startup with unprotected live positions. Fail loud here
+        # with an actionable message instead (name the exact missing input).
+        if not passphrase:
+            if credentials:
+                raise RuntimeError(
+                    "Your linked Bitget account is missing its passphrase. "
+                    "Re-run /connect and include the API passphrase.")
+            raise RuntimeError(
+                "BITGET_PASSPHRASE is missing — Bitget rejects every request "
+                "without the API passphrase. Set it via the admin /setexchange "
+                "command (persists across .env wipes) or in .env, then restart.")
         is_futures = cfg.trade_mode == "futures"
         exchange = ccxt.bitget({
             "aiohttp_trust_env": True,  # honor HTTPS_PROXY/CA env (no-op without proxy)

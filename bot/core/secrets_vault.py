@@ -132,6 +132,54 @@ def _save_vault(cipher, plain: dict[str, str]) -> None:
     tmp.rename(p)
 
 
+def store_secrets(mapping: dict[str, str]) -> list[str]:
+    """Persist operator-supplied secrets ENCRYPTED in the vault and inject them
+    into the live process environment.
+
+    Unlike :func:`seed_and_restore` (which only mirrors what the environment
+    already has), this is the write path for an operator who supplies a secret
+    at runtime — e.g. the admin ``/setexchange`` command re-entering a Bitget
+    passphrase the wiped .env lost. Each value is:
+
+      1. written into ``os.environ`` so the CURRENT process can use it, and
+      2. encrypted into ``data/secrets_vault.enc`` so it survives the next
+         redeploy (as long as ``data/`` persists).
+
+    Blank/whitespace-only values are skipped. Returns the key NAMES stored
+    (never values). Best-effort: on any crypto/IO failure the env is still
+    updated (so the current process recovers) and the names are still returned;
+    persistence just doesn't happen. Never raises.
+    """
+    stored: list[str] = []
+    clean = {k: str(v).strip() for k, v in (mapping or {}).items() if str(v).strip()}
+    if not clean:
+        return stored
+    # Always update the live environment first — recovery of the running process
+    # must not depend on the vault being writable.
+    for k, v in clean.items():
+        os.environ[k] = v
+        stored.append(k)
+    try:
+        if not _enabled():
+            log.warning("secrets vault disabled — %d secret(s) set for THIS process "
+                        "only; they will NOT survive a redeploy", len(stored))
+            return stored
+        cipher = _cipher()
+        if cipher is None:
+            log.warning("secrets vault: no cipher — %d secret(s) set for THIS "
+                        "process only, not persisted", len(stored))
+            return stored
+        persisted = _load_vault(cipher)
+        persisted.update(clean)
+        _save_vault(cipher, persisted)
+        log.info("secrets vault: stored %d operator secret(s): %s",
+                 len(stored), ", ".join(stored))
+    except Exception as exc:  # pragma: no cover - persistence is best-effort
+        log.error("secrets vault: store_secrets persist failed (%s) — secrets are "
+                  "live for this process but not saved", exc)
+    return stored
+
+
 def seed_and_restore() -> dict[str, list[str]]:
     """Mirror present env secrets into the vault; restore absent ones from it.
 

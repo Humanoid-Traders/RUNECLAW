@@ -336,6 +336,8 @@ class TelegramHandler:
             # Per-user exchange BYOK (link your own Bitget account)
             ("connect", self._cmd_connect), ("disconnect", self._cmd_disconnect),
             ("exchange", self._cmd_exchange),
+            # Admin: repair the OPERATOR (engine) Bitget credentials → vault
+            ("setexchange", self._cmd_setexchange),
             # Confidence calibration (admin)
             ("calibration", self._cmd_calibration),
             # Deep scan & playbook
@@ -3544,6 +3546,104 @@ class TelegramHandler:
             "Your keys are encrypted at rest. Per-user live trading is not yet "
             "enabled — you'll be notified when it goes live. Use "
             "<code>/exchange</code> to review or <code>/disconnect</code> to remove.")
+
+    async def _cmd_setexchange(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """/setexchange <api_key> <api_secret> <passphrase> — ADMIN ONLY.
+
+        Repairs the OPERATOR (engine) Bitget credentials that the bot trades on.
+        This is the recovery path for a wiped .env that lost BITGET_PASSPHRASE —
+        the engine account then can't authenticate ("bitget requires password"),
+        leaving live positions unprotected. The keys are validated read-only,
+        stored ENCRYPTED in the secrets vault (survives future .env wipes), and
+        the operator exchange client is rebuilt live — no restart needed. The
+        message carrying the keys is deleted immediately. Places no orders."""
+        # Delete the secret-bearing message FIRST, before any gate can return.
+        try:
+            if update.message:
+                await update.message.delete()
+        except Exception as del_exc:
+            system_log.warning(
+                "Failed to delete /setexchange message with keys: %s", del_exc)
+
+        # Admin only — these are the OPERATOR keys the whole engine trades on.
+        if not self._is_admin(update):
+            return
+        # Private chat only: never accept secrets in a group.
+        if update.effective_chat and update.effective_chat.type != "private":
+            await self._send(update,
+                "⚠️ Send <code>/setexchange</code> in a <b>private chat</b> only.")
+            return
+
+        args = ctx.args or []
+        if len(args) != 3:
+            await self._send(update,
+                "<b>Set the operator (engine) Bitget credentials</b>\n\n"
+                "Recovers the account the bot trades on after a wiped .env.\n"
+                "<code>/setexchange &lt;api_key&gt; &lt;api_secret&gt; &lt;passphrase&gt;</code>\n\n"
+                "• Validated read-only, then <b>encrypted in the vault</b> "
+                "(survives future .env wipes).\n"
+                "• The engine client is rebuilt live — no restart.\n"
+                "• This message is deleted immediately.")
+            return
+
+        api_key, api_secret, passphrase = (
+            args[0].strip(), args[1].strip(), args[2].strip())
+
+        from bot.core.exchange_credentials import (
+            validate_bitget_credentials, basic_key_format_ok,
+        )
+        if not basic_key_format_ok(api_key, api_secret, passphrase):
+            await self._send(update,
+                "🔴 Those don't look like valid Bitget keys "
+                "(empty, contain spaces, or too short). Nothing was stored.")
+            return
+
+        await self._send(update,
+            "⏳ Validating the operator Bitget keys (read-only balance check)…")
+        ok, detail = await validate_bitget_credentials(
+            api_key, api_secret, passphrase, sandbox=CONFIG.exchange.sandbox)
+        if not ok:
+            await self._send(update,
+                "🔴 Could not authenticate with Bitget. Nothing was changed.\n"
+                f"<code>{html.escape(detail)}</code>")
+            return
+
+        # 1) Persist ENCRYPTED to the vault + inject into os.environ (so a future
+        #    redeploy restores them before CONFIG reads the environment).
+        try:
+            from bot.core.secrets_vault import store_secrets
+            store_secrets({
+                "BITGET_API_KEY": api_key,
+                "BITGET_API_SECRET": api_secret,
+                "BITGET_PASSPHRASE": passphrase,
+            })
+        except Exception as exc:
+            system_log.error("setexchange: vault store failed: %s", exc)
+
+        # 2) Hot-patch the live CONFIG (frozen dataclass) so every operator code
+        #    path sees the corrected creds without a restart, then drop the
+        #    cached operator exchange client so it rebuilds authenticated.
+        try:
+            _ex_cfg = CONFIG.exchange
+            object.__setattr__(_ex_cfg, "api_key", api_key)
+            object.__setattr__(_ex_cfg, "api_secret", api_secret)
+            object.__setattr__(_ex_cfg, "passphrase", passphrase)
+        except Exception as exc:
+            system_log.error("setexchange: CONFIG hot-patch failed: %s", exc)
+        try:
+            self.engine.live_executor._exchange = None
+            self.engine._invalidate_live_balance_cache()
+        except Exception as exc:
+            system_log.warning("setexchange: executor rebuild hint failed: %s", exc)
+
+        audit(system_log, "Admin set operator Bitget credentials via /setexchange",
+              action="setexchange", result="OK")
+        await self._send(update,
+            "🟢 <b>Operator Bitget credentials updated</b>\n\n"
+            f"Balance: {html.escape(detail)}\n\n"
+            "Stored <b>encrypted</b> in the vault (survives .env wipes) and the "
+            "engine client was rebuilt. Run <code>/start</code> — equity should "
+            "read live now, and open positions are protected again.")
 
     async def _cmd_disconnect(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """/disconnect — remove YOUR linked Bitget account credentials."""
