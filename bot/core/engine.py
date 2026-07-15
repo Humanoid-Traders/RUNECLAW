@@ -816,18 +816,23 @@ class RuneClawEngine:
             return self.live_executor
         try:
             from bot.core.exchange_credentials import get_credential_store
-            creds = get_credential_store().get(user_id)
+            _store = get_credential_store()
+            creds = _store.get(user_id)
+            venue = getattr(_store, "get_venue", lambda _u: "bitget")(user_id)
         except Exception as exc:
             logger.warning("Per-user executor: credential lookup failed for %s: %s "
                            "— using operator executor", user_id, exc)
             creds = None
+            venue = "bitget"
         if not creds:
             return self.live_executor
         key = str(user_id)
         ex = self._user_executors.get(key)
-        # Rebuild if absent or the user's api_key changed (e.g. re-/connect).
-        if ex is None or (ex._credentials or {}).get("api_key") != creds.get("api_key"):
-            ex = LiveExecutor(user_id=user_id, credentials=creds)
+        # Rebuild if absent or the user's credentials changed (e.g. re-/connect,
+        # or switched venue). Full-dict compare is venue-agnostic — Hyperliquid
+        # records have no api_key.
+        if ex is None or (ex._credentials or {}) != creds:
+            ex = LiveExecutor(user_id=user_id, credentials=creds, venue=venue)
             # Capture this user's id in the callback (default-arg avoids the
             # late-binding closure trap) so a per-user live close feeds THAT
             # user's risk engine, not the operator's (audit C1).
@@ -872,18 +877,22 @@ class RuneClawEngine:
             return self.live_executor
         try:
             from bot.core.exchange_credentials import get_credential_store
-            creds = get_credential_store().get(str(user_id))
+            _store = get_credential_store()
+            creds = _store.get(str(user_id))
+            venue = getattr(_store, "get_venue", lambda _u: "bitget")(str(user_id))
         except Exception as exc:
             logger.warning("balance_view_executor: credential lookup failed for "
                            "%s: %s — using operator executor", user_id, exc)
             creds = None
+            venue = "bitget"
         if not creds:
             return self.live_executor
         key = str(user_id)
         ex = self._balance_view_executors.get(key)
-        # Rebuild if absent or the user's api_key changed (e.g. re-/connect).
-        if ex is None or (ex._credentials or {}).get("api_key") != creds.get("api_key"):
-            ex = LiveExecutor(user_id=user_id, credentials=creds)
+        # Rebuild if absent or the user's credentials changed (venue-agnostic
+        # full-dict compare — Hyperliquid records have no api_key).
+        if ex is None or (ex._credentials or {}) != creds:
+            ex = LiveExecutor(user_id=user_id, credentials=creds, venue=venue)
             # Share the operator WS feed (market data is not per-user). No
             # on_position_closed / risk wiring: this executor never trades.
             ex._ws_feed = self.ws_feed

@@ -37,8 +37,19 @@ _STATE_DIR = os.environ.get("RUNECLAW_STATE_DIR", "data")
 _CREDS_FILE = os.path.join(_STATE_DIR, "exchange_creds.enc")
 _KEY_FILE = os.path.join(_STATE_DIR, ".exchange_secret.key")
 
-# Credential field names stored per user.
-_FIELDS = ("api_key", "api_secret", "passphrase")
+# Credential field names stored per user, per venue. Each venue authenticates
+# with a different shape: Bitget uses an API key triple; Hyperliquid uses the
+# account wallet address + an *agent* (API) wallet private key (never the main
+# wallet key). Adding a venue here + a matching create_exchange branch in
+# bot/core/venues.py is all it takes to make it connectable.
+_VENUE_FIELDS: dict[str, tuple[str, ...]] = {
+    "bitget": ("api_key", "api_secret", "passphrase"),
+    "hyperliquid": ("wallet_address", "agent_private_key"),
+}
+_DEFAULT_VENUE = "bitget"
+# Legacy alias — the pre-multi-venue field tuple. Kept so any external reference
+# still resolves; the Bitget path is byte-identical to before.
+_FIELDS = _VENUE_FIELDS[_DEFAULT_VENUE]
 
 
 def _load_or_create_master_key(key_file: str = _KEY_FILE) -> bytes:
@@ -106,7 +117,10 @@ class ExchangeCredentialStore:
         # optional extra). Now reachable by the gated mypy run via
         # config -> secrets_vault -> exchange_credentials.
         self._fernet: Any = None  # lazy — only when crypto is actually needed
-        # Raw on-disk map: { telegram_id: { field: ciphertext_str } }
+        # Raw on-disk map. Two record shapes coexist:
+        #   NEW:    { telegram_id: { "venue": "bitget", "fields": { field: ct } } }
+        #   LEGACY: { telegram_id: { field: ct } }  (implicitly Bitget)
+        # _read_record() normalizes both; legacy files decrypt with zero rewrite.
         self._enc: dict[str, dict] = {}
         self._load()
 
@@ -143,17 +157,50 @@ class ExchangeCredentialStore:
             pass
         tmp.rename(self._path)
 
+    # -- record normalization -------------------------------------------------
+
+    @staticmethod
+    def _read_record(enc: dict) -> tuple[str, dict]:
+        """Normalize an on-disk record to ``(venue, {field: ciphertext})``.
+
+        A record carrying explicit ``venue``/``fields`` keys is used as-is; any
+        other (legacy flat) record is treated as Bitget — so pre-multi-venue
+        ``exchange_creds.enc`` files keep decrypting without a rewrite.
+        """
+        if isinstance(enc, dict) and "fields" in enc and "venue" in enc:
+            return str(enc["venue"]), dict(enc["fields"])
+        return _DEFAULT_VENUE, dict(enc)
+
     # -- public API -----------------------------------------------------------
 
     def set(self, telegram_id, api_key: str, api_secret: str, passphrase: str) -> None:
-        """Encrypt and store a user's credentials (overwrites any existing)."""
+        """Encrypt and store a user's BITGET credentials (overwrites any existing).
+
+        Kept for the Bitget path (its 3-positional signature is unchanged); it
+        delegates to the venue-aware ``set_venue``.
+        """
+        self.set_venue(telegram_id, "bitget", {
+            "api_key": api_key, "api_secret": api_secret, "passphrase": passphrase,
+        })
+
+    def set_venue(self, telegram_id, venue: str, fields: dict) -> None:
+        """Encrypt and store a user's credentials for ``venue`` (overwrites any
+        existing). ``fields`` must contain exactly the venue's required keys
+        (see ``_VENUE_FIELDS``). Raises ValueError on an unknown venue or a
+        missing field, so a bad connect can never persist a half-record."""
+        venue = str(venue).lower().strip()
+        expected = _VENUE_FIELDS.get(venue)
+        if expected is None:
+            raise ValueError(f"unknown venue {venue!r}")
+        missing = [f for f in expected if not fields.get(f)]
+        if missing:
+            raise ValueError(f"missing {venue} credential field(s): {missing}")
         c = self._cipher()
-        plain = {"api_key": api_key, "api_secret": api_secret, "passphrase": passphrase}
-        enc = {field: c.encrypt(plain[field].encode()).decode() for field in _FIELDS}
+        enc = {f: c.encrypt(str(fields[f]).encode()).decode() for f in expected}
         with self._lock:
-            self._enc[str(telegram_id)] = enc
+            self._enc[str(telegram_id)] = {"venue": venue, "fields": enc}
             self._save()
-        log.info("Stored encrypted exchange credentials for user %s", telegram_id)
+        log.info("Stored encrypted %s credentials for user %s", venue, telegram_id)
 
     def has(self, telegram_id) -> bool:
         with self._lock:
@@ -166,22 +213,36 @@ class ExchangeCredentialStore:
             return list(self._enc.keys())
 
     def get(self, telegram_id) -> Optional[dict]:
-        """Decrypt and return ``{api_key, api_secret, passphrase}`` or None.
+        """Decrypt and return the venue-specific credential fields, or None.
 
-        Used by the execution layer at trade time. Returns None (never raises)
-        if the user has no credentials or decryption fails (e.g. the master key
+        Bitget records return ``{api_key, api_secret, passphrase}`` (unchanged);
+        Hyperliquid records return ``{wallet_address, agent_private_key}``. Used
+        by the execution layer at trade time. Returns None (never raises) if the
+        user has no credentials or decryption fails (e.g. the master key
         changed) — the caller treats that as 'not connected'.
         """
         with self._lock:
             enc = self._enc.get(str(telegram_id))
         if not enc:
             return None
+        venue, fields_enc = self._read_record(enc)
+        field_names = _VENUE_FIELDS.get(venue, _FIELDS)
         try:
             c = self._cipher()
-            return {field: c.decrypt(enc[field].encode()).decode() for field in _FIELDS}
+            return {f: c.decrypt(fields_enc[f].encode()).decode() for f in field_names}
         except Exception as exc:  # InvalidToken, missing field, etc.
             log.error("Failed to decrypt exchange credentials for %s: %s", telegram_id, exc)
             return None
+
+    def get_venue(self, telegram_id) -> str:
+        """The venue a user's stored credentials belong to (``"bitget"`` default,
+        including for legacy records and users with nothing stored)."""
+        with self._lock:
+            enc = self._enc.get(str(telegram_id))
+        if not enc:
+            return _DEFAULT_VENUE
+        venue, _ = self._read_record(enc)
+        return venue
 
     def delete(self, telegram_id) -> bool:
         with self._lock:
@@ -196,15 +257,24 @@ class ExchangeCredentialStore:
     def fingerprint(self, telegram_id) -> str:
         """A safe, non-reversible identifier of the stored key for status display.
 
-        Returns e.g. ``"BG-1a2b…f9"`` (a short hash of the api_key) or "" if none.
+        Returns e.g. ``"BG-1a2b…f9"`` (Bitget, a short hash of the api_key) or
+        ``"HL-…"`` (Hyperliquid, hash of the wallet address), or "" if none.
         Never reveals the key itself.
         """
         creds = self.get(telegram_id)
-        if not creds or not creds.get("api_key"):
+        if not creds:
+            return ""
+        venue = self.get_venue(telegram_id)
+        # Fingerprint the venue's identity field (Bitget key stays byte-identical).
+        ident_field = "api_key" if venue == "bitget" else _VENUE_FIELDS.get(
+            venue, ("",))[0]
+        ident = creds.get(ident_field)
+        if not ident:
             return ""
         import hashlib
-        h = hashlib.sha256(creds["api_key"].encode()).hexdigest()
-        return f"BG-{h[:4]}…{h[-2:]}"
+        prefix = "BG" if venue == "bitget" else "HL" if venue == "hyperliquid" else venue[:2].upper()
+        h = hashlib.sha256(ident.encode()).hexdigest()
+        return f"{prefix}-{h[:4]}…{h[-2:]}"
 
 
 # Bitget error for API keys that belong to the OTHER environment: a
@@ -297,6 +367,59 @@ async def validate_bitget_credentials(
     return False, detail
 
 
+async def _hyperliquid_balance_probe(wallet_address: str, agent_private_key: str,
+                                     sandbox: bool) -> tuple[bool, str]:
+    """One read-only balance fetch against Hyperliquid (USDC perps).
+
+    Hyperliquid authenticates with the account's public wallet address plus an
+    *agent* (API) wallet private key — never the main wallet key. ``sandbox``
+    routes to the testnet. Returns (ok, detail).
+    """
+    client = None
+    try:
+        import ccxt.async_support as ccxt
+    except Exception as exc:  # pragma: no cover - import guard
+        return False, f"ccxt unavailable: {exc}"
+    try:
+        client = ccxt.hyperliquid({
+            "walletAddress": wallet_address,
+            "privateKey": agent_private_key,
+            "timeout": 15000,
+            "enableRateLimit": True,
+            "options": {"defaultType": "swap"},
+        })
+        try:
+            client.set_sandbox_mode(sandbox)
+        except Exception:
+            if sandbox:
+                raise
+        bal = await client.fetch_balance()
+        free = 0.0
+        try:
+            free = float((bal.get("USDC") or {}).get("free", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            free = 0.0
+        return True, f"{free:.2f} USDC free"
+    except Exception as exc:
+        return False, str(exc)[:200]
+    finally:
+        if client is not None:
+            try:
+                await client.close()
+            except Exception:
+                pass
+
+
+async def validate_hyperliquid_credentials(
+    wallet_address: str, agent_private_key: str, sandbox: bool = False
+) -> tuple[bool, str]:
+    """Functionally validate Hyperliquid credentials with a READ-ONLY balance
+    fetch. Returns (ok, detail) — a short free USDC summary on success or a
+    trimmed error on failure. Proves the agent key authenticates for the wallet
+    before we store it and before any order is placed. Never places an order."""
+    return await _hyperliquid_balance_probe(wallet_address, agent_private_key, sandbox)
+
+
 _STORE: Optional["ExchangeCredentialStore"] = None
 _STORE_LOCK = threading.Lock()
 
@@ -319,3 +442,26 @@ def basic_key_format_ok(api_key: str, api_secret: str, passphrase: str) -> bool:
         if not v or " " in v or "\n" in v:
             return False
     return len(api_key) >= 12 and len(api_secret) >= 12 and len(passphrase) >= 1
+
+
+def basic_hl_format_ok(wallet_address: str, agent_private_key: str) -> bool:
+    """Cheap sanity check for Hyperliquid: a 0x-prefixed 40-hex-char wallet
+    address and a 0x-prefixed 64-hex-char private key (with or without the 0x).
+    Not a security control — catches obvious paste mistakes before the network
+    probe."""
+    for v in (wallet_address, agent_private_key):
+        if not v or " " in v or "\n" in v:
+            return False
+    addr = wallet_address[2:] if wallet_address.lower().startswith("0x") else wallet_address
+    key = agent_private_key[2:] if agent_private_key.lower().startswith("0x") else agent_private_key
+    hexset = set("0123456789abcdefABCDEF")
+    if len(addr) != 40 or any(ch not in hexset for ch in addr):
+        return False
+    if len(key) != 64 or any(ch not in hexset for ch in key):
+        return False
+    return True
+
+
+def valid_venue_ids() -> tuple[str, ...]:
+    """Venues the per-user credential store can hold (for /connect + web)."""
+    return tuple(_VENUE_FIELDS.keys())

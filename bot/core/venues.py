@@ -283,10 +283,16 @@ class HyperliquidVenue(Venue):
 
     def create_exchange(self, cfg: Any,
                         credentials: Optional[dict] = None) -> ccxt.Exchange:
-        # Per-user credentials are Bitget-only by design (see module doc);
-        # only the operator's env-configured wallet reaches here.
-        wallet = getattr(cfg, "hyperliquid_wallet_address", "") or ""
-        priv = getattr(cfg, "hyperliquid_private_key", "") or ""
+        # Per-user credentials (from a user's /connect hyperliquid) take
+        # precedence — {wallet_address, agent_private_key}. Falls back to the
+        # operator's env-configured wallet when none are supplied (operator path
+        # byte-identical).
+        if credentials:
+            wallet = str(credentials.get("wallet_address", "") or "")
+            priv = str(credentials.get("agent_private_key", "") or "")
+        else:
+            wallet = getattr(cfg, "hyperliquid_wallet_address", "") or ""
+            priv = getattr(cfg, "hyperliquid_private_key", "") or ""
         if not wallet or not priv:
             raise RuntimeError(
                 self.missing_credentials_error(per_user=bool(credentials)))
@@ -306,8 +312,9 @@ class HyperliquidVenue(Venue):
 
     def missing_credentials_error(self, per_user: bool) -> str:
         if per_user:
-            return ("Per-user live trading is Bitget-only; the Hyperliquid "
-                    "venue trades the operator wallet configured in .env.")
+            return ("Hyperliquid connect needs a wallet_address and an agent "
+                    "(API) wallet private key — reconnect with "
+                    "/connect hyperliquid <wallet_address> <agent_private_key>.")
         return ("HYPERLIQUID_WALLET_ADDRESS and HYPERLIQUID_PRIVATE_KEY "
                 "required for live trading on Hyperliquid. Set them in .env "
                 "and restart.")

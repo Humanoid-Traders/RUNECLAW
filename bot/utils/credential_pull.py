@@ -93,7 +93,14 @@ def process_pending(rows, store, validator: Optional[Callable[[dict], Optional[b
                 continue
             # connect
             creds = decrypt_payload(r.get("encrypted_payload"))
-            if not all(creds.get(k) for k in ("api_key", "api_secret", "passphrase")):
+            # Venue defaults to bitget so existing (venue-less) web rows import
+            # unchanged. Each venue requires its own field set.
+            venue = str(creds.get("venue") or "bitget").lower()
+            # Local import: keeps the web-pull module importable without pulling
+            # in the crypto-backed store at module load.
+            from bot.core.exchange_credentials import _VENUE_FIELDS
+            required = _VENUE_FIELDS.get(venue)
+            if required is None or not all(creds.get(k) for k in required):
                 acks.append({"user_id": uid, "action": "connect", "ok": False,
                              "error": "incomplete credentials"})
                 continue
@@ -106,7 +113,11 @@ def process_pending(rows, store, validator: Optional[Callable[[dict], Optional[b
                 if verdict is None:
                     # Transient — leave un-acked so the row is retried next poll.
                     continue
-            store.set(tg, creds["api_key"], creds["api_secret"], creds["passphrase"])
+            if venue == "bitget":
+                # Byte-identical legacy path (keeps the 3-positional store.set).
+                store.set(tg, creds["api_key"], creds["api_secret"], creds["passphrase"])
+            else:
+                store.set_venue(tg, venue, {k: creds[k] for k in required})
             acks.append({"user_id": uid, "action": "connect", "ok": True})
             if on_change:
                 on_change(tg)

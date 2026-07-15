@@ -3468,9 +3468,13 @@ class TelegramHandler:
     # orders. See docs/LIVE_TRADING_ENABLEMENT.md.
 
     async def _cmd_connect(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-        """/connect <api_key> <api_secret> <passphrase> — link YOUR OWN Bitget
-        account. The message carrying the keys is deleted immediately and the
-        keys are encrypted at rest. Places no orders."""
+        """/connect [venue] <credentials…> — link YOUR OWN exchange account.
+
+        Bitget (default): /connect <api_key> <api_secret> <passphrase>
+        Hyperliquid:      /connect hyperliquid <wallet_address> <agent_private_key>
+
+        The message carrying the keys is deleted immediately and the keys are
+        encrypted at rest. Places no orders."""
         # Delete the secret-bearing message FIRST — before any gate can return
         # — so keys never linger in chat history even on a denied/rate-limited call.
         try:
@@ -3491,58 +3495,108 @@ class TelegramHandler:
         if not await self._guard(update, "status"):
             return
 
-        args = ctx.args or []
-        if len(args) != 3:
-            await self._send(update,
-                "<b>Link your own Bitget account</b>\n\n"
-                "Create API keys at Bitget with <b>USDT-M futures (read + trade)</b> "
-                "permission, then send:\n"
-                "<code>/connect &lt;api_key&gt; &lt;api_secret&gt; &lt;passphrase&gt;</code>\n\n"
-                "• Keys are <b>encrypted at rest</b> and never logged.\n"
-                "• This message is deleted immediately after you send it.\n"
-                "• Use <code>/exchange</code> to check status, "
-                "<code>/disconnect</code> to remove.")
-            return
-
-        api_key, api_secret, passphrase = (
-            args[0].strip(), args[1].strip(), args[2].strip())
-
         from bot.core.exchange_credentials import (
             get_credential_store, validate_bitget_credentials, basic_key_format_ok,
+            validate_hyperliquid_credentials, basic_hl_format_ok, valid_venue_ids,
         )
-        if not basic_key_format_ok(api_key, api_secret, passphrase):
-            await self._send(update,
-                "🔴 Those don't look like valid Bitget keys "
-                "(empty, contain spaces, or too short). Nothing was stored.")
-            return
 
-        await self._send(update,
-            "⏳ Validating your Bitget keys (read-only balance check)…")
-        ok, detail = await validate_bitget_credentials(
-            api_key, api_secret, passphrase, sandbox=CONFIG.exchange.sandbox)
-        if not ok:
-            await self._send(update,
-                "🔴 Could not authenticate with Bitget. Nothing was stored.\n"
-                f"<code>{html.escape(detail)}</code>\n\n"
-                "Check the key / secret / passphrase and that the key has "
-                "USDT-M futures permission.")
-            return
+        # Optional leading venue token; default Bitget so the legacy 3-arg form
+        # (/connect <key> <secret> <pass>) is byte-identical.
+        args = list(ctx.args or [])
+        venue = "bitget"
+        if args and args[0].lower() in valid_venue_ids():
+            venue = args[0].lower()
+            args = args[1:]
 
-        tg_id = self._get_tg_id(update)
-        store = get_credential_store()
-        store.set(tg_id, api_key, api_secret, passphrase)
+        if venue == "bitget":
+            if len(args) != 3:
+                await self._send(update,
+                    "<b>Link your own exchange account</b>\n\n"
+                    "<b>Bitget</b> — create API keys with <b>USDT-M futures "
+                    "(read + trade)</b> permission, then send:\n"
+                    "<code>/connect &lt;api_key&gt; &lt;api_secret&gt; &lt;passphrase&gt;</code>\n\n"
+                    "<b>Hyperliquid</b> — create an API (agent) wallet, then send:\n"
+                    "<code>/connect hyperliquid &lt;wallet_address&gt; &lt;agent_private_key&gt;</code>\n\n"
+                    "• Keys are <b>encrypted at rest</b> and never logged.\n"
+                    "• This message is deleted immediately after you send it.\n"
+                    "• Use <code>/exchange</code> to check status, "
+                    "<code>/disconnect</code> to remove.")
+                return
+
+            api_key, api_secret, passphrase = (
+                args[0].strip(), args[1].strip(), args[2].strip())
+            if not basic_key_format_ok(api_key, api_secret, passphrase):
+                await self._send(update,
+                    "🔴 Those don't look like valid Bitget keys "
+                    "(empty, contain spaces, or too short). Nothing was stored.")
+                return
+
+            await self._send(update,
+                "⏳ Validating your Bitget keys (read-only balance check)…")
+            ok, detail = await validate_bitget_credentials(
+                api_key, api_secret, passphrase, sandbox=CONFIG.exchange.sandbox)
+            if not ok:
+                await self._send(update,
+                    "🔴 Could not authenticate with Bitget. Nothing was stored.\n"
+                    f"<code>{html.escape(detail)}</code>\n\n"
+                    "Check the key / secret / passphrase and that the key has "
+                    "USDT-M futures permission.")
+                return
+
+            tg_id = self._get_tg_id(update)
+            store = get_credential_store()
+            store.set(tg_id, api_key, api_secret, passphrase)
+            venue_label, balance_hint = "Bitget", ""
+        else:  # hyperliquid
+            if len(args) != 2:
+                await self._send(update,
+                    "<b>Link your Hyperliquid account</b>\n\n"
+                    "Create an <b>API (agent) wallet</b> at Hyperliquid, then send:\n"
+                    "<code>/connect hyperliquid &lt;wallet_address&gt; &lt;agent_private_key&gt;</code>\n\n"
+                    "• Use the <b>agent</b> wallet key, never your main wallet key.\n"
+                    "• Keys are <b>encrypted at rest</b> and never logged; this "
+                    "message is deleted immediately.")
+                return
+
+            wallet_address, agent_private_key = args[0].strip(), args[1].strip()
+            if not basic_hl_format_ok(wallet_address, agent_private_key):
+                await self._send(update,
+                    "🔴 That doesn't look like a valid wallet address (0x + 40 hex) "
+                    "and agent key (0x + 64 hex). Nothing was stored.")
+                return
+
+            await self._send(update,
+                "⏳ Validating your Hyperliquid agent key (read-only balance check)…")
+            ok, detail = await validate_hyperliquid_credentials(
+                wallet_address, agent_private_key, sandbox=CONFIG.exchange.sandbox)
+            if not ok:
+                await self._send(update,
+                    "🔴 Could not authenticate with Hyperliquid. Nothing was stored.\n"
+                    f"<code>{html.escape(detail)}</code>\n\n"
+                    "Check the wallet address and that the agent key is authorized "
+                    "for it.")
+                return
+
+            tg_id = self._get_tg_id(update)
+            store = get_credential_store()
+            store.set_venue(tg_id, "hyperliquid", {
+                "wallet_address": wallet_address,
+                "agent_private_key": agent_private_key,
+            })
+            venue_label, balance_hint = "Hyperliquid", ""
+
         # Drop any cached executor so the next trade rebuilds with the new keys.
         try:
             self.engine.invalidate_user_executor(tg_id)
         except Exception:
             pass
-        audit(system_log, "User linked own Bitget account via /connect",
+        audit(system_log, f"User linked own {venue_label} account via /connect",
               action="connect", result="OK",
-              data={"user": tg_id, "fingerprint": store.fingerprint(tg_id)})
+              data={"user": tg_id, "venue": venue, "fingerprint": store.fingerprint(tg_id)})
         await self._send(update,
-            "🟢 <b>Bitget account linked</b>\n\n"
+            f"🟢 <b>{venue_label} account linked</b>\n\n"
             f"Key: <code>{store.fingerprint(tg_id)}</code>\n"
-            f"Balance: {html.escape(detail)}\n\n"
+            f"Balance: {html.escape(detail)}{balance_hint}\n\n"
             "Your keys are encrypted at rest. Per-user live trading is not yet "
             "enabled — you'll be notified when it goes live. Use "
             "<code>/exchange</code> to review or <code>/disconnect</code> to remove.")
