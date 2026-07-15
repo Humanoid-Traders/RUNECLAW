@@ -67,10 +67,16 @@ class TestEnvSecret:
         # not raw _env (which would re-open the 40006 footgun).
         import bot.config as cfg
         src = inspect.getsource(cfg)
-        for var in ("BITGET_API_KEY", "BITGET_API_SECRET",
-                    "BITGET_PASSPHRASE", "TELEGRAM_BOT_TOKEN"):
+        for var in ("BITGET_API_KEY", "BITGET_API_SECRET", "TELEGRAM_BOT_TOKEN"):
             assert f'_env_secret("{var}")' in src, var
             assert f'_env("{var}")' not in src, f"{var} still uses raw _env"
+        # The passphrase goes through _env_secret_any (accepts the legacy
+        # BITGET_API_PASSPHRASE spelling too) — still the hardened loader, never
+        # raw _env. _env_secret_any delegates to _env_secret, so the quote/
+        # whitespace stripping guarantee is preserved.
+        assert '_env_secret_any("BITGET_PASSPHRASE"' in src
+        assert '_env("BITGET_PASSPHRASE")' not in src
+        assert "def _env_secret_any" in src and "_env_secret(k)" in src
 
 
 class TestPreflightWiring:

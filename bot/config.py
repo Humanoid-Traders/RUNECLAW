@@ -175,6 +175,21 @@ def _env_secret(key: str, default: str = "") -> str:
     return v
 
 
+def _env_secret_any(*keys: str, default: str = "") -> str:
+    """First non-empty _env_secret across several env var NAMES.
+
+    For credentials that have drifted names across deployments. Live incident
+    (2026-07): the Bitget passphrase lived in ``BITGET_API_PASSPHRASE`` in an
+    operator's .env, but the code only read ``BITGET_PASSPHRASE`` — so the engine
+    account silently failed auth ("bitget requires password") with unprotected
+    positions. Accepting both names makes either spelling work."""
+    for k in keys:
+        v = _env_secret(k)
+        if v:
+            return v
+    return default
+
+
 def _env_bool(key: str, default: bool = False) -> bool:
     raw = _env(key, "").strip().lower()
     if raw in ("", "false", "0", "no"):
@@ -596,7 +611,10 @@ class ExchangeConfig:
     venue: str = _env("VENUE", "bitget")
     api_key: str = _env_secret("BITGET_API_KEY")
     api_secret: str = _env_secret("BITGET_API_SECRET")
-    passphrase: str = _env_secret("BITGET_PASSPHRASE")
+    # Accept the legacy BITGET_API_PASSPHRASE spelling too (see _env_secret_any):
+    # a blank BITGET_PASSPHRASE while the passphrase sat under the old name was
+    # the 2026-07 "engine can't authenticate" incident.
+    passphrase: str = _env_secret_any("BITGET_PASSPHRASE", "BITGET_API_PASSPHRASE")
     # Bitget demo trading (PAPTRADING header). Default FALSE: the old True
     # default was dead config — ccxt ignored the constructor key it fed, so
     # every real deployment has always hit production. Now that the flag is

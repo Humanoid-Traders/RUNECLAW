@@ -3402,14 +3402,25 @@ class RuneClawEngine:
         # LIVE FIX: Cap position size at actual exchange equity to prevent
         # InsufficientFunds errors.  The risk engine sizes based on paper
         # portfolio equity; in LIVE mode the real account may be smaller.
-        live_bal = self._live_balance_cache
+        #
+        # C2 FIX (HIGH): clamp against the EXECUTING account's free balance, not
+        # the operator's. This used self._live_balance_cache — always the shared
+        # operator account — so under per-user live a user's order was sized
+        # against the OPERATOR's margin (too loose → InsufficientFunds on their
+        # smaller account, or too tight). get_user_live_equity resolves to the
+        # operator balance for the operator/non-per-user paths (byte-identical)
+        # and to the user's OWN linked account otherwise. Fail-safe: returns None
+        # on fetch failure, so the clamp is simply skipped (as before an empty
+        # cache), never sized against the wrong account.
+        live_bal = await self.get_user_live_equity(user_id)
         if live_bal:
             available = live_bal.get("free", 0.0)
             if size_usd > available:
                 audit(trade_log,
                       f"Live size clamped: ${size_usd:.2f} -> ${available:.2f} (exchange available)",
                       action="live_size_clamp", result="CLAMPED",
-                      data={"requested": round(size_usd, 2), "available": round(available, 2)})
+                      data={"requested": round(size_usd, 2), "available": round(available, 2),
+                            "user_id": user_id})
                 size_usd = available
 
         # Manual margin override: if user specified a fixed margin via /trade command.
