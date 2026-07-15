@@ -118,6 +118,7 @@
       <div class="form-err" id="social-err" style="text-align:center" aria-live="polite"></div>
       <div id="google-btn" style="display:flex;justify-content:center;margin-bottom:10px"></div>
       <div id="telegram-btn" style="display:flex;justify-content:center"></div>
+      <div id="oauth-btns" style="display:flex;flex-direction:column;gap:8px;margin-top:10px"></div>
     </div>
   </div>
 
@@ -146,6 +147,13 @@
         <button class="btn btn--sm" onclick="getToken()">Generate link token</button>
       </div>
     </div>
+    <!-- Link social accounts (shown only when redirect providers are configured) -->
+    <div id="link-social" class="hidden mt-4">
+      <h3 style="font-size:var(--fs-base);margin-bottom:var(--s1)">Link social accounts</h3>
+      <p class="muted small">Connect another way to sign in. You'll stay the same account.</p>
+      <div id="link-social-btns" style="display:flex;flex-direction:column;gap:8px;margin-top:var(--s2)"></div>
+    </div>
+
     <!-- Email verification status (shown only for real email accounts) -->
     <div class="section-note hidden" id="verify-box" style="border-style:solid">
       <span id="verify-text">Your email isn't verified yet.</span>
@@ -175,6 +183,7 @@
       <a href="https://t.me/+VRNgsmkR5pszZTdk" target="_blank" rel="noopener">Community</a>
       <a href="https://github.com/Humanoid-Traders/RUNECLAW" target="_blank" rel="noopener">GitHub</a>
       <a href="https://humanoid-traders-1.gitbook.io/humanoid-traders-ai" target="_blank" rel="noopener">Docs</a>
+      <span id="footer-socials"></span>
     </div>
   </div>
   <div class="risk">Trading futures involves substantial risk of loss and is not suitable for every investor. RUNECLAW is a trading tool, not financial advice. Use withdrawal-disabled API keys and never risk more than you can afford to lose.</div>
@@ -265,8 +274,10 @@ async function refreshAccountMeta(){
   try{const me=await apiAuth('/auth/me',null,'GET');if(!me.error)renderAccountMeta(me);}catch{/* offline */}
 }
 function renderAccountMeta(data){
+  renderLinkSocial();
   const email=data.email||'';
-  const placeholder=/@telegram\.runeclaw\.local$/.test(email);
+  // Placeholder emails for providers that give none (Telegram/X/Discord).
+  const placeholder=/\.runeclaw\.local$/.test(email);
   // Email verification: only meaningful for real email addresses.
   const vbox=document.getElementById('verify-box');
   if(placeholder){vbox.classList.add('hidden');}
@@ -338,11 +349,82 @@ function handleGoogleCredential(resp){
 }
 // Telegram Login Widget callback (global — the widget calls it by name).
 function onTelegramAuth(user){ if(user)socialLogin('/auth/telegram',user); }
+// Redirect-based providers (Discord, X). Login: go straight to the start URL.
+// Link (logged in): mint a one-time link key first so the callback attaches the
+// identity to THIS account instead of creating a new one.
+const OAUTH_META={discord:{label:'Continue with Discord',bg:'#5865F2'},x:{label:'Continue with X',bg:'#000'}};
+function oauthStartUrl(provider){return API+'/auth/oauth/'+provider+'/start';}
+async function oauthLink(provider){
+  if(!SESSION?.token)return;
+  try{
+    const r=await apiAuth('/auth/oauth-link-token',{});
+    if(r.link_key)location.href=oauthStartUrl(provider)+'?link='+encodeURIComponent(r.link_key);
+  }catch{/* offline */}
+}
+function renderOauthButtons(providers){
+  const box=document.getElementById('oauth-btns');if(!box)return;
+  box.innerHTML='';
+  (providers||[]).forEach(p=>{
+    const m=OAUTH_META[p];if(!m)return;
+    const a=document.createElement('a');
+    a.href=oauthStartUrl(p);a.className='btn btn-block';
+    a.style.background=m.bg;a.style.color='#fff';a.textContent=m.label;
+    box.appendChild(a);
+  });
+}
+// Account panel: "Link <provider>" buttons for redirect providers.
+function renderLinkSocial(){
+  const providers=window.__RC_OAUTH||[];
+  const wrap=document.getElementById('link-social');
+  const box=document.getElementById('link-social-btns');
+  if(!wrap||!box)return;
+  if(!providers.length){wrap.classList.add('hidden');return;}
+  wrap.classList.remove('hidden');box.innerHTML='';
+  providers.forEach(p=>{
+    const m=OAUTH_META[p];if(!m)return;
+    const b=document.createElement('button');
+    b.className='btn btn--sm btn-block';b.textContent='Link '+p.charAt(0).toUpperCase()+p.slice(1);
+    b.onclick=()=>oauthLink(p);
+    box.appendChild(b);
+  });
+}
+// Footer: append operator-configured social links (X, Discord) when present.
+function renderFooterSocials(links){
+  const box=document.getElementById('footer-socials');
+  if(!box||!links)return;
+  const add=(url,label)=>{if(!url)return;const a=document.createElement('a');a.href=url;a.target='_blank';a.rel='noopener';a.textContent=label;box.appendChild(a);};
+  add(links.x,'X');
+  add(links.discord,'Discord');
+}
+// OAuth completion: the callback redirects back with the session in the URL
+// fragment (#oauth=<base64> or #oauth_error=...). Consume it before anything else.
+(function handleOauthFragment(){
+  const h=location.hash||'';
+  if(h.startsWith('#oauth_error=')){
+    const msg=decodeURIComponent(h.slice('#oauth_error='.length));
+    history.replaceState(null,'',location.pathname);
+    const el=document.getElementById('social-err');if(el)el.textContent='Social login failed: '+msg;
+    return;
+  }
+  if(h.startsWith('#oauth=')){
+    try{
+      const data=JSON.parse(atob(h.slice('#oauth='.length)));
+      history.replaceState(null,'',location.pathname);
+      if(data&&data.token){SESSION=data;showAccount(data);}
+    }catch{/* malformed fragment */}
+  }
+})();
 (async()=>{
   let cfg={};
   try{cfg=await fetch(API+'/auth/config').then(r=>r.json());}catch{return;}
-  if(!cfg.google_client_id&&!cfg.telegram_bot)return; // nothing configured
+  const hasOauth=(cfg.oauth_providers||[]).length>0;
+  if(!cfg.google_client_id&&!cfg.telegram_bot&&!hasOauth)return; // nothing configured
   document.getElementById('social-auth').classList.remove('hidden');
+  renderOauthButtons(cfg.oauth_providers);
+  window.__RC_OAUTH=cfg.oauth_providers||[]; // account panel reads this for Link buttons
+  renderFooterSocials(cfg.social_links);
+  // If the account panel is already open (returning session), fill Link buttons.
+  if(SESSION)renderLinkSocial();
   if(cfg.google_client_id){
     const s=document.createElement('script');
     s.src='https://accounts.google.com/gsi/client';s.async=true;

@@ -4,6 +4,7 @@ const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const { pool } = require('./db');
 const mailer = require('./lib/mailer');
+const oauth2 = require('./lib/oauth2');
 
 const router = express.Router();
 
@@ -354,8 +355,15 @@ router.post('/validate-token', async (req, res) => {
 // -- OAuth: find-or-create by provider identity --
 // 1) match the provider id; 2) else link to an existing email account;
 // 3) else create a passwordless account. Returns the user row (id, email, plan).
+const _PROVIDER_ID_COLUMN = {
+  google: 'google_id',
+  telegram: 'telegram_id',
+  discord: 'discord_id',
+  x: 'x_id',
+};
+
 async function findOrCreateOAuthUser({ provider, providerId, email, avatarUrl }) {
-  const idCol = provider === 'google' ? 'google_id' : 'telegram_id';
+  const idCol = _PROVIDER_ID_COLUMN[provider] || 'telegram_id';
   const [byId] = await pool.execute(
     `SELECT id, email, plan FROM users WHERE ${idCol} = ? LIMIT 1`, [providerId]);
   if (byId.length) return byId[0];
@@ -369,9 +377,12 @@ async function findOrCreateOAuthUser({ provider, providerId, email, avatarUrl })
       return byEmail[0];
     }
   }
-  // Telegram gives no email — synthesize a unique, non-routable placeholder so
-  // the NOT-NULL/UNIQUE email column is satisfied; the user can add a real one.
-  const finalEmail = email || `tg-${providerId}@telegram.runeclaw.local`;
+  // Some providers give no email (Telegram, X) — synthesize a unique,
+  // non-routable placeholder so the NOT-NULL/UNIQUE email column is satisfied;
+  // the user can add a real one later. Keep Telegram's historical "tg-" prefix.
+  const phUser = provider === 'telegram' ? 'tg' : provider;
+  const phDomain = provider === 'telegram' ? 'telegram' : provider;
+  const finalEmail = email || `${phUser}-${providerId}@${phDomain}.runeclaw.local`;
   const [result] = await pool.execute(
     `INSERT INTO users (email, ${idCol}, avatar_url, telegram_linked) VALUES (?, ?, ?, ?)`,
     [finalEmail, providerId, avatarUrl || null, provider === 'telegram']);
@@ -385,6 +396,14 @@ router.get('/config', (_req, res) => {
     // Telegram widget needs the bot USERNAME (public). Set TELEGRAM_BOT_USERNAME
     // (without @). Only advertise Telegram login when the verifying token exists.
     telegram_bot: (TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_BOT_USERNAME) || null,
+    // Redirect-based providers (Discord, X) — advertised only when configured.
+    oauth_providers: oauth2.configuredProviders(),
+    // Footer social links — operator-set, rendered only when present (no guessing).
+    social_links: {
+      x: process.env.SOCIAL_X_URL || null,
+      discord: process.env.SOCIAL_DISCORD_URL || null,
+      telegram: process.env.SOCIAL_TELEGRAM_URL || 'https://t.me/HTRUNECLAW_bot',
+    },
   });
 });
 
@@ -578,4 +597,112 @@ router.post('/send-verification', authMiddleware, async (req, res) => {
   }
 });
 
-module.exports = { router, authMiddleware, verifyTelegramAuth, findOrCreateOAuthUser, sendVerificationEmail };
+// -- Redirect-based OAuth2 (Discord, X) — login OR link to a logged-in account --
+//
+// Google/Telegram use client-side widgets; Discord and X need the server to
+// drive the authorization-code round-trip. Two short-lived in-memory stores back
+// it (single-replica, like the rate limiters above): oauthFlows holds the CSRF
+// state + PKCE verifier + optional link target between /start and /callback;
+// oauthLinkKeys is a one-time handoff so a logged-in browser can enter LINK mode
+// without putting its bearer token in a redirect URL.
+const oauthFlows = new Map();     // state -> { provider, verifier, linkUserId, exp }
+const oauthLinkKeys = new Map();  // linkKey -> { userId, exp }
+const OAUTH_FLOW_TTL_MS = 10 * 60 * 1000;
+const OAUTH_LINK_TTL_MS = 5 * 60 * 1000;
+
+function _sweepOauth() {
+  const now = Date.now();
+  for (const [k, v] of oauthFlows) if (v.exp < now) oauthFlows.delete(k);
+  for (const [k, v] of oauthLinkKeys) if (v.exp < now) oauthLinkKeys.delete(k);
+}
+const _oauthTimer = setInterval(_sweepOauth, 60000);
+if (_oauthTimer.unref) _oauthTimer.unref();
+
+function _oauthRedirectUri(provider) {
+  // Providers require an absolute, pre-registered redirect URI. Operators set
+  // APP_BASE_URL and register `${APP_BASE_URL}/api/auth/oauth/<provider>/callback`.
+  const base = (process.env.APP_BASE_URL || '').replace(/\/+$/, '');
+  return `${base}/api/auth/oauth/${provider}/callback`;
+}
+
+// Authed: mint a one-time key so a logged-in user can LINK a provider to their
+// existing account (rather than creating/logging into a separate one).
+router.post('/oauth-link-token', authMiddleware, (req, res) => {
+  const key = crypto.randomBytes(24).toString('hex');
+  oauthLinkKeys.set(key, { userId: req.user.user_id, exp: Date.now() + OAUTH_LINK_TTL_MS });
+  res.json({ link_key: key });
+});
+
+// Begin the redirect flow → 302 to the provider's consent screen.
+router.get('/oauth/:provider/start', (req, res) => {
+  const provider = req.params.provider;
+  if (!oauth2.isProviderConfigured(provider)) {
+    return res.status(503).send('This login provider is not configured.');
+  }
+  let linkUserId = null;
+  const linkKey = req.query.link ? String(req.query.link) : '';
+  const lk = linkKey ? oauthLinkKeys.get(linkKey) : null;
+  if (lk && lk.exp > Date.now()) { linkUserId = lk.userId; oauthLinkKeys.delete(linkKey); }
+  const state = oauth2.randomState();
+  const { verifier, challenge } = oauth2.pkcePair();
+  oauthFlows.set(state, { provider, verifier, linkUserId, exp: Date.now() + OAUTH_FLOW_TTL_MS });
+  const url = oauth2.buildAuthorizeUrl(provider, {
+    redirectUri: _oauthRedirectUri(provider), state, challenge,
+  });
+  res.redirect(url);
+});
+
+// Provider redirects back here with ?code&state. Exchange → profile → session,
+// then hand the session to the SPA via the URL fragment (never a query string,
+// which would land the JWT in server/proxy access logs).
+router.get('/oauth/:provider/callback', async (req, res) => {
+  const provider = req.params.provider;
+  const fail = (msg) => res.redirect(`/#oauth_error=${encodeURIComponent(msg)}`);
+  try {
+    const { code, state, error } = req.query;
+    if (error) return fail(String(error));
+    if (!code || !state) return fail('missing code or state');
+    const flow = oauthFlows.get(String(state));
+    if (!flow || flow.exp < Date.now() || flow.provider !== provider) {
+      return fail('invalid or expired login attempt');
+    }
+    oauthFlows.delete(String(state));
+
+    const accessToken = await oauth2.exchangeCode(provider, {
+      code: String(code), redirectUri: _oauthRedirectUri(provider), verifier: flow.verifier,
+    });
+    const profile = await oauth2.fetchProfile(provider, accessToken);
+
+    let user;
+    if (flow.linkUserId) {
+      // LINK mode: attach this provider identity to the already-logged-in user.
+      const idCol = _PROVIDER_ID_COLUMN[provider];
+      await pool.execute(`UPDATE users SET ${idCol} = ? WHERE id = ?`,
+        [profile.providerId, flow.linkUserId]);
+      const [rows] = await pool.execute(
+        'SELECT id, email, plan FROM users WHERE id = ?', [flow.linkUserId]);
+      user = rows[0];
+    } else {
+      user = await findOrCreateOAuthUser({
+        provider, providerId: profile.providerId,
+        email: profile.email, avatarUrl: profile.avatarUrl,
+      });
+    }
+    if (!user) return fail('could not complete login');
+
+    const token = signToken(user);
+    const equity = await getUserEquity(user.id);
+    const payload = Buffer.from(JSON.stringify({
+      token, user_id: user.id, email: user.email, plan: user.plan || 'free',
+      equity, provider, linked: Boolean(flow.linkUserId),
+    })).toString('base64');
+    res.redirect(`/#oauth=${payload}`);
+  } catch (err) {
+    console.error(`OAuth ${provider} callback error:`, err.message);
+    return fail('login failed');
+  }
+});
+
+module.exports = {
+  router, authMiddleware, verifyTelegramAuth, findOrCreateOAuthUser, sendVerificationEmail,
+};
