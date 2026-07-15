@@ -46,6 +46,7 @@ _VAULT_BASENAME = "secrets_vault.enc"
 # runtime with RUNECLAW_VAULT_KEYS (comma-separated).
 _DEFAULT_MANAGED = (
     "BITGET_API_KEY", "BITGET_API_SECRET", "BITGET_PASSPHRASE",
+    "BITGET_API_PASSPHRASE",  # legacy passphrase spelling — preserve either name
     "TELEGRAM_BOT_TOKEN",
     "LLM_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY",
     "GROQ_API_KEY", "DEEPSEEK_API_KEY", "ALIBABA_API_KEY", "MISTRAL_API_KEY",

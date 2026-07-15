@@ -189,7 +189,9 @@ class BitgetVenue(Venue):
             raise RuntimeError(
                 "BITGET_PASSPHRASE is missing — Bitget rejects every request "
                 "without the API passphrase. Set it via the admin /setexchange "
-                "command (persists across .env wipes) or in .env, then restart.")
+                "command (persists across .env wipes), or in .env as "
+                "BITGET_PASSPHRASE (the legacy BITGET_API_PASSPHRASE name is "
+                "also accepted), then restart.")
         is_futures = cfg.trade_mode == "futures"
         exchange = ccxt.bitget({
             "aiohttp_trust_env": True,  # honor HTTPS_PROXY/CA env (no-op without proxy)
