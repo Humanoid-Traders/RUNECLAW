@@ -72,6 +72,7 @@ async def _credential_preflight(engine, bot) -> None:
                     "Live trading is enabled but BITGET_API_KEY / "
                     "BITGET_API_SECRET are empty — the bot cannot place or "
                     "protect live orders. Check your .env.")
+            engine.set_live_auth_status(False, "no API key configured")
         else:
             # Call fetch_balance DIRECTLY — get_live_equity swallows the venue
             # error and returns None, so its exception (and this function's
@@ -87,12 +88,17 @@ async def _credential_preflight(engine, bot) -> None:
                 audit(system_log,
                       "Credential preflight OK — venue authenticated",
                       action="cred_preflight", result="OK")
+                engine.set_live_auth_status(True)
                 return
             if not _err:
                 _msg = ("\U0001f6a8 <b>STARTUP: venue returned an empty "
                         "balance</b>\nAuthenticated but equity is 0 — check "
                         "the account is funded and the sandbox flag matches "
                         "the key.")
+                # Auth SUCCEEDED (equity just 0) — a funding issue, not an auth
+                # failure, so do NOT halt entries here; sizing/risk handle zero
+                # equity on their own.
+                engine.set_live_auth_status(True)
             else:
                 _e = str(_err)
                 _hint = ""
@@ -118,6 +124,10 @@ async def _credential_preflight(engine, bot) -> None:
                         f"authentication — open positions cannot be "
                         f"protected until this is fixed.\n"
                         f"Venue said: <code>{_e[:160]}</code>{_hint}")
+                # Mark operator auth DOWN → the pre-execute gate halts new live
+                # entries (open positions stay monitored) until a restart with
+                # fixed credentials re-runs this preflight OK.
+                engine.set_live_auth_status(False, _e[:120])
         audit(system_log, f"Credential preflight FAILED: {_msg[:200]}",
               action="cred_preflight", result="FAIL", level=logging.CRITICAL)
         _admin = CONFIG.telegram.chat_id or ""
@@ -133,6 +143,65 @@ async def _credential_preflight(engine, bot) -> None:
         try:
             audit(system_log, f"Credential preflight error: {exc}",
                   action="cred_preflight", result="ERROR")
+        except Exception:
+            pass
+
+
+async def _per_user_credential_preflight(engine, bot) -> None:
+    """Probe every LINKED per-user account's venue auth at boot and alert on
+    failure (live-readiness audit C3).
+
+    A user whose Bitget key was revoked/regenerated otherwise surfaces only when
+    their first stop fails to place — the naked-position failure mode the
+    operator preflight was built to prevent. This marks each failing account's
+    auth DOWN so the pre-execute gate halts new entries on it (open positions
+    stay monitored). No-op unless per-user live trading is enabled. Never
+    raises; never blocks startup."""
+    try:
+        if (CONFIG.simulation_mode or not CONFIG.live_trading_enabled
+                or not getattr(CONFIG, "per_user_live_enabled", False)):
+            return
+        from bot.core.exchange_credentials import get_credential_store
+        ids = get_credential_store().user_ids()
+        if not ids:
+            return
+        failures = []
+        for uid in ids:
+            try:
+                ex = engine._executor_for(uid)
+            except Exception:
+                ex = None
+            if ex is None or ex is engine.live_executor:
+                continue  # no usable keys / fell back to operator — skip
+            try:
+                bal = await ex.fetch_balance()
+            except Exception as _exc:
+                bal = {"error": str(_exc)}
+            _err = bal.get("error") if isinstance(bal, dict) else None
+            if _err:
+                engine.set_live_auth_status(False, str(_err)[:120], user_id=uid)
+                failures.append((uid, str(_err)[:100]))
+            else:
+                engine.set_live_auth_status(True, user_id=uid)
+        if failures:
+            _lines = "\n".join(f"• <code>{u}</code>: {e}" for u, e in failures)
+            _msg = ("\U0001f6a8 <b>STARTUP: %d linked account(s) failed venue "
+                    "auth</b>\nNew live entries on these accounts are halted "
+                    "until they re-<code>/connect</code>:\n%s"
+                    % (len(failures), _lines))
+            _admin = CONFIG.telegram.chat_id or ""
+            _ids = [i.strip() for i in
+                    (CONFIG.telegram.admin_ids or "").split(",") if i.strip()]
+            for _target in ([_admin] if _admin else []) + _ids:
+                try:
+                    await bot.send_message(chat_id=_target, text=_msg,
+                                           parse_mode="HTML")
+                except Exception:
+                    continue
+    except Exception as exc:
+        try:
+            audit(system_log, f"Per-user credential preflight error: {exc}",
+                  action="cred_preflight_users", result="ERROR")
         except Exception:
             pass
 
@@ -237,6 +306,10 @@ def run_telegram() -> None:
             # Fail-open: never blocks startup — a live position still needs
             # monitoring even with broken creds — but it MUST alert loudly.
             await _credential_preflight(engine, app.bot)
+            # Per-user auth sweep (C3): probe each LINKED account so a revoked or
+            # regenerated user key surfaces here at boot, not when their first
+            # protective stop fails to place. No-op unless per-user live is on.
+            await _per_user_credential_preflight(engine, app.bot)
 
             # Keep running forever — restart engine if it crashes
             while True:
