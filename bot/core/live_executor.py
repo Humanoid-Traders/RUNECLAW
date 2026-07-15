@@ -347,20 +347,23 @@ class LiveExecutor:
     """
 
     def __init__(self, user_id=None, credentials: Optional[dict] = None,
-                 state_dir: Optional[str] = None) -> None:
+                 state_dir: Optional[str] = None, venue: Optional[str] = None) -> None:
         # Per-user live trading (PER_USER_LIVE_ENABLED, default OFF): when a
         # user_id + credentials are supplied, this executor trades THAT user's
-        # own Bitget account and persists to per-user state files. The default
-        # (all None) is the shared operator executor — credentials come from
+        # own account and persists to per-user state files. The default (all
+        # None) is the shared operator executor — credentials come from
         # CONFIG.exchange and the state files are the original module paths, so
         # the operator path is byte-identical to before. credentials, when set,
-        # is {"api_key", "api_secret", "passphrase"} (from the encrypted store).
+        # is the venue's field dict from the encrypted store (Bitget:
+        # {api_key, api_secret, passphrase}; Hyperliquid: {wallet_address,
+        # agent_private_key}).
         self.user_id = user_id
         self._credentials = credentials
-        # Venue spec (bot/core/venues.py). Per-user executors are always
-        # Bitget — the /connect credential store has no venue field; VENUE
-        # selects the venue for the operator's shared executor only.
-        self._venue = get_venue("bitget") if credentials else get_venue()
+        # Venue spec (bot/core/venues.py). For a per-user executor the venue is
+        # whichever exchange the user connected (passed by the engine from the
+        # credential store, default "bitget"); the operator's shared executor
+        # uses the VENUE env selector via get_venue().
+        self._venue = get_venue(venue or "bitget") if credentials else get_venue()
         self._positions_file = _user_state_path(_POSITIONS_FILE, state_dir, user_id)
         self._closed_trades_file = _user_state_path(_CLOSED_TRADES_FILE, state_dir, user_id)
         self._exchange: Optional[ccxt.Exchange] = None
