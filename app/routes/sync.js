@@ -80,13 +80,18 @@ router.get('/portfolio-summary', async (req, res) => {
     } catch (err) { /* ignore */ }
   }
   const cb = latestScan?.circuit_breaker;
-  if (cb && (cb.equity != null || cb.total_trades != null)) {
+  if (cb && (cb.equity != null || cb.total_trades != null || cb.live_unavailable)) {
     latestPortfolio = {
-      equity: cb.equity || 0,
+      // Preserve null when the bot flagged the live account UNAVAILABLE — never
+      // coerce it to 0 or a paper baseline (the dashboard renders "—" +
+      // "live account unavailable" instead of a fake balance).
+      equity: cb.live_unavailable ? null : (cb.equity || 0),
       open_count: cb.open_count || 0,
       net_pnl: cb.net_pnl || 0,
       total_trades: cb.total_trades || 0,
       win_rate: cb.win_rate || 0,
+      mode: cb.live_mode ? 'LIVE' : 'PAPER',
+      live_unavailable: !!cb.live_unavailable,
       updated_at: latestScan.received_at || latestScan.timestamp || new Date().toISOString()
     };
     return res.json({ portfolio: latestPortfolio });
