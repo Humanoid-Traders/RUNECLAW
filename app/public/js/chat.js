@@ -7,7 +7,7 @@
  */
 (function () {
   'use strict';
-  const { LOGGED_IN, fetchJSON, esc, fmt, sanitizeBotHtml, toast, modalA11y } = window.RC;
+  const { LOGGED_IN, fetchJSON, esc, fmt, fmtMoney, signed, sanitizeBotHtml, toast, modalA11y } = window.RC;
 
   // Anonymous visitors (landing page, not signed in) get the SAME drawer wired
   // to the account-free public endpoint: general market/product Q&A only, no
@@ -21,6 +21,7 @@
   const form = document.getElementById('chatForm');
   const input = document.getElementById('chatInput');
   const sendBtn = document.getElementById('chatSend');
+  const metaEl = document.getElementById('chatMeta');
   if (!fab || !drawer) return;
 
   let open = false;
@@ -40,6 +41,7 @@
       a11y.open(input);
       fab.classList.add('hidden'); fab.hidden = true;
       if (!hydrated) hydrate().then(renderChips); else renderChips();
+      loadMeta();  // logged-in: refresh the live portfolio strip on open
     } else {
       drawer.classList.add('hidden'); drawer.hidden = true;
       fab.classList.remove('hidden'); fab.hidden = false;
@@ -92,6 +94,66 @@
     };
     body.appendChild(div);
     body.scrollTop = body.scrollHeight;
+  }
+
+  // "Trade this" — an analysis produced a concrete setup. One tap re-proposes
+  // it through the SAME manual /api/trade/propose -> confirm rails (which run
+  // every risk gate), then renders the normal Confirm/Cancel card. Anonymous
+  // visitors never see this (they can't trade); the server never returns a
+  // setup on the public endpoint anyway.
+  function appendSetupAction(s) {
+    if (PUBLIC || !s) return;
+    const dir = String(s.direction || '').toUpperCase();
+    if (!s.symbol || (dir !== 'LONG' && dir !== 'SHORT')) return;
+    const div = document.createElement('div');
+    div.className = 'chat-card chat-setup';
+    const rr = (s.rr != null) ? `R:R ${fmt(s.rr)}` : '';
+    const conf = (s.confidence != null) ? `<span class="chip chip--info">${Math.round(s.confidence * 100)}% conf</span>` : '';
+    div.innerHTML = `
+      <div class="kv-row"><span>${esc(s.symbol)}/USDT ${esc(dir)} ${conf}</span><b>${rr}</b></div>
+      <div class="kv-row"><span>Entry · Stop · Target</span><b>$${fmt(s.entry, 4)} · $${fmt(s.sl, 4)} · $${fmt(s.tp, 4)}</b></div>
+      <button class="btn btn--primary btn--sm mt-3" type="button" style="width:100%">Trade this</button>`;
+    const btn = div.querySelector('button');
+    btn.onclick = async () => {
+      btn.disabled = true;
+      btn.textContent = 'Setting up…';
+      const r = await fetchJSON('/api/trade/propose', {
+        method: 'POST',
+        body: { direction: dir, symbol: s.symbol, entry: s.entry, sl: s.sl, tp: s.tp },
+        timeoutMs: 20000,
+      }).catch(() => ({ ok: false, data: null }));
+      if (!r.ok || !r.data || !r.data.pending_trade) {
+        appendMsg('bot', `<b>Couldn't set up that trade:</b> ${esc(r.data?.detail || r.data?.error || 'try again')}`);
+        btn.disabled = false;
+        btn.textContent = 'Trade this';
+        return;
+      }
+      div.remove();  // replace the hint with the real confirmable trade card
+      appendTradeCard(r.data.pending_trade);
+    };
+    body.appendChild(div);
+    body.scrollTop = body.scrollHeight;
+  }
+
+  // Live portfolio strip in the chat header (logged-in only). Reuses the same
+  // snapshot the dashboard shows; hides itself silently on any failure.
+  async function loadMeta() {
+    if (PUBLIC || !metaEl) return;
+    const r = await fetchJSON('/api/portfolio').catch(() => null);
+    if (!r || !r.ok || !r.data) { metaEl.hidden = true; return; }
+    const d = r.data;
+    const eq = (d.equity == null) ? '—'
+      : (fmtMoney ? fmtMoney(d.equity) : '$' + fmt(d.equity, 2));
+    const dp = Number(d.daily_pnl || 0);
+    const dpTxt = signed ? signed(dp) : (dp >= 0 ? '+' + fmt(dp, 2) : fmt(dp, 2));
+    const openN = (d.open_positions || []).length;
+    const modeCls = d.mode === 'LIVE' ? 'mode-badge--live' : 'mode-badge--paper';
+    metaEl.innerHTML =
+      `<span class="mode-badge ${modeCls}">${esc(d.mode || 'PAPER')}</span>` +
+      `<span class="chat-meta-item"><span class="k">Equity</span><b>${eq}</b></span>` +
+      `<span class="chat-meta-item"><span class="k">Today</span><b class="${dp >= 0 ? 'up' : 'down'}">${dpTxt}</b></span>` +
+      `<span class="chat-meta-item"><span class="k">Open</span><b>${openN}</b></span>`;
+    metaEl.hidden = false;
   }
 
   async function hydrate() {
@@ -182,7 +244,12 @@
       }
       else if (!r.ok) appendFailure(`<b>Error:</b> ${esc(r.data?.detail || r.data?.error || 'chat unavailable')}`, text);
       else if (r.data.pending_trade) appendTradeCard(r.data.pending_trade);
-      else appendMsg('bot', sanitizeBotHtml(r.data.reply_html || '…'));
+      else {
+        // Analysis / answer bubble, plus (when the skill surfaced a concrete
+        // setup) a one-tap "Trade this" card underneath it.
+        appendMsg('bot', sanitizeBotHtml(r.data.reply_html || '…'));
+        if (r.data.setup) appendSetupAction(r.data.setup);
+      }
     } catch (e) {
       typing.remove();
       appendFailure('Network error.', text);
@@ -210,6 +277,9 @@
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && open) setOpen(false);
   });
+  // A trade confirmed here (or elsewhere on the page) changes the book — refresh
+  // the portfolio strip if the drawer is open.
+  document.addEventListener('rc:portfolio-changed', () => { if (open) loadMeta(); });
 
   init();
 })();

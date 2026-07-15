@@ -185,6 +185,10 @@ async def handle_chat(request: web.Request) -> web.Response:
             tg_handler.conversations.append(tg_id, "user", text,
                                             metadata={"intent": intent.skill,
                                                       "surface": "web"})
+            # Snapshot queued ideas so an analysis that produces a concrete
+            # setup (analyze_asset registers one in engine._pending_ideas) can
+            # be offered to the web as a one-tap "Trade this".
+            ideas_before = set(getattr(engine, "_pending_ideas", {}) or {})
             try:
                 result = await skill.execute(engine, user_id=tg_id, **intent.kwargs)
             except Exception:
@@ -194,7 +198,11 @@ async def handle_chat(request: web.Request) -> web.Response:
             tg_handler.conversations.append(
                 tg_id, "assistant", f"[{intent.skill}] executed successfully",
                 metadata={"skill": intent.skill, "surface": "web"})
-            return web.json_response({"reply_html": result, "intent": intent.skill})
+            resp = {"reply_html": result, "intent": intent.skill}
+            setup = _setup_from_new_idea(engine, ideas_before)
+            if setup is not None:
+                resp["setup"] = setup
+            return web.json_response(resp)
 
     # Fallback: LLM chat — same append-around-call pattern as _handle_message.
     from bot.nlp.sanitize import sanitize_chat_input
@@ -243,6 +251,47 @@ async def handle_public_chat(request: web.Request) -> web.Response:
         sanitize_chat_input(text), user_id="", user_name="",
         is_admin=False, public=True)
     return web.json_response({"reply_html": answer, "intent": "chat"})
+
+
+def _setup_from_new_idea(engine, ideas_before: set) -> dict | None:
+    """A READ-ONLY setup hint for the web chat's one-tap "Trade this".
+
+    If a skill (e.g. analyze_asset) just registered a fresh tradeable idea in
+    engine._pending_ideas, return {symbol, direction, entry, sl, tp, rr,
+    confidence} so the client can offer a "Trade this" button. That button
+    re-proposes through the SAME manual /trade/propose -> confirm rails (which
+    register the proposer and re-run every gate) — this hint never registers a
+    proposer, mutates the money path, or makes any trade confirmable on its own.
+    Returns None when no new idea with valid levels appeared.
+    """
+    pending = getattr(engine, "_pending_ideas", {}) or {}
+    new_ids = [k for k in pending if k not in ideas_before]
+    if not new_ids:
+        return None
+    idea = pending.get(new_ids[-1])
+    try:
+        entry = float(idea.entry_price)
+        sl = float(idea.stop_loss)
+        tp = float(idea.take_profit)
+    except (TypeError, ValueError, AttributeError):
+        return None
+    if not (entry > 0 and sl > 0 and tp > 0):
+        return None
+    direction = (idea.direction.value if hasattr(idea.direction, "value")
+                 else str(idea.direction)).upper()
+    if direction not in ("LONG", "SHORT"):
+        return None
+    rr = getattr(idea, "risk_reward_ratio", None)
+    conf = getattr(idea, "confidence", None)
+    return {
+        "symbol": str(getattr(idea, "asset", "")).split("/")[0],
+        "direction": direction,
+        "entry": entry,
+        "sl": sl,
+        "tp": tp,
+        "rr": round(float(rr), 2) if isinstance(rr, (int, float)) else None,
+        "confidence": round(float(conf), 2) if isinstance(conf, (int, float)) else None,
+    }
 
 
 async def handle_chat_history(request: web.Request) -> web.Response:

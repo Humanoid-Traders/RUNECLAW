@@ -14,7 +14,7 @@
 <link rel="manifest" href="/manifest.json">
 <meta name="theme-color" content="#0a0b10">
 <link rel="preload" href="/fonts/cinzel-700.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="stylesheet" href="/styles.css?v=4">
+<link rel="stylesheet" href="/styles.css?v=5">
 <style>
   /* Page-local composition only — all tokens/components come from styles.css */
   .btn-block { width: 100%; }
@@ -198,6 +198,7 @@
     <span class="t"><svg class="icon" aria-hidden="true"><use href="#icon-sparkle"></use></svg>RUNECLAW — AI ANALYST</span>
     <button class="chat-close" id="chatClose" aria-label="Close chat">&times;</button>
   </div>
+  <div id="chatMeta" class="chat-meta" hidden aria-label="Your live portfolio"></div>
   <div id="chatBody" class="chat-body" aria-live="polite"></div>
   <div id="chatChips" class="chat-chips" aria-label="Suggested prompts"></div>
   <form class="chat-inputrow" id="chatForm">
@@ -212,7 +213,7 @@
 
 <script src="/js/icons.js?v=3"></script>
 <script src="/js/app.js?v=3"></script>
-<script src="/js/chat.js?v=5" defer></script>
+<script src="/js/chat.js?v=6" defer></script>
 <script>
 const API='/api';
 let SESSION=null;
