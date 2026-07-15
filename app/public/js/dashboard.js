@@ -1098,13 +1098,28 @@
       const count = r.data.count || 0;
       const share = encodeURIComponent(link);
       const text = encodeURIComponent('Trade alongside an autonomous AI on RUNECLAW:');
+      // Reward tier + progress to the next milestone (server-computed).
+      const tier = r.data.tier || { name: 'Starter', perk: '' };
+      const next = r.data.next;
+      const pct = next ? Math.min(100, Math.round((count / next.at) * 100)) : 100;
+      const tierBlock = `
+        <div class="ref-tier mt-3">
+          <div class="row" style="justify-content:space-between;align-items:baseline">
+            <span class="chip chip--gold">${esc(tier.name)}</span>
+            <span class="muted small">${count} joined</span>
+          </div>
+          <p class="small mt-1" style="color:var(--text-2)">${esc(tier.perk)}</p>
+          ${next ? `<div class="ref-bar mt-2"><span style="width:${pct}%"></span></div>
+            <p class="muted small mt-1">${next.remaining} more to reach <b style="color:var(--gold)">${esc(next.name)}</b></p>`
+          : `<p class="muted small mt-2">Top tier reached — thank you. 🏆</p>`}
+        </div>`;
       return `<p class="small mb-2" style="color:var(--text-2)">Share your link — anyone who signs up through it is credited to you.</p>
         <div class="token-display" id="refLink" role="button" tabindex="0" title="Copy invite link">${esc(link)}</div>
         <div class="row mt-3" style="gap:var(--s2);flex-wrap:wrap">
           <a class="btn btn--sm" href="https://t.me/share/url?url=${share}&text=${text}" target="_blank" rel="noopener">Share on Telegram</a>
           <a class="btn btn--sm" href="https://twitter.com/intent/tweet?url=${share}&text=${text}" target="_blank" rel="noopener">Share on X</a>
         </div>
-        <div class="kv-row mt-3"><span>Friends joined</span><b>${count}</b></div>`;
+        ${tierBlock}`;
     }, { empty: { text: 'Your invite link will appear here shortly.' } });
 
     // Venue catalog (from /config) shared by the panel + submit handler. The

@@ -200,6 +200,33 @@ function genReferralCode() {
   return crypto.randomBytes(6).toString('base64url');
 }
 
+// Referral tiers — milestones by how many friends signed up through your link.
+// The perks are aspirational and mostly land with the token/billing layer (see
+// docs/ROADMAP.md); this endpoint only computes and reports the tier so the UI
+// can motivate sharing. It does NOT grant fee credits or change live limits —
+// nothing here touches the money path or the live-eligibility gate.
+const REFERRAL_TIERS = [
+  { at: 0, name: 'Starter', perk: 'Your invite link is live — share it to climb.' },
+  { at: 1, name: 'Connector', perk: 'You’re on the board. Priority support.' },
+  { at: 3, name: 'Advocate', perk: 'Early access to new agents & features.' },
+  { at: 10, name: 'Ambassador', perk: 'Fee credits when the token launches.' },
+  { at: 25, name: 'Legend', perk: 'Protocol revenue share when the token launches.' },
+];
+
+function referralTier(count) {
+  const n = Math.max(0, Number(count) || 0);
+  let idx = 0;
+  for (let i = 0; i < REFERRAL_TIERS.length; i++) {
+    if (n >= REFERRAL_TIERS[i].at) idx = i;
+  }
+  const cur = REFERRAL_TIERS[idx];
+  const nx = REFERRAL_TIERS[idx + 1] || null;
+  return {
+    tier: { name: cur.name, perk: cur.perk, index: idx },
+    next: nx ? { name: nx.name, at: nx.at, remaining: Math.max(0, nx.at - n) } : null,
+  };
+}
+
 // -- Account-management helpers (email verification + password reset) --
 
 // Tokens are stored HASHED in the DB; only the raw token travels in the email
@@ -370,7 +397,8 @@ router.get('/referrals', authMiddleware, async (req, res) => {
       await pool.execute('UPDATE users SET referral_code = ? WHERE id = ?', [code, uid]);
     }
     const [joined] = await pool.execute('SELECT id FROM users WHERE referred_by = ?', [uid]);
-    res.json({ code, count: joined.length });
+    const count = joined.length;
+    res.json({ code, count, ...referralTier(count) });
   } catch (err) {
     console.error('Referrals error:', err.message);
     res.status(500).json({ error: 'Failed to load referrals' });
