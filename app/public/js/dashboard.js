@@ -235,6 +235,10 @@
             </span></h2>
           <div id="c-chart"><div class="skel"></div><div class="skel"></div></div>
         </section>
+        <section class="panel" id="p-insight"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-sparkle"></use></svg>AI decision picture
+          <span class="right muted small">the same read the engine trades off</span></h2>
+          <div id="c-insight"><div class="skel"></div><div class="skel"></div></div>
+        </section>
         <div class="grid grid-2">
           <section class="panel" id="p-depth"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-chart"></use></svg>Order book</h2><div id="c-depth"><div class="skel"></div></div></section>
           <section class="panel" id="p-funding"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-bolt"></use></svg>Funding rate</h2><div id="c-funding"><div class="skel"></div></div></section>
@@ -249,9 +253,9 @@
     const DEFAULTS = ['BTCUSDT','ETHUSDT','SOLUSDT','BNBUSDT','XRPUSDT','DOGEUSDT','ADAUSDT','LINKUSDT','AVAXUSDT','SUIUSDT'];
     symSel.innerHTML = DEFAULTS.map(s => `<option value="${s}">${s.replace('USDT','')}/USDT</option>`).join('');
 
-    const drawAll = () => { drawChart(); drawDepth(); drawFunding(); };
+    const drawAll = () => { drawChart(); drawDepth(); drawFunding(); drawInsight(); };
     symSel.addEventListener('change', drawAll);
-    document.getElementById('chartGran').addEventListener('change', drawChart);
+    document.getElementById('chartGran').addEventListener('change', () => { drawChart(); drawInsight(); });
 
     async function drawChart() {
       renderPanel(C('chart'), async () => {
@@ -289,6 +293,101 @@
           <div class="v big num ${pnlClass(pct)}" style="font-size:var(--fs-xl)">${signed(pct, 4)}%</div>
           <div class="d muted">${pct >= 0 ? 'Longs pay shorts' : 'Shorts pay longs'} · settles every 8h (00/08/16 UTC)</div></div>`;
       }, { empty: { text: 'Funding data unavailable.' } });
+    }
+
+    // AI decision picture — the SAME read the engine trades off: directional
+    // confluence, the voters behind it, key levels, fair-value gaps and flow.
+    async function drawInsight() {
+      renderPanel(C('insight'), async () => {
+        const base = symSel.value.replace('USDT', '');
+        // Chart uses Bitget granularity (15min/1h/4h/1d); the insight bridge feeds
+        // ccxt fetch_ohlcv, which wants 15m/1h/4h/1d — map the one that differs.
+        const gran = document.getElementById('chartGran').value;
+        const tf = ({ '15min': '15m' })[gran] || gran;
+        const r = await fetchJSON(
+          `/api/insight/${encodeURIComponent(base + '/USDT')}?timeframe=${tf}&limit=200`,
+          { auth: false, timeoutMs: 12000 });
+        const d = r.data;
+        if (!d || d.error || typeof d.confluence !== 'number') return null;
+
+        // Bridge confluence is a 0..1 conviction score: 0.5 = neutral, >0.5
+        // bullish, <0.5 bearish (analyzer._score_confluence). Map to a signed
+        // -100..+100 lean for display; 0.5 sits dead-centre on the bar.
+        const conf = d.confluence;
+        const dir = (conf - 0.5) * 2;              // -1 (bearish) .. +1 (bullish)
+        const lean = dir > 0.1 ? 'Bullish' : dir < -0.1 ? 'Bearish' : 'Neutral';
+        const leanCls = dir > 0.1 ? 'up' : dir < -0.1 ? 'down' : '';
+        const pos = Math.max(0, Math.min(100, conf * 100));  // 0..100 on the bar
+
+        // Confluence meter (bearish ← 0 → bullish).
+        const meter = `
+          <div class="stat"><div class="k">Directional confluence</div>
+            <div class="v big ${leanCls}" style="font-size:var(--fs-xl)">${lean} <span class="num" style="font-size:var(--fs-md)">${signed(dir * 100, 0)}</span></div>
+            <div style="position:relative;height:8px;border-radius:5px;margin-top:8px;background:linear-gradient(90deg,var(--down-dim),var(--surface-3) 45% 55%,var(--up-dim))">
+              <div style="position:absolute;top:-3px;left:calc(${pos}% - 2px);width:4px;height:14px;border-radius:2px;background:var(--text)"></div>
+            </div>
+            <div class="d muted small mt-2">Regime <b>${esc(String(d.regime || '—').replace(/_/g, ' '))}</b> · price ${fmtPrice(d.price)} · ATR ${fmtPrice(d.atr)}</div>
+          </div>`;
+
+        // Voters — WHY it leans this way (top contributors by |vote·weight|).
+        const votes = (d.votes || [])
+          .map(v => ({ ...v, c: (v.vote || 0) * (v.weight || 0) }))
+          .filter(v => Math.abs(v.c) > 1e-6)
+          .sort((a, b) => Math.abs(b.c) - Math.abs(a.c))
+          .slice(0, 8);
+        const maxC = votes.length ? Math.max(...votes.map(v => Math.abs(v.c))) : 1;
+        const voteRows = votes.length ? votes.map(v => {
+          const w = Math.max(4, Math.round(Math.abs(v.c) / maxC * 100));
+          const bull = v.c >= 0;
+          return `<div class="kv-row" style="align-items:center">
+            <span class="small" style="font-family:var(--font-data);flex:0 0 42%">${esc(String(v.name).replace(/_/g, ' ').slice(0, 26))}</span>
+            <span style="flex:1;height:7px;border-radius:4px;background:var(--surface-3);position:relative;overflow:hidden">
+              <span style="position:absolute;${bull ? 'left' : 'right'}:50%;width:${w / 2}%;height:100%;background:var(${bull ? '--up' : '--down'})"></span>
+              <span style="position:absolute;left:50%;top:-2px;width:1px;height:11px;background:var(--line-2)"></span>
+            </span>
+            <span class="num small ${bull ? 'up' : 'down'}" style="flex:0 0 48px;text-align:right">${signed(v.c * 100, 0)}</span>
+          </div>`;
+        }).join('') : '<div class="muted small">No active voters this bar.</div>';
+
+        // Key levels (nearest to price first).
+        const px = d.price || 0;
+        const levels = (d.levels || [])
+          .slice().sort((a, b) => Math.abs(a.price - px) - Math.abs(b.price - px)).slice(0, 6);
+        const levelRows = levels.length ? levels.map(lv => {
+          const above = lv.price >= px;
+          return `<tr>
+            <td data-label="Level"><span class="chip ${above ? 'chip--down' : 'chip--up'}">${above ? 'RES' : 'SUP'}</span> <span class="muted small">${esc(String(lv.kind || '').replace(/_/g, ' '))}</span></td>
+            <td data-label="Price" class="r num">${fmtPrice(lv.price)}</td>
+            <td data-label="Score" class="r num muted">${(lv.score ?? 0).toFixed(1)} · ${lv.touches || 0}×</td></tr>`;
+        }).join('') : '';
+        const levelsBlock = levelRows ? `<div class="tbl-wrap"><table class="tbl tbl--collapse">
+          <thead><tr><th>Level</th><th class="r">Price</th><th class="r">Score · touches</th></tr></thead>
+          <tbody>${levelRows}</tbody></table></div>` : '';
+
+        // Fair-value gaps (unfilled) + flow footer.
+        const openGaps = (d.fvgs || []).filter(g => !g.filled).slice(0, 4);
+        const gapsLine = openGaps.length
+          ? `<div class="muted small mt-2">Open FVGs: ${openGaps.map(g => `${g.kind === 'bull' || g.kind === 'bullish' ? '▲' : '▼'} ${fmtPrice(g.bottom)}–${fmtPrice(g.top)}`).join(' · ')}</div>`
+          : '';
+        const cvdVal = (d.cvd && (typeof d.cvd === 'object' ? d.cvd.cum_delta_usd : d.cvd));
+        const flowBits = [];
+        if (isFinite(parseFloat(cvdVal))) flowBits.push(`CVD <b class="${pnlClass(parseFloat(cvdVal))}">${signed(parseFloat(cvdVal), 0)}</b>`);
+        if (typeof d.premium_discount === 'number') flowBits.push(`Prem/disc <b>${signed(d.premium_discount * 100, 0)}%</b>`);
+        const rs = d.risk_state || {};
+        if (rs.latched) flowBits.push('<span class="chip chip--warn">entries gated</span>');
+        const flowLine = flowBits.length ? `<div class="muted small mt-2">${flowBits.join(' · ')}</div>` : '';
+
+        return `<div class="stack" style="gap:var(--s3)">
+          ${meter}
+          <div><div class="k muted small mb-2" style="text-transform:uppercase;letter-spacing:.08em">Why — confluence voters</div>${voteRows}</div>
+          ${levelsBlock}
+          ${gapsLine}${flowLine}
+          <p class="muted small">The engine's own read — not personal advice. Confirmations still run the full risk gate.</p>
+        </div>`;
+      }, {
+        empty: { icon: 'icon-sparkle', text: 'Decision picture unavailable — the analysis bridge may be offline for this pair.' },
+        errorText: 'Analysis bridge unreachable — retry in a moment.',
+      });
     }
 
     async function drawUniverse() {
