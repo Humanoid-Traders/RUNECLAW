@@ -68,13 +68,32 @@ test.before(async () => {
 
 test.after(() => { if (server) server.close(); });
 
-test('/config advertises the venue catalog with field specs', async () => {
+test('/config advertises all four connectable venues with field specs', async () => {
   const r = await request('GET', '/api/auth/config');
   const venues = r.data.venues || [];
   const ids = venues.map(v => v.id);
-  assert.ok(ids.includes('bitget') && ids.includes('hyperliquid'));
+  for (const v of ['bitget', 'bybit', 'bingx', 'hyperliquid']) {
+    assert.ok(ids.includes(v), `${v} missing from /config venues`);
+  }
   const hl = venues.find(v => v.id === 'hyperliquid');
   assert.deepStrictEqual(hl.fields.map(f => f.key), ['wallet_address', 'agent_private_key']);
+  const by = venues.find(v => v.id === 'bybit');
+  assert.deepStrictEqual(by.fields.map(f => f.key), ['api_key', 'api_secret']);
+});
+
+test('a Bybit connect stores an encrypted key/secret payload carrying the venue', async () => {
+  const r = await request('POST', '/api/credentials', {
+    token, body: { venue: 'bybit', api_key: 'BYKEY' + 'k'.repeat(12), api_secret: 'BYSEC' + 's'.repeat(12) },
+  });
+  assert.strictEqual(r.status, 200);
+  assert.strictEqual(r.data.venue, 'bybit');
+  const [pend] = await pool.execute('SELECT exchange, encrypted_payload FROM pending_credentials WHERE user_id = ?', [tgUserId]);
+  assert.strictEqual(pend[0].exchange, 'bybit');
+  const decoded = credsCrypto.decryptJSON(pend[0].encrypted_payload);
+  assert.strictEqual(decoded.venue, 'bybit');
+  assert.strictEqual(decoded.api_key, 'BYKEY' + 'k'.repeat(12));
+  assert.strictEqual(decoded.passphrase, undefined);      // no Bitget field
+  assert.strictEqual(decoded.wallet_address, undefined);  // no HL field
 });
 
 test('a Hyperliquid connect stores an encrypted payload carrying the venue', async () => {

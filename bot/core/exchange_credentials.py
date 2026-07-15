@@ -38,12 +38,15 @@ _CREDS_FILE = os.path.join(_STATE_DIR, "exchange_creds.enc")
 _KEY_FILE = os.path.join(_STATE_DIR, ".exchange_secret.key")
 
 # Credential field names stored per user, per venue. Each venue authenticates
-# with a different shape: Bitget uses an API key triple; Hyperliquid uses the
-# account wallet address + an *agent* (API) wallet private key (never the main
-# wallet key). Adding a venue here + a matching create_exchange branch in
-# bot/core/venues.py is all it takes to make it connectable.
+# with a different shape: Bitget uses an API key triple; Bybit/BingX use a plain
+# key+secret; Hyperliquid uses the account wallet address + an *agent* (API)
+# wallet private key (never the main wallet key). Adding a venue here + a
+# matching create_exchange branch in bot/core/venues.py is all it takes to make
+# it connectable (must match the venue ids registered in venues.py).
 _VENUE_FIELDS: dict[str, tuple[str, ...]] = {
     "bitget": ("api_key", "api_secret", "passphrase"),
+    "bybit": ("api_key", "api_secret"),
+    "bingx": ("api_key", "api_secret"),
     "hyperliquid": ("wallet_address", "agent_private_key"),
 }
 _DEFAULT_VENUE = "bitget"
@@ -418,6 +421,86 @@ async def validate_hyperliquid_credentials(
     trimmed error on failure. Proves the agent key authenticates for the wallet
     before we store it and before any order is placed. Never places an order."""
     return await _hyperliquid_balance_probe(wallet_address, agent_private_key, sandbox)
+
+
+async def _keysecret_balance_probe(exchange_id: str, api_key: str,
+                                   api_secret: str, sandbox: bool) -> tuple[bool, str]:
+    """Read-only balance fetch for a plain key+secret ccxt venue (Bybit, BingX).
+
+    Both are USDT-margined swap exchanges that authenticate with apiKey/secret
+    only. Returns (ok, detail). Never places an order."""
+    client = None
+    try:
+        import ccxt.async_support as ccxt
+    except Exception as exc:  # pragma: no cover - import guard
+        return False, f"ccxt unavailable: {exc}"
+    try:
+        factory = getattr(ccxt, exchange_id, None)
+        if factory is None:
+            return False, f"ccxt has no exchange {exchange_id!r}"
+        client = factory({
+            "apiKey": api_key,
+            "secret": api_secret,
+            "timeout": 15000,
+            "enableRateLimit": True,
+            "options": {"defaultType": "swap"},
+        })
+        try:
+            client.set_sandbox_mode(sandbox)
+        except Exception:
+            if sandbox:
+                raise
+        bal = await client.fetch_balance()
+        free = 0.0
+        try:
+            free = float((bal.get("USDT") or {}).get("free", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            free = 0.0
+        return True, f"{free:.2f} USDT free"
+    except Exception as exc:
+        return False, str(exc)[:200]
+    finally:
+        if client is not None:
+            try:
+                await client.close()
+            except Exception:
+                pass
+
+
+async def validate_venue_credentials(venue: str, fields: dict,
+                                     sandbox: bool = False) -> tuple[bool, str]:
+    """Read-only-validate a user's credentials for ``venue`` (dispatches to the
+    per-venue probe). Returns (ok, detail). Never places an order."""
+    venue = str(venue).lower().strip()
+    if venue == "bitget":
+        return await validate_bitget_credentials(
+            fields["api_key"], fields["api_secret"], fields["passphrase"], sandbox)
+    if venue == "hyperliquid":
+        return await validate_hyperliquid_credentials(
+            fields["wallet_address"], fields["agent_private_key"], sandbox)
+    if venue in ("bybit", "bingx"):
+        return await _keysecret_balance_probe(
+            venue, fields["api_key"], fields["api_secret"], sandbox)
+    return False, f"unknown venue {venue!r}"
+
+
+def basic_venue_format_ok(venue: str, fields: dict) -> bool:
+    """Cheap per-venue paste-mistake check before the network probe."""
+    venue = str(venue).lower().strip()
+    if venue == "bitget":
+        return basic_key_format_ok(
+            fields.get("api_key", ""), fields.get("api_secret", ""),
+            fields.get("passphrase", ""))
+    if venue == "hyperliquid":
+        return basic_hl_format_ok(
+            fields.get("wallet_address", ""), fields.get("agent_private_key", ""))
+    if venue in ("bybit", "bingx"):
+        ak, sec = fields.get("api_key", ""), fields.get("api_secret", "")
+        for v in (ak, sec):
+            if not v or " " in v or "\n" in v:
+                return False
+        return len(ak) >= 8 and len(sec) >= 8
+    return False
 
 
 _STORE: Optional["ExchangeCredentialStore"] = None

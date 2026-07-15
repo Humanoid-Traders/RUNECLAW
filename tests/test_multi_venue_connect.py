@@ -89,7 +89,32 @@ def test_format_check_and_venue_ids():
     assert basic_hl_format_ok("not-an-address", HL_AGENT) is False
     assert basic_hl_format_ok(HL_WALLET.replace("0x", ""), HL_AGENT.replace("0x", "")) is True
     ids = valid_venue_ids()
-    assert "bitget" in ids and "hyperliquid" in ids
+    for v in ("bitget", "bybit", "bingx", "hyperliquid"):
+        assert v in ids, f"{v} missing from valid_venue_ids"
+
+
+def test_keysecret_venues_round_trip(tmp_path):
+    s, creds_file = _store(tmp_path)
+    s.set_venue("42", "bybit", {"api_key": "BYKEY" + "K" * 12, "api_secret": "BYSEC" + "S" * 14})
+    assert s.get_venue("42") == "bybit"
+    assert s.get("42") == {"api_key": "BYKEY" + "K" * 12, "api_secret": "BYSEC" + "S" * 14}
+    assert s.fingerprint("42").startswith("BY-")
+    # No plaintext at rest.
+    assert "BYSEC" not in creds_file.read_text()
+
+    s.set_venue("43", "bingx", {"api_key": "BX" + "K" * 14, "api_secret": "BX" + "S" * 14})
+    assert s.get_venue("43") == "bingx"
+    assert s.fingerprint("43").startswith("BI-")
+
+
+def test_basic_venue_format_ok_dispatch():
+    from bot.core.exchange_credentials import basic_venue_format_ok
+    assert basic_venue_format_ok("bitget", {"api_key": BG_KEY, "api_secret": BG_SEC, "passphrase": BG_PP}) is True
+    assert basic_venue_format_ok("hyperliquid", {"wallet_address": HL_WALLET, "agent_private_key": HL_AGENT}) is True
+    assert basic_venue_format_ok("bybit", {"api_key": "K" * 12, "api_secret": "S" * 12}) is True
+    assert basic_venue_format_ok("bybit", {"api_key": "short", "api_secret": "S" * 12}) is False
+    assert basic_venue_format_ok("bingx", {"api_key": "K" * 12, "api_secret": ""}) is False
+    assert basic_venue_format_ok("ftx", {"api_key": "K" * 12}) is False
 
 
 # ── venue adapter: per-user credentials win over operator env ────────────────

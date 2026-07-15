@@ -401,8 +401,14 @@ class BybitVenue(Venue):
 
     def create_exchange(self, cfg: Any,
                         credentials: Optional[dict] = None) -> ccxt.Exchange:
-        api_key = getattr(cfg, "bybit_api_key", "") or ""
-        api_secret = getattr(cfg, "bybit_api_secret", "") or ""
+        # Per-user {api_key, api_secret} take precedence; fall back to the
+        # operator env keys when none supplied (operator path byte-identical).
+        if credentials:
+            api_key = str(credentials.get("api_key", "") or "")
+            api_secret = str(credentials.get("api_secret", "") or "")
+        else:
+            api_key = getattr(cfg, "bybit_api_key", "") or ""
+            api_secret = getattr(cfg, "bybit_api_secret", "") or ""
         if not api_key or not api_secret:
             raise RuntimeError(
                 self.missing_credentials_error(per_user=bool(credentials)))
@@ -419,8 +425,9 @@ class BybitVenue(Venue):
 
     def missing_credentials_error(self, per_user: bool) -> str:
         if per_user:
-            return ("Per-user live trading is Bitget-only; the Bybit venue "
-                    "trades the operator account configured in .env.")
+            return ("Bybit connect needs an api_key and api_secret — reconnect "
+                    "with /connect bybit <api_key> <api_secret>. Account must be "
+                    "in ONE-WAY position mode.")
         return ("BYBIT_API_KEY and BYBIT_API_SECRET required for live "
                 "trading on Bybit. Set them in .env and restart. Account "
                 "must be in ONE-WAY position mode.")
@@ -476,8 +483,14 @@ class BingxVenue(Venue):
 
     def create_exchange(self, cfg: Any,
                         credentials: Optional[dict] = None) -> ccxt.Exchange:
-        api_key = getattr(cfg, "bingx_api_key", "") or ""
-        api_secret = getattr(cfg, "bingx_api_secret", "") or ""
+        # Per-user {api_key, api_secret} take precedence; fall back to the
+        # operator env keys when none supplied (operator path byte-identical).
+        if credentials:
+            api_key = str(credentials.get("api_key", "") or "")
+            api_secret = str(credentials.get("api_secret", "") or "")
+        else:
+            api_key = getattr(cfg, "bingx_api_key", "") or ""
+            api_secret = getattr(cfg, "bingx_api_secret", "") or ""
         if not api_key or not api_secret:
             raise RuntimeError(
                 self.missing_credentials_error(per_user=bool(credentials)))
@@ -494,8 +507,9 @@ class BingxVenue(Venue):
 
     def missing_credentials_error(self, per_user: bool) -> str:
         if per_user:
-            return ("Per-user live trading is Bitget-only; the BingX venue "
-                    "trades the operator account configured in .env.")
+            return ("BingX connect needs an api_key and api_secret — reconnect "
+                    "with /connect bingx <api_key> <api_secret>. Account must be "
+                    "in ONE-WAY position mode.")
         return ("BINGX_API_KEY and BINGX_API_SECRET required for live "
                 "trading on BingX. Set them in .env and restart. Account "
                 "must be in ONE-WAY position mode.")

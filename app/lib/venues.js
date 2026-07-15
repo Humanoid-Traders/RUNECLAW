@@ -22,6 +22,26 @@ const VENUES = [
     ],
   },
   {
+    id: 'bybit',
+    label: 'Bybit',
+    balance_coin: 'USDT',
+    help: 'USDT perpetuals. Create API keys with derivatives trade permission; account must be in ONE-WAY position mode.',
+    fields: [
+      { key: 'api_key', label: 'API key', type: 'text' },
+      { key: 'api_secret', label: 'API secret', type: 'password' },
+    ],
+  },
+  {
+    id: 'bingx',
+    label: 'BingX',
+    balance_coin: 'USDT',
+    help: 'USDT perpetuals ($2 min notional). Create API keys with perpetual-futures trade permission; account must be in ONE-WAY position mode.',
+    fields: [
+      { key: 'api_key', label: 'API key', type: 'text' },
+      { key: 'api_secret', label: 'API secret', type: 'password' },
+    ],
+  },
+  {
     id: 'hyperliquid',
     label: 'Hyperliquid',
     balance_coin: 'USDC',
