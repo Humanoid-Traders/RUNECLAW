@@ -4733,7 +4733,7 @@ class TelegramHandler:
             from bot.llm import key_health as _kh
             _status, _detail = await asyncio.to_thread(
                 _kh.validate_anthropic_key, api_key,
-                model or "claude-sonnet-4-6")
+                model or "claude-sonnet-5")
             if _status == _kh.INVALID:
                 await self._send(update,
                     "🔴 <b>Key REJECTED — preflight failed.</b>\n"
