@@ -33,7 +33,9 @@ test('sessionResponse reflects the row flags, not a hardcoded literal', async ()
   assert.strictEqual(out.email_verified, true);
   assert.strictEqual(out.user_id, u.id);
   assert.ok(out.token, 'issues a JWT');
-  assert.strictEqual(typeof out.equity, 'number');
+  // equity is a number for paper users, or null for the operator (id 1) which
+  // has no paper baseline — this first-inserted user IS id 1 (=BOT_USER_ID).
+  assert.ok(out.equity === null || typeof out.equity === 'number');
 });
 
 test('sessionResponse merges per-route extras (e.g. OAuth provider markers)', async () => {

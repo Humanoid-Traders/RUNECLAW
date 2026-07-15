@@ -55,22 +55,40 @@ async function operatorPortfolio(userId) {
   const [winRows] = await pool.execute(
     'SELECT COUNT(*) as wins FROM trades WHERE user_id = ? AND status = ? AND pnl > 0',
     [userId, 'CLOSED']);
-  // Live/paper mode from the bot's own scan payload (circuit_breaker.live_mode).
+  // Live/paper mode AND live-availability from the bot's own scan payload
+  // (circuit_breaker). Mode and equity must be derived together so the header
+  // can never say LIVE over a stale/paper number.
   let live = false;
+  let cbUnavailable = false;
   try {
     const [rows] = await pool.execute('SELECT scan_json, updated_at FROM scan_cache WHERE id = 1');
     if (rows.length && rows[0].scan_json) {
-      live = !!(JSON.parse(rows[0].scan_json).circuit_breaker || {}).live_mode;
+      const cb = JSON.parse(rows[0].scan_json).circuit_breaker || {};
+      live = !!cb.live_mode;
+      cbUnavailable = cb.live_unavailable === true;
     }
   } catch (e) { /* mode stays PAPER */ }
   const total = parseInt(pnlRows[0]?.total_trades || 0);
   const wins = parseInt(winRows[0]?.wins || 0);
   const snap = snaps[0];
   const fresh = snap && (Date.now() - new Date(snap.snapshot_at).getTime()) < 30 * 60 * 1000;
+
+  // In LIVE mode the operator has no paper baseline: show a REAL, fresh balance
+  // or explicitly nothing. The snapshot is now guaranteed real (sync.js only
+  // stores genuine readings), so equity is null when the bot signalled the live
+  // balance is unavailable, or when no fresh snapshot exists. In PAPER mode the
+  // (paper) snapshot is the correct thing to show.
+  let equity = snap ? parseFloat(snap.equity) : null;
+  let liveUnavailable = false;
+  if (live && (cbUnavailable || !fresh)) {
+    equity = null;
+    liveUnavailable = true;
+  }
   return {
     mode: live ? 'LIVE' : 'PAPER',
     source: 'sync',
-    equity: snap ? parseFloat(snap.equity) : null,
+    equity,
+    live_unavailable: liveUnavailable,
     total_pnl: parseFloat(pnlRows[0]?.net_pnl || 0),
     daily_pnl: null, // not tracked on the sync path
     win_rate: total > 0 ? (wins / total) * 100 : null,

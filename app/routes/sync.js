@@ -165,10 +165,20 @@ router.post('/', async (req, res) => {
   try {
     const user_id = AUTHORIZED_BOT_USER_ID; // Server-enforced, ignores any client-supplied user_id
     const { equity, positions, closed_trades } = req.body;
+    // Truthful equity: the bot sends a real number, or null/absent when the
+    // LIVE balance can't be read (bot-side resolve_display_equity ->
+    // (None,"unavailable")). NEVER coerce that to 0 or a paper baseline — a
+    // fake number under a LIVE header is exactly the bug we're killing.
+    const eq = Number.isFinite(equity) ? Number(equity) : null;
 
     // Clear existing trades and snapshots for this user
     await pool.execute('DELETE FROM trades WHERE user_id = ?', [user_id]);
-    await pool.execute('DELETE FROM equity_snapshots WHERE user_id = ?', [user_id]);
+    // Only replace the equity curve when we actually have a real reading;
+    // when equity is unavailable, leave the prior snapshots intact (they age
+    // out via the freshness gate) rather than stamping a fake point.
+    if (eq !== null) {
+      await pool.execute('DELETE FROM equity_snapshots WHERE user_id = ?', [user_id]);
+    }
 
     // Insert closed trades
     if (closed_trades && closed_trades.length > 0) {
@@ -198,12 +208,13 @@ router.post('/', async (req, res) => {
       }
     }
 
-    // Insert equity snapshot
-    const eq = equity || 0;
-    await pool.execute(
-      'INSERT INTO equity_snapshots (user_id, equity, snapshot_at) VALUES (?, ?, ?)',
-      [user_id, eq, new Date()]
-    );
+    // Insert equity snapshot only for a real reading (see eq above).
+    if (eq !== null) {
+      await pool.execute(
+        'INSERT INTO equity_snapshots (user_id, equity, snapshot_at) VALUES (?, ?, ?)',
+        [user_id, eq, new Date()]
+      );
+    }
 
     // Update in-memory portfolio summary
     const closedCount = (closed_trades || []).length;
@@ -272,11 +283,12 @@ router.post('/trade-event', async (req, res) => {
       );
     }
 
-    // Record equity snapshot
-    if (equity !== undefined) {
+    // Record equity snapshot only for a real reading — never a coerced
+    // 0/undefined when the live balance is unavailable.
+    if (Number.isFinite(equity)) {
       await pool.execute(
         'INSERT INTO equity_snapshots (user_id, equity, snapshot_at) VALUES (?, ?, ?)',
-        [user_id, equity, new Date()]
+        [user_id, Number(equity), new Date()]
       );
     }
 
