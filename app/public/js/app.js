@@ -193,9 +193,57 @@
     } catch (e) { return null; }
   }
 
+  // ── Modal a11y: focus-trap + inert background + focus-return ─────────────
+  // Turns a role="dialog" element (a direct <body> child) into a proper modal.
+  // Call open() when you show it and close() when you hide it. Handles WCAG
+  // 2.4.3 (focus order) + 4.1.2: sets aria-modal, makes every OTHER top-level
+  // element `inert` (SR + Tab can't reach the page behind it), cycles Tab /
+  // Shift+Tab inside the dialog, and returns focus to whatever was focused when
+  // it opened (the trigger). `inert` degrades gracefully where unsupported —
+  // the keydown trap still keeps Tab inside.
+  function modalA11y(dialog) {
+    let prevFocus = null;
+    const focusables = () => Array.from(dialog.querySelectorAll(
+      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'))
+      .filter(el => !el.disabled && el.getClientRects().length > 0);
+    function onKeydown(e) {
+      if (e.key !== 'Tab') return;
+      const f = focusables();
+      if (!f.length) { e.preventDefault(); return; }
+      const first = f[0], last = f[f.length - 1], a = document.activeElement;
+      if (e.shiftKey && (a === first || !dialog.contains(a))) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && (a === last || !dialog.contains(a))) { e.preventDefault(); first.focus(); }
+    }
+    function setInert(on) {
+      Array.from(document.body.children).forEach(el => {
+        if (el === dialog || el.tagName === 'SCRIPT') return;
+        if (on) el.setAttribute('inert', '');
+        else el.removeAttribute('inert');
+      });
+    }
+    return {
+      open(focusEl) {
+        prevFocus = document.activeElement;
+        dialog.setAttribute('aria-modal', 'true');
+        setInert(true);
+        document.addEventListener('keydown', onKeydown, true);
+        const target = focusEl || focusables()[0] || dialog;
+        if (target && target.focus) { try { target.focus(); } catch (e) { /* noop */ } }
+      },
+      close() {
+        document.removeEventListener('keydown', onKeydown, true);
+        setInert(false);
+        dialog.removeAttribute('aria-modal');
+        if (prevFocus && prevFocus.focus) { try { prevFocus.focus(); } catch (e) { /* noop */ } }
+        prevFocus = null;
+      },
+    };
+  }
+
   window.RC = {
     TOKEN, LOGGED_IN, authHeaders, logout,
     fetchJSON, esc, fmt, fmtMoney, fmtPrice, fmtK, signed, pnlClass, fmtAgo,
     dirChip, sanitizeBotHtml, toast, renderPanel, stateBlock, connectStream,
+    modalA11y,
   };
 })();

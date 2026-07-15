@@ -557,7 +557,15 @@
       ${live ? '' : '<p class="muted small mt-2">Executes on your paper portfolio. The risk engine re-checks everything now.</p>'}`;
     modal.classList.remove('hidden');
     modal.hidden = false;
-    const close = () => { modal.classList.add('hidden'); modal.hidden = true; };
+    const a11y = window.RC.modalA11y(modal);
+    a11y.open(document.getElementById('tradeModalConfirm'));
+    const onEsc = (e) => { if (e.key === 'Escape') close(); };
+    const close = () => {
+      modal.classList.add('hidden'); modal.hidden = true;
+      document.removeEventListener('keydown', onEsc, true);
+      a11y.close();  // release inert/trap + return focus to the trigger
+    };
+    document.addEventListener('keydown', onEsc, true);
     document.getElementById('tradeModalConfirm').onclick = async () => {
       msg.textContent = 'Executing…';
       const r = await fetchJSON('/api/trade/confirm', { method: 'POST', body: { trade_id: pt.trade_id }, timeoutMs: 35000 }).catch(() => ({ ok: false, data: null }));
