@@ -197,7 +197,7 @@
       let step;
       if (!traded) step = { text: 'Place your first paper trade — real risk gate, zero risk.', cta: { label: 'Place a paper trade', href: '#trade' } };
       else if (!linked) step = { text: 'Optional: link Telegram to unlock live trading and exchange keys.', cta: { label: 'Link Telegram', href: '/' } };
-      else if (!connected) step = { text: 'Connect withdrawal-disabled Bitget keys to prepare live trading.', cta: { label: 'Connect exchange', href: '#account' } };
+      else if (!connected) step = { text: 'Connect your exchange keys (Bitget or Hyperliquid) to prepare live trading.', cta: { label: 'Connect exchange', href: '#account' } };
       else if (!(ctl.data?.live_enabled && ctl.data?.allowlisted)) step = { text: 'Everything is connected. Live trading needs your toggle + operator approval.', cta: { label: 'Review live controls', href: '#account' } };
       else step = { text: 'Fully set up. Watch the engine or manage your risk caps any time.', cta: { label: 'Open Engine telemetry', href: '#engine' } };
       return `<p class="small mb-3" style="color:var(--text-2)">${esc(step.text)}</p><a class="btn btn--primary btn--sm" href="${step.cta.href}">${esc(step.cta.label)}</a>`;
@@ -1031,42 +1031,68 @@
       }
     });
 
+    // Venue catalog (from /config) shared by the panel + submit handler. The
+    // form is data-driven: each venue declares its own fields, so adding a venue
+    // server-side needs no client change.
+    let venuesCatalog = [];
+    const venueById = (id) => venuesCatalog.find(v => v.id === id) || venuesCatalog[0];
+    const fieldsHtml = (venue) => (venue?.fields || []).map(f =>
+      `<div class="field"><label for="cf-${esc(f.key)}">${esc(f.label)}</label>
+        <input class="input" id="cf-${esc(f.key)}" data-fkey="${esc(f.key)}" type="${f.type === 'password' ? 'password' : 'text'}" autocomplete="off"></div>`
+    ).join('');
+
     renderPanel(C('akeys'), async () => {
-      const r = await fetchJSON('/api/credentials/status');
+      const [r, cfg] = await Promise.all([
+        fetchJSON('/api/credentials/status'),
+        fetchJSON('/api/auth/config', { auth: false }).catch(() => ({ data: {} })),
+      ]);
+      venuesCatalog = (cfg.data?.venues) || [];
       if (r.status === 409) {
         return `<div class="section-note"><svg class="icon" aria-hidden="true"><use href="#icon-link"></use></svg>
           ${esc(r.data?.detail || 'Exchange keys require a linked Telegram account.')}</div>`;
       }
       const c = r.data || {};
+      const venueLabel = (id) => (venuesCatalog.find(v => v.id === id)?.label) || (id ? id[0].toUpperCase() + id.slice(1) : 'Exchange');
       if (c.connected) {
         return `<div class="row" style="justify-content:space-between">
-          <span class="chip chip--up">✓ Bitget connected</span>
+          <span class="chip chip--up">✓ ${esc(venueLabel(c.venue))} connected</span>
           <button class="btn btn--danger btn--sm" id="credDisc">Disconnect</button></div>
           <p class="muted small mt-2">Keys are AES-256-GCM encrypted at rest and pulled by the bot over an authenticated channel. Withdrawal permissions are never required.</p>`;
       }
+      if (!venuesCatalog.length) return null;
+      const first = venuesCatalog[0];
+      const options = venuesCatalog.map(v => `<option value="${esc(v.id)}">${esc(v.label)}</option>`).join('');
       return `<form id="credForm" class="stack">
-        <p class="small" style="color:var(--text-2)">Connect withdrawal-disabled Bitget API keys to prepare live trading.</p>
-        <div class="form-row">
-          <div class="field"><label for="ckey">API key</label><input class="input" id="ckey" autocomplete="off"></div>
-          <div class="field"><label for="csec">API secret</label><input class="input" id="csec" type="password" autocomplete="off"></div>
-          <div class="field"><label for="cpass">Passphrase</label><input class="input" id="cpass" type="password" autocomplete="off"></div>
-        </div>
+        <p class="small" style="color:var(--text-2)">Connect your own exchange keys to prepare live trading. Keys are encrypted at rest; withdrawal permission is never required.</p>
+        <div class="field" style="max-width:220px"><label for="credVenue">Venue</label>
+          <select class="input" id="credVenue">${options}</select></div>
+        <p class="muted small" id="venueHelp">${esc(first.help || '')}</p>
+        <div class="form-row" id="credFields">${fieldsHtml(first)}</div>
         <div class="row"><button class="btn btn--primary btn--sm" type="submit">Connect exchange</button>
-        <span id="credMsg" class="small muted" aria-live="polite">${c.pending ? 'Applying…' : ''}</span></div>
+        <span id="credMsg" class="small muted" aria-live="polite">${c.pending ? `Applying ${esc(venueLabel(c.pending_venue))}…` : ''}</span></div>
       </form>`;
-    }, { empty: { text: 'Credential status unavailable.' } });
+    }, { empty: { text: 'Credential connect is unavailable right now.' } });
+    // Swap the fields + help when the venue changes.
+    container.addEventListener('change', (e) => {
+      if (e.target.id !== 'credVenue') return;
+      const v = venueById(e.target.value);
+      const fw = document.getElementById('credFields');
+      const help = document.getElementById('venueHelp');
+      if (fw) fw.innerHTML = fieldsHtml(v);
+      if (help) help.textContent = v?.help || '';
+    });
     container.addEventListener('submit', async (e) => {
       const f = e.target.closest('#credForm');
       if (!f) return;
       e.preventDefault();
       const msg = document.getElementById('credMsg');
+      const venue = document.getElementById('credVenue')?.value || 'bitget';
+      const body = { venue };
+      for (const inp of f.querySelectorAll('[data-fkey]')) body[inp.dataset.fkey] = inp.value.trim();
       msg.textContent = 'Encrypting & queueing…';
-      const r = await fetchJSON('/api/credentials', { method: 'POST', body: {
-        api_key: document.getElementById('ckey').value.trim(),
-        api_secret: document.getElementById('csec').value.trim(),
-        passphrase: document.getElementById('cpass').value.trim(),
-      } }).catch(() => ({ ok: false }));
+      const r = await fetchJSON('/api/credentials', { method: 'POST', body }).catch(() => ({ ok: false }));
       msg.textContent = r.ok ? 'Queued — the bot applies it within a minute.' : (r.data?.detail || r.data?.error || 'Failed.');
+      if (r.ok) setTimeout(() => showView('account'), 1200);
     });
     container.addEventListener('click', async (e) => {
       if (e.target.id !== 'credDisc') return;

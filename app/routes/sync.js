@@ -433,14 +433,19 @@ router.post('/credentials/ack', async (req, res) => {
       if (!a || a.user_id == null || !a.ok) continue;
       const uid = parseInt(a.user_id);
       if (!Number.isInteger(uid)) continue;
+      // Carry the venue from the pending row (or the bot's ack) so the status
+      // badge names the right exchange instead of always "bitget".
+      const [prow] = await pool.execute(
+        'SELECT exchange FROM pending_credentials WHERE user_id = ?', [uid]);
+      const venue = String(a.venue || (prow[0] && prow[0].exchange) || 'bitget').toLowerCase();
       await pool.execute('DELETE FROM pending_credentials WHERE user_id = ?', [uid]);
       const connected = a.action === 'disconnect' ? false : true;
       await pool.execute(
         `INSERT INTO exchange_status (user_id, exchange, connected)
-         VALUES (?, 'bitget', ?)
-         ON DUPLICATE KEY UPDATE connected = VALUES(connected),
-           updated_at = CURRENT_TIMESTAMP`,
-        [uid, connected]
+         VALUES (?, ?, ?)
+         ON DUPLICATE KEY UPDATE exchange = VALUES(exchange),
+           connected = VALUES(connected), updated_at = CURRENT_TIMESTAMP`,
+        [uid, venue, connected]
       );
       applied++;
     }
