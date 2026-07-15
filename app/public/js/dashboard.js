@@ -78,6 +78,13 @@
       return;
     }
     const live = pf.mode === 'LIVE' || pf.mode === 'MIXED';
+    // LIVE mode but the balance can't be read: don't flash a confident "LIVE"
+    // over an unavailable account — say so.
+    if (live && pf.live_unavailable) {
+      el.textContent = 'LIVE — BALANCE UNAVAILABLE';
+      el.className = 'chip chip--warn';
+      return;
+    }
     el.textContent = live ? 'LIVE' : 'PAPER';
     el.className = 'chip ' + (live ? 'chip--live' : 'chip--paper');
   }
@@ -142,6 +149,11 @@
       }
       const pf = await getPortfolio(true);
       updateModeChip(pf);
+      if (pf && pf.live_unavailable) {
+        // LIVE account but the exchange balance can't be read right now — say so
+        // honestly instead of inviting a paper trade or faking a number.
+        return stateBlock({ icon: 'icon-coin', text: 'Live account connected, but the exchange balance is unavailable right now — the engine will refresh it on the next sync.' });
+      }
       if (!pf || pf.equity == null) {
         return stateBlock({ icon: 'icon-coin', text: 'No portfolio yet — place your first paper trade and your equity shows up here.', cta: { label: 'Place a paper trade', href: '#trade' } });
       }
@@ -707,15 +719,25 @@
       </div>`);
 
     // Fetch /api/portfolio first: triggers the DB write-through so the
-    // DB-backed panels below reflect the freshest paper state.
-    await getPortfolio(true).then(updateModeChip);
+    // DB-backed panels below reflect the freshest paper state. Keep pf around —
+    // it carries the authoritative (truthful) equity + live_unavailable state,
+    // which /api/trades/stats does not know about.
+    const pf = await getPortfolio(true);
+    updateModeChip(pf);
 
     renderPanel(C('pstats'), async () => {
       const r = await fetchJSON('/api/trades/stats');
       const s = r.data;
       if (!s || (s.equity == null && !s.total_trades)) return null;
+      // Equity comes from pf (honest: null/unavailable in LIVE mode when the
+      // balance can't be read), not the raw snapshot in /stats which could be
+      // stale. The ratios (PnL, win, PF, Sharpe) still come from /stats.
+      const equityCell = (pf && pf.live_unavailable)
+        ? '<span class="muted" style="font-size:var(--fs-md)">unavailable</span>'
+        : ((pf && pf.equity != null) ? fmtMoney(pf.equity)
+          : (s.equity != null ? fmtMoney(s.equity) : '—'));
       return `<div class="stat-row">
-        <div class="stat"><div class="k">Equity</div><div class="v big" style="font-size:var(--fs-xl)">${s.equity != null ? fmtMoney(s.equity) : '—'}</div></div>
+        <div class="stat"><div class="k">Equity</div><div class="v big" style="font-size:var(--fs-xl)">${equityCell}</div></div>
         <div class="stat"><div class="k">Net PnL</div><div class="v num ${pnlClass(s.net_pnl)}">${signed(s.net_pnl)}</div></div>
         <div class="stat"><div class="k">Win rate</div><div class="v">${fmt(s.win_rate, 1)}%</div></div>
         <div class="stat"><div class="k">Profit factor</div><div class="v">${fmt(s.profit_factor)}</div></div>

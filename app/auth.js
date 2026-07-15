@@ -154,7 +154,14 @@ async function getUserEquity(userId) {
   if (snapRows.length > 0) {
     return parseFloat(snapRows[0].equity);
   }
-  // Fallback: compute from trade PnL (for users who haven't synced yet)
+  // The operator (BOT_USER_ID) trades LIVE — there is no paper baseline to fall
+  // back to. If no real synced snapshot exists, the honest answer is null
+  // ("unavailable"), never a fabricated $10k. Paper users below still get the
+  // paper baseline, which is correct for them.
+  const BOT_USER_ID = parseInt(process.env.BOT_USER_ID) || 1;
+  if (userId === BOT_USER_ID) return null;
+  // Fallback: compute from trade PnL (paper users who haven't synced yet start
+  // from the $10k paper baseline).
   const [rows] = await pool.execute(
     'SELECT COALESCE(SUM(pnl), 0) as total_pnl FROM trades WHERE user_id = ? AND status = ?',
     [userId, 'CLOSED']
