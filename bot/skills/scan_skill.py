@@ -27,6 +27,7 @@ def _fetch_live_exchange_data() -> Optional[dict]:
     open_positions, closed_trades. Returns None on failure.
     """
     import json, os
+    from bot.config import CONFIG
 
     result = {
         "equity": 0, "net_pnl": 0, "win_rate": 0,
@@ -84,10 +85,17 @@ def _fetch_live_exchange_data() -> Optional[dict]:
         pass
     try:
         import ccxt as ccxt_sync
+        # Use the SAME credentials the live executor uses (CONFIG.exchange, which
+        # _env_secret-strips surrounding quotes/whitespace) rather than raw
+        # os.getenv. A quoted/whitespaced .env value authenticates fine for
+        # /livebalance and /livepositions but THREW here — so this parallel
+        # readout failed and the website silently fell back to the paper $10k
+        # baseline while the live account was real. Also honour the sandbox flag
+        # so a demo/live mismatch surfaces instead of masquerading as paper.
         exchange = ccxt_sync.bitget({
-            "apiKey": os.getenv("BITGET_API_KEY", ""),
-            "secret": os.getenv("BITGET_API_SECRET", ""),
-            "password": os.getenv("BITGET_PASSPHRASE", ""),
+            "apiKey": CONFIG.exchange.api_key,
+            "secret": CONFIG.exchange.api_secret,
+            "password": CONFIG.exchange.passphrase,
             "timeout": 15000,
             "enableRateLimit": True,
             "options": {
@@ -95,6 +103,11 @@ def _fetch_live_exchange_data() -> Optional[dict]:
                 "uta": True,  # Unified Trading Account mode
             },
         })
+        try:
+            exchange.set_sandbox_mode(CONFIG.exchange.sandbox)
+        except Exception:
+            if CONFIG.exchange.sandbox:
+                raise
 
         # Fetch balance (try multiple approaches for UTA compatibility)
         try:
@@ -206,8 +219,10 @@ def _build_scan_payload(results: list[dict], engine=None) -> dict:
     cb_closed_trades = []   # Recent closed trades for dashboard
 
     # Try to get REAL exchange data first (live mode)
+    _live_mode = not CONFIG.simulation_mode and CONFIG.live_trading_enabled
     live_data_loaded = False
-    if not CONFIG.simulation_mode and CONFIG.live_trading_enabled:
+    live_unavailable = False
+    if _live_mode:
         try:
             live_data = _fetch_live_exchange_data()
             if live_data:
@@ -222,10 +237,19 @@ def _build_scan_payload(results: list[dict], engine=None) -> dict:
                 log.info("Live exchange data loaded: equity=$%.2f, %d trades, %d open",
                          cb_equity, cb_total_trades, cb_open_count)
         except Exception as exc:
-            log.warning("Failed to fetch live exchange data, falling back to paper: %s", exc)
+            log.warning("Failed to fetch live exchange data: %s", exc)
 
-    # Fallback to paper portfolio if live data not available
-    if engine and not live_data_loaded:
+    if _live_mode and not live_data_loaded:
+        # Live mode but the exchange balance could not be read. Do NOT
+        # masquerade the $10k paper baseline as the live account (that made the
+        # website show paper while the real account was live) — flag it
+        # unavailable so the dashboard shows the truth.
+        live_unavailable = True
+        cb_equity = None
+        log.warning("Live telemetry: exchange balance unavailable — marking the "
+                    "live account UNAVAILABLE rather than reporting paper equity.")
+    elif engine and not live_data_loaded:
+        # Genuine paper mode — the paper portfolio IS the account.
         try:
             risk = engine.risk
             portfolio = engine.portfolio
@@ -363,6 +387,7 @@ def _build_scan_payload(results: list[dict], engine=None) -> dict:
             "open_positions": cb_open_positions,
             "closed_trades": cb_closed_trades,
             "live_mode": not CONFIG.simulation_mode and CONFIG.live_trading_enabled,
+            "live_unavailable": live_unavailable,
         },
         "symbols": symbols,
         "entry_cards": entry_cards,
