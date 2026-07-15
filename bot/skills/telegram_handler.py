@@ -288,6 +288,7 @@ class TelegramHandler:
             ("run", self._cmd_run), ("learn", self._cmd_learn),
             ("patterns", self._cmd_patterns), ("proposals", self._cmd_proposals),
             ("optimize", self._cmd_optimize), ("help", self._cmd_help),
+            ("version", self._cmd_version),
             # Strategy preset shortcuts (aliases for /run <name>)
             ("momentum", self._cmd_momentum), ("dip", self._cmd_dip),
             ("scalp", self._cmd_scalp),
@@ -363,6 +364,10 @@ class TelegramHandler:
         # Free-text message handler (must be last — catches non-command text)
         app.add_handler(MessageHandler(
             filters.TEXT & ~filters.COMMAND, self._handle_message))
+        # Global backstop: any uncaught exception in ANY handler lands here
+        # instead of PTB's silent default-log, so the user always gets a
+        # friendly reply and the failure is captured with update_id correlation.
+        app.add_error_handler(self._on_error)
         return app
 
     @staticmethod
@@ -479,6 +484,42 @@ class TelegramHandler:
         system_log.error("%s failed: %s", command_name, exc, exc_info=True)
         await self._send(update,
             f"❌ Something went wrong loading {command_name}. Try again in a moment.")
+
+    async def _on_error(self, update: object, context) -> None:
+        """Global PTB error handler — the backstop for ANY uncaught exception in
+        a handler. Without it, PTB only logs a bare traceback and the user gets
+        silence (a silent failure). This logs the error through the redacting
+        structured logger WITH update_id correlation, then sends ONE friendly,
+        generic reply (never the raw exception text — that can contain secrets).
+        Never raises."""
+        exc = getattr(context, "error", None)
+        upd_id = getattr(update, "update_id", None) if isinstance(update, Update) else None
+        try:
+            system_log.error("Unhandled handler error (update_id=%s): %s",
+                             upd_id, exc, exc_info=exc)
+        except Exception:
+            pass
+        try:
+            chat = update.effective_chat if isinstance(update, Update) else None
+            if chat is not None:
+                await context.bot.send_message(
+                    chat_id=chat.id,
+                    text=("⚠️ Something broke on my end — it's logged "
+                          "and I'm on it. Try that again in a moment."))
+        except Exception:
+            pass
+
+    async def _cmd_version(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """/version — bot version + mode. Lightweight liveness check (rate-limited,
+        no sensitive data)."""
+        uid = update.effective_user.id if update.effective_user else 0
+        if not self._limiter.allow(uid):
+            return
+        from bot import __version__
+        mode = "LIVE" if CONFIG.is_live() else ("PAPER" if CONFIG.simulation_mode else "IDLE")
+        await self._send(update,
+            f"⚔️ <b>RUNECLAW</b> v{html.escape(__version__)}\n"
+            f"Mode: <code>{mode}</code>")
 
     async def _send_photo(self, update: Update, png: bytes, caption: str,
                           reply_markup=None) -> bool:
