@@ -843,7 +843,10 @@
             <td data-label="Entry → Exit" class="r num muted">${fmtPrice(t.entry_price)} → ${fmtPrice(t.exit_price)}</td>
             <td data-label="PnL" class="r num ${pnlClass(t.pnl)}">${signed(parseFloat(t.pnl))}</td>
             <td data-label="Closed" class="r muted small">${fmtAgo(t.closed_at)}</td>
-            <td data-label="Note"><input class="input" style="padding:4px 8px;font-size:var(--fs-xs);min-width:120px" placeholder="Add note…" value="${esc(t.notes || '')}" data-trade-id="${t.id}" aria-label="Journal note for ${esc(t.symbol)}"></td>
+            <td data-label="Note"><div class="row" style="gap:6px;align-items:center">
+              <input class="input" style="padding:4px 8px;font-size:var(--fs-xs);min-width:110px" placeholder="Add note…" value="${esc(t.notes || '')}" data-trade-id="${t.id}" aria-label="Journal note for ${esc(t.symbol)}">
+              <button class="btn btn--sm share-trade" type="button" title="Share this trade" aria-label="Share ${esc(String(t.symbol).split('/')[0])} trade" data-sym="${esc(String(t.symbol).split('/')[0])}" data-dir="${esc(t.direction)}" data-entry="${esc(String(t.entry_price))}" data-exit="${esc(String(t.exit_price))}">Share</button>
+            </div></td>
           </tr>`).join('')}</tbody></table></div>`;
     }, { empty: { icon: 'icon-coin', text: 'No closed trades yet — your history and journal live here.', cta: { label: 'Place a paper trade', href: '#trade' } } });
 
@@ -853,6 +856,33 @@
       if (!inp) return;
       const r = await fetchJSON(`/api/trades/${inp.dataset.tradeId}/notes`, { method: 'PATCH', body: { notes: inp.value.slice(0, 500) } }).catch(() => ({ ok: false }));
       toast(r.ok ? 'Note saved.' : 'Could not save the note — try again.', r.ok ? 'up' : 'down');
+    });
+
+    // Share a closed trade — symbol · direction · PnL% only (never a dollar
+    // amount, so account size never leaks), carrying the user's invite link so
+    // a shared win also recruits. Native share sheet when available, else a
+    // Telegram share intent.
+    container.addEventListener('click', async (e) => {
+      const btn = e.target.closest('.share-trade');
+      if (!btn) return;
+      const { sym, dir, entry, exit } = btn.dataset;
+      const e0 = parseFloat(entry), x0 = parseFloat(exit);
+      let pctTxt = '';
+      if (isFinite(e0) && isFinite(x0) && e0 > 0) {
+        const pct = (String(dir).toUpperCase() === 'LONG' ? (x0 - e0) : (e0 - x0)) / e0 * 100;
+        pctTxt = ` ${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%`;
+      }
+      let url = location.origin;
+      try {
+        const rr = await fetchJSON('/api/auth/referrals');
+        if (rr.ok && rr.data?.code) url = `${location.origin}/?ref=${encodeURIComponent(rr.data.code)}`;
+      } catch (_) { /* fall back to the bare origin */ }
+      const text = `${dir} ${sym}${pctTxt} — traded with RUNECLAW, the autonomous AI trading agent.`;
+      if (navigator.share) {
+        try { await navigator.share({ text, url }); return; } catch (_) { /* cancelled / unsupported → fall through */ }
+      }
+      window.open(`https://t.me/share/url?url=${encodeURIComponent(url)}&text=${encodeURIComponent(text)}`,
+        '_blank', 'noopener');
     });
   }
 
