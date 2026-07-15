@@ -6,6 +6,20 @@
 
 ---
 
+## ⚠️ Post-publication correction (2026-07-15)
+
+**Finding P1-SEC "ungated read commands" is WITHDRAWN — verified false positive.**
+On re-verification against `main`, `/status` `/risk` `/signals` `/playbook` **do** carry
+`@guard(...)` decorators (`@guard("status")` at the line *above* each `async def`), and
+`guard()` (`telegram_handler.py:208-226`) runs the hard-allowlist gate `self._guard`
+(`:1510`) **before** the handler body. **There is no operator-financials leak.** The
+sub-review misattributed the `async def` line and missed the decorator above it. All
+other P1 findings were independently re-verified and stand. The remaining true P1s, in
+fix order: global error handler → web-chat resilience/focus-trap → CI `pip-audit` scope +
+aiohttp drift → `robots.txt`/`sitemap.xml` → `smart_exits`/`sanitize` tests → `/version`.
+
+---
+
 ## 0. Executive summary
 
 **No P0 (no crash/data-loss/committed-secret) issues.** The codebase is, on the whole, **above average**: clean PTB v20 async, tamper-evident redacted audit logs, a hard allowlist on privileged commands, zero committed secrets, an ultra-light landing page, and a disciplined custom CI flake-filter. The gaps are specific and fixable.
@@ -14,7 +28,7 @@
 
 | # | Tag | Finding | Evidence |
 |---|-----|---------|----------|
-| 1 | SEC | Read commands `/status` `/signals` `/playbook` `/risk` are **ungated** → on a live bot any stranger sees operator equity/PnL/positions | `telegram_handler.py:5313,7268,5657,5264` |
+| 1 | ~~SEC~~ | ~~Read commands ungated~~ **← WITHDRAWN, false positive** (see correction above — commands carry `@guard`; no leak) | `telegram_handler.py:208-226,1510` |
 | 2 | BUG | **No global PTB error handler** anywhere → uncaught handler exceptions fail silently; no Sentry | `add_error_handler` absent repo-wide |
 | 3 | BUG/UX | Web chat error **loses the user's typed message** and offers no retry | `app/public/js/chat.js:102-117` |
 | 4 | A11Y | Chat drawer + trade modal: **no focus-trap / `aria-modal` / focus-return** | `dashboard.html:46`; `dashboard.js` |
