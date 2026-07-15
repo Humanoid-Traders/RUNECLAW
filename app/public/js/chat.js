@@ -174,7 +174,12 @@
       const r = await fetchJSON(ENDPOINT, { method: 'POST', body: { text }, timeoutMs: 50000 });
       typing.remove();
       if (r.status === 429) appendFailure('Rate limit hit — give it a few seconds.', text);
-      else if (r.status === 503) appendMsg('bot', 'Chat isn\'t configured on this deployment yet.');
+      else if (r.status === 503) {
+        appendMsg('bot', 'Chat isn\'t available on this deployment right now — please try again shortly.');
+        // Operator hint (console only — never surfaced to visitors): the bot
+        // user-gateway isn't reachable/configured.
+        console.warn('[chat] gateway 503 — set WEB_GATEWAY_SECRET (same on website + bot) and BOT_GATEWAY_URL, then redeploy both.');
+      }
       else if (!r.ok) appendFailure(`<b>Error:</b> ${esc(r.data?.detail || r.data?.error || 'chat unavailable')}`, text);
       else if (r.data.pending_trade) appendTradeCard(r.data.pending_trade);
       else appendMsg('bot', sanitizeBotHtml(r.data.reply_html || '…'));
@@ -187,19 +192,14 @@
     }
   }
 
-  // Availability:
-  //  - Anonymous visitors get the FAB unconditionally (the public endpoint is
-  //    a POST — there's nothing cheap to probe; a 503 surfaces on first send).
-  //  - Signed-in users get it unless the deployment has no gateway (503) or the
-  //    session isn't valid (401).
+  // Availability: ALWAYS surface the FAB — for everyone, on every page. Chat
+  // must never be an invisible feature. Previously a signed-in visitor's FAB
+  // was hidden whenever /api/chat/history returned 503, so if the bot gateway
+  // wasn't configured (WEB_GATEWAY_SECRET / BOT_GATEWAY_URL) the chat button
+  // silently didn't exist — indistinguishable from "the feature isn't there".
+  // Now the drawer always opens; if the gateway is unconfigured/unreachable the
+  // composer says so on send (503), which is self-diagnosing instead of silent.
   async function init() {
-    if (PUBLIC) {
-      fab.classList.remove('hidden');
-      fab.hidden = false;
-      return;
-    }
-    const r = await fetchJSON('/api/chat/history?limit=1').catch(() => null);
-    if (r && (r.status === 503 || r.status === 401)) return;
     fab.classList.remove('hidden');
     fab.hidden = false;
   }
