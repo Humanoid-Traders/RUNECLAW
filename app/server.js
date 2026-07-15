@@ -34,6 +34,13 @@ if (!process.env.BOT_SYNC_SECRET || process.env.BOT_SYNC_SECRET.length < 32) {
   process.exit(1);
 }
 
+const { auditConfig } = require('./lib/config_audit');
+// Surface every silently-degrading config (SMTP, gateway/creds secrets,
+// APP_BASE_URL, OAuth) once at boot — and, in production, refuse to start on a
+// fatal (e.g. a set-but-malformed WEB_CREDS_KEY that would fail every exchange-
+// key submission). Runs after the JWT/BOT_SYNC hard checks above.
+auditConfig();
+
 const express = require('express');
 const { migrate } = require('./db');
 const { router: authRouter } = require('./auth');
