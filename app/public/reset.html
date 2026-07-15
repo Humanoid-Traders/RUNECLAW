@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reset password — RUNECLAW</title>
+<meta name="robots" content="noindex">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="stylesheet" href="/styles.css?v=3">
+</head>
+<body>
+<main class="auth-wrap">
+  <div class="card">
+    <h2 style="font-family:var(--font-brand);font-size:var(--fs-md);letter-spacing:.06em;margin-bottom:var(--s3)">Choose a new password</h2>
+    <div id="form">
+      <div class="field"><label for="pw">New password</label><input class="input" type="password" id="pw" placeholder="Min 10 characters" autocomplete="new-password"></div>
+      <div class="field"><label for="pw2">Confirm new password</label><input class="input" type="password" id="pw2" autocomplete="new-password"></div>
+      <div class="form-err" id="msg" aria-live="polite"></div>
+      <button class="btn btn--primary btn-block" id="submit">Reset password</button>
+    </div>
+    <div id="done" class="hidden">
+      <div class="section-note" style="border-style:solid;border-color:var(--up);color:var(--up)">✓ Your password has been reset.</div>
+      <a href="/" class="btn btn--primary btn-block mt-4">Go to log in →</a>
+    </div>
+  </div>
+</main>
+<script>
+const params=new URLSearchParams(location.search);
+const token=params.get('token')||'';
+const msg=document.getElementById('msg');
+if(!token){msg.textContent='This reset link is missing its token. Request a new one from the log-in page.';}
+document.getElementById('submit').addEventListener('click',async()=>{
+  msg.textContent='';
+  const pw=document.getElementById('pw').value, pw2=document.getElementById('pw2').value;
+  if(!token){msg.textContent='Missing reset token.';return;}
+  if(pw.length<10){msg.textContent='Password must be at least 10 characters.';return;}
+  if(pw!==pw2){msg.textContent='Passwords do not match.';return;}
+  try{
+    const r=await fetch('/api/auth/reset-password',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token,new_password:pw})});
+    const res=await r.json();
+    if(res.error){msg.textContent=res.error;return;}
+    document.getElementById('form').classList.add('hidden');
+    document.getElementById('done').classList.remove('hidden');
+  }catch(e){msg.textContent='Network error — try again.';}
+});
+</script>
+</body>
+</html>

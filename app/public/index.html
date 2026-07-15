@@ -97,6 +97,19 @@
       <div class="field"><label for="login-pass">Password</label><input class="input" type="password" id="login-pass" placeholder="Your password" autocomplete="current-password"></div>
       <div class="form-err" id="login-err" aria-live="polite"></div>
       <button class="btn btn--primary btn-block" onclick="doLogin()">Log in</button>
+      <p class="muted small" style="text-align:center;margin-top:var(--s2)">
+        <a href="#" onclick="showForgot();return false">Forgot your password?</a>
+      </p>
+    </div>
+
+    <div id="step-forgot" class="step">
+      <p class="muted small">Enter your email and we'll send a link to reset your password.</p>
+      <div class="field"><label for="forgot-email">Email</label><input class="input" type="email" id="forgot-email" placeholder="you@example.com" autocomplete="email"></div>
+      <div class="form-err" id="forgot-msg" aria-live="polite"></div>
+      <button class="btn btn--primary btn-block" onclick="doForgot()">Send reset link</button>
+      <p class="muted small" style="text-align:center;margin-top:var(--s2)">
+        <a href="#" onclick="switchTab('login');return false">← Back to log in</a>
+      </p>
     </div>
 
     <!-- Social sign-in / sign-up: same buttons create OR log in an account. -->
@@ -133,6 +146,22 @@
         <button class="btn btn--sm" onclick="getToken()">Generate link token</button>
       </div>
     </div>
+    <!-- Email verification status (shown only for real email accounts) -->
+    <div class="section-note hidden" id="verify-box" style="border-style:solid">
+      <span id="verify-text">Your email isn't verified yet.</span>
+      <button class="btn btn--ghost btn--sm mt-2" id="verify-resend" onclick="resendVerification()">Resend verification email</button>
+    </div>
+
+    <!-- Change / set password -->
+    <div id="pw-box" class="mt-4">
+      <h3 style="font-size:var(--fs-base);margin-bottom:var(--s1)" id="pw-title">Change password</h3>
+      <div class="field" id="pw-current-field"><label for="pw-current">Current password</label><input class="input" type="password" id="pw-current" autocomplete="current-password"></div>
+      <div class="field"><label for="pw-new">New password</label><input class="input" type="password" id="pw-new" placeholder="Min 10 characters" autocomplete="new-password"></div>
+      <div class="field"><label for="pw-new2">Confirm new password</label><input class="input" type="password" id="pw-new2" autocomplete="new-password"></div>
+      <div class="form-err" id="pw-msg" aria-live="polite"></div>
+      <button class="btn btn--sm" onclick="doChangePassword()">Update password</button>
+    </div>
+
     <a href="/dashboard" class="btn btn--primary btn-block mt-4">Open trading dashboard →</a>
   </div>
 </main>
@@ -163,6 +192,20 @@ function switchTab(t){
   document.getElementById('tab-login').setAttribute('aria-selected',!isReg);
   document.getElementById('step-register').classList.toggle('active',isReg);
   document.getElementById('step-login').classList.toggle('active',!isReg);
+  document.getElementById('step-forgot').classList.remove('active');
+}
+function showForgot(){
+  document.getElementById('step-login').classList.remove('active');
+  document.getElementById('step-register').classList.remove('active');
+  document.getElementById('step-forgot').classList.add('active');
+}
+async function doForgot(){
+  const email=document.getElementById('forgot-email').value.trim();
+  setErr('forgot-msg','');
+  if(!email){setErr('forgot-msg','Email required.');return;}
+  const res=await apiCall('/auth/forgot-password',{email});
+  // Always show the generic success message (no account enumeration).
+  setErr('forgot-msg',res.message||'If that email has an account, a reset link is on its way.');
 }
 function setErr(id,msg){document.getElementById(id).textContent=msg;}
 async function apiCall(path,body){
@@ -206,6 +249,66 @@ function showAccount(data){
   document.getElementById('linked-ok').classList.toggle('hidden',!linked);
   document.getElementById('link-box').classList.toggle('hidden',linked);
   localStorage.setItem('rc_session',JSON.stringify({token:data.token||SESSION?.token,user_id:data.user_id}));
+  renderAccountMeta(data);
+  // Fetch authoritative flags (has_password, email_verified) from /me.
+  refreshAccountMeta();
+}
+// Authed POST/GET helper — attaches the session bearer token.
+async function apiAuth(path,body,method){
+  const opts={method:method||'POST',headers:{'Authorization':'Bearer '+(SESSION?.token||''),'Content-Type':'application/json'}};
+  if(body)opts.body=JSON.stringify(body);
+  const r=await fetch(API+path,opts);
+  return r.json();
+}
+async function refreshAccountMeta(){
+  if(!SESSION?.token)return;
+  try{const me=await apiAuth('/auth/me',null,'GET');if(!me.error)renderAccountMeta(me);}catch{/* offline */}
+}
+function renderAccountMeta(data){
+  const email=data.email||'';
+  const placeholder=/@telegram\.runeclaw\.local$/.test(email);
+  // Email verification: only meaningful for real email addresses.
+  const vbox=document.getElementById('verify-box');
+  if(placeholder){vbox.classList.add('hidden');}
+  else if(data.email_verified){
+    vbox.classList.remove('hidden');
+    vbox.style.borderColor='var(--up)';vbox.style.color='var(--up)';
+    document.getElementById('verify-text').textContent='✓ Email verified.';
+    document.getElementById('verify-resend').classList.add('hidden');
+  }else if(data.email_verified===false){
+    vbox.classList.remove('hidden');
+    vbox.style.borderColor='';vbox.style.color='';
+    document.getElementById('verify-text').textContent="Your email isn't verified yet.";
+    document.getElementById('verify-resend').classList.remove('hidden');
+  }
+  // Password box: OAuth-only accounts SET a password (no current field).
+  if(data.has_password===false){
+    document.getElementById('pw-title').textContent='Set a password';
+    document.getElementById('pw-current-field').classList.add('hidden');
+  }else{
+    document.getElementById('pw-title').textContent='Change password';
+    document.getElementById('pw-current-field').classList.remove('hidden');
+  }
+}
+async function doChangePassword(){
+  setErr('pw-msg','');
+  const cur=document.getElementById('pw-current').value;
+  const nw=document.getElementById('pw-new').value;
+  const nw2=document.getElementById('pw-new2').value;
+  if(nw.length<10){setErr('pw-msg','New password must be at least 10 characters.');return;}
+  if(nw!==nw2){setErr('pw-msg','New passwords do not match.');return;}
+  const res=await apiAuth('/auth/change-password',{current_password:cur,new_password:nw});
+  if(res.error){setErr('pw-msg',res.error);return;}
+  setErr('pw-msg','✓ Password updated.');
+  document.getElementById('pw-current').value='';document.getElementById('pw-new').value='';document.getElementById('pw-new2').value='';
+  refreshAccountMeta();
+}
+async function resendVerification(){
+  const res=await apiAuth('/auth/send-verification',{});
+  const t=document.getElementById('verify-text');
+  if(res.error){t.textContent=res.error;return;}
+  if(res.already_verified){t.textContent='✓ Email verified.';document.getElementById('verify-resend').classList.add('hidden');return;}
+  t.textContent=res.sent?'Verification email sent — check your inbox.':'Email delivery is not configured yet; ask the operator to set up SMTP.';
 }
 async function getToken(){
   if(!SESSION?.token)return;
