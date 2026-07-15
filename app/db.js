@@ -172,7 +172,9 @@ class MemoryDB {
       }
       const user = { id: this._nextUserId++, email: params[0], password_hash: null,
         google_id: null, telegram_id: null, avatar_url: null, plan: 'free',
-        telegram_linked: false, link_token: null, link_token_expires: null, created_at: new Date() };
+        telegram_linked: false, link_token: null, link_token_expires: null,
+        email_verified: false, verify_token: null, verify_token_expires: null,
+        reset_token: null, reset_token_expires: null, created_at: new Date() };
       // Column order varies: email/password vs the OAuth passwordless inserts.
       if (cmd.includes('PASSWORD_HASH')) {
         user.password_hash = params[1];
@@ -238,6 +240,45 @@ class MemoryDB {
       const now = new Date();
       const rows = this.users.filter(u => u.link_token === params[0] && u.link_token_expires > now);
       return [rows, []];
+    }
+
+    // -- Account management: verify + reset tokens, password changes --
+    if (cmd.startsWith('UPDATE USERS SET VERIFY_TOKEN')) {
+      // params: [verify_token, verify_token_expires, id]
+      const user = this.users.find(u => u.id === params[params.length - 1]);
+      if (user) { user.verify_token = params[0]; user.verify_token_expires = params[1]; }
+      return [{ affectedRows: user ? 1 : 0 }, []];
+    }
+    if (cmd.includes('FROM USERS WHERE VERIFY_TOKEN')) {
+      const now = new Date();
+      const rows = this.users.filter(u => u.verify_token === params[0] && u.verify_token_expires > now);
+      return [rows, []];
+    }
+    if (cmd.startsWith('UPDATE USERS SET EMAIL_VERIFIED')) {
+      // params: [id]
+      const user = this.users.find(u => u.id === params[params.length - 1]);
+      if (user) { user.email_verified = true; user.verify_token = null; user.verify_token_expires = null; }
+      return [{ affectedRows: user ? 1 : 0 }, []];
+    }
+    if (cmd.startsWith('UPDATE USERS SET RESET_TOKEN')) {
+      // params: [reset_token, reset_token_expires, id]
+      const user = this.users.find(u => u.id === params[params.length - 1]);
+      if (user) { user.reset_token = params[0]; user.reset_token_expires = params[1]; }
+      return [{ affectedRows: user ? 1 : 0 }, []];
+    }
+    if (cmd.includes('FROM USERS WHERE RESET_TOKEN')) {
+      const now = new Date();
+      const rows = this.users.filter(u => u.reset_token === params[0] && u.reset_token_expires > now);
+      return [rows, []];
+    }
+    if (cmd.startsWith('UPDATE USERS SET PASSWORD_HASH')) {
+      // Reset flow clears reset_token too: [hash, id] or [hash, id] with reset clear.
+      const user = this.users.find(u => u.id === params[params.length - 1]);
+      if (user) {
+        user.password_hash = params[0];
+        if (cmd.includes('RESET_TOKEN')) { user.reset_token = null; user.reset_token_expires = null; }
+      }
+      return [{ affectedRows: user ? 1 : 0 }, []];
     }
 
     // -- TRADES --
@@ -436,6 +477,24 @@ async function migrate() {
     try {
       await pool.execute('ALTER TABLE users MODIFY COLUMN password_hash VARCHAR(255) NULL');
     } catch (e) { /* already nullable */ }
+    // Account management: email verification + password reset. Tokens are
+    // stored HASHED (sha256 hex) — a DB leak can't be replayed to reset/verify.
+    // Each ALTER is guarded so re-running migrate() on a live DB is a no-op.
+    try {
+      await pool.execute('ALTER TABLE users ADD COLUMN email_verified BOOLEAN DEFAULT FALSE');
+    } catch (e) { /* exists */ }
+    try {
+      await pool.execute('ALTER TABLE users ADD COLUMN verify_token VARCHAR(100) DEFAULT NULL');
+    } catch (e) { /* exists */ }
+    try {
+      await pool.execute('ALTER TABLE users ADD COLUMN verify_token_expires TIMESTAMP NULL');
+    } catch (e) { /* exists */ }
+    try {
+      await pool.execute('ALTER TABLE users ADD COLUMN reset_token VARCHAR(100) DEFAULT NULL');
+    } catch (e) { /* exists */ }
+    try {
+      await pool.execute('ALTER TABLE users ADD COLUMN reset_token_expires TIMESTAMP NULL');
+    } catch (e) { /* exists */ }
     await pool.execute(`
       CREATE TABLE IF NOT EXISTS trades (
         id INT AUTO_INCREMENT PRIMARY KEY,

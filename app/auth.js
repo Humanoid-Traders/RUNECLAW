@@ -3,6 +3,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const { pool } = require('./db');
+const mailer = require('./lib/mailer');
 
 const router = express.Router();
 
@@ -160,6 +161,44 @@ async function getUserEquity(userId) {
   return 10000 + parseFloat(rows[0].total_pnl || 0);
 }
 
+// -- Account-management helpers (email verification + password reset) --
+
+// Tokens are stored HASHED in the DB; only the raw token travels in the email
+// link, so a DB leak can't be replayed to verify an address or reset a password.
+function _hashToken(raw) {
+  return crypto.createHash('sha256').update(raw).digest('hex');
+}
+
+const VERIFY_TTL_MS = 24 * 60 * 60 * 1000; // 24h
+const RESET_TTL_MS = 30 * 60 * 1000;       // 30m
+
+// Issue a verification token for a user and email the link. Best-effort: a
+// mailer failure never breaks the calling flow (registration still succeeds).
+async function sendVerificationEmail(userId, email) {
+  try {
+    const raw = crypto.randomBytes(32).toString('hex');
+    const expires = new Date(Date.now() + VERIFY_TTL_MS);
+    await pool.execute(
+      'UPDATE users SET verify_token = ?, verify_token_expires = ? WHERE id = ?',
+      [_hashToken(raw), expires, userId]
+    );
+    const base = mailer.baseUrl();
+    const link = `${base}/verify?token=${raw}`;
+    await mailer.sendMail({
+      to: email,
+      subject: 'Verify your RUNECLAW email',
+      text: `Confirm your email to finish setting up RUNECLAW.\n\nOpen this link (valid 24h):\n${link}\n\nIf you didn't create an account, ignore this message.`,
+      html: `<p>Confirm your email to finish setting up <b>RUNECLAW</b>.</p>`
+        + `<p><a href="${link}">Verify my email</a> (valid 24h)</p>`
+        + `<p style="color:#888;font-size:12px">If you didn't create an account, ignore this message.</p>`,
+    });
+    return true;
+  } catch (err) {
+    console.error('sendVerificationEmail error:', err.message);
+    return false;
+  }
+}
+
 // -- Routes --
 
 router.post('/register', async (req, res) => {
@@ -189,7 +228,13 @@ router.post('/register', async (req, res) => {
 
     const token = signToken({ id: userId, email: normalizedEmail });
     const equity = await getUserEquity(userId);
-    res.json({ token, user_id: userId, email: normalizedEmail, plan: 'free', telegram_linked: false, equity });
+    // Best-effort verification email (no-op when SMTP unconfigured). Fired
+    // before responding so the token is persisted; never blocks on delivery
+    // errors (sendVerificationEmail swallows them).
+    await sendVerificationEmail(userId, normalizedEmail);
+    res.json({ token, user_id: userId, email: normalizedEmail, plan: 'free',
+               telegram_linked: false, email_verified: false,
+               email_pending: mailer.isConfigured(), equity });
   } catch (err) {
     // Uniform response to prevent user enumeration (don't reveal ER_DUP_ENTRY)
     if (err.code === 'ER_DUP_ENTRY') return res.status(400).json({ error: 'Registration failed. Please try a different email.' });
@@ -233,7 +278,9 @@ router.post('/login', async (req, res) => {
     clearAccountFailures(normalizedEmail);
     const token = signToken(user);
     const equity = await getUserEquity(user.id);
-    res.json({ token, user_id: user.id, email: user.email, plan: user.plan, telegram_linked: !!user.telegram_linked, equity });
+    res.json({ token, user_id: user.id, email: user.email, plan: user.plan,
+               telegram_linked: !!user.telegram_linked,
+               email_verified: !!user.email_verified, equity });
   } catch (err) {
     console.error('Login error:', err.message);
     res.status(500).json({ error: 'Login failed' });
@@ -242,11 +289,14 @@ router.post('/login', async (req, res) => {
 
 router.get('/me', authMiddleware, async (req, res) => {
   try {
-    const [rows] = await pool.execute('SELECT id, email, plan, telegram_linked FROM users WHERE id = ?', [req.user.user_id]);
+    const [rows] = await pool.execute('SELECT id, email, plan, telegram_linked, email_verified, password_hash FROM users WHERE id = ?', [req.user.user_id]);
     if (rows.length === 0) return res.status(404).json({ error: 'User not found' });
     const user = rows[0];
     const equity = await getUserEquity(user.id);
-    res.json({ user_id: user.id, email: user.email, plan: user.plan, telegram_linked: !!user.telegram_linked, equity });
+    res.json({ user_id: user.id, email: user.email, plan: user.plan,
+               telegram_linked: !!user.telegram_linked,
+               email_verified: !!user.email_verified,
+               has_password: !!user.password_hash, equity });
   } catch (err) {
     console.error('Me error:', err.message);
     res.status(500).json({ error: 'Failed to fetch user' });
@@ -390,4 +440,142 @@ router.post('/google', async (req, res) => {
   }
 });
 
-module.exports = { router, authMiddleware, verifyTelegramAuth, findOrCreateOAuthUser };
+// -- Change password (authenticated) --
+// If the account already has a password, the current one must be supplied and
+// correct. OAuth-only accounts (no password_hash) can SET one without a current
+// password — this is how a Google/Telegram user adds email/password login.
+router.post('/change-password', authMiddleware, async (req, res) => {
+  try {
+    const { current_password, new_password } = req.body || {};
+    if (!new_password || String(new_password).length < 10) {
+      return res.status(400).json({ error: 'New password must be at least 10 characters' });
+    }
+    const [rows] = await pool.execute(
+      'SELECT id, password_hash FROM users WHERE id = ?', [req.user.user_id]);
+    if (rows.length === 0) return res.status(404).json({ error: 'User not found' });
+    const user = rows[0];
+    if (user.password_hash) {
+      if (!current_password) return res.status(400).json({ error: 'Current password required' });
+      const ok = await bcrypt.compare(String(current_password), user.password_hash);
+      if (!ok) return res.status(401).json({ error: 'Current password is incorrect' });
+    }
+    const hash = await bcrypt.hash(String(new_password), 12);
+    await pool.execute('UPDATE users SET password_hash = ? WHERE id = ?', [hash, user.id]);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('Change-password error:', err.message);
+    res.status(500).json({ error: 'Failed to change password' });
+  }
+});
+
+// -- Forgot password: issue a reset link (unauthenticated) --
+// Always returns 200 with the same body regardless of whether the email exists,
+// to avoid account enumeration. Rate-limited per IP (shared login limiter).
+router.post('/forgot-password', async (req, res) => {
+  const generic = { ok: true, message: 'If that email has an account, a reset link is on its way.' };
+  try {
+    const clientIp = req.ip || req.socket.remoteAddress || 'unknown';
+    if (!checkRateLimit(clientIp)) {
+      return res.status(429).json({ error: 'Too many attempts. Try again later.' });
+    }
+    recordAttempt(clientIp);
+
+    const { email } = req.body || {};
+    if (!email) return res.status(400).json({ error: 'Email required' });
+    const normalizedEmail = String(email).trim().toLowerCase();
+
+    const [rows] = await pool.execute(
+      'SELECT id, email, password_hash FROM users WHERE email = ?', [normalizedEmail]);
+    // Only send for accounts that actually have a password to reset.
+    if (rows.length && rows[0].password_hash) {
+      const raw = crypto.randomBytes(32).toString('hex');
+      const expires = new Date(Date.now() + RESET_TTL_MS);
+      await pool.execute(
+        'UPDATE users SET reset_token = ?, reset_token_expires = ? WHERE id = ?',
+        [_hashToken(raw), expires, rows[0].id]);
+      const link = `${mailer.baseUrl()}/reset?token=${raw}`;
+      try {
+        await mailer.sendMail({
+          to: normalizedEmail,
+          subject: 'Reset your RUNECLAW password',
+          text: `Reset your RUNECLAW password using this link (valid 30 minutes):\n${link}\n\nIf you didn't request this, ignore this email — your password is unchanged.`,
+          html: `<p>Reset your <b>RUNECLAW</b> password.</p>`
+            + `<p><a href="${link}">Choose a new password</a> (valid 30 minutes)</p>`
+            + `<p style="color:#888;font-size:12px">If you didn't request this, ignore this email — your password is unchanged.</p>`,
+        });
+      } catch (mailErr) {
+        console.error('Reset email send failed:', mailErr.message);
+      }
+    }
+    res.json(generic);
+  } catch (err) {
+    console.error('Forgot-password error:', err.message);
+    // Still return the generic body — don't leak that something errored.
+    res.json(generic);
+  }
+});
+
+// -- Reset password with a token (unauthenticated) --
+router.post('/reset-password', async (req, res) => {
+  try {
+    const { token, new_password } = req.body || {};
+    if (!token || !new_password) return res.status(400).json({ error: 'token and new_password required' });
+    if (String(new_password).length < 10) {
+      return res.status(400).json({ error: 'Password must be at least 10 characters' });
+    }
+    const [rows] = await pool.execute(
+      'SELECT id, email FROM users WHERE reset_token = ? AND reset_token_expires > ?',
+      [_hashToken(String(token)), new Date()]);
+    if (rows.length === 0) return res.status(400).json({ error: 'Reset link is invalid or expired' });
+
+    const hash = await bcrypt.hash(String(new_password), 12);
+    await pool.execute(
+      'UPDATE users SET password_hash = ?, reset_token = NULL, reset_token_expires = NULL WHERE id = ?',
+      [hash, rows[0].id]);
+    // A successful reset clears any per-account lockout so the user can log in.
+    clearAccountFailures(String(rows[0].email).trim().toLowerCase());
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('Reset-password error:', err.message);
+    res.status(500).json({ error: 'Failed to reset password' });
+  }
+});
+
+// -- Verify email with a token (unauthenticated; link from the email) --
+router.post('/verify-email', async (req, res) => {
+  try {
+    const token = (req.body && req.body.token) || req.query.token;
+    if (!token) return res.status(400).json({ error: 'token required' });
+    const [rows] = await pool.execute(
+      'SELECT id FROM users WHERE verify_token = ? AND verify_token_expires > ?',
+      [_hashToken(String(token)), new Date()]);
+    if (rows.length === 0) return res.status(400).json({ error: 'Verification link is invalid or expired' });
+    await pool.execute(
+      'UPDATE users SET email_verified = TRUE, verify_token = NULL, verify_token_expires = NULL WHERE id = ?',
+      [rows[0].id]);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('Verify-email error:', err.message);
+    res.status(500).json({ error: 'Verification failed' });
+  }
+});
+
+// -- Resend the verification email (authenticated) --
+router.post('/send-verification', authMiddleware, async (req, res) => {
+  try {
+    const [rows] = await pool.execute(
+      'SELECT id, email, email_verified FROM users WHERE id = ?', [req.user.user_id]);
+    if (rows.length === 0) return res.status(404).json({ error: 'User not found' });
+    if (rows[0].email_verified) return res.json({ ok: true, already_verified: true });
+    if (String(rows[0].email).endsWith('@telegram.runeclaw.local')) {
+      return res.status(400).json({ error: 'Add a real email address first' });
+    }
+    await sendVerificationEmail(rows[0].id, rows[0].email);
+    res.json({ ok: true, sent: mailer.isConfigured() });
+  } catch (err) {
+    console.error('Send-verification error:', err.message);
+    res.status(500).json({ error: 'Failed to send verification' });
+  }
+});
+
+module.exports = { router, authMiddleware, verifyTelegramAuth, findOrCreateOAuthUser, sendVerificationEmail };

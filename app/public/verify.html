@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Verify email — RUNECLAW</title>
+<meta name="robots" content="noindex">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="stylesheet" href="/styles.css?v=3">
+</head>
+<body>
+<main class="auth-wrap">
+  <div class="card" style="text-align:center">
+    <h2 style="font-family:var(--font-brand);font-size:var(--fs-md);letter-spacing:.06em;margin-bottom:var(--s3)">Email verification</h2>
+    <div id="status" class="muted">Verifying…</div>
+    <a href="/" class="btn btn--primary btn-block mt-4">Continue to RUNECLAW →</a>
+  </div>
+</main>
+<script>
+const token=new URLSearchParams(location.search).get('token')||'';
+const status=document.getElementById('status');
+(async()=>{
+  if(!token){status.textContent='This link is missing its token.';return;}
+  try{
+    const r=await fetch('/api/auth/verify-email',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token})});
+    const res=await r.json();
+    if(res.error){status.textContent=res.error;status.className='form-err';}
+    else{status.textContent='✓ Your email is verified. Thanks!';status.style.color='var(--up)';}
+  }catch(e){status.textContent='Network error — try again.';status.className='form-err';}
+})();
+</script>
+</body>
+</html>
