@@ -1144,13 +1144,28 @@ class RuneClawEngine:
             return True, "operator/auto path"
         if self._is_operator_user(user_id):
             return True, "operator/admin user"
+        # A regular user must have their OWN linked, decryptable keys …
         try:
             from bot.core.exchange_credentials import get_credential_store
-            if get_credential_store().get(user_id):
-                return True, "user has linked keys"
+            if not get_credential_store().get(user_id):
+                return False, "no linked Bitget account — use /connect to link one"
         except Exception as exc:
             return False, f"credential lookup failed: {exc}"
-        return False, "no linked Bitget account — use /connect to link one"
+        # … AND be on the live ALLOWLIST (admin /grant_live). Staged rollout:
+        # linked keys alone are NOT enough — this is the gate that keeps flipping
+        # PER_USER_LIVE_ENABLED=on from opening live to every key-holder at once.
+        # Fail-CLOSED for real money: if the user store isn't available to confirm
+        # the allowlist, deny rather than assume permission.
+        store = getattr(self, "_user_store", None)
+        if store is None:
+            return False, "live allowlist unavailable — denying (fail-closed)"
+        try:
+            if not store.can_trade_live(user_id):
+                return False, ("not on the live allowlist — an admin must "
+                               "approve you with /grant_live")
+        except Exception as exc:
+            return False, f"live allowlist check failed: {exc}"
+        return True, "linked keys + live-allowlisted"
 
     def _all_live_executors(self) -> list:
         """The shared operator executor plus every active per-user executor.
@@ -3441,6 +3456,29 @@ class RuneClawEngine:
                   action="manual_margin_override", result="APPLIED",
                   data={"margin": round(manual_margin, 2), "leverage": leverage,
                         "approx_notional": round(manual_margin * leverage, 2)})
+            # C5 FIX: the manual override was applied AFTER the per-user cap and the
+            # free-margin clamp above, so a manual /trade could oversize past a
+            # user's ceiling or their account's available margin. Re-apply both
+            # guards to the manual value (tighten-only; never raises size).
+            _cap = self._per_user_margin_cap(user_id)
+            if _cap is not None and size_usd > _cap:
+                audit(trade_log,
+                      f"Manual margin capped to per-user ceiling: "
+                      f"${size_usd:.2f} -> ${_cap:.2f}",
+                      action="manual_margin_cap", result="CAPPED",
+                      data={"requested": round(size_usd, 2), "cap": round(_cap, 2),
+                            "user_id": user_id})
+                size_usd = _cap
+            if live_bal:
+                _avail = live_bal.get("free", 0.0)
+                if size_usd > _avail:
+                    audit(trade_log,
+                          f"Manual margin clamped to free balance: "
+                          f"${size_usd:.2f} -> ${_avail:.2f}",
+                          action="manual_margin_clamp", result="CLAMPED",
+                          data={"requested": round(size_usd, 2),
+                                "available": round(_avail, 2), "user_id": user_id})
+                    size_usd = _avail
 
         # C2-53 FIX: Reject trade when ATR is missing or zero.
         # A zero ATR produces SL at entry price = immediate stop-out.

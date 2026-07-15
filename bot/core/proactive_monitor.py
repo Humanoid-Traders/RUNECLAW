@@ -479,16 +479,26 @@ class ProactiveMonitor:
         cb_active = self.engine.risk.circuit_breaker_active
 
         if cb_active and not self._last_cb_state:
-            # Gather live context for the alert
-            drawdown_pct = getattr(self.engine.risk, 'current_drawdown_pct', None)
-            drawdown_str = f"{drawdown_pct:.2f}%" if drawdown_pct is not None else "N/A"
+            # Gather live context for the alert. Read the REAL trip cause and the
+            # live accumulators — the old code read non-existent attrs
+            # (risk.current_drawdown_pct / risk.daily_pnl) and the empty PAPER
+            # portfolios, so a live trip always showed "Drawdown N/A, Daily P&L
+            # N/A, Open Positions 0" even with real positions (operator report:
+            # "message is not correct").
+            cause = getattr(self.engine.risk, 'circuit_trip_cause', '') or 'unknown'
+            _dl = getattr(self.engine.risk, 'last_known_daily_loss_pct', None)
+            daily_pnl_str = f"-{_dl:.2f}% (of equity)" if _dl else "N/A"
+            # Drawdown reason is shown via the cause line; the exact live % isn't
+            # separately retained, so present it only when it IS the cause.
+            drawdown_str = "see cause" if cause == "drawdown" else "N/A"
+            # Live open-position count (operator account), not the paper books.
             positions_count = 0
             try:
-                positions_count = self.engine.user_portfolios.total_open_positions() if self.engine.user_portfolios.all_portfolios() else 0
+                ex = getattr(self.engine, 'live_executor', None)
+                if ex is not None:
+                    positions_count = len(getattr(ex, 'open_positions', []) or [])
             except Exception:
                 pass
-            daily_pnl = getattr(self.engine.risk, 'daily_pnl', None)
-            daily_pnl_str = f"${daily_pnl:+,.2f}" if daily_pnl is not None else "N/A"
             ts = datetime.now(UTC).strftime("%H:%M:%S UTC")
 
             alerts.append(Alert(
@@ -499,10 +509,14 @@ class ProactiveMonitor:
                     "\U0001f6a8 <b>CIRCUIT BREAKER TRIPPED</b>\n"
                     "────────────────\n"
                     "The risk engine has <b>halted all new entries</b>.\n\n"
+                    f"- Reason: <code>{cause}</code>\n"
                     f"- Drawdown: <code>{drawdown_str}</code>\n"
-                    f"- Daily P&L: <code>{daily_pnl_str}</code>\n"
+                    f"- Daily loss: <code>{daily_pnl_str}</code>\n"
                     f"- Open Positions: <code>{positions_count}</code>\n"
                     f"- Triggered At: <code>{ts}</code>\n\n"
+                    "If the reason looks wrong (e.g. a stale drawdown after an "
+                    "auth blip), <code>/resume</code> re-seeds the high-water "
+                    "mark and clears it.\n\n"
                     "\U0001f6e1 Open positions are still monitored for SL/TP.\n"
                     "────────────────\n"
                     "\U0001f449 /status — review engine state\n"
