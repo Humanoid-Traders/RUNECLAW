@@ -7539,6 +7539,24 @@ class TelegramHandler:
                         pos_match = p
                         break
 
+            # The button passes a trade_id (TI-xxxx). When local tracking has
+            # gone stale — booked closed while the exchange still holds the
+            # position (the "local tracking out of sync" case that made this
+            # button say "position closed" while /livepositions showed it OPEN)
+            # — resolve the SYMBOL from any local record (open OR closed) so the
+            # exchange fallback below can match it by symbol instead of failing.
+            _resolved_sym = None
+            if is_trade_id and _detail_ex is not None:
+                _rec = getattr(_detail_ex, "_positions", {}).get(ident)
+                if _rec is None:
+                    try:
+                        _rec = next((c for c in _detail_ex.closed_positions
+                                     if getattr(c, "trade_id", None) == ident), None)
+                    except Exception:
+                        _rec = None
+                if _rec is not None:
+                    _resolved_sym = getattr(_rec, "symbol", None)
+
             # Fallback: check exchange directly for untracked positions
             is_untracked = False
             if pos_match is None and CONFIG.is_live():
@@ -7554,7 +7572,9 @@ class TelegramHandler:
                             continue
                         ep_sym = ep.get("symbol", "")
                         ep_clean = ep_sym.replace("/", "").replace(":USDT", "")
-                        if ep_clean == ident_clean or ep_sym == ident:
+                        _rs_clean = (_resolved_sym or "").replace("/", "").replace(":USDT", "")
+                        if (ep_clean == ident_clean or ep_sym == ident
+                                or (_rs_clean and ep_clean == _rs_clean)):
                             # Build a lightweight mock object for rendering
                             from types import SimpleNamespace
                             from datetime import datetime, timezone
