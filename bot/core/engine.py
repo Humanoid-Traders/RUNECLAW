@@ -282,6 +282,14 @@ class RuneClawEngine:
         # cache. Empty + unused while the flag is off → operator path unchanged.
         self._user_live_balance_cache: dict[str, dict] = {}
         self._user_live_balance_cache_ts: dict[str, float] = {}
+        # Live-auth health per account ("" = operator). When an account's venue
+        # authentication is failing (missing passphrase, Bitget 40006/40012), new
+        # live ENTRIES on that account are halted — existing positions keep being
+        # monitored and closed. Set by the boot credential preflight / per-user
+        # auth sweep and cleared when auth is confirmed OK. Unknown → healthy, so
+        # nothing is blocked until a probe actually reports a failure.
+        self._live_auth_ok: dict[str, bool] = {}
+        self._live_auth_detail: dict[str, str] = {}
         # Consecutive engine-tick failures, mirrored from the run loop so the
         # proactive monitor can alert when the main loop is degraded/unmonitored.
         self._tick_consecutive_failures: int = 0
@@ -881,6 +889,38 @@ class RuneClawEngine:
             ex._ws_feed = self.ws_feed
             self._balance_view_executors[key] = ex
         return ex
+
+    def set_live_auth_status(self, ok: bool, detail: str = "",
+                             user_id: str = "") -> None:
+        """Record whether ACCOUNT ``user_id`` ("" = operator) currently
+        authenticates with its venue.
+
+        When an account is marked NOT ok, new live ENTRIES on it are halted
+        (``live_auth_healthy`` returns False and the pre-execute gate refuses to
+        open) — but open positions keep being monitored and closed. Set by the
+        boot credential preflight, the per-user auth sweep, and any live auth
+        failure observed during operation. Logs the transition loudly so a
+        recovery/regression is visible."""
+        key = str(user_id or "")
+        prev = self._live_auth_ok.get(key, True)
+        self._live_auth_ok[key] = bool(ok)
+        self._live_auth_detail[key] = str(detail or "")
+        who = key or "operator"
+        if prev and not ok:
+            logger.critical(
+                "Live auth DOWN for account '%s': %s — NEW live entries halted "
+                "until authentication is restored (open positions still "
+                "monitored).", who, detail)
+        elif ok and not prev:
+            logger.info("Live auth restored for account '%s' — live entries "
+                        "resume.", who)
+
+    def live_auth_healthy(self, user_id: str = "") -> bool:
+        """True unless ACCOUNT ``user_id`` has been marked as failing venue auth.
+        Unknown accounts default True (allow) so nothing is blocked until a probe
+        or a live auth error actually reports a failure — fail-open on detection,
+        fail-closed only on a confirmed failure."""
+        return self._live_auth_ok.get(str(user_id or ""), True)
 
     def invalidate_user_executor(self, user_id: str) -> None:
         """Drop any cached per-user executor (e.g. after /connect or /disconnect)
@@ -3376,6 +3416,21 @@ class RuneClawEngine:
             self._pending_pyramid.pop(trade_id, None)
             self._transition(AgentState.IDLE, f"halted before execute {trade_id}")
             return "Trade REJECTED: engine halted (kill-switch) before execution."
+
+        # Auth fail-closed: never OPEN a live position on an account whose venue
+        # authentication is known-broken (missing passphrase, Bitget 40006/40012)
+        # — it could not place the protective stop, exactly the naked-position
+        # failure mode. This blocks NEW entries only; open positions keep being
+        # monitored and closed. Cleared automatically when the next preflight /
+        # auth probe confirms auth is healthy again.
+        if CONFIG.is_live() and not self.live_auth_healthy(user_id):
+            self._pending_pyramid.pop(trade_id, None)
+            self._transition(AgentState.IDLE, f"auth-halt before execute {trade_id}")
+            _detail = self._live_auth_detail.get(str(user_id or ""), "")
+            return ("Trade REJECTED: exchange authentication is failing"
+                    + (f" ({_detail})" if _detail else "")
+                    + " — new live entries are halted until the credentials are "
+                    "fixed. Open positions are still monitored.")
 
         result = await executor.execute(
             idea, size_usd,
