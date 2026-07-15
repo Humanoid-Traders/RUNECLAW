@@ -46,7 +46,7 @@ _STRINGS: dict[str, dict[str, str]] = {
         "en": (
             "Hey {name}, here's where things stand:\n\n"
             "{status_icon} <b>{status_label}</b> | {mode}\n"
-            "Equity: <code>${equity}</code>\n"
+            "Equity: <code>{equity}</code>\n"
             "Open positions: <code>{filled}</code>{pending_str}\n"
             "Win rate: <code>{win_rate}</code>\n"
             "Tier: {tier} | Trading: {trade_mode}\n\n"
@@ -59,7 +59,7 @@ _STRINGS: dict[str, dict[str, str]] = {
         "zh": (
             "嗨 {name}，以下是目前的狀態：\n\n"
             "{status_icon} <b>{status_label_zh}</b> | {mode}\n"
-            "權益: <code>${equity}</code>\n"
+            "權益: <code>{equity}</code>\n"
             "持倉數量: <code>{filled}</code>{pending_str_zh}\n"
             "勝率: <code>{win_rate}</code>\n"
             "等級: {tier} | 交易模式: {trade_mode_zh}\n\n"

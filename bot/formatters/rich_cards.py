@@ -759,7 +759,7 @@ def render_open_positions(positions: List[Dict[str, Any]], lang: str = "en") -> 
 def render_status_card(
     mode: str,
     active: bool,
-    equity: float,
+    equity: Optional[float],
     open_positions: int,
     daily_pnl: float,
     drawdown: float,
@@ -789,7 +789,10 @@ def render_status_card(
         f"- {t('lbl_pending_ideas', lang)}: {pending_ideas}",
         "",
         f"<b>{t('hdr_capital', lang)}</b>",
-        f"- {t('lbl_equity', lang)}: {_fmt_price(equity)}",
+        # equity is None only in LIVE mode when the balance is unreadable —
+        # say so, never fall back to the paper baseline.
+        f"- {t('lbl_equity', lang)}: "
+        f"{_fmt_price(equity) if equity is not None else 'unavailable'}",
         f"- {t('lbl_open_positions', lang)}: {open_positions}",
         f"- {t('lbl_daily_pnl', lang)}: {pnl_icon} {_pct(daily_pnl)}",
         "",
