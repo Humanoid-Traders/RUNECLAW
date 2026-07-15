@@ -560,8 +560,17 @@ class RuneClawEngine:
             pass
         return str(getattr(self.risk, "_current_regime", "") or "")
 
-    def _on_live_position_closed(self, pos) -> None:
-        """Handle live position close: invalidate cache + set SL cooldown."""
+    def _on_live_position_closed(self, pos, user_id: str = "") -> None:
+        """Handle live position close: invalidate cache + set SL cooldown.
+
+        ``user_id`` identifies the account that closed the trade (the operator
+        executor passes "" — the default — so behaviour is unchanged; per-user
+        executors pass their own id). It routes the account-level loss breakers
+        to the RIGHT risk engine (audit C1): without it, a per-user live trader's
+        realized losses were recorded against the operator engine, so their own
+        daily-loss / drawdown / streak breakers never tripped and the operator's
+        breakers absorbed every user's losses.
+        """
         self._invalidate_live_balance_cache()
 
         # ── Close the learning loop's WRITE side ──────────────────────────
@@ -585,12 +594,16 @@ class RuneClawEngine:
         # In pure-live mode the paper portfolio is never updated, so the
         # consecutive-loss breaker, live-performance governor, equity throttle
         # and the daily-loss / drawdown gates would never see real losses.
-        # Route each live realized close into the risk engine's live-close
-        # accounting so those account-level protections actually engage.
+        # Route each live realized close into the OWNING account's risk engine
+        # (risk_for(user_id)) so those account-level protections engage on the
+        # right account: the operator engine for operator/auto closes ("" id),
+        # and the user's OWN engine for a per-user live close (audit C1). With
+        # PER_USER_LIVE_ENABLED off, risk_for always returns the operator engine
+        # — byte-identical to before.
         try:
             _rpnl = getattr(pos, "pnl_usd", None)
             if _rpnl is not None:
-                self.risk.record_live_trade_result(float(_rpnl))
+                self.risk_for(user_id).record_live_trade_result(float(_rpnl))
         except Exception as _rr_exc:
             logger.debug("Live risk-result record skipped: %s", _rr_exc)
         # Auto-refit the learners every N closed outcomes (gated, fail-open).
@@ -807,7 +820,15 @@ class RuneClawEngine:
         # Rebuild if absent or the user's api_key changed (e.g. re-/connect).
         if ex is None or (ex._credentials or {}).get("api_key") != creds.get("api_key"):
             ex = LiveExecutor(user_id=user_id, credentials=creds)
-            ex.on_position_closed = lambda pos: self._on_live_position_closed(pos)
+            # Capture this user's id in the callback (default-arg avoids the
+            # late-binding closure trap) so a per-user live close feeds THAT
+            # user's risk engine, not the operator's (audit C1).
+            ex.on_position_closed = (
+                lambda pos, uid=user_id: self._on_live_position_closed(pos, uid))
+            # _risk_engine here only forwards INFRASTRUCTURE warnings (feed
+            # staleness etc.), which are shared market-level state — keep it on
+            # the operator engine. Per-user ACCOUNT breakers are routed via the
+            # close callback above (risk_for(uid)), not this handle.
             ex._risk_engine = self.risk
             # Share the same WS feed as the operator executor (market data is not
             # per-user) so degradation uses real price-staleness, not the shadow clock.
