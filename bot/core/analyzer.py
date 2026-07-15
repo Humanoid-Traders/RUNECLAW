@@ -4073,7 +4073,7 @@ class Analyzer:
         ]
         if is_admin:
             fallback_chain.insert(
-                3, (LLMProvider.ANTHROPIC, "ANTHROPIC_API_KEY", "claude-sonnet-4-6"))
+                3, (LLMProvider.ANTHROPIC, "ANTHROPIC_API_KEY", "claude-sonnet-5"))
 
         for provider, key_env, default_model in fallback_chain:
             if provider.value == skip_provider:

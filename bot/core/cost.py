@@ -61,6 +61,20 @@ LLM_PRICING_FAMILIES: list[tuple[str, dict[str, float]]] = [
     ("claude-3-",      {"in": 3.00,  "out": 15.00}),
     ("gpt-4o-mini",    {"in": 0.15,  "out": 0.60}),
     ("gpt-4",          {"in": 2.50,  "out": 10.00}),
+    ("gpt-5",          {"in": 2.50,  "out": 10.00}),
+    # Non-Anthropic tiers the routing tables actually use (Gemini, Alibaba Qwen)
+    # were UNPRICED → booked $0.00 → disarmed the daily budget guard (same class
+    # as the 2026-07-11 incident). Approximate family pricing arms the guard;
+    # exact per-model entries can be added to LLM_PRICING above when needed.
+    # More-specific prefixes first (first match wins).
+    ("gemini-2.5-pro",   {"in": 1.25, "out": 5.00}),
+    ("gemini-2.5-flash", {"in": 0.30, "out": 2.50}),
+    ("gemini-1.5-pro",   {"in": 1.25, "out": 5.00}),
+    ("gemini-",          {"in": 0.30, "out": 2.50}),
+    ("qwen",             {"in": 0.40, "out": 1.20}),
+    ("deepseek",         {"in": 0.14, "out": 0.28}),
+    ("mistral",          {"in": 2.00, "out": 6.00}),
+    ("llama",            {"in": 0.20, "out": 0.20}),
 ]
 
 

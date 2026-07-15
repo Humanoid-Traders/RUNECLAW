@@ -139,11 +139,16 @@ class TestBudgetGuard:
         # Any future dated Anthropic ID prices by family, never $0.
         for mid, lo in (("claude-sonnet-4-5-20250929", 3.0),
                         ("claude-opus-4-7-20260105", 15.0),
-                        ("claude-haiku-4-5-20251001", 0.8)):
+                        ("claude-haiku-4-5-20251001", 0.8),
+                        # Non-Anthropic routing defaults are now family-priced too
+                        # so they can't book $0 and disarm the budget guard.
+                        ("llama-3.3-70b-versatile", 0.20),
+                        ("gemini-2.5-pro", 1.25),
+                        ("qwen3.6-flash", 0.40)):
             price, _ = resolve_llm_price(mid)
             assert price is not None and price["in"] == lo
-        # Genuinely unknown models stay unpriced (tracked as unknown-cost).
-        price, exact = resolve_llm_price("llama-3.3-70b-versatile")
+        # A genuinely unknown model still stays unpriced (tracked as unknown-cost).
+        price, exact = resolve_llm_price("acme-frontier-9000")
         assert price is None and exact is False
 
     def test_calls_through_when_under_budget(self, monkeypatch):

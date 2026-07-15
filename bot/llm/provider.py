@@ -39,7 +39,11 @@ class LLMProvider(str, Enum):
     CUSTOM        = "custom"          # Any OpenAI-compatible base URL
 
 
-# Provider metadata — updated June 2026 with latest model names.
+# Provider metadata — refreshed 2026-07 to current model names (Anthropic Sonnet
+# 5 is the live Sonnet tier; admin routing uses it). Non-Anthropic IDs are left
+# as-is unless independently verified — a wrong model id breaks live LLM calls,
+# so operators switch models via the admin controls / LLM_TIER_*_MODEL env after
+# validating on the replay/backtest harness. Runtime tier defaults are unchanged.
 PROVIDER_CATALOG: dict[LLMProvider, dict] = {
     LLMProvider.OPENAI: {
         "base_url": "https://api.openai.com/v1",
@@ -54,8 +58,8 @@ PROVIDER_CATALOG: dict[LLMProvider, dict] = {
     },
     LLMProvider.ANTHROPIC: {
         "base_url": "https://api.anthropic.com",
-        "default_model": "claude-sonnet-4-6",
-        "recommended_models": ["claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5-20251001"],
+        "default_model": "claude-sonnet-5",
+        "recommended_models": ["claude-opus-4-8", "claude-sonnet-5", "claude-haiku-4-5-20251001"],
         "sdk": "anthropic",
         "free_tier": False,
         "speed": "medium",
@@ -134,9 +138,9 @@ PROVIDER_CATALOG: dict[LLMProvider, dict] = {
     },
     LLMProvider.OPENROUTER: {
         "base_url": "https://openrouter.ai/api/v1",
-        "default_model": "anthropic/claude-sonnet-4-6",
+        "default_model": "anthropic/claude-sonnet-5",
         "recommended_models": [
-            "anthropic/claude-sonnet-4-6",
+            "anthropic/claude-sonnet-5",
             "openai/gpt-4o",
             "google/gemini-2.0-flash-001",
             "meta-llama/llama-3.1-70b-instruct:free",
@@ -226,22 +230,22 @@ DEFAULT_TIER_ROUTING: dict[LLMTier, dict] = {
 ADMIN_TIER_ROUTING: dict[LLMTier, dict] = {
     LLMTier.SCAN: {
         "provider": LLMProvider.ANTHROPIC,
-        "model": "claude-sonnet-4-6",
+        "model": "claude-sonnet-5",
         "reason": "Admin premium: full Sonnet reasoning for scan analysis",
     },
     LLMTier.THESIS: {
         "provider": LLMProvider.ANTHROPIC,
-        "model": "claude-sonnet-4-6",
+        "model": "claude-sonnet-5",
         "reason": "Admin premium: Sonnet for trade thesis generation",
     },
     LLMTier.LEARNING: {
         "provider": LLMProvider.ANTHROPIC,
-        "model": "claude-sonnet-4-6",
+        "model": "claude-sonnet-5",
         "reason": "Admin premium: Sonnet for deep reflection and learning",
     },
     LLMTier.CHAT: {
         "provider": LLMProvider.ANTHROPIC,
-        "model": "claude-sonnet-4-6",
+        "model": "claude-sonnet-5",
         "reason": "Admin premium: Sonnet for user Q&A — best quality responses",
     },
 }
