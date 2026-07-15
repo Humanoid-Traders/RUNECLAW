@@ -204,9 +204,11 @@ code { font-family: var(--font-data); font-size: .9em; background: var(--surface
   font-family: var(--font-ui); font-size: var(--fs-sm); font-weight: 600;
   padding: 9px 16px; border-radius: var(--radius-sm); cursor: pointer;
   border: 1px solid var(--line-2); background: var(--surface-2); color: var(--text);
-  transition: background .15s, border-color .15s, color .15s;
+  transition: background .15s, border-color .15s, color .15s, transform .08s;
 }
 .btn:hover { border-color: var(--gold); color: var(--gold-bright); }
+/* Tactile press feedback (disabled under reduced-motion via the global rule). */
+.btn:active:not(:disabled) { transform: translateY(1px) scale(.99); }
 .btn:disabled { opacity: .45; cursor: not-allowed; }
 .btn--primary { background: var(--gold); border-color: var(--gold); color: #14120a; }
 .btn--primary:hover { background: var(--gold-bright); color: #14120a; }
@@ -327,7 +329,9 @@ code { font-family: var(--font-data); font-size: .9em; background: var(--surface
 .kv-row b { font-family: var(--font-data); font-variant-numeric: tabular-nums; font-weight: 600; }
 
 .mode-badge { display: inline-flex; align-items: center; gap: 6px; font-family: var(--font-data); font-size: var(--fs-sm); font-weight: 700; letter-spacing: .08em; padding: 5px 14px; border-radius: var(--radius-sm); margin-bottom: var(--s3); }
-.mode-badge--paper { color: var(--warn); background: var(--warn-dim); border: 1px solid var(--warn); }
+/* Badge contrast: both modes use a solid fill with a dark/white foreground so
+   the label passes WCAG AA — the old paper badge was amber-on-dim-amber (~2:1). */
+.mode-badge--paper { color: #17130a; background: var(--warn); border: 1px solid var(--warn); }
 .mode-badge--live { color: #fff; background: var(--down); border: 1px solid var(--down); }
 
 /* ---- Chat drawer ----------------------------------------------------------- */
@@ -369,10 +373,27 @@ code { font-family: var(--font-data); font-size: .9em; background: var(--surface
 .chat-msg.bot { align-self: flex-start; background: var(--surface-2); border: 1px solid var(--line); color: var(--text-2); border-bottom-left-radius: 4px; }
 .chat-msg.bot code { color: var(--gold-bright); }
 .chat-msg.bot pre { font-family: var(--font-data); font-size: var(--fs-xs); overflow-x: auto; margin: 4px 0; }
-.chat-msg.pending { opacity: .55; }
+.chat-msg.pending { opacity: 1; }
+/* Each new bubble eases in — subtle, and disabled under reduced-motion (top). */
+.chat-msg { animation: chat-in .18s ease-out; }
+@keyframes chat-in { from { opacity: 0; transform: translateY(4px); } }
 .chat-card { align-self: stretch; background: var(--surface-2); border: 1px solid var(--gold); border-radius: var(--radius); padding: var(--s3); }
 .chat-inputrow { display: flex; gap: var(--s2); padding: var(--s3); border-top: 1px solid var(--line); background: var(--surface-2); }
 .chat-inputrow .input { flex: 1; }
+
+/* Typing indicator — three dots that bounce in sequence. */
+.typing-dots { display: inline-flex; gap: 4px; align-items: center; height: 1em; }
+.typing-dots span { width: 6px; height: 6px; border-radius: 50%; background: var(--text-3); animation: typing-bounce 1.2s infinite ease-in-out both; }
+.typing-dots span:nth-child(1) { animation-delay: -.24s; }
+.typing-dots span:nth-child(2) { animation-delay: -.12s; }
+@keyframes typing-bounce { 0%, 80%, 100% { transform: scale(.6); opacity: .4; } 40% { transform: scale(1); opacity: 1; } }
+
+/* Suggestion chips row under the chat body. */
+.chat-chips { display: flex; flex-wrap: wrap; gap: var(--s2); padding: 0 var(--s3) var(--s2); }
+.chat-chips:empty { display: none; }
+.chat-chip { cursor: pointer; border: 1px solid var(--line-2); background: var(--surface-2); color: var(--text-2); transition: background .15s, border-color .15s, transform .1s; }
+.chat-chip:hover { background: var(--surface-3); border-color: var(--gold); color: var(--text); }
+.chat-chip:active { transform: scale(.96); }
 
 /* ---- Landing page -------------------------------------------------------- */
 .hero { max-width: var(--maxw); margin: 0 auto; padding: 64px var(--s4) var(--s8); }
