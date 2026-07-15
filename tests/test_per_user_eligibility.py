@@ -58,13 +58,23 @@ def test_regular_user_without_keys_rejected(flag, monkeypatch):
     assert "connect" in reason.lower()
 
 
-def test_regular_user_with_keys_eligible(flag, monkeypatch):
+def test_regular_user_with_keys_needs_allowlist(flag, monkeypatch):
+    # Staged rollout: linked keys are necessary but NOT sufficient — the user
+    # must also be on the live allowlist (admin /grant_live).
+    from unittest.mock import MagicMock
     flag(True)
     eng = RuneClawEngine()
     monkeypatch.setattr(eng, "_is_operator_user", lambda uid: False)
     monkeypatch.setattr(
         "bot.core.exchange_credentials.get_credential_store",
         lambda: _store({"777": {"api_key": "k", "api_secret": "s", "passphrase": "p"}}))
+    # Keys present but NOT allowlisted -> rejected.
+    store = MagicMock(); store.can_trade_live.return_value = False
+    eng._user_store = store
+    ok, reason = eng.per_user_live_eligibility("777")
+    assert ok is False and "allowlist" in reason.lower()
+    # Allowlisted -> eligible.
+    store.can_trade_live.return_value = True
     ok, _ = eng.per_user_live_eligibility("777")
     assert ok is True
 
