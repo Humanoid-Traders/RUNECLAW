@@ -29,7 +29,7 @@ import logging
 import os
 import threading
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 log = logging.getLogger("runeclaw.exchange_creds")
 
@@ -55,13 +55,29 @@ def _load_or_create_master_key(key_file: str = _KEY_FILE) -> bytes:
         # Validate it is a usable Fernet key; fail loud rather than silently
         # falling back to a different key (which would orphan existing data).
         Fernet(env_key.encode())  # raises if malformed
+        # Persist the env key to the 0600 file too, so that a wiped .env — which
+        # removes RUNECLAW_SECRETS_KEY from the environment — falls back to the
+        # SAME key from disk on the next boot instead of generating a fresh one
+        # and orphaning all ciphertext (the secrets-vault + per-user store both
+        # rely on this). Only write when the file is absent or differs.
+        try:
+            p = Path(key_file)
+            if not p.exists() or p.read_bytes().strip() != env_key.encode():
+                p.parent.mkdir(parents=True, exist_ok=True)
+                p.write_bytes(env_key.encode())
+                try:
+                    os.chmod(str(p), 0o600)
+                except OSError:
+                    pass
+        except OSError as exc:
+            log.debug("Could not persist master key to %s: %s", key_file, exc)
         return env_key.encode()
 
     p = Path(key_file)
     if p.exists():
         return p.read_bytes().strip()
 
-    key = Fernet.generate_key()
+    key: bytes = Fernet.generate_key()
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_bytes(key)
     try:
@@ -85,7 +101,11 @@ class ExchangeCredentialStore:
         self._path = Path(creds_file)
         self._lock = threading.Lock()
         self._key_file = key_file
-        self._fernet = None  # lazy — only when crypto is actually needed
+        # Annotated Any (not None) so the lazy ``Fernet`` assignment in _cipher
+        # type-checks without importing cryptography at module top (it's an
+        # optional extra). Now reachable by the gated mypy run via
+        # config -> secrets_vault -> exchange_credentials.
+        self._fernet: Any = None  # lazy — only when crypto is actually needed
         # Raw on-disk map: { telegram_id: { field: ciphertext_str } }
         self._enc: dict[str, dict] = {}
         self._load()

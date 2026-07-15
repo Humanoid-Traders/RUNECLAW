@@ -60,6 +60,20 @@ if _REPO_ROOT_ENV.is_file():
 else:
     load_dotenv(override=_DOTENV_OVERRIDE)
 
+# ── Secrets vault: self-heal a wiped .env ──────────────────────────────────
+# After .env is loaded, mirror the operator's present secrets into an encrypted
+# vault under data/ and restore any the environment has lost — so a redeploy
+# that wipes .env comes back fully authenticated instead of failing to place
+# stops (the recurring 40012 naked-position incident). Runs HERE, before CONFIG
+# reads os.environ. Fully no-op when disabled / crypto-absent / nothing to do;
+# fail-open so a vault error can never block startup.
+try:
+    from bot.core.secrets_vault import seed_and_restore as _seed_and_restore
+    _seed_and_restore()
+except Exception as _vault_exc:  # pragma: no cover - defensive
+    import logging as _vlog
+    _vlog.getLogger(__name__).debug("secrets vault skipped: %s", _vault_exc)
+
 
 def _detect_replaced_inherited_keys(
         pre_env: dict, post_env: dict) -> list[str]:
