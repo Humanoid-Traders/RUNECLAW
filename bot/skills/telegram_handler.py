@@ -350,6 +350,8 @@ class TelegramHandler:
             # Multi-symbol funding-spread scan (read-only, public data);
             # /funding (above) stays the single-symbol deep view.
             ("fundingscan", self._cmd_fundingscan),
+            # Funding-arb paper tracker (100% paper — records + reports only)
+            ("arb", self._cmd_arb),
             # Admin: which secrets are vault-protected vs still missing
             ("vault", self._cmd_vault),
             # Confidence calibration (admin)
@@ -3992,6 +3994,32 @@ class TelegramHandler:
             system_log.warning("/stake failed: %s", exc)
             await self._send(update,
                 "🔴 Could not build the stake plan — nothing was moved.")
+
+    async def _cmd_arb(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """/arb — the funding-arb paper tracker: what a fixed $1k delta-
+        neutral pair WOULD have earned on the recorded cross-venue spreads,
+        with the fee reality check. 100% paper — the evidence that gates
+        whether a real capture strategy is worth building."""
+        if not await self._guard(update, "status"):
+            return
+        await self._send(update, "⏳ Crunching the paper-arb history…")
+        try:
+            from bot.core.arb_tracker import (compute_paper_carry,
+                                              format_arb_html,
+                                              load_snapshots)
+            from bot.core.funding_radar import build_comparison
+            snaps = await asyncio.to_thread(load_snapshots)
+            carries = compute_paper_carry(snaps)
+            current = []
+            try:
+                current = await asyncio.to_thread(
+                    build_comparison, ["BTC", "ETH", "SOL", "XRP", "DOGE"])
+            except Exception:
+                pass
+            await self._send(update, format_arb_html(carries, current))
+        except Exception as exc:
+            system_log.warning("/arb failed: %s", exc)
+            await self._send(update, "🔴 Paper-arb report failed — see logs.")
 
     async def _cmd_llmab(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """/llmab — the LLM shadow A/B report (admin): the challenger model
