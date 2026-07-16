@@ -1197,6 +1197,7 @@
     container.insertAdjacentHTML('beforeend', `
       <div class="stack">
         <section class="panel" id="p-aprof"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-user"></use></svg>Profile</h2><div id="c-aprof"><div class="skel"></div></div></section>
+        <section class="panel" id="p-aplan"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-sparkle"></use></svg>Membership</h2><div id="c-aplan"><div class="skel"></div></div></section>
         <section class="panel" id="p-atg"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-link"></use></svg>Telegram link <span class="right muted small">optional — unlocks live trading</span></h2><div id="c-atg"><div class="skel"></div></div></section>
         <section class="panel" id="p-ainvite"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-user"></use></svg>Invite friends</h2><div id="c-ainvite"><div class="skel"></div></div></section>
         <section class="panel" id="p-akeys"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-wallet"></use></svg>Exchange keys</h2><div id="c-akeys"><div class="skel"></div></div></section>
@@ -1212,6 +1213,30 @@
         <div class="kv-row"><span>Mode</span><b><span class="chip chip--paper">PAPER</span>${linked ? ' <span class="chip chip--gold">LIVE-CAPABLE</span>' : ''}</b></div>
         <button class="btn btn--ghost btn--sm mt-3" id="logoutBtn">Log out</button>`;
     }, { empty: { text: 'Could not load your profile.' } });
+
+    renderPanel(C('aplan'), async () => {
+      if (!me?.ok) return null;
+      // 'free' is the pre-tier-sync default; the bot's tier authority calls
+      // the same thing 'basic'. One label for both.
+      const raw = String(me.data.plan || 'basic').toLowerCase();
+      const plan = raw === 'free' ? 'basic' : raw;
+      const PLANS = [
+        { id: 'basic', name: 'Basic', pts: ['Paper trading with the real risk gate', 'Live charts, signals & AI chat', 'Strategy Lab backtests'] },
+        { id: 'pro', name: 'Pro', pts: ['Premium AI models answer your scans', 'Live trading eligibility (linked + approved)', 'Priority support'] },
+        { id: 'elite', name: 'Elite', pts: ['Everything in Pro', 'Higher live caps', 'Early access to new agent features'] },
+      ];
+      const cards = PLANS.map(p => `
+        <div class="tile" style="flex:1;min-width:180px;border:1px solid ${p.id === plan ? 'var(--gold)' : 'var(--line)'};border-radius:var(--radius);padding:var(--s3) var(--s4)">
+          <div style="display:flex;justify-content:space-between;align-items:baseline">
+            <b>${esc(p.name)}</b>${p.id === plan ? '<span class="chip chip--gold">your plan</span>' : ''}
+          </div>
+          <ul class="small" style="margin:8px 0 0 16px;color:var(--text-2);display:flex;flex-direction:column;gap:4px">
+            ${p.pts.map(t2 => `<li>${esc(t2)}</li>`).join('')}
+          </ul>
+        </div>`).join('');
+      return `<div class="row" style="gap:var(--s3);flex-wrap:wrap;align-items:stretch">${cards}</div>
+        <p class="muted small mt-3">Tiers are granted by the operator through the Telegram bot. Interested in Pro or Elite? Ask in <a href="https://t.me/HTRUNECLAW_bot" target="_blank" rel="noopener">@HTRUNECLAW_bot</a> — online checkout is coming later.</p>`;
+    }, { empty: { text: 'Membership info unavailable.' } });
     setTimeout(() => {
       const b = document.getElementById('logoutBtn');
       if (b) b.onclick = RC.logout;

@@ -2092,6 +2092,13 @@ class TelegramHandler:
             return
         ok = self.users.set_tier(target_id, tier)
         if ok:
+            # Mirror the change to the website so users.plan follows the
+            # bot's tier authority (best-effort, background).
+            try:
+                from bot.utils.website_sync import sync_tiers_in_background
+                sync_tiers_in_background(self.users.all_tiers())
+            except Exception:
+                pass
             name = user.get("name", "Unknown")
             tier_label = self.users.tier_label(target_id)
             await self._send(update,
@@ -4819,6 +4826,13 @@ class TelegramHandler:
             self.monitor.hydrate()
         except Exception as exc:
             system_log.debug("proactive monitor hydrate skipped: %s", exc)
+        # One boot-time tier push so the website's plan column converges with
+        # the bot's tier authority even if it missed earlier /set_tier runs.
+        try:
+            from bot.utils.website_sync import sync_tiers_in_background
+            sync_tiers_in_background(self.users.all_tiers())
+        except Exception:
+            pass
         # Wire up channel forwarder
         self.forwarder.set_bot(bot)
         async def _send_fn(chat_id: str, text: str, buttons=None) -> None:

@@ -392,6 +392,13 @@ class MemoryDB {
       return [{ insertId: trade.id }, []];
     }
 
+    if (cmd.includes('UPDATE USERS SET PLAN')) {
+      // Tier sync: params [plan, telegram_id]
+      const u = this.users.find(x => String(x.telegram_id) === String(params[1]));
+      if (u) u.plan = params[0];
+      return [{ affectedRows: u ? 1 : 0 }, []];
+    }
+
     if (cmd.includes('UPDATE TRADES SET NOTES')) {
       // params: notes, id, user_id
       const t = this.trades.find(t => t.id === params[1] && t.user_id === params[2]);

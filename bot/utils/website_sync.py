@@ -253,3 +253,41 @@ def sync_signals_in_background(signals: list[dict]) -> None:
         return
     t = threading.Thread(target=sync_signals, args=(list(signals),), daemon=True)
     t.start()
+
+
+# ── Membership tier sync (bot is the tier authority) ─────────────────
+
+_last_tiers_sent: str = ""   # hash of the last successfully-pushed map
+
+
+def sync_tiers(tier_map: dict) -> bool:
+    """Mirror {telegram_id: tier} to the website so users.plan matches the
+    bot's tier authority. Skips the POST when nothing changed since the
+    last successful push (tiers change rarely; no need to spam)."""
+    global _last_tiers_sent
+    if not tier_map:
+        return True
+    import hashlib
+    import json as _json
+    digest = hashlib.sha256(
+        _json.dumps(tier_map, sort_keys=True).encode()).hexdigest()
+    if digest == _last_tiers_sent:
+        return True
+    result = _post("/api/bot/sync/tiers", {
+        "tiers": [{"telegram_id": k, "tier": v}
+                  for k, v in tier_map.items()],
+    })
+    if result and result.get("ok"):
+        _last_tiers_sent = digest
+        log.info(f"Synced {result.get('updated', 0)} user tier(s) to website")
+        return True
+    log.warning("Tier sync failed")
+    return False
+
+
+def sync_tiers_in_background(tier_map: dict) -> None:
+    """Non-blocking tier sync."""
+    if not tier_map:
+        return
+    t = threading.Thread(target=sync_tiers, args=(dict(tier_map),), daemon=True)
+    t.start()
