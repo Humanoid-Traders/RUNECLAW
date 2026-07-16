@@ -1553,6 +1553,7 @@
         <section class="panel" id="p-aprof"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-user"></use></svg>Profile</h2><div id="c-aprof"><div class="skel"></div></div></section>
         <section class="panel" id="p-aplan"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-sparkle"></use></svg>Membership</h2><div id="c-aplan"><div class="skel"></div></div></section>
         <section class="panel" id="p-atg"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-link"></use></svg>Telegram link <span class="right muted small">optional — unlocks live trading</span></h2><div id="c-atg"><div class="skel"></div></div></section>
+        <section class="panel" id="p-apush"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-bolt"></use></svg>Push notifications <span class="right muted small">trades & alerts, straight to this device</span></h2><div id="c-apush"><div class="skel"></div></div></section>
         <section class="panel" id="p-ainvite"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-user"></use></svg>Invite friends</h2><div id="c-ainvite"><div class="skel"></div></div></section>
         <section class="panel" id="p-akeys"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-wallet"></use></svg>Exchange keys</h2><div id="c-akeys"><div class="skel"></div></div></section>
         <section class="panel" id="p-actl"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-shield"></use></svg>Live controls</h2><div id="c-actl"><div class="skel"></div></div></section>
@@ -1581,6 +1582,63 @@
           <p class="small muted mt-2">Total idle <b class="num">$${Number(y.total_idle_usd || 0).toFixed(2)}</b> · est. <b class="num">$${Number(y.total_est_year_usd || 0).toFixed(2)}/yr</b> at current flexible rates. Use /stake in Telegram to act.</p>`;
       }, { empty: { icon: 'icon-coin', text: 'Yield data arrives with the bot\'s hourly report (needs operator Earn credentials).' } });
     }
+
+    // Web push: opt-in per browser. Requires VAPID keys server-side and
+    // Notification permission client-side; every state is shown honestly.
+    async function drawPush() {
+      renderPanel(C('apush'), async () => {
+        if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+          return `<p class="small muted">This browser doesn't support web push.</p>`;
+        }
+        const k = await fetchJSON('/api/push/key');
+        if (!k?.ok || !k.data?.enabled) {
+          return `<p class="small muted">Push isn't configured on the server yet (operator: set VAPID keys). Telegram alerts keep working meanwhile.</p>`;
+        }
+        const reg = await navigator.serviceWorker.ready.catch(() => null);
+        const sub = reg ? await reg.pushManager.getSubscription().catch(() => null) : null;
+        if (sub) {
+          return `<p class="small" style="color:var(--text-2)">✅ This device gets a notification when the agent opens or closes a trade, or raises a warning.</p>
+            <button class="btn btn--sm" id="pushOff" type="button">Turn off on this device</button>`;
+        }
+        return `<p class="small" style="color:var(--text-2)">Get a notification the moment the agent opens or closes a trade, or raises a warning — even with the tab closed.</p>
+          <button class="btn btn--primary btn--sm" id="pushOn" type="button">Enable on this device</button>
+          ${Notification.permission === 'denied' ? '<p class="small muted mt-2">Notifications are blocked in your browser settings for this site — unblock them first.</p>' : ''}`;
+      }, { empty: { text: 'Push status unavailable.' } });
+    }
+    function urlB64ToU8(s) {
+      const pad = '='.repeat((4 - s.length % 4) % 4);
+      const raw = atob((s + pad).replace(/-/g, '+').replace(/_/g, '/'));
+      return Uint8Array.from([...raw].map(c => c.charCodeAt(0)));
+    }
+    C('apush').addEventListener('click', async (e) => {
+      const on = e.target.closest('#pushOn'), off = e.target.closest('#pushOff');
+      if (!on && !off) return;
+      try {
+        const reg = await navigator.serviceWorker.ready;
+        if (on) {
+          const perm = await Notification.requestPermission();
+          if (perm !== 'granted') { toast('Notifications were not allowed.'); return; }
+          const k = await fetchJSON('/api/push/key');
+          const sub = await reg.pushManager.subscribe({
+            userVisibleOnly: true,
+            applicationServerKey: urlB64ToU8(k.data.public_key),
+          });
+          const r = await fetchJSON('/api/push/subscribe', { method: 'POST', body: { subscription: sub.toJSON() } });
+          toast(r?.ok ? 'Push enabled — the agent can reach you here now.' : 'Could not save the subscription.');
+        } else {
+          const sub = await reg.pushManager.getSubscription();
+          if (sub) {
+            await fetchJSON('/api/push/unsubscribe', { method: 'POST', body: { endpoint: sub.endpoint } });
+            await sub.unsubscribe();
+          }
+          toast('Push disabled on this device.');
+        }
+      } catch (err) {
+        toast('Push setup failed: ' + (err?.message || 'unknown error'));
+      }
+      drawPush();
+    });
+    drawPush();
 
     renderPanel(C('aprof'), async () => {
       if (!me?.ok) return null;

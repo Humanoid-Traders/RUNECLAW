@@ -35,6 +35,8 @@ class MemoryDB {
     this._nextAgentEventId = 1;
     this.reportsCache = null;  // { reports_json, updated_at } (single row)
     this.userProfiles = {};    // user_id -> { risk_pref, watchlist, prefs }
+    this.pushSubs = [];        // web-push subscriptions (UPSERT by endpoint)
+    this._nextPushSubId = 1;
     this.pendingStance = null; // { mode, requested_by, telegram_id, created_at } (single row)
     this.pendingCreds = [];   // pending_credentials (UPSERT by user_id)
     this.exchangeStatus = {}; // user_id -> { connected }
@@ -83,6 +85,42 @@ class MemoryDB {
         .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
         .slice(0, limit);
       return [rows, []];
+    }
+
+    // -- PUSH SUBSCRIPTIONS (web push; UPSERT by endpoint) --
+    if (cmd.includes('INSERT INTO PUSH_SUBSCRIPTIONS')) {
+      // params: user_id, endpoint, keys_json
+      const i = this.pushSubs.findIndex(s => s.endpoint === params[1]);
+      if (i >= 0) {
+        this.pushSubs[i].user_id = params[0];
+        this.pushSubs[i].keys_json = params[2];
+      } else {
+        this.pushSubs.push({ id: this._nextPushSubId++, user_id: params[0],
+          endpoint: params[1], keys_json: params[2], created_at: new Date() });
+      }
+      return [{ affectedRows: 1 }, []];
+    }
+    if (cmd.includes('DELETE FROM PUSH_SUBSCRIPTIONS')) {
+      if (cmd.includes('ORDER BY ID ASC')) {          // drop oldest for user
+        const mine = this.pushSubs.filter(s => s.user_id === params[0])
+          .sort((a, b) => a.id - b.id);
+        if (mine.length) this.pushSubs = this.pushSubs.filter(s => s.id !== mine[0].id);
+      } else if (cmd.includes('AND ENDPOINT')) {      // user-scoped unsubscribe
+        this.pushSubs = this.pushSubs.filter(
+          s => !(s.user_id === params[0] && s.endpoint === params[1]));
+      } else {                                        // prune by endpoint (410)
+        this.pushSubs = this.pushSubs.filter(s => s.endpoint !== params[0]);
+      }
+      return [{ affectedRows: 1 }, []];
+    }
+    if (cmd.includes('FROM PUSH_SUBSCRIPTIONS') && cmd.includes('COUNT(*)')) {
+      return [[{ n: this.pushSubs.filter(s => s.user_id === params[0]).length }], []];
+    }
+    if (cmd.includes('FROM PUSH_SUBSCRIPTIONS')) {
+      const rows = cmd.includes('WHERE USER_ID')
+        ? this.pushSubs.filter(s => s.user_id === params[0])
+        : [...this.pushSubs].sort((a, b) => b.id - a.id);
+      return [rows.map(s => ({ ...s })), []];
     }
 
     // -- USER PROFILES (per-user agent profile: risk pref, watchlist, prefs) --
@@ -767,6 +805,18 @@ async function migrate() {
         resolved_at TIMESTAMP NULL DEFAULT NULL,
         INDEX idx_created (created_at),
         INDEX idx_symbol (symbol)
+      )
+    `);
+    // Web-push subscriptions (opt-in, per browser). endpoint is the unique
+    // key so re-subscribing the same browser updates instead of duplicating.
+    await pool.execute(`
+      CREATE TABLE IF NOT EXISTS push_subscriptions (
+        id BIGINT AUTO_INCREMENT PRIMARY KEY,
+        user_id INT NOT NULL,
+        endpoint VARCHAR(500) NOT NULL UNIQUE,
+        keys_json TEXT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_push_user (user_id)
       )
     `);
     // Per-user agent profile: the user's OWN risk preference (display + chat

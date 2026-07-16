@@ -105,6 +105,7 @@ app.use('/api/lab', labRouter);
 app.use('/api/feed', feedRouter);
 app.use('/api/reports', reportsRouter);
 app.use('/api/profile', profileRouter);
+app.use('/api/push', require('./routes/push'));
 
 // Single-host dev foot-gun: Express and the bot's gateway both default to
 // port 8080. Warn loudly if they would collide.
