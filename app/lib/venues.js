@@ -43,9 +43,9 @@ const VENUES = [
   },
   {
     id: 'hyperliquid',
-    label: 'Hyperliquid',
+    label: 'Hyperliquid (DEX)',
     balance_coin: 'USDC',
-    help: 'Create an API (agent) wallet and use ITS private key — never your main wallet key.',
+    help: 'On-chain perps DEX. Create an API (agent) wallet and use ITS private key — never your main wallet key.',
     fields: [
       { key: 'wallet_address', label: 'Wallet address', type: 'text' },
       { key: 'agent_private_key', label: 'Agent private key', type: 'password' },

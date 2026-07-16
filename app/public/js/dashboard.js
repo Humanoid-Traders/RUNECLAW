@@ -322,14 +322,54 @@
     symSel.addEventListener('change', drawAll);
     document.getElementById('chartGran').addEventListener('change', () => { drawChart(); drawInsight(); });
 
+    let tvChart = null, tvSeries = null;
     async function drawChart() {
-      renderPanel(C('chart'), async () => {
+      let rows = null;
+      await renderPanel(C('chart'), async () => {
         const sym = symSel.value, gran = document.getElementById('chartGran').value;
-        const r = await fetchJSON(`/api/market/candles/${sym}?granularity=${gran}&limit=96`, { auth: false, timeoutMs: 12000 });
-        const rows = r.data?.data;
+        const r = await fetchJSON(`/api/market/candles/${sym}?granularity=${gran}&limit=200`, { auth: false, timeoutMs: 12000 });
+        rows = r.data?.data;
         if (!rows || !rows.length) return null;
-        return candleSvg(rows);
+        // TradingView Lightweight Charts (vendored, self-hosted). Fall back to
+        // the SVG renderer when the library failed to load.
+        if (!window.LightweightCharts) return candleSvg(rows);
+        return `<div id="tvChart" style="height:340px"></div>`;
       }, { empty: { icon: 'icon-chart', text: 'No candle data for this pair right now.' }, errorText: 'Market data unavailable — retry in a moment.' });
+
+      const host = document.getElementById('tvChart');
+      if (!host || !window.LightweightCharts || !rows || !rows.length) return;
+      if (tvChart) { try { tvChart.remove(); } catch (e) { /* host already gone */ } tvChart = null; tvSeries = null; }
+      const data = rows.map(c => ({
+        time: Math.floor(+c[0] / 1000),
+        open: +c[1], high: +c[2], low: +c[3], close: +c[4],
+      })).sort((a, b) => a.time - b.time)
+        // Bitget can echo a candle twice at the live edge — TV requires
+        // strictly ascending times.
+        .filter((c, i, arr) => i === 0 || c.time > arr[i - 1].time);
+      if (!data.length) return;
+      const css = getComputedStyle(document.documentElement);
+      tvChart = LightweightCharts.createChart(host, {
+        layout: {
+          background: { type: 'solid', color: 'transparent' },
+          textColor: css.getPropertyValue('--text-3').trim() || '#8f99ab',
+          fontFamily: css.getPropertyValue('--font-data').trim() || 'monospace',
+        },
+        grid: {
+          vertLines: { color: 'rgba(49,57,80,.35)' },
+          horzLines: { color: 'rgba(49,57,80,.35)' },
+        },
+        rightPriceScale: { borderColor: 'rgba(49,57,80,.6)' },
+        timeScale: { borderColor: 'rgba(49,57,80,.6)', timeVisible: true, secondsVisible: false },
+        crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+        autoSize: true,
+      });
+      tvSeries = tvChart.addCandlestickSeries({
+        upColor: '#2fbf71', downColor: '#e5484d',
+        wickUpColor: '#2fbf71', wickDownColor: '#e5484d',
+        borderVisible: false,
+      });
+      tvSeries.setData(data);
+      tvChart.timeScale().fitContent();
     }
     async function drawDepth() {
       renderPanel(C('depth'), async () => {
