@@ -36,6 +36,7 @@ class LLMProvider(str, Enum):
     OLLAMA        = "ollama"          # Local Ollama — fully private, no cost
     OPENROUTER    = "openrouter"      # OpenRouter — routes to 100+ models
     ALIBABA       = "alibaba"         # Alibaba Cloud / DashScope — Qwen models
+    RUNECLAW      = "runeclaw"        # In-house fine-tuned RUNECLAW model (self-hosted)
     CUSTOM        = "custom"          # Any OpenAI-compatible base URL
 
 
@@ -162,6 +163,22 @@ PROVIDER_CATALOG: dict[LLMProvider, dict] = {
         "cost": "low",
         "notes": "Alibaba Cloud Qwen via Bitget Hackathon endpoint. $30 credits included.",
         "get_key_url": "https://dashscope.console.aliyun.com/apiKey",
+    },
+    LLMProvider.RUNECLAW: {
+        # The in-house fine-tuned RUNECLAW model (Llama 3.1 8B + LoRA), served
+        # from any OpenAI-compatible runtime the operator controls. Default is
+        # vLLM's port; for Ollama set RUNECLAW_LLM_BASE_URL=http://localhost:11434/v1.
+        # Keyless by default (local serving); RUNECLAW_LLM_API_KEY secures a
+        # remote endpoint and is vault-managed like every other provider key.
+        "base_url": os.getenv("RUNECLAW_LLM_BASE_URL", "http://localhost:8000/v1"),
+        "default_model": os.getenv("RUNECLAW_LLM_MODEL", "runeclaw-v6"),
+        "recommended_models": ["runeclaw-v6"],
+        "sdk": "openai",
+        "free_tier": True,
+        "speed": "fast",
+        "cost": "zero",
+        "notes": "In-house fine-tuned RUNECLAW model. Self-hosted (vLLM/Ollama), fully private, zero per-token cost. See docs/RUNECLAW_LLM.md.",
+        "get_key_url": None,
     },
     LLMProvider.CUSTOM: {
         "base_url": "",
@@ -378,6 +395,7 @@ def resolve_tier_config(
                         LLMProvider.DEEPSEEK: "DEEPSEEK_API_KEY",
                         LLMProvider.OPENAI: "OPENAI_API_KEY",
                         LLMProvider.ALIBABA: "ALIBABA_API_KEY",
+                        LLMProvider.RUNECLAW: "RUNECLAW_LLM_API_KEY",
                     }
                     fallback_env = key_env_map.get(tier_provider, "")
                     tier_key = os.getenv(fallback_env, "") if fallback_env else ""
@@ -385,6 +403,14 @@ def resolve_tier_config(
                 # Still no key? If the tier provider matches primary, use primary key
                 if not tier_key and tier_provider == primary_config.provider:
                     tier_key = primary_config.api_key
+
+                # Keyless local providers (Ollama, the self-hosted RUNECLAW
+                # model) are valid WITHOUT a key — the key guard below exists
+                # to avoid silently running a tier keyless against a hosted
+                # API, which doesn't apply to a local endpoint. Without this,
+                # LLM_TIER_SCAN_PROVIDER=runeclaw would be silently ignored.
+                keyless_ok = tier_provider in (LLMProvider.OLLAMA,
+                                               LLMProvider.RUNECLAW)
 
                 # LLM-2: only honor the override when a key is actually
                 # available; otherwise fall through to default routing / primary
@@ -395,7 +421,7 @@ def resolve_tier_config(
                 # is_admin (use_table_directly is False here), so an explicit
                 # env override asking for Anthropic must not be honored —
                 # fall through to the next step instead.
-                if tier_key and tier_provider != LLMProvider.ANTHROPIC:
+                if (tier_key or keyless_ok) and tier_provider != LLMProvider.ANTHROPIC:
                     catalog = PROVIDER_CATALOG.get(tier_provider, {})
                     return LLMConfig(
                         provider=tier_provider,
@@ -493,8 +519,9 @@ class LLMConfig:
         return catalog.get("base_url", "https://api.openai.com/v1")
 
     def is_configured(self) -> bool:
-        """True if an API key is set (or if Ollama local — no key needed)."""
-        if self.provider == LLMProvider.OLLAMA:
+        """True if an API key is set (or for keyless local providers —
+        Ollama and the self-hosted RUNECLAW model need no key)."""
+        if self.provider in (LLMProvider.OLLAMA, LLMProvider.RUNECLAW):
             return True
         return bool(self.api_key)
 
@@ -700,6 +727,7 @@ class BYOKManager:
                 LLMProvider.DEEPSEEK: "DEEPSEEK_API_KEY",
                 LLMProvider.OPENAI: "OPENAI_API_KEY",
                 LLMProvider.ALIBABA: "ALIBABA_API_KEY",
+                LLMProvider.RUNECLAW: "RUNECLAW_LLM_API_KEY",
             }
             env_var = env_key_map.get(provider, "")
             api_key = os.getenv(env_var, "") if env_var else ""
@@ -714,7 +742,8 @@ class BYOKManager:
         # Verify client can be created
         try:
             client = create_llm_client(self._runtime_config)
-            if client is None and provider != LLMProvider.OLLAMA:
+            if client is None and provider not in (LLMProvider.OLLAMA,
+                                                   LLMProvider.RUNECLAW):
                 return False, "No API key provided and provider requires one."
         except ImportError as e:
             return False, str(e)
