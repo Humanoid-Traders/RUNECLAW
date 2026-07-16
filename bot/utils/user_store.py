@@ -447,6 +447,14 @@ class UserStore:
                 counts[r] = counts.get(r, 0) + 1
             return counts
 
+    def all_tiers(self) -> dict[str, str]:
+        """{telegram_id: tier} for every registered user — the payload the
+        website tier sync pushes so the web 'plan' mirrors the bot's tier
+        authority."""
+        with self._lock:
+            return {k: u.get("tier", DEFAULT_TIER)
+                    for k, u in self._users.items()}
+
     def count_by_tier(self) -> dict[str, int]:
         """Count users by tier."""
         with self._lock:

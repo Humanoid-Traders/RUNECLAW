@@ -303,6 +303,32 @@ router.post('/trade-event', async (req, res) => {
 // -- In-memory scan data store is declared above (before botAuth) --
 
 /**
+ * POST /api/bot/sync/tiers
+ * Bot mirrors its membership tiers ({telegram_id, tier} rows) so users.plan
+ * follows the bot's tier authority — /set_tier in Telegram is the ONLY way
+ * a tier changes; this endpoint just reflects it. (X-Bot-Secret authed.)
+ */
+const VALID_TIERS = new Set(['basic', 'pro', 'elite', 'admin']);
+router.post('/tiers', async (req, res) => {
+  try {
+    const rows = Array.isArray(req.body?.tiers) ? req.body.tiers.slice(0, 500) : [];
+    let updated = 0;
+    for (const r of rows) {
+      const tgId = String(r?.telegram_id || '').trim();
+      const tier = String(r?.tier || '').toLowerCase();
+      if (!tgId || !VALID_TIERS.has(tier)) continue;
+      const [result] = await pool.execute(
+        'UPDATE users SET plan = ? WHERE telegram_id = ?', [tier, tgId]);
+      updated += (result && result.affectedRows) || 0;
+    }
+    res.json({ ok: true, received: rows.length, updated });
+  } catch (err) {
+    console.error('Tier sync error:', err.message);
+    res.status(500).json({ error: 'Tier sync failed' });
+  }
+});
+
+/**
  * POST /api/bot/sync/scan
  * Bot pushes GetClaw scan results after each scan cycle.
  * (authenticated — requires X-Bot-Secret)
