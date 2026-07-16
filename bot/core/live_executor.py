@@ -4729,6 +4729,21 @@ class LiveExecutor:
                                   data={"trade_id": trade_id, "old_sl": old_sl,
                                         "new_sl": new_sl, "price": price,
                                         "trailing_active": trailing_active})
+                            # Public mind-stream: operator executor only
+                            # (per-user executors carry a non-empty user_id).
+                            try:
+                                from bot.core.agent_feed import FEED
+                                if not getattr(self, "user_id", ""):
+                                    FEED.emit(
+                                        "sl_move",
+                                        f"Trailing stop moved — {pos.symbol}",
+                                        body=f"${old_sl:,.4f} → ${new_sl:,.4f}",
+                                        symbol=pos.symbol,
+                                        data={"old_sl": old_sl,
+                                              "new_sl": new_sl})
+                            except Exception as _feed_exc:
+                                logger.debug(
+                                    "Agent feed sl_move skipped: %s", _feed_exc)
 
                 # ── Partial take-profit ladder ──
                 # Banks 50% at 1.5R (SL→breakeven), 30% at 2.5R (lock 1R), runner

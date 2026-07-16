@@ -31,6 +31,8 @@ class MemoryDB {
     this.scanCache = null; // { scan_json, updated_at }
     this.signals = [];     // global signal stream (UPSERT by signal_key)
     this._nextSignalId = 1;
+    this.agentEvents = []; // public agent mind-stream feed (bounded ring)
+    this._nextAgentEventId = 1;
     this.pendingCreds = [];   // pending_credentials (UPSERT by user_id)
     this.exchangeStatus = {}; // user_id -> { connected }
     this.pendingControls = []; // pending_controls (UPSERT by user_id)
@@ -77,6 +79,38 @@ class MemoryDB {
       const rows = [...this.signals]
         .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
         .slice(0, limit);
+      return [rows, []];
+    }
+
+    // -- AGENT EVENTS (public mind-stream feed; bounded ring) --
+    if (cmd.includes('INSERT INTO AGENT_EVENTS')) {
+      // params: event_type, severity, symbol, title, body, data_json, created_at
+      const row = {
+        id: this._nextAgentEventId++,
+        event_type: params[0], severity: params[1], symbol: params[2],
+        title: params[3], body: params[4], data_json: params[5],
+        created_at: params[6] || new Date(),
+      };
+      this.agentEvents.push(row);
+      return [{ insertId: row.id }, []];
+    }
+    if (cmd.includes('FROM AGENT_EVENTS') && cmd.includes('OFFSET')) {
+      // Prune probe: SELECT id ... ORDER BY id DESC LIMIT 1 OFFSET <keep>
+      const m = cmd.match(/OFFSET\s+(\d+)/);
+      const off = m ? parseInt(m[1]) : 0;
+      const sorted = [...this.agentEvents].sort((a, b) => b.id - a.id);
+      return [sorted.slice(off, off + 1).map(r => ({ id: r.id })), []];
+    }
+    if (cmd.includes('DELETE FROM AGENT_EVENTS')) {
+      // DELETE ... WHERE id <= ? (ring-buffer prune)
+      const cutoff = Number(params[0]);
+      this.agentEvents = this.agentEvents.filter(e => e.id > cutoff);
+      return [{ affectedRows: 1 }, []];
+    }
+    if (cmd.includes('FROM AGENT_EVENTS')) {
+      const m = cmd.match(/LIMIT\s+(\d+)/);
+      const limit = m ? parseInt(m[1]) : 50;
+      const rows = [...this.agentEvents].sort((a, b) => b.id - a.id).slice(0, limit);
       return [rows, []];
     }
 
@@ -682,6 +716,22 @@ async function migrate() {
         resolved_at TIMESTAMP NULL DEFAULT NULL,
         INDEX idx_created (created_at),
         INDEX idx_symbol (symbol)
+      )
+    `);
+    // Public agent mind-stream feed (bot-pushed, SSE-rebroadcast). Bounded
+    // ring: the sync route prunes to the newest ~500 rows. No user data —
+    // operator-agent activity only, pre-sanitized bot-side (agent_feed.py).
+    await pool.execute(`
+      CREATE TABLE IF NOT EXISTS agent_events (
+        id BIGINT AUTO_INCREMENT PRIMARY KEY,
+        event_type VARCHAR(24) NOT NULL,
+        severity VARCHAR(16) DEFAULT 'info',
+        symbol VARCHAR(32) DEFAULT NULL,
+        title VARCHAR(300) NOT NULL,
+        body TEXT DEFAULT NULL,
+        data_json TEXT DEFAULT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_agent_events_created (created_at)
       )
     `);
     // Pending exchange-credential submissions. The website encrypts the keys

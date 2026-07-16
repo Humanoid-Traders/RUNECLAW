@@ -58,6 +58,7 @@ const portfolioRouter = require('./routes/portfolio');
 const leaderboardRouter = require('./routes/leaderboard');
 const trackRouter = require('./routes/track');
 const labRouter = require('./routes/lab');
+const feedRouter = require('./routes/feed');
 const { router: streamRouter } = require('./routes/stream');
 
 const app = express();
@@ -99,6 +100,7 @@ app.use('/api/portfolio', portfolioRouter);
 app.use('/api/leaderboard', leaderboardRouter);
 app.use('/api/public', trackRouter);
 app.use('/api/lab', labRouter);
+app.use('/api/feed', feedRouter);
 
 // Single-host dev foot-gun: Express and the bot's gateway both default to
 // port 8080. Warn loudly if they would collide.

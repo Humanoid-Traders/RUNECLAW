@@ -8283,6 +8283,14 @@ class TelegramHandler:
             except Exception:
                 pass
             audit(system_log, f"Strategy mode: {mode}", action="mode_switch", result="OK")
+            # Public mind-stream: stance changes are part of the agent's
+            # visible personality (mode name only, no account detail).
+            try:
+                from bot.core.agent_feed import FEED
+                FEED.emit("stance", f"Stance changed to {mode.capitalize()}",
+                          data={"mode": mode})
+            except Exception:
+                pass
             return
 
         # ── Signal action callbacks ──────────────────────────

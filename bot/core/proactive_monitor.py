@@ -1527,6 +1527,18 @@ class ProactiveMonitor:
         icon = _SEVERITY_ICON.get(alert.severity, "\u2139\ufe0f")
         full_msg = f"{icon} {alert.body}"
 
+        # Public mind-stream: title + type only \u2014 alert BODIES can carry
+        # operator-account detail (drawdown amounts, idle-cash balances) that
+        # must not reach the public feed.
+        try:
+            from bot.core.agent_feed import FEED
+            _sev = {"INFO": "info", "WARNING": "warning",
+                    "CRITICAL": "critical"}.get(alert.severity, "info")
+            FEED.emit("alert", alert.title, severity=_sev,
+                      data={"type": alert.alert_type})
+        except Exception as _feed_exc:
+            logger.debug("Agent feed alert event skipped: %s", _feed_exc)
+
         async def _send_to_chat(chat_id: str) -> None:
             try:
                 if alert.buttons:

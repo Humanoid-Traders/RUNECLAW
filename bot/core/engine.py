@@ -677,6 +677,28 @@ class RuneClawEngine:
             except Exception as _sls_exc:
                 logger.debug("Symbol loss-streak tracking skipped: %s", _sls_exc)
 
+        # Public mind-stream: operator-account closes only (user_id "" is the
+        # operator executor; per-user closes carry that user's id and stay
+        # private). Realized PnL is already public on the track-record page.
+        try:
+            from bot.core.agent_feed import FEED
+            if not user_id:
+                _fpnl = getattr(pos, "pnl_usd", None)
+                _fsym = getattr(pos, "symbol", "")
+                if _fpnl is not None and _fsym:
+                    _fpnl = float(_fpnl)
+                    _freason = str(getattr(pos, "close_reason", "") or "")
+                    FEED.emit(
+                        "trade_close",
+                        f"Closed {_fsym} "
+                        f"{'+' if _fpnl >= 0 else '-'}${abs(_fpnl):,.2f}",
+                        body=f"Exit: {_freason}" if _freason else "",
+                        symbol=_fsym,
+                        severity="success" if _fpnl >= 0 else "warning",
+                        data={"pnl": round(_fpnl, 2), "reason": _freason})
+        except Exception as _feed_exc:
+            logger.debug("Agent feed close event skipped: %s", _feed_exc)
+
         # Push real live state to the website dashboard. The paper portfolio's
         # close callback (_on_trade_close_composite, above) already does this
         # for paper trades; live closes never reached the website at all before
@@ -1994,6 +2016,22 @@ class RuneClawEngine:
               action="scan_cycle", result="OK" if signals else "NO_SIGNALS",
               data=scan_summary)
 
+        # Public mind-stream: one compact "the agent just scanned" event per
+        # cycle (bounded queue, background flush — see bot/core/agent_feed).
+        try:
+            from bot.core.agent_feed import FEED
+            _feed_top = ", ".join(
+                s["symbol"] for s in scan_summary["top_signals"][:3])
+            FEED.emit(
+                "scan",
+                f"Scan complete — {scan_summary['pairs_scanned']} pairs, "
+                f"{scan_summary['signals_found']} candidate(s)",
+                body=f"Strongest momentum: {_feed_top}" if _feed_top else "",
+                data={"pairs": scan_summary["pairs_scanned"],
+                      "candidates": scan_summary["signals_found"]})
+        except Exception as _feed_exc:
+            logger.debug("Agent feed scan event skipped: %s", _feed_exc)
+
         # Push a fresh regime/circuit-breaker/key-call summary every autonomous
         # cycle. Before this, those dashboard panels only ever refreshed from a
         # manual Telegram /scan (or DeepScanSkill/PlaybookSkill query) -- while
@@ -2055,6 +2093,24 @@ class RuneClawEngine:
                     _build_signal_sync_payloads(_synced_ideas, self._outcome_regime))
             except Exception as _sig_sync_exc:
                 logger.debug("Signal stream sync skipped: %s", _sig_sync_exc)
+            # Public mind-stream: the thesis behind each fresh idea (capped —
+            # a wide cycle shouldn't flood the public feed).
+            try:
+                from bot.core.agent_feed import FEED
+                for _fi in _synced_ideas[:5]:
+                    _fdir = str(getattr(_fi.direction, "value", _fi.direction))
+                    FEED.emit(
+                        "thesis",
+                        f"{_fdir} {_fi.asset} — confidence {_fi.confidence:.0%}",
+                        body=str(getattr(_fi, "reasoning", "") or "")[:300],
+                        symbol=_fi.asset,
+                        data={"direction": _fdir,
+                              "confidence": round(float(_fi.confidence), 3),
+                              "entry": float(_fi.entry_price or 0),
+                              "sl": float(_fi.stop_loss or 0),
+                              "tp": float(_fi.take_profit or 0)})
+            except Exception as _feed_exc:
+                logger.debug("Agent feed thesis events skipped: %s", _feed_exc)
 
         # ── Adaptive Confidence Threshold ──
         # Auto-adjust threshold based on recent win rate
@@ -3579,6 +3635,23 @@ class RuneClawEngine:
             # C-05 FIX: only remove idea and ATR after successful execution
             self._pending_ideas.pop(trade_id, None)
             self._pending_atr.pop(trade_id, None)
+            # Public mind-stream: operator-account opens only (per-user
+            # executors are private). No sizes on the public feed.
+            try:
+                from bot.core.agent_feed import FEED
+                if executor is getattr(self, "live_executor", None):
+                    _fdir = idea.direction.value
+                    FEED.emit(
+                        "trade_open",
+                        f"Opened {_fdir} {idea.asset}",
+                        body=(f"Entry ${idea.entry_price:,.4f} · "
+                              f"SL ${idea.stop_loss:,.4f} · "
+                              f"TP ${idea.take_profit:,.4f}"),
+                        symbol=idea.asset, severity="success",
+                        data={"direction": _fdir,
+                              "confidence": round(float(idea.confidence), 3)})
+            except Exception as _feed_exc:
+                logger.debug("Agent feed open event skipped: %s", _feed_exc)
             # Pyramid add filled — NOW move the existing position's SL to breakeven
             # (deferred from before execute() so a blocked/failed add never leaves
             # the existing winner sitting at breakeven with no rollback).
