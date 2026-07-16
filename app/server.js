@@ -108,6 +108,7 @@ app.use('/api/profile', profileRouter);
 app.use('/api/push', require('./routes/push'));
 app.use('/api/alerts', require('./routes/alerts'));
 app.use('/api/replay', require('./routes/replay'));
+app.use('/api/letter', require('./routes/letter'));
 
 // Single-host dev foot-gun: Express and the bot's gateway both default to
 // port 8080. Warn loudly if they would collide.
@@ -149,4 +150,8 @@ app.use((err, req, res, next) => {
   // Custom "tell me when…" alert tripwires: evaluate active alerts against
   // public tickers once a minute (skips instantly when none are armed).
   require('./lib/alerts').startAlertEngine();
+
+  // Weekly agent letter: hourly sweep lazily writes the letter for the last
+  // completed ISO week and announces it once with a web push.
+  require('./lib/letter').startLetterSweep();
 })();

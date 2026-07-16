@@ -363,6 +363,9 @@
           <span class="right muted small">what it's doing for you</span></h2><div id="c-agent"><div class="skel"></div></div></section>` : ''}
         <section class="panel" id="p-mind"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-radar"></use></svg>Agent mind-stream
           <span class="right"><a class="small" href="#feed">full feed →</a></span></h2><div id="c-mind"><div class="skel"></div><div class="skel"></div></div></section>
+        ${LOGGED_IN ? `<section class="panel" id="p-letter"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-sparkle"></use></svg>The Agent Letter
+          <select class="input" id="letterWeek" aria-label="Letter week" style="margin-left:auto;width:auto;padding:2px 8px"></select></h2>
+          <div id="c-letter"><div class="skel"></div><div class="skel"></div></div></section>` : ''}
         <div class="grid grid-main">
           <section class="panel" id="p-hpos"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-coin"></use></svg>Open positions</h2><div id="c-hpos"><div class="skel"></div><div class="skel"></div></div></section>
           <section class="panel" id="p-next"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-rocket"></use></svg>Getting started</h2><div id="c-next"><div class="skel"></div></div></section>
@@ -407,6 +410,34 @@
     }, { empty: { text: 'No portfolio data yet.' } });
 
     if (LOGGED_IN) {
+      // The Agent Letter — weekly fund-style letter from recorded data.
+      const letterHtml = (letter) => {
+        const secs = (letter.sections || []).map(s =>
+          `<h3 class="small" style="margin:var(--s3) 0 var(--s1);letter-spacing:.06em;text-transform:uppercase;color:var(--text-3)">${esc(s.title)}</h3>
+           <p style="max-width:70ch">${s.html}</p>`).join('');
+        return `<p class="muted small" style="margin-bottom:var(--s1)">${esc(letter.period.start)} → ${esc(letter.period.end)}</p>
+          <p style="font-weight:600">${esc(letter.headline)}</p>${secs}
+          <p class="small muted" style="margin-top:var(--s3)"><i>${esc(letter.footer)}</i></p>`;
+      };
+      async function loadLetter(week) {
+        await renderPanel(C('letter'), async () => {
+          const r = await fetchJSON(week ? `/api/letter/${encodeURIComponent(week)}` : '/api/letter/latest');
+          if (!r.ok || !r.data?.letter) return null;
+          return letterHtml(r.data.letter);
+        }, { empty: { icon: 'icon-sparkle', text: 'The first letter writes itself after the first full week of recorded activity.' } });
+      }
+      (async () => {
+        const arc = await fetchJSON('/api/letter/archive').catch(() => null);
+        const sel = document.getElementById('letterWeek');
+        const weeks = arc?.data?.letters || [];
+        if (sel) {
+          sel.innerHTML = '<option value="">latest</option>'
+            + weeks.map(w => `<option value="${esc(w.week_key)}">${esc(w.week_key)}</option>`).join('');
+          sel.onchange = () => loadLetter(sel.value);
+        }
+        loadLetter('');
+      })();
+
       renderPanel(C('agent'), async () => {
         // Everything here is real synced data; anything unavailable is
         // omitted, never invented.
