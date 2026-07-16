@@ -176,3 +176,86 @@ def test_trade_signal_at_threshold_alerts():
     m = _mon(_engine())
     m.engine._pending_ideas = {"edge": _idea(0.70)}   # exactly at the gate
     assert len(m._check_trade_signals()) == 1
+
+
+# ── idle-cash stake nudge ─────────────────────────────────────────────────
+
+def _idle_engine(free):
+    eng = types.SimpleNamespace()
+    eng._live_balance_cache = {"free": free, "equity": free}
+    return eng
+
+
+def test_idle_cash_nudges_once_after_hours_with_guarded_button(monkeypatch):
+    monkeypatch.setenv("IDLE_CASH_NUDGE_USD", "25")
+    monkeypatch.setenv("IDLE_CASH_NUDGE_HOURS", "6")
+    m = _mon(_idle_engine(free=100.0))   # stakeable 70 >= 25
+    assert m._check_idle_cash() == []    # timer only just started
+    m._idle_since -= 6 * 3600 + 1        # simulate 6h of idleness
+    alerts = m._check_idle_cash()
+    assert len(alerts) == 1 and alerts[0].alert_type == "IDLE_CASH"
+    # The button must route to the guarded stake callback and carry NO amount.
+    assert ("✅ Stake idle USDT", "yld:s:USDT") in alerts[0].buttons
+    assert all("70" not in cb for _lbl, cb in alerts[0].buttons)
+    # Cooldown: no immediate re-nudge even though still idle.
+    m._idle_since -= 6 * 3600 + 1
+    assert m._check_idle_cash() == []
+
+
+def test_idle_cash_rearms_when_cash_gets_used(monkeypatch):
+    monkeypatch.setenv("IDLE_CASH_NUDGE_USD", "25")
+    m = _mon(_idle_engine(free=100.0))
+    m._check_idle_cash()
+    assert m._idle_since > 0
+    m.engine._live_balance_cache = {"free": 10.0}   # engine deployed the cash
+    assert m._check_idle_cash() == []
+    assert m._idle_since == 0.0                     # timer reset
+
+
+def test_idle_cash_disabled_by_env(monkeypatch):
+    monkeypatch.setenv("IDLE_CASH_NUDGE_ENABLED", "false")
+    m = _mon(_idle_engine(free=1000.0))
+    m._idle_since = 1.0
+    assert m._check_idle_cash() == []
+
+
+# ── daily digest (morning brief / evening wrap) ───────────────────────────
+
+def test_daily_digest_fires_each_kind_once_per_day(monkeypatch):
+    monkeypatch.setenv("DAILY_BRIEF_HOUR_UTC", "0")
+    monkeypatch.setenv("DAILY_WRAP_HOUR_UTC", "0")   # any hour qualifies
+    eng = _idle_engine(free=50.0)
+    eng.portfolio = types.SimpleNamespace(open_positions=[])
+    m = _mon(eng)
+    kinds = {a.alert_type for a in m._check_daily_digest()}
+    assert kinds == {"DAILY_BRIEF", "DAILY_WRAP"}
+    assert m._check_daily_digest() == []             # once per day only
+
+
+def test_daily_digest_respects_hour_gate(monkeypatch):
+    monkeypatch.setenv("DAILY_BRIEF_HOUR_UTC", "23")
+    monkeypatch.setenv("DAILY_WRAP_HOUR_UTC", "23")
+    from datetime import datetime as _dt
+    if _dt.now(pm.UTC).hour >= 23:
+        pytest.skip("wall clock past the gate hour")
+    m = _mon(_idle_engine(free=50.0))
+    assert m._check_daily_digest() == []
+
+
+# ── button pass-through in dispatch ───────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_dispatch_uses_3arg_send_only_for_button_alerts():
+    m = _mon(types.SimpleNamespace())
+    m._enabled_chats = {"1"}
+    calls = []
+
+    async def send_fn(chat_id, text, buttons=None):
+        calls.append((chat_id, text, buttons))
+
+    await m._dispatch(pm.Alert(alert_type="T", severity="INFO", title="t",
+                               body="plain"), send_fn)
+    await m._dispatch(pm.Alert(alert_type="T", severity="INFO", title="t",
+                               body="btn", buttons=[("Go", "yld:x")]), send_fn)
+    assert calls[0][2] is None                     # legacy 2-arg path
+    assert calls[1][2] == [("Go", "yld:x")]        # buttons passed through
