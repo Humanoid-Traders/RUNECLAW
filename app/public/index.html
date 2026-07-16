@@ -119,6 +119,7 @@
       <div id="google-btn" style="display:flex;justify-content:center;margin-bottom:10px"></div>
       <div id="telegram-btn" style="display:flex;justify-content:center"></div>
       <div id="oauth-btns" style="display:flex;flex-direction:column;gap:8px;margin-top:10px"></div>
+      <div id="wallet-btns" style="display:flex;flex-direction:column;gap:8px;margin-top:8px"></div>
     </div>
   </div>
 
@@ -406,6 +407,34 @@ function renderOauthButtons(providers){
     box.appendChild(a);
   });
 }
+// Self-custody sign-in with an injected wallet (MetaMask / browser wallet).
+function renderWalletButton(){
+  const box=document.getElementById('wallet-btns');if(!box)return;
+  box.innerHTML='';
+  const b=document.createElement('button');
+  b.className='btn btn-block';b.type='button';b.textContent='Continue with a wallet';
+  b.onclick=doWalletLogin;
+  box.appendChild(b);
+}
+async function doWalletLogin(){
+  setErr('social-err','');
+  const eth=window.ethereum;
+  if(!eth){setErr('social-err','No wallet detected — install MetaMask or a browser wallet.');return;}
+  try{
+    const accounts=await eth.request({method:'eth_requestAccounts'});
+    const address=(accounts&&accounts[0]||'').trim();
+    if(!address){setErr('social-err','No wallet account was shared.');return;}
+    const nres=await apiCall('/auth/wallet/nonce',{address});
+    if(nres.error||!nres.message){setErr('social-err',nres.error||'Could not start wallet sign-in.');return;}
+    const signature=await eth.request({method:'personal_sign',params:[nres.message,address]});
+    const vres=await apiCall('/auth/wallet/verify',{address,signature});
+    if(vres.error||!vres.token){setErr('social-err',vres.error||'Wallet sign-in failed.');return;}
+    SESSION=vres;showAccount(vres);
+  }catch(e){
+    // User rejected the connection/signature, or the wallet errored.
+    setErr('social-err','Wallet sign-in was cancelled.');
+  }
+}
 // Account panel: "Link <provider>" buttons for redirect providers.
 function renderLinkSocial(){
   const providers=window.__RC_OAUTH||[];
@@ -452,9 +481,10 @@ function renderFooterSocials(links){
   let cfg={};
   try{cfg=await fetch(API+'/auth/config').then(r=>r.json());}catch{return;}
   const hasOauth=(cfg.oauth_providers||[]).length>0;
-  if(!cfg.google_client_id&&!cfg.telegram_bot&&!hasOauth)return; // nothing configured
+  if(!cfg.google_client_id&&!cfg.telegram_bot&&!hasOauth&&!cfg.wallet_login)return; // nothing configured
   document.getElementById('social-auth').classList.remove('hidden');
   renderOauthButtons(cfg.oauth_providers);
+  if(cfg.wallet_login)renderWalletButton();
   window.__RC_OAUTH=cfg.oauth_providers||[]; // account panel reads this for Link buttons
   renderFooterSocials(cfg.social_links);
   // If the account panel is already open (returning session), fill Link buttons.
