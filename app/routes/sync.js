@@ -438,6 +438,20 @@ router.post('/events', async (req, res) => {
         data: (ev.data && typeof ev.data === 'object') ? ev.data : {},
         created_at: at.toISOString(),
       });
+      // Web push for the moments users actually want on their phone: trades
+      // and alerts (scans/theses would be spam). Fire-and-forget — a push
+      // service hiccup must never slow the bot's ingest.
+      if (type === 'trade_open' || type === 'trade_close'
+          || (type === 'alert' && severity !== 'info')) {
+        try {
+          const { notifySubscribers } = require('../lib/push');
+          setImmediate(() => notifySubscribers({
+            title: `RUNECLAW — ${title}`,
+            body: body || 'Open the live feed for details.',
+            url: '/dashboard#feed',
+          }).catch(() => {}));
+        } catch (e) { /* push is optional */ }
+      }
     }
     // Ring-buffer prune, amortized (LIMIT/OFFSET inlined — placeholder
     // LIMITs break on some MySQL backends, see the markets-panel fix).
