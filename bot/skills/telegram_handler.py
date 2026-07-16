@@ -326,6 +326,8 @@ class TelegramHandler:
             # LLM BYOK commands
             ("setllm", self._cmd_setllm), ("llmstatus", self._cmd_llmstatus),
             ("llmreset", self._cmd_llmreset), ("llmtiers", self._cmd_llmtiers),
+            # Shadow A/B: challenger model vs primary on the same live prompts
+            ("llmab", self._cmd_llmab),
             # Proactive alerts
             ("watch", self._cmd_watch),
             # Live trading commands
@@ -3990,6 +3992,37 @@ class TelegramHandler:
             system_log.warning("/stake failed: %s", exc)
             await self._send(update,
                 "🔴 Could not build the stake plan — nothing was moved.")
+
+    async def _cmd_llmab(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """/llmab — the LLM shadow A/B report (admin): the challenger model
+        (LLM_SHADOW_PROVIDER, e.g. runeclaw) vs the primary, scored on the
+        same live prompts against realized trade outcomes. The shadow model
+        never influences trading — this is the evidence for (or against)
+        promoting it into tier routing."""
+        if not self._is_admin(update):
+            await self._send(update, "🔒 /llmab is admin only.")
+            return
+        try:
+            from bot.llm.shadow_eval import (SHADOW, format_ab_html,
+                                             load_records,
+                                             score_against_trades)
+            from bot.backtest.parity import load_closed_trades
+            records = await asyncio.to_thread(load_records)
+            trades = []
+            try:
+                path = self.engine.live_executor._closed_trades_file
+                trades = await asyncio.to_thread(load_closed_trades, path)
+            except Exception:
+                pass
+            stats = score_against_trades(records, trades)
+            text = format_ab_html(stats)
+            if SHADOW.errors:
+                text += (f"\n\n<i>⚠️ {SHADOW.errors} shadow call(s) failed "
+                         "this session — check the shadow endpoint.</i>")
+            await self._send(update, text)
+        except Exception as exc:
+            system_log.warning("/llmab failed: %s", exc)
+            await self._send(update, "🔴 Shadow A/B report failed — see logs.")
 
     async def _cmd_fundingscan(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """/fundingscan [SYMBOLS…] — annualized funding across Bitget, Bybit

@@ -3943,6 +3943,16 @@ class Analyzer:
             self._llm_cache.put(cache_key, result, signal.symbol)
 
             self._note_llm_ok()
+            # Shadow A/B (opt-in): fire the same prompt at the challenger
+            # model in the background. Records only — the shadow answer is
+            # never read by the trading path, and errors are swallowed.
+            if as_of is None:
+                try:
+                    from bot.llm.shadow_eval import SHADOW
+                    SHADOW.maybe_spawn(self, prompt, _prompt_hash,
+                                       signal.symbol, result)
+                except Exception:
+                    pass
             return result
         except Exception as exc:
             audit(trade_log, f"LLM error on primary provider, trying fallback: {exc}",

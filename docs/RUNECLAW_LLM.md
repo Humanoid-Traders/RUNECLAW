@@ -84,12 +84,25 @@ The fine-tune writes in RUNECLAW's voice; whether it *picks better trades*
 than the current routing is an empirical question. Do not let it drive
 THESIS until it wins on evidence:
 
-1. **Replay A/B** (no market risk): run the recorded-LLM replay harness with
+1. **Shadow A/B** (zero influence, live prompts — start here):
+
+   ```bash
+   LLM_SHADOW_ENABLED=true
+   LLM_SHADOW_PROVIDER=runeclaw
+   LLM_SHADOW_MODEL=runeclaw-v6        # optional
+   ```
+
+   Every primary thesis call now also fires the identical prompt at
+   runeclaw in the background; both answers are recorded, and the shadow
+   answer is never read by the trading path. After a day or two of scans,
+   `/llmab` reports each model's directional hit rate on the *same
+   realized trades* — the like-for-like number that decides promotion.
+2. **Replay A/B** (no market risk): run the recorded-LLM replay harness with
    the thesis tier pointed at `runeclaw` vs the incumbent, on the frozen
    benchmark snapshots. Compare PF / expectancy / Sharpe, not vibes.
-2. **Paper shadow**: route `SCAN`+`CHAT` to it live (paper impact only) for a
+3. **Paper shadow**: route `SCAN`+`CHAT` to it live (paper impact only) for a
    few days; watch `/llmstatus` for degradation streaks and latency.
-3. **Promote by tier**: only after (1) and (2) look good, move `THESIS`
+4. **Promote by tier**: only after (1)–(3) look good, move `THESIS`
    — and keep `LEARNING` on a large-context hosted model (8K-context 8B
    models are weak at long reflection).
 
