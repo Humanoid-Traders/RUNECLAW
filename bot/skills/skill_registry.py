@@ -8,10 +8,15 @@ from __future__ import annotations
 
 import asyncio
 import html as _html
+import json
+import re
 from abc import ABC, abstractmethod
 from datetime import datetime
+from pathlib import Path
 from bot.compat import UTC
-from typing import Any
+from typing import Any, Optional
+
+from bot.formatters.rich_cards import display_symbol
 
 from bot.config import CONFIG
 from bot.core.engine import RuneClawEngine
@@ -809,9 +814,116 @@ class ExplainTradeSkill(BaseSkill):
 
 class RunBacktestSkill(BaseSkill):
     name = "run_backtest"
-    description = "Run backtest with synthetic data"
+    description = "Backtest a symbol on a frozen benchmark snapshot (chat: 'backtest SOL')"
+
+    _BENCH_DIR = Path("data/benchmark")
+    _TIMEOUT_SEC = 240.0
+    _LAST_BARS = 600           # ~25 days of 1h — fast enough for a chat reply
+    _running = False           # single-flight: a backtest saturates a core
+
+    @classmethod
+    def find_dataset_for_symbol(cls, symbol: str):
+        """(dataset_name, canonical_symbol) for the first frozen snapshot whose
+        manifest contains ``symbol`` (base-coin match: 'sol' / 'SOLUSDT' →
+        'SOL/USDT:USDT'), or None. Pure filesystem read, fail-soft."""
+        want = re.sub(r"[^A-Z0-9]", "", (symbol or "").upper())
+        if want.endswith("USDT"):
+            want = want[:-4]
+        if not want:
+            return None
+        try:
+            for d in sorted(cls._BENCH_DIR.iterdir()):
+                man_path = d / "manifest.json"
+                if not d.is_dir() or not man_path.exists():
+                    continue
+                syms = json.loads(man_path.read_text()).get("symbols", {})
+                for s in sorted(syms):
+                    base = re.sub(r"[^A-Z0-9]", "", s.upper().split("/")[0])
+                    if base == want:
+                        return d.name, s
+        except Exception:
+            return None
+        return None
+
+    async def _run_dataset_backtest(self, dataset: str, symbol: str) -> Optional[str]:
+        """Run the REAL frozen-snapshot backtest (same subprocess isolation as
+        the web Strategy Lab) and render a compact scorecard. None on any
+        failure — the caller falls back to the synthetic smoke test."""
+        import asyncio as _aio
+        import sys as _sys
+        import uuid as _uuid
+        out_file = Path("data/lab") / f"chat_{_uuid.uuid4().hex[:10]}.json"
+        out_file.parent.mkdir(parents=True, exist_ok=True)
+        cmd = [
+            _sys.executable, "-m", "bot.backtest.runner",
+            "--dataset", str(self._BENCH_DIR / dataset),
+            "--symbols", symbol,
+            "--last-bars", str(self._LAST_BARS),
+            "--honest", "--strict-data",
+            "--output", str(out_file),
+        ]
+        try:
+            proc = await _aio.create_subprocess_exec(
+                *cmd, stdout=_aio.subprocess.DEVNULL,
+                stderr=_aio.subprocess.DEVNULL)
+            try:
+                await _aio.wait_for(proc.wait(), timeout=self._TIMEOUT_SEC)
+            except _aio.TimeoutError:
+                proc.kill()
+                return None
+            if proc.returncode != 0 or not out_file.exists():
+                return None
+            r = json.loads(out_file.read_text())
+        except Exception:
+            return None
+        finally:
+            try:
+                out_file.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+        def _f(key, default=0.0):
+            try:
+                return float(r.get(key, default) or default)
+            except (TypeError, ValueError):
+                return default
+
+        wr = _f("win_rate")
+        wr_pct = wr * 100 if wr <= 1.0 else wr
+        pf = _f("profit_factor")
+        display = display_symbol(symbol)
+        return (
+            f"{_CHART} <b>BACKTEST — {display}</b>\n{SEP}\n"
+            f"<i>Frozen snapshot <code>{dataset}</code> · last {self._LAST_BARS} bars · "
+            f"honest fees/fills · real recorded data</i>\n\n"
+            f"<pre>"
+            f"  Return     {_f('total_return_pct'):>+8.2f}%\n"
+            f"  Net PnL    {_money(_f('net_pnl'), sign=True):>12}\n"
+            f"  Win rate   {wr_pct:>7.0f}%  ({int(_f('total_trades'))}t)\n"
+            f"  Profit F   {pf:>8.2f}\n"
+            f"  Max DD     {_f('max_drawdown_pct'):>7.2f}%"
+            f"</pre>\n\n"
+            f"<i>Past simulated performance ≠ future results. The web "
+            f"dashboard's Lab view has curves, per-symbol splits and longer "
+            f"windows.</i>"
+        )
 
     async def execute(self, engine: RuneClawEngine, **kwargs: Any) -> str:
+        # Real frozen-dataset run when the ask names a symbol we have a
+        # snapshot for (this is what "backtest SOL" in chat should mean).
+        symbol_ask = str(kwargs.get("symbol") or "").strip()
+        if symbol_ask and not RunBacktestSkill._running:
+            hit = self.find_dataset_for_symbol(symbol_ask)
+            if hit is not None:
+                RunBacktestSkill._running = True
+                try:
+                    rendered = await self._run_dataset_backtest(*hit)
+                finally:
+                    RunBacktestSkill._running = False
+                if rendered is not None:
+                    return rendered
+                # fall through to the synthetic smoke test on failure
+
         from bot.backtest.data_loader import DataLoader
         from bot.backtest.engine import BacktestEngine
         from bot.backtest.models import BacktestConfig

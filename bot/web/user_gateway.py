@@ -205,10 +205,62 @@ async def handle_chat(request: web.Request) -> web.Response:
         return _propose_from_text(request.app, tg_handler, engine, tg_id,
                                   trade_text, name=name)
 
+    # Bare directional ask — "long ETH" / "paper short sol" (no explicit
+    # levels). NEVER loosened into an order: it routes to analyze_asset, so
+    # the user gets the agent's actual setup (entry/SL/TP from the engine)
+    # with the one-tap "Trade this" card. SL discipline stays mandatory —
+    # only the strict "buy X <entry> sl <sl> tp <tp>" form proposes directly.
+    _bare = re.match(r"^(?:paper\s+)?(?:long|short|buy|sell)\s+([a-z0-9]{2,12})$",
+                     trade_text)
+    if _bare:
+        skill = tg_handler.registry.get("analyze_asset")
+        if skill:
+            _sym = _bare.group(1).upper()
+            tg_handler.conversations.append(tg_id, "user", text,
+                                            metadata={"intent": "analyze_asset",
+                                                      "surface": "web"})
+            ideas_before = set(getattr(engine, "_pending_ideas", {}) or {})
+            try:
+                result = await skill.execute(engine, user_id=tg_id, symbol=_sym)
+            except Exception:
+                return web.json_response(
+                    {"reply_html": "Couldn't analyze that right now — try again.",
+                     "intent": "analyze_asset"}, status=200)
+            resp = {"reply_html": result, "intent": "analyze_asset"}
+            setup = _setup_from_new_idea(engine, ideas_before)
+            if setup is not None:
+                resp["setup"] = setup
+            return web.json_response(resp)
+
     # Intent routing — same threshold as Telegram (confidence >= 0.8).
     intent = tg_handler.intent_router.classify_rules(text)
+    # Stance intents are Telegram-flow only (a confirm-button proposal for
+    # the OPERATOR's global mode). On the web, answer honestly instead of
+    # silently falling through to generic LLM chat.
+    if intent.matched and intent.confidence >= 0.8 \
+            and intent.skill.startswith("stance_"):
+        _want = intent.skill.removeprefix("stance_")
+        return web.json_response({
+            "reply_html": (
+                f"Your <b>personal risk preference</b> lives on the Home view "
+                f"(the 🛡/⚖️/🔥 chips under <i>Your agent</i>) — set it to "
+                f"<b>{_html.escape(_want)}</b> there and I'll tailor how I talk "
+                f"to you. The engine's <b>global</b> stance is an operator "
+                f"control (admins: the stance buttons on Home, or /agent in "
+                f"Telegram)."),
+            "intent": intent.skill})
     if intent.matched and intent.confidence >= 0.8:
-        skill = tg_handler.registry.get(intent.skill)
+        # Router intents whose skills exist only as Telegram command handlers:
+        # map them to the closest registered skill so a web ask ACTS instead
+        # of degrading to generic chat.
+        _INTENT_ALIASES = {
+            "scan_swing": "scan_market", "scan_scalp": "scan_market",
+            "scan_intraday": "scan_market", "scan_deep": "scan_market",
+            "scan_full": "scan_market",
+            "status": "get_portfolio", "get_orders": "get_portfolio",
+        }
+        skill_name = _INTENT_ALIASES.get(intent.skill, intent.skill)
+        skill = tg_handler.registry.get(skill_name)
         if skill:
             audit(system_log, f"Web NL intent routed: '{text[:50]}' -> {intent.skill}",
                   action="web_intent_dispatch", result=intent.skill,
