@@ -205,6 +205,19 @@ _KB_DASH = InlineKeyboardMarkup([
 ])
 
 
+def _chat_ret(text: str, cfg, return_meta: bool):
+    """Shape _llm_chat's return: plain string (default, every existing caller),
+    or (string, meta) when the caller wants model transparency (the web
+    gateway shows which model answered). Module-level — several test suites
+    invoke _llm_chat with a SimpleNamespace stand-in for self, so this must
+    not live on the class."""
+    if not return_meta:
+        return text
+    meta = ({"provider": cfg.provider.value, "model": cfg.model}
+            if cfg is not None else {})
+    return text, meta
+
+
 def guard(command: str = ""):
     """Decorator for command handlers: run the auth / rate-limit / role-permission
     gate (``self._guard``) before the body, returning early if it fails.
@@ -1033,17 +1046,6 @@ class TelegramHandler:
         )
         return base + f"\n{time_note}" + positions_detail + context_block
 
-    @staticmethod
-    def _chat_ret(text: str, cfg, return_meta: bool):
-        """Shape _llm_chat's return: plain string (default, every existing
-        caller), or (string, meta) when the caller wants model transparency
-        (the web gateway shows which model answered)."""
-        if not return_meta:
-            return text
-        meta = ({"provider": cfg.provider.value, "model": cfg.model}
-                if cfg is not None else {})
-        return text, meta
-
     async def _llm_chat(self, question: str, user_id: str = "",
                         user_name: str = "",
                         is_admin: bool = False,
@@ -1156,7 +1158,7 @@ class TelegramHandler:
             configs_to_try.append(("primary", active_cfg))
 
         if not configs_to_try:
-            return self._chat_ret(
+            return _chat_ret(
                 "No LLM configured. Use /setllm to set a provider, or add LLM_API_KEY to .env.",
                 None, return_meta)
 
@@ -1175,7 +1177,7 @@ class TelegramHandler:
                       f"Chat LLM budget exhausted (calls={snap.llm_calls}, "
                       f"cost=${snap.llm_cost_usd:.4f})",
                       action="chat_llm_budget", result="EXHAUSTED")
-                return self._chat_ret(
+                return _chat_ret(
                     "I've used up today's AI budget — try again tomorrow, "
                     "or use a specific command like /scan or /positions.",
                     None, return_meta)
@@ -1218,7 +1220,7 @@ class TelegramHandler:
                           f"Chat used fallback: {cfg.provider.value}/{cfg.model}",
                           action="chat_fallback", result="OK")
 
-                return self._chat_ret(answer.strip(), cfg, return_meta)
+                return _chat_ret(answer.strip(), cfg, return_meta)
 
             except asyncio.TimeoutError:
                 last_error = f"timeout ({cfg.provider.value})"
@@ -1235,7 +1237,7 @@ class TelegramHandler:
         # All providers failed
         audit(system_log, f"All chat LLM providers failed. Last: {last_error}",
               action="chat_error", result="ALL_FAILED")
-        return self._chat_ret(
+        return _chat_ret(
             "I'm having trouble thinking right now. "
             f"Last error: {last_error[:80]}. "
             "Try again in a minute.",
