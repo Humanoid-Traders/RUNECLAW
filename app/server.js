@@ -56,6 +56,7 @@ const publicChatRouter = require('./routes/public_chat');
 const webtradeRouter = require('./routes/webtrade');
 const portfolioRouter = require('./routes/portfolio');
 const leaderboardRouter = require('./routes/leaderboard');
+const trackRouter = require('./routes/track');
 const { router: streamRouter } = require('./routes/stream');
 
 const app = express();
@@ -95,6 +96,7 @@ app.use('/api/public/chat', publicChatRouter);
 app.use('/api/trade', webtradeRouter);
 app.use('/api/portfolio', portfolioRouter);
 app.use('/api/leaderboard', leaderboardRouter);
+app.use('/api/public', trackRouter);
 
 // Single-host dev foot-gun: Express and the bot's gateway both default to
 // port 8080. Warn loudly if they would collide.
@@ -109,6 +111,7 @@ app.use('/api/stream', streamRouter);
 app.get('/', (req, res) => { res.setHeader('Cache-Control', 'no-cache'); res.sendFile(path.join(__dirname, 'public', 'index.html')); });
 app.get('/dashboard', (req, res) => { res.setHeader('Cache-Control', 'no-cache'); res.sendFile(path.join(__dirname, 'public', 'dashboard.html')); });
 // Account-management landing pages reached from email links.
+app.get('/track', (req, res) => { res.setHeader('Cache-Control', 'no-cache'); res.sendFile(path.join(__dirname, 'public', 'track.html')); });
 app.get('/reset', (req, res) => { res.setHeader('Cache-Control', 'no-cache'); res.sendFile(path.join(__dirname, 'public', 'reset.html')); });
 app.get('/verify', (req, res) => { res.setHeader('Cache-Control', 'no-cache'); res.sendFile(path.join(__dirname, 'public', 'verify.html')); });
 

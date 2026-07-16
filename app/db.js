@@ -443,6 +443,14 @@ class MemoryDB {
       return [rows, []];
     }
 
+    if (cmd.includes("STATUS = 'CLOSED'") && cmd.includes('ORDER BY CLOSED_AT ASC')) {
+      // Track-record aggregation: full closed history, oldest first.
+      const rows = this.trades
+        .filter(t => t.user_id === params[0] && t.status === 'CLOSED' && t.closed_at)
+        .sort((a, b) => new Date(a.closed_at) - new Date(b.closed_at));
+      return [rows, []];
+    }
+
     if (cmd.includes("STATUS = 'CLOSED'") && cmd.includes('ORDER BY CLOSED_AT DESC')) {
       let rows = this.trades.filter(t => t.user_id === params[0] && t.status === 'CLOSED').sort((a, b) => new Date(b.closed_at) - new Date(a.closed_at));
       const limit = params[1] || 50;

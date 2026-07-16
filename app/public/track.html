@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>RUNECLAW — Track Record</title>
+<meta name="description" content="The RUNECLAW engine's verifiable track record — every number aggregated from real synced trades and equity snapshots. Nothing hand-entered.">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<meta name="theme-color" content="#0a0b10">
+<link rel="preload" href="/fonts/cinzel-700.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/styles.css?v=9">
+<style>
+  /* Page-local composition only — tokens/components come from styles.css */
+  .tr-wrap { max-width: 1040px; margin: 0 auto; padding: var(--s5) var(--s4) var(--s6); }
+  .tr-hero { display: flex; align-items: baseline; gap: var(--s3); flex-wrap: wrap; margin-bottom: var(--s4); }
+  .tr-hero h1 { font-family: var(--font-display); letter-spacing: .08em; font-size: clamp(26px, 4vw, 38px); }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: var(--s3); margin-bottom: var(--s4); }
+  .tile { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: var(--s3) var(--s4); }
+  .tile .k { font-size: var(--fs-xs); color: var(--text-3); text-transform: uppercase; letter-spacing: .08em; }
+  .tile .v { font-family: var(--font-data); font-size: var(--fs-xl); margin-top: 4px; }
+  .panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: var(--s4); margin-bottom: var(--s4); }
+  .panel h2 { font-size: var(--fs-sm); text-transform: uppercase; letter-spacing: .1em; color: var(--text-3); margin-bottom: var(--s3); }
+  #curve { width: 100%; height: 260px; display: block; }
+  table { width: 100%; border-collapse: collapse; font-size: var(--fs-sm); }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+  th { color: var(--text-3); font-weight: 500; font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: .06em; }
+  td.num, th.num { text-align: right; font-family: var(--font-data); }
+  .pos { color: var(--up); } .neg { color: var(--down); }
+  .empty { color: var(--text-3); padding: var(--s4); text-align: center; }
+  .badge { font-size: var(--fs-xs); padding: 3px 10px; border-radius: 999px; border: 1px solid var(--line); font-family: var(--font-data); letter-spacing: .08em; }
+  .badge.live { color: var(--up); border-color: var(--up); }
+  .disclaimer { color: var(--text-3); font-size: var(--fs-xs); line-height: 1.6; }
+</style>
+</head>
+<body>
+<svg style="display:none" aria-hidden="true"><use href="#brand-mark"></use></svg>
+<nav class="topbar" aria-label="Main">
+  <a class="brand" href="/"><svg class="brand-mark" aria-hidden="true"><use href="#brand-mark"></use></svg>RUNECLAW<span class="brand-sub">Track Record</span></a>
+  <div class="spacer"></div>
+  <div class="nav-links" style="display:flex;gap:var(--s2)">
+    <a class="btn btn--sm" href="/dashboard">Dashboard</a>
+    <a class="btn btn--primary btn--sm" href="/">Get started</a>
+  </div>
+</nav>
+
+<main class="tr-wrap">
+  <div class="tr-hero">
+    <h1>Engine Track Record</h1>
+    <span class="badge" id="modeBadge">…</span>
+    <span class="muted small" id="genAt"></span>
+  </div>
+  <p class="muted small" style="margin-bottom:var(--s4);max-width:70ch">
+    Every number on this page is aggregated automatically from the engine's synced
+    closed trades and equity snapshots — nothing is hand-entered. Venue:
+    <span id="venue">Bitget USDT-M perpetuals</span>.
+  </p>
+
+  <div class="tiles" id="tiles"></div>
+
+  <section class="panel">
+    <h2>Equity curve</h2>
+    <svg id="curve" preserveAspectRatio="none" role="img" aria-label="Equity curve"></svg>
+    <div class="empty" id="curveEmpty" hidden>Not enough equity snapshots yet.</div>
+  </section>
+
+  <div class="grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:var(--s4)">
+    <section class="panel">
+      <h2>Monthly net PnL</h2>
+      <table><thead><tr><th>Month</th><th class="num">Net PnL</th></tr></thead><tbody id="monthly"></tbody></table>
+      <div class="empty" id="monthlyEmpty" hidden>No closed trades yet.</div>
+    </section>
+    <section class="panel">
+      <h2>Recent closed trades</h2>
+      <table><thead><tr><th>Symbol</th><th>Side</th><th class="num">PnL</th><th>Closed</th></tr></thead><tbody id="recent"></tbody></table>
+      <div class="empty" id="recentEmpty" hidden>No closed trades yet.</div>
+    </section>
+  </div>
+
+  <section class="panel disclaimer">
+    Past performance is not indicative of future results. Trading perpetual futures
+    involves substantial risk of loss. This page reports the operator engine account
+    only; figures include fees where recorded and refresh every few minutes.
+  </section>
+</main>
+
+<script src="/js/icons.js?v=3"></script>
+<script>
+(async () => {
+  const $ = id => document.getElementById(id);
+  const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const usd = v => (v == null ? '—' : (v < 0 ? '-' : '') + '$' + Math.abs(v).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2}));
+  const cls = v => v > 0 ? 'pos' : v < 0 ? 'neg' : '';
+  let d;
+  try {
+    const r = await fetch('/api/public/track-record');
+    if (!r.ok) throw new Error('http ' + r.status);
+    d = await r.json();
+  } catch (e) {
+    $('tiles').innerHTML = '<div class="empty">Track record temporarily unavailable.</div>';
+    return;
+  }
+  const s = d.stats || {};
+  const badge = $('modeBadge');
+  badge.textContent = d.mode || 'MODE UNKNOWN';
+  if (d.mode === 'LIVE') badge.classList.add('live');
+  $('genAt').textContent = 'updated ' + new Date(d.generated_at).toLocaleString();
+  if (d.venue) $('venue').textContent = d.venue;
+
+  const tiles = [
+    ['Net PnL', usd(s.net_pnl_usd), cls(s.net_pnl_usd)],
+    ['Profit factor', s.profit_factor == null ? '—' : s.profit_factor.toFixed(2), cls((s.profit_factor || 1) - 1)],
+    ['Win rate', s.win_rate_pct == null ? '—' : s.win_rate_pct.toFixed(1) + '%', ''],
+    ['Closed trades', s.trades ?? '—', ''],
+    ['Max drawdown', s.max_drawdown_pct == null ? '—' : s.max_drawdown_pct.toFixed(1) + '%', s.max_drawdown_pct > 0 ? 'neg' : ''],
+    ['Equity', usd(s.current_equity_usd), ''],
+  ];
+  $('tiles').innerHTML = tiles.map(([k, v, c]) =>
+    `<div class="tile"><div class="k">${esc(k)}</div><div class="v ${c}">${esc(String(v))}</div></div>`).join('');
+
+  // Equity curve — simple scaled polyline, no external libs.
+  const curve = d.equity_curve || [];
+  if (curve.length >= 2) {
+    const W = 1000, H = 260, PAD = 8;
+    const xs = curve.map(p => p.t), ys = curve.map(p => p.equity);
+    const x0 = Math.min(...xs), x1 = Math.max(...xs);
+    const y0 = Math.min(...ys), y1 = Math.max(...ys);
+    const X = t => PAD + (W - 2 * PAD) * (x1 === x0 ? 0.5 : (t - x0) / (x1 - x0));
+    const Y = v => H - PAD - (H - 2 * PAD) * (y1 === y0 ? 0.5 : (v - y0) / (y1 - y0));
+    const pts = curve.map(p => `${X(p.t).toFixed(1)},${Y(p.equity).toFixed(1)}`).join(' ');
+    const up = ys[ys.length - 1] >= ys[0];
+    const svg = $('curve');
+    svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+    svg.innerHTML = `
+      <polyline points="${pts} ${W - PAD},${H - PAD} ${PAD},${H - PAD}" fill="${up ? 'rgba(47,191,113,.09)' : 'rgba(229,72,77,.09)'}" stroke="none"/>
+      <polyline points="${pts}" fill="none" stroke="${up ? '#2fbf71' : '#e5484d'}" stroke-width="2" vector-effect="non-scaling-stroke"/>`;
+  } else {
+    $('curve').hidden = true; $('curveEmpty').hidden = false;
+  }
+
+  const months = Object.entries(d.monthly_pnl_usd || {}).sort((a, b) => b[0].localeCompare(a[0]));
+  if (months.length) {
+    $('monthly').innerHTML = months.map(([m, v]) =>
+      `<tr><td>${esc(m)}</td><td class="num ${cls(v)}">${usd(v)}</td></tr>`).join('');
+  } else { $('monthlyEmpty').hidden = false; }
+
+  const recent = d.recent_trades || [];
+  if (recent.length) {
+    $('recent').innerHTML = recent.map(t =>
+      `<tr><td>${esc(String(t.symbol).replace(/[:/]?USDT.*/, ''))}</td>
+       <td>${esc(String(t.direction || '').toUpperCase())}</td>
+       <td class="num ${cls(t.pnl)}">${usd(t.pnl)}</td>
+       <td class="muted small">${esc(new Date(t.closed_at).toLocaleDateString())}</td></tr>`).join('');
+  } else { $('recentEmpty').hidden = false; }
+})();
+</script>
+</body>
+</html>

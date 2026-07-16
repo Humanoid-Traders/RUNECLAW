@@ -286,7 +286,55 @@ class ProactiveMonitor:
         alerts.extend(self._check_self_audit())
         alerts.extend(self._check_idle_cash())
         alerts.extend(self._check_daily_digest())
+        alerts.extend(self._check_parity_digest())
         return alerts
+
+    # ── Weekly live↔backtest parity digest ────────────────────────
+
+    def _check_parity_digest(self) -> list[Alert]:
+        """Once a week, surface whether live execution still matches the
+        model: realized PF, fee drag vs the modeled commission, win rate.
+        Drift here is the earliest sign the backtest no longer describes
+        reality. Local file read only — no network, no orders."""
+        if os.environ.get("PARITY_DIGEST_ENABLED", "true").strip().lower() \
+                not in ("1", "true", "yes", "on"):
+            return []
+        try:
+            now = datetime.now(UTC)
+            dow = int(self._env_f("PARITY_DIGEST_DOW", 0))       # 0 = Monday
+            hour = int(self._env_f("PARITY_DIGEST_HOUR_UTC", 7))
+            week = now.strftime("%G-W%V")
+            if now.weekday() != dow or now.hour < hour \
+                    or self._digest_sent.get("parity") == week:
+                return []
+            self._digest_sent["parity"] = week
+            from bot.backtest.parity import load_closed_trades, parity_summary
+            path = getattr(getattr(self.engine, "live_executor", None),
+                           "_closed_trades_file", None)
+            if not path:
+                return []
+            trades = load_closed_trades(path)
+            if not trades:
+                return []
+            s = parity_summary(trades, CONFIG.risk.commission_pct)
+            fee_x = s.get("fee_vs_model", 0.0)
+            drift = " ⚠️ fees running above model — /parity for the breakdown" \
+                if fee_x > 1.5 else ""
+            body = (
+                "📏 <b>Weekly parity — live vs model</b>\n\n"
+                f"Filled trades: <b>{s['trades']}</b> · win rate "
+                f"<code>{s['win_rate'] * 100:.0f}%</code> · PF "
+                f"<code>{s['pf']:.2f}</code>\n"
+                f"Net <code>${s['net_pnl']:+,.2f}</code> · fees "
+                f"<code>${s['total_fees']:,.2f}</code> "
+                f"(<code>{fee_x:.1f}×</code> the modeled rate)"
+                f"{drift}\n\n<i>/parity for the full bucketed report.</i>")
+            return [Alert(alert_type="PARITY_DIGEST", severity="INFO",
+                          title="Weekly parity digest", body=body,
+                          dedup_key=f"parity_{week}")]
+        except Exception as exc:
+            logger.debug("parity digest skipped: %s", exc)
+            return []
 
     # ── Proactive proposals: idle cash → stake nudge ──────────────
 
