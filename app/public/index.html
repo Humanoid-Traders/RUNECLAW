@@ -74,6 +74,28 @@
   <div class="card" id="landingFeed"><p class="muted small">Connecting to the agent…</p></div>
 </section>
 
+<section class="section hidden" id="theaterSection" hidden aria-labelledby="theater-h">
+  <div class="section-head">
+    <h2 id="theater-h">Watch a real trade unfold</h2>
+    <p>Replayed frame by frame from the engine's recorded log — a real entry, a real exit, real PnL. Wins and losses alike.</p>
+  </div>
+  <div class="card" id="theaterCard">
+    <div class="row" style="gap:var(--s2);flex-wrap:wrap;align-items:center;margin-bottom:var(--s2)">
+      <span class="badge" id="theaterBadge">REAL RECORDED TRADE</span>
+      <b id="theaterTitle"></b>
+      <span class="muted small" id="theaterWhen"></span>
+      <button class="btn btn--sm" id="theaterReplay" type="button" style="margin-left:auto">↺ Replay</button>
+    </div>
+    <div id="theaterStage" style="position:relative"></div>
+    <div class="row" style="gap:var(--s4);flex-wrap:wrap;margin-top:var(--s2)">
+      <span>Entry <b class="num" id="theaterEntry"></b></span>
+      <span>Exit <b class="num" id="theaterExit"></b></span>
+      <span>PnL <b class="num" id="theaterPnl"></b></span>
+    </div>
+    <p class="muted small" style="margin-top:var(--s2)">From the same recorded history behind the <a href="/track">public track record</a>. Past results ≠ future results.</p>
+  </div>
+</section>
+
 <section class="section" aria-labelledby="features-h">
   <div class="section-head">
     <h2 id="features-h">Everything the bot does, on the web</h2>
@@ -238,6 +260,7 @@
 <script src="/js/icons.js?v=3"></script>
 <script src="/js/app.js?v=3"></script>
 <script src="/js/chat.js?v=14" defer></script>
+<script src="/js/theater.js?v=1" defer></script>
 <script>
 // Landing mind-stream: last few real agent events + live SSE append.
 (function () {
