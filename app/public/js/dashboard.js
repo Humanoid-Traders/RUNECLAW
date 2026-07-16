@@ -140,6 +140,8 @@
     container.insertAdjacentHTML('beforeend', `
       <div class="stack">
         <section class="panel panel--primary" id="p-hero"><div id="c-hero"><div class="skel"></div><div class="skel"></div></div></section>
+        ${LOGGED_IN ? `<section class="panel" id="p-agent"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-sparkle"></use></svg>Your agent
+          <span class="right muted small">what it's doing for you</span></h2><div id="c-agent"><div class="skel"></div></div></section>` : ''}
         <div class="grid grid-main">
           <section class="panel" id="p-hpos"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-coin"></use></svg>Open positions</h2><div id="c-hpos"><div class="skel"></div><div class="skel"></div></div></section>
           <section class="panel" id="p-next"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-rocket"></use></svg>Getting started</h2><div id="c-next"><div class="skel"></div></div></section>
@@ -182,6 +184,57 @@
         </div>
       </div>`;
     }, { empty: { text: 'No portfolio data yet.' } });
+
+    if (LOGGED_IN) {
+      renderPanel(C('agent'), async () => {
+        // Everything here is real synced data; anything unavailable is
+        // omitted, never invented.
+        const [pf, hist, scanR] = await Promise.all([
+          getPortfolio(),
+          fetchJSON('/api/trades/history?limit=50', { timeoutMs: 12000 }).catch(() => null),
+          fetchJSON('/api/bot/sync/scan', { auth: false, timeoutMs: 10000 }).catch(() => null),
+        ]);
+        const scan = scanR?.data?.scan || null;
+        const cb = scan?.circuit_breaker || {};
+        const stance = String(cb.strategy_mode || '').toLowerCase();
+        const STANCE = {
+          defensive: ['🛡', 'Defensive', 'capital protection first'],
+          balanced: ['⚔️', 'Balanced', 'the default posture'],
+          aggressive: ['🔥', 'Aggressive', 'larger sizing bias, every gate still on'],
+          manual: ['🧘', 'Manual', 'proposes only — you confirm each trade'],
+        }[stance];
+        const lines = [];
+        if (STANCE) {
+          lines.push(`<div class="kv-row"><span>Stance</span><b>${STANCE[0]} ${STANCE[1]} <span class="muted small">— ${STANCE[2]}</span></b></div>`);
+        }
+        if (scan) {
+          const nSyms = Object.keys(scan.symbols || {}).length;
+          const at = scan.received_at ? new Date(scan.received_at) : null;
+          const fresh = at && (Date.now() - at.getTime()) < 3 * 3600 * 1000;
+          if (nSyms && at) {
+            lines.push(`<div class="kv-row"><span>Last scan</span><b class="num">${nSyms} pairs · ${at.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}${fresh ? '' : ' <span class="muted small">(stale)</span>'}</b></div>`);
+          }
+        }
+        const rows = hist?.data?.trades || hist?.data?.rows || [];
+        const todayStr = new Date().toDateString();
+        const today = rows.filter(t => t.closed_at && new Date(t.closed_at).toDateString() === todayStr);
+        if (today.length) {
+          const net = today.reduce((a, t) => a + (parseFloat(t.pnl) || 0), 0);
+          const wins = today.filter(t => parseFloat(t.pnl) > 0).length;
+          lines.push(`<div class="kv-row"><span>Today for you</span><b class="num ${pnlClass(net)}">${today.length} closed (${wins} wins) · ${net < 0 ? '-' : '+'}$${Math.abs(net).toFixed(2)}</b></div>`);
+        } else {
+          lines.push(`<div class="kv-row"><span>Today for you</span><b class="muted">no closed trades yet — only setups that clear the risk gate get taken</b></div>`);
+        }
+        const nOpen = (pf?.open_positions || []).length;
+        lines.push(`<div class="kv-row"><span>Carrying</span><b class="num">${nOpen} open position${nOpen === 1 ? '' : 's'}</b></div>`);
+        lines.push(`<div class="row mt-3" style="gap:var(--s2);flex-wrap:wrap">
+          <a class="btn btn--sm" href="#chat">💬 Ask your agent</a>
+          <a class="btn btn--sm" href="#signals">📡 Signals</a>
+          <a class="btn btn--sm" href="#portfolio">📊 Portfolio</a>
+        </div>`);
+        return lines.join('');
+      }, { empty: { text: 'Agent status unavailable right now.' } });
+    }
 
     renderPanel(C('hpos'), async () => {
       if (!LOGGED_IN) return loginGate('Log in to see your open positions.');

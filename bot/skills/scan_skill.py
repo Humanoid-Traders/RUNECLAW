@@ -183,6 +183,16 @@ def _fetch_live_exchange_data() -> Optional[dict]:
 
 # ── Dashboard sync helper ─────────────────────────────────────────
 
+def _current_strategy_mode() -> str:
+    """The runtime stance ('defensive'|'balanced'|'aggressive'|'manual'),
+    fail-soft to 'balanced' so a config hiccup never breaks the payload."""
+    try:
+        from bot.config import RUNTIME
+        return str(RUNTIME.strategy_mode)
+    except Exception:
+        return "balanced"
+
+
 def _build_scan_payload(results: list[dict], engine=None) -> dict:
     """Convert raw scan results into the website dashboard schema and push.
 
@@ -423,6 +433,9 @@ def _build_scan_payload(results: list[dict], engine=None) -> dict:
             "closed_trades": cb_closed_trades,
             "live_mode": not CONFIG.simulation_mode and CONFIG.live_trading_enabled,
             "live_unavailable": live_unavailable,
+            # Agent stance (RUNTIME.strategy_mode) so the website's "Your
+            # agent" panel can show the posture the engine is trading with.
+            "strategy_mode": _current_strategy_mode(),
         },
         "symbols": symbols,
         "entry_cards": entry_cards,
