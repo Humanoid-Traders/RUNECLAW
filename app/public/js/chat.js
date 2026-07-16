@@ -235,7 +235,7 @@
     'Backtest SOL', 'Why no trade on BTC?', 'Long ETH',
     'Alert me when BTC drops below $100k',
     "What if I'd taken every signal with $1k?", "This week's letter",
-    'Show my positions', 'Post-mortem my last trade',
+    'RWA radar', 'Show my positions', 'Post-mortem my last trade',
   ];
   const chipsEl = document.getElementById('chatChips');
   function hideChips() { if (chipsEl) chipsEl.innerHTML = ''; }

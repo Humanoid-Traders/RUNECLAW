@@ -19,6 +19,7 @@ const { loadProfile } = require('./profile');
 const { maybeHandleAlertChat } = require('../lib/alerts');
 const { maybeHandleReplayChat } = require('../lib/replay');
 const { maybeHandleLetterChat } = require('../lib/letter');
+const { maybeHandleRwaChat } = require('../lib/rwa');
 
 const router = express.Router();
 router.use(authMiddleware);
@@ -48,6 +49,9 @@ router.post('/', chatLimit, async (req, res) => {
     // from recorded data in the web DB.
     const letterReply = await maybeHandleLetterChat(req.user.user_id, text);
     if (letterReply) return res.json(letterReply);
+    // "rwa radar" — read-only tokenized-asset sector snapshot from live tickers.
+    const rwaReply = await maybeHandleRwaChat(req.user.user_id, text);
+    if (rwaReply) return res.json(rwaReply);
     if (!gateway.isConfigured()) {
       return res.status(503).json({ error: 'Chat not configured' });
     }
