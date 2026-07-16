@@ -34,6 +34,7 @@ class MemoryDB {
     this.agentEvents = []; // public agent mind-stream feed (bounded ring)
     this._nextAgentEventId = 1;
     this.reportsCache = null;  // { reports_json, updated_at } (single row)
+    this.userProfiles = {};    // user_id -> { risk_pref, watchlist, prefs }
     this.pendingStance = null; // { mode, requested_by, telegram_id, created_at } (single row)
     this.pendingCreds = [];   // pending_credentials (UPSERT by user_id)
     this.exchangeStatus = {}; // user_id -> { connected }
@@ -82,6 +83,20 @@ class MemoryDB {
         .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
         .slice(0, limit);
       return [rows, []];
+    }
+
+    // -- USER PROFILES (per-user agent profile: risk pref, watchlist, prefs) --
+    if (cmd.includes('INTO USER_PROFILES')) {
+      // params: user_id, risk_pref, watchlist, prefs (UPSERT by user_id)
+      this.userProfiles[params[0]] = {
+        user_id: params[0], risk_pref: params[1],
+        watchlist: params[2], prefs: params[3], updated_at: new Date(),
+      };
+      return [{ affectedRows: 1 }, []];
+    }
+    if (cmd.includes('FROM USER_PROFILES')) {
+      const p = this.userProfiles[params[0]];
+      return [p ? [{ ...p }] : [], []];
     }
 
     // -- REPORTS CACHE (single-row, like scan_cache) --
@@ -752,6 +767,19 @@ async function migrate() {
         resolved_at TIMESTAMP NULL DEFAULT NULL,
         INDEX idx_created (created_at),
         INDEX idx_symbol (symbol)
+      )
+    `);
+    // Per-user agent profile: the user's OWN risk preference (display + chat
+    // context only — never touches the operator bot's global stance), pinned
+    // watchlist, and UI prefs. JSON columns are validated/whitelisted by
+    // routes/profile.js before write.
+    await pool.execute(`
+      CREATE TABLE IF NOT EXISTS user_profiles (
+        user_id INT PRIMARY KEY,
+        risk_pref VARCHAR(16) DEFAULT NULL,
+        watchlist TEXT DEFAULT NULL,
+        prefs TEXT DEFAULT NULL,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
       )
     `);
     // Bot-pushed intelligence reports (funding scan / arb tracker / parity /
