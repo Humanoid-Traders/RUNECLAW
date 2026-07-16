@@ -243,13 +243,18 @@ async def handle_chat(request: web.Request) -> web.Response:
     # is_admin MUST reflect the caller's real role: resolve_tier_config's
     # non-admin guard (operator Anthropic key stays admin-only) and the
     # fallback-chain gate in _llm_chat both key off this flag.
-    answer = await tg_handler._llm_chat(
+    answer, meta = await tg_handler._llm_chat(
         sanitize_chat_input(text), user_id=tg_id, user_name=name,
         is_admin=_is_admin_id(tg_handler, tg_id),
-        profile_note=profile_note)
+        profile_note=profile_note, return_meta=True)
     tg_handler.conversations.append(tg_id, "assistant", answer,
                                     metadata={"surface": "web"})
-    return web.json_response({"reply_html": answer, "intent": "chat"})
+    # Model transparency: the web renders a small caption showing WHICH
+    # model answered — the visible face of tier routing (and of a runeclaw
+    # promotion via /settier).
+    return web.json_response({"reply_html": answer, "intent": "chat",
+                              "model": (meta or {}).get("model", ""),
+                              "provider": (meta or {}).get("provider", "")})
 
 
 # ── Public chat (anonymous website visitors; market Q&A only) ───────────────

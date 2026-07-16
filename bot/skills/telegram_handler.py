@@ -325,6 +325,7 @@ class TelegramHandler:
             ("channel", self._cmd_channel), ("broadcast", self._cmd_broadcast),
             # LLM BYOK commands
             ("setllm", self._cmd_setllm), ("llmstatus", self._cmd_llmstatus),
+            ("settier", self._cmd_settier),
             ("llmreset", self._cmd_llmreset), ("llmtiers", self._cmd_llmtiers),
             # Shadow A/B: challenger model vs primary on the same live prompts
             ("llmab", self._cmd_llmab),
@@ -1032,11 +1033,23 @@ class TelegramHandler:
         )
         return base + f"\n{time_note}" + positions_detail + context_block
 
+    @staticmethod
+    def _chat_ret(text: str, cfg, return_meta: bool):
+        """Shape _llm_chat's return: plain string (default, every existing
+        caller), or (string, meta) when the caller wants model transparency
+        (the web gateway shows which model answered)."""
+        if not return_meta:
+            return text
+        meta = ({"provider": cfg.provider.value, "model": cfg.model}
+                if cfg is not None else {})
+        return text, meta
+
     async def _llm_chat(self, question: str, user_id: str = "",
                         user_name: str = "",
                         is_admin: bool = False,
                         public: bool = False,
-                        profile_note: str = "") -> str:
+                        profile_note: str = "",
+                        return_meta: bool = False):
         """Send a free-text question to the LLM with multi-turn context.
 
         Uses CHAT tier routing with automatic fallback chain:
@@ -1143,7 +1156,9 @@ class TelegramHandler:
             configs_to_try.append(("primary", active_cfg))
 
         if not configs_to_try:
-            return "No LLM configured. Use /setllm to set a provider, or add LLM_API_KEY to .env."
+            return self._chat_ret(
+                "No LLM configured. Use /setllm to set a provider, or add LLM_API_KEY to .env.",
+                None, return_meta)
 
         # Budget guard: refuse to spend once the shared daily LLM budget is
         # exhausted, mirroring analyzer.py's guard for trade-thesis calls.
@@ -1160,10 +1175,10 @@ class TelegramHandler:
                       f"Chat LLM budget exhausted (calls={snap.llm_calls}, "
                       f"cost=${snap.llm_cost_usd:.4f})",
                       action="chat_llm_budget", result="EXHAUSTED")
-                return (
+                return self._chat_ret(
                     "I've used up today's AI budget — try again tomorrow, "
-                    "or use a specific command like /scan or /positions."
-                )
+                    "or use a specific command like /scan or /positions.",
+                    None, return_meta)
 
         # Try each config in order
         last_error = ""
@@ -1203,7 +1218,7 @@ class TelegramHandler:
                           f"Chat used fallback: {cfg.provider.value}/{cfg.model}",
                           action="chat_fallback", result="OK")
 
-                return answer.strip()
+                return self._chat_ret(answer.strip(), cfg, return_meta)
 
             except asyncio.TimeoutError:
                 last_error = f"timeout ({cfg.provider.value})"
@@ -1220,11 +1235,11 @@ class TelegramHandler:
         # All providers failed
         audit(system_log, f"All chat LLM providers failed. Last: {last_error}",
               action="chat_error", result="ALL_FAILED")
-        return (
+        return self._chat_ret(
             "I'm having trouble thinking right now. "
             f"Last error: {last_error[:80]}. "
-            "Try again in a minute."
-        )
+            "Try again in a minute.",
+            None, return_meta)
 
     async def _handle_message(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle free-text messages — intent routing + AI chat fallback.
@@ -5295,6 +5310,85 @@ class TelegramHandler:
     # ── LLM BYOK commands ────────────────────────────────────
 
     @guard("mode")
+    async def _cmd_settier(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """/settier <tier> <provider> [model] — runtime per-tier LLM routing.
+
+        THE promotion path after a winning /llmab shadow A/B:
+        `/settier chat runeclaw` flips the chat tier to the in-house model
+        with no restart and no env edit. `/settier clear <tier|all>` reverts.
+        """
+        # Same blast radius as /setllm (changes which model answers every
+        # user), so the same admin-only gate.
+        if not self._is_admin(update):
+            await self._send(update,
+                f"\U0001f512 {t('admin_only_llm_set', self._lang(update))}")
+            return
+        from bot.llm.provider import (LLMTier, clear_tier_override,
+                                      get_tier_overrides, set_tier_override)
+        args = [a.lower() for a in (ctx.args or [])]
+        tiers = ", ".join(x.value for x in LLMTier)
+        if not args:
+            cur = get_tier_overrides()
+            cur_lines = ("\n".join(
+                f" • <code>{html.escape(k)}</code> → "
+                f"<code>{html.escape(v['provider'])}/{html.escape(v['model'] or 'default')}</code>"
+                for k, v in cur.items()) if cur else " • <i>none — env/default routing active</i>")
+            await self._send(update,
+                "🎛 <b>Runtime tier routing</b>\n"
+                "<pre>"
+                " /settier chat runeclaw\n"
+                " /settier scan runeclaw runeclaw-v6\n"
+                " /settier clear chat\n"
+                " /settier clear all"
+                "</pre>\n"
+                f"<b>Tiers:</b> <code>{tiers}</code>\n\n"
+                f"<b>Active overrides</b>\n{cur_lines}\n\n"
+                "<i>Applies instantly to every caller of the tier; survives "
+                "until restart (set LLM_TIER_*_PROVIDER in .env to make it "
+                "permanent). The operator Anthropic key stays admin-only "
+                "regardless of routing.</i>")
+            return
+        if args[0] == "clear":
+            if len(args) > 1 and args[1] != "all":
+                try:
+                    n = clear_tier_override(LLMTier(args[1]))
+                except ValueError:
+                    await self._send(update, f"Unknown tier. Tiers: <code>{tiers}</code>")
+                    return
+            else:
+                n = clear_tier_override()
+            audit(system_log, f"Tier override cleared ({args[1] if len(args) > 1 else 'all'})",
+                  action="settier", result="CLEARED")
+            await self._send(update, f"✅ Cleared {n} tier override(s) — env/default routing active.")
+            return
+        if len(args) < 2:
+            await self._send(update, "Usage: /settier &lt;tier&gt; &lt;provider&gt; [model]")
+            return
+        try:
+            tier = LLMTier(args[0])
+        except ValueError:
+            await self._send(update, f"Unknown tier <code>{html.escape(args[0])}</code>. Tiers: <code>{tiers}</code>")
+            return
+        try:
+            provider = LLMProvider(args[1])
+        except ValueError:
+            await self._send(update, f"Unknown provider <code>{html.escape(args[1])}</code>.")
+            return
+        model = ctx.args[2] if len(ctx.args or []) > 2 else ""
+        ok, detail = set_tier_override(tier, provider, model)
+        if ok:
+            audit(system_log, f"Tier override set: {detail}",
+                  action="settier", result="OK",
+                  data={"tier": tier.value, "provider": provider.value,
+                        "model": model or "default"})
+            await self._send(update,
+                f"✅ <b>Routing updated:</b> <code>{html.escape(detail)}</code>\n"
+                "<i>Applies instantly, reverts on restart — set "
+                "LLM_TIER_*_PROVIDER in .env to make it permanent.</i>")
+        else:
+            await self._send(update,
+                f"🔴 Override NOT set: {html.escape(detail)}")
+
     async def _cmd_setllm(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """/setllm <provider> [api_key] [model] — switch LLM provider at runtime."""
         # Audit F-12: swapping the analysis LLM / injecting a key affects every
@@ -5475,11 +5569,26 @@ class TelegramHandler:
                     + "</pre>")
         except Exception:
             slots_block = ""
+        # Runtime tier overrides (/settier) — the routing that actually
+        # answers calls right now, ahead of env/default tables.
+        override_block = ""
+        try:
+            from bot.llm.provider import get_tier_overrides
+            _ovs = get_tier_overrides()
+            if _ovs:
+                override_block = ("\n\n<b>Runtime tier overrides (/settier)</b>\n" +
+                                  "\n".join(
+                                      f" • <code>{html.escape(k)}</code> → "
+                                      f"<code>{html.escape(v['provider'])}/"
+                                      f"{html.escape(v['model'] or 'default')}</code>"
+                                      for k, v in _ovs.items()))
+        except Exception:
+            override_block = ""
         await self._send(update,
             f"🤖 {t('llm_status_title', self._lang(update))}\n"
             f"{SEP}\n"
             f"<pre>{html.escape(status)}</pre>"
-            f"{health_line}{slots_block}")
+            f"{health_line}{slots_block}{override_block}")
 
     @guard("mode")
     async def _cmd_llmreset(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:

@@ -63,9 +63,18 @@ other provider key.
 
 ## 3. Route work to it
 
-**Per-tier (recommended)** — send the high-frequency, low-stakes tiers to the
-in-house model and keep the stronger hosted model on the tiers that pick
-trades:
+**Per-tier at runtime (recommended)** — no restart, no env edit; as admin:
+
+```
+/settier chat runeclaw          # user Q&A → free + private, instantly
+/settier scan runeclaw          # high-frequency scans
+/settier clear chat             # revert one tier
+/settier clear all              # revert everything
+```
+
+Runtime overrides apply instantly to every caller of the tier, show up in
+`/llmstatus`, and revert on restart. To make a promotion permanent, mirror
+it in `.env`:
 
 ```bash
 LLM_TIER_SCAN_PROVIDER=runeclaw    # high-frequency scans → free + private
@@ -73,7 +82,9 @@ LLM_TIER_CHAT_PROVIDER=runeclaw    # user Q&A → free + private
 # THESIS / LEARNING stay on the default routing until the eval says otherwise
 ```
 
-(Keyless local providers are honored in tier routing — no `_KEY` needed.)
+(Keyless local providers are honored in tier routing — no `_KEY` needed.
+The operator Anthropic key stays admin-only regardless of routing. Web chat
+replies show which model answered, so a promotion is visible immediately.)
 
 **Everything at once (trial)** — as admin: `/setllm runeclaw`. Revert with
 `/llmreset`. Check with `/llmtiers` and `/llmstatus`.

@@ -301,7 +301,17 @@
       else {
         // Analysis / answer bubble, plus (when the skill surfaced a concrete
         // setup) a one-tap "Trade this" card underneath it.
-        appendMsg('bot', sanitizeBotHtml(r.data.reply_html || '…'));
+        const bubble = appendMsg('bot', sanitizeBotHtml(r.data.reply_html || '…'));
+        // Model transparency: show WHICH model answered (the visible face of
+        // tier routing — and of a runeclaw promotion). LLM replies only;
+        // intent-routed skill replies carry no model.
+        if (r.data.model && r.data.intent === 'chat') {
+          const cap = document.createElement('div');
+          cap.className = 'muted small';
+          cap.style.cssText = 'margin-top:4px;opacity:.7;font-size:11px';
+          cap.textContent = '🤖 ' + r.data.model;
+          bubble.appendChild(cap);
+        }
         if (r.data.setup) appendSetupAction(r.data.setup);
       }
     } catch (e) {
