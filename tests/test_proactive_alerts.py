@@ -259,3 +259,38 @@ async def test_dispatch_uses_3arg_send_only_for_button_alerts():
                                body="btn", buttons=[("Go", "yld:x")]), send_fn)
     assert calls[0][2] is None                     # legacy 2-arg path
     assert calls[1][2] == [("Go", "yld:x")]        # buttons passed through
+
+
+# ── weekly parity digest ──────────────────────────────────────────────────
+
+def test_parity_digest_fires_once_per_week(monkeypatch, tmp_path):
+    import json
+    from datetime import datetime as _dt
+    now = _dt.now(pm.UTC)
+    monkeypatch.setenv("PARITY_DIGEST_DOW", str(now.weekday()))
+    monkeypatch.setenv("PARITY_DIGEST_HOUR_UTC", "0")
+    f = tmp_path / "closed.json"
+    f.write_text(json.dumps([
+        {"symbol": "BTC/USDT", "pnl_usd": 10.0, "fees_usd": 0.5,
+         "size_usd": 100.0, "close_reason": "take_profit"},
+        {"symbol": "ETH/USDT", "pnl_usd": -4.0, "fees_usd": 0.5,
+         "size_usd": 100.0, "close_reason": "stop_loss"},
+    ]))
+    eng = types.SimpleNamespace(
+        live_executor=types.SimpleNamespace(_closed_trades_file=str(f)))
+    m = _mon(eng)
+    alerts = m._check_parity_digest()
+    assert len(alerts) == 1 and alerts[0].alert_type == "PARITY_DIGEST"
+    assert "PF" in alerts[0].body and "parity" in alerts[0].body.lower()
+    assert m._check_parity_digest() == []          # once per ISO week
+
+
+def test_parity_digest_silent_without_trades(monkeypatch, tmp_path):
+    from datetime import datetime as _dt
+    now = _dt.now(pm.UTC)
+    monkeypatch.setenv("PARITY_DIGEST_DOW", str(now.weekday()))
+    monkeypatch.setenv("PARITY_DIGEST_HOUR_UTC", "0")
+    eng = types.SimpleNamespace(
+        live_executor=types.SimpleNamespace(
+            _closed_trades_file=str(tmp_path / "missing.json")))
+    assert _mon(eng)._check_parity_digest() == []
