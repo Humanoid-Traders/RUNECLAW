@@ -352,6 +352,8 @@ class TelegramHandler:
             ("fundingscan", self._cmd_fundingscan),
             # Funding-arb paper tracker (100% paper — records + reports only)
             ("arb", self._cmd_arb),
+            # Your agent's posture in plain language + stance presets
+            ("agent", self._cmd_agent),
             # Admin: which secrets are vault-protected vs still missing
             ("vault", self._cmd_vault),
             # Confidence calibration (admin)
@@ -1355,6 +1357,15 @@ class TelegramHandler:
             user_name = update.effective_user.first_name
 
         if intent.matched and intent.confidence >= 0.8:
+            # ── Agent stance (talk-to-your-agent) ────────────────
+            # "be more careful" / "push harder" NEVER flips the mode
+            # directly — the agent proposes and the user confirms. The
+            # mode_ callback it routes to is permission-gated ("mode"),
+            # so an unprivileged user gets the standard role refusal.
+            if intent.skill.startswith("stance_"):
+                await self._propose_stance(update, intent.skill.removeprefix("stance_"))
+                return
+
             # ── Scan mode shortcuts ──────────────────────────────
             scan_modes = {
                 "scan_swing": ("swing", "<i>Checking the 4H chart...</i>"),
@@ -4001,6 +4012,79 @@ class TelegramHandler:
             system_log.warning("/stake failed: %s", exc)
             await self._send(update,
                 "🔴 Could not build the stake plan — nothing was moved.")
+
+    # ── Talk-to-your-agent: stance proposal + /agent status ─────────
+
+    _STANCE_BLURB = {
+        "defensive": ("🛡 <b>Defensive</b> — smaller sizing bias, stricter "
+                      "setup selection, capital protection first."),
+        "balanced": ("⚔️ <b>Balanced</b> — the default posture: normal "
+                     "sizing, the full setup playbook."),
+        "aggressive": ("🔥 <b>Aggressive</b> — larger sizing bias, more "
+                       "setups taken. Every risk gate stays ON."),
+        "manual": ("🧘 <b>Manual</b> — the engine proposes, you confirm "
+                   "every trade."),
+    }
+
+    async def _propose_stance(self, update: Update, stance: str) -> None:
+        """The agent's reply to 'be more careful' etc.: restate what it
+        heard, show what would change, and wait for an explicit button
+        press. The button routes to the existing mode_ callback, which is
+        permission-gated — this method itself changes nothing."""
+        from bot.config import RUNTIME
+        if stance not in self._STANCE_BLURB:
+            return
+        current = RUNTIME.strategy_mode
+        if stance == current:
+            await self._send(update,
+                f"👍 We're already trading <b>{current.capitalize()}</b>.\n\n"
+                f"{self._STANCE_BLURB[current]}\n\n"
+                "<i>/agent shows the full posture.</i>")
+            return
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton(f"✅ Switch to {stance.capitalize()}",
+                                  callback_data=f"mode_{stance}"),
+             InlineKeyboardButton("Keep current", callback_data="stance_keep")],
+        ])
+        await self._send(update,
+            "🎯 <b>Got it — you want to adjust how I trade.</b>\n\n"
+            f"Current: <b>{current.capitalize()}</b>\n"
+            f"Proposed: {self._STANCE_BLURB[stance]}\n\n"
+            "<i>Nothing changes until you confirm. The 23-check risk gate, "
+            "loss breakers and drawdown caps apply in every stance.</i>",
+            reply_markup=kb)
+
+    async def _cmd_agent(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """/agent — your agent's posture in plain language, with one-tap
+        stance presets. You can also just SAY it: 'be more careful',
+        'push harder', 'back to normal'."""
+        if not await self._guard(update, "status"):
+            return
+        from bot.config import RUNTIME
+        mode = RUNTIME.strategy_mode
+        lines = ["🤖 <b>Your agent's posture</b>", self._STANCE_BLURB.get(
+            mode, f"<b>{mode.capitalize()}</b>")]
+        lines.append(
+            f"Mode <b>{'LIVE' if CONFIG.is_live() else 'PAPER'}</b> · "
+            f"auto-trades at <code>{RUNTIME.auto_confirm_threshold:.0%}</code> "
+            "confidence · signals messaged at <code>70%</code>+")
+        try:
+            ex = getattr(self.engine, "live_executor", None)
+            n_open = len(getattr(ex, "open_positions", []) or []) if ex else 0
+            lines.append(f"Carrying <b>{n_open}</b> open position(s) — "
+                         "<i>/positions for detail</i>")
+        except Exception:
+            pass
+        lines.append(
+            "<i>Change how I trade by talking to me — “be more careful”, "
+            "“push harder”, “back to normal” — or tap a preset:</i>")
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🛡 Defensive", callback_data="mode_defensive"),
+             InlineKeyboardButton("⚔️ Balanced", callback_data="mode_balanced")],
+            [InlineKeyboardButton("🔥 Aggressive", callback_data="mode_aggressive"),
+             InlineKeyboardButton("🧘 Manual", callback_data="mode_manual")],
+        ])
+        await self._send(update, "\n\n".join(lines), reply_markup=kb)
 
     async def _cmd_arb(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """/arb — the funding-arb paper tracker: what a fixed $1k delta-
@@ -8019,6 +8103,14 @@ class TelegramHandler:
                         parse_mode="HTML")
                 except Exception:
                     pass
+            return
+
+        # ── Stance proposal declined ─────────────────────────
+        if data == "stance_keep":
+            from bot.config import RUNTIME as _rt
+            await self._send(update,
+                f"👍 Keeping <b>{_rt.strategy_mode.capitalize()}</b> — "
+                "nothing changed.", edit=True)
             return
 
         # ── Earn stake/redeem confirm buttons (operator money path) ──
