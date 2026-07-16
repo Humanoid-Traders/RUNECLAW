@@ -1262,6 +1262,24 @@
       <div class="stack">
         <section class="panel panel--primary" id="p-pstats"><div id="c-pstats"><div class="skel"></div><div class="skel"></div></div></section>
         <section class="panel" id="p-curve"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-chart"></use></svg>Equity curve</h2><div id="c-curve"><div class="skel"></div></div></section>
+        <section class="panel" id="p-replay">
+          <h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-bolt"></use></svg>What-if replay
+            <span class="badge" style="margin-left:auto" title="Real recorded agent trades, mirrored at your stake — hypothetical, not account history">hypothetical</span></h2>
+          <p style="color:var(--text-2);margin-bottom:var(--s3)">What if you'd mirrored <b>every trade the agent closed</b> with a fixed stake?
+            Replayed from real recorded results — you can also just ask the chat.</p>
+          <form class="row" id="replayForm" style="gap:var(--s2);flex-wrap:wrap;margin-bottom:var(--s3)">
+            <label class="small" style="align-self:center">Stake $</label>
+            <input class="input" id="replayStake" type="number" min="10" max="1000000" step="any" value="1000" style="width:8rem" aria-label="Stake per trade">
+            <select class="input" id="replayDays" aria-label="Period" style="width:auto">
+              <option value="0">all time</option>
+              <option value="90">last 90d</option>
+              <option value="30">last 30d</option>
+              <option value="7">last 7d</option>
+            </select>
+            <button class="btn btn--primary btn--sm" type="submit">Replay</button>
+          </form>
+          <div id="c-replay"><div class="skel"></div></div>
+        </section>
         <div class="grid grid-2">
           <section class="panel" id="p-breakdown"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-chart"></use></svg>By symbol</h2><div id="c-breakdown"><div class="skel"></div></div></section>
           <section class="panel" id="p-cal"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-coin"></use></svg>Daily PnL — last 4 weeks</h2><div id="c-cal"><div class="skel"></div></div></section>
@@ -1304,6 +1322,40 @@
       if (snaps.length < 2) return null;
       return equitySvg(snaps);
     }, { empty: { icon: 'icon-chart', text: 'The equity curve draws once you have a few snapshots — trade and check back.' } });
+
+    // What-if replay: mirror every closed agent trade at a fixed stake.
+    async function runReplayPanel() {
+      const stake = parseFloat(document.getElementById('replayStake').value) || 1000;
+      const days = document.getElementById('replayDays').value;
+      await renderPanel(C('replay'), async () => {
+        const r = await fetchJSON(`/api/replay?stake=${encodeURIComponent(stake)}&days=${encodeURIComponent(days)}`);
+        const d = r.data;
+        if (!r.ok || !d || !d.trades) return null;
+        const f = d.fixed;
+        const cls = f.net_pnl_usd >= 0 ? 'up' : 'down';
+        const curveSvg = d.curve.length >= 2
+          ? equitySvg(d.curve.map(p => ({ snapshot_at: p.t, equity: p.equity }))) : '';
+        return `
+          <div class="stat-row" style="margin-bottom:var(--s3)">
+            <div class="stat"><div class="k">Net (fixed $${fmt(d.stake, 0)}/trade)</div>
+              <div class="v ${cls}">${fmtMoney(f.net_pnl_usd)}</div>
+              <div class="small muted">${f.return_pct >= 0 ? '+' : ''}${fmt(f.return_pct, 1)}% per-stake · ${d.trades} trades</div></div>
+            <div class="stat"><div class="k">Win rate</div>
+              <div class="v">${fmt(d.win_rate_pct, 0)}%</div>
+              <div class="small muted">${d.wins}W / ${d.losses}L</div></div>
+            <div class="stat"><div class="k">Max drawdown</div>
+              <div class="v">${fmt(f.max_drawdown_pct, 1)}%</div>
+              <div class="small muted">on the fixed-stake bankroll</div></div>
+            <div class="stat"><div class="k">Compounded</div>
+              <div class="v">${fmtMoney(d.compound.final_usd)}</div>
+              <div class="small muted">rolling the full bankroll</div></div>
+          </div>
+          ${curveSvg}
+          <p class="small muted" style="margin-top:var(--s2)">Hypothetical mirror of ${d.trades} real recorded agent trades${d.skipped ? ` (${d.skipped} skipped — no usable size)` : ''}. Past performance ≠ future results.</p>`;
+      }, { empty: { icon: 'icon-bolt', text: 'No closed agent trades in this window yet — the replay lights up once the engine has history.' } });
+    }
+    document.getElementById('replayForm').onsubmit = (e) => { e.preventDefault(); runReplayPanel(); };
+    runReplayPanel();
 
     renderPanel(C('breakdown'), async () => {
       const r = await fetchJSON('/api/trades/breakdown');
