@@ -4872,7 +4872,9 @@ class TelegramHandler:
                 " /setllm openai sk-key gpt-4o-mini\n"
                 "</pre>\n\n"
                 f"<b>Providers:</b> <code>{providers}</code>\n\n"
-                "<i>🔑 Keys are stored in memory only — never saved to disk or logs.</i>")
+                "<i>🔑 Keys are validated live, then stored ENCRYPTED in the "
+                "operator vault — they survive restarts and redeploys. Never "
+                "logged.</i>")
             return
 
         provider_str = args[0].lower()
@@ -4909,6 +4911,25 @@ class TelegramHandler:
 
         ok, msg = BYOK.set_provider(provider_str, api_key=api_key, model=model)
         if ok:
+            # Persist the key ENCRYPTED in the operator vault so it survives
+            # restarts and redeploys — the recurring "every LLM tier shows ❌
+            # after a wiped .env" outage. The in-memory BYOK config stays the
+            # runtime source; the vault re-injects the env var on the next
+            # boot so tier resolution finds it again.
+            if api_key:
+                _key_env = {
+                    "anthropic": "ANTHROPIC_API_KEY", "openai": "OPENAI_API_KEY",
+                    "gemini": "GEMINI_API_KEY", "groq": "GROQ_API_KEY",
+                    "deepseek": "DEEPSEEK_API_KEY", "alibaba": "ALIBABA_API_KEY",
+                    "mistral": "MISTRAL_API_KEY", "together": "TOGETHER_API_KEY",
+                    "openrouter": "OPENROUTER_API_KEY",
+                }.get(provider_str)
+                if _key_env:
+                    try:
+                        from bot.core.secrets_vault import store_secrets
+                        store_secrets({_key_env: api_key})
+                    except Exception as exc:
+                        system_log.error("setllm: vault store failed: %s", exc)
             # Refresh the analyzer's LLM client to use new provider
             if hasattr(self.engine, 'analyzer') and hasattr(self.engine.analyzer, 'refresh_llm_client'):
                 self.engine.analyzer.refresh_llm_client()
@@ -5051,11 +5072,17 @@ class TelegramHandler:
             is_custom = tier_cfg != active_cfg
             source = "tier-routed" if is_custom else "primary"
             configured = "✅" if tier_cfg.is_configured() else "❌"
+            fix_hint = ("" if tier_cfg.is_configured() else
+                        "- <i>No API key found — fix with "
+                        "<code>/setllm &lt;provider&gt; &lt;key&gt;</code> "
+                        "(validated live, stored encrypted, survives "
+                        "redeploys)</i>\n")
             lines.append(
                 f"{configured} <b>{tier.value.upper()}</b>\n"
                 f"- Provider: <code>{provider_name}</code>\n"
                 f"- Model: <code>{tier_cfg.model}</code>\n"
                 f"- Source: {source} | {default_route.get('reason', 'default')}\n"
+                f"{fix_hint}"
             )
 
         lines.append(
