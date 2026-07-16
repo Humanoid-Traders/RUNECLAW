@@ -14,7 +14,10 @@
 }
 
 :root {
-  /* Surfaces: near-black with a blue bias so the gold reads warm, not muddy */
+  /* Surfaces: near-black with a blue bias — the RUNECLAW brand's storm-steel
+     ground. Accent is the brand's electric rune-blue (see the Command Core
+     art); the token names keep their historical "--gold" spelling so the
+     entire site re-themes from these three values alone. */
   --bg: #0a0b10;
   --surface: #12141c;
   --surface-2: #181b25;
@@ -22,16 +25,18 @@
   --line: #232838;
   --line-2: #313950;
 
-  /* Brand */
-  --gold: #cbb06a;
-  --gold-bright: #e8d391;
-  --gold-dim: rgba(203, 176, 106, 0.13);
+  /* Brand — RUNECLAW electric rune-blue + chrome steel */
+  --gold: #3fb6ff;
+  --gold-bright: #8fd9ff;
+  --gold-dim: rgba(63, 182, 255, 0.13);
+  --steel: #b9c5d6;
+  --glow: 0 0 18px rgba(63, 182, 255, 0.30);
 
   /* Semantic (state, never decoration) */
   --up: #2fbf71;      --up-dim: rgba(47, 191, 113, 0.13);
   --down: #e5484d;    --down-dim: rgba(229, 72, 77, 0.13);
   --warn: #f5a524;    --warn-dim: rgba(245, 165, 36, 0.13);
-  --info: #4cc2e0;    --info-dim: rgba(76, 194, 224, 0.12);
+  --info: #9aa7ff;    --info-dim: rgba(154, 167, 255, 0.12);
 
   /* Text ramp — secondary is >=4.5:1 on --surface */
   --text: #edeef2;
@@ -91,7 +96,12 @@ code { font-family: var(--font-data); font-size: .9em; background: var(--surface
 
 /* ---- Brand ------------------------------------------------------------- */
 .brand { display: inline-flex; align-items: center; gap: 9px; font-family: var(--font-brand); font-weight: 700; font-size: 17px; letter-spacing: .10em; color: var(--text); white-space: nowrap; }
-.brand .brand-mark { width: 22px; height: 22px; color: var(--gold); }
+.brand .brand-mark { width: 22px; height: 22px; color: var(--gold); filter: drop-shadow(0 0 6px rgba(63, 182, 255, .55)); }
+/* Brand sub-line: the Command Core wordmark, steel + tracked-out like the art */
+.brand-sub { font-family: var(--font-data); font-size: 9px; letter-spacing: .34em; text-transform: uppercase; color: var(--steel); opacity: .85; margin-left: 2px; align-self: flex-end; padding-bottom: 2px; }
+@media (max-width: 520px) { .brand-sub { display: none; } }
+/* Tagline: INTELLIGENT · ADAPTIVE · RELENTLESS */
+.tagline { font-family: var(--font-data); font-size: var(--fs-xs); letter-spacing: .30em; text-transform: uppercase; color: var(--gold); text-shadow: 0 0 12px rgba(63, 182, 255, .45); margin-bottom: var(--s4); }
 
 /* ---- App shell: topbar + rail (desktop) / tab bar (mobile) ------------- */
 .topbar {

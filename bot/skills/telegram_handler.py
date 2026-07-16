@@ -4923,6 +4923,7 @@ class TelegramHandler:
                     "deepseek": "DEEPSEEK_API_KEY", "alibaba": "ALIBABA_API_KEY",
                     "mistral": "MISTRAL_API_KEY", "together": "TOGETHER_API_KEY",
                     "openrouter": "OPENROUTER_API_KEY",
+                    "runeclaw": "RUNECLAW_LLM_API_KEY",
                 }.get(provider_str)
                 if _key_env:
                     try:

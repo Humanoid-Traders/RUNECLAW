@@ -96,3 +96,31 @@ test('circuit_breaker.live_unavailable → equity null + live_unavailable, never
   assert.strictEqual(p.data.equity, null, 'LIVE but unreadable → null, never $10k/paper');
   assert.strictEqual(p.data.live_unavailable, true);
 });
+
+test('fresh scan-cycle equity shows through even with no recent close-driven snapshot', async () => {
+  // The bot refreshes circuit_breaker.equity every scan cycle; snapshots only
+  // update on live CLOSES. A quiet stretch must show the scan reading, not
+  // "BALANCE UNAVAILABLE" (the live-site regression of 2026-07-16).
+  await pool.execute('REPLACE INTO scan_cache (id, scan_json) VALUES (1, ?)',
+    [JSON.stringify({
+      received_at: new Date().toISOString(),
+      circuit_breaker: { live_mode: true, live_unavailable: false, equity: 128.99 },
+    })]);
+  const p = await request('GET', '/api/portfolio', { token: opToken });
+  assert.strictEqual(p.data.mode, 'LIVE');
+  assert.strictEqual(p.data.equity, 128.99);
+  assert.strictEqual(p.data.live_unavailable, false);
+});
+
+test('a STALE scan-cycle equity does not mask unavailability', async () => {
+  await pool.execute('REPLACE INTO scan_cache (id, scan_json) VALUES (1, ?)',
+    [JSON.stringify({
+      received_at: new Date(Date.now() - 2 * 3600 * 1000).toISOString(),  // 2h old
+      circuit_breaker: { live_mode: true, live_unavailable: false, equity: 128.99 },
+    })]);
+  // Also age out the close-driven snapshot path by clearing snapshots.
+  await pool.execute('DELETE FROM equity_snapshots WHERE user_id = ?', [1]);
+  const p = await request('GET', '/api/portfolio', { token: opToken });
+  assert.strictEqual(p.data.equity, null, 'stale reading must not be presented as live');
+  assert.strictEqual(p.data.live_unavailable, true);
+});

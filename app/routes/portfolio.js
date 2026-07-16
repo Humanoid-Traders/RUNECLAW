@@ -60,12 +60,19 @@ async function operatorPortfolio(userId) {
   // can never say LIVE over a stale/paper number.
   let live = false;
   let cbUnavailable = false;
+  let cbEquity = null;
+  let cbFresh = false;
   try {
     const [rows] = await pool.execute('SELECT scan_json, updated_at FROM scan_cache WHERE id = 1');
     if (rows.length && rows[0].scan_json) {
-      const cb = JSON.parse(rows[0].scan_json).circuit_breaker || {};
+      const scan = JSON.parse(rows[0].scan_json);
+      const cb = scan.circuit_breaker || {};
       live = !!cb.live_mode;
       cbUnavailable = cb.live_unavailable === true;
+      const ts = scan.received_at || rows[0].updated_at;
+      cbFresh = !!ts && (Date.now() - new Date(ts).getTime()) < 30 * 60 * 1000;
+      const e = parseFloat(cb.equity);
+      if (Number.isFinite(e) && e > 0) cbEquity = e;
     }
   } catch (e) { /* mode stays PAPER */ }
   const total = parseInt(pnlRows[0]?.total_trades || 0);
@@ -74,15 +81,33 @@ async function operatorPortfolio(userId) {
   const fresh = snap && (Date.now() - new Date(snap.snapshot_at).getTime()) < 30 * 60 * 1000;
 
   // In LIVE mode the operator has no paper baseline: show a REAL, fresh balance
-  // or explicitly nothing. The snapshot is now guaranteed real (sync.js only
-  // stores genuine readings), so equity is null when the bot signalled the live
-  // balance is unavailable, or when no fresh snapshot exists. In PAPER mode the
-  // (paper) snapshot is the correct thing to show.
+  // or explicitly nothing. Two real sources, freshest first:
+  //  1. the scan payload's executor-backed equity (cb.equity) — the bot
+  //     refreshes it EVERY scan cycle;
+  //  2. the close-driven equity snapshot — only written on live closes, so a
+  //     quiet stretch with no closes previously read "BALANCE UNAVAILABLE"
+  //     even while a perfectly fresh reading sat in the scan cache.
+  // Only when neither source is fresh/real does the header say unavailable.
   let equity = snap ? parseFloat(snap.equity) : null;
   let liveUnavailable = false;
-  if (live && (cbUnavailable || !fresh)) {
-    equity = null;
-    liveUnavailable = true;
+  if (live) {
+    if (!cbUnavailable && cbFresh && cbEquity != null) {
+      equity = cbEquity;
+      // Write through so the operator's equity curve keeps growing between
+      // closes (same change/staleness thresholds as the per-user path).
+      try {
+        const changed = !snap || Math.abs(parseFloat(snap.equity) - cbEquity) > 0.005;
+        const staleSnap = !snap || (Date.now() - new Date(snap.snapshot_at).getTime()) > SNAPSHOT_MIN_INTERVAL_MS;
+        if (changed || staleSnap) {
+          await pool.execute(
+            'INSERT INTO equity_snapshots (user_id, equity, snapshot_at) VALUES (?, ?, ?)',
+            [userId, cbEquity, new Date()]);
+        }
+      } catch (e) { /* curve write-through is best-effort */ }
+    } else if (cbUnavailable || !fresh) {
+      equity = null;
+      liveUnavailable = true;
+    }
   }
   return {
     mode: live ? 'LIVE' : 'PAPER',
