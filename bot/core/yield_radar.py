@@ -53,6 +53,7 @@ class YieldRow:
     est_year_usd: float = 0.0   # stakeable_usd * apy_flexible
     source: str = ""            # "futures free" | "spot"
     product_id: str = ""        # Bitget productId of the best flexible product
+    alt_note: str = ""          # cross-venue info, e.g. "Bybit pays 9.1%"
 
 
 @dataclass
@@ -217,6 +218,8 @@ def format_report_html(report: YieldReport) -> str:
             f"- Stakeable after reserve: <code>${r.stakeable_usd:,.2f}</code>"
             + (f" → est <code>${r.est_year_usd:,.2f}/yr</code>"
                f" (<code>${per_day:,.2f}/day</code>)" if r.est_year_usd else "")
+            + (f"\n- ℹ️ {r.alt_note} (info only — /stake executes on Bitget)"
+               if r.alt_note else "")
         )
     lines.append(sep)
     lines.append(
@@ -367,3 +370,68 @@ def execute_unstake(client, product_id: str) -> ActionResult:
             steps.append("spot→futures transfer failed — funds are safe in "
                          f"spot, move them manually ({back.message})")
     return ActionResult(True, "; ".join(steps))
+
+
+# ─── Cross-venue yield (informational) ───────────────────────────────────────
+# The radar recommends where the money ALREADY IS (Bitget — /stake executes
+# there). Other venues' Earn rates are surfaced as info so the operator can
+# see when idle cash would earn meaningfully more elsewhere.
+
+def fetch_bybit_savings_catalog() -> dict[str, dict]:
+    """Best flexible-savings APY per coin from Bybit Earn, using the
+    operator's BYBIT_API_KEY/SECRET from the environment (the v5 earn
+    endpoints are authenticated). {} when keys are absent or the venue is
+    unreachable — cross-venue info is strictly best-effort.
+    """
+    import hashlib
+    import hmac
+    import json as _json
+    import os
+    import time
+    import urllib.request
+
+    key = os.environ.get("BYBIT_API_KEY", "").strip()
+    secret = os.environ.get("BYBIT_API_SECRET", "").strip()
+    if not key or not secret:
+        return {}
+    try:
+        ts = str(int(time.time() * 1000))
+        recv = "5000"
+        query = "category=FlexibleSaving"
+        sign = hmac.new(secret.encode(), (ts + key + recv + query).encode(),
+                        hashlib.sha256).hexdigest()
+        req = urllib.request.Request(
+            f"https://api.bybit.com/v5/earn/product?{query}",
+            headers={"X-BAPI-API-KEY": key, "X-BAPI-TIMESTAMP": ts,
+                     "X-BAPI-RECV-WINDOW": recv, "X-BAPI-SIGN": sign})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            payload = _json.loads(resp.read().decode())
+    except Exception as exc:
+        log.debug("Yield radar: bybit earn unreachable: %s", exc)
+        return {}
+    if str(payload.get("retCode")) != "0":
+        log.debug("Yield radar: bybit earn error: %s", payload.get("retMsg"))
+        return {}
+    catalog: dict[str, dict] = {}
+    for p in ((payload.get("result") or {}).get("list")) or []:
+        coin = str(p.get("coin", "")).upper()
+        # estimateApr arrives as a percent string like "3.50%".
+        apr = _f(str(p.get("estimateApr", "")).rstrip("%"))
+        if coin and apr > 0 and str(p.get("status", "")).lower() != "notavailable":
+            slot = catalog.setdefault(coin, {})
+            slot["flexible"] = max(slot.get("flexible", 0.0), apr)
+    return catalog
+
+
+def annotate_cross_venue(report: YieldReport,
+                         alt_catalogs: dict[str, dict]) -> None:
+    """Mark rows where another venue's flexible rate beats the local one.
+    Info only — never changes amounts, recommendations, or the stake path."""
+    for row in report.rows:
+        best_venue, best_apy = "", row.apy_flexible or 0.0
+        for venue, catalog in (alt_catalogs or {}).items():
+            apy = (catalog.get(row.coin) or {}).get("flexible", 0.0)
+            if apy > best_apy:
+                best_venue, best_apy = venue, apy
+        if best_venue:
+            row.alt_note = f"{best_venue} pays {best_apy:.2f}%"

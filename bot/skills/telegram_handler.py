@@ -345,6 +345,8 @@ class TelegramHandler:
             # Admin: stake/redeem flexible Earn (button-confirmed money path)
             ("stake", self._cmd_stake),
             ("unstake", self._cmd_unstake),
+            # Cross-venue perp funding comparison (read-only, public data)
+            ("funding", self._cmd_funding),
             # Admin: which secrets are vault-protected vs still missing
             ("vault", self._cmd_vault),
             # Confidence calibration (admin)
@@ -3898,6 +3900,16 @@ class TelegramHandler:
             except Exception:
                 pass
             report = await asyncio.to_thread(build_report, client, free_usdt)
+            # Cross-venue info: when Bybit Earn pays more on a coin, say so
+            # (info only — /stake still executes where the funds are).
+            try:
+                from bot.core.yield_radar import (annotate_cross_venue,
+                                                  fetch_bybit_savings_catalog)
+                bybit_cat = await asyncio.to_thread(fetch_bybit_savings_catalog)
+                if bybit_cat:
+                    annotate_cross_venue(report, {"Bybit": bybit_cat})
+            except Exception:
+                pass
             await self._send(update, format_report_html(report))
         except Exception as exc:
             system_log.warning("/yield failed: %s", exc)
@@ -3977,6 +3989,42 @@ class TelegramHandler:
             system_log.warning("/stake failed: %s", exc)
             await self._send(update,
                 "🔴 Could not build the stake plan — nothing was moved.")
+
+    async def _cmd_funding(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """/funding [SYMBOLS…] — annualized perp funding across Bitget, Bybit
+        and Hyperliquid, widest spread first. Read-only public data; the
+        measurement layer for the funding-arb roadmap item. Defaults to the
+        open positions' coins plus the majors."""
+        if not await self._guard(update, "status"):
+            return
+        await self._send(update, "⏳ Comparing funding across venues…")
+        try:
+            from bot.core.funding_radar import (build_comparison,
+                                                format_funding_html)
+            bases: list[str] = []
+            for a in (ctx.args or []):
+                b = a.upper().replace("/USDT", "").replace("USDT", "").strip(":/")
+                if b and b not in bases:
+                    bases.append(b)
+            if not bases:
+                # Positions first — carry cost is most actionable there.
+                try:
+                    ex = getattr(self.engine, "live_executor", None)
+                    for p in getattr(ex, "open_positions", []) or []:
+                        b = str(getattr(p, "symbol", "")).split("/")[0].upper()
+                        if b and b not in bases:
+                            bases.append(b)
+                except Exception:
+                    pass
+                for b in ("BTC", "ETH", "SOL", "XRP", "DOGE", "BNB", "AVAX", "LINK"):
+                    if b not in bases:
+                        bases.append(b)
+            rows = await asyncio.to_thread(build_comparison, bases[:12])
+            await self._send(update, format_funding_html(rows))
+        except Exception as exc:
+            system_log.warning("/funding failed: %s", exc)
+            await self._send(update,
+                "🔴 Funding comparison failed — venues unreachable?")
 
     async def _cmd_unstake(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """/unstake — redeem flexible Earn holdings back to trading margin
