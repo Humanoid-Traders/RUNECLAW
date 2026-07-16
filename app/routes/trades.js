@@ -94,8 +94,8 @@ router.get('/history', async (req, res) => {
     const [rows] = await pool.execute(
       `SELECT id, symbol, direction, entry_price, exit_price, size_usd, pnl, fees, pattern, opened_at, closed_at, notes
        FROM trades WHERE user_id = ? AND status = 'CLOSED'
-       ORDER BY closed_at DESC LIMIT ? OFFSET ?`,
-      [uid, limit, offset]
+       ORDER BY closed_at DESC LIMIT ${limit} OFFSET ${offset}`,
+      [uid]
     );
 
     const [countRows] = await pool.execute(
@@ -160,8 +160,8 @@ router.get('/activity', async (req, res) => {
     const [rows] = await pool.execute(
       `SELECT symbol, direction, pnl, size_usd, status, opened_at, closed_at
        FROM trades WHERE user_id = ?
-       ORDER BY COALESCE(closed_at, opened_at) DESC LIMIT ?`,
-      [uid, limit * 2]
+       ORDER BY COALESCE(closed_at, opened_at) DESC LIMIT ${limit * 2}`,
+      [uid]
     );
     const events = [];
     for (const t of rows) {

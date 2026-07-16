@@ -53,7 +53,7 @@
   // One probe per page-load decides whether bridge-fed analytics render at all.
   async function insightAvailable() {
     if (cache.insightOk !== null) return cache.insightOk;
-    const r = await fetchJSON('/api/insight/BTC%2FUSDT?timeframe=1h&limit=50', { auth: false, timeoutMs: 7000 }).catch(() => null);
+    const r = await fetchJSON('/api/insight?symbol=BTC%2FUSDT&timeframe=1h&limit=50', { auth: false, timeoutMs: 7000 }).catch(() => null);
     cache.insightOk = !!(r && r.ok);
     return cache.insightOk;
   }
@@ -370,7 +370,7 @@
         const gran = document.getElementById('chartGran').value;
         const tf = ({ '15min': '15m' })[gran] || gran;
         const r = await fetchJSON(
-          `/api/insight/${encodeURIComponent(base + '/USDT')}?timeframe=${tf}&limit=200`,
+          `/api/insight?symbol=${encodeURIComponent(base + '/USDT')}&timeframe=${tf}&limit=200`,
           { auth: false, timeoutMs: 12000 });
         const d = r.data;
         if (!d || d.error || typeof d.confluence !== 'number') return null;

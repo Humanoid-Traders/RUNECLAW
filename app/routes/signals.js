@@ -30,8 +30,8 @@ router.get('/', async (req, res) => {
               entry_price, stop_loss, take_profit, rr, thesis, status, pnl,
               created_at, resolved_at
        FROM signals ${clause}
-       ORDER BY created_at DESC LIMIT ?`,
-      [...params, limit]
+       ORDER BY created_at DESC LIMIT ${limit}`,
+      params
     );
     res.json({ signals: rows });
   } catch (err) {
