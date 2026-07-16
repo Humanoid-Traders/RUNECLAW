@@ -377,6 +377,12 @@ code { font-family: var(--font-data); font-size: .9em; background: var(--surface
 .chat-head .t .icon { width: 16px; height: 16px; }
 .chat-close { background: none; border: none; color: var(--text-3); font-size: 22px; line-height: 1; cursor: pointer; padding: 2px 6px; }
 .chat-close:hover { color: var(--text); }
+/* Voice controls: TTS toggle in the header, mic in the composer. */
+.chat-tts { background: none; border: none; font-size: 15px; line-height: 1; cursor: pointer; padding: 2px 6px; margin-left: auto; }
+.chat-head .chat-tts + .chat-close { margin-left: 0; }
+#chatMic { padding-inline: 10px; }
+#chatMic.mic--live { animation: mic-pulse 1.2s ease-in-out infinite; }
+@keyframes mic-pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(220, 60, 60, .55); } 50% { box-shadow: 0 0 0 6px rgba(220, 60, 60, 0); } }
 .chat-body { flex: 1; overflow-y: auto; padding: var(--s4); display: flex; flex-direction: column; gap: var(--s2); }
 .chat-msg { max-width: 88%; padding: 9px 12px; border-radius: 11px; font-size: var(--fs-sm); line-height: 1.5; overflow-wrap: break-word; white-space: pre-wrap; }
 .chat-msg.user { align-self: flex-end; background: var(--gold-dim); border: 1px solid var(--gold); color: var(--text); border-bottom-right-radius: 4px; }
