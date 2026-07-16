@@ -18,6 +18,7 @@ const gateway = require('../lib/gateway');
 const { loadProfile } = require('./profile');
 const { maybeHandleAlertChat } = require('../lib/alerts');
 const { maybeHandleReplayChat } = require('../lib/replay');
+const { maybeHandleLetterChat } = require('../lib/letter');
 
 const router = express.Router();
 router.use(authMiddleware);
@@ -43,6 +44,10 @@ router.post('/', chatLimit, async (req, res) => {
     // own recorded trade history, no bot round-trip needed.
     const replayReply = await maybeHandleReplayChat(req.user.user_id, text);
     if (replayReply) return res.json(replayReply);
+    // "show me this week's letter" — the weekly fund-style letter, composed
+    // from recorded data in the web DB.
+    const letterReply = await maybeHandleLetterChat(req.user.user_id, text);
+    if (letterReply) return res.json(letterReply);
     if (!gateway.isConfigured()) {
       return res.status(503).json({ error: 'Chat not configured' });
     }

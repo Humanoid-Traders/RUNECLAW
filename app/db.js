@@ -45,6 +45,7 @@ class MemoryDB {
     this.pendingFlatten = []; // pending_flatten (UPSERT by user_id)
     this.userAlerts = [];     // custom "tell me when…" tripwires
     this._nextAlertId = 1;
+    this.agentLetters = [];   // weekly agent letters (UPSERT-free; one per week_key)
   }
 
   // Minimal query interface matching mysql2 pool.execute() return format
@@ -86,6 +87,26 @@ class MemoryDB {
       const rows = [...this.signals]
         .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
         .slice(0, limit);
+      return [rows, []];
+    }
+
+    // -- AGENT LETTERS (weekly fund-style letter; one row per ISO week) --
+    if (cmd.includes('INSERT INTO AGENT_LETTERS')) {
+      // params: week_key, generated_at, letter_json
+      if (!this.agentLetters.some(l => l.week_key === params[0])) {
+        this.agentLetters.push({ week_key: params[0], generated_at: params[1],
+          letter_json: params[2] });
+      }
+      return [{ affectedRows: 1 }, []];
+    }
+    if (cmd.includes('FROM AGENT_LETTERS')) {
+      if (cmd.includes('WHERE WEEK_KEY')) {
+        return [this.agentLetters.filter(l => l.week_key === params[0]).map(r => ({ ...r })), []];
+      }
+      const rows = [...this.agentLetters]
+        .sort((a, b) => String(b.week_key).localeCompare(String(a.week_key)))
+        .slice(0, 52)
+        .map(({ week_key, generated_at }) => ({ week_key, generated_at }));
       return [rows, []];
     }
 
@@ -873,6 +894,16 @@ async function migrate() {
         watchlist TEXT DEFAULT NULL,
         prefs TEXT DEFAULT NULL,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+      )
+    `);
+    // Weekly agent letters — one per completed ISO week, composed entirely
+    // from recorded data (lib/letter.js). week_key is the natural key.
+    await pool.execute(`
+      CREATE TABLE IF NOT EXISTS agent_letters (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        week_key VARCHAR(10) NOT NULL UNIQUE,
+        generated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        letter_json LONGTEXT NOT NULL
       )
     `);
     // Custom user alerts ("tell me when BTC drops below 100k"). One-shot
