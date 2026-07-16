@@ -424,3 +424,47 @@ async def test_llmtiers_unconfigured_shows_fix_hint():
     text = _last_reply_text(update)
     if "❌" in text:
         assert "/setllm" in text, "an unconfigured tier must point at the fix"
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  EARN STAKE COMMANDS (money path gating)
+# ═══════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.asyncio
+async def test_stake_denied_for_non_admin():
+    """/stake moves operator funds — a non-admin must be refused up front."""
+    handler = _make_handler()
+    update, ctx = _make_update(user_id=999999, text="/stake")
+    await handler._cmd_stake(update, ctx)
+    assert _any_reply_contains(update, "admin only")
+
+
+@pytest.mark.asyncio
+async def test_stake_only_proposes_never_executes(monkeypatch):
+    """/stake shows the plan with a confirm BUTTON — the command itself must
+    never call a money-moving function. Execution happens only in the
+    yld: callback."""
+    import bot.core.yield_radar as yr
+
+    handler = _make_handler()
+    update, ctx = _make_update(text="/stake")
+
+    report = yr.YieldReport(rows=[yr.YieldRow(
+        coin="USDT", idle_amount=140.0, idle_usd=140.0, stakeable_usd=98.0,
+        apy_flexible=8.5, est_year_usd=8.33, source="futures free + spot",
+        product_id="7001")])
+    monkeypatch.setattr(yr, "build_report", lambda *a, **k: report)
+    monkeypatch.setattr(handler, "_yield_client", lambda: MagicMock())
+    executed = []
+    monkeypatch.setattr(yr, "execute_stake",
+                        lambda *a, **k: executed.append(1))
+
+    await handler._cmd_stake(update, ctx)
+    assert _any_reply_contains(update, "Stake plan")
+    assert not executed, "/stake itself must never move funds"
+    # The confirm button carries only the coin — never an amount.
+    markup = update.message.reply_text.call_args.kwargs.get("reply_markup")
+    flat = [b for row in markup.inline_keyboard for b in row]
+    assert any(b.callback_data == "yld:s:USDT" for b in flat)
+    assert all("98" not in (b.callback_data or "") for b in flat)
