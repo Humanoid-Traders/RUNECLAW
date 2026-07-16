@@ -15,6 +15,7 @@ const { authMiddleware } = require('../auth');
 const { rateLimit, userKey } = require('../lib/rate_limit');
 const { resolveBotIdentity } = require('../lib/identity');
 const gateway = require('../lib/gateway');
+const { loadProfile } = require('./profile');
 
 const router = express.Router();
 router.use(authMiddleware);
@@ -36,8 +37,19 @@ router.post('/', chatLimit, async (req, res) => {
     if (text.length > MAX_TEXT_LEN) return res.status(400).json({ error: 'Message too long' });
     const ident = await resolveBotIdentity(req);
     const name = String(ident.email || '').split('@')[0];
+    // The user's saved agent profile rides along so the bot's chat prompt
+    // knows who it's talking to (risk preference, watchlist). Best-effort —
+    // a profile read hiccup must never block chat.
+    let profile = null;
+    try {
+      const p = await loadProfile(req.user.user_id);
+      if (p.risk_pref || (p.watchlist || []).length) {
+        profile = { risk_pref: p.risk_pref, watchlist: p.watchlist };
+      }
+    } catch (e) { /* chat works without a profile */ }
     const r = await gateway.postGateway('/chat', {
       telegram_id: ident.id, name, text,
+      ...(profile ? { profile } : {}),
     }, CHAT_TIMEOUT_MS);
     return gateway.relay(res, r);
   } catch (err) {

@@ -192,6 +192,31 @@
     });
   }
 
+  // ── Per-user agent profile (server-side; anon falls back to local) ──
+  // { risk_pref, watchlist[], prefs{} } — logged-in users get cross-device
+  // persistence via /api/profile; anonymous visitors keep a local watchlist.
+  let profileCache = null;
+  async function getUserProfile(force = false) {
+    if (!LOGGED_IN) {
+      let wl = [];
+      try { wl = JSON.parse(localStorage.getItem('rc_watchlist') || '[]'); } catch (e) { /* fresh */ }
+      return { risk_pref: null, watchlist: Array.isArray(wl) ? wl : [], prefs: {} };
+    }
+    if (profileCache && !force) return profileCache;
+    const r = await fetchJSON('/api/profile').catch(() => null);
+    profileCache = (r?.ok && r.data) ? r.data : { risk_pref: null, watchlist: [], prefs: {} };
+    return profileCache;
+  }
+  async function saveUserProfile(patch) {
+    if (!LOGGED_IN) {
+      if (patch.watchlist) localStorage.setItem('rc_watchlist', JSON.stringify(patch.watchlist));
+      return true;
+    }
+    const r = await fetchJSON('/api/profile', { method: 'PUT', body: patch }).catch(() => null);
+    if (r?.ok && r.data) { profileCache = r.data; return true; }
+    return false;
+  }
+
   // ── Bot intelligence reports (funding / arb / parity / yield) ──
   // Pushed hourly by the bot; panels render real data or an empty state.
   async function getReports() {
@@ -314,11 +339,12 @@
       renderPanel(C('agent'), async () => {
         // Everything here is real synced data; anything unavailable is
         // omitted, never invented.
-        const [pf, hist, scanR, meR] = await Promise.all([
+        const [pf, hist, scanR, meR, prof] = await Promise.all([
           getPortfolio(),
           fetchJSON('/api/trades/history?limit=50', { timeoutMs: 12000 }).catch(() => null),
           fetchJSON('/api/bot/sync/scan', { auth: false, timeoutMs: 10000 }).catch(() => null),
           fetchJSON('/api/auth/me', { timeoutMs: 10000 }).catch(() => null),
+          getUserProfile().catch(() => ({ risk_pref: null, watchlist: [], prefs: {} })),
         ]);
         const isAdmin = meR?.data?.plan === 'admin';
         const scan = scanR?.data?.scan || null;
@@ -354,6 +380,16 @@
         }
         const nOpen = (pf?.open_positions || []).length;
         lines.push(`<div class="kv-row"><span>Carrying</span><b class="num">${nOpen} open position${nOpen === 1 ? '' : 's'}</b></div>`);
+        // YOUR risk preference — personal (saved to your profile, shapes how
+        // the agent talks to you in chat); it never changes the engine.
+        const rp = prof?.risk_pref || null;
+        lines.push(`<div class="kv-row"><span>Your risk preference</span><b>
+          ${[['conservative', '🛡'], ['balanced', '⚖️'], ['aggressive', '🔥']].map(([m, ic]) =>
+            `<button class="btn btn--sm ${rp === m ? 'btn--primary' : ''}" data-riskpref="${m}" type="button" aria-pressed="${rp === m}" style="margin-left:4px">${ic} ${m[0].toUpperCase() + m.slice(1)}</button>`).join('')}
+        </b></div>`);
+        if ((prof?.watchlist || []).length) {
+          lines.push(`<div class="kv-row"><span>Watching</span><b class="num small">${prof.watchlist.slice(0, 8).map(s => esc(s.replace('USDT', ''))).join(' · ')}</b></div>`);
+        }
         lines.push(`<div class="row mt-3" style="gap:var(--s2);flex-wrap:wrap">
           <a class="btn btn--sm" href="#chat">💬 Ask your agent</a>
           <a class="btn btn--sm" href="#signals">📡 Signals</a>
@@ -372,8 +408,19 @@
         }
         return lines.join('');
       }, { empty: { text: 'Agent status unavailable right now.' } });
-      // Delegated so it survives panel re-renders; buttons exist only for admins.
+      // Delegated so it survives panel re-renders. data-stance buttons exist
+      // only for admins (global bot posture); data-riskpref is every user's
+      // own saved preference.
       C('agent').addEventListener('click', async (e) => {
+        const rb = e.target.closest('button[data-riskpref]');
+        if (rb) {
+          rb.disabled = true;
+          const ok = await saveUserProfile({ risk_pref: rb.dataset.riskpref });
+          rb.disabled = false;
+          if (ok) { toast(`Saved — your agent now knows you prefer ${rb.dataset.riskpref}.`); showView('home'); }
+          else toast('Could not save your preference — try again.');
+          return;
+        }
         const b = e.target.closest('button[data-stance]');
         if (!b) return;
         b.disabled = true;
@@ -559,8 +606,14 @@
     }, { empty: { icon: 'icon-coin', text: 'The paper arb tracker fills in as the bot records hourly funding snapshots.' } });
 
     const drawAll = () => { drawChart(); drawDepth(); drawFunding(); drawInsight(); };
-    symSel.addEventListener('change', drawAll);
-    document.getElementById('chartGran').addEventListener('change', () => { drawChart(); drawInsight(); });
+    symSel.addEventListener('change', () => {
+      drawAll();
+      saveUserProfile({ prefs: { chart_symbol: symSel.value } });
+    });
+    document.getElementById('chartGran').addEventListener('change', () => {
+      drawChart(); drawInsight();
+      saveUserProfile({ prefs: { chart_tf: document.getElementById('chartGran').value } });
+    });
 
     let tvChart = null, tvSeries = null, tvTimer = null;
     async function drawChart() {
@@ -794,20 +847,29 @@
 
     async function drawUniverse() {
       renderPanel(C('universe'), async () => {
-        const [tickers, scan] = await Promise.all([getTickers(), getScan()]);
+        const [tickers, scan, prof] = await Promise.all([getTickers(), getScan(), getUserProfile()]);
         updateConnChip();
         const filter = (document.getElementById('uniSearch')?.value || '').toUpperCase();
         const scanSyms = scan?.symbols || {};
+        const pinned = new Set(prof.watchlist || []);
         let rows = Object.values(tickers);
         if (!rows.length) return null;
         if (filter) rows = rows.filter(t => t.symbol.includes(filter));
-        rows.sort((a, b) => parseFloat(b.quoteVolume || 0) - parseFloat(a.quoteVolume || 0));
+        // Watchlist pins float to the top (kept across devices via the
+        // profile API); the rest sort by 24h volume as before.
+        rows.sort((a, b) => {
+          const pa = pinned.has(a.symbol) ? 1 : 0, pb = pinned.has(b.symbol) ? 1 : 0;
+          if (pa !== pb) return pb - pa;
+          return parseFloat(b.quoteVolume || 0) - parseFloat(a.quoteVolume || 0);
+        });
         return `<div class="tbl-wrap"><table class="tbl tbl--collapse">
-          <thead><tr><th>Pair</th><th class="r">Price</th><th class="r">24h</th><th class="r">Volume</th><th>Engine</th></tr></thead>
+          <thead><tr><th aria-label="Pinned"></th><th>Pair</th><th class="r">Price</th><th class="r">24h</th><th class="r">Volume</th><th>Engine</th></tr></thead>
           <tbody>${rows.slice(0, 30).map(t => {
             const chg = parseFloat(t.change24h) * 100;
             const tag = scanSyms[t.symbol];
+            const isPinned = pinned.has(t.symbol);
             return `<tr>
+              <td data-label="Pin"><button class="btn btn--ghost btn--sm" data-pin="${esc(t.symbol)}" type="button" title="${isPinned ? 'Unpin from watchlist' : 'Pin to watchlist'}" aria-pressed="${isPinned}" style="padding:2px 7px">${isPinned ? '★' : '☆'}</button></td>
               <td data-label="Pair"><b>${esc(t.symbol.replace('USDT', ''))}</b><span class="muted">/USDT</span></td>
               <td data-label="Price" class="r num">${fmtPrice(parseFloat(t.lastPr))}</td>
               <td data-label="24h" class="r num ${pnlClass(chg)}">${signed(chg, 2)}%</td>
@@ -818,7 +880,35 @@
       }, { empty: { text: 'No market data — the exchange proxy may be unreachable.' }, timeoutMs: 12000 });
     }
     document.getElementById('uniSearch').addEventListener('input', drawUniverse);
+    // Pin toggles — delegated so it survives the 15s re-render loop.
+    C('universe').addEventListener('click', async (e) => {
+      const b = e.target.closest('button[data-pin]');
+      if (!b) return;
+      const sym = b.dataset.pin;
+      const prof = await getUserProfile();
+      const wl = new Set(prof.watchlist || []);
+      if (wl.has(sym)) wl.delete(sym);
+      else {
+        if (wl.size >= 20) { toast('Watchlist is capped at 20 symbols.'); return; }
+        wl.add(sym);
+      }
+      const ok = await saveUserProfile({ watchlist: [...wl] });
+      if (!ok) { toast('Could not save your watchlist — try again.'); return; }
+      drawUniverse();
+    });
 
+    // Restore saved chart prefs BEFORE the first draw (cross-device memory).
+    try {
+      const prof = await getUserProfile();
+      const p = prof?.prefs || {};
+      if (p.chart_symbol && [...symSel.options].some(o => o.value === p.chart_symbol)) {
+        symSel.value = p.chart_symbol;
+      }
+      const granSel = document.getElementById('chartGran');
+      if (p.chart_tf && [...granSel.options].some(o => o.value === p.chart_tf)) {
+        granSel.value = p.chart_tf;
+      }
+    } catch (e) { /* defaults are fine */ }
     drawAll(); drawUniverse();
     every(20000, drawChart);
     every(15000, drawUniverse);

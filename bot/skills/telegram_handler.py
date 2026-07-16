@@ -1035,7 +1035,8 @@ class TelegramHandler:
     async def _llm_chat(self, question: str, user_id: str = "",
                         user_name: str = "",
                         is_admin: bool = False,
-                        public: bool = False) -> str:
+                        public: bool = False,
+                        profile_note: str = "") -> str:
         """Send a free-text question to the LLM with multi-turn context.
 
         Uses CHAT tier routing with automatic fallback chain:
@@ -1077,6 +1078,13 @@ class TelegramHandler:
             system_prompt = self._build_chat_system_prompt(
                 user_id,
                 user_name=_sanitize_chat_input(user_name) if user_name else user_name)
+            # Web agent profile (whitelisted words only — see the gateway's
+            # build_profile_note): lets the agent tailor tone/examples to the
+            # user's own risk preference and watchlist. Advisory context only;
+            # it changes nothing about gates or execution.
+            if profile_note:
+                system_prompt += (
+                    "\n\nThis user's saved agent profile: " + profile_note[:300])
 
             # Get conversation history for multi-turn context
             history = []

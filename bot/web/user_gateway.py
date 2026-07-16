@@ -149,6 +149,34 @@ async def _json_body(request: web.Request) -> dict:
 
 # ── Chat (all authorized users; LLM tier follows the caller's real role) ────
 
+_PROFILE_RISK_PREFS = frozenset({"conservative", "balanced", "aggressive"})
+_PROFILE_WATCHLIST_MAX = 20
+_PROFILE_SYMBOL_RE = re.compile(r"^[A-Z0-9]{2,20}$")
+
+
+def build_profile_note(profile) -> str:
+    """Compact, whitelisted context line from the web user's saved profile.
+
+    The Express server already validates profile writes, but this re-filters
+    (defense-in-depth) because the note lands in the LLM system prompt:
+    risk_pref must be one of three known words and watchlist symbols must be
+    bare uppercase tickers — nothing free-form can ride through here.
+    """
+    if not isinstance(profile, dict):
+        return ""
+    parts = []
+    risk = str(profile.get("risk_pref") or "").lower()
+    if risk in _PROFILE_RISK_PREFS:
+        parts.append(f"Their self-declared risk preference is {risk}.")
+    wl = profile.get("watchlist")
+    if isinstance(wl, list):
+        syms = [s for s in (str(x or "").upper() for x in wl[:_PROFILE_WATCHLIST_MAX])
+                if _PROFILE_SYMBOL_RE.match(s)]
+        if syms:
+            parts.append("They are watching: " + ", ".join(syms) + ".")
+    return " ".join(parts)
+
+
 async def handle_chat(request: web.Request) -> web.Response:
     engine = request.app["engine"]
     tg_handler = request.app["tg_handler"]
@@ -156,6 +184,7 @@ async def handle_chat(request: web.Request) -> web.Response:
     tg_id = str(body.get("telegram_id") or "").strip()
     text = str(body.get("text") or "").strip()
     name = str(body.get("name") or "").strip()[:64]
+    profile_note = build_profile_note(body.get("profile"))
 
     if not tg_id or not text:
         return web.json_response({"error": "telegram_id and text required"}, status=400)
@@ -216,7 +245,8 @@ async def handle_chat(request: web.Request) -> web.Response:
     # fallback-chain gate in _llm_chat both key off this flag.
     answer = await tg_handler._llm_chat(
         sanitize_chat_input(text), user_id=tg_id, user_name=name,
-        is_admin=_is_admin_id(tg_handler, tg_id))
+        is_admin=_is_admin_id(tg_handler, tg_id),
+        profile_note=profile_note)
     tg_handler.conversations.append(tg_id, "assistant", answer,
                                     metadata={"surface": "web"})
     return web.json_response({"reply_html": answer, "intent": "chat"})
