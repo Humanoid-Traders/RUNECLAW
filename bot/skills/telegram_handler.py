@@ -342,6 +342,9 @@ class TelegramHandler:
             ("setgateway", self._cmd_setgateway),
             # Admin: idle-asset yield radar (read-only Bitget Earn scan)
             ("yield", self._cmd_yield),
+            # Admin: stake/redeem flexible Earn (button-confirmed money path)
+            ("stake", self._cmd_stake),
+            ("unstake", self._cmd_unstake),
             # Admin: which secrets are vault-protected vs still missing
             ("vault", self._cmd_vault),
             # Confidence calibration (admin)
@@ -3901,6 +3904,118 @@ class TelegramHandler:
             await self._send(update,
                 "🔴 Yield radar failed — check the logs. The account was "
                 "not touched (the radar is read-only).")
+
+    def _yield_client(self):
+        """Signed operator Bitget client for Earn calls, or None if no keys."""
+        from bot.core.bitget_v3_client import BitgetV3Client
+        client = BitgetV3Client.from_config()
+        return client if client.has_credentials else None
+
+    def _engine_free_usdt(self) -> float:
+        """Free futures margin from the engine's venue-aware balance cache."""
+        try:
+            cache = getattr(self.engine, "_live_balance_cache", None) or {}
+            return float(cache.get("free", 0) or 0)
+        except Exception:
+            return 0.0
+
+    async def _cmd_stake(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """/stake — put idle stables into flexible Bitget Earn (admin only).
+
+        Two-step by design: this command only SHOWS the plan; money moves
+        exclusively on the explicit confirm button, and even then the amount
+        is recomputed and re-clamped from live balances at press time — the
+        button carries the coin, never a number. Flexible-only (instant
+        redemption) with the margin reserve always kept free."""
+        if not self._is_admin(update):
+            await self._send(update,
+                "🔒 /stake moves operator funds — admin only.")
+            return
+        await self._send(update, "⏳ Computing the stake plan…")
+        try:
+            from bot.core.yield_radar import (
+                MARGIN_RESERVE_PCT, MIN_IDLE_USD, STAKEABLE_COINS, build_report)
+            client = self._yield_client()
+            if client is None:
+                await self._send(update,
+                    "🔴 No operator Bitget keys configured — "
+                    "<code>/setexchange</code> first.")
+                return
+            report = await asyncio.to_thread(
+                build_report, client, self._engine_free_usdt())
+            if report.error:
+                await self._send(update, f"🔴 {html.escape(report.error)}")
+                return
+            plans = [r for r in report.rows
+                     if r.coin in STAKEABLE_COINS and r.apy_flexible
+                     and r.product_id and r.stakeable_usd >= MIN_IDLE_USD]
+            if not plans:
+                await self._send(update,
+                    "🟡 Nothing stakeable right now — no stable balance above "
+                    f"${MIN_IDLE_USD:.0f} after the {MARGIN_RESERVE_PCT:.0%} "
+                    "margin reserve, or no flexible Earn product available.")
+                return
+            lines = ["⚡ <b>Stake plan — flexible Earn, instantly redeemable</b>"]
+            buttons = []
+            for r in plans:
+                lines.append(
+                    f"<b>{r.coin}</b>: stake ≈<code>${r.stakeable_usd:,.2f}</code> "
+                    f"@ <code>{r.apy_flexible:.2f}%</code> APY "
+                    f"(≈${r.est_year_usd:,.2f}/yr) — {r.source}")
+                buttons.append([InlineKeyboardButton(
+                    f"✅ Stake {r.coin} (~${r.stakeable_usd:,.0f})",
+                    callback_data=f"yld:s:{r.coin}")])
+            buttons.append([InlineKeyboardButton("❌ Cancel", callback_data="yld:x")])
+            lines.append(
+                f"<i>The exact amount is recomputed from live balances when "
+                f"you press the button; the {MARGIN_RESERVE_PCT:.0%} margin "
+                "reserve always stays free for the engine. Redeem any time "
+                "with /unstake.</i>")
+            await self._send(update, "\n\n".join(lines),
+                             reply_markup=InlineKeyboardMarkup(buttons))
+        except Exception as exc:
+            system_log.warning("/stake failed: %s", exc)
+            await self._send(update,
+                "🔴 Could not build the stake plan — nothing was moved.")
+
+    async def _cmd_unstake(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """/unstake — redeem flexible Earn holdings back to trading margin
+        (admin only, button-confirmed)."""
+        if not self._is_admin(update):
+            await self._send(update,
+                "🔒 /unstake moves operator funds — admin only.")
+            return
+        await self._send(update, "⏳ Loading Earn holdings…")
+        try:
+            from bot.core.yield_radar import fetch_savings_assets
+            client = self._yield_client()
+            if client is None:
+                await self._send(update,
+                    "🔴 No operator Bitget keys configured — "
+                    "<code>/setexchange</code> first.")
+                return
+            holdings = await asyncio.to_thread(fetch_savings_assets, client)
+            if not holdings:
+                await self._send(update,
+                    "🟡 No flexible Earn holdings found — nothing to redeem.")
+                return
+            lines = ["🏦 <b>Flexible Earn holdings</b>"]
+            buttons = []
+            for h in holdings:
+                apy = f" @ {h['apy']:.2f}%" if h.get("apy") else ""
+                lines.append(f"<b>{h['coin']}</b>: <code>{h['amount']:g}</code>{apy}")
+                buttons.append([InlineKeyboardButton(
+                    f"↩️ Redeem {h['amount']:g} {h['coin']} → margin",
+                    callback_data=f"yld:r:{h['product_id']}")])
+            buttons.append([InlineKeyboardButton("❌ Cancel", callback_data="yld:x")])
+            lines.append("<i>Redeems in full; stables are moved back to "
+                         "futures margin automatically.</i>")
+            await self._send(update, "\n\n".join(lines),
+                             reply_markup=InlineKeyboardMarkup(buttons))
+        except Exception as exc:
+            system_log.warning("/unstake failed: %s", exc)
+            await self._send(update,
+                "🔴 Could not load Earn holdings — nothing was moved.")
 
     async def _cmd_disconnect(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """/disconnect — remove YOUR linked Bitget account credentials."""
@@ -7770,6 +7885,50 @@ class TelegramHandler:
                         parse_mode="HTML")
                 except Exception:
                     pass
+            return
+
+        # ── Earn stake/redeem confirm buttons (operator money path) ──
+        # The /stake and /unstake commands only PROPOSE; this is the sole
+        # place funds actually move, and only for an admin. Buttons carry the
+        # coin/productId, never an amount — execute_* recomputes and clamps
+        # from live balances, so a stale button can never over-stake.
+        if data.startswith("yld:"):
+            if not self._is_admin(update):
+                await self._send(update,
+                    "🔒 Earn actions move operator funds — admin only.",
+                    edit=True)
+                return
+            parts = data.split(":")
+            action = parts[1] if len(parts) > 1 else ""
+            if action == "x" or len(parts) < 3:
+                await self._send(update,
+                    "Cancelled — nothing was moved.", edit=True)
+                return
+            from bot.core.yield_radar import execute_stake, execute_unstake
+            client = self._yield_client()
+            if client is None:
+                await self._send(update,
+                    "🔴 No operator Bitget keys — <code>/setexchange</code> "
+                    "first.", edit=True)
+                return
+            await self._send(update, "⏳ Executing Earn action…", edit=True)
+            if action == "s":
+                verb = f"Stake {parts[2]}"
+                res = await asyncio.to_thread(
+                    execute_stake, client, parts[2], self._engine_free_usdt())
+            elif action == "r":
+                verb = "Redeem"
+                res = await asyncio.to_thread(execute_unstake, client, parts[2])
+            else:
+                await self._send(update, "Unknown Earn action.", edit=True)
+                return
+            audit(system_log, f"Earn {verb} via confirm button",
+                  action="earn_action", result="OK" if res.ok else "FAIL",
+                  data={"cb": data, "detail": res.message})
+            icon = "✅" if res.ok else "🔴"
+            await self._send(update,
+                f"{icon} <b>{verb}</b>\n{html.escape(res.message)}\n\n"
+                "<i>/yield shows the radar · /unstake redeems.</i>", edit=True)
             return
 
         # ── War Room menu callbacks ──────────────────────────

@@ -36,6 +36,12 @@ MIN_IDLE_USD = 5.0
 MARGIN_RESERVE_PCT = 0.30
 
 
+# Coins the STAKE money-path may touch. Execution is stables-only on purpose:
+# units == USD, so there is no price-conversion step that could size a
+# subscription off a stale or wrong price. Other coins stay info-only rows.
+STAKEABLE_COINS = ("USDT", "USDC")
+
+
 @dataclass
 class YieldRow:
     coin: str
@@ -46,6 +52,7 @@ class YieldRow:
     apy_fixed: Optional[float] = None      # best fixed APY (info only)
     est_year_usd: float = 0.0   # stakeable_usd * apy_flexible
     source: str = ""            # "futures free" | "spot"
+    product_id: str = ""        # Bitget productId of the best flexible product
 
 
 @dataclass
@@ -81,11 +88,11 @@ def _best_apy(product: dict) -> Optional[float]:
     return max(candidates) if candidates else None
 
 
-def fetch_savings_catalog(client) -> dict[str, dict[str, float]]:
+def fetch_savings_catalog(client) -> dict[str, dict]:
     """Best APY per coin from Bitget Earn savings, split flexible vs fixed.
 
-    Returns {coin: {"flexible": apy, "fixed": apy}} (either key may be
-    missing). Empty dict on any API/schema failure.
+    Returns {coin: {"flexible": apy, "fixed": apy, "flexible_id": productId}}
+    (keys may be missing). Empty dict on any API/schema failure.
     """
     try:
         resp = client.request("GET", "/api/v2/earn/savings/product?filter=available")
@@ -95,7 +102,7 @@ def fetch_savings_catalog(client) -> dict[str, dict[str, float]]:
     if not isinstance(resp, dict) or str(resp.get("code")) not in ("00000", "0"):
         log.warning("Yield radar: savings catalog error: %s", resp)
         return {}
-    catalog: dict[str, dict[str, float]] = {}
+    catalog: dict[str, dict] = {}
     for p in resp.get("data") or []:
         coin = str(p.get("coin", "")).upper()
         apy = _best_apy(p)
@@ -104,7 +111,12 @@ def fetch_savings_catalog(client) -> dict[str, dict[str, float]]:
         period = str(p.get("periodType", "")).lower()
         bucket = "flexible" if "flexible" in period else "fixed"
         slot = catalog.setdefault(coin, {})
-        slot[bucket] = max(slot.get(bucket, 0.0), apy)
+        if apy >= slot.get(bucket, 0.0):
+            slot[bucket] = apy
+            if bucket == "flexible":
+                # Keep the productId alongside the winning flexible rate so
+                # the stake path subscribes to exactly the product it quoted.
+                slot["flexible_id"] = str(p.get("productId", "") or "")
     return catalog
 
 
@@ -173,6 +185,7 @@ def build_report(client, futures_free_usdt: float = 0.0,
             apy_flexible=apys.get("flexible"),
             apy_fixed=apys.get("fixed"),
             source=source,
+            product_id=str(apys.get("flexible_id", "") or ""),
         )
         if row.apy_flexible:
             row.est_year_usd = stakeable * row.apy_flexible / 100.0
@@ -215,3 +228,142 @@ def format_report_html(report: YieldReport) -> str:
         "is always kept free. Auto-staking ships separately behind an admin "
         "confirmation.</i>")
     return "\n\n".join(lines)
+
+
+# ─── Phase 2: the STAKE money path (explicit admin confirmation required) ────
+# Everything below moves real funds. The Telegram layer only calls these from
+# an inline-button press by an admin — never automatically — and every amount
+# is recomputed and re-clamped HERE at execution time, so a stale button can
+# never stake more than the account's current idle balance allows.
+
+@dataclass
+class ActionResult:
+    ok: bool
+    message: str            # human-readable, safe for Telegram HTML
+
+
+def _post(client, path: str, body: dict) -> ActionResult:
+    """Signed POST with uniform code checking. Never raises."""
+    try:
+        resp = client.request("POST", path, body)
+    except Exception as exc:
+        return ActionResult(False, f"request failed: {exc}")
+    if isinstance(resp, dict) and str(resp.get("code")) in ("00000", "0"):
+        return ActionResult(True, "ok")
+    msg = resp.get("msg", "unknown error") if isinstance(resp, dict) else str(resp)
+    return ActionResult(False, f"Bitget error: {msg}")
+
+
+def fetch_savings_assets(client) -> list[dict]:
+    """Current FLEXIBLE savings holdings: [{product_id, coin, amount, apy}].
+
+    [] on any failure — the caller treats that as "nothing to redeem".
+    """
+    try:
+        resp = client.request(
+            "GET", "/api/v2/earn/savings/assets?periodType=flexible")
+    except Exception as exc:
+        log.warning("Yield radar: savings assets fetch failed: %s", exc)
+        return []
+    if not isinstance(resp, dict) or str(resp.get("code")) not in ("00000", "0"):
+        return []
+    data = resp.get("data") or {}
+    rows = data.get("resultList") if isinstance(data, dict) else data
+    out: list[dict] = []
+    for a in rows or []:
+        coin = str(a.get("productCoin") or a.get("coin") or "").upper()
+        amount = _f(a.get("holdAmount") or a.get("amount"))
+        pid = str(a.get("productId", "") or "")
+        if coin and pid and amount > 0:
+            out.append({"product_id": pid, "coin": coin, "amount": amount,
+                        "apy": _f(a.get("apy"))})
+    return out
+
+
+def transfer_futures_to_spot(client, amount: float, coin: str = "USDT") -> ActionResult:
+    return _post(client, "/api/v2/spot/wallet/transfer", {
+        "fromType": "usdt_futures", "toType": "spot",
+        "amount": f"{amount:.2f}", "coin": coin,
+    })
+
+
+def transfer_spot_to_futures(client, amount: float, coin: str = "USDT") -> ActionResult:
+    return _post(client, "/api/v2/spot/wallet/transfer", {
+        "fromType": "spot", "toType": "usdt_futures",
+        "amount": f"{amount:.2f}", "coin": coin,
+    })
+
+
+def execute_stake(client, coin: str, futures_free_usdt: float = 0.0) -> ActionResult:
+    """Stake a stable coin's CURRENT stakeable amount into the best flexible
+    savings product. The plan the operator confirmed is recomputed from live
+    balances here — the button carries only the coin, never an amount.
+
+    Steps: rebuild the radar -> clamp to stakeable (reserve already applied)
+    -> top up spot from free futures margin only for the shortfall -> subscribe.
+    """
+    coin = str(coin).upper()
+    if coin not in STAKEABLE_COINS:
+        return ActionResult(False, f"{coin} staking is not enabled — "
+                            "execution is stables-only (USDT/USDC).")
+    report = build_report(client, futures_free_usdt=futures_free_usdt)
+    if report.error:
+        return ActionResult(False, report.error)
+    row = next((r for r in report.rows if r.coin == coin), None)
+    if row is None or row.stakeable_usd < MIN_IDLE_USD:
+        return ActionResult(False, f"Nothing stakeable in {coin} right now "
+                            f"(min ${MIN_IDLE_USD:.0f} after the "
+                            f"{MARGIN_RESERVE_PCT:.0%} margin reserve).")
+    if not row.apy_flexible or not row.product_id:
+        return ActionResult(False, f"No flexible Earn product for {coin}.")
+    amount = float(int(row.stakeable_usd * 100)) / 100.0  # round DOWN to cents
+
+    steps: list[str] = []
+    # Earn subscribes from the SPOT account; top it up from free futures
+    # margin only by the shortfall. By construction the shortfall is at most
+    # futures_free * (1 - reserve), so the reserve always stays free.
+    spot_avail = fetch_spot_idle(client).get(coin, 0.0)
+    shortfall = amount - spot_avail
+    if shortfall > 0.01:
+        moved = transfer_futures_to_spot(client, shortfall, coin)
+        if not moved.ok:
+            return ActionResult(False, "Transfer futures→spot failed before "
+                                f"any subscription: {moved.message}")
+        steps.append(f"moved ${shortfall:,.2f} futures→spot")
+
+    sub = _post(client, "/api/v2/earn/savings/subscribe", {
+        "productId": row.product_id, "periodType": "flexible",
+        "amount": f"{amount:.2f}",
+    })
+    if not sub.ok:
+        note = f" ({steps[0]} — funds are in spot)" if steps else ""
+        return ActionResult(False, f"Subscribe failed: {sub.message}{note}")
+    steps.append(f"subscribed ${amount:,.2f} {coin} @ "
+                 f"{row.apy_flexible:.2f}% flexible")
+    return ActionResult(True, "; ".join(steps))
+
+
+def execute_unstake(client, product_id: str) -> ActionResult:
+    """Redeem a flexible savings holding IN FULL and (for stables) move the
+    proceeds back to futures margin so the engine can trade them again."""
+    holding = next((h for h in fetch_savings_assets(client)
+                    if h["product_id"] == str(product_id)), None)
+    if holding is None:
+        return ActionResult(False, "That savings position no longer exists — "
+                            "already redeemed?")
+    coin, amount = holding["coin"], holding["amount"]
+    red = _post(client, "/api/v2/earn/savings/redeem", {
+        "productId": str(product_id), "periodType": "flexible",
+        "amount": f"{amount:.8f}".rstrip("0").rstrip("."),
+    })
+    if not red.ok:
+        return ActionResult(False, f"Redeem failed: {red.message}")
+    steps = [f"redeemed {amount:g} {coin} to spot"]
+    if coin in STAKEABLE_COINS:
+        back = transfer_spot_to_futures(client, amount, coin)
+        if back.ok:
+            steps.append("moved back to futures margin")
+        else:
+            steps.append("spot→futures transfer failed — funds are safe in "
+                         f"spot, move them manually ({back.message})")
+    return ActionResult(True, "; ".join(steps))
