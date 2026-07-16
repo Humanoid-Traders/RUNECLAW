@@ -85,6 +85,50 @@ def pull_and_apply_controls(store=None, allowlist_check=None, on_change=None) ->
     return len(acks)
 
 
+VALID_STANCE_MODES = frozenset({"defensive", "balanced", "aggressive", "manual"})
+
+
+def pull_and_apply_stance(store=None) -> bool:
+    """Fetch a web-queued strategy-stance change and apply it — ADMIN ONLY.
+
+    Stance (RUNTIME.strategy_mode) is a GLOBAL operator setting, so this is
+    deliberately stricter than the per-user controls above: the request is
+    applied only when the requesting telegram user's tier in the bot's own
+    UserStore (the tier authority) is 'admin'. Anything else is acked away
+    (dropped) so a non-admin request can't sit in the queue forever. Returns
+    True when a stance was actually applied.
+    """
+    if not SYNC_SECRET or store is None:
+        return False
+    resp = _request("/api/bot/sync/stance/pending")
+    row = (resp or {}).get("pending") if resp else None
+    if not row:
+        return False
+    mode = str(row.get("mode") or "").lower()
+    tg = str(row.get("telegram_id") or "")
+    applied = False
+    try:
+        if mode in VALID_STANCE_MODES and tg and store.get_tier(tg) == "admin":
+            from bot.config import RUNTIME
+            RUNTIME.strategy_mode = mode
+            applied = True
+            log.info("Web stance change applied: %s (by tg=%s)", mode, tg)
+            try:
+                from bot.core.agent_feed import FEED
+                FEED.emit("stance", f"Stance changed to {mode.capitalize()}",
+                          data={"mode": mode, "via": "web"})
+            except Exception:
+                pass
+        else:
+            log.warning("Web stance change REJECTED: mode=%r tg=%r tier=%r",
+                        mode, tg, store.get_tier(tg) if tg else None)
+    except Exception as exc:
+        log.warning("stance pull: apply failed: %s", exc)
+    # Always ack so the row clears — rejected requests must not retry forever.
+    _request("/api/bot/sync/stance/ack", {"applied": applied, "mode": mode})
+    return applied
+
+
 def fetch_flatten_pending() -> list[dict]:
     """Fetch queued emergency-stop flatten requests. Empty when unconfigured."""
     if not SYNC_SECRET:

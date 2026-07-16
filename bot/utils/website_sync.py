@@ -259,6 +259,19 @@ def sync_signals_in_background(signals: list[dict]) -> None:
     t.start()
 
 
+def sync_reports(payload: dict) -> bool:
+    """Push the web-reports payload (funding/arb/parity/yield sections built
+    by bot.core.web_reports) to the website's reports cache."""
+    if not payload:
+        return True
+    result = _post("/api/bot/sync/reports", payload)
+    if result and result.get("ok"):
+        log.info("Web reports synced")
+        return True
+    log.debug("Web reports sync failed")
+    return False
+
+
 def sync_agent_events(events: list[dict]) -> bool:
     """Push a batch of public agent-feed (mind-stream) events to the website.
 

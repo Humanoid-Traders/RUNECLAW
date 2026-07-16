@@ -131,6 +131,9 @@ class ProactiveMonitor:
         self._last_arb_snapshot: float = 0.0
         self._arb_alerted: set = set()
         self._arb_send_fn = None
+        # Web reports push: hourly funding/arb/parity/yield payload to the
+        # website so the dashboard reaches parity with the Telegram reports.
+        self._last_reports_push: float = 0.0
         # Optional async callback(chat_id, idea) -> None to push a setup chart
         # alongside a signal alert. Set via set_chart_fn(); never required.
         self._chart_fn: Optional[Callable] = None
@@ -295,7 +298,43 @@ class ProactiveMonitor:
         alerts.extend(self._check_daily_digest())
         alerts.extend(self._check_parity_digest())
         alerts.extend(self._check_arb_tracker())
+        self._check_reports_push()
         return alerts
+
+    # ── Web reports push: hourly Telegram↔web parity payload ──────
+
+    def _check_reports_push(self) -> None:
+        """Once an hour, build the web-reports payload (funding scan, arb
+        paper tracker, parity headline, yield radar) in a worker thread and
+        push it to the website's reports cache. Read-only everywhere; a dead
+        website or venue just skips this cycle."""
+        if os.environ.get("WEB_REPORTS_ENABLED", "true").strip().lower() \
+                not in ("1", "true", "yes", "on"):
+            return
+        try:
+            now = time.monotonic()
+            interval_s = self._env_f("WEB_REPORTS_MIN", 60.0) * 60
+            # 0.0 = never ran — fire immediately (same boot-pacing rule as
+            # the arb tracker above; monotonic() starts near zero).
+            if self._last_reports_push and now - self._last_reports_push < interval_s:
+                return
+            self._last_reports_push = now
+            import asyncio as _aio
+
+            engine = self.engine
+
+            async def _build_and_push() -> None:
+                try:
+                    from bot.core.web_reports import build_reports_payload
+                    from bot.utils.website_sync import sync_reports
+                    payload = await _aio.to_thread(build_reports_payload, engine)
+                    await _aio.to_thread(sync_reports, payload)
+                except Exception as exc:
+                    logger.debug("web reports push failed: %s", exc)
+
+            _aio.get_running_loop().create_task(_build_and_push())
+        except Exception as exc:
+            logger.debug("web reports check skipped: %s", exc)
 
     # ── Funding-arb paper tracker: hourly snapshot + big-spread alert ─
 

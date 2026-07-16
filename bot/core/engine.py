@@ -1834,6 +1834,13 @@ class RuneClawEngine:
                 if m:
                     audit(system_log, f"Applied {m} web control change(s)",
                           action="web_controls_pull", result="OK")
+                # Web parity: admin-queued stance change (global strategy
+                # mode). control_pull re-verifies the requester's tier is
+                # 'admin' against the bot's own UserStore before applying.
+                from bot.utils.control_pull import pull_and_apply_stance
+                if pull_and_apply_stance(store=store):
+                    audit(system_log, "Applied web stance change",
+                          action="web_stance_pull", result="OK")
         except Exception as exc:
             try:
                 audit(system_log, f"Web credential pull error: {exc}",
