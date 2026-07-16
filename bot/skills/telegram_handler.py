@@ -2760,11 +2760,18 @@ class TelegramHandler:
                                        CONFIG.risk.commission_pct)
         report = format_report(summary)
         # Evidence extension: the per-asset-class bucket (classpf's view,
-        # inside the parity framing).
-        for tr in trades:
+        # inside the parity framing). Filter never-filled records with the
+        # SAME rule the headline stats use — previously this bucket counted
+        # all raw records, so its totals disagreed with the summary (25 vs
+        # 18) and win rates were diluted by zero-PnL non-fills.
+        from bot.utils.close_reason import is_filled_close
+        from bot.backtest.parity import _net
+        filled = [tr for tr in trades
+                  if is_filled_close(tr.get("close_reason"), _net(tr))]
+        for tr in filled:
             tr["asset_class"] = category_for_symbol(tr.get("symbol", "") or "")
         cls_lines = _bucket_lines("By asset class",
-                                  _group(trades, "asset_class"))
+                                  _group(filled, "asset_class"))
         if cls_lines:
             report += "\n" + "\n".join(cls_lines)
         text = f"📏 <b>Live ↔ backtest parity</b>\n<pre>{_html.escape(report)}</pre>"
