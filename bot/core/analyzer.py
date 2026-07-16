@@ -3851,6 +3851,13 @@ class Analyzer:
                     # on — thinking requires default temperature.)
                     "temperature": CONFIG.llm.temperature,
                 }
+                # LIVE INCIDENT 2026-07-16: the Claude 5 family DEPRECATED the
+                # temperature parameter — sending one returns 400 and took the
+                # whole brain down to the rule engine ("every provider has
+                # failed 20 analyses"). Omit it for those models up front.
+                from bot.llm.provider import model_accepts_temperature
+                if not model_accepts_temperature(model):
+                    create_kwargs.pop("temperature", None)
 
                 # Enable adaptive thinking for Opus 4.8+ (thesis tier)
                 # Opus 4.8 ONLY supports adaptive thinking; manual budget_tokens
@@ -3880,7 +3887,24 @@ class Analyzer:
                         }
                     }
 
-                response = await active_client.messages.create(**create_kwargs)
+                try:
+                    response = await active_client.messages.create(**create_kwargs)
+                except Exception as _temp_exc:
+                    # Future-proof net: if a model we didn't anticipate rejects
+                    # the temperature parameter, strip it and retry ONCE rather
+                    # than failing every analysis until a code change ships.
+                    _msg = str(_temp_exc).lower()
+                    if ("temperature" in create_kwargs and "temperature" in _msg
+                            and ("deprecated" in _msg or "unsupported" in _msg
+                                 or "invalid_request" in _msg)):
+                        audit(trade_log,
+                              f"Anthropic rejected temperature for {model} — "
+                              f"retrying without it",
+                              action="llm_temperature_retry", result="RETRY")
+                        create_kwargs.pop("temperature", None)
+                        response = await active_client.messages.create(**create_kwargs)
+                    else:
+                        raise
                 # Handle extended thinking response — extract text block (skip thinking blocks)
                 raw_text = ""
                 if response.content:

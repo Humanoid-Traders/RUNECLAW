@@ -583,6 +583,20 @@ def create_llm_client(config: LLMConfig):
 #  UNIFIED INFERENCE — handles both OpenAI + Anthropic APIs
 # ════════════════════════════════════════════════════════════
 
+# The Claude 5 family (claude-sonnet-5, claude-fable-5, dated variants …)
+# DEPRECATED the explicit `temperature` parameter — sending one now returns
+# 400 invalid_request_error ("`temperature` is deprecated for this model"),
+# which took the whole analysis brain down to the rule engine on 2026-07-16.
+_TEMPERATURE_DEPRECATED_RE = re.compile(r"^claude-[a-z]+-5\b|^claude-[a-z]+-5-")
+
+
+def model_accepts_temperature(model: str) -> bool:
+    """False when the model rejects an explicit `temperature` (Claude 5
+    family). Callers must omit the parameter entirely for those models —
+    provider-default sampling applies."""
+    return not _TEMPERATURE_DEPRECATED_RE.match((model or "").strip().lower())
+
+
 async def llm_complete(
     client,
     config: LLMConfig,
