@@ -378,7 +378,14 @@ _rule(r"\b(macro (calendar|events?)|fomc|cpi (data|release)|fed (meeting|decisio
       "macro_calendar", explanation="Macro event request")
 
 # --- Backtest ---
-_rule(r"\b(run (a )?backtest|backtest (it|this|btc|eth|sol|\w+/usdt)|replay|test (the )?strategy)\b",
+# Two rules on purpose: the symbol-bearing form carries the coin into the
+# skill (which runs the REAL frozen-snapshot backtest for it); the generic
+# form keeps its old full-confidence match (synthetic smoke test) — a single
+# needs_symbol rule would demote bare "run a backtest" to a 0.5-confidence
+# partial and drop it to LLM chat.
+_rule(r"\bbacktest\s+[A-Za-z0-9/]{2,12}\b",
+      "run_backtest", needs_symbol=True, explanation="Backtest request (symbol)")
+_rule(r"\b(run (a )?backtest|backtest (it|this)|replay|test (the )?strategy)\b",
       "run_backtest", explanation="Backtest request")
 
 # --- Costs ---
@@ -393,6 +400,18 @@ _rule(r"\b(halt (the )?bot|stop (the )?(bot|trading|engine|everything|all)|emerg
 # --- RUNECLAW playbook ---
 _rule(r"\b(bot playbook|playbook|execution logic|run the playbook)\b",
       "playbook", explanation="RUNECLAW playbook request")
+
+# --- Why-not (rejection explainer) ---
+# MUST be registered before the broader "no trade"→check_risk rule below,
+# or "why no trade on BTC" is swallowed by it and the whynot skill (which
+# explains the actual recorded rejection) is unreachable from chat.
+# Deliberately NOT needs_symbol: the skill defaults to the most-recent
+# recorded rejection (and names it), and a needs_symbol rule would demote
+# the common bare "why no trade?" to a 0.5-confidence partial.
+_rule(r"\b(why (no|not a?) trade|why (was|did) .{0,24}(reject|skip|filter)"
+      r"|why didn.?t (you|it|the bot) (trade|enter|take|buy|sell)"
+      r"|whynot|explain the (rejection|skip))\b",
+      "whynot", explanation="Rejection explainer request")
 
 # --- RUNECLAW no-trade check ---
 _rule(r"\b(no trade|should i sit out|stay flat|skip this|sit this out)\b",
