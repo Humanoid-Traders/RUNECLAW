@@ -106,6 +106,7 @@ app.use('/api/feed', feedRouter);
 app.use('/api/reports', reportsRouter);
 app.use('/api/profile', profileRouter);
 app.use('/api/push', require('./routes/push'));
+app.use('/api/alerts', require('./routes/alerts'));
 
 // Single-host dev foot-gun: Express and the bot's gateway both default to
 // port 8080. Warn loudly if they would collide.
@@ -143,4 +144,8 @@ app.use((err, req, res, next) => {
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`RUNECLAW app running on port ${PORT}`);
   });
+
+  // Custom "tell me when…" alert tripwires: evaluate active alerts against
+  // public tickers once a minute (skips instantly when none are armed).
+  require('./lib/alerts').startAlertEngine();
 })();

@@ -233,7 +233,8 @@
     // Pro-desk workflow: brief -> find conviction -> execute -> review.
     'Give me a market briefing', "What's the highest-conviction setup right now?",
     'Backtest SOL', 'Why no trade on BTC?', 'Long ETH',
-    'Show my positions', 'Post-mortem my last trade',
+    'Alert me when BTC drops below $100k', 'Show my positions',
+    'Post-mortem my last trade',
   ];
   const chipsEl = document.getElementById('chatChips');
   function hideChips() { if (chipsEl) chipsEl.innerHTML = ''; }

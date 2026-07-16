@@ -16,6 +16,7 @@ const { rateLimit, userKey } = require('../lib/rate_limit');
 const { resolveBotIdentity } = require('../lib/identity');
 const gateway = require('../lib/gateway');
 const { loadProfile } = require('./profile');
+const { maybeHandleAlertChat } = require('../lib/alerts');
 
 const router = express.Router();
 router.use(authMiddleware);
@@ -29,12 +30,17 @@ const CHAT_TIMEOUT_MS = 45000;
 // POST /api/chat  body: { text }
 router.post('/', chatLimit, async (req, res) => {
   try {
-    if (!gateway.isConfigured()) {
-      return res.status(503).json({ error: 'Chat not configured' });
-    }
     const text = typeof (req.body || {}).text === 'string' ? req.body.text.trim() : '';
     if (!text) return res.status(400).json({ error: 'text required' });
     if (text.length > MAX_TEXT_LEN) return res.status(400).json({ error: 'Message too long' });
+    // "tell me when BTC drops below 100k" — alerts live in the WEB app (the
+    // push channel is here), so handle them before the bot proxy. Evaluated
+    // against public tickers; works even while the bot process is down.
+    const alertReply = await maybeHandleAlertChat(req.user.user_id, text);
+    if (alertReply) return res.json(alertReply);
+    if (!gateway.isConfigured()) {
+      return res.status(503).json({ error: 'Chat not configured' });
+    }
     const ident = await resolveBotIdentity(req);
     const name = String(ident.email || '').split('@')[0];
     // The user's saved agent profile rides along so the bot's chat prompt

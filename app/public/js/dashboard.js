@@ -232,10 +232,27 @@
   async function renderFeed() {
     container.innerHTML = viewHead('Live Feed',
       "The agent's mind-stream — every scan, thesis, trade and alert, as it happens")
+      + (LOGGED_IN ? `<section class="panel" id="p-tripwires">
+          <h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-alert"></use></svg>My tripwires
+            <span class="badge" style="margin-left:auto" title="One-shot alerts — each disarms after it trips">one-shot</span></h2>
+          <p style="color:var(--text-2);margin-bottom:var(--s3)">Personal price alerts, delivered as push notifications.
+            You can also just tell the chat: <i>"alert me when BTC drops below $100k"</i>.</p>
+          <form class="row" id="alertForm" style="gap:var(--s2);flex-wrap:wrap;margin-bottom:var(--s3)">
+            <input class="input" id="alertSym" placeholder="BTC" style="width:7rem" maxlength="10" aria-label="Symbol" required>
+            <select class="input" id="alertOp" aria-label="Direction" style="width:auto">
+              <option value=">">price above</option>
+              <option value="<">price below</option>
+            </select>
+            <input class="input" id="alertTh" type="number" step="any" min="0" placeholder="100000" style="width:9rem" aria-label="Level" required>
+            <button class="btn btn--primary btn--sm" type="submit">Arm alert</button>
+          </form>
+          <div id="alertList"><div class="skel"></div></div>
+        </section>` : '')
       + `<section class="panel">
           <div class="row" id="feedChips" style="gap:var(--s2);flex-wrap:wrap;margin-bottom:var(--s3)"></div>
           <div id="feedLive"><div class="skel"></div><div class="skel"></div><div class="skel"></div></div>
         </section>`;
+    if (LOGGED_IN) wireAlertsPanel();
     const TYPES = [['all', 'All'], ['scan', '📡 Scans'], ['thesis', '🧠 Theses'],
       ['trade_open', '🟢 Opens'], ['trade_close', '🏁 Closes'],
       ['sl_move', '🛡️ Stops'], ['alert', '⚠️ Alerts'], ['stance', '🎚️ Stance']];
@@ -255,6 +272,60 @@
       { empty: { icon: 'icon-radar', text: 'No agent events yet — they appear here the moment the engine pushes its next scan.' } });
     const list = document.querySelector('#feedLive .feed-list');
     if (list && feedFilter !== 'all') applyFeedFilter(list);
+  }
+
+  /* ── My tripwires (custom one-shot alerts → web push) ── */
+  async function loadAlertList() {
+    const el = document.getElementById('alertList');
+    if (!el) return;
+    const r = await fetchJSON('/api/alerts').catch(() => null);
+    if (!r || !r.ok) {
+      el.innerHTML = '<p style="color:var(--text-2)">Could not load alerts.</p>';
+      return;
+    }
+    const rows = (r.data && r.data.alerts) || [];
+    if (!rows.length) {
+      el.innerHTML = '<p style="color:var(--text-2)">No alerts armed. Set a level above, or ask the chat.</p>';
+      return;
+    }
+    el.innerHTML = rows.map((a) => {
+      const state = a.active
+        ? '<span class="badge badge--success">armed</span>'
+        : `<span class="badge">tripped${a.trigger_price != null ? ' @ ' + fmtPrice(a.trigger_price) : ''}</span>`;
+      return `<div class="row" style="gap:var(--s2);align-items:center;padding:var(--s1) 0;border-bottom:1px solid var(--border)">
+          <b>${esc(a.label)}</b> ${state}
+          <button class="btn btn--sm" data-del="${a.id}" type="button" style="margin-left:auto" aria-label="Delete alert">✕</button>
+        </div>`;
+    }).join('');
+    el.onclick = async (e) => {
+      const b = e.target.closest('button[data-del]'); if (!b) return;
+      const del = await fetchJSON(`/api/alerts/${b.dataset.del}`, { method: 'DELETE' }).catch(() => null);
+      toast(del && del.ok ? 'Alert deleted.' : 'Could not delete that alert.');
+      loadAlertList();
+    };
+  }
+
+  function wireAlertsPanel() {
+    const form = document.getElementById('alertForm');
+    if (!form) return;
+    form.onsubmit = async (e) => {
+      e.preventDefault();
+      const symbol = document.getElementById('alertSym').value.trim();
+      const op = document.getElementById('alertOp').value;
+      const threshold = parseFloat(document.getElementById('alertTh').value);
+      if (!symbol || !isFinite(threshold)) return;
+      const r = await fetchJSON('/api/alerts', {
+        method: 'POST', body: { symbol, metric: 'price', op, threshold },
+      }).catch(() => null);
+      if (r && r.ok) {
+        toast(`Armed: ${r.data.label}`);
+        form.reset();
+        loadAlertList();
+      } else {
+        toast((r && r.data && r.data.error) || 'Could not arm that alert.');
+      }
+    };
+    loadAlertList();
   }
 
   /* ═══════════════ HOME ═══════════════ */
