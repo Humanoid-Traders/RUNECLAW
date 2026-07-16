@@ -392,6 +392,16 @@ code { font-family: var(--font-data); font-size: .9em; background: var(--surface
 .chat-inputrow { display: flex; gap: var(--s2); padding: var(--s3); border-top: 1px solid var(--line); background: var(--surface-2); }
 .chat-inputrow .input { flex: 1; }
 
+/* ---- Inline chat: the same drawer docked IN the page flow ------------------ */
+.chat-drawer.chat--inline {
+  position: static; inset: auto; z-index: auto;
+  width: 100%; max-width: 880px; margin: 0 auto;
+  height: min(68vh, 640px); min-height: 420px;
+  border: 1px solid var(--line-2); border-radius: var(--radius-lg);
+  box-shadow: var(--shadow); overflow: hidden;
+}
+.chat-drawer.chat--inline .chat-close { display: none; }  /* nothing to close */
+
 /* Typing indicator — three dots that bounce in sequence. */
 .typing-dots { display: inline-flex; gap: 4px; align-items: center; height: 1em; }
 .typing-dots span { width: 6px; height: 6px; border-radius: 50%; background: var(--text-3); animation: typing-bounce 1.2s infinite ease-in-out both; }
