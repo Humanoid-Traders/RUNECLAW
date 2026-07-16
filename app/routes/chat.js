@@ -17,6 +17,7 @@ const { resolveBotIdentity } = require('../lib/identity');
 const gateway = require('../lib/gateway');
 const { loadProfile } = require('./profile');
 const { maybeHandleAlertChat } = require('../lib/alerts');
+const { maybeHandleReplayChat } = require('../lib/replay');
 
 const router = express.Router();
 router.use(authMiddleware);
@@ -38,6 +39,10 @@ router.post('/', chatLimit, async (req, res) => {
     // against public tickers; works even while the bot process is down.
     const alertReply = await maybeHandleAlertChat(req.user.user_id, text);
     if (alertReply) return res.json(alertReply);
+    // "what if I'd taken every signal with $1k?" — replayed from the web's
+    // own recorded trade history, no bot round-trip needed.
+    const replayReply = await maybeHandleReplayChat(req.user.user_id, text);
+    if (replayReply) return res.json(replayReply);
     if (!gateway.isConfigured()) {
       return res.status(503).json({ error: 'Chat not configured' });
     }
