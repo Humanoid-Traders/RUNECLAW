@@ -180,11 +180,26 @@ async def gateway_client(engine, handler):
 
 async def test_no_secret_configured_is_403(monkeypatch):
     monkeypatch.setattr(ug, "_GATEWAY_SECRET", "")
+    monkeypatch.delenv("WEB_GATEWAY_SECRET", raising=False)
     async with gateway_client(FakeEngine(), FakeHandler()) as c:
         r = await c.post("/chat", json={"telegram_id": "7", "text": "hi"},
                          headers=HDRS)
         assert r.status == 403
         assert (await r.json())["error"] == "gateway_disabled"
+
+
+async def test_secret_set_after_boot_takes_effect_without_restart(monkeypatch):
+    # Vault restore / admin /setgateway writes os.environ at runtime. The
+    # middleware must pick it up per-request — a restart-free repair.
+    monkeypatch.setattr(ug, "_GATEWAY_SECRET", "")
+    monkeypatch.setenv("WEB_GATEWAY_SECRET", SECRET)
+    async with gateway_client(FakeEngine(), FakeHandler()) as c:
+        r = await c.post("/chat", json={"telegram_id": "7", "text": "hi"},
+                         headers=HDRS)
+        # Downstream auth may still reject the fake user — the point is the
+        # GATEWAY unlocked: it must not report gateway_disabled anymore.
+        assert (await r.json()).get("error") != "gateway_disabled", \
+            "env-set secret must enable the gateway without a restart"
 
 
 async def test_short_secret_is_403(monkeypatch):

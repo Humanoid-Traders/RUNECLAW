@@ -338,6 +338,8 @@ class TelegramHandler:
             ("exchange", self._cmd_exchange),
             # Admin: repair the OPERATOR (engine) Bitget credentials → vault
             ("setexchange", self._cmd_setexchange),
+            # Admin: repair the website↔bot shared gateway secret → vault
+            ("setgateway", self._cmd_setgateway),
             # Confidence calibration (admin)
             ("calibration", self._cmd_calibration),
             # Deep scan & playbook
@@ -3737,6 +3739,69 @@ class TelegramHandler:
             "Stored <b>encrypted</b> in the vault (survives .env wipes) and the "
             "engine client was rebuilt. Run <code>/start</code> — equity should "
             "read live now, and open positions are protected again.")
+
+    async def _cmd_setgateway(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """/setgateway <secret> — ADMIN ONLY.
+
+        Repairs the WEB_GATEWAY_SECRET the website uses to reach this bot's
+        chat/trade gateway. A wiped .env that predates vault coverage loses it,
+        and web chat then errors with "gateway_disabled" while the bot trades
+        fine. The secret is stored ENCRYPTED in the vault (survives future .env
+        wipes) and takes effect immediately — the gateway re-reads the
+        environment per request, no restart needed. The message carrying the
+        secret is deleted immediately. Must equal the website's value."""
+        # Delete the secret-bearing message FIRST, before any gate can return.
+        try:
+            if update.message:
+                await update.message.delete()
+        except Exception as del_exc:
+            system_log.warning(
+                "Failed to delete /setgateway message with secret: %s", del_exc)
+
+        if not self._is_admin(update):
+            return
+        if update.effective_chat and update.effective_chat.type != "private":
+            await self._send(update,
+                "⚠️ Send <code>/setgateway</code> in a <b>private chat</b> only.")
+            return
+
+        args = ctx.args or []
+        if len(args) != 1:
+            await self._send(update,
+                "<b>Set the website↔bot gateway secret</b>\n\n"
+                "Re-pairs web chat + web trading after a wiped .env.\n"
+                "<code>/setgateway &lt;secret&gt;</code>\n\n"
+                "• Must be the SAME value as <code>WEB_GATEWAY_SECRET</code> "
+                "on the website (&gt;=32 chars).\n"
+                "• Stored <b>encrypted</b> in the vault; effective immediately, "
+                "no restart.\n"
+                "• This message is deleted immediately.")
+            return
+
+        secret = args[0].strip()
+        if len(secret) < 32 or any(c.isspace() for c in secret):
+            await self._send(update,
+                "🔴 The gateway secret must be at least <b>32 characters</b> "
+                "with no spaces. Nothing was stored.")
+            return
+
+        try:
+            from bot.core.secrets_vault import store_secrets
+            store_secrets({"WEB_GATEWAY_SECRET": secret})
+        except Exception as exc:
+            system_log.error("setgateway: vault store failed: %s", exc)
+            await self._send(update,
+                "🔴 Could not store the secret. Check the logs.")
+            return
+
+        audit(system_log, "Admin set the web gateway secret via /setgateway",
+              action="setgateway", result="OK")
+        await self._send(update,
+            "🟢 <b>Web gateway secret updated</b>\n\n"
+            "Stored <b>encrypted</b> in the vault (survives .env wipes) and "
+            "live now — no restart needed. If web chat still shows a gateway "
+            "error, make sure the website's <code>WEB_GATEWAY_SECRET</code> "
+            "is the exact same value.")
 
     async def _cmd_disconnect(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """/disconnect — remove YOUR linked Bitget account credentials."""

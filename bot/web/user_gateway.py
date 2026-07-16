@@ -50,8 +50,10 @@ _MAX_PROPOSERS = 500  # bound the proposer map (pending ideas expire anyway)
 
 
 def _secret() -> str:
-    # Indirection so tests can monkeypatch module state.
-    return _GATEWAY_SECRET
+    # Read the environment on every request (not only import time) so a vault
+    # restore or an admin /setgateway repair takes effect WITHOUT a restart.
+    # Falls back to the import-time value so tests can monkeypatch module state.
+    return os.environ.get("WEB_GATEWAY_SECRET", "") or _GATEWAY_SECRET
 
 
 @web.middleware

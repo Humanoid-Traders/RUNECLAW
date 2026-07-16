@@ -145,3 +145,23 @@ class TestNoOpSafety:
         s = sv.seed_and_restore()
         assert s == {"seeded": [], "restored": []}
         assert not (tmp_path / "secrets_vault.enc").exists()
+
+
+class TestWebsitePairingSecrets:
+    def test_gateway_and_sync_secrets_are_managed(self):
+        # Losing these silently severs the website from the bot (chat/webtrade
+        # die, dashboard sync rejected) while the bot itself keeps trading —
+        # exactly the failure mode the vault exists to prevent.
+        assert "WEB_GATEWAY_SECRET" in sv._DEFAULT_MANAGED
+        assert "BOT_SYNC_SECRET" in sv._DEFAULT_MANAGED
+
+    def test_gateway_secret_survives_env_wipe(self, tmp_path, monkeypatch):
+        _isolate(monkeypatch, tmp_path)
+        monkeypatch.setenv("WEB_GATEWAY_SECRET", "g" * 48)
+        s = sv.seed_and_restore()
+        assert "WEB_GATEWAY_SECRET" in s["seeded"]
+
+        monkeypatch.delenv("WEB_GATEWAY_SECRET")
+        s2 = sv.seed_and_restore()
+        assert "WEB_GATEWAY_SECRET" in s2["restored"]
+        assert os.environ["WEB_GATEWAY_SECRET"] == "g" * 48

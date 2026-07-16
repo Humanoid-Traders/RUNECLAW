@@ -55,6 +55,10 @@ _DEFAULT_MANAGED = (
     "BYBIT_API_KEY", "BYBIT_API_SECRET",
     "BINGX_API_KEY", "BINGX_API_SECRET",
     "ONCHAIN_API_KEY",
+    # Website pairing secrets: losing either silently severs the web app from
+    # the bot — chat/web-trade die (WEB_GATEWAY_SECRET) or dashboard sync is
+    # rejected (BOT_SYNC_SECRET) — while the bot itself keeps trading fine.
+    "WEB_GATEWAY_SECRET", "BOT_SYNC_SECRET",
 )
 
 

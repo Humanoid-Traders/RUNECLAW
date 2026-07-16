@@ -48,7 +48,8 @@ def _stub_engine_for_sync(open_positions, closed_positions, equity=326.55, user_
     )
     stub = types.SimpleNamespace(
         live_executor=executor,
-        get_effective_equity=lambda: equity,
+        # Truthful-equity source: (equity, source) — None means "unavailable".
+        resolve_display_equity_sync=lambda: (equity, "live" if equity is not None else "unavailable"),
     )
     return stub
 
@@ -188,3 +189,17 @@ class TestTickWiresSignalStreamSync:
         assert "_build_signal_sync_payloads(_synced_ideas, self._outcome_regime)" in src
         # Fail-open: the push is wrapped so a sync failure can't break the tick.
         assert "logger.debug(\"Signal stream sync skipped: %s\", _sig_sync_exc)" in src
+
+
+def test_live_unavailable_equity_syncs_none_not_paper(monkeypatch):
+    # LIVE mode with an empty balance cache: the sync must carry None (website
+    # renders "unavailable"), never the paper baseline get_effective_equity()
+    # silently falls back to.
+    captured = {}
+    import bot.utils.website_sync as ws
+    monkeypatch.setattr(
+        ws, "sync_in_background",
+        lambda user_id, equity, positions, closed_trades: captured.update(equity=equity))
+    stub = _stub_engine_for_sync([], [], equity=None, user_id=7)
+    RuneClawEngine._sync_live_state_to_website(stub)
+    assert captured["equity"] is None
