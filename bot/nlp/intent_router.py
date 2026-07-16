@@ -278,6 +278,24 @@ def _rule(pattern: str, skill: str, needs_symbol: bool = False, explanation: str
     ))
 
 
+# --- Agent stance (talk-to-your-agent risk posture) ---
+# Registered FIRST so risk-preference phrasing wins over scan/analyze rules.
+# These never execute anything: the handler PROPOSES a stance switch with a
+# confirm button (the mode_ callback path, which is permission-gated).
+_rule(r"\b(be (a bit |a little |way |much )?more (careful|cautious|conservative|defensive)|"
+      r"(reduce|lower|less|cut) (the )?risk|risk off|play it safe(r)?|"
+      r"(take |use )?smaller positions?|slow (it |things )?down|protect (the )?capital|"
+      r"trade (more )?defensive(ly)?|dial (it|risk) (back|down))\b",
+      "stance_defensive", explanation="Wants a more defensive risk posture")
+_rule(r"\b(be (a bit |a little |way |much )?more aggressive|"
+      r"(increase|raise|more|add) (the )?risk|risk on|push (it )?harder|"
+      r"(take |use )?bigger positions?|trade (more )?aggressive(ly)?|"
+      r"step on (the )?gas|go bigger)\b",
+      "stance_aggressive", explanation="Wants a more aggressive risk posture")
+_rule(r"\b((back to|go) (normal|balanced|default)( risk| mode)?|"
+      r"balanced (mode|stance|risk)|reset (the )?(risk|stance|mode))\b",
+      "stance_balanced", explanation="Wants the balanced default posture")
+
 # --- Scan / market overview ---
 # RUNECLAW natural language triggers — scan modes
 _rule(r"\b(swing(?: (?:scan|mode|trade))?|4h scan|swing by swing)\b",
