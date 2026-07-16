@@ -11,7 +11,7 @@
 <link rel="manifest" href="/manifest.json">
 <meta name="theme-color" content="#0a0b10">
 <link rel="preload" href="/fonts/cinzel-700.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="stylesheet" href="/styles.css?v=9">
+<link rel="stylesheet" href="/styles.css?v=10">
 </head>
 <body>
 <a class="skip-link" href="#view-root">Skip to content</a>
@@ -46,6 +46,8 @@
 <section id="chatDrawer" class="chat-drawer hidden" hidden role="dialog" aria-label="RUNECLAW chat">
   <div class="chat-head">
     <span class="t"><svg class="icon" aria-hidden="true"><use href="#icon-sparkle"></use></svg>RUNECLAW — AI ANALYST</span>
+    <button class="chat-tts" id="chatTts" type="button" aria-pressed="false"
+      aria-label="Read replies aloud" title="Read replies aloud" hidden>🔇</button>
     <button class="chat-close" id="chatClose" aria-label="Close chat">&times;</button>
   </div>
   <div id="chatMeta" class="chat-meta" hidden aria-label="Your live portfolio"></div>
@@ -55,6 +57,8 @@
     <label class="visually-hidden" for="chatInput">Message the RUNECLAW assistant</label>
     <input id="chatInput" class="input" type="text" maxlength="2000" autocomplete="off"
            placeholder='Ask anything — or "buy SOL 71 sl 70 tp 76"'>
+    <button class="btn" id="chatMic" type="button" aria-pressed="false"
+      aria-label="Dictate a message" title="Dictate a message" hidden>🎤</button>
     <button class="btn btn--primary" id="chatSend" type="submit" aria-label="Send message">
       <svg class="icon" style="width:16px;height:16px" aria-hidden="true"><use href="#icon-send"></use></svg>
     </button>
@@ -76,7 +80,7 @@
 
 <script src="/js/icons.js?v=3"></script>
 <script src="/js/app.js?v=3"></script>
-<script src="/js/chat.js?v=13" defer></script>
+<script src="/js/chat.js?v=14" defer></script>
 <script src="/vendor/lightweight-charts.standalone.production.js" defer></script>
 <script src="/js/dashboard.js?v=25" defer></script>
 <script>if('serviceWorker' in navigator){navigator.serviceWorker.register('/sw.js').catch(()=>{});}</script>

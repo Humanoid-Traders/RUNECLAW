@@ -254,6 +254,93 @@
     });
   }
 
+  // ── Voice ──────────────────────────────────────────────────────────────────
+  // Mic dictation (Web Speech API) + optional spoken replies (speechSynthesis).
+  // Both feature-detected: the buttons stay hidden on browsers without the API.
+  const micBtn = document.getElementById('chatMic');
+  const ttsBtn = document.getElementById('chatTts');
+
+  // Dictation fills the composer and NEVER auto-sends: this chat can act
+  // (propose trades, run backtests, arm alerts), so a misheard sentence must
+  // never fire an action — the user reads what was heard, then presses send.
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  let recog = null;
+  let listening = false;
+  function stopMic() {
+    listening = false;
+    if (micBtn) {
+      micBtn.classList.remove('mic--live');
+      micBtn.setAttribute('aria-pressed', 'false');
+      micBtn.textContent = '🎤';
+    }
+    if (recog) { try { recog.stop(); } catch (e) { /* already stopped */ } }
+  }
+  function startMic() {
+    try {
+      recog = new SR();
+    } catch (e) { return; }
+    recog.lang = navigator.language || 'en-US';
+    recog.interimResults = true;
+    recog.continuous = false;
+    const base = input.value ? input.value.replace(/\s+$/, '') + ' ' : '';
+    recog.onresult = (ev) => {
+      let text = '';
+      for (const res of ev.results) text += res[0].transcript;
+      input.value = (base + text).slice(0, 2000);
+    };
+    recog.onend = () => { stopMic(); input.focus(); };
+    recog.onerror = () => stopMic();
+    listening = true;
+    micBtn.classList.add('mic--live');
+    micBtn.setAttribute('aria-pressed', 'true');
+    micBtn.textContent = '⏺';
+    try { recog.start(); } catch (e) { stopMic(); }
+  }
+  if (micBtn && SR) {
+    micBtn.hidden = false;
+    micBtn.addEventListener('click', () => (listening ? stopMic() : startMic()));
+  }
+
+  // Spoken replies — a per-browser preference, off by default.
+  let ttsOn = false;
+  try { ttsOn = localStorage.getItem('rc_tts') === '1'; } catch (e) { /* private mode */ }
+  function renderTtsBtn() {
+    ttsBtn.textContent = ttsOn ? '🔊' : '🔇';
+    ttsBtn.setAttribute('aria-pressed', String(ttsOn));
+    ttsBtn.title = ttsOn ? 'Spoken replies on — click to mute' : 'Read replies aloud';
+    ttsBtn.setAttribute('aria-label', ttsBtn.title);
+  }
+  function speechText(html) {
+    // `html` is already sanitized; a detached div never executes anything.
+    const div = document.createElement('div');
+    div.innerHTML = html;
+    const text = (div.textContent || '').replace(/\s+/g, ' ').trim();
+    // Long analyses are a chore to sit through — speak the first sentences.
+    return text.length > 420 ? text.slice(0, 420) + '… more on screen.' : text;
+  }
+  function speakReply(html) {
+    if (!ttsOn || !window.speechSynthesis) return;
+    const text = speechText(html);
+    if (!text) return;
+    try {
+      window.speechSynthesis.cancel();
+      const u = new SpeechSynthesisUtterance(text);
+      u.lang = navigator.language || 'en-US';
+      u.rate = 1.05;
+      window.speechSynthesis.speak(u);
+    } catch (e) { /* voice is best-effort */ }
+  }
+  if (ttsBtn && window.speechSynthesis) {
+    ttsBtn.hidden = false;
+    renderTtsBtn();
+    ttsBtn.addEventListener('click', () => {
+      ttsOn = !ttsOn;
+      try { localStorage.setItem('rc_tts', ttsOn ? '1' : '0'); } catch (e) { /* fine */ }
+      if (!ttsOn) { try { window.speechSynthesis.cancel(); } catch (e) { /* fine */ } }
+      renderTtsBtn();
+    });
+  }
+
   // Append a bot error bubble with a one-tap Retry, and restore the user's
   // text to the composer so a failed turn never loses what they typed.
   function appendFailure(html, text) {
@@ -303,7 +390,9 @@
       else {
         // Analysis / answer bubble, plus (when the skill surfaced a concrete
         // setup) a one-tap "Trade this" card underneath it.
-        const bubble = appendMsg('bot', sanitizeBotHtml(r.data.reply_html || '…'));
+        const safeHtml = sanitizeBotHtml(r.data.reply_html || '…');
+        const bubble = appendMsg('bot', safeHtml);
+        speakReply(safeHtml);
         // Model transparency: show WHICH model answered (the visible face of
         // tier routing — and of a runeclaw promotion). LLM replies only;
         // intent-routed skill replies carry no model.
