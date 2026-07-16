@@ -15,7 +15,9 @@ admin users in the allow-list (F-04 compliant).
 
 Safety: the monitor is read-only. It observes engine state and emits
 alerts. It never creates trades, modifies risk limits, or bypasses
-any gate.
+any gate. Proposal alerts may ATTACH inline action buttons, but those
+buttons route to already-guarded handlers (admin re-check + live-amount
+recompute happen there) — the monitor itself still moves nothing.
 """
 
 from __future__ import annotations
@@ -23,6 +25,7 @@ from __future__ import annotations
 import asyncio
 import html as _html
 import logging
+import os
 import time
 from collections import deque
 from dataclasses import dataclass, field
@@ -48,6 +51,11 @@ class Alert:
     timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
     dedup_key: str = ""   # For deduplication (same key = don't re-alert within cooldown)
     idea: Any = None      # optional TradeIdea — enables an attached setup chart
+    # Optional inline action buttons as (label, callback_data) pairs. Kept as
+    # plain tuples so this core module never imports telegram — the handler's
+    # send_fn converts them to an InlineKeyboardMarkup. Callback data must be
+    # an already-guarded route (e.g. "yld:s:USDT" re-checks admin + amounts).
+    buttons: list = field(default_factory=list)
 
 
 # ── Alert severity icons ──────────────────────────────────────────────
@@ -111,6 +119,12 @@ class ProactiveMonitor:
         # BECOMING ready alerts exactly once (not every tick it stays ready).
         self._readiness_states: dict[str, str] = {}
         self._readiness_next_check: float = 0.0
+        # Idle-cash nudge: when free margin sits stakeable for hours, propose
+        # /stake with a confirm button (once per cooldown, re-arms on spend).
+        self._idle_since: float = 0.0        # monotonic ts idle threshold first met
+        self._last_idle_nudge: float = 0.0   # monotonic ts of the last nudge sent
+        # Daily digest: morning plan + evening wrap, sent once per UTC day each.
+        self._digest_sent: dict[str, str] = {}   # kind -> "YYYY-MM-DD" last sent
         # Optional async callback(chat_id, idea) -> None to push a setup chart
         # alongside a signal alert. Set via set_chart_fn(); never required.
         self._chart_fn: Optional[Callable] = None
@@ -270,7 +284,175 @@ class ProactiveMonitor:
         alerts.extend(self._check_learning_readiness())
         alerts.extend(self._check_new_listings())
         alerts.extend(self._check_self_audit())
+        alerts.extend(self._check_idle_cash())
+        alerts.extend(self._check_daily_digest())
         return alerts
+
+    # ── Proactive proposals: idle cash → stake nudge ──────────────
+
+    @staticmethod
+    def _env_f(name: str, default: float) -> float:
+        try:
+            return float(os.environ.get(name, "") or default)
+        except (TypeError, ValueError):
+            return default
+
+    def _check_idle_cash(self) -> list[Alert]:
+        """Propose staking when free margin has sat idle for hours.
+
+        Read-only: the alert only carries a button to the yld:s route, which
+        re-checks admin and recomputes/clamps the amount from live balances
+        at press time. Re-arms after the cooldown or once the cash is used.
+        """
+        if os.environ.get("IDLE_CASH_NUDGE_ENABLED", "true").strip().lower() \
+                not in ("1", "true", "yes", "on"):
+            return []
+        try:
+            from bot.core.yield_radar import MARGIN_RESERVE_PCT
+            cache = getattr(self.engine, "_live_balance_cache", None) or {}
+            free = float(cache.get("free", 0) or 0)
+            stakeable = free * (1 - MARGIN_RESERVE_PCT)
+            threshold = self._env_f("IDLE_CASH_NUDGE_USD", 25.0)
+            now = time.monotonic()
+            if stakeable < threshold:
+                self._idle_since = 0.0   # cash got used — re-arm the timer
+                return []
+            if not self._idle_since:
+                self._idle_since = now
+            idle_hours = self._env_f("IDLE_CASH_NUDGE_HOURS", 6.0)
+            cooldown_h = self._env_f("IDLE_CASH_NUDGE_COOLDOWN_H", 24.0)
+            if (now - self._idle_since) < idle_hours * 3600:
+                return []
+            if self._last_idle_nudge and \
+                    (now - self._last_idle_nudge) < cooldown_h * 3600:
+                return []
+            self._last_idle_nudge = now
+            return [Alert(
+                alert_type="IDLE_CASH",
+                severity="INFO",
+                title="Idle cash could be earning",
+                body=(
+                    "💤 <b>Idle cash could be earning</b>\n\n"
+                    f"≈<code>${stakeable:,.2f}</code> of free margin has sat "
+                    f"unused for {idle_hours:.0f}h+ (after the "
+                    f"{MARGIN_RESERVE_PCT:.0%} reserve the engine keeps).\n"
+                    "Flexible Earn redeems instantly, so it stays recallable.\n\n"
+                    "<i>The button recomputes the exact amount from live "
+                    "balances — /yield shows current rates, /unstake redeems.</i>"),
+                dedup_key="idle_cash_nudge",
+                buttons=[("✅ Stake idle USDT", "yld:s:USDT"),
+                         ("Not now", "yld:x")],
+            )]
+        except Exception as exc:
+            logger.debug("idle-cash check skipped: %s", exc)
+            return []
+
+    # ── Proactive digests: morning plan + evening wrap ────────────
+
+    def _check_daily_digest(self) -> list[Alert]:
+        """Send a morning plan and an evening wrap once per UTC day each."""
+        if os.environ.get("DAILY_DIGEST_ENABLED", "true").strip().lower() \
+                not in ("1", "true", "yes", "on"):
+            return []
+        alerts: list[Alert] = []
+        try:
+            now = datetime.now(UTC)
+            today = now.strftime("%Y-%m-%d")
+            schedule = {
+                "brief": int(self._env_f("DAILY_BRIEF_HOUR_UTC", 6)),
+                "wrap": int(self._env_f("DAILY_WRAP_HOUR_UTC", 20)),
+            }
+            for kind, hour in schedule.items():
+                if now.hour >= hour and self._digest_sent.get(kind) != today:
+                    self._digest_sent[kind] = today
+                    body = self._digest_body(kind)
+                    if body:
+                        alerts.append(Alert(
+                            alert_type=f"DAILY_{kind.upper()}",
+                            severity="INFO",
+                            title=f"Daily {kind}",
+                            body=body,
+                            dedup_key=f"digest_{kind}_{today}"))
+        except Exception as exc:
+            logger.debug("daily digest check skipped: %s", exc)
+        return alerts
+
+    def _digest_body(self, kind: str) -> str:
+        """Compact, truthful engine digest. Everything best-effort — a field
+        we can't read is omitted, never invented."""
+        e = self.engine
+        lines: list[str] = []
+        try:
+            mode = "LIVE" if CONFIG.is_live() else "PAPER"
+        except Exception:
+            mode = "?"
+        state = str(getattr(e, "state", "") or "").replace("EngineState.", "")
+
+        # Open positions (operator book; live executor first).
+        positions = []
+        try:
+            ex = getattr(e, "live_executor", None)
+            if ex is not None and getattr(ex, "open_positions", None):
+                positions = list(ex.open_positions)
+            elif getattr(e, "portfolio", None) is not None:
+                positions = list(e.portfolio.open_positions)
+        except Exception:
+            pass
+        pos_bits = []
+        for p in positions[:6]:
+            sym = str(getattr(p, "symbol", getattr(p, "asset", "?")))
+            sym = sym.replace("/USDT", "").replace(":USDT", "")
+            side = str(getattr(p, "direction", getattr(p, "side", "")))[:5].upper()
+            pos_bits.append(f"{sym} {side}")
+
+        # Free margin / equity from the venue-aware cache (may be absent).
+        equity_bit = ""
+        try:
+            cache = getattr(e, "_live_balance_cache", None) or {}
+            eq = float(cache.get("equity", 0) or 0)
+            free = float(cache.get("free", 0) or 0)
+            if eq > 0:
+                equity_bit = (f"Equity <code>${eq:,.2f}</code> · free margin "
+                              f"<code>${free:,.2f}</code>")
+        except Exception:
+            pass
+
+        if kind == "brief":
+            lines.append("🌅 <b>Morning brief — today's plan</b>")
+            lines.append(f"Mode <b>{mode}</b>" + (f" · engine <code>{_html.escape(state)}</code>" if state else ""))
+            if equity_bit:
+                lines.append(equity_bit)
+            lines.append(
+                f"Carrying <b>{len(positions)}</b> open position(s)"
+                + (f": {_html.escape(', '.join(pos_bits))}" if pos_bits else "")
+                + " — managing SL/TP and scanning the universe for setups "
+                  "at or above the auto-trade confidence gate.")
+            lines.append("<i>/status for detail · /whynot SYMBOL to see why "
+                         "something isn't being traded.</i>")
+        else:
+            lines.append("🌙 <b>Evening wrap</b>")
+            lines.append(f"Mode <b>{mode}</b>" + (f" · engine <code>{_html.escape(state)}</code>" if state else ""))
+            if equity_bit:
+                lines.append(equity_bit)
+            # Recent closed trades (live book) — count + net, best/worst.
+            try:
+                ex = getattr(e, "live_executor", None)
+                closed = list(getattr(ex, "closed_positions", []) or [])[-20:]
+                if closed:
+                    net = sum(float(getattr(t, "pnl_usd", 0) or 0) for t in closed)
+                    wins = sum(1 for t in closed
+                               if float(getattr(t, "pnl_usd", 0) or 0) > 0)
+                    lines.append(
+                        f"Recent closes: <b>{len(closed)}</b> "
+                        f"(<b>{wins}</b> wins) · net <code>${net:+,.2f}</code>")
+            except Exception:
+                pass
+            lines.append(
+                f"Still open: <b>{len(positions)}</b>"
+                + (f" — {_html.escape(', '.join(pos_bits))}" if pos_bits else ""))
+            lines.append("<i>/daily_report for the full report · "
+                         "/yield checks what idle cash could earn.</i>")
+        return "\n\n".join(lines)
 
     def _check_learning_readiness(self) -> list[Alert]:
         """Alert when a learner BECOMES validated-and-ready — the moment the
@@ -1231,7 +1413,12 @@ class ProactiveMonitor:
 
         async def _send_to_chat(chat_id: str) -> None:
             try:
-                await send_fn(chat_id, full_msg)
+                if alert.buttons:
+                    # 3-arg form only when needed, so existing 2-arg send_fns
+                    # (tests, custom integrations) keep working untouched.
+                    await send_fn(chat_id, full_msg, alert.buttons)
+                else:
+                    await send_fn(chat_id, full_msg)
                 if alert.idea is not None and self._chart_fn is not None:
                     try:
                         await self._chart_fn(chat_id, alert.idea)

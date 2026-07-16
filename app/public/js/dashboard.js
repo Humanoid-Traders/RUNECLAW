@@ -322,11 +322,12 @@
     symSel.addEventListener('change', drawAll);
     document.getElementById('chartGran').addEventListener('change', () => { drawChart(); drawInsight(); });
 
-    let tvChart = null, tvSeries = null;
+    let tvChart = null, tvSeries = null, tvTimer = null;
     async function drawChart() {
+      if (tvTimer) { clearInterval(tvTimer); tvTimer = null; }
+      const sym = symSel.value, gran = document.getElementById('chartGran').value;
       let rows = null;
       await renderPanel(C('chart'), async () => {
-        const sym = symSel.value, gran = document.getElementById('chartGran').value;
         const r = await fetchJSON(`/api/market/candles/${sym}?granularity=${gran}&limit=200`, { auth: false, timeoutMs: 12000 });
         rows = r.data?.data;
         if (!rows || !rows.length) return null;
@@ -369,7 +370,63 @@
         borderVisible: false,
       });
       tvSeries.setData(data);
+
+      // Indicator overlays computed from the same candles: EMA20/50 + VWAP.
+      const emaLine = (period, color) => {
+        const k = 2 / (period + 1);
+        let ema = null;
+        const pts = data.map(c => {
+          ema = ema === null ? c.close : c.close * k + ema * (1 - k);
+          return { time: c.time, value: ema };
+        }).slice(period);
+        const s = tvChart.addLineSeries({ color, lineWidth: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
+        s.setData(pts);
+      };
+      emaLine(20, 'rgba(63,182,255,.75)');
+      emaLine(50, 'rgba(154,167,255,.65)');
+      // VWAP over the loaded window (Bitget candles carry base volume at [5]).
+      const volByTime = new Map(rows.map(c => [Math.floor(+c[0] / 1000), +c[5] || 0]));
+      let cumPV = 0, cumV = 0;
+      const vwapPts = data.map(c => {
+        const v = volByTime.get(c.time) || 0;
+        cumPV += ((c.high + c.low + c.close) / 3) * v; cumV += v;
+        return cumV > 0 ? { time: c.time, value: cumPV / cumV } : null;
+      }).filter(Boolean);
+      if (vwapPts.length) {
+        tvChart.addLineSeries({ color: 'rgba(185,197,214,.55)', lineWidth: 1, lineStyle: 2, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false })
+          .setData(vwapPts);
+      }
+
+      // Entry/SL/TP price lines when the user has an open position on this pair.
+      try {
+        const pf = LOGGED_IN ? await getPortfolio() : null;
+        const norm = s => String(s || '').replace(/[/:]/g, '').replace(/USDT.*$/, 'USDT');
+        const pos = (pf?.open_positions || []).find(p => norm(p.symbol) === norm(sym));
+        if (pos && tvSeries) {
+          const line = (price, color, title) => price > 0 && tvSeries.createPriceLine({
+            price, color, lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title,
+          });
+          line(+pos.entry_price, 'rgba(63,182,255,.9)', `entry ${String(pos.direction || '').toUpperCase()}`);
+          line(+pos.stop_loss, '#e5484d', 'SL');
+          line(+pos.take_profit, '#2fbf71', 'TP');
+        }
+      } catch (e) { /* overlays are best-effort */ }
+
       tvChart.timeScale().fitContent();
+
+      // Live updates: refresh the last candle while the chart stays mounted.
+      if (tvTimer) clearInterval(tvTimer);
+      tvTimer = setInterval(async () => {
+        if (!document.getElementById('tvChart') || document.visibilityState !== 'visible') return;
+        try {
+          const r2 = await fetchJSON(`/api/market/candles/${sym}?granularity=${gran}&limit=2`, { auth: false, timeoutMs: 8000 });
+          const last = (r2.data?.data || []).map(c => ({
+            time: Math.floor(+c[0] / 1000), open: +c[1], high: +c[2], low: +c[3], close: +c[4],
+          })).sort((a, b) => a.time - b.time).pop();
+          const lastLoaded = data[data.length - 1];
+          if (last && tvSeries && last.time >= lastLoaded.time) tvSeries.update(last);
+        } catch (e) { /* transient — next tick retries */ }
+      }, 15000);
     }
     async function drawDepth() {
       renderPanel(C('depth'), async () => {

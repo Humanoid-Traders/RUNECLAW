@@ -4709,10 +4709,18 @@ class TelegramHandler:
             system_log.debug("proactive monitor hydrate skipped: %s", exc)
         # Wire up channel forwarder
         self.forwarder.set_bot(bot)
-        async def _send_fn(chat_id: str, text: str) -> None:
+        async def _send_fn(chat_id: str, text: str, buttons=None) -> None:
+            # `buttons` = optional (label, callback_data) pairs from proposal
+            # alerts; the callbacks route to already-guarded handlers.
             try:
+                markup = None
+                if buttons:
+                    markup = InlineKeyboardMarkup(
+                        [[InlineKeyboardButton(lbl, callback_data=cb)]
+                         for lbl, cb in buttons])
                 await bot.send_message(
-                    chat_id=int(chat_id), text=text, parse_mode="HTML")
+                    chat_id=int(chat_id), text=text, parse_mode="HTML",
+                    reply_markup=markup)
             except Exception:
                 pass
 
