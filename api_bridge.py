@@ -35,6 +35,7 @@ from pydantic import BaseModel
 from bot.config import CONFIG
 from bot.core.engine import RuneClawEngine
 from bot.api.auth_routes import auth_router
+from bot.api.lab import lab_router
 from bot.core.chart_patterns import scan_all_chart_patterns
 from bot.core.analyzer import _detect_candlestick_patterns
 from bot.utils.models import (
@@ -356,6 +357,9 @@ app.add_middleware(
 
 # Mount auth routes for multi-user registration / login / link flow
 app.include_router(auth_router, prefix="/auth", tags=["auth"])
+# Strategy Lab: frozen-snapshot backtests for the web dashboard (bounded,
+# single-job, subprocess-isolated — see bot/api/lab.py).
+app.include_router(lab_router, tags=["lab"])
 
 # ── Auth dependency for state-changing endpoints ────────────────
 _DASHBOARD_TOKEN = os.getenv("DASHBOARD_TOKEN", "")

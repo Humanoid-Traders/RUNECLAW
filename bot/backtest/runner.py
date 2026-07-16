@@ -182,6 +182,23 @@ def _ascii_equity_curve(equity_points, width: int = 70, height: int = 12) -> str
     return "\n".join(lines)
 
 
+def _tail_bars(bars: list, args: argparse.Namespace) -> list:
+    """Apply --last-bars: keep only the newest N bars (0/absent = all)."""
+    n = int(getattr(args, "last_bars", 0) or 0)
+    return bars[-n:] if n > 0 else bars
+
+
+def _curve_points(result, max_points: int = 300) -> list[dict]:
+    """Downsampled [{t, equity}] from a result's equity curve — small enough
+    to embed in the --output JSON that the web Strategy Lab renders."""
+    curve = list(getattr(result, "equity_curve", []) or [])
+    if len(curve) > max_points:
+        step = (len(curve) - 1) / (max_points - 1)
+        curve = [curve[round(i * step)] for i in range(max_points)]
+    return [{"t": p.timestamp.isoformat(), "equity": round(p.equity, 2)}
+            for p in curve]
+
+
 async def _load_bars(args: argparse.Namespace, config) -> tuple[list, bool, str]:
     """Load OHLCV bars for a backtest. Returns (bars, used_synthetic, data_source).
 
@@ -208,6 +225,7 @@ async def _load_bars(args: argparse.Namespace, config) -> tuple[list, bool, str]
         from bot.backtest import snapshot as _snap
         man = _snap.load_manifest_multi(args.dataset)
         bars = _snap.load_symbol_multi(args.dataset, config.symbol, man)
+        bars = _tail_bars(bars, args)
         print(f"  Loaded {len(bars)} FROZEN bars for {config.symbol} from "
               f"{args.dataset} (dataset_hash={man['dataset_hash'][:12]}…)")
         return bars, False, f"frozen_snapshot:{man['dataset_hash']}"
@@ -304,7 +322,8 @@ async def _run_backtest(args: argparse.Namespace) -> None:
         out_path.parent.mkdir(parents=True, exist_ok=True)
         with open(out_path, "w") as f:
             json.dump(
-                result.model_dump(mode="json", exclude={"equity_curve"}),
+                {**result.model_dump(mode="json", exclude={"equity_curve"}),
+                 "equity_curve_points": _curve_points(result)},
                 f, indent=2, default=str,
             )
         print(f"  Results saved to {args.output}")
@@ -338,6 +357,11 @@ Examples:
                                  "is attributable to the code change, not to data drift. "
                                  "With --dataset and no --symbols, the snapshot's full "
                                  "universe is run as a portfolio.")
+    data_group.add_argument("--last-bars", type=int, default=0, metavar="N",
+                            help="Use only the most recent N bars of the loaded "
+                                 "data (0 = all). Lets interactive callers (the "
+                                 "web Strategy Lab) bound wall-clock on the big "
+                                 "frozen snapshots.")
     data_group.add_argument("--csv", type=str, help="Path to OHLCV CSV file")
     data_group.add_argument("--fetch", action="store_true",
                             help="(deprecated: real data is the default) Fetch from Bitget API")
@@ -651,7 +675,8 @@ async def _run_portfolio(args: argparse.Namespace) -> None:
               f"{args.dataset} (dataset_hash={man['dataset_hash'][:12]}…)")
         for sym in symbols:
             try:
-                data[sym] = _snap.load_symbol_multi(args.dataset, sym, man)
+                data[sym] = _tail_bars(
+                    _snap.load_symbol_multi(args.dataset, sym, man), args)
                 print(f"  loaded {sym}: {len(data[sym])} frozen bars")
             except KeyError as exc:
                 print(f"  ERROR: {exc}")
@@ -704,7 +729,9 @@ async def _run_portfolio(args: argparse.Namespace) -> None:
         out_path.parent.mkdir(parents=True, exist_ok=True)
         with open(out_path, "w") as f:
             json.dump({**result.model_dump(mode="json", exclude={"equity_curve", "trades"}),
-                       "per_symbol": pb.per_symbol}, f, indent=2, default=str)
+                       "per_symbol": pb.per_symbol,
+                       "equity_curve_points": _curve_points(result)},
+                      f, indent=2, default=str)
         print(f"  Results saved to {args.output}")
 
 

@@ -21,6 +21,7 @@
     { id: 'trade',     label: 'Trade',     icon: 'icon-target' },
     { id: 'portfolio', label: 'Portfolio', icon: 'icon-chart' },
     { id: 'leaderboard', label: 'Leaders', icon: 'icon-target' },
+    { id: 'lab',       label: 'Lab',       icon: 'icon-sparkle' },
     { id: 'engine',    label: 'Engine',    icon: 'icon-cog' },
     { id: 'account',   label: 'Account',   icon: 'icon-user' },
   ];
@@ -1503,10 +1504,159 @@
     }
   }
 
+  /* ═══════════════ Lab (Strategy Lab — frozen-snapshot backtests) ═══════ */
+  async function renderLab() {
+    container.innerHTML = viewHead('Strategy Lab', 'Run the engine\'s honest backtester on frozen benchmark data');
+    if (!LOGGED_IN) {
+      container.insertAdjacentHTML('beforeend', `<section class="panel">${loginGate('Log in to run backtests in the Strategy Lab.')}</section>`);
+      return;
+    }
+    container.insertAdjacentHTML('beforeend', `
+      <div class="stack">
+        <section class="panel" id="p-labform"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-sparkle"></use></svg>Configure a run
+          <span class="right muted small">frozen data · honest fees &amp; fills · one job at a time</span></h2>
+          <div id="c-labform"><div class="skel"></div></div></section>
+        <section class="panel" id="p-labres" hidden><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-chart"></use></svg>Result</h2>
+          <div id="c-labres"></div></section>
+      </div>`);
+
+    let meta = null;
+    await renderPanel(C('labform'), async () => {
+      const r = await fetchJSON('/api/lab/meta', { timeoutMs: 16000 });
+      if (r.status === 503) {
+        return `<div class="state-block"><svg class="icon"><use href="#icon-offline"></use></svg>
+          <p>The Strategy Lab needs the bot's analysis bridge (run <code>python api_bridge.py</code> on the bot host, port 8000).</p></div>`;
+      }
+      if (!r.ok || !r.data?.datasets) return null;
+      meta = r.data;
+      const names = Object.keys(meta.datasets);
+      if (!names.length) return `<div class="state-block"><p>No frozen benchmark snapshots found on the bot host.</p></div>`;
+      const dsOpts = names.map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join('');
+      return `
+        <div class="row" style="gap:var(--s3);flex-wrap:wrap;align-items:flex-end">
+          <div class="field"><label for="labDs">Dataset</label><select class="input" id="labDs">${dsOpts}</select></div>
+          <div class="field"><label for="labBars">History</label><select class="input" id="labBars">
+            <option value="720">~1 month (720 bars)</option>
+            <option value="1500" selected>~2 months (1500)</option>
+            <option value="3000">~4 months (3000)</option>
+            <option value="6000">~8 months (6000)</option></select></div>
+          <div class="field"><label for="labConf">Min confidence</label><select class="input" id="labConf">
+            <option value="0" selected>Engine default</option>
+            <option value="0.5">0.50</option><option value="0.6">0.60</option>
+            <option value="0.7">0.70</option><option value="0.8">0.80</option></select></div>
+          <div class="field"><label for="labBal">Balance $</label><input class="input" id="labBal" type="number" value="10000" min="100" max="1000000" style="width:110px"></div>
+        </div>
+        <div class="mt-3"><span class="muted small">Symbols (max 4):</span>
+          <div id="labSyms" class="row mt-1" style="gap:6px;flex-wrap:wrap"></div></div>
+        <div class="row mt-3" style="gap:var(--s3);align-items:center">
+          <button class="btn btn--primary" id="labRun" type="button">Run backtest</button>
+          <span class="small muted" id="labMsg" aria-live="polite"></span>
+        </div>
+        <p class="muted small mt-2">Runs on frozen, content-hashed market data with the honest fee/fill model — the same engine used to validate the live strategy. It never touches the live account.</p>`;
+    }, { errorText: 'Strategy Lab unavailable.' });
+
+    // Populate symbol chips when the dataset changes (data-driven from meta).
+    const fillSyms = () => {
+      const host = document.getElementById('labSyms');
+      const ds = meta?.datasets?.[document.getElementById('labDs')?.value];
+      if (!host || !ds) return;
+      host.innerHTML = ds.symbols.map((s, i) => `
+        <label class="chip" style="cursor:pointer;user-select:none">
+          <input type="checkbox" value="${esc(s)}" ${i < 3 ? 'checked' : ''} style="margin-right:5px">${esc(s.replace(':USDT', '').replace('/USDT', ''))}</label>`).join('');
+    };
+    fillSyms();
+    container.addEventListener('change', (e) => { if (e.target.id === 'labDs') fillSyms(); });
+
+    let pollTimer = null;
+    container.addEventListener('click', async (e) => {
+      if (e.target.id !== 'labRun') return;
+      const msg = document.getElementById('labMsg');
+      const syms = [...document.querySelectorAll('#labSyms input:checked')].map(i => i.value).slice(0, 4);
+      if (!syms.length) { msg.textContent = 'Pick at least one symbol.'; return; }
+      e.target.disabled = true;
+      msg.textContent = 'Submitting…';
+      const r = await fetchJSON('/api/lab/run', { method: 'POST', timeoutMs: 16000, body: {
+        dataset: document.getElementById('labDs').value,
+        symbols: syms,
+        last_bars: parseInt(document.getElementById('labBars').value, 10),
+        confidence_threshold: parseFloat(document.getElementById('labConf').value),
+        balance: parseFloat(document.getElementById('labBal').value) || 10000,
+      }});
+      if (!r.ok) {
+        e.target.disabled = false;
+        msg.textContent = r.data?.detail || r.data?.error || 'Could not start the run.';
+        return;
+      }
+      const jobId = r.data.job_id;
+      const started = Date.now();
+      msg.textContent = 'Running…';
+      if (pollTimer) clearInterval(pollTimer);
+      pollTimer = setInterval(async () => {
+        if (!document.getElementById('labMsg')) { clearInterval(pollTimer); pollTimer = null; return; }
+        const st = await fetchJSON(`/api/lab/status/${jobId}`, { timeoutMs: 16000 });
+        if (!st.ok) return;
+        const s = st.data;
+        if (s.status === 'running') {
+          msg.textContent = `Running… ${Math.round((Date.now() - started) / 1000)}s (analyzing every bar, be patient)`;
+          return;
+        }
+        clearInterval(pollTimer); pollTimer = null;
+        e.target.disabled = false;
+        if (s.status === 'error') { msg.textContent = s.error || 'Run failed.'; return; }
+        msg.textContent = 'Done.';
+        drawLabResult(s.result, s.params);
+      }, 3000);
+    });
+
+    function drawLabResult(res, params) {
+      const panel = document.getElementById('p-labres');
+      const host = C('labres');
+      if (!panel || !host || !res) return;
+      panel.hidden = false;
+      const pct = v => (v == null ? '—' : `${v >= 0 ? '+' : ''}${(+v).toFixed(2)}%`);
+      const usd = v => (v == null ? '—' : `${v < 0 ? '-' : ''}$${Math.abs(+v).toLocaleString(undefined, { maximumFractionDigits: 2 })}`);
+      const tiles = [
+        ['Return', pct(res.total_return_pct), pnlClass(res.total_return_pct)],
+        ['Net PnL', usd(res.net_pnl), pnlClass(res.net_pnl)],
+        ['Profit factor', res.profit_factor?.toFixed(2) ?? '—', pnlClass((res.profit_factor || 1) - 1)],
+        ['Win rate', res.win_rate != null ? `${(res.win_rate * 100).toFixed(0)}%` : '—', ''],
+        ['Max drawdown', res.max_drawdown_pct != null ? `${res.max_drawdown_pct.toFixed(2)}%` : '—', 'neg'],
+        ['Sharpe', res.sharpe_ratio?.toFixed(2) ?? '—', ''],
+        ['Trades', res.total_trades ?? '—', ''],
+      ];
+      const curve = res.equity_curve_points || [];
+      let curveSvg = '';
+      if (curve.length >= 2) {
+        const W = 1000, H = 200, P = 6;
+        const ys = curve.map(p => p.equity);
+        const y0 = Math.min(...ys), y1 = Math.max(...ys);
+        const pts = curve.map((p, i) => `${(P + (W - 2 * P) * i / (curve.length - 1)).toFixed(1)},${(H - P - (H - 2 * P) * (y1 === y0 ? 0.5 : (p.equity - y0) / (y1 - y0))).toFixed(1)}`).join(' ');
+        const up = ys[ys.length - 1] >= ys[0];
+        curveSvg = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style="width:100%;height:170px;display:block;margin-top:var(--s3)" role="img" aria-label="Backtest equity curve">
+          <polyline points="${pts}" fill="none" stroke="${up ? '#2fbf71' : '#e5484d'}" stroke-width="2" vector-effect="non-scaling-stroke"/></svg>`;
+      }
+      const perSym = res.per_symbol ? Object.entries(res.per_symbol) : [];
+      host.innerHTML = `
+        <p class="muted small">${esc(params?.dataset || '')} · ${esc((params?.symbols || []).join(', '))} · ${esc(String(params?.last_bars || ''))} bars · honest fees/fills · frozen data</p>
+        <div class="grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:var(--s2);margin-top:var(--s3)">
+          ${tiles.map(([k, v, c]) => `<div class="stat"><div class="k">${esc(k)}</div><div class="v num ${c}">${esc(String(v))}</div></div>`).join('')}
+        </div>
+        ${curveSvg}
+        ${perSym.length ? `<div class="tbl-wrap mt-3"><table class="tbl">
+          <thead><tr><th>Symbol</th><th class="r">Trades</th><th class="r">Net PnL</th><th class="r">Win rate</th></tr></thead>
+          <tbody>${perSym.map(([s, row]) => `<tr><td>${esc(s.replace(':USDT', '').replace('/USDT', ''))}</td>
+            <td class="num r">${row.trades}</td>
+            <td class="num r ${pnlClass(row.net_pnl)}">${usd(row.net_pnl)}</td>
+            <td class="num r">${(row.win_rate * 100).toFixed(0)}%</td></tr>`).join('')}</tbody></table></div>` : ''}
+        <p class="muted small mt-3">Past simulated performance does not guarantee future results.</p>`;
+      panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }
+
   /* ═══════════════ Boot ═══════════════ */
   const RENDER = { home: renderHome, chat: renderChat, markets: renderMarkets, signals: renderSignals,
                    trade: renderTrade, portfolio: renderPortfolio, leaderboard: renderLeaderboard,
-                   engine: renderEngine, account: renderAccount };
+                   lab: renderLab, engine: renderEngine, account: renderAccount };
 
   window.addEventListener('hashchange', () => showView(location.hash.slice(1) || 'home'));
 
