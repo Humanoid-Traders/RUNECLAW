@@ -11,7 +11,9 @@ meaningfully different rates per venue, which matters twice:
      is delta-neutral and collects the spread (the roadmap's funding-arb
      backbone; this radar is its measurement layer).
 
-Everything here is informational: one GET/POST per venue, normalized to
+Complements bot.core.cross_venue (the single-symbol /funding deep view,
+ccxt-based with a bulk cache): this module is the MULTI-symbol scan that
+ranks spreads. Everything here is informational: one GET/POST per venue, normalized to
 annualized percent (APR) so an 8h Bitget rate and an hourly Hyperliquid
 rate are directly comparable. Every fetch is fail-soft — a venue that is
 unreachable (e.g. Bybit is geo-fenced in some regions) simply drops out of

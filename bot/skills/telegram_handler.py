@@ -345,8 +345,9 @@ class TelegramHandler:
             # Admin: stake/redeem flexible Earn (button-confirmed money path)
             ("stake", self._cmd_stake),
             ("unstake", self._cmd_unstake),
-            # Cross-venue perp funding comparison (read-only, public data)
-            ("funding", self._cmd_funding),
+            # Multi-symbol funding-spread scan (read-only, public data);
+            # /funding (above) stays the single-symbol deep view.
+            ("fundingscan", self._cmd_fundingscan),
             # Admin: which secrets are vault-protected vs still missing
             ("vault", self._cmd_vault),
             # Confidence calibration (admin)
@@ -3990,11 +3991,13 @@ class TelegramHandler:
             await self._send(update,
                 "🔴 Could not build the stake plan — nothing was moved.")
 
-    async def _cmd_funding(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-        """/funding [SYMBOLS…] — annualized perp funding across Bitget, Bybit
-        and Hyperliquid, widest spread first. Read-only public data; the
-        measurement layer for the funding-arb roadmap item. Defaults to the
-        open positions' coins plus the majors."""
+    async def _cmd_fundingscan(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """/fundingscan [SYMBOLS…] — annualized funding across Bitget, Bybit
+        and Hyperliquid for MANY coins at once, widest spread first, with the
+        delta-neutral direction. Complements /funding (the single-symbol deep
+        view via bot.core.cross_venue). Read-only public data; the measurement
+        layer for the funding-arb roadmap item. Defaults to the open
+        positions' coins plus the majors."""
         if not await self._guard(update, "status"):
             return
         await self._send(update, "⏳ Comparing funding across venues…")
