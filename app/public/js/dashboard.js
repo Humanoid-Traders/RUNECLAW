@@ -15,6 +15,7 @@
 
   const VIEWS = [
     { id: 'home',      label: 'Home',      icon: 'icon-home' },
+    { id: 'chat',      label: 'AI Chat',   icon: 'icon-chat' },
     { id: 'markets',   label: 'Markets',   icon: 'icon-globe' },
     { id: 'signals',   label: 'Signals',   icon: 'icon-radar' },
     { id: 'trade',     label: 'Trade',     icon: 'icon-target' },
@@ -109,6 +110,9 @@
     viewTimers = [];
     renderNav(id);
     window.scrollTo({ top: 0 });
+    // Pull the docked chat back out before the container is wiped; the chat
+    // view re-docks it. Other views keep the floating FAB.
+    if (window.RCChat) window.RCChat.unmountInline();
     RENDER[id]();
   }
 
@@ -764,6 +768,7 @@
           <section class="panel" id="p-breakdown"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-chart"></use></svg>By symbol</h2><div id="c-breakdown"><div class="skel"></div></div></section>
           <section class="panel" id="p-cal"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-coin"></use></svg>Daily PnL — last 4 weeks</h2><div id="c-cal"><div class="skel"></div></div></section>
         </div>
+        <section class="panel" id="p-edge"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-bolt"></use></svg>Edge metrics — the numbers pro desks track</h2><div id="c-edge"><div class="skel"></div></div></section>
         <section class="panel" id="p-hist"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-coin"></use></svg>Trade history & journal</h2><div id="c-hist"><div class="skel"></div><div class="skel"></div></div></section>
       </div>`);
 
@@ -832,6 +837,42 @@
         <p class="muted small mt-2">One cell per day, newest bottom-right. + profit · − loss.</p>`;
     }, { empty: { text: 'Your daily PnL calendar fills as trades close.' } });
 
+    // Edge metrics — expectancy, payoff ratio, streaks, hold time: the numbers
+    // professional traders manage by. All computed client-side from the same
+    // closed-trade history the calendar uses; nothing is invented.
+    renderPanel(C('edge'), async () => {
+      const r = await fetchJSON('/api/trades/history?limit=200');
+      const trades = (r.data?.trades || []).filter(t => t.closed_at);
+      if (trades.length < 2) return null;
+      const pnls = trades.map(t => parseFloat(t.pnl) || 0);
+      const wins = pnls.filter(p => p > 0), losses = pnls.filter(p => p < 0);
+      const expectancy = pnls.reduce((a, b) => a + b, 0) / pnls.length;
+      const avgWin = wins.length ? wins.reduce((a, b) => a + b, 0) / wins.length : 0;
+      const avgLoss = losses.length ? Math.abs(losses.reduce((a, b) => a + b, 0) / losses.length) : 0;
+      const payoff = avgLoss > 0 ? avgWin / avgLoss : null;
+      // Streaks over trades ordered oldest -> newest (history arrives newest-first).
+      let winStreak = 0, lossStreak = 0, curW = 0, curL = 0;
+      [...pnls].reverse().forEach(p => {
+        if (p > 0) { curW++; curL = 0; } else if (p < 0) { curL++; curW = 0; }
+        winStreak = Math.max(winStreak, curW); lossStreak = Math.max(lossStreak, curL);
+      });
+      const holds = trades
+        .map(t => (new Date(t.closed_at) - new Date(t.opened_at)) / 3600000)
+        .filter(h => isFinite(h) && h >= 0);
+      const avgHold = holds.length ? holds.reduce((a, b) => a + b, 0) / holds.length : null;
+      const holdTxt = avgHold == null ? '—' : avgHold >= 48 ? `${fmt(avgHold / 24, 1)}d` : `${fmt(avgHold, 1)}h`;
+      const best = Math.max(...pnls), worst = Math.min(...pnls);
+      return `<div class="stat-row">
+        <div class="stat"><div class="k">Expectancy / trade</div><div class="v num ${pnlClass(expectancy)}">${signed(expectancy)}</div></div>
+        <div class="stat"><div class="k">Payoff (avg win / loss)</div><div class="v">${payoff == null ? '—' : fmt(payoff)}</div></div>
+        <div class="stat"><div class="k">Best streak</div><div class="v">${winStreak}W</div></div>
+        <div class="stat"><div class="k">Worst streak</div><div class="v">${lossStreak}L</div></div>
+        <div class="stat"><div class="k">Avg hold</div><div class="v">${holdTxt}</div></div>
+        <div class="stat"><div class="k">Best / worst</div><div class="v num"><span class="${pnlClass(best)}">${signed(best)}</span> / <span class="${pnlClass(worst)}">${signed(worst)}</span></div></div>
+      </div>
+      <p class="muted small mt-2">Positive expectancy with payoff ≥ 1 is a durable edge. Ask the AI analyst to review any of it.</p>`;
+    }, { empty: { icon: 'icon-bolt', text: 'Edge metrics unlock after a couple of closed trades.' } });
+
     renderPanel(C('hist'), async () => {
       const r = await fetchJSON('/api/trades/history?limit=25');
       const trades = r.data?.trades || [];
@@ -847,6 +888,7 @@
             <td data-label="Note"><div class="row" style="gap:6px;align-items:center">
               <input class="input" style="padding:4px 8px;font-size:var(--fs-xs);min-width:110px" placeholder="Add note…" value="${esc(t.notes || '')}" data-trade-id="${t.id}" aria-label="Journal note for ${esc(t.symbol)}">
               <button class="btn btn--sm share-trade" type="button" title="Share this trade" aria-label="Share ${esc(String(t.symbol).split('/')[0])} trade" data-sym="${esc(String(t.symbol).split('/')[0])}" data-dir="${esc(t.direction)}" data-entry="${esc(String(t.entry_price))}" data-exit="${esc(String(t.exit_price))}">Share</button>
+              <button class="btn btn--sm ask-ai" type="button" title="Ask the AI analyst to post-mortem this trade" aria-label="Post-mortem ${esc(String(t.symbol).split('/')[0])} trade with the AI analyst" data-sym="${esc(String(t.symbol).split('/')[0])}" data-dir="${esc(t.direction)}" data-entry="${esc(String(t.entry_price))}" data-exit="${esc(String(t.exit_price))}" data-pnl="${esc(String(t.pnl))}">Ask AI</button>
             </div></td>
           </tr>`).join('')}</tbody></table></div>`;
     }, { empty: { icon: 'icon-coin', text: 'No closed trades yet — your history and journal live here.', cta: { label: 'Place a paper trade', href: '#trade' } } });
@@ -863,6 +905,19 @@
     // amount, so account size never leaks), carrying the user's invite link so
     // a shared win also recruits. Native share sheet when available, else a
     // Telegram share intent.
+    // Post-mortem coaching: hand the trade to the AI analyst (drawer opens in
+    // place) with a prompt a trading coach would actually answer.
+    container.addEventListener('click', (e) => {
+      const btn = e.target.closest('.ask-ai');
+      if (!btn || !window.RCChat) return;
+      const { sym, dir, entry, exit, pnl } = btn.dataset;
+      const won = (parseFloat(pnl) || 0) >= 0;
+      window.RCChat.ask(
+        `Post-mortem my ${dir} ${sym} trade: entry ${entry}, exit ${exit}, ` +
+        `PnL ${pnl}. It ${won ? 'won' : 'lost'} — what did I do right or wrong, ` +
+        `and what should I look for before taking this setup again?`);
+    });
+
     container.addEventListener('click', async (e) => {
       const btn = e.target.closest('.share-trade');
       if (!btn) return;
@@ -1340,8 +1395,19 @@
     });
   }
 
+  /* ═══════════════ AI CHAT (docked) ═══════════════ */
+  async function renderChat() {
+    container.innerHTML = viewHead('AI Analyst',
+      'The same agent that runs the Telegram bot — portfolio-aware, trade-capable.') +
+      '<div id="chatInlineHost"></div>';
+    if (window.RCChat) {
+      window.RCChat.mountInline(document.getElementById('chatInlineHost'));
+      window.RCChat.focus();
+    }
+  }
+
   /* ═══════════════ Boot ═══════════════ */
-  const RENDER = { home: renderHome, markets: renderMarkets, signals: renderSignals,
+  const RENDER = { home: renderHome, chat: renderChat, markets: renderMarkets, signals: renderSignals,
                    trade: renderTrade, portfolio: renderPortfolio, leaderboard: renderLeaderboard,
                    engine: renderEngine, account: renderAccount };
 

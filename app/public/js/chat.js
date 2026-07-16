@@ -27,9 +27,48 @@
   let open = false;
   let busy = false;
   let hydrated = false;
+  let inline = false;   // docked in the page flow (no overlay, no focus trap)
   const a11y = modalA11y(drawer);
 
+  // ── Inline mode ──────────────────────────────────────────────────────────
+  // The same chat, docked INTO the page (landing section / dashboard view)
+  // instead of floating over it. Inline is not a modal: no inert/focus trap,
+  // no FAB, no close button (CSS hides it). mountInline moves the single
+  // drawer node into the host; unmountInline returns it to the floating state.
+  function mountInline(host) {
+    if (!host) return;
+    if (open) setOpen(false);           // never both overlay and inline
+    inline = true;
+    host.appendChild(drawer);
+    drawer.classList.add('chat--inline');
+    drawer.classList.remove('hidden'); drawer.hidden = false;
+    fab.classList.add('hidden'); fab.hidden = true;
+    if (!hydrated) hydrate().then(renderChips); else renderChips();
+    loadMeta();
+  }
+  function unmountInline() {
+    if (!inline) return;
+    inline = false;
+    drawer.classList.remove('chat--inline');
+    drawer.classList.add('hidden'); drawer.hidden = true;
+    document.body.appendChild(drawer);  // back to its floating anchor
+    fab.classList.remove('hidden'); fab.hidden = false;
+  }
+  // ask(text): open the chat wherever it lives (docked or drawer) and send —
+  // lets any page element hand a question to the agent (journal post-mortems,
+  // setup reviews). send() is a hoisted declaration below.
+  function ask(text) {
+    if (!text) return;
+    if (!inline) setOpen(true);
+    // Through the composer (not send(text)): the retry path skips appending
+    // the user bubble, which is only correct when the bubble already exists.
+    input.value = String(text);
+    send();
+  }
+  window.RCChat = { mountInline, unmountInline, ask, focus: () => input.focus() };
+
   function setOpen(v) {
+    if (inline) return;                 // docked in the page — nothing to toggle
     if (v === open) return;
     open = v;
     // Toggle BOTH the class and the native attribute: the attribute keeps the
@@ -184,8 +223,10 @@
     'What is a liquidity sweep?', 'How does leverage work?',
     'Which exchanges are supported?',
   ] : [
-    'Scan the market', 'Show my positions', "What's my risk?",
-    "How's my PnL?", 'Analyze BTC',
+    // Pro-desk workflow: brief -> find conviction -> execute -> review.
+    'Give me a market briefing', "What's the highest-conviction setup right now?",
+    'Show my positions', 'Post-mortem my last trade',
+    'Review my risk like a prop-desk risk manager',
   ];
   const chipsEl = document.getElementById('chatChips');
   function hideChips() { if (chipsEl) chipsEl.innerHTML = ''; }
@@ -242,6 +283,12 @@
         // user-gateway isn't reachable/configured.
         console.warn('[chat] gateway 503 — set WEB_GATEWAY_SECRET (same on website + bot) and BOT_GATEWAY_URL, then redeploy both.');
       }
+      else if (r.data?.error === 'gateway_disabled' || r.status === 502) {
+        // Pairing problem between website and bot — an operator issue, not the
+        // visitor's. Say so plainly; keep the actionable detail in the console.
+        appendMsg('bot', 'Chat isn\'t connected on this deployment yet — the operator is being notified. Please check back soon.');
+        console.warn('[chat] bot gateway rejected the shared secret — set the SAME WEB_GATEWAY_SECRET on the bot (env or admin /setgateway) and the website.');
+      }
       else if (!r.ok) appendFailure(`<b>Error:</b> ${esc(r.data?.detail || r.data?.error || 'chat unavailable')}`, text);
       else if (r.data.pending_trade) appendTradeCard(r.data.pending_trade);
       else {
@@ -267,6 +314,10 @@
   // Now the drawer always opens; if the gateway is unconfigured/unreachable the
   // composer says so on send (503), which is self-diagnosing instead of silent.
   async function init() {
+    // A page that ships a host element gets the chat docked IN the page
+    // (landing). Pages without one keep the floating FAB + drawer.
+    const host = document.getElementById('chatInlineHost');
+    if (host) { mountInline(host); return; }
     fab.classList.remove('hidden');
     fab.hidden = false;
   }

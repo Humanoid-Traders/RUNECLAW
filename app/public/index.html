@@ -14,7 +14,7 @@
 <link rel="manifest" href="/manifest.json">
 <meta name="theme-color" content="#0a0b10">
 <link rel="preload" href="/fonts/cinzel-700.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="stylesheet" href="/styles.css?v=7">
+<link rel="stylesheet" href="/styles.css?v=8">
 <style>
   /* Page-local composition only — all tokens/components come from styles.css */
   .btn-block { width: 100%; }
@@ -55,6 +55,14 @@
     <a class="btn" href="/dashboard">View the dashboard</a>
   </div>
 </header>
+
+<section class="section" aria-labelledby="ask-h">
+  <div class="section-head">
+    <h2 id="ask-h">Talk to it, right here</h2>
+    <p>This is the live analyst — the same one behind the Telegram bot. Ask it anything; no account needed.</p>
+  </div>
+  <div id="chatInlineHost"></div>
+</section>
 
 <section class="section" aria-labelledby="features-h">
   <div class="section-head">
@@ -214,7 +222,7 @@
 
 <script src="/js/icons.js?v=3"></script>
 <script src="/js/app.js?v=3"></script>
-<script src="/js/chat.js?v=6" defer></script>
+<script src="/js/chat.js?v=7" defer></script>
 <script>
 const API='/api';
 let SESSION=null;
