@@ -312,6 +312,62 @@ def routing_for_user_tier(user_tier) -> "Optional[dict]":
     return USER_TIER_ROUTING.get(str(user_tier).strip().lower())
 
 
+# ── Runtime tier overrides (admin /settier) ─────────────────────────
+# {LLMTier: {"provider": LLMProvider, "model": str}} — set at runtime by the
+# operator to promote a tier without a restart or env edit (THE promotion
+# path after a winning /llmab shadow A/B: `/settier chat runeclaw`).
+# Highest priority in resolve_tier_config; the non-admin Anthropic guard
+# still applies on every resolution.
+_RUNTIME_TIER_OVERRIDES: dict = {}
+
+_PROVIDER_KEY_ENV = {
+    LLMProvider.GEMINI: "GEMINI_API_KEY",
+    LLMProvider.ANTHROPIC: "ANTHROPIC_API_KEY",
+    LLMProvider.GROQ: "GROQ_API_KEY",
+    LLMProvider.DEEPSEEK: "DEEPSEEK_API_KEY",
+    LLMProvider.OPENAI: "OPENAI_API_KEY",
+    LLMProvider.ALIBABA: "ALIBABA_API_KEY",
+    LLMProvider.MISTRAL: "MISTRAL_API_KEY",
+    LLMProvider.TOGETHER: "TOGETHER_API_KEY",
+    LLMProvider.OPENROUTER: "OPENROUTER_API_KEY",
+    LLMProvider.RUNECLAW: "RUNECLAW_LLM_API_KEY",
+}
+
+_KEYLESS_PROVIDERS = (LLMProvider.OLLAMA, LLMProvider.RUNECLAW)
+
+
+def set_tier_override(tier: "LLMTier", provider: "LLMProvider",
+                      model: str = "") -> tuple[bool, str]:
+    """Set a runtime routing override for one tier. Returns (ok, detail).
+
+    Validates that the provider is actually usable (a key exists in env, or
+    the provider is keyless-local) BEFORE storing — a bad override must fail
+    loudly at set time, not silently break every call of that tier."""
+    if provider not in _KEYLESS_PROVIDERS and not os.getenv(
+            _PROVIDER_KEY_ENV.get(provider, ""), ""):
+        return False, (f"no key found for {provider.value} "
+                       f"(set {_PROVIDER_KEY_ENV.get(provider, 'its key env')} first)")
+    _RUNTIME_TIER_OVERRIDES[tier] = {"provider": provider, "model": model}
+    catalog = PROVIDER_CATALOG.get(provider, {})
+    return True, (f"{tier.value} → {provider.value}/"
+                  f"{model or catalog.get('default_model', 'default')}")
+
+
+def clear_tier_override(tier: "Optional[LLMTier]" = None) -> int:
+    """Clear one tier's runtime override, or all when tier is None."""
+    if tier is not None:
+        return 1 if _RUNTIME_TIER_OVERRIDES.pop(tier, None) is not None else 0
+    n = len(_RUNTIME_TIER_OVERRIDES)
+    _RUNTIME_TIER_OVERRIDES.clear()
+    return n
+
+
+def get_tier_overrides() -> dict:
+    """Snapshot of the runtime tier overrides (for /llmstatus display)."""
+    return {t.value: {"provider": o["provider"].value, "model": o["model"]}
+            for t, o in _RUNTIME_TIER_OVERRIDES.items()}
+
+
 def resolve_tier_config(
     tier: LLMTier,
     primary_config: "LLMConfig",
@@ -338,6 +394,32 @@ def resolve_tier_config(
     is skipped in favor of the next step, so a non-admin caller can never be
     handed the admin's Claude key regardless of how routing is configured.
     """
+    # 0. Runtime override (admin /settier) — highest priority, applies to
+    # every caller of the tier. The non-admin Anthropic guard still holds:
+    # an Anthropic override only resolves for admin callers; everyone else
+    # falls through to the normal steps below.
+    _rt = _RUNTIME_TIER_OVERRIDES.get(tier)
+    if _rt is not None:
+        _rt_provider = _rt["provider"]
+        if is_admin or _rt_provider != LLMProvider.ANTHROPIC:
+            if _rt_provider == LLMProvider.ANTHROPIC:
+                from bot.llm import key_health as _kh
+                _src, _rt_key = _kh.pick_anthropic_key(
+                    primary_config, BYOK._runtime_config)
+            else:
+                _rt_key = os.getenv(_PROVIDER_KEY_ENV.get(_rt_provider, ""), "")
+                if not _rt_key and _rt_provider == primary_config.provider:
+                    _rt_key = primary_config.api_key
+            if _rt_key or _rt_provider in _KEYLESS_PROVIDERS:
+                _rt_catalog = PROVIDER_CATALOG.get(_rt_provider, {})
+                return LLMConfig(
+                    provider=_rt_provider,
+                    api_key=_rt_key or "",
+                    model=_rt["model"] or _rt_catalog.get("default_model", ""),
+                    base_url=_rt_catalog.get("base_url", ""),
+                )
+        # No usable key / non-admin Anthropic → normal resolution below.
+
     # routing_override (user-tier table) or admin → premium routing, skip env
     # tier overrides; otherwise the default cheap routing.
     use_table_directly = routing_override is not None or is_admin

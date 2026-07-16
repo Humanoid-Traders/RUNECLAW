@@ -126,9 +126,11 @@ class FakeHandler:
         return self.users.can_trade_live(tg)
 
     async def _llm_chat(self, q, user_id="", user_name="", is_admin=False,
-                        public=False, profile_note=""):
+                        public=False, profile_note="", return_meta=False):
         self.llm_calls.append((q, user_id, is_admin, public))
         self.llm_profile_notes.append(profile_note)
+        if return_meta:
+            return "llm answer", {"provider": "runeclaw", "model": "runeclaw-v6"}
         return "llm answer"
 
 
@@ -231,7 +233,11 @@ async def test_chat_open_to_regular_authorized_user(monkeypatch):
         r = await c.post("/chat", json={"telegram_id": "7", "text": "how are you"},
                          headers=HDRS)
         assert r.status == 200
-        assert (await r.json())["reply_html"] == "llm answer"
+        body = await r.json()
+        assert body["reply_html"] == "llm answer"
+        # Model transparency: the reply says WHICH model answered.
+        assert body["model"] == "runeclaw-v6"
+        assert body["provider"] == "runeclaw"
 
 
 async def test_chat_passes_filtered_profile_note_to_llm(monkeypatch):

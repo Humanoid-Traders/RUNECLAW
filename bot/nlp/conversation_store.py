@@ -15,6 +15,7 @@ Design constraints:
 from __future__ import annotations
 
 import json
+import os
 import threading
 import time
 from collections import OrderedDict
@@ -325,8 +326,37 @@ class ConversationStore:
                 if len(self._conversations[uid]) > self._max_messages:
                     self._conversations[uid] = \
                         self._conversations[uid][-self._max_messages:]
+            self._maybe_compact()
         except OSError:
             pass
+
+    # Rewrite the JSONL from retained in-memory state once the on-disk file
+    # outgrows what memory keeps. The file is append-only and was NEVER
+    # pruned, so a long-lived bot re-parsed an ever-growing history on every
+    # restart while keeping only max_messages/user of it.
+    COMPACT_THRESHOLD_LINES = 5000
+
+    def _maybe_compact(self) -> None:
+        try:
+            with open(self._persist_path) as f:
+                raw_lines = sum(1 for _ in f)
+            retained = sum(len(v) for v in self._conversations.values())
+            if raw_lines <= max(self.COMPACT_THRESHOLD_LINES, retained):
+                return
+            tmp = self._persist_path.with_suffix(".jsonl.tmp")
+            with open(tmp, "w") as f:
+                for uid, msgs in self._conversations.items():
+                    for msg in msgs:
+                        f.write(json.dumps({
+                            "user_id": uid,
+                            "role": msg.role,
+                            "content": msg.content[:2000],
+                            "timestamp": msg.timestamp,
+                            "metadata": msg.metadata,
+                        }) + "\n")
+            os.replace(tmp, self._persist_path)
+        except OSError:
+            pass  # compaction is an optimization, never a requirement
 
     def stats(self) -> dict:
         """Return store statistics."""
