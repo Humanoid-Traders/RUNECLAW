@@ -239,6 +239,41 @@ def _build_scan_payload(results: list[dict], engine=None) -> dict:
         except Exception as exc:
             log.warning("Failed to fetch live exchange data: %s", exc)
 
+    if _live_mode and (not live_data_loaded or not cb_equity):
+        # Venue-aware fallback: prefer the engine's live-balance cache, which
+        # the engine tick refreshes every cycle through the AUTHENTICATED live
+        # executor — the same path that actually places trades. The parallel
+        # Bitget-only readout above fails independently of it (vault-restored
+        # creds it can't see, a /venue switch, UTA balance quirks), which left
+        # the dashboard stuck on "balance unavailable" while the bot traded
+        # fine. Never fabricates: an empty cache still reports unavailable.
+        try:
+            cache = getattr(engine, "_live_balance_cache", None) if engine else None
+            total = float(cache.get("total", 0) or 0) if isinstance(cache, dict) else 0.0
+            if total > 0:
+                cb_equity = round(total, 2)
+                if not cb_open_positions:
+                    ex_pos = list(getattr(getattr(engine, "live_executor", None),
+                                          "open_positions", []) or [])
+                    for p in ex_pos:
+                        cb_open_positions.append({
+                            "symbol": str(getattr(p, "symbol", "") or "").replace("/", ""),
+                            "direction": str(getattr(p, "direction", "") or "").upper(),
+                            "entry_price": float(getattr(p, "entry_price", 0) or 0),
+                            "contracts": float(getattr(p, "quantity", 0) or 0),
+                            "notional": float(getattr(p, "quantity", 0) or 0)
+                                        * float(getattr(p, "entry_price", 0) or 0),
+                            "unrealized_pnl": 0.0,
+                            "margin": 0.0,
+                            "leverage": "",
+                        })
+                    cb_open_count = len(cb_open_positions)
+                live_data_loaded = True
+                log.info("Live equity from engine balance cache: $%.2f "
+                         "(parallel exchange readout unavailable)", total)
+        except Exception as exc:
+            log.debug("Engine balance-cache fallback failed: %s", exc)
+
     if _live_mode and not live_data_loaded:
         # Live mode but the exchange balance could not be read. Do NOT
         # masquerade the $10k paper baseline as the live account (that made the

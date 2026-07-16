@@ -42,7 +42,9 @@ def _post(path: str, data: dict) -> Optional[dict]:
             "Content-Type": "application/json",
             "Accept": "application/json",
             "User-Agent": "RUNECLAW-Bot/1.0",
-            "X-Bot-Secret": SYNC_SECRET,
+            # Read the env per request (not only import time) so a vault
+            # restore or admin repair takes effect without a restart.
+            "X-Bot-Secret": os.getenv("BOT_SYNC_SECRET", "") or SYNC_SECRET,
         },
         method="POST",
     )

@@ -720,7 +720,10 @@ class RuneClawEngine:
 
         positions = [_open_dict(p) for p in executor.open_positions]
         closed = [_closed_dict(p) for p in executor.closed_positions[-50:]]
-        equity = self.get_effective_equity()
+        # Truthful equity: in LIVE mode with an empty balance cache this must
+        # send None (website renders "unavailable"), never the paper baseline
+        # that get_effective_equity() silently falls back to.
+        equity, _eq_src = self.resolve_display_equity_sync()
         user_id = getattr(executor, "user_id", None) or 1
         sync_in_background(user_id, equity, positions, closed)
 
