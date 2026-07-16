@@ -125,6 +125,12 @@ class ProactiveMonitor:
         self._last_idle_nudge: float = 0.0   # monotonic ts of the last nudge sent
         # Daily digest: morning plan + evening wrap, sent once per UTC day each.
         self._digest_sent: dict[str, str] = {}   # kind -> "YYYY-MM-DD" last sent
+        # Funding-arb paper tracker: hourly background snapshot + per-coin
+        # per-day big-spread alert dedup. The send_fn is captured by run()
+        # so the background task can dispatch outside the check cycle.
+        self._last_arb_snapshot: float = 0.0
+        self._arb_alerted: set = set()
+        self._arb_send_fn = None
         # Optional async callback(chat_id, idea) -> None to push a setup chart
         # alongside a signal alert. Set via set_chart_fn(); never required.
         self._chart_fn: Optional[Callable] = None
@@ -242,6 +248,7 @@ class ProactiveMonitor:
     async def run(self, send_fn) -> None:
         """Main monitor loop. Runs until stopped."""
         self._running = True
+        self._arb_send_fn = send_fn
         logger.info("Proactive monitor started")
 
         while self._running:
@@ -287,6 +294,67 @@ class ProactiveMonitor:
         alerts.extend(self._check_idle_cash())
         alerts.extend(self._check_daily_digest())
         alerts.extend(self._check_parity_digest())
+        alerts.extend(self._check_arb_tracker())
+        return alerts
+
+    # ── Funding-arb paper tracker: hourly snapshot + big-spread alert ─
+
+    def _check_arb_tracker(self) -> list[Alert]:
+        """Once an hour, snapshot cross-venue funding spreads (background
+        thread — three public HTTP calls must never block the monitor loop)
+        and alert when a coin's spread crosses the alert threshold. The
+        tracker is 100% paper: it records and reports, never trades."""
+        if os.environ.get("ARB_TRACKER_ENABLED", "true").strip().lower() \
+                not in ("1", "true", "yes", "on"):
+            return []
+        alerts: list[Alert] = []
+        try:
+            now = time.monotonic()
+            interval_s = self._env_f("ARB_SNAPSHOT_MIN", 60.0) * 60
+            # 0.0 means "never ran" — fire immediately. (monotonic() starts
+            # near zero at boot, so `now - 0 < interval` would wrongly pace
+            # out the first snapshot for up to an hour after every restart.)
+            if self._last_arb_snapshot and now - self._last_arb_snapshot < interval_s:
+                return []
+            self._last_arb_snapshot = now
+            import asyncio as _aio
+
+            async def _snap_and_alert() -> None:
+                try:
+                    from bot.core.arb_tracker import (load_snapshots,
+                                                      snapshot_opportunities)
+                    wrote = await _aio.to_thread(snapshot_opportunities)
+                    if not wrote:
+                        return
+                    threshold = self._env_f("ARB_ALERT_SPREAD_APR", 10.0)
+                    snaps = (await _aio.to_thread(load_snapshots))[-wrote:]
+                    today = datetime.now(UTC).strftime("%Y-%m-%d")
+                    for s in snaps:
+                        spread = float(s.get("spread_apr", 0) or 0)
+                        key = f"arb_{s.get('base')}_{today}"
+                        if spread < threshold or key in self._arb_alerted:
+                            continue
+                        self._arb_alerted.add(key)
+                        alert = Alert(
+                            alert_type="FUNDING_ARB", severity="INFO",
+                            title="Wide funding spread",
+                            body=(f"⚖️ <b>Wide funding spread: "
+                                  f"{s.get('base')}</b>\n\n"
+                                  f"<code>{spread:.1f}%/yr</code> — long "
+                                  f"{s.get('long_venue')} / short "
+                                  f"{s.get('short_venue')}.\n"
+                                  "<i>Info only — /arb shows the paper "
+                                  "tracker; nothing is traded.</i>"),
+                            dedup_key=key)
+                        if self._should_send(alert) and self._arb_send_fn:
+                            await self._dispatch(alert, self._arb_send_fn)
+                            self._mark_sent(alert)
+                except Exception as exc:
+                    logger.debug("arb tracker snapshot failed: %s", exc)
+
+            _aio.get_running_loop().create_task(_snap_and_alert())
+        except Exception as exc:
+            logger.debug("arb tracker check skipped: %s", exc)
         return alerts
 
     # ── Weekly live↔backtest parity digest ────────────────────────
