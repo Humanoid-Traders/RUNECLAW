@@ -14,11 +14,6 @@
 const { pool } = require('../db');
 
 const MAX_ACTIVE_PER_USER = 10;
-// Overridable for tests and for deployments that must route market data
-// through a different host (same Bitget v2 tickers response shape).
-const TICKERS_URL = process.env.ALERTS_TICKERS_URL
-  || 'https://api.bitget.com/api/v2/mix/market/tickers?productType=USDT-FUTURES';
-const TICKERS_TTL_MS = 30_000;
 
 // ── Symbol resolution ────────────────────────────────────────────────────────
 
@@ -112,23 +107,9 @@ function parseAlertCommand(text) {
 
 // ── Ticker source (injectable for tests) ─────────────────────────────────────
 
-let tickersCache = { at: 0, map: null };
-async function defaultFetchTickers() {
-  const now = Date.now();
-  if (tickersCache.map && now - tickersCache.at < TICKERS_TTL_MS) return tickersCache.map;
-  const res = await fetch(TICKERS_URL, { signal: AbortSignal.timeout(10_000) });
-  if (!res.ok) throw new Error(`tickers HTTP ${res.status}`);
-  const data = await res.json();
-  const map = {};
-  for (const t of (data && data.data) || []) {
-    const price = parseFloat(t.lastPr);
-    if (!t.symbol || !isFinite(price)) continue;
-    // Bitget change24h is a decimal fraction (0.0123 = +1.23%).
-    map[t.symbol] = { price, change: (parseFloat(t.change24h) || 0) * 100 };
-  }
-  tickersCache = { at: now, map };
-  return map;
-}
+// Shared source (lib/tickers.js): one fetch + cache for alerts AND the RWA
+// radar. Same map shape as before, plus a volume field the radar uses.
+const defaultFetchTickers = require('./tickers').getTickers;
 let fetchTickers = defaultFetchTickers;
 function setTickerFetcher(fn) { fetchTickers = fn || defaultFetchTickers; }
 

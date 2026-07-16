@@ -176,4 +176,16 @@ router.get('/funding/:symbol', async (req, res) => {
   }
 });
 
+// GET /api/market/rwa — RWA & on-chain radar (read-only market intelligence
+// from the live ticker map; curated universe filtered to actual listings).
+router.get('/rwa', async (req, res) => {
+  try {
+    const radar = await require('../lib/rwa').getRadar();
+    res.setHeader('Cache-Control', 'public, max-age=30');
+    res.json(radar);
+  } catch (err) {
+    res.status(502).json({ error: 'RWA radar unavailable' });
+  }
+});
+
 module.exports = router;

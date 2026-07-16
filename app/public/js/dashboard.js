@@ -667,6 +667,10 @@
           <section class="panel" id="p-xfunding"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-globe"></use></svg>Cross-venue funding</h2><div id="c-xfunding"><div class="skel"></div></div></section>
           <section class="panel" id="p-arb"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-coin"></use></svg>Funding-arb paper tracker</h2><div id="c-arb"><div class="skel"></div></div></section>
         </div>
+        <section class="panel" id="p-rwa"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-coin"></use></svg>RWA &amp; on-chain radar
+          <span class="badge" style="margin-left:auto" title="Market intelligence from live venue tickers — the radar never trades">read-only</span></h2>
+          <div id="c-rwa"><div class="skel"></div><div class="skel"></div></div>
+        </section>
         <section class="panel" id="p-universe"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-globe"></use></svg>Universe
           <span class="right"><label class="visually-hidden" for="uniSearch">Filter symbols</label><input class="input" id="uniSearch" placeholder="Filter…" style="width:130px;padding:5px 9px;font-size:var(--fs-sm)"></span></h2>
           <div id="c-universe"><div class="skel"></div><div class="skel"></div></div>
@@ -676,6 +680,33 @@
     const symSel = document.getElementById('chartSym');
     const DEFAULTS = ['BTCUSDT','ETHUSDT','SOLUSDT','BNBUSDT','XRPUSDT','DOGEUSDT','ADAUSDT','LINKUSDT','AVAXUSDT','SUIUSDT'];
     symSel.innerHTML = DEFAULTS.map(s => `<option value="${s}">${s.replace('USDT','')}/USDT</option>`).join('');
+
+    // RWA & on-chain radar — live sector read from public venue tickers.
+    renderPanel(C('rwa'), async () => {
+      const r = await fetchJSON('/api/market/rwa', { auth: false, timeoutMs: 12000 });
+      const d = r.data;
+      if (!r.ok || !d || !d.sector || !d.sector.listed) return null;
+      const s = d.sector;
+      const chip = (v) => v == null ? '—'
+        : `<b class="num ${v >= 0 ? 'up' : 'down'}">${v >= 0 ? '+' : ''}${fmt(v, 2)}%</b>`;
+      const head = `<p class="muted small">Tokenized real-world assets, read through this venue's live perpetual tickers.
+          Sector 24h (volume-weighted): ${chip(s.change_24h_pct)}${s.vs_btc_pct != null ? ` · vs BTC ${chip(s.vs_btc_pct)}` : ''}
+          · ${s.listed} tokens listed · $${fmtK(s.volume_24h_usd)} volume.
+          Market intelligence only — nothing here trades.</p>`;
+      const cats = d.categories.filter(c => c.listed).map((c) => `
+        <h3 class="small" style="margin:var(--s3) 0 var(--s1);letter-spacing:.06em;text-transform:uppercase;color:var(--text-3)">
+          ${esc(c.title)} <span class="muted">· ${c.listed}/${c.tracked} listed · 24h ${c.change_24h_pct != null ? (c.change_24h_pct >= 0 ? '+' : '') + fmt(c.change_24h_pct, 2) + '%' : '—'}</span></h3>
+        <p class="muted small" style="margin-bottom:var(--s1)">${esc(c.blurb)}</p>
+        <div class="tbl-wrap"><table class="tbl">
+          <thead><tr><th>Token</th><th class="r">Price</th><th class="r">24h</th><th class="r">Volume</th></tr></thead>
+          <tbody>${c.tokens.map(t => `<tr>
+            <td><b>${esc(t.base)}</b></td>
+            <td class="num r">$${fmtPrice(t.price)}</td>
+            <td class="num r ${t.change_24h_pct >= 0 ? 'up' : 'down'}">${t.change_24h_pct >= 0 ? '+' : ''}${fmt(t.change_24h_pct, 2)}%</td>
+            <td class="num r">$${fmtK(t.volume_24h_usd)}</td></tr>`).join('')}</tbody>
+        </table></div>`).join('');
+      return head + cats;
+    }, { empty: { icon: 'icon-coin', text: 'The RWA radar lights up when live tickers are reachable.' } });
 
     // Cross-venue intelligence (one shared fetch; hourly bot-pushed data).
     const reportsP = getReports();
