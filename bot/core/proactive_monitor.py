@@ -1056,12 +1056,26 @@ class ProactiveMonitor:
         return alerts
 
     def _check_trade_signals(self) -> list[Alert]:
-        """Alert when a new trade idea is generated and pending confirmation."""
+        """Alert when a new trade idea is generated and pending confirmation.
+
+        Only higher-conviction ideas ping Telegram: confidence must clear
+        ``risk.signal_display_min_confidence`` (default 0.70). Lower-conviction
+        ideas (0.60-0.70) still queue and trade normally — they just don't
+        message the operator, cutting notification noise. (Auto-execution is a
+        separate, stricter gate: ``auto_confirm_threshold``, default 0.85.)
+        """
         alerts = []
         try:
+            min_alert_conf = CONFIG.risk.signal_display_min_confidence
             for idea_id, idea in list(self.engine._pending_ideas.items()):
                 key = f"signal_{idea_id}"
-                if key not in self._alerted_signals:
+                if key in self._alerted_signals:
+                    continue
+                # Mark seen once so a sub-threshold idea isn't re-evaluated each tick.
+                self._alerted_signals.add(key)
+                # Only higher-conviction ideas message the operator; lower ones
+                # (0.60-0.70) still queue and trade, they just don't ping Telegram.
+                if float(getattr(idea, "confidence", 0.0) or 0.0) >= min_alert_conf:
                     d = "\U0001f7e2 LONG" if idea.direction.value == "LONG" else "\U0001f534 SHORT"
                     risk_amt = abs(idea.entry_price - idea.stop_loss)
                     reward_amt = abs(idea.take_profit - idea.entry_price)
@@ -1088,7 +1102,6 @@ class ProactiveMonitor:
                         dedup_key=key,
                         idea=idea,
                     ))
-                    self._alerted_signals.add(key)
         except Exception as exc:
             logger.debug("_check_trade_signals error: %s", exc)
         return alerts

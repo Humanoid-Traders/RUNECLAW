@@ -145,3 +145,34 @@ def test_stale_balance_alerts_when_old(live, monkeypatch):
 
 def test_stale_balance_quiet_when_never_fetched(live):
     assert _mon(_engine(bal_ts=0.0))._check_stale_balance() == []
+
+
+# ── trade-signal Telegram gate (confidence >= signal_display_min_confidence) ──
+
+def _idea(conf, direction="LONG"):
+    return types.SimpleNamespace(
+        asset="BTC/USDT",
+        direction=types.SimpleNamespace(value=direction),
+        confidence=conf,
+        entry_price=100.0,
+        stop_loss=95.0,
+        take_profit=115.0,
+    )
+
+
+def test_trade_signal_only_alerts_above_display_threshold():
+    # Default risk.signal_display_min_confidence is 0.70: a 0.62 idea still
+    # queues/trades but must NOT ping Telegram; a 0.75 idea does.
+    m = _mon(_engine())
+    m.engine._pending_ideas = {"lo": _idea(0.62), "hi": _idea(0.75)}
+    a = m._check_trade_signals()
+    assert len(a) == 1 and a[0].alert_type == "TRADE_SIGNAL"
+    assert "75%" in a[0].body            # the high-conviction idea messaged
+    # Both ideas are now marked seen -> a second tick is silent (no re-eval).
+    assert m._check_trade_signals() == []
+
+
+def test_trade_signal_at_threshold_alerts():
+    m = _mon(_engine())
+    m.engine._pending_ideas = {"edge": _idea(0.70)}   # exactly at the gate
+    assert len(m._check_trade_signals()) == 1
