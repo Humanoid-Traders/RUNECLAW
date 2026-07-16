@@ -7,6 +7,12 @@ const mailer = require('./lib/mailer');
 const oauth2 = require('./lib/oauth2');
 const { VENUES } = require('./lib/venues');
 
+// Self-custody sign-in verifier — optional dependency. Lazy so the app still
+// boots (and every other auth route works) if ethers isn't installed on a
+// deployment; the wallet routes then report themselves unavailable (503).
+let _ethers = null;
+try { _ethers = require('ethers'); } catch (_) { /* wallet sign-in disabled */ }
+
 const router = express.Router();
 
 // CRITICAL: No fallback secret. Refuse to start if unset or too short.
@@ -461,6 +467,7 @@ const _PROVIDER_ID_COLUMN = {
   telegram: 'telegram_id',
   discord: 'discord_id',
   x: 'x_id',
+  wallet: 'wallet_address',
 };
 
 async function findOrCreateOAuthUser({ provider, providerId, email, avatarUrl }) {
@@ -499,6 +506,8 @@ router.get('/config', (_req, res) => {
     telegram_bot: (TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_BOT_USERNAME) || null,
     // Redirect-based providers (Discord, X) — advertised only when configured.
     oauth_providers: oauth2.configuredProviders(),
+    // Self-custody wallet sign-in is available when the verifier is installed.
+    wallet_login: !!_ethers,
     // Footer social links — operator-set, rendered only when present (no guessing).
     social_links: {
       x: process.env.SOCIAL_X_URL || null,
@@ -509,6 +518,70 @@ router.get('/config', (_req, res) => {
     // the right connect form per venue (public: field names/types, no secrets).
     venues: VENUES,
   });
+});
+
+// -- Self-custody sign-in (Sign-In-With-Ethereum) --
+// The client requests a one-time nonce, signs a plain login message with
+// personal_sign, and posts { address, signature }. The server verifies the
+// signature recovers to the claimed address, consumes the nonce (single-use,
+// short TTL — anti-replay), and finds-or-creates a passwordless account keyed
+// by wallet_address. Non-custodial: the wallet only signs a login message here,
+// it never authorizes a transaction, and no private key ever leaves the wallet.
+const _ADDR_RE = /^0x[a-fA-F0-9]{40}$/;
+const _walletNonces = new Map();   // address(lower) -> { message, expires }
+const _NONCE_TTL_MS = 5 * 60 * 1000;
+
+function _pruneNonces() {
+  const now = Date.now();
+  for (const [k, v] of _walletNonces) if (v.expires < now) _walletNonces.delete(k);
+  if (_walletNonces.size > 5000) {
+    const keys = [..._walletNonces.keys()];
+    for (let i = 0; i < keys.length - 2500; i++) _walletNonces.delete(keys[i]);
+  }
+}
+
+router.post('/wallet/nonce', async (req, res) => {
+  if (!_ethers) return res.status(503).json({ error: 'Wallet sign-in is not available on this deployment.' });
+  const clientIp = req.ip || (req.socket && req.socket.remoteAddress) || 'unknown';
+  if (!checkRateLimit(clientIp)) return res.status(429).json({ error: 'Too many attempts. Try again later.' });
+  const address = String((req.body || {}).address || '').trim();
+  if (!_ADDR_RE.test(address)) return res.status(400).json({ error: 'A valid wallet address is required.' });
+  _pruneNonces();
+  const nonce = crypto.randomBytes(16).toString('hex');
+  const message = 'RUNECLAW — sign in with your wallet.\n\n'
+    + 'This only proves you own this address. It will NOT trigger a transaction or cost gas.\n\n'
+    + `Address: ${address}\nNonce: ${nonce}\nIssued: ${new Date().toISOString()}`;
+  _walletNonces.set(address.toLowerCase(), { message, expires: Date.now() + _NONCE_TTL_MS });
+  res.json({ message });
+});
+
+router.post('/wallet/verify', async (req, res) => {
+  try {
+    if (!_ethers) return res.status(503).json({ error: 'Wallet sign-in is not available on this deployment.' });
+    const address = String((req.body || {}).address || '').trim();
+    const signature = String((req.body || {}).signature || '').trim();
+    if (!_ADDR_RE.test(address) || !signature) {
+      return res.status(400).json({ error: 'Address and signature are required.' });
+    }
+    const rec = _walletNonces.get(address.toLowerCase());
+    if (!rec || rec.expires < Date.now()) {
+      return res.status(400).json({ error: 'Login request expired — please try again.' });
+    }
+    let recovered;
+    try { recovered = _ethers.verifyMessage(rec.message, signature); }
+    catch (_) { return res.status(401).json({ error: 'Signature verification failed.' }); }
+    if (String(recovered).toLowerCase() !== address.toLowerCase()) {
+      return res.status(401).json({ error: 'Signature does not match the wallet.' });
+    }
+    _walletNonces.delete(address.toLowerCase());   // single-use
+    const user = await findOrCreateOAuthUser({
+      provider: 'wallet', providerId: address.toLowerCase(), email: null,
+    });
+    res.json(await sessionResponse(user, { provider: 'wallet' }));
+  } catch (err) {
+    console.error('Wallet verify error:', err.message);
+    res.status(500).json({ error: 'Wallet sign-in failed' });
+  }
 });
 
 // -- Login / register with Telegram (Login Widget) --

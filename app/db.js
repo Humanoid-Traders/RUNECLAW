@@ -174,11 +174,12 @@ class MemoryDB {
       }
       const user = { id: this._nextUserId++, email: params[0], password_hash: null,
         google_id: null, telegram_id: null, discord_id: null, x_id: null,
-        avatar_url: null, plan: 'free',
+        wallet_address: null, avatar_url: null, plan: 'free',
         telegram_linked: false, link_token: null, link_token_expires: null,
         email_verified: false, verify_token: null, verify_token_expires: null,
         reset_token: null, reset_token_expires: null,
-        referral_code: null, referred_by: null, created_at: new Date() };
+        referral_code: null, referred_by: null,
+        leaderboard_handle: null, created_at: new Date() };
       // Column order varies: email/password vs the OAuth passwordless inserts.
       if (cmd.includes('PASSWORD_HASH')) {
         user.password_hash = params[1];
@@ -190,6 +191,8 @@ class MemoryDB {
         user.discord_id = params[1]; user.avatar_url = params[2]; user.telegram_linked = !!params[3];
       } else if (cmd.includes('X_ID')) {
         user.x_id = params[1]; user.avatar_url = params[2]; user.telegram_linked = !!params[3];
+      } else if (cmd.includes('WALLET_ADDRESS')) {
+        user.wallet_address = params[1]; user.avatar_url = params[2]; user.telegram_linked = !!params[3];
       }
       this.users.push(user);
       return [{ insertId: user.id }, []];
@@ -209,6 +212,11 @@ class MemoryDB {
 
     if (cmd.includes('FROM USERS WHERE X_ID')) {
       return [this.users.filter(u => String(u.x_id) === String(params[0])), []];
+    }
+
+    if (cmd.includes('FROM USERS WHERE WALLET_ADDRESS')) {
+      return [this.users.filter(u => u.wallet_address != null
+        && String(u.wallet_address).toLowerCase() === String(params[0]).toLowerCase()), []];
     }
 
     if (cmd.startsWith('UPDATE USERS SET GOOGLE_ID')) {
@@ -235,6 +243,12 @@ class MemoryDB {
       return [{ affectedRows: user ? 1 : 0 }, []];
     }
 
+    if (cmd.startsWith('UPDATE USERS SET WALLET_ADDRESS')) {
+      const user = this.users.find(u => u.id === params[1]);
+      if (user) user.wallet_address = params[0];
+      return [{ affectedRows: user ? 1 : 0 }, []];
+    }
+
     // -- Referral / invite --
     if (cmd.startsWith('UPDATE USERS SET REFERRAL_CODE')) {
       const user = this.users.find(u => u.id === params[1]);
@@ -251,6 +265,20 @@ class MemoryDB {
     }
     if (cmd.includes('FROM USERS WHERE REFERRED_BY')) {
       return [this.users.filter(u => u.referred_by === params[0]), []];
+    }
+
+    // -- Leaderboard opt-in (anonymous handle) --
+    if (cmd.startsWith('UPDATE USERS SET LEADERBOARD_HANDLE')) {
+      const user = this.users.find(u => u.id === params[1]);
+      if (user) user.leaderboard_handle = params[0];  // params[0] may be null (opt-out)
+      return [{ affectedRows: user ? 1 : 0 }, []];
+    }
+    if (cmd.includes('FROM USERS WHERE LEADERBOARD_HANDLE IS NOT NULL')) {
+      return [this.users.filter(u => u.leaderboard_handle != null), []];
+    }
+    if (cmd.includes('FROM USERS WHERE LEADERBOARD_HANDLE')) {  // = ?  (uniqueness check)
+      return [this.users.filter(u => u.leaderboard_handle != null
+        && String(u.leaderboard_handle).toLowerCase() === String(params[0]).toLowerCase()), []];
     }
 
     if (cmd.includes('FROM USERS WHERE EMAIL')) {
@@ -527,6 +555,13 @@ async function migrate() {
     try {
       await pool.execute('ALTER TABLE users ADD COLUMN x_id VARCHAR(64) DEFAULT NULL');
     } catch (e) { /* exists */ }
+    // Self-custody sign-in: the user's EVM wallet address (lowercased, unique).
+    try {
+      await pool.execute('ALTER TABLE users ADD COLUMN wallet_address VARCHAR(42) DEFAULT NULL');
+    } catch (e) { /* exists */ }
+    try {
+      await pool.execute('CREATE UNIQUE INDEX idx_users_wallet_address ON users (wallet_address)');
+    } catch (e) { /* index exists */ }
     try {
       await pool.execute('ALTER TABLE users MODIFY COLUMN password_hash VARCHAR(255) NULL');
     } catch (e) { /* already nullable */ }
@@ -557,6 +592,13 @@ async function migrate() {
     } catch (e) { /* exists */ }
     try {
       await pool.execute('CREATE UNIQUE INDEX idx_users_referral_code ON users (referral_code)');
+    } catch (e) { /* index exists */ }
+    // Leaderboard opt-in: an anonymous display handle (NULL = not on the board).
+    try {
+      await pool.execute('ALTER TABLE users ADD COLUMN leaderboard_handle VARCHAR(24) DEFAULT NULL');
+    } catch (e) { /* exists */ }
+    try {
+      await pool.execute('CREATE UNIQUE INDEX idx_users_leaderboard_handle ON users (leaderboard_handle)');
     } catch (e) { /* index exists */ }
     await pool.execute(`
       CREATE TABLE IF NOT EXISTS trades (
