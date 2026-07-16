@@ -87,12 +87,14 @@ function validateSymbol(sym) {
   return /^[A-Z0-9]{1,15}(\/[A-Z0-9]{1,15})?$/.test(sym);
 }
 
-// GET /api/insight/:symbol?timeframe=1h&limit=200 - Bot decision picture
-// (:symbol contains a slash — the dashboard sends it encodeURIComponent'd,
-// Express decodes it back into req.params.symbol.)
-router.get('/:symbol', async (req, res) => {
+// GET /api/insight?symbol=BTC/USDT&timeframe=1h&limit=200 - Bot decision picture
+// The symbol travels as a QUERY PARAM, not a path segment: several hosting
+// proxies (including the live deployment's) reject the %2F an encoded-slash
+// path segment needs, 404ing at the edge before Express ever sees the request.
+// The legacy /:symbol path form is kept below for old cached clients.
+async function insightHandler(req, res, rawSym) {
   try {
-    const sym = req.params.symbol.toUpperCase();
+    const sym = String(rawSym || '').toUpperCase();
     if (!validateSymbol(sym)) return res.status(400).json({ error: 'Invalid symbol' });
     const tf = req.query.timeframe || '1h';
     if (!/^(1m|5m|15m|30m|1h|2h|4h|6h|12h|1d|1w)$/.test(tf)) return res.status(400).json({ error: 'Invalid timeframe' });
@@ -108,6 +110,9 @@ router.get('/:symbol', async (req, res) => {
   } catch (err) {
     res.status(502).json({ error: 'Failed to fetch insight' });
   }
-});
+}
+
+router.get('/', (req, res) => insightHandler(req, res, req.query.symbol));
+router.get('/:symbol', (req, res) => insightHandler(req, res, req.params.symbol));
 
 module.exports = router;

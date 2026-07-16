@@ -106,15 +106,26 @@ router.get('/ticker/:symbol', async (req, res) => {
   }
 });
 
+// Bitget wraps errors in HTTP 200 ({code:"400171",...}). Surface them as 502
+// so panels show a Retry instead of a false "no data" empty state.
+function relayBitget(res, data) {
+  if (data && data.code && data.code !== '00000') {
+    return res.status(502).json({ error: `Bitget: ${data.msg || data.code}` });
+  }
+  res.json(data);
+}
+
 // GET /api/market/depth/:symbol - Order book (top 5 levels)
 router.get('/depth/:symbol', async (req, res) => {
   try {
     const sym = req.params.symbol.toUpperCase();
     if (!validateSymbol(sym)) return res.status(400).json({ error: 'Invalid symbol' });
+    // merge-depth no longer accepts precision=price (40020) — omit it and let
+    // Bitget use the symbol's native price scale.
     const data = await cached(`depth_${sym}`, 5000, () =>
-      fetchJSON(`https://api.bitget.com/api/v2/mix/market/merge-depth?symbol=${sym}&productType=USDT-FUTURES&precision=price&limit=5`)
+      fetchJSON(`https://api.bitget.com/api/v2/mix/market/merge-depth?symbol=${sym}&productType=USDT-FUTURES&limit=5`)
     )();
-    res.json(data);
+    relayBitget(res, data);
   } catch (err) {
     res.status(502).json({ error: 'Failed to fetch depth' });
   }
@@ -126,12 +137,22 @@ router.get('/candles/:symbol', async (req, res) => {
     const sym = req.params.symbol.toUpperCase();
     if (!validateSymbol(sym)) return res.status(400).json({ error: 'Invalid symbol' });
     const gran = req.query.granularity || '1h';
-    if (!/^(1min|5min|15min|30min|1h|2h|4h|6h|12h|1d|1w)$/.test(gran)) return res.status(400).json({ error: 'Invalid granularity' });
+    if (!/^(1min|5min|15min|30min|1h|2h|4h|6h|12h|1d|1w)$/i.test(gran)) return res.status(400).json({ error: 'Invalid granularity' });
+    // Bitget now requires uppercase hour+ granularities (1H/4H/1D/1W) and
+    // short minute tokens (1m/5m/...) — lowercase "1h" is rejected with
+    // 400171 inside an HTTP 200, which the chart used to render as
+    // "no candle data".
+    const BITGET_GRAN = {
+      '1min': '1m', '5min': '5m', '15min': '15m', '30min': '30m',
+      '1h': '1H', '2h': '2H', '4h': '4H', '6h': '6H', '12h': '12H',
+      '1d': '1D', '1w': '1W',
+    };
+    const bg = BITGET_GRAN[gran.toLowerCase()] || gran;
     const limit = Math.min(parseInt(req.query.limit) || 24, 200);
-    const data = await cached(`candles_${sym}_${gran}`, 15000, () =>
-      fetchJSON(`https://api.bitget.com/api/v2/mix/market/candles?symbol=${sym}&productType=USDT-FUTURES&granularity=${gran}&limit=${limit}`)
+    const data = await cached(`candles_${sym}_${bg}`, 15000, () =>
+      fetchJSON(`https://api.bitget.com/api/v2/mix/market/candles?symbol=${sym}&productType=USDT-FUTURES&granularity=${bg}&limit=${limit}`)
     )();
-    res.json(data);
+    relayBitget(res, data);
   } catch (err) {
     res.status(502).json({ error: 'Failed to fetch candles' });
   }

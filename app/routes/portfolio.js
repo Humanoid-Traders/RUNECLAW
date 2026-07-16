@@ -145,8 +145,8 @@ async function writeThrough(userId, pf) {
   const closed = pf.closed_trades || [];
   if (closed.length) {
     const [existing] = await pool.execute(
-      `SELECT symbol, closed_at, pnl FROM trades WHERE user_id = ? AND status = 'CLOSED' ORDER BY closed_at DESC LIMIT ?`,
-      [userId, 500]);
+      `SELECT symbol, closed_at, pnl FROM trades WHERE user_id = ? AND status = 'CLOSED' ORDER BY closed_at DESC LIMIT 500`,
+      [userId]);
     const seen = new Set(existing.map(t =>
       `${t.symbol}|${new Date(t.closed_at).getTime()}|${parseFloat(t.pnl)}`));
     for (const t of closed) {
