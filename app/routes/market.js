@@ -149,8 +149,12 @@ router.get('/candles/:symbol', async (req, res) => {
     };
     const bg = BITGET_GRAN[gran.toLowerCase()] || gran;
     const limit = Math.min(parseInt(req.query.limit) || 24, 200);
-    const data = await cached(`candles_${sym}_${bg}`, 15000, () =>
-      fetchJSON(`https://api.bitget.com/api/v2/mix/market/candles?symbol=${sym}&productType=USDT-FUTURES&granularity=${bg}&limit=${limit}`)
+    // Optional ms-epoch window (trade replay theater fetches the candles
+    // around a recorded trade). Validated numeric; Bitget ignores unknowns.
+    const startTime = /^\d{10,16}$/.test(String(req.query.startTime || '')) ? `&startTime=${req.query.startTime}` : '';
+    const endTime = /^\d{10,16}$/.test(String(req.query.endTime || '')) ? `&endTime=${req.query.endTime}` : '';
+    const data = await cached(`candles_${sym}_${bg}_${startTime}_${endTime}`, 15000, () =>
+      fetchJSON(`https://api.bitget.com/api/v2/mix/market/candles?symbol=${sym}&productType=USDT-FUTURES&granularity=${bg}&limit=${limit}${startTime}${endTime}`)
     )();
     relayBitget(res, data);
   } catch (err) {

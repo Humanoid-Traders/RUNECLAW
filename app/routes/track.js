@@ -125,4 +125,56 @@ router.get('/track-record', async (req, res) => {
   }
 });
 
+// ── Trade replay theater (landing page) ──────────────────────────────────────
+// GET /api/public/replay-trade — ONE recorded closed trade to animate on the
+// landing page. Showcase pick: the largest |PnL| close of the last 14 days
+// (win or loss — the theater shows what actually happened), falling back to
+// the most recent close. No trades → { trade: null }, and the landing section
+// stays hidden — never a fabricated story.
+let replayCache = null;
+router.get('/replay-trade', async (req, res) => {
+  try {
+    if (replayCache && Date.now() - replayCache.at < CACHE_MS) {
+      res.setHeader('Cache-Control', 'public, max-age=120');
+      return res.json(replayCache.payload);
+    }
+    const [rows] = await pool.execute(
+      `SELECT symbol, direction, entry_price, exit_price, size_usd, pnl, fees,
+              opened_at, closed_at
+         FROM trades
+        WHERE user_id = ? AND status = 'CLOSED' AND closed_at IS NOT NULL
+        ORDER BY closed_at ASC`, [OPERATOR_USER_ID]);
+    const usable = rows.filter(t =>
+      isFinite(parseFloat(t.entry_price)) && isFinite(parseFloat(t.exit_price))
+      && isFinite(parseFloat(t.pnl)) && t.opened_at);
+    let pick = null;
+    if (usable.length) {
+      const cutoff = Date.now() - 14 * 86_400_000;
+      const recent = usable.filter(t => new Date(t.closed_at).getTime() >= cutoff);
+      const pool_ = recent.length ? recent : [usable[usable.length - 1]];
+      pick = pool_.reduce((a, b) =>
+        Math.abs(parseFloat(b.pnl)) > Math.abs(parseFloat(a.pnl)) ? b : a);
+    }
+    const payload = {
+      trade: pick ? {
+        symbol: String(pick.symbol || ''),
+        direction: String(pick.direction || '').toUpperCase(),
+        entry_price: parseFloat(pick.entry_price),
+        exit_price: parseFloat(pick.exit_price),
+        size_usd: parseFloat(pick.size_usd) || null,
+        pnl: round2(parseFloat(pick.pnl)),
+        fees: round2(parseFloat(pick.fees) || 0),
+        opened_at: pick.opened_at,
+        closed_at: pick.closed_at,
+      } : null,
+    };
+    replayCache = { at: Date.now(), payload };
+    res.setHeader('Cache-Control', 'public, max-age=120');
+    res.json(payload);
+  } catch (err) {
+    console.error('Replay trade error:', err.message);
+    res.status(500).json({ error: 'Replay trade unavailable' });
+  }
+});
+
 module.exports = router;
