@@ -19,6 +19,7 @@
     { id: 'signals',   label: 'Signals',   icon: 'icon-radar' },
     { id: 'trade',     label: 'Trade',     icon: 'icon-target' },
     { id: 'portfolio', label: 'Portfolio', icon: 'icon-chart' },
+    { id: 'leaderboard', label: 'Leaders', icon: 'icon-target' },
     { id: 'engine',    label: 'Engine',    icon: 'icon-cog' },
     { id: 'account',   label: 'Account',   icon: 'icon-user' },
   ];
@@ -1271,10 +1272,78 @@
     });
   }
 
+  /* ═══════════════ LEADERBOARD ═══════════════ */
+  async function renderLeaderboard() {
+    container.innerHTML = viewHead('Leaderboard', 'Opt-in ranks by return % — anonymous handles, no dollar amounts');
+    if (!LOGGED_IN) {
+      container.insertAdjacentHTML('beforeend', `<section class="panel">${loginGate('Log in to see the leaderboard and join with a handle.')}</section>`);
+      return;
+    }
+    container.insertAdjacentHTML('beforeend', `
+      <div class="stack">
+        <section class="panel" id="p-lbjoin"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-user"></use></svg>Your spot</h2><div id="c-lbjoin"><div class="skel"></div></div></section>
+        <section class="panel" id="p-lbtable"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-target"></use></svg>Top traders</h2><div id="c-lbtable"><div class="skel"></div><div class="skel"></div></div></section>
+      </div>`);
+
+    let data = null;
+    const load = async () => { const r = await fetchJSON('/api/leaderboard'); data = r.ok ? r.data : null; return data; };
+
+    renderPanel(C('lbjoin'), async () => {
+      await load();
+      if (!data) return null;
+      if (data.opted_in) {
+        return `<p class="small" style="color:var(--text-2)">You're on the board as <span class="chip chip--gold">${esc(data.handle)}</span>. Only this handle and your % return show — never your email or balance.</p>
+          <button class="btn btn--ghost btn--sm mt-3" id="lbLeave" type="button">Leave the leaderboard</button>`;
+      }
+      return `<p class="small" style="color:var(--text-2)">Join with an anonymous handle to appear in the ranks — leave any time. We show your handle and % return only, never your email or any dollar amount.</p>
+        <div class="row mt-3" style="gap:var(--s2);flex-wrap:wrap;align-items:center">
+          <input class="input" id="lbHandle" maxlength="20" placeholder="Pick a handle (3–20 chars)" style="max-width:220px" aria-label="Leaderboard handle">
+          <button class="btn btn--primary btn--sm" id="lbJoin" type="button">Join leaderboard</button>
+        </div>
+        <p class="small mt-1" id="lbMsg" aria-live="polite" style="color:var(--down)"></p>`;
+    }, { empty: { text: 'The leaderboard is unavailable right now.' } });
+
+    renderPanel(C('lbtable'), async () => {
+      if (!data) await load();
+      const rows = (data && data.rows) || [];
+      if (!rows.length) return null;
+      return `<div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>#</th><th>Trader</th><th class="r">Return</th><th class="r">Trades</th><th class="r">Win rate</th></tr></thead>
+        <tbody>${rows.map(row => `
+          <tr${row.is_me ? ' style="background:var(--gold-dim)"' : ''}>
+            <td class="num muted">${row.rank}</td>
+            <td><b>${esc(row.handle)}</b>${row.is_me ? ' <span class="chip chip--gold">you</span>' : ''}</td>
+            <td class="r num ${pnlClass(row.return_pct)}">${signed(row.return_pct)}%</td>
+            <td class="r num muted">${row.trades}</td>
+            <td class="r num muted">${fmt(row.win_rate, 1)}%</td>
+          </tr>`).join('')}</tbody></table></div>
+        <p class="muted small mt-2">Return % is measured on the standard paper stake. Dollar amounts are never shown.</p>`;
+    }, { empty: { icon: 'icon-target', text: 'No ranked traders yet — pick a handle above and close a trade to be the first.' } });
+
+    // Join / leave.
+    container.addEventListener('click', async (e) => {
+      if (e.target.id === 'lbJoin') {
+        const h = (document.getElementById('lbHandle').value || '').trim();
+        const msg = document.getElementById('lbMsg');
+        e.target.disabled = true;
+        const r = await fetchJSON('/api/leaderboard/opt-in', { method: 'POST', body: { handle: h } })
+          .catch(() => ({ ok: false, data: null }));
+        e.target.disabled = false;
+        if (!r.ok) { if (msg) msg.textContent = (r.data && r.data.error) || 'Could not join — try another handle.'; return; }
+        toast('You\'re on the leaderboard.'); showView('leaderboard');
+      }
+      if (e.target.id === 'lbLeave') {
+        e.target.disabled = true;
+        await fetchJSON('/api/leaderboard/opt-out', { method: 'POST' }).catch(() => {});
+        toast('Left the leaderboard.'); showView('leaderboard');
+      }
+    });
+  }
+
   /* ═══════════════ Boot ═══════════════ */
   const RENDER = { home: renderHome, markets: renderMarkets, signals: renderSignals,
-                   trade: renderTrade, portfolio: renderPortfolio, engine: renderEngine,
-                   account: renderAccount };
+                   trade: renderTrade, portfolio: renderPortfolio, leaderboard: renderLeaderboard,
+                   engine: renderEngine, account: renderAccount };
 
   window.addEventListener('hashchange', () => showView(location.hash.slice(1) || 'home'));
 

@@ -178,7 +178,8 @@ class MemoryDB {
         telegram_linked: false, link_token: null, link_token_expires: null,
         email_verified: false, verify_token: null, verify_token_expires: null,
         reset_token: null, reset_token_expires: null,
-        referral_code: null, referred_by: null, created_at: new Date() };
+        referral_code: null, referred_by: null,
+        leaderboard_handle: null, created_at: new Date() };
       // Column order varies: email/password vs the OAuth passwordless inserts.
       if (cmd.includes('PASSWORD_HASH')) {
         user.password_hash = params[1];
@@ -251,6 +252,20 @@ class MemoryDB {
     }
     if (cmd.includes('FROM USERS WHERE REFERRED_BY')) {
       return [this.users.filter(u => u.referred_by === params[0]), []];
+    }
+
+    // -- Leaderboard opt-in (anonymous handle) --
+    if (cmd.startsWith('UPDATE USERS SET LEADERBOARD_HANDLE')) {
+      const user = this.users.find(u => u.id === params[1]);
+      if (user) user.leaderboard_handle = params[0];  // params[0] may be null (opt-out)
+      return [{ affectedRows: user ? 1 : 0 }, []];
+    }
+    if (cmd.includes('FROM USERS WHERE LEADERBOARD_HANDLE IS NOT NULL')) {
+      return [this.users.filter(u => u.leaderboard_handle != null), []];
+    }
+    if (cmd.includes('FROM USERS WHERE LEADERBOARD_HANDLE')) {  // = ?  (uniqueness check)
+      return [this.users.filter(u => u.leaderboard_handle != null
+        && String(u.leaderboard_handle).toLowerCase() === String(params[0]).toLowerCase()), []];
     }
 
     if (cmd.includes('FROM USERS WHERE EMAIL')) {
@@ -557,6 +572,13 @@ async function migrate() {
     } catch (e) { /* exists */ }
     try {
       await pool.execute('CREATE UNIQUE INDEX idx_users_referral_code ON users (referral_code)');
+    } catch (e) { /* index exists */ }
+    // Leaderboard opt-in: an anonymous display handle (NULL = not on the board).
+    try {
+      await pool.execute('ALTER TABLE users ADD COLUMN leaderboard_handle VARCHAR(24) DEFAULT NULL');
+    } catch (e) { /* exists */ }
+    try {
+      await pool.execute('CREATE UNIQUE INDEX idx_users_leaderboard_handle ON users (leaderboard_handle)');
     } catch (e) { /* index exists */ }
     await pool.execute(`
       CREATE TABLE IF NOT EXISTS trades (

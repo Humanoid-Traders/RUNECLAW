@@ -55,6 +55,7 @@ const chatRouter = require('./routes/chat');
 const publicChatRouter = require('./routes/public_chat');
 const webtradeRouter = require('./routes/webtrade');
 const portfolioRouter = require('./routes/portfolio');
+const leaderboardRouter = require('./routes/leaderboard');
 const { router: streamRouter } = require('./routes/stream');
 
 const app = express();
@@ -93,6 +94,7 @@ app.use('/api/chat', chatRouter);
 app.use('/api/public/chat', publicChatRouter);
 app.use('/api/trade', webtradeRouter);
 app.use('/api/portfolio', portfolioRouter);
+app.use('/api/leaderboard', leaderboardRouter);
 
 // Single-host dev foot-gun: Express and the bot's gateway both default to
 // port 8080. Warn loudly if they would collide.
