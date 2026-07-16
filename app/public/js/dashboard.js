@@ -137,6 +137,31 @@
   /* ═══════════════ HOME ═══════════════ */
   async function renderHome() {
     container.innerHTML = viewHead('Home', 'Your account at a glance');
+    // First visit after signup: the agent introduces itself once, with three
+    // guided first actions. Dismiss persists in localStorage.
+    const firstRun = LOGGED_IN && !localStorage.getItem('rc_welcomed');
+    if (firstRun) {
+      container.insertAdjacentHTML('beforeend', `
+        <section class="panel panel--primary" id="p-welcome">
+          <h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-sparkle"></use></svg>Meet your agent</h2>
+          <p style="max-width:62ch;color:var(--text-2)">Welcome to RUNECLAW. From here on, an autonomous trading agent works this dashboard with you —
+          it scans the market around the clock, explains every read, and only ever trades through a strict risk gate. Three good first moves:</p>
+          <div class="row mt-3" style="gap:var(--s2);flex-wrap:wrap">
+            <a class="btn btn--primary btn--sm" href="#chat">💬 1 · Say hello to your agent</a>
+            <a class="btn btn--sm" href="#signals">📡 2 · Watch it read the market</a>
+            <a class="btn btn--sm" href="#trade">🎯 3 · Place a risk-gated paper trade</a>
+          </div>
+          <button class="btn btn--ghost btn--sm mt-3" id="welcomeDismiss" type="button">Got it — don't show again</button>
+        </section>`);
+      // The element exists synchronously after insertAdjacentHTML — attach
+      // immediately so a fast click can't land before the handler does.
+      const dismissBtn = document.getElementById('welcomeDismiss');
+      if (dismissBtn) dismissBtn.onclick = () => {
+        localStorage.setItem('rc_welcomed', '1');
+        const p = document.getElementById('p-welcome');
+        if (p) p.remove();
+      };
+    }
     container.insertAdjacentHTML('beforeend', `
       <div class="stack">
         <section class="panel panel--primary" id="p-hero"><div id="c-hero"><div class="skel"></div><div class="skel"></div></div></section>

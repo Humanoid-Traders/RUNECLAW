@@ -211,7 +211,14 @@
         else appendMsg('bot', sanitizeBotHtml(m.content));
       });
     } else if (!body.children.length) {
-      appendMsg('bot', 'I\'m the same analyst that runs the Telegram bot — ask about the market, your portfolio, or type a trade like <code>buy SOL 71 sl 70 tp 76</code>.');
+      // First conversation ever: the agent introduces itself properly.
+      appendMsg('bot',
+        '👋 I\'m <b>your RUNECLAW agent</b> — the same engine that scans 60+ pairs, '
+        + 'gates every idea through a 23-check risk engine, and trades autonomously.<br><br>'
+        + 'Talk to me like a colleague: ask for a <b>market briefing</b>, the '
+        + '<b>highest-conviction setup</b>, or a <b>post-mortem</b> of any trade. '
+        + 'You can even place paper trades right here — try '
+        + '<code>buy SOL 71 sl 70 tp 76</code>.');
     }
   }
 
