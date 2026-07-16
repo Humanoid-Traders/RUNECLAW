@@ -389,3 +389,38 @@ async def test_watch_on_enables_alerts():
     await handler._cmd_watch(update, ctx)
     assert handler.monitor.is_enabled(tg_id)
     assert _any_reply_contains(update, "PROACTIVE ALERTS ON")
+
+
+@pytest.mark.asyncio
+async def test_setllm_persists_key_to_vault(monkeypatch):
+    """An admin /setllm with a key must persist it ENCRYPTED to the secrets
+    vault — in-memory-only keys are lost on every restart/redeploy, which is
+    exactly the recurring "every LLM tier shows ❌" outage."""
+    from bot.llm.provider import BYOK
+    from bot.core import secrets_vault as sv
+
+    stored = {}
+    monkeypatch.setattr(sv, "store_secrets",
+                        lambda mapping: stored.update(mapping) or list(mapping))
+    # Isolate the persist logic from provider-client availability in CI.
+    monkeypatch.setattr(type(BYOK), "set_provider",
+                        lambda self, p, api_key="", model="", base_url="": (True, "ok"))
+
+    handler = _make_handler()
+    update, ctx = _make_update(text="/setllm groq gsk_testkey1234567890",
+                               args=["groq", "gsk_testkey1234567890"])
+    await handler._cmd_setllm(update, ctx)
+
+    assert stored.get("GROQ_API_KEY") == "gsk_testkey1234567890"
+    BYOK.reset()
+
+
+@pytest.mark.asyncio
+async def test_llmtiers_unconfigured_shows_fix_hint():
+    """A tier with no API key must say HOW to fix it, not just show ❌."""
+    handler = _make_handler()
+    update, ctx = _make_update(text="/llmtiers")
+    await handler._cmd_llmtiers(update, ctx)
+    text = _last_reply_text(update)
+    if "❌" in text:
+        assert "/setllm" in text, "an unconfigured tier must point at the fix"
