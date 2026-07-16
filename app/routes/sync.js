@@ -329,6 +329,72 @@ router.post('/tiers', async (req, res) => {
 });
 
 /**
+ * POST /api/bot/sync/events
+ * Bot pushes public agent mind-stream events (bot/core/agent_feed.py):
+ * scan cycles, trade theses, opens/closes, trailing-stop moves, alerts,
+ * stance changes. Stored in a bounded ring (agent_events) and re-broadcast
+ * live to connected clients as SSE 'activity' events. (X-Bot-Secret authed.)
+ *
+ * Body: { events: [{ event_type, severity, symbol, title, body, data, ts }] }
+ */
+const FEED_TYPES = new Set(['scan', 'thesis', 'trade_open', 'trade_close',
+  'sl_move', 'alert', 'stance', 'info']);
+const FEED_SEVERITIES = new Set(['info', 'success', 'warning', 'critical']);
+const FEED_KEEP = 500;           // ring size: newest N rows survive pruning
+let feedInsertsSincePrune = 0;
+router.post('/events', async (req, res) => {
+  try {
+    const events = Array.isArray(req.body?.events) ? req.body.events.slice(0, 50) : [];
+    if (events.length === 0) {
+      return res.status(400).json({ error: 'events array required' });
+    }
+    let inserted = 0;
+    for (const ev of events) {
+      const title = String(ev?.title || '').slice(0, 300);
+      if (!title) continue;
+      const type = FEED_TYPES.has(ev.event_type) ? ev.event_type : 'info';
+      const severity = FEED_SEVERITIES.has(ev.severity) ? ev.severity : 'info';
+      const symbol = String(ev.symbol || '').slice(0, 32);
+      const body = String(ev.body || '').slice(0, 600);
+      let dataJson = null;
+      try {
+        dataJson = ev.data && typeof ev.data === 'object'
+          ? JSON.stringify(ev.data).slice(0, 2000) : null;
+      } catch (e) { dataJson = null; }
+      const ts = ev.ts ? new Date(ev.ts) : new Date();
+      const at = isNaN(ts.getTime()) ? new Date() : ts;
+      await pool.execute(
+        `INSERT INTO agent_events (event_type, severity, symbol, title, body, data_json, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [type, severity, symbol || null, title, body || null, dataJson, at]);
+      inserted++;
+      nudge('activity', {
+        event_type: type, severity, symbol, title, body,
+        data: (ev.data && typeof ev.data === 'object') ? ev.data : {},
+        created_at: at.toISOString(),
+      });
+    }
+    // Ring-buffer prune, amortized (LIMIT/OFFSET inlined — placeholder
+    // LIMITs break on some MySQL backends, see the markets-panel fix).
+    feedInsertsSincePrune += inserted;
+    if (feedInsertsSincePrune >= 50) {
+      feedInsertsSincePrune = 0;
+      try {
+        const [old] = await pool.execute(
+          `SELECT id FROM agent_events ORDER BY id DESC LIMIT 1 OFFSET ${FEED_KEEP}`);
+        if (old.length > 0) {
+          await pool.execute('DELETE FROM agent_events WHERE id <= ?', [old[0].id]);
+        }
+      } catch (pruneErr) { /* prune is best-effort */ }
+    }
+    res.json({ ok: true, inserted });
+  } catch (err) {
+    console.error('Agent feed sync error:', err.message);
+    res.status(500).json({ error: 'Feed sync failed' });
+  }
+});
+
+/**
  * POST /api/bot/sync/scan
  * Bot pushes GetClaw scan results after each scan cycle.
  * (authenticated — requires X-Bot-Secret)

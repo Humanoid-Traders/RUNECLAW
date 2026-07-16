@@ -66,6 +66,14 @@
   <div id="chatInlineHost"></div>
 </section>
 
+<section class="section" aria-labelledby="live-h">
+  <div class="section-head">
+    <h2 id="live-h">Watch the agent think — live</h2>
+    <p>The real engine's mind-stream: scans, trade theses, executions and stop moves, streamed straight from the bot. No mockups.</p>
+  </div>
+  <div class="card" id="landingFeed"><p class="muted small">Connecting to the agent…</p></div>
+</section>
+
 <section class="section" aria-labelledby="features-h">
   <div class="section-head">
     <h2 id="features-h">Everything the bot does, on the web</h2>
@@ -226,6 +234,38 @@
 <script src="/js/icons.js?v=3"></script>
 <script src="/js/app.js?v=3"></script>
 <script src="/js/chat.js?v=8" defer></script>
+<script>
+// Landing mind-stream: last few real agent events + live SSE append.
+(function () {
+  var RC = window.RC;
+  var host = document.getElementById('landingFeed');
+  if (!RC || !host) return;
+  var ICONS = { scan: '📡', thesis: '🧠', trade_open: '🟢', trade_close: '🏁',
+    sl_move: '🛡️', alert: '⚠️', stance: '🎚️', info: 'ℹ️' };
+  function row(ev) {
+    var sym = ev.symbol ? ' <span class="muted small">' + RC.esc(String(ev.symbol).replace(':USDT', '').replace('/USDT', '')) + '</span>' : '';
+    return '<div style="display:flex;gap:10px;padding:8px 0;border-bottom:1px solid rgba(128,128,128,.15)">'
+      + '<span>' + (ICONS[ev.event_type] || ICONS.info) + '</span>'
+      + '<span style="flex:1;min-width:0"><b>' + RC.esc(ev.title || '') + '</b>' + sym
+      + (ev.body ? '<div class="muted small">' + RC.esc(ev.body) + '</div>' : '') + '</span>'
+      + '<span class="muted small">' + RC.fmtAgo(ev.created_at) + '</span></div>';
+  }
+  function draw(events) {
+    host.innerHTML = events.length ? events.map(row).join('')
+      : '<p class="muted small">The engine hasn\'t pushed an event yet — this section fills in live as it scans.</p>';
+  }
+  RC.fetchJSON('/api/feed/recent?limit=8', { auth: false })
+    .then(function (r) { draw((r.ok && r.data && r.data.events) || []); })
+    .catch(function () { draw([]); });
+  RC.connectStream({ activity: function (e) {
+    var ev; try { ev = JSON.parse(e.data); } catch (err) { return; }
+    if (!ev || !ev.title) return;
+    if (host.querySelector('p')) host.innerHTML = '';
+    host.insertAdjacentHTML('afterbegin', row(ev));
+    while (host.children.length > 8) host.lastElementChild.remove();
+  } });
+})();
+</script>
 <script>
 const API='/api';
 let SESSION=null;

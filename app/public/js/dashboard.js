@@ -18,6 +18,7 @@
     { id: 'chat',      label: 'AI Chat',   icon: 'icon-chat' },
     { id: 'markets',   label: 'Markets',   icon: 'icon-globe' },
     { id: 'signals',   label: 'Signals',   icon: 'icon-radar' },
+    { id: 'feed',      label: 'Live Feed', icon: 'icon-sparkle' },
     { id: 'trade',     label: 'Trade',     icon: 'icon-target' },
     { id: 'portfolio', label: 'Portfolio', icon: 'icon-chart' },
     { id: 'leaderboard', label: 'Leaders', icon: 'icon-target' },
@@ -134,6 +135,92 @@
     return `<div class="view-head"><h1>${esc(title)}</h1>${sub ? `<span class="sub">${esc(sub)}</span>` : ''}</div>`;
   }
 
+  /* ── Agent mind-stream (shared: home panel + Live Feed view + SSE) ──
+     Events come from the bot's agent_feed emitter via /api/feed/recent and
+     arrive live as SSE 'activity' events. Public, pre-sanitized data. */
+  const FEED_META = {
+    scan: '📡', thesis: '🧠', trade_open: '🟢', trade_close: '🏁',
+    sl_move: '🛡️', alert: '⚠️', stance: '🎚️', info: 'ℹ️',
+  };
+  let feedFilter = 'all';
+
+  function feedItemHtml(ev) {
+    const icon = FEED_META[ev.event_type] || FEED_META.info;
+    const sym = ev.symbol
+      ? `<span class="chip" style="font-size:11px;padding:1px 7px">${esc(String(ev.symbol).replace(':USDT', '').replace('/USDT', ''))}</span>` : '';
+    const body = ev.body
+      ? `<div class="small muted" style="margin-top:2px;max-width:72ch">${esc(ev.body)}</div>` : '';
+    return `<div class="feed-item" data-type="${esc(ev.event_type || 'info')}" style="display:flex;gap:10px;padding:9px 0;border-bottom:1px solid rgba(128,128,128,.15)">
+      <div style="flex:0 0 auto;line-height:1.5">${icon}</div>
+      <div style="flex:1;min-width:0">
+        <div class="row" style="gap:8px;align-items:baseline;flex-wrap:wrap">
+          <b>${esc(ev.title || '')}</b>${sym}
+          <span class="muted small num" style="margin-left:auto">${fmtAgo(ev.created_at)}</span>
+        </div>
+        ${body}
+      </div>
+    </div>`;
+  }
+  async function getFeed(limit) {
+    const r = await fetchJSON('/api/feed/recent?limit=' + limit, { auth: false });
+    return (r.ok && r.data?.events) || [];
+  }
+  function feedListHtml(events) {
+    if (!events.length) return null; // renderPanel shows the empty state
+    return `<div class="feed-list">${events.map(feedItemHtml).join('')}</div>`;
+  }
+  function applyFeedFilter(list) {
+    Array.from(list.children).forEach(el => {
+      el.style.display = (feedFilter === 'all' || el.dataset.type === feedFilter) ? '' : 'none';
+    });
+  }
+  // SSE 'activity': prepend into whichever mind-stream hosts are on screen.
+  function onActivity(e) {
+    let ev; try { ev = JSON.parse(e.data); } catch (err) { return; }
+    if (!ev || !ev.title) return;
+    [['c-mind', 10], ['feedLive', 120]].forEach(([id, max]) => {
+      const host = document.getElementById(id);
+      if (!host) return;
+      let list = host.querySelector('.feed-list');
+      if (!list) { // replaces the empty state on first live event
+        host.innerHTML = '<div class="feed-list"></div>';
+        list = host.firstElementChild;
+      }
+      list.insertAdjacentHTML('afterbegin', feedItemHtml(ev));
+      while (list.children.length > max) list.lastElementChild.remove();
+      if (id === 'feedLive' && feedFilter !== 'all') applyFeedFilter(list);
+    });
+  }
+
+  /* ═══════════════ LIVE FEED ═══════════════ */
+  async function renderFeed() {
+    container.innerHTML = viewHead('Live Feed',
+      "The agent's mind-stream — every scan, thesis, trade and alert, as it happens")
+      + `<section class="panel">
+          <div class="row" id="feedChips" style="gap:var(--s2);flex-wrap:wrap;margin-bottom:var(--s3)"></div>
+          <div id="feedLive"><div class="skel"></div><div class="skel"></div><div class="skel"></div></div>
+        </section>`;
+    const TYPES = [['all', 'All'], ['scan', '📡 Scans'], ['thesis', '🧠 Theses'],
+      ['trade_open', '🟢 Opens'], ['trade_close', '🏁 Closes'],
+      ['sl_move', '🛡️ Stops'], ['alert', '⚠️ Alerts'], ['stance', '🎚️ Stance']];
+    const chips = document.getElementById('feedChips');
+    chips.innerHTML = TYPES.map(([t, l]) =>
+      `<button class="btn btn--sm ${t === feedFilter ? 'btn--primary' : ''}" data-t="${t}" type="button">${l}</button>`).join('');
+    chips.onclick = (e) => {
+      const b = e.target.closest('button[data-t]'); if (!b) return;
+      feedFilter = b.dataset.t;
+      chips.querySelectorAll('button').forEach(x =>
+        x.classList.toggle('btn--primary', x.dataset.t === feedFilter));
+      const list = document.querySelector('#feedLive .feed-list');
+      if (list) applyFeedFilter(list);
+    };
+    await renderPanel(document.getElementById('feedLive'),
+      async () => feedListHtml(await getFeed(100)),
+      { empty: { icon: 'icon-radar', text: 'No agent events yet — they appear here the moment the engine pushes its next scan.' } });
+    const list = document.querySelector('#feedLive .feed-list');
+    if (list && feedFilter !== 'all') applyFeedFilter(list);
+  }
+
   /* ═══════════════ HOME ═══════════════ */
   async function renderHome() {
     container.innerHTML = viewHead('Home', 'Your account at a glance');
@@ -167,6 +254,8 @@
         <section class="panel panel--primary" id="p-hero"><div id="c-hero"><div class="skel"></div><div class="skel"></div></div></section>
         ${LOGGED_IN ? `<section class="panel" id="p-agent"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-sparkle"></use></svg>Your agent
           <span class="right muted small">what it's doing for you</span></h2><div id="c-agent"><div class="skel"></div></div></section>` : ''}
+        <section class="panel" id="p-mind"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-radar"></use></svg>Agent mind-stream
+          <span class="right"><a class="small" href="#feed">full feed →</a></span></h2><div id="c-mind"><div class="skel"></div><div class="skel"></div></div></section>
         <div class="grid grid-main">
           <section class="panel" id="p-hpos"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-coin"></use></svg>Open positions</h2><div id="c-hpos"><div class="skel"></div><div class="skel"></div></div></section>
           <section class="panel" id="p-next"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-rocket"></use></svg>Getting started</h2><div id="c-next"><div class="skel"></div></div></section>
@@ -260,6 +349,9 @@
         return lines.join('');
       }, { empty: { text: 'Agent status unavailable right now.' } });
     }
+
+    renderPanel(C('mind'), async () => feedListHtml(await getFeed(10)),
+      { empty: { icon: 'icon-radar', text: 'The agent narrates its work here — scans, theses, trades and stop moves, live as they happen.' } });
 
     renderPanel(C('hpos'), async () => {
       if (!LOGGED_IN) return loginGate('Log in to see your open positions.');
@@ -1758,8 +1850,9 @@
 
   /* ═══════════════ Boot ═══════════════ */
   const RENDER = { home: renderHome, chat: renderChat, markets: renderMarkets, signals: renderSignals,
-                   trade: renderTrade, portfolio: renderPortfolio, leaderboard: renderLeaderboard,
-                   lab: renderLab, engine: renderEngine, account: renderAccount };
+                   feed: renderFeed, trade: renderTrade, portfolio: renderPortfolio,
+                   leaderboard: renderLeaderboard, lab: renderLab, engine: renderEngine,
+                   account: renderAccount };
 
   window.addEventListener('hashchange', () => showView(location.hash.slice(1) || 'home'));
 
@@ -1769,6 +1862,7 @@
     portfolio: () => { cache.portfolio = null; if (currentView === 'home' || currentView === 'portfolio') showView(currentView); },
     trade: () => { cache.portfolio = null; toast('Trade update from the engine.'); if (currentView === 'home' || currentView === 'portfolio' || currentView === 'trade') showView(currentView); },
     signals: () => { if (currentView === 'signals') showView('signals'); },
+    activity: onActivity,
   });
 
   getScan().then(updateConnChip);

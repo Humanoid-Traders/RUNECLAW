@@ -50,7 +50,11 @@ def _post(path: str, data: dict) -> Optional[dict]:
     )
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
-            return json.loads(resp.read().decode())
+            parsed = json.loads(resp.read().decode())
+            # isinstance narrows the json.loads Any for mypy (this module is
+            # now transitively type-checked via live_executor -> agent_feed)
+            # and guards against a non-object JSON body from a proxy/CDN.
+            return parsed if isinstance(parsed, dict) else None
     except urllib.error.HTTPError as e:
         body = ""
         try:
@@ -253,6 +257,22 @@ def sync_signals_in_background(signals: list[dict]) -> None:
         return
     t = threading.Thread(target=sync_signals, args=(list(signals),), daemon=True)
     t.start()
+
+
+def sync_agent_events(events: list[dict]) -> bool:
+    """Push a batch of public agent-feed (mind-stream) events to the website.
+
+    Events are shaped by bot.core.agent_feed (type-whitelisted, truncated).
+    Best-effort telemetry: a failed POST just returns False — the caller
+    (AgentFeed.flush_once) drops the batch rather than retrying.
+    """
+    if not events:
+        return True
+    result = _post("/api/bot/sync/events", {"events": list(events)})
+    if result and result.get("ok"):
+        return True
+    log.debug("Agent feed sync failed")
+    return False
 
 
 # ── Membership tier sync (bot is the tier authority) ─────────────────
