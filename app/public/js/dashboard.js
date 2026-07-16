@@ -667,6 +667,10 @@
           <section class="panel" id="p-xfunding"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-globe"></use></svg>Cross-venue funding</h2><div id="c-xfunding"><div class="skel"></div></div></section>
           <section class="panel" id="p-arb"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-coin"></use></svg>Funding-arb paper tracker</h2><div id="c-arb"><div class="skel"></div></div></section>
         </div>
+        <section class="panel" id="p-dex"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-globe"></use></svg>DEX ↔ CEX — Hyperliquid vs this venue
+          <span class="badge" style="margin-left:auto" title="Public data comparison — nothing here trades">read-only</span></h2>
+          <div id="c-dex"><div class="skel"></div></div>
+        </section>
         <section class="panel" id="p-rwa"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-coin"></use></svg>RWA &amp; on-chain radar
           <span class="badge" style="margin-left:auto" title="Market intelligence from live venue tickers — the radar never trades">read-only</span></h2>
           <div id="c-rwa"><div class="skel"></div><div class="skel"></div></div>
@@ -680,6 +684,24 @@
     const symSel = document.getElementById('chartSym');
     const DEFAULTS = ['BTCUSDT','ETHUSDT','SOLUSDT','BNBUSDT','XRPUSDT','DOGEUSDT','ADAUSDT','LINKUSDT','AVAXUSDT','SUIUSDT'];
     symSel.innerHTML = DEFAULTS.map(s => `<option value="${s}">${s.replace('USDT','')}/USDT</option>`).join('');
+
+    // DEX ↔ CEX comparison — Hyperliquid mids vs this venue's perp prices.
+    renderPanel(C('dex'), async () => {
+      const r = await fetchJSON('/api/market/dex', { auth: false, timeoutMs: 12000 });
+      const d = r.data;
+      if (!r.ok || !d || !(d.rows || []).length) return null;
+      return `<p class="muted small">Live mid prices on <b>${esc(d.dex)}</b> against ${esc(d.cex)} —
+          the on-chain perps market, side by side. Avg |basis| ${d.avg_abs_delta_bps != null ? fmt(d.avg_abs_delta_bps, 1) + ' bps' : '—'}.</p>
+        <div class="tbl-wrap"><table class="tbl">
+          <thead><tr><th>Coin</th><th class="r">DEX mid</th><th class="r">CEX price</th><th class="r">Basis</th></tr></thead>
+          <tbody>${d.rows.map(x => `<tr>
+            <td><b>${esc(x.base)}</b></td>
+            <td class="num r">$${fmtPrice(x.dex_mid)}</td>
+            <td class="num r">${x.cex_price != null ? '$' + fmtPrice(x.cex_price) : '—'}</td>
+            <td class="num r ${x.delta_bps >= 0 ? 'up' : 'down'}">${x.delta_bps != null ? (x.delta_bps >= 0 ? '+' : '') + fmt(x.delta_bps, 1) + ' bps' : '—'}</td></tr>`).join('')}</tbody>
+        </table></div>
+        <p class="muted small" style="margin-top:var(--s2)">${esc(d.execution_note)}</p>`;
+    }, { empty: { icon: 'icon-globe', text: 'The DEX comparison lights up when Hyperliquid public data is reachable.' } });
 
     // RWA & on-chain radar — live sector read from public venue tickers.
     renderPanel(C('rwa'), async () => {
@@ -1324,6 +1346,11 @@
       <div class="stack">
         <section class="panel panel--primary" id="p-pstats"><div id="c-pstats"><div class="skel"></div><div class="skel"></div></div></section>
         <section class="panel" id="p-curve"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-chart"></use></svg>Equity curve</h2><div id="c-curve"><div class="skel"></div></div></section>
+        <section class="panel" id="p-wallet">
+          <h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-wallet"></use></svg>On-chain wallet
+            <span class="badge" style="margin-left:auto" title="Balances read straight from the chain — RUNECLAW can never move them">read-only</span></h2>
+          <div id="c-wallet"><div class="skel"></div></div>
+        </section>
         <section class="panel" id="p-replay">
           <h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-bolt"></use></svg>What-if replay
             <span class="badge" style="margin-left:auto" title="Real recorded agent trades, mirrored at your stake — hypothetical, not account history">hypothetical</span></h2>
@@ -1384,6 +1411,31 @@
       if (snaps.length < 2) return null;
       return equitySvg(snaps);
     }, { empty: { icon: 'icon-chart', text: 'The equity curve draws once you have a few snapshots — trade and check back.' } });
+
+    // On-chain wallet mirror (SIWE-linked; strictly read-only).
+    renderPanel(C('wallet'), async () => {
+      const r = await fetchJSON('/api/wallet/portfolio', { timeoutMs: 15000 });
+      const d = r.data;
+      if (!r.ok || !d) return null;
+      if (!d.linked) {
+        return `<p class="muted">No wallet linked. Connect one with <b>Sign-In with Ethereum</b>
+          (Account view) — linking is read-only: the wallet signs a login message, never a transaction.</p>`;
+      }
+      const short = `${d.address.slice(0, 6)}…${d.address.slice(-4)}`;
+      if (!(d.assets || []).length) {
+        return `<p class="muted"><b class="num">${esc(short)}</b> — no balances found among the tracked assets.</p>`;
+      }
+      return `<p class="muted small"><b class="num">${esc(short)}</b> on ${esc(d.chain)} —
+          balances read straight from the chain.</p>
+        <div class="tbl-wrap"><table class="tbl">
+          <thead><tr><th>Asset</th><th class="r">Amount</th><th class="r">Value</th></tr></thead>
+          <tbody>${d.assets.map(a => `<tr>
+            <td><b>${esc(a.symbol)}</b></td>
+            <td class="num r">${Number(a.amount).toLocaleString('en-US', { maximumFractionDigits: 6 })}</td>
+            <td class="num r">${a.usd != null ? '$' + Number(a.usd).toLocaleString('en-US', { maximumFractionDigits: 2 }) : 'unpriced'}</td></tr>`).join('')}</tbody>
+        </table></div>
+        <p style="margin-top:var(--s2)">Total (priced): <b class="num">$${Number(d.total_usd).toLocaleString('en-US', { maximumFractionDigits: 2 })}</b></p>`;
+    }, { empty: { icon: 'icon-wallet', text: 'The wallet mirror lights up when the chain RPC is reachable.' } });
 
     // What-if replay: mirror every closed agent trade at a fixed stake.
     async function runReplayPanel() {
