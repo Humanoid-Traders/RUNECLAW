@@ -176,6 +176,18 @@ router.get('/funding/:symbol', async (req, res) => {
   }
 });
 
+// GET /api/market/dex — DEX↔CEX comparison (Hyperliquid mids vs this venue's
+// perp prices; public info API, read-only).
+router.get('/dex', async (req, res) => {
+  try {
+    const cmp = await require('../lib/dex').getDexCompare();
+    res.setHeader('Cache-Control', 'public, max-age=30');
+    res.json(cmp);
+  } catch (err) {
+    res.status(502).json({ error: 'DEX comparison unavailable' });
+  }
+});
+
 // GET /api/market/rwa — RWA & on-chain radar (read-only market intelligence
 // from the live ticker map; curated universe filtered to actual listings).
 router.get('/rwa', async (req, res) => {
