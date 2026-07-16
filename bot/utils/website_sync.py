@@ -50,7 +50,11 @@ def _post(path: str, data: dict) -> Optional[dict]:
     )
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
-            return json.loads(resp.read().decode())
+            parsed = json.loads(resp.read().decode())
+            # isinstance narrows the json.loads Any for mypy (this module is
+            # now transitively type-checked via live_executor -> agent_feed)
+            # and guards against a non-object JSON body from a proxy/CDN.
+            return parsed if isinstance(parsed, dict) else None
     except urllib.error.HTTPError as e:
         body = ""
         try:
