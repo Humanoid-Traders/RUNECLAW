@@ -329,6 +329,71 @@ router.post('/tiers', async (req, res) => {
 });
 
 /**
+ * POST /api/bot/sync/reports
+ * Bot pushes the hourly intelligence reports payload (funding scan, arb
+ * paper tracker, parity headline, yield radar) built by bot/core/web_reports.
+ * Single-row cache like scan_cache. The yield section is operator-sensitive —
+ * the read side (routes/reports.js) only serves it to admin-plan users.
+ */
+let latestReports = null;
+router.post('/reports', async (req, res) => {
+  try {
+    latestReports = { ...req.body, received_at: new Date().toISOString() };
+    try {
+      await pool.execute(
+        'REPLACE INTO reports_cache (id, reports_json) VALUES (1, ?)',
+        [JSON.stringify(latestReports)]);
+    } catch (dbErr) {
+      console.error('Reports cache write error:', dbErr.message);
+    }
+    nudge('reports');
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('Reports sync error:', err.message);
+    res.status(500).json({ error: 'Reports sync failed' });
+  }
+});
+// Read-side accessor for routes/reports.js: in-memory first, DB on cold start.
+async function getLatestReports() {
+  if (latestReports) return latestReports;
+  try {
+    const [rows] = await pool.execute(
+      'SELECT reports_json FROM reports_cache WHERE id = 1');
+    if (rows.length > 0 && rows[0].reports_json) {
+      latestReports = JSON.parse(rows[0].reports_json);
+    }
+  } catch (err) { /* cold-start miss is fine */ }
+  return latestReports;
+}
+
+/**
+ * GET /api/bot/sync/stance/pending + POST /api/bot/sync/stance/ack
+ * Round trip for the admin-queued GLOBAL stance change (routes/controls.js
+ * queues it; the bot pulls, re-verifies the requester's tier is 'admin'
+ * against its own UserStore, applies, then acks — which clears the row
+ * whether applied or rejected, so a bad request can't retry forever).
+ */
+router.get('/stance/pending', async (req, res) => {
+  try {
+    const [rows] = await pool.execute(
+      'SELECT mode, requested_by, telegram_id FROM pending_stance WHERE id = 1');
+    res.json({ pending: rows[0] || null });
+  } catch (err) {
+    console.error('Stance pending error:', err.message);
+    res.status(500).json({ error: 'Failed to read pending stance' });
+  }
+});
+router.post('/stance/ack', async (req, res) => {
+  try {
+    await pool.execute('DELETE FROM pending_stance WHERE id = 1');
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('Stance ack error:', err.message);
+    res.status(500).json({ error: 'Failed to ack stance' });
+  }
+});
+
+/**
  * POST /api/bot/sync/events
  * Bot pushes public agent mind-stream events (bot/core/agent_feed.py):
  * scan cycles, trade theses, opens/closes, trailing-stop moves, alerts,
@@ -636,3 +701,5 @@ router.post('/flatten/ack', async (req, res) => {
 });
 
 module.exports = router;
+// Named accessor for routes/reports.js (in-memory + DB cold-start fallback).
+module.exports.getLatestReports = getLatestReports;

@@ -93,6 +93,40 @@ router.post('/', ctlLimit, async (req, res) => {
   }
 });
 
+// POST /api/controls/stance  body: { mode } — queue a GLOBAL strategy-stance
+// change (defensive/balanced/aggressive/manual). Admin plan only: stance is
+// the operator bot's global posture, not a per-user setting. Plan is re-read
+// fresh from the DB (not trusted from the JWT), and the bot re-verifies the
+// requester's tier against its OWN UserStore before applying — the web can
+// propose, only the bot decides.
+const STANCE_MODES = new Set(['defensive', 'balanced', 'aggressive', 'manual']);
+router.post('/stance', ctlLimit, async (req, res) => {
+  try {
+    const uid = req.user.user_id;
+    const mode = String((req.body || {}).mode || '').toLowerCase();
+    if (!STANCE_MODES.has(mode)) {
+      return res.status(400).json({ error: 'mode must be one of defensive|balanced|aggressive|manual' });
+    }
+    const [u] = await pool.execute(
+      'SELECT telegram_linked, telegram_id, plan FROM users WHERE id = ?', [uid]);
+    if (!u[0] || String(u[0].plan) !== 'admin') {
+      secLog('stance_denied', req, `mode=${mode}`);
+      return res.status(403).json({ error: 'admin_required', detail: 'Stance is the agent\'s global posture — only the operator (admin plan) can change it.' });
+    }
+    if (!u[0].telegram_linked || !u[0].telegram_id) {
+      return res.status(409).json({ error: 'telegram_required', detail: 'Link your Telegram account first so the bot can verify the request.' });
+    }
+    await pool.execute(
+      'REPLACE INTO pending_stance (id, mode, requested_by, telegram_id) VALUES (1, ?, ?, ?)',
+      [mode, uid, String(u[0].telegram_id)]);
+    secLog('stance_queued', req, `mode=${mode}`);
+    res.json({ ok: true, pending: true, mode });
+  } catch (err) {
+    console.error('Stance submit error:', err.message);
+    res.status(500).json({ error: 'Failed to queue stance change' });
+  }
+});
+
 // POST /api/controls/stop -> EMERGENCY STOP: disable live + pause (flag changes,
 // applied by the normal control pull) AND queue a flatten of the user's live
 // positions (processed asynchronously by the bot via the user's own executor).

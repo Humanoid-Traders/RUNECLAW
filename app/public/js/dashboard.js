@@ -192,6 +192,17 @@
     });
   }
 
+  // ── Bot intelligence reports (funding / arb / parity / yield) ──
+  // Pushed hourly by the bot; panels render real data or an empty state.
+  async function getReports() {
+    const r = await fetchJSON('/api/reports', { auth: false });
+    return (r.ok && r.data?.reports) || null;
+  }
+  function reportAge(rep) {
+    const t = rep?.generated_at || rep?.received_at;
+    return t ? `updated ${fmtAgo(t)}` : '';
+  }
+
   /* ═══════════════ LIVE FEED ═══════════════ */
   async function renderFeed() {
     container.innerHTML = viewHead('Live Feed',
@@ -303,11 +314,13 @@
       renderPanel(C('agent'), async () => {
         // Everything here is real synced data; anything unavailable is
         // omitted, never invented.
-        const [pf, hist, scanR] = await Promise.all([
+        const [pf, hist, scanR, meR] = await Promise.all([
           getPortfolio(),
           fetchJSON('/api/trades/history?limit=50', { timeoutMs: 12000 }).catch(() => null),
           fetchJSON('/api/bot/sync/scan', { auth: false, timeoutMs: 10000 }).catch(() => null),
+          fetchJSON('/api/auth/me', { timeoutMs: 10000 }).catch(() => null),
         ]);
+        const isAdmin = meR?.data?.plan === 'admin';
         const scan = scanR?.data?.scan || null;
         const cb = scan?.circuit_breaker || {};
         const stance = String(cb.strategy_mode || '').toLowerCase();
@@ -346,8 +359,30 @@
           <a class="btn btn--sm" href="#signals">📡 Signals</a>
           <a class="btn btn--sm" href="#portfolio">📊 Portfolio</a>
         </div>`);
+        // Operator stance control — same presets as Telegram /agent. The web
+        // only QUEUES the change; the bot re-verifies the requester's tier
+        // against its own UserStore and applies within ~30s.
+        if (isAdmin) {
+          lines.push(`<div class="row mt-3" style="gap:var(--s2);flex-wrap:wrap">
+            ${[['defensive', '🛡 Defensive'], ['balanced', '⚔️ Balanced'],
+               ['aggressive', '🔥 Aggressive'], ['manual', '🧘 Manual']]
+              .map(([m, l]) => `<button class="btn btn--sm" data-stance="${m}" type="button">${l}</button>`).join('')}
+          </div>
+          <p class="muted small" style="margin-top:6px">Operator: set the agent's global stance — the bot verifies and applies it within ~30s.</p>`);
+        }
         return lines.join('');
       }, { empty: { text: 'Agent status unavailable right now.' } });
+      // Delegated so it survives panel re-renders; buttons exist only for admins.
+      C('agent').addEventListener('click', async (e) => {
+        const b = e.target.closest('button[data-stance]');
+        if (!b) return;
+        b.disabled = true;
+        const r = await fetchJSON('/api/controls/stance', {
+          method: 'POST', body: { mode: b.dataset.stance } }).catch(() => null);
+        b.disabled = false;
+        if (r?.ok) toast(`Stance change queued: ${b.dataset.stance} — the bot applies it within ~30s.`);
+        else toast(r?.data?.detail || r?.data?.error || 'Stance change failed.');
+      });
     }
 
     renderPanel(C('mind'), async () => feedListHtml(await getFeed(10)),
@@ -479,6 +514,10 @@
           <section class="panel" id="p-depth"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-chart"></use></svg>Order book</h2><div id="c-depth"><div class="skel"></div></div></section>
           <section class="panel" id="p-funding"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-bolt"></use></svg>Funding rate</h2><div id="c-funding"><div class="skel"></div></div></section>
         </div>
+        <div class="grid grid-2">
+          <section class="panel" id="p-xfunding"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-globe"></use></svg>Cross-venue funding</h2><div id="c-xfunding"><div class="skel"></div></div></section>
+          <section class="panel" id="p-arb"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-coin"></use></svg>Funding-arb paper tracker</h2><div id="c-arb"><div class="skel"></div></div></section>
+        </div>
         <section class="panel" id="p-universe"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-globe"></use></svg>Universe
           <span class="right"><label class="visually-hidden" for="uniSearch">Filter symbols</label><input class="input" id="uniSearch" placeholder="Filter…" style="width:130px;padding:5px 9px;font-size:var(--fs-sm)"></span></h2>
           <div id="c-universe"><div class="skel"></div><div class="skel"></div></div>
@@ -488,6 +527,36 @@
     const symSel = document.getElementById('chartSym');
     const DEFAULTS = ['BTCUSDT','ETHUSDT','SOLUSDT','BNBUSDT','XRPUSDT','DOGEUSDT','ADAUSDT','LINKUSDT','AVAXUSDT','SUIUSDT'];
     symSel.innerHTML = DEFAULTS.map(s => `<option value="${s}">${s.replace('USDT','')}/USDT</option>`).join('');
+
+    // Cross-venue intelligence (one shared fetch; hourly bot-pushed data).
+    const reportsP = getReports();
+    renderPanel(C('xfunding'), async () => {
+      const rep = await reportsP;
+      const rows = rep?.funding?.rows || [];
+      if (!rows.length) return null;
+      const venues = [...new Set(rows.flatMap(r => Object.keys(r.rates || {})))];
+      return `<p class="muted small">Annualized funding APR by venue — carry pays long where it's low, short where it's high. ${esc(reportAge(rep))}</p>
+        <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Coin</th>${venues.map(v => `<th class="r">${esc(v)}</th>`).join('')}<th class="r">Spread</th></tr></thead>
+        <tbody>${rows.slice(0, 10).map(r => `<tr><td><b>${esc(r.base)}</b></td>
+          ${venues.map(v => `<td class="num r">${r.rates && r.rates[v] != null ? Number(r.rates[v]).toFixed(1) + '%' : '—'}</td>`).join('')}
+          <td class="num r" title="long ${esc(r.long_venue || '')} / short ${esc(r.short_venue || '')}"><b>${Number(r.spread_apr || 0).toFixed(1)}%</b></td></tr>`).join('')}</tbody></table></div>`;
+    }, { empty: { icon: 'icon-globe', text: 'Cross-venue funding arrives when the bot pushes its hourly report.' } });
+
+    renderPanel(C('arb'), async () => {
+      const rep = await reportsP;
+      const arb = rep?.arb;
+      if (!arb || !(arb.carries || []).length) return null;
+      const total = arb.carries.reduce((a, c) => a + (Number(c.earned_usd) || 0), 0);
+      return `<p class="muted small">What $${Number(arb.notional_usd || 1000).toLocaleString()} would have earned holding each spread — an evidence tracker; nothing is traded. ${esc(reportAge(rep))}</p>
+        <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Coin</th><th class="r">Paper carry</th><th class="r">Held / seen</th><th class="r">Last spread</th></tr></thead>
+        <tbody>${arb.carries.slice(0, 8).map(c => `<tr><td><b>${esc(c.base)}</b></td>
+          <td class="num r ${pnlClass(c.earned_usd)}">$${Number(c.earned_usd || 0).toFixed(2)}</td>
+          <td class="num r">${Number(c.held_hours || 0).toFixed(0)}h / ${Number(c.observed_hours || 0).toFixed(0)}h</td>
+          <td class="num r">${Number(c.last_spread_apr || 0).toFixed(1)}%</td></tr>`).join('')}</tbody></table></div>
+        <p class="small muted mt-2">Total paper carry <b class="num ${pnlClass(total)}">$${total.toFixed(2)}</b> over ${arb.snapshots || 0} snapshots. A real 2-venue round trip costs ~0.24% of notional in fees.</p>`;
+    }, { empty: { icon: 'icon-coin', text: 'The paper arb tracker fills in as the bot records hourly funding snapshots.' } });
 
     const drawAll = () => { drawChart(); drawDepth(); drawFunding(); drawInsight(); };
     symSel.addEventListener('change', drawAll);
@@ -1254,8 +1323,33 @@
           <section class="panel panel--quiet" id="p-eshadow"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-shield"></use></svg>Shadow book — what the gates cost</h2><div id="c-eshadow"><div class="skel"></div></div></section>
           <section class="panel panel--quiet" id="p-elist"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-rocket"></use></svg>New listings radar</h2><div id="c-elist"><div class="skel"></div></div></section>
         </div>
+        <section class="panel panel--quiet" id="p-eparity"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-shield"></use></svg>Live ↔ backtest parity</h2><div id="c-eparity"><div class="skel"></div></div></section>
         <section class="panel panel--quiet" id="p-estrat"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-cog"></use></svg>Strategy configuration</h2><div id="c-estrat"><div class="skel"></div></div></section>
       </div>`);
+
+    // Parity headline: does live execution still match the model? Pushed
+    // hourly by the bot from its real closed-trades journal.
+    renderPanel(C('eparity'), async () => {
+      const rep = await getReports();
+      const p = rep?.parity;
+      if (!p || !p.trades) return null;
+      const feeX = p.fee_vs_model != null ? Number(p.fee_vs_model) : null;
+      const tiles = [
+        ['Filled trades', String(p.trades), ''],
+        ['Win rate', p.win_rate != null ? (p.win_rate * 100).toFixed(0) + '%' : '—', ''],
+        ['Net PnL', p.net_pnl != null ? signed(p.net_pnl) : '—', pnlClass(p.net_pnl)],
+        ['Profit factor', p.pf != null ? Number(p.pf).toFixed(2) : '—', ''],
+        ['Fees vs model', feeX != null ? feeX.toFixed(2) + '×' : '—', feeX != null && feeX > 1.5 ? 'neg' : ''],
+      ];
+      const notes = [];
+      if (p.inferred_fills) notes.push(`${p.inferred_fills} close price(s) inferred from ticker`);
+      if (p.excluded_non_fills) notes.push(`${p.excluded_non_fills} never-filled record(s) excluded`);
+      return `<p class="muted small">Realized live execution vs the modeled backtest assumptions — drift here is the earliest sign the model no longer describes reality. ${esc(reportAge(rep))}</p>
+        <div class="grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:var(--s2);margin-top:var(--s3)">
+          ${tiles.map(([k, v, c]) => `<div class="stat"><div class="k">${esc(k)}</div><div class="v num ${c}">${esc(String(v))}</div></div>`).join('')}
+        </div>
+        ${notes.length ? `<p class="small muted mt-2">${esc(notes.join(' · '))}</p>` : ''}`;
+    }, { empty: { icon: 'icon-shield', text: 'Parity stats arrive with the bot\'s hourly report once live trades have closed.' } });
 
     const scan = await getScan();
     updateConnChip();
@@ -1376,6 +1470,27 @@
 
     const me = await fetchJSON('/api/auth/me').catch(() => null);
     const linked = !!me?.data?.telegram_linked;
+
+    // Yield radar — OPERATOR report (real account idle balances), so the
+    // panel only exists for admin-plan users; the API re-checks server-side.
+    if (me?.data?.plan === 'admin') {
+      document.getElementById('p-aplan').insertAdjacentHTML('afterend', `
+        <section class="panel" id="p-ayield"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-coin"></use></svg>Yield radar <span class="right muted small">operator report</span></h2><div id="c-ayield"><div class="skel"></div></div></section>`);
+      renderPanel(C('ayield'), async () => {
+        const r = await fetchJSON('/api/reports/yield', { timeoutMs: 12000 });
+        const y = r.data?.yield;
+        if (!y || !(y.rows || []).length) return null;
+        return `<p class="muted small">Idle assets vs Bitget flexible Earn — same data as Telegram /yield. Staking stays behind the bot's confirm buttons.</p>
+          <div class="tbl-wrap"><table class="tbl">
+          <thead><tr><th>Coin</th><th class="r">Idle</th><th class="r">Stakeable</th><th class="r">Flex APY</th><th class="r">Est/yr</th></tr></thead>
+          <tbody>${y.rows.slice(0, 10).map(row => `<tr><td><b>${esc(row.coin)}</b>${row.alt_note ? ` <span class="muted small">${esc(row.alt_note)}</span>` : ''}</td>
+            <td class="num r">$${Number(row.idle_usd || 0).toFixed(2)}</td>
+            <td class="num r">$${Number(row.stakeable_usd || 0).toFixed(2)}</td>
+            <td class="num r">${row.apy_flexible != null ? Number(row.apy_flexible).toFixed(2) + '%' : '—'}</td>
+            <td class="num r">$${Number(row.est_year_usd || 0).toFixed(2)}</td></tr>`).join('')}</tbody></table></div>
+          <p class="small muted mt-2">Total idle <b class="num">$${Number(y.total_idle_usd || 0).toFixed(2)}</b> · est. <b class="num">$${Number(y.total_est_year_usd || 0).toFixed(2)}/yr</b> at current flexible rates. Use /stake in Telegram to act.</p>`;
+      }, { empty: { icon: 'icon-coin', text: 'Yield data arrives with the bot\'s hourly report (needs operator Earn credentials).' } });
+    }
 
     renderPanel(C('aprof'), async () => {
       if (!me?.ok) return null;

@@ -33,6 +33,8 @@ class MemoryDB {
     this._nextSignalId = 1;
     this.agentEvents = []; // public agent mind-stream feed (bounded ring)
     this._nextAgentEventId = 1;
+    this.reportsCache = null;  // { reports_json, updated_at } (single row)
+    this.pendingStance = null; // { mode, requested_by, telegram_id, created_at } (single row)
     this.pendingCreds = [];   // pending_credentials (UPSERT by user_id)
     this.exchangeStatus = {}; // user_id -> { connected }
     this.pendingControls = []; // pending_controls (UPSERT by user_id)
@@ -80,6 +82,32 @@ class MemoryDB {
         .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
         .slice(0, limit);
       return [rows, []];
+    }
+
+    // -- REPORTS CACHE (single-row, like scan_cache) --
+    if (cmd.includes('REPLACE INTO REPORTS_CACHE')) {
+      this.reportsCache = { reports_json: params[0], updated_at: new Date() };
+      return [{ affectedRows: 1 }, []];
+    }
+    if (cmd.includes('FROM REPORTS_CACHE')) {
+      return [this.reportsCache ? [{ ...this.reportsCache }] : [], []];
+    }
+
+    // -- PENDING STANCE (single-row admin request queue) --
+    if (cmd.includes('REPLACE INTO PENDING_STANCE')) {
+      // params: mode, requested_by, telegram_id
+      this.pendingStance = {
+        id: 1, mode: params[0], requested_by: params[1],
+        telegram_id: params[2], created_at: new Date(),
+      };
+      return [{ affectedRows: 1 }, []];
+    }
+    if (cmd.includes('DELETE FROM PENDING_STANCE')) {
+      this.pendingStance = null;
+      return [{ affectedRows: 1 }, []];
+    }
+    if (cmd.includes('FROM PENDING_STANCE')) {
+      return [this.pendingStance ? [{ ...this.pendingStance }] : [], []];
     }
 
     // -- AGENT EVENTS (public mind-stream feed; bounded ring) --
@@ -323,6 +351,14 @@ class MemoryDB {
     if (cmd.includes('FROM USERS WHERE ID')) {
       const rows = this.users.filter(u => u.id === params[0]);
       return [rows, []];
+    }
+
+    if (cmd.startsWith('UPDATE USERS SET TELEGRAM_LINKED')) {
+      // params: [linked, id] — plain linked-flag set (test fixtures / admin
+      // tooling; the real link flow goes through the LINK_TOKEN branch below).
+      const user = this.users.find(u => u.id === params[1]);
+      if (user) user.telegram_linked = !!params[0];
+      return [{ affectedRows: user ? 1 : 0 }, []];
     }
 
     if (cmd.includes('UPDATE USERS SET LINK_TOKEN')) {
@@ -716,6 +752,28 @@ async function migrate() {
         resolved_at TIMESTAMP NULL DEFAULT NULL,
         INDEX idx_created (created_at),
         INDEX idx_symbol (symbol)
+      )
+    `);
+    // Bot-pushed intelligence reports (funding scan / arb tracker / parity /
+    // yield radar) — single-row cache like scan_cache. The yield section is
+    // operator-sensitive and only served to admin-plan users (routes/reports.js).
+    await pool.execute(`
+      CREATE TABLE IF NOT EXISTS reports_cache (
+        id INT PRIMARY KEY DEFAULT 1,
+        reports_json LONGTEXT NOT NULL,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+      )
+    `);
+    // Admin-queued strategy-stance change (global, single in-flight row).
+    // The bot pulls it, re-verifies the requester's tier is 'admin' against
+    // its OWN UserStore, applies RUNTIME.strategy_mode, then acks (deletes).
+    await pool.execute(`
+      CREATE TABLE IF NOT EXISTS pending_stance (
+        id INT PRIMARY KEY DEFAULT 1,
+        mode VARCHAR(16) NOT NULL,
+        requested_by INT NOT NULL,
+        telegram_id VARCHAR(32) NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);
     // Public agent mind-stream feed (bot-pushed, SSE-rebroadcast). Bounded
