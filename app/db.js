@@ -43,6 +43,8 @@ class MemoryDB {
     this.pendingControls = []; // pending_controls (UPSERT by user_id)
     this.userControls = {};   // user_id -> { live_enabled, max_margin, paused, allowlisted }
     this.pendingFlatten = []; // pending_flatten (UPSERT by user_id)
+    this.userAlerts = [];     // custom "tell me when…" tripwires
+    this._nextAlertId = 1;
   }
 
   // Minimal query interface matching mysql2 pool.execute() return format
@@ -85,6 +87,47 @@ class MemoryDB {
         .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
         .slice(0, limit);
       return [rows, []];
+    }
+
+    // -- USER ALERTS (custom "tell me when…" tripwires; one-shot) --
+    // Checked before USERS handlers: 'USER_ALERTS' must never fall through
+    // to a substring match on 'USERS'.
+    if (cmd.includes('INSERT INTO USER_ALERTS')) {
+      // params: user_id, symbol, metric, op, threshold, created_at
+      this.userAlerts.push({
+        id: this._nextAlertId++, user_id: params[0], symbol: params[1],
+        metric: params[2], op: params[3], threshold: params[4],
+        active: 1, trigger_price: null, created_at: params[5], triggered_at: null,
+      });
+      return [{ affectedRows: 1 }, []];
+    }
+    if (cmd.includes('FROM USER_ALERTS') && cmd.includes('COUNT(*)')) {
+      const n = this.userAlerts.filter(
+        a => a.user_id === params[0] && a.active === 1).length;
+      return [[{ n }], []];
+    }
+    if (cmd.includes('UPDATE USER_ALERTS')) {
+      // params: triggered_at, trigger_price, id (WHERE id = ? AND active = 1)
+      const a = this.userAlerts.find(x => x.id === params[2] && x.active === 1);
+      if (!a) return [{ affectedRows: 0 }, []];
+      a.active = 0; a.triggered_at = params[0]; a.trigger_price = params[1];
+      return [{ affectedRows: 1 }, []];
+    }
+    if (cmd.includes('DELETE FROM USER_ALERTS')) {
+      // params: id, user_id (own rows only)
+      const before = this.userAlerts.length;
+      this.userAlerts = this.userAlerts.filter(
+        a => !(a.id === params[0] && a.user_id === params[1]));
+      return [{ affectedRows: before - this.userAlerts.length }, []];
+    }
+    if (cmd.includes('FROM USER_ALERTS')) {
+      if (cmd.includes('WHERE USER_ID')) {
+        const rows = this.userAlerts.filter(a => a.user_id === params[0])
+          .sort((a, b) => b.id - a.id).slice(0, 50);
+        return [rows.map(r => ({ ...r })), []];
+      }
+      // engine sweep: WHERE active = 1
+      return [this.userAlerts.filter(a => a.active === 1).map(r => ({ ...r })), []];
     }
 
     // -- PUSH SUBSCRIPTIONS (web push; UPSERT by endpoint) --
@@ -830,6 +873,26 @@ async function migrate() {
         watchlist TEXT DEFAULT NULL,
         prefs TEXT DEFAULT NULL,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+      )
+    `);
+    // Custom user alerts ("tell me when BTC drops below 100k"). One-shot
+    // tripwires: the alert engine (lib/alerts.js) evaluates active rows
+    // against public tickers and deactivates a row as it trips. Notification
+    // only — an alert can never place or touch a trade.
+    await pool.execute(`
+      CREATE TABLE IF NOT EXISTS user_alerts (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        user_id INT NOT NULL,
+        symbol VARCHAR(24) NOT NULL,
+        metric VARCHAR(20) NOT NULL DEFAULT 'price',
+        op VARCHAR(2) NOT NULL,
+        threshold DOUBLE NOT NULL,
+        active TINYINT NOT NULL DEFAULT 1,
+        trigger_price DOUBLE DEFAULT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        triggered_at TIMESTAMP NULL DEFAULT NULL,
+        INDEX idx_alerts_user (user_id),
+        INDEX idx_alerts_active (active)
       )
     `);
     // Bot-pushed intelligence reports (funding scan / arb tracker / parity /
