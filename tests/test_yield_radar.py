@@ -181,3 +181,33 @@ def test_unstake_unknown_position_moves_nothing():
     res = execute_unstake(c, "9999")
     assert not res.ok
     assert not any(m == "POST" for m, _p, _b in c.calls)
+
+
+# ─── Cross-venue yield info ──────────────────────────────────────────────────
+
+def test_annotate_cross_venue_marks_better_rates_info_only():
+    from bot.core.yield_radar import (YieldReport, YieldRow,
+                                      annotate_cross_venue,
+                                      format_report_html)
+    report = YieldReport(rows=[
+        YieldRow(coin="USDT", idle_amount=100, idle_usd=100, stakeable_usd=70,
+                 apy_flexible=8.5, est_year_usd=5.95, source="futures free",
+                 product_id="7001"),
+        YieldRow(coin="ETH", idle_amount=0.5, idle_usd=1500, stakeable_usd=1500,
+                 apy_flexible=2.1, source="spot"),
+    ], total_idle_usd=1600.0)
+    annotate_cross_venue(report, {"Bybit": {"USDT": {"flexible": 12.0},
+                                            "ETH": {"flexible": 1.0}}})
+    assert report.rows[0].alt_note == "Bybit pays 12.00%"
+    assert report.rows[1].alt_note == ""      # local rate already better
+    # Amounts/recommendations untouched — annotation is info only.
+    assert report.rows[0].stakeable_usd == 70
+    html = format_report_html(report)
+    assert "Bybit pays 12.00%" in html and "info only" in html
+
+
+def test_bybit_catalog_requires_keys(monkeypatch):
+    from bot.core.yield_radar import fetch_bybit_savings_catalog
+    monkeypatch.delenv("BYBIT_API_KEY", raising=False)
+    monkeypatch.delenv("BYBIT_API_SECRET", raising=False)
+    assert fetch_bybit_savings_catalog() == {}
