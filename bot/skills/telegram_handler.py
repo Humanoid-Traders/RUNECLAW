@@ -340,6 +340,10 @@ class TelegramHandler:
             ("setexchange", self._cmd_setexchange),
             # Admin: repair the website↔bot shared gateway secret → vault
             ("setgateway", self._cmd_setgateway),
+            # Admin: idle-asset yield radar (read-only Bitget Earn scan)
+            ("yield", self._cmd_yield),
+            # Admin: which secrets are vault-protected vs still missing
+            ("vault", self._cmd_vault),
             # Confidence calibration (admin)
             ("calibration", self._cmd_calibration),
             # Deep scan & playbook
@@ -3802,6 +3806,101 @@ class TelegramHandler:
             "live now — no restart needed. If web chat still shows a gateway "
             "error, make sure the website's <code>WEB_GATEWAY_SECRET</code> "
             "is the exact same value.")
+
+    async def _cmd_vault(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """/vault — secret-protection status (admin). Names only, never values.
+
+        Shows every vault-managed secret with whether it is live in the
+        environment and whether an ENCRYPTED copy exists in the vault (i.e.
+        survives the next redeploy/.env wipe). Anything set once via
+        /setexchange, /setgateway, or /setllm is stored and auto-restored on
+        every future boot — this command is how you verify nothing is left
+        unprotected."""
+        if not self._is_admin(update):
+            return
+        from bot.core.secrets_vault import vault_status
+        status = vault_status()
+        if not status:
+            await self._send(update,
+                "🔴 Vault unavailable (disabled or crypto missing) — secrets "
+                "will NOT survive a redeploy.")
+            return
+        FIX = {
+            "BITGET": "/setexchange", "WEB_GATEWAY_SECRET": "/setgateway",
+            "TELEGRAM_BOT_TOKEN": ".env only",
+            "BOT_SYNC_SECRET": ".env (auto-vaults from env)",
+        }
+        def _fix_for(key: str) -> str:
+            for prefix, cmd in FIX.items():
+                if key.startswith(prefix):
+                    return cmd
+            return "/setllm <provider> <key>" if key.endswith("_API_KEY") else ".env"
+        protected, env_only, absent = [], [], []
+        for key, s in sorted(status.items()):
+            if s["vault"]:
+                protected.append(key)
+            elif s["env"]:
+                env_only.append(key)  # present but would die with .env
+            else:
+                absent.append(key)
+        SEP = "─" * 16
+        lines = [f"🔐 <b>Secrets vault</b>\n{SEP}"]
+        lines.append(f"🟢 <b>Protected</b> (encrypted, survive redeploys): "
+                     f"<code>{len(protected)}</code>")
+        if env_only:
+            lines.append("🟡 <b>Env-only</b> (will auto-vault on next boot):\n"
+                         + "\n".join(f"- <code>{k}</code>" for k in env_only))
+        used_absent = [k for k in absent
+                       if not k.startswith(("HYPERLIQUID", "BYBIT", "BINGX",
+                                            "ONCHAIN", "RUNECLAW"))]
+        if used_absent:
+            lines.append("🔴 <b>Missing</b> (set once, protected forever):\n"
+                         + "\n".join(f"- <code>{k}</code> → {_fix_for(k)}"
+                                     for k in used_absent))
+        lines.append(f"{SEP}\n<i>Anything set via /setexchange, /setgateway, "
+                     "or /setllm is stored encrypted and restored on every "
+                     "boot — you never re-enter it.</i>")
+        await self._send(update, "\n".join(lines))
+
+    async def _cmd_yield(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """/yield — READ-ONLY idle-asset yield radar (admin).
+
+        Scans the operator account's idle balances (free futures margin +
+        available spot coins), pulls Bitget Earn's current savings catalog,
+        and reports what the idle money could earn on the best FLEXIBLE
+        products (instantly redeemable, so margin stays recallable). Places
+        no orders, subscribes to nothing — the auto-staking phase ships
+        separately behind an explicit admin confirmation."""
+        if not self._is_admin(update):
+            await self._send(update,
+                "🔒 /yield reads the operator account — admin only.")
+            return
+        await self._send(update, "⏳ Scanning idle assets and Earn rates…")
+        try:
+            from bot.core.bitget_v3_client import BitgetV3Client
+            from bot.core.yield_radar import build_report, format_report_html
+
+            client = BitgetV3Client.from_config()
+            if not client.has_credentials:
+                await self._send(update,
+                    "🔴 No operator Bitget keys configured — "
+                    "<code>/setexchange</code> first.")
+                return
+            # Free futures margin from the engine's venue-aware balance cache
+            # (refreshed every tick by the authenticated executor).
+            free_usdt = 0.0
+            try:
+                cache = getattr(self.engine, "_live_balance_cache", None) or {}
+                free_usdt = float(cache.get("free", 0) or 0)
+            except Exception:
+                pass
+            report = await asyncio.to_thread(build_report, client, free_usdt)
+            await self._send(update, format_report_html(report))
+        except Exception as exc:
+            system_log.warning("/yield failed: %s", exc)
+            await self._send(update,
+                "🔴 Yield radar failed — check the logs. The account was "
+                "not touched (the radar is read-only).")
 
     async def _cmd_disconnect(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """/disconnect — remove YOUR linked Bitget account credentials."""

@@ -186,6 +186,30 @@ def store_secrets(mapping: dict[str, str]) -> list[str]:
     return stored
 
 
+def vault_status() -> dict[str, dict[str, bool]]:
+    """Presence map for every managed secret: {key: {env, vault}}.
+
+    Never returns values — only whether each key is currently in the process
+    environment and whether an encrypted copy exists in the vault (i.e. would
+    survive a wiped .env). Empty dict when the vault is disabled/unavailable.
+    """
+    out: dict[str, dict[str, bool]] = {}
+    try:
+        stored: dict[str, str] = {}
+        if _enabled():
+            cipher = _cipher()
+            if cipher is not None:
+                stored = _load_vault(cipher)
+        for k in _managed_keys():
+            out[k] = {
+                "env": bool(os.environ.get(k, "").strip()),
+                "vault": bool(stored.get(k)),
+            }
+    except Exception as exc:  # pragma: no cover - status must never raise
+        log.debug("secrets vault: status failed: %s", exc)
+    return out
+
+
 def seed_and_restore() -> dict[str, list[str]]:
     """Mirror present env secrets into the vault; restore absent ones from it.
 

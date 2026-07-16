@@ -165,3 +165,27 @@ class TestWebsitePairingSecrets:
         s2 = sv.seed_and_restore()
         assert "WEB_GATEWAY_SECRET" in s2["restored"]
         assert os.environ["WEB_GATEWAY_SECRET"] == "g" * 48
+
+
+class TestVaultStatus:
+    def test_status_maps_env_and_vault_presence_names_only(self, tmp_path, monkeypatch):
+        _isolate(monkeypatch, tmp_path)
+        monkeypatch.setenv("BITGET_API_KEY", "AKEY123456789")
+        sv.seed_and_restore()                        # -> in env AND vault
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-live-env-only")  # env only
+
+        st = sv.vault_status()
+        assert st["BITGET_API_KEY"] == {"env": True, "vault": True}
+        assert st["OPENAI_API_KEY"] == {"env": True, "vault": False}
+        assert st["GROQ_API_KEY"] == {"env": False, "vault": False}
+        # Names only — no secret value may appear anywhere in the payload.
+        flat = repr(st)
+        assert "AKEY123456789" not in flat and "sk-live-env-only" not in flat
+
+    def test_status_never_raises_when_disabled(self, tmp_path, monkeypatch):
+        _isolate(monkeypatch, tmp_path, enabled="false")
+        monkeypatch.setenv("BITGET_API_KEY", "X")
+        st = sv.vault_status()
+        # Disabled vault: still reports env presence, vault side stays False.
+        assert st.get("BITGET_API_KEY", {}).get("env") is True
+        assert st.get("BITGET_API_KEY", {}).get("vault") is False
