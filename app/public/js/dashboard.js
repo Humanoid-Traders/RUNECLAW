@@ -1351,6 +1351,11 @@
             <span class="badge" style="margin-left:auto" title="Read-only aggregation — RUNECLAW can read these balances, never move them">read-only</span></h2>
           <div id="c-networth"><div class="skel"></div></div>
         </section>
+        <section class="panel" id="p-exposure">
+          <h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-shield"></use></svg>Exposure — everywhere
+            <span class="badge" style="margin-left:auto" title="Perp positions netted against on-chain spot — intelligence only, nothing here can act">read-only</span></h2>
+          <div id="c-exposure"><div class="skel"></div></div>
+        </section>
         <section class="panel" id="p-wallet">
           <h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-wallet"></use></svg>On-chain wallet
             <span class="badge" style="margin-left:auto" title="Balances read straight from the chain — RUNECLAW can never move them">read-only</span></h2>
@@ -1449,6 +1454,34 @@
             <b class="num">${d.total_real_usd != null ? '$' + fmt(d.total_real_usd, 2) : '—'}</b></div>
           <p class="small muted" style="margin-top:var(--s2)">${esc(d.note)}</p>`;
     }, { empty: { icon: 'icon-globe', text: 'Net worth aggregates once a venue or wallet is reachable.' } });
+
+    // Exposure — perp positions netted against wallet spot, with the flags
+    // a risk desk would raise (stacked longs, hedges, concentration).
+    renderPanel(C('exposure'), async () => {
+      const r = await fetchJSON('/api/exposure', { timeoutMs: 20000 });
+      const d = r.data;
+      if (!r.ok || !d || !(d.assets || []).length) return null;
+      const flagBadge = (f) => f.includes('stacked_long')
+        ? '<span class="badge" style="color:var(--down)">⚠️ doubled</span>'
+        : f.includes('hedged') ? '<span class="badge">🛡 hedged</span>' : '';
+      const rows = d.assets.map(a => `<tr>
+          <td><b>${esc(a.base)}</b> ${flagBadge(a.flags)}</td>
+          <td class="num r">${a.perp_long_usd ? '$' + fmt(a.perp_long_usd, 0) : '—'}</td>
+          <td class="num r">${a.perp_short_usd ? '$' + fmt(a.perp_short_usd, 0) : '—'}</td>
+          <td class="num r">${a.spot_usd ? '$' + fmt(a.spot_usd, 0) : '—'}</td>
+          <td class="num r ${a.net_usd >= 0 ? 'up' : 'down'}">$${fmt(a.net_usd, 0)}</td>
+        </tr>`).join('');
+      const warn = (d.warnings || []).map(w =>
+        `<p class="small" style="color:var(--down);margin-top:var(--s1)">⚠️ ${esc(w)}</p>`).join('');
+      return `<div class="tbl-wrap"><table class="tbl">
+          <thead><tr><th>Asset</th><th class="r">Perp long</th><th class="r">Perp short</th><th class="r">Spot</th><th class="r">Net</th></tr></thead>
+          <tbody>${rows}</tbody></table></div>
+        <p style="margin-top:var(--s2)">Net <b class="num">$${fmt(d.net_total_usd, 0)}</b>
+          · Gross <b class="num">$${fmt(d.gross_total_usd, 0)}</b>
+          ${d.cash_usd ? `· Cash (stables) <b class="num">$${fmt(d.cash_usd, 0)}</b>` : ''}</p>
+        ${warn}
+        <p class="small muted" style="margin-top:var(--s2)">${esc(d.note)}</p>`;
+    }, { empty: { icon: 'icon-shield', text: 'Exposure appears once you have open positions or non-stable wallet holdings.' } });
 
     // On-chain wallet mirror (SIWE-linked; strictly read-only).
     renderPanel(C('wallet'), async () => {
