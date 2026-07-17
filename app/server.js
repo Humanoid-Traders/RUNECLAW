@@ -112,6 +112,7 @@ app.use('/api/letter', require('./routes/letter'));
 app.use('/api/wallet', require('./routes/wallet'));
 app.use('/api/networth', require('./routes/networth'));
 app.use('/api/exposure', require('./routes/exposure'));
+app.use('/api/research', require('./routes/research'));
 app.use('/mcp', require('./routes/mcp'));
 
 // Single-host dev foot-gun: Express and the bot's gateway both default to
