@@ -111,6 +111,7 @@ app.use('/api/replay', require('./routes/replay'));
 app.use('/api/letter', require('./routes/letter'));
 app.use('/api/wallet', require('./routes/wallet'));
 app.use('/api/networth', require('./routes/networth'));
+app.use('/mcp', require('./routes/mcp'));
 
 // Single-host dev foot-gun: Express and the bot's gateway both default to
 // port 8080. Warn loudly if they would collide.
