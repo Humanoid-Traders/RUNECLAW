@@ -21,6 +21,7 @@ const { maybeHandleReplayChat } = require('../lib/replay');
 const { maybeHandleLetterChat } = require('../lib/letter');
 const { maybeHandleRwaChat } = require('../lib/rwa');
 const { maybeHandleWalletChat } = require('../lib/wallet');
+const { maybeHandleNetWorthChat } = require('../lib/networth');
 
 const router = express.Router();
 router.use(authMiddleware);
@@ -56,6 +57,15 @@ router.post('/', chatLimit, async (req, res) => {
     // "my wallet" — read-only mirror of the caller's SIWE-linked wallet.
     const walletReply = await maybeHandleWalletChat(req.user.user_id, text);
     if (walletReply) return res.json(walletReply);
+    // "net worth" — everything the user holds, everywhere, read-only.
+    // Needs the resolved bot identity, so it runs after resolveBotIdentity…
+    // except the identity is resolved below; resolve it here for this
+    // intercept only when the pattern matches (cheap guard inside).
+    if (/net ?worth|total (balance|holdings|equity)|balance across|everything i (own|hold)/i.test(text)) {
+      const identNW = await resolveBotIdentity(req);
+      const nwReply = await maybeHandleNetWorthChat(identNW, req.user.user_id, text);
+      if (nwReply) return res.json(nwReply);
+    }
     if (!gateway.isConfigured()) {
       return res.status(503).json({ error: 'Chat not configured' });
     }

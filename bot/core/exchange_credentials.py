@@ -484,6 +484,90 @@ async def validate_venue_credentials(venue: str, fields: dict,
     return False, f"unknown venue {venue!r}"
 
 
+def _balance_total(bal: dict, currency: str) -> float:
+    """Total (free+used) of ``currency`` from a ccxt fetch_balance dict.
+
+    Pure and defensive: prefers the 'total' field, falls back to free+used,
+    and returns 0.0 on any malformed shape — a balance display must never
+    raise over an exchange's response quirks."""
+    try:
+        row = bal.get(currency) or {}
+        total = row.get("total")
+        if total is not None:
+            return float(total)
+        return float(row.get("free") or 0.0) + float(row.get("used") or 0.0)
+    except (TypeError, ValueError, AttributeError):
+        return 0.0
+
+
+async def balance_snapshot(venue: str, fields: dict,
+                           sandbox: bool = False) -> dict:
+    """READ-ONLY equity snapshot for a user's stored venue credentials.
+
+    One fetch_balance — the exact same call the connect-time validators
+    make — returning numbers instead of a validation string:
+    ``{ok, venue, currency, equity_usd, detail}``. Never raises, never
+    writes, never places an order; credentials are used in-process only
+    and never appear in the returned dict.
+    """
+    venue = str(venue).lower().strip()
+    client = None
+    try:
+        import ccxt.async_support as ccxt
+    except Exception as exc:  # pragma: no cover - import guard
+        return {"ok": False, "venue": venue, "equity_usd": None,
+                "detail": f"ccxt unavailable: {exc}"}
+    currency = "USDC" if venue == "hyperliquid" else "USDT"
+    try:
+        if venue == "bitget":
+            client = ccxt.bitget({
+                "apiKey": fields["api_key"], "secret": fields["api_secret"],
+                "password": fields["passphrase"], "timeout": 15000,
+                "enableRateLimit": True,
+                "options": {"defaultType": "swap", "uta": True},
+            })
+        elif venue == "hyperliquid":
+            client = ccxt.hyperliquid({
+                "walletAddress": fields["wallet_address"],
+                "privateKey": fields["agent_private_key"],
+                "timeout": 15000, "enableRateLimit": True,
+                "options": {"defaultType": "swap"},
+            })
+        elif venue in ("bybit", "bingx"):
+            factory = getattr(ccxt, venue, None)
+            if factory is None:
+                return {"ok": False, "venue": venue, "equity_usd": None,
+                        "detail": f"ccxt has no exchange {venue!r}"}
+            client = factory({
+                "apiKey": fields["api_key"], "secret": fields["api_secret"],
+                "timeout": 15000, "enableRateLimit": True,
+                "options": {"defaultType": "swap"},
+            })
+        else:
+            return {"ok": False, "venue": venue, "equity_usd": None,
+                    "detail": f"unknown venue {venue!r}"}
+        try:
+            client.set_sandbox_mode(sandbox)
+        except Exception:
+            if sandbox:
+                raise
+        params = {"type": "swap"} if venue == "bitget" else {}
+        bal = await client.fetch_balance(params)
+        equity = _balance_total(bal, currency)
+        return {"ok": True, "venue": venue, "currency": currency,
+                "equity_usd": round(equity, 2),
+                "detail": f"{equity:.2f} {currency} total"}
+    except Exception as exc:
+        return {"ok": False, "venue": venue, "equity_usd": None,
+                "detail": str(exc)[:200]}
+    finally:
+        if client is not None:
+            try:
+                await client.close()
+            except Exception:
+                pass
+
+
 def basic_venue_format_ok(venue: str, fields: dict) -> bool:
     """Cheap per-venue paste-mistake check before the network probe."""
     venue = str(venue).lower().strip()

@@ -1346,6 +1346,11 @@
       <div class="stack">
         <section class="panel panel--primary" id="p-pstats"><div id="c-pstats"><div class="skel"></div><div class="skel"></div></div></section>
         <section class="panel" id="p-curve"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-chart"></use></svg>Equity curve</h2><div id="c-curve"><div class="skel"></div></div></section>
+        <section class="panel panel--primary" id="p-networth">
+          <h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-globe"></use></svg>Net worth — everywhere
+            <span class="badge" style="margin-left:auto" title="Read-only aggregation — RUNECLAW can read these balances, never move them">read-only</span></h2>
+          <div id="c-networth"><div class="skel"></div></div>
+        </section>
         <section class="panel" id="p-wallet">
           <h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-wallet"></use></svg>On-chain wallet
             <span class="badge" style="margin-left:auto" title="Balances read straight from the chain — RUNECLAW can never move them">read-only</span></h2>
@@ -1411,6 +1416,39 @@
       if (snaps.length < 2) return null;
       return equitySvg(snaps);
     }, { empty: { icon: 'icon-chart', text: 'The equity curve draws once you have a few snapshots — trade and check back.' } });
+
+    // Net worth — everywhere: connected CEX + wallet (real) with paper
+    // shown separately and NEVER counted into the real total.
+    renderPanel(C('networth'), async () => {
+      const r = await fetchJSON('/api/networth', { timeoutMs: 35000 });
+      const d = r.data;
+      if (!r.ok || !d || !d.sections) return null;
+      const rows = [];
+      const c = d.sections.cex;
+      if (c && c.connected) {
+        rows.push(`<div class="kv-row"><span>🏦 ${esc((c.venue || 'exchange').toUpperCase())} <span class="muted small">connected exchange</span></span>
+          <b class="num">${c.ok && c.equity_usd != null ? '$' + fmt(c.equity_usd, 2) : `<span class="muted small">${esc(c.detail || 'unreadable')}</span>`}</b></div>`);
+      } else {
+        rows.push('<div class="kv-row"><span>🏦 Exchange</span><span class="muted small">none connected — /connect in Telegram</span></div>');
+      }
+      const w = d.sections.wallet;
+      if (w && w.linked) {
+        rows.push(`<div class="kv-row"><span>👛 Wallet <span class="muted small">on-chain</span></span>
+          <b class="num">${w.total_usd != null ? '$' + fmt(w.total_usd, 2) : '<span class="muted small">unreadable</span>'}</b></div>`);
+      } else {
+        rows.push('<div class="kv-row"><span>👛 Wallet</span><span class="muted small">none linked — Sign-In with Ethereum</span></div>');
+      }
+      const p = d.sections.paper;
+      if (p && p.equity_usd != null) {
+        rows.push(`<div class="kv-row"><span>📄 Paper portfolio <span class="muted small">simulated — not counted</span></span>
+          <b class="num muted">$${fmt(p.equity_usd, 2)}</b></div>`);
+      }
+      return rows.join('')
+        + `<div class="kv-row" style="border-top:1px solid var(--line);margin-top:var(--s2);padding-top:var(--s2)">
+            <span><b>Real total</b></span>
+            <b class="num">${d.total_real_usd != null ? '$' + fmt(d.total_real_usd, 2) : '—'}</b></div>
+          <p class="small muted" style="margin-top:var(--s2)">${esc(d.note)}</p>`;
+    }, { empty: { icon: 'icon-globe', text: 'Net worth aggregates once a venue or wallet is reachable.' } });
 
     // On-chain wallet mirror (SIWE-linked; strictly read-only).
     renderPanel(C('wallet'), async () => {

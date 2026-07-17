@@ -628,6 +628,67 @@ async def handle_portfolio(request: web.Request) -> web.Response:
     })
 
 
+# ── Cross-venue net worth (read-only) ────────────────────────────────────────
+
+async def handle_networth(request: web.Request) -> web.Response:
+    """GET /gateway/networth?telegram_id=... — the caller's own cross-venue
+    snapshot: paper equity plus (when they connected an exchange) ONE
+    read-only balance fetch on their stored venue.
+
+    Credentials are decrypted in-process for the fetch and never appear in
+    the response; nothing here can place, modify, or cancel an order — it is
+    the same read-only call the connect-time validators make.
+    """
+    import asyncio
+
+    engine = request.app["engine"]
+    tg_handler = request.app["tg_handler"]
+    tg_id = str(request.query.get("telegram_id") or "").strip()
+    err = _guard_user(tg_handler, tg_id)
+    if err is not None:
+        return err
+
+    paper = None
+    try:
+        snap = engine.user_portfolios.get(tg_id).snapshot()
+        paper = {"equity_usd": round(float(snap.equity_usd), 2),
+                 "total_pnl": round(float(snap.total_pnl), 2),
+                 "simulated": True}
+    except Exception:
+        paper = None                                   # section says so
+
+    cex: dict = {"connected": False}
+    try:
+        from bot.core.exchange_credentials import (
+            get_credential_store, balance_snapshot)
+        store = get_credential_store()
+        if store.has(tg_id):
+            venue = store.get_venue(tg_id)
+            fields = store.get(tg_id)
+            if not fields:
+                cex = {"connected": True, "venue": venue, "ok": False,
+                       "equity_usd": None, "detail": "credentials unreadable"}
+            else:
+                try:
+                    snap_cex = await asyncio.wait_for(
+                        balance_snapshot(venue, fields), timeout=25)
+                except asyncio.TimeoutError:
+                    snap_cex = {"ok": False, "venue": venue,
+                                "equity_usd": None, "detail": "venue timeout"}
+                cex = {"connected": True, **snap_cex}
+    except Exception as exc:
+        audit(system_log, f"Net-worth CEX read failed for {tg_id}: {exc}",
+              action="web_networth", result="ERROR")
+        cex = {"connected": False, "error": "cex_unavailable"}
+
+    return web.json_response({
+        "read_only": True,
+        "paper": paper,
+        "cex": cex,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    })
+
+
 # ── App factory ──────────────────────────────────────────────────────────────
 
 def build_gateway(engine, tg_handler) -> web.Application:
@@ -640,6 +701,7 @@ def build_gateway(engine, tg_handler) -> web.Application:
     app.router.add_post("/chat/public", handle_public_chat)
     app.router.add_get("/chat/history", handle_chat_history)
     app.router.add_get("/portfolio", handle_portfolio)
+    app.router.add_get("/networth", handle_networth)
     app.router.add_post("/trade/propose", handle_trade_propose)
     app.router.add_post("/trade/confirm", handle_trade_confirm)
     app.router.add_post("/trade/cancel", handle_trade_cancel)
