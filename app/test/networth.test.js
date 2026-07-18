@@ -5,6 +5,7 @@
  * total), fail-soft sections, and the chat intercept.
  */
 process.env.JWT_SECRET = 'j'.repeat(64);
+process.env.WEB3_CHAINS = 'ethereum';   // single-chain FakeProvider — see multichain test
 process.env.WEB_GATEWAY_SECRET = 'g'.repeat(40);   // set BEFORE requiring routes
 // lib/gateway captures BOT_GATEWAY_URL at require time — pin the fake
 // upstream's port BEFORE any route module loads.

@@ -1491,9 +1491,9 @@
         <p class="small muted" style="margin-top:var(--s2)">${esc(d.note)}</p>`;
     }, { empty: { icon: 'icon-shield', text: 'Exposure appears once you have open positions or non-stable wallet holdings.' } });
 
-    // On-chain wallet mirror (SIWE-linked; strictly read-only).
+    // On-chain wallet mirror (SIWE-linked; strictly read-only, multi-chain).
     renderPanel(C('wallet'), async () => {
-      const r = await fetchJSON('/api/wallet/portfolio', { timeoutMs: 15000 });
+      const r = await fetchJSON('/api/wallet/portfolio', { timeoutMs: 25000 });
       const d = r.data;
       if (!r.ok || !d) return null;
       if (!d.linked) {
@@ -1502,19 +1502,31 @@
       }
       const short = `${d.address.slice(0, 6)}…${d.address.slice(-4)}`;
       if (!(d.assets || []).length) {
-        return `<p class="muted"><b class="num">${esc(short)}</b> — no balances found among the tracked assets.</p>`;
+        const unreadable = (d.chains || []).filter(c => c.error).map(c => c.label);
+        return `<p class="muted"><b class="num">${esc(short)}</b> — no balances found among the tracked assets
+          ${d.chains ? `across ${d.chains.length} chains` : ''}.</p>`
+          + (unreadable.length ? `<p class="muted small">${esc(unreadable.join(', '))} unreadable right now (RPC).</p>` : '');
       }
-      return `<p class="muted small"><b class="num">${esc(short)}</b> on ${esc(d.chain)} —
-          balances read straight from the chain.</p>
-        <div class="tbl-wrap"><table class="tbl">
-          <thead><tr><th>Asset</th><th class="r">Amount</th><th class="r">Value</th></tr></thead>
-          <tbody>${d.assets.map(a => `<tr>
-            <td><b>${esc(a.symbol)}</b></td>
-            <td class="num r">${Number(a.amount).toLocaleString('en-US', { maximumFractionDigits: 6 })}</td>
-            <td class="num r">${a.usd != null ? '$' + Number(a.usd).toLocaleString('en-US', { maximumFractionDigits: 2 }) : 'unpriced'}</td></tr>`).join('')}</tbody>
-        </table></div>
-        <p style="margin-top:var(--s2)">Total (priced): <b class="num">$${Number(d.total_usd).toLocaleString('en-US', { maximumFractionDigits: 2 })}</b></p>`;
-    }, { empty: { icon: 'icon-wallet', text: 'The wallet mirror lights up when the chain RPC is reachable.' } });
+      // Per-chain groups (chains with balances first, unreadable ones noted).
+      const groups = (d.chains || [{ label: d.chain, assets: d.assets, total_usd: d.total_usd }])
+        .filter(c => c.assets && c.assets.length)
+        .map(c => `
+          <p class="small" style="margin-top:var(--s2)"><b>${esc(c.label)}</b>
+            <span class="num muted">· $${Number(c.total_usd || 0).toLocaleString('en-US', { maximumFractionDigits: 2 })}</span></p>
+          <div class="tbl-wrap"><table class="tbl">
+            <thead><tr><th>Asset</th><th class="r">Amount</th><th class="r">Value</th></tr></thead>
+            <tbody>${c.assets.map(a => `<tr>
+              <td><b>${esc(a.symbol)}</b></td>
+              <td class="num r">${Number(a.amount).toLocaleString('en-US', { maximumFractionDigits: 6 })}</td>
+              <td class="num r">${a.usd != null ? '$' + Number(a.usd).toLocaleString('en-US', { maximumFractionDigits: 2 }) : 'unpriced'}</td></tr>`).join('')}</tbody>
+          </table></div>`).join('');
+      const unreadable = (d.chains || []).filter(c => c.error).map(c => c.label);
+      return `<p class="muted small"><b class="num">${esc(short)}</b> —
+          balances read straight from the chains.</p>
+        ${groups}
+        <p style="margin-top:var(--s2)">Total (priced, all chains): <b class="num">$${Number(d.total_usd).toLocaleString('en-US', { maximumFractionDigits: 2 })}</b></p>
+        ${unreadable.length ? `<p class="muted small">${esc(unreadable.join(', '))} unreadable right now (RPC).</p>` : ''}`;
+    }, { empty: { icon: 'icon-wallet', text: 'The wallet mirror lights up when a chain RPC is reachable.' } });
 
     // What-if replay: mirror every closed agent trade at a fixed stake.
     async function runReplayPanel() {
