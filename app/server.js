@@ -81,9 +81,13 @@ const CSP = [
   "default-src 'self'",
   "script-src 'self' 'unsafe-inline' https://telegram.org",
   "style-src 'self' 'unsafe-inline'",
-  "img-src 'self' data:",
+  // blob: is needed for the WebGL agent viewer (GLTF decodes embedded textures
+  // to same-origin blob: URLs); it's ephemeral and same-origin, not a network
+  // egress. worker-src blob: covers optional GLTF Draco/KTX2 decoders.
+  "img-src 'self' data: blob:",
   "font-src 'self'",
-  "connect-src 'self'",
+  "connect-src 'self' blob:",
+  "worker-src 'self' blob:",
   "frame-src https://oauth.telegram.org",
   "object-src 'none'",
   "base-uri 'self'",
@@ -161,6 +165,7 @@ app.get('/track', (req, res) => { res.setHeader('Cache-Control', 'no-cache'); re
 app.get('/wallet-link', (req, res) => { res.setHeader('Cache-Control', 'no-cache'); res.sendFile(path.join(__dirname, 'public', 'wallet-link.html')); });
 app.get('/reset', (req, res) => { res.setHeader('Cache-Control', 'no-cache'); res.sendFile(path.join(__dirname, 'public', 'reset.html')); });
 app.get('/verify', (req, res) => { res.setHeader('Cache-Control', 'no-cache'); res.sendFile(path.join(__dirname, 'public', 'verify.html')); });
+app.get('/agent', (req, res) => { res.setHeader('Cache-Control', 'no-cache'); res.sendFile(path.join(__dirname, 'public', 'agent.html')); });
 
 // Error handler
 app.use((err, req, res, next) => {

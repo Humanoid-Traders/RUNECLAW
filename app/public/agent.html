@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>RUNECLAW — AI Viking Agent</title>
+<meta name="description" content="Meet the RUNECLAW AI Viking agent — a real-time 3D companion for the trading engine.">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<meta name="theme-color" content="#0a0b10">
+<link rel="preload" href="/fonts/cinzel-700.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/styles.css?v=13">
+<style>
+  .agent-wrap { min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: var(--s6) var(--s4); position: relative; }
+  .agent-stage { width: min(560px, 92vw); aspect-ratio: 1 / 1; position: relative; }
+  .agent-stage canvas { border-radius: var(--radius-lg); }
+  .agent-eyebrow { font-family: var(--font-data); font-size: var(--fs-xs); letter-spacing: .18em; text-transform: uppercase; color: var(--up); }
+  .agent-title { font-family: var(--font-brand); font-size: clamp(28px, 6vw, 46px); letter-spacing: .04em; margin: var(--s2) 0; }
+  .agent-title span { color: var(--gold); }
+  .agent-creed { display: flex; gap: var(--s4); flex-wrap: wrap; justify-content: center; color: var(--text-2); font-family: var(--font-data); font-size: var(--fs-sm); letter-spacing: .08em; }
+  .agent-hint { color: var(--text-3); font-size: var(--fs-sm); max-width: 46ch; margin: var(--s4) auto 0; }
+  /* The "awaiting model" placeholder shows until a model is ready. */
+  .agent-placeholder { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; text-align: center; color: var(--text-3); font-size: var(--fs-sm); pointer-events: none; }
+  [data-rc3d-state="ready"] .agent-placeholder { display: none; }
+</style>
+</head>
+<body>
+<nav class="topbar" aria-label="Main">
+  <a class="brand" href="/"><svg class="brand-mark" aria-hidden="true"><use href="#brand-mark"></use></svg>RUNECLAW<span class="brand-sub">Command Core</span></a>
+  <div class="spacer"></div>
+  <div class="row" style="gap:var(--s2)"><a class="btn btn--ghost btn--sm" href="/">Home</a><a class="btn btn--primary btn--sm" href="/dashboard">Dashboard</a></div>
+</nav>
+
+<main class="agent-wrap">
+  <div class="agent-eyebrow">Intelligent · Adaptive · Relentless</div>
+  <h1 class="agent-title">The <span>AI Viking</span> Agent</h1>
+  <div class="agent-stage" data-rc-agent3d aria-label="RUNECLAW 3D agent">
+    <div class="agent-placeholder">
+      <span>Summoning the agent…<br><span class="muted small">(the 3D model appears once <code>/mascot/agent.glb</code> is added)</span></span>
+    </div>
+  </div>
+  <div class="agent-creed mt-4"><span>I ANALYZE.</span><span>I ADAPT.</span><span>I EXECUTE.</span><span>I WIN.</span></div>
+  <p class="agent-hint">Drag to orbit the agent. It watches the markets so you don't have to.</p>
+</main>
+
+<script type="importmap">
+{ "imports": {
+  "three": "/vendor/three/three.module.min.js",
+  "three/addons/": "/vendor/three/examples/jsm/"
+}}
+</script>
+<script src="/js/icons.js?v=3"></script>
+<script type="module" src="/js/mascot3d.js?v=1"></script>
+</body>
+</html>
