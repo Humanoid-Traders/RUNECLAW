@@ -428,10 +428,19 @@ router.post('/events', async (req, res) => {
       } catch (e) { dataJson = null; }
       const ts = ev.ts ? new Date(ev.ts) : new Date();
       const at = isNaN(ts.getTime()) ? new Date() : ts;
-      await pool.execute(
-        `INSERT INTO agent_events (event_type, severity, symbol, title, body, data_json, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [type, severity, symbol || null, title, body || null, dataJson, at]);
+      // Per-event fail-soft WITH the real driver error logged: one bad row
+      // must not abort the batch, and a silent 500 to the bot's
+      // fire-and-forget push left the feed empty with no trace of why.
+      try {
+        await pool.execute(
+          `INSERT INTO agent_events (event_type, severity, symbol, title, body, data_json, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          [type, severity, symbol || null, title, body || null, dataJson, at]);
+      } catch (insErr) {
+        console.error('agent_events insert failed:', insErr.message,
+          `(type=${type} at=${at.toISOString()})`);
+        continue;
+      }
       inserted++;
       nudge('activity', {
         event_type: type, severity, symbol, title, body,
