@@ -2926,7 +2926,9 @@ class DeepScanSkill(BaseSkill):
                     "vol_ratio": 2.5 if h["vol_spike"] else 1.0,
                     "patterns": h.get("chart_patterns", []),
                 })
-            payload = _build_scan_payload(scan_results, engine)
+            # Pass the full scored hits so the payload carries the deep-scan
+            # pattern block (names + signal + confidence + candles) for the web.
+            payload = _build_scan_payload(scan_results, engine, deepscan_hits=top)
             sync_scan_in_background(payload)
         except Exception as exc:
             system_log.warning("Dashboard scan push failed: %s", exc)

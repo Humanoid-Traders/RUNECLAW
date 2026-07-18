@@ -19,6 +19,7 @@
     { id: 'hub',       label: 'Agent Hub', icon: 'icon-bolt' },
     { id: 'markets',   label: 'Markets',   icon: 'icon-globe' },
     { id: 'signals',   label: 'Signals',   icon: 'icon-radar' },
+    { id: 'deepscan',  label: 'Deep Scan', icon: 'icon-target' },
     { id: 'feed',      label: 'Live Feed', icon: 'icon-sparkle' },
     { id: 'trade',     label: 'Trade',     icon: 'icon-target' },
     { id: 'portfolio', label: 'Portfolio', icon: 'icon-chart' },
@@ -1178,6 +1179,117 @@
 
     drawStream();
     every(30000, drawStream);
+  }
+
+  /* ═══════════════ DEEP SCAN ═══════════════ */
+  // One card per symbol: header (arrow/price/change/RSI), the top chart
+  // patterns each with a signal-coloured confidence bar, and candle chips —
+  // the same readout as the Telegram /deepscan card. "Observations, not
+  // signals": this view never asserts a trade, only what the detectors saw.
+  function _dsArrow(chg) {
+    if (chg == null) return '<span style="color:var(--text-3)">●</span>';
+    if (chg > 0) return '<span style="color:var(--up)">▲</span>';
+    if (chg < 0) return '<span style="color:var(--down)">▼</span>';
+    return '<span style="color:var(--text-3)">●</span>';
+  }
+  function _dsSigCol(sig) {
+    return sig === 'bullish' ? 'var(--up)' : sig === 'bearish' ? 'var(--down)' : 'var(--text-3)';
+  }
+  function deepScanCard(h) {
+    const chg = (h.chg == null || h.chg === '') ? null : Number(h.chg);
+    const rsi = (h.rsi == null || h.rsi === '') ? null : Number(h.rsi);
+    const sym = esc(String(h.symbol || '').replace('/USDT', '').replace(':USDT', ''));
+    const priceHtml = h.price != null
+      ? `<span class="num" style="color:var(--info)">${fmtPrice(h.price)}</span>` : '';
+    const chgHtml = chg == null ? ''
+      : `<span class="num" style="color:${chg > 0 ? 'var(--up)' : chg < 0 ? 'var(--down)' : 'var(--text-2)'}">${chg > 0 ? '+' : ''}${fmt(chg, 1)}%</span>`;
+    let rsiHtml = '';
+    if (rsi != null && isFinite(rsi)) {
+      const tag = rsi > 70 ? ' OB' : rsi < 30 ? ' OS' : '';
+      const col = rsi > 70 ? 'var(--down)' : rsi < 30 ? 'var(--up)' : 'var(--text-3)';
+      rsiHtml = `<span class="num" style="color:${col}">RSI ${fmt(rsi, 0)}${tag}</span>`;
+    }
+    const vol = h.vol_spike ? '<span class="chip chip--warn">VOL</span>' : '';
+    const pats = (h.chart_patterns || []).slice(0, 4).map(cp => {
+      const col = _dsSigCol(String(cp.signal || 'neutral'));
+      const pct = Math.round(Math.max(0, Math.min(1, Number(cp.confidence || 0))) * 100);
+      return `<div style="display:flex;align-items:center;gap:8px;margin:5px 0">
+        <span style="width:8px;height:8px;border-radius:50%;background:${col};flex:none"></span>
+        <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(cp.name || '')}</span>
+        <span class="ref-bar" style="width:88px;flex:none"><span style="width:${pct}%;background:${col}"></span></span>
+        <span class="num muted" style="width:36px;text-align:right;flex:none">${pct}%</span>
+      </div>`;
+    }).join('');
+    const candles = h.candle_patterns || {};
+    const chips = Object.keys(candles).slice(0, 6).map(k => {
+      const sig = String(candles[k] || 'neutral');
+      const cls = sig === 'bullish' ? 'chip--up' : sig === 'bearish' ? 'chip--down' : '';
+      return `<span class="chip ${cls}">${esc(k)}</span>`;
+    }).join(' ');
+    return `<div style="border:1px solid var(--line);border-radius:var(--radius);padding:var(--s3) var(--s4);margin-bottom:var(--s3)">
+      <div class="row" style="justify-content:space-between;align-items:center;gap:var(--s2);flex-wrap:wrap">
+        <span style="display:flex;gap:8px;align-items:center">${_dsArrow(chg)} <b>${sym}</b> ${priceHtml} ${chgHtml}</span>
+        <span style="display:flex;gap:8px;align-items:center">${rsiHtml} ${vol}</span>
+      </div>
+      ${pats ? `<div class="mt-2">${pats}</div>` : '<p class="muted small mt-1">No chart patterns.</p>'}
+      ${chips ? `<div class="mt-2" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center"><span class="muted">🕯</span> ${chips}</div>` : ''}
+    </div>`;
+  }
+
+  async function renderDeepScan() {
+    container.innerHTML = viewHead('Deep Scan', 'The engine\'s per-symbol pattern read — chart & candlestick');
+    container.insertAdjacentHTML('beforeend', `
+      <div class="stack">
+        <section class="panel panel--primary" id="p-dscards"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-radar"></use></svg>Deep Scan
+          <span class="right muted small">chart & candle patterns</span></h2><div id="c-dscards"><div class="skel"></div><div class="skel"></div></div></section>
+        <section class="panel" id="p-dslook"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-target"></use></svg>Check any symbol
+          <span class="right muted small">live pattern read</span></h2>
+          <div class="row" style="gap:var(--s2);flex-wrap:wrap">
+            <input class="input" id="dsSym" placeholder="e.g. BTC" autocomplete="off" style="max-width:200px">
+            <select class="input" id="dsTf" style="max-width:120px">
+              <option value="15m">15m</option><option value="1h">1h</option>
+              <option value="4h" selected>4h</option><option value="1d">1d</option>
+            </select>
+            <button class="btn btn--primary btn--sm" id="dsGo" type="button">Scan</button>
+          </div>
+          <div id="dsLookOut" class="mt-3"></div></section>
+      </div>`);
+
+    renderPanel(C('dscards'), async () => {
+      const scan = await getScan();
+      const ds = scan && scan.deepscan;
+      if (!ds || !(ds.hits || []).length) return null;
+      const hdr = `<p class="muted small mb-2">${ds.count || ds.hits.length} hits · ${esc(ds.tf || '')} · chart + candle patterns${ds.generated_at ? ' · ' + esc(ds.generated_at) : ''}</p>`;
+      return hdr + ds.hits.map(deepScanCard).join('')
+        + `<p class="muted small mt-2">Patterns are observations, not signals.</p>`;
+    }, { empty: { icon: 'icon-radar', text: 'The deep-scan pattern read appears after the engine\'s next deep scan. Meanwhile, check any symbol below.' } });
+
+    const out = document.getElementById('dsLookOut');
+    async function lookup() {
+      const raw = (document.getElementById('dsSym')?.value || '').trim().toUpperCase();
+      if (!raw) { toast('Type a symbol first.'); return; }
+      const sym = raw.includes('/') ? raw : raw + '/USDT';
+      const tf = document.getElementById('dsTf')?.value || '4h';
+      if (out) out.innerHTML = '<div class="skel"></div>';
+      const r = await fetchJSON('/api/patterns?symbol=' + encodeURIComponent(sym) + '&timeframe=' + tf,
+        { auth: false, timeoutMs: 14000 }).catch(() => null);
+      const d = r && r.ok && r.data;
+      if (!d) {
+        if (out) out.innerHTML = `<p class="muted small">No live pattern read right now — the analysis bridge may be offline. The deep scan above still shows the engine's last sweep.</p>`;
+        return;
+      }
+      const hit = {
+        symbol: d.symbol || sym, price: d.price, chg: d.change_pct, rsi: d.rsi,
+        vol_spike: false, chart_patterns: d.chart_patterns || [],
+        candle_patterns: d.candlestick_patterns || d.candle_patterns || {},
+      };
+      const empty = !hit.chart_patterns.length && !Object.keys(hit.candle_patterns).length;
+      if (out) out.innerHTML = empty
+        ? `<p class="muted small">No patterns detected on ${esc(sym)} (${esc(tf)}) right now.</p>`
+        : deepScanCard(hit);
+    }
+    document.getElementById('dsGo')?.addEventListener('click', lookup);
+    document.getElementById('dsSym')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') lookup(); });
   }
 
   /* ═══════════════ TRADE ═══════════════ */
@@ -2897,7 +3009,7 @@
 
   /* ═══════════════ Boot ═══════════════ */
   const RENDER = { home: renderHome, chat: renderChat, hub: renderHub, markets: renderMarkets,
-                   signals: renderSignals,
+                   signals: renderSignals, deepscan: renderDeepScan,
                    feed: renderFeed, trade: renderTrade, portfolio: renderPortfolio,
                    leaderboard: renderLeaderboard, lab: renderLab, engine: renderEngine,
                    account: renderAccount };
@@ -2906,7 +3018,7 @@
 
   // SSE: refresh the bits that changed, only re-render if the view shows them.
   connectStream({
-    scan: () => { cache.scan = null; getScan().then(updateConnChip); if (currentView === 'engine') showView('engine'); },
+    scan: () => { cache.scan = null; getScan().then(updateConnChip); if (currentView === 'engine' || currentView === 'deepscan') showView(currentView); },
     portfolio: () => { cache.portfolio = null; if (currentView === 'home' || currentView === 'portfolio') showView(currentView); },
     trade: () => { cache.portfolio = null; toast('Trade update from the engine.'); if (currentView === 'home' || currentView === 'portfolio' || currentView === 'trade') showView(currentView); },
     signals: () => { if (currentView === 'signals') showView('signals'); },

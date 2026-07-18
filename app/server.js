@@ -119,6 +119,7 @@ app.use('/api/trades', tradesRouter);
 app.use('/api/bot/sync', syncRouter);
 app.use('/api/market', marketRouter);
 app.use('/api/insight', insightRouter);
+app.use('/api/patterns', require('./routes/patterns'));
 app.use('/api/signals', signalsRouter);
 app.use('/api/credentials', credentialsRouter);
 app.use('/api/controls', controlsRouter);
