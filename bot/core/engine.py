@@ -1688,6 +1688,13 @@ class RuneClawEngine:
                 for msg in sync_msgs:
                     audit(system_log, f"Exchange sync: {msg}",
                           action="startup_exchange_sync", result="SYNCED")
+                # Positions adopted at boot (bot restarted while carrying a
+                # live position) must reach the website too — the close-time
+                # sync alone leaves them invisible on the dashboard.
+                try:
+                    self._sync_live_state_to_website()
+                except Exception as _sync_exc:
+                    logger.debug("Startup live website sync skipped: %s", _sync_exc)
             except Exception as exc:
                 audit(system_log, f"Startup exchange sync error: {exc}",
                       action="startup_exchange_sync", result="ERROR")
@@ -3659,6 +3666,15 @@ class RuneClawEngine:
                               "confidence": round(float(idea.confidence), 3)})
             except Exception as _feed_exc:
                 logger.debug("Agent feed open event skipped: %s", _feed_exc)
+            # Push the new live position to the website immediately. Before
+            # this, live state only synced on CLOSE — an open position sat
+            # invisible on the web dashboard (while Telegram showed it) until
+            # the trade finished.
+            try:
+                if executor is getattr(self, "live_executor", None):
+                    self._sync_live_state_to_website()
+            except Exception as _sync_exc:
+                logger.debug("Live website sync skipped: %s", _sync_exc)
             # Pyramid add filled — NOW move the existing position's SL to breakeven
             # (deferred from before execute() so a blocked/failed add never leaves
             # the existing winner sitting at breakeven with no rollback).
@@ -4168,6 +4184,14 @@ class RuneClawEngine:
                         await self._adopt_notify_callback(adopted_msgs)
                     except Exception as exc:
                         logger.debug("Adopt notify failed: %s", exc)
+                # Adopted/ghost/orphan changes alter the live position set —
+                # mirror them to the website (only when something changed;
+                # this branch runs every tick).
+                if sync_msgs:
+                    try:
+                        self._sync_live_state_to_website()
+                    except Exception as _sync_exc:
+                        logger.debug("Periodic live website sync skipped: %s", _sync_exc)
             except Exception as exc:
                 audit(system_log, f"Periodic exchange sync error: {exc}",
                       action="periodic_exchange_sync", result="ERROR")
