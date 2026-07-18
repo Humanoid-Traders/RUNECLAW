@@ -503,3 +503,113 @@ code { font-family: var(--font-data); font-size: .9em; background: var(--surface
 .token-display { font-family: var(--font-data); font-size: var(--fs-base); letter-spacing: .06em; background: var(--bg); border: 1px dashed var(--gold); border-radius: var(--radius-sm); padding: var(--s3); text-align: center; cursor: pointer; word-break: break-all; }
 .token-display.copied { border-color: var(--up); color: var(--up); }
 .steps-list { margin: var(--s2) 0 0 18px; color: var(--text-2); font-size: var(--fs-sm); display: flex; flex-direction: column; gap: 6px; }
+
+/* ==========================================================================
+   AI MOTION — a cohesive, GPU-friendly motion layer for the "living agent"
+   feel. Everything here animates transform / opacity / background-position
+   only (no layout thrash), and the global prefers-reduced-motion rule near
+   the top of this sheet neutralises all of it for motion-sensitive users.
+   ========================================================================== */
+
+/* Panels & cards rise in on render — views re-render on navigation and on
+   live pushes, so this re-fires and the UI feels like it's assembling itself. */
+@keyframes rc-rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+.panel { animation: rc-rise .42s cubic-bezier(.2, .7, .3, 1) both; }
+.stack > .panel:nth-child(2) { animation-delay: .05s; }
+.stack > .panel:nth-child(3) { animation-delay: .10s; }
+.stack > .panel:nth-child(4) { animation-delay: .15s; }
+.stack > .panel:nth-child(5) { animation-delay: .20s; }
+.stack > .panel:nth-child(n + 6) { animation-delay: .24s; }
+
+/* Utility rise for JS-injected blocks (deep-scan cards, list rows, chat). */
+.rc-rise { animation: rc-rise .4s cubic-bezier(.2, .7, .3, 1) both; }
+
+/* Primary panels carry a slow flowing accent seam — the "engine is thinking"
+   signature, drawn in the brand rune-blue. */
+.panel--primary { position: relative; }
+.panel--primary::before {
+  content: ""; position: absolute; top: 0; left: 0; right: 0; height: 2px;
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  background: linear-gradient(90deg, transparent, var(--gold), var(--gold-bright), var(--gold), transparent);
+  background-size: 200% 100%; animation: rc-flow 4s linear infinite; opacity: .85; pointer-events: none;
+}
+@keyframes rc-flow { to { background-position: -200% 0; } }
+
+/* Live / active chips breathe a soft ring so "LIVE" reads as alive, not static. */
+.chip--live, .chip--up.chip--pulse { position: relative; }
+.chip--live::after {
+  content: ""; position: absolute; inset: -1px; border-radius: inherit; pointer-events: none;
+  animation: rc-live-ring 2.4s ease-out infinite;
+}
+@keyframes rc-live-ring {
+  0% { box-shadow: 0 0 0 0 rgba(63, 182, 255, .45); }
+  70%, 100% { box-shadow: 0 0 0 8px rgba(63, 182, 255, 0); }
+}
+
+/* Confidence / progress bars: fill up from the left on mount, with a single
+   light sheen sweeping across — cheap (one-shot, transform-based) even on a
+   deep-scan page full of bars. */
+.ref-bar { position: relative; }
+.ref-bar > span { transform-origin: left; animation: rc-fill .6s cubic-bezier(.2, .7, .3, 1) both; position: relative; overflow: hidden; }
+.ref-bar > span::after {
+  content: ""; position: absolute; inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, .38), transparent);
+  transform: translateX(-100%); animation: rc-sheen 1.5s ease-out .35s both;
+}
+@keyframes rc-fill { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+@keyframes rc-sheen { to { transform: translateX(220%); } }
+
+/* Live value flash — JS toggles these on a fresh equity/price tick. */
+.rc-flash-up { animation: rc-flash-up .9s ease-out; }
+.rc-flash-down { animation: rc-flash-down .9s ease-out; }
+@keyframes rc-flash-up { 0% { color: var(--up); text-shadow: 0 0 12px var(--up); } 100% { text-shadow: 0 0 0 transparent; } }
+@keyframes rc-flash-down { 0% { color: var(--down); text-shadow: 0 0 12px var(--down); } 100% { text-shadow: 0 0 0 transparent; } }
+
+/* AI orb — a small living gradient sphere for agent/chat headers. */
+.rc-orb {
+  width: 20px; height: 20px; border-radius: 50%; flex: none; display: inline-block;
+  background: radial-gradient(circle at 32% 30%, var(--gold-bright), var(--gold) 45%, #12385c 92%);
+  box-shadow: 0 0 12px rgba(63, 182, 255, .35), inset 0 0 6px rgba(255, 255, 255, .25);
+  animation: rc-orb-breathe 3s ease-in-out infinite;
+}
+@keyframes rc-orb-breathe {
+  0%, 100% { transform: scale(1); filter: brightness(1); }
+  50% { transform: scale(1.09); filter: brightness(1.22); }
+}
+/* The chat header's sparkle icon breathes like the orb — zero extra markup. */
+.chat-head .t .icon { animation: rc-orb-breathe 3s ease-in-out infinite; transform-origin: center; }
+
+/* Primary buttons lift with a rune-blue glow on hover. */
+.btn--primary { transition: transform .15s ease, box-shadow .2s ease, filter .2s ease; }
+.btn--primary:hover { transform: translateY(-1px); box-shadow: var(--glow); }
+
+/* Connecting state on the header chip: a scanning shimmer sweep. */
+.chip--offline {
+  background-image: linear-gradient(90deg, transparent 0%, rgba(154, 167, 255, .18) 50%, transparent 100%);
+  background-size: 200% 100%; animation: rc-scan 1.6s linear infinite;
+}
+@keyframes rc-scan { to { background-position: -200% 0; } }
+
+/* Landing hero: a slow drifting aurora behind the headline — the platform's
+   first impression reads as an intelligence at work, not a static page. */
+.hero { position: relative; overflow: hidden; }
+.hero::before {
+  content: ""; position: absolute; inset: -30% -10% auto -10%; height: 150%; z-index: 0; pointer-events: none;
+  background:
+    radial-gradient(40% 50% at 20% 30%, rgba(63, 182, 255, .16), transparent 70%),
+    radial-gradient(35% 45% at 80% 20%, rgba(154, 167, 255, .13), transparent 70%),
+    radial-gradient(45% 40% at 60% 70%, rgba(47, 191, 113, .08), transparent 70%);
+  filter: blur(6px); animation: rc-aurora 20s ease-in-out infinite alternate;
+}
+.hero > * { position: relative; z-index: 1; }
+@keyframes rc-aurora {
+  0% { transform: translate3d(-3%, -2%, 0) scale(1); opacity: .85; }
+  50% { transform: translate3d(3%, 2%, 0) scale(1.08); opacity: 1; }
+  100% { transform: translate3d(-2%, 3%, 0) scale(1.03); opacity: .9; }
+}
+
+/* Active nav item glows in the brand blue — the current view feels "energised". */
+.rail a.active .icon, .tabbar a.active .icon { filter: drop-shadow(0 0 6px var(--gold)); transition: filter .2s ease; }
+/* Chips/badges gain a hairline lift on hover where they're interactive. */
+.chip[role="button"], .token-display { transition: transform .15s ease, box-shadow .2s ease, border-color .2s ease; }
+.token-display:hover { box-shadow: var(--glow); }
