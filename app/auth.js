@@ -375,7 +375,7 @@ router.post('/login', async (req, res) => {
 
 router.get('/me', authMiddleware, async (req, res) => {
   try {
-    const [rows] = await pool.execute('SELECT id, email, plan, telegram_linked, email_verified, password_hash, referral_code FROM users WHERE id = ?', [req.user.user_id]);
+    const [rows] = await pool.execute('SELECT * FROM users WHERE id = ?', [req.user.user_id]);
     if (rows.length === 0) return res.status(404).json({ error: 'User not found' });
     const user = rows[0];
     const equity = await getUserEquity(user.id);
@@ -383,6 +383,7 @@ router.get('/me', authMiddleware, async (req, res) => {
                telegram_linked: !!user.telegram_linked,
                email_verified: !!user.email_verified,
                referral_code: user.referral_code || null,
+               wallet_address: user.wallet_address || null,
                has_password: !!user.password_hash, equity });
   } catch (err) {
     console.error('Me error:', err.message);
