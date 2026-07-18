@@ -23,6 +23,7 @@ const { maybeHandleRwaChat } = require('../lib/rwa');
 const { maybeHandleWalletChat } = require('../lib/wallet');
 const { maybeHandleNetWorthChat } = require('../lib/networth');
 const { maybeHandleExposureChat } = require('../lib/exposure');
+const { maybeHandleResearchChat } = require('../lib/research');
 
 const router = express.Router();
 router.use(authMiddleware);
@@ -61,6 +62,9 @@ router.post('/', chatLimit, async (req, res) => {
     // "what's my total exposure?" — perp positions netted against wallet spot.
     const exposureReply = await maybeHandleExposureChat(req.user.user_id, text);
     if (exposureReply) return res.json(exposureReply);
+    // "research PENDLE" — evidence dossier from trusted local + live sources.
+    const researchReply = await maybeHandleResearchChat(req.user.user_id, text);
+    if (researchReply) return res.json(researchReply);
     // "net worth" — everything the user holds, everywhere, read-only.
     // Needs the resolved bot identity, so it runs after resolveBotIdentity…
     // except the identity is resolved below; resolve it here for this
