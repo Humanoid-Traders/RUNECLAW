@@ -450,6 +450,13 @@ class MemoryDB {
       return [{ affectedRows: user ? 1 : 0 }, []];
     }
 
+    if (cmd.startsWith('UPDATE USERS SET SOL_ADDRESS')) {
+      // params: [sol_address|null, id] — Solana watch address (read-only mirror)
+      const user = this.users.find(u => u.id === params[1]);
+      if (user) user.sol_address = params[0];
+      return [{ affectedRows: user ? 1 : 0 }, []];
+    }
+
     // -- Referral / invite --
     if (cmd.startsWith('UPDATE USERS SET REFERRAL_CODE')) {
       const user = this.users.find(u => u.id === params[1]);
@@ -795,6 +802,10 @@ async function migrate() {
     // Self-custody sign-in: the user's EVM wallet address (lowercased, unique).
     try {
       await pool.execute('ALTER TABLE users ADD COLUMN wallet_address VARCHAR(42) DEFAULT NULL');
+    } catch (e) { /* exists */ }
+    // Solana WATCH address (base58, read-only mirror — no signing surface).
+    try {
+      await pool.execute('ALTER TABLE users ADD COLUMN sol_address VARCHAR(48) DEFAULT NULL');
     } catch (e) { /* exists */ }
     try {
       await pool.execute('CREATE UNIQUE INDEX idx_users_wallet_address ON users (wallet_address)');

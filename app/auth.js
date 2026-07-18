@@ -384,6 +384,7 @@ router.get('/me', authMiddleware, async (req, res) => {
                email_verified: !!user.email_verified,
                referral_code: user.referral_code || null,
                wallet_address: user.wallet_address || null,
+               sol_address: user.sol_address || null,
                has_password: !!user.password_hash, equity });
   } catch (err) {
     console.error('Me error:', err.message);
@@ -709,6 +710,37 @@ router.post('/wallet/unlink', authMiddleware, async (req, res) => {
   } catch (err) {
     console.error('Wallet unlink error:', err.message);
     res.status(500).json({ error: 'Wallet unlink failed' });
+  }
+});
+
+// Solana WATCH address — read-only mirror, honestly unauthenticated. SIWE is
+// EVM-only (personal_sign), so there is no signature proving ownership here;
+// the address only ever feeds public balance READS (lib/solana.js), never any
+// signing surface, so watching an arbitrary address is harmless by design.
+router.post('/wallet/solana', authMiddleware, async (req, res) => {
+  try {
+    const { isSolanaAddress } = require('./lib/solana');
+    const address = String((req.body || {}).address || '').trim();
+    if (!isSolanaAddress(address)) {
+      return res.status(400).json({ error: 'Not a valid Solana address (base58).' });
+    }
+    await pool.execute('UPDATE users SET sol_address = ? WHERE id = ?',
+      [address, req.user.user_id]);
+    res.json({ ok: true, sol_address: address });
+  } catch (err) {
+    console.error('Solana watch link error:', err.message);
+    res.status(500).json({ error: 'Solana address link failed' });
+  }
+});
+
+router.post('/wallet/solana/unlink', authMiddleware, async (req, res) => {
+  try {
+    await pool.execute('UPDATE users SET sol_address = ? WHERE id = ?',
+      [null, req.user.user_id]);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('Solana watch unlink error:', err.message);
+    res.status(500).json({ error: 'Solana address unlink failed' });
   }
 });
 
