@@ -53,6 +53,8 @@ router.post('/', writeLimit, async (req, res) => {
       op: b.op === '<' || b.op === '>' ? b.op : null,
       threshold: Number(b.threshold),
       inferOp: !b.op,
+      mode: b.mode === 'recurring' ? 'recurring' : 'once',
+      cooldownMin: Number(b.cooldown_min) || undefined,
     });
     if (!r.ok) return res.status(400).json({ error: r.error });
     res.json({ ok: true, label: alerts.describeCondition(r.alert), now: r.now });

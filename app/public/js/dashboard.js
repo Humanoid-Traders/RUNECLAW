@@ -251,6 +251,10 @@
               <option value="<">price below</option>
             </select>
             <input class="input" id="alertTh" type="number" step="any" min="0" placeholder="100000" style="width:9rem" aria-label="Level" required>
+            <select class="input" id="alertMode" aria-label="Alert mode" style="width:auto">
+              <option value="once">one-shot</option>
+              <option value="recurring">recurring (hourly max)</option>
+            </select>
             <button class="btn btn--primary btn--sm" type="submit">Arm alert</button>
           </form>
           <div id="alertList"><div class="skel"></div></div>
@@ -321,8 +325,9 @@
       const op = document.getElementById('alertOp').value;
       const threshold = parseFloat(document.getElementById('alertTh').value);
       if (!symbol || !isFinite(threshold)) return;
+      const mode = document.getElementById('alertMode')?.value === 'recurring' ? 'recurring' : 'once';
       const r = await fetchJSON('/api/alerts', {
-        method: 'POST', body: { symbol, metric: 'price', op, threshold },
+        method: 'POST', body: { symbol, metric: 'price', op, threshold, mode },
       }).catch(() => null);
       if (r && r.ok) {
         toast(`Armed: ${r.data.label}`);

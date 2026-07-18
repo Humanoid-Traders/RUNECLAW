@@ -72,7 +72,7 @@ async function newUser() {
 
 test('parser: price below with $ and k-suffix', () => {
   const p = alerts.parseAlertCommand('tell me when BTC drops below $100k');
-  assert.deepEqual(p, { kind: 'create', base: 'BTC', metric: 'price', op: '<', threshold: 100_000 });
+  assert.deepEqual(p, { kind: 'create', base: 'BTC', metric: 'price', op: '<', threshold: 100_000, mode: 'once' });
 });
 
 test('parser: coin name + above', () => {
