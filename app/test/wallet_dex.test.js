@@ -8,6 +8,7 @@
  * math, and both chat intercepts.
  */
 process.env.JWT_SECRET = 'j'.repeat(64);
+process.env.WEB3_CHAINS = 'ethereum';   // single-chain FakeProvider — see multichain test
 delete process.env.DATABASE_URL;
 delete process.env.WEB_GATEWAY_SECRET;
 
