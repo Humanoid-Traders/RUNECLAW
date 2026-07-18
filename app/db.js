@@ -298,13 +298,23 @@ class MemoryDB {
       return [[...this.pendingCreds].sort((a, b) => a.created_at - b.created_at), []];
     }
     if (cmd.includes('INSERT INTO EXCHANGE_STATUS')) {
-      // params: user_id, exchange(venue), connected
-      this.exchangeStatus[params[0]] = { exchange: params[1] || 'bitget', connected: !!params[2] };
+      // params: user_id, exchange(venue), connected — upsert per (user, venue)
+      // so multiple connected exchanges coexist.
+      const key = String(params[0]);
+      if (!this.exchangeStatus[key] || !Array.isArray(this.exchangeStatus[key])) {
+        this.exchangeStatus[key] = [];
+      }
+      const venue = params[1] || 'bitget';
+      const row = this.exchangeStatus[key].find(r => r.exchange === venue);
+      if (row) row.connected = !!params[2];
+      else this.exchangeStatus[key].push({ exchange: venue, connected: !!params[2] });
       return [{ affectedRows: 1 }, []];
     }
     if (cmd.includes('FROM EXCHANGE_STATUS')) {
-      const s = this.exchangeStatus[params[0]];
-      return [s ? [{ connected: s.connected, exchange: s.exchange || 'bitget' }] : [], []];
+      const rows = this.exchangeStatus[String(params[0])];
+      return [Array.isArray(rows)
+        ? rows.map(r => ({ connected: r.connected, exchange: r.exchange || 'bitget' }))
+        : [], []];
     }
 
     // -- PENDING CONTROLS / USER CONTROLS --
@@ -769,6 +779,12 @@ async function migrate() {
     try {
       await pool.execute('ALTER TABLE users ADD COLUMN x_id VARCHAR(64) DEFAULT NULL');
     } catch (e) { /* exists */ }
+    // Multi-venue exchange keys: exchange_status becomes one row per
+    // (user, venue) so several connected exchanges coexist. DROP+ADD in one
+    // statement is idempotent — re-running recreates the same composite key.
+    try {
+      await pool.execute('ALTER TABLE exchange_status DROP PRIMARY KEY, ADD PRIMARY KEY (user_id, exchange)');
+    } catch (e) { /* already composite / column constraints — fine */ }
     // Alerts 2.0: recurring mode + cooldown on pre-existing deployments.
     try {
       await pool.execute("ALTER TABLE user_alerts ADD COLUMN mode VARCHAR(12) NOT NULL DEFAULT 'once'");
@@ -1005,10 +1021,11 @@ async function migrate() {
     // (connect) or removes (disconnect) the credentials. Drives the web UI badge.
     await pool.execute(`
       CREATE TABLE IF NOT EXISTS exchange_status (
-        user_id INT PRIMARY KEY,
-        exchange VARCHAR(16) DEFAULT 'bitget',
+        user_id INT NOT NULL,
+        exchange VARCHAR(16) NOT NULL DEFAULT 'bitget',
         connected BOOLEAN DEFAULT FALSE,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        PRIMARY KEY (user_id, exchange)
       )
     `);
     // Pending per-user live-control changes (flags/numbers, not secrets — no
