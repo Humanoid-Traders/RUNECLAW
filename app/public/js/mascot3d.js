@@ -12,6 +12,21 @@
  * present yet, so shipping this never changes the site until the artwork
  * (agent.glb) is dropped in.
  *
+ * Two modes:
+ *   • showcase (default) — the full character, drag-to-orbit, gentle auto-rotate
+ *     (landing hero, /agent page).
+ *   • avatar (opts.mode==='avatar' or [data-rc-agent3d="avatar"]) — a compact
+ *     head-and-chest bust that faces the viewer and REACTS: it plays 'analyze'
+ *     while the chat is thinking and one-shot 'alert'/'execute' on live signals
+ *     and fills, then settles back to idle. Used in the dashboard chat header
+ *     and Agent Hub.
+ *
+ * Reactive API (drive every mounted agent at once):
+ *   window.RCAgent3D.react('analyze'|'alert'|'execute')   // one-shot then idle
+ *   window.RCAgent3D.setThinking(true|false)               // hold 'analyze'
+ *   window.RCAgent3D.mountIfAvailable(host, {mode})        // SPA dynamic mount
+ *   window.RCAgent3D.disposeAll()                          // free GL on view change
+ *
  * Mount targets: any element with [data-rc-agent3d]. Self-contained: three.js is
  * vendored under /vendor/three (no CDN); the page must declare the import map.
  */
@@ -22,6 +37,7 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 
 const MODEL_URL = '/mascot/agent.glb';
 const RUNE = 0x3fb6ff;
+const _instances = new Set();   // every live viewer, for global react()/disposeAll()
 
 async function modelExists() {
   try {
@@ -30,9 +46,10 @@ async function modelExists() {
   } catch (e) { return false; }
 }
 
-export function mountAgent(host) {
+export function mountAgent(host, opts = {}) {
   if (!host || host.__rc3d) return null;
   host.__rc3d = true;
+  const avatar = opts.mode === 'avatar';   // compact bust, faces viewer, reacts
   const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
   const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: 'high-performance' });
@@ -62,11 +79,13 @@ export function mountAgent(host) {
   // frame and rotate it.
   const controls = new OrbitControls(camera, renderer.domElement);
   controls.enableZoom = false; controls.enablePan = false;
+  controls.enableRotate = !avatar;          // the avatar faces you; only the showcase orbits
   controls.enableDamping = true; controls.dampingFactor = 0.08;
-  controls.autoRotate = !reduce; controls.autoRotateSpeed = 1.0;
+  controls.autoRotate = !reduce && !avatar; controls.autoRotateSpeed = 1.0;
   controls.minPolarAngle = Math.PI * 0.30; controls.maxPolarAngle = Math.PI * 0.62;
 
   let mixer = null, model = null;
+  let actionByName = {}, current = null, reactTimer = 0, wantThinking = false;
   host.setAttribute('data-rc3d-state', 'loading');
 
   // Box3.setFromObject reads BIND-POSE geometry — it is blind to skeletal
@@ -102,14 +121,39 @@ export function mountAgent(host) {
   function reframe() {
     if (!model || !model.__fit) return;
     const f = model.__fit, half = (camera.fov * Math.PI / 180) / 2;
-    const dist = Math.max(f.sy / 2 / Math.tan(half), f.sx / 2 / Math.tan(half) / camera.aspect) * 1.12;
+    // Showcase frames the whole character; avatar crops to a head-and-chest bust
+    // (fit a shorter vertical slice and lift the target toward the rune emblem).
+    const fitH = avatar ? f.sy * 0.60 : f.sy;
+    const fitW = avatar ? f.sy * 0.60 : f.sx;
+    const ty = avatar ? f.cy + f.sy * 0.18 : f.cy;
+    const dist = Math.max(fitH / 2 / Math.tan(half), fitW / 2 / Math.tan(half) / camera.aspect) * (avatar ? 1.04 : 1.12);
     const dir = new THREE.Vector3().subVectors(camera.position, controls.target);
     if (dir.lengthSq() === 0) dir.set(0, 0, 1);
     dir.normalize().multiplyScalar(dist);
-    controls.target.set(0, f.cy, 0);
+    controls.target.set(0, ty, 0);
     camera.position.copy(controls.target).add(dir);
     controls.update();
   }
+
+  // Cross-fade to a named clip. One-shot reactions (analyze/alert/execute) play
+  // once then return to idle — or hold 'analyze' while the chat is thinking.
+  function fadeTo(name, once) {
+    if (!mixer) return;
+    const to = actionByName[name]; if (!to) return;
+    const same = to === current;
+    to.reset();
+    to.setLoop(once ? THREE.LoopOnce : THREE.LoopRepeat, once ? 1 : Infinity);
+    to.clampWhenFinished = !!once;
+    to.fadeIn(same ? 0 : 0.25); to.play();
+    if (current && !same) current.fadeOut(0.25);
+    current = to;
+    clearTimeout(reactTimer);
+    if (once) reactTimer = setTimeout(
+      () => fadeTo(wantThinking ? 'analyze' : 'idle', false),
+      (to.getClip().duration || 1) * 1000 + 120);
+  }
+  function react(name) { if (mixer && ['analyze', 'alert', 'execute', 'blink'].includes(name)) fadeTo(name, true); }
+  function setThinking(on) { wantThinking = !!on; if (mixer) fadeTo(on ? 'analyze' : 'idle', false); }
 
   new GLTFLoader().load(MODEL_URL, (gltf) => {
     model = gltf.scene;
@@ -134,11 +178,13 @@ export function mountAgent(host) {
     controls.target.set(0, ctr.y, 0);
     reframe();
 
-    // Default expression: idle loops; the agent breathes on its own.
+    // Build the clip actions and settle on the resting expression. Reactive
+    // callers (chat "thinking", live signals/fills) cross-fade between these.
     if (mixer) {
-      const idle = clips.find((cl) => cl.name === 'idle') || clips[0];
-      clips.forEach((cl) => mixer.clipAction(cl).stop());
-      mixer.clipAction(idle).reset().play();
+      clips.forEach((cl) => { actionByName[cl.name] = mixer.clipAction(cl).stop(); });
+      if (!actionByName.idle) actionByName.idle = mixer.clipAction(clips[0]);
+      current = null;
+      fadeTo(wantThinking ? 'analyze' : 'idle', false);
     }
     host.setAttribute('data-rc3d-state', 'ready');
   }, undefined, () => { host.setAttribute('data-rc3d-state', 'error'); });
@@ -164,28 +210,73 @@ export function mountAgent(host) {
   function pause() { running = false; if (raf) { cancelAnimationFrame(raf); raf = 0; } }
 
   resize();
-  if (window.ResizeObserver) new ResizeObserver(resize).observe(host);
+  let ro = null, io = null;
+  const onVis = () => (document.hidden ? pause() : play());
+  if (window.ResizeObserver) { ro = new ResizeObserver(resize); ro.observe(host); }
   else window.addEventListener('resize', resize);
-  document.addEventListener('visibilitychange', () => document.hidden ? pause() : play());
+  document.addEventListener('visibilitychange', onVis);
   if ('IntersectionObserver' in window) {
-    new IntersectionObserver((es) => es[0].isIntersecting ? play() : pause(), { threshold: 0.01 }).observe(host);
+    io = new IntersectionObserver((es) => es[0].isIntersecting ? play() : pause(), { threshold: 0.01 });
+    io.observe(host);
   } else { play(); }
   play();
   if (reduce) { controls.autoRotate = false; }
 
-  return { play, pause, get model() { return model; } };
+  // Free the WebGL context + GPU resources. The dashboard SPA wipes a view's
+  // DOM on navigation, which would otherwise orphan a live context; disposeAll()
+  // (called from showView) reclaims it before the next view mounts.
+  function dispose() {
+    pause();
+    _instances.delete(inst);
+    clearTimeout(reactTimer);
+    try { ro && ro.disconnect(); } catch (e) { /* gone */ }
+    try { io && io.disconnect(); } catch (e) { /* gone */ }
+    document.removeEventListener('visibilitychange', onVis);
+    if (mixer) mixer.stopAllAction();
+    scene.traverse((o) => {
+      if (o.geometry) o.geometry.dispose();
+      const mats = o.material ? (Array.isArray(o.material) ? o.material : [o.material]) : [];
+      mats.forEach((m) => { for (const k in m) { const v = m[k]; if (v && v.isTexture) v.dispose(); } if (m.dispose) m.dispose(); });
+    });
+    try { pmrem.dispose(); } catch (e) { /* gone */ }
+    try { renderer.dispose(); } catch (e) { /* gone */ }
+    const gl = renderer.getContext && renderer.getContext();
+    const lose = gl && gl.getExtension && gl.getExtension('WEBGL_lose_context');
+    if (lose) lose.loseContext();
+    if (renderer.domElement.parentNode) renderer.domElement.parentNode.removeChild(renderer.domElement);
+    host.__rc3d = false;
+  }
+
+  const inst = { play, pause, react, setThinking, dispose, get model() { return model; } };
+  _instances.add(inst);
+  return inst;
 }
+
+let _modelOk = null;
+async function modelReady() { if (_modelOk === null) _modelOk = await modelExists(); return _modelOk; }
 
 export async function autoMount() {
   const hosts = Array.prototype.slice.call(document.querySelectorAll('[data-rc-agent3d]'));
   if (!hosts.length) return;
   // Non-breaking: with no model committed yet, leave the page exactly as-is.
-  if (!(await modelExists())) {
+  if (!(await modelReady())) {
     hosts.forEach(h => h.setAttribute('data-rc3d-state', 'absent'));
     return;
   }
-  hosts.forEach(mountAgent);
+  hosts.forEach(h => mountAgent(h, h.getAttribute('data-rc-agent3d') === 'avatar' ? { mode: 'avatar' } : {}));
 }
 
-window.RCAgent3D = { mountAgent: mountAgent, autoMount: autoMount };
+// Mount into a dynamically-created host (SPA views) only when the model is
+// present — cached probe so repeated view renders don't re-HEAD the asset.
+export async function mountIfAvailable(host, opts) {
+  if (!host || host.__rc3d) return null;
+  return (await modelReady()) ? mountAgent(host, opts) : null;
+}
+
+window.RCAgent3D = {
+  mountAgent, autoMount, mountIfAvailable,
+  react: (n) => _instances.forEach((i) => i.react && i.react(n)),
+  setThinking: (on) => _instances.forEach((i) => i.setThinking && i.setThinking(on)),
+  disposeAll: () => Array.from(_instances).forEach((i) => i.dispose && i.dispose()),
+};
 autoMount();

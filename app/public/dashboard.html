@@ -91,9 +91,17 @@
 
 <script src="/js/icons.js?v=3"></script>
 <script src="/js/app.js?v=3"></script>
-<script src="/js/chat.js?v=19" defer></script>
+<script src="/js/chat.js?v=20" defer></script>
+<!-- 3D AI Viking agent: import map + reactive viewer (defers; no-op if the model is absent). -->
+<script type="importmap">
+{ "imports": {
+  "three": "/vendor/three/three.module.min.js",
+  "three/addons/": "/vendor/three/examples/jsm/"
+}}
+</script>
+<script type="module" src="/js/mascot3d.js?v=2"></script>
 <script src="/vendor/lightweight-charts.standalone.production.js" defer></script>
-<script src="/js/dashboard.js?v=41" defer></script>
+<script src="/js/dashboard.js?v=42" defer></script>
 <script>if('serviceWorker' in navigator){navigator.serviceWorker.register('/sw.js').catch(()=>{});}</script>
 </body>
 </html>
