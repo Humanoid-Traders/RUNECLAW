@@ -1369,6 +1369,11 @@
             <span class="badge" style="margin-left:auto" title="Balances read straight from the chain — RUNECLAW can never move them">read-only</span></h2>
           <div id="c-wallet"><div class="skel"></div></div>
         </section>
+        <section class="panel" id="p-defi">
+          <h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-shield"></use></svg>DeFi positions
+            <span class="badge" style="margin-left:auto" title="Aave/Lido/Uniswap read straight from protocol contracts — RUNECLAW warns, it can never manage a position">read-only</span></h2>
+          <div id="c-defi"><div class="skel"></div></div>
+        </section>
         <section class="panel" id="p-replay">
           <h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-bolt"></use></svg>What-if replay
             <span class="badge" style="margin-left:auto" title="Real recorded agent trades, mirrored at your stake — hypothetical, not account history">hypothetical</span></h2>
@@ -1530,6 +1535,38 @@
         <p style="margin-top:var(--s2)">Total (priced, all chains): <b class="num">$${Number(d.total_usd).toLocaleString('en-US', { maximumFractionDigits: 2 })}</b></p>
         ${unreadable.length ? `<p class="muted small">${esc(unreadable.join(', '))} unreadable right now (RPC).</p>` : ''}`;
     }, { empty: { icon: 'icon-wallet', text: 'The wallet mirror lights up when a chain RPC is reachable.' } });
+
+    // DeFi positions: Aave health factors, Lido stETH, Uniswap LP counts —
+    // read from protocol contracts, with the warnings a risk desk would raise.
+    renderPanel(C('defi'), async () => {
+      const r = await fetchJSON('/api/defi', { timeoutMs: 25000 });
+      const d = r.data;
+      if (!r.ok || !d) return null;
+      if (!d.linked) {
+        return `<p class="muted">No wallet linked — link one in the <a href="#account">Account view</a>
+          and your Aave, Lido and Uniswap positions appear here with liquidation-risk warnings.</p>`;
+      }
+      const bits = [];
+      for (const a of (d.aave || [])) {
+        const hfCls = a.health_factor === null ? '' : a.health_factor < 1.1 ? 'down' : a.health_factor < 1.5 ? 'chip--warn' : 'up';
+        bits.push(`<div class="kv-row"><span>🏦 Aave v3 · ${esc(a.label)}</span>
+          <b class="num">$${fmt(a.collateral_usd, 0)} coll · $${fmt(a.debt_usd, 0)} debt ·
+          ${a.health_factor === null ? '<span class="muted small">no debt</span>' : `HF <span class="${hfCls}">${a.health_factor}</span>`}</b></div>`);
+      }
+      if (d.lido) {
+        bits.push(`<div class="kv-row"><span>🌊 Lido stETH</span>
+          <b class="num">${Number(d.lido.steth_amount).toLocaleString('en-US', { maximumFractionDigits: 4 })} — ${d.lido.usd != null ? '$' + fmt(d.lido.usd, 2) : 'unpriced'}</b></div>`);
+      }
+      for (const u of (d.uniswap || [])) {
+        bits.push(`<div class="kv-row"><span>🦄 Uniswap v3 · ${esc(u.label)}</span>
+          <b class="num">${u.positions} LP position${u.positions === 1 ? '' : 's'} <span class="muted small">counted, not valued</span></b></div>`);
+      }
+      if (!bits.length) return null;
+      const warn = (d.warnings || []).map(w =>
+        `<p class="small" style="color:var(--down);margin-top:var(--s1)">⚠️ ${esc(w)}</p>`).join('');
+      return bits.join('') + warn
+        + `<p class="small muted" style="margin-top:var(--s2)">${esc(d.note)}</p>`;
+    }, { empty: { icon: 'icon-shield', text: 'No Aave, Lido or Uniswap v3 positions found on the tracked chains.' } });
 
     // What-if replay: mirror every closed agent trade at a fixed stake.
     async function runReplayPanel() {

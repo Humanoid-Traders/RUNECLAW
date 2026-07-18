@@ -137,6 +137,7 @@ app.use('/api/alerts', require('./routes/alerts'));
 app.use('/api/replay', require('./routes/replay'));
 app.use('/api/letter', require('./routes/letter'));
 app.use('/api/wallet', require('./routes/wallet'));
+app.use('/api/defi', require('./routes/defi'));
 app.use('/api/networth', require('./routes/networth'));
 app.use('/api/exposure', require('./routes/exposure'));
 app.use('/api/research', require('./routes/research'));

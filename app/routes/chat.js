@@ -21,6 +21,7 @@ const { maybeHandleReplayChat } = require('../lib/replay');
 const { maybeHandleLetterChat } = require('../lib/letter');
 const { maybeHandleRwaChat } = require('../lib/rwa');
 const { maybeHandleWalletChat } = require('../lib/wallet');
+const { maybeHandleDefiChat } = require('../lib/defi');
 const { maybeHandleNetWorthChat } = require('../lib/networth');
 const { maybeHandleExposureChat } = require('../lib/exposure');
 const { maybeHandleResearchChat } = require('../lib/research');
@@ -59,6 +60,10 @@ router.post('/', chatLimit, async (req, res) => {
     // "my wallet" — read-only mirror of the caller's SIWE-linked wallet.
     const walletReply = await maybeHandleWalletChat(req.user.user_id, text);
     if (walletReply) return res.json(walletReply);
+    // "my defi positions" / "health factor" — Aave/Lido/Uniswap read straight
+    // from protocol contracts, with liquidation-risk warnings.
+    const defiReply = await maybeHandleDefiChat(req.user.user_id, text);
+    if (defiReply) return res.json(defiReply);
     // "what's my total exposure?" — perp positions netted against wallet spot.
     const exposureReply = await maybeHandleExposureChat(req.user.user_id, text);
     if (exposureReply) return res.json(exposureReply);
