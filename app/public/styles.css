@@ -354,7 +354,10 @@ code { font-family: var(--font-data); font-size: .9em; background: var(--surface
 }
 .chat-fab .icon { width: 24px; height: 24px; }
 .chat-fab:hover { background: var(--gold-bright); }
-@media (min-width: 1024px) { .chat-fab { bottom: var(--s4); } }
+/* Desktop: the hosting platform injects a "by MuleRun" badge into the
+   bottom-right corner — keep the FAB (and the docked drawer, below) clear
+   above it instead of fighting for the same pixels. */
+@media (min-width: 1024px) { .chat-fab { bottom: calc(var(--s4) + 56px); } }
 
 .chat-drawer {
   position: fixed; inset: 0; z-index: 100;
@@ -363,8 +366,8 @@ code { font-family: var(--font-data); font-size: .9em; background: var(--surface
 }
 @media (min-width: 640px) {
   .chat-drawer {
-    inset: auto var(--s4) var(--s4) auto;
-    width: 400px; height: min(560px, calc(100vh - 90px));
+    inset: auto var(--s4) calc(var(--s4) + 56px) auto;
+    width: 400px; height: min(560px, calc(100vh - 146px));
     border: 1px solid var(--line-2); border-radius: var(--radius-lg);
     box-shadow: var(--shadow); overflow: hidden;
   }

@@ -1884,6 +1884,7 @@
         <section class="panel" id="p-aprof"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-user"></use></svg>Profile</h2><div id="c-aprof"><div class="skel"></div></div></section>
         <section class="panel" id="p-aplan"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-sparkle"></use></svg>Membership</h2><div id="c-aplan"><div class="skel"></div></div></section>
         <section class="panel" id="p-atg"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-link"></use></svg>Telegram link <span class="right muted small">optional — unlocks live trading</span></h2><div id="c-atg"><div class="skel"></div></div></section>
+        <section class="panel" id="p-awallet"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-wallet"></use></svg>Wallet link <span class="right muted small">read-only balance mirror</span></h2><div id="c-awallet"><div class="skel"></div></div></section>
         <section class="panel" id="p-apush"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-bolt"></use></svg>Push notifications <span class="right muted small">trades & alerts, straight to this device</span></h2><div id="c-apush"><div class="skel"></div></div></section>
         <section class="panel" id="p-ainvite"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-user"></use></svg>Invite friends</h2><div id="c-ainvite"><div class="skel"></div></div></section>
         <section class="panel" id="p-akeys"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-wallet"></use></svg>Exchange keys</h2><div id="c-akeys"><div class="skel"></div></div></section>
@@ -1913,6 +1914,52 @@
           <p class="small muted mt-2">Total idle <b class="num">$${Number(y.total_idle_usd || 0).toFixed(2)}</b> · est. <b class="num">$${Number(y.total_est_year_usd || 0).toFixed(2)}/yr</b> at current flexible rates. Use /stake in Telegram to act.</p>`;
       }, { empty: { icon: 'icon-coin', text: 'Yield data arrives with the bot\'s hourly report (needs operator Earn credentials).' } });
     }
+
+    // Wallet link: attach a browser wallet to THIS account so the read-only
+    // multi-chain mirror (Portfolio, net worth, exposure) lights up. SIWE-style
+    // proof: the wallet signs a login message — never a transaction.
+    async function drawWalletLink() {
+      renderPanel(C('awallet'), async () => {
+        const r = await fetchJSON('/api/wallet/portfolio', { timeoutMs: 25000 }).catch(() => null);
+        if (r?.ok && r.data?.linked && r.data.address) {
+          const short = `${r.data.address.slice(0, 6)}…${r.data.address.slice(-4)}`;
+          return `<p class="small" style="color:var(--text-2)">✅ Wallet <b class="num">${esc(short)}</b> is linked —
+              its balances mirror into Portfolio, net worth and exposure across the tracked chains.
+              RUNECLAW can read them, never move them.</p>
+            <button class="btn btn--sm" id="walletUnlink" type="button">Unlink wallet</button>`;
+        }
+        return `<p class="small" style="color:var(--text-2)">Link a browser wallet (MetaMask or compatible) to see your
+            on-chain balances inside RUNECLAW — strictly read-only: the wallet signs one login message, never a transaction.</p>
+          <button class="btn btn--primary btn--sm" id="walletLink" type="button">🔗 Link wallet</button>
+          ${!window.ethereum ? '<p class="small muted mt-2">No browser wallet detected — install MetaMask (or open this page in a wallet browser) first.</p>' : ''}`;
+      }, { empty: { text: 'Wallet status unavailable.' } });
+    }
+    C('awallet').addEventListener('click', async (e) => {
+      const link = e.target.closest('#walletLink'), unlink = e.target.closest('#walletUnlink');
+      if (!link && !unlink) return;
+      try {
+        if (link) {
+          const eth = window.ethereum;
+          if (!eth) { toast('No browser wallet detected — install MetaMask first.'); return; }
+          const accounts = await eth.request({ method: 'eth_requestAccounts' });
+          const address = (accounts && accounts[0] || '').trim();
+          if (!address) { toast('No wallet account was shared.'); return; }
+          const n = await fetchJSON('/api/auth/wallet/nonce', { method: 'POST', body: { address } });
+          if (!n?.ok || !n.data?.message) { toast(n?.data?.error || 'Could not start wallet linking.'); return; }
+          const signature = await eth.request({ method: 'personal_sign', params: [n.data.message, address] });
+          const v = await fetchJSON('/api/auth/wallet/link', { method: 'POST', body: { address, signature } });
+          toast(v?.ok ? 'Wallet linked — your on-chain balances now mirror into the dashboard.'
+            : (v?.data?.error || 'Wallet link failed.'));
+        } else {
+          const v = await fetchJSON('/api/auth/wallet/unlink', { method: 'POST', body: {} });
+          toast(v?.ok ? 'Wallet unlinked.' : 'Could not unlink the wallet.');
+        }
+      } catch (err) {
+        toast('Wallet linking was cancelled.');
+      }
+      drawWalletLink();
+    });
+    drawWalletLink();
 
     // Web push: opt-in per browser. Requires VAPID keys server-side and
     // Notification permission client-side; every state is shown honestly.

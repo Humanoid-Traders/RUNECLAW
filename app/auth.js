@@ -584,6 +584,59 @@ router.post('/wallet/verify', async (req, res) => {
   }
 });
 
+// -- Link/unlink a wallet on the ALREADY-LOGGED-IN account --
+// The landing page's "Continue with a wallet" is a LOGIN method; users who
+// signed up with email/Telegram had no way to attach a wallet at all, even
+// though every wallet/net-worth panel pointed them at one. Same SIWE-style
+// proof as login (nonce → personal_sign → recover), then the address is
+// stored on the caller's own row. Read-only linkage: it unlocks balance
+// mirroring only, never any signing surface.
+router.post('/wallet/link', authMiddleware, async (req, res) => {
+  try {
+    if (!_ethers) return res.status(503).json({ error: 'Wallet linking is not available on this deployment.' });
+    const address = String((req.body || {}).address || '').trim();
+    const signature = String((req.body || {}).signature || '').trim();
+    if (!_ADDR_RE.test(address) || !signature) {
+      return res.status(400).json({ error: 'Address and signature are required.' });
+    }
+    const lower = address.toLowerCase();
+    const rec = _walletNonces.get(lower);
+    if (!rec || rec.expires < Date.now()) {
+      return res.status(400).json({ error: 'Link request expired — please try again.' });
+    }
+    let recovered;
+    try { recovered = _ethers.verifyMessage(rec.message, signature); }
+    catch (_) { return res.status(401).json({ error: 'Signature verification failed.' }); }
+    if (String(recovered).toLowerCase() !== lower) {
+      return res.status(401).json({ error: 'Signature does not match the wallet.' });
+    }
+    _walletNonces.delete(lower);   // single-use
+    // A wallet identifies at most one account (it is also a login key).
+    const [rows] = await pool.execute(
+      'SELECT id FROM users WHERE wallet_address = ? LIMIT 1', [lower]);
+    if (rows.length && rows[0].id !== req.user.user_id) {
+      return res.status(409).json({ error: 'That wallet is already linked to another account.' });
+    }
+    await pool.execute('UPDATE users SET wallet_address = ? WHERE id = ?',
+      [lower, req.user.user_id]);
+    res.json({ ok: true, address: lower });
+  } catch (err) {
+    console.error('Wallet link error:', err.message);
+    res.status(500).json({ error: 'Wallet link failed' });
+  }
+});
+
+router.post('/wallet/unlink', authMiddleware, async (req, res) => {
+  try {
+    await pool.execute('UPDATE users SET wallet_address = ? WHERE id = ?',
+      [null, req.user.user_id]);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('Wallet unlink error:', err.message);
+    res.status(500).json({ error: 'Wallet unlink failed' });
+  }
+});
+
 // -- Login / register with Telegram (Login Widget) --
 router.post('/telegram', async (req, res) => {
   try {
