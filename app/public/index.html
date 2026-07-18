@@ -207,7 +207,9 @@
       <p class="muted small" id="wallet-status">Link a browser wallet to mirror your on-chain balances and DeFi positions — read-only: the wallet signs one login message, never a transaction.</p>
       <div class="form-err" id="wallet-msg" aria-live="polite"></div>
       <button class="btn btn--sm mt-2" id="wallet-link-btn" onclick="linkWalletToAccount()">🔗 Link wallet</button>
+      <button class="btn btn--sm mt-2" id="wallet-qr-btn" onclick="showWalletQr()">📱 Link with phone</button>
       <button class="btn btn--ghost btn--sm mt-2 hidden" id="wallet-unlink-btn" onclick="unlinkWalletFromAccount()">Unlink wallet</button>
+      <div id="wallet-qr-box" class="mt-3 hidden"></div>
     </div>
 
     <!-- Change / set password -->
@@ -479,6 +481,23 @@ async function unlinkWalletFromAccount(){
   const res=await apiAuth('/auth/wallet/unlink',{});
   setErr('wallet-msg',res.error||'Wallet unlinked.');
   refreshAccountMeta();
+}
+// Phone linking: single-use QR → sign in the phone wallet's browser.
+var _qrPoll=null;
+async function showWalletQr(){
+  setErr('wallet-msg','');
+  const res=await apiAuth('/auth/wallet/link-code',{});
+  if(res.error||!res.url){setErr('wallet-msg',res.error||'Could not create a phone-link code.');return;}
+  const box=document.getElementById('wallet-qr-box');
+  box.classList.remove('hidden');
+  box.innerHTML=(res.svg||'')+'<p class="muted small mt-2">Scan with your phone, open the link <b>inside your wallet app\'s browser</b> (MetaMask → Browser, Trust → Discover), sign once. Code works once, expires in '+Math.round((res.expires_in_sec||600)/60)+' min.</p>';
+  if(_qrPoll)clearInterval(_qrPoll);
+  var polls=0;
+  _qrPoll=setInterval(async function(){
+    if(++polls>24){clearInterval(_qrPoll);return;}
+    const me=await apiAuth('/auth/me',null,'GET');
+    if(me&&me.wallet_address){clearInterval(_qrPoll);box.innerHTML='';box.classList.add('hidden');renderAccountMeta(me);setErr('wallet-msg','✓ Wallet linked from your phone.');}
+  },5000);
 }
 async function resendVerification(){
   const res=await apiAuth('/auth/send-verification',{});

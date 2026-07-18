@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RUNECLAW — Link your wallet</title>
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<meta name="theme-color" content="#0a0b10">
+<link rel="stylesheet" href="/styles.css?v=11">
+<style>
+  .wl-wrap { max-width: 440px; margin: 8vh auto; padding: 0 var(--s4); }
+  .wl-card { background: var(--surface); border: 1px solid var(--line-2); border-radius: var(--radius-lg); padding: var(--s5); }
+</style>
+</head>
+<body>
+<div class="wl-wrap">
+  <div class="wl-card">
+    <h1 style="font-size:var(--fs-lg);margin-bottom:var(--s2)">🔗 Link this wallet to RUNECLAW</h1>
+    <p class="muted small" style="margin-bottom:var(--s3)">
+      Read-only linking: your wallet signs <b>one login message</b> — never a
+      transaction, never an approval. RUNECLAW can then mirror balances and
+      DeFi positions; it can never move funds.
+    </p>
+    <div id="state" class="small" style="color:var(--text-2)">Checking for a wallet…</div>
+    <button class="btn btn--primary btn-block mt-3 hidden" id="linkBtn" type="button">Sign &amp; link wallet</button>
+  </div>
+</div>
+<script>
+(function () {
+  var API = '/api';
+  var state = document.getElementById('state');
+  var btn = document.getElementById('linkBtn');
+  var code = new URLSearchParams(location.search).get('code') || '';
+
+  function say(html) { state.innerHTML = html; }
+
+  if (!/^[0-9a-f]{32}$/.test(code)) {
+    say('This link is missing its code — scan the QR on your computer again.');
+    return;
+  }
+  if (!window.ethereum) {
+    // The phone's normal browser has no signer. Honest guidance, no dead end.
+    say('No wallet found in this browser.<br><br><b>Open this link inside your '
+      + 'wallet app\'s browser</b> (MetaMask → menu → Browser, Trust Wallet → '
+      + 'Discover, Rabby → Dapp) and it will work — the wallet app provides '
+      + 'the signer.');
+    return;
+  }
+  say('Wallet detected. One signature links it to your RUNECLAW account.');
+  btn.classList.remove('hidden');
+
+  btn.onclick = function () {
+    btn.disabled = true;
+    say('Waiting for your wallet…');
+    (async function () {
+      try {
+        var accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+        var address = (accounts && accounts[0] || '').trim();
+        if (!address) { say('No wallet account was shared.'); btn.disabled = false; return; }
+        var n = await fetch(API + '/auth/wallet/nonce', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ address: address }),
+        }).then(function (r) { return r.json(); });
+        if (!n.message) { say(n.error || 'Could not start linking.'); btn.disabled = false; return; }
+        var signature = await window.ethereum.request({
+          method: 'personal_sign', params: [n.message, address],
+        });
+        var v = await fetch(API + '/auth/wallet/link-by-code', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ code: code, address: address, signature: signature }),
+        }).then(function (r) { return r.json(); });
+        if (v.ok) {
+          say('✅ <b>Wallet linked.</b> Back on your computer, the account card '
+            + 'updates within a few seconds. You can close this page.');
+          btn.classList.add('hidden');
+        } else {
+          say(v.error || 'Linking failed — generate a fresh QR and try again.');
+          btn.disabled = false;
+        }
+      } catch (e) {
+        say('Linking was cancelled in the wallet.');
+        btn.disabled = false;
+      }
+    })();
+  };
+})();
+</script>
+</body>
+</html>
