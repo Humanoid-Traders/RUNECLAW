@@ -1278,7 +1278,7 @@
       const cls = sig === 'bullish' ? 'chip--up' : sig === 'bearish' ? 'chip--down' : '';
       return `<span class="chip ${cls}">${esc(k)}</span>`;
     }).join(' ');
-    return `<div style="border:1px solid var(--line);border-radius:var(--radius);padding:var(--s3) var(--s4);margin-bottom:var(--s3)">
+    return `<div class="ds-card" data-sym="${esc(String(h.symbol || ''))}" role="button" tabindex="0" title="Open ${sym} detail" style="border:1px solid var(--line);border-radius:var(--radius);padding:var(--s3) var(--s4);margin-bottom:var(--s3);cursor:pointer">
       <div class="row" style="justify-content:space-between;align-items:center;gap:var(--s2);flex-wrap:wrap">
         <span style="display:flex;gap:8px;align-items:center">${_dsArrow(chg)} <b>${sym}</b> ${priceHtml} ${chgHtml}</span>
         <span style="display:flex;gap:8px;align-items:center">${rsiHtml} ${vol}</span>
@@ -1286,6 +1286,91 @@
       ${pats ? `<div class="mt-2">${pats}</div>` : '<p class="muted small mt-1">No chart patterns.</p>'}
       ${chips ? `<div class="mt-2" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center"><span class="muted">🕯</span> ${chips}</div>` : ''}
     </div>`;
+  }
+
+  // ── Symbol detail drill-down ────────────────────────────────────────────────
+  // Any pattern card (Deep Scan / Markets / Signals) opens a modal with the live
+  // decision picture (confluence + top voters + regime) and the pattern read for
+  // that symbol — one tap from "I see a pattern" to the whole picture.
+  let symA11y = null;
+  function closeSymModal() {
+    const m = document.getElementById('symModal');
+    if (!m) return;
+    m.classList.add('hidden'); m.hidden = true;
+    if (symA11y) { try { symA11y.close(); } catch (e) { /* fine */ } symA11y = null; }
+  }
+  function _insightBlock(d) {
+    if (!d || d.error || typeof d.confluence !== 'number') {
+      return '<p class="muted small">No live decision picture right now (the analysis bridge may be offline).</p>';
+    }
+    const dir = (d.confluence - 0.5) * 2;
+    const lean = dir > 0.1 ? 'Bullish' : dir < -0.1 ? 'Bearish' : 'Neutral';
+    const leanCls = dir > 0.1 ? 'up' : dir < -0.1 ? 'down' : '';
+    const pos = Math.max(0, Math.min(100, d.confluence * 100));
+    const meter = `<div class="stat"><div class="k">Directional confluence</div>
+      <div class="v big ${leanCls}" style="font-size:var(--fs-lg)">${lean} <span class="num" style="font-size:var(--fs-base)">${signed(dir * 100, 0)}</span></div>
+      <div style="position:relative;height:8px;border-radius:5px;margin-top:8px;background:linear-gradient(90deg,var(--down-dim),var(--surface-3) 45% 55%,var(--up-dim))">
+        <div style="position:absolute;top:-3px;left:calc(${pos}% - 2px);width:4px;height:14px;border-radius:2px;background:var(--text)"></div></div>
+      <div class="d muted small mt-2">Regime <b>${esc(String(d.regime || '—').replace(/_/g, ' '))}</b> · price ${fmtPrice(d.price)} · ATR ${fmtPrice(d.atr)}</div></div>`;
+    const votes = (d.votes || []).map(v => ({ n: v.name, c: (v.vote || 0) * (v.weight || 0) }))
+      .filter(v => Math.abs(v.c) > 1e-6).sort((a, b) => Math.abs(b.c) - Math.abs(a.c)).slice(0, 6);
+    const maxC = votes.length ? Math.max(...votes.map(v => Math.abs(v.c))) : 1;
+    const rows = votes.length ? votes.map(v => {
+      const w = Math.max(4, Math.round(Math.abs(v.c) / maxC * 100)), bull = v.c >= 0;
+      return `<div class="kv-row" style="align-items:center">
+        <span class="small" style="font-family:var(--font-data);flex:0 0 44%">${esc(String(v.n).replace(/_/g, ' ').slice(0, 24))}</span>
+        <span style="flex:1;height:7px;border-radius:4px;background:var(--surface-3);position:relative;overflow:hidden">
+          <span style="position:absolute;${bull ? 'left' : 'right'}:50%;width:${w / 2}%;height:100%;background:var(${bull ? '--up' : '--down'})"></span></span>
+        <span class="num small ${bull ? 'up' : 'down'}" style="flex:0 0 44px;text-align:right">${signed(v.c * 100, 0)}</span></div>`;
+    }).join('') : '<div class="muted small">No active voters this bar.</div>';
+    return meter + `<div class="mt-3"><div class="stat mb-2"><div class="k">Why — top voters</div></div>${rows}</div>`;
+  }
+  async function openSymbol(rawSym) {
+    const m = document.getElementById('symModal');
+    if (!m) return;
+    const base = dsBase(rawSym);
+    if (!base) return;
+    const pair = base + '/USDT';
+    document.getElementById('symModalTitle').textContent = base;
+    const body = document.getElementById('symModalBody');
+    body.innerHTML = '<div class="skel"></div><div class="skel"></div><div class="skel"></div>';
+    m.hidden = false; m.classList.remove('hidden');
+    if (window.RC.modalA11y) { symA11y = window.RC.modalA11y(m); symA11y.open(document.getElementById('symModalClose')); }
+    const [pat, ins, scan] = await Promise.all([
+      fetchJSON('/api/patterns?symbol=' + encodeURIComponent(pair) + '&timeframe=4h', { auth: false, timeoutMs: 14000 }).catch(() => null),
+      fetchJSON('/api/insight?symbol=' + encodeURIComponent(pair) + '&timeframe=4h&limit=200', { auth: false, timeoutMs: 14000 }).catch(() => null),
+      getScan().catch(() => null),
+    ]);
+    if (m.hidden) return; // closed while loading
+    const hit = deepScanIndex(scan).get(base);
+    let card = null;
+    const pd = pat && pat.ok && pat.data;
+    if (pd && ((pd.chart_patterns || []).length || Object.keys(pd.candlestick_patterns || pd.candle_patterns || {}).length)) {
+      card = deepScanCard({ symbol: pair, price: pd.price, chg: pd.change_pct, rsi: pd.rsi,
+        chart_patterns: pd.chart_patterns || [], candle_patterns: pd.candlestick_patterns || pd.candle_patterns || {} });
+    } else if (hit) {
+      card = deepScanCard(hit);
+    }
+    body.innerHTML = `
+      <section class="mt-1">${_insightBlock(ins && ins.data)}</section>
+      <h3 class="mt-4 mb-2" style="font-size:var(--fs-md)">Pattern read</h3>
+      ${card || '<p class="muted small">No chart patterns detected on ' + esc(pair) + ' right now.</p>'}
+      <div class="row mt-3" style="gap:var(--s2)">
+        <a class="btn btn--sm" href="#markets" id="symGoChart">View in Markets</a>
+        <button class="btn btn--sm" type="button" id="symAsk">Ask the AI</button>
+      </div>
+      <p class="muted small mt-2">Read-only decision picture · patterns are observations, not signals.</p>`;
+    const ask = document.getElementById('symAsk');
+    if (ask) ask.onclick = () => {
+      closeSymModal(); location.hash = 'chat';
+      // Pre-fill the chat input once the chat view has docked (no chat.js dependency).
+      setTimeout(() => {
+        const inp = document.getElementById('chatInput');
+        if (inp) { inp.value = 'What do you think of ' + base + ' right now?'; inp.focus(); }
+      }, 350);
+    };
+    const go = document.getElementById('symGoChart');
+    if (go) go.onclick = () => closeSymModal();
   }
 
   async function renderDeepScan() {
@@ -3076,6 +3161,23 @@
     signals: () => { if (currentView === 'signals') showView('signals'); },
     activity: onActivity,
   });
+
+  // Drill-down: click (or Enter/Space) any [data-sym] card opens the symbol
+  // detail modal. Delegated on body so it survives every view re-render.
+  document.body.addEventListener('click', (e) => {
+    if (e.target.closest('#symModal .modal-card')) return;      // inside the modal
+    if (e.target.closest('#symModal')) { closeSymModal(); return; } // backdrop
+    const el = e.target.closest('[data-sym]');
+    if (el && !e.target.closest('a, button')) openSymbol(el.getAttribute('data-sym'));
+  });
+  document.body.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { closeSymModal(); return; }
+    if ((e.key === 'Enter' || e.key === ' ') && e.target.matches('[data-sym][role="button"]')) {
+      e.preventDefault(); openSymbol(e.target.getAttribute('data-sym'));
+    }
+  });
+  const _symClose = document.getElementById('symModalClose');
+  if (_symClose) _symClose.addEventListener('click', closeSymModal);
 
   getScan().then(updateConnChip);
   showView(location.hash.slice(1) || 'home');
