@@ -16,6 +16,7 @@
   const VIEWS = [
     { id: 'home',      label: 'Home',      icon: 'icon-home' },
     { id: 'chat',      label: 'AI Chat',   icon: 'icon-chat' },
+    { id: 'hub',       label: 'Agent Hub', icon: 'icon-bolt' },
     { id: 'markets',   label: 'Markets',   icon: 'icon-globe' },
     { id: 'signals',   label: 'Signals',   icon: 'icon-radar' },
     { id: 'feed',      label: 'Live Feed', icon: 'icon-sparkle' },
@@ -130,6 +131,12 @@
 
   function loginGate(text) {
     return stateBlock({ icon: 'icon-user', text, cta: { label: 'Log in or create an account', href: '/' } });
+  }
+  // VAPID application-server key: base64url → Uint8Array (push subscribe).
+  function urlB64ToU8(s) {
+    const pad = '='.repeat((4 - s.length % 4) % 4);
+    const raw = atob((s + pad).replace(/-/g, '+').replace(/_/g, '/'));
+    return Uint8Array.from([...raw].map(c => c.charCodeAt(0)));
   }
   function viewHead(title, sub) {
     return `<div class="view-head"><h1>${esc(title)}</h1>${sub ? `<span class="sub">${esc(sub)}</span>` : ''}</div>`;
@@ -494,6 +501,7 @@
         }
         lines.push(`<div class="row mt-3" style="gap:var(--s2);flex-wrap:wrap">
           <a class="btn btn--sm" href="#chat">💬 Ask your agent</a>
+          <a class="btn btn--sm" href="#hub">🎛 Agent Hub</a>
           <a class="btn btn--sm" href="#signals">📡 Signals</a>
           <a class="btn btn--sm" href="#portfolio">📊 Portfolio</a>
         </div>`);
@@ -1913,11 +1921,6 @@
           ${Notification.permission === 'denied' ? '<p class="small muted mt-2">Notifications are blocked in your browser settings for this site — unblock them first.</p>' : ''}`;
       }, { empty: { text: 'Push status unavailable.' } });
     }
-    function urlB64ToU8(s) {
-      const pad = '='.repeat((4 - s.length % 4) % 4);
-      const raw = atob((s + pad).replace(/-/g, '+').replace(/_/g, '/'));
-      return Uint8Array.from([...raw].map(c => c.charCodeAt(0)));
-    }
     C('apush').addEventListener('click', async (e) => {
       const on = e.target.closest('#pushOn'), off = e.target.closest('#pushOff');
       if (!on && !off) return;
@@ -2419,8 +2422,310 @@
     }
   }
 
+  /* ═══════════════ AGENT HUB ═══════════════
+     One console for every agent function: live status at a glance, one tap
+     to act. Pure consolidation — every card reads the same APIs its full
+     view uses and deep-links there; nothing here can trade or sign. */
+  async function renderHub() {
+    container.innerHTML = viewHead('Agent Hub', 'Everything your agent does — status at a glance, one tap to act');
+    if (!LOGGED_IN) {
+      container.insertAdjacentHTML('beforeend', `<section class="panel">${loginGate('Log in to open your agent console — tripwires, letters, replays, net worth, exposure and controls in one place.')}</section>`);
+      return;
+    }
+    container.insertAdjacentHTML('beforeend', `
+      <div class="stack" id="hubStack">
+        <section class="panel panel--primary" id="p-hubstat"><div id="c-hubstat"><div class="skel"></div><div class="skel"></div></div></section>
+        <section class="panel" id="p-hubask">
+          <h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-chat"></use></svg>Ask in one tap
+            <span class="right muted small">each opens the chat with the question ready</span></h2>
+          <div class="row" style="gap:var(--s2);flex-wrap:wrap">
+            ${[['📰 Market briefing', 'Give me a market briefing'],
+               ['✉️ This week’s letter', "this week's letter"],
+               ['🌐 My net worth', 'my net worth'],
+               ['🛡 My total exposure', "what's my total exposure?"],
+               ['⚡ What-if $1k replay', "what if I'd taken every signal with $1k?"],
+               ['🏛 RWA radar', 'rwa radar']]
+              .map(([l, q]) => `<button class="btn btn--sm" data-ask="${esc(q)}" type="button">${l}</button>`).join('')}
+          </div>
+        </section>
+        <div class="grid grid-2">
+          <section class="panel" id="p-hubalerts"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-alert"></use></svg>Tripwires
+            <span class="right"><a class="small" href="#feed">arm & manage →</a></span></h2>
+            <p class="small" style="color:var(--text-2);margin-bottom:var(--s2)">One-shot price alerts → push. Or just tell the chat: <i>"alert me when BTC drops below $100k"</i>.</p>
+            <div id="alertList"><div class="skel"></div></div></section>
+          <section class="panel" id="p-hubletter"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-sparkle"></use></svg>The Agent Letter
+            <span class="right"><a class="small" href="#home">read in Home →</a></span></h2>
+            <div id="c-hubletter"><div class="skel"></div></div></section>
+          <section class="panel" id="p-hubreplay"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-bolt"></use></svg>What-if replay
+            <span class="right"><a class="small" href="#portfolio">full controls →</a></span></h2>
+            <div id="c-hubreplay"><div class="skel"></div></div></section>
+          <section class="panel" id="p-hubnw"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-globe"></use></svg>Net worth
+            <span class="right"><a class="small" href="#portfolio">details →</a></span></h2>
+            <div id="c-hubnw"><div class="skel"></div></div></section>
+          <section class="panel" id="p-hubexp"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-shield"></use></svg>Exposure
+            <span class="right"><a class="small" href="#portfolio">details →</a></span></h2>
+            <div id="c-hubexp"><div class="skel"></div></div></section>
+          <section class="panel" id="p-hubwatch"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-radar"></use></svg>Watchlist
+            <span class="right"><a class="small" href="#markets">pin from Markets →</a></span></h2>
+            <div id="c-hubwatch"><div class="skel"></div></div></section>
+          <section class="panel" id="p-hublab"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-cog"></use></svg>Strategy Lab</h2>
+            <div id="c-hublab"><div class="skel"></div></div></section>
+          <section class="panel" id="p-hubresearch"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-globe"></use></svg>Research desk</h2>
+            <div id="c-hubresearch"><div class="skel"></div></div></section>
+          <section class="panel" id="p-hubtoggles"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-user"></use></svg>Voice & push</h2>
+            <div id="c-hubtoggles"><div class="skel"></div></div></section>
+          <section class="panel" id="p-hubmcp"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-link"></use></svg>Agent API (MCP)</h2>
+            <div id="c-hubmcp"><div class="skel"></div></div></section>
+        </div>
+      </div>`);
+
+    // One tap → the chat, with the question ready. The hub itself never acts.
+    // Delegated on the hub's own stack (recreated each render), so buttons
+    // painted later by async panels are covered too.
+    document.getElementById('hubStack').addEventListener('click', (e) => {
+      const b = e.target.closest('button[data-ask]');
+      if (b && window.RCChat) window.RCChat.ask(b.dataset.ask);
+    });
+
+    // ── Status strip: engine, stance, mode, positions, tripwires ──
+    renderPanel(C('hubstat'), async () => {
+      const [scan, pf, alertsR] = await Promise.all([
+        getScan().catch(() => null),
+        getPortfolio(true).catch(() => null),
+        fetchJSON('/api/alerts', { timeoutMs: 8000 }).catch(() => null),
+      ]);
+      updateModeChip(pf);
+      const at = scan?.received_at ? new Date(scan.received_at) : null;
+      const fresh = at && (Date.now() - at.getTime()) < 3 * 3600 * 1000;
+      const stance = String(scan?.circuit_breaker?.strategy_mode || '').toLowerCase();
+      const STANCE = { defensive: '🛡 Defensive', balanced: '⚔️ Balanced',
+                       aggressive: '🔥 Aggressive', manual: '🧘 Manual' }[stance];
+      const live = pf && (pf.mode === 'LIVE' || pf.mode === 'MIXED');
+      const armed = ((alertsR?.data?.alerts) || []).filter(a => a.active).length;
+      const nOpen = (pf?.open_positions || []).length;
+      const equity = (pf && pf.live_unavailable) ? 'unavailable'
+        : (pf && pf.equity != null ? fmtMoney(pf.equity) : '—');
+      const tile = (k, v, d) => `<div class="stat"><div class="k">${k}</div>
+        <div class="v" style="font-size:var(--fs-lg)">${v}</div>${d ? `<div class="small muted">${d}</div>` : ''}</div>`;
+      return `<div class="stat-row">
+        ${tile('Engine', at ? (fresh ? '<span class="up">● LIVE</span>' : '<span class="chip chip--warn">STALE</span>') : '<span class="muted">OFFLINE</span>',
+               at ? 'last scan ' + at.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'no scan data')}
+        ${tile('Stance', STANCE || '—', 'how the agent trades right now')}
+        ${tile('Mode', pf ? (live ? 'LIVE' : 'PAPER') : '—', 'equity ' + equity)}
+        ${tile('Open', String(nOpen), nOpen === 1 ? 'position carried' : 'positions carried')}
+        ${tile('Tripwires', String(armed), armed === 1 ? 'alert armed' : 'alerts armed')}
+      </div>`;
+    }, { empty: { text: 'Status unavailable right now.' } });
+
+    // Tripwires list — same element id the Feed view uses, so the shared
+    // loader (list + delete handling) works unchanged here.
+    loadAlertList();
+
+    // ── Weekly letter: latest headline ──
+    renderPanel(C('hubletter'), async () => {
+      const r = await fetchJSON('/api/letter/latest');
+      const L = r.data?.letter;
+      if (!r.ok || !L) return null;
+      return `<p class="muted small" style="margin-bottom:var(--s1)">${esc(L.period.start)} → ${esc(L.period.end)}</p>
+        <p style="font-weight:600">${esc(L.headline)}</p>
+        <button class="btn btn--sm mt-2" data-ask="this week's letter" type="button">✉️ Read it in chat</button>`;
+    }, { empty: { icon: 'icon-sparkle', text: 'The first letter writes itself after the first full week of recorded activity.' } });
+
+    // ── What-if replay: the standard $1k all-time mirror ──
+    renderPanel(C('hubreplay'), async () => {
+      const r = await fetchJSON('/api/replay?stake=1000&days=0');
+      const d = r.data;
+      if (!r.ok || !d || !d.trades) return null;
+      const f = d.fixed;
+      return `<p>Mirroring every closed agent trade at <b>$1,000</b>:
+          <b class="num ${f.net_pnl_usd >= 0 ? 'up' : 'down'}">${fmtMoney(f.net_pnl_usd)}</b>
+          over ${d.trades} trade${d.trades === 1 ? '' : 's'} · ${fmt(d.win_rate_pct, 0)}% wins</p>
+        <p class="small muted mt-2">Hypothetical, from real recorded results. Past performance ≠ future results.</p>`;
+    }, { empty: { icon: 'icon-bolt', text: 'No closed agent trades yet — the replay lights up once the engine has history.' } });
+
+    // ── Net worth: the honest real total ──
+    renderPanel(C('hubnw'), async () => {
+      const r = await fetchJSON('/api/networth', { timeoutMs: 35000 });
+      const d = r.data;
+      if (!r.ok || !d || !d.sections) return null;
+      const bits = [];
+      const c = d.sections.cex;
+      if (c && c.connected) bits.push(`🏦 ${esc((c.venue || 'CEX').toUpperCase())} ${c.ok && c.equity_usd != null ? '$' + fmt(c.equity_usd, 2) : '<span class="muted small">unreadable</span>'}`);
+      const w = d.sections.wallet;
+      if (w && w.linked) bits.push(`👛 wallet ${w.total_usd != null ? '$' + fmt(w.total_usd, 2) : '<span class="muted small">unreadable</span>'}`);
+      return `<p class="small" style="color:var(--text-2)">${bits.length ? bits.join(' · ') : 'No exchange connected, no wallet linked yet.'}</p>
+        <p style="margin-top:var(--s2)">Real total <b class="num" style="font-size:var(--fs-lg)">${d.total_real_usd != null ? '$' + fmt(d.total_real_usd, 2) : '—'}</b></p>
+        <p class="small muted mt-2">Paper equity is listed in Portfolio but never counted as real.</p>`;
+    }, { empty: { icon: 'icon-globe', text: 'Net worth aggregates once a venue or wallet is reachable.' } });
+
+    // ── Exposure: net / gross + risk flags ──
+    renderPanel(C('hubexp'), async () => {
+      const r = await fetchJSON('/api/exposure', { timeoutMs: 20000 });
+      const d = r.data;
+      if (!r.ok || !d || !(d.assets || []).length) return null;
+      const warn = (d.warnings || []).map(w2 =>
+        `<p class="small" style="color:var(--down);margin-top:var(--s1)">⚠️ ${esc(w2)}</p>`).join('');
+      return `<p>Net <b class="num">$${fmt(d.net_total_usd, 0)}</b>
+          · Gross <b class="num">$${fmt(d.gross_total_usd, 0)}</b>
+          · ${d.assets.length} asset${d.assets.length === 1 ? '' : 's'}</p>
+        ${warn || '<p class="small muted mt-2">No risk flags — nothing stacked or concentrated.</p>'}`;
+    }, { empty: { icon: 'icon-shield', text: 'Exposure appears once you have open positions or non-stable wallet holdings.' } });
+
+    // ── Watchlist: view + quick add/remove (saved to your profile) ──
+    async function drawHubWatchlist() {
+      await renderPanel(C('hubwatch'), async () => {
+        const prof = await getUserProfile(true);
+        const wl = prof.watchlist || [];
+        const chips2 = wl.map(s => `<span class="chip" style="gap:4px">${esc(String(s).replace('USDT', ''))}
+            <button class="btn btn--ghost btn--sm" data-unpin="${esc(s)}" type="button" aria-label="Remove ${esc(s)}" style="padding:0 4px">✕</button></span>`).join(' ');
+        return `${wl.length ? `<div class="row" style="gap:var(--s1);flex-wrap:wrap">${chips2}</div>`
+            : '<p class="small muted">Nothing pinned yet — the agent watches these coins for you in chat.</p>'}
+          <form class="row mt-3" id="hubWlForm" style="gap:var(--s2)">
+            <input class="input" id="hubWlSym" placeholder="BTC" maxlength="12" style="width:7rem" aria-label="Symbol to watch">
+            <button class="btn btn--sm" type="submit">＋ Watch</button>
+          </form>`;
+      }, { empty: { text: 'Watchlist unavailable.' } });
+      const form = document.getElementById('hubWlForm');
+      if (form) form.onsubmit = async (e) => {
+        e.preventDefault();
+        const raw = document.getElementById('hubWlSym').value.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+        if (!raw) return;
+        const sym = raw.endsWith('USDT') ? raw : raw + 'USDT';
+        const prof = await getUserProfile(true);
+        const wl = new Set(prof.watchlist || []);
+        wl.add(sym);
+        const ok = await saveUserProfile({ watchlist: [...wl] });
+        toast(ok ? `Watching ${sym.replace('USDT', '')}.` : 'Could not save your watchlist — try again.');
+        if (ok) drawHubWatchlist();
+      };
+      C('hubwatch').querySelectorAll('button[data-unpin]').forEach(b => {
+        b.addEventListener('click', async () => {
+          const prof = await getUserProfile(true);
+          const wl = new Set(prof.watchlist || []);
+          wl.delete(b.dataset.unpin);
+          const ok = await saveUserProfile({ watchlist: [...wl] });
+          toast(ok ? `Removed ${String(b.dataset.unpin).replace('USDT', '')}.` : 'Could not save your watchlist — try again.');
+          if (ok) drawHubWatchlist();
+        });
+      });
+    }
+    drawHubWatchlist();
+
+    // ── Strategy Lab shortcut ──
+    renderPanel(C('hublab'), async () =>
+      `<p class="small" style="color:var(--text-2)">Backtest the engine's strategies on frozen benchmark data — same code paths the live engine runs.</p>
+       <div class="row mt-3" style="gap:var(--s2);flex-wrap:wrap">
+         <a class="btn btn--primary btn--sm" href="#lab">🧪 Open the Lab</a>
+         <button class="btn btn--sm" data-ask="backtest SOL" type="button">Backtest SOL in chat</button>
+       </div>`);
+
+    // ── Research desk: dossier on any listed coin ──
+    (async () => {
+      await renderPanel(C('hubresearch'), async () =>
+        `<p class="small" style="color:var(--text-2)">An evidence dossier from live venue data and the agent's own recorded history — sources named, nothing invented.</p>
+         <form class="row mt-3" id="hubResForm" style="gap:var(--s2)">
+           <input class="input" id="hubResSym" placeholder="PENDLE" maxlength="12" style="width:9rem" aria-label="Coin to research">
+           <button class="btn btn--primary btn--sm" type="submit">🔬 Research</button>
+         </form>`);
+      const form = document.getElementById('hubResForm');
+      if (form) form.onsubmit = (e) => {
+        e.preventDefault();
+        const sym = document.getElementById('hubResSym').value.trim().replace(/[^a-zA-Z0-9$]/g, '');
+        if (sym && window.RCChat) window.RCChat.ask('research ' + sym.toUpperCase());
+      };
+    })();
+
+    // ── Voice & push toggles (honest per-device states) ──
+    async function drawHubToggles() {
+      await renderPanel(C('hubtoggles'), async () => {
+        // Voice: same per-browser preference the chat's 🔊 button controls.
+        let voice;
+        if (!window.speechSynthesis) {
+          voice = '<span class="muted small">not supported in this browser</span>';
+        } else {
+          const on = (() => { try { return localStorage.getItem('rc_tts') === '1'; } catch (e) { return false; } })();
+          voice = `<button class="btn btn--sm ${on ? 'btn--primary' : ''}" id="hubTtsBtn" type="button" aria-pressed="${on}">${on ? '🔊 On — replies are spoken' : '🔇 Off'}</button>`;
+        }
+        // Push: real subscription state on THIS device.
+        let push;
+        if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+          push = '<span class="muted small">not supported in this browser</span>';
+        } else {
+          const k = await fetchJSON('/api/push/key').catch(() => null);
+          if (!k?.ok || !k.data?.enabled) {
+            push = '<span class="muted small">not configured on the server yet</span>';
+          } else {
+            const reg = await navigator.serviceWorker.ready.catch(() => null);
+            const sub = reg ? await reg.pushManager.getSubscription().catch(() => null) : null;
+            push = sub
+              ? '<button class="btn btn--sm btn--primary" id="hubPushOff" type="button">🔔 On — turn off</button>'
+              : '<button class="btn btn--sm" id="hubPushOn" type="button">🔕 Off — enable</button>';
+          }
+        }
+        return `<div class="kv-row"><span>Spoken chat replies <span class="muted small">this browser</span></span><b>${voice}</b></div>
+          <div class="kv-row"><span>Push notifications <span class="muted small">this device</span></span><b>${push}</b></div>
+          <p class="small muted mt-2">Dictation lives on the chat's 🎤 button — it never auto-sends.</p>`;
+      }, { empty: { text: 'Toggle states unavailable.' } });
+      const tts = document.getElementById('hubTtsBtn');
+      if (tts) tts.onclick = () => {
+        // Route through the chat's own button so its in-memory state stays
+        // in sync with the stored preference.
+        const real = document.getElementById('chatTts');
+        if (real) real.click();
+        else { try { localStorage.setItem('rc_tts', localStorage.getItem('rc_tts') === '1' ? '0' : '1'); } catch (e) { /* fine */ } }
+        drawHubToggles();
+      };
+      const on = document.getElementById('hubPushOn'), off = document.getElementById('hubPushOff');
+      if (on) on.onclick = async () => {
+        try {
+          const perm = await Notification.requestPermission();
+          if (perm !== 'granted') { toast('Notifications were not allowed.'); return; }
+          const reg = await navigator.serviceWorker.ready;
+          const k = await fetchJSON('/api/push/key');
+          const sub = await reg.pushManager.subscribe({
+            userVisibleOnly: true, applicationServerKey: urlB64ToU8(k.data.public_key) });
+          const r = await fetchJSON('/api/push/subscribe', { method: 'POST', body: { subscription: sub.toJSON() } });
+          toast(r?.ok ? 'Push enabled — the agent can reach you here now.' : 'Could not save the subscription.');
+        } catch (err) { toast('Push setup failed: ' + (err?.message || 'unknown error')); }
+        drawHubToggles();
+      };
+      if (off) off.onclick = async () => {
+        try {
+          const reg = await navigator.serviceWorker.ready;
+          const sub = await reg.pushManager.getSubscription();
+          if (sub) {
+            await fetchJSON('/api/push/unsubscribe', { method: 'POST', body: { endpoint: sub.endpoint } });
+            await sub.unsubscribe();
+          }
+          toast('Push disabled on this device.');
+        } catch (err) { toast('Push setup failed: ' + (err?.message || 'unknown error')); }
+        drawHubToggles();
+      };
+    }
+    drawHubToggles();
+
+    // ── Agent API pointer: the read-only MCP endpoint ──
+    renderPanel(C('hubmcp'), async () => {
+      const ep = location.origin + '/mcp';
+      return `<p class="small" style="color:var(--text-2)">Any MCP-capable agent can use RUNECLAW's public intelligence as tools — track record, signals, radar, replay. Read-only by design: no tool can touch an account or place a trade.</p>
+        <div class="kv-row mt-2"><span>Endpoint</span><b class="num small">${esc(ep)}</b></div>
+        <div class="row mt-2" style="gap:var(--s2);flex-wrap:wrap">
+          <button class="btn btn--sm" id="hubMcpCopy" type="button">📋 Copy Claude Code command</button>
+        </div>`;
+    });
+    setTimeout(() => {
+      const b = document.getElementById('hubMcpCopy');
+      if (b) b.onclick = async () => {
+        const cmd = `claude mcp add --transport http runeclaw ${location.origin}/mcp`;
+        try { await navigator.clipboard.writeText(cmd); toast('Copied — paste it into your terminal.'); }
+        catch (e) { toast(cmd); }
+      };
+    }, 0);
+  }
+
   /* ═══════════════ Boot ═══════════════ */
-  const RENDER = { home: renderHome, chat: renderChat, markets: renderMarkets, signals: renderSignals,
+  const RENDER = { home: renderHome, chat: renderChat, hub: renderHub, markets: renderMarkets,
+                   signals: renderSignals,
                    feed: renderFeed, trade: renderTrade, portfolio: renderPortfolio,
                    leaderboard: renderLeaderboard, lab: renderLab, engine: renderEngine,
                    account: renderAccount };
