@@ -18,6 +18,7 @@
     { id: 'chat',      label: 'AI Chat',   icon: 'icon-chat' },
     { id: 'hub',       label: 'Agent Hub', icon: 'icon-bolt' },
     { id: 'markets',   label: 'Markets',   icon: 'icon-globe' },
+    { id: 'macro',     label: 'Macro',     icon: 'icon-shield' },
     { id: 'signals',   label: 'Signals',   icon: 'icon-radar' },
     { id: 'deepscan',  label: 'Deep Scan', icon: 'icon-target' },
     { id: 'feed',      label: 'Live Feed', icon: 'icon-sparkle' },
@@ -3253,8 +3254,62 @@
     }, 0);
   }
 
+  /* ═══════════════ MACRO AI ═══════════════ */
+  function fmtBigUsd(n) {
+    if (n == null || !isFinite(n)) return '—';
+    if (n >= 1e12) return '$' + (n / 1e12).toFixed(2) + 'T';
+    if (n >= 1e9) return '$' + (n / 1e9).toFixed(1) + 'B';
+    if (n >= 1e6) return '$' + (n / 1e6).toFixed(1) + 'M';
+    return '$' + Math.round(n);
+  }
+  function macroBlock(m, at) {
+    const band = m.band || { label: '—', tone: '' };
+    const toneCol = band.tone === 'up' ? 'var(--up)' : band.tone === 'down' ? 'var(--down)' : 'var(--text-2)';
+    const score = m.risk_score;
+    const pos = score == null ? 50 : Math.max(0, Math.min(100, score));
+    const gauge = `<div class="stat">
+      <div class="k">Market posture</div>
+      <div class="v big" style="font-size:var(--fs-xl);color:${toneCol}">${esc(band.label)}${score != null ? ` <span class="num" style="font-size:var(--fs-md);color:var(--text-2)">${score}/100</span>` : ''}</div>
+      <div style="position:relative;height:10px;border-radius:6px;margin-top:10px;background:linear-gradient(90deg,var(--down) 0%,#e0a63a 50%,var(--up) 100%)">
+        <div style="position:absolute;top:-4px;left:calc(${pos}% - 3px);width:6px;height:18px;border-radius:3px;background:var(--text);box-shadow:0 0 6px rgba(0,0,0,.6)"></div></div>
+      <div class="row" style="justify-content:space-between;margin-top:4px"><span class="muted small">Risk-Off</span><span class="muted small">Risk-On</span></div></div>`;
+    const fg = m.fear_greed;
+    const fgCol = !fg ? 'var(--text-3)' : fg.value < 25 ? 'var(--down)' : fg.value < 45 ? '#e0a63a' : fg.value < 55 ? 'var(--text-2)' : 'var(--up)';
+    const chg = m.market_cap_change_24h;
+    const tile = (k, v, d, col) => `<div class="stat"><div class="k">${k}</div><div class="v" style="font-size:var(--fs-lg)${col ? `;color:${col}` : ''}">${v}</div>${d ? `<div class="small muted">${d}</div>` : ''}</div>`;
+    const tiles = `<div class="stat-row">
+      ${tile('Fear &amp; Greed', fg ? String(fg.value) : '—', fg ? esc(fg.classification) : 'unavailable', fgCol)}
+      ${tile('Total market cap', fmtBigUsd(m.market_cap_usd), chg != null ? `${chg >= 0 ? '▲' : '▼'} ${Math.abs(chg).toFixed(1)}% 24h` : '', chg == null ? '' : chg >= 0 ? 'var(--up)' : 'var(--down)')}
+      ${tile('BTC dominance', m.btc_dominance != null ? m.btc_dominance.toFixed(1) + '%' : '—', 'share of total cap')}
+      ${tile('ETH dominance', m.eth_dominance != null ? m.eth_dominance.toFixed(1) + '%' : '—', 'share of total cap')}
+      ${tile('24h volume', fmtBigUsd(m.volume_24h_usd), 'all crypto')}
+      ${tile('Engine regime', m.regime && m.regime.label ? esc(m.regime.label) : '—', m.regime && m.regime.score != null ? `score ${Number(m.regime.score).toFixed(2)}` : 'BTC-derived')}
+    </div>`;
+    const brief = m.brief ? `<div class="mt-3" style="border:1px solid var(--line);border-left:3px solid ${toneCol};border-radius:var(--radius);padding:var(--s3) var(--s4);background:rgba(63,182,255,.04)">
+      <div class="muted small" style="font-family:var(--font-data);letter-spacing:.1em;text-transform:uppercase;margin-bottom:6px">🧭 Agent macro read</div>
+      <p style="margin:0;line-height:1.6">${esc(m.brief)}</p></div>` : '';
+    const foot = `<p class="muted small mt-2">Sources: Fear &amp; Greed (alternative.me) · market structure (CoinGecko) · engine BTC regime${at ? ' · ' + esc(new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })) : ''} · read-only, never trades.</p>`;
+    return gauge + `<div class="mt-3">${tiles}</div>` + brief + foot;
+  }
+  async function renderMacro() {
+    container.innerHTML = viewHead('Macro AI', 'The market’s risk backdrop — sentiment, structure & the engine’s regime');
+    container.insertAdjacentHTML('beforeend', `
+      <div class="stack">
+        <section class="panel panel--primary" id="p-macro"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-shield"></use></svg>Risk backdrop
+          <span class="right muted small">sentiment · market structure · BTC regime</span></h2>
+          <div id="c-macro"><div class="skel"></div><div class="skel"></div></div></section>
+      </div>`);
+    renderPanel(C('macro'), async () => {
+      const r = await fetchJSON('/api/macro', { auth: false, timeoutMs: 14000 });
+      const m = r && r.ok && r.data && r.data.macro;
+      if (!m) return null;
+      return macroBlock(m, r.data.generated_at);
+    }, { empty: { icon: 'icon-shield', text: 'Macro data is unavailable right now — check back in a moment.' } });
+  }
+
   /* ═══════════════ Boot ═══════════════ */
   const RENDER = { home: renderHome, chat: renderChat, hub: renderHub, markets: renderMarkets,
+                   macro: renderMacro,
                    signals: renderSignals, deepscan: renderDeepScan,
                    feed: renderFeed, trade: renderTrade, portfolio: renderPortfolio,
                    leaderboard: renderLeaderboard, lab: renderLab, engine: renderEngine,

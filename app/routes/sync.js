@@ -743,3 +743,5 @@ router.post('/flatten/ack', async (req, res) => {
 module.exports = router;
 // Named accessor for routes/reports.js (in-memory + DB cold-start fallback).
 module.exports.getLatestReports = getLatestReports;
+// Named accessor for routes/macro.js — the synced scan's BTC regime block.
+module.exports.getLatestScan = () => latestScan;
