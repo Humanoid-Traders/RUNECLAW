@@ -86,7 +86,14 @@ def process_pending(rows, store, validator: Optional[Callable[[dict], Optional[b
             if uid is None or not tg:
                 continue
             if action == "disconnect":
-                store.delete(tg)
+                # Venue-scoped disconnect (multi-venue store): remove only the
+                # named venue when the row carries one; a row without a venue
+                # (legacy) removes everything, preserving old behavior.
+                venue = str(r.get("exchange") or "").lower().strip()
+                if venue and hasattr(store, "delete_venue"):
+                    store.delete_venue(tg, venue)
+                else:
+                    store.delete(tg)
                 acks.append({"user_id": uid, "action": "disconnect", "ok": True})
                 if on_change:
                     on_change(tg)
