@@ -25,6 +25,9 @@
 <meta name="theme-color" content="#0a0b10">
 <link rel="preload" href="/fonts/cinzel-700.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/styles.css?v=13">
+<script type="importmap">
+{ "imports": { "three": "/vendor/three/three.module.min.js", "three/addons/": "/vendor/three/examples/jsm/" } }
+</script>
 <style>
   /* Page-local composition only — all tokens/components come from styles.css */
   .btn-block { width: 100%; }
@@ -41,6 +44,14 @@
   .nav-links a { color: var(--text-2); font-size: var(--fs-sm); font-weight: 500; padding: 7px 11px; border-radius: var(--radius-sm); }
   .nav-links a:hover { color: var(--text); background: var(--surface-2); }
   @media (max-width: 639px) { .nav-links a:not(.btn) { display: none; } }
+  /* Real-time 3D agent in the hero — invisible until agent.glb is present, so
+     this never alters the landing until the model artwork is added. */
+  .hero-agent3d { display: none; }
+  .hero-agent3d[data-rc3d-state="loading"], .hero-agent3d[data-rc3d-state="ready"] {
+    display: block; position: absolute; top: 0; right: 3%; width: clamp(200px, 30vw, 380px);
+    aspect-ratio: 1 / 1; z-index: 1; pointer-events: auto;
+  }
+  @media (max-width: 900px) { .hero-agent3d[data-rc3d-state="ready"], .hero-agent3d[data-rc3d-state="loading"] { position: static; margin: 0 auto; width: 240px; } }
 </style>
 </head>
 <body>
@@ -59,6 +70,7 @@
 
 <header class="hero">
   <canvas id="rc-constellation" aria-hidden="true"></canvas>
+  <div class="hero-agent3d" data-rc-agent3d aria-label="RUNECLAW 3D agent"></div>
   <div class="eyebrow"><svg class="icon" style="width:12px;height:12px" aria-hidden="true"><use href="#icon-bolt"></use></svg> Live · Bitget USDT-M futures</div>
   <h1>An AI trading engine<br>you can <span>talk to.</span></h1>
   <div class="tagline">Intelligent · Adaptive · Relentless</div>
@@ -692,5 +704,6 @@ function renderFooterSocials(links){
 if('serviceWorker' in navigator){navigator.serviceWorker.register('/sw.js').catch(()=>{});}
 </script>
 <script src="/js/ambient.js?v=1" defer></script>
+<script type="module" src="/js/mascot3d.js?v=1"></script>
 </body>
 </html>
