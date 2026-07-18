@@ -1,13 +1,16 @@
 /**
  * RUNECLAW 3D agent — a real-time WebGL viewer for the AI Viking agent model.
  *
- * Loads a glTF-binary model from /mascot/agent.glb and presents it on a glowing
- * rune-blue disc with a rotating halo, room-environment PBR lighting, gentle
- * auto-rotation and drag-to-orbit. It plays the model's own animation clip if it
- * has one, otherwise a soft idle bob. It pauses when off-screen or the tab is
- * hidden, honours prefers-reduced-motion, and — crucially — does NOTHING when no
- * model is present yet, so shipping this never changes the site until the
- * artwork (agent.glb) is dropped in.
+ * Loads a glTF-binary model from /mascot/agent.glb (which brings its own
+ * rune-disc base + holographics) and lights it with room-environment PBR plus a
+ * white key and a rune-blue rim/fill, with gentle auto-rotation and
+ * drag-to-orbit. It plays the model's idle animation clip if it has one,
+ * otherwise a soft idle bob. Framing is measured from the true SKINNED pose
+ * (see skinnedUnionBox) so a rigged model that floats/spreads its arms stays
+ * fully in shot. It pauses when off-screen or the tab is hidden, honours
+ * prefers-reduced-motion, and — crucially — does NOTHING when no model is
+ * present yet, so shipping this never changes the site until the artwork
+ * (agent.glb) is dropped in.
  *
  * Mount targets: any element with [data-rc-agent3d]. Self-contained: three.js is
  * vendored under /vendor/three (no CDN); the page must declare the import map.
@@ -55,43 +58,87 @@ export function mountAgent(host) {
   const rim = new THREE.DirectionalLight(RUNE, 3.0); rim.position.set(-4, 2, -3); scene.add(rim);
   const fill = new THREE.PointLight(RUNE, 12, 24); fill.position.set(0, 1.2, 4); scene.add(fill);
 
-  // Rune-disc pedestal + two halo rings.
-  const disc = new THREE.Group();
-  const ring = (r, tube, op) => new THREE.Mesh(
-    new THREE.TorusGeometry(r, tube, 12, 120),
-    new THREE.MeshBasicMaterial({ color: RUNE, transparent: true, opacity: op }));
-  const d1 = ring(1.15, 0.012, 0.9); d1.rotation.x = Math.PI / 2; disc.add(d1);
-  const d2 = ring(0.98, 0.006, 0.5); d2.rotation.x = Math.PI / 2; disc.add(d2);
-  const glowDisc = new THREE.Mesh(new THREE.CircleGeometry(1.15, 64),
-    new THREE.MeshBasicMaterial({ color: RUNE, transparent: true, opacity: 0.09 }));
-  glowDisc.rotation.x = -Math.PI / 2; disc.add(glowDisc);
-  disc.position.y = 0; scene.add(disc);
-  const halo = ring(1.7, 0.006, 0.35); halo.position.y = 1.0; scene.add(halo);
-
+  // The model brings its own rune-disc base + holographics; we just light,
+  // frame and rotate it.
   const controls = new OrbitControls(camera, renderer.domElement);
   controls.enableZoom = false; controls.enablePan = false;
   controls.enableDamping = true; controls.dampingFactor = 0.08;
   controls.autoRotate = !reduce; controls.autoRotateSpeed = 1.0;
-  controls.minPolarAngle = Math.PI * 0.32; controls.maxPolarAngle = Math.PI * 0.6;
-  controls.target.set(0, 0.95, 0);
+  controls.minPolarAngle = Math.PI * 0.30; controls.maxPolarAngle = Math.PI * 0.62;
 
   let mixer = null, model = null;
   host.setAttribute('data-rc3d-state', 'loading');
+
+  // Box3.setFromObject reads BIND-POSE geometry — it is blind to skeletal
+  // skinning, so a rigged model that floats or spreads its arms in its idle
+  // pose gets mis-framed when you measure the rest pose. Measure the real
+  // SKINNED pose instead: advance each clip, refresh the skeleton, and union
+  // computeBoundingBox() across the motion so the agent stays fully in shot
+  // whichever expression (idle / analyze / alert / execute) is playing.
+  function skinnedUnionBox(mx, clips) {
+    const box = new THREE.Box3(), tmp = new THREE.Box3();
+    const sample = () => {
+      model.updateMatrixWorld(true);
+      model.traverse((o) => {
+        if (o.isSkinnedMesh && o.skeleton) {
+          o.skeleton.update(); o.computeBoundingBox();
+          tmp.copy(o.boundingBox).applyMatrix4(o.matrixWorld);
+        } else if (o.isMesh) { tmp.setFromObject(o); } else { return; }
+        box.union(tmp);
+      });
+    };
+    if (mx && clips.length) {
+      for (const clip of clips) {
+        const a = mx.clipAction(clip); a.stop(); a.reset(); a.play();
+        for (let i = 0; i <= 6; i++) { a.time = (clip.duration * i) / 6; mx.update(0); sample(); }
+        a.stop();
+      }
+    } else { sample(); }
+    return box;
+  }
+
+  // Fit the camera to the measured animated extent. Recomputed on resize so the
+  // wide-armed silhouette stays framed on square, portrait and landscape stages.
+  function reframe() {
+    if (!model || !model.__fit) return;
+    const f = model.__fit, half = (camera.fov * Math.PI / 180) / 2;
+    const dist = Math.max(f.sy / 2 / Math.tan(half), f.sx / 2 / Math.tan(half) / camera.aspect) * 1.12;
+    const dir = new THREE.Vector3().subVectors(camera.position, controls.target);
+    if (dir.lengthSq() === 0) dir.set(0, 0, 1);
+    dir.normalize().multiplyScalar(dist);
+    controls.target.set(0, f.cy, 0);
+    camera.position.copy(controls.target).add(dir);
+    controls.update();
+  }
+
   new GLTFLoader().load(MODEL_URL, (gltf) => {
     model = gltf.scene;
-    // Normalise: centre on origin, scale to a fixed height, sit feet on the disc.
-    let box = new THREE.Box3().setFromObject(model);
-    const size = box.getSize(new THREE.Vector3());
-    const maxDim = Math.max(size.x, size.y, size.z) || 1;
-    model.scale.setScalar(1.9 / maxDim);
-    box = new THREE.Box3().setFromObject(model);
-    const c = box.getCenter(new THREE.Vector3());
+    const clips = gltf.animations || [];
+    if (clips.length) mixer = new THREE.AnimationMixer(model);
+
+    // 1) Scale to a stable on-screen size from the true animated extent.
+    let ab = skinnedUnionBox(mixer, clips);
+    const size = ab.getSize(new THREE.Vector3());
+    model.scale.setScalar(2.4 / (Math.max(size.x, size.y, size.z) || 1));
+    // 2) Re-measure at the new scale and centre horizontally over the origin.
+    ab = skinnedUnionBox(mixer, clips);
+    const c = ab.getCenter(new THREE.Vector3());
     model.position.x -= c.x; model.position.z -= c.z;
-    model.position.y -= box.min.y; // feet at y=0
+    // 3) Final measure drives the camera fit (see reframe()).
+    ab = skinnedUnionBox(mixer, clips);
+    const s2 = ab.getSize(new THREE.Vector3()), ctr = ab.getCenter(new THREE.Vector3());
     scene.add(model);
-    if (gltf.animations && gltf.animations.length) {
-      mixer = new THREE.AnimationMixer(model);
-      mixer.clipAction(gltf.animations[0]).play();
+    model.__baseY = model.position.y;
+    model.__fit = { sx: s2.x, sy: s2.y, cy: ctr.y };
+    camera.position.set(0, ctr.y, 10); // head-on start; reframe() sets the distance
+    controls.target.set(0, ctr.y, 0);
+    reframe();
+
+    // Default expression: idle loops; the agent breathes on its own.
+    if (mixer) {
+      const idle = clips.find((cl) => cl.name === 'idle') || clips[0];
+      clips.forEach((cl) => mixer.clipAction(cl).stop());
+      mixer.clipAction(idle).reset().play();
     }
     host.setAttribute('data-rc3d-state', 'ready');
   }, undefined, () => { host.setAttribute('data-rc3d-state', 'error'); });
@@ -102,13 +149,13 @@ export function mountAgent(host) {
     const w = host.clientWidth || 320, h = host.clientHeight || 360;
     renderer.setSize(w, h, false);
     camera.aspect = w / h; camera.updateProjectionMatrix();
+    reframe();
   }
   function frame() {
     raf = 0;
     const dt = clock.getDelta(); t0 += dt;
     if (mixer) mixer.update(dt);
-    else if (model && !reduce) model.position.y = (model.__baseY || 0) + Math.sin(t0 * 1.6) * 0.03;
-    disc.rotation.y += dt * 0.25; halo.rotation.y -= dt * 0.4;
+    else if (model && !reduce) model.position.y = (model.__baseY || 0) + Math.sin(t0 * 1.6) * 0.025;
     controls.update();
     renderer.render(scene, camera);
     if (running) raf = requestAnimationFrame(frame);
