@@ -689,11 +689,28 @@
           <span class="badge" style="margin-left:auto" title="Market intelligence from live venue tickers — the radar never trades">read-only</span></h2>
           <div id="c-rwa"><div class="skel"></div><div class="skel"></div></div>
         </section>
+        <section class="panel" id="p-mkpat"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-target"></use></svg>Engine pattern read
+          <span class="right muted small">chart &amp; candle patterns · observations, not signals</span></h2>
+          <div id="c-mkpat"><div class="skel"></div><div class="skel"></div></div>
+        </section>
         <section class="panel" id="p-universe"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-globe"></use></svg>Universe
           <span class="right"><label class="visually-hidden" for="uniSearch">Filter symbols</label><input class="input" id="uniSearch" placeholder="Filter…" style="width:130px;padding:5px 9px;font-size:var(--fs-sm)"></span></h2>
           <div id="c-universe"><div class="skel"></div><div class="skel"></div></div>
         </section>
       </div>`);
+
+    // The deep-scan pattern read, surfaced right inside Markets (same cards as
+    // the Deep Scan view). Reuses the synced batch — populated after a deep scan.
+    renderPanel(C('mkpat'), async () => {
+      const scan = await getScan();
+      const ds = scan && scan.deepscan;
+      if (!ds || !(ds.hits || []).length) return null;
+      const top = ds.hits.slice(0, 8);
+      return `<p class="muted small mb-2">${ds.count || ds.hits.length} symbols with detected patterns · ${esc(ds.tf || '')}${ds.generated_at ? ' · ' + esc(ds.generated_at) : ''}</p>`
+        + top.map(deepScanCard).join('')
+        + (ds.hits.length > top.length
+          ? `<p class="small mt-1"><a href="#deepscan">See all ${ds.hits.length} in Deep Scan →</a></p>` : '');
+    }, { empty: { icon: 'icon-target', text: 'Pattern read appears after the engine\'s next deep scan — the full board lives in the Deep Scan view.' } });
 
     const symSel = document.getElementById('chartSym');
     const DEFAULTS = ['BTCUSDT','ETHUSDT','SOLUSDT','BNBUSDT','XRPUSDT','DOGEUSDT','ADAUSDT','LINKUSDT','AVAXUSDT','SUIUSDT'];
@@ -1122,9 +1139,32 @@
       <div class="stack">
         <section class="panel" id="p-sstats"><div id="c-sstats"><div class="skel"></div></div></section>
         <section class="panel panel--primary" id="p-stream"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-radar"></use></svg>Signal stream</h2><div id="c-stream"><div class="skel"></div><div class="skel"></div></div></section>
+        <section class="panel" id="p-spat"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-target"></use></svg>Pattern read
+          <span class="right muted small">the chart &amp; candle patterns behind live signals</span></h2><div id="c-spat"><div class="skel"></div><div class="skel"></div></div></section>
         <section class="panel" id="p-sinsights"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-chart"></use></svg>What works
           <span class="right muted small">win-rate by pattern & symbol (resolved signals)</span></h2><div id="c-sinsights"><div class="skel"></div></div></section>
       </div>`);
+
+    // Deep-scan pattern read for the symbols that currently have signals — the
+    // detectors behind the setups. Falls back to the whole board when none of
+    // the live signals overlap the last deep scan.
+    renderPanel(C('spat'), async () => {
+      const [scan, sig] = await Promise.all([
+        getScan(),
+        fetchJSON('/api/signals?limit=40', { auth: false }).catch(() => ({ data: {} })),
+      ]);
+      const idx = deepScanIndex(scan);
+      if (!idx.size) return null;
+      const wanted = new Set((sig.data?.signals || []).map(s => dsBase(s.symbol)));
+      let hits = [...idx.entries()].filter(([b]) => wanted.has(b)).map(([, h]) => h);
+      const scoped = hits.length > 0;
+      if (!scoped) hits = [...idx.values()];
+      const note = scoped
+        ? `Patterns behind ${hits.length} live signal ${hits.length === 1 ? 'symbol' : 'symbols'}.`
+        : 'No live signal overlaps the last deep scan yet — showing the full pattern board.';
+      return `<p class="muted small mb-2">${note}</p>` + hits.slice(0, 8).map(deepScanCard).join('')
+        + `<p class="muted small mt-1">Patterns are observations, not signals · <a href="#deepscan">full Deep Scan →</a></p>`;
+    }, { empty: { icon: 'icon-target', text: 'The pattern read fills in after the engine\'s next deep scan.' } });
 
     renderPanel(C('sstats'), async () => {
       const r = await fetchJSON('/api/signals/stats', { auth: false });
@@ -1194,6 +1234,18 @@
   }
   function _dsSigCol(sig) {
     return sig === 'bullish' ? 'var(--up)' : sig === 'bearish' ? 'var(--down)' : 'var(--text-3)';
+  }
+  // Base ticker (BTC/USDT | BTCUSDT | BTC → BTC) — used to match deep-scan hits
+  // to universe rows and signal symbols so the pattern read follows the symbol.
+  function dsBase(sym) {
+    return String(sym || '').toUpperCase().replace('/USDT', '').replace(':USDT', '').replace(/USDT$/, '').replace(/[^A-Z0-9]/g, '');
+  }
+  // The synced deep-scan hits indexed by base ticker (empty until a deep scan
+  // has synced). Shared by the Deep Scan, Markets, and Signals views.
+  function deepScanIndex(scan) {
+    const idx = new Map();
+    for (const h of (scan && scan.deepscan && scan.deepscan.hits) || []) idx.set(dsBase(h.symbol), h);
+    return idx;
   }
   function deepScanCard(h) {
     const chg = (h.chg == null || h.chg === '') ? null : Number(h.chg);
