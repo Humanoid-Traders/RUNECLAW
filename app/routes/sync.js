@@ -39,6 +39,11 @@ const AUTHORIZED_BOT_USER_ID = parseInt(process.env.BOT_USER_ID) || 1;
 let latestScan = null;
 let latestPortfolio = null; // { equity, open_count, net_pnl, total_trades, win_rate, updated_at }
 
+// The deep-scan pattern block only rides /deepscan syncs; a regular /scan (or
+// the autonomous cycle's empty push) must NOT wipe the last readout. We carry
+// the previous block forward until a fresh one arrives or it ages past this TTL.
+const DEEPSCAN_TTL_MS = 6 * 60 * 60 * 1000; // 6h
+
 /**
  * GET /api/bot/sync/scan
  * Dashboard fetches latest scan data (no auth required — data is public market info).
@@ -489,8 +494,20 @@ router.post('/events', async (req, res) => {
  */
 router.post('/scan', async (req, res) => {
   try {
+    const incoming = req.body || {};
+    // Preserve the deep-scan pattern block across scans that don't carry one.
+    // A fresh block (from /deepscan) is stamped with its web arrival time; a
+    // carried-forward block is dropped once older than the TTL.
+    let deepscan = incoming.deepscan
+      ? { ...incoming.deepscan, received_at: new Date().toISOString() }
+      : (latestScan && latestScan.deepscan) || null;
+    if (deepscan && deepscan.received_at) {
+      const age = Date.now() - new Date(deepscan.received_at).getTime();
+      if (!(age >= 0 && age < DEEPSCAN_TTL_MS)) deepscan = null;
+    }
     latestScan = {
-      ...req.body,
+      ...incoming,
+      ...(deepscan ? { deepscan } : {}),
       received_at: new Date().toISOString(),
     };
     // Persist to DB so it survives cold starts

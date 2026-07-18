@@ -193,11 +193,54 @@ def _current_strategy_mode() -> str:
         return "balanced"
 
 
-def _build_scan_payload(results: list[dict], engine=None) -> dict:
+def _deepscan_block(hits: list[dict], max_symbols: int = 24,
+                    max_patterns: int = 4) -> list[dict]:
+    """Full per-symbol pattern breakdown for the website Deep Scan view.
+
+    The regular scan payload flattens patterns down to the top-2 names on
+    high-score entry cards (dropping per-pattern confidence, the bullish/
+    bearish signal, and the candle patterns entirely). This preserves the
+    deep-scan readout verbatim — each chart pattern's name + signal +
+    confidence, the candle chips, and the RSI/vol context — so the web can
+    mirror the Telegram /deepscan card. Bounded (symbols x patterns) to keep
+    the synced blob small.
+    """
+    out: list[dict] = []
+    for h in (hits or [])[:max_symbols]:
+        cps = []
+        for cp in (h.get("chart_patterns") or [])[:max_patterns]:
+            cps.append({
+                "name": str(cp.get("name", "")),
+                "signal": str(cp.get("signal", "neutral")),
+                "confidence": round(float(cp.get("confidence", 0) or 0), 4),
+            })
+        candles = {}
+        for k, v in list((h.get("candle_patterns") or {}).items())[:6]:
+            candles[str(k)] = str(v)
+        out.append({
+            "symbol": str(h.get("symbol", "")),
+            "price": float(h.get("price", 0) or 0),
+            "chg": round(float(h.get("chg", 0) or 0), 3),
+            "rsi": round(float(h.get("rsi", 0) or 0), 1),
+            "vol_spike": bool(h.get("vol_spike")),
+            "score": round(float(h.get("score_norm", 0) or 0), 4),
+            "tf": str(h.get("tf", "")),
+            "chart_patterns": cps,
+            "candle_patterns": candles,
+        })
+    return out
+
+
+def _build_scan_payload(results: list[dict], engine=None,
+                        deepscan_hits: "list[dict] | None" = None) -> dict:
     """Convert raw scan results into the website dashboard schema and push.
 
     Transforms _scan_symbol() dicts into the format expected by the War Room:
     regime, symbols, entry_cards, key_call, circuit_breaker.
+
+    ``deepscan_hits`` (only passed by the /deepscan path) adds a ``deepscan``
+    block carrying the full per-symbol chart+candle pattern breakdown so the
+    website can render the same card as Telegram. Absent for regular scans.
     """
     from bot.config import CONFIG
 
@@ -442,6 +485,14 @@ def _build_scan_payload(results: list[dict], engine=None) -> dict:
         "key_call": key_call,
         "features": _build_features_block(engine),
         "timestamp": now.strftime("%Y-%m-%d %H:%M UTC"),
+        # Deep-scan pattern readout (only on the /deepscan path) so the website
+        # can mirror the Telegram card: full chart+candle breakdown per symbol.
+        **({"deepscan": {
+            "hits": _deepscan_block(deepscan_hits),
+            "count": len(deepscan_hits or []),
+            "tf": (deepscan_hits[0].get("tf") if deepscan_hits else ""),
+            "generated_at": now.strftime("%Y-%m-%d %H:%M UTC"),
+        }} if deepscan_hits else {}),
     }
 
 
