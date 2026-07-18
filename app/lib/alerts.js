@@ -38,6 +38,14 @@ function resolveBase(word) {
 
 const TRIGGER_RE =
   /^(?:please\s+)?(?:tell me|alert me|notify me|ping me|warn me|let me know)\s+(?:when|if)\s+(.+)$/i;
+// "every time" / "whenever" arms a RECURRING alert (re-arms after a cooldown).
+const RECURRING_RE =
+  /^(?:please\s+)?(?:tell me|alert me|notify me|ping me|warn me|let me know)\s+(?:every time|whenever|each time)\s+(.+)$/i;
+// DeFi tripwire: "…my health factor drops below 1.5" (no symbol — it reads
+// the linked wallet's Aave book).
+const HF_RE = /(?:my\s+)?(?:aave\s+)?health factor\s+(?:drops?|falls?|goes?|is)?\s*(?:below|under)\s*([\d.]+)/i;
+// Signal watch: "…a signal fires on my watchlist" / "…a signal fires on SOL".
+const SIGNAL_RE = /(?:a\s+|the\s+|any\s+)?(?:new\s+)?signal\s+(?:fires?|posts?|appears?|comes)(?:\s+(?:on|for)\s+(?:my\s+watchlist|([a-z0-9$]{2,10})))?/i;
 const LIST_RE = /^(?:(?:show|list)\s+)?my\s+alerts$|^(?:show|list)\s+(?:active\s+)?alerts$/i;
 const COND_RE = new RegExp(
   '(drops|falls|dips|dumps|goes|moves|rises|pumps|climbs|breaks|crosses|hits|reaches|is|trades)'
@@ -57,9 +65,27 @@ const UP_VERBS = new Set(['rises', 'pumps', 'climbs']);
 function parseAlertCommand(text) {
   const t = String(text || '').trim();
   if (LIST_RE.test(t)) return { kind: 'list' };
-  const m = t.match(TRIGGER_RE);
+  let mode = 'once';
+  let m = t.match(RECURRING_RE);
+  if (m) mode = 'recurring';
+  else m = t.match(TRIGGER_RE);
   if (!m) return null;
   const rest = m[1].trim();
+
+  // DeFi + signal tripwires parse before the price grammar.
+  const hf = rest.match(HF_RE);
+  if (hf) {
+    const th = parseFloat(hf[1]);
+    if (!isFinite(th) || th <= 0) return { kind: 'unparsed' };
+    return { kind: 'create', base: 'DEFI', metric: 'health_factor', op: '<', threshold: th, mode };
+  }
+  const sig = rest.match(SIGNAL_RE);
+  if (sig) {
+    const coin = sig[1] ? resolveBase(sig[1]) : null;
+    // Signal watch is recurring by nature — every matching signal notifies.
+    return { kind: 'create', base: coin || 'WATCHLIST', metric: 'signal', op: '>', threshold: 0, mode: 'recurring' };
+  }
+
   const cond = rest.match(COND_RE);
   if (!cond) return { kind: 'unparsed' };
 
@@ -85,12 +111,12 @@ function parseAlertCommand(text) {
     // 24h-change tripwire. "drops 5%" → change below -5; "pumps 5%" →
     // change above +5; "moves 5%" → |change| above 5.
     if (DOWN_VERBS.has(verb)) {
-      return { kind: 'create', base, metric: 'change_24h', op: '<', threshold: -Math.abs(threshold) };
+      return { kind: 'create', base, metric: 'change_24h', op: '<', threshold: -Math.abs(threshold), mode };
     }
     if (UP_VERBS.has(verb) || dir === 'above' || dir === 'over') {
-      return { kind: 'create', base, metric: 'change_24h', op: '>', threshold: Math.abs(threshold) };
+      return { kind: 'create', base, metric: 'change_24h', op: '>', threshold: Math.abs(threshold), mode };
     }
-    return { kind: 'create', base, metric: 'change_abs_24h', op: '>', threshold: Math.abs(threshold) };
+    return { kind: 'create', base, metric: 'change_abs_24h', op: '>', threshold: Math.abs(threshold), mode };
   }
 
   // Price tripwire.
@@ -99,10 +125,10 @@ function parseAlertCommand(text) {
   else if (dir === 'above' || dir === 'over' || dir === 'past' || dir === 'through') op = '>';
   else if (DOWN_VERBS.has(verb)) op = '<';
   else if (UP_VERBS.has(verb)) op = '>';
-  if (op) return { kind: 'create', base, metric: 'price', op, threshold };
+  if (op) return { kind: 'create', base, metric: 'price', op, threshold, mode };
   // "hits/reaches/crosses/breaks/is/trades [to] X" — direction depends on
   // where price is NOW; the route resolves it against the live ticker.
-  return { kind: 'create', base, metric: 'price', op: null, threshold, inferOp: true };
+  return { kind: 'create', base, metric: 'price', op: null, threshold, inferOp: true, mode };
 }
 
 // ── Ticker source (injectable for tests) ─────────────────────────────────────
@@ -124,13 +150,22 @@ function fmtPrice(v) {
 
 function describeCondition(a) {
   const base = String(a.symbol || '').replace(/USDT$/, '');
+  const rec = a.mode === 'recurring' ? ' (recurring)' : '';
   if (a.metric === 'change_24h') {
-    return `${base} 24h change ${a.op === '<' ? 'below' : 'above'} ${Number(a.threshold).toFixed(1)}%`;
+    return `${base} 24h change ${a.op === '<' ? 'below' : 'above'} ${Number(a.threshold).toFixed(1)}%${rec}`;
   }
   if (a.metric === 'change_abs_24h') {
-    return `${base} moves more than ${Number(a.threshold).toFixed(1)}% in 24h`;
+    return `${base} moves more than ${Number(a.threshold).toFixed(1)}% in 24h${rec}`;
   }
-  return `${base} price ${a.op === '<' ? 'below' : 'above'} ${fmtPrice(a.threshold)}`;
+  if (a.metric === 'health_factor') {
+    return `Aave health factor below ${Number(a.threshold).toFixed(2)}${rec}`;
+  }
+  if (a.metric === 'signal') {
+    return base === 'WATCHLIST'
+      ? 'engine signal on a watchlist coin (recurring)'
+      : `engine signal on ${base} (recurring)`;
+  }
+  return `${base} price ${a.op === '<' ? 'below' : 'above'} ${fmtPrice(a.threshold)}${rec}`;
 }
 
 // ── Evaluation ───────────────────────────────────────────────────────────────
@@ -160,26 +195,45 @@ async function listAlerts(userId) {
  * Validate + insert. Returns { ok, alert?, error?, now? } — `error` is a
  * user-facing sentence, `now` the live metric value at creation.
  */
-async function createAlert(userId, { base, metric, op, threshold, inferOp }) {
-  const symbol = String(base || '').toUpperCase().replace(/USDT$/, '') + 'USDT';
-  if (!/^[A-Z0-9]{2,10}USDT$/.test(symbol)) {
-    return { ok: false, error: 'That does not look like a symbol I can watch.' };
-  }
-  if (!['price', 'change_24h', 'change_abs_24h'].includes(metric)) {
+async function createAlert(userId, { base, metric, op, threshold, inferOp, mode, cooldownMin }) {
+  if (!['price', 'change_24h', 'change_abs_24h', 'health_factor', 'signal'].includes(metric)) {
     return { ok: false, error: 'Unsupported alert metric.' };
   }
   const th = Number(threshold);
   if (!isFinite(th)) return { ok: false, error: 'The alert needs a numeric level.' };
+  mode = mode === 'recurring' ? 'recurring' : 'once';
+  // Signal watch dedupes by triggered_at, so its cooldown stays 0.
+  const cooldown = metric === 'signal' ? 0
+    : Math.min(1440, Math.max(5, Number(cooldownMin) || 60));
 
-  let tk = null;
-  try {
-    tk = (await fetchTickers())[symbol] || null;
-  } catch (e) { /* validation degrades gracefully below */ }
-  if (!tk) {
-    return { ok: false, error: `I can't find a ${symbol.replace(/USDT$/, '')} perpetual on the exchange, so I can't watch it.` };
-  }
-  if (inferOp || !op) {
-    op = metric === 'price' ? (th > tk.price ? '>' : '<') : '>';
+  let symbol, now = null;
+  if (metric === 'health_factor') {
+    symbol = 'DEFI';
+    if (!(th > 0 && th <= 10)) {
+      return { ok: false, error: 'A health-factor threshold between 0 and 10 makes sense (e.g. 1.5).' };
+    }
+    const { walletAddressOf } = require('./wallet');
+    if (!(await walletAddressOf(userId))) {
+      return { ok: false, error: 'Link a wallet first (Account view) so I can read your Aave health factor.' };
+    }
+  } else if (metric === 'signal' && String(base).toUpperCase() === 'WATCHLIST') {
+    symbol = 'WATCHLIST';
+  } else {
+    symbol = String(base || '').toUpperCase().replace(/USDT$/, '') + 'USDT';
+    if (!/^[A-Z0-9]{2,10}USDT$/.test(symbol)) {
+      return { ok: false, error: 'That does not look like a symbol I can watch.' };
+    }
+    let tk = null;
+    try {
+      tk = (await fetchTickers())[symbol] || null;
+    } catch (e) { /* validation degrades gracefully below */ }
+    if (!tk) {
+      return { ok: false, error: `I can't find a ${symbol.replace(/USDT$/, '')} perpetual on the exchange, so I can't watch it.` };
+    }
+    if (inferOp || !op) {
+      op = metric === 'price' ? (th > tk.price ? '>' : '<') : '>';
+    }
+    if (metric !== 'signal') now = metric === 'price' ? tk.price : tk.change;
   }
   if (op !== '>' && op !== '<') return { ok: false, error: 'Unsupported alert direction.' };
 
@@ -190,11 +244,11 @@ async function createAlert(userId, { base, metric, op, threshold, inferOp }) {
   }
 
   await pool.execute(
-    `INSERT INTO user_alerts (user_id, symbol, metric, op, threshold, created_at)
-     VALUES (?, ?, ?, ?, ?, ?)`,
-    [userId, symbol, metric, op, th, new Date()]);
-  const alert = { symbol, metric, op, threshold: th };
-  return { ok: true, alert, now: metric === 'price' ? tk.price : tk.change };
+    `INSERT INTO user_alerts (user_id, symbol, metric, op, threshold, mode, cooldown_min, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [userId, symbol, metric, op, th, mode, cooldown, new Date()]);
+  const alert = { symbol, metric, op, threshold: th, mode, cooldown_min: cooldown };
+  return { ok: true, alert, now };
 }
 
 async function deleteAlert(userId, id) {
@@ -210,6 +264,32 @@ async function deleteAlert(userId, id) {
  * deactivated in the same statement that stamps it, so a slow push can never
  * double-fire it. Returns the number of alerts tripped. Never throws.
  */
+/** Fire an alert race-safely. One-shot: disarm-and-stamp. Recurring: restamp
+ * only if the cooldown has passed (the WHERE guard makes racing evaluators
+ * harmless). Returns true when THIS caller won the fire. */
+async function fireAlert(a, value) {
+  const now = new Date();
+  if (a.mode === 'recurring') {
+    const cooldownMs = (Number(a.cooldown_min) || 0) * 60_000;
+    const cutoff = new Date(now.getTime() - cooldownMs);
+    if (a.triggered_at && new Date(a.triggered_at).getTime() > cutoff.getTime()) return false;
+    const [upd] = await pool.execute(
+      `UPDATE user_alerts SET triggered_at = ?, trigger_price = ?
+       WHERE id = ? AND active = 1 AND (triggered_at IS NULL OR triggered_at <= ?)`,
+      [now, value, a.id, cutoff]);
+    return (upd.affectedRows || 0) > 0;
+  }
+  const [upd] = await pool.execute(
+    `UPDATE user_alerts SET active = 0, triggered_at = ?, trigger_price = ?
+     WHERE id = ? AND active = 1`,
+    [now, value, a.id]);
+  return (upd.affectedRows || 0) > 0;
+}
+
+// On-chain reads (health factor) run on a slower cadence than tickers.
+const ONCHAIN_INTERVAL_MS = 5 * 60_000;
+let lastOnchainSweep = 0;
+
 async function runOnce(notify) {
   let send = notify;
   if (!send) {
@@ -221,22 +301,73 @@ async function runOnce(notify) {
     if (!rows.length) return 0;
     const map = await fetchTickers();
     let tripped = 0;
+    const doOnchain = Date.now() - lastOnchainSweep >= ONCHAIN_INTERVAL_MS;
+    if (doOnchain && rows.some(a => a.metric === 'health_factor')) lastOnchainSweep = Date.now();
+
     for (const a of rows) {
-      const v = evaluateAlert(a, map[a.symbol]);
+      let v = null, bodyOverride = null;
+      if (a.metric === 'signal') {
+        // New engine signal on the watched coin / the user's watchlist since
+        // the last fire (or the last 15 minutes for a fresh alert).
+        try {
+          const [sigs] = await pool.execute(
+            'SELECT symbol, direction, confidence, created_at FROM signals ORDER BY created_at DESC LIMIT 50', []);
+          const since = a.triggered_at
+            ? new Date(a.triggered_at).getTime() : Date.now() - 15 * 60_000;
+          let bases;
+          if (a.symbol === 'WATCHLIST') {
+            const [prows] = await pool.execute(
+              'SELECT user_id, risk_pref, watchlist, prefs FROM user_profiles WHERE user_id = ?', [a.user_id]);
+            let wl = [];
+            try { wl = JSON.parse(prows[0]?.watchlist || '[]'); } catch (e) { /* empty */ }
+            bases = new Set(wl.map(s => String(s).toUpperCase().replace(/USDT$/, '')));
+          } else {
+            bases = new Set([String(a.symbol).replace(/USDT$/, '')]);
+          }
+          const hit = sigs.find(s => {
+            const b = String(s.symbol || '').toUpperCase().split('/')[0].replace(/USDT.*$/, '');
+            return bases.has(b) && new Date(s.created_at).getTime() > since;
+          });
+          if (hit) {
+            v = 0;
+            const b = String(hit.symbol).split('/')[0];
+            bodyOverride = `Engine signal: ${String(hit.direction || '').toUpperCase()} ${b}`
+              + (isFinite(parseFloat(hit.confidence)) ? ` (${Math.round(parseFloat(hit.confidence) * 100)}% confidence)` : '')
+              + ' — open Signals for the full read.';
+          }
+        } catch (e) { /* signals unavailable this pass */ }
+      } else if (a.metric === 'health_factor') {
+        if (!doOnchain) continue;
+        try {
+          const { walletAddressOf } = require('./wallet');
+          const defi = require('./defi');
+          const address = await walletAddressOf(a.user_id);
+          if (!address) continue;
+          const d = await defi.getDefiPositions(address);
+          const hfs = (d?.aave || []).map(x => x.health_factor).filter(h => h !== null && isFinite(h));
+          if (!hfs.length) continue;
+          const minHf = Math.min(...hfs);
+          if (minHf < Number(a.threshold)) {
+            v = minHf;
+            bodyOverride = `Aave health factor is ${minHf} (threshold ${Number(a.threshold).toFixed(2)}) — `
+              + 'liquidation risk is rising. Review your position in your wallet.';
+          }
+        } catch (e) { /* chain read unavailable this pass */ }
+      } else {
+        v = evaluateAlert(a, map[a.symbol]);
+      }
       if (v === null) continue;
-      const [upd] = await pool.execute(
-        `UPDATE user_alerts SET active = 0, triggered_at = ?, trigger_price = ?
-         WHERE id = ? AND active = 1`,
-        [new Date(), v, a.id]);
-      if ((upd.affectedRows || 0) === 0) continue;   // raced another evaluator
+      if (!(await fireAlert(a, v))) continue;   // raced / inside cooldown
       tripped++;
       const base = String(a.symbol).replace(/USDT$/, '');
-      const nowTxt = a.metric === 'price' ? fmtPrice(v) : `${v.toFixed(2)}%`;
+      const nowTxt = a.metric === 'price' ? fmtPrice(v) : `${Number(v).toFixed(2)}%`;
       try {
         await send({
-          title: `⏰ ${base} alert tripped`,
-          body: `${describeCondition(a)} — ${base} is now ${nowTxt}.`,
-          url: '/dashboard#feed',
+          title: a.metric === 'health_factor' ? '🏦 DeFi risk alert'
+            : a.metric === 'signal' ? '📡 Signal watch'
+            : `⏰ ${base} alert tripped`,
+          body: bodyOverride || `${describeCondition(a)} — ${base} is now ${nowTxt}.`,
+          url: a.metric === 'signal' ? '/dashboard#signals' : '/dashboard#feed',
         }, [a.user_id]);
       } catch (e) { /* push is best-effort; the row is already stamped */ }
     }
@@ -313,10 +444,14 @@ async function maybeHandleAlertChat(userId, text) {
         hint = '<br><i>Enable push notifications (Account → Notifications) so this reaches you even with the tab closed.</i>';
       }
     } catch (e) { /* hint only */ }
+    const semantics = r.alert.mode === 'recurring'
+      ? (r.alert.metric === 'signal'
+        ? 'I\'ll push you every matching signal.'
+        : `I\'ll push you each time it trips (at most once per ${r.alert.cooldown_min} min).`)
+      : 'I\'ll send you a push notification the moment it trips — one-shot, then it disarms.';
     return {
-      reply_html: `⏰ Alert armed: <b>${esc(describeCondition(r.alert))}</b> (now ${nowTxt}). `
-        + 'I\'ll send you a push notification the moment it trips — one-shot, then it disarms.'
-        + hint,
+      reply_html: `⏰ Alert armed: <b>${esc(describeCondition(r.alert))}</b>${nowTxt !== null && r.now !== null ? ` (now ${nowTxt})` : ''}. `
+        + semantics + hint,
       intent: 'alert_create',
     };
   } catch (e) {
@@ -324,8 +459,11 @@ async function maybeHandleAlertChat(userId, text) {
   }
 }
 
+function __testResetOnchainSweep() { lastOnchainSweep = 0; }
+
 module.exports = {
   MAX_ACTIVE_PER_USER,
+  __testResetOnchainSweep,
   parseAlertCommand,
   evaluateAlert,
   describeCondition,

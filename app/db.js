@@ -114,11 +114,12 @@ class MemoryDB {
     // Checked before USERS handlers: 'USER_ALERTS' must never fall through
     // to a substring match on 'USERS'.
     if (cmd.includes('INSERT INTO USER_ALERTS')) {
-      // params: user_id, symbol, metric, op, threshold, created_at
+      // params: user_id, symbol, metric, op, threshold, mode, cooldown_min, created_at
       this.userAlerts.push({
         id: this._nextAlertId++, user_id: params[0], symbol: params[1],
         metric: params[2], op: params[3], threshold: params[4],
-        active: 1, trigger_price: null, created_at: params[5], triggered_at: null,
+        mode: params[5], cooldown_min: params[6],
+        active: 1, trigger_price: null, created_at: params[7], triggered_at: null,
       });
       return [{ affectedRows: 1 }, []];
     }
@@ -128,10 +129,21 @@ class MemoryDB {
       return [[{ n }], []];
     }
     if (cmd.includes('UPDATE USER_ALERTS')) {
-      // params: triggered_at, trigger_price, id (WHERE id = ? AND active = 1)
+      // Two shapes share the params (triggered_at, trigger_price, id [, cutoff]):
+      //  one-shot disarm  … SET ACTIVE = 0, …          WHERE id AND active = 1
+      //  recurring restamp … SET triggered_at, … WHERE id AND active = 1
+      //                      AND (triggered_at IS NULL OR triggered_at <= ?)
       const a = this.userAlerts.find(x => x.id === params[2] && x.active === 1);
       if (!a) return [{ affectedRows: 0 }, []];
-      a.active = 0; a.triggered_at = params[0]; a.trigger_price = params[1];
+      if (cmd.includes('ACTIVE = 0')) {
+        a.active = 0;
+      } else if (params.length > 3) {
+        // cooldown guard: only restamp if the last fire is old enough
+        const cutoff = new Date(params[3]).getTime();
+        const last = a.triggered_at ? new Date(a.triggered_at).getTime() : null;
+        if (last !== null && last > cutoff) return [{ affectedRows: 0 }, []];
+      }
+      a.triggered_at = params[0]; a.trigger_price = params[1];
       return [{ affectedRows: 1 }, []];
     }
     if (cmd.includes('DELETE FROM USER_ALERTS')) {
@@ -757,6 +769,13 @@ async function migrate() {
     try {
       await pool.execute('ALTER TABLE users ADD COLUMN x_id VARCHAR(64) DEFAULT NULL');
     } catch (e) { /* exists */ }
+    // Alerts 2.0: recurring mode + cooldown on pre-existing deployments.
+    try {
+      await pool.execute("ALTER TABLE user_alerts ADD COLUMN mode VARCHAR(12) NOT NULL DEFAULT 'once'");
+    } catch (e) { /* exists */ }
+    try {
+      await pool.execute('ALTER TABLE user_alerts ADD COLUMN cooldown_min INT NOT NULL DEFAULT 60');
+    } catch (e) { /* exists */ }
     // Self-custody sign-in: the user's EVM wallet address (lowercased, unique).
     try {
       await pool.execute('ALTER TABLE users ADD COLUMN wallet_address VARCHAR(42) DEFAULT NULL');
@@ -918,6 +937,8 @@ async function migrate() {
         metric VARCHAR(20) NOT NULL DEFAULT 'price',
         op VARCHAR(2) NOT NULL,
         threshold DOUBLE NOT NULL,
+        mode VARCHAR(12) NOT NULL DEFAULT 'once',
+        cooldown_min INT NOT NULL DEFAULT 60,
         active TINYINT NOT NULL DEFAULT 1,
         trigger_price DOUBLE DEFAULT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
