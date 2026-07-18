@@ -613,3 +613,93 @@ code { font-family: var(--font-data); font-size: .9em; background: var(--surface
 /* Chips/badges gain a hairline lift on hover where they're interactive. */
 .chip[role="button"], .token-display { transition: transform .15s ease, box-shadow .2s ease, border-color .2s ease; }
 .token-display:hover { box-shadow: var(--glow); }
+
+/* ==========================================================================
+   AI MOTION v2 — PRESENCE & DEPTH. A bolder, top-tier "intelligence at work"
+   layer: an ambient field behind everything, animated glow frames, a living
+   orb, and a cinematic hero. Still transform/opacity/gradient only, and the
+   global prefers-reduced-motion rule freezes all of it.
+   ========================================================================== */
+
+@property --rc-ang { syntax: "<angle>"; inherits: false; initial-value: 0deg; }
+
+/* App-wide ambient field: a slow drifting aurora + a masked neural grid,
+   fixed behind all content (panels sit on solid surfaces, so this reads as
+   depth in the gaps rather than noise under the data). */
+body::before {
+  content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none;
+  background:
+    radial-gradient(55% 45% at 12% 0%, rgba(63, 182, 255, .13), transparent 62%),
+    radial-gradient(45% 40% at 88% 8%, rgba(154, 167, 255, .10), transparent 62%),
+    radial-gradient(60% 55% at 50% 108%, rgba(47, 191, 113, .06), transparent 60%);
+  animation: rc-bg-drift 26s ease-in-out infinite alternate;
+}
+@keyframes rc-bg-drift {
+  from { transform: translate3d(-1%, 0, 0) scale(1); }
+  to { transform: translate3d(2%, -3%, 0) scale(1.08); }
+}
+body::after {
+  content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none; opacity: .55;
+  background-image:
+    linear-gradient(rgba(63, 182, 255, .045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(63, 182, 255, .045) 1px, transparent 1px);
+  background-size: 46px 46px, 46px 46px;
+  -webkit-mask-image: radial-gradient(circle at 50% 35%, #000, transparent 78%);
+  mask-image: radial-gradient(circle at 50% 35%, #000, transparent 78%);
+  animation: rc-grid-pan 32s linear infinite;
+}
+@keyframes rc-grid-pan { to { background-position: 46px 46px, 46px 46px; } }
+
+/* Primary panels: an animated rune-blue glow frame (rotating conic border).
+   The v1 top seam is quietened to a static accent so the frame is the star. */
+.panel--primary::before { animation: none; opacity: .3; }
+.panel--primary::after {
+  content: ""; position: absolute; inset: -1px; border-radius: inherit; padding: 1.5px; pointer-events: none; z-index: 0;
+  background: conic-gradient(from var(--rc-ang), transparent 0 60%, var(--gold) 78%, var(--gold-bright) 86%, transparent 94% 100%);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor; mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); mask-composite: exclude;
+  animation: rc-spin 7s linear infinite; opacity: .9;
+}
+.panel--primary > * { position: relative; z-index: 1; }
+@keyframes rc-spin { to { --rc-ang: 360deg; } }
+
+/* Every panel lifts with a rune-blue glow on hover — the surface feels reactive. */
+.panel { transition: transform .2s ease, box-shadow .25s ease, border-color .2s ease; }
+.panel:hover { transform: translateY(-2px); box-shadow: var(--shadow), var(--glow); border-color: var(--line-2); }
+
+/* Enriched AI orb: the breathing core now carries a slow rotating halo ring. */
+.rc-orb { position: relative; }
+.rc-orb::before {
+  content: ""; position: absolute; inset: -4px; border-radius: 50%; pointer-events: none;
+  background: conic-gradient(from var(--rc-ang), transparent 0 55%, rgba(63, 182, 255, .95) 80%, transparent 100%);
+  -webkit-mask: radial-gradient(circle, transparent 56%, #000 60%); mask: radial-gradient(circle, transparent 56%, #000 60%);
+  animation: rc-spin 4s linear infinite;
+}
+/* Large hero core utility for agent surfaces (concentric pulse). */
+.rc-core { position: relative; width: 84px; height: 84px; border-radius: 50%; flex: none;
+  background: radial-gradient(circle at 34% 30%, var(--gold-bright), var(--gold) 45%, #0e2f4d 92%);
+  box-shadow: 0 0 40px rgba(63, 182, 255, .45), inset 0 0 20px rgba(255, 255, 255, .22);
+  animation: rc-orb-breathe 3.4s ease-in-out infinite; }
+.rc-core::before, .rc-core::after {
+  content: ""; position: absolute; border-radius: 50%; border: 1px solid rgba(63, 182, 255, .4); pointer-events: none;
+  animation: rc-ripple 3.4s ease-out infinite; }
+.rc-core::before { inset: -10px; } .rc-core::after { inset: -10px; animation-delay: 1.7s; }
+@keyframes rc-ripple { 0% { transform: scale(.9); opacity: .7; } 100% { transform: scale(1.6); opacity: 0; } }
+
+/* Hero: shimmering accent words, a scanline sweep, the constellation canvas. */
+.hero h1 span {
+  background: linear-gradient(100deg, var(--gold) 15%, var(--gold-bright) 50%, var(--gold) 85%);
+  background-size: 200% auto; -webkit-background-clip: text; background-clip: text; color: transparent;
+  animation: rc-textshine 5s linear infinite;
+}
+@keyframes rc-textshine { to { background-position: 200% center; } }
+.hero::after {
+  content: ""; position: absolute; left: 0; right: 0; top: 0; height: 42%; z-index: 0; pointer-events: none;
+  background: linear-gradient(180deg, rgba(63, 182, 255, .12), transparent);
+  transform: translateY(-100%); animation: rc-scanline 7s ease-in-out infinite;
+}
+@keyframes rc-scanline {
+  0% { transform: translateY(-100%); opacity: 0; }
+  15% { opacity: 1; } 60%, 100% { transform: translateY(260%); opacity: 0; }
+}
+#rc-constellation { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 0; pointer-events: none; opacity: .75; }

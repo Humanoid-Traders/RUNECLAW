@@ -24,7 +24,7 @@
 <link rel="manifest" href="/manifest.json">
 <meta name="theme-color" content="#0a0b10">
 <link rel="preload" href="/fonts/cinzel-700.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="stylesheet" href="/styles.css?v=12">
+<link rel="stylesheet" href="/styles.css?v=13">
 <style>
   /* Page-local composition only — all tokens/components come from styles.css */
   .btn-block { width: 100%; }
@@ -58,6 +58,7 @@
 </nav>
 
 <header class="hero">
+  <canvas id="rc-constellation" aria-hidden="true"></canvas>
   <div class="eyebrow"><svg class="icon" style="width:12px;height:12px" aria-hidden="true"><use href="#icon-bolt"></use></svg> Live · Bitget USDT-M futures</div>
   <h1>An AI trading engine<br>you can <span>talk to.</span></h1>
   <div class="tagline">Intelligent · Adaptive · Relentless</div>
@@ -690,5 +691,6 @@ function renderFooterSocials(links){
 })();
 if('serviceWorker' in navigator){navigator.serviceWorker.register('/sw.js').catch(()=>{});}
 </script>
+<script src="/js/ambient.js?v=1" defer></script>
 </body>
 </html>
