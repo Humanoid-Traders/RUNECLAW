@@ -369,6 +369,7 @@
     hideChips();
     busy = true;
     sendBtn.disabled = true;
+    if (window.RCAgent3D) window.RCAgent3D.setThinking(true);   // agent avatar: 'analyze'
     try {
       const r = await fetchJSON(ENDPOINT, { method: 'POST', body: { text }, timeoutMs: 50000 });
       typing.remove();
@@ -411,6 +412,7 @@
     } finally {
       busy = false;
       sendBtn.disabled = false;
+      if (window.RCAgent3D) window.RCAgent3D.setThinking(false);   // back to idle
     }
   }
 

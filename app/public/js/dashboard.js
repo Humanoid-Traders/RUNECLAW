@@ -117,6 +117,9 @@
     // Pull the docked chat back out before the container is wiped; the chat
     // view re-docks it. Other views keep the floating FAB.
     if (window.RCChat) window.RCChat.unmountInline();
+    // Free any live 3D agent viewer before its DOM host is wiped (reclaims the
+    // WebGL context; the chat/hub views re-mount their own).
+    if (window.RCAgent3D) window.RCAgent3D.disposeAll();
     RENDER[id]();
   }
 
@@ -2776,9 +2779,14 @@
 
   /* ═══════════════ AI CHAT (docked) ═══════════════ */
   async function renderChat() {
-    container.innerHTML = viewHead('AI Analyst',
-      'The same agent that runs the Telegram bot — portfolio-aware, trade-capable.') +
-      '<div id="chatInlineHost"></div>';
+    container.innerHTML = `
+      <div class="view-head" style="display:flex;align-items:center;gap:var(--s4)">
+        <div class="agent-avatar" data-rc-agent3d="avatar" aria-hidden="true"
+             style="width:92px;height:92px;flex:none;border-radius:16px;overflow:hidden"></div>
+        <div><h1>AI Analyst</h1><span class="sub">The same agent that runs the Telegram bot — portfolio-aware, trade-capable.</span></div>
+      </div>
+      <div id="chatInlineHost"></div>`;
+    if (window.RCAgent3D) window.RCAgent3D.mountIfAvailable(container.querySelector('[data-rc-agent3d]'), { mode: 'avatar' });
     if (window.RCChat) {
       window.RCChat.mountInline(document.getElementById('chatInlineHost'));
       window.RCChat.focus();
@@ -2946,6 +2954,15 @@
     }
     container.insertAdjacentHTML('beforeend', `
       <div class="stack" id="hubStack">
+        <section class="panel panel--primary" style="display:flex;align-items:center;gap:var(--s4)">
+          <div class="agent-avatar" data-rc-agent3d="avatar" aria-hidden="true"
+               style="width:112px;height:112px;flex:none;border-radius:16px;overflow:hidden"></div>
+          <div>
+            <div class="eyebrow" style="font-family:var(--font-data);font-size:var(--fs-xs);letter-spacing:.16em;text-transform:uppercase;color:var(--up)">Your agent · live</div>
+            <div style="font-family:var(--font-brand);font-size:var(--fs-lg);letter-spacing:.03em">RUNECLAW</div>
+            <div class="muted small">Watching the markets — reacts to every scan, signal and fill.</div>
+          </div>
+        </section>
         <section class="panel panel--primary" id="p-hubstat"><div id="c-hubstat"><div class="skel"></div><div class="skel"></div></div></section>
         <section class="panel" id="p-hubask">
           <h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-chat"></use></svg>Ask in one tap
@@ -2998,6 +3015,7 @@
       const b = e.target.closest('button[data-ask]');
       if (b && window.RCChat) window.RCChat.ask(b.dataset.ask);
     });
+    if (window.RCAgent3D) window.RCAgent3D.mountIfAvailable(container.querySelector('#hubStack [data-rc-agent3d]'), { mode: 'avatar' });
 
     // ── Status strip: engine, stance, mode, positions, tripwires ──
     renderPanel(C('hubstat'), async () => {
@@ -3245,11 +3263,15 @@
   window.addEventListener('hashchange', () => showView(location.hash.slice(1) || 'home'));
 
   // SSE: refresh the bits that changed, only re-render if the view shows them.
+  // Live events make the 3D agent react: a fresh scan -> 'analyze', a new
+  // signal -> 'alert', a trade/fill -> 'execute' (no-op unless an avatar is
+  // mounted on the current view).
+  const agentReact = (clip) => { if (window.RCAgent3D) window.RCAgent3D.react(clip); };
   connectStream({
-    scan: () => { cache.scan = null; getScan().then(updateConnChip); if (currentView === 'engine' || currentView === 'deepscan') showView(currentView); },
+    scan: () => { cache.scan = null; agentReact('analyze'); getScan().then(updateConnChip); if (currentView === 'engine' || currentView === 'deepscan') showView(currentView); },
     portfolio: () => { cache.portfolio = null; if (currentView === 'home' || currentView === 'portfolio') showView(currentView); },
-    trade: () => { cache.portfolio = null; toast('Trade update from the engine.'); if (currentView === 'home' || currentView === 'portfolio' || currentView === 'trade') showView(currentView); },
-    signals: () => { if (currentView === 'signals') showView('signals'); },
+    trade: () => { cache.portfolio = null; agentReact('execute'); toast('Trade update from the engine.'); if (currentView === 'home' || currentView === 'portfolio' || currentView === 'trade') showView(currentView); },
+    signals: () => { agentReact('alert'); if (currentView === 'signals') showView('signals'); },
     activity: onActivity,
   });
 
