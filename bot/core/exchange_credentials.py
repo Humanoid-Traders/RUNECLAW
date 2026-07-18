@@ -217,12 +217,13 @@ class ExchangeCredentialStore:
         enc = {f: c.encrypt(str(fields[f]).encode()).decode() for f in expected}
         with self._lock:
             # MERGE into the user's venue map (multi-venue): connecting Bybit
-            # must never wipe Bitget. The first-connected venue becomes the
-            # active one; later connects keep the existing active pointer.
+            # must never wipe Bitget's stored keys. The just-connected venue
+            # becomes the ACTIVE one — submitting keys for a venue is the user
+            # saying "trade here", and the executor rebuild check follows the
+            # active view. set_active() switches back without re-entering keys.
             rec = self._normalize(self._enc.get(str(telegram_id)) or {"active": venue, "venues": {}})
             rec["venues"][venue] = enc
-            if rec["active"] not in rec["venues"]:
-                rec["active"] = venue
+            rec["active"] = venue
             self._enc[str(telegram_id)] = rec
             self._save()
         log.info("Stored encrypted %s credentials for user %s", venue, telegram_id)

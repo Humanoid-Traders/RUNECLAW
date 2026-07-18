@@ -1,6 +1,6 @@
 """Multi-venue credential store: connecting a second venue must MERGE, never
-overwrite; the active pointer follows first-connect / set_active / deletes;
-all legacy record shapes keep decrypting."""
+overwrite; the active pointer follows the latest connect / set_active /
+deletes; all legacy record shapes keep decrypting."""
 import json
 
 from bot.core.exchange_credentials import ExchangeCredentialStore
@@ -16,11 +16,12 @@ def test_second_venue_merges_and_active_pointer_moves(tmp_path):
     s.set_venue("42", "bitget", {"api_key": "a", "api_secret": "b", "passphrase": "c"})
     s.set_venue("42", "bybit", {"api_key": "x", "api_secret": "y"})
     assert s.list_venues("42") == ["bitget", "bybit"]
-    assert s.get_venue("42") == "bitget"          # first connect stays active
-    assert s.get("42")["api_key"] == "a"          # active venue's fields
-    assert s.get_for_venue("42", "bybit")["api_key"] == "x"
+    assert s.get_venue("42") == "bybit"           # latest connect becomes active
+    assert s.get("42")["api_key"] == "x"          # active venue's fields
+    assert s.get_for_venue("42", "bitget")["api_key"] == "a"  # bitget kept
+    assert s.set_active("42", "bitget")
+    assert s.get("42")["api_key"] == "a"
     assert s.set_active("42", "bybit")
-    assert s.get("42")["api_key"] == "x"
     assert s.delete_venue("42", "bybit")
     assert s.get_venue("42") == "bitget"          # pointer falls back
     assert s.delete_venue("42", "bitget")
