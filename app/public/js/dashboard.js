@@ -1963,12 +1963,28 @@
     async function drawWalletLink() {
       renderPanel(C('awallet'), async () => {
         const r = await fetchJSON('/api/wallet/portfolio', { timeoutMs: 25000 }).catch(() => null);
-        if (r?.ok && r.data?.linked && r.data.address) {
-          const short = `${r.data.address.slice(0, 6)}…${r.data.address.slice(-4)}`;
+        const d = (r?.ok && r.data) || {};
+        // Solana rides alongside the EVM link as a WATCH address — honestly
+        // read-only and unauthenticated (SIWE can't sign on Solana), it only
+        // ever feeds public balance reads.
+        const solShort = d.sol_address ? `${d.sol_address.slice(0, 4)}…${d.sol_address.slice(-4)}` : null;
+        const solBlock = d.sol_address
+          ? `<div class="mt-3" style="border-top:1px solid var(--line);padding-top:var(--s3)">
+              <p class="small" style="color:var(--text-2)">◎ Solana watch address <b class="num">${esc(solShort)}</b> —
+                SOL and major SPL balances mirror read-only into Portfolio.</p>
+              <button class="btn btn--sm" id="solUnwatch" type="button">Stop watching</button></div>`
+          : `<div class="mt-3" style="border-top:1px solid var(--line);padding-top:var(--s3)">
+              <p class="small muted">Also on Solana? Paste an address to watch it — read-only, no signature or permissions involved.</p>
+              <div class="row" style="gap:var(--s2);flex-wrap:wrap">
+                <input class="input" id="solAddr" placeholder="Solana address (base58)" autocomplete="off" style="max-width:340px">
+                <button class="btn btn--sm" id="solWatch" type="button">◎ Watch</button></div></div>`;
+        if (d.linked && d.address) {
+          const short = `${d.address.slice(0, 6)}…${d.address.slice(-4)}`;
           return `<p class="small" style="color:var(--text-2)">✅ Wallet <b class="num">${esc(short)}</b> is linked —
               its balances mirror into Portfolio, net worth and exposure across the tracked chains.
               RUNECLAW can read them, never move them.</p>
-            <button class="btn btn--sm" id="walletUnlink" type="button">Unlink wallet</button>`;
+            <button class="btn btn--sm" id="walletUnlink" type="button">Unlink wallet</button>
+            ${solBlock}`;
         }
         return `<p class="small" style="color:var(--text-2)">Link a browser wallet (MetaMask or compatible) to see your
             on-chain balances inside RUNECLAW — strictly read-only: the wallet signs one login message, never a transaction.</p>
@@ -1977,7 +1993,8 @@
             <button class="btn btn--sm" id="walletQr" type="button">📱 Link with phone</button>
           </div>
           <div id="walletQrBox" class="mt-3" hidden></div>
-          ${!window.ethereum ? '<p class="small muted mt-2">No browser wallet here? Use <b>Link with phone</b> — scan the QR with your phone and sign in your wallet app.</p>' : ''}`;
+          ${!window.ethereum ? '<p class="small muted mt-2">No browser wallet here? Use <b>Link with phone</b> — scan the QR with your phone and sign in your wallet app.</p>' : ''}
+          ${solBlock}`;
       }, { empty: { text: 'Wallet status unavailable.' } });
     }
     // Phone linking: show the single-use QR and poll until the phone signs.
@@ -2011,6 +2028,18 @@
     }
     C('awallet').addEventListener('click', async (e) => {
       if (e.target.closest('#walletQr')) { showWalletQr(); return; }
+      if (e.target.closest('#solWatch')) {
+        const addr = (document.getElementById('solAddr')?.value || '').trim();
+        if (!addr) { toast('Paste a Solana address first.'); return; }
+        const v = await fetchJSON('/api/auth/wallet/solana', { method: 'POST', body: { address: addr } }).catch(() => null);
+        toast(v?.ok ? 'Solana address watched — balances mirror read-only.' : (v?.data?.error || 'Could not watch that address.'));
+        drawWalletLink(); return;
+      }
+      if (e.target.closest('#solUnwatch')) {
+        await fetchJSON('/api/auth/wallet/solana/unlink', { method: 'POST', body: {} }).catch(() => {});
+        toast('Solana watch removed.');
+        drawWalletLink(); return;
+      }
       const link = e.target.closest('#walletLink'), unlink = e.target.closest('#walletUnlink');
       if (!link && !unlink) return;
       try {

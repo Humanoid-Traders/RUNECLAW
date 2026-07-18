@@ -79,6 +79,18 @@ const CHAINS = [
     ],
   },
   {
+    key: 'bnb', label: 'BNB Chain', chainId: 56,
+    rpcEnv: 'WEB3_RPC_URL_BNB', rpcDefault: 'https://bsc-dataseed.binance.org',
+    native: { symbol: 'BNB', ticker: 'BNBUSDT' },
+    tokens: [
+      { symbol: 'USDT', address: '0x55d398326f99059fF775485246999027B3197955', decimals: 18, stable: true },
+      { symbol: 'USDC', address: '0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d', decimals: 18, stable: true },
+      { symbol: 'ETH', address: '0x2170Ed0880ac9A755fd29B2688956BD959F933F8', decimals: 18, ticker: 'ETHUSDT' },
+      { symbol: 'BTCB', address: '0x7130d2A12B9BCbFAe4f2634d864A1Ee1Ce3Ead9c', decimals: 18, ticker: 'BTCUSDT' },
+      { symbol: 'WBNB', address: '0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c', decimals: 18, ticker: 'BNBUSDT' },
+    ],
+  },
+  {
     key: 'polygon', label: 'Polygon', chainId: 137,
     rpcEnv: 'WEB3_RPC_URL_POLYGON', rpcDefault: 'https://polygon-rpc.com',
     native: { symbol: 'POL', ticker: 'POLUSDT' },

@@ -48,6 +48,7 @@ const PROVIDERS = {
   }),
   arbitrum: new FakeProvider('arbitrum', { down: true }),
   optimism: new FakeProvider('optimism', {}),
+  bnb: new FakeProvider('bnb', {}),
   polygon: new FakeProvider('polygon', {}),
 };
 
@@ -68,7 +69,7 @@ test('portfolio: per-chain sections, combined total, down chain isolated', async
   const p = await wallet.getWalletPortfolio(ADDR);
   assert.ok(p && p.read_only === true);
   assert.equal(p.chain, 'multi');
-  assert.equal(p.chains.length, 5);
+  assert.equal(p.chains.length, 6);   // + BNB Chain
 
   const eth = p.chains.find(c => c.chain === 'ethereum');
   // 2 ETH * 2500 + 500 USDC = 5500.
@@ -107,16 +108,16 @@ test('chat: "my wallet on base" filters to that chain; unknown chain honest', as
   assert.ok(!/Ethereum/.test(r.reply_html), 'other chains filtered out');
   assert.match(r.reply_html, /\$250/);
 
-  const un = await wallet.maybeHandleWalletChat(rows[0].id, 'my wallet on solana');
+  const un = await wallet.maybeHandleWalletChat(rows[0].id, 'my wallet on fantom');
   assert.match(un.reply_html, /don't mirror/);
-  assert.match(un.reply_html, /Ethereum, Base, Arbitrum, Optimism, Polygon/);
+  assert.match(un.reply_html, /Ethereum, Base, Arbitrum, Optimism, BNB Chain, Polygon/);
 });
 
 test('WEB3_CHAINS trims the sweep (and invalid values fall back to all)', () => {
   process.env.WEB3_CHAINS = 'ethereum,base';
   assert.deepEqual(wallet.activeChains().map(c => c.key), ['ethereum', 'base']);
   process.env.WEB3_CHAINS = 'nonsense';
-  assert.equal(wallet.activeChains().length, 5);
+  assert.equal(wallet.activeChains().length, 6);
   delete process.env.WEB3_CHAINS;
 });
 
