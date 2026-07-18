@@ -12,7 +12,9 @@ const { buildNetWorth } = require('../lib/networth');
 
 const router = express.Router();
 router.use(authMiddleware);
-router.use(rateLimit({ windowMs: 60000, max: 15, key: userKey }));
+// Tight cap: each call fans out to a ~30s bot-gateway probe plus wallet RPC
+// reads — at 15/min one user could hold 15 concurrent upstream sockets.
+router.use(rateLimit({ windowMs: 60000, max: 6, key: userKey }));
 
 router.get('/', async (req, res) => {
   try {

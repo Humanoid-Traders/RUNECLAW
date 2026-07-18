@@ -65,6 +65,41 @@ const { router: streamRouter } = require('./routes/stream');
 
 const app = express();
 
+// Behind the deployment's reverse proxy, req.ip is the proxy's address unless
+// Express is told to trust the X-Forwarded-For hop. Without this, every
+// per-IP rate limiter (public market data, /mcp, login attempts) collapses
+// into ONE shared bucket for all visitors — a single client can exhaust the
+// global budget, and abuse can't be attributed to a source address.
+app.set('trust proxy', 1);
+
+// Security headers — BEFORE the static handler so every response (including
+// static-served HTML) carries them. The CSP allows inline script/style (the
+// pages use both) but pins script sources to this origin plus the Telegram
+// login widget — an injected <script src> from anywhere else won't execute,
+// which is the second line of defense behind the app's HTML escaping.
+const CSP = [
+  "default-src 'self'",
+  "script-src 'self' 'unsafe-inline' https://telegram.org",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data:",
+  "font-src 'self'",
+  "connect-src 'self'",
+  "frame-src https://oauth.telegram.org",
+  "object-src 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  "frame-ancestors 'none'",
+].join('; ');
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('Content-Security-Policy', CSP);
+  // Meaningful only over HTTPS; browsers ignore it on plain HTTP (local dev).
+  res.setHeader('Strict-Transport-Security', 'max-age=15552000');
+  next();
+});
+
 app.use(express.json({ limit: '1mb' })); // Cap payload size
 // Cache policy: HTML must never be cached (deploys ship new markup that
 // references version-tagged assets, e.g. /styles.css?v=2) — a cached HTML +
@@ -77,14 +112,6 @@ app.use(express.static(path.join(__dirname, 'public'), {
     else if (/\.(css|js|woff2)$/.test(filePath)) res.setHeader('Cache-Control', 'public, max-age=86400');
   },
 }));
-
-// Security headers
-app.use((req, res, next) => {
-  res.setHeader('X-Content-Type-Options', 'nosniff');
-  res.setHeader('X-Frame-Options', 'DENY');
-  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
-  next();
-});
 
 // API routes
 app.use('/api/auth', authRouter);

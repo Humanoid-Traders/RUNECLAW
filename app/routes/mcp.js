@@ -25,20 +25,22 @@ const router = express.Router();
 const PROTOCOL_VERSION = '2025-03-26';
 const SERVER_INFO = { name: 'runeclaw', version: '1.0.0' };
 
-// Per-IP limiter mirroring the market proxy: MCP is public surface.
-const hits = new Map();
-const WINDOW_MS = 60_000;
-const MAX_PER_WINDOW = 60;
+// Per-IP limiter: MCP is public surface. Uses the shared limiter (periodic
+// idle-bucket pruning) — the earlier hand-rolled map never expired entries
+// and, once full, evicted the OLDEST-INSERTED key, which could reset an
+// actively-limited IP's counter under bucket churn.
+const { rateLimit, ipKey } = require('../lib/rate_limit');
+router.use(rateLimit({ windowMs: 60_000, max: 60, key: ipKey, message: 'rate_limited' }));
+
+// The global express.json() (1 MB) has already parsed the body by the time
+// the per-route 64 KB parser runs, making that cap a no-op. Enforce the
+// intended MCP payload bound explicitly.
+const MAX_MCP_BODY_BYTES = 64 * 1024;
 router.use((req, res, next) => {
-  const ip = req.ip || (req.socket && req.socket.remoteAddress) || 'unknown';
-  const now = Date.now();
-  const recent = (hits.get(ip) || []).filter(t => t > now - WINDOW_MS);
-  if (recent.length >= MAX_PER_WINDOW) {
-    return res.status(429).json({ error: 'rate_limited' });
+  const len = parseInt(req.headers['content-length'] || '0', 10);
+  if (len > MAX_MCP_BODY_BYTES) {
+    return res.status(413).json({ error: 'Payload too large (64 KB max)' });
   }
-  recent.push(now);
-  hits.set(ip, recent);
-  if (hits.size > 10000) hits.delete(hits.keys().next().value);
   next();
 });
 
@@ -233,6 +235,8 @@ async function handleRpc(msg) {
     const name = params && params.name;
     const tool = TOOLS[name];
     if (!tool) return rpcError(id, -32602, `Unknown tool: ${name}`);
+    const argErr = validateArgs(tool.inputSchema, params.arguments);
+    if (argErr) return rpcError(id, -32602, argErr);
     try {
       const out = await tool.handler(params.arguments || {});
       return rpcResult(id, {
@@ -247,6 +251,35 @@ async function handleRpc(msg) {
     }
   }
   return rpcError(id, -32601, `Method not found: ${method}`);
+}
+
+/**
+ * Enforce each tool's declared inputSchema before dispatch (previously the
+ * schema was advertised but arguments went to handlers unvalidated). Minimal
+ * on purpose — object shape, known keys, primitive types, string caps —
+ * matching the simple schemas this server declares.
+ */
+function validateArgs(schema, args) {
+  if (args == null) return null;
+  if (typeof args !== 'object' || Array.isArray(args)) return 'arguments must be an object';
+  const props = (schema && schema.properties) || {};
+  for (const [k, v] of Object.entries(args)) {
+    const spec = props[k];
+    if (!spec) {
+      if (schema && schema.additionalProperties === false) return `Unknown argument: ${k}`;
+      continue;
+    }
+    if (spec.type === 'string') {
+      if (typeof v !== 'string') return `${k} must be a string`;
+      if (v.length > 200) return `${k} too long (200 max)`;
+    } else if (spec.type === 'number' || spec.type === 'integer') {
+      if (typeof v !== 'number' || !isFinite(v)) return `${k} must be a number`;
+      if (spec.type === 'integer' && !Number.isInteger(v)) return `${k} must be an integer`;
+    } else if (spec.type === 'boolean' && typeof v !== 'boolean') {
+      return `${k} must be a boolean`;
+    }
+  }
+  return null;
 }
 
 router.post('/', express.json({ limit: '64kb' }), async (req, res) => {
