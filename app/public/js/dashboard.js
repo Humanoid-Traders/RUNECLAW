@@ -710,7 +710,7 @@
         + top.map(deepScanCard).join('')
         + (ds.hits.length > top.length
           ? `<p class="small mt-1"><a href="#deepscan">See all ${ds.hits.length} in Deep Scan →</a></p>` : '');
-    }, { empty: { icon: 'icon-target', text: 'Pattern read appears after the engine\'s next deep scan — the full board lives in the Deep Scan view.' } });
+    }, { empty: { icon: 'icon-target', text: 'Pattern read appears after the engine\'s next deep scan — the full board lives in the Deep Scan view.' } }).then(mountDeepScanMinis);
 
     const symSel = document.getElementById('chartSym');
     const DEFAULTS = ['BTCUSDT','ETHUSDT','SOLUSDT','BNBUSDT','XRPUSDT','DOGEUSDT','ADAUSDT','LINKUSDT','AVAXUSDT','SUIUSDT'];
@@ -1132,6 +1132,84 @@
     return `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Price chart" style="display:block">${out}</svg>`;
   }
 
+  // ── Deep-scan card mini-charts ──────────────────────────────────────────────
+  // A compact, library-free candlestick sparkline drawn from the same
+  // /api/market/candles the main chart uses. It shows the recent 4h price with
+  // the swing high/low band (the reference levels most detected chart patterns
+  // key off — double top/bottom, rectangle, triangle, H&S neckline) and the last
+  // close, tinted by the dominant pattern's directional bias. Real price + real
+  // computed levels; no fabricated geometry.
+  function miniCandleSvg(rows, opts) {
+    opts = opts || {};
+    const cs = rows.map(r => ({ t: +r[0], o: +r[1], h: +r[2], l: +r[3], c: +r[4] }))
+      .filter(c => isFinite(c.h) && isFinite(c.l) && isFinite(c.o) && isFinite(c.c))
+      .sort((a, b) => a.t - b.t).slice(-44);
+    if (cs.length < 3) return '';
+    const W = 240, H = 64, P = 3;
+    const min = Math.min(...cs.map(c => c.l)), max = Math.max(...cs.map(c => c.h));
+    const span = (max - min) || 1;
+    const x = i => P + i * ((W - 2 * P) / cs.length);
+    const y = v => P + (max - v) / span * (H - 2 * P);
+    const cw = Math.max(1.4, (W - 2 * P) / cs.length - 1.4);
+    const f = n => n.toFixed(1);
+    let out = '';
+    // Swing high/low reference band.
+    out += `<line x1="${P}" x2="${W - P}" y1="${f(y(max))}" y2="${f(y(max))}" stroke="var(--down)" stroke-opacity=".33" stroke-width="1" stroke-dasharray="3 3"/>`
+      + `<line x1="${P}" x2="${W - P}" y1="${f(y(min))}" y2="${f(y(min))}" stroke="var(--up)" stroke-opacity=".33" stroke-width="1" stroke-dasharray="3 3"/>`;
+    cs.forEach((c, i) => {
+      const up = c.c >= c.o, col = up ? 'var(--up)' : 'var(--down)', bx = x(i);
+      out += `<line x1="${f(bx + cw / 2)}" x2="${f(bx + cw / 2)}" y1="${f(y(c.h))}" y2="${f(y(c.l))}" stroke="${col}" stroke-width="1"/>`
+        + `<rect x="${f(bx)}" y="${f(y(Math.max(c.o, c.c)))}" width="${f(cw)}" height="${f(Math.max(1, Math.abs(y(c.o) - y(c.c))))}" fill="${col}"/>`;
+    });
+    const last = cs[cs.length - 1];
+    const lc = opts.bias === 'bull' ? 'var(--up)' : opts.bias === 'bear' ? 'var(--down)' : 'var(--gold-bright)';
+    out += `<line x1="${P}" x2="${W - P}" y1="${f(y(last.c))}" y2="${f(y(last.c))}" stroke="${lc}" stroke-width="1" stroke-dasharray="2 2" stroke-opacity=".85"/>`;
+    return `<svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" preserveAspectRatio="none" role="img" aria-label="Recent 4h price with pattern high/low band" style="display:block">${out}</svg>`;
+  }
+
+  const _miniCandles = new Map(); // "SYMUSDT" -> { ts, rows }
+  let _miniIO = null;
+  async function _fetchMiniCandles(sym) {
+    const hit = _miniCandles.get(sym);
+    if (hit && Date.now() - hit.ts < 120000) return hit.rows;
+    const r = await fetchJSON(`/api/market/candles/${encodeURIComponent(sym)}?granularity=4h&limit=48`,
+      { auth: false, timeoutMs: 10000 });
+    const rows = (r && r.data && r.data.data) || [];
+    _miniCandles.set(sym, { ts: Date.now(), rows });
+    return rows;
+  }
+  // Lazily draw the mini-chart in every un-rendered .ds-mini as it scrolls into
+  // view. Idempotent and re-run after each render that emits deep-scan cards;
+  // fetches are cached and one-per-symbol, so switching views is cheap.
+  function mountDeepScanMinis() {
+    const nodes = document.querySelectorAll('.ds-mini[data-mini-sym]:not([data-mini-done])');
+    if (!nodes.length) return;
+    if (!('IntersectionObserver' in window)) { // no lazy path — draw immediately
+      nodes.forEach(el => _drawMini(el));
+      return;
+    }
+    if (_miniIO) _miniIO.disconnect();
+    _miniIO = new IntersectionObserver((entries) => {
+      for (const e of entries) {
+        if (!e.isIntersecting) continue;
+        _miniIO.unobserve(e.target);
+        _drawMini(e.target);
+      }
+    }, { rootMargin: '140px' });
+    document.querySelectorAll('.ds-mini[data-mini-sym]:not([data-mini-done])').forEach(el => _miniIO.observe(el));
+  }
+  function _drawMini(el) {
+    if (!el || el.getAttribute('data-mini-done')) return;
+    el.setAttribute('data-mini-done', '1');
+    const sym = el.getAttribute('data-mini-sym');
+    const bias = el.getAttribute('data-mini-bias') || 'neutral';
+    _fetchMiniCandles(sym).then((rows) => {
+      if (!el.isConnected) return;
+      const svg = rows && rows.length >= 3 ? miniCandleSvg(rows, { bias }) : '';
+      if (svg) el.innerHTML = svg; else el.style.display = 'none';
+    }).catch(() => { el.style.display = 'none'; });
+  }
+
   /* ═══════════════ SIGNALS ═══════════════ */
   async function renderSignals() {
     container.innerHTML = viewHead('Signals', 'Every setup the engine generates — taken or not');
@@ -1164,7 +1242,7 @@
         : 'No live signal overlaps the last deep scan yet — showing the full pattern board.';
       return `<p class="muted small mb-2">${note}</p>` + hits.slice(0, 8).map(deepScanCard).join('')
         + `<p class="muted small mt-1">Patterns are observations, not signals · <a href="#deepscan">full Deep Scan →</a></p>`;
-    }, { empty: { icon: 'icon-target', text: 'The pattern read fills in after the engine\'s next deep scan.' } });
+    }, { empty: { icon: 'icon-target', text: 'The pattern read fills in after the engine\'s next deep scan.' } }).then(mountDeepScanMinis);
 
     renderPanel(C('sstats'), async () => {
       const r = await fetchJSON('/api/signals/stats', { auth: false });
@@ -1278,6 +1356,16 @@
       const cls = sig === 'bullish' ? 'chip--up' : sig === 'bearish' ? 'chip--down' : '';
       return `<span class="chip ${cls}">${esc(k)}</span>`;
     }).join(' ');
+    // Mini price chart with the pattern high/low band — lazy-drawn on scroll.
+    const top = (h.chart_patterns || [])[0];
+    const bias = top ? (String(top.signal) === 'bullish' ? 'bull' : String(top.signal) === 'bearish' ? 'bear' : 'neutral') : 'neutral';
+    const base = dsBase(h.symbol);
+    const mini = base.length >= 2
+      ? `<div class="ds-mini" data-mini-sym="${esc(base + 'USDT')}" data-mini-bias="${bias}" aria-hidden="true"
+           style="height:64px;margin-top:var(--s2);border-radius:6px;overflow:hidden;background:rgba(63,182,255,.035);pointer-events:none"></div>
+         <div class="muted small" style="display:flex;justify-content:space-between;margin-top:4px;pointer-events:none">
+           <span>4h · swing range</span><span style="color:${bias === 'bull' ? 'var(--up)' : bias === 'bear' ? 'var(--down)' : 'var(--text-3)'}">${top ? esc(top.name || '') : 'last price'}</span></div>`
+      : '';
     return `<div class="ds-card" data-sym="${esc(String(h.symbol || ''))}" role="button" tabindex="0" title="Open ${sym} detail" style="border:1px solid var(--line);border-radius:var(--radius);padding:var(--s3) var(--s4);margin-bottom:var(--s3);cursor:pointer">
       <div class="row" style="justify-content:space-between;align-items:center;gap:var(--s2);flex-wrap:wrap">
         <span style="display:flex;gap:8px;align-items:center">${_dsArrow(chg)} <b>${sym}</b> ${priceHtml} ${chgHtml}</span>
@@ -1285,6 +1373,7 @@
       </div>
       ${pats ? `<div class="mt-2">${pats}</div>` : '<p class="muted small mt-1">No chart patterns.</p>'}
       ${chips ? `<div class="mt-2" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center"><span class="muted">🕯</span> ${chips}</div>` : ''}
+      ${mini}
     </div>`;
   }
 
@@ -1360,6 +1449,7 @@
         <button class="btn btn--sm" type="button" id="symAsk">Ask the AI</button>
       </div>
       <p class="muted small mt-2">Read-only decision picture · patterns are observations, not signals.</p>`;
+    mountDeepScanMinis();
     const ask = document.getElementById('symAsk');
     if (ask) ask.onclick = () => {
       closeSymModal(); location.hash = 'chat';
@@ -1399,7 +1489,7 @@
       const hdr = `<p class="muted small mb-2">${ds.count || ds.hits.length} hits · ${esc(ds.tf || '')} · chart + candle patterns${ds.generated_at ? ' · ' + esc(ds.generated_at) : ''}</p>`;
       return hdr + ds.hits.map(deepScanCard).join('')
         + `<p class="muted small mt-2">Patterns are observations, not signals.</p>`;
-    }, { empty: { icon: 'icon-radar', text: 'The deep-scan pattern read appears after the engine\'s next deep scan. Meanwhile, check any symbol below.' } });
+    }, { empty: { icon: 'icon-radar', text: 'The deep-scan pattern read appears after the engine\'s next deep scan. Meanwhile, check any symbol below.' } }).then(mountDeepScanMinis);
 
     const out = document.getElementById('dsLookOut');
     async function lookup() {
@@ -1424,6 +1514,7 @@
       if (out) out.innerHTML = empty
         ? `<p class="muted small">No patterns detected on ${esc(sym)} (${esc(tf)}) right now.</p>`
         : deepScanCard(hit);
+      if (!empty) mountDeepScanMinis();
     }
     document.getElementById('dsGo')?.addEventListener('click', lookup);
     document.getElementById('dsSym')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') lookup(); });
