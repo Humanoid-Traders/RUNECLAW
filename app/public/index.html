@@ -201,6 +201,15 @@
       <button class="btn btn--ghost btn--sm mt-2" id="verify-resend" onclick="resendVerification()">Resend verification email</button>
     </div>
 
+    <!-- Wallet link (shown when the server supports wallet verification) -->
+    <div id="wallet-box" class="hidden mt-4">
+      <h3 style="font-size:var(--fs-base);margin-bottom:var(--s1)">Wallet</h3>
+      <p class="muted small" id="wallet-status">Link a browser wallet to mirror your on-chain balances and DeFi positions — read-only: the wallet signs one login message, never a transaction.</p>
+      <div class="form-err" id="wallet-msg" aria-live="polite"></div>
+      <button class="btn btn--sm mt-2" id="wallet-link-btn" onclick="linkWalletToAccount()">🔗 Link wallet</button>
+      <button class="btn btn--ghost btn--sm mt-2 hidden" id="wallet-unlink-btn" onclick="unlinkWalletFromAccount()">Unlink wallet</button>
+    </div>
+
     <!-- Change / set password -->
     <div id="pw-box" class="mt-4">
       <h3 style="font-size:var(--fs-base);margin-bottom:var(--s1)" id="pw-title">Change password</h3>
@@ -413,6 +422,7 @@ function renderAccountMeta(data){
     document.getElementById('pw-title').textContent='Change password';
     document.getElementById('pw-current-field').classList.remove('hidden');
   }
+  renderWalletBox(data);
 }
 async function doChangePassword(){
   setErr('pw-msg','');
@@ -425,6 +435,49 @@ async function doChangePassword(){
   if(res.error){setErr('pw-msg',res.error);return;}
   setErr('pw-msg','✓ Password updated.');
   document.getElementById('pw-current').value='';document.getElementById('pw-new').value='';document.getElementById('pw-new2').value='';
+  refreshAccountMeta();
+}
+// Wallet link on the account card — same SIWE-style proof as wallet login,
+// attached to the LOGGED-IN account. Read-only: unlocks balance mirroring only.
+function renderWalletBox(data){
+  const box=document.getElementById('wallet-box');if(!box)return;
+  if(!window.__RC_WALLET_LOGIN||!SESSION){box.classList.add('hidden');return;}
+  box.classList.remove('hidden');
+  const linked=data&&data.wallet_address;
+  const st=document.getElementById('wallet-status');
+  if(linked){
+    const a=data.wallet_address;
+    st.textContent='✓ Wallet '+a.slice(0,6)+'…'+a.slice(-4)+' is linked — balances and DeFi positions mirror into the dashboard (read-only).';
+    document.getElementById('wallet-link-btn').classList.add('hidden');
+    document.getElementById('wallet-unlink-btn').classList.remove('hidden');
+  }else{
+    st.textContent='Link a browser wallet to mirror your on-chain balances and DeFi positions — read-only: the wallet signs one login message, never a transaction.';
+    document.getElementById('wallet-link-btn').classList.remove('hidden');
+    document.getElementById('wallet-unlink-btn').classList.add('hidden');
+  }
+}
+async function linkWalletToAccount(){
+  setErr('wallet-msg','');
+  const eth=window.ethereum;
+  if(!eth){setErr('wallet-msg','No wallet detected — install MetaMask or open this page in a wallet browser.');return;}
+  try{
+    const accounts=await eth.request({method:'eth_requestAccounts'});
+    const address=(accounts&&accounts[0]||'').trim();
+    if(!address){setErr('wallet-msg','No wallet account was shared.');return;}
+    const nres=await apiCall('/auth/wallet/nonce',{address});
+    if(nres.error||!nres.message){setErr('wallet-msg',nres.error||'Could not start wallet linking.');return;}
+    const signature=await eth.request({method:'personal_sign',params:[nres.message,address]});
+    const vres=await apiAuth('/auth/wallet/link',{address,signature});
+    if(vres.error){setErr('wallet-msg',vres.error);return;}
+    setErr('wallet-msg','✓ Wallet linked.');
+    refreshAccountMeta();
+  }catch(e){
+    setErr('wallet-msg','Wallet linking was cancelled.');
+  }
+}
+async function unlinkWalletFromAccount(){
+  const res=await apiAuth('/auth/wallet/unlink',{});
+  setErr('wallet-msg',res.error||'Wallet unlinked.');
   refreshAccountMeta();
 }
 async function resendVerification(){
@@ -563,6 +616,8 @@ function renderFooterSocials(links){
   document.getElementById('social-auth').classList.remove('hidden');
   renderOauthButtons(cfg.oauth_providers);
   if(cfg.wallet_login)renderWalletButton();
+  window.__RC_WALLET_LOGIN=!!cfg.wallet_login; // account card gates its wallet box on this
+  if(SESSION)refreshAccountMeta();             // re-render the box now that the flag is known
   window.__RC_OAUTH=cfg.oauth_providers||[]; // account panel reads this for Link buttons
   renderFooterSocials(cfg.social_links);
   // If the account panel is already open (returning session), fill Link buttons.
