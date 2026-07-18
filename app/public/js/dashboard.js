@@ -2217,10 +2217,9 @@
     // form is data-driven: each venue declares its own fields, so adding a venue
     // server-side needs no client change.
     let venuesCatalog = [];
-    const venueById = (id) => venuesCatalog.find(v => v.id === id) || venuesCatalog[0];
     const fieldsHtml = (venue) => (venue?.fields || []).map(f =>
-      `<div class="field"><label for="cf-${esc(f.key)}">${esc(f.label)}</label>
-        <input class="input" id="cf-${esc(f.key)}" data-fkey="${esc(f.key)}" type="${f.type === 'password' ? 'password' : 'text'}" autocomplete="off"></div>`
+      `<div class="field"><label for="cf-${esc(venue.id)}-${esc(f.key)}">${esc(f.label)}</label>
+        <input class="input" id="cf-${esc(venue.id)}-${esc(f.key)}" data-fkey="${esc(f.key)}" type="${f.type === 'password' ? 'password' : 'text'}" autocomplete="off"></div>`
     ).join('');
 
     renderPanel(C('akeys'), async () => {
@@ -2234,52 +2233,58 @@
           ${esc(r.data?.detail || 'Exchange keys require a linked Telegram account.')}</div>`;
       }
       const c = r.data || {};
-      const venueLabel = (id) => (venuesCatalog.find(v => v.id === id)?.label) || (id ? id[0].toUpperCase() + id.slice(1) : 'Exchange');
-      if (c.connected) {
-        return `<div class="row" style="justify-content:space-between">
-          <span class="chip chip--up">✓ ${esc(venueLabel(c.venue))} connected</span>
-          <button class="btn btn--danger btn--sm" id="credDisc">Disconnect</button></div>
-          <p class="muted small mt-2">Keys are AES-256-GCM encrypted at rest and pulled by the bot over an authenticated channel. Withdrawal permissions are never required.</p>`;
-      }
       if (!venuesCatalog.length) return null;
-      const first = venuesCatalog[0];
-      const options = venuesCatalog.map(v => `<option value="${esc(v.id)}">${esc(v.label)}</option>`).join('');
-      return `<form id="credForm" class="stack">
-        <p class="small" style="color:var(--text-2)">Connect your own exchange keys to prepare live trading. Keys are encrypted at rest; withdrawal permission is never required.</p>
-        <div class="field" style="max-width:220px"><label for="credVenue">Venue</label>
-          <select class="input" id="credVenue">${options}</select></div>
-        <p class="muted small" id="venueHelp">${esc(first.help || '')}</p>
-        <div class="form-row" id="credFields">${fieldsHtml(first)}</div>
-        <div class="row"><button class="btn btn--primary btn--sm" type="submit">Connect exchange</button>
-        <span id="credMsg" class="small muted" aria-live="polite">${c.pending ? `Applying ${esc(venueLabel(c.pending_venue))}…` : ''}</span></div>
-      </form>`;
+      // Multi-venue: EVERY exchange side by side with its own field form,
+      // status, and independent disconnect — connecting one never touches
+      // another (the bot's store merges per venue).
+      const statusOf = (id) => (c.venues || []).find(v => v.venue === id);
+      const pendingFor = c.pending ? c.pending_venue : null;
+      const cards = venuesCatalog.map(v => {
+        const st = statusOf(v.id);
+        const connected = !!(st && st.connected);
+        const pending = pendingFor === v.id ? c.pending : null;
+        const chip = connected ? '<span class="chip chip--up">✓ connected</span>'
+          : pending ? `<span class="chip chip--warn">applying ${esc(pending)}…</span>`
+          : '<span class="chip">not connected</span>';
+        const disc = connected
+          ? `<button class="btn btn--danger btn--sm" data-discvenue="${esc(v.id)}" type="button">Disconnect</button>` : '';
+        const form = connected ? '' : `
+          <form class="credForm stack mt-2" data-venue="${esc(v.id)}">
+            <p class="muted small">${esc(v.help || '')}</p>
+            <div class="form-row">${fieldsHtml(v)}</div>
+            <div class="row"><button class="btn btn--primary btn--sm" type="submit">Connect ${esc(v.label)}</button>
+              <span class="small muted credMsg" aria-live="polite"></span></div>
+          </form>`;
+        return `<div style="border:1px solid var(--line);border-radius:var(--radius);padding:var(--s3) var(--s4);margin-bottom:var(--s3)">
+          <div class="row" style="justify-content:space-between;align-items:center">
+            <b>${esc(v.label)}</b><span class="row" style="gap:var(--s2)">${chip}${disc}</span></div>
+          ${form}</div>`;
+      }).join('');
+      return cards
+        + `<p class="muted small">Keys are AES-256-GCM encrypted at rest and pulled by the bot over an
+           authenticated channel. Withdrawal permissions are never required. Connect as many exchanges
+           as you like — each is independent, and smart per-pair venue routing builds on this next.</p>`;
     }, { empty: { text: 'Credential connect is unavailable right now.' } });
-    // Swap the fields + help when the venue changes.
-    container.addEventListener('change', (e) => {
-      if (e.target.id !== 'credVenue') return;
-      const v = venueById(e.target.value);
-      const fw = document.getElementById('credFields');
-      const help = document.getElementById('venueHelp');
-      if (fw) fw.innerHTML = fieldsHtml(v);
-      if (help) help.textContent = v?.help || '';
-    });
+    // Each venue card has its own form (data-venue) and message span, so the
+    // handlers are delegated by class, not id — every card works independently.
     container.addEventListener('submit', async (e) => {
-      const f = e.target.closest('#credForm');
+      const f = e.target.closest('.credForm');
       if (!f) return;
       e.preventDefault();
-      const msg = document.getElementById('credMsg');
-      const venue = document.getElementById('credVenue')?.value || 'bitget';
-      const body = { venue };
+      const msg = f.querySelector('.credMsg');
+      const body = { venue: f.dataset.venue || 'bitget' };
       for (const inp of f.querySelectorAll('[data-fkey]')) body[inp.dataset.fkey] = inp.value.trim();
-      msg.textContent = 'Encrypting & queueing…';
+      if (msg) msg.textContent = 'Encrypting & queueing…';
       const r = await fetchJSON('/api/credentials', { method: 'POST', body }).catch(() => ({ ok: false }));
-      msg.textContent = r.ok ? 'Queued — the bot applies it within a minute.' : (r.data?.detail || r.data?.error || 'Failed.');
+      if (msg) msg.textContent = r.ok ? 'Queued — the bot applies it within a minute.' : (r.data?.detail || r.data?.error || 'Failed.');
       if (r.ok) setTimeout(() => showView('account'), 1200);
     });
     container.addEventListener('click', async (e) => {
-      if (e.target.id !== 'credDisc') return;
-      if (!confirm('Disconnect your exchange keys?')) return;
-      await fetchJSON('/api/credentials', { method: 'DELETE' }).catch(() => {});
+      const b = e.target.closest('[data-discvenue]');
+      if (!b) return;
+      const venue = b.dataset.discvenue;
+      if (!confirm(`Disconnect your ${venue} keys? Other exchanges stay connected.`)) return;
+      await fetchJSON('/api/credentials?venue=' + encodeURIComponent(venue), { method: 'DELETE' }).catch(() => {});
       toast('Disconnect queued.');
       showView('account');
     });

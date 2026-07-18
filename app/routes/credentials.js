@@ -50,11 +50,14 @@ router.get('/status', async (req, res) => {
       'SELECT connected, exchange FROM exchange_status WHERE user_id = ?', [uid]);
     const [pend] = await pool.execute(
       'SELECT action, exchange FROM pending_credentials WHERE user_id = ?', [uid]);
+    const connectedRows = st.filter(r => !!r.connected);
     res.json({
       linked: !!(u && u.telegram_linked),
-      connected: st.length > 0 ? !!st[0].connected : false,
-      // Which venue is connected / being applied, so the UI can label it.
-      venue: st.length > 0 ? (st[0].exchange || 'bitget') : null,
+      // Multi-venue: every exchange's own state, side by side.
+      venues: st.map(r => ({ venue: r.exchange || 'bitget', connected: !!r.connected })),
+      // Legacy single-venue fields (older clients): the first connected one.
+      connected: connectedRows.length > 0,
+      venue: connectedRows.length > 0 ? (connectedRows[0].exchange || 'bitget') : null,
       pending: pend.length > 0 ? pend[0].action : null,
       pending_venue: pend.length > 0 ? (pend[0].exchange || 'bitget') : null,
       crypto_ready: creds.isConfigured(),
@@ -119,11 +122,19 @@ router.delete('/', credLimit, async (req, res) => {
     const uid = req.user.user_id;
     const u = await _userRow(uid);
     const tg = u && u.telegram_id ? String(u.telegram_id) : '';
-    // Preserve the connected venue on the disconnect row (cosmetic — the bot's
-    // store.delete is venue-agnostic, but this keeps the status label honest).
-    const [st] = await pool.execute(
-      'SELECT exchange FROM exchange_status WHERE user_id = ?', [uid]);
-    const venue = st.length > 0 ? (st[0].exchange || 'bitget') : 'bitget';
+    // Venue-scoped disconnect: ?venue=bybit removes ONLY that exchange's keys
+    // (the bot's store.delete_venue). Without the param, fall back to the
+    // first connected venue for older clients.
+    let venue = String(req.query.venue || '').toLowerCase();
+    if (venue && !isVenue(venue)) {
+      return res.status(400).json({ error: 'Unknown venue.' });
+    }
+    if (!venue) {
+      const [st] = await pool.execute(
+        'SELECT connected, exchange FROM exchange_status WHERE user_id = ?', [uid]);
+      const first = st.find(r => !!r.connected) || st[0];
+      venue = (first && first.exchange) || 'bitget';
+    }
     await pool.execute(
       `INSERT INTO pending_credentials (user_id, telegram_id, exchange, action, encrypted_payload)
        VALUES (?, ?, ?, 'disconnect', NULL)

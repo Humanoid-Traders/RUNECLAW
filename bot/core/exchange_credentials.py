@@ -163,16 +163,31 @@ class ExchangeCredentialStore:
     # -- record normalization -------------------------------------------------
 
     @staticmethod
-    def _read_record(enc: dict) -> tuple[str, dict]:
-        """Normalize an on-disk record to ``(venue, {field: ciphertext})``.
+    def _normalize(enc: dict) -> dict:
+        """Normalize any on-disk record shape to the multi-venue form
+        ``{"active": venue, "venues": {venue: {field: ct}}}``.
 
-        A record carrying explicit ``venue``/``fields`` keys is used as-is; any
-        other (legacy flat) record is treated as Bitget — so pre-multi-venue
-        ``exchange_creds.enc`` files keep decrypting without a rewrite.
+        Three generations coexist and all keep decrypting with zero rewrite:
+          v3: {"active": v, "venues": {v: fields, ...}}   (multi-venue)
+          v2: {"venue": v, "fields": fields}              (single venue)
+          v1: {field: ct}                                 (implicitly Bitget)
         """
+        if isinstance(enc, dict) and "venues" in enc:
+            venues = {str(v): dict(f) for v, f in dict(enc["venues"]).items()}
+            active = str(enc.get("active") or next(iter(venues), _DEFAULT_VENUE))
+            return {"active": active, "venues": venues}
         if isinstance(enc, dict) and "fields" in enc and "venue" in enc:
-            return str(enc["venue"]), dict(enc["fields"])
-        return _DEFAULT_VENUE, dict(enc)
+            v = str(enc["venue"])
+            return {"active": v, "venues": {v: dict(enc["fields"])}}
+        return {"active": _DEFAULT_VENUE, "venues": {_DEFAULT_VENUE: dict(enc)}}
+
+    @classmethod
+    def _read_record(cls, enc: dict) -> tuple[str, dict]:
+        """The ACTIVE venue's ``(venue, {field: ciphertext})`` — the shape the
+        pre-multi-venue callers expect."""
+        rec = cls._normalize(enc)
+        active = str(rec["active"])
+        return active, dict(rec["venues"].get(active, {}))
 
     # -- public API -----------------------------------------------------------
 
@@ -201,7 +216,15 @@ class ExchangeCredentialStore:
         c = self._cipher()
         enc = {f: c.encrypt(str(fields[f]).encode()).decode() for f in expected}
         with self._lock:
-            self._enc[str(telegram_id)] = {"venue": venue, "fields": enc}
+            # MERGE into the user's venue map (multi-venue): connecting Bybit
+            # must never wipe Bitget's stored keys. The just-connected venue
+            # becomes the ACTIVE one — submitting keys for a venue is the user
+            # saying "trade here", and the executor rebuild check follows the
+            # active view. set_active() switches back without re-entering keys.
+            rec = self._normalize(self._enc.get(str(telegram_id)) or {"active": venue, "venues": {}})
+            rec["venues"][venue] = enc
+            rec["active"] = venue
+            self._enc[str(telegram_id)] = rec
             self._save()
         log.info("Stored encrypted %s credentials for user %s", venue, telegram_id)
 
@@ -238,14 +261,78 @@ class ExchangeCredentialStore:
             return None
 
     def get_venue(self, telegram_id) -> str:
-        """The venue a user's stored credentials belong to (``"bitget"`` default,
-        including for legacy records and users with nothing stored)."""
+        """The user's ACTIVE venue (``"bitget"`` default, including for legacy
+        records and users with nothing stored)."""
         with self._lock:
             enc = self._enc.get(str(telegram_id))
         if not enc:
             return _DEFAULT_VENUE
         venue, _ = self._read_record(enc)
         return venue
+
+    def list_venues(self, telegram_id) -> list[str]:
+        """Every venue this user has credentials stored for (may be empty)."""
+        with self._lock:
+            enc = self._enc.get(str(telegram_id))
+        if not enc:
+            return []
+        return sorted(self._normalize(enc)["venues"].keys())
+
+    def get_for_venue(self, telegram_id, venue: str) -> Optional[dict]:
+        """Decrypt one SPECIFIC venue's fields (None when absent/undecryptable)."""
+        venue = str(venue).lower().strip()
+        with self._lock:
+            enc = self._enc.get(str(telegram_id))
+        if not enc:
+            return None
+        fields_enc = self._normalize(enc)["venues"].get(venue)
+        if not fields_enc:
+            return None
+        field_names = _VENUE_FIELDS.get(venue, _FIELDS)
+        try:
+            c = self._cipher()
+            return {f: c.decrypt(fields_enc[f].encode()).decode() for f in field_names}
+        except Exception as exc:
+            log.error("Failed to decrypt %s credentials for %s: %s", venue, telegram_id, exc)
+            return None
+
+    def set_active(self, telegram_id, venue: str) -> bool:
+        """Switch the user's ACTIVE venue (must already have credentials for it)."""
+        venue = str(venue).lower().strip()
+        with self._lock:
+            enc = self._enc.get(str(telegram_id))
+            if not enc:
+                return False
+            rec = self._normalize(enc)
+            if venue not in rec["venues"]:
+                return False
+            rec["active"] = venue
+            self._enc[str(telegram_id)] = rec
+            self._save()
+        log.info("Active venue for user %s -> %s", telegram_id, venue)
+        return True
+
+    def delete_venue(self, telegram_id, venue: str) -> bool:
+        """Remove ONE venue's credentials; the active pointer moves to another
+        connected venue (or the whole record goes when none remain)."""
+        venue = str(venue).lower().strip()
+        with self._lock:
+            enc = self._enc.get(str(telegram_id))
+            if not enc:
+                return False
+            rec = self._normalize(enc)
+            if venue not in rec["venues"]:
+                return False
+            del rec["venues"][venue]
+            if not rec["venues"]:
+                self._enc.pop(str(telegram_id), None)
+            else:
+                if rec["active"] == venue:
+                    rec["active"] = next(iter(sorted(rec["venues"])))
+                self._enc[str(telegram_id)] = rec
+            self._save()
+        log.info("Deleted %s credentials for user %s", venue, telegram_id)
+        return True
 
     def delete(self, telegram_id) -> bool:
         with self._lock:
