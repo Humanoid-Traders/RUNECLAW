@@ -1972,11 +1972,45 @@
         }
         return `<p class="small" style="color:var(--text-2)">Link a browser wallet (MetaMask or compatible) to see your
             on-chain balances inside RUNECLAW — strictly read-only: the wallet signs one login message, never a transaction.</p>
-          <button class="btn btn--primary btn--sm" id="walletLink" type="button">🔗 Link wallet</button>
-          ${!window.ethereum ? '<p class="small muted mt-2">No browser wallet detected — install MetaMask (or open this page in a wallet browser) first.</p>' : ''}`;
+          <div class="row" style="gap:var(--s2);flex-wrap:wrap">
+            <button class="btn btn--primary btn--sm" id="walletLink" type="button">🔗 Link wallet</button>
+            <button class="btn btn--sm" id="walletQr" type="button">📱 Link with phone</button>
+          </div>
+          <div id="walletQrBox" class="mt-3" hidden></div>
+          ${!window.ethereum ? '<p class="small muted mt-2">No browser wallet here? Use <b>Link with phone</b> — scan the QR with your phone and sign in your wallet app.</p>' : ''}`;
       }, { empty: { text: 'Wallet status unavailable.' } });
     }
+    // Phone linking: show the single-use QR and poll until the phone signs.
+    let qrPollTimer = null;
+    async function showWalletQr() {
+      const box = document.getElementById('walletQrBox');
+      if (!box) return;
+      const r = await fetchJSON('/api/auth/wallet/link-code', { method: 'POST', body: {} }).catch(() => null);
+      if (!r?.ok || !r.data?.url) {
+        toast(r?.data?.error || 'Could not create a phone-link code.');
+        return;
+      }
+      box.hidden = false;
+      box.innerHTML = `${r.data.svg || ''}
+        <p class="small muted mt-2" style="max-width:46ch">Scan with your phone and open the link
+          <b>inside your wallet app's browser</b> (MetaMask → Browser, Trust → Discover).
+          One signature links the wallet — this code works once and expires in ${Math.round((r.data.expires_in_sec || 600) / 60)} minutes.</p>`;
+      // Poll for the phone-side link completing (bounded: ~2 min).
+      if (qrPollTimer) clearInterval(qrPollTimer);
+      let polls = 0;
+      qrPollTimer = setInterval(async () => {
+        if (++polls > 24) { clearInterval(qrPollTimer); return; }
+        const me = await fetchJSON('/api/auth/me').catch(() => null);
+        if (me?.ok && me.data?.wallet_address) {
+          clearInterval(qrPollTimer);
+          toast('Wallet linked from your phone.');
+          drawWalletLink();
+        }
+      }, 5000);
+      if (qrPollTimer.unref) qrPollTimer.unref();
+    }
     C('awallet').addEventListener('click', async (e) => {
+      if (e.target.closest('#walletQr')) { showWalletQr(); return; }
       const link = e.target.closest('#walletLink'), unlink = e.target.closest('#walletUnlink');
       if (!link && !unlink) return;
       try {

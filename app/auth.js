@@ -627,6 +627,80 @@ router.post('/wallet/link', authMiddleware, async (req, res) => {
   }
 });
 
+// -- Phone linking via QR: mint a single-use code bound to THIS account --
+// Desktop shows the QR; the phone opens /wallet-link?code=… inside a wallet
+// app's browser and proves ownership with the same SIWE-style signature.
+// The code is the bearer: 10-minute TTL, single-use, server-side user
+// binding — the phone never needs the desktop's JWT.
+const _linkCodes = new Map();   // code -> { userId, expires }
+const LINK_CODE_TTL_MS = 10 * 60_000;
+function _pruneLinkCodes() {
+  const now = Date.now();
+  for (const [c, rec] of _linkCodes) if (rec.expires < now) _linkCodes.delete(c);
+  if (_linkCodes.size > 5000) _linkCodes.clear();   // abuse backstop
+}
+
+router.post('/wallet/link-code', authMiddleware, async (req, res) => {
+  try {
+    if (!_ethers) return res.status(503).json({ error: 'Wallet linking is not available on this deployment.' });
+    _pruneLinkCodes();
+    const code = crypto.randomBytes(16).toString('hex');
+    _linkCodes.set(code, { userId: req.user.user_id, expires: Date.now() + LINK_CODE_TTL_MS });
+    const origin = process.env.PUBLIC_ORIGIN
+      || `${req.protocol}://${req.get('host')}`;
+    const url = `${origin}/wallet-link?code=${code}`;
+    let svg = null;
+    try {
+      svg = await require('qrcode').toString(url, { type: 'svg', margin: 1, width: 220 });
+    } catch (e) { /* QR lib missing → the URL alone still works */ }
+    res.json({ code, url, svg, expires_in_sec: LINK_CODE_TTL_MS / 1000 });
+  } catch (err) {
+    console.error('Wallet link-code error:', err.message);
+    res.status(500).json({ error: 'Could not create a link code' });
+  }
+});
+
+// Redeemed FROM THE PHONE — no JWT; the single-use code carries the binding.
+router.post('/wallet/link-by-code', async (req, res) => {
+  try {
+    if (!_ethers) return res.status(503).json({ error: 'Wallet linking is not available on this deployment.' });
+    const code = String((req.body || {}).code || '').trim();
+    const address = String((req.body || {}).address || '').trim();
+    const signature = String((req.body || {}).signature || '').trim();
+    if (!/^[0-9a-f]{32}$/.test(code) || !_ADDR_RE.test(address) || !signature) {
+      return res.status(400).json({ error: 'Code, address and signature are required.' });
+    }
+    const rec = _linkCodes.get(code);
+    if (!rec || rec.expires < Date.now()) {
+      return res.status(400).json({ error: 'This link code has expired — generate a fresh QR on your computer.' });
+    }
+    const lower = address.toLowerCase();
+    const nrec = _walletNonces.get(lower);
+    if (!nrec || nrec.expires < Date.now()) {
+      return res.status(400).json({ error: 'Signing request expired — try again.' });
+    }
+    let recovered;
+    try { recovered = _ethers.verifyMessage(nrec.message, signature); }
+    catch (_) { return res.status(401).json({ error: 'Signature verification failed.' }); }
+    if (String(recovered).toLowerCase() !== lower) {
+      return res.status(401).json({ error: 'Signature does not match the wallet.' });
+    }
+    _walletNonces.delete(lower);
+    const [rows] = await pool.execute(
+      'SELECT id FROM users WHERE wallet_address = ? LIMIT 1', [lower]);
+    if (rows.length && rows[0].id !== rec.userId) {
+      return res.status(409).json({ error: 'That wallet is already linked to another account.' });
+    }
+    _linkCodes.delete(code);   // single-use — only after every check passed
+    await pool.execute('UPDATE users SET wallet_address = ? WHERE id = ?',
+      [lower, rec.userId]);
+    res.json({ ok: true, address: lower });
+  } catch (err) {
+    console.error('Wallet link-by-code error:', err.message);
+    res.status(500).json({ error: 'Wallet link failed' });
+  }
+});
+
 router.post('/wallet/unlink', authMiddleware, async (req, res) => {
   try {
     await pool.execute('UPDATE users SET wallet_address = ? WHERE id = ?',
