@@ -1427,7 +1427,10 @@
       const r = await fetchJSON('/api/trades/equity-curve');
       const snaps = r.data?.snapshots || [];
       if (snaps.length < 2) return null;
-      return equitySvg(snaps);
+      const ce = r.data?.capital_events || 0;
+      return equitySvg(snaps)
+        + (ce ? `<p class="muted small" style="margin-top:var(--s2)">Capital basis changed ${ce} time${ce === 1 ? '' : 's'}
+            (deposit, withdrawal, or paper→live switch) — the curve shows the current period only, so funding changes never draw as trading losses.</p>` : '');
     }, { empty: { icon: 'icon-chart', text: 'The equity curve draws once you have a few snapshots — trade and check back.' } });
 
     // Net worth — everywhere: connected CEX + wallet (real) with paper

@@ -14,6 +14,7 @@ const assert = require('node:assert');
 const http = require('node:http');
 const express = require('express');
 const { pool } = require('../db');
+const authModule = require('../auth');
 const track = require('../routes/track');
 
 const { maxDrawdownPct, segmentByCapitalEvents, segmentedMaxDrawdownPct } = track;
@@ -87,7 +88,10 @@ test.before(async () => {
       [1, eq, new Date(t)]);
   }
   const app = express();
+  app.use(express.json());
   app.use('/api/public', track);
+  app.use('/api/auth', authModule.router);
+  app.use('/api/trades', require('../routes/trades'));
   await new Promise((res) => { server = app.listen(0, '127.0.0.1', res); });
   base = `http://127.0.0.1:${server.address().port}`;
 });
@@ -118,4 +122,52 @@ test('GET /track-record: drawdown ignores the capital switch; curve is the curre
   assert.equal(Math.min(...eq) > 500 && Math.max(...eq) < 600, true,
     'curve must not include the paper-era points');
   assert.equal(s.current_equity_usd, 578);
+});
+
+test('GET /api/trades/equity-curve: per-user curve is the current basis only', async () => {
+  // Burner registration first: the operator seeds above use user_id 1, and
+  // in a fresh in-memory DB the first registered user would ALSO get id 1 —
+  // colliding with them. The burner absorbs id 1.
+  await new Promise((resolve, reject) => {
+    const payload = JSON.stringify({ email: 'burner@example.com', password: 'longenough1' });
+    const r = http.request(`${base}/api/auth/register`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+    }, (res) => { res.resume(); res.on('end', resolve); });
+    r.on('error', reject); r.write(payload); r.end();
+  });
+  // Fresh user with a paper era, a capital switch, then a live era.
+  const email = `dd${Date.now()}@example.com`;
+  const reg = await new Promise((resolve, reject) => {
+    const payload = JSON.stringify({ email, password: 'longenough1' });
+    const r = http.request(`${base}/api/auth/register`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+    }, (res) => {
+      let d = '';
+      res.on('data', c => d += c);
+      res.on('end', () => resolve(JSON.parse(d)));
+    });
+    r.on('error', reject); r.write(payload); r.end();
+  });
+  // Resolve the user id from the DB (register response shape varies).
+  const [urows] = await pool.execute('SELECT * FROM users WHERE email = ?', [email]);
+  const userId = urows[0].id;
+  const now = Date.now(), day = 86400000;
+  for (const [t, eq] of [[now - 5 * day, 10000], [now - 4 * day, 10020],
+                         [now - 2 * day, 300], [now - 1 * day, 305]]) {
+    await pool.execute(
+      'INSERT INTO equity_snapshots (user_id, equity, snapshot_at) VALUES (?, ?, ?)',
+      [userId, eq, new Date(t)]);
+  }
+  const r = await new Promise((resolve, reject) => {
+    http.get(`${base}/api/trades/equity-curve`, {
+      headers: { Authorization: `Bearer ${reg.token}` },
+    }, (res) => {
+      let d = '';
+      res.on('data', c => d += c);
+      res.on('end', () => resolve(JSON.parse(d)));
+    }).on('error', reject);
+  });
+  assert.equal(r.capital_events, 1);
+  const eqs = r.snapshots.map(s => parseFloat(s.equity));
+  assert.deepEqual(eqs, [300, 305], 'paper-era points never reach the chart');
 });

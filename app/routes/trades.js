@@ -2,6 +2,7 @@ const express = require('express');
 const { pool } = require('../db');
 const { authMiddleware } = require('../auth');
 const { computePerformance } = require('../lib/trade_performance');
+const { segmentByCapitalEvents } = require('../lib/equity_basis');
 const { rateLimit, userKey } = require('../lib/rate_limit');
 
 const router = express.Router();
@@ -202,7 +203,11 @@ router.get('/breakdown', async (req, res) => {
   }
 });
 
-// GET /api/trades/equity-curve - Equity snapshots
+// GET /api/trades/equity-curve - Equity snapshots (current capital basis).
+// The raw series can contain capital events — a deposit, withdrawal, or the
+// paper→live switch — that would draw as a trading cliff. Serve only the
+// CURRENT consistent-capital segment, plus how many events were skipped, so
+// the chart shows trading performance, never funding changes.
 router.get('/equity-curve', async (req, res) => {
   try {
     const uid = req.user.user_id;
@@ -210,7 +215,19 @@ router.get('/equity-curve', async (req, res) => {
       'SELECT equity, snapshot_at FROM equity_snapshots WHERE user_id = ? ORDER BY snapshot_at ASC LIMIT 365',
       [uid]
     );
-    res.json({ snapshots: rows });
+    const [closed] = await pool.execute(
+      "SELECT pnl, closed_at FROM trades WHERE user_id = ? AND status = 'CLOSED' AND closed_at IS NOT NULL ORDER BY closed_at ASC",
+      [uid]
+    );
+    const curve = rows
+      .map(r => ({ t: new Date(r.snapshot_at).getTime(), equity: parseFloat(r.equity), snapshot_at: r.snapshot_at }))
+      .filter(p => isFinite(p.equity) && p.equity > 0);
+    const segments = segmentByCapitalEvents(curve, closed);
+    const current = segments.length ? segments[segments.length - 1] : [];
+    res.json({
+      snapshots: current.map(p => ({ equity: p.equity, snapshot_at: p.snapshot_at })),
+      capital_events: Math.max(0, segments.length - 1),
+    });
   } catch (err) {
     console.error('Equity curve error:', err.message);
     res.status(500).json({ error: 'Failed to fetch equity curve' });
