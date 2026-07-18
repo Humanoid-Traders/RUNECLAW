@@ -913,4 +913,12 @@ if os.path.isdir(_WEBSITE_DIR):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("api_bridge:app", host="0.0.0.0", port=8000, reload=False)
+    # Loopback by default: the web app reaches this bridge via localhost, and
+    # it exposes trade-capable endpoints (/confirm, /close) — never bind it
+    # to all interfaces unless the operator explicitly opts in.
+    uvicorn.run(
+        "api_bridge:app",
+        host=os.getenv("API_BRIDGE_HOST", "127.0.0.1"),
+        port=int(os.getenv("API_BRIDGE_PORT", "8000")),
+        reload=False,
+    )
