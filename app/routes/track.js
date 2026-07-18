@@ -33,6 +33,50 @@ function maxDrawdownPct(curve) {
   return round2(maxDd);
 }
 
+/**
+ * Split the snapshot series wherever equity steps in a way trading cannot
+ * explain — a deposit, withdrawal, or capital-base switch (e.g. paper
+ * $10,000 history followed by a live account holding $574). Measuring
+ * drawdown across such a step reports the capital event as a trading loss
+ * (the "98.7% drawdown" bug), which is exactly the kind of made-up figure
+ * this page promises never to show.
+ *
+ * A step is a capital event when the part of the equity change NOT covered
+ * by realised PnL closed between the two snapshots exceeds both 30% of the
+ * prior equity and $25 (the floor keeps tiny paper accounts from
+ * splitting on noise; unrealised swings stay well under 30% at the
+ * engine's position sizing).
+ */
+function segmentByCapitalEvents(curve, trades) {
+  if (!curve.length) return [];
+  const closes = (trades || [])
+    .map(t => ({ t: new Date(t.closed_at).getTime(), pnl: parseFloat(t.pnl) || 0 }))
+    .filter(c => isFinite(c.t));
+  const segments = [[curve[0]]];
+  for (let i = 1; i < curve.length; i++) {
+    const prev = curve[i - 1], cur = curve[i];
+    const pnlBetween = closes
+      .filter(c => c.t > prev.t && c.t <= cur.t)
+      .reduce((a, c) => a + c.pnl, 0);
+    const unexplained = Math.abs((cur.equity - prev.equity) - pnlBetween);
+    const capitalEvent = prev.equity > 0
+      && unexplained > Math.max(prev.equity * 0.30, 25);
+    if (capitalEvent) segments.push([cur]);
+    else segments[segments.length - 1].push(cur);
+  }
+  return segments;
+}
+
+// Max drawdown measured only within consistent-capital segments.
+function segmentedMaxDrawdownPct(curve, trades) {
+  const segments = segmentByCapitalEvents(curve, trades);
+  let maxDd = 0;
+  for (const seg of segments) {
+    if (seg.length >= 2) maxDd = Math.max(maxDd, maxDrawdownPct(seg));
+  }
+  return round2(maxDd);
+}
+
 // Downsample to at most n points, always keeping the first and last.
 function downsample(rows, n) {
   if (rows.length <= n) return rows;
@@ -90,6 +134,12 @@ router.get('/track-record', async (req, res) => {
       equity: parseFloat(s.equity),
     })).filter(p => isFinite(p.equity) && p.equity > 0);
 
+    // Capital-aware view of the snapshot series: drawdown within consistent
+    // segments only, and the displayed curve is the CURRENT capital basis —
+    // a deposit or paper→live switch must never render as a trading cliff.
+    const segments = segmentByCapitalEvents(curve, trades);
+    const currentSegment = segments.length ? segments[segments.length - 1] : [];
+
     const payload = {
       generated_at: new Date().toISOString(),
       mode,                                       // 'LIVE' | 'PAPER' | null
@@ -104,13 +154,14 @@ router.get('/track-record', async (req, res) => {
         profit_factor: grossLoss > 0 ? round2(grossWin / grossLoss) : null,
         avg_win_usd: wins.length ? round2(grossWin / wins.length) : null,
         avg_loss_usd: losses.length ? round2(-grossLoss / losses.length) : null,
-        max_drawdown_pct: curve.length >= 2 ? maxDrawdownPct(curve) : null,
+        max_drawdown_pct: curve.length >= 2 ? segmentedMaxDrawdownPct(curve, trades) : null,
         current_equity_usd: curve.length ? round2(curve[curve.length - 1].equity) : null,
         first_trade_at: trades.length ? trades[0].closed_at : null,
         last_trade_at: trades.length ? trades[trades.length - 1].closed_at : null,
       },
       monthly_pnl_usd: monthly,
-      equity_curve: downsample(curve, 400),
+      equity_curve: downsample(currentSegment, 400),
+      capital_events: Math.max(0, segments.length - 1),
       recent_trades: trades.slice(-20).reverse().map(t => ({
         symbol: t.symbol, direction: t.direction,
         pnl: round2(parseFloat(t.pnl) || 0), closed_at: t.closed_at,
@@ -178,3 +229,7 @@ router.get('/replay-trade', async (req, res) => {
 });
 
 module.exports = router;
+// Pure helpers, exported for tests.
+module.exports.maxDrawdownPct = maxDrawdownPct;
+module.exports.segmentByCapitalEvents = segmentByCapitalEvents;
+module.exports.segmentedMaxDrawdownPct = segmentedMaxDrawdownPct;
