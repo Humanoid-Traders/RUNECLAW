@@ -984,6 +984,43 @@ async def handle_sentry(request: web.Request) -> web.Response:
     return web.json_response(report)
 
 
+async def handle_proofofpnl(request: web.Request) -> web.Response:
+    """GET /gateway/proofofpnl — the latest CONTINUOUSLY-PUBLISHED Proof-of-PnL
+    statement: the public-safe bundle, its freshness, re-derived integrity, and
+    the anchor's (honest) UNVERIFIED status. 'Don't trust the dashboard — verify
+    the fills.'"""
+    import time as _time
+    tg_handler = request.app["tg_handler"]
+    tg_id = str(request.query.get("telegram_id") or "").strip()
+    err = _guard_user(tg_handler, tg_id)
+    if err is not None:
+        return err
+    try:
+        from bot.proofofpnl.publish import (get_publication_store, verify_publication,
+                                            is_fresh)
+        pub = get_publication_store().read()
+    except Exception as exc:
+        system_log.debug("Proof-of-PnL read failed: %s", exc)
+        return web.json_response({"published": False, "error": "unavailable"})
+    if not pub:
+        return web.json_response({
+            "published": False,
+            "note": "No Proof-of-PnL statement has been published yet. The "
+                    "publisher seals one each epoch from raw fills.",
+        })
+    ok, problems = verify_publication(pub)
+    now = int(_time.time())
+    return web.json_response({
+        "published": True,
+        "publication": pub,
+        "verified": ok,
+        "problems": problems,
+        "fresh": is_fresh(pub, now),
+        "age_seconds": max(0, now - int(pub.get("published_at") or now)),
+        "checked_at": datetime.now(timezone.utc).isoformat(),
+    })
+
+
 # ── Idle-Asset Yield Optimizer (read-only recommendation) ────────────────────
 #
 # One brain, one language: the optimizer lives in Python (bot.core.idle_yield);
@@ -1366,6 +1403,7 @@ def build_gateway(engine, tg_handler) -> web.Application:
     app.router.add_get("/networth", handle_networth)
     app.router.add_get("/holdings", handle_holdings)
     app.router.add_get("/sentry", handle_sentry)
+    app.router.add_get("/proofofpnl", handle_proofofpnl)
     app.router.add_post("/idleyield", handle_idle_yield)
     # Authority Envelope authoring (per-user, self-serve; _guard_user-gated).
     app.router.add_post("/authority/preview", handle_authority_preview)
