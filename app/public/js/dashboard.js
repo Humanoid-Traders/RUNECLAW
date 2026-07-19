@@ -380,6 +380,8 @@
           <span class="right muted small">what it's doing for you</span></h2><div id="c-agent"><div class="skel"></div></div></section>` : ''}
         <section class="panel" id="p-mind"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-radar"></use></svg>Agent mind-stream
           <span class="right"><a class="small" href="#feed">full feed →</a></span></h2><div id="c-mind"><div class="skel"></div><div class="skel"></div></div></section>
+        <section class="panel" id="p-macmini"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-shield"></use></svg>Macro backdrop
+          <span class="right"><a class="small" href="#macro">open Macro →</a></span></h2><div id="c-macmini"><div class="skel"></div></div></section>
         ${LOGGED_IN ? `<section class="panel" id="p-letter"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-sparkle"></use></svg>The Agent Letter
           <select class="input" id="letterWeek" aria-label="Letter week" style="margin-left:auto;width:auto;padding:2px 8px"></select></h2>
           <div id="c-letter"><div class="skel"></div><div class="skel"></div></div></section>` : ''}
@@ -554,6 +556,23 @@
 
     renderPanel(C('mind'), async () => feedListHtml(await getFeed(10)),
       { empty: { icon: 'icon-radar', text: 'The agent narrates its work here — scans, theses, trades and stop moves, live as they happen.' } });
+
+    renderPanel(C('macmini'), async () => {
+      const r = await fetchJSON('/api/macro', { auth: false, timeoutMs: 14000 });
+      const m = r && r.ok && r.data && r.data.macro;
+      if (!m || !m.band) return null;
+      const toneCol = m.band.tone === 'up' ? 'var(--up)' : m.band.tone === 'down' ? 'var(--down)' : 'var(--text-2)';
+      const pos = m.risk_score == null ? 50 : Math.max(0, Math.min(100, m.risk_score));
+      const fg = m.fear_greed;
+      const cell = (k, v) => `<div><div class="k muted small">${k}</div><div class="v" style="font-size:var(--fs-lg)">${v}</div></div>`;
+      return `<div class="row" style="align-items:center;gap:var(--s5);flex-wrap:wrap">
+          ${cell('Market posture', `<span style="color:${toneCol}">${esc(m.band.label)}</span> <span class="num muted" style="font-size:var(--fs-sm)">${m.risk_score}/100</span>`)}
+          ${fg ? cell('Fear &amp; Greed', `${fg.value} <span class="muted small">${esc(fg.classification)}</span>`) : ''}
+          ${m.regime && m.regime.label ? cell('Engine regime', esc(m.regime.label)) : ''}
+          ${m.structure ? cell('Structure', esc(m.structure)) : ''}
+        </div>
+        <div style="position:relative;height:8px;border-radius:5px;margin-top:12px;background:linear-gradient(90deg,var(--down),#e0a63a 50%,var(--up))"><div style="position:absolute;top:-3px;left:calc(${pos}% - 2px);width:5px;height:14px;border-radius:3px;background:var(--text)"></div></div>`;
+    }, { empty: { icon: 'icon-shield', text: 'The macro backdrop appears once market data is available.' } });
 
     renderPanel(C('hpos'), async () => {
       if (!LOGGED_IN) return loginGate('Log in to see your open positions.');
@@ -2970,6 +2989,7 @@
             <span class="right muted small">each opens the chat with the question ready</span></h2>
           <div class="row" style="gap:var(--s2);flex-wrap:wrap">
             ${[['📰 Market briefing', 'Give me a market briefing'],
+               ['🧭 Macro backdrop', "how's the macro backdrop right now?"],
                ['✉️ This week’s letter', "this week's letter"],
                ['🌐 My net worth', 'my net worth'],
                ['🛡 My total exposure', "what's my total exposure?"],
@@ -3282,27 +3302,44 @@
       ${tile('Total market cap', fmtBigUsd(m.market_cap_usd), chg != null ? `${chg >= 0 ? '▲' : '▼'} ${Math.abs(chg).toFixed(1)}% 24h` : '', chg == null ? '' : chg >= 0 ? 'var(--up)' : 'var(--down)')}
       ${tile('BTC dominance', m.btc_dominance != null ? m.btc_dominance.toFixed(1) + '%' : '—', 'share of total cap')}
       ${tile('ETH dominance', m.eth_dominance != null ? m.eth_dominance.toFixed(1) + '%' : '—', 'share of total cap')}
+      ${tile('Market structure', m.structure ? esc(m.structure) : '—', m.others_dominance != null ? `alts (others) ${m.others_dominance}%` : 'BTC vs ETH vs alts')}
       ${tile('24h volume', fmtBigUsd(m.volume_24h_usd), 'all crypto')}
       ${tile('Engine regime', m.regime && m.regime.label ? esc(m.regime.label) : '—', m.regime && m.regime.score != null ? `score ${Number(m.regime.score).toFixed(2)}` : 'BTC-derived')}
     </div>`;
-    const brief = m.brief ? `<div class="mt-3" style="border:1px solid var(--line);border-left:3px solid ${toneCol};border-radius:var(--radius);padding:var(--s3) var(--s4);background:rgba(63,182,255,.04)">
-      <div class="muted small" style="font-family:var(--font-data);letter-spacing:.1em;text-transform:uppercase;margin-bottom:6px">🧭 Agent macro read</div>
-      <p style="margin:0;line-height:1.6">${esc(m.brief)}</p></div>` : '';
+    const briefText = m.ai_brief || m.brief;
+    const briefLabel = m.ai_brief ? '🧭 RUNECLAW macro read' : '🧭 Agent macro read';
+    const brief = briefText ? `<div class="mt-3" style="border:1px solid var(--line);border-left:3px solid ${toneCol};border-radius:var(--radius);padding:var(--s3) var(--s4);background:rgba(63,182,255,.04)">
+      <div class="muted small" style="font-family:var(--font-data);letter-spacing:.1em;text-transform:uppercase;margin-bottom:6px">${briefLabel}${m.ai_brief ? ' <span style="opacity:.6">· live LLM</span>' : ''}</div>
+      <p style="margin:0;line-height:1.6">${esc(briefText)}</p></div>` : '';
     const foot = `<p class="muted small mt-2">Sources: Fear &amp; Greed (alternative.me) · market structure (CoinGecko) · engine BTC regime${at ? ' · ' + esc(new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })) : ''} · read-only, never trades.</p>`;
     return gauge + `<div class="mt-3">${tiles}</div>` + brief + foot;
   }
+  // The agent physically reacts to the macro posture: alert on a defensive
+  // backdrop, execute on a constructive one, analyze in the middle.
+  function macroReact(band) {
+    if (!window.RCAgent3D || !band) return;
+    const clip = band.key === 'risk_off' || band.key === 'cautious' ? 'alert'
+      : band.key === 'risk_on' || band.key === 'euphoric' ? 'execute' : 'analyze';
+    window.RCAgent3D.react(clip);
+    setTimeout(() => window.RCAgent3D && window.RCAgent3D.react(clip), 1300); // catch the avatar once it has loaded
+  }
   async function renderMacro() {
-    container.innerHTML = viewHead('Macro AI', 'The market’s risk backdrop — sentiment, structure & the engine’s regime');
-    container.insertAdjacentHTML('beforeend', `
+    container.innerHTML = `
+      <div class="view-head" style="display:flex;align-items:center;gap:var(--s4)">
+        <div class="agent-avatar" data-rc-agent3d="avatar" aria-hidden="true" style="width:84px;height:84px;flex:none;border-radius:16px;overflow:hidden"></div>
+        <div><h1>Macro AI</h1><span class="sub">The market’s risk backdrop — sentiment, structure &amp; the engine’s regime</span></div>
+      </div>
       <div class="stack">
         <section class="panel panel--primary" id="p-macro"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-shield"></use></svg>Risk backdrop
           <span class="right muted small">sentiment · market structure · BTC regime</span></h2>
           <div id="c-macro"><div class="skel"></div><div class="skel"></div></div></section>
-      </div>`);
+      </div>`;
+    if (window.RCAgent3D) window.RCAgent3D.mountIfAvailable(container.querySelector('[data-rc-agent3d]'), { mode: 'avatar' });
     renderPanel(C('macro'), async () => {
-      const r = await fetchJSON('/api/macro', { auth: false, timeoutMs: 14000 });
+      const r = await fetchJSON('/api/macro', { auth: false, timeoutMs: 16000 });
       const m = r && r.ok && r.data && r.data.macro;
       if (!m) return null;
+      macroReact(m.band);
       return macroBlock(m, r.data.generated_at);
     }, { empty: { icon: 'icon-shield', text: 'Macro data is unavailable right now — check back in a moment.' } });
   }

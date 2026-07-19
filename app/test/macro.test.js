@@ -16,6 +16,22 @@ const { assembleMacro, classifyBand } = require('../routes/macro');
 
 const GLOBAL = { mcap_usd: 2.29e12, vol_usd: 3.7e10, btc_dom: 56.5, eth_dom: 9.8, mcap_chg_24h: 0.66 };
 
+test('derives others-dominance and market-structure label', () => {
+  const btcLed = assembleMacro({ global: { ...GLOBAL, btc_dom: 60, eth_dom: 9 }, fng: { value: '50', classification: 'Neutral' } });
+  assert.equal(btcLed.others_dominance, 31);       // 100 - 60 - 9
+  assert.equal(btcLed.structure, 'BTC-led');
+  assert.match(btcLed.brief, /concentrated in BTC/);
+  const alt = assembleMacro({ global: { ...GLOBAL, btc_dom: 44, eth_dom: 18 }, fng: { value: '60', classification: 'Greed' } });
+  assert.equal(alt.structure, 'Alt-heavy');
+  assert.match(alt.brief, /rotating into alts/);
+  const broad = assembleMacro({ global: { ...GLOBAL, btc_dom: 51, eth_dom: 12 }, fng: { value: '50', classification: 'Neutral' } });
+  assert.equal(broad.structure, 'Broad');
+  // No dominance data -> no structure, no others.
+  const none = assembleMacro({ fng: { value: '50', classification: 'Neutral' } });
+  assert.equal(none.structure, null);
+  assert.equal(none.others_dominance, null);
+});
+
 test('bands map risk score to the right label', () => {
   assert.equal(classifyBand(10).key, 'risk_off');
   assert.equal(classifyBand(30).key, 'cautious');
