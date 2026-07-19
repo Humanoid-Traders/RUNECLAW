@@ -168,3 +168,29 @@ IUniswapV3PoolEvents; QuickNode/Cobo Jupiter guides; baransel.dev Solana parsing
 **Net:** Phase 1 is ~70% reuse of existing tamper-evidence + fill plumbing; the
 new surface is the CSF, `verify.py`, the omission defense, and on-chain
 re-derivation.
+
+## 5.6 Surface generalization — prediction markets, NFTs, DeFi (design note)
+
+The CSF was built venue-agnostic on purpose: a "fill" is any signed value transfer
+with a price, and the trust tier follows the venue's provenance. So the broader
+AI/web3/DeFi surface is **not new machinery — it is new `onchain_public` venues
+under the same `verify.py`.** All read/verify only; none touch the Non-Goals
+(no launch/pump/shill mechanics — this productizes *"verify the fills,"* not
+promotion).
+
+| Surface | CSF `venue` | How `verify.py` re-derives a "fill" | Trust tier |
+|---|---|---|---|
+| **Prediction markets** (Polymarket) | `polygon:polymarket` | CTF `OrderFilled`/`PositionSplit` + USDC `Transfer` netting on Polygon RPC; PnL = payout − cost basis per market resolution | `onchain_public` |
+| **NFTs** (OpenSea/Blur) | `base:seaport` / `eth:blur` | Seaport `OrderFulfilled` (offer/consideration) + ERC-721/1155 `Transfer`; "fill" price = ETH/USDC leg; PnL = sale − acquisition | `onchain_public` |
+| **DeFi LP / lending** (Uniswap v3 LP, Aave) | `base:uniswap-v3-lp`, `base:aave-v3` | position deltas from `Mint`/`Burn`/`Collect` (LP) or `Supply`/`Withdraw`/`Borrow`/`Repay` + interest accrual; already partially read by `app/lib/defi.js` | `onchain_public` |
+| **Perp DEX** (Hyperliquid, GMX) | `hyperliquid`, `arbitrum:gmx` | HL: L1 fills API (semi-public → tier between onchain and cex); GMX: `IncreasePosition`/`DecreasePosition` events | `onchain_public` / mixed |
+
+**Why this is the right shape:** the same fills-first, min-tier-honest, Merkle-
+signed statement + `verify.py` re-computer works for every one — a Polymarket
+resolution or an NFT flip is *more* verifiable than a CEX trade (fully on-chain),
+so they slot in at the **strongest** tier. Each is a separate future version
+(one variable each), gated behind its own `verify.py` re-derivation + a
+pre-registered prediction, exactly like the Base EVM slice. **Not built now;**
+scoped here so the CSF `venue`/`venue_type` design is validated against them
+before we commit. ERC-8004 identity (Phase 3) then anchors *one* portable
+reputation across all of these surfaces — the durable asset.

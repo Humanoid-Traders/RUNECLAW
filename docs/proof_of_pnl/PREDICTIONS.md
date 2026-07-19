@@ -21,7 +21,9 @@ run — add a result line and, if needed, a new entry.
 **Falsifier:** non-identical roots across runs (nondeterminism), or an unchanged
 root after a fill mutation (broken hash coverage).
 
-**Result:** _PENDING run._
+**Result:** ✅ **CONFIRMED** (`tests/test_proof_of_pnl.py::test_p1_determinism…`).
+Two independent builds → identical `merkle_root` + `commitment` + canonical fills;
+mutating `qty` 1→1.0001 changed the root; `round_trips == 1` on the closed pair.
 
 ---
 
@@ -40,7 +42,17 @@ root after a fill mutation (broken hash coverage).
 **Falsifier:** reconciliation passes with a fill omitted (omission defense
 ineffective), or fails on the complete set (accounting wrong).
 
-**Result:** _PENDING run._
+**Result:** ⚠️ **REVISED + CONFIRMED (the honest way).** The original P2 assumed the
+real `live_trade_proof.json` would reconcile. It does NOT and CANNOT: that file
+carries no per-fill fees, no prices on 2/3 round-trips, and its only balances live
+in a `summary` block the path is forbidden to read. So the real file correctly
+resolves to **`INCOMPLETE`** and `verify.py` **rejects it (exit 1)** with a precise
+diff — the strongest honest outcome (the legacy "proof" is not fills-grade).
+The reconciliation + omission defense were instead validated on a *complete
+synthetic* epoch (labeled synthetic, not a track record):
+`test_p2_complete_epoch_publishes` (a fully-reconciling epoch → `published`) and
+`test_p2_omission_is_caught` (dropping a losing fill → residual > tol →
+`INCOMPLETE`). Net: the defense works; the real data is honestly refused.
 
 ---
 
@@ -73,4 +85,16 @@ minimum), and no code path lets an operator raise it.
 
 **Falsifier:** headline tier renders higher than the epoch minimum.
 
-**Result:** _PENDING run._
+**Result:** ✅ **CONFIRMED** (`test_p4_epoch_tier_is_the_minimum`): an epoch mixing
+`onchain_public` + `cex_operator_signed` reports the minimum
+`cex_operator_signed`; `verify.py` independently recomputes the tier and rejects
+any inflation.
+
+---
+
+## P3 note — deferred to the next version (on-chain EVM slice)
+
+P3 (Base fill re-derivation, zero-server-trust) is NOT in this CEX slice.
+`verify.py` currently reports any on-chain fill as `UNVERIFIED` rather than
+passing it — the honest placeholder until the Transfer-netting re-derivation
+lands. P3 stays REGISTERED, run PENDING for the next version.
