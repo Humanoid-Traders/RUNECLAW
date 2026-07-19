@@ -518,6 +518,14 @@ class RiskLimits:
     # is refused (the message is not acted on) instead of merely recorded. Default
     # OFF so enabling the firewall observes before it ever blocks.
     guardian_firewall_block_high: bool = _env_bool("GUARDIAN_FIREWALL_BLOCK_HIGH", False)
+    # Guardian Portfolio Digital Twin: master switch for SEALING a stress-test
+    # verdict (bot/guardian/digital_twin.py) to the tamper-evident chain when the
+    # twin runs. Default OFF → the twin still computes on demand (it's pure,
+    # read-only foresight — e.g. the admin /twin command always works), but no
+    # TWIN event is written until an operator opts in. The twin never proposes,
+    # blocks, or alters a trade; it only describes how the current book would
+    # fare under parametric price shocks.
+    guardian_digital_twin_enabled: bool = _env_bool("GUARDIAN_DIGITAL_TWIN_ENABLED", False)
     # Kelly-criterion sizing (default ON; runbook stage 2, tighten-only). evaluate() also
     # derives a half-Kelly size from realized trade history and takes the SMALLER
     # of {fixed-fractional, Kelly}: Kelly can only TIGHTEN size, never grow it, and

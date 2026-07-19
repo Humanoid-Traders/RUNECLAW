@@ -338,6 +338,16 @@ defaults:
       (the message is recorded and rejected) instead of merely recording it.
       Default OFF so enabling the firewall observes before it ever blocks.
 
+  guardian_digital_twin_enabled:
+    value: false
+    env_var: GUARDIAN_DIGITAL_TWIN_ENABLED
+    description: >
+      Guardian Portfolio Digital Twin: when on, a stress-test verdict (projected
+      drawdown + liquidations under parametric price shocks) is sealed to the
+      tamper-evident chain each time the twin runs. Default OFF; the twin is pure,
+      read-only foresight that still computes on demand (e.g. the admin /twin
+      command) even when off — it never proposes, blocks, or alters a trade.
+
   per_strategy_confidence_floor_enabled:
     value: false
     env_var: PER_STRATEGY_CONFIDENCE_FLOOR_ENABLED
