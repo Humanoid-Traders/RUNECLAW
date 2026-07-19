@@ -361,6 +361,71 @@ class HyperliquidVenue(Venue):
         return {"clientOrderId": self.client_oid(coid)}
 
 
+class ParadexVenue(Venue):
+    """Paradex USDC-margined perpetual futures (on-chain DEX, StarkEx L2) via ccxt.
+
+    Non-custodial, wallet-authenticated like Hyperliquid ({wallet_address,
+    agent_private_key}). On-chain settlement makes its fills re-derivable — the
+    strongest Proof-of-PnL trust tier (onchain_public). ccxt handles the StarkEx
+    onboarding from the wallet key.
+
+    NOTE: connectable + read-only-checkable here; must pass the /venue preflight
+    against a real account before being enabled for auto-trade."""
+
+    id = "paradex"
+    display_name = "Paradex (DEX)"
+    quote = "USDC"
+    balance_coin = "USDC"
+    min_notional_usd = 10.0
+    supports_hedge_mode = False
+    supports_native_triggers = False
+    market_order_needs_price = False
+
+    def create_exchange(self, cfg: Any,
+                        credentials: Optional[dict] = None) -> ccxt.Exchange:
+        creds = credentials or {}
+        wallet = str(creds.get("wallet_address", "") or "")
+        priv = str(creds.get("agent_private_key", "") or "")
+        if not wallet or not priv:
+            raise RuntimeError(self.missing_credentials_error(per_user=bool(credentials)))
+        exchange = ccxt.paradex({
+            "aiohttp_trust_env": True,
+            "walletAddress": wallet,
+            "privateKey": priv,
+            "timeout": 30000,
+            "enableRateLimit": True,
+            "options": {"defaultType": "swap"},
+        })
+        if getattr(cfg, "sandbox", False):
+            try:
+                exchange.set_sandbox_mode(True)
+            except Exception:
+                pass
+        return exchange
+
+    def missing_credentials_error(self, per_user: bool) -> str:
+        return ("Paradex connect needs a wallet_address and an API (agent) wallet "
+                "private key — reconnect with /connect paradex <wallet_address> "
+                "<agent_private_key>. Never use your main wallet key.")
+
+    def has_operator_credentials(self, cfg: Any) -> bool:
+        return False   # per-user connect venue; the operator trades Bitget
+
+    def order_symbol(self, symbol: str) -> str:
+        return self.swap_symbol(symbol)
+
+    def trigger_params(self, kind: str, trigger_price: float) -> dict:
+        if kind == "tp":
+            return {"takeProfitPrice": trigger_price, "reduceOnly": True}
+        return {"stopLossPrice": trigger_price, "reduceOnly": True}
+
+    def is_plan_order(self, order: dict) -> bool:
+        return _is_trigger_order(order)
+
+    def order_id_params(self, coid: str) -> dict:
+        return {"clientOrderId": coid}
+
+
 def _is_trigger_order(order: dict) -> bool:
     """Client-side trigger/conditional detection for venues whose
     fetch_open_orders has no reliable server-side plan filter — SL/TP
@@ -650,6 +715,7 @@ _VENUES: dict[str, Venue] = {
     "okx": OkxVenue(),
     "gate": GateVenue(),
     "kucoin": KucoinVenue(),
+    "paradex": ParadexVenue(),
 }
 
 

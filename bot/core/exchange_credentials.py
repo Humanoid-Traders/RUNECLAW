@@ -51,6 +51,7 @@ _VENUE_FIELDS: dict[str, tuple[str, ...]] = {
     "gate": ("api_key", "api_secret"),
     "kucoin": ("api_key", "api_secret", "passphrase"),
     "hyperliquid": ("wallet_address", "agent_private_key"),
+    "paradex": ("wallet_address", "agent_private_key"),
 }
 
 # venue id → ccxt exchange id (differs only where the perp product is a distinct
@@ -608,6 +609,46 @@ async def _ccxt_keysecret_probe(ccxt_id: str, api_key: str, api_secret: str,
                 pass
 
 
+async def _wallet_balance_probe(ccxt_id: str, currency: str, wallet_address: str,
+                                agent_private_key: str, sandbox: bool) -> tuple[bool, str]:
+    """Read-only balance fetch for a wallet-authenticated ccxt DEX (walletAddress +
+    privateKey) — e.g. Paradex. Never places an order."""
+    client = None
+    try:
+        import ccxt.async_support as ccxt
+    except Exception as exc:  # pragma: no cover - import guard
+        return False, f"ccxt unavailable: {exc}"
+    try:
+        factory = getattr(ccxt, ccxt_id, None)
+        if factory is None:
+            return False, f"ccxt has no exchange {ccxt_id!r}"
+        client = factory({
+            "walletAddress": wallet_address, "privateKey": agent_private_key,
+            "timeout": 15000, "enableRateLimit": True,
+            "options": {"defaultType": "swap"},
+        })
+        try:
+            client.set_sandbox_mode(sandbox)
+        except Exception:
+            if sandbox:
+                raise
+        bal = await client.fetch_balance()
+        free = 0.0
+        try:
+            free = float((bal.get(currency) or {}).get("free", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            free = 0.0
+        return True, f"{free:.2f} {currency} free"
+    except Exception as exc:
+        return False, str(exc)[:200]
+    finally:
+        if client is not None:
+            try:
+                await client.close()
+            except Exception:
+                pass
+
+
 async def validate_venue_credentials(venue: str, fields: dict,
                                      sandbox: bool = False) -> tuple[bool, str]:
     """Read-only-validate a user's credentials for ``venue`` (dispatches to the
@@ -619,6 +660,10 @@ async def validate_venue_credentials(venue: str, fields: dict,
     if venue == "hyperliquid":
         return await validate_hyperliquid_credentials(
             fields["wallet_address"], fields["agent_private_key"], sandbox)
+    if venue == "paradex":
+        return await _wallet_balance_probe(
+            "paradex", "USDC", fields["wallet_address"],
+            fields["agent_private_key"], sandbox)
     if venue in ("bybit", "bingx"):
         return await _keysecret_balance_probe(
             venue, fields["api_key"], fields["api_secret"], sandbox)
@@ -662,7 +707,7 @@ async def balance_snapshot(venue: str, fields: dict,
     except Exception as exc:  # pragma: no cover - import guard
         return {"ok": False, "venue": venue, "equity_usd": None,
                 "detail": f"ccxt unavailable: {exc}"}
-    currency = "USDC" if venue == "hyperliquid" else "USDT"
+    currency = "USDC" if venue in ("hyperliquid", "paradex") else "USDT"
     try:
         if venue == "bitget":
             client = ccxt.bitget({
@@ -671,8 +716,12 @@ async def balance_snapshot(venue: str, fields: dict,
                 "enableRateLimit": True,
                 "options": {"defaultType": "swap", "uta": True},
             })
-        elif venue == "hyperliquid":
-            client = ccxt.hyperliquid({
+        elif venue in ("hyperliquid", "paradex"):
+            factory = getattr(ccxt, venue, None)
+            if factory is None:
+                return {"ok": False, "venue": venue, "equity_usd": None,
+                        "detail": f"ccxt has no exchange {venue!r}"}
+            client = factory({
                 "walletAddress": fields["wallet_address"],
                 "privateKey": fields["agent_private_key"],
                 "timeout": 15000, "enableRateLimit": True,
@@ -724,7 +773,7 @@ def basic_venue_format_ok(venue: str, fields: dict) -> bool:
         return basic_key_format_ok(
             fields.get("api_key", ""), fields.get("api_secret", ""),
             fields.get("passphrase", ""))
-    if venue == "hyperliquid":
+    if venue in ("hyperliquid", "paradex"):
         return basic_hl_format_ok(
             fields.get("wallet_address", ""), fields.get("agent_private_key", ""))
     if venue in ("bybit", "bingx", "gate"):
