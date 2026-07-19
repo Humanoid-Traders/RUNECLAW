@@ -93,6 +93,23 @@
     'dash.confirm_trade': { en: 'Confirm trade', es: 'Confirmar operación', zh: '確認交易', pt: 'Confirmar operação', fr: 'Confirmer l’ordre', ar: 'تأكيد الصفقة' },
     'dash.confirm': { en: 'Confirm', es: 'Confirmar', zh: '確認', pt: 'Confirmar', fr: 'Confirmer', ar: 'تأكيد' },
     'dash.cancel_order': { en: 'Cancel order', es: 'Cancelar orden', zh: '取消訂單', pt: 'Cancelar ordem', fr: 'Annuler l’ordre', ar: 'إلغاء الأمر' },
+
+    // Dashboard nav labels (left rail + bottom tabbar), built in dashboard.js.
+    'nav.home': { en: 'Home', es: 'Inicio', zh: '首頁', pt: 'Início', fr: 'Accueil', ar: 'الرئيسية' },
+    'nav.chat': { en: 'AI Chat', es: 'Chat IA', zh: 'AI 聊天', pt: 'Chat IA', fr: 'Chat IA', ar: 'محادثة الذكاء' },
+    'nav.hub': { en: 'Agent Hub', es: 'Centro del agente', zh: '智能體中心', pt: 'Central do agente', fr: 'Hub de l’agent', ar: 'مركز الوكيل' },
+    'nav.markets': { en: 'Markets', es: 'Mercados', zh: '市場', pt: 'Mercados', fr: 'Marchés', ar: 'الأسواق' },
+    'nav.macro': { en: 'Macro', es: 'Macro', zh: '總經', pt: 'Macro', fr: 'Macro', ar: 'الاقتصاد الكلي' },
+    'nav.guardian': { en: 'Guardian', es: 'Guardián', zh: '守護者', pt: 'Guardião', fr: 'Gardien', ar: 'الحارس' },
+    'nav.signals': { en: 'Signals', es: 'Señales', zh: '信號', pt: 'Sinais', fr: 'Signaux', ar: 'الإشارات' },
+    'nav.deepscan': { en: 'Deep Scan', es: 'Escaneo profundo', zh: '深度掃描', pt: 'Varredura profunda', fr: 'Analyse approfondie', ar: 'فحص عميق' },
+    'nav.feed': { en: 'Live Feed', es: 'Feed en vivo', zh: '即時動態', pt: 'Feed ao vivo', fr: 'Flux en direct', ar: 'البث المباشر' },
+    'nav.trade': { en: 'Trade', es: 'Operar', zh: '交易', pt: 'Operar', fr: 'Trader', ar: 'تداول' },
+    'nav.portfolio': { en: 'Portfolio', es: 'Cartera', zh: '投資組合', pt: 'Carteira', fr: 'Portefeuille', ar: 'المحفظة' },
+    'nav.leaderboard': { en: 'Leaders', es: 'Líderes', zh: '排行榜', pt: 'Líderes', fr: 'Classement', ar: 'المتصدرون' },
+    'nav.lab': { en: 'Lab', es: 'Laboratorio', zh: '實驗室', pt: 'Laboratório', fr: 'Labo', ar: 'المختبر' },
+    'nav.engine': { en: 'Engine', es: 'Motor', zh: '引擎', pt: 'Motor', fr: 'Moteur', ar: 'المحرك' },
+    'nav.account': { en: 'Account', es: 'Cuenta', zh: '帳戶', pt: 'Conta', fr: 'Compte', ar: 'الحساب' },
   };
 
   function normalize(code) {
@@ -131,6 +148,7 @@
   }
 
   function apply(scope, lang) {
+    if (lang == null) lang = current;      // default to the active language
     var doc = scope || document;
     doc.querySelectorAll('[data-i18n]').forEach(function (el) {
       var v = translate(el.getAttribute('data-i18n'), lang);
