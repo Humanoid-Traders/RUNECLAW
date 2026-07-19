@@ -1070,6 +1070,77 @@ class RuneClawEngine:
             logger.debug("Escape agent skipped: %s", exc)
             return None
 
+    def guardian_status(self, user_id: str = "") -> dict:
+        """Guardian console: one read-only snapshot of the whole safety layer —
+        the evidence chain's health, the intent policy's state, the firewall's
+        arming, and the live book's foresight (Digital Twin), crowding (Risk
+        Sentinel) and unwind urgency (Escape Agent), plus which modules are armed.
+
+        PURE READ + fail-open. Crucially it calls the *pure* Guardian modules
+        directly (not the ``run_*`` helpers), so opening the console NEVER seals a
+        chain event — a status view has no side effects. Every section degrades to
+        a safe default on error, so the console can never raise."""
+        status: dict = {
+            "flags": {
+                "intent_policy": bool(getattr(CONFIG.risk, "intent_policy_enabled", False)),
+                "firewall": bool(getattr(CONFIG.risk, "guardian_firewall_enabled", False)),
+                "firewall_block": bool(getattr(CONFIG.risk, "guardian_firewall_block_high", False)),
+                "digital_twin": bool(getattr(CONFIG.risk, "guardian_digital_twin_enabled", False)),
+                "risk_sentinel": bool(getattr(CONFIG.risk, "guardian_risk_sentinel_enabled", False)),
+                "escape": bool(getattr(CONFIG.risk, "guardian_escape_enabled", False)),
+            },
+            "chain": {"length": 0, "ok": None, "tip": ""},
+            "policy": None,
+            "twin": {"risk": "none", "position_count": 0},
+            "sentinel": {"risk": "none"},
+            "escape": {"risk": "none"},
+            "posture": "none",
+        }
+        # Evidence chain — length + tip cheaply; verification is best-effort.
+        try:
+            status["chain"]["length"] = self.audit_chain.get_chain_length()
+            entries = self.audit_chain.get_entries(limit=1)
+            status["chain"]["tip"] = entries[-1].entry_hash if entries else ""
+            try:
+                ok, _problems = self.audit_chain.verify(str(self.audit_chain._path))
+                status["chain"]["ok"] = bool(ok)
+            except Exception:
+                pass
+        except Exception:
+            pass
+        # Intent policy summary (what the risk gate would consult).
+        try:
+            status["policy"] = self._intent_policy_summary()
+        except Exception:
+            pass
+        # Live-book assessments — the PURE modules, no chain writes.
+        try:
+            positions = self._twin_positions(user_id)
+            if positions:
+                from bot.guardian import digital_twin as _dt
+                from bot.guardian import escape_agent as _ea
+                from bot.guardian import risk_sentinel as _rs
+                try:
+                    equity = self.get_effective_equity(user_id)
+                except Exception:
+                    equity = 0.0
+                twin = _dt.run(positions, equity)
+                status["twin"] = {"risk": twin.get("risk", "none"),
+                                  "position_count": twin.get("position_count", 0)}
+                status["sentinel"] = {"risk": _rs.analyze(positions).get("risk", "none")}
+                status["escape"] = {"risk": _ea.plan(positions).get("risk", "none")}
+        except Exception as exc:
+            logger.debug("Guardian status book assessment skipped: %s", exc)
+        # Overall posture = worst live-book risk across the three assessments.
+        try:
+            order = {"none": 0, "low": 1, "medium": 2, "high": 3}
+            worst = max((status["twin"]["risk"], status["sentinel"]["risk"],
+                         status["escape"]["risk"]), key=lambda r: order.get(r, 0))
+            status["posture"] = worst
+        except Exception:
+            pass
+        return status
+
     def _sync_flight_records(self) -> None:
         """Guardian Flight Recorder: push recent joined decision records + the
         engine-verified chain status to the website (fire-and-forget, fail-open).
