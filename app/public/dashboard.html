@@ -11,10 +11,10 @@
 <link rel="manifest" href="/manifest.json">
 <meta name="theme-color" content="#0a0b10">
 <link rel="preload" href="/fonts/cinzel-700.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="stylesheet" href="/styles.css?v=13">
+<link rel="stylesheet" href="/styles.css?v=14">
 </head>
 <body>
-<a class="skip-link" href="#view-root">Skip to content</a>
+<a class="skip-link" href="#view-root" data-i18n="dash.skip">Skip to content</a>
 
 <header class="topbar">
   <a class="brand" href="/"><svg class="brand-mark" aria-hidden="true"><use href="#brand-mark"></use></svg>RUNECLAW<span class="brand-sub">Command Core</span></a>
@@ -22,7 +22,8 @@
   <div class="spacer"></div>
   <div class="top-actions">
     <span id="modeChip" class="chip chip--paper hidden">PAPER</span>
-    <a class="btn btn--ghost btn--sm" href="/" id="accountLink">Account</a>
+    <span data-i18n-switcher></span>
+    <a class="btn btn--ghost btn--sm" href="/" id="accountLink" data-i18n="dash.account">Account</a>
   </div>
 </header>
 
@@ -56,7 +57,7 @@
   <form class="chat-inputrow" id="chatForm">
     <label class="visually-hidden" for="chatInput">Message the RUNECLAW assistant</label>
     <input id="chatInput" class="input" type="text" maxlength="2000" autocomplete="off"
-           placeholder='Ask anything — or "buy SOL 71 sl 70 tp 76"'>
+           placeholder='Ask anything — or "buy SOL 71 sl 70 tp 76"' data-i18n-attr="placeholder:dash.chat_ph">
     <button class="btn" id="chatMic" type="button" aria-pressed="false"
       aria-label="Dictate a message" title="Dictate a message" hidden>🎤</button>
     <button class="btn btn--primary" id="chatSend" type="submit" aria-label="Send message">
@@ -68,11 +69,11 @@
 <!-- Trade confirm modal -->
 <div id="tradeModal" class="modal hidden" hidden role="dialog" aria-modal="true" aria-label="Confirm trade">
   <div class="modal-card">
-    <h2>Confirm trade</h2>
+    <h2 data-i18n="dash.confirm_trade">Confirm trade</h2>
     <div id="tradeModalBody"></div>
     <div class="row mt-4">
-      <button class="btn btn--primary" id="tradeModalConfirm" style="flex:1">Confirm</button>
-      <button class="btn" id="tradeModalCancel" style="flex:1">Cancel order</button>
+      <button class="btn btn--primary" id="tradeModalConfirm" style="flex:1" data-i18n="dash.confirm">Confirm</button>
+      <button class="btn" id="tradeModalCancel" style="flex:1" data-i18n="dash.cancel_order">Cancel order</button>
     </div>
     <p id="tradeModalMsg" class="muted small mt-2" aria-live="polite"></p>
   </div>
@@ -89,6 +90,7 @@
   </div>
 </div>
 
+<script src="/js/i18n.js?v=1"></script>
 <script src="/js/icons.js?v=3"></script>
 <script src="/js/app.js?v=3"></script>
 <script src="/js/chat.js?v=20" defer></script>
