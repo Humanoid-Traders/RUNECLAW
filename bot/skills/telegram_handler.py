@@ -396,6 +396,7 @@ class TelegramHandler:
             ("twin", self._cmd_twin),
             ("sentinel", self._cmd_sentinel),
             ("escape", self._cmd_escape),
+            ("guardian", self._cmd_guardian),
         ]:
             app.add_handler(CommandHandler(cmd, handler))
         app.add_handler(CallbackQueryHandler(self._handle_callback))
@@ -4345,6 +4346,54 @@ class TelegramHandler:
         lines.append("\n<i>Execute with /closeall (flatten) or /emergency_stop (halt + flatten).</i>")
         sealed = bool(getattr(CONFIG.risk, "guardian_escape_enabled", False))
         lines.append(f"<i>{'🟢 plan sealed to the evidence chain' if sealed else '🟡 preview only (GUARDIAN_ESCAPE_ENABLED off)'} · this plans, it does not close</i>")
+        await self._send(update, "\n".join(lines))
+
+    async def _cmd_guardian(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """/guardian — the Guardian console (admin, read-only).
+
+        One screen for the whole safety layer: the evidence chain's health, the
+        intent policy, the firewall, and the live book's foresight / crowding /
+        unwind urgency — plus which modules are armed. Pure read — viewing this
+        seals nothing. Deep-dive with /twin, /sentinel, /escape, /policy.
+        """
+        if not self._is_admin(update):
+            await self._send(update, f"\U0001f512 {t('admin_only', self._lang(update))}")
+            return
+        s = self.engine.guardian_status()
+        _RISK_ICON = {"none": "🟢", "low": "🟡", "medium": "🟠", "high": "🔴"}
+        flags = s.get("flags", {})
+
+        def _arm(on: bool) -> str:
+            return "🟢 armed" if on else "⚪ off"
+
+        posture = s.get("posture", "none")
+        chain = s.get("chain", {})
+        chain_ok = chain.get("ok")
+        chain_badge = ("✅ verified" if chain_ok is True
+                       else "⚠️ UNVERIFIED" if chain_ok is False else "· unchecked")
+        lines = [
+            f"🛡 <b>Guardian console</b> — posture {_RISK_ICON.get(posture, '⚪')} "
+            f"<b>{html.escape(str(posture).upper())}</b>",
+            "",
+            f"🎞 <b>Flight Recorder</b> — {chain.get('length', 0)} entries · {chain_badge}",
+            f"📜 <b>Intent Compiler</b> — {'policy set' if s.get('policy') else 'no policy'} · "
+            f"{_arm(flags.get('intent_policy'))}",
+            f"🧱 <b>Firewall</b> — {_arm(flags.get('firewall'))}"
+            + (" · blocks HIGH" if flags.get('firewall_block') else " · record-only"),
+            "",
+            "<b>Live book</b>",
+            f"🔮 Digital Twin — {_RISK_ICON.get(s.get('twin', {}).get('risk','none'), '⚪')} "
+            f"{html.escape(str(s.get('twin', {}).get('risk','none')).upper())} "
+            f"({s.get('twin', {}).get('position_count', 0)} pos) · {_arm(flags.get('digital_twin'))}",
+            f"🛰 Risk Sentinel — {_RISK_ICON.get(s.get('sentinel', {}).get('risk','none'), '⚪')} "
+            f"{html.escape(str(s.get('sentinel', {}).get('risk','none')).upper())} · {_arm(flags.get('risk_sentinel'))}",
+            f"🪂 Escape Agent — {_RISK_ICON.get(s.get('escape', {}).get('risk','none'), '⚪')} "
+            f"{html.escape(str(s.get('escape', {}).get('risk','none')).upper())} · {_arm(flags.get('escape'))}",
+            "",
+            "<i>Deep-dive: /twin · /sentinel · /escape · /policy · /whynot</i>",
+            "<i>The AI proposes · controls authorize · the wallet enforces · "
+            "the recorder proves · the escape agent recovers.</i>",
+        ]
         await self._send(update, "\n".join(lines))
 
     async def _apply_policy_callback(self, update: Update, data: str) -> None:
