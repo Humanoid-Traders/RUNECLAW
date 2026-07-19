@@ -85,6 +85,14 @@
     },
 
     'lang.label': { en: 'Language', es: 'Idioma', zh: '語言', pt: 'Idioma', fr: 'Langue', ar: 'اللغة' },
+
+    // Dashboard shell chrome (static in dashboard.html).
+    'dash.skip': { en: 'Skip to content', es: 'Saltar al contenido', zh: '跳至內容', pt: 'Pular para o conteúdo', fr: 'Aller au contenu', ar: 'تخطَّ إلى المحتوى' },
+    'dash.account': { en: 'Account', es: 'Cuenta', zh: '帳戶', pt: 'Conta', fr: 'Compte', ar: 'الحساب' },
+    'dash.chat_ph': { en: 'Ask anything — or "buy SOL 71 sl 70 tp 76"', es: 'Pregunta lo que sea — o "buy SOL 71 sl 70 tp 76"', zh: '隨便問——或輸入「buy SOL 71 sl 70 tp 76」', pt: 'Pergunte qualquer coisa — ou "buy SOL 71 sl 70 tp 76"', fr: 'Demandez n’importe quoi — ou "buy SOL 71 sl 70 tp 76"', ar: 'اسأل أي شيء — أو اكتب "buy SOL 71 sl 70 tp 76"' },
+    'dash.confirm_trade': { en: 'Confirm trade', es: 'Confirmar operación', zh: '確認交易', pt: 'Confirmar operação', fr: 'Confirmer l’ordre', ar: 'تأكيد الصفقة' },
+    'dash.confirm': { en: 'Confirm', es: 'Confirmar', zh: '確認', pt: 'Confirmar', fr: 'Confirmer', ar: 'تأكيد' },
+    'dash.cancel_order': { en: 'Cancel order', es: 'Cancelar orden', zh: '取消訂單', pt: 'Cancelar ordem', fr: 'Annuler l’ordre', ar: 'إلغاء الأمر' },
   };
 
   function normalize(code) {
