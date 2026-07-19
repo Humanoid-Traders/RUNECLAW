@@ -374,15 +374,15 @@
     if (firstRun) {
       container.insertAdjacentHTML('beforeend', `
         <section class="panel panel--primary" id="p-welcome">
-          <h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-sparkle"></use></svg>Meet your agent</h2>
-          <p style="max-width:62ch;color:var(--text-2)">Welcome to RUNECLAW. From here on, an autonomous trading agent works this dashboard with you —
+          <h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-sparkle"></use></svg><span data-i18n="home.welcome_title">Meet your agent</span></h2>
+          <p style="max-width:62ch;color:var(--text-2)" data-i18n="home.welcome_body">Welcome to RUNECLAW. From here on, an autonomous trading agent works this dashboard with you —
           it scans the market around the clock, explains every read, and only ever trades through a strict risk gate. Three good first moves:</p>
           <div class="row mt-3" style="gap:var(--s2);flex-wrap:wrap">
-            <a class="btn btn--primary btn--sm" href="#chat">💬 1 · Say hello to your agent</a>
-            <a class="btn btn--sm" href="#signals">📡 2 · Watch it read the market</a>
-            <a class="btn btn--sm" href="#trade">🎯 3 · Place a risk-gated paper trade</a>
+            <a class="btn btn--primary btn--sm" href="#chat" data-i18n="home.welcome_1">💬 1 · Say hello to your agent</a>
+            <a class="btn btn--sm" href="#signals" data-i18n="home.welcome_2">📡 2 · Watch it read the market</a>
+            <a class="btn btn--sm" href="#trade" data-i18n="home.welcome_3">🎯 3 · Place a risk-gated paper trade</a>
           </div>
-          <button class="btn btn--ghost btn--sm mt-3" id="welcomeDismiss" type="button">Got it — don't show again</button>
+          <button class="btn btn--ghost btn--sm mt-3" id="welcomeDismiss" type="button" data-i18n="home.welcome_dismiss">Got it — don't show again</button>
         </section>`);
       // The element exists synchronously after insertAdjacentHTML — attach
       // immediately so a fast click can't land before the handler does.
