@@ -35,7 +35,9 @@ def _executor():
     ex = _ex()
     exe = LiveExecutor()
     exe._is_uta = True
-    exe._update_exchange_sl = AsyncMock(return_value=None)  # isolate ladder logic
+    # Return True = the exchange confirmed the tighter stop, so the ladder
+    # advances the local stop (the caller now gates local moves on this).
+    exe._update_exchange_sl = AsyncMock(return_value=True)  # isolate ladder logic
     exe._save_positions = MagicMock(return_value=None)
     return exe, ex
 

@@ -39,6 +39,7 @@ class _FakeExec:
 
     async def _update_exchange_sl(self, exchange, lp, new_sl):
         self.sl_updates.append((lp.trade_id, new_sl))
+        return True  # exchange confirmed — caller may advance the local stop
 
     def _save_positions(self):
         pass

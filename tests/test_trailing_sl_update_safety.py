@@ -40,12 +40,13 @@ async def test_uta_account_uses_v3_not_immediate_market_close():
         side_effect=RuntimeError("bitget {code: 40085} UTA account"))
 
     pos = _pos()
-    await ex._update_exchange_sl(exchange, pos, new_sl=99.0)
+    ok = await ex._update_exchange_sl(exchange, pos, new_sl=99.0)
 
     ex._place_sl_tp_v3.assert_awaited()          # took the SAFE v3 path
     exchange.create_order.assert_not_called()    # never the immediate-close path
     assert ex._is_uta is True
     assert pos.sl_order_id == "SL-NEW"
+    assert ok is True                            # confirmed on exchange
 
 
 @pytest.mark.asyncio
@@ -61,7 +62,7 @@ async def test_classic_account_probe_then_rounds_trigger():
     exchange.create_order = AsyncMock(return_value={"id": "SL-CLASSIC"})
 
     pos = _pos()
-    await ex._update_exchange_sl(exchange, pos, new_sl=99.53)
+    ok = await ex._update_exchange_sl(exchange, pos, new_sl=99.53)
 
     assert ex._is_uta is False
     exchange.create_order.assert_awaited_once()
@@ -69,6 +70,7 @@ async def test_classic_account_probe_then_rounds_trigger():
     params = exchange.create_order.await_args.kwargs["params"]
     assert params["triggerPrice"] == pytest.approx(99.5)
     assert pos.sl_order_id == "SL-CLASSIC"
+    assert ok is True                            # confirmed on exchange
 
 
 @pytest.mark.asyncio
@@ -81,8 +83,29 @@ async def test_failed_new_placement_preserves_old_sl():
     exchange.create_order = AsyncMock(side_effect=RuntimeError("45115 rejected"))
 
     pos = _pos()
-    await ex._update_exchange_sl(exchange, pos, new_sl=99.5)
+    ok = await ex._update_exchange_sl(exchange, pos, new_sl=99.5)
 
     # New placement failed -> old SL id untouched, old order NOT cancelled.
     assert pos.sl_order_id == "OLD-SL"
     exchange.cancel_order.assert_not_called()
+    # M-02: the caller MUST learn the exchange update failed, so it can keep the
+    # local stop equal to what the exchange holds (no over-reported protection).
+    assert ok is False
+
+
+def test_trailing_advances_local_stop_only_after_exchange_confirms():
+    """M-02 regression (source invariant): in the trailing-stop update block the
+    local pos.stop_loss must be written only AFTER a truthy _update_exchange_sl
+    result — never before. Persisting the tighter stop first (the old bug) makes
+    the position claim protection the exchange isn't holding during any downtime.
+    """
+    import inspect
+    src = inspect.getsource(LiveExecutor.check_positions)
+    # Both substrings are unique to the trailing-stop update block.
+    i_call = src.index("sl_applied = await self._update_exchange_sl(")
+    i_local = src.index("pos.stop_loss = new_sl")
+    assert i_call < i_local, (
+        "local trailing stop advanced before the exchange confirmed the tighten")
+    # And it must be inside the success branch.
+    assert "if sl_applied:" in src
+    assert src.index("if sl_applied:") < i_local
