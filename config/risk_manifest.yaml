@@ -359,6 +359,18 @@ defaults:
       still computes on demand (e.g. the admin /sentinel command) even when off —
       it warns about structural crowding but never blocks or alters a trade.
 
+  guardian_escape_enabled:
+    value: false
+    env_var: GUARDIAN_ESCAPE_ENABLED
+    description: >
+      Guardian Universal Escape Agent: when on, a safe, ordered emergency-exit
+      PLAN (which position to close first and why, ranked by liquidation
+      urgency × exposure) is sealed to the tamper-evident chain each time the
+      planner runs. Default OFF; the planner is pure, read-only and still computes
+      on demand (e.g. the admin /escape command) even when off. It PLANS only —
+      it never closes anything; execution stays with the existing kill-switch
+      stack (flatten_all_positions / close_all_positions / emergency_halt_all).
+
   per_strategy_confidence_floor_enabled:
     value: false
     env_var: PER_STRATEGY_CONFIDENCE_FLOOR_ENABLED

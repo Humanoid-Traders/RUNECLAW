@@ -1039,6 +1039,37 @@ class RuneClawEngine:
             logger.debug("Risk sentinel skipped: %s", exc)
             return None
 
+    def run_escape_agent(self, user_id: str = "") -> Optional[dict]:
+        """Guardian Universal Escape Agent: build a safe, ordered emergency-exit
+        PLAN for the current book and (when enabled) seal an ESCAPE plan on the
+        tamper-evident chain.
+
+        PLAN-ONLY + read-only + fail-open: this never closes anything. It ranks
+        the book by escape urgency (liquidation proximity × exposure) so the most
+        dangerous positions are unwound first, and names the existing execution
+        primitive to use. Returns the plan (``steps``, ``risk``, ``recommended``)
+        so a caller (e.g. the admin ``/escape`` command) can render it, or ``None``
+        when there is nothing to unwind. The ESCAPE chain event is written only
+        when ``GUARDIAN_ESCAPE_ENABLED`` is on — the planning itself always runs,
+        since it is pure. Execution stays with ``flatten_all_positions`` /
+        ``close_all_positions`` / ``emergency_halt_all``."""
+        try:
+            from bot.guardian import escape_agent as _ea
+            positions = self._twin_positions(user_id)
+            if not positions:
+                return None
+            report = _ea.plan(positions)
+            if getattr(CONFIG.risk, "guardian_escape_enabled", False):
+                try:
+                    payload = _ea.escape_payload(positions)
+                    self.audit_chain.append("ESCAPE", payload, actor=str(user_id or "operator"))
+                except Exception as exc:
+                    logger.debug("Escape plan record skipped: %s", exc)
+            return report
+        except Exception as exc:
+            logger.debug("Escape agent skipped: %s", exc)
+            return None
+
     def _sync_flight_records(self) -> None:
         """Guardian Flight Recorder: push recent joined decision records + the
         engine-verified chain status to the website (fire-and-forget, fail-open).

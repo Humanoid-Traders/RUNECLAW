@@ -395,6 +395,7 @@ class TelegramHandler:
             ("policy", self._cmd_policy),
             ("twin", self._cmd_twin),
             ("sentinel", self._cmd_sentinel),
+            ("escape", self._cmd_escape),
         ]:
             app.add_handler(CommandHandler(cmd, handler))
         app.add_handler(CallbackQueryHandler(self._handle_callback))
@@ -4302,6 +4303,48 @@ class TelegramHandler:
             lines.append("🟢 Book looks diversified — no crowding concern tripped.")
         sealed = bool(getattr(CONFIG.risk, "guardian_risk_sentinel_enabled", False))
         lines.append(f"\n<i>{'🟢 sealed to the evidence chain' if sealed else '🟡 preview only (GUARDIAN_RISK_SENTINEL_ENABLED off)'}</i>")
+        await self._send(update, "\n".join(lines))
+
+    async def _cmd_escape(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """/escape — Guardian Universal Escape Agent (admin, read-only PLAN).
+
+        Builds a safe, ORDERED emergency-exit plan for the live book: which
+        position to close first and why, ranked by escape urgency (how close each
+        sits to liquidation × how large it is), with the margin each close frees.
+        This PLANS only — it closes nothing. To actually flatten, use /closeall or
+        /emergency_stop. When GUARDIAN_ESCAPE_ENABLED is on, each run also seals an
+        ESCAPE plan on the tamper-evident chain.
+        """
+        if not self._is_admin(update):
+            await self._send(update, f"\U0001f512 {t('admin_only', self._lang(update))}")
+            return
+        report = self.engine.run_escape_agent()
+        if not report or not report.get("steps"):
+            await self._send(update,
+                "🪂 <b>Escape Agent</b> — no open positions to unwind.\n\n"
+                "<i>The escape plan orders the book by liquidation urgency so the "
+                "most dangerous positions close first. Nothing to plan while "
+                "flat.</i>")
+            return
+        _RISK_ICON = {"none": "🟢", "low": "🟡", "medium": "🟠", "high": "🔴"}
+        icon = _RISK_ICON.get(report.get("risk", "none"), "⚪")
+        lines = [
+            f"🪂 <b>Escape plan</b> — {icon} unwind urgency <b>{html.escape(str(report.get('risk','none')).upper())}</b>",
+            f"<i>{report.get('position_count', 0)} position(s) · gross "
+            f"${report.get('gross_notional_usd', 0):,.0f} · margin "
+            f"${report.get('total_margin_usd', 0):,.0f}</i>", ""]
+        for s in report.get("steps", [])[:12]:
+            liq = s.get("liq_move_pct")
+            liq_txt = f" · ~{liq}% to liq" if liq is not None else ""
+            lines.append(
+                f"<b>{s.get('order')}.</b> close <b>{html.escape(s.get('symbol',''))}</b> "
+                f"{html.escape(s.get('direction',''))} "
+                f"(${s.get('notional_usd', 0):,.0f}{liq_txt})\n"
+                f"   <i>{html.escape(s.get('reason',''))} · frees "
+                f"${s.get('margin_freed_cum_usd', 0):,.0f} cum.</i>")
+        lines.append("\n<i>Execute with /closeall (flatten) or /emergency_stop (halt + flatten).</i>")
+        sealed = bool(getattr(CONFIG.risk, "guardian_escape_enabled", False))
+        lines.append(f"<i>{'🟢 plan sealed to the evidence chain' if sealed else '🟡 preview only (GUARDIAN_ESCAPE_ENABLED off)'} · this plans, it does not close</i>")
         await self._send(update, "\n".join(lines))
 
     async def _apply_policy_callback(self, update: Update, data: str) -> None:
