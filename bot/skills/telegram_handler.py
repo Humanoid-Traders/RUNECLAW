@@ -394,6 +394,7 @@ class TelegramHandler:
             ("holdtime", self._cmd_holdtime),
             ("policy", self._cmd_policy),
             ("twin", self._cmd_twin),
+            ("sentinel", self._cmd_sentinel),
         ]:
             app.add_handler(CommandHandler(cmd, handler))
         app.add_handler(CallbackQueryHandler(self._handle_callback))
@@ -4258,6 +4259,49 @@ class TelegramHandler:
             lines.append(f"\n<i>Most fragile (adverse move to liquidation): {frag_txt}</i>")
         sealed = bool(getattr(CONFIG.risk, "guardian_digital_twin_enabled", False))
         lines.append(f"\n<i>{'🟢 sealed to the evidence chain' if sealed else '🟡 preview only (GUARDIAN_DIGITAL_TWIN_ENABLED off)'} · isolated-margin estimate</i>")
+        await self._send(update, "\n".join(lines))
+
+    async def _cmd_sentinel(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """/sentinel — Guardian Systemic Risk Sentinel (admin, read-only).
+
+        Assesses how structurally crowded the live book is right now — is too much
+        in one correlation group, is it heavily net one-direction, are many
+        positions clustered in the same group/direction or sharing a liquidation
+        zone. Pure telemetry — it warns, it changes nothing. When
+        GUARDIAN_RISK_SENTINEL_ENABLED is on, each run also seals a SENTINEL
+        verdict on the tamper-evident chain.
+        """
+        if not self._is_admin(update):
+            await self._send(update, f"\U0001f512 {t('admin_only', self._lang(update))}")
+            return
+        report = self.engine.run_risk_sentinel()
+        if not report or not report.get("position_count"):
+            await self._send(update,
+                "🛰 <b>Risk Sentinel</b> — no open positions to assess.\n\n"
+                "<i>The sentinel flags intra-book crowding (one sector, one "
+                "direction, shared liquidation zones). Nothing to assess while "
+                "flat.</i>")
+            return
+        _RISK_ICON = {"none": "🟢", "low": "🟡", "medium": "🟠", "high": "🔴"}
+        icon = _RISK_ICON.get(report.get("risk", "none"), "⚪")
+        tg = report.get("top_group", {}) or {}
+        lines = [
+            f"🛰 <b>Risk Sentinel</b> — {icon} crowding <b>{html.escape(str(report.get('risk','none')).upper())}</b>",
+            f"<i>{report.get('position_count', 0)} position(s) · gross "
+            f"${report.get('gross_notional_usd', 0):,.0f} · "
+            f"{int(report.get('net_bias', 0) * 100)}% net {html.escape(str(report.get('net_direction','')))}"
+            + (f" · top {html.escape(str(tg.get('group','')))} {tg.get('share_pct',0)}%" if tg.get('group') else "")
+            + "</i>", ""]
+        concerns = report.get("concerns", [])
+        if concerns:
+            for c in concerns:
+                c_icon = _RISK_ICON.get(c.get("severity", "none"), "⚪")
+                lines.append(f"{c_icon} <b>{html.escape(c.get('kind','').replace('_',' '))}</b> — "
+                             f"{html.escape(c.get('detail',''))}")
+        else:
+            lines.append("🟢 Book looks diversified — no crowding concern tripped.")
+        sealed = bool(getattr(CONFIG.risk, "guardian_risk_sentinel_enabled", False))
+        lines.append(f"\n<i>{'🟢 sealed to the evidence chain' if sealed else '🟡 preview only (GUARDIAN_RISK_SENTINEL_ENABLED off)'}</i>")
         await self._send(update, "\n".join(lines))
 
     async def _apply_policy_callback(self, update: Update, data: str) -> None:
