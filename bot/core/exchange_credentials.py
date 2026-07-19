@@ -47,7 +47,17 @@ _VENUE_FIELDS: dict[str, tuple[str, ...]] = {
     "bitget": ("api_key", "api_secret", "passphrase"),
     "bybit": ("api_key", "api_secret"),
     "bingx": ("api_key", "api_secret"),
+    "okx": ("api_key", "api_secret", "passphrase"),
+    "gate": ("api_key", "api_secret"),
+    "kucoin": ("api_key", "api_secret", "passphrase"),
     "hyperliquid": ("wallet_address", "agent_private_key"),
+}
+
+# venue id → ccxt exchange id (differs only where the perp product is a distinct
+# ccxt class, e.g. KuCoin futures). Used by the read-only validation + balance
+# probes for the plain key+secret[+passphrase] CEX venues.
+_CCXT_ID: dict[str, str] = {
+    "okx": "okx", "gate": "gate", "kucoin": "kucoinfutures",
 }
 _DEFAULT_VENUE = "bitget"
 # Legacy alias — the pre-multi-venue field tuple. Kept so any external reference
@@ -554,6 +564,50 @@ async def _keysecret_balance_probe(exchange_id: str, api_key: str,
                 pass
 
 
+async def _ccxt_keysecret_probe(ccxt_id: str, api_key: str, api_secret: str,
+                                passphrase: str, sandbox: bool) -> tuple[bool, str]:
+    """Read-only balance fetch for a ccxt swap venue that authenticates with
+    apiKey/secret and (optionally) a passphrase — OKX, Gate, KuCoin. Never places
+    an order."""
+    client = None
+    try:
+        import ccxt.async_support as ccxt
+    except Exception as exc:  # pragma: no cover - import guard
+        return False, f"ccxt unavailable: {exc}"
+    try:
+        factory = getattr(ccxt, ccxt_id, None)
+        if factory is None:
+            return False, f"ccxt has no exchange {ccxt_id!r}"
+        opts = {
+            "apiKey": api_key, "secret": api_secret,
+            "timeout": 15000, "enableRateLimit": True,
+            "options": {"defaultType": "swap"},
+        }
+        if passphrase:
+            opts["password"] = passphrase
+        client = factory(opts)
+        try:
+            client.set_sandbox_mode(sandbox)
+        except Exception:
+            if sandbox:
+                raise
+        bal = await client.fetch_balance()
+        free = 0.0
+        try:
+            free = float((bal.get("USDT") or {}).get("free", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            free = 0.0
+        return True, f"{free:.2f} USDT free"
+    except Exception as exc:
+        return False, str(exc)[:200]
+    finally:
+        if client is not None:
+            try:
+                await client.close()
+            except Exception:
+                pass
+
+
 async def validate_venue_credentials(venue: str, fields: dict,
                                      sandbox: bool = False) -> tuple[bool, str]:
     """Read-only-validate a user's credentials for ``venue`` (dispatches to the
@@ -568,6 +622,10 @@ async def validate_venue_credentials(venue: str, fields: dict,
     if venue in ("bybit", "bingx"):
         return await _keysecret_balance_probe(
             venue, fields["api_key"], fields["api_secret"], sandbox)
+    if venue in _CCXT_ID:   # okx, gate, kucoin (kucoin → kucoinfutures)
+        return await _ccxt_keysecret_probe(
+            _CCXT_ID[venue], fields["api_key"], fields["api_secret"],
+            fields.get("passphrase", ""), sandbox)
     return False, f"unknown venue {venue!r}"
 
 
@@ -620,16 +678,20 @@ async def balance_snapshot(venue: str, fields: dict,
                 "timeout": 15000, "enableRateLimit": True,
                 "options": {"defaultType": "swap"},
             })
-        elif venue in ("bybit", "bingx"):
-            factory = getattr(ccxt, venue, None)
+        elif venue in ("bybit", "bingx") or venue in _CCXT_ID:
+            ccxt_id = _CCXT_ID.get(venue, venue)   # kucoin → kucoinfutures
+            factory = getattr(ccxt, ccxt_id, None)
             if factory is None:
                 return {"ok": False, "venue": venue, "equity_usd": None,
-                        "detail": f"ccxt has no exchange {venue!r}"}
-            client = factory({
+                        "detail": f"ccxt has no exchange {ccxt_id!r}"}
+            opts = {
                 "apiKey": fields["api_key"], "secret": fields["api_secret"],
                 "timeout": 15000, "enableRateLimit": True,
                 "options": {"defaultType": "swap"},
-            })
+            }
+            if fields.get("passphrase"):           # okx, kucoin
+                opts["password"] = fields["passphrase"]
+            client = factory(opts)
         else:
             return {"ok": False, "venue": venue, "equity_usd": None,
                     "detail": f"unknown venue {venue!r}"}
@@ -665,9 +727,16 @@ def basic_venue_format_ok(venue: str, fields: dict) -> bool:
     if venue == "hyperliquid":
         return basic_hl_format_ok(
             fields.get("wallet_address", ""), fields.get("agent_private_key", ""))
-    if venue in ("bybit", "bingx"):
+    if venue in ("bybit", "bingx", "gate"):
         ak, sec = fields.get("api_key", ""), fields.get("api_secret", "")
         for v in (ak, sec):
+            if not v or " " in v or "\n" in v:
+                return False
+        return len(ak) >= 8 and len(sec) >= 8
+    if venue in ("okx", "kucoin"):   # key + secret + passphrase
+        ak, sec, pw = (fields.get("api_key", ""), fields.get("api_secret", ""),
+                       fields.get("passphrase", ""))
+        for v in (ak, sec, pw):
             if not v or " " in v or "\n" in v:
                 return False
         return len(ak) >= 8 and len(sec) >= 8

@@ -42,6 +42,38 @@ const VENUES = [
     ],
   },
   {
+    id: 'okx',
+    label: 'OKX',
+    balance_coin: 'USDT',
+    help: 'USDT perpetual swaps. Create API keys with trade permission and set an API passphrase; keep withdrawals disabled.',
+    fields: [
+      { key: 'api_key', label: 'API key', type: 'text' },
+      { key: 'api_secret', label: 'API secret', type: 'password' },
+      { key: 'passphrase', label: 'Passphrase', type: 'password' },
+    ],
+  },
+  {
+    id: 'gate',
+    label: 'Gate.io',
+    balance_coin: 'USDT',
+    help: 'USDT perpetual swaps. Create API keys with futures trade permission; keep withdrawals disabled.',
+    fields: [
+      { key: 'api_key', label: 'API key', type: 'text' },
+      { key: 'api_secret', label: 'API secret', type: 'password' },
+    ],
+  },
+  {
+    id: 'kucoin',
+    label: 'KuCoin Futures',
+    balance_coin: 'USDT',
+    help: 'USDT perpetual futures. Create Futures API keys with trade permission and set an API passphrase; keep withdrawals disabled.',
+    fields: [
+      { key: 'api_key', label: 'API key', type: 'text' },
+      { key: 'api_secret', label: 'API secret', type: 'password' },
+      { key: 'passphrase', label: 'Passphrase', type: 'password' },
+    ],
+  },
+  {
     id: 'hyperliquid',
     label: 'Hyperliquid (DEX)',
     balance_coin: 'USDC',
