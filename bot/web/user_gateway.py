@@ -33,6 +33,7 @@ import hmac
 import html as _html
 import os
 import re
+import time
 from datetime import datetime, timezone
 
 from aiohttp import web
@@ -773,6 +774,98 @@ async def handle_holdings(request: web.Request) -> web.Response:
     })
 
 
+# ── Idle-Asset Yield Optimizer (read-only recommendation) ────────────────────
+#
+# One brain, one language: the optimizer lives in Python (bot.core.idle_yield);
+# the web POSTs the caller's idle holdings and gets back the best cross-source
+# rate per asset — non-custodial (Lido/Aave, live) preferred honestly over a
+# marginally-higher custodial CEX Earn rate. Recommendation-only: this endpoint
+# never moves a cent (there is no execution code here at all).
+
+_NONCUSTODIAL_CACHE: dict = {"at": 0.0, "options": []}
+_NONCUSTODIAL_TTL_SEC = 900.0        # 15 min — DeFi rates move slowly
+
+
+def _noncustodial_options_cached() -> list:
+    """Live non-custodial options with a 15-min in-process cache. Honest-empty
+    on a fetch failure (never a stale-forever or fabricated rate)."""
+    now = time.monotonic()
+    if now - _NONCUSTODIAL_CACHE["at"] < _NONCUSTODIAL_TTL_SEC and _NONCUSTODIAL_CACHE["options"]:
+        return _NONCUSTODIAL_CACHE["options"]
+    try:
+        from bot.core.idle_yield_feeds import fetch_noncustodial_options
+        opts = fetch_noncustodial_options()
+    except Exception as exc:
+        system_log.debug("Idle-yield non-custodial fetch failed: %s", exc)
+        opts = []
+    if opts:                              # only cache a good result
+        _NONCUSTODIAL_CACHE["at"] = now
+        _NONCUSTODIAL_CACHE["options"] = opts
+    return opts
+
+
+def _sanitize_holdings(raw: object) -> list:
+    """Accept only well-shaped {asset, usd_value} rows from the client; drop
+    everything else. The optimizer is pure, but this keeps a malformed body
+    from reaching it."""
+    out = []
+    if not isinstance(raw, list):
+        return out
+    for h in raw[:200]:                   # bound the work
+        if not isinstance(h, dict):
+            continue
+        asset = str(h.get("asset") or "").upper().strip()[:20]
+        try:
+            usd = float(h.get("usd_value"))
+        except (TypeError, ValueError):
+            continue
+        if not asset or not (usd == usd) or usd <= 0 or usd in (float("inf"), float("-inf")):
+            continue
+        row = {"asset": asset, "usd_value": usd}
+        if h.get("location"):
+            row["location"] = str(h.get("location"))[:40]
+        out.append(row)
+    return out
+
+
+async def handle_idle_yield(request: web.Request) -> web.Response:
+    """POST /gateway/idleyield — best cross-source rate per idle asset.
+
+    Body: ``{telegram_id, holdings:[{asset,usd_value,location?}], prefer_noncustodial?}``.
+    Builds options from LIVE non-custodial feeds (Lido/Aave via DefiLlama) and
+    runs the pure optimizer. Read-only; nothing is moved.
+    """
+    import asyncio
+
+    tg_handler = request.app["tg_handler"]
+    body = await _json_body(request)
+    tg_id = str(body.get("telegram_id") or "").strip()
+    err = _guard_user(tg_handler, tg_id)
+    if err is not None:
+        return err
+
+    holdings = _sanitize_holdings(body.get("holdings"))
+    prefer_nc = body.get("prefer_noncustodial")
+    prefer_nc = True if prefer_nc is None else bool(prefer_nc)
+    if not holdings:
+        return web.json_response({"read_only": True, "recommendations": [],
+                                  "total_idle_usd": 0.0, "total_deployable_usd": 0.0,
+                                  "total_est_year_usd": 0.0, "unmatched": [],
+                                  "note": "No idle assets supplied."})
+    try:
+        options = await asyncio.to_thread(_noncustodial_options_cached)
+        from bot.core.idle_yield import optimize
+        report = optimize(holdings, options, prefer_noncustodial=prefer_nc)
+    except Exception as exc:
+        audit(system_log, f"Idle-yield optimize failed for {tg_id}: {exc}",
+              action="web_idleyield", result="ERROR")
+        return web.json_response({"read_only": True, "error": "idleyield_unavailable"})
+    report["read_only"] = True
+    report["sources"] = {"noncustodial": len(options)}
+    report["updated_at"] = datetime.now(timezone.utc).isoformat()
+    return web.json_response(report)
+
+
 # ── Intent Compiler authoring (OPERATOR only) ────────────────────────────────
 #
 # Web parity for the Telegram /policy compile→preview→confirm→bind loop. These
@@ -920,6 +1013,7 @@ def build_gateway(engine, tg_handler) -> web.Application:
     app.router.add_get("/portfolio", handle_portfolio)
     app.router.add_get("/networth", handle_networth)
     app.router.add_get("/holdings", handle_holdings)
+    app.router.add_post("/idleyield", handle_idle_yield)
     app.router.add_post("/trade/propose", handle_trade_propose)
     app.router.add_post("/trade/confirm", handle_trade_confirm)
     app.router.add_post("/trade/cancel", handle_trade_cancel)

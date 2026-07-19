@@ -23,6 +23,7 @@ const { maybeHandleRwaChat } = require('../lib/rwa');
 const { maybeHandleWalletChat } = require('../lib/wallet');
 const { maybeHandleDefiChat } = require('../lib/defi');
 const { maybeHandleNetWorthChat } = require('../lib/networth');
+const { maybeHandleIdleYieldChat } = require('../lib/idle_yield');
 const { maybeHandleExposureChat } = require('../lib/exposure');
 const { maybeHandleResearchChat } = require('../lib/research');
 
@@ -78,6 +79,12 @@ router.post('/', chatLimit, async (req, res) => {
       const identNW = await resolveBotIdentity(req);
       const nwReply = await maybeHandleNetWorthChat(identNW, req.user.user_id, text);
       if (nwReply) return res.json(nwReply);
+    }
+    // "idle" / "best rate" / "earn more" — idle-asset yield optimizer.
+    if (/\bidle|earn more|best (rate|yield|apy)|put .* to work|stake my|where can i earn\b/i.test(text)) {
+      const identIY = await resolveBotIdentity(req);
+      const iyReply = await maybeHandleIdleYieldChat(identIY, req.user.user_id, text);
+      if (iyReply) return res.json(iyReply);
     }
     if (!gateway.isConfigured()) {
       return res.status(503).json({ error: 'Chat not configured' });
