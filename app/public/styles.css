@@ -703,3 +703,17 @@ body::after {
   15% { opacity: 1; } 60%, 100% { transform: translateY(260%); opacity: 0; }
 }
 #rc-constellation { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 0; pointer-events: none; opacity: .75; }
+
+/* Language switcher (web i18n) — a compact, tokenized select in the top nav. */
+.rc-lang-select {
+  appearance: none; -webkit-appearance: none;
+  background: var(--surface-2); color: var(--text-2);
+  border: 1px solid var(--line); border-radius: var(--radius-sm);
+  font: inherit; font-size: var(--fs-sm); padding: 6px 26px 6px 10px;
+  cursor: pointer; line-height: 1.2;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path d='M1 1l4 4 4-4' fill='none' stroke='%238a90a0' stroke-width='1.5' stroke-linecap='round'/></svg>");
+  background-repeat: no-repeat; background-position: right 9px center;
+}
+.rc-lang-select:hover { color: var(--text); border-color: var(--text-3); }
+.rc-lang-select:focus-visible { outline: 2px solid var(--gold); outline-offset: 1px; }
+:root[dir="rtl"] .rc-lang-select { padding: 6px 10px 6px 26px; background-position: left 9px center; }
