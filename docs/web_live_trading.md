@@ -46,17 +46,23 @@ legacy flag can ever open this path.
 Because every default is OFF/none, **no live web order is possible yet** — this
 is the safe decision spine everything else hangs off.
 
-## Remaining stages (not in this PR)
+## Stages (status)
 
-2. **Per-user Authority Envelope binding** — web UI + store so a user sets their
-   envelope (max notional, symbols, daily drawdown) and RUNECLAW binds it to
-   their executor; `_web_envelope_enforcing` reads it (the seam is already here).
-3. **Per-user live executor routing on own keys** — confirm routes an
-   envelope-authorized web trade to the user's own-keys executor; per-user loss
-   breakers (already built) apply.
-4. **Operator enablement runbook** — set `WEB_LIVE_TRADING_ENABLED=1`, per-user
-   `web_live_enabled`, and require an enforce-mode envelope before any web user
-   can go live. Roll out to a small allowlist first.
+2. **Per-user Authority Envelope binding — DONE** (say-it-in-words NL compiler +
+   per-user store + web card; `_web_envelope_enforcing` reads the store).
+3. **Per-trade envelope authorization at confirm — DONE.** When the gate passes,
+   `handle_trade_confirm` calls `_authorize_web_live_trade`: it reconstructs the
+   order (venue from the user's active keys, market_type=swap, symbol, notional =
+   manual margin × configured leverage) and runs `authority.authorize` against the
+   bound enforce-mode envelope with the 24h spend from a per-user
+   `AuthoritySpendLedger`. FAIL-CLOSED — a symbol/venue/notional/daily-cap
+   violation, or an auto-sized order whose notional can't be verified against a
+   cap, returns `authority_denied`. Only an allow records the spend and proceeds
+   to `engine.confirm_trade(user_id=…)`, which routes to the user's own-keys
+   executor (per-user loss breakers apply).
+4. **Operator enablement runbook** (still ahead) — set `WEB_LIVE_TRADING_ENABLED=1`,
+   per-user `web_live_enabled`, require an enforce-mode envelope. Roll out to a
+   small allowlist first. `WEB_LIVE_LEDGER_PATH` persists the 24h spend book.
 
 ## Architecture note — is the bot a blocker?
 

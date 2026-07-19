@@ -475,6 +475,74 @@ def _web_live_decision(app, tg_handler, tg_id: str):
     )
 
 
+_WEB_LIVE_LEDGER = None
+
+
+def _web_live_ledger():
+    """Process-wide 24h notional spend ledger for web-live authority checks."""
+    global _WEB_LIVE_LEDGER
+    if _WEB_LIVE_LEDGER is None:
+        from bot.guardian.authority_ledger import AuthoritySpendLedger
+        _WEB_LIVE_LEDGER = AuthoritySpendLedger(
+            state_file=os.environ.get("WEB_LIVE_LEDGER_PATH",
+                                      "data/web_live_ledger.json"))
+    return _WEB_LIVE_LEDGER
+
+
+def _authorize_web_live_trade(app, engine, tg_id: str, trade_id: str) -> tuple[bool, list]:
+    """Authorize a specific web-live trade against the user's ENFORCE-mode
+    Authority Envelope. FAIL-CLOSED: any missing piece → deny.
+
+    Reconstructs the trade action (venue, market_type, symbol, notional) from the
+    pending idea + the user's active venue and configured leverage, runs
+    ``authority.authorize`` against the bound envelope with the 24h spend already
+    recorded, and — only on allow — records this trade's notional. Returns
+    ``(allowed, reasons)``.
+    """
+    import time as _time
+    try:
+        from bot.guardian.user_authority_store import get_user_authority_store
+        from bot.guardian.authority import authorize
+        env = get_user_authority_store().get(tg_id)
+        if not env:
+            return False, ["no Authority Envelope is bound"]
+        idea = getattr(engine, "_pending_ideas", {}).get(trade_id)
+        if idea is None:
+            return False, ["the proposed trade is no longer pending"]
+        asset = str(getattr(idea, "asset", "")).split("/")[0]
+        # Active venue for this user (their own connected keys).
+        try:
+            from bot.core.exchange_credentials import get_credential_store
+            venue = get_credential_store().get_venue(tg_id)
+        except Exception:
+            venue = ""
+        # Notional = manual margin × configured leverage. Auto-sized (no margin)
+        # → notional unknown → authorize() denies against any per-trade cap.
+        margin = getattr(engine, "_manual_margin_override", {}).get(trade_id)
+        notional = None
+        if margin is not None:
+            try:
+                exch = getattr(CONFIG, "exchange", None)
+                lev = float(getattr(exch, "default_leverage", 5) or 5)
+                notional = float(margin) * max(1.0, lev)
+            except (TypeError, ValueError):
+                notional = None
+        action = {"kind": "trade", "venue": venue, "market_type": "swap",
+                  "asset": asset, "notional_usd": notional}
+        now = _time.time()
+        ledger = _web_live_ledger()
+        spent = ledger.spent(tg_id, now)
+        result = authorize(env, action, now_ts=now, spent_today_usd=spent)
+        if result.get("decision") != "allow":
+            return False, list(result.get("reasons") or ["not authorized"])
+        if notional:
+            ledger.record(tg_id, notional, now, ref=trade_id)
+        return True, []
+    except Exception as exc:
+        system_log.warning("Web-live authorization error for %s: %s", tg_id, exc)
+        return False, ["authorization check failed"]
+
+
 def _trade_mode(app, tg_handler, tg_id: str) -> tuple[str, bool, str]:
     """(mode, live_allowed, reason) — the live-execution decision.
 
@@ -607,6 +675,16 @@ async def handle_trade_confirm(request: web.Request) -> web.Response:
             return web.json_response(
                 {"error": "live_not_enabled", "detail": dec.reason,
                  "checklist": dec.checklist}, status=403)
+        # Gate passed → this trade will route LIVE on the user's own keys. The
+        # enforce-mode Authority Envelope must now authorize THIS specific order
+        # (venue, symbol, notional, 24h spend). Fail-closed: any deny blocks it.
+        ok, reasons = _authorize_web_live_trade(request.app, engine, tg_id, trade_id)
+        if not ok:
+            audit(system_log, f"Web-live trade DENIED by authority: {trade_id}",
+                  action="web_authority_deny", result="DENY", data={"user": tg_id})
+            return web.json_response(
+                {"error": "authority_denied", "detail": "; ".join(reasons),
+                 "reasons": reasons}, status=403)
     # Live gate — same H-18 check as the Telegram confirm path (non-web ids).
     elif CONFIG.is_live() and not _is_admin_id(tg_handler, tg_id):
         if not tg_handler._can_trade_live(tg_id):
