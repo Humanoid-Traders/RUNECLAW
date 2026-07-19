@@ -1011,6 +1011,34 @@ class RuneClawEngine:
             logger.debug("Digital twin skipped: %s", exc)
             return None
 
+    def run_risk_sentinel(self, user_id: str = "") -> Optional[dict]:
+        """Guardian Systemic Risk Sentinel: assess intra-book crowding /
+        concentration and (when enabled) seal a SENTINEL verdict on the
+        tamper-evident chain.
+
+        Read-only telemetry + fail-open: it never proposes, blocks, or alters a
+        trade. Returns the crowding assessment (``concerns``, ``risk``,
+        ``top_group``, ``net_bias``) so a caller (e.g. the admin ``/sentinel``
+        command) can render it, or ``None`` when there is nothing to assess. The
+        SENTINEL chain event is written only when ``GUARDIAN_RISK_SENTINEL_ENABLED``
+        is on — the assessment itself always runs, since it is pure."""
+        try:
+            from bot.guardian import risk_sentinel as _rs
+            positions = self._twin_positions(user_id)
+            if not positions:
+                return None
+            report = _rs.analyze(positions)
+            if getattr(CONFIG.risk, "guardian_risk_sentinel_enabled", False):
+                try:
+                    payload = _rs.sentinel_payload(positions)
+                    self.audit_chain.append("SENTINEL", payload, actor=str(user_id or "operator"))
+                except Exception as exc:
+                    logger.debug("Sentinel verdict record skipped: %s", exc)
+            return report
+        except Exception as exc:
+            logger.debug("Risk sentinel skipped: %s", exc)
+            return None
+
     def _sync_flight_records(self) -> None:
         """Guardian Flight Recorder: push recent joined decision records + the
         engine-verified chain status to the website (fire-and-forget, fail-open).

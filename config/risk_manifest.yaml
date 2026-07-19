@@ -348,6 +348,17 @@ defaults:
       read-only foresight that still computes on demand (e.g. the admin /twin
       command) even when off — it never proposes, blocks, or alters a trade.
 
+  guardian_risk_sentinel_enabled:
+    value: false
+    env_var: GUARDIAN_RISK_SENTINEL_ENABLED
+    description: >
+      Guardian Systemic Risk Sentinel: when on, an intra-book crowding verdict
+      (correlated concentration, directional bias, same-group clusters, shared
+      liquidation zones) is sealed to the tamper-evident chain each time the
+      sentinel runs. Default OFF; the sentinel is pure, read-only telemetry that
+      still computes on demand (e.g. the admin /sentinel command) even when off —
+      it warns about structural crowding but never blocks or alters a trade.
+
   per_strategy_confidence_floor_enabled:
     value: false
     env_var: PER_STRATEGY_CONFIDENCE_FLOOR_ENABLED

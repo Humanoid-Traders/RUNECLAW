@@ -526,6 +526,14 @@ class RiskLimits:
     # blocks, or alters a trade; it only describes how the current book would
     # fare under parametric price shocks.
     guardian_digital_twin_enabled: bool = _env_bool("GUARDIAN_DIGITAL_TWIN_ENABLED", False)
+    # Guardian Systemic Risk Sentinel: master switch for SEALING an intra-book
+    # crowding/concentration verdict (bot/guardian/risk_sentinel.py) to the
+    # tamper-evident chain when the sentinel runs. Default OFF → the sentinel
+    # still computes on demand (pure, read-only — e.g. the admin /sentinel
+    # command), but no SENTINEL event is written until an operator opts in. It
+    # warns about structural crowding (one sector, one direction, shared
+    # liquidation zones); it never proposes, blocks, or alters a trade.
+    guardian_risk_sentinel_enabled: bool = _env_bool("GUARDIAN_RISK_SENTINEL_ENABLED", False)
     # Kelly-criterion sizing (default ON; runbook stage 2, tighten-only). evaluate() also
     # derives a half-Kelly size from realized trade history and takes the SMALLER
     # of {fixed-fractional, Kelly}: Kelly can only TIGHTEN size, never grow it, and
