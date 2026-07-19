@@ -86,3 +86,33 @@ a follow-up; PR-2 ships operator-file authoring + read-only surfaces.)
 |---|---|---|
 | `INTENT_POLICY_ENABLED` | `false` | master switch — off = hook skipped entirely |
 | `INTENT_POLICY_PATH` | `config/intent_policy.json` | operator policy file |
+
+## Authoring from Telegram (PR-2b)
+
+An operator (admin) authors and manages the policy in plain language — the AI
+proposes, deterministic controls compile, and nothing binds without an explicit
+tap:
+
+| command | effect |
+|---|---|
+| `/policy` | show the active policy, its mode, and whether enforcement is on |
+| `/policy set <plain English>` | `compile_nl` → `compile_policy` → **preview the compiled rules + any cap-clamp warnings** with inline confirm buttons |
+| *(tap)* `Apply (shadow)` / `Apply (enforce)` | persist to `config/intent_policy.json` (atomic write) and hot-reload onto the live engine |
+| `/policy mode shadow\|enforce\|off` | change the active policy's mode |
+| `/policy clear` | remove the policy |
+
+Example: `/policy set only majors, max 5% per trade, no shorts, min confidence 70%`
+→ compiles to `allowed_symbols`, `max_position_pct`, `direction: long_only`,
+`min_confidence` and shows them for review.
+
+Safety of the authoring path:
+- **Admin-gated** command; the apply buttons carry the same `mode` permission as
+  a strategy-mode change, and are the *only* place a policy is persisted/bound.
+- **Shadow-first** — the preview's primary button applies in shadow (logs
+  would-be rejections, blocks nothing). Enforce is the explicit second button.
+- **Dormant unless enabled** — with `INTENT_POLICY_ENABLED` off, an authored
+  policy is saved but not consulted; the reply says so.
+- **Provably one** — a policy's hash/`policy_id` is derived from its *rules*
+  (not its label), so the authored artifact and the enforced artifact are
+  identical across the write→reload round-trip, and the `POLICY_DECISION` record
+  proves which one ran.

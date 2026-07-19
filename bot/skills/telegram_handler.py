@@ -392,6 +392,7 @@ class TelegramHandler:
             ("zones", self._cmd_zones),
             ("squeeze", self._cmd_squeeze),
             ("holdtime", self._cmd_holdtime),
+            ("policy", self._cmd_policy),
         ]:
             app.add_handler(CommandHandler(cmd, handler))
         app.add_handler(CallbackQueryHandler(self._handle_callback))
@@ -4085,6 +4086,155 @@ class TelegramHandler:
             "<i>Nothing changes until you confirm. The 23-check risk gate, "
             "loss breakers and drawdown caps apply in every stance.</i>",
             reply_markup=kb)
+
+    async def _cmd_policy(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """/policy — Guardian Intent Compiler authoring (admin).
+
+        /policy                → show the active policy + mode + enforce state
+        /policy set <plain EN>  → compile a policy from a sentence, preview + confirm
+        /policy mode shadow|enforce|off → change the active policy's mode
+        /policy clear           → remove the policy
+
+        The AI proposes (compiles your sentence into typed rules); nothing binds
+        until you tap a confirm button. A policy can only TIGHTEN the engine's
+        caps, and defaults to shadow (logs would-be rejections, blocks nothing).
+        """
+        if not self._is_admin(update):
+            await self._send(update, f"\U0001f512 {t('admin_only', self._lang(update))}")
+            return
+        from bot.guardian import intent_policy as ip
+        args = list(ctx.args or [])
+        sub = args[0].lower() if args else ""
+        uid = update.effective_user.id if update.effective_user else 0
+
+        if sub in ("", "show"):
+            summ = self.engine._intent_policy_summary()
+            enabled = bool(getattr(CONFIG.risk, "intent_policy_enabled", False))
+            if not summ:
+                await self._send(update,
+                    "🛡 <b>Intent policy</b> — none set.\n\n"
+                    "Author one in plain language, e.g.\n"
+                    "<code>/policy set only majors, max 5% per trade, "
+                    "no shorts, min confidence 70%</code>\n\n"
+                    f"<i>Enforcement flag INTENT_POLICY_ENABLED is "
+                    f"<b>{'ON' if enabled else 'OFF'}</b>. The engine's 23-check "
+                    "risk gate always applies regardless.</i>")
+                return
+            body = ip.human_readable(summ)
+            state = ("🟢 active" if enabled else "🟡 saved, dormant (INTENT_POLICY_ENABLED off)")
+            await self._send(update,
+                f"🛡 <b>Intent policy</b> — {state}\n\n<pre>{html.escape(body)}</pre>\n"
+                "<i>/policy mode shadow|enforce|off · /policy clear · "
+                "/policy set …</i>")
+            return
+
+        if sub == "set":
+            nl = " ".join(args[1:]).strip()
+            if not nl:
+                await self._send(update,
+                    "Usage: <code>/policy set only majors, max 5% per trade, "
+                    "no shorts</code>")
+                return
+            parsed = ip.compile_nl(nl)
+            if not parsed.get("rules"):
+                await self._send(update,
+                    "I couldn't turn that into any rules. Try phrasings like "
+                    "“max 5% per trade”, “only majors”, “no shorts”, "
+                    "“min confidence 70%”, “stop if down 8%”.")
+                return
+            policy = ip.compile_policy({
+                "mode": "shadow", "source_text": nl,
+                "label": "Operator policy",
+                "rules": parsed["rules"],
+            }, self.engine._intent_engine_caps())
+            if not hasattr(self, "_pending_policy"):
+                self._pending_policy = {}
+            self._pending_policy[uid] = policy
+            unparsed_note = ""
+            body = ip.human_readable(policy)
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("👁 Apply (shadow)", callback_data="policy_apply_shadow"),
+                 InlineKeyboardButton("🛡 Apply (enforce)", callback_data="policy_apply_enforce")],
+                [InlineKeyboardButton("Cancel", callback_data="policy_cancel")],
+            ])
+            await self._send(update,
+                f"🛡 <b>Compiled this policy</b> — review before it binds:\n\n"
+                f"<pre>{html.escape(body)}</pre>\n{unparsed_note}"
+                "<i>Shadow logs would-be rejections without blocking. Enforce "
+                "adds them to the risk gate as tighten-only rejections. Nothing "
+                "changes until you tap.</i>",
+                reply_markup=kb)
+            return
+
+        if sub == "mode":
+            m = (args[1].lower() if len(args) > 1 else "")
+            if m not in ("off", "shadow", "enforce"):
+                await self._send(update, "Usage: <code>/policy mode shadow|enforce|off</code>")
+                return
+            try:
+                bound = self.engine.set_intent_policy_mode(m)
+            except FileNotFoundError:
+                await self._send(update, "No policy to change. Set one with <code>/policy set …</code>")
+                return
+            except Exception as exc:
+                await self._send(update, f"Couldn't change mode: {html.escape(str(exc))}")
+                return
+            enabled = bool(getattr(CONFIG.risk, "intent_policy_enabled", False))
+            tail = ("" if enabled else
+                    "\n<i>(Enforcement flag INTENT_POLICY_ENABLED is off, so it's "
+                    "saved but dormant until enabled + restart.)</i>")
+            await self._send(update, f"✅ Policy mode → <b>{m}</b>.{tail}")
+            return
+
+        if sub == "clear":
+            removed = self.engine.clear_intent_policy()
+            await self._send(update,
+                "🗑 Policy cleared." if removed else "No policy was set.")
+            return
+
+        await self._send(update,
+            "Usage: <code>/policy</code> · <code>/policy set …</code> · "
+            "<code>/policy mode shadow|enforce|off</code> · <code>/policy clear</code>")
+
+    async def _apply_policy_callback(self, update: Update, data: str) -> None:
+        """Confirm/cancel for /policy set — the SOLE place a compiled policy is
+        persisted and bound to the live engine. Admin-perm gated upstream in
+        _handle_callback (data.startswith('policy_') → 'mode' permission)."""
+        uid = update.effective_user.id if update.effective_user else 0
+        pend = getattr(self, "_pending_policy", {})
+        if data == "policy_cancel":
+            pend.pop(uid, None)
+            await self._send(update, "👍 Cancelled — nothing changed.", edit=True)
+            return
+        policy = pend.pop(uid, None)
+        if not policy:
+            await self._send(update,
+                "That policy preview expired. Run <code>/policy set …</code> again.",
+                edit=True)
+            return
+        mode = "enforce" if data == "policy_apply_enforce" else "shadow"
+        policy = dict(policy)
+        policy["mode"] = mode
+        try:
+            bound = self.engine.write_intent_policy(policy)
+        except Exception as exc:
+            await self._send(update,
+                f"Couldn't save policy: {html.escape(str(exc))}", edit=True)
+            return
+        enabled = bool(getattr(CONFIG.risk, "intent_policy_enabled", False))
+        if enabled and bound:
+            state = f"🟢 active in <b>{mode}</b> mode"
+        else:
+            state = (f"🟡 saved in <b>{mode}</b> mode but dormant — "
+                     "INTENT_POLICY_ENABLED is off (enable + restart to activate)")
+        audit(system_log, f"Intent policy applied via Telegram: {policy.get('policy_id')} mode={mode}",
+              action="intent_policy_apply", result="APPLIED",
+              data={"policy_id": policy.get("policy_id"), "mode": mode,
+                    "hash": policy.get("compiled_hash"), "bound": bool(bound)})
+        await self._send(update,
+            f"🛡 Policy applied — {state}.\n"
+            "<i>The 23-check risk gate always applies; a policy can only add "
+            "tighten-only rejections.</i>", edit=True)
 
     async def _cmd_agent(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """/agent — your agent's posture in plain language, with one-tap
@@ -8207,6 +8357,10 @@ class TelegramHandler:
         _required_perm = _DESTRUCTIVE_CB_PERM.get(data)
         if _required_perm is None and data.startswith("mode_"):
             _required_perm = "mode"
+        # Guardian intent-policy apply buttons change enforcement → same gate as
+        # a strategy-mode change. Cancel is harmless (no perm needed).
+        if _required_perm is None and data.startswith("policy_") and data != "policy_cancel":
+            _required_perm = "mode"
         if _required_perm and not self.users.has_permission(self._get_tg_id(update), _required_perm):
             role = (self.users.get(self._get_tg_id(update)) or {}).get("role", "pending")
             await self._send(update,
@@ -8229,6 +8383,11 @@ class TelegramHandler:
                         parse_mode="HTML")
                 except Exception:
                     pass
+            return
+
+        # ── Guardian intent-policy authoring confirm buttons ──
+        if data.startswith("policy_"):
+            await self._apply_policy_callback(update, data)
             return
 
         # ── Stance proposal declined ─────────────────────────

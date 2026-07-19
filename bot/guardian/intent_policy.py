@@ -103,11 +103,17 @@ def _canon(rules: list[dict], meta: dict) -> str:
         ),
         key=lambda r: (str(r["type"]), json.dumps(r["value"], sort_keys=True, default=str)),
     )
-    return json.dumps({"v": POLICY_VERSION, "meta": meta, "rules": norm},
+    # A policy's IDENTITY is its enforceable rules + schema version — NOT its
+    # cosmetic label. Excluding the label keeps the hash (and policy_id) stable
+    # across a write→reload round-trip even when the label was resolved from a
+    # default, so the authored policy and the enforced policy are provably one.
+    return json.dumps({"v": POLICY_VERSION, "rules": norm},
                       sort_keys=True, default=str)
 
 
 def policy_hash(rules: list[dict], meta: Optional[dict] = None) -> str:
+    # ``meta`` is accepted for backward compatibility but no longer hashed
+    # (identity is the rules, not the label). See _canon.
     return hashlib.sha256(_canon(rules, meta or {}).encode("utf-8")).hexdigest()
 
 
@@ -442,3 +448,73 @@ def compile_nl(text: str) -> dict:
 
     return {"rules": rules, "matched": matched,
             "unparsed": (text or "").strip()[:500]}
+
+
+# ── human-readable rendering (for Telegram / web review) ──────────────
+
+def _fmt_pct(v):
+    try:
+        f = float(v)
+        return f"{f:g}%"
+    except (TypeError, ValueError):
+        return str(v)
+
+
+def _rule_line(rule: dict) -> str:
+    """One plain-language line for a compiled rule. Deterministic, no markup."""
+    t = rule.get("type")
+    v = rule.get("value")
+    if t == "max_position_pct":
+        return f"Max {_fmt_pct(v)} of equity per trade"
+    if t == "max_symbol_exposure_pct":
+        return f"Max {_fmt_pct(v)} exposure in any one symbol"
+    if t == "max_portfolio_exposure_pct":
+        return f"Max {_fmt_pct(v)} total portfolio exposure"
+    if t == "max_open_positions":
+        n = _num(v)
+        return f"Max {int(n)} open positions" if n is not None else f"Max {v} open positions"
+    if t == "min_confidence":
+        c = _num(v)
+        return f"Min confidence {c * 100:g}%" if c is not None else f"Min confidence {v}"
+    if t == "min_rr":
+        return f"Min reward:risk {v}R"
+    if t == "max_daily_loss_pct":
+        return f"Stand down at {_fmt_pct(v)} daily loss"
+    if t == "max_drawdown_pct":
+        return f"Stand down at {_fmt_pct(v)} drawdown"
+    if t == "min_free_margin_pct":
+        return f"Keep at least {_fmt_pct(v)} free margin"
+    if t == "allowed_symbols":
+        return f"Only trade: {', '.join(v)}" if isinstance(v, list) else f"Only trade: {v}"
+    if t == "blocked_symbols":
+        return f"Never trade: {', '.join(v)}" if isinstance(v, list) else f"Never trade: {v}"
+    if t == "allowed_strategy_types":
+        return f"Only strategies: {', '.join(v)}" if isinstance(v, list) else f"Only strategies: {v}"
+    if t == "direction":
+        return "Long only (no shorts)" if v == "long_only" else "Short only (no longs)"
+    return f"{t}: {v}"
+
+
+def human_readable(policy: Optional[dict]) -> str:
+    """Render a compiled policy as plain text (no markup) for operator review.
+
+    Lists the mode, id, every rule as a sentence, and any compile warnings
+    (e.g. a value clamped to the engine cap). Pure — safe to call anywhere.
+    """
+    if not policy or not policy.get("rules"):
+        return "No policy (the engine's own risk gate still applies in full)."
+    lines = []
+    label = policy.get("label") or "Untitled policy"
+    lines.append(f"{label}  ·  mode: {policy.get('mode', 'shadow')}  ·  {policy.get('policy_id', '')}")
+    for r in policy["rules"]:
+        try:
+            lines.append("• " + _rule_line(r))
+        except Exception:
+            continue
+    warnings = policy.get("warnings") or []
+    if warnings:
+        lines.append("")
+        lines.append("Adjusted to stay within engine caps:")
+        for w in warnings[:8]:
+            lines.append("  – " + str(w))
+    return "\n".join(lines)

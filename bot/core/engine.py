@@ -849,6 +849,60 @@ class RuneClawEngine:
         (e.g. after editing the file or flipping shadow→enforce). Fail-open."""
         return self._load_intent_policy_onto(self.risk, owner="operator")
 
+    def _intent_policy_path(self) -> str:
+        import os as _os
+        return _os.getenv("INTENT_POLICY_PATH", "config/intent_policy.json")
+
+    def write_intent_policy(self, policy: dict) -> Optional[dict]:
+        """Guardian Intent authoring: persist a compiled policy to disk and
+        reload it onto the live engine. Returns the BOUND policy (what the risk
+        gate will actually consult) — ``None`` when nothing bound (e.g. the
+        ``INTENT_POLICY_ENABLED`` flag is off, so it is saved-but-dormant until
+        the operator enables + restarts). Fail-open: a write/reload fault raises
+        so the caller can surface it, but never leaves the engine half-bound.
+        """
+        import json as _json
+        import os as _os
+        path = self._intent_policy_path()
+        _os.makedirs(_os.path.dirname(path) or ".", exist_ok=True)
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            _json.dump(policy, fh, indent=2, sort_keys=False)
+        _os.replace(tmp, path)   # atomic
+        return self.reload_intent_policy()
+
+    def set_intent_policy_mode(self, mode: str) -> Optional[dict]:
+        """Flip the on-disk policy's mode (off | shadow | enforce) and reload.
+        Returns the bound policy (or None). Raises if there is no policy file."""
+        import json as _json
+        import os as _os
+        if mode not in ("off", "shadow", "enforce"):
+            raise ValueError(f"invalid mode {mode!r}")
+        path = self._intent_policy_path()
+        if not _os.path.exists(path):
+            raise FileNotFoundError("no intent policy to change")
+        with open(path, "r", encoding="utf-8") as fh:
+            spec = _json.load(fh)
+        spec["mode"] = mode
+        return self.write_intent_policy(spec)
+
+    def clear_intent_policy(self) -> bool:
+        """Remove the on-disk policy and unbind it from the live engine.
+        Returns True if a policy file was removed. Fail-open."""
+        import os as _os
+        path = self._intent_policy_path()
+        removed = False
+        try:
+            if _os.path.exists(path):
+                _os.remove(path)
+                removed = True
+        finally:
+            try:
+                self.risk.set_intent_policy(None)
+            except Exception:
+                pass
+        return removed
+
     def _emit_policy_decision(self, recheck, trade_id: str, symbol: str, user_id: str = "") -> None:
         """Guardian: seal a first-class POLICY_DECISION event (the Policy Decision
         Record) on the tamper-evident chain when a compiled policy was consulted

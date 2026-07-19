@@ -244,3 +244,43 @@ def test_round_trip_nl_to_enforcement():
     bad = ip.evaluate_policy(pol, {"position_pct": 9, "asset": "DOGE/USDT", "confidence": 0.6})
     assert bad["verdict"] == "reject"
     assert len(bad["violations"]) == 3
+
+
+# ── human_readable + on-disk round-trip (PR-2b authoring) ─────────────
+
+def test_human_readable_renders_rules_and_warnings():
+    pol = ip.compile_policy({
+        "label": "Conservative", "mode": "shadow",
+        "rules": [
+            {"type": "max_position_pct", "value": 5},
+            {"type": "allowed_symbols", "value": ["BTC", "ETH"]},
+            {"type": "direction", "value": "long_only"},
+            {"type": "min_confidence", "value": 0.7},
+            {"type": "max_symbol_exposure_pct", "value": 50},   # clamped → warning
+        ],
+    }, ENGINE_CAPS)
+    text = ip.human_readable(pol)
+    assert "Conservative" in text and "shadow" in text
+    assert "Max 5% of equity per trade" in text
+    assert "Only trade: BTC, ETH" in text
+    assert "Long only" in text
+    assert "Min confidence 70%" in text
+    assert "engine caps" in text          # warnings section (50 → clamped to 30)
+
+
+def test_human_readable_empty_policy():
+    assert "No policy" in ip.human_readable(None)
+    assert "No policy" in ip.human_readable({"rules": []})
+
+
+def test_ondisk_format_reloads_identically():
+    """What the engine writes to config/intent_policy.json must recompile to the
+    same hash — so the authored policy and the enforced policy are provably one."""
+    import json
+    nl = ip.compile_nl("only majors, max 5% per trade, no shorts, min confidence 70%")
+    pol = ip.compile_policy({"mode": "shadow", "source_text": "x", "rules": nl["rules"]}, ENGINE_CAPS)
+    # Simulate write → read → recompile (the engine's load path).
+    on_disk = json.loads(json.dumps(pol))
+    reloaded = ip.compile_policy(on_disk, ENGINE_CAPS)
+    assert reloaded["compiled_hash"] == pol["compiled_hash"]
+    assert reloaded["mode"] == "shadow"
