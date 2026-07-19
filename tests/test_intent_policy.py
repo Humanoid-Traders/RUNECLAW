@@ -217,6 +217,23 @@ def test_nl_confidence_decimal_form():
 
 # ── end-to-end: NL → compile → evaluate ───────────────────────────────
 
+def test_shipped_example_policy_compiles_cleanly():
+    # The committed example must always compile to a valid shadow policy that only
+    # tightens (no clamp warnings against generous caps) — guards it from drift.
+    import json
+    import os
+    path = os.path.join(os.path.dirname(__file__), "..", "config", "intent_policy.example.json")
+    with open(path, "r", encoding="utf-8") as fh:
+        spec = json.load(fh)
+    pol = ip.compile_policy(spec, ENGINE_CAPS)
+    assert pol["mode"] == "shadow"
+    types = {r["type"] for r in pol["rules"]}
+    assert {"allowed_symbols", "max_notional_pct", "min_rr",
+            "max_open_positions", "min_confidence", "direction"} <= types
+    assert pol["warnings"] == []          # example never loosens a cap
+    assert pol["policy_id"].startswith("pol_")
+
+
 def test_round_trip_nl_to_enforcement():
     nl = ip.compile_nl("under 3x leverage, only majors, min confidence 70%")
     pol = ip.compile_policy(
