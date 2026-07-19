@@ -534,6 +534,14 @@ class RiskLimits:
     # warns about structural crowding (one sector, one direction, shared
     # liquidation zones); it never proposes, blocks, or alters a trade.
     guardian_risk_sentinel_enabled: bool = _env_bool("GUARDIAN_RISK_SENTINEL_ENABLED", False)
+    # Guardian Universal Escape Agent: master switch for SEALING an emergency-exit
+    # PLAN (bot/guardian/escape_agent.py) to the tamper-evident chain when the
+    # planner runs. Default OFF → the planner still computes on demand (pure,
+    # read-only — e.g. the admin /escape command), but no ESCAPE event is written
+    # until an operator opts in. This module PLANS only; it never closes anything.
+    # Execution stays with the existing kill-switch stack (flatten_all_positions /
+    # close_all_positions / emergency_halt_all).
+    guardian_escape_enabled: bool = _env_bool("GUARDIAN_ESCAPE_ENABLED", False)
     # Kelly-criterion sizing (default ON; runbook stage 2, tighten-only). evaluate() also
     # derives a half-Kelly size from realized trade history and takes the SMALLER
     # of {fixed-fractional, Kelly}: Kelly can only TIGHTEN size, never grow it, and
