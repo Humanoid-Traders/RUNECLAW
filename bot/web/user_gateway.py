@@ -710,6 +710,69 @@ async def handle_networth(request: web.Request) -> web.Response:
     })
 
 
+async def handle_holdings(request: web.Request) -> web.Response:
+    """GET /gateway/holdings?telegram_id=... — per-venue read-only balances across
+    ALL of the caller's connected venues (not just the active one), for the
+    "funds by venue & wallet" view.
+
+    One read-only balance fetch per connected venue, bounded concurrency. Same
+    trust surface as handle_networth: credentials decrypted in-process only, never
+    in the response; nothing here can place, modify, or cancel an order. A venue
+    that errors returns its error row — never a fabricated zero.
+    """
+    import asyncio
+
+    tg_handler = request.app["tg_handler"]
+    tg_id = str(request.query.get("telegram_id") or "").strip()
+    err = _guard_user(tg_handler, tg_id)
+    if err is not None:
+        return err
+
+    rows: list[dict] = []
+    try:
+        from bot.core.exchange_credentials import (
+            get_credential_store, balance_snapshot)
+        store = get_credential_store()
+        venues = store.list_venues(tg_id)          # every connected venue
+        active = store.get_venue(tg_id)
+        sem = asyncio.Semaphore(4)                  # bound concurrent upstream sockets
+
+        async def _one(venue: str) -> dict:
+            fields = store.get_for_venue(tg_id, venue)
+            if not fields:
+                return {"venue": venue, "ok": False, "equity_usd": None,
+                        "detail": "credentials unreadable"}
+            async with sem:
+                try:
+                    snap = await asyncio.wait_for(
+                        balance_snapshot(venue, fields), timeout=25)
+                except asyncio.TimeoutError:
+                    snap = {"ok": False, "venue": venue, "equity_usd": None,
+                            "detail": "venue timeout"}
+            return {"venue": venue, "active": venue == active, **snap}
+
+        if venues:
+            rows = list(await asyncio.gather(*[_one(v) for v in venues]))
+    except Exception as exc:
+        audit(system_log, f"Holdings read failed for {tg_id}: {exc}",
+              action="web_holdings", result="ERROR")
+        return web.json_response({"read_only": True, "venues": [],
+                                  "error": "holdings_unavailable"})
+
+    total = 0.0
+    for r in rows:
+        v = r.get("equity_usd")
+        if r.get("ok") and isinstance(v, (int, float)):
+            total += float(v)
+    return web.json_response({
+        "read_only": True,
+        "venues": rows,
+        "venue_total_usd": round(total, 2),
+        "venue_count": len(rows),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    })
+
+
 # ── Intent Compiler authoring (OPERATOR only) ────────────────────────────────
 #
 # Web parity for the Telegram /policy compile→preview→confirm→bind loop. These
@@ -856,6 +919,7 @@ def build_gateway(engine, tg_handler) -> web.Application:
     app.router.add_get("/chat/history", handle_chat_history)
     app.router.add_get("/portfolio", handle_portfolio)
     app.router.add_get("/networth", handle_networth)
+    app.router.add_get("/holdings", handle_holdings)
     app.router.add_post("/trade/propose", handle_trade_propose)
     app.router.add_post("/trade/confirm", handle_trade_confirm)
     app.router.add_post("/trade/cancel", handle_trade_cancel)
