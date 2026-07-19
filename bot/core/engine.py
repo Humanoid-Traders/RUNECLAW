@@ -949,6 +949,68 @@ class RuneClawEngine:
             logger.debug("Firewall scan skipped (%s): %s", source, exc)
             return None
 
+    def _twin_positions(self, user_id: str = "") -> list:
+        """Normalise the live book into the plain dicts the pure Digital Twin
+        consumes: symbol, direction, entry, qty, cost/margin, leverage, and the
+        correlation group (for correlated shocks). Operator book by default; a
+        specific user's executor when ``user_id`` is given. Fail-open — a bad
+        position is skipped, never fatal."""
+        ex = self._user_executors.get(user_id) if user_id else self.live_executor
+        if ex is None:
+            ex = self.live_executor
+        out: list = []
+        for pos in (getattr(ex, "open_positions", None) or []):
+            try:
+                symbol = getattr(pos, "symbol", "?")
+                try:
+                    group = self.risk._correlation_group(symbol)
+                except Exception:
+                    group = "*"
+                out.append({
+                    "symbol": symbol,
+                    "direction": getattr(pos, "direction", "LONG"),
+                    "entry": getattr(pos, "entry_price", None),
+                    "qty": getattr(pos, "quantity", None),
+                    "cost_usd": getattr(pos, "cost_usd", None),
+                    "leverage": getattr(pos, "leverage", 1),
+                    "group": group,
+                })
+            except Exception:
+                continue
+        return out
+
+    def run_digital_twin(self, user_id: str = "") -> Optional[dict]:
+        """Guardian Portfolio Digital Twin: stress-test the current book against
+        parametric price shocks and (when enabled) seal a TWIN verdict on the
+        tamper-evident chain.
+
+        Read-only foresight + fail-open: it never proposes, blocks, or alters a
+        trade. Returns the full stress report (``scenarios``, ``worst``, ``risk``,
+        ``fragile``) so a caller (e.g. the admin ``/twin`` command) can render it,
+        or ``None`` when there is nothing to simulate. The TWIN chain event is
+        written only when ``GUARDIAN_DIGITAL_TWIN_ENABLED`` is on — the simulation
+        itself always runs, since it is pure and touches nothing."""
+        try:
+            from bot.guardian import digital_twin as _dt
+            positions = self._twin_positions(user_id)
+            if not positions:
+                return None
+            try:
+                equity = self.get_effective_equity(user_id)
+            except Exception:
+                equity = 0.0
+            report = _dt.run(positions, equity)
+            if getattr(CONFIG.risk, "guardian_digital_twin_enabled", False):
+                try:
+                    payload = _dt.twin_payload(positions, equity)
+                    self.audit_chain.append("TWIN", payload, actor=str(user_id or "operator"))
+                except Exception as exc:
+                    logger.debug("Twin verdict record skipped: %s", exc)
+            return report
+        except Exception as exc:
+            logger.debug("Digital twin skipped: %s", exc)
+            return None
+
     def _sync_flight_records(self) -> None:
         """Guardian Flight Recorder: push recent joined decision records + the
         engine-verified chain status to the website (fire-and-forget, fail-open).

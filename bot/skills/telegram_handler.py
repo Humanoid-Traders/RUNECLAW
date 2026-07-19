@@ -393,6 +393,7 @@ class TelegramHandler:
             ("squeeze", self._cmd_squeeze),
             ("holdtime", self._cmd_holdtime),
             ("policy", self._cmd_policy),
+            ("twin", self._cmd_twin),
         ]:
             app.add_handler(CommandHandler(cmd, handler))
         app.add_handler(CallbackQueryHandler(self._handle_callback))
@@ -4215,6 +4216,49 @@ class TelegramHandler:
         await self._send(update,
             "Usage: <code>/policy</code> · <code>/policy set …</code> · "
             "<code>/policy mode shadow|enforce|off</code> · <code>/policy clear</code>")
+
+    async def _cmd_twin(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """/twin — Guardian Portfolio Digital Twin (admin, read-only).
+
+        Stress-tests the live book against parametric price shocks (flash crash,
+        severe correlated tail, alt capitulation, short squeeze) and shows the
+        projected drawdown + which positions would be liquidated in each. Pure
+        foresight — it proposes nothing and changes nothing. When
+        GUARDIAN_DIGITAL_TWIN_ENABLED is on, each run also seals a TWIN verdict on
+        the tamper-evident chain.
+        """
+        if not self._is_admin(update):
+            await self._send(update, f"\U0001f512 {t('admin_only', self._lang(update))}")
+            return
+        report = self.engine.run_digital_twin()
+        if not report or not report.get("scenarios"):
+            await self._send(update,
+                "🔮 <b>Digital Twin</b> — no open positions to stress-test.\n\n"
+                "<i>The twin shocks the live book (flash crash, correlated tail, "
+                "alt capitulation, short squeeze) and shows projected drawdown + "
+                "liquidations. Nothing to simulate while flat.</i>")
+            return
+        _RISK_ICON = {"none": "🟢", "low": "🟡", "medium": "🟠", "high": "🔴"}
+        icon = _RISK_ICON.get(report.get("risk", "none"), "⚪")
+        eq = report.get("equity_usd", 0.0)
+        lines = [f"🔮 <b>Digital Twin</b> — {icon} worst-case <b>{html.escape(str(report.get('risk','none')).upper())}</b>",
+                 f"<i>{report.get('position_count', 0)} position(s) · equity ${eq:,.0f}</i>", ""]
+        for s in report.get("scenarios", []):
+            s_icon = _RISK_ICON.get(s.get("risk", "none"), "⚪")
+            liq = s.get("liquidations", [])
+            liq_txt = (" · liquidates " + ", ".join(html.escape(x) for x in liq[:4])) if liq else ""
+            lines.append(
+                f"{s_icon} <b>{html.escape(s.get('label', s.get('name','')))}</b>\n"
+                f"   drawdown <b>{s.get('drawdown_pct', 0)}%</b> "
+                f"(P&L ${s.get('projected_pnl_usd', 0):,.0f}){liq_txt}")
+        fragile = report.get("fragile", [])
+        if fragile:
+            frag_txt = ", ".join(f"{html.escape(f['symbol'])} (~{f['liq_move_pct']}%)"
+                                 for f in fragile[:4])
+            lines.append(f"\n<i>Most fragile (adverse move to liquidation): {frag_txt}</i>")
+        sealed = bool(getattr(CONFIG.risk, "guardian_digital_twin_enabled", False))
+        lines.append(f"\n<i>{'🟢 sealed to the evidence chain' if sealed else '🟡 preview only (GUARDIAN_DIGITAL_TWIN_ENABLED off)'} · isolated-margin estimate</i>")
+        await self._send(update, "\n".join(lines))
 
     async def _apply_policy_callback(self, update: Update, data: str) -> None:
         """Confirm/cancel for /policy set — the SOLE place a compiled policy is
