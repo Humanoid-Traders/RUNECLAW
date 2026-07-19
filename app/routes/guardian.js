@@ -65,6 +65,7 @@ router.get('/flight', async (req, res) => {
     res.json({
       records,
       chain: flight.chain || {},
+      policy: flight.policy || null,
       window: inspectWindow(records),
       updated_at: flight.updated_at || null,
     });

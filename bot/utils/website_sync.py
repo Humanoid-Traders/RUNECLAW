@@ -259,20 +259,24 @@ def sync_signals_in_background(signals: list[dict]) -> None:
     t.start()
 
 
-def sync_flight_records(records: list[dict], chain: Optional[dict] = None) -> bool:
-    """Push Guardian Flight Recorder records + engine-verified chain status.
+def sync_flight_records(records: list[dict], chain: Optional[dict] = None,
+                        policy: Optional[dict] = None) -> bool:
+    """Push Guardian Flight Recorder records + engine-verified chain status +
+    the active Intent-policy summary.
 
-    Telemetry only (the decision ledger already lives bot-side in the audit
-    chain): a failed POST just returns False. ``chain`` carries the
+    Telemetry only (the decision ledger and the enforceable policy both live
+    bot-side): a failed POST just returns False. ``chain`` carries the
     authoritative ``verify()`` result — {ok, length, tip_hash, problems} — so
     the website can show an engine-verified integrity badge without re-hashing
-    the whole file.
+    the whole file. ``policy`` is a read-only summary of the compiled intent
+    policy (id, mode, rules, hash) for display.
     """
-    if not records and not chain:
+    if not records and not chain and not policy:
         return True
     result = _post("/api/bot/sync/flight", {
         "records": list(records or []),
         "chain": chain or {},
+        "policy": policy or None,
     })
     if result and result.get("ok"):
         log.info(f"Synced {result.get('stored', len(records or []))} flight record(s)")
@@ -281,10 +285,11 @@ def sync_flight_records(records: list[dict], chain: Optional[dict] = None) -> bo
     return False
 
 
-def sync_flight_records_in_background(records: list[dict], chain: Optional[dict] = None) -> None:
+def sync_flight_records_in_background(records: list[dict], chain: Optional[dict] = None,
+                                     policy: Optional[dict] = None) -> None:
     """Non-blocking flight-record sync (fire-and-forget)."""
     t = threading.Thread(
-        target=sync_flight_records, args=(list(records or []), chain), daemon=True)
+        target=sync_flight_records, args=(list(records or []), chain, policy), daemon=True)
     t.start()
 
 

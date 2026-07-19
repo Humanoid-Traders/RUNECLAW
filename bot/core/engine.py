@@ -890,9 +890,30 @@ class RuneClawEngine:
                 "tip_hash": tip,
                 "problems": (problems or [])[:5],
             }
-            sync_flight_records_in_background(records, chain)
+            sync_flight_records_in_background(records, chain, self._intent_policy_summary())
         except Exception as _fr_exc:
             logger.debug("Flight-record sync skipped: %s", _fr_exc)
+
+    def _intent_policy_summary(self) -> Optional[dict]:
+        """Compact, read-only view of the active operator intent policy for the
+        website (the enforceable artifact is bot-side). None when no policy is
+        bound. Fail-open — never raises into the sync path."""
+        try:
+            pol = self.risk.get_intent_policy()
+            if not pol:
+                return None
+            return {
+                "policy_id": pol.get("policy_id"),
+                "label": pol.get("label"),
+                "mode": pol.get("mode"),
+                "compiled_hash": pol.get("compiled_hash"),
+                "rules": pol.get("rules", []),
+                "warnings": pol.get("warnings", []),
+                "source_text": pol.get("source_text", ""),
+                "enabled": bool(getattr(CONFIG.risk, "intent_policy_enabled", False)),
+            }
+        except Exception:
+            return None
 
     def _push_scan_summary_to_website(self, signals: list) -> None:
         """Push a fresh regime/circuit-breaker/key-call summary every
