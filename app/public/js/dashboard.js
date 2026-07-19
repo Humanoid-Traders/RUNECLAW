@@ -1728,6 +1728,11 @@
             <span class="badge" style="margin-left:auto" title="Read-only aggregation — RUNECLAW can read these balances, never move them">read-only</span></h2>
           <div id="c-networth"><div class="skel"></div></div>
         </section>
+        <section class="panel" id="p-holdings">
+          <h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-wallet"></use></svg>Funds by venue &amp; wallet
+            <span class="badge" style="margin-left:auto" title="Every connected exchange and on-chain wallet chain, itemised — read-only, RUNECLAW can never move them">read-only</span></h2>
+          <div id="c-holdings"><div class="skel"></div></div>
+        </section>
         <section class="panel" id="p-exposure">
           <h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-shield"></use></svg>Exposure — everywhere
             <span class="badge" style="margin-left:auto" title="Perp positions netted against on-chain spot — intelligence only, nothing here can act">read-only</span></h2>
@@ -1839,6 +1844,50 @@
             <b class="num">${d.total_real_usd != null ? '$' + fmt(d.total_real_usd, 2) : '—'}</b></div>
           <p class="small muted" style="margin-top:var(--s2)">${esc(d.note)}</p>`;
     }, { empty: { icon: 'icon-globe', text: 'Net worth aggregates once a venue or wallet is reachable.' } });
+
+    // Funds by venue & wallet — the same real money as net worth, but itemised
+    // per source: one row per connected exchange, one per on-chain chain.
+    // An unreadable source shows as unreadable, never a fabricated $0.
+    renderPanel(C('holdings'), async () => {
+      const r = await fetchJSON('/api/holdings', { timeoutMs: 40000 });
+      const d = r.data;
+      if (!r.ok || !d) return null;
+      const rows = [];
+      // Venues (connected exchanges).
+      if (d.venues && d.venues.length) {
+        for (const v of d.venues) {
+          const name = esc((v.venue || 'venue').toUpperCase());
+          const tag = v.active ? ' <span class="muted small">active</span>' : '';
+          rows.push(`<div class="kv-row"><span>🏦 ${name}${tag}</span>
+            <b class="num">${v.ok && v.equity_usd != null ? '$' + fmt(v.equity_usd, 2)
+              : `<span class="muted small">${esc(v.detail || 'unreadable')}</span>`}</b></div>`);
+        }
+      } else if (d.venues_available) {
+        rows.push('<div class="kv-row"><span>🏦 Exchanges</span><span class="muted small">none connected — /connect in Telegram</span></div>');
+      } else {
+        rows.push('<div class="kv-row"><span>🏦 Exchanges</span><span class="muted small">gateway unavailable</span></div>');
+      }
+      // Wallet chains.
+      const w = d.wallet || {};
+      if (w.linked && w.chains && w.chains.length) {
+        for (const c of w.chains) {
+          const extra = c.detail ? `<span class="muted small">${esc(c.detail)}</span>`
+            : (c.total_usd != null ? '$' + fmt(c.total_usd, 2) : '<span class="muted small">unpriced</span>');
+          const unp = (c.unpriced ? ` <span class="muted small">${c.unpriced} unpriced</span>` : '');
+          rows.push(`<div class="kv-row"><span>👛 ${esc(c.label || c.chain)} <span class="muted small">wallet</span>${unp}</span>
+            <b class="num">${extra}</b></div>`);
+        }
+      } else if (w.linked) {
+        rows.push('<div class="kv-row"><span>👛 Wallet</span><span class="muted small">no balances on tracked chains</span></div>');
+      } else {
+        rows.push('<div class="kv-row"><span>👛 Wallet</span><span class="muted small">none linked — Sign-In with Ethereum</span></div>');
+      }
+      return rows.join('')
+        + `<div class="kv-row" style="border-top:1px solid var(--line);margin-top:var(--s2);padding-top:var(--s2)">
+            <span><b>Real total</b>${d.partial ? ' <span class="muted small">(partial — some sources unreadable)</span>' : ''}</span>
+            <b class="num">${d.total_real_usd != null ? '$' + fmt(d.total_real_usd, 2) : '—'}</b></div>
+          <p class="small muted" style="margin-top:var(--s2)">${esc(d.note)}</p>`;
+    }, { empty: { icon: 'icon-wallet', text: 'Funds itemise once a venue or wallet is reachable.' } });
 
     // Exposure — perp positions netted against wallet spot, with the flags
     // a risk desk would raise (stacked longs, hedges, concentration).
