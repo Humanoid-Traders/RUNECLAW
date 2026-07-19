@@ -21,6 +21,10 @@ Modules:
 * ``erc8004``      — bind a published statement + authority posture to a portable
                      ERC-8004 agent identity as a signed Agent Identity Card
                      (reputation is fills-derived, never self-reported).
+* ``assemble``     — one entry point: raw CCXT fills + signed balance snapshots →
+                     the public, verifiable bundle (statement + identity card +
+                     a third-party verification manifest). Public-safe; an
+                     INCOMPLETE bundle is a first-class honest outcome.
 
 The verifier lives at repo root: ``verify.py``.
 """
