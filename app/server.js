@@ -148,6 +148,7 @@ app.use('/api/defi', require('./routes/defi'));
 app.use('/api/networth', require('./routes/networth'));
 app.use('/api/holdings', require('./routes/holdings'));
 app.use('/api/idleyield', require('./routes/idleyield'));
+app.use('/api/authority', require('./routes/authority'));
 app.use('/api/exposure', require('./routes/exposure'));
 app.use('/api/research', require('./routes/research'));
 app.use('/mcp', require('./routes/mcp'));

@@ -724,3 +724,74 @@ async def test_public_chat_still_requires_service_secret(monkeypatch):
         assert r.status == 403
         r2 = await c.post("/chat/public", json={"text": "hi"})
         assert r2.status == 403
+
+
+# ── Authority Envelope authoring (per-user, self-serve) ─────────────────────
+
+async def _fresh_authority_store(monkeypatch, tmp_path):
+    from bot.guardian import user_authority_store as uas
+    store = uas.UserAuthorityStore(str(tmp_path / "ua.json"))
+    monkeypatch.setattr(uas, "_STORE", store)
+    return store
+
+
+async def test_authority_preview_compiles_without_binding(monkeypatch, tmp_path):
+    monkeypatch.setattr(ug, "_GATEWAY_SECRET", SECRET)
+    store = await _fresh_authority_store(monkeypatch, tmp_path)
+    async with gateway_client(FakeEngine(), FakeHandler()) as c:
+        r = await c.post("/authority/preview",
+                         json={"telegram_id": "web:5", "text": "only majors, max $500 per trade"},
+                         headers=HDRS)
+        assert r.status == 200
+        d = await r.json()
+        assert d["ok"] and not d["unmatched"]
+        assert any("majors" in m for m in d["matched"])
+        # preview never binds
+        assert store.get("web:5") is None
+
+
+async def test_authority_apply_then_enforce_flips_gate(monkeypatch, tmp_path):
+    monkeypatch.setattr(ug, "_GATEWAY_SECRET", SECRET)
+    store = await _fresh_authority_store(monkeypatch, tmp_path)
+    async with gateway_client(FakeEngine(), FakeHandler()) as c:
+        r = await c.post("/authority/apply",
+                         json={"telegram_id": "web:5", "mode": "shadow",
+                               "text": "only majors, max $500 per trade, $2000 a day"},
+                         headers=HDRS)
+        assert r.status == 200 and (await r.json())["ok"]
+        assert store.mode("web:5") == "shadow"
+        assert store.is_enforcing("web:5") is False
+        # flip to enforce → the web-live gate precondition is now satisfied
+        r2 = await c.post("/authority/mode",
+                          json={"telegram_id": "web:5", "mode": "enforce"}, headers=HDRS)
+        assert r2.status == 200
+        assert store.is_enforcing("web:5") is True
+        # status reflects the bound envelope + checklist
+        r3 = await c.get("/authority/status?telegram_id=web:5", headers=HDRS)
+        d3 = await r3.json()
+        assert d3["bound"] and d3["mode"] == "enforce"
+        assert d3["live_checklist"]["envelope_enforcing"] is True
+
+
+async def test_authority_apply_gibberish_is_rejected(monkeypatch, tmp_path):
+    monkeypatch.setattr(ug, "_GATEWAY_SECRET", SECRET)
+    await _fresh_authority_store(monkeypatch, tmp_path)
+    async with gateway_client(FakeEngine(), FakeHandler()) as c:
+        r = await c.post("/authority/apply",
+                         json={"telegram_id": "web:5", "text": "make me rich"},
+                         headers=HDRS)
+        assert r.status == 400
+        assert (await r.json())["error"] == "no_rules"
+
+
+async def test_authority_revoke_disarms(monkeypatch, tmp_path):
+    monkeypatch.setattr(ug, "_GATEWAY_SECRET", SECRET)
+    store = await _fresh_authority_store(monkeypatch, tmp_path)
+    async with gateway_client(FakeEngine(), FakeHandler()) as c:
+        await c.post("/authority/apply",
+                     json={"telegram_id": "web:5", "mode": "enforce",
+                           "text": "only majors, max $500 per trade"}, headers=HDRS)
+        assert store.is_enforcing("web:5") is True
+        r = await c.post("/authority/revoke", json={"telegram_id": "web:5"}, headers=HDRS)
+        assert r.status == 200 and (await r.json())["revoked"] is True
+        assert store.is_enforcing("web:5") is False
