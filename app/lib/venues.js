@@ -83,6 +83,16 @@ const VENUES = [
       { key: 'agent_private_key', label: 'Agent private key', type: 'password' },
     ],
   },
+  {
+    id: 'paradex',
+    label: 'Paradex (DEX)',
+    balance_coin: 'USDC',
+    help: 'On-chain perps DEX (StarkEx L2). Create an API (agent) wallet and use ITS private key — never your main wallet key.',
+    fields: [
+      { key: 'wallet_address', label: 'Wallet address', type: 'text' },
+      { key: 'agent_private_key', label: 'Agent private key', type: 'password' },
+    ],
+  },
 ];
 
 const byId = Object.fromEntries(VENUES.map((v) => [v.id, v]));

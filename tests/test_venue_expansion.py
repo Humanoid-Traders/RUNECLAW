@@ -74,3 +74,26 @@ def test_gate_builds_offline_client_with_key_secret():
     # key+secret path builds without a passphrase.
     client = get_venue("gate").create_exchange(None, {"api_key": "k" * 12, "api_secret": "s" * 12})
     assert client is not None
+
+
+# ── Paradex — wallet-authenticated on-chain perps DEX ─────────────────
+
+def test_paradex_registered_and_wallet_authed():
+    assert "paradex" in valid_venue_ids()
+    v = get_venue("paradex")
+    assert v.id == "paradex"
+    assert v.quote == "USDC" and v.balance_coin == "USDC"    # on-chain, USDC-margined
+    assert v.order_symbol("BTC/USDT") == "BTC/USDC:USDC"     # internal USDT → venue USDC
+    # wallet auth (walletAddress + privateKey), like Hyperliquid
+    assert ec._VENUE_FIELDS["paradex"] == ("wallet_address", "agent_private_key")
+
+
+def test_paradex_missing_wallet_raises_and_format_check():
+    with pytest.raises(RuntimeError):
+        get_venue("paradex").create_exchange(None, {})
+    # 0x-address + 64-hex-key format check (shared with Hyperliquid)
+    ok = ec.basic_venue_format_ok("paradex", {
+        "wallet_address": "0x" + "a" * 40, "agent_private_key": "b" * 64})
+    assert ok
+    assert not ec.basic_venue_format_ok("paradex", {
+        "wallet_address": "not-an-address", "agent_private_key": "b" * 64})
