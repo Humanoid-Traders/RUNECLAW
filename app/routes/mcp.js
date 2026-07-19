@@ -20,6 +20,7 @@
 const express = require('express');
 const { pool } = require('../db');
 const { getLatestFlight } = require('./sync');
+const { getGateway, isConfigured: gatewayConfigured } = require('../lib/gateway');
 
 const router = express.Router();
 
@@ -80,6 +81,35 @@ const TOOLS = {
           pnl: Math.round((parseFloat(t.pnl) || 0) * 100) / 100, closed_at: t.closed_at,
         })),
         source: 'recorded closed trades (same data as the public /track page)',
+      };
+    },
+  },
+
+  get_proof_of_pnl: {
+    description: "RUNECLAW's continuously-published Proof-of-PnL: the sealed, "
+      + 'public-safe track-record statement with a SHA-256 publish_hash over the '
+      + 'canonical bundle, its freshness, the trust tier and reconciliation '
+      + 'status, and the ERC-8004 identity anchor (honestly UNVERIFIED until a '
+      + 'real tx confirms it). Machine counterpart of the /proof page: an agent '
+      + 'can re-derive the hash itself instead of trusting this response. '
+      + 'Re-derive: canonical = JSON with recursively sorted keys, no whitespace, '
+      + 'UTF-8 (every number already a string); publish_hash = SHA-256(canonical).',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: async () => {
+      if (!gatewayConfigured()) return { published: false, error: 'not_configured' };
+      const r = await getGateway('/public/proofofpnl', 15000);
+      if (r.status < 200 || r.status >= 300) return { published: false, error: 'unavailable' };
+      const d = r.data || {};
+      // Pass the sealed statement through verbatim so the caller verifies the
+      // SAME bytes we did — plus a machine-readable re-derivation recipe.
+      return {
+        ...d,
+        reverify: {
+          canonicalization: 'json.dumps(bundle, sort_keys=True, separators=(",",":"), ensure_ascii=False)',
+          hash: 'sha256(utf8(canonical))',
+          note: 'All numbers in the bundle are strings, so a recursive key-sort '
+            + '+ JSON.stringify reproduces the canonical bytes in any language.',
+        },
       };
     },
   },

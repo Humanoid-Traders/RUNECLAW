@@ -6,6 +6,7 @@
  */
 process.env.JWT_SECRET = 'j'.repeat(64);
 delete process.env.DATABASE_URL;
+delete process.env.WEB_GATEWAY_SECRET;   // get_proof_of_pnl must fail-closed unconfigured
 
 const test = require('node:test');
 const assert = require('node:assert');
@@ -82,7 +83,7 @@ test('tools/list: every tool is annotated read-only with a schema', async () => 
   assert.ok(tools.length >= 8);
   const names = tools.map(t => t.name);
   for (const want of ['get_track_record', 'get_signals', 'get_rwa_radar',
-    'get_dex_compare', 'run_what_if', 'get_weekly_letter']) {
+    'get_dex_compare', 'run_what_if', 'get_weekly_letter', 'get_proof_of_pnl']) {
     assert.ok(names.includes(want), want);
   }
   for (const t of tools) {
@@ -115,6 +116,17 @@ test('tools/call: radar + dex compare ride the injected fixtures', async () => {
     params: { name: 'get_dex_compare', arguments: {} } }));
   assert.equal(cmp.rows[0].base, 'BTC');
   assert.equal(cmp.rows[0].delta_bps, 5);
+});
+
+test('tools/call: proof_of_pnl fails closed when the gateway is unconfigured', async () => {
+  // The tool relays the sealed statement from the bot gateway. With no
+  // WEB_GATEWAY_SECRET it must NOT attempt a call or invent data — it reports
+  // published:false honestly. (The passthrough shape is the gateway's, already
+  // exercised by the gateway suite.)
+  const p = toolResult(await rpc({ jsonrpc: '2.0', id: 9, method: 'tools/call',
+    params: { name: 'get_proof_of_pnl', arguments: {} } }));
+  assert.equal(p.published, false);
+  assert.equal(p.error, 'not_configured');
 });
 
 test('tools/call: weekly letter generates and carries the honesty footer', async () => {
