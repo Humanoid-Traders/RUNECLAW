@@ -246,6 +246,10 @@ class RiskEngine:
         # C2-45 FIX: deque with maxlen auto-prunes, no manual size checks needed
         self._rejection_history: deque[dict] = deque(maxlen=50)
         self._lock = threading.RLock()
+        # Guardian Intent Compiler: an optional compiled strategy-intent policy
+        # this engine consults in evaluate() (set by the engine at construction /
+        # reload). None → no policy; the hook is inert. See set_intent_policy().
+        self._intent_policy: Optional[dict] = None
         self._state_file = state_file or _STATE_FILE
         self._macro_calendar = macro_calendar
         self._macro_provider = macro_provider  # v2: enhanced macro-event provider
@@ -735,6 +739,16 @@ class RiskEngine:
         self._price_history[symbol].append((float(ts) if ts is not None else time.time(), float(price)))
         if len(self._price_history[symbol]) > 100:
             self._price_history[symbol] = self._price_history[symbol][-100:]
+
+    # -- Guardian Intent Compiler --------------------------------------------
+    def set_intent_policy(self, policy: Optional[dict]) -> None:
+        """Bind (or clear) the compiled strategy-intent policy this engine
+        consults in evaluate(). Thread-safe; ``None`` disables the hook."""
+        with self._lock:
+            self._intent_policy = policy or None
+
+    def get_intent_policy(self) -> Optional[dict]:
+        return self._intent_policy
 
     def evaluate(self, idea: TradeIdea, atr: Optional[float] = None, live_equity: Optional[float] = None, max_position_usd: Optional[float] = None, live_open_count: Optional[int] = None, as_of: Optional[datetime] = None) -> RiskCheck:
         """
@@ -1700,6 +1714,48 @@ class RiskEngine:
             # Fail-open: a broken clock must never block trading.
             passed.append(f"FUNDING_CLOCK: skipped (error: {exc})")
 
+        # -- Guardian Intent Compiler (gated · deterministic · tighten-only) --
+        # A compiled strategy-intent policy may ADD deterministic rejections. It
+        # runs HERE — after every sizing/context value is known and just before
+        # the verdict is derived — so its only power is to append to `failed`,
+        # which can flip APPROVED→REJECTED but never the reverse (tighten-only is
+        # a property of the control flow, not an assertion). In *shadow* mode it
+        # records would-reject violations without blocking. Fail-open: any fault
+        # leaves the trade untouched, so the engine's own 23 caps always stand.
+        intent_policy_result = None
+        if getattr(CONFIG.risk, "intent_policy_enabled", False) and self._intent_policy:
+            try:
+                from bot.guardian import intent_policy as _ip
+                _eff_open = (live_open_count if live_open_count is not None
+                             else getattr(state, "open_positions", None))
+                _dir = idea.direction.value if hasattr(idea.direction, "value") else str(idea.direction)
+                _ctx = {
+                    "position_pct": (position_usd / sizing_equity * 100) if sizing_equity > 0 else None,
+                    "confidence": idea.confidence,
+                    "rr": idea.risk_reward_ratio,
+                    "daily_loss_pct": daily_loss_pct,
+                    "drawdown_pct": getattr(state, "max_drawdown_pct", None),
+                    "open_positions": _eff_open,
+                    "asset": idea.asset,
+                    "strategy_type": getattr(idea, "strategy_type", ""),
+                    "direction": _dir,
+                }
+                _pres = _ip.evaluate_policy(self._intent_policy, _ctx)
+                intent_policy_result = _pres
+                if _pres.get("violations"):
+                    if _pres.get("mode") == "enforce":
+                        for _v in _pres["violations"]:
+                            failed.append(f"INTENT_POLICY: {_v}")
+                    else:  # shadow: observe only — record, never block.
+                        passed.append(
+                            f"INTENT_POLICY: shadow — would reject "
+                            f"({len(_pres['violations'])}: {'; '.join(_pres['violations'][:3])})")
+                else:
+                    passed.append("INTENT_POLICY: OK")
+            except Exception as _ipe:
+                # A policy fault must NEVER affect a trade.
+                passed.append(f"INTENT_POLICY: skipped (error: {_ipe})")
+
         # -- Verdict --
         verdict = RiskVerdict.APPROVED if len(failed) == 0 else RiskVerdict.REJECTED
 
@@ -1756,6 +1812,7 @@ class RiskEngine:
             checks_failed=failed,
             reason=reason,
             timestamp=datetime.now(UTC),
+            intent_policy=intent_policy_result,
         )
 
         # Audit V7 follow-up: make the margin/notional/leverage relationship

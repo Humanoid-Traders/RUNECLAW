@@ -309,6 +309,16 @@ defaults:
     env_var: PER_STRATEGY_NOTIONAL_CAP_ENABLED
     description: "Use the per-strategy notional cap (StrategyTypeConfig) instead of the global max_position_pct for the size cap + POSITION_SIZE check"
 
+  intent_policy_enabled:
+    value: false
+    env_var: INTENT_POLICY_ENABLED
+    description: >
+      Guardian Formal Strategy Intent Compiler: when on, a compiled, tighten-only
+      policy (config/intent_policy.json) is consulted at the risk gate as an
+      additional deterministic check that can only ADD rejections. Default OFF;
+      when enabled a policy still defaults to shadow mode (logs would-be
+      rejections, blocks nothing) until explicitly set to enforce.
+
   per_strategy_confidence_floor_enabled:
     value: false
     env_var: PER_STRATEGY_CONFIDENCE_FLOOR_ENABLED

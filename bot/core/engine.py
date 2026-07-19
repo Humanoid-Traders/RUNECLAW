@@ -168,6 +168,11 @@ class RuneClawEngine:
                 "Lock 1 is satisfied for the entire process lifetime."
             )
         self.audit_chain = AuditChain("logs/audit_chain.jsonl")
+        # Guardian Intent Compiler: compile the operator's on-disk strategy-intent
+        # policy against the live risk caps and bind it to the operator engine.
+        # No-op (and no policy) unless INTENT_POLICY_ENABLED and a policy file
+        # exist — fail-open, so a bad/absent file never blocks startup or trading.
+        self._load_intent_policy_onto(self.risk, owner="operator")
         self.learning = LearningOrchestrator()
         # WebSocket feed for real-time price monitoring (supplements REST polling)
         self.ws_feed = BitgetWSFeed()
@@ -788,6 +793,79 @@ class RuneClawEngine:
         user_id = getattr(executor, "user_id", None) or 1
         sync_in_background(user_id, equity, positions, closed)
 
+    def _intent_engine_caps(self) -> dict:
+        """The authoritative engine caps a compiled policy is clamped against
+        (so a policy can only tighten). Missing caps are simply omitted."""
+        caps = {
+            "max_position_pct": getattr(CONFIG.risk, "max_position_pct", None),
+            "max_symbol_exposure_pct": getattr(CONFIG.risk, "max_symbol_exposure_pct", None),
+            "max_portfolio_exposure_pct": getattr(CONFIG.risk, "max_portfolio_exposure_pct", None),
+            "max_open_positions": getattr(CONFIG.risk, "max_open_positions", None),
+            "min_confidence": getattr(CONFIG.risk, "min_confidence", None),
+            "min_risk_reward": getattr(CONFIG.risk, "min_risk_reward", None),
+            "max_daily_loss_pct": getattr(CONFIG.risk, "max_daily_loss_pct", None),
+            "max_drawdown_pct": getattr(CONFIG.risk, "max_drawdown_pct", None),
+        }
+        return {k: v for k, v in caps.items() if v is not None}
+
+    def _load_intent_policy_onto(self, engine, owner: str = "operator") -> Optional[dict]:
+        """Guardian Intent Compiler: compile the on-disk intent policy against the
+        live caps and bind it to ``engine``. Fail-open: any error (flag off,
+        missing/invalid file, compile fault) leaves the engine with NO policy, so
+        this can never block startup or a trade. Returns the compiled policy (or
+        None). Path: INTENT_POLICY_PATH env, default config/intent_policy.json.
+        """
+        try:
+            if not getattr(CONFIG.risk, "intent_policy_enabled", False):
+                engine.set_intent_policy(None)
+                return None
+            import json as _json
+            import os as _os
+            from bot.guardian import intent_policy as _ip
+            path = _os.getenv("INTENT_POLICY_PATH", "config/intent_policy.json")
+            if not _os.path.exists(path):
+                engine.set_intent_policy(None)
+                return None
+            with open(path, "r", encoding="utf-8") as fh:
+                spec = _json.load(fh)
+            policy = _ip.compile_policy(spec, self._intent_engine_caps())
+            engine.set_intent_policy(policy)
+            system_log.info(
+                "Guardian intent policy loaded (%s): %s · mode=%s · %d rule(s)%s",
+                owner, policy.get("policy_id"), policy.get("mode"),
+                len(policy.get("rules", [])),
+                (" · warnings: " + "; ".join(policy["warnings"])) if policy.get("warnings") else "")
+            return policy
+        except Exception as exc:
+            logger.debug("Intent policy load skipped (%s): %s", owner, exc)
+            try:
+                engine.set_intent_policy(None)
+            except Exception:
+                pass
+            return None
+
+    def reload_intent_policy(self) -> Optional[dict]:
+        """Re-read + recompile the operator intent policy onto the live engine
+        (e.g. after editing the file or flipping shadow→enforce). Fail-open."""
+        return self._load_intent_policy_onto(self.risk, owner="operator")
+
+    def _emit_policy_decision(self, recheck, trade_id: str, symbol: str, user_id: str = "") -> None:
+        """Guardian: seal a first-class POLICY_DECISION event (the Policy Decision
+        Record) on the tamper-evident chain when a compiled policy was consulted
+        for this trade — logged whether the trade executed or was rejected, so the
+        policy's verdict is provable independently of the DECISION outcome.
+        Best-effort, fail-open — never affects a trade."""
+        try:
+            pol = getattr(recheck, "intent_policy", None)
+            if not pol:
+                return
+            payload = dict(pol)
+            payload["decision_id"] = trade_id
+            payload["symbol"] = symbol
+            self.audit_chain.append("POLICY_DECISION", payload, actor=str(user_id or "operator"))
+        except Exception as exc:
+            logger.debug("Policy decision record skipped: %s", exc)
+
     def _sync_flight_records(self) -> None:
         """Guardian Flight Recorder: push recent joined decision records + the
         engine-verified chain status to the website (fire-and-forget, fail-open).
@@ -811,9 +889,30 @@ class RuneClawEngine:
                 "tip_hash": tip,
                 "problems": (problems or [])[:5],
             }
-            sync_flight_records_in_background(records, chain)
+            sync_flight_records_in_background(records, chain, self._intent_policy_summary())
         except Exception as _fr_exc:
             logger.debug("Flight-record sync skipped: %s", _fr_exc)
+
+    def _intent_policy_summary(self) -> Optional[dict]:
+        """Compact, read-only view of the active operator intent policy for the
+        website (the enforceable artifact is bot-side). None when no policy is
+        bound. Fail-open — never raises into the sync path."""
+        try:
+            pol = self.risk.get_intent_policy()
+            if not pol:
+                return None
+            return {
+                "policy_id": pol.get("policy_id"),
+                "label": pol.get("label"),
+                "mode": pol.get("mode"),
+                "compiled_hash": pol.get("compiled_hash"),
+                "rules": pol.get("rules", []),
+                "warnings": pol.get("warnings", []),
+                "source_text": pol.get("source_text", ""),
+                "enabled": bool(getattr(CONFIG.risk, "intent_policy_enabled", False)),
+            }
+        except Exception:
+            return None
 
     def _push_scan_summary_to_website(self, signals: list) -> None:
         """Push a fresh regime/circuit-breaker/key-call summary every
@@ -3315,6 +3414,7 @@ class RuneClawEngine:
                 risk=_flight_risk(recheck),
                 outcome="REJECTED_ON_RECHECK", is_paper=not CONFIG.is_live(),
             ))
+            self._emit_policy_decision(recheck, trade_id, idea.asset, user_id)
             self._sync_flight_records()
             return f"Trade REJECTED on re-check: {recheck.reason}"
 
@@ -3766,6 +3866,7 @@ class RuneClawEngine:
             compliance={"granted": True, "locks_passed": compliance_decision.locks_passed},
             outcome="EXECUTED_LIVE", is_paper=False,
         ))
+        self._emit_policy_decision(recheck, trade_id, idea.asset, user_id)
         self._sync_flight_records()
         # Learning: log accepted trade decision
         self.learning.log_decision(

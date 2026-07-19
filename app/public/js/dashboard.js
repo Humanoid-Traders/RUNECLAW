@@ -3487,9 +3487,51 @@
     </article>`;
   }
 
+  const _RULE_LABEL = {
+    max_position_pct: 'Max size / trade',
+    max_symbol_exposure_pct: 'Max per-symbol', max_portfolio_exposure_pct: 'Max portfolio',
+    max_open_positions: 'Max open positions', min_confidence: 'Min confidence',
+    min_rr: 'Min reward:risk', max_daily_loss_pct: 'Max daily loss',
+    max_drawdown_pct: 'Max drawdown', min_free_margin_pct: 'Min free margin',
+    allowed_symbols: 'Only these symbols', blocked_symbols: 'Never these symbols',
+    allowed_strategy_types: 'Only these strategies', direction: 'Direction',
+  };
+  function ruleChip(r) {
+    const label = _RULE_LABEL[r.type] || r.type;
+    let v = r.value;
+    if (Array.isArray(v)) v = v.join(', ');
+    else if (r.type === 'min_confidence') v = Math.round(Number(v) * 100) + '%';
+    else if (/pct$/.test(r.type)) v = v + '%';
+    else if (r.type === 'min_rr') v = v + 'R';
+    else if (r.type === 'direction') v = String(v).replace('_', ' ');
+    return `<span class="chip" style="font-size:11px;padding:2px 8px"><span class="muted">${esc(label)}</span>&nbsp;<strong>${esc(String(v))}</strong></span>`;
+  }
+  function policyCard(policy) {
+    if (!policy || !Array.isArray(policy.rules) || !policy.rules.length) return '';
+    const mode = String(policy.mode || 'off');
+    const enabled = policy.enabled !== false;
+    const active = enabled && mode === 'enforce';
+    const col = active ? 'var(--up,#31c48d)' : (mode === 'shadow' ? 'var(--accent,#3fb6ff)' : 'var(--muted,#8a94a6)');
+    const modeText = !enabled ? 'disabled' : (mode === 'enforce' ? 'ENFORCING' : mode === 'shadow' ? 'SHADOW (observe-only)' : mode);
+    const warns = (policy.warnings || []).length
+      ? `<div class="small" style="color:var(--down,#f05252);margin-top:6px">${policy.warnings.map(esc).join(' · ')}</div>` : '';
+    return `<section class="panel" style="margin-bottom:var(--s4);border-color:${col}">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <strong>Intent policy</strong>
+        <span class="chip" style="border-color:${col};color:${col}">${esc(modeText)}</span>
+        ${policy.label ? `<span class="small muted">${esc(policy.label)}</span>` : ''}
+        <span class="right small muted" style="margin-left:auto">${esc(policy.policy_id || '')} · <code>${esc(shortHash(policy.compiled_hash))}</code></span>
+      </div>
+      ${policy.source_text ? `<p class="small muted" style="margin:8px 0 4px;max-width:76ch">“${esc(policy.source_text)}”</p>` : ''}
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">${policy.rules.map(ruleChip).join('')}</div>
+      <div class="small muted" style="margin-top:8px">The AI proposes; these deterministic rules authorize. A policy can only tighten the engine's caps${mode === 'shadow' ? ' — in shadow mode, violations are recorded below but never block a trade.' : '.'}</div>${warns}
+    </section>`;
+  }
+
   function guardianBlock(data) {
     const recs = (data && data.records) || [];
-    const head = `<div style="margin-bottom:var(--s4)">${chainBanner(data.chain, data.window, data.updated_at)}</div>`;
+    const head = `<div style="margin-bottom:var(--s4)">${chainBanner(data.chain, data.window, data.updated_at)}</div>`
+      + policyCard(data.policy);
     if (!recs.length) {
       return head + `<div class="empty small muted" style="padding:var(--s4)">No decisions have been recorded yet. As the engine confirms or rejects trades, each one is sealed here with its full provenance.</div>`;
     }

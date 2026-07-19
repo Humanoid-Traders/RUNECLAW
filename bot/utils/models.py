@@ -164,6 +164,11 @@ class RiskCheck(BaseModel):
     checks_failed: list[str] = Field(default_factory=list)
     reason: str = ""
     timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    # Guardian Intent Compiler: the compiled-policy evaluation for this trade
+    # (policy_id, hash, mode, verdict, violations, checked/skipped). Optional so
+    # every existing construction stays valid; the risk engine sets it when a
+    # policy is consulted. Rides into the Flight Recorder's Policy Decision Record.
+    intent_policy: Optional[dict] = None
 
 
 # -- Execution Record --

@@ -1,0 +1,14 @@
+{
+  "_comment": "RUNECLAW Guardian — Formal Strategy Intent policy (example). Copy to config/intent_policy.json and set INTENT_POLICY_ENABLED=true to activate. The AI proposes; this deterministic policy authorizes. A policy can only TIGHTEN the engine's caps (the compiler clamps any looser value) and each rule maps to a deterministic risk-gate rejection. Start in \"shadow\" mode: violations are recorded as would-reject observations but never block a trade. Switch \"mode\" to \"enforce\" only once the shadow log looks right.",
+  "label": "Operator guardrails",
+  "mode": "shadow",
+  "source_text": "Only majors, max 5% per trade, at least 1.5R, no more than 4 open positions, minimum confidence 0.65, no shorts.",
+  "rules": [
+    {"type": "allowed_symbols", "value": ["BTC", "ETH", "SOL", "BNB", "XRP"]},
+    {"type": "max_position_pct", "value": 5},
+    {"type": "min_rr", "value": 1.5},
+    {"type": "max_open_positions", "value": 4},
+    {"type": "min_confidence", "value": 0.65},
+    {"type": "direction", "value": "long_only"}
+  ]
+}

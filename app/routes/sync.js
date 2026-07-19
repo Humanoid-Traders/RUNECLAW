@@ -557,7 +557,8 @@ router.post('/flight', async (req, res) => {
     const body = req.body || {};
     const records = Array.isArray(body.records) ? body.records.slice(0, 200) : [];
     const chain = (body.chain && typeof body.chain === 'object') ? body.chain : {};
-    latestFlight = { records, chain, updated_at: new Date().toISOString() };
+    const policy = (body.policy && typeof body.policy === 'object') ? body.policy : null;
+    latestFlight = { records, chain, policy, updated_at: new Date().toISOString() };
     // Persist so it survives cold starts (table may not exist on older DBs —
     // in-memory still serves in that case).
     try {
