@@ -38,6 +38,9 @@ const AUTHORIZED_BOT_USER_ID = parseInt(process.env.BOT_USER_ID) || 1;
 // -- In-memory stores (persist within same cold start) --
 let latestScan = null;
 let latestPortfolio = null; // { equity, open_count, net_pnl, total_trades, win_rate, updated_at }
+// Guardian Flight Recorder: recent joined decision records + engine-verified
+// chain status. { records: [...], chain: {ok,length,tip_hash,problems}, updated_at }
+let latestFlight = null;
 
 // The deep-scan pattern block only rides /deepscan syncs; a regular /scan (or
 // the autonomous cycle's empty push) must NOT wipe the last readout. We carry
@@ -540,6 +543,40 @@ router.post('/scan', async (req, res) => {
 });
 
 /**
+ * POST /api/bot/sync/flight
+ * Body: { records: [ joined DECISION↔OUTCOME flight records ],
+ *         chain: { ok, length, tip_hash, problems } }
+ *
+ * Guardian Flight Recorder ingest. The bot pushes recent provenance-complete
+ * decision records and the authoritative hash-chain verification result. Purely
+ * a read-only mirror for the website — the tamper-evident ledger itself lives
+ * bot-side. Bot-secret authed (botAuth middleware above).
+ */
+router.post('/flight', async (req, res) => {
+  try {
+    const body = req.body || {};
+    const records = Array.isArray(body.records) ? body.records.slice(0, 200) : [];
+    const chain = (body.chain && typeof body.chain === 'object') ? body.chain : {};
+    latestFlight = { records, chain, updated_at: new Date().toISOString() };
+    // Persist so it survives cold starts (table may not exist on older DBs —
+    // in-memory still serves in that case).
+    try {
+      await pool.execute(
+        'REPLACE INTO flight_cache (id, flight_json) VALUES (1, ?)',
+        [JSON.stringify(latestFlight)]
+      );
+    } catch (dbErr) {
+      console.error('Flight cache write error:', dbErr.message);
+    }
+    nudge('flight', { count: records.length, chain_ok: chain.ok !== false });
+    res.json({ ok: true, stored: records.length });
+  } catch (err) {
+    console.error('Flight sync error:', err.message);
+    res.status(500).json({ error: 'Flight sync failed' });
+  }
+});
+
+/**
  * POST /api/bot/sync/signals
  * Body: { signals: [{ signal_key, symbol, direction, confidence, score, pattern,
  *         regime, entry_price, stop_loss, take_profit, rr, thesis, status, pnl,
@@ -740,8 +777,23 @@ router.post('/flatten/ack', async (req, res) => {
   }
 });
 
+// Read-side accessor for routes/guardian.js: in-memory first, DB on cold start.
+async function getLatestFlight() {
+  if (latestFlight) return latestFlight;
+  try {
+    const [rows] = await pool.execute(
+      'SELECT flight_json FROM flight_cache WHERE id = 1');
+    if (rows.length > 0 && rows[0].flight_json) {
+      latestFlight = JSON.parse(rows[0].flight_json);
+    }
+  } catch (err) { /* cold-start miss / table absent is fine */ }
+  return latestFlight;
+}
+
 module.exports = router;
 // Named accessor for routes/reports.js (in-memory + DB cold-start fallback).
 module.exports.getLatestReports = getLatestReports;
 // Named accessor for routes/macro.js — the synced scan's BTC regime block.
 module.exports.getLatestScan = () => latestScan;
+// Named accessor for routes/guardian.js — the Flight Recorder ledger mirror.
+module.exports.getLatestFlight = getLatestFlight;

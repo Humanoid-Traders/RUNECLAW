@@ -82,6 +82,34 @@ def _build_signal_sync_payloads(ideas: list, regime_fn) -> list[dict]:
     ]
 
 
+def _flight_idea(idea) -> dict:
+    """Guardian Flight Recorder: provenance-complete idea dict for the seal.
+
+    Wraps the pure builder so a recorder failure can never touch a trade — on
+    any error it falls back to the historic thin shape.
+    """
+    try:
+        from bot.guardian.flight_recorder import decision_idea_payload
+        return decision_idea_payload(idea)
+    except Exception:
+        try:
+            return {"direction": idea.direction.value, "confidence": idea.confidence}
+        except Exception:
+            return {}
+
+
+def _flight_risk(risk, size_usd=None) -> dict:
+    """Guardian Flight Recorder: provenance-complete risk dict for the seal."""
+    try:
+        from bot.guardian.flight_recorder import decision_risk_payload
+        return decision_risk_payload(risk, size_usd=size_usd)
+    except Exception:
+        try:
+            return {"verdict": getattr(risk.verdict, "value", str(risk.verdict))}
+        except Exception:
+            return {}
+
+
 class RuneClawEngine:
     """
     Main event loop that ties scanner, analyzer, risk, and execution together.
@@ -614,6 +642,17 @@ class RuneClawEngine:
                 self.risk_for(user_id).record_live_trade_result(float(_rpnl))
         except Exception as _rr_exc:
             logger.debug("Live risk-result record skipped: %s", _rr_exc)
+        # ── Guardian Flight Recorder: close the decision→outcome loop ───────
+        # Append an OUTCOME event keyed to this position's trade_id (the same id
+        # the DecisionRecord was sealed under) so a decision links to its
+        # realised fill / PnL / close. Best-effort, fail-open: a recorder error
+        # can never affect the close path.
+        try:
+            from bot.guardian.flight_recorder import outcome_event_payload
+            self.audit_chain.append("OUTCOME", outcome_event_payload(pos))
+            self._sync_flight_records()
+        except Exception as _fo_exc:
+            logger.debug("Flight-record outcome append skipped: %s", _fo_exc)
         # Auto-refit the learners every N closed outcomes (gated, fail-open).
         # Keeps calibration/voter/expectancy fresh without a manual /calibration
         # refit. Only updates persisted learner state — never changes a decision
@@ -748,6 +787,33 @@ class RuneClawEngine:
         equity, _eq_src = self.resolve_display_equity_sync()
         user_id = getattr(executor, "user_id", None) or 1
         sync_in_background(user_id, equity, positions, closed)
+
+    def _sync_flight_records(self) -> None:
+        """Guardian Flight Recorder: push recent joined decision records + the
+        engine-verified chain status to the website (fire-and-forget, fail-open).
+
+        Telemetry only — never blocks, delays, or alters a trade. Reads the
+        existing audit chain, joins DECISION↔OUTCOME, runs the authoritative
+        ``verify()`` (the engine holds the file and the exact canonical hashing),
+        and ships the last N records so the web can render and re-check them.
+        """
+        try:
+            from bot.guardian.flight_recorder import assemble_flight_records
+            from bot.utils.website_sync import sync_flight_records_in_background
+
+            entries = self.audit_chain.get_entries(limit=400)
+            records = assemble_flight_records(entries, limit=50)
+            ok, problems = self.audit_chain.verify(str(self.audit_chain._path))
+            tip = entries[-1].entry_hash if entries else ""
+            chain = {
+                "ok": bool(ok),
+                "length": self.audit_chain.get_chain_length(),
+                "tip_hash": tip,
+                "problems": (problems or [])[:5],
+            }
+            sync_flight_records_in_background(records, chain)
+        except Exception as _fr_exc:
+            logger.debug("Flight-record sync skipped: %s", _fr_exc)
 
     def _push_scan_summary_to_website(self, signals: list) -> None:
         """Push a fresh regime/circuit-breaker/key-call summary every
@@ -3241,13 +3307,15 @@ class RuneClawEngine:
         if recheck.verdict == RiskVerdict.REJECTED:
             self._pending_pyramid.pop(trade_id, None)
             self._transition(AgentState.IDLE, f"re-check rejected {trade_id}")
-            # Seal rejection to audit chain
+            # Seal rejection to audit chain (Guardian Flight Recorder: seal the
+            # full provenance so a rejection is as explainable as an execution).
             self.audit_chain.seal_decision(DecisionRecord(
                 decision_id=trade_id, symbol=idea.asset,
-                idea={"direction": idea.direction.value, "confidence": idea.confidence},
-                risk={"verdict": "REJECTED", "reason": recheck.reason},
+                idea=_flight_idea(idea),
+                risk=_flight_risk(recheck),
                 outcome="REJECTED_ON_RECHECK", is_paper=not CONFIG.is_live(),
             ))
+            self._sync_flight_records()
             return f"Trade REJECTED on re-check: {recheck.reason}"
 
         # Adversarial self-critique gate (fail-open: errors = proceed with warning)
@@ -3687,17 +3755,18 @@ class RuneClawEngine:
                 entry_vwap = getattr(idea, '_entry_vwap', None) or idea.entry_price
                 self._last_vwap[idea.asset] = entry_vwap
 
-        # Seal decision to tamper-evident audit chain
+        # Seal decision to tamper-evident audit chain (Guardian Flight Recorder:
+        # provenance-complete idea/risk — votes, model/prompt version, and the
+        # explainability slice — so every executed decision is fully auditable).
         self.audit_chain.seal_decision(DecisionRecord(
             decision_id=trade_id, symbol=idea.asset,
-            idea={"direction": idea.direction.value, "confidence": idea.confidence,
-                  "entry": idea.entry_price, "sl": idea.stop_loss, "tp": idea.take_profit},
-            risk={"verdict": "APPROVED", "passed": len(recheck.checks_passed),
-                  "failed": len(recheck.checks_failed), "size_usd": size_usd},
+            idea=_flight_idea(idea),
+            risk=_flight_risk(recheck, size_usd=size_usd),
             macro={"risk_state": macro_ctx.risk_state, "multiplier": macro_ctx.size_multiplier},
             compliance={"granted": True, "locks_passed": compliance_decision.locks_passed},
             outcome="EXECUTED_LIVE", is_paper=False,
         ))
+        self._sync_flight_records()
         # Learning: log accepted trade decision
         self.learning.log_decision(
             symbol=idea.asset,

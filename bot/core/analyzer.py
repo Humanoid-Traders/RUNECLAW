@@ -1971,6 +1971,13 @@ class Analyzer:
                   data={"compliance": explain_report.compliance.overall,
                         "top_bullish": explain_report.top_bullish,
                         "top_bearish": explain_report.top_bearish})
+            # Guardian Flight Recorder: carry the deterministic explanation onto
+            # the idea (like _confluence_votes above) so the decision seal can
+            # persist it as provenance. Best-effort — never blocks the idea.
+            try:
+                idea._explain_report = explain_report.model_dump(mode="json")
+            except Exception:
+                pass
         except Exception:
             pass  # explainability is non-critical
 
