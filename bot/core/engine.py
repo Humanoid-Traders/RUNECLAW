@@ -1164,7 +1164,12 @@ class RuneClawEngine:
                 "tip_hash": tip,
                 "problems": (problems or [])[:5],
             }
-            sync_flight_records_in_background(records, chain, self._intent_policy_summary())
+            try:
+                gstatus = self.guardian_status()
+            except Exception:
+                gstatus = None
+            sync_flight_records_in_background(
+                records, chain, self._intent_policy_summary(), gstatus)
         except Exception as _fr_exc:
             logger.debug("Flight-record sync skipped: %s", _fr_exc)
 
