@@ -618,6 +618,40 @@ async def handle_trade_confirm(request: web.Request) -> web.Response:
     return web.json_response({"result_html": result})
 
 
+async def handle_trade_copilot(request: web.Request) -> web.Response:
+    """POST /gateway/trade/copilot — a deterministic second opinion on a
+    proposed trade BEFORE the user confirms. Read-only advice; places nothing.
+
+    Body: ``{telegram_id, direction, symbol, entry, sl, tp, margin?}``. The
+    gateway enriches with the caller's paper equity (for the size check); engine
+    bias / existing exposure are passed through when the client supplies them.
+    """
+    tg_handler = request.app["tg_handler"]
+    engine = request.app["engine"]
+    body = await _json_body(request)
+    tg_id = str(body.get("telegram_id") or "").strip()
+    err = _guard_user(tg_handler, tg_id, command="trade")
+    if err is not None:
+        return err
+    trade = {k: body.get(k) for k in ("direction", "symbol", "entry", "sl", "tp", "margin")}
+    equity = None
+    try:
+        snap = engine.user_portfolios.get(tg_id).snapshot()
+        equity = float(snap.equity_usd)
+    except Exception:
+        equity = None
+    bias = body.get("engine_bias") if body.get("engine_bias") in ("long", "short") else None
+    expo = body.get("existing_exposure") if body.get("existing_exposure") in ("long", "short") else None
+    try:
+        from bot.core.trade_copilot import review, human_readable
+        rev = review(trade, equity_usd=equity, engine_bias=bias, existing_exposure=expo)
+        rev["human_readable"] = human_readable(rev)
+        return web.json_response(rev)
+    except Exception as exc:
+        system_log.debug("Trade co-pilot failed: %s", exc)
+        return web.json_response({"error": "copilot_unavailable"}, status=500)
+
+
 async def handle_trade_cancel(request: web.Request) -> web.Response:
     engine = request.app["engine"]
     tg_handler = request.app["tg_handler"]
@@ -1215,6 +1249,7 @@ def build_gateway(engine, tg_handler) -> web.Application:
     app.router.add_post("/trade/propose", handle_trade_propose)
     app.router.add_post("/trade/confirm", handle_trade_confirm)
     app.router.add_post("/trade/cancel", handle_trade_cancel)
+    app.router.add_post("/trade/copilot", handle_trade_copilot)
     # Intent Compiler authoring (operator-only; _is_admin_id-gated per handler).
     app.router.add_post("/policy/preview", handle_policy_preview)
     app.router.add_post("/policy/apply", handle_policy_apply)

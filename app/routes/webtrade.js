@@ -97,6 +97,28 @@ router.post('/confirm', tradeLimit, async (req, res) => {
   }
 });
 
+// POST /api/trade/copilot  body: { direction, symbol, entry, sl, tp, margin? }
+// A read-only deterministic second opinion on a proposed trade — advice only.
+router.post('/copilot', tradeLimit, async (req, res) => {
+  try {
+    if (!gateway.isConfigured()) {
+      return res.status(503).json({ error: 'Web trading not configured' });
+    }
+    const b = req.body || {};
+    const ident = await resolveBotIdentity(req);
+    const r = await gateway.postGateway('/trade/copilot', {
+      telegram_id: ident.id,
+      direction: String(b.direction || '').toUpperCase(),
+      symbol: String(b.symbol || '').toUpperCase(),
+      entry: b.entry, sl: b.sl, tp: b.tp, margin: b.margin,
+    }, 12000);
+    return gateway.relay(res, r);
+  } catch (err) {
+    console.error('Trade copilot proxy error:', err.message);
+    return res.status(502).json({ error: 'Co-pilot unavailable' });
+  }
+});
+
 // POST /api/trade/cancel  body: { trade_id }
 router.post('/cancel', tradeLimit, async (req, res) => {
   try {

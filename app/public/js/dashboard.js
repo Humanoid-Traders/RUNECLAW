@@ -1586,10 +1586,12 @@
                 <div class="field"><label for="tTp">Take profit</label><input class="input input--num" id="tTp" type="number" step="any" min="0" placeholder="0.00"></div>
               </div>
               <p id="tPreview" class="small muted" aria-live="polite">Fill in entry, stop, and target to preview risk/reward.</p>
-              <div class="row">
+              <div class="row" style="gap:var(--s2);flex-wrap:wrap">
                 <button class="btn btn--primary" type="submit">Review trade</button>
+                <button class="btn btn--sm" type="button" id="tCopilotBtn">🤖 Second opinion</button>
                 <span id="tMsg" class="small muted" aria-live="polite"></span>
               </div>
+              <div id="tCopilot" class="small" style="margin-top:var(--s1)"></div>
               <p class="muted small">Every trade re-runs the full risk gate at confirmation. Limit order, same path as the Telegram bot.</p>
             </form>
           </section>
@@ -1713,6 +1715,31 @@
     }
     ['tDir', 'tEntry', 'tSl', 'tTp'].forEach(id => $(id).addEventListener('input', preview));
     ['szRisk', 'szLev'].forEach(id => $(id).addEventListener('input', sizer));
+
+    // AI co-pilot — deterministic second opinion before you commit (advice only).
+    document.getElementById('tCopilotBtn').addEventListener('click', async () => {
+      const out = $('tCopilot');
+      const body = {
+        direction: $('tDir').value, symbol: $('tSym').value.trim().toUpperCase(),
+        entry: parseFloat($('tEntry').value), sl: parseFloat($('tSl').value),
+        tp: parseFloat($('tTp').value),
+      };
+      const mr = $('tMargin').value.trim(); if (mr !== '') body.margin = Number(mr);
+      if (!body.symbol || !body.entry || !body.sl || !body.tp) { out.innerHTML = '<span class="muted">Fill in symbol, entry, stop, and target first.</span>'; return; }
+      out.innerHTML = '<span class="muted">Reviewing…</span>';
+      const r = await fetchJSON('/api/trade/copilot', { method: 'POST', body, timeoutMs: 12000 }).catch(() => ({ ok: false, data: null }));
+      const d = r.data;
+      if (!r.ok || !d || d.error) { out.innerHTML = '<span class="muted">Co-pilot unavailable right now.</span>'; return; }
+      if (d.verdict === 'invalid') { out.innerHTML = `<span class="neg">⛔ ${esc((d.flags?.[0]?.msg) || 'Invalid geometry.')}</span>`; return; }
+      const badge = d.verdict === 'clear'
+        ? '<span class="mode-badge mode-badge--paper">CLEAR</span>'
+        : '<span class="mode-badge" style="background:var(--warn,#a86)">CAUTION</span>';
+      const flags = (d.flags || []).map(f => `<div class="kv-row"><span>⚠️ ${esc(f.msg)}</span></div>`).join('');
+      const notes = (d.notes || []).map(n => `<div class="kv-row"><span class="muted">· ${esc(n)}</span></div>`).join('');
+      out.innerHTML = `${badge} <b>score ${d.score}/100</b> · R:R ${d.rr ?? '—'} · stop ${d.stop_pct}% · target ${d.target_pct}%
+        ${flags}${notes}
+        <p class="muted small" style="margin-top:var(--s1)">Advice only — the risk gate (and your Authority Envelope, for live) remain the authority.</p>`;
+    });
 
     document.getElementById('ticketForm').addEventListener('submit', async (e) => {
       e.preventDefault();
