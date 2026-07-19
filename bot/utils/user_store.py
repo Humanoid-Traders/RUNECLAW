@@ -261,6 +261,38 @@ class UserStore:
 
     # ── Live trading permission ────────────────────────────────
 
+    def web_live_enabled(self, telegram_id: int | str) -> bool:
+        """Dedicated per-user opt-in for WEB live trading (web:<id> only).
+
+        Deliberately separate from ``can_trade_live``: that flag stays
+        structurally False for web ids (below), so a stale/legacy
+        ``can_trade_live`` value can never open the web live path. This is the
+        one flag the web live gate reads, and it only ever means anything for a
+        web-only identity that also passes every other precondition (operator
+        feature switch, own keys, enforce-mode Authority Envelope).
+        """
+        if not str(telegram_id).startswith("web:"):
+            return False
+        user = self.get(telegram_id)
+        if not user or not user.get("authorized", False):
+            return False
+        return bool(user.get("web_live_enabled", False))
+
+    def set_web_live_enabled(self, telegram_id: int | str, enabled: bool) -> bool:
+        """Set the web live opt-in flag (web:<id> only). Returns True on success."""
+        key = str(telegram_id)
+        if not key.startswith("web:"):
+            return False
+        with self._lock:
+            if key not in self._users:
+                return False
+            self._users[key]["web_live_enabled"] = bool(enabled)
+            self._save()
+            audit(system_log,
+                  f"Web live trading {'enabled' if enabled else 'disabled'} for {key}",
+                  action="web_live_permission", result="OK")
+            return True
+
     def can_trade_live(self, telegram_id: int | str) -> bool:
         """Check if user is allowed to execute live trades.
 
@@ -270,6 +302,7 @@ class UserStore:
         """
         # Web-only identities ("web:<id>", provisioned by the web gateway)
         # are structurally paper-only — even an explicit flag can't override.
+        # (Web live execution rides the SEPARATE web_live_enabled flag + gate.)
         if str(telegram_id).startswith("web:"):
             return False
         user = self.get(telegram_id)

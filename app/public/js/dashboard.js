@@ -1677,7 +1677,8 @@
       <div class="kv-row"><span>Take profit</span><b>$${fmt(pt.tp, 4)} (+${fmt(pt.tp_pct, 1)}%)</b></div>
       <div class="kv-row"><span>Risk : reward</span><b>${fmt(pt.rr)}</b></div>
       <div class="kv-row"><span>Margin</span><b>${pt.margin_usd ? fmtMoney(pt.margin_usd, 0) : 'auto (risk-sized)'}</b></div>
-      ${live ? '' : '<p class="muted small mt-2">Executes on your paper portfolio. The risk engine re-checks everything now.</p>'}`;
+      ${live ? '' : '<p class="muted small mt-2">Executes on your paper portfolio. The risk engine re-checks everything now.</p>'}
+      ${(!live && pt.live_reason) ? `<p class="muted small mt-2">🔓 To trade live on your own account: ${esc(pt.live_reason)}.</p>` : ''}`;
     modal.classList.remove('hidden');
     modal.hidden = false;
     const a11y = window.RC.modalA11y(modal);
@@ -1694,7 +1695,7 @@
       const r = await fetchJSON('/api/trade/confirm', { method: 'POST', body: { trade_id: pt.trade_id }, timeoutMs: 35000 }).catch(() => ({ ok: false, data: null }));
       if (!r.ok) {
         const reason = r.data?.error === 'live_not_enabled'
-          ? 'Live trading is not enabled for your account (your toggle + operator approval needed).'
+          ? `Live trading not enabled: ${r.data?.detail || 'your toggle + operator approval needed'}.`
           : (r.data?.detail || r.data?.error || 'Confirm failed.');
         msg.innerHTML = `<span class="neg">${esc(reason)}</span>`;
         return;

@@ -437,24 +437,71 @@ def _remember_proposer(app, trade_id: str, tg_id: str) -> None:
     proposers[trade_id] = tg_id
 
 
-def _trade_mode(tg_handler, tg_id: str) -> tuple[str, bool]:
-    """(mode, live_allowed) exactly as the Telegram gate decides it.
+def _web_envelope_enforcing(app, tg_id: str) -> bool:
+    """Is a bound Authority Envelope in ENFORCE mode for this web user?
 
-    Web-only identities are structurally paper-only: even a tampered
-    users.json entry (web:N with role=admin / can_trade_live=true) never
-    yields LIVE here.
+    Seam for the per-user envelope binding (next stage). Fail-closed: any
+    absence — no registry, no bound envelope, non-enforce mode, or any error —
+    returns False, so the web live gate denies. There is deliberately no way to
+    reach a live web order without an enforce-mode envelope.
+    """
+    try:
+        engine = app.get("engine")
+        getter = getattr(engine, "get_user_authority_envelope", None)
+        if getter is None:
+            return False
+        env = getter(tg_id)
+        return bool(env) and str(getattr(env, "mode", "")).lower() == "enforce"
+    except Exception:
+        return False
+
+
+def _web_live_decision(app, tg_handler, tg_id: str):
+    """Evaluate the fail-closed web live gate for a web-only identity."""
+    from bot.web import web_live_gate
+    has_keys = False
+    try:
+        from bot.core.exchange_credentials import get_credential_store
+        has_keys = bool(get_credential_store().has(tg_id))
+    except Exception:
+        has_keys = False
+    opt_in_fn = getattr(tg_handler.users, "web_live_enabled", None)
+    try:
+        user_opted_in = bool(opt_in_fn(tg_id)) if callable(opt_in_fn) else False
+    except Exception:
+        user_opted_in = False
+    return web_live_gate.evaluate(
+        feature_enabled=web_live_gate.feature_enabled(),
+        bot_is_live=CONFIG.is_live(),
+        user_opted_in=user_opted_in,
+        has_own_keys=has_keys,
+        envelope_enforcing=_web_envelope_enforcing(app, tg_id),
+    )
+
+
+def _trade_mode(app, tg_handler, tg_id: str) -> tuple[str, bool, str]:
+    """(mode, live_allowed, reason) — the live-execution decision.
+
+    Telegram identities follow the operator allowlist + UserStore flag exactly.
+    Web-only identities are paper by default and can reach LIVE only through the
+    separate, fail-closed web live gate (own keys + operator feature switch +
+    per-user opt-in + enforce-mode Authority Envelope) — a tampered users.json
+    entry alone (web:N with role=admin) never yields LIVE.
     """
     if _is_web_id(tg_id):
-        return "PAPER", False
+        dec = _web_live_decision(app, tg_handler, tg_id)
+        if dec.allowed and CONFIG.is_live():
+            return "LIVE", True, dec.reason
+        return "PAPER", False, dec.reason
     live_allowed = bool(_is_admin_id(tg_handler, tg_id)
                         or tg_handler._can_trade_live(tg_id))
     mode = "LIVE" if (CONFIG.is_live() and live_allowed) else "PAPER"
-    return mode, live_allowed
+    return mode, live_allowed, ""
 
 
 def _idea_payload(app, tg_handler, tg_id: str, idea, margin_usd) -> dict:
     entry, sl, tp = idea.entry_price, idea.stop_loss, idea.take_profit
-    mode, live_allowed = _trade_mode(tg_handler, tg_id)
+    mode, live_allowed, live_reason = _trade_mode(app, tg_handler, tg_id)
     return {
         "trade_id": idea.id,
         "symbol": idea.asset.split("/")[0],
@@ -469,6 +516,7 @@ def _idea_payload(app, tg_handler, tg_id: str, idea, margin_usd) -> dict:
         "order_type": "limit",
         "mode": mode,
         "live_allowed": live_allowed,
+        "live_reason": live_reason,
     }
 
 
@@ -552,13 +600,19 @@ async def handle_trade_confirm(request: web.Request) -> web.Response:
     # another user's proposal.
     if request.app["proposers"].get(trade_id) != tg_id:
         return web.json_response({"error": "not_proposer"}, status=403)
-    # Web-only identities can NEVER confirm in live mode. This check runs
-    # BEFORE the _is_admin_id bypass on purpose: a tampered users.json entry
-    # (web:N with role=admin) must not open a live path.
+    # Web-only identities reach LIVE only through the fail-closed web live gate
+    # (operator feature switch + own keys + per-user opt-in + enforce-mode
+    # Authority Envelope). By default the gate denies, so this stays paper-only
+    # exactly as before — but a tampered users.json entry alone (web:N with
+    # role=admin) can never satisfy the gate, so it never opens a live path.
     if CONFIG.is_live() and _is_web_id(tg_id):
-        return web.json_response({"error": "live_not_enabled"}, status=403)
-    # Live gate — same H-18 check as the Telegram confirm path.
-    if CONFIG.is_live() and not _is_admin_id(tg_handler, tg_id):
+        dec = _web_live_decision(request.app, tg_handler, tg_id)
+        if not dec.allowed:
+            return web.json_response(
+                {"error": "live_not_enabled", "detail": dec.reason,
+                 "checklist": dec.checklist}, status=403)
+    # Live gate — same H-18 check as the Telegram confirm path (non-web ids).
+    elif CONFIG.is_live() and not _is_admin_id(tg_handler, tg_id):
         if not tg_handler._can_trade_live(tg_id):
             return web.json_response({"error": "live_not_enabled"}, status=403)
     result = await engine.confirm_trade(trade_id, user_id=tg_id)
