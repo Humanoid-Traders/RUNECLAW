@@ -19,6 +19,7 @@
 
 const express = require('express');
 const { pool } = require('../db');
+const { getLatestFlight } = require('./sync');
 
 const router = express.Router();
 
@@ -99,6 +100,41 @@ const TOOLS = {
                 entry_price, stop_loss, take_profit, rr, status, pnl, created_at
            FROM signals ORDER BY created_at DESC LIMIT ${limit}`, []);
       return { signals: rows };
+    },
+  },
+
+  get_flight_record: {
+    description: 'Guardian Flight Recorder: the tamper-evident ledger of the '
+      + "agent's recent trading decisions. Each record carries full provenance — "
+      + 'the reasoning, ranked voter contributions, LLM model/prompt version, the '
+      + 'risk-gate verdict, and the realised outcome (PnL/close) — plus the '
+      + 'engine-verified SHA-256 hash-chain status proving the log is unaltered.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        limit: { type: 'integer', minimum: 1, maximum: 50 },
+        decision_id: { type: 'string', description: 'Return only this decision' },
+      },
+      additionalProperties: false,
+    },
+    handler: async (args) => {
+      const flight = await getLatestFlight();
+      const all = (flight && Array.isArray(flight.records)) ? flight.records : [];
+      const chain = (flight && flight.chain) || {};
+      if (args && args.decision_id) {
+        const rec = all.find((r) => r && r.decision_id === args.decision_id);
+        return { record: rec || null, chain };
+      }
+      const limit = Math.min(parseInt(args?.limit) || 20, 50);
+      return {
+        chain: {
+          verified: chain.ok !== false,
+          entries: chain.length ?? null,
+          tip_hash: chain.tip_hash ?? null,
+        },
+        records: all.slice(0, limit),
+        source: 'engine-side hash-chained audit ledger (logs/audit_chain.jsonl)',
+      };
     },
   },
 

@@ -19,6 +19,7 @@
     { id: 'hub',       label: 'Agent Hub', icon: 'icon-bolt' },
     { id: 'markets',   label: 'Markets',   icon: 'icon-globe' },
     { id: 'macro',     label: 'Macro',     icon: 'icon-shield' },
+    { id: 'guardian',  label: 'Guardian',  icon: 'icon-check' },
     { id: 'signals',   label: 'Signals',   icon: 'icon-radar' },
     { id: 'deepscan',  label: 'Deep Scan', icon: 'icon-target' },
     { id: 'feed',      label: 'Live Feed', icon: 'icon-sparkle' },
@@ -3378,9 +3379,145 @@
     every(30000, updateMacroCountdowns);   // keep the event countdown ticking
   }
 
+  /* ═══════════════ Guardian — Agent Flight Recorder ═══════════════ */
+  // A tamper-evident record of every trading decision's full provenance:
+  // inputs -> voter reasoning -> model/prompt version -> risk-gate verdict ->
+  // approval -> transaction -> outcome. The engine hash-chains and cryptographically
+  // verifies the ledger; the website mirrors it read-only.
+
+  function shortHash(h) {
+    h = String(h || '');
+    return h.length > 14 ? h.slice(0, 10) + '…' + h.slice(-4) : (h || '—');
+  }
+
+  function chainBanner(chain, win, at) {
+    const ok = chain && chain.ok !== false && (!win || !win.problems || win.problems.length === 0);
+    const len = (chain && chain.length != null) ? chain.length : '—';
+    const tip = chain && chain.tip_hash ? shortHash(chain.tip_hash) : '—';
+    const color = ok ? 'var(--up,#31c48d)' : 'var(--down,#f05252)';
+    const label = ok ? 'Chain verified' : 'Chain integrity WARNING';
+    const icon = ok ? 'icon-check' : 'icon-alert';
+    const problems = (win && win.problems && win.problems.length)
+      ? `<div class="small" style="color:${color};margin-top:4px">${win.problems.map(esc).join(' · ')}</div>` : '';
+    return `<div style="display:flex;align-items:center;gap:var(--s3);flex-wrap:wrap">
+        <span class="chip" style="border-color:${color};color:${color}">
+          <svg class="icon" aria-hidden="true" style="width:14px;height:14px"><use href="#${icon}"></use></svg> ${label}</span>
+        <span class="small muted">${len} entries · tip <code>${esc(tip)}</code>${at ? ' · synced ' + esc(fmtAgo(at)) : ''}</span>
+      </div>
+      <div class="small muted" style="margin-top:6px;max-width:76ch">Every decision below is sealed into a SHA-256 hash-chained,
+        signed append-only ledger the engine verifies cryptographically — any edit, deletion, or reorder breaks the chain.</div>${problems}`;
+  }
+
+  function voteRow(v) {
+    const col = v.direction === 'bullish' ? 'var(--up,#31c48d)' : v.direction === 'bearish' ? 'var(--down,#f05252)' : 'var(--muted,#8a94a6)';
+    const mag = Math.min(100, Math.abs(Number(v.contribution) || 0) * 100);
+    return `<div style="display:flex;align-items:center;gap:8px;margin:2px 0">
+      <span class="small" style="width:130px;flex:none;color:var(--text)">${esc(v.name)}</span>
+      <span style="flex:1;height:6px;background:var(--line,#222);border-radius:3px;overflow:hidden">
+        <span style="display:block;height:100%;width:${mag}%;background:${col}"></span></span>
+      <span class="small muted" style="width:52px;text-align:right;font-variant-numeric:tabular-nums">${(Number(v.contribution) || 0).toFixed(2)}</span></div>`;
+  }
+
+  function tags(list, col) {
+    if (!list || !list.length) return '';
+    return list.map((x) => `<span class="chip" style="font-size:11px;padding:1px 7px;border-color:${col};color:${col}">${esc(x)}</span>`).join(' ');
+  }
+
+  function outcomeBadge(rec) {
+    const res = rec.result;
+    if (res && res.pnl_usd != null) {
+      const p = Number(res.pnl_usd);
+      const col = p >= 0 ? 'var(--up,#31c48d)' : 'var(--down,#f05252)';
+      const rr = res.close_reason ? ` · ${esc(res.close_reason)}` : '';
+      return `<span class="chip" style="border-color:${col};color:${col}">${p >= 0 ? '+' : ''}${fmtMoney(p)}${rr}</span>`;
+    }
+    const o = String(rec.outcome || '');
+    if (o === 'EXECUTED_LIVE') return `<span class="chip" style="border-color:var(--up,#31c48d);color:var(--up,#31c48d)">Executed · open</span>`;
+    if (o.startsWith('REJECTED')) return `<span class="chip muted">Rejected on re-check</span>`;
+    return `<span class="chip muted">${esc(o || 'recorded')}</span>`;
+  }
+
+  function flightCard(rec) {
+    const idea = rec.idea || {};
+    const risk = rec.risk || {};
+    const prov = idea.provenance || {};
+    const explain = idea.explain || {};
+    const sym = esc(String(rec.symbol || '').replace(':USDT', '').replace('/USDT', ''));
+    const dir = String(idea.direction || '').toUpperCase();
+    const dirCol = dir === 'LONG' ? 'var(--up,#31c48d)' : dir === 'SHORT' ? 'var(--down,#f05252)' : 'var(--muted)';
+    const conf = idea.confidence != null ? Math.round(idea.confidence * 100) + '%' : '—';
+    const seq = rec.chain && rec.chain.sequence != null ? '#' + rec.chain.sequence : '';
+    const votes = (idea.votes || []).slice(0, 6).map(voteRow).join('');
+    const provline = [
+      prov.model_provider ? `model <code>${esc(prov.model_provider)}</code>` : '',
+      prov.prompt_hash ? `prompt <code>${esc(shortHash(prov.prompt_hash))}</code>` : '',
+      prov.analysis_version ? `analyzer <code>${esc(prov.analysis_version)}</code>` : '',
+      prov.data_bars != null ? `${prov.data_bars} bars` : '',
+      prov.data_thin ? `<span style="color:var(--down,#f05252)">thin data</span>` : '',
+    ].filter(Boolean).join(' · ');
+    const riskLine = `<span style="color:${String(risk.verdict) === 'APPROVED' ? 'var(--up,#31c48d)' : 'var(--down,#f05252)'}">${esc(risk.verdict || '—')}</span>`
+      + ` · ${risk.passed || 0} checks passed${risk.failed ? ` · ${risk.failed} failed` : ''}`
+      + (risk.size_usd != null ? ` · size ${fmtMoney(risk.size_usd)}` : '')
+      + (risk.checks_failed && risk.checks_failed.length ? `<div class="small" style="color:var(--down,#f05252);margin-top:2px">${risk.checks_failed.map(esc).join(', ')}</div>` : '');
+    const bullish = tags(explain.top_bullish, 'var(--up,#31c48d)');
+    const bearish = tags(explain.top_bearish, 'var(--down,#f05252)');
+
+    return `<article class="panel" style="margin-bottom:var(--s3)">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <strong style="font-size:15px">${sym || '—'}</strong>
+        <span class="chip" style="border-color:${dirCol};color:${dirCol}">${esc(dir || '—')}</span>
+        <span class="small muted">conf ${conf}</span>
+        ${outcomeBadge(rec)}
+        <span class="right small muted" style="margin-left:auto;font-variant-numeric:tabular-nums">${esc(fmtAgo(rec.timestamp))} · ${esc(seq)}</span>
+      </div>
+      ${idea.reasoning ? `<p class="small" style="margin:8px 0 6px;color:var(--text)">${esc(idea.reasoning)}</p>` : ''}
+      ${(bullish || bearish) ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin:4px 0">${bullish}${bearish}</div>` : ''}
+      <details style="margin-top:8px">
+        <summary class="small" style="cursor:pointer;color:var(--accent,#3fb6ff)">Provenance &amp; evidence</summary>
+        <div style="margin-top:8px;display:grid;gap:10px">
+          ${votes ? `<div><div class="small muted" style="margin-bottom:4px">Why — ranked voter contributions</div>${votes}</div>` : ''}
+          <div><div class="small muted" style="margin-bottom:2px">Risk gate</div><div class="small">${riskLine}</div></div>
+          ${provline ? `<div><div class="small muted" style="margin-bottom:2px">Model &amp; data provenance</div><div class="small">${provline}</div></div>` : ''}
+          <div><div class="small muted" style="margin-bottom:2px">Trade geometry</div>
+            <div class="small">entry ${fmtPrice(idea.entry)} · SL ${fmtPrice(idea.sl)} · TP ${fmtPrice(idea.tp)}${idea.rr ? ` · ${idea.rr}R` : ''}${idea.timeframe ? ` · ${esc(idea.timeframe)}` : ''}</div></div>
+          <div><div class="small muted" style="margin-bottom:2px">Ledger</div>
+            <div class="small">decision <code>${esc(rec.decision_id || '—')}</code> · entry hash <code>${esc(shortHash(rec.chain && rec.chain.entry_hash))}</code></div></div>
+        </div>
+      </details>
+    </article>`;
+  }
+
+  function guardianBlock(data) {
+    const recs = (data && data.records) || [];
+    const head = `<div style="margin-bottom:var(--s4)">${chainBanner(data.chain, data.window, data.updated_at)}</div>`;
+    if (!recs.length) {
+      return head + `<div class="empty small muted" style="padding:var(--s4)">No decisions have been recorded yet. As the engine confirms or rejects trades, each one is sealed here with its full provenance.</div>`;
+    }
+    return head + recs.map(flightCard).join('');
+  }
+
+  async function renderGuardian() {
+    container.innerHTML = `
+      <div class="view-head" style="display:flex;align-items:center;gap:var(--s4)">
+        <div class="agent-avatar" data-rc-agent3d="avatar" aria-hidden="true" style="width:84px;height:84px;flex:none;border-radius:16px;overflow:hidden"></div>
+        <div><h1>Guardian · Flight Recorder</h1><span class="sub">Tamper-evident evidence for every decision the agent makes — provenance, reasoning &amp; outcome</span></div>
+      </div>
+      <div class="stack">
+        <section class="panel panel--primary" id="p-flight"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-check"></use></svg>Decision ledger
+          <span class="right muted small">inputs · reasoning · model · risk gate · outcome</span></h2>
+          <div id="c-flight"><div class="skel"></div><div class="skel"></div><div class="skel"></div></div></section>
+      </div>`;
+    if (window.RCAgent3D) window.RCAgent3D.mountIfAvailable(container.querySelector('[data-rc-agent3d]'), { mode: 'avatar' });
+    renderPanel(C('flight'), async () => {
+      const r = await fetchJSON('/api/guardian/flight?limit=50', { auth: false, timeoutMs: 16000 });
+      if (!r || !r.ok || !r.data) return null;
+      return guardianBlock(r.data);
+    }, { empty: { icon: 'icon-check', text: 'The decision ledger is unavailable right now — check back in a moment.' } });
+  }
+
   /* ═══════════════ Boot ═══════════════ */
   const RENDER = { home: renderHome, chat: renderChat, hub: renderHub, markets: renderMarkets,
-                   macro: renderMacro,
+                   macro: renderMacro, guardian: renderGuardian,
                    signals: renderSignals, deepscan: renderDeepScan,
                    feed: renderFeed, trade: renderTrade, portfolio: renderPortfolio,
                    leaderboard: renderLeaderboard, lab: renderLab, engine: renderEngine,

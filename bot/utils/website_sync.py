@@ -259,6 +259,35 @@ def sync_signals_in_background(signals: list[dict]) -> None:
     t.start()
 
 
+def sync_flight_records(records: list[dict], chain: Optional[dict] = None) -> bool:
+    """Push Guardian Flight Recorder records + engine-verified chain status.
+
+    Telemetry only (the decision ledger already lives bot-side in the audit
+    chain): a failed POST just returns False. ``chain`` carries the
+    authoritative ``verify()`` result — {ok, length, tip_hash, problems} — so
+    the website can show an engine-verified integrity badge without re-hashing
+    the whole file.
+    """
+    if not records and not chain:
+        return True
+    result = _post("/api/bot/sync/flight", {
+        "records": list(records or []),
+        "chain": chain or {},
+    })
+    if result and result.get("ok"):
+        log.info(f"Synced {result.get('stored', len(records or []))} flight record(s)")
+        return True
+    log.debug("Flight-record sync failed")
+    return False
+
+
+def sync_flight_records_in_background(records: list[dict], chain: Optional[dict] = None) -> None:
+    """Non-blocking flight-record sync (fire-and-forget)."""
+    t = threading.Thread(
+        target=sync_flight_records, args=(list(records or []), chain), daemon=True)
+    t.start()
+
+
 def sync_reports(payload: dict) -> bool:
     """Push the web-reports payload (funding/arb/parity/yield sections built
     by bot.core.web_reports) to the website's reports cache."""

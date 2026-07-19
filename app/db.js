@@ -984,6 +984,17 @@ async function migrate() {
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
       )
     `);
+    // Guardian Flight Recorder cache (single row): the bot pushes recent joined
+    // decision records + the engine-verified hash-chain status. Read-only
+    // provenance surface for the website — the authoritative ledger lives
+    // bot-side in logs/audit_chain.jsonl.
+    await pool.execute(`
+      CREATE TABLE IF NOT EXISTS flight_cache (
+        id INT PRIMARY KEY DEFAULT 1,
+        flight_json LONGTEXT NOT NULL,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+      )
+    `);
     // Admin-queued strategy-stance change (global, single in-flight row).
     // The bot pulls it, re-verifies the requester's tier is 'admin' against
     // its OWN UserStore, applies RUNTIME.strategy_mode, then acks (deletes).

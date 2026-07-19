@@ -125,6 +125,7 @@ app.use('/api/market', marketRouter);
 app.use('/api/insight', insightRouter);
 app.use('/api/patterns', require('./routes/patterns'));
 app.use('/api/macro', require('./routes/macro'));
+app.use('/api/guardian', require('./routes/guardian'));
 app.use('/api/signals', signalsRouter);
 app.use('/api/credentials', credentialsRouter);
 app.use('/api/controls', controlsRouter);
