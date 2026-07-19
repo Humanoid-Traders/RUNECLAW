@@ -1845,6 +1845,11 @@
             <span class="badge" style="margin-left:auto" title="Every connected exchange and on-chain wallet chain, itemised — read-only, RUNECLAW can never move them">read-only</span></h2>
           <div id="c-holdings"><div class="skel"></div></div>
         </section>
+        <section class="panel" id="p-sentry">
+          <h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-shield"></use></svg>Risk sentry
+            <span class="badge" style="margin-left:auto" title="A proactive read-only watch over your standing book — envelope drift, over-cap, concentration, crowding, daily spend. It flags; it never acts.">watch-only</span></h2>
+          <div id="c-sentry"><div class="skel"></div></div>
+        </section>
         <section class="panel" id="p-exposure">
           <h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-shield"></use></svg>Exposure — everywhere
             <span class="badge" style="margin-left:auto" title="Perp positions netted against on-chain spot — intelligence only, nothing here can act">read-only</span></h2>
@@ -2039,6 +2044,27 @@
           <p class="small muted" style="margin-top:var(--s2)">${nc} non-custodial rate(s) live (Lido/Aave via DefiLlama).
             Recommendation only — RUNECLAW never moves your funds.</p>`;
     }, { empty: { icon: 'icon-coin', text: 'Idle-yield scans your wallet assets once one is reachable.' } });
+
+    // Risk sentry — proactive watch over the standing book (envelope drift,
+    // over-cap, concentration, crowding, daily spend). Detection-only.
+    renderPanel(C('sentry'), async () => {
+      const r = await fetchJSON('/api/sentry', { timeoutMs: 18000 });
+      const d = r.data;
+      if (!r.ok || !d) return null;
+      if (!d.alerts || !d.alerts.length) {
+        return `<div class="kv-row"><span>🟢 Nothing flagged in your current posture.</span></div>
+          <p class="small muted" style="margin-top:var(--s2)">Watches for envelope drift, over-cap positions,
+            concentration, correlated crowding, and daily-spend. It flags — it never closes or resizes anything.</p>`;
+      }
+      const icon = { warn: '🔴', caution: '🟠', info: '🔵' };
+      const rows = d.alerts.map(a =>
+        `<div class="kv-row" style="align-items:flex-start"><span>${icon[a.level] || '•'} ${esc(a.msg)}</span></div>`).join('');
+      const worst = d.worst_level === 'warn' ? 'mode-badge--live' : (d.worst_level === 'caution' ? '' : 'mode-badge--paper');
+      return `<div style="margin-bottom:var(--s2)"><span class="mode-badge ${worst}">${esc((d.worst_level || 'clear').toUpperCase())}</span>
+          <span class="muted small">${d.count} flag(s)${d.envelope_bound ? '' : ' · no Authority Envelope bound'}</span></div>
+        ${rows}
+        <p class="small muted" style="margin-top:var(--s2)">Detection-only — RUNECLAW never closes or resizes your positions.</p>`;
+    }, { empty: { icon: 'icon-shield', text: 'The risk sentry appears once you have open positions.' } });
 
     // Exposure — perp positions netted against wallet spot, with the flags
     // a risk desk would raise (stacked longs, hedges, concentration).

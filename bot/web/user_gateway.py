@@ -936,6 +936,54 @@ async def handle_holdings(request: web.Request) -> web.Response:
     })
 
 
+async def handle_sentry(request: web.Request) -> web.Response:
+    """GET /gateway/sentry?telegram_id=... — proactive risk watch over the
+    caller's standing book (envelope drift, over-cap, concentration, crowding,
+    daily-spend). DETECTION-ONLY; nothing is closed or resized."""
+    import time as _time
+    engine = request.app["engine"]
+    tg_handler = request.app["tg_handler"]
+    tg_id = str(request.query.get("telegram_id") or "").strip()
+    err = _guard_user(tg_handler, tg_id)
+    if err is not None:
+        return err
+    positions: list[dict] = []
+    equity = None
+    try:
+        pf = engine.user_portfolios.get(tg_id)
+        for t in pf.open_positions:
+            price = float(getattr(t, "entry_price", 0) or 0)
+            qty = float(getattr(t, "quantity", 0) or 0)
+            side = getattr(getattr(t, "direction", None), "value", None) or str(getattr(t, "direction", ""))
+            positions.append({"symbol": getattr(t, "asset", ""), "side": side,
+                              "notional_usd": price * qty})
+        equity = float(pf.snapshot().equity_usd)
+    except Exception:
+        positions, equity = [], None
+    envelope = None
+    spent = 0.0
+    try:
+        from bot.guardian.user_authority_store import get_user_authority_store
+        envelope = get_user_authority_store().get(tg_id)
+    except Exception:
+        envelope = None
+    try:
+        spent = _web_live_ledger().spent(tg_id, _time.time())
+    except Exception:
+        spent = 0.0
+    try:
+        from bot.guardian.risk_sentry import assess
+        report = assess(positions, envelope=envelope, equity_usd=equity,
+                        spent_today_usd=spent)
+    except Exception as exc:
+        system_log.debug("Risk sentry failed for %s: %s", tg_id, exc)
+        return web.json_response({"error": "sentry_unavailable"}, status=500)
+    report["read_only"] = True
+    report["envelope_bound"] = envelope is not None
+    report["updated_at"] = datetime.now(timezone.utc).isoformat()
+    return web.json_response(report)
+
+
 # ── Idle-Asset Yield Optimizer (read-only recommendation) ────────────────────
 #
 # One brain, one language: the optimizer lives in Python (bot.core.idle_yield);
@@ -1317,6 +1365,7 @@ def build_gateway(engine, tg_handler) -> web.Application:
     app.router.add_get("/portfolio", handle_portfolio)
     app.router.add_get("/networth", handle_networth)
     app.router.add_get("/holdings", handle_holdings)
+    app.router.add_get("/sentry", handle_sentry)
     app.router.add_post("/idleyield", handle_idle_yield)
     # Authority Envelope authoring (per-user, self-serve; _guard_user-gated).
     app.router.add_post("/authority/preview", handle_authority_preview)
