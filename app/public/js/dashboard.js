@@ -3586,16 +3586,100 @@
         <div><h1>Guardian</h1><span class="sub">The safety layer — live posture across every control, plus tamper-evident evidence for every decision</span></div>
       </div>
       <div class="stack">
+        <section class="panel" id="p-author" hidden></section>
         <section class="panel panel--primary" id="p-flight"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-check"></use></svg>Decision ledger
           <span class="right muted small">inputs · reasoning · model · risk gate · outcome</span></h2>
           <div id="c-flight"><div class="skel"></div><div class="skel"></div><div class="skel"></div></div></section>
       </div>`;
     if (window.RCAgent3D) window.RCAgent3D.mountIfAvailable(container.querySelector('[data-rc-agent3d]'), { mode: 'avatar' });
+    // Operator-only Intent Compiler authoring (compile → preview → bind). The
+    // server re-checks plan==='admin' and the bot re-verifies the caller, so this
+    // client gate is only about what to SHOW.
+    fetchJSON('/api/auth/me').then((me) => {
+      if (me && me.ok && me.data && me.data.plan === 'admin') mountPolicyAuthoring(C('author'));
+    }).catch(() => {});
     renderPanel(C('flight'), async () => {
       const r = await fetchJSON('/api/guardian/flight?limit=50', { auth: false, timeoutMs: 16000 });
       if (!r || !r.ok || !r.data) return null;
       return guardianBlock(r.data);
     }, { empty: { icon: 'icon-check', text: 'The decision ledger is unavailable right now — check back in a moment.' } });
+  }
+
+  function mountPolicyAuthoring(panel) {
+    if (!panel) return;
+    panel.hidden = false;
+    panel.innerHTML = `
+      <h2 class="panel-title">🛡 Author intent policy
+        <span class="right muted small">operator only · tighten-only</span></h2>
+      <p class="small muted" style="margin:0 0 8px">Describe a policy in plain language — the AI compiles it into deterministic, tighten-only rules the risk gate enforces. It can only <em>tighten</em> the engine's caps, and previews before it binds.</p>
+      <textarea id="pol-text" rows="3" spellcheck="false"
+        placeholder="only majors, max 5% per trade, no shorts, min confidence 70%, stop if down 8%"
+        style="width:100%;box-sizing:border-box;font:inherit;padding:10px;border-radius:10px;border:1px solid var(--line,#2a3142);background:var(--bg-elev,#141a24);color:inherit;resize:vertical"></textarea>
+      <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;align-items:center">
+        <button class="btn" id="pol-preview">Preview</button>
+        <button class="btn" data-polmode="shadow">Set shadow</button>
+        <button class="btn" data-polmode="enforce">Set enforce</button>
+        <button class="btn" data-polmode="off">Set off</button>
+        <button class="btn" id="pol-clear" style="border-color:var(--down,#f05252);color:var(--down,#f05252)">Clear</button>
+        <span class="right small muted" id="pol-msg" style="margin-left:auto"></span>
+      </div>
+      <div id="pol-out" style="margin-top:12px"></div>`;
+    const msg = (t) => { const m = panel.querySelector('#pol-msg'); if (m) m.textContent = t || ''; };
+    panel.addEventListener('click', async (e) => {
+      const text = () => String((panel.querySelector('#pol-text') || {}).value || '').trim();
+      // Preview (compile, no bind)
+      if (e.target.closest('#pol-preview')) {
+        const t = text();
+        if (!t) { msg('Type a policy first.'); return; }
+        msg('Compiling…');
+        const r = await fetchJSON('/api/controls/policy/preview', { method: 'POST', body: { text: t } }).catch(() => null);
+        if (!r || !r.ok) { msg(r?.data?.detail || r?.data?.error || 'Compile failed.'); return; }
+        const d = r.data || {};
+        if (!d.rules || !d.rules.length) {
+          panel.querySelector('#pol-out').innerHTML = `<div class="small muted">${esc(d.note || 'No rules recognised.')}</div>`;
+          msg(''); return;
+        }
+        const warns = (d.warnings || []).length
+          ? `<div class="small" style="color:var(--down,#f05252);margin-top:6px">${d.warnings.map(esc).join(' · ')}</div>` : '';
+        panel.querySelector('#pol-out').innerHTML =
+          `<div class="small muted" style="margin-bottom:6px">Review, then bind. Shadow logs would-be rejections without blocking; enforce adds them to the risk gate.</div>
+           <pre style="white-space:pre-wrap;background:var(--bg-elev,#141a24);padding:10px;border-radius:10px;border:1px solid var(--line,#2a3142)">${esc(d.human_readable || '')}</pre>${warns}
+           <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+             <button class="btn" data-apply="shadow">👁 Apply (shadow)</button>
+             <button class="btn btn--primary" data-apply="enforce">🛡 Apply (enforce)</button>
+           </div>`;
+        msg('');
+        return;
+      }
+      // Apply (bind) — recompiled from the text server-side
+      const ab = e.target.closest('button[data-apply]');
+      if (ab) {
+        const t = text();
+        if (!t) return;
+        ab.disabled = true; msg('Binding…');
+        const r = await fetchJSON('/api/controls/policy/apply', { method: 'POST', body: { text: t, mode: ab.dataset.apply } }).catch(() => null);
+        ab.disabled = false;
+        if (r?.ok) { toast(`Policy bound (${ab.dataset.apply}).${r.data && r.data.bound === false ? ' Saved but dormant — INTENT_POLICY_ENABLED is off.' : ''}`); showView('guardian'); }
+        else { msg(r?.data?.detail || r?.data?.error || 'Bind failed.'); }
+        return;
+      }
+      // Change mode of the existing policy
+      const mb = e.target.closest('button[data-polmode]');
+      if (mb) {
+        mb.disabled = true;
+        const r = await fetchJSON('/api/controls/policy/mode', { method: 'POST', body: { mode: mb.dataset.polmode } }).catch(() => null);
+        mb.disabled = false;
+        if (r?.ok) { toast(`Policy mode → ${mb.dataset.polmode}.`); showView('guardian'); }
+        else toast(r?.data?.error === 'no_policy' ? 'No policy set yet — author one first.' : (r?.data?.detail || r?.data?.error || 'Mode change failed.'));
+        return;
+      }
+      // Clear the bound policy
+      if (e.target.closest('#pol-clear')) {
+        const r = await fetchJSON('/api/controls/policy/clear', { method: 'POST' }).catch(() => null);
+        if (r?.ok) { toast(r.data && r.data.removed ? 'Policy cleared.' : 'No policy was set.'); showView('guardian'); }
+        else toast('Clear failed.');
+      }
+    });
   }
 
   /* ═══════════════ Boot ═══════════════ */

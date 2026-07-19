@@ -16,6 +16,7 @@ const express = require('express');
 const { pool } = require('../db');
 const { authMiddleware } = require('../auth');
 const { rateLimit, userKey } = require('../lib/rate_limit');
+const { postGateway, relay, isConfigured } = require('../lib/gateway');
 
 const router = express.Router();
 router.use(authMiddleware);
@@ -159,6 +160,98 @@ router.post('/stop', stopLimit, async (req, res) => {
   } catch (err) {
     console.error('Emergency stop error:', err.message);
     res.status(500).json({ error: 'Failed to queue emergency stop' });
+  }
+});
+
+// ── Intent Compiler authoring (operator only) ──────────────────────────────
+//
+// Web parity for the Telegram /policy compile→preview→confirm→bind loop. The
+// policy is the agent's GLOBAL, tighten-only risk-gate control, so — exactly
+// like /stance above — plan is re-read fresh from the DB (never trusted from the
+// JWT), a linked Telegram is required, and the request is forwarded to the bot
+// gateway which re-verifies the caller is admin before it compiles or binds
+// anything. The web proposes; the bot decides.
+async function operatorGate(req, res) {
+  const uid = req.user.user_id;
+  const [u] = await pool.execute(
+    'SELECT telegram_linked, telegram_id, plan FROM users WHERE id = ?', [uid]);
+  if (!u[0] || String(u[0].plan) !== 'admin') {
+    secLog('policy_denied', req);
+    res.status(403).json({ error: 'admin_required', detail: 'The intent policy is the agent\'s global risk-gate control — only the operator (admin plan) can author it.' });
+    return null;
+  }
+  if (!u[0].telegram_linked || !u[0].telegram_id) {
+    res.status(409).json({ error: 'telegram_required', detail: 'Link your Telegram account first so the bot can verify the request.' });
+    return null;
+  }
+  if (!isConfigured()) {
+    res.status(503).json({ error: 'gateway_unconfigured', detail: 'The bot gateway is not configured, so policy authoring is unavailable right now.' });
+    return null;
+  }
+  return String(u[0].telegram_id);
+}
+
+// POST /api/controls/policy/preview  body: { text } — compile a preview (no bind)
+router.post('/policy/preview', ctlLimit, async (req, res) => {
+  try {
+    const tg = await operatorGate(req, res);
+    if (!tg) return;
+    const text = String((req.body || {}).text || '').slice(0, 600);
+    if (!text.trim()) return res.status(400).json({ error: 'text required' });
+    const r = await postGateway('/policy/preview', { telegram_id: tg, text }, 15000);
+    return relay(res, r);
+  } catch (err) {
+    console.error('Policy preview error:', err.message);
+    res.status(502).json({ error: 'Policy preview failed' });
+  }
+});
+
+// POST /api/controls/policy/apply  body: { text, mode } — compile + BIND
+router.post('/policy/apply', ctlLimit, async (req, res) => {
+  try {
+    const tg = await operatorGate(req, res);
+    if (!tg) return;
+    const b = req.body || {};
+    const text = String(b.text || '').slice(0, 600);
+    const mode = String(b.mode || 'shadow').toLowerCase();
+    if (!text.trim()) return res.status(400).json({ error: 'text required' });
+    if (!['shadow', 'enforce'].includes(mode)) return res.status(400).json({ error: 'mode must be shadow or enforce' });
+    const r = await postGateway('/policy/apply', { telegram_id: tg, text, mode }, 15000);
+    secLog('policy_apply', req, `mode=${mode}`);
+    return relay(res, r);
+  } catch (err) {
+    console.error('Policy apply error:', err.message);
+    res.status(502).json({ error: 'Policy apply failed' });
+  }
+});
+
+// POST /api/controls/policy/mode  body: { mode } — off|shadow|enforce
+router.post('/policy/mode', ctlLimit, async (req, res) => {
+  try {
+    const tg = await operatorGate(req, res);
+    if (!tg) return;
+    const mode = String((req.body || {}).mode || '').toLowerCase();
+    if (!['off', 'shadow', 'enforce'].includes(mode)) return res.status(400).json({ error: 'mode must be off, shadow or enforce' });
+    const r = await postGateway('/policy/mode', { telegram_id: tg, mode }, 12000);
+    secLog('policy_mode', req, `mode=${mode}`);
+    return relay(res, r);
+  } catch (err) {
+    console.error('Policy mode error:', err.message);
+    res.status(502).json({ error: 'Policy mode change failed' });
+  }
+});
+
+// POST /api/controls/policy/clear — remove the bound policy
+router.post('/policy/clear', ctlLimit, async (req, res) => {
+  try {
+    const tg = await operatorGate(req, res);
+    if (!tg) return;
+    const r = await postGateway('/policy/clear', { telegram_id: tg }, 12000);
+    secLog('policy_clear', req);
+    return relay(res, r);
+  } catch (err) {
+    console.error('Policy clear error:', err.message);
+    res.status(502).json({ error: 'Policy clear failed' });
   }
 });
 
