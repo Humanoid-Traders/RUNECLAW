@@ -3488,7 +3488,7 @@
   }
 
   const _RULE_LABEL = {
-    max_leverage: 'Max leverage', max_notional_pct: 'Max notional / trade',
+    max_position_pct: 'Max size / trade',
     max_symbol_exposure_pct: 'Max per-symbol', max_portfolio_exposure_pct: 'Max portfolio',
     max_open_positions: 'Max open positions', min_confidence: 'Min confidence',
     min_rr: 'Min reward:risk', max_daily_loss_pct: 'Max daily loss',
@@ -3502,7 +3502,6 @@
     if (Array.isArray(v)) v = v.join(', ');
     else if (r.type === 'min_confidence') v = Math.round(Number(v) * 100) + '%';
     else if (/pct$/.test(r.type)) v = v + '%';
-    else if (r.type === 'max_leverage') v = v + '×';
     else if (r.type === 'min_rr') v = v + 'R';
     else if (r.type === 'direction') v = String(v).replace('_', ' ');
     return `<span class="chip" style="font-size:11px;padding:2px 8px"><span class="muted">${esc(label)}</span>&nbsp;<strong>${esc(String(v))}</strong></span>`;

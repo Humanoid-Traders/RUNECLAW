@@ -39,8 +39,8 @@ Guardian module, building on the Agent Flight Recorder.
 5. When the shadow log looks right, switch `"mode": "enforce"` and reload.
 
 Natural-language authoring is deterministic: `intent_policy.compile_nl()` parses
-common phrasings ("under 3x leverage, only majors, max 5% per trade, no shorts,
-cap 3 open") into a rule list you review before it compiles. The LLM only ever
+common phrasings ("only majors, max 5% per trade, no shorts, cap 3 open, min
+confidence 70%") into a rule list you review before it compiles. The LLM only ever
 *drafts* — the compiled artifact is what enforces. (Web/Telegram authoring UI is
 a follow-up; PR-2 ships operator-file authoring + read-only surfaces.)
 
@@ -48,8 +48,7 @@ a follow-up; PR-2 ships operator-file authoring + read-only surfaces.)
 
 | type | params | violates when | clamps against |
 |---|---|---|---|
-| `max_leverage` | number `×` | configured leverage > limit | `default_leverage` |
-| `max_notional_pct` | number `%` | `position_usd / equity` > limit | `max_position_pct` |
+| `max_position_pct` | number `%` | `position_usd / equity` > limit | `max_position_pct` |
 | `max_open_positions` | integer | effective open count ≥ limit | `max_open_positions` |
 | `min_confidence` | 0–1 | idea confidence < floor | `min_confidence` |
 | `min_rr` | number `R` | reward:risk < floor | `min_risk_reward` |
@@ -60,11 +59,13 @@ a follow-up; PR-2 ships operator-file authoring + read-only surfaces.)
 | `allowed_strategy_types` | `[str…]` | strategy not in the allowlist | — |
 | `direction` | `long_only`/`short_only` | trade is the wrong side | — |
 
-> `max_notional_pct` is named honestly: at the hook the compared value is
-> `position_usd / equity`, and `position_usd` is the final macro-adjusted,
-> execution-capped **notional** — not risk-to-stop. A true `max_risk_pct` (over
-> stop distance) and policy-level exposure/free-margin rules that need extra
-> plumbing are deferred to a follow-up.
+> `max_position_pct` uses the engine's own name and meaning: the compared value
+> is `position_usd / equity` — the engine calls that `position_pct` and caps it
+> with `CONFIG.risk.max_position_pct`. (`position_usd` is committed as margin, so
+> this is position size as % of equity, not a leverage-adjusted notional or a
+> risk-to-stop figure.) A true `max_risk_pct` (over stop distance), policy-level
+> exposure/free-margin rules, and a per-trade leverage rule (live leverage is a
+> fixed config today, not per-trade) are deferred to a follow-up.
 
 ## Where it plugs in
 

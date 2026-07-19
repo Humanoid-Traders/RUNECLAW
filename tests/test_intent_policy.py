@@ -13,7 +13,6 @@ from bot.guardian import intent_policy as ip
 # ── compile: validation + clamp-to-tighten + hashing ──────────────────
 
 ENGINE_CAPS = {
-    "max_leverage": 10,
     "max_position_pct": 10,
     "max_symbol_exposure_pct": 30,
     "max_portfolio_exposure_pct": 80,
@@ -56,12 +55,12 @@ def test_compile_clamps_min_rules_up_to_engine_floor():
 def test_compile_drops_unknown_and_nonnumeric_and_dupes():
     pol = ip.compile_policy({"rules": [
         {"type": "make_me_rich", "value": 1},
-        {"type": "max_leverage", "value": "abc"},
-        {"type": "max_leverage", "value": 3},
-        {"type": "max_leverage", "value": 5},   # duplicate
+        {"type": "max_position_pct", "value": "abc"},
+        {"type": "max_position_pct", "value": 3},
+        {"type": "max_position_pct", "value": 5},   # duplicate
     ]}, ENGINE_CAPS)
     types = [r["type"] for r in pol["rules"]]
-    assert types == ["max_leverage"]
+    assert types == ["max_position_pct"]
     assert pol["rules"][0]["value"] == 3
     assert any("unknown rule" in w for w in pol["warnings"])
     assert any("non-numeric" in w for w in pol["warnings"])
@@ -81,7 +80,7 @@ def test_compile_normalises_symbol_lists_and_direction():
 
 
 def test_compile_defaults_mode_shadow_and_derives_id():
-    pol = ip.compile_policy({"rules": [{"type": "max_leverage", "value": 3}]})
+    pol = ip.compile_policy({"rules": [{"type": "max_position_pct", "value": 3}]})
     assert pol["mode"] == "shadow"                       # safe default
     assert pol["policy_id"] == "pol_" + pol["compiled_hash"][:8]
     assert pol["version"] == ip.POLICY_VERSION
@@ -89,15 +88,15 @@ def test_compile_defaults_mode_shadow_and_derives_id():
 
 def test_hash_is_order_independent_and_content_stable():
     a = ip.compile_policy({"rules": [
-        {"type": "max_leverage", "value": 3},
+        {"type": "max_position_pct", "value": 3},
         {"type": "min_rr", "value": 1.5},
     ]})
     b = ip.compile_policy({"rules": [
         {"type": "min_rr", "value": 1.5},
-        {"type": "max_leverage", "value": 3},
+        {"type": "max_position_pct", "value": 3},
     ]})
     assert a["compiled_hash"] == b["compiled_hash"]      # order doesn't change hash
-    c = ip.compile_policy({"rules": [{"type": "max_leverage", "value": 4}]})
+    c = ip.compile_policy({"rules": [{"type": "max_position_pct", "value": 4}]})
     assert c["compiled_hash"] != a["compiled_hash"]      # value change → new hash
 
 
@@ -119,10 +118,10 @@ def test_evaluate_numeric_max_and_min_boundaries():
     conf = _pol({"type": "min_confidence", "value": 0.7})
     assert ip.evaluate_policy(conf, {"confidence": 0.65})["verdict"] == "reject"
     assert ip.evaluate_policy(conf, {"confidence": 0.70})["verdict"] == "pass"
-    # notional cap compares position_usd/equity = ctx.notional_pct
-    notl = _pol({"type": "max_notional_pct", "value": 5})
-    assert ip.evaluate_policy(notl, {"notional_pct": 6})["verdict"] == "reject"
-    assert ip.evaluate_policy(notl, {"notional_pct": 5})["verdict"] == "pass"
+    # position-size cap compares position_usd/equity = ctx.position_pct
+    notl = _pol({"type": "max_position_pct", "value": 5})
+    assert ip.evaluate_policy(notl, {"position_pct": 6})["verdict"] == "reject"
+    assert ip.evaluate_policy(notl, {"position_pct": 5})["verdict"] == "pass"
 
 
 def test_evaluate_max_open_positions_uses_effective_count():
@@ -163,10 +162,10 @@ def test_evaluate_missing_data_skips_never_fails():
 
 def test_evaluate_collects_multiple_violations():
     pol = _pol(
-        {"type": "max_leverage", "value": 3},
+        {"type": "max_position_pct", "value": 3},
         {"type": "direction", "value": "long_only"},
     )
-    r = ip.evaluate_policy(pol, {"leverage": 5, "direction": "SHORT"})
+    r = ip.evaluate_policy(pol, {"position_pct": 5, "direction": "SHORT"})
     assert r["verdict"] == "reject"
     assert len(r["violations"]) == 2
 
@@ -174,9 +173,9 @@ def test_evaluate_collects_multiple_violations():
 def test_evaluate_never_raises_on_garbage_rule():
     # A malformed rule value must not crash enforcement.
     bad = {"policy_id": "x", "compiled_hash": "y", "mode": "enforce",
-           "rules": [{"type": "max_leverage", "value": None},
+           "rules": [{"type": "max_position_pct", "value": None},
                      {"type": "allowed_symbols", "value": "not-a-list"}]}
-    r = ip.evaluate_policy(bad, {"leverage": 5, "asset": "BTC"})
+    r = ip.evaluate_policy(bad, {"position_pct": 5, "asset": "BTC"})
     assert isinstance(r["violations"], list)   # no exception
 
 
@@ -184,10 +183,9 @@ def test_evaluate_never_raises_on_garbage_rule():
 
 def test_nl_extracts_common_intent():
     out = ip.compile_nl(
-        "Keep me under 3x leverage, never more than 20% in one coin, "
-        "only majors, and stop if I'm down 8% this week. Min confidence 70%.")
+        "Never more than 20% in one coin, only majors, and stop if I'm down "
+        "8% this week. Min confidence 70%.")
     by = {r["type"]: r["value"] for r in out["rules"]}
-    assert by["max_leverage"] == 3
     assert by["max_symbol_exposure_pct"] == 20
     assert by["max_drawdown_pct"] == 8
     assert by["min_confidence"] == 0.70
@@ -202,10 +200,10 @@ def test_nl_direction_and_rr_and_free_margin():
     assert by["min_free_margin_pct"] == 30
 
 
-def test_nl_notional_and_open_positions():
+def test_nl_position_size_and_open_positions():
     out = ip.compile_nl("max 2% per trade, cap 3 open positions")
     by = {r["type"]: r["value"] for r in out["rules"]}
-    assert by["max_notional_pct"] == 2
+    assert by["max_position_pct"] == 2
     assert by["max_open_positions"] == 3
 
 
@@ -228,21 +226,21 @@ def test_shipped_example_policy_compiles_cleanly():
     pol = ip.compile_policy(spec, ENGINE_CAPS)
     assert pol["mode"] == "shadow"
     types = {r["type"] for r in pol["rules"]}
-    assert {"allowed_symbols", "max_notional_pct", "min_rr",
+    assert {"allowed_symbols", "max_position_pct", "min_rr",
             "max_open_positions", "min_confidence", "direction"} <= types
     assert pol["warnings"] == []          # example never loosens a cap
     assert pol["policy_id"].startswith("pol_")
 
 
 def test_round_trip_nl_to_enforcement():
-    nl = ip.compile_nl("under 3x leverage, only majors, min confidence 70%")
+    nl = ip.compile_nl("only majors, max 5% per trade, min confidence 70%")
     pol = ip.compile_policy(
-        {"mode": "enforce", "source_text": "under 3x...", "rules": nl["rules"]},
+        {"mode": "enforce", "source_text": "only majors...", "rules": nl["rules"]},
         ENGINE_CAPS)
     # A compliant trade passes.
-    ok = ip.evaluate_policy(pol, {"leverage": 2, "asset": "BTC/USDT", "confidence": 0.8})
+    ok = ip.evaluate_policy(pol, {"position_pct": 2, "asset": "BTC/USDT", "confidence": 0.8})
     assert ok["verdict"] == "pass"
-    # A DOGE short at 5x, low confidence violates three rules.
-    bad = ip.evaluate_policy(pol, {"leverage": 5, "asset": "DOGE/USDT", "confidence": 0.6})
+    # A DOGE trade at 9% size, low confidence violates three rules.
+    bad = ip.evaluate_policy(pol, {"position_pct": 9, "asset": "DOGE/USDT", "confidence": 0.6})
     assert bad["verdict"] == "reject"
     assert len(bad["violations"]) == 3

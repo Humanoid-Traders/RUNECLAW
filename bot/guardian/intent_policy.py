@@ -2,8 +2,8 @@
 
     The AI proposes. Deterministic controls authorize.
 
-A user states an intent in plain language ("keep me under 3x leverage, never more
-than 20% in one coin, only majors, stop if I'm down 8% this week"). ``compile_nl``
+A user states an intent in plain language ("never more than 20% in one coin, only
+majors, max 5% per trade, stop if I'm down 8% this week"). ``compile_nl``
 turns that into a **compiled policy**: a versioned, content-hashed list of typed
 rules. ``evaluate_policy`` then checks a candidate trade against that policy
 **deterministically** — no LLM, no network, pure functions of the inputs — and
@@ -39,14 +39,16 @@ POLICY_VERSION = 1
 # must be ≥ engine cap) and the evaluator knows which way a violation points.
 # `cap` names the engine-cap key the compiler clamps against (None → the rule is
 # a NEW restriction with no engine equivalent, so it only ever tightens).
-# `max_notional_pct` (not `max_position_pct`): at the risk-gate hook the value
-# compared is `position_usd / sizing_equity` — position_usd is the final
-# macro-adjusted, execution-capped *notional*, so the rule is a notional cap, not
-# a risk-to-stop cap. Naming it honestly keeps the human-reviewable artifact true
-# to what it enforces. (The engine cap it clamps against is still max_position_pct.)
+# `max_position_pct` matches the engine's own field exactly: at the risk-gate
+# hook the value compared is `position_usd / sizing_equity` — the engine calls
+# that `position_pct` and caps it with `CONFIG.risk.max_position_pct`. (position_usd
+# is committed as margin, so this is position-size as % of equity, not a
+# risk-to-stop or leverage-adjusted notional — the honest name is the engine's.)
+# A per-trade leverage rule is intentionally NOT here: live leverage is a fixed
+# config, not per-trade, so a "max_leverage" rule would be a blunt all-or-nothing
+# gate — deferred until real per-trade leverage is threaded onto the idea.
 _NUMERIC_RULES: dict[str, dict] = {
-    "max_leverage":                {"dir": "max", "cap": "max_leverage",              "unit": "x"},
-    "max_notional_pct":            {"dir": "max", "cap": "max_position_pct",          "unit": "%"},
+    "max_position_pct":            {"dir": "max", "cap": "max_position_pct",          "unit": "%"},
     "max_symbol_exposure_pct":     {"dir": "max", "cap": "max_symbol_exposure_pct",   "unit": "%"},
     "max_portfolio_exposure_pct":  {"dir": "max", "cap": "max_portfolio_exposure_pct","unit": "%"},
     "max_open_positions":          {"dir": "max", "cap": "max_open_positions",        "unit": ""},
@@ -253,10 +255,8 @@ def evaluate_policy(policy: Optional[dict], ctx: dict) -> dict:
         try:
             rtype = rule.get("type")
             val = rule.get("value")
-            if rtype == "max_leverage":
-                _cmp_max("leverage", val, "leverage", "x")
-            elif rtype == "max_notional_pct":
-                _cmp_max("notional_pct", val, "position notional", "%")
+            if rtype == "max_position_pct":
+                _cmp_max("position_pct", val, "position size", "%")
             elif rtype == "max_open_positions":
                 # "adding one more would exceed the cap": violate when the
                 # current open count already meets/exceeds the limit. Uses the
@@ -347,14 +347,6 @@ def compile_nl(text: str) -> dict:
         rules.append(rule)
         matched.append(note)
 
-    # leverage: "under 3x", "max leverage 3", "no more than 3x leverage"
-    m = re.search(r"(?:under|max(?:imum)?|below|no more than|less than)\s*"
-                  r"(\d+(?:\.\d+)?)\s*x?\s*(?:leverage|lev)", t) \
-        or re.search(r"(\d+(?:\.\d+)?)\s*x\s*(?:leverage|lev|max)", t)
-    if m:
-        add({"type": "max_leverage", "value": float(m.group(1))},
-            f"max leverage {m.group(1)}x")
-
     # per-coin / per-symbol exposure: "20% in one coin/symbol/asset/position"
     m = re.search(_PCT + r"\s*(?:in|per|max(?:imum)?)?\s*(?:any\s*)?"
                   r"(?:one|single|per)?\s*(?:coin|symbol|asset|token|name)", t)
@@ -372,8 +364,8 @@ def compile_nl(text: str) -> dict:
     m = re.search(_PCT + r"\s*(?:per|a|each)\s*(?:trade|position|entry)", t) \
         or re.search(r"position\s*size\s*(?:of\s*)?" + _PCT, t)
     if m:
-        add({"type": "max_notional_pct", "value": float(m.group(1))},
-            f"max {m.group(1)}% notional per trade")
+        add({"type": "max_position_pct", "value": float(m.group(1))},
+            f"max {m.group(1)}% per trade")
 
     # open-position cap: "cap 3 open / max 3 positions / at most 3 open trades"
     m = re.search(r"(?:cap|max(?:imum)?|at most|no more than|up to)\s*(\d+)\s*"

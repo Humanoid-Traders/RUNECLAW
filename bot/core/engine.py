@@ -805,7 +805,6 @@ class RuneClawEngine:
             "min_risk_reward": getattr(CONFIG.risk, "min_risk_reward", None),
             "max_daily_loss_pct": getattr(CONFIG.risk, "max_daily_loss_pct", None),
             "max_drawdown_pct": getattr(CONFIG.risk, "max_drawdown_pct", None),
-            "max_leverage": getattr(CONFIG.exchange, "default_leverage", None),
         }
         return {k: v for k, v in caps.items() if v is not None}
 

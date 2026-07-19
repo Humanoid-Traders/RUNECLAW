@@ -1730,8 +1730,7 @@ class RiskEngine:
                              else getattr(state, "open_positions", None))
                 _dir = idea.direction.value if hasattr(idea.direction, "value") else str(idea.direction)
                 _ctx = {
-                    "notional_pct": (position_usd / sizing_equity * 100) if sizing_equity > 0 else None,
-                    "leverage": getattr(CONFIG.exchange, "default_leverage", 1) or 1,
+                    "position_pct": (position_usd / sizing_equity * 100) if sizing_equity > 0 else None,
                     "confidence": idea.confidence,
                     "rr": idea.risk_reward_ratio,
                     "daily_loss_pct": daily_loss_pct,
