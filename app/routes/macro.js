@@ -16,6 +16,7 @@
 
 const express = require('express');
 const https = require('https');
+const gateway = require('../lib/gateway');
 
 const router = express.Router();
 
@@ -108,6 +109,9 @@ function buildBrief(m) {
     if (m.btc_dominance != null) dom = ` BTC dominance ${m.btc_dominance.toFixed(1)}%${m.eth_dominance != null ? `, ETH ${m.eth_dominance.toFixed(1)}%` : ''}.`;
     s.push(`Total crypto market cap is ${fmtCap(m.market_cap_usd)}${dir}.${dom}`);
   }
+  if (m.structure) {
+    s.push(`Capital is ${m.structure === 'BTC-led' ? 'concentrated in BTC — a defensive tilt' : m.structure === 'Alt-heavy' ? 'rotating into alts — a risk-seeking tilt' : 'spread broadly across the market'}.`);
+  }
   if (m.regime && m.regime.label) {
     const sc = m.regime.score != null ? ` (score ${Number(m.regime.score).toFixed(2)})` : '';
     s.push(`The engine's live BTC regime is ${String(m.regime.label).toUpperCase()}${sc}.`);
@@ -132,14 +136,19 @@ function buildBrief(m) {
  */
 function assembleMacro({ global, fng, regime } = {}) {
   const g = global || {};
+  const btcDom = num(g.btc_dom), ethDom = num(g.eth_dom);
   const out = {
     risk_score: null,
     band: null,
     fear_greed: null,
     market_cap_usd: num(g.mcap_usd),
     market_cap_change_24h: num(g.mcap_chg_24h),
-    btc_dominance: num(g.btc_dom),
-    eth_dominance: num(g.eth_dom),
+    btc_dominance: btcDom,
+    eth_dominance: ethDom,
+    // Everything that isn't BTC or ETH — the alt share of total cap.
+    others_dominance: (btcDom != null && ethDom != null) ? Math.max(0, +(100 - btcDom - ethDom).toFixed(1)) : null,
+    // Where the money sits: BTC-led (defensive), Alt-heavy (risk-seeking), or broad.
+    structure: btcDom == null ? null : (btcDom >= 55 ? 'BTC-led' : btcDom <= 48 ? 'Alt-heavy' : 'Broad'),
     volume_24h_usd: num(g.vol_usd),
     regime: (regime && (regime.label || regime.score != null)) ? {
       label: regime.label || null,
@@ -173,6 +182,45 @@ function assembleMacro({ global, fng, regime } = {}) {
   return out;
 }
 
+// ── LLM-written brief (best-effort) ──────────────────────────────────────────
+// The deterministic brief above always ships. When the bot gateway is wired,
+// we ALSO ask the agent's LLM for a richer read over the SAME numbers, via the
+// account-free public chat path (no identity crosses the boundary). It is
+// coalesced + cached ~10 min and keyed on the posture, so a live view doesn't
+// hit the model on every poll, and it never blocks: on a cold cache the route
+// waits briefly, otherwise it returns instantly with whatever is cached.
+const stripTags = (s) => String(s).replace(/<[^>]*>/g, ' ').replace(/&[a-z]+;/gi, ' ').replace(/\s+/g, ' ').trim();
+function llmPrompt(m) {
+  const parts = [];
+  if (m.fear_greed) parts.push(`Fear & Greed ${m.fear_greed.value}/100 (${m.fear_greed.classification})`);
+  if (m.market_cap_usd != null) parts.push(`total crypto market cap ${fmtCap(m.market_cap_usd)}${m.market_cap_change_24h != null ? ` (${m.market_cap_change_24h >= 0 ? '+' : ''}${m.market_cap_change_24h.toFixed(1)}% 24h)` : ''}`);
+  if (m.btc_dominance != null) parts.push(`BTC dominance ${m.btc_dominance.toFixed(1)}%`);
+  if (m.eth_dominance != null) parts.push(`ETH dominance ${m.eth_dominance.toFixed(1)}%`);
+  if (m.structure) parts.push(`market structure ${m.structure}`);
+  if (m.regime && m.regime.label) parts.push(`the engine's BTC regime reads ${m.regime.label}`);
+  if (m.risk_score != null) parts.push(`blended risk-on score ${m.risk_score}/100 (${m.band ? m.band.label : ''})`);
+  return 'You are RUNECLAW, an AI crypto macro strategist. Using ONLY this data (do not invent numbers or news): '
+    + parts.join('; ') + '. '
+    + 'Write a sharp 3-sentence macro read for a crypto trader, then one short actionable stance line. '
+    + 'Plain text, no preamble, no markdown headers.';
+}
+let _ai = { text: null, ts: 0, key: '', promise: null };
+async function llmBrief(m) {
+  if (!gateway.isConfigured() || !m.band) return null;
+  const key = `${m.band.key}|${Math.round((m.fear_greed ? m.fear_greed.value : 50) / 5)}|${m.structure || ''}`;
+  if (_ai.text && _ai.key === key && Date.now() - _ai.ts < 10 * 60000) return _ai.text;
+  if (_ai.promise) return _ai.promise;                     // coalesce concurrent cold-cache callers
+  _ai.promise = gateway.postGateway('/chat/public', { text: llmPrompt(m) }, 9000)
+    .then((r) => {
+      const raw = r && r.status === 200 && r.data ? (r.data.reply_html || r.data.reply || '') : '';
+      const t = stripTags(raw).slice(0, 700);
+      _ai = { text: t || null, ts: Date.now(), key, promise: null };
+      return _ai.text;
+    })
+    .catch(() => { _ai.promise = null; return null; });
+  return _ai.promise;
+}
+
 // ── GET /api/macro ───────────────────────────────────────────────────────────
 router.get('/', async (req, res) => {
   let global = null, fng = null, regime = null;
@@ -202,6 +250,7 @@ router.get('/', async (req, res) => {
   if (!macro.sources.length) {
     return res.status(502).json({ error: 'Macro data unavailable right now.' });
   }
+  try { const ai = await llmBrief(macro); if (ai) macro.ai_brief = ai; } catch (e) { /* fall back to the deterministic brief */ }
   res.set('Cache-Control', 'public, max-age=60');
   res.json({ ok: true, macro, generated_at: new Date().toISOString() });
 });
