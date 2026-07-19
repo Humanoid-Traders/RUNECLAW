@@ -110,6 +110,32 @@
     'nav.lab': { en: 'Lab', es: 'Laboratorio', zh: '實驗室', pt: 'Laboratório', fr: 'Labo', ar: 'المختبر' },
     'nav.engine': { en: 'Engine', es: 'Motor', zh: '引擎', pt: 'Motor', fr: 'Moteur', ar: 'المحرك' },
     'nav.account': { en: 'Account', es: 'Cuenta', zh: '帳戶', pt: 'Conta', fr: 'Compte', ar: 'الحساب' },
+
+    // Dashboard view headers (title + subtitle), emitted centrally by viewHead.
+    'vh.home.title': { en: 'Home', es: 'Inicio', zh: '首頁', pt: 'Início', fr: 'Accueil', ar: 'الرئيسية' },
+    'vh.home.sub': { en: 'Your account at a glance', es: 'Tu cuenta de un vistazo', zh: '一覽你的帳戶', pt: 'Sua conta num relance', fr: 'Votre compte en un coup d’œil', ar: 'حسابك في لمحة' },
+    'vh.markets.title': { en: 'Markets', es: 'Mercados', zh: '市場', pt: 'Mercados', fr: 'Marchés', ar: 'الأسواق' },
+    'vh.markets.sub': { en: 'Live exchange data', es: 'Datos del exchange en vivo', zh: '即時交易所數據', pt: 'Dados da exchange ao vivo', fr: 'Données d’échange en direct', ar: 'بيانات المنصّة المباشرة' },
+    'vh.signals.title': { en: 'Signals', es: 'Señales', zh: '信號', pt: 'Sinais', fr: 'Signaux', ar: 'الإشارات' },
+    'vh.signals.sub': { en: 'Every setup the engine generates — taken or not', es: 'Cada oportunidad que genera el motor, tomada o no', zh: '引擎產生的每個交易機會——無論是否採用', pt: 'Cada setup que o motor gera, executado ou não', fr: 'Chaque configuration générée par le moteur, prise ou non', ar: 'كل فرصة يولّدها المحرك، سواء نُفّذت أم لا' },
+    'vh.deepscan.title': { en: 'Deep Scan', es: 'Escaneo profundo', zh: '深度掃描', pt: 'Varredura profunda', fr: 'Analyse approfondie', ar: 'فحص عميق' },
+    'vh.deepscan.sub': { en: 'The engine’s per-symbol pattern read — chart & candlestick', es: 'La lectura de patrones del motor por símbolo: gráfico y velas', zh: '引擎對每個標的的形態解讀——圖表與 K 線', pt: 'A leitura de padrões do motor por símbolo — gráfico e candles', fr: 'La lecture des motifs par symbole du moteur — graphique et chandeliers', ar: 'قراءة المحرك للأنماط لكل رمز — الرسم والشموع' },
+    'vh.trade.title': { en: 'Trade', es: 'Operar', zh: '交易', pt: 'Operar', fr: 'Trader', ar: 'تداول' },
+    'vh.trade.sub': { en: 'Manual trading through the engine’s risk gate', es: 'Operativa manual a través del filtro de riesgo del motor', zh: '透過引擎風險閘進行手動交易', pt: 'Operação manual pelo filtro de risco do motor', fr: 'Trading manuel via le filtre de risque du moteur', ar: 'تداول يدوي عبر بوابة مخاطر المحرك' },
+    'vh.portfolio.title': { en: 'Portfolio', es: 'Cartera', zh: '投資組合', pt: 'Carteira', fr: 'Portefeuille', ar: 'المحفظة' },
+    'vh.portfolio.sub': { en: 'Your equity, history, and journal', es: 'Tu capital, historial y diario', zh: '你的權益、歷史與交易日誌', pt: 'Seu patrimônio, histórico e diário', fr: 'Vos fonds, votre historique et votre journal', ar: 'رأس مالك وسجلّك ومذكّرتك' },
+    'vh.engine.title': { en: 'Engine', es: 'Motor', zh: '引擎', pt: 'Motor', fr: 'Moteur', ar: 'المحرك' },
+    'vh.engine.sub': { en: 'The autonomous RUNECLAW engine, live', es: 'El motor autónomo de RUNECLAW, en vivo', zh: '自主運行的 RUNECLAW 引擎，實時', pt: 'O motor autônomo da RUNECLAW, ao vivo', fr: 'Le moteur autonome RUNECLAW, en direct', ar: 'محرك RUNECLAW المستقل، مباشرةً' },
+    'vh.account.title': { en: 'Account', es: 'Cuenta', zh: '帳戶', pt: 'Conta', fr: 'Compte', ar: 'الحساب' },
+    'vh.account.sub': { en: 'Profile, connections, and live-trading controls', es: 'Perfil, conexiones y controles de operativa real', zh: '個人資料、連接與實盤交易控制', pt: 'Perfil, conexões e controles de trading real', fr: 'Profil, connexions et contrôles de trading réel', ar: 'الملف الشخصي والاتصالات وضوابط التداول الحقيقي' },
+    'vh.leaderboard.title': { en: 'Leaderboard', es: 'Clasificación', zh: '排行榜', pt: 'Classificação', fr: 'Classement', ar: 'لوحة المتصدرين' },
+    'vh.leaderboard.sub': { en: 'Opt-in ranks by return % — anonymous handles, no dollar amounts', es: 'Rankings voluntarios por % de rendimiento: alias anónimos, sin importes', zh: '自願參與、按報酬率排名——匿名代號，不顯示金額', pt: 'Ranking opcional por % de retorno — apelidos anônimos, sem valores', fr: 'Classements volontaires par % de rendement — pseudos anonymes, sans montants', ar: 'ترتيب اختياري حسب نسبة العائد — أسماء مستعارة، دون مبالغ' },
+    'vh.lab.title': { en: 'Strategy Lab', es: 'Laboratorio de estrategias', zh: '策略實驗室', pt: 'Laboratório de estratégias', fr: 'Labo de stratégies', ar: 'مختبر الاستراتيجيات' },
+    'vh.lab.sub': { en: 'Run the engine’s honest backtester on frozen benchmark data', es: 'Ejecuta el backtester honesto del motor sobre datos de referencia congelados', zh: '在凍結的基準數據上運行引擎的誠實回測器', pt: 'Rode o backtester honesto do motor em dados de referência congelados', fr: 'Lancez le backtester honnête du moteur sur des données de référence figées', ar: 'شغّل أداة الاختبار الخلفي الأمينة للمحرك على بيانات مرجعية مجمّدة' },
+    'vh.hub.title': { en: 'Agent Hub', es: 'Centro del agente', zh: '智能體中心', pt: 'Central do agente', fr: 'Hub de l’agent', ar: 'مركز الوكيل' },
+    'vh.hub.sub': { en: 'Everything your agent does — status at a glance, one tap to act', es: 'Todo lo que hace tu agente: estado de un vistazo, una pulsación para actuar', zh: '你的智能體所做的一切——狀態一目了然，一鍵操作', pt: 'Tudo o que seu agente faz — status num relance, um toque para agir', fr: 'Tout ce que fait votre agent — statut en un coup d’œil, une touche pour agir', ar: 'كل ما يفعله وكيلك — الحالة في لمحة، نقرة واحدة للتنفيذ' },
+    'vh.feed.title': { en: 'Live Feed', es: 'Feed en vivo', zh: '即時動態', pt: 'Feed ao vivo', fr: 'Flux en direct', ar: 'البث المباشر' },
+    'vh.feed.sub': { en: 'The agent’s mind-stream — every scan, thesis, trade and alert, as it happens', es: 'El flujo mental del agente: cada análisis, tesis, operación y alerta, en tiempo real', zh: '智能體的思緒流——每次掃描、論點、交易與警報，實時呈現', pt: 'O fluxo de pensamento do agente — cada varredura, tese, operação e alerta, em tempo real', fr: 'Le flux de pensée de l’agent — chaque analyse, thèse, trade et alerte, en direct', ar: 'تدفّق تفكير الوكيل — كل مسح وأطروحة وصفقة وتنبيه، لحظيًا' },
   };
 
   function normalize(code) {

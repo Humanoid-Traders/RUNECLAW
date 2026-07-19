@@ -127,6 +127,8 @@
     // WebGL context; the chat/hub views re-mount their own).
     if (window.RCAgent3D) window.RCAgent3D.disposeAll();
     RENDER[id]();
+    // Localize the freshly-rendered view (headers etc.) to the active language.
+    if (window.RCI18N) RCI18N.apply(container);
   }
 
   // Panels are declared as [id, title, icon, extraClass] and mounted together.
@@ -148,8 +150,21 @@
     const raw = atob((s + pad).replace(/-/g, '+').replace(/_/g, '/'));
     return Uint8Array.from([...raw].map(c => c.charCodeAt(0)));
   }
+  // Map each view header's English title to an i18n key base, so viewHead can
+  // emit data-i18n without touching the ~12 call sites. Unmapped titles just
+  // render in English (the in-markup fallback).
+  const VH_KEYS = {
+    'Home': 'home', 'AI Chat': 'chat', 'Agent Hub': 'hub', 'Markets': 'markets',
+    'Macro': 'macro', 'Guardian': 'guardian', 'Signals': 'signals',
+    'Deep Scan': 'deepscan', 'Live Feed': 'feed', 'Trade': 'trade',
+    'Portfolio': 'portfolio', 'Leaderboard': 'leaderboard', 'Strategy Lab': 'lab',
+    'Engine': 'engine', 'Account': 'account',
+  };
   function viewHead(title, sub) {
-    return `<div class="view-head"><h1>${esc(title)}</h1>${sub ? `<span class="sub">${esc(sub)}</span>` : ''}</div>`;
+    const k = VH_KEYS[title];
+    const tAttr = k ? ` data-i18n="vh.${k}.title"` : '';
+    const sAttr = (k && sub) ? ` data-i18n="vh.${k}.sub"` : '';
+    return `<div class="view-head"><h1${tAttr}>${esc(title)}</h1>${sub ? `<span class="sub"${sAttr}>${esc(sub)}</span>` : ''}</div>`;
   }
 
   /* ── Agent mind-stream (shared: home panel + Live Feed view + SSE) ──
