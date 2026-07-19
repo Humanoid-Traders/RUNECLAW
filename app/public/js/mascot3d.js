@@ -35,7 +35,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 
-const MODEL_URL = '/mascot/agent.glb';
+const MODEL_URL = '/mascot/agent.glb?v=2';
 const RUNE = 0x3fb6ff;
 const _instances = new Set();   // every live viewer, for global react()/disposeAll()
 
