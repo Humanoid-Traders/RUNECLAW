@@ -537,11 +537,119 @@ class BingxVenue(Venue):
         return {"clientOrderId": coid}
 
 
+class _KeySecretPerpVenue(Venue):
+    """Shared base for USDT-linear-perp CEX venues reached via ccxt with plain
+    ``apiKey``/``secret`` (optionally ``password``). Uses ccxt UNIFIED trigger
+    params (``stopLossPrice``/``takeProfitPrice`` + reduceOnly) and one-way symbol
+    mapping — the same shape BingX uses. Concrete venues set ``id``,
+    ``display_name``, ``ccxt_id``, ``needs_passphrase`` and any quirks.
+
+    NOTE: these adapters are ccxt-native and unit-tested for symbol/param shape,
+    but each MUST pass the existing /venue preflight against a real account before
+    being enabled for auto-trade — same bar Bybit/BingX cleared."""
+
+    ccxt_id: str = ""
+    needs_passphrase: bool = False
+    quote = "USDT"
+    balance_coin = "USDT"
+    supports_hedge_mode = False
+    supports_native_triggers = False
+    market_order_needs_price = False
+
+    def create_exchange(self, cfg: Any,
+                        credentials: Optional[dict] = None) -> ccxt.Exchange:
+        creds = credentials or {}
+        api_key = str(creds.get("api_key", "") or "")
+        api_secret = str(creds.get("api_secret", "") or "")
+        passphrase = str(creds.get("passphrase", "") or "")
+        if not api_key or not api_secret:
+            raise RuntimeError(self.missing_credentials_error(per_user=bool(credentials)))
+        if self.needs_passphrase and not passphrase:
+            raise RuntimeError(
+                f"Your linked {self.display_name} account is missing its API "
+                f"passphrase. Re-run /connect {self.id} and include it.")
+        factory = getattr(ccxt, self.ccxt_id, None)
+        if factory is None:                       # pragma: no cover - import guard
+            raise RuntimeError(f"ccxt has no exchange {self.ccxt_id!r}")
+        opts: dict[str, Any] = {
+            "aiohttp_trust_env": True,
+            "apiKey": api_key,
+            "secret": api_secret,
+            "timeout": 30000,
+            "enableRateLimit": True,
+            "options": {"defaultType": "swap"},
+        }
+        if self.needs_passphrase:
+            opts["password"] = passphrase
+        exchange = factory(opts)
+        if getattr(cfg, "sandbox", False):
+            try:
+                exchange.set_sandbox_mode(True)
+            except Exception:
+                pass
+        return exchange
+
+    def missing_credentials_error(self, per_user: bool) -> str:
+        pw = " <passphrase>" if self.needs_passphrase else ""
+        return (f"{self.display_name} connect needs an api_key and api_secret"
+                f"{' and passphrase' if self.needs_passphrase else ''} — reconnect "
+                f"with /connect {self.id} <api_key> <api_secret>{pw}. Account must "
+                "be in ONE-WAY position mode.")
+
+    def has_operator_credentials(self, cfg: Any) -> bool:
+        return False   # per-user connect venues; the operator trades Bitget
+
+    def order_symbol(self, symbol: str) -> str:
+        return self.swap_symbol(symbol)
+
+    def trigger_params(self, kind: str, trigger_price: float) -> dict:
+        if kind == "tp":
+            return {"takeProfitPrice": trigger_price, "reduceOnly": True}
+        return {"stopLossPrice": trigger_price, "reduceOnly": True}
+
+    def is_plan_order(self, order: dict) -> bool:
+        return _is_trigger_order(order)
+
+    def order_id_params(self, coid: str) -> dict:
+        return {"clientOrderId": coid}
+
+
+class OkxVenue(_KeySecretPerpVenue):
+    """OKX USDT-margined perpetual swaps via ccxt (apiKey/secret/passphrase)."""
+    id = "okx"
+    display_name = "OKX"
+    ccxt_id = "okx"
+    needs_passphrase = True
+    min_notional_usd = 5.0
+
+
+class GateVenue(_KeySecretPerpVenue):
+    """Gate.io USDT perpetual swaps via ccxt (apiKey/secret)."""
+    id = "gate"
+    display_name = "Gate.io"
+    ccxt_id = "gate"
+    needs_passphrase = False
+    min_notional_usd = 5.0
+
+
+class KucoinVenue(_KeySecretPerpVenue):
+    """KuCoin Futures USDT perpetual swaps via ccxt (apiKey/secret/passphrase).
+    Uses the dedicated ``kucoinfutures`` ccxt id for the perp product."""
+    id = "kucoin"
+    display_name = "KuCoin Futures"
+    ccxt_id = "kucoinfutures"
+    needs_passphrase = True
+    min_notional_usd = 5.0
+
+
 _VENUES: dict[str, Venue] = {
     "bitget": BitgetVenue(),
     "hyperliquid": HyperliquidVenue(),
     "bybit": BybitVenue(),
     "bingx": BingxVenue(),
+    "okx": OkxVenue(),
+    "gate": GateVenue(),
+    "kucoin": KucoinVenue(),
 }
 
 
