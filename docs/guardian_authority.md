@@ -63,8 +63,29 @@ Like the Intent Compiler, the envelope has three modes so wiring is safe:
 - `shadow` — `authorize()` runs and its `deny`s are **recorded** but not enforced.
 - `enforce` — a `deny` blocks the action before it reaches the venue.
 
-PR-1 ships the **pure core + tests** (blocks nothing). Enforcement wiring lands in
-a later, separately-gated PR after shadow-mode evidence.
+PR-1 ships the **pure core + tests** (blocks nothing).
+
+**Engine bridge (landed, default OFF).** `RiskEngine.set_authority_envelope(env,
+venue=…)` binds an envelope; `evaluate()` consults it right after the Intent
+Compiler hook, gated by `AUTHORITY_ENVELOPE_ENABLED` (default OFF → byte-identical
+to before). Mirroring the Intent Compiler precedent exactly:
+
+- the hook can only **append to `failed`** (tighten-only — flips APPROVED→REJECTED,
+  never the reverse);
+- `enforce` mode blocks a denied action; `shadow` records `AUTHORITY: shadow —
+  would deny …` in `checks_passed` without blocking;
+- the bridge is **fail-open on faults** (a bridge/envelope bug records
+  `AUTHORITY: skipped (error …)` and never halts the engine) even though the pure
+  `authorize` core is fail-closed;
+- the decision rides into `RiskCheck.authority` (→ Flight Recorder), beside
+  `intent_policy`.
+
+At the gate the honestly-knowable dimensions bind: per-trade notional (position ×
+leverage), symbol allow/block, market type, expiry, revocation, and venue (when a
+venue is bound). Cumulative daily spend is not tracked at the gate (`spent_today=0`),
+so the per-trade cap is the binding size check there; a stateful daily accumulator
+is a later step. Admin surface (`/authority`) and per-user binding from a store are
+follow-ups.
 
 ## Pre-registered predictions (before the tests were written)
 

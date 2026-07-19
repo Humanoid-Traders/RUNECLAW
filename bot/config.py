@@ -506,6 +506,16 @@ class RiskLimits:
     # engine cap); each policy also carries its own mode (shadow = observe-only,
     # enforce = reject) so shadow can run in production before anything blocks.
     intent_policy_enabled: bool = _env_bool("INTENT_POLICY_ENABLED", False)
+    # Guardian Authority Envelope: master switch for consulting a bound, compiled
+    # custody envelope in evaluate() (bot/guardian/authority.py) — the scoped,
+    # revocable, non-custodial authority a human granted the credential. Default
+    # OFF → the hook is skipped entirely, byte-identical to before. When ON, an
+    # envelope can only ADD deterministic rejections (per-trade notional, symbol
+    # scope, expiry, revocation — it never loosens an engine cap); each envelope
+    # carries its own mode (shadow = observe-only, enforce = reject) so shadow can
+    # run in production before anything blocks. Unlike intent_policy (strategy),
+    # this is the CUSTODY boundary — what the credential is permitted to do.
+    authority_envelope_enabled: bool = _env_bool("AUTHORITY_ENVELOPE_ENABLED", False)
     # Guardian Prompt-Injection & Transaction Firewall: master switch for scanning
     # inbound chat-action text (Telegram free text / web chat) for manipulation
     # shapes (bot/guardian/firewall.py) before it can steer an agent that acts.

@@ -169,6 +169,11 @@ class RiskCheck(BaseModel):
     # every existing construction stays valid; the risk engine sets it when a
     # policy is consulted. Rides into the Flight Recorder's Policy Decision Record.
     intent_policy: Optional[dict] = None
+    # Guardian Authority Envelope: the custody-authorization decision for this
+    # trade (envelope_id, hash, decision, reasons, kind). Optional so every
+    # existing construction stays valid; the risk engine sets it when an envelope
+    # is consulted. Rides into the Flight Recorder alongside intent_policy.
+    authority: Optional[dict] = None
 
 
 # -- Execution Record --
