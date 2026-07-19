@@ -4297,7 +4297,7 @@ class LiveExecutor:
             Pure check — used to decide whether to touch the exchange at all,
             without mutating local state (the local advance is gated on the
             exchange actually accepting the tighter stop)."""
-            return new_sl > pos.stop_loss if is_long else new_sl < pos.stop_loss
+            return bool(new_sl > pos.stop_loss if is_long else new_sl < pos.stop_loss)
 
         def _ratchet_sl(new_sl: float) -> bool:
             """Raise (LONG) / lower (SHORT) the stop only — never loosen it."""
