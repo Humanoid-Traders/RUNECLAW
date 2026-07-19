@@ -92,3 +92,56 @@ def test_p6_store_roundtrip_and_publish_now():
         assert ok
     finally:
         os.unlink(path)
+
+
+# ── P7 — the PUBLIC page re-derives the SAME hash in-browser ──────────────
+#
+# proof.html claims a visitor can re-verify the sealed statement in their own
+# browser. That only holds if the page's canonical() (recursive key-sort +
+# JSON.stringify) reproduces publish.py's json.dumps(sort_keys, separators,
+# ensure_ascii=False) byte-for-byte. Run the page's ACTUAL JS under node and
+# assert the hash matches. Skips cleanly where node is unavailable (e.g. a
+# Python-only CI image) — the guarantee is still checked wherever node exists.
+
+def _extract_canonical_js():
+    """Pull the canonical() function body out of app/public/proof.html so the
+    test breaks if the page's algorithm ever drifts from the Python sealer."""
+    import re
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    html = open(os.path.join(here, "app", "public", "proof.html"),
+                encoding="utf-8").read()
+    m = re.search(r"function canonical\(obj\) \{.*?\n  \}", html, re.S)
+    assert m, "canonical() not found in proof.html — did the page change?"
+    return m.group(0)
+
+
+def test_p7_browser_canonical_matches_python():
+    import json
+    import shutil
+    import subprocess
+    if not shutil.which("node"):
+        pytest.skip("node not available")
+    # A bundle exercising the divergence risks: nested dicts/lists, string
+    # numbers, integers, booleans, null, unicode, and a forward slash.
+    bundle = {
+        "format": "runeclaw.proofofpnl.bundle.v0",
+        "statement": {"trust_tier": "onchain_public", "flag": True, "empty": None,
+                      "count": 7, "note": "café ☕ a/b déjà",
+                      "fills": [{"px": "100.5", "qty": "0.10"}, {"px": "9.99"}]},
+        "identity_card": {"anchor": {"status": "UNVERIFIED", "chain_id": 84532}},
+        "manifest": {"keys": ["z", "a", "m"]},
+    }
+    py_hash = pub.publish_hash(bundle)
+    js = _extract_canonical_js() + """
+    const crypto = require('crypto');
+    let data = '';
+    process.stdin.on('data', d => data += d);
+    process.stdin.on('end', () => {
+      const c = canonical(JSON.parse(data));
+      process.stdout.write(crypto.createHash('sha256').update(Buffer.from(c, 'utf-8')).digest('hex'));
+    });
+    """
+    res = subprocess.run(["node", "-e", js], input=json.dumps(bundle),
+                         capture_output=True, text=True, timeout=30)
+    assert res.returncode == 0, res.stderr
+    assert res.stdout.strip() == py_hash, "browser canonical() drifted from the Python sealer"

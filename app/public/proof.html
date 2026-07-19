@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>RUNECLAW — Proof of PnL</title>
+<meta name="description" content="Don't trust the dashboard — verify the fills. The RUNECLAW agent's continuously-published, cryptographically re-verifiable track record. Your own browser re-derives the hash; nothing here asks you to trust us.">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<meta name="theme-color" content="#0a0b10">
+<link rel="preload" href="/fonts/cinzel-700.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/styles.css?v=13">
+<style>
+  /* Page-local composition only — tokens/components come from styles.css */
+  .pf-wrap { max-width: 940px; margin: 0 auto; padding: var(--s5) var(--s4) var(--s6); }
+  .pf-hero { display: flex; align-items: baseline; gap: var(--s3); flex-wrap: wrap; margin-bottom: var(--s3); }
+  .pf-hero h1 { font-family: var(--font-display); letter-spacing: .08em; font-size: clamp(26px, 4vw, 38px); }
+  .lede { color: var(--text-2); max-width: 68ch; line-height: 1.6; margin-bottom: var(--s4); }
+  .lede b { color: var(--text-1); }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: var(--s3); margin-bottom: var(--s4); }
+  .tile { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: var(--s3) var(--s4); }
+  .tile .k { font-size: var(--fs-xs); color: var(--text-3); text-transform: uppercase; letter-spacing: .08em; }
+  .tile .v { font-family: var(--font-data); font-size: var(--fs-lg); margin-top: 4px; word-break: break-word; }
+  .panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: var(--s4); margin-bottom: var(--s4); }
+  .panel h2 { font-size: var(--fs-sm); text-transform: uppercase; letter-spacing: .1em; color: var(--text-3); margin-bottom: var(--s3); }
+  .checks { list-style: none; display: flex; flex-direction: column; gap: var(--s2); }
+  .checks li { display: flex; align-items: flex-start; gap: var(--s2); font-size: var(--fs-sm); line-height: 1.5; }
+  .ck { flex: none; width: 22px; height: 22px; border-radius: 999px; display: inline-flex; align-items: center; justify-content: center; font-family: var(--font-data); font-size: 13px; font-weight: 700; }
+  .ck.ok { background: rgba(47,191,113,.14); color: var(--up); }
+  .ck.bad { background: rgba(229,72,77,.14); color: var(--down); }
+  .ck.wait { background: rgba(255,255,255,.06); color: var(--text-3); }
+  .ck.warn { background: rgba(240,177,0,.16); color: #f0b100; }
+  .verdict { display: flex; align-items: center; gap: var(--s3); padding: var(--s3) var(--s4); border-radius: var(--radius); border: 1px solid var(--line); margin-bottom: var(--s3); font-weight: 600; }
+  .verdict.ok { border-color: var(--up); color: var(--up); background: rgba(47,191,113,.06); }
+  .verdict.bad { border-color: var(--down); color: var(--down); background: rgba(229,72,77,.06); }
+  .verdict.wait { color: var(--text-3); }
+  .verdict .big { font-size: 26px; line-height: 1; }
+  .hash { font-family: var(--font-data); font-size: var(--fs-xs); color: var(--text-2); word-break: break-all; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+  .kv { display: grid; grid-template-columns: max-content 1fr; gap: 6px var(--s3); font-size: var(--fs-sm); }
+  .kv dt { color: var(--text-3); }
+  .kv dd { font-family: var(--font-data); word-break: break-word; }
+  .badge { font-size: var(--fs-xs); padding: 3px 10px; border-radius: 999px; border: 1px solid var(--line); font-family: var(--font-data); letter-spacing: .08em; }
+  .badge.unverified { color: #f0b100; border-color: #f0b100; }
+  .badge.fresh { color: var(--up); border-color: var(--up); }
+  .badge.stale { color: var(--text-3); }
+  details { margin-top: var(--s3); }
+  summary { cursor: pointer; color: var(--text-3); font-size: var(--fs-sm); }
+  pre { margin-top: var(--s2); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: var(--s3); overflow-x: auto; font-family: var(--font-data); font-size: var(--fs-xs); line-height: 1.5; max-height: 360px; }
+  .empty { color: var(--text-3); padding: var(--s5) var(--s4); text-align: center; line-height: 1.6; }
+  .steps { color: var(--text-2); font-size: var(--fs-sm); line-height: 1.7; }
+  .steps code { font-family: var(--font-data); background: var(--bg); border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; }
+  .disclaimer { color: var(--text-3); font-size: var(--fs-xs); line-height: 1.6; }
+  .row { display: flex; gap: var(--s2); align-items: center; flex-wrap: wrap; }
+</style>
+</head>
+<body>
+<svg style="display:none" aria-hidden="true"><use href="#brand-mark"></use></svg>
+<nav class="topbar" aria-label="Main">
+  <a class="brand" href="/"><svg class="brand-mark" aria-hidden="true"><use href="#brand-mark"></use></svg>RUNECLAW<span class="brand-sub">Proof of PnL</span></a>
+  <div class="spacer"></div>
+  <div class="nav-links" style="display:flex;gap:var(--s2)">
+    <a class="btn btn--sm" href="/track">Track record</a>
+    <a class="btn btn--primary btn--sm" href="/">Get started</a>
+  </div>
+</nav>
+
+<main class="pf-wrap">
+  <div class="pf-hero">
+    <h1>Proof of PnL</h1>
+    <span class="badge" id="freshBadge" hidden></span>
+  </div>
+  <p class="lede">
+    <b>Don't trust the dashboard — verify the fills.</b> The agent re-derives its
+    track record from raw fills each epoch, seals it with a SHA-256 hash over the
+    canonical statement, and publishes it here. This page re-derives that hash in
+    <b>your own browser</b> and re-checks that the statement carries no private
+    exchange internals — so you're trusting math on your machine, not our word.
+  </p>
+
+  <div id="content">
+    <div class="empty" id="loading">Loading the latest sealed statement…</div>
+  </div>
+
+  <section class="panel disclaimer">
+    Past performance is not indicative of future results. The published statement
+    reports the operator agent account and is public-safe by construction — the
+    sealer refuses to publish anything carrying exchange internals. The on-chain
+    ERC-8004 anchor is shown with its true status and stays <b>UNVERIFIED</b> until
+    a real transaction confirms it; nothing here is dressed up.
+  </section>
+</main>
+
+<script src="/js/icons.js?v=3"></script>
+<script>
+(async () => {
+  const $ = id => document.getElementById(id);
+  const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const chainName = id => ({ 84532: 'Base Sepolia', 8453: 'Base', 1: 'Ethereum' }[id] || 'chain');
+
+  // ── Canonicalization: byte-for-byte match with the Python sealer ──────────
+  // publish.py hashes json.dumps(bundle, sort_keys=True, separators=(",",":"),
+  // ensure_ascii=False).encode("utf-8"). The CSF invariant guarantees every
+  // number in the bundle is already a string, so JSON.stringify on primitives
+  // (which serialises strings/bools/null/integers identically to Python) plus a
+  // recursive key sort reproduces the exact same bytes here.
+  function canonical(obj) {
+    if (obj === null || typeof obj !== 'object') return JSON.stringify(obj);
+    if (Array.isArray(obj)) return '[' + obj.map(canonical).join(',') + ']';
+    return '{' + Object.keys(obj).sort().map(k =>
+      JSON.stringify(k) + ':' + canonical(obj[k])).join(',') + '}';
+  }
+  async function sha256hex(str) {
+    const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
+    return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join('');
+  }
+  // Public-safety: no `summary` key anywhere (mirrors assemble.is_public_safe).
+  function isPublicSafe(obj) {
+    if (Array.isArray(obj)) return obj.every(isPublicSafe);
+    if (obj && typeof obj === 'object') {
+      if ('summary' in obj) return false;
+      return Object.values(obj).every(isPublicSafe);
+    }
+    return true;
+  }
+
+  let d;
+  try {
+    const r = await fetch('/api/public/proofofpnl');
+    d = await r.json();
+    if (!r.ok && !d.published) throw new Error('http ' + r.status);
+  } catch (e) {
+    $('content').innerHTML = '<div class="empty">The proof feed is temporarily unavailable. Please try again shortly.</div>';
+    return;
+  }
+
+  if (!d.published) {
+    $('content').innerHTML = '<div class="empty">' +
+      '<p style="font-size:var(--fs-lg);color:var(--text-2);margin-bottom:8px">No statement published yet.</p>' +
+      '<p>' + esc(d.note || 'The publisher seals a fresh, re-verifiable statement each epoch from raw fills. Check back once the agent has traded.') + '</p></div>';
+    return;
+  }
+
+  const pub = d.publication || {};
+  const bundle = pub.bundle || {};
+  const anchor = pub.anchor || {};
+  const publishedAt = pub.published_at ? new Date(pub.published_at * 1000) : null;
+
+  // Freshness badge in the hero.
+  const fb = $('freshBadge');
+  fb.hidden = false;
+  fb.textContent = d.fresh ? 'FRESH' : 'STALE';
+  fb.classList.add(d.fresh ? 'fresh' : 'stale');
+
+  const ageTxt = (() => {
+    const s = d.age_seconds || 0;
+    if (s < 90) return 'just now';
+    if (s < 3600) return Math.round(s / 60) + ' min ago';
+    if (s < 86400) return Math.round(s / 3600) + ' h ago';
+    return Math.round(s / 86400) + ' d ago';
+  })();
+
+  const tiles = [
+    ['Trust tier', pub.trust_tier || '—'],
+    ['Reconciliation', pub.reconciliation || '—'],
+    ['Epoch', pub.epoch_seq == null ? '—' : '#' + pub.epoch_seq],
+    ['Published', publishedAt ? ageTxt : '—'],
+  ];
+
+  $('content').innerHTML = `
+    <div class="tiles">
+      ${tiles.map(([k, v]) => `<div class="tile"><div class="k">${esc(k)}</div><div class="v">${esc(String(v))}</div></div>`).join('')}
+    </div>
+
+    <section class="panel">
+      <h2>Verify it yourself — in this browser</h2>
+      <div class="verdict wait" id="verdict"><span class="big" id="verdictIcon">…</span><span id="verdictText">Re-deriving the hash on your device…</span></div>
+      <ul class="checks" id="checks">
+        <li><span class="ck wait" id="ckHashIcon">…</span><span id="ckHash">Re-derive the SHA-256 over the canonical statement and compare it to the sealed hash.</span></li>
+        <li><span class="ck wait" id="ckSafeIcon">…</span><span id="ckSafe">Re-check the statement carries no private exchange internals.</span></li>
+        <li><span class="ck wait" id="ckSrvIcon">…</span><span id="ckSrv">Cross-check against the server's own re-verification.</span></li>
+      </ul>
+      <div style="margin-top:var(--s3)">
+        <div class="k" style="font-size:var(--fs-xs);color:var(--text-3);text-transform:uppercase;letter-spacing:.08em;margin-bottom:4px">Sealed hash</div>
+        <div class="hash" id="sealedHash">${esc(pub.publish_hash || '—')}</div>
+        <div class="k" style="font-size:var(--fs-xs);color:var(--text-3);text-transform:uppercase;letter-spacing:.08em;margin:10px 0 4px">Re-derived in your browser</div>
+        <div class="hash" id="derivedHash">computing…</div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>On-chain identity anchor (ERC-8004)</h2>
+      <div class="row" style="margin-bottom:var(--s3)">
+        <span class="badge unverified">${esc((anchor.status || 'UNVERIFIED')).toUpperCase()}</span>
+        <span class="muted small">No anchoring transaction is claimed until one is confirmed on-chain.</span>
+      </div>
+      <dl class="kv">
+        ${anchor.reputation_registry ? `<dt>ReputationRegistry</dt><dd>${esc(anchor.reputation_registry)}</dd>` : ''}
+        ${anchor.chain_id ? `<dt>Chain</dt><dd>${esc(chainName(anchor.chain_id))} (id ${esc(String(anchor.chain_id))})</dd>` : ''}
+        ${anchor.card_hash ? `<dt>Card hash</dt><dd>${esc(anchor.card_hash)}</dd>` : ''}
+        ${anchor.note ? `<dt>Note</dt><dd style="font-family:inherit;color:var(--text-3)">${esc(anchor.note)}</dd>` : ''}
+      </dl>
+    </section>
+
+    <section class="panel">
+      <h2>How to re-verify off this page</h2>
+      <p class="steps">
+        1. Copy the full statement below.<br>
+        2. Serialise it canonically: <code>json.dumps(bundle, sort_keys=True, separators=(",",":"), ensure_ascii=False)</code>.<br>
+        3. Take the <code>SHA-256</code> of the UTF-8 bytes — it must equal the sealed hash above.<br>
+        4. Re-derive the fills themselves with the engine's <code>verify.py</code> section-7 on-chain Transfer-netting.
+      </p>
+      <details>
+        <summary>Show the full sealed statement (JSON)</summary>
+        <pre id="rawJson">${esc(JSON.stringify(bundle, null, 2))}</pre>
+      </details>
+      ${pub.verify_note ? `<p class="muted small" style="margin-top:var(--s3)">${esc(pub.verify_note)}</p>` : ''}
+    </section>
+  `;
+
+  // ── Run the in-browser re-verification ───────────────────────────────────
+  const setCk = (icon, el, state, text) => {
+    const i = $(icon);
+    i.className = 'ck ' + state;
+    i.textContent = state === 'ok' ? '✓' : state === 'bad' ? '✗' : state === 'warn' ? '!' : '…';
+    if (text) $(el).textContent = text;
+  };
+
+  if (!(window.crypto && window.crypto.subtle)) {
+    // Secure-context only. Be honest rather than silently "passing".
+    setCk('ckHashIcon', 'ckHash', 'warn', 'In-browser hashing needs a secure (HTTPS) context. Re-verify off-page using the steps below.');
+    $('derivedHash').textContent = 'unavailable (needs HTTPS)';
+    const v = $('verdict'); v.className = 'verdict wait';
+    $('verdictIcon').textContent = 'i'; $('verdictText').textContent = 'Open this page over HTTPS to re-derive the hash here.';
+  } else {
+    let derived = '';
+    try {
+      derived = await sha256hex(canonical(bundle));
+    } catch (e) { derived = ''; }
+    $('derivedHash').textContent = derived || 'error';
+    const hashOk = derived && derived === pub.publish_hash;
+    setCk('ckHashIcon', 'ckHash', hashOk ? 'ok' : 'bad',
+      hashOk ? 'SHA-256 re-derived on your device matches the sealed hash exactly.'
+             : 'The re-derived hash does NOT match the sealed hash — the statement may have been altered.');
+
+    const safeOk = isPublicSafe(bundle);
+    setCk('ckSafeIcon', 'ckSafe', safeOk ? 'ok' : 'bad',
+      safeOk ? 'The statement carries no private exchange internals (public-safe).'
+             : 'The statement contains a private field it should not — this is a red flag.');
+
+    const srvOk = d.verified === true;
+    setCk('ckSrvIcon', 'ckSrv', srvOk ? 'ok' : 'warn',
+      srvOk ? "The server's independent re-verification agrees."
+            : ('Server re-verification reported: ' + ((d.problems || []).join('; ') || 'a discrepancy')));
+
+    const allOk = hashOk && safeOk && srvOk;
+    const v = $('verdict');
+    v.className = 'verdict ' + (allOk ? 'ok' : (hashOk && safeOk ? 'ok' : 'bad'));
+    $('verdictIcon').textContent = allOk ? '✓' : (hashOk && safeOk ? '✓' : '✗');
+    $('verdictText').textContent = allOk
+      ? 'Verified on your device — this is the sealed statement, unaltered.'
+      : (hashOk && safeOk
+          ? 'Hash and public-safety check out on your device; see server note above.'
+          : 'Verification FAILED — do not trust this statement.');
+  }
+})();
+</script>
+</body>
+</html>
