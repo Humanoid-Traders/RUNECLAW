@@ -27,6 +27,12 @@ const putLimit = rateLimit({ windowMs: 60000, max: 30, key: userKey });
 
 const RISK_PREFS = new Set(['conservative', 'balanced', 'aggressive']);
 const CHART_TFS = new Set(['15min', '1h', '4h', '1d']);
+// AI-chat languages the bot can localize replies into (base codes; kept in
+// sync with bot/utils/i18n.py _CHAT_LANG_NAMES).
+const LANGS = new Set(['en', 'zh', 'es', 'fr', 'de', 'pt', 'ru', 'ja', 'ko',
+  'ar', 'hi', 'tr', 'it', 'id', 'vi', 'th', 'nl', 'pl', 'uk', 'fa', 'ms',
+  'fil', 'tl', 'bn', 'ur', 'sv', 'no', 'da', 'fi', 'cs', 'el', 'he', 'ro',
+  'hu']);
 const WATCHLIST_MAX = 20;
 const SYMBOL_RE = /^[A-Z0-9]{2,20}$/;
 
@@ -68,6 +74,12 @@ function sanitizePrefs(input) {
   }
   if (typeof input.chart_tf === 'string' && CHART_TFS.has(input.chart_tf)) {
     out.chart_tf = input.chart_tf;
+  }
+  // Preferred language for the AI chat (the bot LLM localizes freeform replies).
+  // Store the normalized base code; the bot maps it to a language name.
+  if (typeof input.lang === 'string') {
+    const base = input.lang.trim().toLowerCase().replace(/_/g, '-').split('-')[0];
+    if (LANGS.has(base)) out.lang = base;
   }
   return out;
 }

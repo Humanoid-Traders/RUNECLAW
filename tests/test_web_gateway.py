@@ -118,6 +118,7 @@ class FakeHandler:
         self._allowlist = set(map(str, allowlist))
         self.llm_calls = []  # (question, user_id, is_admin, public)
         self.llm_profile_notes = []  # profile_note per _llm_chat call
+        self.llm_reply_langs = []    # reply_lang per _llm_chat call
 
     def _allowlist_ids(self):
         return self._allowlist
@@ -126,9 +127,11 @@ class FakeHandler:
         return self.users.can_trade_live(tg)
 
     async def _llm_chat(self, q, user_id="", user_name="", is_admin=False,
-                        public=False, profile_note="", return_meta=False):
+                        public=False, profile_note="", reply_lang="",
+                        return_meta=False):
         self.llm_calls.append((q, user_id, is_admin, public))
         self.llm_profile_notes.append(profile_note)
+        self.llm_reply_langs.append(reply_lang)
         if return_meta:
             return "llm answer", {"provider": "runeclaw", "model": "runeclaw-v6"}
         return "llm answer"
@@ -857,3 +860,31 @@ async def test_public_proofofpnl_still_requires_service_secret(monkeypatch, tmp_
     async with gateway_client(FakeEngine(), FakeHandler(users={})) as c:
         r = await c.get("/public/proofofpnl", headers={"X-Gateway-Secret": "nope"})
         assert r.status == 403
+
+
+# ── i18n: chat reply-language forwarding ────────────────────────────────────
+
+async def test_chat_forwards_reply_lang_to_llm(monkeypatch):
+    monkeypatch.setattr(ug, "_GATEWAY_SECRET", SECRET)
+    handler = FakeHandler(users=AUTHED)
+    async with gateway_client(FakeEngine(), handler) as c:
+        r = await c.post("/chat", json={"telegram_id": "7", "text": "hola",
+                                        "lang": "es"}, headers=HDRS)
+        assert r.status == 200
+        assert handler.llm_reply_langs[-1] == "es"
+
+        # No lang in the payload -> empty reply_lang (English default stands).
+        r = await c.post("/chat", json={"telegram_id": "7", "text": "hi"},
+                         headers=HDRS)
+        assert r.status == 200
+        assert handler.llm_reply_langs[-1] == ""
+
+
+async def test_public_chat_forwards_reply_lang(monkeypatch):
+    monkeypatch.setattr(ug, "_GATEWAY_SECRET", SECRET)
+    handler = FakeHandler(users={})
+    async with gateway_client(FakeEngine(), handler) as c:
+        r = await c.post("/chat/public", json={"text": "bonjour", "lang": "fr"},
+                         headers=HDRS)
+        assert r.status == 200
+        assert handler.llm_reply_langs[-1] == "fr"

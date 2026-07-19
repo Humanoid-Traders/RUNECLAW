@@ -186,6 +186,7 @@ async def handle_chat(request: web.Request) -> web.Response:
     text = str(body.get("text") or "").strip()
     name = str(body.get("name") or "").strip()[:64]
     profile_note = build_profile_note(body.get("profile"))
+    reply_lang = str(body.get("lang") or "").strip()[:12]
 
     if not tg_id or not text:
         return web.json_response({"error": "telegram_id and text required"}, status=400)
@@ -320,7 +321,7 @@ async def handle_chat(request: web.Request) -> web.Response:
     answer, meta = await tg_handler._llm_chat(
         sanitize_chat_input(text), user_id=tg_id, user_name=name,
         is_admin=_is_admin_id(tg_handler, tg_id),
-        profile_note=profile_note, return_meta=True)
+        profile_note=profile_note, reply_lang=reply_lang, return_meta=True)
     tg_handler.conversations.append(tg_id, "assistant", answer,
                                     metadata={"surface": "web"})
     # Model transparency: the web renders a small caption showing WHICH
@@ -357,10 +358,11 @@ async def handle_public_chat(request: web.Request) -> web.Response:
     if len(text) > _MAX_TEXT_LEN:
         return web.json_response({"error": "message too long"}, status=400)
 
+    reply_lang = str(body.get("lang") or "").strip()[:12]
     from bot.nlp.sanitize import sanitize_chat_input
     answer = await tg_handler._llm_chat(
         sanitize_chat_input(text), user_id="", user_name="",
-        is_admin=False, public=True)
+        is_admin=False, public=True, reply_lang=reply_lang)
     return web.json_response({"reply_html": answer, "intent": "chat"})
 
 

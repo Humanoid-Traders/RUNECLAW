@@ -95,15 +95,19 @@ router.post('/', chatLimit, async (req, res) => {
     // knows who it's talking to (risk preference, watchlist). Best-effort —
     // a profile read hiccup must never block chat.
     let profile = null;
+    let lang = '';
     try {
       const p = await loadProfile(req.user.user_id);
       if (p.risk_pref || (p.watchlist || []).length) {
         profile = { risk_pref: p.risk_pref, watchlist: p.watchlist };
       }
+      // Preferred chat language (the bot LLM replies in it). Best-effort.
+      if (p.prefs && typeof p.prefs.lang === 'string') lang = p.prefs.lang;
     } catch (e) { /* chat works without a profile */ }
     const r = await gateway.postGateway('/chat', {
       telegram_id: ident.id, name, text,
       ...(profile ? { profile } : {}),
+      ...(lang ? { lang } : {}),
     }, CHAT_TIMEOUT_MS);
     return gateway.relay(res, r);
   } catch (err) {

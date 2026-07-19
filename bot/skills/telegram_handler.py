@@ -122,7 +122,8 @@ from bot.skills.scan_skill import cmd_scan as _scan_skill_handler, callback_conf
 from bot.skills.user_middleware import cmd_link as _cmd_link, cmd_unlink as _cmd_unlink, cmd_me as _cmd_me, cmd_sync as _cmd_sync
 from bot.utils.logger import audit, system_log, _redact_string
 from bot.utils.user_store import UserStore
-from bot.utils.i18n import t, get_user_lang, set_user_lang, SUPPORTED_LANGS
+from bot.utils.i18n import (t, get_user_lang, get_user_lang_raw, set_user_lang,
+                            chat_language_name, SUPPORTED_LANGS)
 from bot.nlp.intent_router import IntentRouter
 from bot.nlp.conversation_store import ConversationStore
 from bot.core.proactive_monitor import ProactiveMonitor
@@ -1061,6 +1062,7 @@ class TelegramHandler:
                         is_admin: bool = False,
                         public: bool = False,
                         profile_note: str = "",
+                        reply_lang: str = "",
                         return_meta: bool = False):
         """Send a free-text question to the LLM with multi-turn context.
 
@@ -1122,6 +1124,19 @@ class TelegramHandler:
                 # sanitization of the live question. Defense-in-depth only — the
                 # real boundary is the execution gate.
                 history = _sanitize_history_for_llm(history)
+
+        # i18n: instruct the model to answer in the user's language. The UI
+        # dictionary is en/zh only, but the LLM localizes freeform replies into
+        # any named language — so a Spanish/French/… user gets native chat for
+        # the cost of one directive. English/empty/unknown → no directive (the
+        # default English persona stands). Applies to both authed and public.
+        _reply_lang_name = chat_language_name(reply_lang)
+        if _reply_lang_name:
+            system_prompt += (
+                f"\n\nLANGUAGE: Write your ENTIRE reply in {_reply_lang_name}. "
+                f"Translate all prose, labels and explanations into "
+                f"{_reply_lang_name}; keep ticker symbols (e.g. BTC), numeric "
+                f"values and code identifiers unchanged.")
 
         # Build fallback chain: chat tier → fallback providers → primary
         import os
@@ -1532,9 +1547,14 @@ class TelegramHandler:
         thinking = random.choice(self._THINKING_PHRASES)
         await self._send(update, thinking)
 
+        # Reply language: an explicit /lang choice wins; otherwise auto-detect
+        # from the Telegram client's language_code (never read before now).
+        _tel_code = getattr(getattr(update, "effective_user", None),
+                            "language_code", "") or ""
+        _reply_lang = get_user_lang_raw(self.users, tg_id) or _tel_code
         answer = await self._llm_chat(
             _sanitize_chat_input(text), user_id=tg_id, user_name=user_name,
-            is_admin=self._is_admin(update))
+            is_admin=self._is_admin(update), reply_lang=_reply_lang)
 
         # Store assistant response in conversation memory
         self.conversations.append(tg_id, "assistant", answer)
