@@ -193,6 +193,16 @@ const TOOLS = {
     handler: async () => require('../lib/rwa').getRadar(),
   },
 
+  get_meme_radar: {
+    description: 'Read-only meme & AI-agent token radar from live DEXScreener '
+      + 'DEX pairs: trending on-chain tokens ranked by real 24h volume, each '
+      + 'with an explicit SAFETY read (liquidity depth, pair age, buy/sell '
+      + 'balance, risk tier). Intelligence only — never trades, never launches '
+      + 'tokens. Memecoins are extremely high risk; most go to zero.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: async () => require('../lib/meme').getRadar(),
+  },
+
   get_dex_compare: {
     description: 'DEX↔CEX basis: live Hyperliquid mid prices for the majors '
       + "against this venue's perpetual prices, in bps. Read-only public data.",

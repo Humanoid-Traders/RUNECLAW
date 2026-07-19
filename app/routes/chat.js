@@ -58,6 +58,10 @@ router.post('/', chatLimit, async (req, res) => {
     // "rwa radar" — read-only tokenized-asset sector snapshot from live tickers.
     const rwaReply = await maybeHandleRwaChat(req.user.user_id, text);
     if (rwaReply) return res.json(rwaReply);
+    // "meme radar" / "dexscreener" — read-only on-chain meme/AI-token snapshot
+    // with an explicit safety read. Never trades or launches.
+    const memeReply = await require('../lib/meme').maybeHandleMemeChat(req.user.user_id, text);
+    if (memeReply) return res.json(memeReply);
     // "my wallet" — read-only mirror of the caller's SIWE-linked wallet.
     const walletReply = await maybeHandleWalletChat(req.user.user_id, text);
     if (walletReply) return res.json(walletReply);
