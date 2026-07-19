@@ -200,4 +200,16 @@ router.get('/rwa', async (req, res) => {
   }
 });
 
+// GET /api/market/meme — Meme & AI-agent token radar (read-only DEXScreener
+// intelligence with an explicit per-token safety read; never trades/launches).
+router.get('/meme', async (req, res) => {
+  try {
+    const radar = await require('../lib/meme').getRadar();
+    res.setHeader('Cache-Control', 'public, max-age=30');
+    res.json(radar);
+  } catch (err) {
+    res.status(502).json({ error: 'Meme radar unavailable' });
+  }
+});
+
 module.exports = router;
