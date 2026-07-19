@@ -82,10 +82,19 @@ to before). Mirroring the Intent Compiler precedent exactly:
 
 At the gate the honestly-knowable dimensions bind: per-trade notional (position ×
 leverage), symbol allow/block, market type, expiry, revocation, and venue (when a
-venue is bound). Cumulative daily spend is not tracked at the gate (`spent_today=0`),
-so the per-trade cap is the binding size check there; a stateful daily accumulator
-is a later step. Admin surface (`/authority`) and per-user binding from a store are
-follow-ups.
+venue is bound).
+
+**Daily-notional accumulator (landed).** `bot/guardian/authority_ledger.py` is a
+persisted rolling-24h spend ledger keyed by envelope id. Bind it with
+`RiskEngine.set_authority_ledger(ledger)`: the gate then reads `ledger.spent(env_id,
+now)` for the daily-cap check and records an APPROVED trade's notional back to the
+window (idempotent by idea id). Recording on *approval* is deliberately conservative
+— it can only over-count, which tightens the cap, and the window self-heals as
+entries age out. Fail-open and fail-safe: a missing ledger checks the daily cap with
+`spent=0` (per-trade cap still binds); a corrupt ledger file loads empty; a ledger
+fault never affects the verdict.
+
+Admin surface (`/authority`) and per-user binding from a store are follow-ups.
 
 ## Pre-registered predictions (before the tests were written)
 
