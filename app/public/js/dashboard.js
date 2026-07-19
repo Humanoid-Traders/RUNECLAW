@@ -101,12 +101,16 @@
   function navHtml(active) {
     return VIEWS.map(v => `
       <a href="#${v.id}" ${v.id === active ? 'aria-current="page"' : ''}>
-        <svg class="icon" aria-hidden="true"><use href="#${v.icon}"></use></svg>${v.label}
+        <svg class="icon" aria-hidden="true"><use href="#${v.icon}"></use></svg><span data-i18n="nav.${v.id}">${v.label}</span>
       </a>`).join('');
   }
   function renderNav(active) {
     document.getElementById('railNav').innerHTML = navHtml(active);
     document.getElementById('tabbarNav').innerHTML = navHtml(active);
+    // Localize the freshly-built nav to the active language (the i18n engine
+    // applied once at load; nav is (re)built later on every view change).
+    if (window.RCI18N) { RCI18N.apply(document.getElementById('railNav'));
+                         RCI18N.apply(document.getElementById('tabbarNav')); }
   }
   function every(ms, fn) { viewTimers.push(setInterval(fn, ms)); }
   function showView(id) {
