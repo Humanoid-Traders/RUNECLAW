@@ -920,6 +920,35 @@ class RuneClawEngine:
         except Exception as exc:
             logger.debug("Policy decision record skipped: %s", exc)
 
+    def firewall_scan(self, text: str, source: str = "chat", user_id: str = "") -> Optional[dict]:
+        """Guardian Prompt-Injection & Transaction Firewall: scan inbound
+        chat-action text for manipulation shapes and seal a FIREWALL verdict on
+        the tamper-evident chain.
+
+        TELEMETRY-FIRST + fail-open. Returns the compact verdict dict (``risk``,
+        ``score``, ``categories``, ``excerpt``, …) so the caller can decide whether
+        to warn/refuse, or ``None`` when the firewall is disabled or the scan is a
+        no-op. The scan itself never raises and never blocks — enforcement is the
+        caller's gated choice. Only non-clean verdicts (or hidden-char smuggling)
+        are recorded, to keep the chain signal-dense.
+        """
+        try:
+            if not getattr(CONFIG.risk, "guardian_firewall_enabled", False):
+                return None
+            if not text or not str(text).strip():
+                return None
+            from bot.guardian import firewall as _fw
+            verdict = _fw.verdict_payload(text, source=source, user_id=user_id)
+            if verdict.get("risk", "none") != "none" or verdict.get("hidden_chars"):
+                try:
+                    self.audit_chain.append("FIREWALL", verdict, actor=str(user_id or "chat"))
+                except Exception as exc:
+                    logger.debug("Firewall verdict record skipped: %s", exc)
+            return verdict
+        except Exception as exc:
+            logger.debug("Firewall scan skipped (%s): %s", source, exc)
+            return None
+
     def _sync_flight_records(self) -> None:
         """Guardian Flight Recorder: push recent joined decision records + the
         engine-verified chain status to the website (fire-and-forget, fail-open).

@@ -1291,6 +1291,26 @@ class TelegramHandler:
             await update.message.reply_text(f"\u26a0\ufe0f {t('rate_limit', self._lang(update))}")
             return
 
+        # \u2500\u2500 Guardian firewall pre-scan \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+        # Before free text can steer an agent that acts, scan it for injection /
+        # manipulation shapes. Telemetry-first + fail-open: the engine records a
+        # FIREWALL verdict to the tamper-evident chain and returns it; a message is
+        # only refused when the operator has additionally opted into blocking HIGH
+        # verdicts. Default OFF (no scan) \u2014 this can never break a chat.
+        try:
+            fw_verdict = self.engine.firewall_scan(text, source="telegram", user_id=str(uid))
+            if fw_verdict and fw_verdict.get("risk") == "high" and \
+                    getattr(CONFIG.risk, "guardian_firewall_block_high", False):
+                cats = ", ".join(fw_verdict.get("categories", [])[:3]) or "manipulation"
+                await self._send(update,
+                    "\U0001f6e1\ufe0f <b>Blocked by the Guardian firewall.</b>\n\n"
+                    "That message looked like a prompt-injection / unsafe-action "
+                    f"attempt (<i>{html.escape(cats)}</i>), so I won't act on it. "
+                    "Rephrase what you actually want and I'll help.")
+                return
+        except Exception as _fw_exc:
+            logger.debug("Firewall pre-scan skipped: %s", _fw_exc)
+
         # ── Custom limit price input ──────────────────────────
         # If user is in "set limit" mode, capture the price they type
         caller_uid = str(uid)

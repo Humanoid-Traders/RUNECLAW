@@ -506,6 +506,18 @@ class RiskLimits:
     # engine cap); each policy also carries its own mode (shadow = observe-only,
     # enforce = reject) so shadow can run in production before anything blocks.
     intent_policy_enabled: bool = _env_bool("INTENT_POLICY_ENABLED", False)
+    # Guardian Prompt-Injection & Transaction Firewall: master switch for scanning
+    # inbound chat-action text (Telegram free text / web chat) for manipulation
+    # shapes (bot/guardian/firewall.py) before it can steer an agent that acts.
+    # Default OFF → no scan runs, byte-identical to before. When ON it is
+    # TELEMETRY-FIRST: the scan classifies + records a FIREWALL verdict to the
+    # tamper-evident chain and can warn, but never blocks a message. Blocking is a
+    # separate, stricter opt-in below and stays off by default.
+    guardian_firewall_enabled: bool = _env_bool("GUARDIAN_FIREWALL_ENABLED", False)
+    # When BOTH this and guardian_firewall_enabled are on, a HIGH-risk chat verdict
+    # is refused (the message is not acted on) instead of merely recorded. Default
+    # OFF so enabling the firewall observes before it ever blocks.
+    guardian_firewall_block_high: bool = _env_bool("GUARDIAN_FIREWALL_BLOCK_HIGH", False)
     # Kelly-criterion sizing (default ON; runbook stage 2, tighten-only). evaluate() also
     # derives a half-Kelly size from realized trade history and takes the SMALLER
     # of {fixed-fractional, Kelly}: Kelly can only TIGHTEN size, never grow it, and
