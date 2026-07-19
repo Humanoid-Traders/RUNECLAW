@@ -15,6 +15,9 @@ Modules:
 * ``statement``    — build an epoch, Merkle-root + Ed25519-sign it (reuses
                      ``bot.utils.attestation``).
 * ``ingest_cex``   — normalize CCXT ``fetch_my_trades`` output into CSF fills.
+* ``ingest_onchain_evm`` — re-derive an EVM/Base fill by netting ERC-20 ``Transfer``
+                     logs in a public tx receipt (``onchain_public``, the strongest
+                     tier — re-checkable by anyone from a public RPC).
 
 The verifier lives at repo root: ``verify.py``.
 """

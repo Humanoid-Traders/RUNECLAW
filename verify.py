@@ -14,16 +14,24 @@ Coverage (v0):
 * CEX (``cex_operator_signed``) fills: recompute fill hashes, Merkle root, metrics,
   commitment; re-run the completeness + balance-delta reconciliation; verify the
   Ed25519 signature over the commitment; enforce the trust-tier-minimum invariant.
-* On-chain fills: re-derivation from a public RPC is NOT yet implemented — an
-  on-chain fill is reported ``UNVERIFIED`` (never silently passed).
+* On-chain fills (``onchain_public``): re-fetch the receipt from a public Base RPC,
+  re-net the ERC-20 Transfer logs against a bound wallet (an ``account_id``), and
+  confirm the re-derived ``fill_hash`` is byte-identical. A fill that cannot be
+  re-derived (RPC down, wallet not bound, receipt changed) is reported
+  ``UNVERIFIED`` — verify never passes it on trust.
+
+Set ``--offline`` (or ``POP_OFFLINE=1``) to skip the network re-derivation; on-chain
+fills are then reported ``UNVERIFIED`` rather than confirmed.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import sys
 
 from bot.proofofpnl import csf
+from bot.proofofpnl.ingest_onchain_evm import fetch_receipt_evm, fill_from_evm_receipt
 from bot.proofofpnl.reconcile import reconcile
 from bot.proofofpnl.statement import commitment_hash
 
@@ -45,8 +53,34 @@ def _ed25519_verify(commit_hex: str, sig_hex: str, pubkey_hex: str) -> bool:
         return False
 
 
-def verify_statement(stmt: dict) -> tuple[bool, list[str]]:
+def _reverify_onchain(fill: dict, account_ids: list[str], fetch_receipt) -> tuple[bool, str]:
+    """Re-derive one on-chain fill from the public chain and compare its hash.
+
+    Fetches the receipt for the fill's ``source_ref`` (tx hash) via ``fetch_receipt``,
+    then re-nets ERC-20 Transfers against each bound wallet in ``account_ids`` until
+    one reconstructs the identical ``fill_hash``. Returns ``(confirmed, note)``.
+    ``confirmed=False`` means UNVERIFIED — never a silent pass."""
+    txh = str(fill.get("source_ref", ""))
+    want = fill.get("fill_hash")
+    wallets = [a for a in account_ids if str(a).startswith("0x") and len(str(a)) == 42]
+    if not wallets:
+        return False, f"UNVERIFIED {txh[:12]}…: no on-chain wallet bound in account_ids"
+    try:
+        receipt = fetch_receipt(txh)
+    except Exception as exc:  # RPC down / not reachable → UNVERIFIED, not PASS
+        return False, f"UNVERIFIED {txh[:12]}…: receipt fetch failed ({exc})"
+    for wallet in wallets:
+        got = fill_from_evm_receipt(
+            receipt, wallet, venue=str(fill.get("venue", "base:uniswap-v3")),
+            trust_tier=str(fill.get("trust_tier", "onchain_public")))
+        if got is not None and got.get("fill_hash") == want:
+            return True, f"re-derived {txh[:12]}… from chain against {wallet[:10]}…"
+    return False, f"UNVERIFIED {txh[:12]}…: chain re-derivation did not reproduce fill_hash"
+
+
+def verify_statement(stmt: dict, *, offline: bool = False, fetch_receipt=None) -> tuple[bool, list[str]]:
     diffs: list[str] = []
+    fetch_receipt = fetch_receipt or fetch_receipt_evm
 
     # 0) No summary field may appear anywhere in the statement path.
     if _contains_key(stmt, "summary"):
@@ -111,10 +145,17 @@ def verify_statement(stmt: dict) -> tuple[bool, list[str]]:
     elif stmt.get("status") == "published":
         diffs.append("status 'published' but no ed25519 attestation")
 
-    # 7) On-chain fills: re-derivation not implemented in v0 → UNVERIFIED, never pass.
+    # 7) On-chain fills: re-derive each from the public chain and confirm the hash.
+    account_ids = stmt.get("account_ids") or []
     for f in fills:
-        if f.get("venue_type") == "onchain":
-            diffs.append(f"UNVERIFIED: on-chain re-derivation not implemented for {f.get('source_ref')}")
+        if f.get("venue_type") != "onchain":
+            continue
+        if offline:
+            diffs.append(f"UNVERIFIED (offline): on-chain fill {f.get('source_ref')} not re-derived")
+            continue
+        ok, note = _reverify_onchain(f, account_ids, fetch_receipt)
+        if not ok:
+            diffs.append(note)
 
     return (len(diffs) == 0), diffs
 
@@ -130,12 +171,14 @@ def _contains_key(obj, key: str) -> bool:
 
 
 def main(argv: list[str]) -> int:
-    if len(argv) != 2:
-        print("usage: python verify.py <statement.json>")
+    args = [a for a in argv[1:] if not a.startswith("-")]
+    offline = ("--offline" in argv) or (os.environ.get("POP_OFFLINE") == "1")
+    if len(args) != 1:
+        print("usage: python verify.py [--offline] <statement.json>")
         return 2
-    with open(argv[1], "r", encoding="utf-8") as fh:
+    with open(args[0], "r", encoding="utf-8") as fh:
         stmt = json.load(fh)
-    ok, diffs = verify_statement(stmt)
+    ok, diffs = verify_statement(stmt, offline=offline)
     if ok:
         print("VERIFY: PASS")
         print(f"  tier={stmt.get('trust_tier')} status={stmt.get('status')} "
