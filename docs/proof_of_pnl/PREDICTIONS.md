@@ -56,10 +56,13 @@ synthetic* epoch (labeled synthetic, not a track record):
 
 ---
 
-## P3 — On-chain (Base) fill re-derivation — REGISTERED, run PENDING
+## P3 — On-chain (Base) fill re-derivation — ✅ CONFIRMED
 
 **Change under test:** `ingest_onchain_evm.py` Transfer-netting + `verify.py`
-re-fetch on **one real Base swap tx** (tx hash `PENDING` selection).
+re-fetch on **one real Base swap tx**
+`0x3a6d70d20b4a35795a778e75d32e712c96e7f52d9b9669ad1c0f8970b7de378e`
+(wallet `0x51c72848…502a7f`, WETH→USDC sell; receipt frozen at
+`tests/fixtures/base_swap_receipt.json`).
 
 **Prediction (before run):**
 1. Netting ERC-20 `Transfer` logs to/from the wallet reproduces the swap's
@@ -71,7 +74,27 @@ re-fetch on **one real Base swap tx** (tx hash `PENDING` selection).
 **Falsifier:** derived amounts disagree with the on-chain `Swap` event, or
 `verify.py` needs any RUNECLAW-hosted data to reproduce the hash.
 
-**Result:** _PENDING run._
+**Result:** ✅ **CONFIRMED** (`tests/test_proof_of_pnl_onchain.py`).
+1. Netting the two `Transfer` logs against the wallet yields sent
+   `0.212088168854805184` WETH and received `397.021088` USDC → `side=sell`,
+   `market=WETH/USDC`, `qty=0.212088168854805184`, `price≈1871.96`. These are the
+   *same* raw amounts the pool's `Swap` event carries (the pool's token-in equals
+   the wallet's token-out), so amounts agree by construction — verified against the
+   real `Swap` log (topic0 `0xc42079f9…cca67`) present in the receipt.
+2. `verify.py`'s section-7 re-derivation re-fetches the receipt via
+   `eth_getTransactionReceipt` on a public Base RPC (`WEB3_RPC_URL_BASE`, default
+   `https://mainnet.base.org` — no RUNECLAW server, no API key), re-nets against the
+   wallet bound in `account_ids`, and reproduces the byte-identical `fill_hash`
+   `0ddd160b…67a8`. When the RPC is unreachable, the wallet is not bound, or
+   `--offline` is set, the fill is reported `UNVERIFIED` — never a silent PASS.
+3. `epoch_tier == onchain_public` (the strongest tier). Note the honest limit: a
+   *single* sell fill has no matching buy, so the epoch stays `INCOMPLETE` (no
+   round-trip to reconcile) even though every fill re-derives from the chain — the
+   re-derivation and the reconciliation gates are independent.
+
+**Discipline note:** the Uniswap-v3 `Swap` topic0 was verified against raw Base
+chain logs, not a web search — the web-sourced `0x7a6f9cbb…` was **wrong**; the real
+value is `0xc42079f94a6350d7e6235f29174924f928cc2ac818eb64fed8004e115fbcca67`.
 
 ---
 
@@ -92,9 +115,14 @@ any inflation.
 
 ---
 
-## P3 note — deferred to the next version (on-chain EVM slice)
+## Next versions (one variable each)
 
-P3 (Base fill re-derivation, zero-server-trust) is NOT in this CEX slice.
-`verify.py` currently reports any on-chain fill as `UNVERIFIED` rather than
-passing it — the honest placeholder until the Transfer-netting re-derivation
-lands. P3 stays REGISTERED, run PENDING for the next version.
+The on-chain EVM slice (P3) is now landed. Registered-but-not-yet-run venue
+extensions, each a single-variable version on top of the same CSF core:
+
+* **Solana** — `pre/postTokenBalances` deltas instead of ERC-20 Transfer logs
+  (same netting idea, different receipt shape). `onchain_public`.
+* **Token/token swaps** — price via a quote-asset reference leg when neither leg
+  is a stablecoin (v0 only prices swaps with a stable leg).
+* **Prediction markets / NFT / DeFi LP** — scoped in `RESEARCH.md §5.6` as further
+  `onchain_public` venues once a per-venue derivation is written and pre-registered.
