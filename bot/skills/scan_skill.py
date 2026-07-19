@@ -463,6 +463,8 @@ def _build_scan_payload(results: list[dict], engine=None,
     else:
         key_call = "No scan data available."
 
+    macro = _macro_block()
+
     return {
         "regime": regime,
         "circuit_breaker": {
@@ -485,6 +487,10 @@ def _build_scan_payload(results: list[dict], engine=None,
         "key_call": key_call,
         "features": _build_features_block(engine),
         "timestamp": now.strftime("%Y-%m-%d %H:%M UTC"),
+        # Macro event-calendar snapshot for the website's Macro AI page (risk
+        # state + next high-impact event). Telemetry-only + fail-open: omitted
+        # entirely when the builder returns None.
+        **({"macro": macro} if macro else {}),
         # Deep-scan pattern readout (only on the /deepscan path) so the website
         # can mirror the Telegram card: full chart+candle breakdown per symbol.
         **({"deepscan": {
@@ -494,6 +500,47 @@ def _build_scan_payload(results: list[dict], engine=None,
             "generated_at": now.strftime("%Y-%m-%d %H:%M UTC"),
         }} if deepscan_hits else {}),
     }
+
+
+def _macro_block() -> Optional[dict]:
+    """Macro event-calendar snapshot for the website (telemetry-only, fail-open).
+
+    Read-only: builds a fresh ``MacroCalendar`` (the same hardcoded schedule the
+    risk engine gates on) and serialises its current risk-state plus the next
+    high-impact event, so the Macro AI page can show a countdown and an
+    event-risk banner. This NEVER affects trading — it is display data added to
+    the scan sync payload, and ANY failure returns None so the block is simply
+    omitted (the web side already renders a "no calendar yet" fallback).
+    """
+    try:
+        from bot.macro.calendar import MacroCalendar
+
+        snap = MacroCalendar().evaluate()
+
+        def _ev(ev) -> Optional[dict]:
+            if not ev:
+                return None
+            return {
+                "type": ev.event_type.value,
+                "label": ev.label,
+                "scheduled_utc": ev.scheduled_utc.astimezone(UTC).isoformat(),
+                "impact": ev.impact,
+            }
+
+        return {
+            "state": snap.state.value,
+            "stale": bool(snap.stale),
+            "next_event": _ev(snap.next_event),
+            "active_event": _ev(snap.active_event),
+            "seconds_until_next": (
+                int(snap.time_until_next.total_seconds())
+                if snap.time_until_next is not None else None
+            ),
+            "evaluated_at": snap.evaluated_at.astimezone(UTC).isoformat(),
+        }
+    except Exception:
+        log.debug("macro block build failed", exc_info=True)
+        return None
 
 
 def _build_features_block(engine=None) -> dict:

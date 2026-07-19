@@ -3282,6 +3282,37 @@
     if (n >= 1e6) return '$' + (n / 1e6).toFixed(1) + 'M';
     return '$' + Math.round(n);
   }
+  // Live time-to-event ("in 3d 4h" / "in 5h 20m" / "in 12m" / "now").
+  function macroCountdown(iso) {
+    const ms = new Date(iso).getTime() - Date.now();
+    if (!isFinite(ms)) return '';
+    if (ms <= 0) return 'now';
+    const t = Math.floor(ms / 60000), d = Math.floor(t / 1440), h = Math.floor((t % 1440) / 60), mm = t % 60;
+    return d > 0 ? `in ${d}d ${h}h` : h > 0 ? `in ${h}h ${mm}m` : `in ${mm}m`;
+  }
+  function updateMacroCountdowns() {
+    document.querySelectorAll('[data-macro-countdown]').forEach((el) => {
+      const t = macroCountdown(el.getAttribute('data-macro-countdown'));
+      if (t) el.textContent = t;
+    });
+  }
+  // Colored banner for elevated macro-event windows (quiet on NORMAL).
+  function macroEventBanner(ev) {
+    if (!ev || !ev.state || ev.state === 'NORMAL') return '';
+    const info = {
+      PRE_EVENT_CAUTION: { col: '#e0a63a', label: 'Pre-event caution', icon: '⏳' },
+      EVENT_LOCKDOWN: { col: 'var(--down)', label: 'Event lockdown', icon: '🔒' },
+      POST_EVENT_VOLATILITY: { col: '#e0a63a', label: 'Post-event volatility', icon: '🌊' },
+      BLACKOUT: { col: 'var(--down)', label: 'Calendar blackout', icon: '⛔' },
+    }[ev.state];
+    if (!info) return '';
+    const e = ev.active || ev.next;
+    const when = e && e.scheduled_utc ? ` <span class="num" data-macro-countdown="${esc(e.scheduled_utc)}">${macroCountdown(e.scheduled_utc)}</span>` : '';
+    const name = e ? esc(e.label) : 'a high-impact macro event';
+    return `<div style="border:1px solid ${info.col};border-radius:var(--radius);background:rgba(224,166,58,.06);padding:var(--s2) var(--s3);margin-bottom:var(--s3)">
+      <div style="font-family:var(--font-data);letter-spacing:.04em"><span>${info.icon}</span> <b style="color:${info.col}">${info.label}</b> · ${name}${when}</div>
+      <div class="muted small">The engine tightens risk into high-impact macro prints.</div></div>`;
+  }
   function macroBlock(m, at) {
     const band = m.band || { label: '—', tone: '' };
     const toneCol = band.tone === 'up' ? 'var(--up)' : band.tone === 'down' ? 'var(--down)' : 'var(--text-2)';
@@ -3312,7 +3343,9 @@
       <div class="muted small" style="font-family:var(--font-data);letter-spacing:.1em;text-transform:uppercase;margin-bottom:6px">${briefLabel}${m.ai_brief ? ' <span style="opacity:.6">· live LLM</span>' : ''}</div>
       <p style="margin:0;line-height:1.6">${esc(briefText)}</p></div>` : '';
     const foot = `<p class="muted small mt-2">Sources: Fear &amp; Greed (alternative.me) · market structure (CoinGecko) · engine BTC regime${at ? ' · ' + esc(new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })) : ''} · read-only, never trades.</p>`;
-    return gauge + `<div class="mt-3">${tiles}</div>` + brief + foot;
+    // Always show the next high-impact event line when the calendar is synced.
+    const nextLine = (m.event && m.event.next) ? `<div class="muted small mt-2">📅 Next high-impact event: <b>${esc(m.event.next.label)}</b> <span class="num" data-macro-countdown="${esc(m.event.next.scheduled_utc)}">${macroCountdown(m.event.next.scheduled_utc)}</span></div>` : '';
+    return macroEventBanner(m.event) + gauge + nextLine + `<div class="mt-3">${tiles}</div>` + brief + foot;
   }
   // The agent physically reacts to the macro posture: alert on a defensive
   // backdrop, execute on a constructive one, analyze in the middle.
@@ -3342,6 +3375,7 @@
       macroReact(m.band);
       return macroBlock(m, r.data.generated_at);
     }, { empty: { icon: 'icon-shield', text: 'Macro data is unavailable right now — check back in a moment.' } });
+    every(30000, updateMacroCountdowns);   // keep the event countdown ticking
   }
 
   /* ═══════════════ Boot ═══════════════ */
