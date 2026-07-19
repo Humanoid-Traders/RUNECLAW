@@ -195,6 +195,27 @@ async def handle_chat(request: web.Request) -> web.Response:
     if err is not None:
         return err
 
+    # Guardian firewall pre-scan — the web chat can ACT (propose trades,
+    # dispatch skills) exactly like Telegram, so the same input-provenance gate
+    # applies here. Telemetry-first + fail-open: the engine records a FIREWALL
+    # verdict to the tamper-evident chain and returns it; a message is only
+    # refused when the operator has opted into blocking HIGH verdicts. Default
+    # OFF (no scan) — this can never break a chat.
+    try:
+        fw_verdict = engine.firewall_scan(text, source="web", user_id=tg_id)
+        if fw_verdict and fw_verdict.get("risk") == "high" \
+                and bool(getattr(CONFIG.risk, "guardian_firewall_block_high", False)):
+            _cats = ", ".join(fw_verdict.get("categories", [])[:3]) or "manipulation"
+            return web.json_response({
+                "reply_html": (
+                    "🛡️ <b>Blocked by the Guardian firewall.</b><br><br>"
+                    "That message looked like a prompt-injection / unsafe-action "
+                    f"attempt (<i>{_html.escape(_cats)}</i>), so I won't act on it. "
+                    "Rephrase what you actually want and I'll help."),
+                "intent": "firewall_blocked"})
+    except Exception:
+        pass
+
     # Manual trade via natural language — same intercept as _handle_message:
     # "buy SOL 71 sl 70 tp 76" proposes a pending trade (never executes).
     trade_text = text.lower().strip()

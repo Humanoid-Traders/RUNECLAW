@@ -319,6 +319,25 @@ defaults:
       when enabled a policy still defaults to shadow mode (logs would-be
       rejections, blocks nothing) until explicitly set to enforce.
 
+  guardian_firewall_enabled:
+    value: false
+    env_var: GUARDIAN_FIREWALL_ENABLED
+    description: >
+      Guardian Prompt-Injection & Transaction Firewall: when on, inbound
+      chat-action text (Telegram free text / web chat) is scanned for manipulation
+      shapes before it can steer an agent that acts, and a FIREWALL verdict is
+      sealed to the tamper-evident chain. Default OFF; telemetry-first — it records
+      and can warn, but never blocks a message unless guardian_firewall_block_high
+      is also enabled.
+
+  guardian_firewall_block_high:
+    value: false
+    env_var: GUARDIAN_FIREWALL_BLOCK_HIGH
+    description: >
+      With guardian_firewall_enabled on, refuse to act on a HIGH-risk chat verdict
+      (the message is recorded and rejected) instead of merely recording it.
+      Default OFF so enabling the firewall observes before it ever blocks.
+
   per_strategy_confidence_floor_enabled:
     value: false
     env_var: PER_STRATEGY_CONFIDENCE_FLOOR_ENABLED
