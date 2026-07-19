@@ -440,18 +440,14 @@ def _remember_proposer(app, trade_id: str, tg_id: str) -> None:
 def _web_envelope_enforcing(app, tg_id: str) -> bool:
     """Is a bound Authority Envelope in ENFORCE mode for this web user?
 
-    Seam for the per-user envelope binding (next stage). Fail-closed: any
-    absence — no registry, no bound envelope, non-enforce mode, or any error —
-    returns False, so the web live gate denies. There is deliberately no way to
-    reach a live web order without an enforce-mode envelope.
+    Reads the per-user Authority Envelope store. Fail-closed: no bound envelope,
+    a revoked one, non-enforce mode, or any error → False, so the web live gate
+    denies. There is deliberately no way to reach a live web order without an
+    enforce-mode envelope.
     """
     try:
-        engine = app.get("engine")
-        getter = getattr(engine, "get_user_authority_envelope", None)
-        if getter is None:
-            return False
-        env = getter(tg_id)
-        return bool(env) and str(getattr(env, "mode", "")).lower() == "enforce"
+        from bot.guardian.user_authority_store import get_user_authority_store
+        return bool(get_user_authority_store().is_enforcing(tg_id))
     except Exception:
         return False
 
@@ -920,6 +916,148 @@ async def handle_idle_yield(request: web.Request) -> web.Response:
     return web.json_response(report)
 
 
+# ── Authority Envelope authoring (per-user, SELF-SERVE) ──────────────────────
+#
+# A user describes, in plain words, what their agent may do — "only majors, max
+# $500 a trade, $2k a day, only on Bitget" — and this compiles it to a hashed,
+# tighten-only Authority Envelope bound to THEIR id. An enforce-mode envelope is
+# the custody precondition the web live gate requires. Every step is
+# deterministic + fail-open (a hiccup never binds a looser envelope than typed);
+# apply RECOMPILES from the text bot-side (never trusts a client blob).
+
+_AUTHORITY_TEXT_MAX = 600
+
+
+def _compile_user_envelope(text: str, mode: str = "shadow"):
+    """NL → compiled, clamped Authority Envelope for a self-serve user."""
+    from bot.guardian.authority_nl import compile_nl_envelope
+    from bot.guardian.authority import compile_envelope
+    try:
+        from bot.core.venues import valid_venue_ids
+        universe = list(valid_venue_ids())
+    except Exception:
+        universe = None
+    parsed = compile_nl_envelope(text)
+    spec = dict(parsed["spec"])
+    spec["mode"] = mode if mode in ("off", "shadow", "enforce") else "shadow"
+    spec.setdefault("label", "My trading authority")
+    env = compile_envelope(spec, venue_universe=universe)
+    return env, parsed
+
+
+async def handle_authority_preview(request: web.Request) -> web.Response:
+    tg_handler = request.app["tg_handler"]
+    body = await _json_body(request)
+    tg_id = str(body.get("telegram_id") or "").strip()
+    err = _guard_user(tg_handler, tg_id)
+    if err is not None:
+        return err
+    text = str(body.get("text") or "").strip()[:_AUTHORITY_TEXT_MAX]
+    if not text:
+        return web.json_response({"error": "text required"}, status=400)
+    try:
+        from bot.guardian.authority import human_readable
+        env, parsed = _compile_user_envelope(text, "shadow")
+        return web.json_response({
+            "ok": True, "human_readable": human_readable(env),
+            "matched": parsed["matched"], "pending": parsed["pending"],
+            "unmatched": parsed["unmatched"], "envelope_id": env.get("envelope_id"),
+            "warnings": env.get("warnings", []),
+        })
+    except Exception as exc:
+        system_log.debug("Authority preview failed: %s", exc)
+        return web.json_response({"error": "compile_failed"}, status=500)
+
+
+async def handle_authority_apply(request: web.Request) -> web.Response:
+    tg_handler = request.app["tg_handler"]
+    body = await _json_body(request)
+    tg_id = str(body.get("telegram_id") or "").strip()
+    err = _guard_user(tg_handler, tg_id)
+    if err is not None:
+        return err
+    text = str(body.get("text") or "").strip()[:_AUTHORITY_TEXT_MAX]
+    mode = str(body.get("mode") or "shadow").lower()
+    if mode not in ("off", "shadow", "enforce"):
+        mode = "shadow"
+    if not text:
+        return web.json_response({"error": "text required"}, status=400)
+    try:
+        from bot.guardian.authority import human_readable
+        from bot.guardian.user_authority_store import get_user_authority_store
+        env, parsed = _compile_user_envelope(text, mode)
+        if parsed["unmatched"]:
+            return web.json_response(
+                {"ok": False, "error": "no_rules",
+                 "detail": "I couldn't turn that into any limits. Try phrasings "
+                           "like “only majors”, “max $500 per trade”, “$2000 a "
+                           "day”, “only on bitget”."}, status=400)
+        bound = get_user_authority_store().bind(tg_id, env)
+        audit(system_log, f"User bound authority envelope ({mode}) {env.get('envelope_id')}",
+              action="web_authority_apply", result=mode, data={"user": tg_id})
+        return web.json_response({"ok": bound, "mode": mode,
+                                  "human_readable": human_readable(env),
+                                  "envelope_id": env.get("envelope_id")})
+    except Exception as exc:
+        system_log.debug("Authority apply failed: %s", exc)
+        return web.json_response({"error": "apply_failed"}, status=500)
+
+
+async def handle_authority_mode(request: web.Request) -> web.Response:
+    tg_handler = request.app["tg_handler"]
+    body = await _json_body(request)
+    tg_id = str(body.get("telegram_id") or "").strip()
+    err = _guard_user(tg_handler, tg_id)
+    if err is not None:
+        return err
+    mode = str(body.get("mode") or "").lower()
+    if mode not in ("off", "shadow", "enforce"):
+        return web.json_response({"error": "bad_mode"}, status=400)
+    from bot.guardian.user_authority_store import get_user_authority_store
+    ok = get_user_authority_store().set_mode(tg_id, mode)
+    if not ok:
+        return web.json_response({"error": "no_envelope"}, status=404)
+    audit(system_log, f"User set authority mode {mode}", action="web_authority_mode",
+          result=mode, data={"user": tg_id})
+    return web.json_response({"ok": True, "mode": mode})
+
+
+async def handle_authority_status(request: web.Request) -> web.Response:
+    tg_handler = request.app["tg_handler"]
+    tg_id = str(request.query.get("telegram_id") or "").strip()
+    err = _guard_user(tg_handler, tg_id)
+    if err is not None:
+        return err
+    from bot.guardian.user_authority_store import get_user_authority_store
+    from bot.guardian.authority import human_readable
+    store = get_user_authority_store()
+    env = store.get(tg_id)
+    dec = _web_live_decision(request.app, tg_handler, tg_id)
+    return web.json_response({
+        "bound": env is not None,
+        "mode": store.mode(tg_id),
+        "human_readable": human_readable(env) if env else "",
+        "envelope_id": (env or {}).get("envelope_id", ""),
+        "live_ready": dec.allowed,
+        "live_checklist": dec.checklist,
+        "live_reason": dec.reason,
+    })
+
+
+async def handle_authority_revoke(request: web.Request) -> web.Response:
+    tg_handler = request.app["tg_handler"]
+    body = await _json_body(request)
+    tg_id = str(body.get("telegram_id") or "").strip()
+    err = _guard_user(tg_handler, tg_id)
+    if err is not None:
+        return err
+    from bot.guardian.user_authority_store import get_user_authority_store
+    revoked = get_user_authority_store().revoke(tg_id)
+    audit(system_log, "User revoked authority envelope", action="web_authority_revoke",
+          result=str(bool(revoked)), data={"user": tg_id})
+    return web.json_response({"ok": True, "revoked": bool(revoked)})
+
+
 # ── Intent Compiler authoring (OPERATOR only) ────────────────────────────────
 #
 # Web parity for the Telegram /policy compile→preview→confirm→bind loop. These
@@ -1068,6 +1206,12 @@ def build_gateway(engine, tg_handler) -> web.Application:
     app.router.add_get("/networth", handle_networth)
     app.router.add_get("/holdings", handle_holdings)
     app.router.add_post("/idleyield", handle_idle_yield)
+    # Authority Envelope authoring (per-user, self-serve; _guard_user-gated).
+    app.router.add_post("/authority/preview", handle_authority_preview)
+    app.router.add_post("/authority/apply", handle_authority_apply)
+    app.router.add_post("/authority/mode", handle_authority_mode)
+    app.router.add_get("/authority/status", handle_authority_status)
+    app.router.add_post("/authority/revoke", handle_authority_revoke)
     app.router.add_post("/trade/propose", handle_trade_propose)
     app.router.add_post("/trade/confirm", handle_trade_confirm)
     app.router.add_post("/trade/cancel", handle_trade_cancel)

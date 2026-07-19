@@ -1554,6 +1554,20 @@
     container.insertAdjacentHTML('beforeend', `
       <div class="stack">
         <div id="tradeModeNote"></div>
+        <section class="panel" id="p-authority">
+          <h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-shield"></use></svg>Your trading authority
+            <span class="badge" style="margin-left:auto" title="A revocable, tighten-only Authority Envelope you set in plain words. Enforce mode is required before any live trade on your own keys.">custody</span></h2>
+          <p style="color:var(--text-2);margin-bottom:var(--s2)">Say what your agent may do — <i>"only majors, max $500 a trade, $2,000 a day, only on bitget"</i>. It compiles to a revocable envelope that <b>caps and authorizes</b> every live order. Nothing is enforced until you switch it on.</p>
+          <form class="stack" id="authForm">
+            <textarea class="input" id="authText" rows="2" maxlength="600" placeholder="only majors, max $500 per trade, $2000 a day, only on bitget"></textarea>
+            <div class="row" style="gap:var(--s2);flex-wrap:wrap">
+              <button class="btn btn--sm" type="submit">Preview</button>
+              <button class="btn btn--sm btn--primary" type="button" id="authApply">Save (shadow)</button>
+              <span id="authMsg" class="small muted" aria-live="polite"></span>
+            </div>
+          </form>
+          <div id="c-authority" style="margin-top:var(--s2)"><div class="skel"></div></div>
+        </section>
         <div class="grid grid-main">
           <section class="panel panel--primary" id="p-ticket">
             <h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-target"></use></svg>Order ticket</h2>
@@ -1601,6 +1615,76 @@
           Paper mode — trades execute on your paper portfolio. Live trading requires a linked Telegram account and operator approval.</div>`;
       }
     });
+
+    // ── Authority Envelope (custody) ──────────────────────────────────
+    async function drawAuthority() {
+      renderPanel(C('authority'), async () => {
+        const r = await fetchJSON('/api/authority', { timeoutMs: 12000 });
+        const d = r.data;
+        if (!r.ok || !d) return null;
+        const modePill = (m) => {
+          const cls = m === 'enforce' ? 'mode-badge--live' : (m === 'shadow' ? 'mode-badge--paper' : '');
+          return `<span class="mode-badge ${cls}">${esc((m || 'off').toUpperCase())}</span>`;
+        };
+        const checks = d.live_checklist || {};
+        const labels = { feature_enabled: 'Operator enabled live web trading', bot_is_live: 'Bot in live mode',
+          user_opted_in: 'You enabled live for your account', has_own_keys: 'Your own exchange keys connected',
+          envelope_enforcing: 'Authority Envelope in enforce mode' };
+        const list = Object.keys(labels).map(k =>
+          `<div class="kv-row"><span>${checks[k] ? '✅' : '⬜'} ${esc(labels[k])}</span></div>`).join('');
+        const bound = d.bound
+          ? `<div class="kv-row"><span>Envelope</span>${modePill(d.mode)}</div>
+             <pre class="small" style="white-space:pre-wrap;color:var(--text-2)">${esc(d.human_readable || '')}</pre>
+             <div class="row" style="gap:var(--s2);flex-wrap:wrap;margin:var(--s2) 0">
+               <button class="btn btn--sm" data-authmode="shadow">Shadow</button>
+               <button class="btn btn--sm ${d.mode === 'enforce' ? 'btn--primary' : ''}" data-authmode="enforce">Enforce</button>
+               <button class="btn btn--sm" data-authmode="off">Off</button>
+               <button class="btn btn--sm btn--ghost" id="authRevoke">Revoke</button>
+             </div>`
+          : '<p class="muted small">No envelope yet — describe your limits above and Save.</p>';
+        return `${bound}
+          <div style="border-top:1px solid var(--line);margin-top:var(--s2);padding-top:var(--s2)">
+            <p class="small" style="margin-bottom:var(--s1)"><b>Live-on-your-own-keys checklist</b>
+              ${d.live_ready ? '<span class="mode-badge mode-badge--live" style="margin-left:var(--s1)">READY</span>' : ''}</p>
+            ${list}
+            <p class="small muted" style="margin-top:var(--s1)">${esc(d.live_reason || '')}</p>
+          </div>`;
+      }, { empty: { icon: 'icon-shield', text: 'Your authority envelope appears here once saved.' } });
+    }
+    async function authPost(path, body) {
+      const r = await fetchJSON(`/api/authority${path}`, { method: 'POST', body, timeoutMs: 15000 }).catch(() => ({ ok: false, data: null }));
+      return r;
+    }
+    document.getElementById('authForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const m = document.getElementById('authMsg');
+      const text = document.getElementById('authText').value.trim();
+      if (!text) { m.textContent = 'Type your limits first.'; return; }
+      m.textContent = 'Compiling…';
+      const r = await authPost('/preview', { text });
+      if (!r.ok || !r.data?.ok) { m.innerHTML = `<span class="neg">${esc(r.data?.detail || 'Could not compile.')}</span>`; return; }
+      const parts = (r.data.matched || []);
+      const pend = (r.data.pending || []);
+      m.innerHTML = parts.length
+        ? `Understood: ${esc(parts.join('; '))}${pend.length ? ` · <span class="muted">pending: ${esc(pend.join('; '))}</span>` : ''}`
+        : '<span class="neg">No limits recognized — try the example wording.</span>';
+    });
+    document.getElementById('authApply').addEventListener('click', async () => {
+      const m = document.getElementById('authMsg');
+      const text = document.getElementById('authText').value.trim();
+      if (!text) { m.textContent = 'Type your limits first.'; return; }
+      m.textContent = 'Saving…';
+      const r = await authPost('/apply', { text, mode: 'shadow' });
+      if (!r.ok || !r.data?.ok) { m.innerHTML = `<span class="neg">${esc(r.data?.detail || r.data?.error || 'Save failed.')}</span>`; return; }
+      m.textContent = 'Saved in shadow mode — switch to Enforce below to arm it.';
+      drawAuthority();
+    });
+    document.getElementById('c-authority').addEventListener('click', async (e) => {
+      const mb = e.target.closest('[data-authmode]');
+      if (mb) { await authPost('/mode', { mode: mb.dataset.authmode }); drawAuthority(); toast(`Authority mode: ${mb.dataset.authmode}`); return; }
+      if (e.target.closest('#authRevoke')) { await authPost('/revoke', {}); drawAuthority(); toast('Authority revoked.'); }
+    });
+    drawAuthority();
 
     const $ = id => document.getElementById(id);
     function preview() {
