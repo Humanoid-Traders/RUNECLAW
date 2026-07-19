@@ -358,6 +358,9 @@ class TelegramHandler:
             ("setgateway", self._cmd_setgateway),
             # Admin: idle-asset yield radar (read-only Bitget Earn scan)
             ("yield", self._cmd_yield),
+            # Admin: cross-source idle-yield optimizer (CEX Earn + non-custodial
+            # Lido/Aave), non-custodial preferred honestly. Read-only.
+            ("idleyield", self._cmd_idleyield),
             # Admin: stake/redeem flexible Earn (button-confirmed money path)
             ("stake", self._cmd_stake),
             ("unstake", self._cmd_unstake),
@@ -4010,6 +4013,66 @@ class TelegramHandler:
             return float(cache.get("free", 0) or 0)
         except Exception:
             return 0.0
+
+    async def _cmd_idleyield(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """/idleyield — cross-SOURCE best-rate scan for idle assets (admin only).
+
+        Where /yield matches idle balances to ONE venue's Earn catalog, this
+        matches them to the best rate across sources — CEX Earn (custodial) AND
+        on-chain Lido/Aave (non-custodial, live from DefiLlama) — and prefers a
+        marginally-lower non-custodial rate so you keep custody, stating the
+        tradeoff. Read-only: it recommends, it never moves a cent (the money
+        path stays the confirm-gated /stake)."""
+        if not self._is_admin(update):
+            await self._send(update,
+                "🔒 /idleyield reads the operator account — admin only.")
+            return
+        await self._send(update, "⏳ Scanning idle assets across CEX + on-chain rates…")
+        try:
+            from bot.core.bitget_v3_client import BitgetV3Client
+            from bot.core.yield_radar import (build_report, fetch_savings_catalog,
+                                              fetch_bybit_savings_catalog)
+            from bot.core.idle_yield_feeds import build_idle_options
+            from bot.core import idle_yield as iy
+
+            client = BitgetV3Client.from_config()
+            if not client.has_credentials:
+                await self._send(update,
+                    "🔴 No operator Bitget keys — <code>/setexchange</code> first.")
+                return
+            # Reuse the radar's idle discovery (it values free margin + spot).
+            report = await asyncio.to_thread(build_report, client, self._engine_free_usdt())
+            if report.error:
+                await self._send(update, f"🔴 {report.error}")
+                return
+            holdings = [{"asset": r.coin, "usd_value": r.idle_usd, "location": r.source}
+                        for r in report.rows if r.idle_usd > 0]
+            if not holdings:
+                await self._send(update,
+                    "🟡 No idle assets above the dust floor right now.")
+                return
+            # Options: Bitget Earn (custodial) + Bybit Earn + non-custodial feeds.
+            bitget_cat = await asyncio.to_thread(fetch_savings_catalog, client)
+            extra = {}
+            try:
+                bybit_cat = await asyncio.to_thread(fetch_bybit_savings_catalog)
+                if bybit_cat:
+                    extra["Bybit Earn"] = bybit_cat
+            except Exception:
+                pass
+            options = await asyncio.to_thread(
+                build_idle_options, bitget_cat, extra_catalogs=extra)
+            result = iy.optimize(holdings, options, prefer_noncustodial=True)
+            body = iy.human_readable(result)
+            nc = sum(1 for o in options if not o.get("custodial"))
+            await self._send(update,
+                f"<b>💤→💸 Idle-Yield Optimizer</b>\n<pre>{html.escape(body)}</pre>\n"
+                f"<i>{nc} non-custodial rate(s) live · recommendation only — "
+                f"nothing moved. /stake executes flexible CEX Earn on confirm.</i>")
+        except Exception as exc:
+            system_log.warning("/idleyield failed: %s", exc)
+            await self._send(update,
+                "🔴 Idle-yield scan failed — the account was not touched (read-only).")
 
     async def _cmd_stake(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """/stake — put idle stables into flexible Bitget Earn (admin only).

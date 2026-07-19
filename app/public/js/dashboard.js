@@ -1748,6 +1748,11 @@
             <span class="badge" style="margin-left:auto" title="Aave/Lido/Uniswap read straight from protocol contracts — RUNECLAW warns, it can never manage a position">read-only</span></h2>
           <div id="c-defi"><div class="skel"></div></div>
         </section>
+        <section class="panel" id="p-idleyield">
+          <h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-coin"></use></svg>Idle yield — best rate for idle assets
+            <span class="badge" style="margin-left:auto" title="Best cross-source rate per idle asset — non-custodial preferred so you keep custody. Recommendation only, nothing is moved">read-only</span></h2>
+          <div id="c-idleyield"><div class="skel"></div></div>
+        </section>
         <section class="panel" id="p-replay">
           <h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-bolt"></use></svg>What-if replay
             <span class="badge" style="margin-left:auto" title="Real recorded agent trades, mirrored at your stake — hypothetical, not account history">hypothetical</span></h2>
@@ -1888,6 +1893,40 @@
             <b class="num">${d.total_real_usd != null ? '$' + fmt(d.total_real_usd, 2) : '—'}</b></div>
           <p class="small muted" style="margin-top:var(--s2)">${esc(d.note)}</p>`;
     }, { empty: { icon: 'icon-wallet', text: 'Funds itemise once a venue or wallet is reachable.' } });
+
+    // Idle yield — best cross-source rate per idle wallet asset. Non-custodial
+    // (Lido/Aave, live) preferred honestly; recommendation only, nothing moves.
+    renderPanel(C('idleyield'), async () => {
+      const r = await fetchJSON('/api/idleyield', { timeoutMs: 32000 });
+      const d = r.data;
+      if (!r.ok || !d || d.available === false) return null;
+      if (d.wallet_linked === false) {
+        return `<p class="muted">${esc(d.note || 'Link a wallet to scan idle assets for the best rate.')}</p>`;
+      }
+      const recd = (d.recommendations || []).filter(x => x.status === 'recommended');
+      if (!recd.length) {
+        return `<p class="muted">${esc(d.note || 'No idle assets matched a known rate right now.')}</p>`;
+      }
+      const rows = recd.slice(0, 8).map(x => {
+        const b = x.best;
+        const cust = b.custodial
+          ? '<span class="badge" title="The venue custodies the asset">custodial</span>'
+          : '<span class="badge" style="color:var(--up)" title="You keep the keys">non-custodial</span>';
+        return `<div class="kv-row" style="align-items:flex-start">
+            <span>💤 <b>${esc(x.asset)}</b> <span class="muted small">$${fmt(x.idle_usd, 0)} idle</span><br>
+              <span class="muted small">${esc(b.source)} ${cust}</span>
+              ${x.note ? `<br><span class="muted small">↳ ${esc(x.note)}</span>` : ''}</span>
+            <b class="num">${fmt(b.apy, 2)}% <span class="muted small">≈$${fmt(x.est_year_usd, 2)}/yr</span></b>
+          </div>`;
+      }).join('');
+      const nc = (d.sources && d.sources.noncustodial) || 0;
+      return rows
+        + `<div class="kv-row" style="border-top:1px solid var(--line);margin-top:var(--s2);padding-top:var(--s2)">
+            <span><b>If all deployed</b></span>
+            <b class="num">≈$${fmt(d.total_est_year_usd, 2)}/yr</b></div>
+          <p class="small muted" style="margin-top:var(--s2)">${nc} non-custodial rate(s) live (Lido/Aave via DefiLlama).
+            Recommendation only — RUNECLAW never moves your funds.</p>`;
+    }, { empty: { icon: 'icon-coin', text: 'Idle-yield scans your wallet assets once one is reachable.' } });
 
     // Exposure — perp positions netted against wallet spot, with the flags
     // a risk desk would raise (stacked longs, hedges, concentration).
