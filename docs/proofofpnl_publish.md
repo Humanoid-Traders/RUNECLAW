@@ -19,6 +19,29 @@
 3. **Serve** — gateway `GET /gateway/proofofpnl` → web `GET /api/proofofpnl`
    (JWT): the latest publication + `verified` (re-derived hash + public-safety),
    `fresh`, and `age_seconds`.
+4. **Serve publicly** — gateway `GET /gateway/public/proofofpnl` → web
+   `GET /api/public/proofofpnl` (NO auth) → page `/proof`. Same sealed
+   statement, no login. The publication is public-safe by construction, so
+   serving it openly is deliberate, not a leak.
+
+## Verify it yourself — in the browser
+
+`/proof` (`app/public/proof.html`) re-derives the `publish_hash` **in the
+visitor's own browser** and re-checks public-safety, so a prospective user
+trusts math on their machine, not our word. This is exact because:
+
+* the sealer hashes `json.dumps(bundle, sort_keys=True, separators=(",",":"),
+  ensure_ascii=False)` and the CSF invariant guarantees every number in the
+  bundle is already a string — so a recursive key-sort + `JSON.stringify` +
+  `crypto.subtle.digest('SHA-256')` reproduces the same bytes;
+* `tests/test_proofofpnl_publish.py::test_p7` runs the page's actual
+  `canonical()` under node and asserts the hash matches the Python sealer, so
+  the two can't silently drift.
+
+The page shows the sealed hash, the browser-re-derived hash, the public-safety
+result, the server's independent re-verification, and the anchor's honest
+UNVERIFIED status — with a copyable JSON statement and off-page re-verification
+steps.
 
 ## Discipline
 

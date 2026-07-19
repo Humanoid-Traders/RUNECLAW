@@ -134,6 +134,7 @@ app.use('/api/public/chat', publicChatRouter);
 app.use('/api/trade', webtradeRouter);
 app.use('/api/portfolio', portfolioRouter);
 app.use('/api/leaderboard', leaderboardRouter);
+app.use('/api/public/proofofpnl', require('./routes/public_proofofpnl'));
 app.use('/api/public', trackRouter);
 app.use('/api/lab', labRouter);
 app.use('/api/feed', feedRouter);
@@ -169,6 +170,7 @@ app.get('/', (req, res) => { res.setHeader('Cache-Control', 'no-cache'); res.sen
 app.get('/dashboard', (req, res) => { res.setHeader('Cache-Control', 'no-cache'); res.sendFile(path.join(__dirname, 'public', 'dashboard.html')); });
 // Account-management landing pages reached from email links.
 app.get('/track', (req, res) => { res.setHeader('Cache-Control', 'no-cache'); res.sendFile(path.join(__dirname, 'public', 'track.html')); });
+app.get('/proof', (req, res) => { res.setHeader('Cache-Control', 'no-cache'); res.sendFile(path.join(__dirname, 'public', 'proof.html')); });
 app.get('/wallet-link', (req, res) => { res.setHeader('Cache-Control', 'no-cache'); res.sendFile(path.join(__dirname, 'public', 'wallet-link.html')); });
 app.get('/reset', (req, res) => { res.setHeader('Cache-Control', 'no-cache'); res.sendFile(path.join(__dirname, 'public', 'reset.html')); });
 app.get('/verify', (req, res) => { res.setHeader('Cache-Control', 'no-cache'); res.sendFile(path.join(__dirname, 'public', 'verify.html')); });

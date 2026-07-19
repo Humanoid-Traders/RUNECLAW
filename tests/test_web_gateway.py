@@ -795,3 +795,65 @@ async def test_authority_revoke_disarms(monkeypatch, tmp_path):
         r = await c.post("/authority/revoke", json={"telegram_id": "web:5"}, headers=HDRS)
         assert r.status == 200 and (await r.json())["revoked"] is True
         assert store.is_enforcing("web:5") is False
+
+
+# ── Public Proof-of-PnL: no per-user auth, re-verifiable statement ──────────
+
+def _make_publication(tmp_path):
+    """Seal a minimal public-safe bundle into a real publication on disk and
+    return (store, publication). Uses the actual sealer so the served payload
+    is exactly what a client re-verifies."""
+    from bot.proofofpnl import publish as pub_mod
+    bundle = {
+        "format": "runeclaw.proofofpnl.bundle.v0",
+        "statement": {"trust_tier": "cex_operator_signed", "status": "published",
+                      "reconciliation": {"status": "OK"}},
+        "identity_card": {"card_id": "c1", "status": "UNVERIFIED",
+                          "anchor": {"status": "UNVERIFIED", "chain_id": 84532}},
+        "manifest": {"version": "1"},
+    }
+    store = pub_mod.PublicationStore(str(tmp_path / "pub.json"))
+    publication = pub_mod.publish_now(bundle, published_at_ts=1_700_000_000,
+                                      epoch_seq=3, store=store)
+    return store, publication
+
+
+async def test_public_proofofpnl_no_publication_needs_no_user(monkeypatch, tmp_path):
+    # The public endpoint must answer WITHOUT a telegram_id / registered user —
+    # a prospective visitor has neither. No publication yet -> honest empty.
+    monkeypatch.setattr(ug, "_GATEWAY_SECRET", SECRET)
+    from bot.proofofpnl import publish as pub_mod
+    empty = pub_mod.PublicationStore(str(tmp_path / "none.json"))
+    monkeypatch.setattr(pub_mod, "get_publication_store", lambda: empty)
+    async with gateway_client(FakeEngine(), FakeHandler(users={})) as c:
+        r = await c.get("/public/proofofpnl", headers=HDRS)
+        assert r.status == 200
+        body = await r.json()
+        assert body["published"] is False
+
+
+async def test_public_proofofpnl_serves_verifiable_statement(monkeypatch, tmp_path):
+    monkeypatch.setattr(ug, "_GATEWAY_SECRET", SECRET)
+    from bot.proofofpnl import publish as pub_mod
+    store, publication = _make_publication(tmp_path)
+    monkeypatch.setattr(pub_mod, "get_publication_store", lambda: store)
+    async with gateway_client(FakeEngine(), FakeHandler(users={})) as c:
+        r = await c.get("/public/proofofpnl", headers=HDRS)
+        assert r.status == 200
+        body = await r.json()
+        assert body["published"] is True
+        assert body["verified"] is True and body["problems"] == []
+        # The served hash is the sealed hash — a client re-derives and compares.
+        assert body["publication"]["publish_hash"] == publication["publish_hash"]
+        # Public-safe: no exchange `summary` leaked anywhere in the bundle.
+        import json as _json
+        assert "summary" not in _json.dumps(body["publication"]["bundle"])
+
+
+async def test_public_proofofpnl_still_requires_service_secret(monkeypatch, tmp_path):
+    # "Public" means no per-USER auth — it does NOT mean the server-to-server
+    # gateway secret is bypassed. A missing/short secret is still 403.
+    monkeypatch.setattr(ug, "_GATEWAY_SECRET", SECRET)
+    async with gateway_client(FakeEngine(), FakeHandler(users={})) as c:
+        r = await c.get("/public/proofofpnl", headers={"X-Gateway-Secret": "nope"})
+        assert r.status == 403

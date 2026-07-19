@@ -984,33 +984,28 @@ async def handle_sentry(request: web.Request) -> web.Response:
     return web.json_response(report)
 
 
-async def handle_proofofpnl(request: web.Request) -> web.Response:
-    """GET /gateway/proofofpnl — the latest CONTINUOUSLY-PUBLISHED Proof-of-PnL
-    statement: the public-safe bundle, its freshness, re-derived integrity, and
-    the anchor's (honest) UNVERIFIED status. 'Don't trust the dashboard — verify
-    the fills.'"""
+def _proofofpnl_payload() -> dict:
+    """Read the latest sealed Proof-of-PnL publication and re-verify it. Shared by
+    the per-user and public handlers — the publication is public-safe by
+    construction (``build_publication`` refuses anything else), so the same
+    payload is safe to serve with or without auth."""
     import time as _time
-    tg_handler = request.app["tg_handler"]
-    tg_id = str(request.query.get("telegram_id") or "").strip()
-    err = _guard_user(tg_handler, tg_id)
-    if err is not None:
-        return err
     try:
         from bot.proofofpnl.publish import (get_publication_store, verify_publication,
                                             is_fresh)
         pub = get_publication_store().read()
     except Exception as exc:
         system_log.debug("Proof-of-PnL read failed: %s", exc)
-        return web.json_response({"published": False, "error": "unavailable"})
+        return {"published": False, "error": "unavailable"}
     if not pub:
-        return web.json_response({
+        return {
             "published": False,
             "note": "No Proof-of-PnL statement has been published yet. The "
                     "publisher seals one each epoch from raw fills.",
-        })
+        }
     ok, problems = verify_publication(pub)
     now = int(_time.time())
-    return web.json_response({
+    return {
         "published": True,
         "publication": pub,
         "verified": ok,
@@ -1018,7 +1013,28 @@ async def handle_proofofpnl(request: web.Request) -> web.Response:
         "fresh": is_fresh(pub, now),
         "age_seconds": max(0, now - int(pub.get("published_at") or now)),
         "checked_at": datetime.now(timezone.utc).isoformat(),
-    })
+    }
+
+
+async def handle_proofofpnl(request: web.Request) -> web.Response:
+    """GET /gateway/proofofpnl — the latest CONTINUOUSLY-PUBLISHED Proof-of-PnL
+    statement: the public-safe bundle, its freshness, re-derived integrity, and
+    the anchor's (honest) UNVERIFIED status. 'Don't trust the dashboard — verify
+    the fills.'"""
+    tg_handler = request.app["tg_handler"]
+    tg_id = str(request.query.get("telegram_id") or "").strip()
+    err = _guard_user(tg_handler, tg_id)
+    if err is not None:
+        return err
+    return web.json_response(_proofofpnl_payload())
+
+
+async def handle_proofofpnl_public(request: web.Request) -> web.Response:
+    """GET /gateway/public/proofofpnl — the SAME sealed statement, no auth. The
+    whole point of the moat is that anyone can verify it without trusting us or
+    logging in; the bundle is public-safe by construction, so this is deliberate,
+    not a leak. The visitor's browser re-derives the hash on the public page."""
+    return web.json_response(_proofofpnl_payload())
 
 
 # ── Idle-Asset Yield Optimizer (read-only recommendation) ────────────────────
@@ -1404,6 +1420,7 @@ def build_gateway(engine, tg_handler) -> web.Application:
     app.router.add_get("/holdings", handle_holdings)
     app.router.add_get("/sentry", handle_sentry)
     app.router.add_get("/proofofpnl", handle_proofofpnl)
+    app.router.add_get("/public/proofofpnl", handle_proofofpnl_public)
     app.router.add_post("/idleyield", handle_idle_yield)
     # Authority Envelope authoring (per-user, self-serve; _guard_user-gated).
     app.router.add_post("/authority/preview", handle_authority_preview)
