@@ -558,7 +558,11 @@ router.post('/flight', async (req, res) => {
     const records = Array.isArray(body.records) ? body.records.slice(0, 200) : [];
     const chain = (body.chain && typeof body.chain === 'object') ? body.chain : {};
     const policy = (body.policy && typeof body.policy === 'object') ? body.policy : null;
-    latestFlight = { records, chain, policy, updated_at: new Date().toISOString() };
+    // Guardian console posture (chain health + per-module risk + armed flags).
+    // Read-only, optional — older bots don't send it, so it stays null then.
+    const guardian_status = (body.guardian_status && typeof body.guardian_status === 'object')
+      ? body.guardian_status : null;
+    latestFlight = { records, chain, policy, guardian_status, updated_at: new Date().toISOString() };
     // Persist so it survives cold starts (table may not exist on older DBs —
     // in-memory still serves in that case).
     try {

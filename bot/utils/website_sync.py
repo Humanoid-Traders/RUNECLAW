@@ -260,23 +260,27 @@ def sync_signals_in_background(signals: list[dict]) -> None:
 
 
 def sync_flight_records(records: list[dict], chain: Optional[dict] = None,
-                        policy: Optional[dict] = None) -> bool:
+                        policy: Optional[dict] = None,
+                        guardian_status: Optional[dict] = None) -> bool:
     """Push Guardian Flight Recorder records + engine-verified chain status +
-    the active Intent-policy summary.
+    the active Intent-policy summary + the whole-layer Guardian posture.
 
     Telemetry only (the decision ledger and the enforceable policy both live
     bot-side): a failed POST just returns False. ``chain`` carries the
     authoritative ``verify()`` result — {ok, length, tip_hash, problems} — so
     the website can show an engine-verified integrity badge without re-hashing
     the whole file. ``policy`` is a read-only summary of the compiled intent
-    policy (id, mode, rules, hash) for display.
+    policy (id, mode, rules, hash) for display. ``guardian_status`` is the
+    read-only Guardian console snapshot (chain health, per-module risk + armed
+    flags, overall posture) so the web can mirror the Telegram /guardian view.
     """
-    if not records and not chain and not policy:
+    if not records and not chain and not policy and not guardian_status:
         return True
     result = _post("/api/bot/sync/flight", {
         "records": list(records or []),
         "chain": chain or {},
         "policy": policy or None,
+        "guardian_status": guardian_status or None,
     })
     if result and result.get("ok"):
         log.info(f"Synced {result.get('stored', len(records or []))} flight record(s)")
@@ -286,10 +290,12 @@ def sync_flight_records(records: list[dict], chain: Optional[dict] = None,
 
 
 def sync_flight_records_in_background(records: list[dict], chain: Optional[dict] = None,
-                                     policy: Optional[dict] = None) -> None:
+                                     policy: Optional[dict] = None,
+                                     guardian_status: Optional[dict] = None) -> None:
     """Non-blocking flight-record sync (fire-and-forget)."""
     t = threading.Thread(
-        target=sync_flight_records, args=(list(records or []), chain, policy), daemon=True)
+        target=sync_flight_records,
+        args=(list(records or []), chain, policy, guardian_status), daemon=True)
     t.start()
 
 

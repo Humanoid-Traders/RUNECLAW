@@ -3528,9 +3528,50 @@
     </section>`;
   }
 
+  const _RISK_COL = {
+    none: 'var(--up,#31c48d)', low: 'var(--accent,#3fb6ff)',
+    medium: 'var(--warn,#f0a848)', high: 'var(--down,#f05252)',
+  };
+  function riskCol(r) { return _RISK_COL[String(r || 'none')] || 'var(--muted,#8a94a6)'; }
+  function moduleChip(label, risk, armed) {
+    const col = riskCol(risk);
+    const rk = String(risk || 'none').toUpperCase();
+    const arm = armed ? '' : ' <span class="muted" style="font-size:10px">· off</span>';
+    return `<span class="chip" style="font-size:11px;padding:2px 8px;border-color:${col}">
+      <span class="muted">${esc(label)}</span>&nbsp;<strong style="color:${col}">${esc(rk)}</strong>${arm}</span>`;
+  }
+  // The Guardian console posture, mirrored from the Telegram /guardian view.
+  function guardianPostureCard(gs) {
+    if (!gs || typeof gs !== 'object') return '';
+    const f = gs.flags || {};
+    const posture = String(gs.posture || 'none');
+    const col = riskCol(posture);
+    const twin = (gs.twin || {}), sent = (gs.sentinel || {}), esc_ = (gs.escape || {});
+    const armLabel = (on) => on ? '<strong style="color:var(--up,#31c48d)">armed</strong>' : '<span class="muted">off</span>';
+    const chips = [
+      moduleChip('🔮 Twin', twin.risk, f.digital_twin),
+      moduleChip('🛰 Sentinel', sent.risk, f.risk_sentinel),
+      moduleChip('🪂 Escape', esc_.risk, f.escape),
+    ].join('');
+    return `<section class="panel" style="margin-bottom:var(--s4);border-color:${col}">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <strong>🛡 Guardian posture</strong>
+        <span class="chip" style="border-color:${col};color:${col}"><strong>${esc(posture.toUpperCase())}</strong></span>
+        <span class="right small muted" style="margin-left:auto">
+          Firewall ${armLabel(f.firewall)}${f.firewall_block ? ' <span class="small muted">(blocks HIGH)</span>' : ''}
+          · Intent policy ${armLabel(f.intent_policy)}</span>
+      </div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px">${chips}</div>
+      <div class="small muted" style="margin-top:8px">Live-book safety read across the Guardian layer${
+        (twin.position_count ? ` · ${twin.position_count} open position${twin.position_count === 1 ? '' : 's'}` : ' · flat')
+      }. The AI proposes · controls authorize · the recorder proves · the escape agent recovers.</div>
+    </section>`;
+  }
+
   function guardianBlock(data) {
     const recs = (data && data.records) || [];
     const head = `<div style="margin-bottom:var(--s4)">${chainBanner(data.chain, data.window, data.updated_at)}</div>`
+      + guardianPostureCard(data.guardian_status)
       + policyCard(data.policy);
     if (!recs.length) {
       return head + `<div class="empty small muted" style="padding:var(--s4)">No decisions have been recorded yet. As the engine confirms or rejects trades, each one is sealed here with its full provenance.</div>`;
@@ -3542,7 +3583,7 @@
     container.innerHTML = `
       <div class="view-head" style="display:flex;align-items:center;gap:var(--s4)">
         <div class="agent-avatar" data-rc-agent3d="avatar" aria-hidden="true" style="width:84px;height:84px;flex:none;border-radius:16px;overflow:hidden"></div>
-        <div><h1>Guardian · Flight Recorder</h1><span class="sub">Tamper-evident evidence for every decision the agent makes — provenance, reasoning &amp; outcome</span></div>
+        <div><h1>Guardian</h1><span class="sub">The safety layer — live posture across every control, plus tamper-evident evidence for every decision</span></div>
       </div>
       <div class="stack">
         <section class="panel panel--primary" id="p-flight"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-check"></use></svg>Decision ledger

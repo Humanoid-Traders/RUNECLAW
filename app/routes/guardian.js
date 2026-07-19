@@ -54,7 +54,8 @@ router.get('/flight', async (req, res) => {
     const flight = await getLatestFlight();
     if (!flight || !Array.isArray(flight.records)) {
       return res.json({
-        records: [], chain: null, window: null, updated_at: null,
+        records: [], chain: null, guardian_status: (flight && flight.guardian_status) || null,
+        window: null, updated_at: (flight && flight.updated_at) || null,
         note: 'No decisions recorded yet.',
       });
     }
@@ -66,6 +67,7 @@ router.get('/flight', async (req, res) => {
       records,
       chain: flight.chain || {},
       policy: flight.policy || null,
+      guardian_status: flight.guardian_status || null,
       window: inspectWindow(records),
       updated_at: flight.updated_at || null,
     });
