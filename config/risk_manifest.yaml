@@ -319,6 +319,18 @@ defaults:
       when enabled a policy still defaults to shadow mode (logs would-be
       rejections, blocks nothing) until explicitly set to enforce.
 
+  authority_envelope_enabled:
+    value: false
+    env_var: AUTHORITY_ENVELOPE_ENABLED
+    description: >
+      Guardian Authority Envelope (custody boundary): when on, a bound, compiled
+      envelope (bot/guardian/authority.py) is consulted at the risk gate as an
+      additional deterministic, tighten-only check on what the credential may do
+      (per-trade notional, symbol scope, expiry, revocation). Default OFF; when
+      enabled an envelope still defaults to shadow mode (records would-be denials,
+      blocks nothing) until explicitly set to enforce. Fail-open bridge over a
+      fail-closed core.
+
   guardian_firewall_enabled:
     value: false
     env_var: GUARDIAN_FIREWALL_ENABLED
