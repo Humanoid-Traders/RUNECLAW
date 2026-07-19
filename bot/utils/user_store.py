@@ -293,6 +293,24 @@ class UserStore:
                   action="web_live_permission", result="OK")
             return True
 
+    def get_lang(self, telegram_id: int | str):
+        """The user's stored UI language, or None if never set (unset signal)."""
+        with self._lock:
+            u = self._users.get(str(telegram_id))
+            return u.get("lang") if isinstance(u, dict) else None
+
+    def set_lang(self, telegram_id: int | str, lang: str) -> bool:
+        """Set the user's UI language. Returns True on success."""
+        key = str(telegram_id)
+        with self._lock:
+            if key not in self._users:
+                return False
+            self._users[key]["lang"] = lang
+            self._save()
+            audit(system_log, f"Language set to {lang} for {key}",
+                  action="set_lang", result="OK")
+            return True
+
     def can_trade_live(self, telegram_id: int | str) -> bool:
         """Check if user is allowed to execute live trades.
 

@@ -787,12 +787,29 @@ def get_user_lang(users_db, tg_id: str) -> str:
     return DEFAULT_LANG
 
 
+def get_user_lang_raw(users_db, tg_id: str):
+    """The user's EXPLICITLY-set UI language, or None if they never chose one.
+    Unlike ``get_user_lang`` (which defaults to 'en'), this preserves the
+    'unset' signal so callers can fall back to auto-detection (e.g. the
+    Telegram ``language_code``)."""
+    if users_db is None:
+        return None
+    user = users_db.get(tg_id)
+    if user and isinstance(user, dict):
+        return user.get("lang")
+    return None
+
+
 def set_user_lang(users_db, tg_id: str, lang: str) -> bool:
     """Set language preference for a user. Returns True if successful."""
     if lang not in SUPPORTED_LANGS:
         return False
     if users_db is None:
         return False
+    # Prefer a first-class, audited store method when available.
+    setter = getattr(users_db, "set_lang", None)
+    if callable(setter):
+        return bool(setter(tg_id, lang))
     user = users_db.get(tg_id)
     if user and isinstance(user, dict):
         user["lang"] = lang
@@ -802,3 +819,40 @@ def set_user_lang(users_db, tg_id: str, lang: str) -> bool:
             users_db._save()
         return True
     return False
+
+
+# ── Chat reply-language (LLM-localized, broader than the UI dictionary) ───────
+#
+# The UI dictionary above is en/zh only, but the chat LLM can reply in ANY
+# language. We map a BCP-47/ISO code (as Telegram sends in `language_code`, or
+# as the web pref carries) to an English language NAME to instruct the model.
+# Region subtags are stripped (pt-BR -> pt). English / empty / unknown -> "",
+# meaning "no directive, default English" — so this never forces a language we
+# can't name.
+_CHAT_LANG_NAMES = {
+    "en": "English", "zh": "Chinese", "es": "Spanish", "fr": "French",
+    "de": "German", "pt": "Portuguese", "ru": "Russian", "ja": "Japanese",
+    "ko": "Korean", "ar": "Arabic", "hi": "Hindi", "tr": "Turkish",
+    "it": "Italian", "id": "Indonesian", "vi": "Vietnamese", "th": "Thai",
+    "nl": "Dutch", "pl": "Polish", "uk": "Ukrainian", "fa": "Persian",
+    "ms": "Malay", "fil": "Filipino", "tl": "Filipino", "bn": "Bengali",
+    "ur": "Urdu", "sv": "Swedish", "no": "Norwegian", "da": "Danish",
+    "fi": "Finnish", "cs": "Czech", "el": "Greek", "he": "Hebrew",
+    "ro": "Romanian", "hu": "Hungarian",
+}
+
+
+def normalize_lang(code) -> str:
+    """Lowercase and strip any region subtag: 'pt-BR' / 'zh_TW' -> 'pt' / 'zh'."""
+    if not code:
+        return ""
+    return str(code).strip().lower().replace("_", "-").split("-")[0]
+
+
+def chat_language_name(code) -> str:
+    """English name of the language to reply in, or '' for English/empty/unknown
+    (meaning: no directive — the default English persona stands)."""
+    base = normalize_lang(code)
+    if not base or base == "en":
+        return ""
+    return _CHAT_LANG_NAMES.get(base, "")
