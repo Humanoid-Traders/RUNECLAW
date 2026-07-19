@@ -361,6 +361,8 @@ class TelegramHandler:
             # Admin: cross-source idle-yield optimizer (CEX Earn + non-custodial
             # Lido/Aave), non-custodial preferred honestly. Read-only.
             ("idleyield", self._cmd_idleyield),
+            # Admin: web live-trading readiness + per-user enablement control
+            ("weblive", self._cmd_weblive),
             # Admin: stake/redeem flexible Earn (button-confirmed money path)
             ("stake", self._cmd_stake),
             ("unstake", self._cmd_unstake),
@@ -4013,6 +4015,44 @@ class TelegramHandler:
             return float(cache.get("free", 0) or 0)
         except Exception:
             return 0.0
+
+    async def _cmd_weblive(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """/weblive <web:id> [on|off] — web live-trading readiness + enablement.
+
+        Operator-only. With no action it prints the five-precondition readiness
+        card for that web user; ``on``/``off`` flips their dedicated
+        web_live_enabled opt-in (one of the five gates). The GLOBAL switch stays
+        the deployment env var WEB_LIVE_TRADING_ENABLED — this never turns the
+        whole capability on, only a single user's opt-in, and moves no funds."""
+        if not self._is_admin(update):
+            await self._send(update, "🔒 /weblive is operator-only.")
+            return
+        args = (ctx.args or []) if hasattr(ctx, "args") else []
+        if not args:
+            await self._send(update,
+                "Usage: <code>/weblive web:&lt;id&gt; [on|off]</code>\n"
+                "Shows a web user's live-trading readiness; on/off flips their opt-in.")
+            return
+        target = str(args[0]).strip()
+        if not target.startswith("web:"):
+            await self._send(update, "🔴 Target must be a web id, e.g. <code>web:5</code>.")
+            return
+        try:
+            from bot.web import web_live_admin as adm
+            action = str(args[1]).lower() if len(args) > 1 else ""
+            if action in ("on", "off"):
+                ok = adm.set_user_enabled(self.users, target, action == "on")
+                if not ok:
+                    await self._send(update, f"🔴 Could not update {html.escape(target)} "
+                                     "(unknown user?).")
+                    return
+                audit(system_log, f"Operator set web_live_enabled={action} for {target}",
+                      action="op_weblive_toggle", result=action)
+            card = adm.human_readable(target, adm.user_readiness(self.users, target))
+            await self._send(update, f"<pre>{html.escape(card)}</pre>")
+        except Exception as exc:
+            system_log.warning("/weblive failed: %s", exc)
+            await self._send(update, "🔴 Readiness check failed — see logs.")
 
     async def _cmd_idleyield(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """/idleyield — cross-SOURCE best-rate scan for idle assets (admin only).
