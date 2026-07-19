@@ -256,6 +256,11 @@ class RiskEngine:
         # gate). None → no envelope; the hook is inert. See set_authority_envelope().
         self._authority_envelope: Optional[dict] = None
         self._authority_venue: Optional[str] = None
+        # Optional rolling-24h notional ledger for the envelope's daily cap. When
+        # bound, evaluate() reads spent-today from it and records an approved
+        # trade's notional; None → the daily cap is checked with spent=0 (the
+        # per-trade cap still binds). See bot/guardian/authority_ledger.py.
+        self._authority_ledger: Any = None
         self._state_file = state_file or _STATE_FILE
         self._macro_calendar = macro_calendar
         self._macro_provider = macro_provider  # v2: enhanced macro-event provider
@@ -768,6 +773,13 @@ class RiskEngine:
 
     def get_authority_envelope(self) -> Optional[dict]:
         return self._authority_envelope
+
+    def set_authority_ledger(self, ledger: Any) -> None:
+        """Bind (or clear) the rolling notional-spend ledger consulted for the
+        envelope's daily cap. ``None`` disables it (daily cap checked with
+        spent=0). Thread-safe."""
+        with self._lock:
+            self._authority_ledger = ledger
 
     def evaluate(self, idea: TradeIdea, atr: Optional[float] = None, live_equity: Optional[float] = None, max_position_usd: Optional[float] = None, live_open_count: Optional[int] = None, as_of: Optional[datetime] = None) -> RiskCheck:
         """
@@ -1782,25 +1794,36 @@ class RiskEngine:
         # fail-CLOSED (deny on doubt), but this BRIDGE is fail-open: any fault
         # leaves the trade untouched, so an envelope bug can never halt the engine.
         # The gate checks the dimensions it honestly knows; venue is checked only
-        # when a venue was bound, and cumulative daily spend is not tracked here
-        # (spent_today=0), so the per-trade notional cap is the binding size check.
+        # when a venue was bound. Cumulative daily spend comes from a bound rolling
+        # ledger (spent=0 when none is bound, so the per-trade cap still binds).
         authority_result = None
+        _auth_record = None   # (key, notional, now_ts, ref) — recorded iff APPROVED
         if getattr(CONFIG.risk, "authority_envelope_enabled", False) and self._authority_envelope:
             try:
                 from bot.guardian import authority as _auth
                 _lev_a = getattr(CONFIG.exchange, "default_leverage", 1) or 1
+                _notional_a = position_usd * _lev_a
                 _action = {
                     "kind": "trade",
                     "market_type": "swap",
                     "asset": idea.asset,
-                    "notional_usd": position_usd * _lev_a,
+                    "notional_usd": _notional_a,
                 }
                 if self._authority_venue:
                     _action["venue"] = self._authority_venue
                 _now_ts = int(datetime.now(UTC).timestamp())
+                _env_id = str(self._authority_envelope.get("envelope_id") or "envelope")
+                _spent = 0.0
+                if self._authority_ledger is not None:
+                    try:
+                        _spent = float(self._authority_ledger.spent(_env_id, _now_ts))
+                    except Exception:
+                        _spent = 0.0
                 _ares = _auth.authorize(self._authority_envelope, _action,
-                                        now_ts=_now_ts, spent_today_usd=0.0)
+                                        now_ts=_now_ts, spent_today_usd=_spent)
                 authority_result = _ares
+                if self._authority_ledger is not None:
+                    _auth_record = (_env_id, _notional_a, _now_ts, str(idea.id))
                 if _ares.get("decision") == "deny":
                     if self._authority_envelope.get("mode") == "enforce":
                         for _r in _ares.get("reasons", []):
@@ -1818,6 +1841,19 @@ class RiskEngine:
 
         # -- Verdict --
         verdict = RiskVerdict.APPROVED if len(failed) == 0 else RiskVerdict.REJECTED
+
+        # Authority daily-spend accounting: on an APPROVED trade under a bound
+        # ledger, record this notional against the envelope's rolling window
+        # (idempotent by idea id). Recording on approval is deliberately
+        # CONSERVATIVE — it can only over-count, which tightens the daily cap, and
+        # the window self-heals as entries age out. Fail-open: a ledger fault
+        # never affects the verdict (already decided above).
+        if verdict == RiskVerdict.APPROVED and _auth_record and self._authority_ledger is not None:
+            try:
+                self._authority_ledger.record(_auth_record[0], _auth_record[1],
+                                               _auth_record[2], ref=_auth_record[3])
+            except Exception:
+                pass
 
         # Strangle-watchdog inputs: cumulative evaluated/approved counts and
         # the time of the last approval (engine time, sim-aware). The
