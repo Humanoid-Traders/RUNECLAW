@@ -181,8 +181,10 @@ def compile_envelope(spec: dict,
         warnings.append("withdraw_allowed set but no withdraw_allowlist — "
                         "withdrawal stays DENIED (a destination allowlist is required)")
 
-    symbol_allow = _strlist([_base_symbol(x) for x in (spec.get("symbol_allowlist") or [])])
-    symbol_block = _strlist([_base_symbol(x) for x in (spec.get("symbol_blocklist") or [])])
+    # Symbols are tickers — normalise to the uppercase base symbol (BTC, ETH) so
+    # they match ``authorize``'s ``_base_symbol(action.asset)`` exactly.
+    symbol_allow = sorted({s for s in (_base_symbol(x) for x in (spec.get("symbol_allowlist") or [])) if s})
+    symbol_block = sorted({s for s in (_base_symbol(x) for x in (spec.get("symbol_blocklist") or [])) if s})
 
     expiry_ts = _num(spec.get("expiry_ts"))
     expiry_ts = int(expiry_ts) if expiry_ts is not None else None
