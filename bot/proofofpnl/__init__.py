@@ -18,6 +18,9 @@ Modules:
 * ``ingest_onchain_evm`` — re-derive an EVM/Base fill by netting ERC-20 ``Transfer``
                      logs in a public tx receipt (``onchain_public``, the strongest
                      tier — re-checkable by anyone from a public RPC).
+* ``erc8004``      — bind a published statement + authority posture to a portable
+                     ERC-8004 agent identity as a signed Agent Identity Card
+                     (reputation is fills-derived, never self-reported).
 
 The verifier lives at repo root: ``verify.py``.
 """
