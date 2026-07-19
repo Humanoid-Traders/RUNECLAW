@@ -710,6 +710,139 @@ async def handle_networth(request: web.Request) -> web.Response:
     })
 
 
+# ── Intent Compiler authoring (OPERATOR only) ────────────────────────────────
+#
+# Web parity for the Telegram /policy compile→preview→confirm→bind loop. These
+# mutate a GLOBAL engine control, so every handler re-verifies the caller is the
+# operator/admin BOT-SIDE (_is_admin_id) — the Express layer's plan==='admin'
+# check is defense-in-depth, not the authority (the web proposes; the bot
+# decides, exactly like the stance control). Preview never writes; apply
+# RECOMPILES from the text bot-side (never trusts a client-sent policy blob) and
+# is the only path that binds. Every step is deterministic + fail-open.
+
+_POLICY_TEXT_MAX = 600
+_POLICY_NO_RULES_NOTE = (
+    "I couldn't turn that into any rules. Try phrasings like "
+    "“max 5% per trade”, “only majors”, “no shorts”, "
+    "“min confidence 70%”, “stop if down 8%”.")
+
+
+def _compile_policy_preview(engine, text: str) -> dict:
+    """Compile NL → a previewable, clamped policy WITHOUT binding it. Pure read."""
+    from bot.guardian import intent_policy as ip
+    parsed = ip.compile_nl(text)
+    if not parsed.get("rules"):
+        return {"ok": True, "rules": [], "human_readable": "", "note": _POLICY_NO_RULES_NOTE}
+    policy = ip.compile_policy({
+        "mode": "shadow", "source_text": text, "label": "Operator policy",
+        "rules": parsed["rules"],
+    }, engine._intent_engine_caps())
+    return {
+        "ok": True,
+        "human_readable": ip.human_readable(policy),
+        "rules": policy.get("rules", []),
+        "warnings": policy.get("warnings", []),
+        "policy_id": policy.get("policy_id", ""),
+    }
+
+
+def _compile_and_bind_policy(engine, text: str, mode: str) -> dict:
+    """Recompile from the TEXT (authoritative, never a client blob) with the
+    chosen mode and bind it. The SOLE web path that writes a policy."""
+    from bot.guardian import intent_policy as ip
+    parsed = ip.compile_nl(text)
+    if not parsed.get("rules"):
+        return {"ok": False, "error": "no_rules"}
+    policy = ip.compile_policy({
+        "mode": mode, "source_text": text, "label": "Operator policy",
+        "rules": parsed["rules"],
+    }, engine._intent_engine_caps())
+    bound = engine.write_intent_policy(policy)
+    return {"ok": True, "mode": mode, "bound": bound is not None,
+            "summary": engine._intent_policy_summary()}
+
+
+async def _policy_op_guard(request):
+    """Return (engine, tg_id, body) for an operator caller, or (None, None, err)."""
+    engine = request.app["engine"]
+    tg_handler = request.app["tg_handler"]
+    body = await _json_body(request)
+    tg_id = str(body.get("telegram_id") or "").strip()
+    if not tg_id or not _is_admin_id(tg_handler, tg_id):
+        return None, None, web.json_response({"error": "operator_only"}, status=403)
+    return engine, tg_id, body
+
+
+async def handle_policy_preview(request: web.Request) -> web.Response:
+    engine, tg_id, body = await _policy_op_guard(request)
+    if engine is None:
+        return body
+    text = str(body.get("text") or "").strip()[:_POLICY_TEXT_MAX]
+    if not text:
+        return web.json_response({"error": "text required"}, status=400)
+    try:
+        return web.json_response(_compile_policy_preview(engine, text))
+    except Exception as exc:
+        system_log.debug("Web policy preview failed: %s", exc)
+        return web.json_response({"error": "compile_failed"}, status=500)
+
+
+async def handle_policy_apply(request: web.Request) -> web.Response:
+    engine, tg_id, body = await _policy_op_guard(request)
+    if engine is None:
+        return body
+    text = str(body.get("text") or "").strip()[:_POLICY_TEXT_MAX]
+    mode = str(body.get("mode") or "shadow").lower()
+    if mode not in ("shadow", "enforce"):
+        mode = "shadow"
+    if not text:
+        return web.json_response({"error": "text required"}, status=400)
+    try:
+        result = _compile_and_bind_policy(engine, text, mode)
+        if not result.get("ok"):
+            return web.json_response(result, status=400)
+        audit(system_log, f"Web operator bound intent policy ({mode})",
+              action="web_policy_apply", result=mode)
+        return web.json_response(result)
+    except Exception as exc:
+        system_log.debug("Web policy apply failed: %s", exc)
+        return web.json_response({"error": "apply_failed"}, status=500)
+
+
+async def handle_policy_mode(request: web.Request) -> web.Response:
+    engine, tg_id, body = await _policy_op_guard(request)
+    if engine is None:
+        return body
+    mode = str(body.get("mode") or "").lower()
+    if mode not in ("off", "shadow", "enforce"):
+        return web.json_response({"error": "bad_mode"}, status=400)
+    try:
+        engine.set_intent_policy_mode(mode)
+    except FileNotFoundError:
+        return web.json_response({"error": "no_policy"}, status=404)
+    except Exception as exc:
+        system_log.debug("Web policy mode failed: %s", exc)
+        return web.json_response({"error": "mode_failed"}, status=500)
+    audit(system_log, f"Web operator set intent policy mode {mode}",
+          action="web_policy_mode", result=mode)
+    return web.json_response({"ok": True, "mode": mode,
+                             "summary": engine._intent_policy_summary()})
+
+
+async def handle_policy_clear(request: web.Request) -> web.Response:
+    engine, tg_id, body = await _policy_op_guard(request)
+    if engine is None:
+        return body
+    removed = False
+    try:
+        removed = engine.clear_intent_policy()
+    except Exception as exc:
+        system_log.debug("Web policy clear failed: %s", exc)
+    audit(system_log, "Web operator cleared intent policy",
+          action="web_policy_clear", result=str(bool(removed)))
+    return web.json_response({"ok": True, "removed": bool(removed)})
+
+
 # ── App factory ──────────────────────────────────────────────────────────────
 
 def build_gateway(engine, tg_handler) -> web.Application:
@@ -726,4 +859,9 @@ def build_gateway(engine, tg_handler) -> web.Application:
     app.router.add_post("/trade/propose", handle_trade_propose)
     app.router.add_post("/trade/confirm", handle_trade_confirm)
     app.router.add_post("/trade/cancel", handle_trade_cancel)
+    # Intent Compiler authoring (operator-only; _is_admin_id-gated per handler).
+    app.router.add_post("/policy/preview", handle_policy_preview)
+    app.router.add_post("/policy/apply", handle_policy_apply)
+    app.router.add_post("/policy/mode", handle_policy_mode)
+    app.router.add_post("/policy/clear", handle_policy_clear)
     return app
