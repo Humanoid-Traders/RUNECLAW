@@ -116,6 +116,15 @@ function buildBrief(m) {
     const sc = m.regime.score != null ? ` (score ${Number(m.regime.score).toFixed(2)})` : '';
     s.push(`The engine's live BTC regime is ${String(m.regime.label).toUpperCase()}${sc}.`);
   }
+  // Event calendar — stated without a live countdown so the brief stays
+  // deterministic; the client renders the ticking time-to-event.
+  if (m.event && m.event.state && m.event.state !== 'NORMAL') {
+    if (m.event.state === 'EVENT_LOCKDOWN' && m.event.active) {
+      s.push(`A macro event window is open — ${m.event.active.label} is printing; the engine holds through high-impact prints.`);
+    } else if (m.event.next) {
+      s.push(`High-impact macro event ahead: ${m.event.next.label}${m.event.state === 'PRE_EVENT_CAUTION' ? ' — the engine is de-risking into it' : ''}.`);
+    }
+  }
   // Band-specific takeaway.
   const takeaway = {
     risk_off: 'Defensive backdrop — the agent tightens risk, favours majors and cash, and waits for confirmation.',
@@ -134,8 +143,12 @@ function buildBrief(m) {
  * are skipped and the weights renormalise, so the score is always defined when
  * at least one source is present.
  */
-function assembleMacro({ global, fng, regime } = {}) {
+function assembleMacro({ global, fng, regime, calendar } = {}) {
   const g = global || {};
+  const ev = (e) => (e && (e.type || e.label)) ? {
+    type: e.type || null, label: e.label || null,
+    scheduled_utc: e.scheduled_utc || null, impact: e.impact || null,
+  } : null;
   const btcDom = num(g.btc_dom), ethDom = num(g.eth_dom);
   const out = {
     risk_score: null,
@@ -153,6 +166,14 @@ function assembleMacro({ global, fng, regime } = {}) {
     regime: (regime && (regime.label || regime.score != null)) ? {
       label: regime.label || null,
       score: num(regime.score),
+    } : null,
+    // Macro event calendar (synced from the bot). The client computes a live
+    // countdown from next.scheduled_utc; state drives the event-risk banner.
+    event: (calendar && calendar.state) ? {
+      state: String(calendar.state),
+      stale: !!calendar.stale,
+      next: ev(calendar.next_event),
+      active: ev(calendar.active_event),
     } : null,
     sources: [],
     brief: '',
@@ -198,6 +219,9 @@ function llmPrompt(m) {
   if (m.eth_dominance != null) parts.push(`ETH dominance ${m.eth_dominance.toFixed(1)}%`);
   if (m.structure) parts.push(`market structure ${m.structure}`);
   if (m.regime && m.regime.label) parts.push(`the engine's BTC regime reads ${m.regime.label}`);
+  if (m.event && m.event.state && m.event.state !== 'NORMAL' && (m.event.next || m.event.active)) {
+    parts.push(`macro-event state ${m.event.state} (${(m.event.active || m.event.next).label})`);
+  }
   if (m.risk_score != null) parts.push(`blended risk-on score ${m.risk_score}/100 (${m.band ? m.band.label : ''})`);
   return 'You are RUNECLAW, an AI crypto macro strategist. Using ONLY this data (do not invent numbers or news): '
     + parts.join('; ') + '. '
@@ -240,13 +264,15 @@ router.get('/', async (req, res) => {
     const arr = f && Array.isArray(f.data) ? f.data : [];
     if (arr[0]) fng = { value: arr[0].value, classification: arr[0].value_classification, previous: arr[1] ? arr[1].value : null };
   } catch (e) { /* degrade: omit sentiment */ }
+  let calendar = null;
   try {
     const getScan = require('./sync').getLatestScan;
     const scan = typeof getScan === 'function' ? getScan() : null;
     if (scan && scan.regime) regime = scan.regime;
-  } catch (e) { /* regime optional */ }
+    if (scan && scan.macro) calendar = scan.macro;
+  } catch (e) { /* regime/calendar optional */ }
 
-  const macro = assembleMacro({ global, fng, regime });
+  const macro = assembleMacro({ global, fng, regime, calendar });
   if (!macro.sources.length) {
     return res.status(502).json({ error: 'Macro data unavailable right now.' });
   }

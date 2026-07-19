@@ -78,6 +78,35 @@ test('missing sources are omitted and weights renormalise', () => {
   assert.doesNotMatch(m.brief, /yesterday/); // no previous -> no delta clause
 });
 
+test('surfaces the macro event calendar and flags event-risk in the brief', () => {
+  const m = assembleMacro({
+    global: GLOBAL, fng: { value: '40', classification: 'Fear' },
+    calendar: {
+      state: 'PRE_EVENT_CAUTION', stale: false,
+      next_event: { type: 'FOMC_DECISION', label: 'FOMC Rate Decision', scheduled_utc: '2026-07-29T18:00:00+00:00', impact: 'HIGH' },
+      active_event: null,
+    },
+  });
+  assert.equal(m.event.state, 'PRE_EVENT_CAUTION');
+  assert.equal(m.event.next.type, 'FOMC_DECISION');
+  assert.equal(m.event.next.scheduled_utc, '2026-07-29T18:00:00+00:00');
+  assert.match(m.brief, /High-impact macro event ahead: FOMC Rate Decision/);
+  assert.match(m.brief, /de-risking into it/);
+  // No calendar -> event null, no event clause.
+  const none = assembleMacro({ fng: { value: '50', classification: 'Neutral' } });
+  assert.equal(none.event, null);
+});
+
+test('NORMAL macro state exposes the next event but adds no event-risk clause', () => {
+  const m = assembleMacro({
+    global: GLOBAL, fng: { value: '50', classification: 'Neutral' },
+    calendar: { state: 'NORMAL', next_event: { type: 'CPI', label: 'US CPI', scheduled_utc: '2026-08-12T12:30:00+00:00', impact: 'HIGH' } },
+  });
+  assert.equal(m.event.state, 'NORMAL');
+  assert.equal(m.event.next.type, 'CPI');
+  assert.doesNotMatch(m.brief, /macro event/i);   // NORMAL -> no risk clause in the brief
+});
+
 test('no data at all -> null score, empty sources (route turns this into 502)', () => {
   const m = assembleMacro({});
   assert.equal(m.risk_score, null);
