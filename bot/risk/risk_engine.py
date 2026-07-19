@@ -250,6 +250,12 @@ class RiskEngine:
         # this engine consults in evaluate() (set by the engine at construction /
         # reload). None → no policy; the hook is inert. See set_intent_policy().
         self._intent_policy: Optional[dict] = None
+        # Guardian Authority Envelope: an optional compiled custody envelope this
+        # engine consults in evaluate() (bot/guardian/authority.py), plus the venue
+        # it is bound to (so the envelope's allowed_venues can be checked at the
+        # gate). None → no envelope; the hook is inert. See set_authority_envelope().
+        self._authority_envelope: Optional[dict] = None
+        self._authority_venue: Optional[str] = None
         self._state_file = state_file or _STATE_FILE
         self._macro_calendar = macro_calendar
         self._macro_provider = macro_provider  # v2: enhanced macro-event provider
@@ -749,6 +755,19 @@ class RiskEngine:
 
     def get_intent_policy(self) -> Optional[dict]:
         return self._intent_policy
+
+    def set_authority_envelope(self, envelope: Optional[dict],
+                               venue: Optional[str] = None) -> None:
+        """Bind (or clear) the compiled custody envelope this engine consults in
+        evaluate(). ``venue`` is the venue the bound credential trades on, so the
+        envelope's ``allowed_venues`` can be checked at the gate; pass it when the
+        envelope scopes venues. Thread-safe; ``None`` disables the hook."""
+        with self._lock:
+            self._authority_envelope = envelope or None
+            self._authority_venue = (str(venue).lower().strip() if venue else None)
+
+    def get_authority_envelope(self) -> Optional[dict]:
+        return self._authority_envelope
 
     def evaluate(self, idea: TradeIdea, atr: Optional[float] = None, live_equity: Optional[float] = None, max_position_usd: Optional[float] = None, live_open_count: Optional[int] = None, as_of: Optional[datetime] = None) -> RiskCheck:
         """
@@ -1756,6 +1775,47 @@ class RiskEngine:
                 # A policy fault must NEVER affect a trade.
                 passed.append(f"INTENT_POLICY: skipped (error: {_ipe})")
 
+        # -- Guardian Authority Envelope (gated · deterministic · fail-closed core) --
+        # The CUSTODY boundary: a bound envelope may ADD deterministic rejections
+        # (per-trade notional, symbol scope, expiry, revocation). Like the intent
+        # hook it can only append to `failed` (tighten-only). authorize() itself is
+        # fail-CLOSED (deny on doubt), but this BRIDGE is fail-open: any fault
+        # leaves the trade untouched, so an envelope bug can never halt the engine.
+        # The gate checks the dimensions it honestly knows; venue is checked only
+        # when a venue was bound, and cumulative daily spend is not tracked here
+        # (spent_today=0), so the per-trade notional cap is the binding size check.
+        authority_result = None
+        if getattr(CONFIG.risk, "authority_envelope_enabled", False) and self._authority_envelope:
+            try:
+                from bot.guardian import authority as _auth
+                _lev_a = getattr(CONFIG.exchange, "default_leverage", 1) or 1
+                _action = {
+                    "kind": "trade",
+                    "market_type": "swap",
+                    "asset": idea.asset,
+                    "notional_usd": position_usd * _lev_a,
+                }
+                if self._authority_venue:
+                    _action["venue"] = self._authority_venue
+                _now_ts = int(datetime.now(UTC).timestamp())
+                _ares = _auth.authorize(self._authority_envelope, _action,
+                                        now_ts=_now_ts, spent_today_usd=0.0)
+                authority_result = _ares
+                if _ares.get("decision") == "deny":
+                    if self._authority_envelope.get("mode") == "enforce":
+                        for _r in _ares.get("reasons", []):
+                            failed.append(f"AUTHORITY: {_r}")
+                    else:  # shadow / off-at-envelope: observe only.
+                        _rs = _ares.get("reasons", [])
+                        passed.append(
+                            f"AUTHORITY: shadow — would deny "
+                            f"({len(_rs)}: {'; '.join(_rs[:3])})")
+                else:
+                    passed.append("AUTHORITY: OK")
+            except Exception as _ae:
+                # An envelope fault must NEVER affect a trade.
+                passed.append(f"AUTHORITY: skipped (error: {_ae})")
+
         # -- Verdict --
         verdict = RiskVerdict.APPROVED if len(failed) == 0 else RiskVerdict.REJECTED
 
@@ -1813,6 +1873,7 @@ class RiskEngine:
             reason=reason,
             timestamp=datetime.now(UTC),
             intent_policy=intent_policy_result,
+            authority=authority_result,
         )
 
         # Audit V7 follow-up: make the margin/notional/leverage relationship
