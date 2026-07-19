@@ -3696,7 +3696,7 @@
         ${outcomeBadge(rec)}
         <span class="right small muted" style="margin-left:auto;font-variant-numeric:tabular-nums">${esc(fmtAgo(rec.timestamp))} · ${esc(seq)}</span>
       </div>
-      ${idea.reasoning ? `<p class="small" style="margin:8px 0 6px;color:var(--text)">${esc(idea.reasoning)}</p>` : ''}
+      ${(rec.explanation && rec.explanation.narrative) ? `<p style="margin:8px 0 6px;color:var(--text)"><span title="Plain-English explanation drawn strictly from the sealed record">🗣️</span> ${esc(rec.explanation.narrative)}</p>` : (idea.reasoning ? `<p class="small" style="margin:8px 0 6px;color:var(--text)">${esc(idea.reasoning)}</p>` : '')}
       ${(bullish || bearish) ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin:4px 0">${bullish}${bearish}</div>` : ''}
       <details style="margin-top:8px">
         <summary class="small" style="cursor:pointer;color:var(--accent,#3fb6ff)">Provenance &amp; evidence</summary>

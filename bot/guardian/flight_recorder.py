@@ -323,7 +323,20 @@ def assemble_flight_records(entries: Any, limit: int = 50) -> list[dict]:
         })
 
     decisions.reverse()  # newest first
-    return decisions[:limit]
+    out = decisions[:limit]
+    # Attach a plain-English "why" to each record (deterministic, drawn strictly
+    # from the sealed record). Additive + fail-open — a narration hiccup never
+    # drops the record itself.
+    try:
+        from bot.guardian.explain_fill import explain as _explain
+        for rec in out:
+            try:
+                rec["explanation"] = _explain(rec)
+            except Exception:
+                pass
+    except Exception:
+        pass
+    return out
 
 
 def verify_entries(entries: Any) -> tuple[bool, list[str]]:
