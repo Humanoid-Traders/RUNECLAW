@@ -499,6 +499,13 @@ class RiskLimits:
     # activate. Default OFF: it ADDS a higher-confidence + reduced-size restriction,
     # so it is opt-in (its feeder was never called, leaving recovery mode inert).
     drawdown_recovery_enabled: bool = _env_bool("DRAWDOWN_RECOVERY_ENABLED", False)
+    # Guardian Intent Compiler: master switch for consulting a compiled
+    # strategy-intent policy in evaluate() (bot/guardian/intent_policy.py). Default
+    # OFF → the policy hook is skipped entirely, byte-identical to before. When
+    # ON, the policy can only ADD deterministic rejections (it never loosens an
+    # engine cap); each policy also carries its own mode (shadow = observe-only,
+    # enforce = reject) so shadow can run in production before anything blocks.
+    intent_policy_enabled: bool = _env_bool("INTENT_POLICY_ENABLED", False)
     # Kelly-criterion sizing (default ON; runbook stage 2, tighten-only). evaluate() also
     # derives a half-Kelly size from realized trade history and takes the SMALLER
     # of {fixed-fractional, Kelly}: Kelly can only TIGHTEN size, never grow it, and
