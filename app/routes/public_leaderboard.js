@@ -17,17 +17,26 @@ const router = express.Router();
 router.use(rateLimit({ windowMs: 60000, max: 30, key: ipKey }));
 
 const CACHE_MS = 30 * 1000;   // the board refreshes at most once per publish epoch
-let cache = null;              // { at: ms, status, data }
+const cache = new Map();       // key ('' | season) -> { at: ms, status, data }
 
 router.get('/', async (req, res) => {
   if (!isConfigured()) return res.status(503).json({ error: 'Not configured' });
+  // Season standings (frozen calendar-month windows) share the relay; the
+  // key is validated hard so the cache can't be poisoned by junk params.
+  const rawSeason = String(req.query.season || '').slice(0, 7);
+  const season = /^\d{4}-\d{2}$/.test(rawSeason) ? rawSeason : '';
   const now = Date.now();
-  if (cache && (now - cache.at) < CACHE_MS) {
-    return res.status(cache.status).json(cache.data);
+  const hit = cache.get(season);
+  if (hit && (now - hit.at) < CACHE_MS) {
+    return res.status(hit.status).json(hit.data);
   }
   try {
-    const r = await getGateway('/public/leaderboard', 15000);
-    if (r.status >= 200 && r.status < 300) cache = { at: now, status: 200, data: r.data };
+    const qs = season ? `?season=${encodeURIComponent(season)}` : '';
+    const r = await getGateway(`/public/leaderboard${qs}`, 15000);
+    if (r.status >= 200 && r.status < 300) {
+      if (cache.size > 32) cache.clear();          // bound the map
+      cache.set(season, { at: now, status: 200, data: r.data });
+    }
     relay(res, r);
   } catch (err) {
     console.error('Public leaderboard error:', err.message);

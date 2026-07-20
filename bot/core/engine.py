@@ -2196,6 +2196,12 @@ class RuneClawEngine:
                     await self._maybe_publish_user_leaderboards()
                 except Exception as _ulb_exc:
                     system_log.debug("User leaderboard tick skipped: %s", _ulb_exc)
+                # Verifiable seasons: freeze in-window sealed statements into
+                # the current season's standings. Local-disk only, fail-open.
+                try:
+                    self._maybe_snapshot_board_season()
+                except Exception as _ssn_exc:
+                    system_log.debug("Season snapshot tick skipped: %s", _ssn_exc)
             except Exception as exc:
                 _consecutive_failures += 1
                 self._tick_consecutive_failures = _consecutive_failures
@@ -2403,6 +2409,24 @@ class RuneClawEngine:
                 except Exception as exc:
                     system_log.debug("User leaderboard remove skipped: %s", exc)
         self._user_board_handles = desired
+
+    def _maybe_snapshot_board_season(self) -> None:
+        """Freeze the board's in-window sealed statements into the current
+        season (bot/proofofpnl/seasons.py). Pure local-disk bookkeeping over
+        already-verified registry entries — no network, no account data —
+        so it is gated only on the publish feature being on. Throttled and
+        fail-open; past seasons are immutable by construction."""
+        from bot.proofofpnl.scheduler import feature_enabled
+        if not feature_enabled():
+            return
+        now_ts = time.time()
+        if now_ts - getattr(self, "_last_season_snapshot_ts", 0.0) < 600.0:
+            return
+        self._last_season_snapshot_ts = now_ts
+        from bot.proofofpnl.leaderboard import get_leaderboard_registry
+        from bot.proofofpnl.seasons import get_season_store
+        get_season_store().record_current(
+            get_leaderboard_registry().all_entries(), now_ts)
 
     async def _maybe_ping_healthcheck(self) -> None:
         """Dead-man's-switch ping (ops tip #8). GETs HEALTHCHECK_PING_URL at
