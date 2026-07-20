@@ -2716,7 +2716,14 @@
         const reg = await navigator.serviceWorker.ready.catch(() => null);
         const sub = reg ? await reg.pushManager.getSubscription().catch(() => null) : null;
         if (sub) {
+          // Follow-the-agent topics are per-account prefs (opt-in, default off).
+          const prof = await fetchJSON('/api/profile').catch(() => null);
+          const boardOn = !!prof?.data?.prefs?.push_board;
           return `<p class="small" style="color:var(--text-2)">✅ This device gets a notification when the agent opens or closes a trade, or raises a warning.</p>
+            <label class="small" style="display:flex;gap:8px;align-items:center;margin:8px 0;color:var(--text-2)">
+              <input type="checkbox" id="pushBoard" ${boardOn ? 'checked' : ''}>
+              Also follow the <a href="/leaderboard">verifiable board</a> — rank moves, entries, exits (handles only, never amounts)
+            </label>
             <button class="btn btn--sm" id="pushOff" type="button">Turn off on this device</button>`;
         }
         return `<p class="small" style="color:var(--text-2)">Get a notification the moment the agent opens or closes a trade, or raises a warning — even with the tab closed.</p>
@@ -2724,6 +2731,17 @@
           ${Notification.permission === 'denied' ? '<p class="small muted mt-2">Notifications are blocked in your browser settings for this site — unblock them first.</p>' : ''}`;
       }, { empty: { text: 'Push status unavailable.' } });
     }
+    C('apush').addEventListener('change', async (e) => {
+      const cb = e.target.closest('#pushBoard');
+      if (!cb) return;
+      const r = await fetchJSON('/api/profile', {
+        method: 'PUT', body: { prefs: { push_board: cb.checked } },
+      }).catch(() => ({ ok: false }));
+      toast(r.ok
+        ? (cb.checked ? 'Following the board — rank moves will reach this account.'
+                      : 'Board notifications off.')
+        : 'Could not save the preference — try again.', r.ok ? 'up' : 'down');
+    });
     C('apush').addEventListener('click', async (e) => {
       const on = e.target.closest('#pushOn'), off = e.target.closest('#pushOff');
       if (!on && !off) return;

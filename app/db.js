@@ -208,6 +208,12 @@ class MemoryDB {
       };
       return [{ affectedRows: 1 }, []];
     }
+    // Topic-push fan-out: ALL profiles (no user_id param). Matched before the
+    // single-profile lookup, which requires params[0].
+    if (cmd.includes('FROM USER_PROFILES') && cmd.includes('LIMIT 2000')) {
+      return [Object.values(this.userProfiles).slice(0, 2000)
+        .map(p => ({ user_id: p.user_id, prefs: p.prefs })), []];
+    }
     if (cmd.includes('FROM USER_PROFILES')) {
       const p = this.userProfiles[params[0]];
       return [p ? [{ ...p }] : [], []];

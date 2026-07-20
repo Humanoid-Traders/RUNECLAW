@@ -81,6 +81,8 @@ function sanitizePrefs(input) {
     const base = input.lang.trim().toLowerCase().replace(/_/g, '-').split('-')[0];
     if (LANGS.has(base)) out.lang = base;
   }
+  // Follow-the-agent push topics (opt-in per category; default off).
+  if (typeof input.push_board === 'boolean') out.push_board = input.push_board;
   return out;
 }
 

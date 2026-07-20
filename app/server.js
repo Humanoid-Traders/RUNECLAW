@@ -208,4 +208,8 @@ app.use((err, req, res, next) => {
   // Weekly agent letter: hourly sweep lazily writes the letter for the last
   // completed ISO week and announces it once with a web push.
   require('./lib/letter').startLetterSweep();
+
+  // Follow-the-agent: hourly watch on the public verifiable board; rank moves
+  // push a digest to users who opted into the 'board' topic.
+  require('./lib/board_watch').startBoardWatch();
 })();
