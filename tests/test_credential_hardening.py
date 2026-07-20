@@ -8,15 +8,17 @@ a hand-edited .env can no longer silently break auth. A boot-time
 credential preflight surfaces any residual auth failure loudly.
 """
 
-import importlib
 import inspect
 
 import pytest
 
 
 def _reload_config():
+    # _env_secret reads os.environ at CALL time, so no reload is needed — and
+    # reloading bot.config in-process replaces its class objects and silently
+    # breaks later tests' monkeypatches (2026-07 full-suite audit). The name
+    # is kept so the call sites below stay diff-minimal.
     import bot.config as cfg
-    importlib.reload(cfg)
     return cfg
 
 
