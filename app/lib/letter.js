@@ -63,7 +63,7 @@ async function loadWeekData(start, end) {
   let trades = [];
   try {
     const [rows] = await pool.execute(
-      `SELECT symbol, direction, pnl, fees, size_usd, opened_at, closed_at
+      `SELECT symbol, direction, entry_price, exit_price, pnl, fees, size_usd, opened_at, closed_at
          FROM trades
         WHERE user_id = ? AND status = 'CLOSED' AND closed_at IS NOT NULL
         ORDER BY closed_at ASC`, [OPERATOR_USER_ID]);
@@ -115,6 +115,28 @@ async function loadWeekData(start, end) {
 }
 
 // ── Composition (pure, deterministic) ────────────────────────────────────────
+
+/**
+ * Alpha-vs-holding section, shared verbatim by the private AND public letter:
+ * it is percent-only by construction (never a dollar figure), so it clears the
+ * public letter's privacy line without a second composition. Returns null when
+ * no trade in the window carries usable entry/exit prices.
+ */
+function composeAlphaSection(trades) {
+  const { computeIntel } = require('./intel');
+  const a = computeIntel(trades).alpha;
+  if (!a || a.priced < 1) return null;
+  const sign = a.mean_alpha_pct >= 0 ? '+' : '';
+  const bits = [
+    `Against simply buying and holding each asset over the same windows, the desk ran `
+      + `<b>${sign}${a.mean_alpha_pct}%</b> of pure alpha per trade — `
+      + `${a.beat_market} of ${a.priced} closes beat their own market.`,
+    a.best && a.best.alpha_pct > 0
+      ? `Cleanest edge: ${esc(a.best.symbol)} (+${a.best.alpha_pct}% vs holding).` : null,
+    a.unpriced ? `${a.unpriced} close${a.unpriced === 1 ? '' : 's'} lacked recorded prices and sat out the comparison.` : null,
+  ].filter(Boolean).join(' ');
+  return { title: 'Alpha vs holding', html: bits };
+}
 
 function composeLetter({ key, start, end }, data) {
   const { trades, equity, signals, openCount, reports } = data;
@@ -174,6 +196,11 @@ function composeLetter({ key, start, end }, data) {
         + `(${delta >= 0 ? '+' : ''}${money(delta).replace('$', '$')} · ${pct >= 0 ? '+' : ''}${pct}%).`,
     });
   }
+
+  // ── Alpha vs holding — did the week's trading beat simply holding what it
+  // traded? Reconstructed from each trade's own recorded entry/exit prices.
+  const alphaSection = composeAlphaSection(trades);
+  if (alphaSection) sections.push(alphaSection);
 
   // ── The tape ──
   if (signals.length) {
@@ -319,6 +346,10 @@ function composePublicLetter({ key, start, end }, data) {
       html: `Equity moved <b>${pct >= 0 ? '+' : ''}${pct}%</b> on the week.`,
     });
   }
+
+  // Percent-only by construction (see composeAlphaSection) — safe here.
+  const alphaSection = composeAlphaSection(trades);
+  if (alphaSection) sections.push(alphaSection);
 
   if (signals.length) {
     const longs = signals.filter(s => String(s.direction).toUpperCase().includes('LONG')).length;

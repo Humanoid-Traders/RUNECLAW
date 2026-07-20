@@ -42,6 +42,19 @@ const SNAPSHOT_MIN_INTERVAL_MS = 15 * 60 * 1000;
 // pollute the live equity curve with paper-tracker numbers.
 const BOT_USER_ID = parseInt(process.env.BOT_USER_ID) || 1;
 
+// GET /api/portfolio/intel — derived-only analytics over the caller's OWN
+// recorded closed trades (alpha vs holding, expectancy, payoff, drawdown,
+// streaks). Purely a re-read of rows already in the DB; nothing is fetched
+// from the gateway and nothing is estimated.
+router.get('/intel', pfLimit, async (req, res) => {
+  try {
+    const { getUserIntel } = require('../lib/intel');
+    res.json({ intel: await getUserIntel(req.user.user_id) });
+  } catch (e) {
+    res.status(500).json({ error: 'Intel unavailable' });
+  }
+});
+
 async function operatorPortfolio(userId) {
   const [snaps] = await pool.execute(
     'SELECT equity, snapshot_at FROM equity_snapshots WHERE user_id = ? ORDER BY snapshot_at DESC LIMIT 1',
