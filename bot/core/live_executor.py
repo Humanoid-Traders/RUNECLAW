@@ -4987,7 +4987,7 @@ class LiveExecutor:
     async def _reattempt_post_fill_sl(
         self, exchange: "ccxt.Exchange", pos: "LivePosition",
         direction, qty: float, sl_id, tp_id, trade_id: Optional[str] = None,
-    ):
+    ) -> tuple[Optional[str], Optional[str], Optional[str]]:
         """Post-fill stop-loss-failure ESCALATION LADDER for the limit-fill and
         drift-market-fallback entry paths: retry → grace sub-loop → flatten.
 
