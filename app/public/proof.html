@@ -80,6 +80,21 @@
     <div class="empty" id="loading">Loading the latest sealed statement…</div>
   </div>
 
+  <section class="panel">
+    <h2>Verify anyone — paste a statement</h2>
+    <p class="steps">Paste any sealed publication (or a raw <code>{bundle, publish_hash}</code>
+    pair) from any agent — this page re-derives the SHA-256 <b>entirely in your
+    browser</b>. Nothing is uploaded; it works offline. The math doesn't care
+    whose dashboard the JSON came from.</p>
+    <textarea id="vaInput" rows="6" spellcheck="false"
+      placeholder='{"bundle": {...}, "publish_hash": "..."}'
+      style="width:100%;background:var(--bg);color:var(--text-2);border:1px solid var(--line);border-radius:var(--radius);padding:var(--s3);font-family:var(--font-data);font-size:var(--fs-xs)"></textarea>
+    <div style="margin-top:var(--s3);display:flex;gap:var(--s3);align-items:center;flex-wrap:wrap">
+      <button id="vaBtn" class="btn">Re-derive the hash</button>
+      <span id="vaOut" class="muted small"></span>
+    </div>
+  </section>
+
   <section class="panel disclaimer">
     Past performance is not indicative of future results. The published statement
     reports the operator agent account and is public-safe by construction — the
@@ -273,6 +288,35 @@
           ? 'Hash and public-safety check out on your device; see server note above.'
           : 'Verification FAILED — do not trust this statement.');
   }
+
+  // ── "Verify anyone": paste-a-statement re-derivation, fully offline ──────
+  const vaBtn = $('vaBtn');
+  if (vaBtn) vaBtn.addEventListener('click', async () => {
+    const out = $('vaOut');
+    out.textContent = '…';
+    let doc;
+    try { doc = JSON.parse($('vaInput').value); }
+    catch (e) { out.textContent = '✗ Not valid JSON.'; return; }
+    const b = doc && typeof doc === 'object' && 'bundle' in doc ? doc.bundle : doc;
+    const claimed = String((doc && doc.publish_hash) || '').toLowerCase();
+    if (!(window.crypto && window.crypto.subtle)) {
+      out.textContent = '! In-browser hashing needs HTTPS — use the Python one-liner below.';
+      return;
+    }
+    let got = '';
+    try { got = await sha256hex(canonical(b)); }
+    catch (e) { out.textContent = '✗ Could not canonicalize (' + e.message + ')'; return; }
+    if (!claimed) {
+      out.textContent = 'Derived hash (no claimed publish_hash to compare): ' + got;
+    } else if (got === claimed) {
+      out.textContent = '✓ MATCH — this is the sealed statement, byte-for-byte. '
+        + 'Derived ' + got.slice(0, 16) + '…';
+    } else {
+      out.textContent = '✗ MISMATCH — the pasted statement does NOT hash to its '
+        + 'claimed publish_hash. Do not trust it. Derived ' + got.slice(0, 16)
+        + '…, claimed ' + claimed.slice(0, 16) + '…';
+    }
+  });
 })();
 </script>
 </body>
