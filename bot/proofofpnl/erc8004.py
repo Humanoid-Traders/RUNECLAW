@@ -168,6 +168,17 @@ def build_identity_card(agent_address: str,
                     "pubkey": res.public_key_hex,
                 }
     card["attestation"] = attestation
+    # MH2: upgrade the anchor section from the designed plan to VERIFIED/STALE
+    # when (and only when) a confirmed on-chain record matches the card's
+    # current identity (address + signing pubkey). Fail-soft: any hiccup keeps
+    # the honest UNVERIFIED plan.
+    try:
+        from bot.proofofpnl.anchor import anchor_for_card
+        card["anchor"] = anchor_for_card(
+            identity["agent_address"], attestation.get("pubkey", ""),
+            h, card["anchor"])
+    except Exception:
+        pass
     return card
 
 

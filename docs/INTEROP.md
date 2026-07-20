@@ -115,7 +115,14 @@ Any future interop work inherits these unconditionally:
 ## 6. Sequencing (when the operator green-lights)
 
 1. Registry registration tx for the operator identity (smallest step,
-   makes the anchor real).
+   makes the anchor real). **Operator decision (2026-07): root anchor on
+   Base (chain 8453) — fast and cheap now. If the identity later becomes
+   high-value/canonical, mirror or promote the root anchor to Ethereum
+   mainnet (chain 1); per-chain anchor records coexist, Base stays the
+   root.** Tooling: `/anchor` builds the unsigned tx, the operator signs
+   from their own wallet, `/anchor confirm <tx>` verifies on-chain before
+   anything upgrades to VERIFIED. The bot never holds a key and never
+   sends a transaction.
 2. Validation-payload stability guarantee (versioned schema for
    `/api/public/agent/:address`).
 3. Only then, and only after §4's gates: the 402 experiment on one

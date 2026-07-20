@@ -56,6 +56,25 @@
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
     return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]; }); }
 
+  var CHAIN_NAMES = { 84532: 'Base Sepolia', 8453: 'Base', 1: 'Ethereum' };
+  function anchorRows(anc) {
+    var list = Array.isArray(anc.anchors) ? anc.anchors : [];
+    var out = '';
+    for (var i = 0; i < list.length; i++) {
+      var a = list[i] || {};
+      var chain = CHAIN_NAMES[a.chain_id] || ('chain ' + esc(a.chain_id));
+      // Only link explorers we recognize — never render an attacker-supplied URL.
+      var okUrl = typeof a.explorer === 'string'
+        && /^https:\/\/(basescan\.org|etherscan\.io)\/tx\/0x[0-9a-f]{64}$/.test(a.explorer);
+      var tx = okUrl
+        ? '<a href="' + a.explorer + '" target="_blank" rel="noopener">' + esc(a.tx_hash) + '</a>'
+        : esc(a.tx_hash);
+      out += '<dt>On-chain (' + chain + ')</dt><dd>' + tx
+        + (a.block_number ? ' — block ' + esc(a.block_number) : '') + '</dd>';
+    }
+    return out;
+  }
+
   var m = /^\/agent\/(0x[0-9a-fA-F]{40})$/.exec(location.pathname);
   if (!m) {
     el.innerHTML = '<div class="empty">No agent address in the URL — '
@@ -84,6 +103,7 @@
         + '<dt>Publication</dt><dd>' + esc((d.publication || {}).publish_hash) + '</dd>'
         + '<dt>Trust tier</dt><dd>' + esc((d.publication || {}).trust_tier) + '</dd>'
         + '<dt>Anchor</dt><dd>' + esc(anc.status) + ' — ' + esc(anc.note) + '</dd>'
+        + anchorRows(anc)
         + '</dl>'
         + '<p class="lede" style="margin-top:var(--s4)">Verify the record yourself: '
         + '<a href="/proof">re-derive the fills →</a></p>';
