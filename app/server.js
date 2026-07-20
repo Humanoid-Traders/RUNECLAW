@@ -161,6 +161,9 @@ app.use('/api/airdrops', require('./routes/airdrops'));
 app.use('/api/exposure', require('./routes/exposure'));
 app.use('/api/research', require('./routes/research'));
 app.use('/mcp', require('./routes/mcp'));
+// ERC-8257 tool surface (well-known manifest + invoke endpoint + operator
+// registration plan) — mounted at root because /.well-known/ is absolute.
+app.use(require('./routes/tool8257'));
 
 // Single-host dev foot-gun: Express and the bot's gateway both default to
 // port 8080. Warn loudly if they would collide.

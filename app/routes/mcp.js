@@ -514,3 +514,7 @@ router.get('/', (req, res) => res.status(405).json({ error: 'No stream — POST 
 router.delete('/', (req, res) => res.status(405).json({ error: 'Stateless server' }));
 
 module.exports = router;
+// Shared with the ERC-8257 tool endpoint (routes/tool8257.js) so the on-chain
+// manifest and /mcp can never drift — one read-only tool registry.
+module.exports.TOOLS = TOOLS;
+module.exports.validateArgs = validateArgs;
