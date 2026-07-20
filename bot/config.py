@@ -523,7 +523,13 @@ class RiskLimits:
     # TELEMETRY-FIRST: the scan classifies + records a FIREWALL verdict to the
     # tamper-evident chain and can warn, but never blocks a message. Blocking is a
     # separate, stricter opt-in below and stays off by default.
-    guardian_firewall_enabled: bool = _env_bool("GUARDIAN_FIREWALL_ENABLED", False)
+    # LIVE-1 enablement audit (2026-07-20): protection-only Guardian modules
+    # default ON for live testing — the firewall runs in WARN mode
+    # (block_high stays opt-in), twin/sentinel/escape are read-only
+    # analysis/planning. None of these place, size or block trades by
+    # default; they only observe and alert. Evidence: shipped with full
+    # test suites (Guardian PR-3..6), zero money-path writes.
+    guardian_firewall_enabled: bool = _env_bool("GUARDIAN_FIREWALL_ENABLED", True)
     # When BOTH this and guardian_firewall_enabled are on, a HIGH-risk chat verdict
     # is refused (the message is not acted on) instead of merely recorded. Default
     # OFF so enabling the firewall observes before it ever blocks.
@@ -535,7 +541,7 @@ class RiskLimits:
     # TWIN event is written until an operator opts in. The twin never proposes,
     # blocks, or alters a trade; it only describes how the current book would
     # fare under parametric price shocks.
-    guardian_digital_twin_enabled: bool = _env_bool("GUARDIAN_DIGITAL_TWIN_ENABLED", False)
+    guardian_digital_twin_enabled: bool = _env_bool("GUARDIAN_DIGITAL_TWIN_ENABLED", True)
     # Guardian Systemic Risk Sentinel: master switch for SEALING an intra-book
     # crowding/concentration verdict (bot/guardian/risk_sentinel.py) to the
     # tamper-evident chain when the sentinel runs. Default OFF → the sentinel
@@ -543,7 +549,7 @@ class RiskLimits:
     # command), but no SENTINEL event is written until an operator opts in. It
     # warns about structural crowding (one sector, one direction, shared
     # liquidation zones); it never proposes, blocks, or alters a trade.
-    guardian_risk_sentinel_enabled: bool = _env_bool("GUARDIAN_RISK_SENTINEL_ENABLED", False)
+    guardian_risk_sentinel_enabled: bool = _env_bool("GUARDIAN_RISK_SENTINEL_ENABLED", True)
     # Guardian Universal Escape Agent: master switch for SEALING an emergency-exit
     # PLAN (bot/guardian/escape_agent.py) to the tamper-evident chain when the
     # planner runs. Default OFF → the planner still computes on demand (pure,
@@ -551,7 +557,7 @@ class RiskLimits:
     # until an operator opts in. This module PLANS only; it never closes anything.
     # Execution stays with the existing kill-switch stack (flatten_all_positions /
     # close_all_positions / emergency_halt_all).
-    guardian_escape_enabled: bool = _env_bool("GUARDIAN_ESCAPE_ENABLED", False)
+    guardian_escape_enabled: bool = _env_bool("GUARDIAN_ESCAPE_ENABLED", True)
     # Kelly-criterion sizing (default ON; runbook stage 2, tighten-only). evaluate() also
     # derives a half-Kelly size from realized trade history and takes the SMALLER
     # of {fixed-fractional, Kelly}: Kelly can only TIGHTEN size, never grow it, and
