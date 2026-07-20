@@ -54,6 +54,32 @@ test('chat intercept answers its chip phrase with market + basis', async () => {
   spot.setSpotFetcher(null); tickers.setTickerFetcher(null);
 });
 
+test('multi-venue: pairs merge across venues with cross-venue spread', async () => {
+  spot.setSpotFetcher(async () => RAW, 'bitget');
+  spot.setSpotFetcher(async () => ({ result: { list: [
+    { symbol: 'BTCUSDT', lastPrice: '100100', price24hPcnt: '0.01', turnover24h: '500000000' },
+    { symbol: 'SOLUSDT', lastPrice: '200', price24hPcnt: '0.02', turnover24h: '100000000' },
+  ] } }), 'bybit');
+  const m = await spot.getSpotMarket();
+  assert.equal(m.venues.bitget.ok, true);
+  assert.equal(m.venues.bybit.ok, true);
+  const btc = m.pairs.find(p => p.symbol === 'BTCUSDT');
+  assert.deepEqual(btc.listed_on.sort(), ['bitget', 'bybit']);
+  assert.ok(Math.abs(btc.venue_spread_bps - 10.0) < 0.2, String(btc.venue_spread_bps));
+  assert.equal(btc.venue, 'bitget', 'primary quote = highest-volume venue');
+  assert.ok(m.pairs.some(p => p.symbol === 'SOLUSDT' && p.venue === 'bybit'));
+  spot.setSpotFetcher(null);
+});
+
+test('one venue down: partial availability reported honestly per venue', async () => {
+  spot.setSpotFetcher(async () => RAW, 'bitget');
+  spot.setSpotFetcher(async () => { throw new Error('bybit down'); }, 'bybit');
+  const m = await spot.getSpotMarket();
+  assert.equal(m.available, true, 'one live venue keeps the surface up');
+  assert.equal(m.venues.bybit.ok, false);
+  spot.setSpotFetcher(null);
+});
+
 test('HARD LINE: no order machinery in the spot surface', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'spot.js'), 'utf8')
     + fs.readFileSync(path.join(__dirname, '..', 'routes', 'spot.js'), 'utf8');
