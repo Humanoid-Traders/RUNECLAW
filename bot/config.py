@@ -1910,6 +1910,11 @@ class MonitoringConfig:
     healthcheck_ping_url: str = _env("HEALTHCHECK_PING_URL", "")
     healthcheck_ping_interval_sec: float = _env_float_bounded(
         "HEALTHCHECK_PING_INTERVAL_SEC", 60.0, 5.0, 3600.0)
+    # Internal reciprocal watchdog: the engine alarms when the proactive
+    # monitor loop (the delivery channel for every internal safety alert) has
+    # not run for this long — 10x its 30s cadence by default. 0 disables.
+    monitor_liveness_timeout_sec: float = _env_float_bounded(
+        "MONITOR_LIVENESS_TIMEOUT_SEC", 300.0, 0.0, 86400.0)
 
 
 @dataclass(frozen=True)

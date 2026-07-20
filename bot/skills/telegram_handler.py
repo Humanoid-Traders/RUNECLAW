@@ -5523,6 +5523,49 @@ class TelegramHandler:
         self.monitor._dispatch = _dispatch_with_forward
         self._monitor_task = asyncio.create_task(self.monitor.run(_send_fn))
 
+        # Task-death tripwire: a dead monitor task means ALL internal alerting
+        # is down while trading continues. Audit CRITICAL immediately (normal
+        # shutdown cancellation is not a death).
+        def _monitor_task_died(task) -> None:
+            if task.cancelled():
+                return
+            exc = task.exception()
+            audit(system_log,
+                  f"Proactive monitor task DIED: {exc!r} — internal alerting "
+                  f"is DOWN until restarted",
+                  action="monitor_task", result="DIED",
+                  data={"error": repr(exc)})
+
+        self._monitor_task.add_done_callback(_monitor_task_died)
+
+        # Reciprocal liveness: hand the engine a reference so its tick loop
+        # can watch the monitor's heartbeat, plus a monitor-INDEPENDENT
+        # callback that tells the admin and restarts the task when it died.
+        # The SAME monitor object must be reused on restart — it carries the
+        # _dispatch forward hook above and all dedup/watch state.
+        self.engine._proactive_monitor = self.monitor
+
+        async def _on_monitor_stale(age_s: float) -> None:
+            restarted = False
+            task = self._monitor_task
+            if task is not None and task.done():
+                self._monitor_task = asyncio.create_task(self.monitor.run(_send_fn))
+                self._monitor_task.add_done_callback(_monitor_task_died)
+                restarted = True
+            msg = (f"🚨 <b>MONITOR STALLED</b> — the proactive alert loop last "
+                   f"ran {age_s:.0f}s ago. Internal safety alerting was DOWN."
+                   + ("\n♻️ The monitor task had died and was RESTARTED."
+                      if restarted else
+                      "\n⚠️ The task is still running but not progressing — "
+                      "a hung send may be blocking it. Consider a restart."))
+            for cid in _notify_chat_ids:
+                try:
+                    await _send_fn(str(cid), msg)
+                except Exception as exc:
+                    system_log.debug("Monitor-stale notify failed: %s", exc)
+
+        self.engine._monitor_stale_callback = _on_monitor_stale
+
         # Register trade-close notification callback
         admin_chat_id = CONFIG.telegram.chat_id
         # Parse comma-separated admin chat IDs into list of ints

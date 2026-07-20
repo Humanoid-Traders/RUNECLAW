@@ -326,6 +326,14 @@ class RuneClawEngine:
         # Consecutive engine-tick failures, mirrored from the run loop so the
         # proactive monitor can alert when the main loop is degraded/unmonitored.
         self._tick_consecutive_failures: int = 0
+        # Tick-START stamp (monotonic; None = not started) — lets the monitor
+        # detect a HUNG tick, which increments no failure counter.
+        self._last_tick_started_ts: float | None = None
+        # Reciprocal watch on the proactive monitor loop (attached by the
+        # Telegram handler at start_monitor; None when Telegram is off).
+        self._proactive_monitor = None
+        self._monitor_stale_callback = None
+        self._last_monitor_liveness_check: float = 0.0
         # Throttle for the periodic SL/TP self-heal (re-place stops that went
         # missing DURING operation, not just at startup). monotonic seconds.
         self._last_sltp_verify_ts: float = 0.0
@@ -2161,6 +2169,7 @@ class RuneClawEngine:
                 # report — raises an alarm at the monitor's grace timeout.
                 # Throttled + fail-open; no-op unless HEALTHCHECK_PING_URL set.
                 await self._maybe_ping_healthcheck()
+                await self._maybe_check_monitor_liveness()
                 # Web wallet (2b): pull any pending exchange-credential requests
                 # the website queued and import them into the credential store.
                 # Throttled, fail-open, no-op unless WEB_CREDS_KEY is configured.
@@ -2428,6 +2437,55 @@ class RuneClawEngine:
         get_season_store().record_current(
             get_leaderboard_registry().all_entries(), now_ts)
 
+    @staticmethod
+    def _is_monitor_stale(last_loop_ts: "float | None", now: float,
+                          timeout: float) -> bool:
+        """Pure staleness predicate for the proactive monitor loop. None =
+        never ran yet (startup grace) — not stale; timeout <= 0 disables."""
+        if last_loop_ts is None or timeout <= 0:
+            return False
+        return (now - last_loop_ts) > timeout
+
+    async def _maybe_check_monitor_liveness(self) -> None:
+        """Reciprocal watchdog: the proactive monitor delivers every internal
+        safety alert, yet nothing watched IT — a dead monitor task silently
+        ended all alerting while trading continued. Each successful tick now
+        checks the monitor's heartbeat; on staleness it audits CRITICAL,
+        notifies the operator through a monitor-independent callback, and
+        restarts the (same) monitor object's task when it died. Throttled to
+        the check interval so a permanently-dead monitor alerts once per
+        window, and fail-open — a buggy liveness check must never hurt the
+        tick loop it runs in."""
+        monitor = getattr(self, "_proactive_monitor", None)
+        if monitor is None:
+            return
+        try:
+            timeout = float(getattr(CONFIG.monitoring,
+                                    "monitor_liveness_timeout_sec", 300.0))
+            if timeout <= 0:
+                return
+            now = time.monotonic()
+            if now - self._last_monitor_liveness_check < timeout:
+                return
+            if not self._is_monitor_stale(
+                    getattr(monitor, "last_loop_ts", None), now, timeout):
+                return
+            self._last_monitor_liveness_check = now
+            age = now - monitor.last_loop_ts
+            audit(system_log,
+                  f"Proactive monitor loop STALLED: last ran {age:.0f}s ago — "
+                  f"internal alerting is DOWN",
+                  action="monitor_liveness", result="CRITICAL",
+                  data={"age_s": round(age, 1)})
+            cb = getattr(self, "_monitor_stale_callback", None)
+            if cb is not None:
+                try:
+                    await cb(age)
+                except Exception as exc:
+                    system_log.debug("Monitor-stale callback failed: %s", exc)
+        except Exception as exc:
+            system_log.debug("Monitor liveness check skipped: %s", exc)
+
     async def _maybe_ping_healthcheck(self) -> None:
         """Dead-man's-switch ping (ops tip #8). GETs HEALTHCHECK_PING_URL at
         most every HEALTHCHECK_PING_INTERVAL_SEC so an external monitor (e.g.
@@ -2550,6 +2608,7 @@ class RuneClawEngine:
 
     async def _tick(self) -> None:
         """One full scan-analyze cycle."""
+        self._last_tick_started_ts = time.monotonic()
         # ── Watchdog: force-recover if stuck in a non-IDLE state for >2 minutes ──
         # H-09 FIX: Don't interrupt active trade execution — use longer timeout
         if self.state != AgentState.IDLE and time.time() - self._last_state_change > 120:
