@@ -2180,6 +2180,16 @@ class RuneClawEngine:
                         SELF_AUDIT.maybe_spawn(self)
                 except Exception as _sa_exc:
                     system_log.debug("self-audit spawn skipped: %s", _sa_exc)
+                # Continuous Proof-of-PnL publishing: re-derive the operator's
+                # verifiable track record from raw fills, seal it, and persist it
+                # as the latest publication — so the public /proof feed and the
+                # MCP get_proof_of_pnl tool serve live data instead of an empty
+                # store. Cadenced by the publisher, fail-open, DEFAULT-OFF
+                # (PROOFOFPNL_PUBLISH_ENABLED); never touches trading.
+                try:
+                    await self._maybe_publish_proofofpnl()
+                except Exception as _pop_exc:
+                    system_log.debug("Proof-of-PnL publish tick skipped: %s", _pop_exc)
             except Exception as exc:
                 _consecutive_failures += 1
                 self._tick_consecutive_failures = _consecutive_failures
@@ -2227,6 +2237,45 @@ class RuneClawEngine:
         audit(system_log, "Engine stopped", action="stop")
 
     # -- Pipeline stages --
+
+    async def _maybe_publish_proofofpnl(self) -> None:
+        """Cadenced, fail-open Proof-of-PnL publication.
+
+        When enabled (``PROOFOFPNL_PUBLISH_ENABLED``) and the publisher's cadence
+        is due, fetch the operator's REAL fills, assemble a public-safe verifiable
+        statement, seal it, and persist it as the latest publication — so the
+        public ``/proof`` feed and the MCP ``get_proof_of_pnl`` tool serve live
+        data instead of an empty store. DEFAULT-OFF. Runs only on the LIVE
+        operator path (the only place real, re-derivable fills exist). Balances
+        are omitted here, so the epoch reconciles honestly to INCOMPLETE;
+        signed-snapshot anchoring is a later slice. Never touches trading and
+        never raises past this method."""
+        from bot.proofofpnl.scheduler import get_operator_publisher
+        publisher = get_operator_publisher()
+        if publisher is None:
+            return
+        now_ts = int(time.time())
+        if not publisher.should_publish(now_ts):
+            return
+        # Proof-of-PnL is about REAL, re-derivable fills — only the live operator
+        # account has those. Paper mode has nothing verifiable to publish.
+        if not (CONFIG.is_live() and getattr(self, "live_executor", None)):
+            return
+        try:
+            lookback_days = int(os.environ.get("PROOFOFPNL_LOOKBACK_DAYS", "") or 30)
+        except (TypeError, ValueError):
+            lookback_days = 30
+        since_ms = int((now_ts - max(1, lookback_days) * 86400) * 1000)
+        try:
+            exchange = await self.live_executor._get_exchange()
+            trades = await exchange.fetch_my_trades(symbol=None, since=since_ms, limit=200)
+        except Exception as exc:
+            system_log.debug("Proof-of-PnL fills fetch skipped: %s", exc)
+            return
+        # publish() is fail-safe internally; envelope omitted for now (optional).
+        publisher.publish(
+            now_ts, trades or [],
+            range_start=int(since_ms / 1000), range_end=now_ts)
 
     async def _maybe_ping_healthcheck(self) -> None:
         """Dead-man's-switch ping (ops tip #8). GETs HEALTHCHECK_PING_URL at
