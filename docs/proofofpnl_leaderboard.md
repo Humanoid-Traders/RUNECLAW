@@ -42,11 +42,17 @@ opt-out drops them (`remove`).
 
 ## Slice plan
 
-* **A1 (this)** — pure ranking core + registry + tests. Foundation, no producer.
-* **A2** — per-user opt-in producer: on opt-in, seal the member's own fills into
-  a statement and `put` it under their handle. Consent-bearing, default-off.
-* **A3** — public no-auth `/leaderboard` page + route serving the ranked board,
-  each row linking to re-verify its own hash.
+* **A1 ✅** — pure ranking core + registry + tests. Foundation, no producer.
+* **A2 ✅ (this)** — the board goes live, operator first. The operator opts in by
+  setting `PROOFOFPNL_LEADERBOARD_HANDLE`; each published epoch then also
+  registers the sealed statement (`engine._maybe_publish_proofofpnl`), and the
+  gateway serves the ranked, anonymous, re-verifiable board with **no auth** at
+  `GET /gateway/public/leaderboard` (`_leaderboard_payload`). Default OFF (no
+  handle → no registration); fail-open; never touches trading. Per-user opt-in
+  publishing (each member seals their own fills) is a later slice — it needs the
+  Node↔engine handle bridge and per-user fill-gathering, scoped separately.
+* **A3** — public `/leaderboard` page + Node relay, each row re-verifiable in the
+  visitor's own browser (mirrors the `/proof` serving chain).
 
 ## Tests
 

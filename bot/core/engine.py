@@ -2273,9 +2273,21 @@ class RuneClawEngine:
             system_log.debug("Proof-of-PnL fills fetch skipped: %s", exc)
             return
         # publish() is fail-safe internally; envelope omitted for now (optional).
-        publisher.publish(
+        pub = publisher.publish(
             now_ts, trades or [],
             range_start=int(since_ms / 1000), range_end=now_ts)
+        # Public verifiable leaderboard: if the operator has OPTED IN by setting
+        # an anonymous handle, register the freshly-sealed statement so it appears
+        # on the anonymous, re-verifiable board. Default OFF (no handle => no
+        # registration); fail-open; never touches trading.
+        if pub is not None:
+            handle = str(os.environ.get("PROOFOFPNL_LEADERBOARD_HANDLE", "")).strip()
+            if handle:
+                try:
+                    from bot.proofofpnl.leaderboard import get_leaderboard_registry
+                    get_leaderboard_registry().put(handle, pub)
+                except Exception as exc:
+                    system_log.debug("Leaderboard register skipped: %s", exc)
 
     async def _maybe_ping_healthcheck(self) -> None:
         """Dead-man's-switch ping (ops tip #8). GETs HEALTHCHECK_PING_URL at
