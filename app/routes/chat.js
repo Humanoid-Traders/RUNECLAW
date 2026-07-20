@@ -70,6 +70,10 @@ router.post('/', chatLimit, async (req, res) => {
     // with an explicit safety read. Never trades or launches.
     const memeReply = await require('../lib/meme').maybeHandleMemeChat(req.user.user_id, text);
     if (memeReply) return res.json(memeReply);
+    // "nft radar" / "opensea" — read-only collection floor/volume snapshot.
+    // Never lists, bids, mints or trades.
+    const nftReply = await require('../lib/opensea').maybeHandleNftChat(req.user.user_id, text);
+    if (nftReply) return res.json(nftReply);
     // "my wallet" — read-only mirror of the caller's SIWE-linked wallet.
     const walletReply = await maybeHandleWalletChat(req.user.user_id, text);
     if (walletReply) return res.json(walletReply);

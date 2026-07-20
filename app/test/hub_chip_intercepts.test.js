@@ -32,6 +32,12 @@ test('every radar chip ask phrase is claimed by its intercept regex', async () =
         priceChange: { h24: 2 }, pairCreatedAt: Date.now() - 30 * 86400000,
         txns: { h24: { buys: 300, sells: 280 } },
       }]))],
+    ['nft radar', require('../lib/opensea'), 'maybeHandleNftChat', () =>
+      require('../lib/opensea').setOpenSeaFetcher(async (p) =>
+        p.startsWith('/collections?')
+          ? { collections: [{ collection: 'foo', name: 'Foo' }] }
+          : { total: { floor_price: 1.2, num_owners: 10 },
+              intervals: [{ interval: 'seven_day', volume: 100 }] })],
   ];
   for (const [phrase, lib, fn, inject] of CONTRACT) {
     if (inject) inject();
@@ -41,12 +47,13 @@ test('every radar chip ask phrase is claimed by its intercept regex', async () =
   }
   require('../lib/meme').setPairFetcher(null);
   require('../lib/rwa').setTickerFetcher(null);
+  require('../lib/opensea').setOpenSeaFetcher(null);
 });
 
 test('the chips wired in the dashboard stay in sync with this contract', () => {
   const dash = fs.readFileSync(
     path.join(__dirname, '..', 'public', 'js', 'dashboard.js'), 'utf8');
-  for (const ask of ['rwa radar', 'airdrop radar', 'meme radar']) {
+  for (const ask of ['rwa radar', 'airdrop radar', 'meme radar', 'nft radar']) {
     assert.ok(dash.includes(`'${ask}'`), `hub chip "${ask}" exists`);
   }
 });

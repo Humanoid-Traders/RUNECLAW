@@ -165,6 +165,7 @@ app.use('/mcp', require('./routes/mcp'));
 // registration plan) — mounted at root because /.well-known/ is absolute.
 app.use(require('./routes/tool8257'));
 app.use('/api/public/status', require('./routes/public_status'));
+app.use('/api/nft', require('./routes/nft'));
 
 // Single-host dev foot-gun: Express and the bot's gateway both default to
 // port 8080. Warn loudly if they would collide.
