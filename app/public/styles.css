@@ -471,6 +471,14 @@ code { font-family: var(--font-data); font-size: .9em; background: var(--surface
 .hero-email { flex: 1 1 200px; max-width: 260px; min-width: 180px; }
 .hero-note { margin-top: var(--s3); color: var(--text-3); }
 
+/* The trading loop — a real sequence, so numbered steps carry meaning. */
+.loop-steps { list-style: none; display: flex; flex-wrap: wrap; align-items: stretch; gap: var(--s3); padding: 0; margin: 0; }
+.loop-step { flex: 1 1 160px; display: flex; flex-direction: column; gap: 4px; padding: var(--s4); background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius, 10px); }
+.loop-step b { font-size: var(--fs-md); }
+.loop-num { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 999px; background: var(--gold-dim); color: var(--gold-bright); font-family: var(--font-data); font-size: var(--fs-xs); font-weight: 700; }
+.loop-arrow { display: flex; align-items: center; color: var(--text-3); font-size: 20px; }
+@media (max-width: 639px) { .loop-arrow { display: none; } }
+
 .section { max-width: var(--maxw); margin: 0 auto; padding: var(--s8) var(--s4); }
 .section-head { margin-bottom: var(--s6); }
 .section-head h2 { font-family: var(--font-brand); font-size: var(--fs-xl); letter-spacing: .04em; margin-bottom: var(--s1); text-wrap: balance; }
