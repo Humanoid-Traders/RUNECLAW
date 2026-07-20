@@ -467,7 +467,9 @@ code { font-family: var(--font-data); font-size: .9em; background: var(--surface
 .hero h1 { font-family: var(--font-brand); font-size: clamp(30px, 6vw, 52px); line-height: 1.12; letter-spacing: .02em; text-wrap: balance; margin-bottom: var(--s4); }
 .hero h1 span { color: var(--gold); }
 .hero p { color: var(--text-2); font-size: var(--fs-md); max-width: 58ch; margin-bottom: var(--s6); }
-.hero-cta { display: flex; gap: var(--s3); flex-wrap: wrap; }
+.hero-cta { display: flex; gap: var(--s3); flex-wrap: wrap; align-items: center; }
+.hero-email { flex: 1 1 200px; max-width: 260px; min-width: 180px; }
+.hero-note { margin-top: var(--s3); color: var(--text-3); }
 
 .section { max-width: var(--maxw); margin: 0 auto; padding: var(--s8) var(--s4); }
 .section-head { margin-bottom: var(--s6); }
