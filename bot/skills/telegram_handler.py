@@ -5017,7 +5017,12 @@ class TelegramHandler:
             # (that cache feeds operator-account equity/telemetry).
             if is_operator_view and ("error" not in bal or bal.get("total", 0) > 0):
                 self.engine._live_balance_cache = bal
-                self.engine._live_balance_cache_ts = time.time()
+                # MUST be time.monotonic(): the TTL check in get_live_equity()
+                # and the staleness watchdog both diff this against monotonic.
+                # A wall-clock stamp here made the cache read as fresh FOREVER
+                # (epoch >> monotonic), freezing live sizing equity after one
+                # /livebalance and blinding the stale-balance alert.
+                self.engine._live_balance_cache_ts = time.monotonic()
             total = bal.get("total", 0)
             free = bal.get("free", 0)
             used = bal.get("used", 0)
