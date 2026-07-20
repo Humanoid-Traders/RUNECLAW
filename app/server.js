@@ -157,6 +157,7 @@ app.use('/api/authority', require('./routes/authority'));
 app.use('/api/sentry', require('./routes/sentry'));
 app.use('/api/proofofpnl', require('./routes/proofofpnl'));
 app.use('/api/share', require('./routes/share'));
+app.use('/api/airdrops', require('./routes/airdrops'));
 app.use('/api/exposure', require('./routes/exposure'));
 app.use('/api/research', require('./routes/research'));
 app.use('/mcp', require('./routes/mcp'));

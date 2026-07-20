@@ -58,6 +58,11 @@ router.post('/', chatLimit, async (req, res) => {
     // "rwa radar" — read-only tokenized-asset sector snapshot from live tickers.
     const rwaReply = await maybeHandleRwaChat(req.user.user_id, text);
     if (rwaReply) return res.json(rwaReply);
+    // "airdrops" / "testnets" — curated guided-only radar; the reply itself
+    // restates the anti-sybil line so chat can never be read as offering
+    // automated farming.
+    const airdropReply = await require('../lib/airdrops').maybeHandleAirdropChat(req.user.user_id, text);
+    if (airdropReply) return res.json(airdropReply);
     // "meme radar" / "dexscreener" — read-only on-chain meme/AI-token snapshot
     // with an explicit safety read. Never trades or launches.
     const memeReply = await require('../lib/meme').maybeHandleMemeChat(req.user.user_id, text);

@@ -742,6 +742,10 @@
           <span class="badge" style="margin-left:auto" title="Market intelligence from live venue tickers — the radar never trades">read-only</span></h2>
           <div id="c-rwa"><div class="skel"></div><div class="skel"></div></div>
         </section>
+        <section class="panel" id="p-airdrops"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-sparkle"></use></svg>Airdrop &amp; testnet radar
+          <span class="badge" style="margin-left:auto" title="Curated campaigns with guided checklists — you perform and sign every step yourself. RUNECLAW never automates participation or farms with multiple wallets.">guided-only</span></h2>
+          <div id="c-airdrops"><div class="skel"></div><div class="skel"></div></div>
+        </section>
         <section class="panel" id="p-mkpat"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-target"></use></svg>Engine pattern read
           <span class="right muted small">chart &amp; candle patterns · observations, not signals</span></h2>
           <div id="c-mkpat"><div class="skel"></div><div class="skel"></div></div>
@@ -813,6 +817,38 @@
         </table></div>`).join('');
       return head + cats;
     }, { empty: { icon: 'icon-coin', text: 'The RWA radar lights up when live tickers are reachable.' } });
+
+    // Airdrop & testnet radar — curated campaigns, guided checklists, and
+    // (when logged in) honest wallet-readiness hints. Never automated.
+    renderPanel(C('airdrops'), async () => {
+      const r = LOGGED_IN
+        ? await fetchJSON('/api/airdrops/me', { timeoutMs: 20000 })
+        : await fetchJSON('/api/airdrops', { auth: false, timeoutMs: 12000 });
+      const d = r.data;
+      if (!r.ok || !d || !(d.campaigns || []).length) return null;
+      const statusChip = (s) => ({
+        live: '<span class="badge" style="color:var(--up)">live</span>',
+        points: '<span class="badge">points</span>',
+        expected: '<span class="badge muted">speculative</span>',
+      }[s] || `<span class="badge muted">${esc(s)}</span>`);
+      const cards = d.campaigns.map((c) => `
+        <details style="border:1px solid var(--line);border-radius:8px;padding:var(--s2) var(--s3);margin-bottom:var(--s2)">
+          <summary style="cursor:pointer"><b>${esc(c.name)}</b> <span class="muted small">${esc(c.project_type)}</span>
+            ${statusChip(c.status)} <span class="muted small">· ${esc(c.costs)} · effort ${esc(c.effort)}</span>
+            ${(c.hints || []).some(h => h.kind === 'ready') ? ' <span class="small" style="color:var(--up)">✅ wallet ready</span>' : ''}</summary>
+          ${(c.hints || []).map(h => `<p class="small" style="margin-top:var(--s1);color:${h.kind === 'ready' ? 'var(--up)' : 'var(--text-2)'}">${esc(h.text)}</p>`).join('')}
+          <p class="small muted" style="margin-top:var(--s1)">${esc(c.notes)}</p>
+          <ol class="small" style="margin:var(--s2) 0 0 var(--s4);color:var(--text-2)">
+            ${(c.steps || []).map(s => `<li style="margin-bottom:4px">${esc(s)}</li>`).join('')}
+          </ol>
+          <p class="small" style="margin-top:var(--s2)"><a href="${esc(c.official_url)}" target="_blank" rel="noopener">Official site ↗</a>
+            <span class="muted">— verify everything there before acting.</span></p>
+        </details>`).join('');
+      return `<p class="muted small">Curated ${esc(d.curated_at)} — campaigns churn, always confirm on the official link.
+          ${d.wallet_linked ? 'Readiness hints read from your linked wallet (read-only).' : 'Link a wallet (Sign-In with Ethereum) for readiness hints.'}</p>`
+        + cards
+        + `<p class="small muted" style="margin-top:var(--s2)"><i>${esc(d.anti_sybil)}</i></p>`;
+    }, { empty: { icon: 'icon-sparkle', text: 'The airdrop radar is loading its curated catalog.' } });
 
     // Cross-venue intelligence (one shared fetch; hourly bot-pushed data).
     const reportsP = getReports();
@@ -3319,7 +3355,8 @@
                ['🌐 My net worth', 'my net worth'],
                ['🛡 My total exposure', "what's my total exposure?"],
                ['⚡ What-if $1k replay', "what if I'd taken every signal with $1k?"],
-               ['🏛 RWA radar', 'rwa radar']]
+               ['🏛 RWA radar', 'rwa radar'],
+               ['🪂 Airdrop radar', 'airdrop radar']]
               .map(([l, q]) => `<button class="btn btn--sm" data-ask="${esc(q)}" type="button">${l}</button>`).join('')}
           </div>
         </section>
