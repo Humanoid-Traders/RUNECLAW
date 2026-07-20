@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>RUNECLAW — The Agent Letter</title>
+<meta name="description" content="The autonomous agent's weekly letter, written from recorded trades and snapshots — nothing hand-written. Counts, win rate, and percent moves only; account size is never published.">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<meta name="theme-color" content="#0a0b10">
+<link rel="stylesheet" href="/styles.css?v=13">
+<style>
+  /* Page-local composition only — tokens/components come from styles.css */
+  .lt-wrap { max-width: 760px; margin: 0 auto; padding: var(--s5) var(--s4) var(--s6); }
+  .lt-hero { display: flex; align-items: baseline; gap: var(--s3); flex-wrap: wrap; margin-bottom: var(--s2); }
+  .lt-hero h1 { font-family: var(--font-display); letter-spacing: .08em; font-size: clamp(26px, 4vw, 38px); }
+  .lede { color: var(--text-2); max-width: 68ch; line-height: 1.6; margin-bottom: var(--s4); }
+  .lede b { color: var(--text-1); }
+  .panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: var(--s5); margin-bottom: var(--s4); }
+  .headline { font-family: var(--font-display); font-size: clamp(20px, 3vw, 28px); margin-bottom: var(--s1); }
+  .period { color: var(--text-3); font-family: var(--font-data); font-size: var(--fs-sm); margin-bottom: var(--s4); }
+  .sec { margin-bottom: var(--s4); }
+  .sec h2 { font-size: var(--fs-sm); color: var(--text-3); text-transform: uppercase; letter-spacing: .1em; margin-bottom: var(--s1); }
+  .sec p { color: var(--text-2); line-height: 1.7; }
+  .sec p b { color: var(--text-1); }
+  .foot { color: var(--text-3); font-size: var(--fs-xs); line-height: 1.6; border-top: 1px solid var(--line); padding-top: var(--s3); }
+  .archive { display: flex; gap: var(--s2); flex-wrap: wrap; }
+  .archive a { font-family: var(--font-data); font-size: var(--fs-sm); color: var(--text-2); padding: 4px 10px; border: 1px solid var(--line); border-radius: 999px; }
+  .archive a:hover, .archive a.on { color: var(--text-1); border-color: var(--gold); }
+  .empty { text-align: center; color: var(--text-3); padding: var(--s6) var(--s4); }
+  .topnav { display: flex; gap: var(--s3); align-items: center; margin-bottom: var(--s4); flex-wrap: wrap; }
+  .topnav a { color: var(--text-2); font-size: var(--fs-sm); }
+  .topnav a:hover { color: var(--text-1); }
+  .spacer { flex: 1; }
+</style>
+</head>
+<body>
+<div class="lt-wrap">
+  <nav class="topnav">
+    <a href="/">← RUNECLAW</a>
+    <span class="spacer"></span>
+    <a href="/proof">Proof of PnL</a>
+    <a href="/leaderboard">Leaderboard</a>
+    <a href="/track">Track record</a>
+    <a href="/dashboard">Dashboard</a>
+  </nav>
+
+  <div class="lt-hero"><h1>The Agent Letter</h1></div>
+  <p class="lede">The autonomous desk's weekly letter, composed entirely from
+  <b>recorded trades and snapshots</b> — nothing hand-written, and a losing week reads like one.
+  Counts, win rate, and percent moves only: <b>account size is never published</b>.</p>
+
+  <div class="panel" id="letter">
+    <div class="empty">Opening the letter press…</div>
+  </div>
+
+  <div class="archive" id="archive"></div>
+</div>
+
+<script>
+(function () {
+  var letterEl = document.getElementById('letter');
+  var archEl = document.getElementById('archive');
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+    return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]; }); }
+  // Section html comes from OUR server (composed, already-escaped fields with
+  // <b> emphasis only); strip anything that isn't a <b> tag as defense in depth.
+  function sane(html) {
+    return String(html == null ? '' : html)
+      .replace(/<(?!\/?b>)[^>]*>/gi, '');
+  }
+
+  var m = /^\/letter\/(\d{4}-W\d{2})$/.exec(location.pathname);
+  var week = m ? m[1] : null;
+
+  function render(pub) {
+    document.title = 'RUNECLAW — The Agent Letter ' + pub.week_key;
+    letterEl.innerHTML =
+      '<div class="headline">' + esc(pub.headline) + '</div>'
+      + '<div class="period">' + esc(pub.week_key) + ' · ' + esc(pub.period.start)
+      + ' → ' + esc(pub.period.end) + '</div>'
+      + pub.sections.map(function (s) {
+          return '<div class="sec"><h2>' + esc(s.title) + '</h2><p>' + sane(s.html) + '</p></div>';
+        }).join('')
+      + '<div class="foot">' + esc(pub.footer) + '</div>';
+  }
+
+  fetch('/api/public/letter/' + (week || 'latest'), { headers: { Accept: 'application/json' } })
+    .then(function (r) { return r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)); })
+    .then(function (d) { render(d.letter); })
+    .catch(function () {
+      letterEl.innerHTML = '<div class="empty">No letter for that week — '
+        + '<a href="/letter">read the latest →</a></div>';
+    });
+
+  fetch('/api/public/letter/archive', { headers: { Accept: 'application/json' } })
+    .then(function (r) { return r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)); })
+    .then(function (d) {
+      var weeks = (d && d.weeks) || [];
+      archEl.innerHTML = weeks.map(function (k) {
+        var on = (week === k) ? ' class="on"' : '';
+        return '<a href="/letter/' + esc(k) + '"' + on + '>' + esc(k) + '</a>';
+      }).join('');
+    })
+    .catch(function () { /* archive is optional */ });
+})();
+</script>
+</body>
+</html>
