@@ -87,4 +87,29 @@ async function notifySubscribers(payload, userIds = null) {
   return sent;
 }
 
-module.exports = { isConfigured, publicKey, notifySubscribers, setSender };
+/**
+ * Topic-scoped push: send only to users whose profile prefs OPTED IN to the
+ * topic (prefs.push_<topic> === true). Unlike the broadcast notifySubscribers,
+ * a topic push reaches nobody by default — new notification categories must
+ * never surprise existing subscribers. Never throws; returns sends attempted.
+ */
+async function notifyTopic(topic, payload) {
+  if (!configured) return 0;
+  const key = `push_${String(topic)}`;
+  let userIds = [];
+  try {
+    const [rows] = await pool.execute(
+      'SELECT user_id, prefs FROM user_profiles LIMIT 2000');
+    for (const r of rows) {
+      let prefs = {};
+      try { prefs = JSON.parse(r.prefs || '{}'); } catch (e) { /* skip row */ }
+      if (prefs && prefs[key] === true) userIds.push(r.user_id);
+    }
+  } catch (e) {
+    return 0;
+  }
+  if (!userIds.length) return 0;
+  return notifySubscribers(payload, userIds);
+}
+
+module.exports = { isConfigured, publicKey, notifySubscribers, notifyTopic, setSender };
