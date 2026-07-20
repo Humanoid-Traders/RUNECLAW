@@ -333,7 +333,11 @@ class RuneClawEngine:
         # Telegram handler at start_monitor; None when Telegram is off).
         self._proactive_monitor = None
         self._monitor_stale_callback = None
-        self._last_monitor_liveness_check: float = 0.0
+        # None, NOT 0.0 — monotonic's epoch is boot time, so on a freshly
+        # booted host `monotonic() - 0.0 < timeout` would silently suppress
+        # the first check for a whole window (the documented sentinel trap;
+        # caught in CI, whose runners boot seconds before the job).
+        self._last_monitor_liveness_check: float | None = None
         # Throttle for the periodic SL/TP self-heal (re-place stops that went
         # missing DURING operation, not just at startup). monotonic seconds.
         self._last_sltp_verify_ts: float = 0.0
@@ -2465,7 +2469,8 @@ class RuneClawEngine:
             if timeout <= 0:
                 return
             now = time.monotonic()
-            if now - self._last_monitor_liveness_check < timeout:
+            last_check = self._last_monitor_liveness_check
+            if last_check is not None and now - last_check < timeout:
                 return
             if not self._is_monitor_stale(
                     getattr(monitor, "last_loop_ts", None), now, timeout):

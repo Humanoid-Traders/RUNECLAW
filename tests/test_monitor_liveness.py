@@ -78,7 +78,10 @@ def test_monitor_run_records_heartbeat(monkeypatch):
 def _engine_stub():
     """Bare object with only the attrs _maybe_check_monitor_liveness touches."""
     e = SimpleNamespace()
-    e._last_monitor_liveness_check = 0.0
+    # None sentinel (never checked yet) — a 0.0 here with time.monotonic()
+    # would suppress the first check on a freshly-booted host (CI caught
+    # exactly this in the implementation).
+    e._last_monitor_liveness_check = None
     e._proactive_monitor = None
     e._monitor_stale_callback = None
     e._is_monitor_stale = RuneClawEngine._is_monitor_stale
@@ -92,7 +95,27 @@ def _run_check(e):
 def test_noop_without_monitor_attached():
     e = _engine_stub()
     _run_check(e)                                  # must not raise
-    assert e._last_monitor_liveness_check == 0.0
+    assert e._last_monitor_liveness_check is None
+
+
+def test_first_check_works_on_a_freshly_booted_host(monkeypatch):
+    # THE CI failure this guards: monotonic's epoch is BOOT time, so on a
+    # freshly-booted host `monotonic() - 0.0 < timeout` read as "checked
+    # recently" and suppressed the first window (passed locally on a
+    # long-lived container, failed on CI runners). Simulate 200s of uptime
+    # and require the None sentinel to let the very first check through.
+    import bot.core.engine as eng_mod
+    monkeypatch.setattr(eng_mod.time, "monotonic", lambda: 200.0)
+    e = _engine_stub()
+    e._proactive_monitor = SimpleNamespace(last_loop_ts=200.0 - 10_000)
+    calls = []
+
+    async def _cb(age):
+        calls.append(age)
+
+    e._monitor_stale_callback = _cb
+    _run_check(e)
+    assert len(calls) == 1, "first check must never be throttle-suppressed"
 
 
 def test_stale_monitor_fires_callback_once_per_window():
