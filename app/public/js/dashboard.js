@@ -13,20 +13,24 @@
           pnlClass, fmtAgo, dirChip, sanitizeBotHtml, toast, renderPanel,
           stateBlock, connectStream } = RC;
 
+  // Ordered by the new-user JOURNEY, not build order: the core loop
+  // (chat → read signals → trade → see portfolio → browse markets) comes first,
+  // the analyst/advanced surfaces follow, and Account sits last. Views are
+  // hash-routed by id, so order only affects display, never routing.
   const VIEWS = [
     { id: 'home',      label: 'Home',      icon: 'icon-home' },
     { id: 'chat',      label: 'AI Chat',   icon: 'icon-chat' },
-    { id: 'hub',       label: 'Agent Hub', icon: 'icon-bolt' },
+    { id: 'signals',   label: 'Signals',   icon: 'icon-radar' },
+    { id: 'trade',     label: 'Trade',     icon: 'icon-target' },
+    { id: 'portfolio', label: 'Portfolio', icon: 'icon-chart' },
     { id: 'markets',   label: 'Markets',   icon: 'icon-globe' },
     { id: 'macro',     label: 'Macro',     icon: 'icon-shield' },
     { id: 'guardian',  label: 'Guardian',  icon: 'icon-check' },
-    { id: 'signals',   label: 'Signals',   icon: 'icon-radar' },
     { id: 'deepscan',  label: 'Deep Scan', icon: 'icon-target' },
     { id: 'feed',      label: 'Live Feed', icon: 'icon-sparkle' },
-    { id: 'trade',     label: 'Trade',     icon: 'icon-target' },
-    { id: 'portfolio', label: 'Portfolio', icon: 'icon-chart' },
     { id: 'leaderboard', label: 'Leaders', icon: 'icon-target' },
     { id: 'lab',       label: 'Lab',       icon: 'icon-sparkle' },
+    { id: 'hub',       label: 'Agent Hub', icon: 'icon-bolt' },
     { id: 'engine',    label: 'Engine',    icon: 'icon-cog' },
     { id: 'account',   label: 'Account',   icon: 'icon-user' },
   ];
