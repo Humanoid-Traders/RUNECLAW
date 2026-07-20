@@ -34,6 +34,8 @@
   .topnav a { color: var(--text-2); font-size: var(--fs-sm); }
   .topnav a:hover { color: var(--text-1); }
   .spacer { flex: 1; }
+  .season-tab { font-family: var(--font-data); font-size: var(--fs-sm); color: var(--text-2); padding: 4px 10px; border: 1px solid var(--line); border-radius: 999px; cursor: pointer; background: none; }
+  .season-tab:hover, .season-tab.on { color: var(--text-1); border-color: var(--gold); }
 </style>
 </head>
 <body>
@@ -53,6 +55,8 @@
   (profit factor, round-trips, Sharpe), and <b>never a dollar figure</b>. Each row carries the
   <code>publish_hash</code> of its sealed statement; a tampered record is dropped before it can
   rank. Don't trust the ranking — <a href="/proof">verify the fills</a>.</p>
+
+  <div class="archive" id="seasons" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:var(--s3)"></div>
 
   <div class="panel">
     <div class="tbl-scroll">
@@ -81,15 +85,35 @@
 (function () {
   var rowsEl = document.getElementById('rows');
   var metaEl = document.getElementById('meta');
+  var seasonsEl = document.getElementById('seasons');
+  var activeSeason = '';         // '' = live board
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
     return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]; }); }
   function pf(v) { return v === 'inf' ? '∞' : (v == null ? '—' : esc(v)); }
 
+  function renderSeasons(data) {
+    var seasons = (data && data.seasons) || [];
+    if (!seasons.length) { seasonsEl.innerHTML = ''; return; }
+    var tabs = ['<button type="button" class="season-tab' + (activeSeason === '' ? ' on' : '')
+      + '" data-season="">Live</button>'];
+    seasons.forEach(function (s) {
+      if (!/^\d{4}-\d{2}$/.test(s)) return;
+      tabs.push('<button type="button" class="season-tab' + (activeSeason === s ? ' on' : '')
+        + '" data-season="' + esc(s) + '">Season ' + esc(s) + '</button>');
+    });
+    seasonsEl.innerHTML = tabs.join('');
+  }
+
   function render(data) {
+    renderSeasons(data);
     var rows = (data && data.rows) || [];
     if (!rows.length) {
-      rowsEl.innerHTML = '<tr><td colspan="6" class="empty">No verified agents on the board yet — '
-        + 'the first sealed record appears here once an agent opts in.</td></tr>';
+      rowsEl.innerHTML = '<tr><td colspan="6" class="empty">'
+        + (activeSeason
+          ? 'No frozen standings for season ' + esc(activeSeason) + ' — statements sealed during that month appear here.'
+          : 'No verified agents on the board yet — the first sealed record appears here once an agent opts in.')
+        + '</td></tr>';
+      if (metaEl) metaEl.textContent = '';
       return;
     }
     rowsEl.innerHTML = rows.map(function (r) {
@@ -109,13 +133,25 @@
     if (metaEl) metaEl.textContent = rows.length + ' verified agent' + (rows.length === 1 ? '' : 's') + '.';
   }
 
-  fetch('/api/public/leaderboard', { headers: { Accept: 'application/json' } })
-    .then(function (r) { return r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)); })
-    .then(render)
-    .catch(function () {
-      rowsEl.innerHTML = '<tr><td colspan="6" class="empty">The board is temporarily unavailable. '
-        + '<a href="/proof">Verify our own record →</a></td></tr>';
-    });
+  function load(season) {
+    activeSeason = /^\d{4}-\d{2}$/.test(season || '') ? season : '';
+    var qs = activeSeason ? '?season=' + encodeURIComponent(activeSeason) : '';
+    fetch('/api/public/leaderboard' + qs, { headers: { Accept: 'application/json' } })
+      .then(function (r) { return r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)); })
+      .then(render)
+      .catch(function () {
+        rowsEl.innerHTML = '<tr><td colspan="6" class="empty">The board is temporarily unavailable. '
+          + '<a href="/proof">Verify our own record →</a></td></tr>';
+      });
+  }
+
+  seasonsEl.addEventListener('click', function (e) {
+    var tab = e.target.closest('.season-tab');
+    if (!tab) return;
+    load(tab.getAttribute('data-season') || '');
+  });
+
+  load('');
 })();
 </script>
 </body>

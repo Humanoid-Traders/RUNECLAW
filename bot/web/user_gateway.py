@@ -1040,30 +1040,52 @@ async def handle_proofofpnl_public(request: web.Request) -> web.Response:
     return web.json_response(_proofofpnl_payload())
 
 
-def _leaderboard_payload() -> dict:
+def _leaderboard_payload(season: str = "") -> dict:
     """The public verifiable leaderboard: opted-in agents ranked by their
     RE-VERIFIABLE record. Each row is anonymous (handle only), size-agnostic (no
     dollar figure), and carries the publish_hash so anyone can re-derive it.
-    Rows that fail re-verification are excluded by the ranker."""
+    Rows that fail re-verification are excluded by the ranker.
+
+    With ``season`` (e.g. '2026-07'): the FROZEN standings for that calendar
+    month — statements as sealed during the window, ranked through the same
+    re-verify-or-exclude path (bot/proofofpnl/seasons.py). An unknown or
+    malformed season yields an empty board, never an error."""
     try:
-        from bot.proofofpnl.leaderboard import get_leaderboard_registry
-        try:
-            floor = int(str(os.environ.get("PROOFOFPNL_LEADERBOARD_MIN_TRIPS", "") or 1))
-        except (TypeError, ValueError):
-            floor = 1
-        rows = get_leaderboard_registry().ranked(min_round_trips=max(1, floor), limit=50)
+        floor = int(str(os.environ.get("PROOFOFPNL_LEADERBOARD_MIN_TRIPS", "") or 1))
+    except (TypeError, ValueError):
+        floor = 1
+    floor = max(1, floor)
+    season = str(season or "").strip()
+    rows: list = []
+    seasons: list = []
+    try:
+        from bot.proofofpnl.seasons import get_season_store
+        store = get_season_store()
+        seasons = store.season_ids()[:24]
+        if season:
+            rows = store.ranked(season, min_round_trips=floor, limit=50)
+        else:
+            from bot.proofofpnl.leaderboard import get_leaderboard_registry
+            rows = get_leaderboard_registry().ranked(min_round_trips=floor, limit=50)
     except Exception:
         rows = []
-    return {"format": "runeclaw.proofofpnl.leaderboard.v0",
-            "rows": rows, "count": len(rows)}
+    payload = {"format": "runeclaw.proofofpnl.leaderboard.v0",
+               "rows": rows, "count": len(rows), "seasons": seasons}
+    if season:
+        payload["season"] = season
+    return payload
 
 
 async def handle_leaderboard_public(request: web.Request) -> web.Response:
-    """GET /gateway/public/leaderboard — the ranked, anonymous, verifiable board,
-    no auth. Same discipline as the public Proof-of-PnL feed: every row is
-    public-safe by construction and independently re-verifiable, so serving it
-    openly is the point, not a leak."""
-    return web.json_response(_leaderboard_payload())
+    """GET /gateway/public/leaderboard[?season=YYYY-MM] — the ranked, anonymous,
+    verifiable board (live, or a season's frozen standings), no auth. Same
+    discipline as the public Proof-of-PnL feed: every row is public-safe by
+    construction and independently re-verifiable, so serving it openly is the
+    point, not a leak."""
+    season = (request.query.get("season") or "").strip()[:7]
+    if season and not re.match(r"^\d{4}-\d{2}$", season):
+        season = ""
+    return web.json_response(_leaderboard_payload(season))
 
 
 # ── Share card (privacy-safe PNG for the web share flow) ─────────────────────

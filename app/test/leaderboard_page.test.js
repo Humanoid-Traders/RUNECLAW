@@ -17,7 +17,7 @@ test('the public relay route is registered and page is served', () => {
 
 test('the relay is public (no auth middleware) and cached', () => {
   const r = root('routes/public_leaderboard.js');
-  assert.match(r, /getGateway\(['"]\/public\/leaderboard['"]/);
+  assert.match(r, /getGateway\([`'"]\/public\/leaderboard/);
   assert.doesNotMatch(r, /authMiddleware/);   // public by design
   assert.match(r, /CACHE_MS/);
 });
