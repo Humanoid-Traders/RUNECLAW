@@ -1,19 +1,20 @@
 """
 RC-AUD-001 parity on the post-fill entry paths (limit-fill + drift→market fallback).
 
-The synchronous market entry path retries once and FLATTENS when the stop-loss
-can't be placed. The limit-fill and drift-fallback paths previously did neither —
-the limit path warned only when BOTH legs failed and the drift path was silent —
-so an SL-only failure left a live leveraged position with no exchange stop and no
-operator alert until a later check_positions tick. `_reattempt_post_fill_sl` now
-mirrors the market path's retry + unprotected-marker + alert (it does NOT flatten:
-the grace sub-loop / escalation in check_positions is the designed remediation in
-that monitoring context).
+`_reattempt_post_fill_sl` is now a full ESCALATION LADDER with the same
+end-state guarantee as the synchronous market path: on SL failure it retries
+once, then runs the bounded grace sub-loop (re-protect / close on breach), then
+FLATTENS — the position ends protected, closed, or with an URGENT manual-close
+message. It never ends silently "unprotected (monitoring active)". Returns
+``(sl_id, tp_id, close_msg)``; ``close_msg`` non-None means the ladder closed
+the position (or the close failed) and callers must surface it.
 
-These cover the helper directly (no network — _place_sl_tp is stubbed).
+These cover the helper directly (no network — _place_sl_tp, the grace
+sub-loop, and close_position are stubbed).
 """
 
 import pytest
+from unittest.mock import AsyncMock
 
 from bot.core.live_executor import LiveExecutor, LivePosition
 from bot.utils.models import Direction
@@ -27,8 +28,10 @@ def _pos(sl_id=None, tp_id=None, sl=95.0, tp=110.0):
     )
 
 
-def _exec(tmp_path, monkeypatch, place_results):
-    """place_results: list of (sl, tp) returned on successive _place_sl_tp calls."""
+def _exec(tmp_path, monkeypatch, place_results, grace=None, close=None):
+    """place_results: (sl, tp) tuples for successive _place_sl_tp calls.
+    grace: async callable for _guard_unprotected_grace (default: no-op → None).
+    close: AsyncMock for close_position (default returns "CLOSED test")."""
     e = LiveExecutor(state_dir=str(tmp_path))
     seq = list(place_results)
     calls = {"place": 0}
@@ -38,19 +41,26 @@ def _exec(tmp_path, monkeypatch, place_results):
         return seq.pop(0) if seq else (None, None)
 
     monkeypatch.setattr(e, "_place_sl_tp", _fake_place)
+
+    async def _default_grace(exchange, pos):
+        return None
+
+    e._guard_unprotected_grace = grace or _default_grace
+    e.close_position = close or AsyncMock(return_value="CLOSED test")
     return e, calls
 
 
 @pytest.mark.asyncio
 async def test_sl_placed_first_try_is_noop(tmp_path, monkeypatch):
-    # Common case: SL placed → no retry, ids unchanged, NOT marked unprotected.
+    # Common case: SL placed → no retry, ids unchanged, no close, not flagged.
     e, calls = _exec(tmp_path, monkeypatch, [("sl1", "tp1")])
     p = _pos()
-    sl_id, tp_id = await e._reattempt_post_fill_sl(
+    sl_id, tp_id, close_msg = await e._reattempt_post_fill_sl(
         object(), p, Direction.LONG, 1.0, "sl1", "tp1", "T1")
-    assert (sl_id, tp_id) == ("sl1", "tp1")
+    assert (sl_id, tp_id, close_msg) == ("sl1", "tp1", None)
     assert calls["place"] == 0                 # no retry attempted
     assert getattr(p, "unprotected", False) is False
+    e.close_position.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -58,60 +68,117 @@ async def test_sl_fails_then_retry_succeeds(tmp_path, monkeypatch):
     # SL None on the entry attempt; the single retry gets it on → protected.
     e, calls = _exec(tmp_path, monkeypatch, [("sl_retry", "tp_retry")])
     p = _pos()
-    sl_id, tp_id = await e._reattempt_post_fill_sl(
+    sl_id, tp_id, close_msg = await e._reattempt_post_fill_sl(
         object(), p, Direction.LONG, 1.0, None, None, "T1")
-    assert sl_id == "sl_retry"
+    assert sl_id == "sl_retry" and close_msg is None
     assert calls["place"] == 1                 # retried exactly once
     assert getattr(p, "unprotected", False) is False
+    e.close_position.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-async def test_sl_only_failure_is_marked_unprotected(tmp_path, monkeypatch):
-    # The gap: TP placed but SL is None. Must retry, and on persistent failure
-    # mark unprotected (previously this was silent because TP was truthy).
-    e, calls = _exec(tmp_path, monkeypatch, [(None, "tp2")])   # retry: still no SL
+async def test_retry_fails_then_grace_places_stop(tmp_path, monkeypatch):
+    # Retry fails → grace sub-loop gets the exchange stop on: protected, marker
+    # cleared, grace's ids adopted, NO flatten.
+    async def _grace_places(exchange, pos):
+        pos.sl_order_id = "SL-G"
+        return None
+
+    e, calls = _exec(tmp_path, monkeypatch, [(None, None)], grace=_grace_places)
     p = _pos()
-    sl_id, tp_id = await e._reattempt_post_fill_sl(
+    sl_id, tp_id, close_msg = await e._reattempt_post_fill_sl(
         object(), p, Direction.LONG, 1.0, None, "tp1", "T1")
-    assert sl_id is None
-    assert tp_id == "tp1"                       # original TP preserved
-    assert calls["place"] == 1                  # retried once
-    assert getattr(p, "unprotected", False) is True
+    assert sl_id == "SL-G" and close_msg is None
+    assert getattr(p, "unprotected", False) is False   # cleared once protected
+    e.close_position.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-async def test_sl_fails_both_times_marked_unprotected(tmp_path, monkeypatch):
-    e, calls = _exec(tmp_path, monkeypatch, [(None, None)])    # retry also fails
+async def test_grace_breach_close_propagates_without_double_close(tmp_path, monkeypatch):
+    # Grace closed the position on breach → its message propagates and the
+    # flatten stage must NOT fire a second close.
+    async def _grace_closed(exchange, pos):
+        return "CLOSED_LOCAL breach msg"
+
+    e, calls = _exec(tmp_path, monkeypatch, [(None, None)], grace=_grace_closed)
     p = _pos()
-    sl_id, tp_id = await e._reattempt_post_fill_sl(
+    sl_id, tp_id, close_msg = await e._reattempt_post_fill_sl(
         object(), p, Direction.LONG, 1.0, None, None, "T1")
     assert sl_id is None
-    assert calls["place"] == 1
-    assert getattr(p, "unprotected", False) is True
+    assert close_msg == "CLOSED_LOCAL breach msg"
+    e.close_position.assert_not_awaited()              # no double close
 
 
 @pytest.mark.asyncio
-async def test_retry_exception_is_swallowed_and_marked(tmp_path, monkeypatch):
+async def test_grace_exhausted_flattens(tmp_path, monkeypatch):
+    # Retry + grace both fail to protect → FLATTEN (RC-AUD-001 parity).
+    e, calls = _exec(tmp_path, monkeypatch, [(None, None)])
+    p = _pos()
+    sl_id, tp_id, close_msg = await e._reattempt_post_fill_sl(
+        object(), p, Direction.LONG, 1.0, None, None, "T1")
+    assert sl_id is None
+    e.close_position.assert_awaited_once_with("T1", reason="sl_placement_failed")
+    assert close_msg and "CLOSED for safety" in close_msg
+
+
+@pytest.mark.asyncio
+async def test_flatten_failure_returns_urgent_message(tmp_path, monkeypatch):
+    # The safety close itself fails → URGENT manual-intervention message, no raise.
+    e, calls = _exec(tmp_path, monkeypatch, [(None, None)],
+                     close=AsyncMock(side_effect=RuntimeError("venue down")))
+    p = _pos()
+    sl_id, tp_id, close_msg = await e._reattempt_post_fill_sl(
+        object(), p, Direction.LONG, 1.0, None, None, "T1")
+    assert sl_id is None
+    assert close_msg and "URGENT" in close_msg and "MANUALLY" in close_msg
+
+
+@pytest.mark.asyncio
+async def test_retry_exception_swallowed_ladder_continues(tmp_path, monkeypatch):
+    # A raising retry must not abort the ladder — grace then flatten still run.
     e = LiveExecutor(state_dir=str(tmp_path))
 
     async def _boom(*a, **k):
         raise RuntimeError("venue error")
 
     monkeypatch.setattr(e, "_place_sl_tp", _boom)
+
+    async def _no_grace(exchange, pos):
+        return None
+
+    e._guard_unprotected_grace = _no_grace
+    e.close_position = AsyncMock(return_value="CLOSED test")
     p = _pos()
-    sl_id, _ = await e._reattempt_post_fill_sl(
+    sl_id, _, close_msg = await e._reattempt_post_fill_sl(
         object(), p, Direction.LONG, 1.0, None, None, "T1")
-    assert sl_id is None                        # fail-open, no raise
-    assert getattr(p, "unprotected", False) is True
+    assert sl_id is None
+    e.close_position.assert_awaited_once()
+    assert close_msg is not None
 
 
 @pytest.mark.asyncio
-async def test_no_stop_level_not_flagged(tmp_path, monkeypatch):
-    # stop_loss == 0 means no stop was intended → no retry, no unprotected flag.
-    e, calls = _exec(tmp_path, monkeypatch, [("x", "y")])
-    p = _pos(sl=0.0, tp=0.0)
-    sl_id, _ = await e._reattempt_post_fill_sl(
+async def test_grace_exception_swallowed_flatten_still_runs(tmp_path, monkeypatch):
+    # Even a raising grace sub-loop must not leave the position naked — flatten.
+    async def _grace_boom(exchange, pos):
+        raise RuntimeError("ticker outage")
+
+    e, calls = _exec(tmp_path, monkeypatch, [(None, None)], grace=_grace_boom)
+    p = _pos()
+    sl_id, _, close_msg = await e._reattempt_post_fill_sl(
         object(), p, Direction.LONG, 1.0, None, None, "T1")
     assert sl_id is None
+    e.close_position.assert_awaited_once()
+    assert close_msg is not None
+
+
+@pytest.mark.asyncio
+async def test_no_stop_level_never_flags_or_flattens(tmp_path, monkeypatch):
+    # stop_loss == 0 means no stop intended → no retry, no grace, no flatten.
+    e, calls = _exec(tmp_path, monkeypatch, [("x", "y")])
+    p = _pos(sl=0.0, tp=0.0)
+    sl_id, _, close_msg = await e._reattempt_post_fill_sl(
+        object(), p, Direction.LONG, 1.0, None, None, "T1")
+    assert sl_id is None and close_msg is None
     assert calls["place"] == 0
     assert getattr(p, "unprotected", False) is False
+    e.close_position.assert_not_awaited()

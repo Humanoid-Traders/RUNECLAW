@@ -4588,7 +4588,14 @@ class LiveExecutor:
                 # local monitoring left them with NO protection at all for the
                 # full 90s on a leveraged perp. If no exchange SL exists after we
                 # attempt placement below, we fall through to local monitoring.
-                age_secs = (datetime.now(UTC) - pos.opened_at).total_seconds() if pos.opened_at else 999
+                # Grace age is measured from when the position ACTUALLY became
+                # live: for market entries that's opened_at, but a limit order
+                # can rest for hours before filling, so the fill paths stamp
+                # `filled_at` and the gate prefers it. Without this, opened_at
+                # (placement time) was always >90s stale by fill time and the
+                # grace machinery NEVER engaged for limit fills.
+                _grace_ref = getattr(pos, "filled_at", None) or pos.opened_at
+                age_secs = (datetime.now(UTC) - _grace_ref).total_seconds() if _grace_ref else 999
                 if age_secs < 90:
                     # ── SAFEGUARD 3: Wait for SL/TP confirmation ──
                     # During the grace period, still attempt to place SL/TP if missing,
@@ -4981,24 +4988,25 @@ class LiveExecutor:
         self, exchange: "ccxt.Exchange", pos: "LivePosition",
         direction, qty: float, sl_id, tp_id, trade_id: Optional[str] = None,
     ):
-        """Post-fill stop-loss-failure handling for the limit-fill and
-        drift-market-fallback entry paths.
+        """Post-fill stop-loss-failure ESCALATION LADDER for the limit-fill and
+        drift-market-fallback entry paths: retry → grace sub-loop → flatten.
 
         The synchronous market entry path enforces RC-AUD-001: if the stop-loss
-        cannot be placed, retry once and FLATTEN. These two post-fill paths
-        previously did neither — the limit path warned only when BOTH legs failed
-        and the drift path was silent — so an SL-only failure left a live,
-        leveraged position with no exchange stop and no operator alert until a
-        later ``check_positions`` tick noticed.
+        cannot be placed, retry once and FLATTEN. These two post-fill paths run
+        on the single monitor task, so they get the gentler middle stage first —
+        the bounded grace sub-loop (audit F-4) re-attempts the stop for ~8s and
+        closes on breach — but the END-STATE GUARANTEE is now the same as the
+        market path: the position is protected, closed, or the operator gets an
+        URGENT manual-close message. Never silently "unprotected (monitoring
+        active)". (Previously the ladder stopped at an unprotected-marker whose
+        claimed remediation — the grace branch — never engaged for limit fills
+        because opened_at was placement time, always past the 90s gate.)
 
-        This mirrors the market path's *retry + unprotected-marker + alert* so the
-        grace/escalation machinery engages immediately. It deliberately does NOT
-        flatten here: unlike the synchronous market path, these run inside the
-        monitoring context where the bounded grace sub-loop (audit F-4) is the
-        designed remediation (re-protect within grace, flatten on breach).
-
-        Byte-identical when the stop-loss placed (the common case): it returns the
-        ids unchanged and takes no action. Returns the resolved ``(sl_id, tp_id)``.
+        Byte-identical when the stop-loss placed (the common case). Returns
+        ``(sl_id, tp_id, close_msg)`` — ``close_msg`` is non-None when the
+        ladder had to close the position (grace breach-close or flatten) or
+        when the flatten itself failed (URGENT manual-intervention message);
+        callers must surface it instead of their normal fill message.
         """
         if sl_id is None and pos.stop_loss > 0:
             audit(trade_log,
@@ -5016,18 +5024,54 @@ class LiveExecutor:
             except Exception as exc:
                 logger.warning("Post-fill SL retry raised for %s: %s", pos.symbol, exc)
         if sl_id is None and pos.stop_loss > 0:
-            # A stop was intended but didn't place. Flag so the unprotected
-            # escalation/grace machinery in check_positions treats this position
-            # as unprotected immediately. (sl=0 means no stop was intended, so it
-            # is not flagged — matching how the rest of the executor treats it.)
+            # A stop was intended but didn't place after two attempts. Flag it,
+            # then run the bounded grace sub-loop NOW (both callers execute on
+            # the single monitor task, satisfying its no-double-close-race
+            # constraint): each pass re-attempts the exchange stop and closes
+            # on breach. (sl=0 means no stop was intended — never flagged and
+            # never flattened, matching the rest of the executor.)
             setattr(pos, "unprotected", True)
             audit(trade_log,
                   f"UNPROTECTED position {pos.symbol}: stop-loss not placed post-fill "
-                  f"— flagged for grace re-protection / escalation",
+                  f"— running grace re-protection now",
                   action="sl_tp_failed", result="UNPROTECTED",
                   data={"trade_id": trade_id, "symbol": pos.symbol,
                         "stop_loss": getattr(pos, "stop_loss", None)})
-        return sl_id, tp_id
+            try:
+                guard_msg = await self._guard_unprotected_grace(exchange, pos)
+            except Exception as exc:
+                logger.warning("Post-fill grace sub-loop raised for %s: %s",
+                               pos.symbol, exc)
+                guard_msg = None
+            if guard_msg:
+                # Grace closed the position on breach — propagate its message.
+                return None, tp_id, guard_msg
+            if pos.sl_order_id:
+                # Grace got the exchange stop on — protected; clear the marker.
+                setattr(pos, "unprotected", False)
+                return pos.sl_order_id, (pos.tp_order_id or tp_id), None
+            # Grace exhausted with no protection and no breach: RC-AUD-001
+            # parity with the market path — FLATTEN rather than leave a live,
+            # leveraged position with no exchange stop.
+            audit(trade_log,
+                  f"CRITICAL: could not protect {pos.symbol} after fill "
+                  f"(retry + grace exhausted) — FLATTENING for safety",
+                  action="sl_tp_failed", result="FLATTEN",
+                  data={"trade_id": trade_id, "symbol": pos.symbol,
+                        "stop_loss": pos.stop_loss})
+            try:
+                close_msg = await self.close_position(
+                    trade_id or pos.trade_id, reason="sl_placement_failed")
+                return None, tp_id, (
+                    f"⚠️ ENTRY ABORTED: {pos.symbol} filled but the stop-loss could "
+                    f"not be placed — position CLOSED for safety.\n{close_msg}")
+            except Exception as exc:
+                logger.error("Post-fill flatten FAILED for %s: %s", pos.symbol, exc)
+                return None, tp_id, (
+                    f"🚨 URGENT: {pos.symbol} is LIVE with NO stop-loss and the "
+                    f"safety close FAILED ({exc}). Close this position MANUALLY "
+                    f"on the exchange NOW.")
+        return sl_id, tp_id, None
 
     async def _check_pending_limit(self, exchange: "ccxt.Exchange",
                                     trade_id: str, pos: LivePosition) -> Optional[str]:
@@ -5133,6 +5177,10 @@ class LiveExecutor:
                 pos.entry_price = fill_price
                 pos.quantity = filled_qty
                 pos.status = "open"
+                # Stamp the ACTUAL fill time: opened_at is placement time, and a
+                # limit can rest for hours — the 90s grace machinery keys off
+                # this so a just-filled position gets grace-window protection.
+                setattr(pos, "filled_at", datetime.now(UTC))
                 pos.order_type = "limit"  # GETCLAW: limit fill = maker fee rate
 
                 # M-01 FIX: Cancel remaining unfilled quantity to prevent untracked fills
@@ -5169,14 +5217,25 @@ class LiveExecutor:
                     exchange, pos.symbol, direction,
                     filled_qty, pos.stop_loss, pos.take_profit
                 )
-                # RC-AUD-001 parity: retry-once + mark-unprotected on SL failure
-                # (the bare market path flattens; here the grace sub-loop remediates).
-                sl_id, tp_id = await self._reattempt_post_fill_sl(
+                # RC-AUD-001 parity: escalation ladder on SL failure — retry
+                # once, then the bounded grace sub-loop (re-protect / close on
+                # breach), then FLATTEN. Same end-state guarantee as the market
+                # path: protected, closed, or an URGENT manual-close message.
+                sl_id, tp_id, ladder_msg = await self._reattempt_post_fill_sl(
                     exchange, pos, direction, filled_qty, sl_id, tp_id, trade_id)
                 pos.sl_order_id = sl_id
                 pos.tp_order_id = tp_id
 
                 self._save_positions()
+                if ladder_msg:
+                    # The ladder closed the position (or the close failed and the
+                    # operator must act). Still audit the fill itself — the trail
+                    # must show fill → failed protection → close, not a gap.
+                    audit(trade_log, f"Limit order FILLED: {pos.symbol} @ ${fill_price:,.4f}",
+                          action="limit_fill", result="FILLED",
+                          data={"trade_id": trade_id, "fill_price": fill_price,
+                                "quantity": filled_qty})
+                    return ladder_msg
 
                 # True up leverage/margin against the exchange NOW, not at the
                 # next restart: when set-leverage silently failed at placement
@@ -5207,9 +5266,11 @@ class LiveExecutor:
                     pos.stop_loss, pos.take_profit, sl_id, tp_id, pos.trailing_state)
                 st_label = getattr(pos, 'strategy_type', 'swing').upper()
                 sl_tp_warn = ""
-                if sl_id is None:
-                    # No exchange stop-loss is the safety-critical case (a missing
-                    # TP alone is not). Surface it to the operator regardless of TP.
+                if sl_id is None and pos.stop_loss > 0:
+                    # Defense-in-depth only: with the escalation ladder above this
+                    # is unreachable for an intended stop (the ladder protects,
+                    # closes, or returns an URGENT message). Never fires for
+                    # sl=0 (no stop intended).
                     sl_tp_warn = "\n⚠️ STOP-LOSS not placed — position unprotected (monitoring active)!"
                 return (
                     f"LIMIT FILLED: {pos.direction} {pos.symbol} [{st_label}]\n"
@@ -5478,6 +5539,9 @@ class LiveExecutor:
             pos.entry_price = fill_price
             pos.quantity = filled_qty
             pos.status = "open"
+            # Stamp the actual fill time so the 90s grace machinery applies to
+            # this just-opened position (opened_at is stale placement time).
+            setattr(pos, "filled_at", datetime.now(UTC))
             pos.order_type = "market"
             pos.limit_order_id = None
 
@@ -5518,14 +5582,24 @@ class LiveExecutor:
                 exchange, pos.symbol, direction,
                 filled_qty, pos.stop_loss, pos.take_profit)
             # RC-AUD-001 parity: a drift→market fallback is a real market entry,
-            # so apply the same retry-once + mark-unprotected on SL failure as the
-            # primary market path (previously this path had no SL-failure handling).
-            sl_id, tp_id = await self._reattempt_post_fill_sl(
+            # so apply the full escalation ladder on SL failure (retry → grace
+            # sub-loop → flatten) — same end-state guarantee as the market path.
+            sl_id, tp_id, ladder_msg = await self._reattempt_post_fill_sl(
                 exchange, pos, direction, filled_qty, sl_id, tp_id, trade_id)
             pos.sl_order_id = sl_id
             pos.tp_order_id = tp_id
 
             self._save_positions()
+            if ladder_msg:
+                # Ladder closed the position (or close failed → URGENT). Audit
+                # the fallback fill so the trail shows fill → close, then surface.
+                audit(trade_log,
+                      f"Limit → Market FALLBACK filled but could not be protected: "
+                      f"{pos.symbol} @ ${fill_price:,.4f}",
+                      action="limit_drift_market_fallback", result="FILLED_THEN_LADDER",
+                      data={"trade_id": trade_id, "fill_price": fill_price,
+                            "quantity": filled_qty})
+                return ladder_msg
 
             audit(trade_log,
                   f"Limit → Market FALLBACK executed: {pos.symbol} @ ${fill_price:,.4f} "
@@ -5800,9 +5874,36 @@ class LiveExecutor:
                               f"Limit order {pos.limit_order_id} filled during cancel for {pos.symbol}",
                               action="cancel_pending", result="FILLED_DURING_CANCEL")
                         pos.status = "open"
+                        pos.quantity = filled          # true up to actual fill
+                        # Stamp fill time + protect NOW: this transition previously
+                        # placed NO exchange stop at all — the position sat naked
+                        # until a later monitor tick. Best-effort placement here
+                        # (no grace/flatten: close_position may run off the
+                        # monitor task, where the grace sub-loop is unsafe); on
+                        # failure, mark unprotected so the freshly-armed grace
+                        # branch engages on the next tick.
+                        setattr(pos, "filled_at", datetime.now(UTC))
+                        _sl_note = ""
+                        if pos.stop_loss > 0 and not pos.sl_order_id:
+                            try:
+                                _dir = Direction.LONG if pos.direction == "LONG" else Direction.SHORT
+                                _sl, _tp = await self._place_sl_tp(
+                                    exchange, pos.symbol, _dir, pos.quantity,
+                                    pos.stop_loss, pos.take_profit)
+                                if _sl:
+                                    pos.sl_order_id = _sl
+                                if _tp and not pos.tp_order_id:
+                                    pos.tp_order_id = _tp
+                            except Exception as _sl_exc:
+                                logger.warning("SL placement after fill-during-cancel "
+                                               "failed for %s: %s", pos.symbol, _sl_exc)
+                            if not pos.sl_order_id:
+                                setattr(pos, "unprotected", True)
+                                _sl_note = ("\n⚠️ Stop-loss not yet placed — "
+                                            "grace re-protection engages this tick.")
                         self._save_positions()
                         return (f"Limit order for {pos.symbol} filled while cancelling. "
-                                f"Position is now open — use Close to exit.")
+                                f"Position is now open — use Close to exit.{_sl_note}")
                 except Exception:
                     # fetch_order failed — assume cancel worked if cancel_order didn't throw
                     cancelled = True
@@ -5846,9 +5947,33 @@ class LiveExecutor:
                         )
                         if has_pos:
                             pos.status = "open"
+                            # Same naked-transition fix as the fill-during-cancel
+                            # race above: stamp fill time and best-effort place the
+                            # exchange stop now; mark unprotected on failure so the
+                            # grace branch engages on the next monitor tick.
+                            setattr(pos, "filled_at", datetime.now(UTC))
+                            _sl_note = ""
+                            if pos.stop_loss > 0 and not pos.sl_order_id:
+                                try:
+                                    _dir = Direction.LONG if pos.direction == "LONG" else Direction.SHORT
+                                    _sl, _tp = await self._place_sl_tp(
+                                        exchange, pos.symbol, _dir, pos.quantity,
+                                        pos.stop_loss, pos.take_profit)
+                                    if _sl:
+                                        pos.sl_order_id = _sl
+                                    if _tp and not pos.tp_order_id:
+                                        pos.tp_order_id = _tp
+                                except Exception as _sl_exc:
+                                    logger.warning("SL placement after already-filled "
+                                                   "cancel race failed for %s: %s",
+                                                   pos.symbol, _sl_exc)
+                                if not pos.sl_order_id:
+                                    setattr(pos, "unprotected", True)
+                                    _sl_note = ("\n⚠️ Stop-loss not yet placed — "
+                                                "grace re-protection engages this tick.")
                             self._save_positions()
                             return (f"Limit order for {pos.symbol} already filled. "
-                                    f"Position is now open — use Close to exit.")
+                                    f"Position is now open — use Close to exit.{_sl_note}")
                     except Exception as _pos_chk_exc:
                         logger.warning("Position check during pending cancel failed for %s: %s",
                                        pos.symbol, _pos_chk_exc)
