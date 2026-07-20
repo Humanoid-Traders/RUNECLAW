@@ -113,6 +113,37 @@ async function buildDossier(base) {
     } catch (e) { /* skip */ }
   }
 
+  // Safety read — deterministic heuristic flags (CEX + on-chain), the same
+  // yardstick the meme radar applies. A finding is a flag with a reason,
+  // never a verdict; "standard" means the checks found nothing.
+  let safetyRead = null;
+  try {
+    const safety = await require('./token_safety').scanToken(base, {
+      ticker: tk,
+      curated: [
+        cat ? `RWA radar (${cat.title})` : null,
+        dex.COMPARE.includes(base) ? 'DEX comparison set' : null,
+      ].filter(Boolean),
+    });
+    const TIER_LABEL = {
+      standard: '🟢 no heuristic flags',
+      elevated: '🟡 elevated',
+      high: '🟠 high',
+      extreme: '🔴 extreme',
+    };
+    sections.push({
+      title: 'Safety read',
+      html: `<b>${TIER_LABEL[safety.tier] || esc(safety.tier)}</b>`
+        + (safety.flags.length
+          ? '<br>' + safety.flags.map(f => `• ${esc(f.text)}`).join('<br>')
+          : ' — these checks found nothing; that is not a safety guarantee.')
+        + (safety.notes.length ? '<br><i>' + safety.notes.map(esc).join(' ') + '</i>' : ''),
+      source: 'deterministic heuristics over live venue tickers + DEXScreener public data',
+    });
+    sources.add('RUNECLAW token safety heuristics (live)');
+    safetyRead = safety;   // rides the payload below
+  } catch (e) { /* safety section degrades to absent, never blocks the dossier */ }
+
   // Engine signal history on this coin.
   try {
     const [rows] = await pool.execute(
@@ -171,6 +202,7 @@ async function buildDossier(base) {
   return {
     read_only: true,
     base,
+    safety: safetyRead,
     sections,
     sources: [...sources],
     next_step: `Ask "analyze ${base}" for the engine's live trade read — real levels, `

@@ -24,6 +24,7 @@ const FAKE_TICKERS = {
 };
 require('../lib/rwa').setTickerFetcher(async () => FAKE_TICKERS);
 require('../lib/research').setTickerFetcher(async () => FAKE_TICKERS);
+require('../lib/token_safety').setPairSearcher(async () => null);
 
 let server, base;
 
