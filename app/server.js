@@ -137,6 +137,7 @@ app.use('/api/leaderboard', leaderboardRouter);
 app.use('/api/public/proofofpnl', require('./routes/public_proofofpnl'));
 app.use('/api/public/leaderboard', require('./routes/public_leaderboard'));
 app.use('/api/public/letter', require('./routes/public_letter'));
+app.use('/api/public/agent', require('./routes/public_agent'));
 app.use('/api/public', trackRouter);
 app.use('/api/lab', labRouter);
 app.use('/api/feed', feedRouter);
@@ -180,6 +181,7 @@ app.get('/wallet-link', (req, res) => { res.setHeader('Cache-Control', 'no-cache
 app.get('/reset', (req, res) => { res.setHeader('Cache-Control', 'no-cache'); res.sendFile(path.join(__dirname, 'public', 'reset.html')); });
 app.get('/verify', (req, res) => { res.setHeader('Cache-Control', 'no-cache'); res.sendFile(path.join(__dirname, 'public', 'verify.html')); });
 app.get('/agent', (req, res) => { res.setHeader('Cache-Control', 'no-cache'); res.sendFile(path.join(__dirname, 'public', 'agent.html')); });
+app.get('/agent/:address', (req, res) => { res.setHeader('Cache-Control', 'no-cache'); res.sendFile(path.join(__dirname, 'public', 'agent-card.html')); });
 
 // Error handler
 app.use((err, req, res, next) => {

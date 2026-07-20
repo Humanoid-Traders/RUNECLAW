@@ -1088,6 +1088,46 @@ async def handle_leaderboard_public(request: web.Request) -> web.Response:
     return web.json_response(_leaderboard_payload(season))
 
 
+# ── Public agent directory (ERC-8004 identity card) ──────────────────────────
+
+_AGENT_ADDR_RE = re.compile(r"^0x[0-9a-f]{40}$")
+
+
+async def handle_agent_card_public(request: web.Request) -> web.Response:
+    """GET /gateway/public/agent/{address} — the agent's ERC-8004 identity card,
+    no auth. Serves the card ALREADY embedded in the latest public-safe
+    publication (the same bundle /proof serves openly), re-verified at read
+    time: the returned ``verified`` flag is a fresh hash+signature check, never
+    a stored claim. 404 for any address that is not the published agent —
+    the directory only ever states what a sealed publication backs."""
+    addr = str(request.match_info.get("address") or "").strip().lower()
+    if not _AGENT_ADDR_RE.match(addr):
+        return web.json_response({"error": "invalid_address"}, status=400)
+    try:
+        from bot.proofofpnl.erc8004 import human_readable, verify_card
+        from bot.proofofpnl.publish import get_publication_store
+        pub = get_publication_store().read()
+    except Exception:
+        pub = None
+    card = ((pub or {}).get("bundle") or {}).get("identity_card")
+    card_addr = str(((card or {}).get("identity") or {}).get("agent_address") or "")
+    if not card or card_addr.lower() != addr:
+        return web.json_response({"error": "unknown_agent"}, status=404)
+    ok, problems = verify_card(card)
+    return web.json_response({
+        "card": card,
+        "verified": bool(ok),
+        "problems": problems,
+        "human": human_readable(card),
+        "publication": {
+            "publish_hash": pub.get("publish_hash"),
+            "published_at": pub.get("published_at"),
+            "trust_tier": pub.get("trust_tier"),
+            "reconciliation": pub.get("reconciliation"),
+        },
+    })
+
+
 # ── Share card (privacy-safe PNG for the web share flow) ─────────────────────
 
 _SHARE_SYMBOL_RE = re.compile(r"^[A-Z0-9]{1,15}$")
@@ -1511,6 +1551,7 @@ def build_gateway(engine, tg_handler) -> web.Application:
     app.router.add_get("/public/proofofpnl", handle_proofofpnl_public)
     app.router.add_get("/public/leaderboard", handle_leaderboard_public)
     app.router.add_get("/share-card", handle_share_card)
+    app.router.add_get("/public/agent/{address}", handle_agent_card_public)
     app.router.add_post("/idleyield", handle_idle_yield)
     # Authority Envelope authoring (per-user, self-serve; _guard_user-gated).
     app.router.add_post("/authority/preview", handle_authority_preview)
