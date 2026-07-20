@@ -1938,3 +1938,99 @@ def render_alpha_card(data: Dict[str, Any]) -> bytes:
     _buf = io.BytesIO()
     img.save(_buf, format="PNG", optimize=True)
     return _buf.getvalue()
+
+
+def render_share_card(data: Dict[str, Any]) -> bytes:
+    """Render the social share card for one closed trade: PNG bytes.
+
+    PRIVACY CONTRACT (do not weaken): the card carries symbol, direction, and
+    PnL PERCENT only. Never a dollar figure, position size, margin, equity, or
+    entry/exit price — the share flow exists so a win can be shared without
+    leaking account size. This renderer deliberately does not accept or read
+    pnl_usd / size_usd / margin_usd / net_pnl keys; keep it that way.
+
+    Args:
+        data: symbol (str), direction ("LONG"|"SHORT"), pnl_pct (float).
+
+    Returns:
+        PNG bytes, or b"" if Pillow is unavailable.
+    """
+    try:
+        from PIL import Image, ImageDraw, ImageFont
+    except ImportError:
+        log.warning("Pillow not installed, cannot render share card")
+        return b""
+
+    # OG-friendly 1.91:1 canvas so the card previews crisply in social feeds.
+    W, H = 800, 418
+    PAD = 44
+
+    img = Image.new("RGB", (W, H), _BG)
+    draw = ImageDraw.Draw(img)
+
+    def _font(size: int, bold: bool = False):
+        for path in [
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold
+            else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf" if bold
+            else "/usr/share/fonts/TTF/DejaVuSans.ttf",
+        ]:
+            try:
+                return ImageFont.truetype(path, size)
+            except (OSError, IOError):
+                continue
+        return ImageFont.load_default()
+
+    f_brand = _font(26, bold=True)
+    f_tag = _font(13)
+    f_badge = _font(20, bold=True)
+    f_symbol = _font(44, bold=True)
+    f_hero = _font(96, bold=True)
+    f_small = _font(13)
+
+    symbol = str(data.get("symbol", "???")).replace(":USDT", "").replace("/USDT", "")
+    direction = str(data.get("direction", "LONG")).upper()
+    try:
+        pnl_pct = float(data.get("pnl_pct", 0) or 0)
+    except (TypeError, ValueError):
+        pnl_pct = 0.0
+
+    is_long = direction == "LONG"
+    dir_color = _GREEN if is_long else _RED
+    pnl_color = _GREEN if pnl_pct >= 0 else _RED
+
+    # ── Gold stripes top + bottom ──
+    draw.rectangle([0, 0, W, 4], fill=_ACCENT_GOLD)
+    draw.rectangle([0, H - 4, W, H], fill=_ACCENT_GOLD)
+
+    # ── Brand header ──
+    y = PAD - 8
+    draw.text((PAD, y), "RUNECLAW", fill=_WHITE, font=f_brand)
+    draw.text((PAD, y + 34), "AUTONOMOUS AI TRADING AGENT", fill=_GRAY, font=f_tag)
+
+    # ── Symbol + direction badge, right-aligned on the header row ──
+    badge_text = f" {direction} "
+    badge_tw = draw.textlength(badge_text, font=f_badge)
+    bx = W - PAD - badge_tw - 8
+    draw.rounded_rectangle([bx, y + 2, bx + badge_tw + 8, y + 34], radius=6,
+                           fill=dir_color)
+    draw.text((bx + 4, y + 6), badge_text, fill=(0, 0, 0), font=f_badge)
+    sym_w = draw.textlength(symbol, font=f_symbol)
+    draw.text((W - PAD - sym_w, y + 44), symbol, fill=_WHITE, font=f_symbol)
+
+    # ── Hero PnL percent, centered ──
+    hero = f"{pnl_pct:+.2f}%"
+    hero_w = draw.textlength(hero, font=f_hero)
+    draw.text(((W - hero_w) / 2, 168), hero, fill=pnl_color, font=f_hero)
+
+    # ── Footer ──
+    tagline = "Traded autonomously. Shared without account size — percent only."
+    draw.text((PAD, H - 58), tagline, fill=_GRAY, font=f_small)
+    wm = "RUNECLAW"
+    wm_w = draw.textlength(wm, font=f_small)
+    draw.text((W - PAD - wm_w, H - 30), wm, fill=_DIM, font=f_small)
+    draw.text((PAD, H - 30), "Not investment advice.", fill=_DIM, font=f_small)
+
+    buf = io.BytesIO()
+    img.save(buf, format="PNG", optimize=True)
+    return buf.getvalue()

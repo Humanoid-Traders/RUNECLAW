@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import hmac
 import html as _html
+import math
 import os
 import re
 import time
@@ -1065,6 +1066,43 @@ async def handle_leaderboard_public(request: web.Request) -> web.Response:
     return web.json_response(_leaderboard_payload())
 
 
+# ── Share card (privacy-safe PNG for the web share flow) ─────────────────────
+
+_SHARE_SYMBOL_RE = re.compile(r"^[A-Z0-9]{1,15}$")
+
+
+async def handle_share_card(request: web.Request) -> web.Response:
+    """GET /gateway/share-card?symbol=&direction=&pnl_pct= — PNG bytes.
+
+    The card is a pure function of three public inputs (symbol, direction,
+    PnL percent); no account, user store, or dollar figure is ever in scope on
+    this path, which is exactly why it is safe to render on request. Inputs are
+    clamped hard because they are caller-supplied. This is the gateway's only
+    binary (non-JSON) response; callers must not route it through JSON relays.
+    """
+    symbol = (request.query.get("symbol") or "").upper().strip()
+    direction = (request.query.get("direction") or "").upper().strip()
+    if not _SHARE_SYMBOL_RE.match(symbol) or direction not in ("LONG", "SHORT"):
+        return web.json_response({"error": "invalid"}, status=400)
+    try:
+        pnl_pct = float(request.query.get("pnl_pct") or "")
+    except (TypeError, ValueError):
+        return web.json_response({"error": "bad_pnl"}, status=400)
+    if not math.isfinite(pnl_pct):
+        return web.json_response({"error": "bad_pnl"}, status=400)
+    pnl_pct = max(-100000.0, min(100000.0, pnl_pct))
+    try:
+        from bot.formatters.signal_card import render_share_card
+        png = render_share_card(
+            {"symbol": symbol, "direction": direction, "pnl_pct": pnl_pct})
+    except Exception:
+        png = b""
+    if not png:
+        return web.json_response({"error": "render_unavailable"}, status=503)
+    return web.Response(body=png, content_type="image/png",
+                        headers={"Cache-Control": "public, max-age=300"})
+
+
 # ── Idle-Asset Yield Optimizer (read-only recommendation) ────────────────────
 #
 # One brain, one language: the optimizer lives in Python (bot.core.idle_yield);
@@ -1450,6 +1488,7 @@ def build_gateway(engine, tg_handler) -> web.Application:
     app.router.add_get("/proofofpnl", handle_proofofpnl)
     app.router.add_get("/public/proofofpnl", handle_proofofpnl_public)
     app.router.add_get("/public/leaderboard", handle_leaderboard_public)
+    app.router.add_get("/share-card", handle_share_card)
     app.router.add_post("/idleyield", handle_idle_yield)
     # Authority Envelope authoring (per-user, self-serve; _guard_user-gated).
     app.router.add_post("/authority/preview", handle_authority_preview)
