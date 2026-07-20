@@ -750,6 +750,10 @@
           <span class="badge" style="margin-left:auto" title="Live DEX pairs with an explicit per-token risk read — most memecoins go to zero; this never trades or launches anything">safety-first</span></h2>
           <div id="c-meme"><div class="skel"></div><div class="skel"></div></div>
         </section>
+        <section class="panel" id="p-flow"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-globe"></use></svg>On-chain flow — DEX taker balance
+          <span class="badge" style="margin-left:auto" title="24h buy/sell taker balance across the deepest DEX pools per asset. NOT exchange netflow, NOT whale attribution — keyless public data, honestly labeled">read-only</span></h2>
+          <div id="c-flow"><div class="skel"></div></div>
+        </section>
         <section class="panel" id="p-mkpat"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-target"></use></svg>Engine pattern read
           <span class="right muted small">chart &amp; candle patterns · observations, not signals</span></h2>
           <div id="c-mkpat"><div class="skel"></div><div class="skel"></div></div>
@@ -882,6 +886,26 @@
             <tbody>${rows}</tbody></table></div>`
         + `<p class="small muted" style="margin-top:var(--s2)">${esc(d.disclaimer)}</p>`;
     }, { empty: { icon: 'icon-radar', text: 'The meme radar lights up when DEXScreener public data is reachable.' } });
+
+    // On-chain flow — 24h DEX taker balance for the majors. The same payload
+    // the engine's gated on-chain voter consumes; honestly labeled.
+    renderPanel(C('flow'), async () => {
+      const r = await fetchJSON('/api/market/onchain-flow', { auth: false, timeoutMs: 15000 });
+      const d = r.data;
+      if (!r.ok || !d || !(d.bases || []).length) return null;
+      const rows = d.bases.map(b => `<tr>
+          <td><b>${esc(b.base)}</b> <span class="muted small">${b.pairs} pools</span></td>
+          <td class="num r ${b.flow_bias >= 0 ? 'up' : 'down'}">${b.flow_bias >= 0 ? '+' : ''}${b.flow_bias}</td>
+          <td class="num r">${fmt(b.buy_share_pct, 1)}%</td>
+          <td class="num r">${b.txns_24h.toLocaleString()}${b.sample === 'thin' ? ' <span class="muted small">thin</span>' : ''}</td>
+          <td class="num r">$${fmtK(b.volume_24h_usd)}</td>
+        </tr>`).join('');
+      return `<p class="muted small">${esc(d.note)}</p>
+        <div class="tbl-wrap"><table class="tbl">
+          <thead><tr><th>Asset</th><th class="r">Flow bias</th><th class="r">Buy share</th><th class="r">Txns 24h</th><th class="r">DEX volume</th></tr></thead>
+          <tbody>${rows}</tbody></table></div>`
+        + (d.unavailable.length ? `<p class="small muted" style="margin-top:var(--s2)">No usable on-chain sample right now: ${d.unavailable.map(esc).join(', ')}.</p>` : '');
+    }, { empty: { icon: 'icon-globe', text: 'Flow reads appear when DEXScreener public data is reachable.' } });
 
     // Cross-venue intelligence (one shared fetch; hourly bot-pushed data).
     const reportsP = getReports();

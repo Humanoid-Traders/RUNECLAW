@@ -212,4 +212,16 @@ router.get('/meme', async (req, res) => {
   }
 });
 
+// GET /api/market/onchain-flow — 24h DEX taker-flow radar for the majors
+// (keyless, read-only; explicitly NOT exchange netflow — the payload says so).
+router.get('/onchain-flow', async (req, res) => {
+  try {
+    const radar = await require('../lib/onchain_flow').getFlowRadar();
+    res.setHeader('Cache-Control', 'public, max-age=60');
+    res.json(radar);
+  } catch (err) {
+    res.status(502).json({ error: 'Flow radar unavailable' });
+  }
+});
+
 module.exports = router;

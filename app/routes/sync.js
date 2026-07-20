@@ -849,6 +849,17 @@ router.get('/rwa', async (req, res) => {
   }
 });
 
+// DEX taker-flow radar for the engine's gated on-chain voter (PR JJ) — the
+// bot pulls the SAME payload the public Markets panel renders.
+router.get('/onchain-flow', async (req, res) => {
+  try {
+    res.json(await require('../lib/onchain_flow').getFlowRadar());
+  } catch (err) {
+    console.error('Sync onchain-flow error:', err.message);
+    res.status(500).json({ error: 'Flow radar unavailable' });
+  }
+});
+
 // Read-side accessor for routes/guardian.js: in-memory first, DB on cold start.
 async function getLatestFlight() {
   if (latestFlight) return latestFlight;

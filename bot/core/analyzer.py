@@ -1151,6 +1151,19 @@ class Analyzer:
         # Phase B: capture the named per-voter breakdown alongside the score so
         # downstream recording can persist it for voter-weight learning. The
         # breakdown out-param does not affect the returned confluence value.
+        # On-chain snapshot (gated): the provider is inert unless ONCHAIN_* is
+        # enabled, so this await is a no-op in the default configuration; when
+        # enabled it serves a 10-min cache and fails open to None.
+        _onchain_snapshot = None
+        try:
+            from bot.core.onchain import (
+                get_onchain_provider, onchain_enabled, onchain_flow_enabled)
+            if onchain_enabled() or onchain_flow_enabled():
+                _onchain_snapshot = await get_onchain_provider().fetch(
+                    str(signal.symbol).split("/")[0])
+        except Exception as _oc_exc:
+            system_log.debug("On-chain snapshot skipped: %s", _oc_exc)
+
         _confluence_votes: list = []
         confluence = self._score_confluence(
             indicators, regime, signal,
@@ -1161,6 +1174,7 @@ class Analyzer:
             sentiment_engine=self._sentiment,
             strategy_type=strategy_type,
             breakdown=_confluence_votes,
+            onchain_snapshot=_onchain_snapshot,
         )
         # Voter-grounded thesis (audit UX item): expose the top signed votes
         # to the LLM prompt so the narrative cites the actual electorate that
@@ -2801,7 +2815,8 @@ class Analyzer:
                           order_flow=None, mtf_result=None, smart_money_score=None,
                           mode_config=None, sentiment_engine=None,
                           strategy_type: str = "swing",
-                          breakdown: "Optional[list]" = None) -> float:
+                          breakdown: "Optional[list]" = None,
+                          onchain_snapshot=None) -> float:
         """
         Score agreement across indicators on a 0-1 scale.
 
@@ -3342,6 +3357,17 @@ class Analyzer:
                     aw(vote_weight, "sentiment")
             except Exception as _sent_exc:
                 logger.warning("Sentiment engine vote failed: %s", _sent_exc)
+
+        # On-chain flow voter (PR JJ) — present only when the gated provider
+        # (ONCHAIN_ENABLED BYOK or ONCHAIN_FLOW_ENABLED keyless) produced a
+        # snapshot upstream; a dataless snapshot votes nothing.
+        if onchain_snapshot is not None:
+            try:
+                for _oc_name, _oc_vote, _oc_weight in onchain_snapshot.to_confluence_votes():
+                    votes.append(_oc_vote)
+                    aw(_oc_weight, _oc_name)
+            except Exception as _oc_exc:
+                logger.warning("On-chain vote failed: %s", _oc_exc)
 
         # Volume Profile POC-magnet voter
         poc_price = indicators.get("poc_price", 0)
