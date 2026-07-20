@@ -138,7 +138,12 @@ def test_stale_balance_alerts_when_old(live, monkeypatch):
     monkeypatch.setattr(pm.time, "monotonic", lambda: 1_000_000.0)
     fresh = _mon(_engine(bal_ts=1_000_000.0))
     assert fresh._check_stale_balance() == []
-    stale = _mon(_engine(bal_ts=1_000_000.0 - 400))
+    # Inside the legitimate refresh cadence (quiet-market smart scan sleeps up
+    # to smart_scan_max_interval): NO alert — this exact age used to false-fire.
+    quiet = _mon(_engine(bal_ts=1_000_000.0 - 400))
+    assert quiet._check_stale_balance() == []
+    # Past the worst legitimate gap (max(900s, 1.5x scan ceiling)): alert.
+    stale = _mon(_engine(bal_ts=1_000_000.0 - 1_000))
     a = stale._check_stale_balance()
     assert len(a) == 1 and a[0].alert_type == "STALE_BALANCE"
 
