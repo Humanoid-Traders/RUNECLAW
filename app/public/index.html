@@ -25,6 +25,7 @@
 <meta name="theme-color" content="#0a0b10">
 <link rel="preload" href="/fonts/cinzel-700.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/styles.css?v=14">
+<script src="/js/wallet_picker.js"></script>
 <script type="importmap">
 { "imports": { "three": "/vendor/three/three.module.min.js", "three/addons/": "/vendor/three/examples/jsm/" } }
 </script>
@@ -622,8 +623,8 @@ function renderWalletBox(data){
 }
 async function linkWalletToAccount(){
   setErr('wallet-msg','');
-  const eth=window.ethereum;
-  if(!eth){setErr('wallet-msg','No wallet detected — install MetaMask or open this page in a wallet browser.');return;}
+  const eth=await RCWalletPicker.pick();
+  if(!eth){setErr('wallet-msg','No wallet detected — install MetaMask, or use "Link with phone" below.');return;}
   try{
     const accounts=await eth.request({method:'eth_requestAccounts'});
     const address=(accounts&&accounts[0]||'').trim();
@@ -730,7 +731,7 @@ function renderWalletButton(){
 }
 async function doWalletLogin(){
   setErr('social-err','');
-  const eth=window.ethereum;
+  const eth=await RCWalletPicker.pick();
   if(!eth){setErr('social-err','No wallet detected — install MetaMask or a browser wallet.');return;}
   try{
     const accounts=await eth.request({method:'eth_requestAccounts'});
