@@ -4500,15 +4500,23 @@ class TelegramHandler:
 
     async def _cmd_stake(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """/stake — put idle stables into flexible Bitget Earn (admin only).
+        /stake fixed [COIN] — fixed-term LOCK options (double-confirm).
 
         Two-step by design: this command only SHOWS the plan; money moves
         exclusively on the explicit confirm button, and even then the amount
         is recomputed and re-clamped from live balances at press time — the
-        button carries the coin, never a number. Flexible-only (instant
-        redemption) with the margin reserve always kept free."""
+        button carries the coin, never a number. Flexible products redeem
+        instantly; fixed terms LOCK funds until the term ends and therefore
+        require a second confirmation that shows the lock END date (SPOT-2
+        hard line). The margin reserve always stays free."""
         if not self._is_admin(update):
             await self._send(update,
                 "🔒 /stake moves operator funds — admin only.")
+            return
+        args = [a.lower() for a in (ctx.args or [])]
+        if args and args[0] == "fixed":
+            await self._stake_fixed_plan(
+                update, args[1].upper() if len(args) > 1 else "")
             return
         await self._send(update, "⏳ Computing the stake plan…")
         try:
@@ -4549,13 +4557,74 @@ class TelegramHandler:
                 f"<i>The exact amount is recomputed from live balances when "
                 f"you press the button; the {MARGIN_RESERVE_PCT:.0%} margin "
                 "reserve always stays free for the engine. Redeem any time "
-                "with /unstake.</i>")
+                "with /unstake. Fixed-term locks (higher APY, funds locked "
+                "until the term ends): <code>/stake fixed</code></i>")
             await self._send(update, "\n\n".join(lines),
                              reply_markup=InlineKeyboardMarkup(buttons))
         except Exception as exc:
             system_log.warning("/stake failed: %s", exc)
             await self._send(update,
                 "🔴 Could not build the stake plan — nothing was moved.")
+
+    async def _stake_fixed_plan(self, update: Update, coin_filter: str) -> None:
+        """/stake fixed — step 1 of the LOCKED-staking double-confirm.
+
+        Lists every live fixed-term option per stakeable coin with its lock
+        duration and projected unlock date. Choosing one does NOT move money:
+        it opens the final-confirm screen (step 2) which re-shows the lock
+        END date; only that second press executes."""
+        await self._send(update, "⏳ Fetching fixed-term lock options…")
+        try:
+            from bot.core.yield_radar import (
+                MIN_IDLE_USD, STAKEABLE_COINS, build_report, lock_end_date)
+            client = self._yield_client()
+            if client is None:
+                await self._send(update,
+                    "🔴 No operator Bitget keys configured — "
+                    "<code>/setexchange</code> first.")
+                return
+            report = await asyncio.to_thread(
+                build_report, client, self._engine_free_usdt())
+            if report.error:
+                await self._send(update, f"🔴 {html.escape(report.error)}")
+                return
+            rows = [r for r in report.rows
+                    if r.coin in STAKEABLE_COINS and r.fixed_terms
+                    and r.stakeable_usd >= MIN_IDLE_USD
+                    and (not coin_filter or r.coin == coin_filter)]
+            if not rows:
+                await self._send(update,
+                    "🟡 No fixed-term lock available right now — no stable "
+                    "balance above the minimum after the margin reserve, or "
+                    "no fixed Earn products offered"
+                    + (f" for {html.escape(coin_filter)}" if coin_filter else "")
+                    + ". Flexible staking: /stake")
+                return
+            lines = ["🔒 <b>Fixed-term Earn — funds LOCK until the term ends</b>"]
+            buttons = []
+            for r in rows:
+                lines.append(
+                    f"<b>{r.coin}</b>: ≈<code>${r.stakeable_usd:,.2f}</code> "
+                    f"stakeable after the margin reserve")
+                for t_ in r.fixed_terms[:6]:
+                    buttons.append([InlineKeyboardButton(
+                        f"🔒 {r.coin} {t_['days']}d @ {t_['apy']:.2f}% — "
+                        f"locked until {lock_end_date(t_['days'])}",
+                        callback_data=(f"yldf:1:{r.coin}:{t_['product_id']}:"
+                                       f"{t_['days']}"))])
+            buttons.append([InlineKeyboardButton("❌ Cancel",
+                                                 callback_data="yld:x")])
+            lines.append(
+                "<i>Step 1 of 2 — choosing a term opens a FINAL confirmation "
+                "showing the exact lock END date. Locked funds are NOT "
+                "redeemable, tradeable, or usable as margin until that date. "
+                "Instant-redeem alternative: /stake</i>")
+            await self._send(update, "\n\n".join(lines),
+                             reply_markup=InlineKeyboardMarkup(buttons))
+        except Exception as exc:
+            system_log.warning("/stake fixed failed: %s", exc)
+            await self._send(update,
+                "🔴 Could not build the fixed-term plan — nothing was moved.")
 
     # ── Talk-to-your-agent: stance proposal + /agent status ─────────
 
@@ -9185,6 +9254,90 @@ class TelegramHandler:
             await self._send(update,
                 f"👍 Keeping <b>{_rt.strategy_mode.capitalize()}</b> — "
                 "nothing changed.", edit=True)
+            return
+
+        # ── Fixed-term Earn LOCK buttons (operator money path, DOUBLE-confirm) ──
+        # Step 1 (yldf:1:...) re-fetches the live catalog and shows the FINAL
+        # confirm with the lock END date; step 2 (yldf:2:...) is the only
+        # place a fixed-term subscription executes. Buttons carry
+        # coin/productId/days, never an amount — execute_stake_fixed
+        # recomputes, reserve-clamps, and re-validates the product live.
+        if data.startswith("yldf:"):
+            if not self._is_admin(update):
+                await self._send(update,
+                    "🔒 Earn actions move operator funds — admin only.",
+                    edit=True)
+                return
+            parts = data.split(":")
+            if len(parts) < 5 or parts[1] not in ("1", "2"):
+                await self._send(update,
+                    "Cancelled — nothing was moved.", edit=True)
+                return
+            step, f_coin, f_pid = parts[1], parts[2].upper(), parts[3]
+            try:
+                f_days = int(parts[4])
+            except ValueError:
+                await self._send(update,
+                    "Bad lock term — nothing was moved.", edit=True)
+                return
+            from bot.core.yield_radar import (
+                MIN_IDLE_USD, build_report, execute_stake_fixed,
+                lock_end_date)
+            client = self._yield_client()
+            if client is None:
+                await self._send(update,
+                    "🔴 No operator Bitget keys — <code>/setexchange</code> "
+                    "first.", edit=True)
+                return
+            if step == "1":
+                report = await asyncio.to_thread(
+                    build_report, client, self._engine_free_usdt())
+                row = (None if report.error else
+                       next((r for r in report.rows if r.coin == f_coin), None))
+                term = next(
+                    (t_ for t_ in ((row.fixed_terms if row else []) or [])
+                     if str(t_.get("product_id")) == f_pid
+                     and int(t_.get("days", 0)) == f_days), None)
+                if (report.error or row is None or term is None
+                        or row.stakeable_usd < MIN_IDLE_USD):
+                    await self._send(update,
+                        "🟡 That fixed-term option is no longer available "
+                        "(or nothing stakeable after the reserve) — nothing "
+                        "was moved. /stake fixed shows live terms.", edit=True)
+                    return
+                end = lock_end_date(f_days)
+                kb = InlineKeyboardMarkup([
+                    [InlineKeyboardButton(
+                        f"🔒 YES — lock until {end}",
+                        callback_data=f"yldf:2:{f_coin}:{f_pid}:{f_days}")],
+                    [InlineKeyboardButton("❌ Cancel", callback_data="yld:x")],
+                ])
+                await self._send(update,
+                    "⚠️ <b>FINAL CONFIRM — fixed-term lock</b>\n\n"
+                    f"Lock ≈<code>${row.stakeable_usd:,.2f}</code> "
+                    f"<b>{f_coin}</b> @ <code>{term['apy']:.2f}%</code> for "
+                    f"<b>{f_days} days</b>.\n"
+                    f"⛔ <b>NOT redeemable until {end} (UTC)</b> — the funds "
+                    "cannot be withdrawn, traded, or used as margin before "
+                    "that date.\n"
+                    "<i>The exact amount is recomputed and reserve-clamped "
+                    "when you press the button.</i>",
+                    reply_markup=kb, edit=True)
+                return
+            # step == "2" — the ONLY place a fixed-term lock executes.
+            await self._send(update, "⏳ Executing fixed-term lock…", edit=True)
+            res = await asyncio.to_thread(
+                execute_stake_fixed, client, f_coin, f_pid, f_days,
+                self._engine_free_usdt())
+            audit(system_log, f"Earn FIXED lock {f_coin} {f_days}d via double-confirm",
+                  action="earn_action_fixed", result="OK" if res.ok else "FAIL",
+                  data={"cb": data, "detail": res.message})
+            icon = "✅" if res.ok else "🔴"
+            await self._send(update,
+                f"{icon} <b>Fixed-term lock {f_coin}</b>\n"
+                f"{html.escape(res.message)}\n\n"
+                "<i>/yield shows the radar. Fixed terms cannot be redeemed "
+                "early.</i>", edit=True)
             return
 
         # ── Earn stake/redeem confirm buttons (operator money path) ──

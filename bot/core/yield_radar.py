@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 log = logging.getLogger(__name__)
@@ -367,6 +368,68 @@ def execute_stake(client, coin: str, futures_free_usdt: float = 0.0) -> ActionRe
         return ActionResult(False, f"Subscribe failed: {sub.message}{note}")
     steps.append(f"subscribed ${amount:,.2f} {coin} @ "
                  f"{row.apy_flexible:.2f}% flexible")
+    return ActionResult(True, "; ".join(steps))
+
+
+def lock_end_date(days: int) -> str:
+    """ISO date (UTC) when a fixed term subscribed NOW would unlock."""
+    return (datetime.now(timezone.utc) + timedelta(days=int(days))).date().isoformat()
+
+
+def execute_stake_fixed(client, coin: str, product_id: str, days: int,
+                        futures_free_usdt: float = 0.0) -> ActionResult:
+    """Subscribe the coin's CURRENT stakeable amount into a FIXED-TERM Earn
+    product. Funds are NOT redeemable until the term ends — this function is
+    only reachable from the second, lock-end-date-showing confirm button
+    (operator hard line: locked staking is operator-only behind an explicit
+    double-confirm that shows the lock END date).
+
+    Same recompute-at-press-time contract as execute_stake: the buttons carry
+    coin/productId/days, never an amount, and the product must still exist in
+    the live catalog with the SAME term length or nothing moves.
+    """
+    coin = str(coin).upper()
+    if coin not in STAKEABLE_COINS:
+        return ActionResult(False, f"{coin} staking is not enabled — "
+                            "execution is stables-only (USDT/USDC).")
+    report = build_report(client, futures_free_usdt=futures_free_usdt)
+    if report.error:
+        return ActionResult(False, report.error)
+    row = next((r for r in report.rows if r.coin == coin), None)
+    if row is None or row.stakeable_usd < MIN_IDLE_USD:
+        return ActionResult(False, f"Nothing stakeable in {coin} right now "
+                            f"(min ${MIN_IDLE_USD:.0f} after the "
+                            f"{MARGIN_RESERVE_PCT:.0%} margin reserve).")
+    term = next((t for t in (row.fixed_terms or [])
+                 if str(t.get("product_id")) == str(product_id)
+                 and int(t.get("days", 0)) == int(days)), None)
+    if term is None:
+        return ActionResult(False, f"That {int(days)}d fixed-term product is "
+                            f"no longer offered for {coin} — nothing was "
+                            "moved. Run /stake fixed again for live terms.")
+    amount = float(int(row.stakeable_usd * 100)) / 100.0  # round DOWN to cents
+
+    steps: list[str] = []
+    spot_avail = fetch_spot_idle(client).get(coin, 0.0)
+    shortfall = amount - spot_avail
+    if shortfall > 0.01:
+        moved = transfer_futures_to_spot(client, shortfall, coin)
+        if not moved.ok:
+            return ActionResult(False, "Transfer futures→spot failed before "
+                                f"any subscription: {moved.message}")
+        steps.append(f"moved ${shortfall:,.2f} futures→spot")
+
+    sub = _post(client, "/api/v2/earn/savings/subscribe", {
+        "productId": str(product_id), "periodType": "fixed",
+        "amount": f"{amount:.2f}",
+    })
+    if not sub.ok:
+        note = f" ({steps[0]} — funds are in spot)" if steps else ""
+        return ActionResult(False, f"Subscribe failed: {sub.message}{note}")
+    end = lock_end_date(days)
+    steps.append(f"subscribed ${amount:,.2f} {coin} @ {term['apy']:.2f}% "
+                 f"fixed {int(days)}d — LOCKED until {end} (UTC), not "
+                 "redeemable before then")
     return ActionResult(True, "; ".join(steps))
 
 
