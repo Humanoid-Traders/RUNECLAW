@@ -33,6 +33,8 @@ test.before(async () => {
     BTCUSDT: { price: 100000, change: 1, volume: 1e9 },
     PENDLEUSDT: { price: 3.5, change: 4, volume: 5e7 },
   }));
+  // Keep the safety read's on-chain lookup off the network in tests.
+  require('../lib/token_safety').setPairSearcher(async () => null);
 
   // Seed engine history: signals + closed trades on PENDLE.
   await pool.execute(
