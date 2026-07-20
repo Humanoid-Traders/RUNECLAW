@@ -339,7 +339,7 @@ class TelegramHandler:
             ("channel", self._cmd_channel), ("broadcast", self._cmd_broadcast),
             # LLM BYOK commands
             ("setllm", self._cmd_setllm), ("llmstatus", self._cmd_llmstatus),
-            ("settier", self._cmd_settier),
+            ("settier", self._cmd_settier), ("ultra", self._cmd_ultra),
             ("llmreset", self._cmd_llmreset), ("llmtiers", self._cmd_llmtiers),
             # Shadow A/B: challenger model vs primary on the same live prompts
             ("llmab", self._cmd_llmab),
@@ -6282,6 +6282,53 @@ class TelegramHandler:
         else:
             await self._send(update,
                 f"🔴 Override NOT set: {html.escape(detail)}")
+
+    async def _cmd_ultra(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """/ultra [on|off] — ULTRA admin LLM routing (Claude Fable 5).
+
+        Flips admin thesis/learning tiers to claude-fable-5 with
+        output_config.effort high/max; scan/chat stay on Sonnet 5. Costs
+        real money ($10/$50 per MTok) — explicit opt-in, never a default."""
+        # Same blast radius as /setllm//settier (changes the analysis brain
+        # and the bill), so the same admin-only gate.
+        if not self._is_admin(update):
+            await self._send(update,
+                f"\U0001f512 {t('admin_only_llm_set', self._lang(update))}")
+            return
+        from bot.llm.provider import is_ultra_mode, set_ultra_mode
+        args = [a.lower() for a in (ctx.args or [])]
+        if not args or args[0] not in ("on", "off"):
+            state = "🟣 ON" if is_ultra_mode() else "⚪ OFF"
+            await self._send(update,
+                f"🧠 <b>ULTRA routing:</b> {state}\n"
+                "<pre>"
+                " /ultra on\n"
+                " /ultra off"
+                "</pre>\n"
+                "ON: admin thesis/learning → <code>claude-fable-5</code> "
+                "(effort high/max), scan/chat → <code>claude-sonnet-5</code>.\n"
+                "<i>Fable 5 bills $10/$50 per MTok (~2x Opus). Admin-only "
+                "routing — non-admin users are never routed to the operator "
+                "Anthropic key. Reverts on restart; set LLM_ULTRA_ENABLED=1 "
+                "in .env to make it the boot default.</i>")
+            return
+        env_config = LLMConfig(
+            provider=LLMProvider(CONFIG.llm.provider) if CONFIG.llm.provider else LLMProvider.OPENAI,
+            api_key=CONFIG.llm.api_key,
+            model=CONFIG.llm.model,
+            base_url=CONFIG.llm.base_url,
+        )
+        ok, detail = set_ultra_mode(args[0] == "on", env_config)
+        if not ok:
+            await self._send(update, f"🔴 ULTRA NOT enabled: {html.escape(detail)}")
+            return
+        # Re-resolve the analyzer's cached admin tier clients so the toggle
+        # takes effect on the next analysis, not the next restart.
+        if hasattr(self.engine, 'analyzer') and hasattr(self.engine.analyzer, 'refresh_llm_client'):
+            self.engine.analyzer.refresh_llm_client()
+        audit(system_log, f"ULTRA routing {'ON' if args[0] == 'on' else 'OFF'}",
+              action="ultra", result="OK", data={"state": args[0]})
+        await self._send(update, f"✅ {html.escape(detail)}")
 
     async def _cmd_setllm(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """/setllm <provider> [api_key] [model] — switch LLM provider at runtime."""

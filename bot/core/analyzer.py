@@ -709,6 +709,12 @@ class Analyzer:
         self._thesis_config = resolve_tier_config(LLMTier.THESIS, self._llm_config) if self._llm_config else None
         self._scan_client = self._build_client_for_config(self._scan_config)
         self._thesis_client = self._build_client_for_config(self._thesis_config)
+        # Admin tier configs too — /ultra and /settier change what admin
+        # routing resolves to, and these were previously only set at init.
+        self._admin_scan_config = resolve_tier_config(LLMTier.SCAN, self._llm_config, is_admin=True) if self._llm_config else None
+        self._admin_thesis_config = resolve_tier_config(LLMTier.THESIS, self._llm_config, is_admin=True) if self._llm_config else None
+        self._admin_scan_client = self._build_client_for_config(self._admin_scan_config)
+        self._admin_thesis_client = self._build_client_for_config(self._admin_thesis_config)
         # Update model routing for non-OpenAI providers
         if self._llm_config and self._llm_config.model:
             provider = self._llm_config.provider

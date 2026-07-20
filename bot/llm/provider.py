@@ -60,12 +60,15 @@ PROVIDER_CATALOG: dict[LLMProvider, dict] = {
     LLMProvider.ANTHROPIC: {
         "base_url": "https://api.anthropic.com",
         "default_model": "claude-sonnet-5",
-        "recommended_models": ["claude-opus-4-8", "claude-sonnet-5", "claude-haiku-4-5-20251001"],
+        "recommended_models": ["claude-fable-5", "claude-opus-4-8", "claude-sonnet-5",
+                               "claude-haiku-4-5-20251001"],
         "sdk": "anthropic",
         "free_tier": False,
         "speed": "medium",
         "cost": "medium",
-        "notes": "Excellent reasoning, strong safety. Opus 4.8 for best trade analysis, Haiku for speed.",
+        "notes": ("Excellent reasoning, strong safety. Fable 5 is the top tier "
+                  "($10/$50 per MTok — ULTRA routing only), Opus 4.8 for deep "
+                  "analysis, Haiku for speed."),
         "get_key_url": "https://console.anthropic.com/",
     },
     LLMProvider.GEMINI: {
@@ -268,6 +271,83 @@ ADMIN_TIER_ROUTING: dict[LLMTier, dict] = {
 }
 
 
+# ULTRA admin routing — Claude Fable 5 (Anthropic's most capable model) on the
+# deep-reasoning tiers, Sonnet 5 on the latency-sensitive ones. Opt-in ONLY
+# (env LLM_ULTRA_ENABLED or admin /ultra) because Fable 5 costs 2x Opus
+# ($10/$50 per MTok) — the operator chooses the spend, never a default.
+# Same admin-only Anthropic guard as ADMIN_TIER_ROUTING: non-admin callers
+# can never resolve into this table.
+#
+# `effort` maps to Fable 5's output_config.effort (thinking is always on for
+# the Fable/Mythos family — the `thinking` parameter itself is rejected, so
+# effort is the depth dial). Scan/chat stay on Sonnet 5: burning $10/MTok on
+# high-frequency scans buys latency, not quality.
+ULTRA_TIER_ROUTING: dict[LLMTier, dict] = {
+    LLMTier.SCAN: {
+        "provider": LLMProvider.ANTHROPIC,
+        "model": "claude-sonnet-5",
+        "reason": "Ultra: Sonnet keeps high-frequency scans fast and affordable",
+    },
+    LLMTier.THESIS: {
+        "provider": LLMProvider.ANTHROPIC,
+        "model": "claude-fable-5",
+        "effort": "high",
+        "reason": "Ultra: Fable 5 deep reasoning for trade theses",
+    },
+    LLMTier.LEARNING: {
+        "provider": LLMProvider.ANTHROPIC,
+        "model": "claude-fable-5",
+        "effort": "max",
+        "reason": "Ultra: Fable 5 max effort for reflection/learning (infrequent)",
+    },
+    LLMTier.CHAT: {
+        "provider": LLMProvider.ANTHROPIC,
+        "model": "claude-sonnet-5",
+        "reason": "Ultra: Sonnet keeps chat responsive",
+    },
+}
+
+
+def _env_flag(name: str) -> bool:
+    return os.getenv(name, "").strip().lower() in ("1", "true", "yes", "on")
+
+
+# Runtime ULTRA switch — boot default from LLM_ULTRA_ENABLED, toggled live by
+# the admin /ultra command. Applies only to admin routing resolution.
+_ULTRA_MODE: bool = _env_flag("LLM_ULTRA_ENABLED")
+
+
+def is_ultra_mode() -> bool:
+    """True when admin routing resolves through ULTRA_TIER_ROUTING."""
+    return _ULTRA_MODE
+
+
+def set_ultra_mode(enabled: bool, primary_config=None) -> tuple[bool, str]:
+    """Toggle ULTRA admin routing. Returns (ok, detail).
+
+    Enabling requires a usable Anthropic key (same fail-loud-at-set-time rule
+    as set_tier_override) — an ultra mode that silently falls back to cheap
+    routing would misrepresent what the operator is paying for."""
+    global _ULTRA_MODE
+    if enabled:
+        from bot.llm import key_health as _kh
+        _src, _key = _kh.pick_anthropic_key(primary_config, BYOK._runtime_config)
+        if not _key:
+            return False, ("no Anthropic key found — set ANTHROPIC_API_KEY or "
+                           "/setllm anthropic <key> first")
+        _ULTRA_MODE = True
+        return True, ("ULTRA ON — admin thesis/learning → claude-fable-5 "
+                      "(effort high/max), scan/chat → claude-sonnet-5. "
+                      "Fable 5 bills $10/$50 per MTok.")
+    _ULTRA_MODE = False
+    return True, "ULTRA OFF — admin routing back to claude-sonnet-5."
+
+
+def _admin_routing() -> dict:
+    """The admin routing table in effect (ULTRA when toggled on)."""
+    return ULTRA_TIER_ROUTING if _ULTRA_MODE else ADMIN_TIER_ROUTING
+
+
 # Elite user-tier routing — best non-Anthropic models, cheap scan (LLM
 # Optimization Plan P2). Anthropic/Claude is reserved for admin only — see
 # resolve_tier_config()'s hard non-admin guard, which refuses to hand out the
@@ -424,7 +504,7 @@ def resolve_tier_config(
     # tier overrides; otherwise the default cheap routing.
     use_table_directly = routing_override is not None or is_admin
     routing = (routing_override if routing_override is not None
-               else (ADMIN_TIER_ROUTING if is_admin else DEFAULT_TIER_ROUTING))
+               else (_admin_routing() if is_admin else DEFAULT_TIER_ROUTING))
 
     tier_upper = tier.value.upper()
 
@@ -452,6 +532,7 @@ def resolve_tier_config(
                     model=_route.get("model",
                                      _catalog.get("default_model", "")),
                     base_url=_catalog.get("base_url", ""),
+                    effort=_route.get("effort", ""),
                 )
             # No Anthropic key anywhere → fall through to the generic steps.
 
@@ -586,6 +667,9 @@ class LLMConfig:
     temperature: float = 0.3
     max_tokens: int = 1024
     timeout_seconds: float = 15.0
+    # Fable/Mythos-family reasoning depth (output_config.effort): "" omits the
+    # parameter; "low"/"medium"/"high"/"max" only sent for that family.
+    effort: str = ""
 
     def __post_init__(self) -> None:
         # Resolve model default if not set
@@ -671,6 +755,12 @@ def create_llm_client(config: LLMConfig):
 # which took the whole analysis brain down to the rule engine on 2026-07-16.
 _TEMPERATURE_DEPRECATED_RE = re.compile(r"^claude-[a-z]+-5\b|^claude-[a-z]+-5-")
 
+# Fable/Mythos (Claude 5 top tier): thinking is ALWAYS on and the `thinking`
+# request parameter is rejected with 400 — depth is steered through
+# output_config.effort instead. Sending `thinking: adaptive` to these models
+# would take the brain down exactly like the temperature deprecation did.
+_THINKING_ALWAYS_ON_RE = re.compile(r"^claude-(?:fable|mythos)-5(?:$|[.-])")
+
 
 def model_accepts_temperature(model: str) -> bool:
     """False when the model rejects an explicit `temperature` (Claude 5
@@ -724,16 +814,29 @@ async def llm_complete(
                 }
             ]
 
+            model_l = (config.model or "").strip().lower()
+            extra: dict = {}
+            if _THINKING_ALWAYS_ON_RE.match(model_l):
+                # Fable/Mythos: `thinking` param is rejected (always-on);
+                # output_config.effort is the depth dial.
+                if config.effort:
+                    extra["output_config"] = {"effort": config.effort}
+            elif "opus" in model_l:
+                # Enable adaptive thinking for Opus 4.8+ models
+                extra["thinking"] = {"type": "adaptive"}
+
             response = await client.messages.create(
                 model=config.model,
                 max_tokens=config.max_tokens,
                 system=system_content,
                 messages=messages,
-                # Enable adaptive thinking for Opus 4.8+ models
-                **( {"thinking": {"type": "adaptive"}}
-                    if "opus" in config.model.lower() else {}
-                ),
+                **extra,
             )
+            # Fable/Mythos-class models can end with stop_reason="refusal" —
+            # no usable content. Raise so the caller's existing failure path
+            # (rule-based fallback) runs instead of treating "" as an answer.
+            if getattr(response, "stop_reason", "") == "refusal":
+                raise RuntimeError("LLM declined to answer (stop_reason=refusal)")
             # Handle thinking blocks — extract text block
             raw_text = ""
             if response.content:
