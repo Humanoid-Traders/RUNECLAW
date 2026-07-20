@@ -172,6 +172,9 @@
     <div id="step-login" class="step">
       <div class="field"><label for="login-email">Email</label><input class="input" type="email" id="login-email" placeholder="you@example.com" autocomplete="email"></div>
       <div class="field"><label for="login-pass">Password</label><input class="input" type="password" id="login-pass" placeholder="Your password" autocomplete="current-password"></div>
+      <div class="field hidden" id="login-2fa-box"><label for="login-2fa">Two-factor code</label>
+        <input class="input" type="text" id="login-2fa" placeholder="6-digit code or backup code" autocomplete="one-time-code" inputmode="numeric">
+        <p class="muted small" style="margin-top:4px">From your authenticator app — or one of your saved backup codes.</p></div>
       <div class="form-err" id="login-err" aria-live="polite"></div>
       <button class="btn btn--primary btn-block" onclick="doLogin()">Log in</button>
       <p class="muted small" style="text-align:center;margin-top:var(--s2)">
@@ -257,6 +260,30 @@
       <div class="field"><label for="pw-new2">Confirm new password</label><input class="input" type="password" id="pw-new2" autocomplete="new-password"></div>
       <div class="form-err" id="pw-msg" aria-live="polite"></div>
       <button class="btn btn--sm" onclick="doChangePassword()">Update password</button>
+    </div>
+
+    <!-- Two-factor authentication -->
+    <div id="tfa-box" class="mt-4">
+      <h3 style="font-size:var(--fs-base);margin-bottom:var(--s1)">Two-factor authentication</h3>
+      <p class="muted small" id="tfa-state">Checking…</p>
+      <div id="tfa-off" class="hidden">
+        <p class="muted small">Protect your account (and your linked exchange keys) with an authenticator app.</p>
+        <button class="btn btn--sm mt-2" onclick="tfaSetup()">Enable 2FA</button>
+      </div>
+      <div id="tfa-pending" class="hidden">
+        <p class="small">1. Add this secret to your authenticator app (Google Authenticator, Aegis, 1Password…):</p>
+        <div class="token-display" id="tfa-secret" onclick="navigator.clipboard&&navigator.clipboard.writeText(this.textContent)" title="Click to copy"></div>
+        <p class="small mt-2">2. Enter the 6-digit code it shows to confirm:</p>
+        <div class="field"><input class="input" type="text" id="tfa-code" placeholder="123456" inputmode="numeric" autocomplete="one-time-code"></div>
+        <button class="btn btn--primary btn--sm" onclick="tfaEnable()">Confirm &amp; enable</button>
+      </div>
+      <div id="tfa-on" class="hidden">
+        <p class="small">✅ 2FA is <b>enabled</b>. <span class="muted" id="tfa-backups"></span></p>
+        <div class="field mt-2"><input class="input" type="text" id="tfa-disable-code" placeholder="Current code or backup code" autocomplete="one-time-code"></div>
+        <button class="btn btn--ghost btn--sm" onclick="tfaDisable()">Disable 2FA</button>
+      </div>
+      <div id="tfa-codes" class="hidden mt-2"></div>
+      <div class="form-err" id="tfa-msg" aria-live="polite"></div>
     </div>
 
     <a href="/dashboard" class="btn btn--primary btn-block mt-4">Open trading dashboard →</a>
@@ -439,8 +466,19 @@ async function doLogin(){
   const pass=document.getElementById('login-pass').value;
   setErr('login-err','');
   if(!email||!pass){setErr('login-err','Email and password required.');return;}
-  const res=await apiCall('/auth/login',{email,password:pass});
+  const body={email,password:pass};
+  const code=document.getElementById('login-2fa').value.trim();
+  if(code)body.totp_code=code;
+  const res=await apiCall('/auth/login',body);
+  if(res.two_factor_required){
+    document.getElementById('login-2fa-box').classList.remove('hidden');
+    document.getElementById('login-2fa').focus();
+    setErr('login-err',code?res.error:'Enter your two-factor code to finish logging in.');
+    return;
+  }
   if(res.error){setErr('login-err',res.error);return;}
+  document.getElementById('login-2fa-box').classList.add('hidden');
+  document.getElementById('login-2fa').value='';
   SESSION=res;showAccount(res);
 }
 function doLogout(){
@@ -460,6 +498,7 @@ function showAccount(data){
   document.getElementById('link-box').classList.toggle('hidden',linked);
   localStorage.setItem('rc_session',JSON.stringify({token:data.token||SESSION?.token,user_id:data.user_id}));
   renderAccountMeta(data);
+  tfaRefresh();
   // Fetch authoritative flags (has_password, email_verified) from /me.
   refreshAccountMeta();
 }
@@ -473,6 +512,52 @@ async function apiAuth(path,body,method){
 async function refreshAccountMeta(){
   if(!SESSION?.token)return;
   try{const me=await apiAuth('/auth/me',null,'GET');if(!me.error)renderAccountMeta(me);}catch{/* offline */}
+  tfaRefresh();
+}
+// ── Two-factor auth ──
+function tfaShow(state){
+  for(const id of ['tfa-off','tfa-pending','tfa-on'])
+    document.getElementById(id).classList.toggle('hidden',id!=='tfa-'+state);
+}
+async function tfaRefresh(){
+  try{
+    const s=await apiAuth('/auth/2fa/status',null,'GET');
+    document.getElementById('tfa-state').textContent='';
+    if(s.enabled){
+      tfaShow('on');
+      document.getElementById('tfa-backups').textContent=
+        s.backup_codes_remaining!=null?`${s.backup_codes_remaining} backup codes left.`:'';
+    }else{tfaShow('off');}
+  }catch{document.getElementById('tfa-state').textContent='2FA status unavailable.';}
+}
+async function tfaSetup(){
+  setErr('tfa-msg','');
+  const r=await apiAuth('/auth/2fa/setup',{});
+  if(r.error){setErr('tfa-msg',r.error);return;}
+  document.getElementById('tfa-secret').textContent=r.secret;
+  tfaShow('pending');
+}
+async function tfaEnable(){
+  setErr('tfa-msg','');
+  const code=document.getElementById('tfa-code').value.trim();
+  if(!code){setErr('tfa-msg','Enter the 6-digit code from your app.');return;}
+  const r=await apiAuth('/auth/2fa/enable',{code});
+  if(r.error){setErr('tfa-msg',r.error);return;}
+  const box=document.getElementById('tfa-codes');
+  box.classList.remove('hidden');
+  box.innerHTML='<p class="small"><b>Backup codes — save them now, shown once:</b></p>'
+    +'<div class="token-display" style="text-align:left;line-height:1.8"></div>';
+  box.querySelector('.token-display').textContent=(r.backup_codes||[]).join('   ');
+  tfaRefresh();
+}
+async function tfaDisable(){
+  setErr('tfa-msg','');
+  const code=document.getElementById('tfa-disable-code').value.trim();
+  if(!code){setErr('tfa-msg','A current code (or backup code) is required.');return;}
+  const r=await apiAuth('/auth/2fa/disable',{code});
+  if(r.error){setErr('tfa-msg',r.error);return;}
+  document.getElementById('tfa-codes').classList.add('hidden');
+  tfaRefresh();
 }
 function renderAccountMeta(data){
   renderLinkSocial();

@@ -160,7 +160,10 @@ async function getRadar() {
 
 // ── Chat intercept ──────────────────────────────────────────────────────────
 
-const CHAT_RE = /\b(meme ?coins?|meme ?tokens?|dexscreener|degen|pump\.?fun|ai[- ]agent tokens?)\b/i;
+// Must cover the Hub one-tap chip's exact ask ("meme radar") — a chip whose
+// phrase misses this regex falls through to the bot LLM, which honestly
+// reports it has no radar access (live incident, 2026-07-20 screenshot).
+const CHAT_RE = /\b(meme ?(radar|coins?|tokens?)|dexscreener|degen|pump\.?fun|ai[- ]agent tokens?)\b/i;
 
 function fmtVol(v) {
   const n = Number(v) || 0;
