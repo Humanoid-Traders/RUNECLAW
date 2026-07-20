@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>RUNECLAW — System Status</title>
+<meta name="description" content="Live component health for the RUNECLAW platform — computed from real timestamps at request time, never hand-set. Degradation is reported honestly.">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<meta name="theme-color" content="#0a0b10">
+<link rel="stylesheet" href="/styles.css?v=13">
+<style>
+  .st-wrap { max-width: 720px; margin: 0 auto; padding: var(--s5) var(--s4) var(--s6); }
+  .st-wrap h1 { font-family: var(--font-display); letter-spacing: .08em; font-size: clamp(26px, 4vw, 38px); margin-bottom: var(--s2); }
+  .lede { color: var(--text-2); max-width: 66ch; line-height: 1.6; margin-bottom: var(--s4); }
+  .topnav { display: flex; gap: var(--s3); align-items: center; margin-bottom: var(--s4); flex-wrap: wrap; }
+  .topnav a { color: var(--text-2); font-size: var(--fs-sm); }
+  .topnav a:hover { color: var(--text-1); }
+  .banner { border: 1px solid var(--line); border-radius: var(--radius); padding: var(--s4) var(--s5); margin-bottom: var(--s4); font-family: var(--font-data); }
+  .banner.ok { border-color: rgba(47,191,113,.4); color: var(--up); }
+  .banner.partial { border-color: rgba(230,176,60,.4); color: var(--gold-bright); }
+  .banner.degraded { border-color: rgba(224,82,82,.5); color: var(--down); }
+  .comp { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: var(--s4) var(--s5); margin-bottom: var(--s3); display: flex; gap: var(--s3); align-items: baseline; flex-wrap: wrap; }
+  .comp .name { font-family: var(--font-data); min-width: 180px; color: var(--text-1); }
+  .comp .note { color: var(--text-3); font-size: var(--fs-xs); flex-basis: 100%; }
+  .chip { display: inline-flex; font-size: var(--fs-xs); padding: 2px 10px; border-radius: 999px; font-family: var(--font-data); }
+  .chip.good { background: rgba(47,191,113,.14); color: var(--up); }
+  .chip.warn { background: rgba(230,176,60,.14); color: var(--gold-bright); }
+  .chip.bad { background: rgba(224,82,82,.14); color: var(--down); }
+  .chip.mut { background: rgba(255,255,255,.06); color: var(--text-3); }
+  .age { color: var(--text-3); font-size: var(--fs-xs); font-family: var(--font-data); }
+  .empty { text-align: center; color: var(--text-3); padding: var(--s6) var(--s4); }
+</style>
+</head>
+<body>
+<div class="st-wrap">
+  <nav class="topnav">
+    <a href="/">← RUNECLAW</a>
+    <span style="flex:1"></span>
+    <a href="/proof">Proof of PnL</a>
+    <a href="/developers">Developers</a>
+  </nav>
+  <h1>System Status</h1>
+  <p class="lede">Component health computed from <b>real timestamps at request time</b> —
+  never hand-set, never rounded up to healthy. The same honesty rule as the
+  track record: if something is stale, this page says so.</p>
+  <div id="root"><div class="empty">Checking components…</div></div>
+</div>
+
+<script>
+(function () {
+  var GOOD = { ok: 1, fresh: 1, reachable: 1 };
+  var MUTED = { not_configured: 1, no_data: 1 };
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+    return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]; }); }
+  function chip(state) {
+    var cls = GOOD[state] ? 'good' : MUTED[state] ? 'mut'
+      : state === 'stale' ? 'warn' : 'bad';
+    return '<span class="chip ' + cls + '">' + esc(state) + '</span>';
+  }
+  function load() {
+    fetch('/api/public/status', { headers: { Accept: 'application/json' } })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        var html = '<div class="banner ' + esc(d.status) + '">Overall: '
+          + esc(String(d.status).toUpperCase())
+          + ' · checked ' + esc(new Date(d.generated_at).toLocaleTimeString()) + '</div>';
+        var comps = d.components || {};
+        Object.keys(comps).forEach(function (k) {
+          var c = comps[k] || {};
+          html += '<div class="comp"><span class="name">' + esc(k.replace(/_/g, ' ')) + '</span>'
+            + chip(c.state)
+            + (c.age_minutes != null ? '<span class="age">updated ' + esc(c.age_minutes) + ' min ago</span>' : '')
+            + (c.uptime_s != null ? '<span class="age">up ' + esc(Math.floor(c.uptime_s / 3600)) + 'h '
+                + esc(Math.floor((c.uptime_s % 3600) / 60)) + 'm</span>' : '')
+            + (c.mode ? '<span class="age">' + esc(c.mode) + '</span>' : '')
+            + (c.latest_week ? '<span class="age">' + esc(c.latest_week) + '</span>' : '')
+            + (c.note ? '<span class="note">' + esc(c.note) + '</span>' : '')
+            + '</div>';
+        });
+        if (d.honesty_note) html += '<p class="lede" style="margin-top:var(--s4)">' + esc(d.honesty_note) + '</p>';
+        document.getElementById('root').innerHTML = html;
+      })
+      .catch(function () {
+        document.getElementById('root').innerHTML =
+          '<div class="empty">Could not reach the status API — which itself tells you something. Retry shortly.</div>';
+      });
+  }
+  load();
+  setInterval(load, 60000);
+})();
+</script>
+</body>
+</html>
