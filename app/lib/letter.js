@@ -237,6 +237,164 @@ function composeLetter({ key, start, end }, data) {
   };
 }
 
+// ── Public variant (dollar-free) ─────────────────────────────────────────────
+
+/** Inverse of weekKey: '2026-W29' -> { key, start (Mon, UTC), end (next Mon,
+ *  exclusive) } or null when malformed. */
+function weekRangeFromKey(key) {
+  const m = /^(\d{4})-W(\d{2})$/.exec(String(key || ''));
+  if (!m) return null;
+  const year = parseInt(m[1]), week = parseInt(m[2]);
+  if (week < 1 || week > 53) return null;
+  // ISO: week 1 contains Jan 4. Monday of week 1, then step forward.
+  const jan4 = new Date(Date.UTC(year, 0, 4));
+  const day = jan4.getUTCDay() || 7;
+  const week1Monday = new Date(jan4);
+  week1Monday.setUTCDate(jan4.getUTCDate() - (day - 1));
+  const start = new Date(week1Monday);
+  start.setUTCDate(week1Monday.getUTCDate() + (week - 1) * 7);
+  if (weekKey(start) !== `${m[1]}-W${m[2]}`) return null;   // e.g. W53 in a 52-week year
+  const end = new Date(start);
+  end.setUTCDate(start.getUTCDate() + 7);
+  return { key: String(key), start, end };
+}
+
+/**
+ * The PUBLIC letter: same recorded data, recomposed with NO dollar figure —
+ * counts, win rate, profit factor, equity PERCENT change, regime reads. Never
+ * derived by stripping the private letter's HTML (too fragile to trust with a
+ * privacy line); this is a parallel composition from the same loadWeekData.
+ */
+function composePublicLetter({ key, start, end }, data) {
+  const { trades, equity, signals, openCount, reports } = data;
+  const fmtDay = (d) => d.toISOString().slice(0, 10);
+  const endInclusive = new Date(end.getTime() - 86_400_000);
+
+  const pnls = trades.map(t => parseFloat(t.pnl) || 0);
+  const net = pnls.reduce((a, b) => a + b, 0);
+  const wins = pnls.filter(p => p > 0).length;
+  const grossWin = pnls.filter(p => p > 0).reduce((a, b) => a + b, 0);
+  const grossLoss = Math.abs(pnls.filter(p => p < 0).reduce((a, b) => a + b, 0));
+  const wr = trades.length ? Math.round(wins / trades.length * 100) : null;
+  const pf = grossLoss > 0 ? round2(grossWin / grossLoss) : null;
+
+  let best = null, worst = null;
+  for (const t of trades) {
+    const p = parseFloat(t.pnl) || 0;
+    if (!best || p > best.pnl) best = { symbol: t.symbol, pnl: p };
+    if (!worst || p < worst.pnl) worst = { symbol: t.symbol, pnl: p };
+  }
+
+  const sections = [];
+
+  let deskLine;
+  if (!trades.length) {
+    deskLine = 'The desk closed no positions this week — patience is a position too, '
+      + 'and the risk gate saw nothing worth paying fees for.';
+  } else if (net > 0 && (wr ?? 0) >= 60) {
+    deskLine = `A clean week: ${trades.length} closed trades, <b>${wr}% winners</b>, `
+      + 'finished green.';
+  } else if (net > 0) {
+    deskLine = `A grinder's week: ${trades.length} closed trades and only ${wr}% winners, `
+      + 'but the winners paid for the losers — finished green.';
+  } else {
+    deskLine = `A losing week, plainly: ${trades.length} closed trades, ${wr}% winners, `
+      + 'finished red. The reads below are the honest post-mortem.';
+  }
+  sections.push({ title: 'The week', html: deskLine });
+
+  if (trades.length) {
+    const bits = [
+      `${trades.length} closes (${wins}W/${trades.length - wins}L)`,
+      pf !== null ? `profit factor <b>${pf}</b>` : 'no losing trades',
+      best ? `best: ${esc(String(best.symbol).split('/')[0])}` : null,
+      worst && worst.pnl < 0 ? `worst: ${esc(String(worst.symbol).split('/')[0])}` : null,
+    ].filter(Boolean).join(' · ');
+    sections.push({ title: 'Performance', html: bits });
+  }
+  if (equity.start !== null && equity.end !== null && equity.start > 0) {
+    const pct = round2((equity.end - equity.start) / equity.start * 100);
+    sections.push({
+      title: 'Equity',
+      html: `Equity moved <b>${pct >= 0 ? '+' : ''}${pct}%</b> on the week.`,
+    });
+  }
+
+  if (signals.length) {
+    const longs = signals.filter(s => String(s.direction).toUpperCase().includes('LONG')).length;
+    const regimes = {};
+    for (const s of signals) {
+      const r = String(s.regime || '').trim();
+      if (r) regimes[r] = (regimes[r] || 0) + 1;
+    }
+    const topRegime = Object.entries(regimes).sort((a, b) => b[1] - a[1])[0];
+    sections.push({
+      title: 'The tape',
+      html: `${signals.length} signals generated (${longs} long / ${signals.length - longs} short)`
+        + (topRegime ? ` — the dominant read was <b>${esc(topRegime[0])}</b> `
+          + `(${topRegime[1]} of ${signals.length}).` : '.'),
+    });
+  } else {
+    sections.push({
+      title: 'The tape',
+      html: 'No signals recorded this week — either a quiet tape or the engine was resting.',
+    });
+  }
+
+  // Side desks: parity verdict only — the funding-arb tracker's dollar accrual
+  // stays operator-private.
+  if (reports && reports.parity && reports.parity.verdict) {
+    sections.push({
+      title: 'Side desks',
+      html: `Live↔backtest parity reads <b>${esc(reports.parity.verdict)}</b>.`,
+    });
+  }
+
+  sections.push({
+    title: 'Looking ahead',
+    html: (openCount
+      ? `The desk carries <b>${openCount}</b> open position${openCount === 1 ? '' : 's'} into the new week, each with a hard stop working. `
+      : 'The desk enters the week flat. ')
+      + 'Same discipline as always: no trade without a stop, no size without conviction, '
+      + 'and the risk gate has the final word.',
+  });
+
+  const headline = !trades.length
+    ? 'A flat week, by choice'
+    : `${wr}% winners over ${trades.length} trades — `
+      + (net >= 0 ? 'a green week' : 'a red week, honestly told');
+
+  return {
+    week_key: key,
+    period: { start: fmtDay(start), end: fmtDay(endInclusive) },
+    headline,
+    sections,
+    footer: 'Every figure above is derived from recorded trades and snapshots — nothing '
+      + 'hand-written. Percentages and counts only: account size is never published. '
+      + 'Past performance does not predict future results.',
+  };
+}
+
+// The public letter for a COMPLETED week. Recomposed on demand from the same
+// recorded data (deterministic for past weeks — the tables are append-only),
+// cached in memory because a completed week is immutable. Never writes the DB.
+const _publicCache = new Map();          // week_key -> public letter
+const _PUBLIC_CACHE_MAX = 64;
+
+async function getPublicLetter(key) {
+  const week = weekRangeFromKey(key);
+  if (!week) return null;
+  // Only completed weeks: the in-progress week's letter doesn't exist yet.
+  if (week.end.getTime() > lastCompletedWeek().end.getTime()) return null;
+  if (_publicCache.has(week.key)) return _publicCache.get(week.key);
+  const pub = composePublicLetter(week, await loadWeekData(week.start, week.end));
+  if (_publicCache.size >= _PUBLIC_CACHE_MAX) {
+    _publicCache.delete(_publicCache.keys().next().value);
+  }
+  _publicCache.set(week.key, pub);
+  return pub;
+}
+
 // ── Storage + lazy generation ────────────────────────────────────────────────
 
 async function getLetter(week) {
@@ -328,8 +486,11 @@ async function maybeHandleLetterChat(userId, text) {
 
 module.exports = {
   weekKey,
+  weekRangeFromKey,
   lastCompletedWeek,
   composeLetter,
+  composePublicLetter,
+  getPublicLetter,
   getLetter,
   getLetterByKey,
   listLetters,
