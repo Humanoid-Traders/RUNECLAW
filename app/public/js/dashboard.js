@@ -1864,6 +1864,11 @@
       <div class="stack">
         <section class="panel panel--primary" id="p-pstats"><div id="c-pstats"><div class="skel"></div><div class="skel"></div></div></section>
         <section class="panel" id="p-curve"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-chart"></use></svg>Equity curve</h2><div id="c-curve"><div class="skel"></div></div></section>
+        <section class="panel" id="p-intel">
+          <h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-sparkle"></use></svg>Trade intelligence
+            <span class="badge" style="margin-left:auto" title="Every figure derived only from your recorded closed trades — the buy-and-hold benchmark is rebuilt from each trade's own entry/exit prices, nothing is estimated">derived</span></h2>
+          <div id="c-intel"><div class="skel"></div></div>
+        </section>
         <section class="panel panel--primary" id="p-networth">
           <h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-globe"></use></svg>Net worth — everywhere
             <span class="badge" style="margin-left:auto" title="Read-only aggregation — RUNECLAW can read these balances, never move them">read-only</span></h2>
@@ -1962,6 +1967,34 @@
         + (ce ? `<p class="muted small" style="margin-top:var(--s2)">Capital basis changed ${ce} time${ce === 1 ? '' : 's'}
             (deposit, withdrawal, or paper→live switch) — the curve shows the current period only, so funding changes never draw as trading losses.</p>` : '');
     }, { empty: { icon: 'icon-chart', text: 'The equity curve draws once you have a few snapshots — trade and check back.' } });
+
+    // Trade intelligence — alpha vs holding, expectancy, payoff, drawdown,
+    // streaks. All re-derived server-side from the recorded closed trades.
+    renderPanel(C('intel'), async () => {
+      const r = await fetchJSON('/api/portfolio/intel', { timeoutMs: 15000 });
+      const d = r.data?.intel;
+      if (!r.ok || !d || !d.trades) return null;
+      const rows = [];
+      if (d.alpha) {
+        const a = d.alpha;
+        const s = a.mean_alpha_pct >= 0 ? '+' : '';
+        rows.push(`<div class="kv-row"><span>Alpha vs holding <span class="muted small">per trade, vs buying &amp; holding the same asset</span></span>
+          <b class="num ${a.mean_alpha_pct >= 0 ? 'pos' : 'neg'}">${s}${a.mean_alpha_pct}%</b></div>`);
+        rows.push(`<div class="kv-row"><span>Beat their market</span><b class="num">${a.beat_market} of ${a.priced} (${a.beat_market_pct}%)</b></div>`);
+        if (a.best && a.best.alpha_pct > 0) {
+          rows.push(`<div class="kv-row"><span>Cleanest edge</span><b class="num">${esc(a.best.symbol)} +${a.best.alpha_pct}%</b></div>`);
+        }
+      }
+      rows.push(`<div class="kv-row"><span>Expectancy <span class="muted small">avg net per close</span></span>
+        <b class="num ${pnlClass(d.expectancy_usd)}">${d.expectancy_usd >= 0 ? '+' : '-'}$${Math.abs(d.expectancy_usd).toFixed(2)}</b></div>`);
+      if (d.payoff_ratio !== null) {
+        rows.push(`<div class="kv-row"><span>Payoff ratio <span class="muted small">avg win ÷ avg loss</span></span><b class="num">${d.payoff_ratio}</b></div>`);
+      }
+      rows.push(`<div class="kv-row"><span>Max realized drawdown</span><b class="num">$${Math.abs(d.max_drawdown_usd).toFixed(2)}</b></div>`);
+      rows.push(`<div class="kv-row"><span>Longest streaks</span><b class="num">${d.longest_win_streak}W / ${d.longest_loss_streak}L</b></div>`);
+      return rows.join('')
+        + `<p class="small muted" style="margin-top:var(--s2)">Over ${d.trades} recorded closes${d.skipped ? ` (${d.skipped} skipped — unusable rows are never guessed at)` : ''}.</p>`;
+    }, { empty: { icon: 'icon-sparkle', text: 'Intelligence appears after your first few closed trades.' } });
 
     // Net worth — everywhere: connected CEX + wallet (real) with paper
     // shown separately and NEVER counted into the real total.
