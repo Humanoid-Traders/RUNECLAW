@@ -415,7 +415,8 @@
         <section class="panel" id="p-macmini"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-shield"></use></svg>Macro backdrop
           <span class="right"><a class="small" href="#macro">open Macro →</a></span></h2><div id="c-macmini"><div class="skel"></div></div></section>
         ${LOGGED_IN ? `<section class="panel" id="p-letter"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-sparkle"></use></svg>The Agent Letter
-          <select class="input" id="letterWeek" aria-label="Letter week" style="margin-left:auto;width:auto;padding:2px 8px"></select></h2>
+          <select class="input" id="letterWeek" aria-label="Letter week" style="margin-left:auto;width:auto;padding:2px 8px"></select>
+          <a class="small" href="/letter" style="margin-left:8px;white-space:nowrap">public archive →</a></h2>
           <div id="c-letter"><div class="skel"></div><div class="skel"></div></div></section>` : ''}
         <section class="panel" id="p-hpos"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-coin"></use></svg>Open positions</h2><div id="c-hpos"><div class="skel"></div><div class="skel"></div></div></section>
         <section class="panel" id="p-hsig"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-radar"></use></svg>Latest engine signals</h2><div id="c-hsig"><div class="skel"></div><div class="skel"></div></div></section>

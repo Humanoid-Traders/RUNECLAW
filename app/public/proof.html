@@ -198,6 +198,12 @@
         ${anchor.card_hash ? `<dt>Card hash</dt><dd>${esc(anchor.card_hash)}</dd>` : ''}
         ${anchor.note ? `<dt>Note</dt><dd style="font-family:inherit;color:var(--text-3)">${esc(anchor.note)}</dd>` : ''}
       </dl>
+      ${(() => {
+        const addr = String(bundle.identity_card?.identity?.agent_address || '');
+        return /^0x[0-9a-fA-F]{40}$/.test(addr)
+          ? `<p style="margin-top:var(--s3)"><a href="/agent/${esc(addr.toLowerCase())}">View the full ERC-8004 identity card →</a></p>`
+          : '';
+      })()}
     </section>
 
     <section class="panel">
