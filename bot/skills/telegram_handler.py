@@ -5550,6 +5550,13 @@ class TelegramHandler:
                     _msg_norm = msg.replace("/", "").replace(":USDT", "").upper()
                     if _cd_sym and _cd_sym not in _msg_norm:
                         close_data = None  # mismatched close — fall to text from msg
+                # FAILURE messages must never be replaced by a card: the slot is
+                # only written on close SUCCESS, so on a failed/urgent close it
+                # holds an EARLIER close of possibly the same symbol — the guard
+                # above passes and a stale "normal close" card would swallow the
+                # only warning that a position is live and unprotected.
+                if any(k in msg for k in ("CLOSE FAILED", "URGENT", "ENTRY ABORTED")):
+                    close_data = None      # always deliver the failure text itself
                 close_png = None
                 if close_data:
                     try:

@@ -182,3 +182,45 @@ async def test_no_stop_level_never_flags_or_flattens(tmp_path, monkeypatch):
     assert calls["place"] == 0
     assert getattr(p, "unprotected", False) is False
     e.close_position.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_flatten_failure_by_return_string_is_detected(tmp_path, monkeypatch):
+    # THE production failure mode (adversarial review, critical): close_position
+    # never raises for venue errors — it RETURNS "CLOSE FAILED for ...". The
+    # ladder must detect that and go URGENT, never claim "CLOSED for safety".
+    e, calls = _exec(tmp_path, monkeypatch, [(None, None)],
+                     close=AsyncMock(return_value="CLOSE FAILED for T1: venue 5xx"))
+    p = _pos()
+    sl_id, tp_id, close_msg = await e._reattempt_post_fill_sl(
+        object(), p, Direction.LONG, 1.0, None, None, "T1")
+    assert close_msg and "URGENT" in close_msg and "MANUALLY" in close_msg
+    assert "CLOSED for safety" not in close_msg
+    assert "CLOSE FAILED for T1" in close_msg     # underlying detail preserved
+
+
+@pytest.mark.asyncio
+async def test_grace_close_failed_string_escalates_to_flatten(tmp_path, monkeypatch):
+    # A failed grace breach-close (returns "CLOSE FAILED ...") must NOT be
+    # treated as a completed close — the ladder continues to the flatten stage.
+    async def _grace_failed_close(exchange, pos):
+        return "CLOSE FAILED for T1: venue 5xx"
+
+    e, calls = _exec(tmp_path, monkeypatch, [(None, None)], grace=_grace_failed_close)
+    p = _pos()
+    sl_id, tp_id, close_msg = await e._reattempt_post_fill_sl(
+        object(), p, Direction.LONG, 1.0, None, None, "T1")
+    e.close_position.assert_awaited_once()        # flatten stage ran
+    assert close_msg and "CLOSED for safety" in close_msg
+
+
+@pytest.mark.asyncio
+async def test_tp_leg_is_stamped_before_escalation(tmp_path, monkeypatch):
+    # When the ladder escalates, the TP id must already be on the position so
+    # close_position can cancel the leg — otherwise a live TP trigger survives
+    # the flatten as an orphan on the exchange.
+    e, calls = _exec(tmp_path, monkeypatch, [(None, None)])
+    p = _pos()
+    await e._reattempt_post_fill_sl(
+        object(), p, Direction.LONG, 1.0, None, "tp-leg-1", "T1")
+    assert p.tp_order_id == "tp-leg-1"
