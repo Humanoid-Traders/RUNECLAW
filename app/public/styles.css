@@ -132,9 +132,14 @@ code { font-family: var(--font-data); font-size: .9em; background: var(--surface
   display: flex; background: rgba(14, 16, 23, .96); backdrop-filter: blur(12px);
   border-top: 1px solid var(--line);
   padding-bottom: env(safe-area-inset-bottom, 0);
+  /* 15 items would crush to ~25px on a phone. Give each tab a tappable width
+     and let the bar scroll horizontally instead of squashing every label. */
+  overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none;
 }
+.tabbar::-webkit-scrollbar { display: none; }
 .tabbar a {
-  flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+  flex: 1 0 auto; min-width: 64px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
   color: var(--text-3); font-size: 10.5px; font-weight: 600; letter-spacing: .02em;
 }
 .tabbar a .icon { width: 19px; height: 19px; }
