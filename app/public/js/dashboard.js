@@ -2832,8 +2832,8 @@
       if (!link && !unlink) return;
       try {
         if (link) {
-          const eth = window.ethereum;
-          if (!eth) { toast('No browser wallet detected — install MetaMask first.'); return; }
+          const eth = window.RCWalletPicker ? await RCWalletPicker.pick() : window.ethereum;
+          if (!eth) { toast('No browser wallet detected — install MetaMask, or use Link with phone.'); return; }
           const accounts = await eth.request({ method: 'eth_requestAccounts' });
           const address = (accounts && accounts[0] || '').trim();
           if (!address) { toast('No wallet account was shared.'); return; }
