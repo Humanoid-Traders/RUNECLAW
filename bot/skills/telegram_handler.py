@@ -403,6 +403,11 @@ class TelegramHandler:
             ("sentinel", self._cmd_sentinel),
             ("escape", self._cmd_escape),
             ("guardian", self._cmd_guardian),
+            # Web-parity views
+            ("networth", self._cmd_networth),
+            ("exposure", self._cmd_exposure),
+            ("research", self._cmd_research),
+            ("rwa", self._cmd_rwa),
         ]:
             app.add_handler(CommandHandler(cmd, handler))
         app.add_handler(CallbackQueryHandler(self._handle_callback))
@@ -2803,6 +2808,182 @@ class TelegramHandler:
             await self._send(update, SHADOW_BOOK.render_report())
         except Exception as exc:
             await self._send(update, f"Shadow book unavailable: {exc}")
+
+    # ── Web-parity commands: /networth /exposure /research /rwa ─────────────
+    # One brain, one implementation: exposure/research/rwa render the SAME
+    # payloads the web panels use (Node-side libs, fetched over the sync
+    # channel); net worth reuses the gateway's own read-only primitives.
+    # Formatters are static and pure for testability.
+
+    @staticmethod
+    def _web_html_to_tg(s: str) -> str:
+        """Web panel HTML → Telegram-safe HTML: <br> to newline, keep only
+        <b>/<i>/<code>, drop everything else."""
+        s = re.sub(r"<br\s*/?>", "\n", str(s or ""), flags=re.I)
+        return re.sub(r"<(?!/?(?:b|i|code)>)[^>]*>", "", s)
+
+    @staticmethod
+    def _format_networth(paper: Optional[dict], cex: dict) -> str:
+        lines = ["💰 <b>Net worth</b> — read-only, your own accounts\n"]
+        if paper:
+            lines.append(f"📄 Paper: <b>${paper['equity_usd']:,.2f}</b> "
+                         f"(PnL {paper['total_pnl']:+,.2f}, simulated)")
+        else:
+            lines.append("📄 Paper: no snapshot yet")
+        if not cex.get("connected"):
+            lines.append("🏦 Exchange: not connected — /connect to link one")
+        elif cex.get("equity_usd") is not None:
+            lines.append(f"🏦 {str(cex.get('venue', '')).capitalize()}: "
+                         f"<b>${float(cex['equity_usd']):,.2f}</b>")
+        else:
+            lines.append(f"🏦 {str(cex.get('venue', '')).capitalize()}: "
+                         f"unavailable ({cex.get('detail') or 'venue error'})")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _format_exposure(data: dict) -> str:
+        lines = ["⚖️ <b>Cross-venue exposure</b> — perps netted vs on-chain spot\n",
+                 f"Net <b>${float(data.get('net_total_usd') or 0):,.2f}</b> · "
+                 f"gross ${float(data.get('gross_total_usd') or 0):,.2f} · "
+                 f"cash ${float(data.get('cash_usd') or 0):,.2f}"]
+        assets = data.get("assets") or []
+        for r in assets[:8]:
+            flags = f"  ⚠️ {', '.join(r['flags'])}" if r.get("flags") else ""
+            lines.append(f"• <b>{r.get('base')}</b>: net "
+                         f"{float(r.get('net_usd') or 0):+,.2f} "
+                         f"(long {float(r.get('perp_long_usd') or 0):,.0f} / "
+                         f"short {float(r.get('perp_short_usd') or 0):,.0f} / "
+                         f"spot {float(r.get('spot_usd') or 0):,.0f}){flags}")
+        if not assets:
+            lines.append("No non-stable exposure found.")
+        for w in (data.get("warnings") or [])[:4]:
+            lines.append(f"⚠️ {w}")
+        lines.append("\n<i>Intelligence only — nothing here can resize or "
+                     "close a position.</i>")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _format_research(data: dict) -> str:
+        out = [f"🔬 <b>Research: {data.get('base')}</b> — live venue data + "
+               "recorded history\n"]
+        for s in (data.get("sections") or [])[:8]:
+            body = TelegramHandler._web_html_to_tg(
+                s.get("html") or s.get("body") or "")
+            out.append(f"<b>{s.get('title', '')}</b>\n{body}\n")
+        if data.get("disclaimer"):
+            out.append(f"<i>{data['disclaimer']}</i>")
+        return "\n".join(out)
+
+    @staticmethod
+    def _format_rwa(data: dict) -> str:
+        s = data.get("sector") or {}
+        if not s.get("listed"):
+            return ("🏦 <b>RWA radar</b>\n\nNone of the tracked tokens are "
+                    "listed on the venue right now.")
+        def _pct(v):
+            return f"{'+' if float(v) >= 0 else ''}{v}%"
+        vol = float(s.get("volume_24h_usd") or 0)
+        vol_s = (f"${vol / 1e9:.1f}B" if vol >= 1e9
+                 else f"${vol / 1e6:.1f}M" if vol >= 1e6
+                 else f"${vol:,.0f}")
+        lines = ["🏦 <b>RWA radar</b> — live venue tickers, read-only\n",
+                 f"Sector: <b>{_pct(s.get('change_24h_pct', 0))}</b> (24h, "
+                 f"volume-weighted)"
+                 + (f" — {_pct(s['vs_btc_pct'])} vs BTC"
+                    if s.get("vs_btc_pct") is not None else "")
+                 + f" · {s.get('listed')} tokens · {vol_s} volume"]
+        for c in (data.get("categories") or []):
+            if not c.get("listed"):
+                continue
+            top = " · ".join(f"{t.get('base')} {_pct(t.get('change_24h_pct', 0))}"
+                             for t in (c.get("tokens") or [])[:3])
+            lines.append(f"• <b>{c.get('title')}</b> ({c.get('listed')} listed, "
+                         f"{_pct(c.get('change_24h_pct', 0))} wtd): {top}")
+        return "\n".join(lines)
+
+    _WEB_LINK_HINT = ("🔌 The web app isn't reachable (or your account isn't "
+                      "linked). This view is served by the RUNECLAW web app — "
+                      "set it up and /link your account, then try again.")
+
+    @guard("networth")
+    async def _cmd_networth(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """/networth — the caller's own read-only cross-venue snapshot: paper
+        equity plus one balance fetch on their connected venue (the same
+        primitives the web gateway's net-worth endpoint uses)."""
+        import asyncio as _aio
+        tg_id = self._get_tg_id(update)
+        paper = None
+        try:
+            snap = self.engine.user_portfolios.get(tg_id).snapshot()
+            paper = {"equity_usd": round(float(snap.equity_usd), 2),
+                     "total_pnl": round(float(snap.total_pnl), 2)}
+        except Exception:
+            paper = None
+        cex: dict = {"connected": False}
+        try:
+            from bot.core.exchange_credentials import (balance_snapshot,
+                                                       get_credential_store)
+            store = get_credential_store()
+            if store.has(tg_id):
+                venue = store.get_venue(tg_id)
+                fields = store.get(tg_id)
+                if not fields:
+                    cex = {"connected": True, "venue": venue,
+                           "equity_usd": None, "detail": "credentials unreadable"}
+                else:
+                    try:
+                        snap_cex = await _aio.wait_for(
+                            balance_snapshot(venue, fields), timeout=25)
+                    except _aio.TimeoutError:
+                        snap_cex = {"venue": venue, "equity_usd": None,
+                                    "detail": "venue timeout"}
+                    cex = {"connected": True, **snap_cex}
+        except Exception as exc:
+            system_log.debug("/networth CEX read failed: %s", exc)
+            cex = {"connected": False}
+        await self._send(update, self._format_networth(paper, cex))
+
+    @guard("exposure")
+    async def _cmd_exposure(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """/exposure — net per-asset exposure across perps + on-chain spot,
+        the same netting the web Exposure panel shows."""
+        import asyncio as _aio
+        from bot.utils.web_data_pull import fetch_exposure
+        data = await _aio.to_thread(fetch_exposure, self._get_tg_id(update))
+        if not data or "assets" not in data:
+            await self._send(update, self._WEB_LINK_HINT)
+            return
+        await self._send(update, self._format_exposure(data))
+
+    @guard("research")
+    async def _cmd_research(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """/research <symbol> — the cited research dossier (venue data +
+        recorded platform history), same as the web research card."""
+        import asyncio as _aio
+        from bot.utils.web_data_pull import fetch_research
+        args = getattr(ctx, "args", None) or []
+        if not args:
+            await self._send(update, "Usage: /research <symbol> — e.g. "
+                                     "<code>/research PENDLE</code>")
+            return
+        data = await _aio.to_thread(fetch_research, str(args[0]))
+        if not data or "sections" not in data:
+            await self._send(update,
+                             "No dossier — the symbol isn't listed on the "
+                             "venue, or the web app isn't reachable.")
+            return
+        await self._send(update, self._format_research(data))
+
+    @guard("rwa")
+    async def _cmd_rwa(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """/rwa — the tokenized-RWA sector radar (live venue tickers)."""
+        import asyncio as _aio
+        from bot.utils.web_data_pull import fetch_rwa
+        data = await _aio.to_thread(fetch_rwa)
+        if not data or "sector" not in data:
+            await self._send(update, self._WEB_LINK_HINT)
+            return
+        await self._send(update, self._format_rwa(data))
 
     async def _cmd_parity(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """Admin only: /parity — the live↔backtest parity report, on demand

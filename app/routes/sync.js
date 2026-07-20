@@ -806,6 +806,49 @@ router.get('/leaderboard/pending', async (req, res) => {
   }
 });
 
+/**
+ * Telegram-parity reads (bot-secret authed): the bot renders the SAME
+ * Node-side intelligence surfaces the web panels use — /exposure /research
+ * /rwa on Telegram call these instead of duplicating the logic in Python.
+ * All read-only; exposure maps the caller's telegram_id to their web account.
+ */
+router.get('/exposure', async (req, res) => {
+  try {
+    const tg = String(req.query.telegram_id || '').slice(0, 32);
+    if (!tg) return res.status(400).json({ error: 'telegram_id required' });
+    const [rows] = await pool.execute(
+      'SELECT id FROM users WHERE telegram_id = ?', [tg]);
+    if (!rows.length) return res.status(404).json({ error: 'No linked web account' });
+    res.json(await require('../lib/exposure').buildExposure(rows[0].id));
+  } catch (err) {
+    console.error('Sync exposure error:', err.message);
+    res.status(500).json({ error: 'Exposure unavailable' });
+  }
+});
+
+router.get('/research/:symbol', async (req, res) => {
+  try {
+    const base = String(req.params.symbol || '').toUpperCase()
+      .replace(/[^A-Z0-9]/g, '').replace(/USDT$/, '').slice(0, 10);
+    if (!base) return res.status(400).json({ error: 'symbol required' });
+    const d = await require('../lib/research').buildDossier(base);
+    if (!d) return res.status(404).json({ error: 'Not listed on the venue — no trusted data' });
+    res.json(d);
+  } catch (err) {
+    console.error('Sync research error:', err.message);
+    res.status(500).json({ error: 'Research unavailable' });
+  }
+});
+
+router.get('/rwa', async (req, res) => {
+  try {
+    res.json(await require('../lib/rwa').getRadar());
+  } catch (err) {
+    console.error('Sync rwa error:', err.message);
+    res.status(500).json({ error: 'RWA radar unavailable' });
+  }
+});
+
 // Read-side accessor for routes/guardian.js: in-memory first, DB on cold start.
 async function getLatestFlight() {
   if (latestFlight) return latestFlight;
