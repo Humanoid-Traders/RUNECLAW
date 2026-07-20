@@ -46,9 +46,12 @@ def _mock_exchange(set_leverage, fetch_leverage):
 
 
 @pytest.mark.asyncio
-async def test_holdside_retry_fires_immediately_on_set_failure(tmp_path):
+async def test_holdside_retry_fires_immediately_on_set_failure(tmp_path, monkeypatch):
     """The per-side retry must NOT depend on the verification read
-    working — that was exactly the silent-20x shape."""
+    working — that was exactly the silent-20x shape. (Fail-open here to
+    observe the retry calls; the fail-closed abort has its own tests in
+    test_leverage_standard.py.)"""
+    monkeypatch.setenv("LEVERAGE_FAIL_OPEN", "1")
     ex = _executor(tmp_path)
     set_lev = AsyncMock(side_effect=Exception("40019 holdSide cannot be empty"))
     fetch_lev = AsyncMock(side_effect=Exception("fetch_leverage unavailable"))
@@ -65,7 +68,8 @@ async def test_holdside_retry_fires_immediately_on_set_failure(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_unverifiable_leverage_is_warned_once(tmp_path):
+async def test_unverifiable_leverage_is_warned_once(tmp_path, monkeypatch):
+    monkeypatch.setenv("LEVERAGE_FAIL_OPEN", "1")
     ex = _executor(tmp_path)
     set_lev = AsyncMock(side_effect=Exception("40019"))
     fetch_lev = AsyncMock(side_effect=Exception("unavailable"))
