@@ -50,6 +50,10 @@ class YieldRow:
     stakeable_usd: float        # after the margin reserve haircut
     apy_flexible: Optional[float] = None   # best flexible APY (percent)
     apy_fixed: Optional[float] = None      # best fixed APY (info only)
+    # SPOT-2: every fixed/locked term [{days, apy, product_id}] — locks are
+    # surfaced with their full duration so the user can weigh term vs rate;
+    # a lock is not revocable until the term ends.
+    fixed_terms: list = field(default_factory=list)
     est_year_usd: float = 0.0   # stakeable_usd * apy_flexible
     source: str = ""            # "futures free" | "spot"
     product_id: str = ""        # Bitget productId of the best flexible product
@@ -118,6 +122,25 @@ def fetch_savings_catalog(client) -> dict[str, dict]:
                 # Keep the productId alongside the winning flexible rate so
                 # the stake path subscribes to exactly the product it quoted.
                 slot["flexible_id"] = str(p.get("productId", "") or "")
+        if bucket == "fixed":
+            # SPOT-2 (operator directive): keep EVERY fixed term, not just
+            # the best number — the Staking center shows all lock options
+            # with their durations. A lock is not revocable until the term
+            # ends; the surface must let the user weigh term vs rate.
+            try:
+                days = int(float(p.get("period") or 0))
+            except (TypeError, ValueError):
+                days = 0
+            slot.setdefault("fixed_terms", []).append({
+                "days": days,
+                "apy": apy,
+                "product_id": str(p.get("productId", "") or ""),
+            })
+    for slot in catalog.values():
+        terms = slot.get("fixed_terms")
+        if terms:
+            terms.sort(key=lambda t: (t["days"], -t["apy"]))
+            del terms[12:]          # bounded per coin
     return catalog
 
 
@@ -185,6 +208,7 @@ def build_report(client, futures_free_usdt: float = 0.0,
             stakeable_usd=stakeable,
             apy_flexible=apys.get("flexible"),
             apy_fixed=apys.get("fixed"),
+            fixed_terms=list(apys.get("fixed_terms") or []),
             source=source,
             product_id=str(apys.get("flexible_id", "") or ""),
         )
