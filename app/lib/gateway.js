@@ -43,6 +43,31 @@ function requestJSON(method, gwPath, body, timeoutMs = 20000) {
   });
 }
 
+// Binary sibling of requestJSON for the gateway's non-JSON endpoints (today:
+// /share-card PNG). Collects raw Buffer chunks and never JSON.parses — routing
+// a binary response through requestJSON/relay would corrupt it or throw.
+function requestBinary(gwPath, timeoutMs = 15000) {
+  return new Promise((resolve, reject) => {
+    const url = `${BOT_GATEWAY_URL}/gateway${gwPath}`;
+    const mod = url.startsWith('https:') ? https : http;
+    const req = mod.request(url, {
+      method: 'GET', timeout: timeoutMs,
+      headers: { 'X-Gateway-Secret': GATEWAY_SECRET },
+    }, (res) => {
+      const chunks = [];
+      res.on('data', c => chunks.push(c));
+      res.on('end', () => resolve({
+        status: res.statusCode,
+        contentType: res.headers['content-type'] || '',
+        body: Buffer.concat(chunks),
+      }));
+    });
+    req.on('error', reject);
+    req.on('timeout', () => { req.destroy(); reject(new Error('Gateway timeout')); });
+    req.end();
+  });
+}
+
 // Forward a gateway response to the browser: pass 4xx through verbatim (the
 // UI distinguishes chat_admin_only / not_proposer / live_not_enabled / ...),
 // collapse 5xx to a 502.
@@ -57,4 +82,5 @@ module.exports = {
   relay,
   postGateway: (p, b, t) => requestJSON('POST', p, b, t),
   getGateway: (p, t) => requestJSON('GET', p, undefined, t),
+  getGatewayBinary: (p, t) => requestBinary(p, t),
 };

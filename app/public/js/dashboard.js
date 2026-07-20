@@ -2341,9 +2341,9 @@
       if (!btn) return;
       const { sym, dir, entry, exit } = btn.dataset;
       const e0 = parseFloat(entry), x0 = parseFloat(exit);
-      let pctTxt = '';
+      let pct = null, pctTxt = '';
       if (isFinite(e0) && isFinite(x0) && e0 > 0) {
-        const pct = (String(dir).toUpperCase() === 'LONG' ? (x0 - e0) : (e0 - x0)) / e0 * 100;
+        pct = (String(dir).toUpperCase() === 'LONG' ? (x0 - e0) : (e0 - x0)) / e0 * 100;
         pctTxt = ` ${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%`;
       }
       let url = location.origin;
@@ -2352,6 +2352,24 @@
         if (rr.ok && rr.data?.code) url = `${location.origin}/?ref=${encodeURIComponent(rr.data.code)}`;
       } catch (_) { /* fall back to the bare origin */ }
       const text = `${dir} ${sym}${pctTxt} — traded with RUNECLAW, the autonomous AI trading agent.`;
+      // Server-rendered card image (best-effort; the same percent-only data,
+      // never a dollar amount). A missing image never blocks the share.
+      let file = null;
+      if (pct !== null) {
+        try {
+          const q = `symbol=${encodeURIComponent(String(sym).toUpperCase())}` +
+            `&direction=${encodeURIComponent(String(dir).toUpperCase())}` +
+            `&pnl_pct=${encodeURIComponent(pct.toFixed(2))}`;
+          const resp = await fetch(`/api/share/card?${q}`, { headers: RC.authHeaders() });
+          if (resp.ok && /image\/png/.test(resp.headers.get('content-type') || '')) {
+            const blob = await resp.blob();
+            file = new File([blob], `runeclaw-${sym}.png`, { type: 'image/png' });
+          }
+        } catch (_) { /* card is optional */ }
+      }
+      if (file && navigator.canShare && navigator.canShare({ files: [file] })) {
+        try { await navigator.share({ files: [file], text, url }); return; } catch (_) { /* fall through */ }
+      }
       if (navigator.share) {
         try { await navigator.share({ text, url }); return; } catch (_) { /* cancelled / unsupported → fall through */ }
       }

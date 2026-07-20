@@ -34,3 +34,18 @@ test('share is percentage-only and recruit-linked', () => {
   assert.ok(!/text = `[^`]*\$\{?\s*(usd|dollar|pnl_usd|amount)/i.test(shareBlock),
     'share text carries no dollar amount');
 });
+
+test('share attaches the server-rendered card when the browser can take files', () => {
+  assert.match(DASH, /\/api\/share\/card\?/, 'fetches the rendered card');
+  assert.match(DASH, /navigator\.canShare/, 'feature-detects file sharing');
+  assert.match(DASH, /files:\s*\[file\]/, 'attaches the card as a file');
+  assert.match(DASH, /new File\(/, 'wraps the PNG blob as a File');
+  // The card request carries the SAME percent-only data — no dollar params.
+  const cardBlock = DASH.slice(DASH.indexOf('/api/share/card'), DASH.indexOf('navigator.canShare'));
+  assert.ok(!/pnl_usd|size_usd|margin|equity/.test(cardBlock),
+    'card request carries no dollar/size parameter');
+  // Image failure must not break sharing: text/url share + t.me remain after.
+  const after = DASH.slice(DASH.indexOf('navigator.canShare'));
+  assert.match(after, /navigator\.share\(\{ text, url \}\)/, 'text share still follows');
+  assert.match(after, /t\.me\/share\/url/, 'Telegram fallback still follows');
+});
