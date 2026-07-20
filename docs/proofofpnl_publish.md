@@ -55,21 +55,40 @@ steps.
   re-checks public-safety; catching any post-seal tampering. The fills
   themselves re-derive via `verify.py` section-7 (on-chain Transfer-netting).
 
-## Operator: run it continuously
+## Operator: run it continuously (SHIPPED)
 
-The sealer is the unit a scheduler calls each epoch. On the operator path
-(where the fills + signed snapshots live):
+The scheduler is now wired into the engine — the feed is no longer empty in
+production. `bot/proofofpnl/scheduler.ProofOfPnLPublisher` is the cadenced,
+fail-safe unit; the engine's main loop calls it after each successful tick via
+`RuneClawEngine._maybe_publish_proofofpnl`:
 
 ```
-# pseudocode — operator scheduler, once per epoch
-bundle = assemble_track_record(ccxt_trades, account_ids=…, open_balance=…,
-                               close_balance=…, agent_address=…, envelope=…)
-publish_now(bundle, published_at_ts=int(now), epoch_seq=seq)
+# engine loop, once per tick (bot/core/engine.py)
+publisher = get_operator_publisher()          # cached, env-configured
+if publisher.should_publish(now):             # enabled AND cadence due
+    trades = await live_executor._get_exchange().fetch_my_trades(...)  # REAL fills
+    publisher.publish(now, trades, range_start=…, range_end=…)
+    # -> assemble_track_record(...) -> publish_now(bundle, published_at_ts=now)
 ```
 
-`PROOFOFPNL_PUBLICATION_PATH` sets where the latest publication persists (ensure
-`data/` survives redeploys). The web then serves whatever the sealer last wrote,
-with an honest freshness marker.
+Discipline preserved end-to-end:
+
+* **DEFAULT-OFF** — nothing publishes unless `PROOFOFPNL_PUBLISH_ENABLED=1`.
+* **FAIL-OPEN** — every step (fetch, assemble, seal) is wrapped; a bad epoch
+  logs and skips. Publishing can never break or block the trading loop.
+* **LIVE-ONLY** — runs only when `CONFIG.is_live()` and a live executor exists;
+  paper mode has no verifiable fills to publish.
+* **HONEST INCOMPLETE** — balances are omitted in this slice, so the epoch
+  reconciles to `INCOMPLETE` (never dressed up). Signed open/close snapshot
+  anchoring is the next slice.
+
+Env (see `.env.example`): `PROOFOFPNL_PUBLISH_ENABLED`,
+`PROOFOFPNL_PUBLISH_INTERVAL_S` (default hourly, floored 60s),
+`PROOFOFPNL_LOOKBACK_DAYS` (default 30), `PROOFOFPNL_AGENT_ADDRESS` (optional
+identity card), `PROOFOFPNL_ACCOUNT_ID`, and `PROOFOFPNL_PUBLICATION_PATH`
+(where the latest publication persists — ensure `data/` survives redeploys).
+The web then serves whatever the sealer last wrote, with an honest freshness
+marker.
 
 ## The anchor (ERC-8004)
 
