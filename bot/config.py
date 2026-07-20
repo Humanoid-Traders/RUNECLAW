@@ -536,7 +536,8 @@ class RiskLimits:
     guardian_firewall_block_high: bool = _env_bool("GUARDIAN_FIREWALL_BLOCK_HIGH", False)
     # Guardian Portfolio Digital Twin: master switch for SEALING a stress-test
     # verdict (bot/guardian/digital_twin.py) to the tamper-evident chain when the
-    # twin runs. Default OFF → the twin still computes on demand (it's pure,
+    # twin runs. Default ON (LIVE-1 enablement audit, 2026-07-20: read-only
+    # foresight, no money-path writes) → the twin computes and seals (it's pure,
     # read-only foresight — e.g. the admin /twin command always works), but no
     # TWIN event is written until an operator opts in. The twin never proposes,
     # blocks, or alters a trade; it only describes how the current book would
@@ -544,17 +545,19 @@ class RiskLimits:
     guardian_digital_twin_enabled: bool = _env_bool("GUARDIAN_DIGITAL_TWIN_ENABLED", True)
     # Guardian Systemic Risk Sentinel: master switch for SEALING an intra-book
     # crowding/concentration verdict (bot/guardian/risk_sentinel.py) to the
-    # tamper-evident chain when the sentinel runs. Default OFF → the sentinel
-    # still computes on demand (pure, read-only — e.g. the admin /sentinel
+    # tamper-evident chain when the sentinel runs. Default ON (LIVE-1
+    # enablement audit: alerts only, no money-path writes) — the sentinel
+    # also computes on demand (pure, read-only — e.g. the admin /sentinel
     # command), but no SENTINEL event is written until an operator opts in. It
     # warns about structural crowding (one sector, one direction, shared
     # liquidation zones); it never proposes, blocks, or alters a trade.
     guardian_risk_sentinel_enabled: bool = _env_bool("GUARDIAN_RISK_SENTINEL_ENABLED", True)
     # Guardian Universal Escape Agent: master switch for SEALING an emergency-exit
     # PLAN (bot/guardian/escape_agent.py) to the tamper-evident chain when the
-    # planner runs. Default OFF → the planner still computes on demand (pure,
-    # read-only — e.g. the admin /escape command), but no ESCAPE event is written
-    # until an operator opts in. This module PLANS only; it never closes anything.
+    # planner runs. Default ON (LIVE-1 enablement audit: plan generation is a
+    # recommendation surface, no money-path writes) — the planner also computes
+    # on demand (pure, read-only — e.g. the admin /escape command).
+    # This module PLANS only; it never closes anything.
     # Execution stays with the existing kill-switch stack (flatten_all_positions /
     # close_all_positions / emergency_halt_all).
     guardian_escape_enabled: bool = _env_bool("GUARDIAN_ESCAPE_ENABLED", True)
