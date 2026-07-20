@@ -2190,6 +2190,12 @@ class RuneClawEngine:
                     await self._maybe_publish_proofofpnl()
                 except Exception as _pop_exc:
                     system_log.debug("Proof-of-PnL publish tick skipped: %s", _pop_exc)
+                # Per-user opt-in leaderboard publishing (community track).
+                # Triple-gated default-OFF, throttled, fail-open — see method.
+                try:
+                    await self._maybe_publish_user_leaderboards()
+                except Exception as _ulb_exc:
+                    system_log.debug("User leaderboard tick skipped: %s", _ulb_exc)
             except Exception as exc:
                 _consecutive_failures += 1
                 self._tick_consecutive_failures = _consecutive_failures
@@ -2288,6 +2294,115 @@ class RuneClawEngine:
                     get_leaderboard_registry().put(handle, pub)
                 except Exception as exc:
                     system_log.debug("Leaderboard register skipped: %s", exc)
+
+    async def _maybe_publish_user_leaderboards(self) -> None:
+        """Publish each OPTED-IN user's own verifiable statement to the public
+        leaderboard under their anonymous handle, and remove handles whose
+        owners opted out.
+
+        Consent + privacy invariants (do not weaken):
+        - OPT-IN ONLY: a user appears solely because their handle is present in
+          the website's desired-state set (users.leaderboard_handle).
+        - REVOCABLE: opt-out (handle cleared) reconcile-removes their row on
+          the next pull. Only handles THIS loop published are ever removed —
+          the operator's own PROOFOFPNL_LEADERBOARD_HANDLE row is untouchable.
+        - UNLINKABLE: the sealed statement's ``account_ids`` is the HANDLE,
+          never a telegram id / web user id / email — those would be embedded
+          verbatim in the public statement (statement.py) and the on-disk
+          registry bundle, and is_public_safe does not scan account_ids.
+        - ISOLATED: fills come only from an ALREADY-LIVE per-user executor
+          (self._user_executors). Never from _executor_for (which falls back
+          to the shared operator executor for key-less users) — the operator's
+          fills must never publish under a user's handle.
+
+        Triple-gated default-OFF: PER_USER_LIVE_ENABLED and
+        PROOFOFPNL_PUBLISH_ENABLED and PROOFOFPNL_USER_LEADERBOARD_ENABLED.
+        Throttled, cadenced per user, fail-open; never touches trading.
+        """
+        if not getattr(CONFIG, "per_user_live_enabled", False):
+            return
+        from bot.proofofpnl.scheduler import (ProofOfPnLPublisher,
+                                              feature_enabled)
+        if not feature_enabled():
+            return
+        if str(os.environ.get("PROOFOFPNL_USER_LEADERBOARD_ENABLED", "")
+               ).strip().lower() not in ("1", "true", "yes", "on"):
+            return
+        now_ts = time.time()
+        if now_ts - getattr(self, "_last_user_lb_pull_ts", 0.0) < 300.0:
+            return
+        self._last_user_lb_pull_ts = now_ts
+        from bot.utils.leaderboard_pull import fetch_leaderboard_optins
+        optins = fetch_leaderboard_optins()
+        if optins is None:
+            return                      # transport failure: leave the board alone
+        from bot.proofofpnl.leaderboard import get_leaderboard_registry
+        from bot.proofofpnl.publish import PublicationStore
+        registry = get_leaderboard_registry()
+        try:
+            lookback_days = int(os.environ.get("PROOFOFPNL_LOOKBACK_DAYS", "") or 30)
+        except (TypeError, ValueError):
+            lookback_days = 30
+        since_ms = int((now_ts - max(1, lookback_days) * 86400) * 1000)
+        desired: dict[str, str] = {}
+        for row in optins:
+            tg = str(row.get("telegram_id") or "").strip()
+            handle = str(row.get("handle") or "").strip()
+            if not tg or not handle:
+                continue
+            ex = self._user_executors.get(tg)
+            # ISOLATION GUARD (mirror of the web-flatten guard): only a
+            # dedicated per-user executor may be published. The operator
+            # account never publishes under a user handle.
+            if ex is None or ex is self.live_executor or self._is_operator_user(tg):
+                continue
+            desired[tg] = handle
+            publishers = getattr(self, "_user_lb_publishers", None)
+            if publishers is None:
+                publishers = self._user_lb_publishers = {}
+            pub_er = publishers.get(tg)
+            if pub_er is None or pub_er._account_ids != [handle]:   # handle rename
+                try:
+                    from bot.core.exchange_credentials import get_credential_store
+                    venue = getattr(get_credential_store(), "get_venue",
+                                    lambda _u: "bitget")(tg) or "bitget"
+                except Exception:
+                    venue = "bitget"
+                # Dedicated SCRATCH store: per-user publications must never
+                # overwrite the operator's PublicationStore (the /proof feed).
+                # The board itself is fed via registry.put; this file is inert.
+                pub_er = ProofOfPnLPublisher(
+                    account_ids=[handle], venue=str(venue),
+                    store=PublicationStore("data/proofofpnl_user_scratch.json"))
+                publishers[tg] = pub_er
+            if not pub_er.due(int(now_ts)):
+                continue
+            try:
+                exchange = await ex._get_exchange()
+                trades = await exchange.fetch_my_trades(
+                    symbol=None, since=since_ms, limit=200)
+            except Exception as exc:
+                system_log.debug("User leaderboard fills skipped for %s: %s", tg, exc)
+                continue
+            pub = pub_er.publish(int(now_ts), trades or [],
+                                 range_start=int(since_ms / 1000),
+                                 range_end=int(now_ts))
+            if pub is not None:
+                try:
+                    registry.put(handle, pub)
+                except Exception as exc:
+                    system_log.debug("User leaderboard register skipped: %s", exc)
+        # Reconcile opt-outs / renames: remove only handles THIS loop set for a
+        # telegram id that dropped out or changed handle — never the operator's
+        # row or a manually-registered handle.
+        prev: dict[str, str] = getattr(self, "_user_board_handles", {})
+        for tg, old_handle in list(prev.items()):
+            if desired.get(tg) != old_handle:
+                try:
+                    registry.remove(old_handle)
+                except Exception as exc:
+                    system_log.debug("User leaderboard remove skipped: %s", exc)
+        self._user_board_handles = desired
 
     async def _maybe_ping_healthcheck(self) -> None:
         """Dead-man's-switch ping (ops tip #8). GETs HEALTHCHECK_PING_URL at
