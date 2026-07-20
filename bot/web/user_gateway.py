@@ -1039,6 +1039,32 @@ async def handle_proofofpnl_public(request: web.Request) -> web.Response:
     return web.json_response(_proofofpnl_payload())
 
 
+def _leaderboard_payload() -> dict:
+    """The public verifiable leaderboard: opted-in agents ranked by their
+    RE-VERIFIABLE record. Each row is anonymous (handle only), size-agnostic (no
+    dollar figure), and carries the publish_hash so anyone can re-derive it.
+    Rows that fail re-verification are excluded by the ranker."""
+    try:
+        from bot.proofofpnl.leaderboard import get_leaderboard_registry
+        try:
+            floor = int(str(os.environ.get("PROOFOFPNL_LEADERBOARD_MIN_TRIPS", "") or 1))
+        except (TypeError, ValueError):
+            floor = 1
+        rows = get_leaderboard_registry().ranked(min_round_trips=max(1, floor), limit=50)
+    except Exception:
+        rows = []
+    return {"format": "runeclaw.proofofpnl.leaderboard.v0",
+            "rows": rows, "count": len(rows)}
+
+
+async def handle_leaderboard_public(request: web.Request) -> web.Response:
+    """GET /gateway/public/leaderboard — the ranked, anonymous, verifiable board,
+    no auth. Same discipline as the public Proof-of-PnL feed: every row is
+    public-safe by construction and independently re-verifiable, so serving it
+    openly is the point, not a leak."""
+    return web.json_response(_leaderboard_payload())
+
+
 # ── Idle-Asset Yield Optimizer (read-only recommendation) ────────────────────
 #
 # One brain, one language: the optimizer lives in Python (bot.core.idle_yield);
@@ -1423,6 +1449,7 @@ def build_gateway(engine, tg_handler) -> web.Application:
     app.router.add_get("/sentry", handle_sentry)
     app.router.add_get("/proofofpnl", handle_proofofpnl)
     app.router.add_get("/public/proofofpnl", handle_proofofpnl_public)
+    app.router.add_get("/public/leaderboard", handle_leaderboard_public)
     app.router.add_post("/idleyield", handle_idle_yield)
     # Authority Envelope authoring (per-user, self-serve; _guard_user-gated).
     app.router.add_post("/authority/preview", handle_authority_preview)
