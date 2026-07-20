@@ -400,6 +400,13 @@
           <span class="right muted small">what it's doing for you</span></h2><div id="c-agent"><div class="skel"></div></div></section>` : ''}
         <section class="panel" id="p-mind"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-radar"></use></svg>Agent mind-stream
           <span class="right"><a class="small" href="#feed">full feed →</a></span></h2><div id="c-mind"><div class="skel"></div><div class="skel"></div></div></section>
+        <section class="panel" id="p-verify"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-shield"></use></svg>Don't trust the dashboard — verify the fills
+          <span class="right"><a class="small" href="/proof">Proof of PnL →</a></span></h2>
+          <div id="c-verify"><p style="max-width:64ch;color:var(--text-2);margin:0 0 12px">Every figure here is reconstructed from raw exchange fills and published as a sealed, hash-verifiable statement. Re-derive the hash in your own browser — no login, no trust required.</p>
+            <div class="row" style="gap:var(--s2);flex-wrap:wrap">
+              <a class="btn btn--sm" href="/proof">🔐 Re-verify the fills</a>
+              <a class="btn btn--sm btn--ghost" href="/track">📈 Public track record</a>
+            </div></div></section>
         <section class="panel" id="p-macmini"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-shield"></use></svg>Macro backdrop
           <span class="right"><a class="small" href="#macro">open Macro →</a></span></h2><div id="c-macmini"><div class="skel"></div></div></section>
         ${LOGGED_IN ? `<section class="panel" id="p-letter"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-sparkle"></use></svg>The Agent Letter
