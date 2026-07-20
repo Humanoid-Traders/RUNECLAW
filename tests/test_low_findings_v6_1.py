@@ -36,10 +36,10 @@ def test_divergence_strength_not_saturated_near_zero():
 
 def test_mcp_bars_clamped_and_mode_validated(monkeypatch):
     import asyncio
-    monkeypatch.setenv("MCP_AUTH_TOKEN", "tok")
-    import importlib
     import bot.mcp.server as srv
-    importlib.reload(srv)
+    # Patch the module attribute directly (auto-restored) — reloading the
+    # module would replace its objects mid-suite and break later tests.
+    monkeypatch.setattr(srv, "_MCP_AUTH_TOKEN", "tok")
 
     server = srv.RuneClawMCPServer()
 

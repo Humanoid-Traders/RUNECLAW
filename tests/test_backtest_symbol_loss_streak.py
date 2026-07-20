@@ -20,16 +20,34 @@ from bot.backtest.models import BacktestConfig
 from bot.config import CONFIG
 
 
+_LEARNING_FLAGS = ("confidence_calibration_enabled", "setup_expectancy_enabled",
+                   "external_sentiment_enabled")
+
+
+def _build_engine():
+    """Construct a BacktestEngine WITHOUT leaking global state.
+
+    BacktestEngine.__init__ flips three GLOBAL CONFIG.analyzer learning flags
+    off, restored only by cleanup() — which these unit tests never run. Put
+    them back immediately (the streak machinery doesn't depend on them), or
+    every later test in the suite sees default-ON flags reading OFF.
+    """
+    cfg = BacktestConfig(symbol="TAG/USDT:USDT", timeframe="1h",
+                         initial_balance=10_000.0)
+    saved = tuple(getattr(CONFIG.analyzer, f) for f in _LEARNING_FLAGS)
+    eng = BacktestEngine(cfg)
+    for name, val in zip(_LEARNING_FLAGS, saved):
+        object.__setattr__(CONFIG.analyzer, name, val)
+    eng._saved_learning_flags = (None, None, None)  # cleanup() must not re-flip
+    return eng
+
+
 def _engine(monkeypatch, enabled=True):
     if enabled:
         monkeypatch.setenv("BACKTEST_SYMBOL_LOSS_STREAK", "1")
     else:
         monkeypatch.delenv("BACKTEST_SYMBOL_LOSS_STREAK", raising=False)
-    cfg = BacktestConfig(symbol="TAG/USDT:USDT", timeframe="1h",
-                         initial_balance=10_000.0)
-    eng = BacktestEngine(cfg)
-    eng._saved_learning_flags = (None, None, None)  # skip cleanup restore
-    return eng
+    return _build_engine()
 
 
 _T0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
@@ -86,10 +104,7 @@ class TestGating:
         orig = CONFIG.risk.symbol_loss_streak_enabled
         object.__setattr__(CONFIG.risk, "symbol_loss_streak_enabled", False)
         try:
-            cfg = BacktestConfig(symbol="TAG/USDT:USDT", timeframe="1h",
-                                 initial_balance=10_000.0)
-            eng = BacktestEngine(cfg)
-            eng._saved_learning_flags = (None, None, None)
+            eng = _build_engine()
             assert eng._symbol_streak_enabled is False
         finally:
             object.__setattr__(CONFIG.risk, "symbol_loss_streak_enabled", orig)

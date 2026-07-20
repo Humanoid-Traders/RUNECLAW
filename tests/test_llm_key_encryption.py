@@ -8,7 +8,7 @@ save/get boundary. Legacy plaintext rows read back unchanged and re-encrypt on
 the next save.
 """
 
-import importlib
+from pathlib import Path
 
 import pytest
 from cryptography.fernet import Fernet
@@ -16,13 +16,14 @@ from cryptography.fernet import Fernet
 
 @pytest.fixture()
 def models(monkeypatch, tmp_path):
-    # Hermetic: pin a fresh master key and an isolated DB file, then (re)import
-    # the module so DB_PATH and the cipher pick them up.
+    # Hermetic: pin a fresh master key and an isolated DB file by patching the
+    # MODULE ATTRIBUTES (auto-restored by monkeypatch) — never importlib.reload,
+    # which would replace the module's objects mid-suite and leave DB_PATH
+    # pointing at this test's tmp dir for every later test.
     monkeypatch.setenv("RUNECLAW_SECRETS_KEY", Fernet.generate_key().decode())
-    monkeypatch.setenv("DB_PATH", str(tmp_path / "t.db"))
     import bot.db.models as m
-    importlib.reload(m)
-    m._LLM_CIPHER = None  # force rebuild against the pinned key
+    monkeypatch.setattr(m, "DB_PATH", Path(tmp_path / "t.db"))
+    monkeypatch.setattr(m, "_LLM_CIPHER", None)  # force rebuild on pinned key
     m.init_db()
     return m
 

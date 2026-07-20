@@ -8,9 +8,9 @@ password") and live positions were unprotected. _env_secret_any accepts either
 spelling so the passphrase loads regardless.
 """
 
-import importlib
-
 from bot.config import _env_secret_any
+
+from tests._env_subprocess import run_py
 
 
 def test_prefers_canonical_name(monkeypatch):
@@ -38,15 +38,14 @@ def test_strips_quotes_and_whitespace_like_env_secret(monkeypatch):
     assert _env_secret_any("BITGET_PASSPHRASE", "BITGET_API_PASSPHRASE") == "quoted-pass"
 
 
-def test_exchange_config_uses_alias(monkeypatch):
-    # ExchangeConfig computes its default at construction, so set env then rebuild.
-    monkeypatch.delenv("BITGET_PASSPHRASE", raising=False)
-    monkeypatch.setenv("BITGET_API_PASSPHRASE", "legacy-pass")
-    import bot.config as cfg
-    importlib.reload(cfg)
-    try:
-        assert cfg.ExchangeConfig().passphrase == "legacy-pass"
-    finally:
-        # Reload once more with a clean env so other tests see the module fresh.
-        monkeypatch.delenv("BITGET_API_PASSPHRASE", raising=False)
-        importlib.reload(cfg)
+def test_exchange_config_uses_alias():
+    # ExchangeConfig computes its default at class-definition time, so the
+    # alias must be tested against a FRESH import — in a subprocess, never via
+    # importlib.reload (reloading bot.config in-process replaces its class
+    # objects and silently breaks later tests' monkeypatches).
+    out = run_py(
+        "from bot.config import ExchangeConfig\n"
+        "print(ExchangeConfig().passphrase)",
+        env_overrides={"BITGET_API_PASSPHRASE": "legacy-pass"},
+        env_removals=("BITGET_PASSPHRASE",))
+    assert out == "legacy-pass"

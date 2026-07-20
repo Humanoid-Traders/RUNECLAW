@@ -5,10 +5,9 @@ The default table tightens the trail as profit grows (2.0 -> 1.5 -> 1.0 xATR),
 which can choke a runner at stage 3; the knobs let the late-stage distance be
 widened for A/B tuning without touching the default.
 """
-import importlib
-import os
-
 import bot.utils.trailing as trailing
+
+from tests._env_subprocess import run_py
 
 
 def test_stage_mult_defaults():
@@ -27,13 +26,14 @@ def test_default_stage_table_unchanged():
 def test_env_override_widens_late_stage(monkeypatch):
     monkeypatch.setenv("TRAIL_STAGE3_ATR_MULT", "2.5")
     assert trailing._stage_mult(3, 1.0) == 2.5
-    # And the module rebuilds the table with the override on reload.
-    reloaded = importlib.reload(trailing)
-    try:
-        assert reloaded._STAGES[3]["atr_mult"] == 2.5
-    finally:
-        monkeypatch.delenv("TRAIL_STAGE3_ATR_MULT", raising=False)
-        importlib.reload(trailing)  # restore defaults for other tests
+    # And a fresh import builds the table with the override. Checked in a
+    # subprocess — reloading trailing in-process replaces its function objects
+    # and breaks later tests that imported them at collection time.
+    out = run_py(
+        "import bot.utils.trailing as t\n"
+        "print(t._STAGES[3]['atr_mult'])",
+        env_overrides={"TRAIL_STAGE3_ATR_MULT": "2.5"})
+    assert out == "2.5"
 
 
 def test_bad_env_value_falls_back_to_default(monkeypatch):
