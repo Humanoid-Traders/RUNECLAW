@@ -93,6 +93,13 @@ class ProactiveMonitor:
         # enrolled) by hydrate(), called from start_monitor — NOT here — so a
         # bare ProactiveMonitor(engine) in tests stays empty and deterministic.
         self._running = False
+        # Own-loop heartbeat for the engine's reciprocal liveness watch.
+        # None (NOT 0.0) sentinel — see the monotonic-epoch trap note below:
+        # a fresh process has monotonic near zero, so a 0.0 "never ran" would
+        # read as recent and suppress the very alarm this exists to raise.
+        self.last_loop_ts: float | None = None
+        # Edge-trigger state for the engine-tick stall watch.
+        self._tick_stale_alerted = False
         self._dedup_cache: dict[str, float] = {}  # dedup_key -> last_alert_time
 
         # State tracking for change detection
@@ -255,6 +262,7 @@ class ProactiveMonitor:
         logger.info("Proactive monitor started")
 
         while self._running:
+            self.last_loop_ts = time.monotonic()
             try:
                 alerts = self._check_all()
                 for alert in alerts:
@@ -277,6 +285,7 @@ class ProactiveMonitor:
         alerts.extend(self._check_circuit_breaker())
         alerts.extend(self._check_drawdown_tiers())
         alerts.extend(self._check_tick_failures())
+        alerts.extend(self._check_engine_tick_stale())
         alerts.extend(self._check_warning_rate_breaker())
         alerts.extend(self._check_llm_degraded())
         alerts.extend(self._check_ws_health())
@@ -945,6 +954,49 @@ class ProactiveMonitor:
             self._last_tick_degraded = degraded
         except Exception as exc:
             system_log.debug("tick-failure check failed: %s", exc)
+        return alerts
+
+    # A hung tick (a blocked await that never raises) increments no failure
+    # counter and is invisible to _check_tick_failures above. This watches the
+    # tick loop's START stamp instead. Threshold must clear the worst
+    # LEGITIMATE gap — the tick loop backs off up to 300s between failed
+    # ticks — so anything under ~2x the backoff cap would false-alarm on a
+    # degraded-but-alive engine.
+    TICK_STALL_THRESHOLD_S = 600.0
+
+    @staticmethod
+    def _is_tick_stalled(last_started: "float | None", now: float,
+                         threshold: float) -> bool:
+        """Pure staleness predicate. None = engine not started yet — never
+        stale (the documented monotonic None-sentinel rule)."""
+        if last_started is None or threshold <= 0:
+            return False
+        return (now - last_started) > threshold
+
+    def _check_engine_tick_stale(self) -> list[Alert]:
+        """CRITICAL when the engine tick loop has not STARTED a tick for far
+        longer than any legitimate backoff — a hang, not a crash (crashes are
+        counted and caught by _check_tick_failures). Edge-triggered: fires once
+        per stall, re-arms when the loop moves again."""
+        alerts: list[Alert] = []
+        last = getattr(self.engine, "_last_tick_started_ts", None)
+        stalled = self._is_tick_stalled(last, time.monotonic(),
+                                        self.TICK_STALL_THRESHOLD_S)
+        if stalled and not self._tick_stale_alerted:
+            self._tick_stale_alerted = True
+            age = time.monotonic() - last
+            alerts.append(Alert(
+                alert_type="TICK_STALL",
+                severity="CRITICAL",
+                title="Engine loop stalled",
+                body=(f"The engine tick loop has not started a cycle for "
+                      f"{age:.0f}s (threshold {self.TICK_STALL_THRESHOLD_S:.0f}s). "
+                      f"This looks like a HANG, not a crash: positions are NOT "
+                      f"being monitored. Check the process and consider a restart."),
+                dedup_key="tick_stall",
+            ))
+        elif not stalled:
+            self._tick_stale_alerted = False
         return alerts
 
     def _check_warning_rate_breaker(self) -> list[Alert]:
