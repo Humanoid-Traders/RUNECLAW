@@ -61,6 +61,26 @@ async function buildNetWorth(ident, userId) {
     sections.wallet = { linked: true, available: false };
   }
 
+  // NFT collectibles on the linked wallet — CONTEXT ONLY. Floors are asks,
+  // not liquidation values, and NFT markets are thin: collectibles are shown
+  // but their floor value is NEVER summed into the real total.
+  try {
+    const address = sections.wallet && sections.wallet.address;
+    if (address) {
+      const nfts = await require('./opensea').getWalletNfts(address);
+      sections.collectibles = nfts.available
+        ? { available: true, count: nfts.count,
+            collections: [...new Set(nfts.items.map(i => i.collection).filter(Boolean))].slice(0, 5),
+            valuation_note: 'floors are asks, not liquidation values — '
+              + 'collectibles are never counted in the total' }
+        : { available: false, reason: nfts.reason };
+    } else {
+      sections.collectibles = { available: false, reason: 'no_wallet' };
+    }
+  } catch (e) {
+    sections.collectibles = { available: false, reason: 'error' };
+  }
+
   // Real total: only real money. Paper stays out by design.
   let total = 0;
   let counted = 0;
