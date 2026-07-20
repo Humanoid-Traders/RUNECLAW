@@ -13,7 +13,12 @@ const TTL_MS = 30_000;
 
 let cache = { at: 0, map: null };
 
+// Injectable fetch (tests / alternate transports). Null restores the default.
+let fetchImpl = null;
+function setTickerFetcher(fn) { fetchImpl = fn || null; cache = { at: 0, map: null }; }
+
 async function getTickers() {
+  if (fetchImpl) return fetchImpl();
   const now = Date.now();
   if (cache.map && now - cache.at < TTL_MS) return cache.map;
   const res = await fetch(TICKERS_URL, { signal: AbortSignal.timeout(10_000) });
@@ -33,4 +38,4 @@ async function getTickers() {
   return map;
 }
 
-module.exports = { getTickers };
+module.exports = { getTickers, setTickerFetcher };

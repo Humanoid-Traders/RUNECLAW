@@ -25,7 +25,7 @@ const { getGateway, isConfigured: gatewayConfigured } = require('../lib/gateway'
 const router = express.Router();
 
 const PROTOCOL_VERSION = '2025-03-26';
-const SERVER_INFO = { name: 'runeclaw', version: '1.0.0' };
+const SERVER_INFO = { name: 'runeclaw', version: '2.0.0' };
 
 // Per-IP limiter: MCP is public surface. Uses the shared limiter (periodic
 // idle-bucket pruning) — the earlier hand-rolled map never expired entries
@@ -268,6 +268,142 @@ const TOOLS = {
       return r.letter;
     },
   },
+
+  // ── v2 tools ──────────────────────────────────────────────────────────────
+
+  research_token: {
+    description: 'Evidence dossier for a listed coin — live market read, '
+      + 'sector membership, DEX presence, the deterministic SAFETY read '
+      + '(heuristic red flags, never a verdict), engine signal history and '
+      + "the agent's own recorded track record on the coin. Composed only "
+      + 'from trusted live sources and recorded platform history; a coin the '
+      + 'venue does not list returns listed:false (nothing to research '
+      + 'honestly).',
+    inputSchema: {
+      type: 'object',
+      properties: { symbol: { type: 'string', maxLength: 12 } },
+      required: ['symbol'],
+      additionalProperties: false,
+    },
+    handler: async (args) => {
+      const base = String(args.symbol || '').toUpperCase()
+        .replace(/[^A-Z0-9]/g, '').replace(/USDT$/, '').slice(0, 10);
+      if (!base) return { listed: false, error: 'symbol required' };
+      const d = await require('../lib/research').buildDossier(base);
+      return d ? { listed: true, ...d }
+        : { listed: false, note: 'Not listed on the venue — no trusted live data.' };
+    },
+  },
+
+  scan_token_safety: {
+    description: 'Deterministic token safety heuristics for a coin: thin '
+      + 'venue volume, extreme/parabolic 24h moves, on-chain liquidity depth, '
+      + 'pair age, honeypot pattern (buys but no sells), one-sided flow, and '
+      + 'CEX↔DEX price gap — tiered standard/elevated/high/extreme. Flags '
+      + 'are heuristics with reasons, NEVER a verdict: "no flags" means the '
+      + 'checks found nothing, not that the token is safe.',
+    inputSchema: {
+      type: 'object',
+      properties: { symbol: { type: 'string', maxLength: 12 } },
+      required: ['symbol'],
+      additionalProperties: false,
+    },
+    handler: async (args) => {
+      const base = String(args.symbol || '').toUpperCase()
+        .replace(/[^A-Z0-9]/g, '').replace(/USDT$/, '').slice(0, 10);
+      if (!base) return { error: 'symbol required' };
+      let ticker = null;
+      try { ticker = (await require('../lib/tickers').getTickers())[`${base}USDT`] || null; }
+      catch (e) { /* CEX side degrades; on-chain checks still run */ }
+      return require('../lib/token_safety').scanToken(base, { ticker });
+    },
+  },
+
+  get_leaderboard: {
+    description: 'The public verifiable leaderboard: anonymous handles ranked '
+      + 'by re-verified sealed statements (win rate, profit factor, round '
+      + 'trips — never account sizes or dollar amounts). Optional season '
+      + '"YYYY-MM" returns that frozen monthly board.',
+    inputSchema: {
+      type: 'object',
+      properties: { season: { type: 'string', maxLength: 7 } },
+      additionalProperties: false,
+    },
+    handler: async (args) => {
+      const season = String(args?.season || '');
+      if (season && !/^\d{4}-\d{2}$/.test(season)) return { error: 'season must be YYYY-MM' };
+      if (!gatewayConfigured()) return { available: false, error: 'not_configured' };
+      const r = await getGateway(`/public/leaderboard${season ? `?season=${season}` : ''}`, 15000);
+      if (r.status < 200 || r.status >= 300) return { available: false, error: 'unavailable' };
+      return r.data;
+    },
+  },
+
+  get_agent_card: {
+    description: 'The ERC-8004 identity card behind a published agent '
+      + 'address: identity, sealed track-record linkage, server-side '
+      + 'verification result (re-derived hash + Ed25519), trust tier and '
+      + 'reconciliation status. The anchor stays honestly UNVERIFIED until a '
+      + 'real on-chain transaction confirms it. Unknown addresses return '
+      + 'found:false.',
+    inputSchema: {
+      type: 'object',
+      properties: { address: { type: 'string', maxLength: 42 } },
+      required: ['address'],
+      additionalProperties: false,
+    },
+    handler: async (args) => {
+      const addr = String(args.address || '').toLowerCase();
+      if (!/^0x[0-9a-f]{40}$/.test(addr)) return { error: 'address must be 0x + 40 hex chars' };
+      if (!gatewayConfigured()) return { found: false, error: 'not_configured' };
+      const r = await getGateway(`/public/agent/${addr}`, 15000);
+      if (r.status === 404) return { found: false };
+      if (r.status < 200 || r.status >= 300) return { found: false, error: 'unavailable' };
+      return { found: true, ...r.data };
+    },
+  },
+
+  get_public_letter: {
+    description: 'The PUBLIC edition of the weekly Agent Letter — the same '
+      + 'recorded data recomposed with no dollar figure (counts, win rate, '
+      + 'profit factor, equity percent change, alpha vs holding, regime '
+      + 'reads). Optional week "YYYY-Wnn"; defaults to the latest completed '
+      + 'ISO week. Only completed weeks exist.',
+    inputSchema: {
+      type: 'object',
+      properties: { week: { type: 'string', maxLength: 8 } },
+      additionalProperties: false,
+    },
+    handler: async (args) => {
+      const letters = require('../lib/letter');
+      const week = String(args?.week || '') || letters.lastCompletedWeek().key;
+      if (!/^\d{4}-W\d{2}$/.test(week)) return { error: 'week must be YYYY-Wnn' };
+      const letter = await letters.getPublicLetter(week);
+      return letter || { found: false, week };
+    },
+  },
+
+  get_airdrop_radar: {
+    description: 'Curated airdrop & testnet campaign radar with guided '
+      + 'checklists — status, cost, effort, requirements and official links. '
+      + 'GUIDED-ONLY by design: the human performs and signs every step; '
+      + 'RUNECLAW never automates participation, never farms with multiple '
+      + 'wallets (sybil activity gets retroactively disqualified anyway). '
+      + 'Campaigns churn — verify on the official link before acting.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: async () => require('../lib/airdrops').getPublicAirdropRadar(),
+  },
+
+  get_alpha_intel: {
+    description: "Derived analytics over the agent's public recorded closed "
+      + 'trades: alpha vs simply holding each traded asset (rebuilt from each '
+      + "trade's own entry/exit prices — no external price history, fully "
+      + 're-derivable), expectancy, payoff ratio, profit factor, max realized '
+      + 'drawdown and streaks. Same rows as get_track_record.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: async () =>
+      require('../lib/intel').getUserIntel(parseInt(process.env.BOT_USER_ID) || 1),
+  },
 };
 
 // ── JSON-RPC plumbing ────────────────────────────────────────────────────────
@@ -336,6 +472,11 @@ async function handleRpc(msg) {
  * matching the simple schemas this server declares.
  */
 function validateArgs(schema, args) {
+  for (const k of (schema && schema.required) || []) {
+    if (args == null || typeof args !== 'object' || !(k in args)) {
+      return `Missing required argument: ${k}`;
+    }
+  }
   if (args == null) return null;
   if (typeof args !== 'object' || Array.isArray(args)) return 'arguments must be an object';
   const props = (schema && schema.properties) || {};
