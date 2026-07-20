@@ -702,8 +702,11 @@ class ExchangeConfig:
     trade_mode: str = _env("TRADE_MODE", "futures")
     # Default leverage (1x = no leverage, 5x = default for futures)
     default_leverage: int = int(_env_float_bounded("DEFAULT_LEVERAGE", 5, 1, 125))
-    # Dynamic leverage scaling
-    dynamic_leverage_enabled: bool = _env_bool("DYNAMIC_LEVERAGE_ENABLED", True)
+    # Dynamic leverage scaling. Default OFF (operator directive 2026-07-20:
+    # one uniform standard leverage everywhere — different x per symbol read
+    # as drift). Opt back in with DYNAMIC_LEVERAGE_ENABLED=1; scaling only
+    # ever REDUCES from the standard, never raises it.
+    dynamic_leverage_enabled: bool = _env_bool("DYNAMIC_LEVERAGE_ENABLED", False)
     min_leverage: int = int(_env_float_bounded("MIN_LEVERAGE", 2, 1, 125))
     max_leverage: int = int(_env_float_bounded("MAX_LEVERAGE", 10, 1, 125))
     # Margin mode: "isolated" mandatory (GetClaw rule: prevents runaway losses on gap-risk assets)
@@ -2149,6 +2152,10 @@ class RuntimeState:
         # past the default cap. Bounded hard in the setter so it can never be
         # disabled outright. Only consulted on LIVE; paper/backtest ignore it.
         self._live_drawdown_override_pct: float | None = None
+        # Runtime override for the standard leverage (operator /leverage).
+        # None => CONFIG.exchange.default_leverage (5x standard). Clamped
+        # hard in the setter; consulted by LiveExecutor on every open.
+        self._leverage_override: int | None = None
 
     @property
     def live_mode(self) -> bool:
@@ -2195,6 +2202,26 @@ class RuntimeState:
     def auto_confirm_threshold(self, value: float) -> None:
         with self._lock:
             self._auto_confirm_threshold = max(0.0, min(1.0, value))
+
+    # Hard bounds for the operator leverage override: the ceiling is a real
+    # backstop — no runtime command can push standard leverage past 20x.
+    LEVERAGE_OVERRIDE_MIN = 1
+    LEVERAGE_OVERRIDE_MAX = 20
+
+    @property
+    def leverage_override(self):
+        with self._lock:
+            return self._leverage_override
+
+    @leverage_override.setter
+    def leverage_override(self, value) -> None:
+        with self._lock:
+            if value is None:
+                self._leverage_override = None
+                return
+            v = int(value)
+            self._leverage_override = max(self.LEVERAGE_OVERRIDE_MIN,
+                                          min(self.LEVERAGE_OVERRIDE_MAX, v))
 
     # Hard bounds for the live drawdown override. The ceiling is a real
     # backstop: no operator command can push the live drawdown cap past this,

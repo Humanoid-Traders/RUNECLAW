@@ -535,7 +535,16 @@ class LiveExecutor:
         low/normal vol keeps the default. Fail-safe: any error → 1x (safest).
         Returns an int ≥ 1."""
         cfg = CONFIG.exchange
-        default_lev = max(1, int(cfg.default_leverage))
+        # Standard leverage: runtime /leverage override wins over the env
+        # default. One uniform number everywhere unless dynamic scaling is
+        # explicitly enabled (which only ever reduces it).
+        try:
+            from bot.config import RUNTIME
+            _override = RUNTIME.leverage_override
+        except Exception:
+            _override = None
+        default_lev = max(1, int(_override if _override is not None
+                                 else cfg.default_leverage))
         if not getattr(cfg, "dynamic_leverage_enabled", False):
             return default_lev
         try:
@@ -754,18 +763,32 @@ class LiveExecutor:
         # set call failed, the verify read failed, and the order proceeded
         # at the exchange's sticky per-symbol setting with only debug logs.
         # Surface it in the audit trail (once per symbol per process).
+        # Operator directive (2026-07-20, live BCH 20x incident): leverage is
+        # a STANDARD, not a suggestion. When the exchange will not confirm the
+        # target, fail CLOSED — abort the order instead of trading at whatever
+        # sticky per-symbol default Bitget applies (20x on never-configured
+        # symbols). LEVERAGE_FAIL_OPEN=1 restores the old proceed-with-warning
+        # behavior as an explicit escape hatch for venue API weather.
         if not _lev_verified:
+            fail_open = os.environ.get("LEVERAGE_FAIL_OPEN", "0").strip() in ("1", "true", "yes")
             if symbol not in self._lev_unverified_warned:
                 self._lev_unverified_warned.add(symbol)
                 audit(trade_log,
                       f"Leverage UNVERIFIED for {symbol}: wanted "
                       f"{_target_leverage}x but the exchange did not confirm — "
-                      f"order proceeds; position sync will true up after fill",
-                      action="leverage_unverified", result="WARNING",
+                      + ("order proceeds (LEVERAGE_FAIL_OPEN=1)" if fail_open
+                         else "ABORTING order (fail-closed standard)"),
+                      action="leverage_unverified",
+                      result="WARNING" if fail_open else "ABORT",
                       data={"symbol": symbol, "target": _target_leverage})
                 logger.warning(
                     "Leverage UNVERIFIED for %s (wanted %dx) — exchange may "
                     "apply its own per-symbol default", symbol, _target_leverage)
+            if not fail_open:
+                raise RuntimeError(
+                    f"Cannot confirm {_target_leverage}x leverage for {symbol} "
+                    "— aborting order rather than trading at the exchange's "
+                    "sticky default. Set LEVERAGE_FAIL_OPEN=1 to override.")
 
         # Detect hold mode (one-way vs hedge) on first call
         if self._hedge_mode is None:

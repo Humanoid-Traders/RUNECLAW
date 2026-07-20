@@ -406,6 +406,7 @@ class TelegramHandler:
             # Web-parity views
             ("networth", self._cmd_networth),
             ("anchor", self._cmd_anchor),
+            ("leverage", self._cmd_leverage),
             ("exposure", self._cmd_exposure),
             ("research", self._cmd_research),
             ("rwa", self._cmd_rwa),
@@ -2905,6 +2906,58 @@ class TelegramHandler:
     _WEB_LINK_HINT = ("🔌 The web app isn't reachable (or your account isn't "
                       "linked). This view is served by the RUNECLAW web app — "
                       "set it up and /link your account, then try again.")
+
+    @guard("leverage")
+    async def _cmd_leverage(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """/leverage — the standard leverage, runtime-adjustable (admin).
+
+        ``/leverage`` shows the standard and where it comes from;
+        ``/leverage set <n>`` overrides it at runtime (clamped 1-20x, applies
+        to every NEW position on every venue); ``/leverage reset`` returns to
+        the configured default. Open positions keep the leverage they were
+        opened with — the exchange cannot change it under an open position.
+        """
+        from bot.config import CONFIG as _CFG, RUNTIME as _RT
+        args = [a.lower() for a in (ctx.args or [])]
+        if args and not self._is_admin(update):
+            await self._reply(update, "🔒 Changing leverage is admin-only.")
+            return
+        if args[:1] == ["set"] and len(args) >= 2:
+            try:
+                val = int(float(args[1].rstrip("x")))
+            except ValueError:
+                await self._reply(update, "Usage: /leverage set <1-20>")
+                return
+            _RT.leverage_override = val
+            applied = _RT.leverage_override
+            note = "" if applied == val else f" (clamped from {val}x)"
+            await self._reply(
+                update,
+                f"⚙️ Standard leverage set to <b>{applied}x</b>{note}.\n"
+                "Applies to every NEW position on every venue. Open positions "
+                "keep the leverage they were opened with.")
+            return
+        if args[:1] == ["reset"]:
+            _RT.leverage_override = None
+            await self._reply(
+                update,
+                f"⚙️ Standard leverage reset to the configured default "
+                f"(<b>{_CFG.exchange.default_leverage}x</b>).")
+            return
+        override = _RT.leverage_override
+        standard = override if override is not None else _CFG.exchange.default_leverage
+        dyn = getattr(_CFG.exchange, "dynamic_leverage_enabled", False)
+        lines = [
+            "⚙️ <b>Leverage standard</b>",
+            f"• Standard: <b>{standard}x</b> "
+            + ("(runtime override)" if override is not None else "(configured default)"),
+            f"• Dynamic vol scaling: {'ON — can only REDUCE below the standard' if dyn else 'OFF — uniform everywhere'}",
+            "• Unconfirmed leverage: orders ABORT (fail-closed) unless "
+            "LEVERAGE_FAIL_OPEN=1",
+            "",
+            "Change: <code>/leverage set 5</code> · reset: <code>/leverage reset</code>",
+        ]
+        await self._reply(update, "\n".join(lines))
 
     @guard("anchor")
     async def _cmd_anchor(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
