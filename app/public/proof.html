@@ -189,13 +189,19 @@
     <section class="panel">
       <h2>On-chain identity anchor (ERC-8004)</h2>
       <div class="row" style="margin-bottom:var(--s3)">
-        <span class="badge unverified">${esc((anchor.status || 'UNVERIFIED')).toUpperCase()}</span>
-        <span class="muted small">No anchoring transaction is claimed until one is confirmed on-chain.</span>
+        <span class="badge ${String(anchor.status).toUpperCase() === 'VERIFIED' ? 'fresh' : 'unverified'}">${esc((anchor.status || 'UNVERIFIED')).toUpperCase()}</span>
+        <span class="muted small">${String(anchor.status).toUpperCase() === 'VERIFIED'
+          ? 'Confirmed on-chain — re-check the transaction yourself via the explorer link below.'
+          : 'No anchoring transaction is claimed until one is confirmed on-chain.'}</span>
       </div>
       <dl class="kv">
         ${anchor.reputation_registry ? `<dt>ReputationRegistry</dt><dd>${esc(anchor.reputation_registry)}</dd>` : ''}
         ${anchor.chain_id ? `<dt>Chain</dt><dd>${esc(chainName(anchor.chain_id))} (id ${esc(String(anchor.chain_id))})</dd>` : ''}
         ${anchor.card_hash ? `<dt>Card hash</dt><dd>${esc(anchor.card_hash)}</dd>` : ''}
+        ${(anchor.anchors || []).map(a => `<dt>Anchor tx (${esc(chainName(a.chain_id))})</dt>
+          <dd>${/^https:\/\/(basescan\.org|etherscan\.io)\/tx\/0x[0-9a-f]{64}$/.test(String(a.explorer || ''))
+            ? `<a href="${esc(a.explorer)}" target="_blank" rel="noopener">${esc(a.tx_hash)}</a>`
+            : esc(a.tx_hash || '')} <span class="muted">· block ${esc(String(a.block_number ?? '—'))}</span></dd>`).join('')}
         ${anchor.note ? `<dt>Note</dt><dd style="font-family:inherit;color:var(--text-3)">${esc(anchor.note)}</dd>` : ''}
       </dl>
       ${(() => {

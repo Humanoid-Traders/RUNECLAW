@@ -405,6 +405,7 @@ class TelegramHandler:
             ("guardian", self._cmd_guardian),
             # Web-parity views
             ("networth", self._cmd_networth),
+            ("anchor", self._cmd_anchor),
             ("exposure", self._cmd_exposure),
             ("research", self._cmd_research),
             ("rwa", self._cmd_rwa),
@@ -2904,6 +2905,90 @@ class TelegramHandler:
     _WEB_LINK_HINT = ("🔌 The web app isn't reachable (or your account isn't "
                       "linked). This view is served by the RUNECLAW web app — "
                       "set it up and /link your account, then try again.")
+
+    @guard("anchor")
+    async def _cmd_anchor(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """/anchor — ERC-8004 identity anchoring on Base (operator-only).
+
+        ``/anchor`` shows status + the DRY-RUN transaction to send from the
+        operator's own wallet; ``/anchor confirm <tx_hash>`` verifies it
+        on-chain and records it. The bot never holds a key and never sends a
+        transaction — non-custodial even for the operator.
+        """
+        import asyncio as _aio
+        import html as _html
+        import os as _os
+
+        if not self._is_admin(update):
+            await self._send(update, "🔒 /anchor is operator-only.")
+            return
+        from bot.proofofpnl.anchor import (
+            build_anchor_tx, confirm_anchor, read_anchor_state)
+
+        addr = _os.environ.get("PROOFOFPNL_AGENT_ADDRESS", "").strip().lower()
+        if not addr:
+            await self._send(update,
+                "Set <code>PROOFOFPNL_AGENT_ADDRESS</code> (the agent wallet) "
+                "in the environment first — the anchor binds that address.")
+            return
+        pubkey = ""
+        try:
+            from bot.utils.attestation import AttestationEngine
+            _eng = AttestationEngine()
+            if _eng.available:
+                pubkey = _eng.public_key_hex
+        except Exception:
+            pass
+        if not pubkey:
+            await self._send(update,
+                "Attestation signing key unavailable — the anchor binds the "
+                "Ed25519 pubkey, so signing must be configured first.")
+            return
+
+        args = list(ctx.args or [])
+        if args and args[0].lower() == "confirm":
+            if len(args) < 2:
+                await self._send(update, "Usage: /anchor confirm &lt;tx_hash&gt;")
+                return
+            ok, problems = await _aio.to_thread(
+                confirm_anchor, args[1], addr, pubkey)
+            if ok:
+                await self._send(update,
+                    "✅ <b>ANCHOR VERIFIED &amp; RECORDED</b>\n"
+                    "The identity card now reads VERIFIED — the on-chain tx "
+                    "was checked (confirmed, correct calldata, sent from the "
+                    "agent wallet). /proof and /agent surfaces update on the "
+                    "next publication tick.")
+            else:
+                await self._send(update,
+                    "🔴 <b>NOT RECORDED</b>\n"
+                    + "\n".join(f"• {_html.escape(p)}" for p in problems))
+            return
+
+        state = read_anchor_state()
+        plan = await _aio.to_thread(build_anchor_tx, addr, pubkey)
+        est = plan.get("estimate") or {}
+        cost = (f"{est.get('est_cost_eth')} ETH (~gas {est.get('gas')}, "
+                f"{est.get('gas_price_gwei')} gwei)"
+                if est.get("available") else "estimate unavailable")
+        lines = [
+            "⚓ <b>ERC-8004 IDENTITY ANCHOR — Base</b>",
+            "────────────────",
+            f"Recorded anchors: <code>{len(state) or 'none'}</code>",
+            f"Mode: <code>{plan['mode']}</code>",
+            f"Commitment: <code>{plan['commitment'][:16]}…</code>",
+            "",
+            "<b>DRY RUN — send this from YOUR wallet</b> (the bot never signs):",
+            f"To: <code>{plan['to']}</code>",
+            "Value: <code>0</code>",
+            f"Data: <code>{plan['data']}</code>",
+            f"Est. cost: <code>{cost}</code>",
+            "",
+            "Then: <code>/anchor confirm &lt;tx_hash&gt;</code>",
+            "",
+            f"<i>{_html.escape(plan['promotion_note'])}</i>",
+        ]
+        await self._send(update, "\n".join(lines))
 
     @guard("networth")
     async def _cmd_networth(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
