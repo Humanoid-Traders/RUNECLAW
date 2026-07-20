@@ -400,6 +400,7 @@
     container.insertAdjacentHTML('beforeend', `
       <div class="stack">
         <section class="panel panel--primary" id="p-hero"><div id="c-hero"><div class="skel"></div><div class="skel"></div></div></section>
+        <section class="panel" id="p-next"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-rocket"></use></svg>Getting started</h2><div id="c-next"><div class="skel"></div></div></section>
         ${LOGGED_IN ? `<section class="panel" id="p-agent"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-sparkle"></use></svg>Your agent
           <span class="right muted small">what it's doing for you</span></h2><div id="c-agent"><div class="skel"></div></div></section>` : ''}
         <section class="panel" id="p-mind"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-radar"></use></svg>Agent mind-stream
@@ -416,10 +417,7 @@
         ${LOGGED_IN ? `<section class="panel" id="p-letter"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-sparkle"></use></svg>The Agent Letter
           <select class="input" id="letterWeek" aria-label="Letter week" style="margin-left:auto;width:auto;padding:2px 8px"></select></h2>
           <div id="c-letter"><div class="skel"></div><div class="skel"></div></div></section>` : ''}
-        <div class="grid grid-main">
-          <section class="panel" id="p-hpos"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-coin"></use></svg>Open positions</h2><div id="c-hpos"><div class="skel"></div><div class="skel"></div></div></section>
-          <section class="panel" id="p-next"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-rocket"></use></svg>Getting started</h2><div id="c-next"><div class="skel"></div></div></section>
-        </div>
+        <section class="panel" id="p-hpos"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-coin"></use></svg>Open positions</h2><div id="c-hpos"><div class="skel"></div><div class="skel"></div></div></section>
         <section class="panel" id="p-hsig"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-radar"></use></svg>Latest engine signals</h2><div id="c-hsig"><div class="skel"></div><div class="skel"></div></div></section>
       </div>`);
 
