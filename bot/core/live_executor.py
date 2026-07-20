@@ -1016,6 +1016,31 @@ class LiveExecutor:
                 f"micro-test limit ${MICRO_MAX_TOTAL_EXPOSURE:.2f}"
             )
 
+        # LIVE-1 (operator directive, live-testing protection): every LINKED
+        # (per-user) account carries its own hard max-funds ceiling — total
+        # deployed margin may never exceed PER_USER_MAX_FUNDS_USD, regardless
+        # of the account's balance. A test account can lose at most what the
+        # operator deliberately allowed it. Operator executor (user_id None)
+        # is governed by the MICRO_* caps above, not this.
+        if self.user_id is not None:
+            try:
+                per_user_cap = float(os.environ.get("PER_USER_MAX_FUNDS_USD", "100"))
+            except ValueError:
+                per_user_cap = 100.0
+            if per_user_cap > 0 and total_exposure + size_usd > per_user_cap:
+                audit(trade_log,
+                      f"PER-USER CAP blocked trade for user {self.user_id}: "
+                      f"${total_exposure + size_usd:.2f} > ${per_user_cap:.2f}",
+                      action="per_user_cap", result="BLOCKED",
+                      data={"user_id": str(self.user_id), "cap": per_user_cap,
+                            "exposure": total_exposure, "new_size": size_usd})
+                return (
+                    f"Linked-account protection: total deployed "
+                    f"${total_exposure + size_usd:.2f} would exceed this "
+                    f"account's max-funds cap ${per_user_cap:.2f} "
+                    "(PER_USER_MAX_FUNDS_USD)"
+                )
+
         # GETCLAW: Capital buffer guard — keep minimum reserve after trade.
         # Deploying too much leaves no buffer for margin calls or new opportunities.
         # Warn (don't block) if remaining equity drops below 20% of limit.

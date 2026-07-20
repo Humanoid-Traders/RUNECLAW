@@ -2733,15 +2733,21 @@
         const r = await fetchJSON('/api/reports/yield', { timeoutMs: 12000 });
         const y = r.data?.yield;
         if (!y || !(y.rows || []).length) return null;
-        return `<p class="muted small">Idle assets vs Bitget flexible Earn — same data as Telegram /yield. Staking stays behind the bot's confirm buttons.</p>
+        // SPOT-2: every lock term is shown with its duration — a lock is not
+        // revocable until the term ends, so term vs rate must be an explicit
+        // user choice, never a hidden "best fixed" number.
+        const termChips = (row) => (row.fixed_terms || []).slice(0, 6).map(t =>
+          `<span class="badge" title="Locked for ${esc(t.days)} days — funds are NOT redeemable until the term ends">🔒${esc(t.days)}d ${Number(t.apy).toFixed(2)}%</span>`
+        ).join(' ');
+        return `<p class="muted small">Idle assets vs Bitget Earn — flexible redeems instantly; 🔒 fixed terms LOCK funds until the term ends (not revocable). Staking stays behind the bot's confirm buttons.</p>
           <div class="tbl-wrap"><table class="tbl">
           <thead><tr><th>Coin</th><th class="r">Idle</th><th class="r">Stakeable</th><th class="r">Flex APY</th><th class="r">Est/yr</th></tr></thead>
-          <tbody>${y.rows.slice(0, 10).map(row => `<tr><td><b>${esc(row.coin)}</b>${row.alt_note ? ` <span class="muted small">${esc(row.alt_note)}</span>` : ''}</td>
+          <tbody>${y.rows.slice(0, 10).map(row => `<tr><td><b>${esc(row.coin)}</b>${row.alt_note ? ` <span class="muted small">${esc(row.alt_note)}</span>` : ''}${(row.fixed_terms || []).length ? `<br>${termChips(row)}` : ''}</td>
             <td class="num r">$${Number(row.idle_usd || 0).toFixed(2)}</td>
             <td class="num r">$${Number(row.stakeable_usd || 0).toFixed(2)}</td>
             <td class="num r">${row.apy_flexible != null ? Number(row.apy_flexible).toFixed(2) + '%' : '—'}</td>
             <td class="num r">$${Number(row.est_year_usd || 0).toFixed(2)}</td></tr>`).join('')}</tbody></table></div>
-          <p class="small muted mt-2">Total idle <b class="num">$${Number(y.total_idle_usd || 0).toFixed(2)}</b> · est. <b class="num">$${Number(y.total_est_year_usd || 0).toFixed(2)}/yr</b> at current flexible rates. Use /stake in Telegram to act.</p>`;
+          <p class="small muted mt-2">Total idle <b class="num">$${Number(y.total_idle_usd || 0).toFixed(2)}</b> · est. <b class="num">$${Number(y.total_est_year_usd || 0).toFixed(2)}/yr</b> at current flexible rates. Use /stake in Telegram to act — locked terms require an explicit double-confirm showing the lock end date.</p>`;
       }, { empty: { icon: 'icon-coin', text: 'Yield data arrives with the bot\'s hourly report (needs operator Earn credentials).' } });
     }
 

@@ -211,3 +211,38 @@ def test_bybit_catalog_requires_keys(monkeypatch):
     monkeypatch.delenv("BYBIT_API_KEY", raising=False)
     monkeypatch.delenv("BYBIT_API_SECRET", raising=False)
     assert fetch_bybit_savings_catalog() == {}
+
+
+# ── SPOT-2: every fixed/locked term is kept, not just the best number ────────
+
+class _CatalogClient:
+    def request(self, method, path):
+        return {"code": "00000", "data": [
+            {"coin": "USDT", "periodType": "flexible", "apy": "4.0",
+             "productId": "flex1"},
+            {"coin": "USDT", "periodType": "fixed", "period": "7", "apy": "5.5",
+             "productId": "fix7"},
+            {"coin": "USDT", "periodType": "fixed", "period": "30", "apy": "7.2",
+             "productId": "fix30"},
+            {"coin": "USDT", "periodType": "fixed", "period": "90", "apy": "9.9",
+             "productId": "fix90"},
+        ]}
+
+
+def test_fixed_terms_all_kept_with_durations():
+    from bot.core.yield_radar import fetch_savings_catalog
+    cat = fetch_savings_catalog(_CatalogClient())
+    terms = cat["USDT"]["fixed_terms"]
+    assert [t["days"] for t in terms] == [7, 30, 90], "every lock term kept, sorted"
+    assert terms[2]["apy"] == 9.9 and terms[2]["product_id"] == "fix90"
+    assert cat["USDT"]["fixed"] == 9.9, "best-fixed summary unchanged"
+    assert cat["USDT"]["flexible_id"] == "flex1", "flexible path untouched"
+
+
+def test_fixed_terms_ride_the_yield_row():
+    from bot.core.yield_radar import YieldRow
+    r = YieldRow(coin="USDT", idle_amount=1.0, idle_usd=1.0, stakeable_usd=1.0,
+                 fixed_terms=[{"days": 7, "apy": 5.5, "product_id": "x"}])
+    assert r.fixed_terms[0]["days"] == 7
+    assert YieldRow(coin="X", idle_amount=0, idle_usd=0,
+                    stakeable_usd=0).fixed_terms == []
