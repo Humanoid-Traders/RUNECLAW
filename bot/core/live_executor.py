@@ -4291,10 +4291,17 @@ class LiveExecutor:
                     atr=getattr(pos, "atr_at_entry", 0.0) or pos.entry_price * 0.02,
                 )
 
+        def _would_tighten(new_sl: float) -> bool:
+            """True iff new_sl tightens the stop (raise LONG / lower SHORT).
+
+            Pure check — used to decide whether to touch the exchange at all,
+            without mutating local state (the local advance is gated on the
+            exchange actually accepting the tighter stop)."""
+            return bool(new_sl > pos.stop_loss if is_long else new_sl < pos.stop_loss)
+
         def _ratchet_sl(new_sl: float) -> bool:
             """Raise (LONG) / lower (SHORT) the stop only — never loosen it."""
-            better = new_sl > pos.stop_loss if is_long else new_sl < pos.stop_loss
-            if better:
+            if _would_tighten(new_sl):
                 pos.stop_loss = new_sl
                 st.current_sl = new_sl
                 return True
@@ -4316,19 +4323,26 @@ class LiveExecutor:
                               data={"trade_id": pos.trade_id, "symbol": pos.symbol,
                                     "stage": act.stage, "qty_closed": submitted,
                                     "remaining": pos.quantity, "price": price})
-                if act.new_sl and _ratchet_sl(act.new_sl):
-                    changed = True
+                if act.new_sl and _would_tighten(act.new_sl):
+                    # Advance the local stop ONLY after the exchange confirms the
+                    # tighter level — same discipline as the trailing path, so the
+                    # persisted stop never claims more protection than the exchange
+                    # holds. On failure the local stop stays equal to the exchange's.
+                    ok = False
                     try:
-                        await self._update_exchange_sl(exchange, pos, pos.stop_loss)
+                        ok = await self._update_exchange_sl(exchange, pos, act.new_sl)
                     except Exception as exc:
                         logger.debug("Partial-TP SL update failed for %s: %s", pos.symbol, exc)
-            elif act.action == "move_sl" and act.new_sl:
-                if _ratchet_sl(act.new_sl):
+                    if ok and _ratchet_sl(act.new_sl):
+                        changed = True
+            elif act.action == "move_sl" and act.new_sl and _would_tighten(act.new_sl):
+                ok = False
+                try:
+                    ok = await self._update_exchange_sl(exchange, pos, act.new_sl)
+                except Exception as exc:
+                    logger.debug("Partial-TP runner SL update failed for %s: %s", pos.symbol, exc)
+                if ok and _ratchet_sl(act.new_sl):
                     changed = True
-                    try:
-                        await self._update_exchange_sl(exchange, pos, pos.stop_loss)
-                    except Exception as exc:
-                        logger.debug("Partial-TP runner SL update failed for %s: %s", pos.symbol, exc)
             # act.action == "close_runner" is intentionally NOT executed here:
             # the runner exits through the existing static SL check, which uses
             # the ratcheted pos.stop_loss — keeping a single, locked close path.
@@ -4716,34 +4730,54 @@ class LiveExecutor:
                         # Check if the SL moved enough to update on exchange
                         sl_change_pct = abs(new_sl - old_sl) / old_sl * 100 if old_sl > 0 else 100
                         if sl_change_pct >= CONFIG.trailing.min_sl_update_pct:
-                            # M-02 FIX: Only update local SL when exchange update also fires
-                            # to prevent local/exchange SL drift
-                            pos.stop_loss = new_sl
-                            self._save_positions()
-                            await self._update_exchange_sl(
+                            # M-02 FIX (completed): advance the LOCAL stop only after
+                            # the exchange confirms the tighter stop. _update_exchange_sl
+                            # is best-effort; on failure the LOOSER old stop stays live
+                            # on the exchange. Persisting new_sl locally first (the old
+                            # behaviour) made the position display/enforce more protection
+                            # than the exchange actually holds — a silent over-report that
+                            # bites during any monitor downtime, when only the exchange
+                            # stop protects. Gate the local write on the real outcome.
+                            sl_applied = await self._update_exchange_sl(
                                 exchange, pos, new_sl
                             )
-                            audit(trade_log,
-                                  f"Trailing SL updated: {pos.symbol} SL ${old_sl:.4f} -> ${new_sl:.4f}",
-                                  action="trailing_sl", result="UPDATED",
-                                  data={"trade_id": trade_id, "old_sl": old_sl,
-                                        "new_sl": new_sl, "price": price,
-                                        "trailing_active": trailing_active})
-                            # Public mind-stream: operator executor only
-                            # (per-user executors carry a non-empty user_id).
-                            try:
-                                from bot.core.agent_feed import FEED
-                                if not getattr(self, "user_id", ""):
-                                    FEED.emit(
-                                        "sl_move",
-                                        f"Trailing stop moved — {pos.symbol}",
-                                        body=f"${old_sl:,.4f} → ${new_sl:,.4f}",
-                                        symbol=pos.symbol,
-                                        data={"old_sl": old_sl,
-                                              "new_sl": new_sl})
-                            except Exception as _feed_exc:
-                                logger.debug(
-                                    "Agent feed sl_move skipped: %s", _feed_exc)
+                            if sl_applied:
+                                pos.stop_loss = new_sl
+                                self._save_positions()
+                                audit(trade_log,
+                                      f"Trailing SL updated: {pos.symbol} SL ${old_sl:.4f} -> ${new_sl:.4f}",
+                                      action="trailing_sl", result="UPDATED",
+                                      data={"trade_id": trade_id, "old_sl": old_sl,
+                                            "new_sl": new_sl, "price": price,
+                                            "trailing_active": trailing_active})
+                                # Public mind-stream: operator executor only
+                                # (per-user executors carry a non-empty user_id).
+                                try:
+                                    from bot.core.agent_feed import FEED
+                                    if not getattr(self, "user_id", ""):
+                                        FEED.emit(
+                                            "sl_move",
+                                            f"Trailing stop moved — {pos.symbol}",
+                                            body=f"${old_sl:,.4f} → ${new_sl:,.4f}",
+                                            symbol=pos.symbol,
+                                            data={"old_sl": old_sl,
+                                                  "new_sl": new_sl})
+                                except Exception as _feed_exc:
+                                    logger.debug(
+                                        "Agent feed sl_move skipped: %s", _feed_exc)
+                            else:
+                                # Exchange refused the tighter stop — keep the local
+                                # stop equal to what the exchange is actually holding
+                                # (old_sl). Never claim protection we don't have.
+                                audit(trade_log,
+                                      f"Trailing SL NOT applied for {pos.symbol}: exchange "
+                                      f"update failed, local stop preserved at ${old_sl:.4f} "
+                                      f"(wanted ${new_sl:.4f}) — no over-report",
+                                      action="trailing_sl", result="EXCHANGE_UPDATE_FAILED",
+                                      level=logging.WARNING,
+                                      data={"trade_id": trade_id, "old_sl": old_sl,
+                                            "wanted_sl": new_sl, "price": price,
+                                            "trailing_active": trailing_active})
 
                 # ── Partial take-profit ladder ──
                 # Banks 50% at 1.5R (SL→breakeven), 30% at 2.5R (lock 1R), runner
@@ -5548,15 +5582,21 @@ class LiveExecutor:
             return None
 
     async def _update_exchange_sl(self, exchange: "ccxt.Exchange",
-                                   pos: LivePosition, new_sl: float) -> None:
+                                   pos: LivePosition, new_sl: float) -> bool:
         """Place new SL order first, then cancel old one — no protection gap.
 
         C2-03 FIX: Previous logic cancelled old SL before placing new one,
         leaving the position unprotected if the new placement failed.
         Now: place new SL first, then cancel old. If new placement fails,
-        old SL remains active.  Best-effort: trailing stop still works
-        locally even if exchange update fails — check_positions() will
-        close at the new SL.
+        old SL remains active.
+
+        Returns ``True`` only when a new SL order is CONFIRMED live on the
+        exchange (``pos.sl_order_id`` now points at the tightened stop), and
+        ``False`` when the placement failed and the looser old stop is still
+        the one the exchange holds. Callers MUST gate any advance of the local
+        ``pos.stop_loss`` on this return value — otherwise the persisted /
+        displayed stop claims more protection than the exchange is enforcing,
+        which is exactly the drift this method's callers must never introduce.
         """
         # Futures-only mode: all positions are futures
         old_sl_id = pos.sl_order_id
@@ -5627,9 +5667,10 @@ class LiveExecutor:
                     await exchange.cancel_order(old_sl_id, self._venue.order_symbol(pos.symbol))
                 except Exception as exc:
                     logger.debug("Cancel old SL order %s failed (new SL active): %s", old_sl_id, exc)
-        else:
-            # New placement failed — old SL remains active, no gap
-            logger.warning("Trailing SL update skipped for %s — new placement failed, old SL preserved", pos.symbol)
+            return True
+        # New placement failed — old SL remains active, no gap
+        logger.warning("Trailing SL update skipped for %s — new placement failed, old SL preserved", pos.symbol)
+        return False
 
     async def close_all_positions(self, reason: str = "emergency") -> list[str]:
         """Emergency close ALL open positions in a single sweep.

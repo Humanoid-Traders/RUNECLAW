@@ -3448,16 +3448,28 @@ class RuneClawEngine:
         for lp in executor.open_positions:
             if normalize_symbol(lp.symbol) == symbol_key and lp.trade_id != new_trade_id:
                 old_sl = lp.stop_loss
-                lp.stop_loss = lp.entry_price  # breakeven
-                audit(trade_log,
-                      f"Pyramid: moved {lp.symbol} SL to breakeven ${lp.entry_price:.4f} (was ${old_sl:.4f})",
-                      action="pyramid_sl_breakeven", result="MOVED")
+                # Move the LOCAL stop to breakeven only after the exchange confirms
+                # it — otherwise the winner would display/enforce breakeven while the
+                # exchange still holds the looser original stop (silent over-report of
+                # protection that bites during any monitor downtime).
+                ok = False
                 try:
                     exchange = await executor._get_exchange()
-                    await executor._update_exchange_sl(exchange, lp, lp.entry_price)
+                    ok = await executor._update_exchange_sl(exchange, lp, lp.entry_price)
                 except Exception as exc:
                     logger.debug("Failed to update exchange SL to BE: %s", exc)
-                executor._save_positions()
+                if ok:
+                    lp.stop_loss = lp.entry_price  # breakeven — exchange confirmed
+                    executor._save_positions()
+                    audit(trade_log,
+                          f"Pyramid: moved {lp.symbol} SL to breakeven ${lp.entry_price:.4f} (was ${old_sl:.4f})",
+                          action="pyramid_sl_breakeven", result="MOVED")
+                else:
+                    audit(trade_log,
+                          f"Pyramid: exchange SL-to-breakeven FAILED for {lp.symbol} — local "
+                          f"stop preserved at ${old_sl:.4f} (no over-report)",
+                          action="pyramid_sl_breakeven", result="EXCHANGE_UPDATE_FAILED",
+                          level=logging.WARNING)
                 break
 
     async def _confirm_trade_inner(self, trade_id: str, user_id: str = "") -> str:
