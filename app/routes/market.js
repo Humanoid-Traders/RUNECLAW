@@ -212,6 +212,18 @@ router.get('/meme', async (req, res) => {
   }
 });
 
+// GET /api/market/venue-router — per-pair cheapest-venue funding read.
+// Recommendations only; RUNECLAW never auto-routes orders.
+router.get('/venue-router', async (req, res) => {
+  try {
+    const table = await require('../lib/venue_router').getVenueRouter();
+    res.setHeader('Cache-Control', 'public, max-age=60');
+    res.json(table);
+  } catch (err) {
+    res.status(502).json({ error: 'Venue router unavailable' });
+  }
+});
+
 // GET /api/market/onchain-flow — 24h DEX taker-flow radar for the majors
 // (keyless, read-only; explicitly NOT exchange netflow — the payload says so).
 router.get('/onchain-flow', async (req, res) => {

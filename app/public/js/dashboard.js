@@ -754,6 +754,10 @@
           <span class="badge" style="margin-left:auto" title="24h buy/sell taker balance across the deepest DEX pools per asset. NOT exchange netflow, NOT whale attribution — keyless public data, honestly labeled">read-only</span></h2>
           <div id="c-flow"><div class="skel"></div></div>
         </section>
+        <section class="panel" id="p-router"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-target"></use></svg>Venue router — cheapest exchange per pair
+          <span class="badge" style="margin-left:auto" title="Funding-cost read from the hourly cross-venue scan. Recommendations only — RUNECLAW never auto-routes orders">manual-first</span></h2>
+          <div id="c-router"><div class="skel"></div></div>
+        </section>
         <section class="panel" id="p-mkpat"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-target"></use></svg>Engine pattern read
           <span class="right muted small">chart &amp; candle patterns · observations, not signals</span></h2>
           <div id="c-mkpat"><div class="skel"></div><div class="skel"></div></div>
@@ -906,6 +910,27 @@
           <tbody>${rows}</tbody></table></div>`
         + (d.unavailable.length ? `<p class="small muted" style="margin-top:var(--s2)">No usable on-chain sample right now: ${d.unavailable.map(esc).join(', ')}.</p>` : '');
     }, { empty: { icon: 'icon-globe', text: 'Flow reads appear when DEXScreener public data is reachable.' } });
+
+    // Venue router — where is each pair cheapest to hold right now?
+    // Pure funding-cost read; nothing here places or routes an order.
+    renderPanel(C('router'), async () => {
+      const r = await fetchJSON('/api/market/venue-router', { auth: false, timeoutMs: 12000 });
+      const d = r.data;
+      if (!r.ok || !d || !(d.rows || []).length) return null;
+      const rows = d.rows.map(x => `<tr>
+          <td><b>${esc(x.base)}</b></td>
+          <td class="r"><b>${esc(x.long_venue)}</b> <span class="num muted small">${x.long_apr >= 0 ? '+' : ''}${x.long_apr}%</span></td>
+          <td class="r"><b>${esc(x.short_venue)}</b> <span class="num muted small">${x.short_apr >= 0 ? '+' : ''}${x.short_apr}%</span></td>
+          <td class="num r">${x.spread_apr}%</td>
+          <td class="num r">${x.dex_basis_bps != null ? (x.dex_basis_bps >= 0 ? '+' : '') + fmt(x.dex_basis_bps, 1) + ' bps' : '—'}</td>
+        </tr>`).join('');
+      return `<p class="muted small">${esc(d.mechanics)}${d.stale ? ' <b>Scan is stale — verify before acting.</b>' : ''}
+          ${d.report_age_minutes != null ? ` Scan age: ${d.report_age_minutes} min.` : ''}</p>
+        <div class="tbl-wrap"><table class="tbl">
+          <thead><tr><th>Pair</th><th class="r">Cheapest long</th><th class="r">Best paid short</th><th class="r">Spread APR</th><th class="r">DEX basis</th></tr></thead>
+          <tbody>${rows}</tbody></table></div>
+        <p class="small muted" style="margin-top:var(--s2)">${esc(d.manual_first)}</p>`;
+    }, { empty: { icon: 'icon-target', text: 'The venue router lights up after the next hourly cross-venue funding scan.' } });
 
     // Cross-venue intelligence (one shared fetch; hourly bot-pushed data).
     const reportsP = getReports();
