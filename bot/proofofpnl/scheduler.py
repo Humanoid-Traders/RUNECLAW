@@ -115,6 +115,13 @@ class ProofOfPnLPublisher:
                 "Proof-of-PnL published: hash=%s tier=%s recon=%s trades=%d",
                 str(pub.get("publish_hash"))[:12], pub.get("trust_tier"),
                 pub.get("reconciliation"), len(list(ccxt_trades or [])))
+            # MH4: opportunistic daily backup of irreplaceable state — rides
+            # the publish cadence, throttled internally, never blocks publish.
+            try:
+                from bot.utils.backup import maybe_daily_backup
+                maybe_daily_backup()
+            except Exception:
+                pass
             return pub
         except Exception as exc:   # fail-safe — publishing must never break the caller
             logger.warning("Proof-of-PnL publish skipped (error): %s", exc)
