@@ -364,6 +364,36 @@ router.post('/login', async (req, res) => {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
+    // 2FA (MH1): password alone is not a session when TOTP is enabled. The
+    // second factor rides the SAME login call (totp_code, or a one-time
+    // backup code) — no intermediate half-authenticated token to steal.
+    // Failed/missing codes count toward the same lockout counters as bad
+    // passwords, so codes can't be brute-forced past the rate limits.
+    if (user.totp_enabled) {
+      const totp = require('./lib/totp');
+      const code = String((req.body || {}).totp_code || '').trim();
+      if (!code) {
+        return res.status(401).json({
+          error: 'Two-factor code required', two_factor_required: true,
+        });
+      }
+      if (!totp.verifyTotp(user.totp_secret, code)) {
+        let backups = [];
+        try { backups = JSON.parse(user.totp_backup_codes || '[]'); } catch (e) { backups = []; }
+        const remaining = totp.consumeBackupCode(code, backups);
+        if (remaining === null) {
+          recordAttempt(clientIp);
+          recordAccountFailure(normalizedEmail);
+          return res.status(401).json({
+            error: 'Invalid two-factor code', two_factor_required: true,
+          });
+        }
+        await pool.execute(
+          'UPDATE users SET totp_backup_codes = ? WHERE id = ?',
+          [JSON.stringify(remaining), user.id]);
+      }
+    }
+
     // Successful login — clear this account's failure counter.
     clearAccountFailures(normalizedEmail);
     res.json(await sessionResponse(user));
@@ -389,6 +419,101 @@ router.get('/me', authMiddleware, async (req, res) => {
   } catch (err) {
     console.error('Me error:', err.message);
     res.status(500).json({ error: 'Failed to fetch user' });
+  }
+});
+
+// ── Two-factor auth (MH1) ────────────────────────────────────────────────────
+// Setup is two-phase so a typo'd authenticator can never lock the account:
+// /2fa/setup stages a secret (enabled stays 0), /2fa/enable turns it on only
+// after the user proves their app generates valid codes. Disabling requires a
+// current code (or backup code) — a stolen session alone can't strip 2FA.
+
+router.get('/2fa/status', authMiddleware, async (req, res) => {
+  try {
+    const [rows] = await pool.execute('SELECT * FROM users WHERE id = ?', [req.user.user_id]);
+    if (rows.length === 0) return res.status(404).json({ error: 'User not found' });
+    let backups = [];
+    try { backups = JSON.parse(rows[0].totp_backup_codes || '[]'); } catch (e) { backups = []; }
+    res.json({
+      enabled: !!rows[0].totp_enabled,
+      pending: !rows[0].totp_enabled && !!rows[0].totp_secret,
+      backup_codes_remaining: rows[0].totp_enabled ? backups.length : null,
+    });
+  } catch (err) {
+    res.status(500).json({ error: '2FA status failed' });
+  }
+});
+
+router.post('/2fa/setup', authMiddleware, async (req, res) => {
+  try {
+    const totp = require('./lib/totp');
+    const [rows] = await pool.execute('SELECT * FROM users WHERE id = ?', [req.user.user_id]);
+    if (rows.length === 0) return res.status(404).json({ error: 'User not found' });
+    if (rows[0].totp_enabled) {
+      return res.status(400).json({ error: '2FA is already enabled — disable it first to rotate.' });
+    }
+    const secret = totp.generateSecret();
+    await pool.execute(
+      'UPDATE users SET totp_secret = ?, totp_enabled = ?, totp_backup_codes = ? WHERE id = ?',
+      [secret, 0, null, req.user.user_id]);
+    res.json({
+      secret,
+      otpauth: totp.otpauthUri(secret, rows[0].email),
+      note: 'Scan or enter this in your authenticator app, then confirm a code '
+        + 'at /2fa/enable. 2FA is NOT active until confirmed.',
+    });
+  } catch (err) {
+    res.status(500).json({ error: '2FA setup failed' });
+  }
+});
+
+router.post('/2fa/enable', authMiddleware, async (req, res) => {
+  try {
+    const totp = require('./lib/totp');
+    const [rows] = await pool.execute('SELECT * FROM users WHERE id = ?', [req.user.user_id]);
+    if (rows.length === 0) return res.status(404).json({ error: 'User not found' });
+    const user = rows[0];
+    if (user.totp_enabled) return res.status(400).json({ error: '2FA is already enabled.' });
+    if (!user.totp_secret) return res.status(400).json({ error: 'Run /2fa/setup first.' });
+    if (!totp.verifyTotp(user.totp_secret, (req.body || {}).code)) {
+      return res.status(401).json({ error: 'Code does not match — check your authenticator app.' });
+    }
+    const { codes, hashes } = totp.generateBackupCodes();
+    await pool.execute(
+      'UPDATE users SET totp_secret = ?, totp_enabled = ?, totp_backup_codes = ? WHERE id = ?',
+      [user.totp_secret, 1, JSON.stringify(hashes), req.user.user_id]);
+    res.json({
+      enabled: true,
+      backup_codes: codes,
+      note: 'Save these one-time backup codes now — they are shown ONCE and '
+        + 'each works a single time if you lose your authenticator.',
+    });
+  } catch (err) {
+    res.status(500).json({ error: '2FA enable failed' });
+  }
+});
+
+router.post('/2fa/disable', authMiddleware, async (req, res) => {
+  try {
+    const totp = require('./lib/totp');
+    const [rows] = await pool.execute('SELECT * FROM users WHERE id = ?', [req.user.user_id]);
+    if (rows.length === 0) return res.status(404).json({ error: 'User not found' });
+    const user = rows[0];
+    if (!user.totp_enabled) return res.status(400).json({ error: '2FA is not enabled.' });
+    const code = String((req.body || {}).code || '').trim();
+    let ok = totp.verifyTotp(user.totp_secret, code);
+    if (!ok) {
+      let backups = [];
+      try { backups = JSON.parse(user.totp_backup_codes || '[]'); } catch (e) { backups = []; }
+      ok = totp.consumeBackupCode(code, backups) !== null;
+    }
+    if (!ok) return res.status(401).json({ error: 'A valid current code (or backup code) is required to disable 2FA.' });
+    await pool.execute(
+      'UPDATE users SET totp_secret = ?, totp_enabled = ?, totp_backup_codes = ? WHERE id = ?',
+      [null, 0, null, req.user.user_id]);
+    res.json({ enabled: false });
+  } catch (err) {
+    res.status(500).json({ error: '2FA disable failed' });
   }
 });
 

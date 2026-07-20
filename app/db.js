@@ -626,6 +626,24 @@ class MemoryDB {
       return [{ insertId: trade.id }, []];
     }
 
+    if (cmd.includes('UPDATE USERS SET TOTP_SECRET')) {
+      // params: [secret|null, enabled, backup_codes_json|null, id]
+      const u = this.users.find(x => x.id === params[params.length - 1]);
+      if (u) {
+        u.totp_secret = params[0];
+        u.totp_enabled = params[1];
+        u.totp_backup_codes = params[2];
+      }
+      return [{ affectedRows: u ? 1 : 0 }, []];
+    }
+
+    if (cmd.includes('UPDATE USERS SET TOTP_BACKUP_CODES')) {
+      // params: [backup_codes_json, id]
+      const u = this.users.find(x => x.id === params[1]);
+      if (u) u.totp_backup_codes = params[0];
+      return [{ affectedRows: u ? 1 : 0 }, []];
+    }
+
     if (cmd.includes('UPDATE USERS SET PLAN')) {
       // Tier sync: params [plan, telegram_id]
       const u = this.users.find(x => String(x.telegram_id) === String(params[1]));
@@ -789,6 +807,16 @@ async function migrate() {
     try {
       await pool.execute('ALTER TABLE users ADD COLUMN telegram_id VARCHAR(32) DEFAULT NULL');
     } catch (e) { /* column already exists — fine */ }
+    // 2FA (MH1): TOTP secret, enabled flag, hashed one-time backup codes.
+    try {
+      await pool.execute('ALTER TABLE users ADD COLUMN totp_secret VARCHAR(64) DEFAULT NULL');
+    } catch (e) { /* exists */ }
+    try {
+      await pool.execute('ALTER TABLE users ADD COLUMN totp_enabled TINYINT NOT NULL DEFAULT 0');
+    } catch (e) { /* exists */ }
+    try {
+      await pool.execute('ALTER TABLE users ADD COLUMN totp_backup_codes TEXT DEFAULT NULL');
+    } catch (e) { /* exists */ }
     // OAuth: google_id + avatar_url, and password_hash must be nullable
     // (OAuth accounts have no password). Each guarded — ignore if present.
     try {
