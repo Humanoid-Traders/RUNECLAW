@@ -83,6 +83,20 @@
   </div>
 
   <div class="panel">
+    <h2>ERC-8257 Agent Tool Registry</h2>
+    <p style="color:var(--text-2);line-height:1.7;margin-bottom:var(--s3)">
+      RUNECLAW's read-only intelligence is packaged as an on-chain-discoverable tool
+      (ERC-8257, the permissionless Agent Tool Registry that layers on the same
+      ERC-8004 identity standard our track record anchors to on Base).
+      <b>Free and open</b>: no pricing, no access gate — and structurally read-only.</p>
+    <div class="rest">
+      <div class="row"><code>GET /.well-known/ai-tool/runeclaw-intel.json</code><span>the canonical tool manifest (keccak256-hashed for the registry)</span></div>
+      <div class="row"><code>POST /api/tool/invoke</code><span><code>{"tool":"get_proof_of_pnl","args":{}}</code> — dispatches to the same read-only tool set as <code>/mcp</code></span></div>
+      <div class="row"><code>GET /api/tool/registration-plan</code><span>the operator-signed registration dry-run — the server never holds a key</span></div>
+    </div>
+  </div>
+
+  <div class="panel">
     <h2>The verification ethos</h2>
     <p style="color:var(--text-2);line-height:1.7;max-width:76ch">
       Don't trust the dashboard — <b>verify the fills</b>. The Proof-of-PnL bundle canonicalizes as

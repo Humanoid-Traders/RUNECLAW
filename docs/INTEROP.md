@@ -50,6 +50,39 @@ ERC-8004 sketches three registries: identity, reputation, validation.
 than the sealed statement supports. A registry entry is a pointer to a
 verifiable artifact — never a substitute for verifying it.
 
+## 2b. ERC-8257 Agent Tool Registry (implemented: manifest + plan)
+
+ERC-8257 (draft, authored by OpenSea; canonical ToolRegistry
+`0x265BB2DBFC0A8165C9A1941Eb1372F349baD2cf1`, deployed on Base and
+Ethereum among others) is a permissionless on-chain registry of AI-agent
+tools: each record binds a creator address, a metadata URI and a
+keccak256 manifest hash (RFC 8785 canonical JSON), plus an optional
+access-predicate contract. It layers on ERC-8004 — the same standard our
+identity root anchors to on Base — so registration makes RUNECLAW's
+verifiable intelligence discoverable by other agents next to its
+identity.
+
+Implemented surfaces (`app/lib/tool8257.js`, `app/routes/tool8257.js`):
+
+- `GET /.well-known/ai-tool/runeclaw-intel.json` — the canonical
+  manifest, generated at request time from the same read-only MCP tool
+  registry `/mcp` serves (no drift possible).
+- `POST /api/tool/invoke` — the tool endpoint: a dispatcher over that
+  same read-only tool set. Public data only.
+- `GET /api/tool/registration-plan` — a **dry-run** `registerTool`
+  transaction (metadata URI, manifest hash, calldata) the operator signs
+  from their own wallet. Non-custodial, same discipline as `/anchor`:
+  the server never holds a key, never signs, never broadcasts.
+
+Registration posture, pinned by tests:
+
+- **Free and open.** The manifest carries **no `pricing` block** and the
+  plan's access predicate is the **zero address**. Per-call charging is
+  x402 payment machinery — it stays design-only behind all four §4
+  gates. NFT/token gating is a separate operator decision, not a rider.
+- **Read-only.** The endpoint can only reach the public MCP tool set;
+  no tool sees accounts or places orders.
+
 ## 3. MCP as the agent-to-agent transport
 
 The MCP server is the interop workhorse today: identity cards, sealed
