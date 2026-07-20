@@ -34,7 +34,10 @@ _NOW = 10_000.0
 def _stale_alerts(monkeypatch, ts_val):
     monkeypatch.setattr(mon_mod, "CONFIG", SimpleNamespace(is_live=lambda: True))
     monkeypatch.setattr(mon_mod.time, "monotonic", lambda: _NOW)
-    stub = SimpleNamespace(engine=SimpleNamespace(_live_balance_cache_ts=ts_val))
+    stub = SimpleNamespace(
+        engine=SimpleNamespace(_live_balance_cache_ts=ts_val),
+        _stale_balance_threshold_s=ProactiveMonitor._stale_balance_threshold_s,
+    )
     return ProactiveMonitor._check_stale_balance(stub)
 
 
@@ -46,10 +49,28 @@ def test_livebalance_handler_stamps_monotonic_never_wall_clock():
     assert "_live_balance_cache_ts = time.time()" not in src
 
 
-def test_stale_alert_fires_on_old_monotonic_stamp(monkeypatch):
-    alerts = _stale_alerts(monkeypatch, _NOW - 400.0)
+def test_stale_alert_fires_past_the_worst_legitimate_refresh_gap(monkeypatch):
+    alerts = _stale_alerts(monkeypatch, _NOW - 1000.0)
     assert len(alerts) == 1
     assert alerts[0].alert_type == "STALE_BALANCE"
+
+
+def test_quiet_market_tick_cadence_never_false_alarms(monkeypatch):
+    # Live incident 2026-07-20: the old fixed 300s threshold was HALF the
+    # smart scan's quiet-market sleep (600s), so a healthy idling bot
+    # re-fired 'stale balance' every calm stretch. Ages inside the
+    # legitimate refresh cadence must stay silent.
+    assert _stale_alerts(monkeypatch, _NOW - 400.0) == []
+    assert _stale_alerts(monkeypatch, _NOW - 700.0) == []
+
+
+def test_threshold_tracks_the_configured_scan_ceiling():
+    from bot.core.proactive_monitor import ProactiveMonitor
+    t = ProactiveMonitor._stale_balance_threshold_s()
+    import bot.core.proactive_monitor as m
+    max_interval = float(getattr(m.CONFIG.adaptive, "smart_scan_max_interval", 600))
+    assert t >= 1.5 * max_interval
+    assert t >= 900.0
 
 
 def test_fresh_monotonic_stamp_is_quiet(monkeypatch):

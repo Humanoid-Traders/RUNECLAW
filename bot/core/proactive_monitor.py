@@ -1125,6 +1125,23 @@ class ProactiveMonitor:
             system_log.debug("ws-health check failed: %s", exc)
         return alerts
 
+    @staticmethod
+    def _stale_balance_threshold_s() -> float:
+        """Alert only past the WORST legitimate refresh gap. The engine
+        refreshes the cache once per tick, and the smart scan legitimately
+        sleeps up to smart_scan_max_interval (default 600s) in quiet markets
+        — plus the tick's own scan time on top. The previous fixed 300s
+        threshold was HALF the configured quiet-market sleep, so every calm
+        stretch re-fired a false 'stale balance' alarm (live incident,
+        2026-07-20: two spurious alerts ~30min apart on a healthy bot). Same
+        headroom reasoning as TICK_STALL_THRESHOLD_S (2x its cap)."""
+        try:
+            max_interval = float(getattr(
+                CONFIG.adaptive, "smart_scan_max_interval", 600) or 600)
+        except Exception:
+            max_interval = 600.0
+        return max(900.0, 1.5 * max_interval)
+
     def _check_stale_balance(self) -> list[Alert]:
         """Alert when the live balance cache is very stale — position sizing may
         be based on out-of-date equity."""
@@ -1136,7 +1153,7 @@ class ProactiveMonitor:
             if ts <= 0:
                 return alerts
             age = time.monotonic() - ts
-            if age > 300:        # > 5 minutes stale
+            if age > self._stale_balance_threshold_s():
                 alerts.append(Alert(
                     alert_type="STALE_BALANCE", severity="WARNING",
                     title="Live balance stale",
