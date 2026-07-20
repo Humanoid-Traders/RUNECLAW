@@ -3440,7 +3440,8 @@
                ['🏛 RWA radar', 'rwa radar'],
                ['🪂 Airdrop radar', 'airdrop radar'],
                ['🐸 Meme radar', 'meme radar'],
-               ['🖼 NFT radar', 'nft radar']]
+               ['🖼 NFT radar', 'nft radar'],
+               ['🪙 Spot market', 'spot market']]
               .map(([l, q]) => `<button class="btn btn--sm" data-ask="${esc(q)}" type="button">${l}</button>`).join('')}
           </div>
         </section>

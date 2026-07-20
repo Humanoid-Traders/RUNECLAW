@@ -38,6 +38,12 @@ test('every radar chip ask phrase is claimed by its intercept regex', async () =
           ? { collections: [{ collection: 'foo', name: 'Foo' }] }
           : { total: { floor_price: 1.2, num_owners: 10 },
               intervals: [{ interval: 'seven_day', volume: 100 }] })],
+    ['spot market', require('../lib/spot'), 'maybeHandleSpotChat', () => {
+      require('../lib/spot').setSpotFetcher(async () => ({ data: [
+        { symbol: 'BTCUSDT', lastPr: '100000', change24h: '0.01', usdtVolume: '1e9' }] }));
+      require('../lib/tickers').setTickerFetcher(async () => ({
+        BTCUSDT: { price: 99900, change: 1, volume: 1e9 } }));
+    }],
   ];
   for (const [phrase, lib, fn, inject] of CONTRACT) {
     if (inject) inject();
@@ -48,12 +54,13 @@ test('every radar chip ask phrase is claimed by its intercept regex', async () =
   require('../lib/meme').setPairFetcher(null);
   require('../lib/rwa').setTickerFetcher(null);
   require('../lib/opensea').setOpenSeaFetcher(null);
+  require('../lib/spot').setSpotFetcher(null);
 });
 
 test('the chips wired in the dashboard stay in sync with this contract', () => {
   const dash = fs.readFileSync(
     path.join(__dirname, '..', 'public', 'js', 'dashboard.js'), 'utf8');
-  for (const ask of ['rwa radar', 'airdrop radar', 'meme radar', 'nft radar']) {
+  for (const ask of ['rwa radar', 'airdrop radar', 'meme radar', 'nft radar', 'spot market']) {
     assert.ok(dash.includes(`'${ask}'`), `hub chip "${ask}" exists`);
   }
 });
