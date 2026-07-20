@@ -76,10 +76,12 @@
   <h1 data-i18n-html="hero.h1">An AI trading engine<br>you can <span>talk to.</span></h1>
   <div class="tagline" data-i18n="hero.tagline">Intelligent · Adaptive · Relentless</div>
   <p data-i18n="hero.body">RUNECLAW scans 800+ symbols around the clock, explains every decision, and refuses anything its risk engine doesn't like. Create an account and paper-trade in your browser within a minute — chat with the engine, place risk-checked trades, and go live only when you choose to.</p>
-  <div class="hero-cta">
-    <a class="btn btn--primary" href="#auth-panel" data-i18n="hero.cta_create">Create free account</a>
+  <form class="hero-cta hero-signup" id="heroSignup" novalidate>
+    <input class="input hero-email" type="email" id="hero-email" placeholder="you@example.com" autocomplete="email" aria-label="Email address" data-i18n-attr="placeholder:auth.email_ph">
+    <button class="btn btn--primary" type="submit" data-i18n="hero.cta_create">Create free account</button>
     <a class="btn" href="/dashboard" data-i18n="hero.cta_dashboard">View the dashboard</a>
-  </div>
+  </form>
+  <p class="hero-note muted small" data-i18n="hero.free_note">Free · paper-trade in your browser instantly · no exchange keys needed.</p>
 </header>
 
 <section class="section" aria-labelledby="ask-h">
@@ -299,6 +301,27 @@
 <script src="/js/chat.js?v=19" defer></script>
 <script src="/js/theater.js?v=1" defer></script>
 <script>
+// Hero email-capture: the primary conversion action lives above the fold. It
+// does NOT duplicate any auth logic — it prefills the real register form's email,
+// scrolls to it, switches to the Create-account tab, and drops the cursor on the
+// password field, so the actual signup still runs through doRegister() with full
+// validation.
+(function () {
+  var form = document.getElementById('heroSignup');
+  if (!form) return;
+  form.addEventListener('submit', function (e) {
+    e.preventDefault();
+    var email = ((document.getElementById('hero-email') || {}).value || '').trim();
+    var regEmail = document.getElementById('reg-email');
+    if (regEmail) regEmail.value = email;
+    if (typeof window.switchTab === 'function') window.switchTab('register');
+    var panel = document.getElementById('auth-panel');
+    if (panel && panel.scrollIntoView) panel.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    var next = document.getElementById(email ? 'reg-pass' : 'reg-email');
+    if (next) setTimeout(function () { try { next.focus(); } catch (_) {} }, 350);
+  });
+})();
+
 // Landing mind-stream: last few real agent events + live SSE append.
 (function () {
   var RC = window.RC;
