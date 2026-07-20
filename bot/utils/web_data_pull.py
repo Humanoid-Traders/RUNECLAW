@@ -44,3 +44,14 @@ def fetch_rwa() -> dict | None:
     if not SYNC_SECRET:
         return None
     return _request("/api/bot/sync/rwa")
+
+
+def fetch_onchain_flow() -> dict | None:
+    """The DEX taker-flow radar (keyless, 24h buy/sell balance per major).
+
+    Feeds the engine's gated on-chain voter — the SAME payload the public
+    Markets panel renders. None = channel unconfigured or failed (the voter
+    simply contributes nothing; analysis never blocks on this)."""
+    if not SYNC_SECRET:
+        return None
+    return _request("/api/bot/sync/onchain-flow")
