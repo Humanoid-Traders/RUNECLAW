@@ -407,6 +407,7 @@ class TelegramHandler:
             ("networth", self._cmd_networth),
             ("anchor", self._cmd_anchor),
             ("leverage", self._cmd_leverage),
+            ("backup", self._cmd_backup),
             ("exposure", self._cmd_exposure),
             ("research", self._cmd_research),
             ("rwa", self._cmd_rwa),
@@ -2906,6 +2907,50 @@ class TelegramHandler:
     _WEB_LINK_HINT = ("🔌 The web app isn't reachable (or your account isn't "
                       "linked). This view is served by the RUNECLAW web app — "
                       "set it up and /link your account, then try again.")
+
+    @guard("backup")
+    async def _cmd_backup(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """/backup — rotating, verifiable backups of irreplaceable state
+        (admin). /backup = create now; /backup list; /backup verify <name>.
+        Restore is deliberately manual — see docs/DURABILITY.md."""
+        if not self._is_admin(update):
+            await self._reply(update, "🔒 Backups are admin-only.")
+            return
+        from bot.utils import backup as bkp
+        args = list(ctx.args or [])
+        if args[:1] == ["list"]:
+            rows = bkp.list_backups()
+            if not rows:
+                await self._reply(update, "No backups yet — run /backup to create one.")
+                return
+            lines = ["🗄 <b>Backups</b> (newest first)"] + [
+                f"• <code>{r['name']}</code> — {r['size_bytes'] // 1024} KB, "
+                f"{r['files'] if r['files'] is not None else '?'} files"
+                for r in rows[:10]]
+            lines.append("Verify: <code>/backup verify &lt;name&gt;</code> · "
+                         "restore runbook: docs/DURABILITY.md")
+            await self._reply(update, "\n".join(lines))
+            return
+        if args[:1] == ["verify"] and len(args) >= 2:
+            from pathlib import Path
+            name = args[1] if args[1].endswith(".tar.gz") else args[1] + ".tar.gz"
+            path = Path(__import__("os").environ.get("BACKUP_DIR", "data/backups")) / name
+            ok, problems = await asyncio.to_thread(bkp.verify_backup, path)
+            if ok:
+                await self._reply(update, f"✅ <code>{name}</code> verified — every "
+                                          "file re-hashed against the manifest.")
+            else:
+                await self._reply(update, "❌ Verification FAILED:\n" +
+                                  "\n".join(f"• {p}" for p in problems[:8]))
+            return
+        archive, manifest = await asyncio.to_thread(bkp.create_backup)
+        await self._reply(
+            update,
+            f"🗄 Backup created: <code>{archive.name}</code> — "
+            f"{len(manifest['files'])} files, hashes in the sidecar manifest.\n"
+            "Copy it OFF this host (a same-disk backup survives bad deploys, "
+            "not dead disks). Restore: docs/DURABILITY.md")
+        return
 
     @guard("leverage")
     async def _cmd_leverage(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
