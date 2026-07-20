@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>RUNECLAW — Developers &amp; Agents</title>
+<meta name="description" content="Connect your AI agent to RUNECLAW's verifiable trading intelligence: an open MCP server and public REST endpoints. Read-only by design — verify the fills yourself.">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<meta name="theme-color" content="#0a0b10">
+<link rel="stylesheet" href="/styles.css?v=13">
+<style>
+  /* Page-local composition only — tokens/components come from styles.css */
+  .dv-wrap { max-width: 860px; margin: 0 auto; padding: var(--s5) var(--s4) var(--s6); }
+  .dv-hero h1 { font-family: var(--font-display); letter-spacing: .08em; font-size: clamp(26px, 4vw, 38px); margin-bottom: var(--s2); }
+  .lede { color: var(--text-2); max-width: 72ch; line-height: 1.6; margin-bottom: var(--s4); }
+  .lede b { color: var(--text-1); }
+  .panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: var(--s5); margin-bottom: var(--s4); }
+  .panel h2 { font-size: var(--fs-sm); color: var(--text-3); text-transform: uppercase; letter-spacing: .1em; margin-bottom: var(--s3); }
+  pre { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: var(--s3); overflow-x: auto; font-family: var(--font-data); font-size: var(--fs-sm); color: var(--text-2); }
+  code { font-family: var(--font-data); color: var(--text-1); }
+  .tool { border-top: 1px solid var(--line); padding: var(--s3) 0; }
+  .tool:first-of-type { border-top: 0; }
+  .tool .name { font-family: var(--font-data); color: var(--text-1); font-size: var(--fs-md); }
+  .tool .args { color: var(--gold); font-size: var(--fs-xs); font-family: var(--font-data); margin-left: 8px; }
+  .tool p { color: var(--text-2); line-height: 1.6; margin-top: 4px; max-width: 76ch; }
+  .rest { display: grid; gap: var(--s2); }
+  .rest .row { display: flex; gap: var(--s3); align-items: baseline; flex-wrap: wrap; }
+  .rest code { white-space: nowrap; }
+  .rest span { color: var(--text-2); font-size: var(--fs-sm); }
+  .muted { color: var(--text-3); font-size: var(--fs-xs); line-height: 1.6; }
+  .topnav { display: flex; gap: var(--s3); align-items: center; margin-bottom: var(--s4); flex-wrap: wrap; }
+  .topnav a { color: var(--text-2); font-size: var(--fs-sm); }
+  .topnav a:hover { color: var(--text-1); }
+  .spacer { flex: 1; }
+  .empty { color: var(--text-3); padding: var(--s3) 0; }
+</style>
+</head>
+<body>
+<div class="dv-wrap">
+  <nav class="topnav">
+    <a href="/">← RUNECLAW</a>
+    <span class="spacer"></span>
+    <a href="/proof">Proof of PnL</a>
+    <a href="/leaderboard">Leaderboard</a>
+    <a href="/letter">Agent Letter</a>
+    <a href="/track">Track record</a>
+  </nav>
+
+  <div class="dv-hero"><h1>Developers &amp; Agents</h1></div>
+  <p class="lede">Connect your AI agent to RUNECLAW's intelligence. Everything here is
+  <b>read-only by design</b> and serves the same data the public site already publishes —
+  sealed track-record statements your agent can <b>re-verify by hash</b> instead of trusting,
+  live radars with explicit safety reads, and the flight-recorder ledger behind every decision.
+  No tool can see an account. No tool can trade.</p>
+
+  <div class="panel">
+    <h2>MCP server</h2>
+    <p style="color:var(--text-2);line-height:1.7;margin-bottom:var(--s3)">
+      A Model Context Protocol server (Streamable HTTP, stateless JSON) lives at
+      <code>POST /mcp</code>. Point any MCP-capable client — Claude, agent frameworks,
+      other bots — at this origin and the tools below appear automatically.</p>
+    <pre>{ "mcpServers": { "runeclaw": { "url": "https://&lt;this-host&gt;/mcp" } } }</pre>
+    <p class="muted" style="margin-top:var(--s2)">JSON-RPC 2.0 · protocol 2025-03-26 · no auth, per-IP rate-limited ·
+      every tool annotated <code>readOnlyHint</code>.</p>
+  </div>
+
+  <div class="panel">
+    <h2>Tools <span class="muted" style="text-transform:none;letter-spacing:0">— listed live from the server's own <code>tools/list</code>, so this page can never drift from reality</span></h2>
+    <div id="tools"><div class="empty">Asking the server for its tool list…</div></div>
+  </div>
+
+  <div class="panel">
+    <h2>Public REST endpoints</h2>
+    <div class="rest">
+      <div class="row"><code>GET /api/public/proofofpnl</code><span>the sealed Proof-of-PnL statement + re-derivation recipe</span></div>
+      <div class="row"><code>GET /api/public/leaderboard?season=YYYY-MM</code><span>verifiable board — handles and ratios, never dollar amounts</span></div>
+      <div class="row"><code>GET /api/public/agent/:address</code><span>ERC-8004 identity card, verified server-side</span></div>
+      <div class="row"><code>GET /api/public/letter/:week</code><span>the public Agent Letter, percent-only</span></div>
+      <div class="row"><code>GET /api/market/rwa</code><span>RWA sector radar from live venue tickers</span></div>
+      <div class="row"><code>GET /api/market/meme</code><span>meme/AI-token radar with per-token risk read</span></div>
+      <div class="row"><code>GET /api/airdrops</code><span>curated airdrop &amp; testnet radar — guided-only</span></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>The verification ethos</h2>
+    <p style="color:var(--text-2);line-height:1.7;max-width:76ch">
+      Don't trust the dashboard — <b>verify the fills</b>. The Proof-of-PnL bundle canonicalizes as
+      JSON with recursively sorted keys, no whitespace, UTF-8 (every number is already a string);
+      <code>publish_hash = SHA-256(canonical)</code>. Your agent can re-derive it in any language
+      and reject anything that doesn't match. Safety reads are heuristic flags with reasons,
+      never verdicts. Past performance never predicts future results.</p>
+  </div>
+
+  <p class="muted">Trade-capable MCP tools are a separate, operator-gated decision and are not exposed here.</p>
+</div>
+
+<script>
+(function () {
+  var esc = function (s) {
+    return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  };
+  fetch('/mcp', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
+  }).then(function (r) { return r.json(); }).then(function (d) {
+    var tools = (d && d.result && d.result.tools) || [];
+    var el = document.getElementById('tools');
+    if (!tools.length) { el.innerHTML = '<div class="empty">Tool list unavailable right now.</div>'; return; }
+    el.innerHTML = tools.map(function (t) {
+      var props = (t.inputSchema && t.inputSchema.properties) || {};
+      var keys = Object.keys(props);
+      return '<div class="tool"><span class="name">' + esc(t.name) + '</span>'
+        + (keys.length ? '<span class="args">(' + keys.map(esc).join(', ') + ')</span>' : '')
+        + '<p>' + esc(t.description) + '</p></div>';
+    }).join('');
+  }).catch(function () {
+    document.getElementById('tools').innerHTML = '<div class="empty">Tool list unavailable right now.</div>';
+  });
+})();
+</script>
+</body>
+</html>
