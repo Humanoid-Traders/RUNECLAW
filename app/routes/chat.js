@@ -74,6 +74,9 @@ router.post('/', chatLimit, async (req, res) => {
     // Never lists, bids, mints or trades.
     const nftReply = await require('../lib/opensea').maybeHandleNftChat(req.user.user_id, text);
     if (nftReply) return res.json(nftReply);
+    // "spot market" — read-only spot pairs + spot/perp basis. Never orders.
+    const spotReply = await require('../lib/spot').maybeHandleSpotChat(req.user.user_id, text);
+    if (spotReply) return res.json(spotReply);
     // "my wallet" — read-only mirror of the caller's SIWE-linked wallet.
     const walletReply = await maybeHandleWalletChat(req.user.user_id, text);
     if (walletReply) return res.json(walletReply);
