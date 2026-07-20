@@ -63,6 +63,9 @@ router.post('/', chatLimit, async (req, res) => {
     // automated farming.
     const airdropReply = await require('../lib/airdrops').maybeHandleAirdropChat(req.user.user_id, text);
     if (airdropReply) return res.json(airdropReply);
+    // "best venue for BTC" — funding-cost venue read; recommendations only.
+    const venueReply = await require('../lib/venue_router').maybeHandleVenueRouterChat(req.user.user_id, text);
+    if (venueReply) return res.json(venueReply);
     // "meme radar" / "dexscreener" — read-only on-chain meme/AI-token snapshot
     // with an explicit safety read. Never trades or launches.
     const memeReply = await require('../lib/meme').maybeHandleMemeChat(req.user.user_id, text);
