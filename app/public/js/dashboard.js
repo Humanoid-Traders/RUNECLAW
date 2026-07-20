@@ -746,6 +746,10 @@
           <span class="badge" style="margin-left:auto" title="Curated campaigns with guided checklists — you perform and sign every step yourself. RUNECLAW never automates participation or farms with multiple wallets.">guided-only</span></h2>
           <div id="c-airdrops"><div class="skel"></div><div class="skel"></div></div>
         </section>
+        <section class="panel" id="p-meme"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-radar"></use></svg>Meme &amp; AI-token radar
+          <span class="badge" style="margin-left:auto" title="Live DEX pairs with an explicit per-token risk read — most memecoins go to zero; this never trades or launches anything">safety-first</span></h2>
+          <div id="c-meme"><div class="skel"></div><div class="skel"></div></div>
+        </section>
         <section class="panel" id="p-mkpat"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-target"></use></svg>Engine pattern read
           <span class="right muted small">chart &amp; candle patterns · observations, not signals</span></h2>
           <div id="c-mkpat"><div class="skel"></div><div class="skel"></div></div>
@@ -849,6 +853,35 @@
         + cards
         + `<p class="small muted" style="margin-top:var(--s2)"><i>${esc(d.anti_sybil)}</i></p>`;
     }, { empty: { icon: 'icon-sparkle', text: 'The airdrop radar is loading its curated catalog.' } });
+
+    // Meme & AI-token radar — live DEX pairs with the safety read up front.
+    // Ranked by real volume (never by pump %); risk tier rides every row.
+    renderPanel(C('meme'), async () => {
+      const r = await fetchJSON('/api/market/meme', { auth: false, timeoutMs: 15000 });
+      const d = r.data;
+      if (!r.ok || !d || !(d.tokens || []).length) return null;
+      const TIER = {
+        extreme: '<span class="badge" style="color:var(--down)">extreme</span>',
+        high: '<span class="badge" style="color:var(--text-2)">high</span>',
+      };
+      const s = d.summary;
+      const head = `<p class="muted small">${s.tokens} trending on-chain tokens · $${fmtK(s.volume_24h_usd)} 24h volume
+          · <b class="${s.extreme_risk ? 'down' : ''}">${s.extreme_risk} at extreme risk</b>.
+          Ranked by real volume, never by pump %.</p>`;
+      const rows = d.tokens.slice(0, 12).map(t => `<tr>
+          <td><b>${esc(t.symbol)}</b> <span class="muted small">${esc(t.chain_label)}</span></td>
+          <td class="num r">$${fmtPrice(t.price_usd)}</td>
+          <td class="num r ${t.change_24h_pct >= 0 ? 'up' : 'down'}">${t.change_24h_pct != null ? (t.change_24h_pct >= 0 ? '+' : '') + fmt(t.change_24h_pct, 1) + '%' : '—'}</td>
+          <td class="num r">$${fmtK(t.volume_24h_usd)}</td>
+          <td class="num r">${t.liquidity_usd != null ? '$' + fmtK(t.liquidity_usd) : '—'}</td>
+          <td class="r" title="${esc((t.risk.flags || []).join(', ') || 'no extra flags — memecoins are high-risk by default')}">${TIER[t.risk.tier] || `<span class="badge muted">${esc(t.risk.tier)}</span>`}</td>
+        </tr>`).join('');
+      return head
+        + `<div class="tbl-wrap"><table class="tbl">
+            <thead><tr><th>Token</th><th class="r">Price</th><th class="r">24h</th><th class="r">Volume</th><th class="r">Liquidity</th><th class="r">Risk</th></tr></thead>
+            <tbody>${rows}</tbody></table></div>`
+        + `<p class="small muted" style="margin-top:var(--s2)">${esc(d.disclaimer)}</p>`;
+    }, { empty: { icon: 'icon-radar', text: 'The meme radar lights up when DEXScreener public data is reachable.' } });
 
     // Cross-venue intelligence (one shared fetch; hourly bot-pushed data).
     const reportsP = getReports();
@@ -3356,7 +3389,8 @@
                ['🛡 My total exposure', "what's my total exposure?"],
                ['⚡ What-if $1k replay', "what if I'd taken every signal with $1k?"],
                ['🏛 RWA radar', 'rwa radar'],
-               ['🪂 Airdrop radar', 'airdrop radar']]
+               ['🪂 Airdrop radar', 'airdrop radar'],
+               ['🐸 Meme radar', 'meme radar']]
               .map(([l, q]) => `<button class="btn btn--sm" data-ask="${esc(q)}" type="button">${l}</button>`).join('')}
           </div>
         </section>
