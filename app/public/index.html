@@ -374,7 +374,21 @@ if(REF){
   try{localStorage.setItem('rc_ref',REF);}catch(e){}
   // Warm welcome for invited visitors (the #step-register markup is above this script).
   const _rs=document.getElementById('step-register');
-  if(_rs){const _n=document.createElement('p');_n.className='muted small';_n.style.marginBottom='var(--s2)';_n.textContent='🎁 A friend invited you — create your account to get started.';_rs.insertBefore(_n,_rs.firstChild);}
+  if(_rs){const _n=document.createElement('p');_n.className='muted small';_n.id='inviteNote';_n.style.marginBottom='var(--s2)';_n.textContent='🎁 A friend invited you — create your account to get started.';_rs.insertBefore(_n,_rs.firstChild);}
+  // Recognition upgrade: when the referrer chose a PUBLIC leaderboard handle,
+  // name them by it (the only fact the invite endpoint ever reveals). An
+  // invalid/expired code quietly keeps the generic note — never an error.
+  fetch(API+'/public/invite/'+encodeURIComponent(REF))
+    .then(function(r){return r.ok?r.json():null;})
+    .then(function(d){
+      const n=document.getElementById('inviteNote');
+      if(!n||!d||!d.valid)return;
+      if(d.handle){
+        n.innerHTML='🎁 Invited by <b></b> — ranked on the <a href="/leaderboard">verifiable board</a>. Your signup credits them.';
+        n.querySelector('b').textContent=d.handle;
+      }
+    })
+    .catch(function(){/* generic note stands */});
 }
 function switchTab(t){
   const isReg = t==='register';
