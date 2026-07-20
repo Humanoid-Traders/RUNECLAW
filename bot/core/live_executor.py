@@ -3181,7 +3181,7 @@ class LiveExecutor:
                 try:
                     await self.sync_positions_from_exchange()
                 except Exception as _sync_exc:
-                    logger.debug("Post-open leverage sync failed: %s", _sync_exc)
+                    logger.warning("Post-open leverage sync failed: %s", _sync_exc)
             # F-13 FIX: prune order history
             self._prune_order_history()
 
@@ -3834,14 +3834,20 @@ class LiveExecutor:
         return sl_id, tp_id
 
     @staticmethod
-    def _fetch_v3_positions_raw() -> list[dict]:
+    def _fetch_v3_positions_raw() -> Optional[list[dict]]:
         """Fetch all open positions from Bitget v3 API.
 
-        Returns list of raw position dicts.  Handles both response shapes:
-        ``{"data": [...]}`` and ``{"data": {"list": [...]}}``.
-        Synchronous — callers must wrap in ``asyncio.to_thread``.
-        Bitget-only channel: other venues return [] (callers fall back to
-        ccxt position data).
+        Returns a list of raw position dicts, ``[]`` when the channel is
+        NOT APPLICABLE (non-Bitget venue, no v3 credentials — permanent
+        config states, callers fall back to ccxt data), or ``None`` when the
+        channel FAILED (API error code, network/exception). The distinction
+        matters: an API outage used to return [] and was indistinguishable
+        from "no positions", so a broken sync passed silently while stale
+        leverage corrupted margin/risk math downstream.
+
+        Handles both response shapes: ``{"data": [...]}`` and
+        ``{"data": {"list": [...]}}``. Synchronous — callers must wrap in
+        ``asyncio.to_thread``.
         """
         if get_venue().id != "bitget":
             return []
@@ -3853,14 +3859,17 @@ class LiveExecutor:
         try:
             data = client.get(path)
             if data.get("code") != "00000":
-                return []
+                logger.warning("v3 position fetch failed: code=%s msg=%s",
+                               data.get("code"), data.get("msg"))
+                return None
             payload = data.get("data", [])
             # Handle both {"data": [...]} and {"data": {"list": [...]}}
             if isinstance(payload, dict):
                 payload = payload.get("list", [])
             return [item for item in payload if isinstance(item, dict)]
-        except Exception:
-            return []
+        except Exception as exc:
+            logger.warning("v3 position fetch raised: %s", exc)
+            return None
 
     @staticmethod
     def _fetch_position_margin_mode_v3(bitget_symbol: str) -> Optional[str]:
@@ -3869,7 +3878,8 @@ class LiveExecutor:
         Returns 'crossed' or 'isolated', or None if lookup fails.
         Synchronous — callers must wrap in asyncio.to_thread.
         """
-        positions = LiveExecutor._fetch_v3_positions_raw()
+        # None = channel failed → lookup failed, same as symbol-not-found.
+        positions = LiveExecutor._fetch_v3_positions_raw() or []
         for item in positions:
             if item.get("symbol") == bitget_symbol:
                 mm = (item.get("marginMode") or "").lower()
@@ -3878,12 +3888,18 @@ class LiveExecutor:
         return None
 
     async def sync_positions_from_exchange(self) -> None:
-        """Sync tracked position metadata (leverage, margin mode) with exchange.
+        """Sync tracked position LEVERAGE with the exchange (fail-loud).
 
-        Called on startup after position loading. Queries v3 position API and
-        updates any tracked positions whose leverage or margin mode differs
-        from what the exchange reports. This prevents risk calculation errors
-        from stale data (e.g., leverage changed manually on exchange).
+        Called on startup and periodically. Queries the v3 position API and
+        updates any tracked position whose leverage differs from what the
+        exchange reports — stale leverage silently corrupts margin/risk math.
+        Quantity drift is detected and audited REPORT-ONLY (never auto-written:
+        partial-TP ladders, pyramids and in-flight closes legitimately diverge
+        from a point-in-time snapshot).
+
+        Fail-loud contract: a failed or empty-when-positions-exist fetch is
+        AUDITED and fed to the risk engine's warning-rate breaker — a broken
+        sync channel must never be indistinguishable from a clean one.
         """
         import asyncio as _aio_sync
         open_pos = [p for p in self._positions.values() if p.status == "open"]
@@ -3895,10 +3911,37 @@ class LiveExecutor:
                 None, LiveExecutor._fetch_v3_positions_raw
             )
         except Exception as exc:
-            logger.warning("sync_positions_from_exchange: v3 fetch failed: %s", exc)
+            audit(trade_log,
+                  f"Position sync FAILED: v3 fetch raised with {len(open_pos)} open "
+                  f"positions — leverage/margin may be stale ({exc})",
+                  action="position_sync", result="ERROR",
+                  level=logging.ERROR,
+                  data={"open_positions": len(open_pos), "error": str(exc)})
+            self._record_warning("position_sync_fetch")
+            return
+
+        if v3_positions is None:
+            # Channel FAILED (API error / exception inside the fetch) — loud:
+            # trading on unverifiable leverage is a risk-math hazard.
+            audit(trade_log,
+                  f"Position sync SKIPPED: v3 position fetch failed with "
+                  f"{len(open_pos)} open positions — leverage/margin may be stale",
+                  action="position_sync", result="ERROR",
+                  level=logging.ERROR,
+                  data={"open_positions": len(open_pos)})
+            self._record_warning("position_sync_fetch")
             return
 
         if not v3_positions:
+            # Channel worked but reports an EMPTY book while we track open
+            # positions — anomalous (ghost positions are reconcile territory),
+            # surface it instead of silently returning.
+            audit(trade_log,
+                  f"Position sync: exchange reports NO positions but "
+                  f"{len(open_pos)} are tracked locally — reconcile will resolve",
+                  action="position_sync", result="EMPTY",
+                  level=logging.WARNING,
+                  data={"open_positions": len(open_pos)})
             return
 
         # Build lookup: Bitget symbol → position data
@@ -3909,10 +3952,15 @@ class LiveExecutor:
                 exchange_map[sym] = ep
 
         synced = 0
+        unmatched = 0
         for pos in open_pos:
             bitget_sym = pos.symbol.replace("/USDT", "USDT").replace(":USDT", "")
             ex_data = exchange_map.get(bitget_sym)
             if not ex_data:
+                unmatched += 1
+                logger.warning(
+                    "Position sync: tracked %s (%s) not in exchange payload — "
+                    "leverage unverified", pos.symbol, bitget_sym)
                 continue
 
             changed = False
@@ -3924,6 +3972,9 @@ class LiveExecutor:
                     ex_lev = int(float(ex_lev_raw))
                 except (ValueError, TypeError):
                     ex_lev = 0
+                    logger.warning(
+                        "Position sync: unparseable leverage %r for %s — skipping",
+                        ex_lev_raw, pos.symbol)
                 if ex_lev > 0 and ex_lev != pos.leverage:
                     logger.warning(
                         "LEVERAGE SYNC %s: tracked=%dx, exchange=%dx — updating to exchange value",
@@ -3939,14 +3990,29 @@ class LiveExecutor:
                         pos.cost_usd = raw_notional / ex_lev
                     changed = True
 
+            # Quantity drift — REPORT-ONLY (see docstring: never auto-write).
+            ex_qty_raw = ex_data.get("total") or ex_data.get("available")
+            if ex_qty_raw is not None and pos.quantity > 0:
+                try:
+                    ex_qty = abs(float(ex_qty_raw))
+                except (ValueError, TypeError):
+                    ex_qty = 0.0
+                if ex_qty > 0 and abs(ex_qty - pos.quantity) / pos.quantity > 0.01:
+                    audit(trade_log,
+                          f"Qty drift {pos.symbol}: tracked {pos.quantity} vs "
+                          f"exchange {ex_qty} (report-only)",
+                          action="qty_sync", result="DRIFT",
+                          level=logging.WARNING,
+                          data={"trade_id": pos.trade_id, "tracked": pos.quantity,
+                                "exchange": ex_qty})
+
             if changed:
                 synced += 1
 
         if synced > 0:
             self._save_positions()
-            logger.info("Position sync: updated %d/%d positions from exchange", synced, len(open_pos))
-        else:
-            logger.info("Position sync: all %d positions match exchange", len(open_pos))
+        logger.info("Position sync: updated %d/%d positions from exchange (%d unmatched)",
+                    synced, len(open_pos), unmatched)
 
     async def _place_sl_tp_v3(
         self, symbol: str, direction: Direction, quantity: float,
@@ -5031,6 +5097,11 @@ class LiveExecutor:
             # on breach. (sl=0 means no stop was intended — never flagged and
             # never flattened, matching the rest of the executor.)
             setattr(pos, "unprotected", True)
+            # Stamp the TP leg onto the position NOW: if the ladder has to close,
+            # close_position cancels the legs it finds on the pos — an unstamped
+            # TP id would leave a live trigger order orphaned on the exchange.
+            if tp_id and not pos.tp_order_id:
+                pos.tp_order_id = tp_id
             audit(trade_log,
                   f"UNPROTECTED position {pos.symbol}: stop-loss not placed post-fill "
                   f"— running grace re-protection now",
@@ -5043,9 +5114,14 @@ class LiveExecutor:
                 logger.warning("Post-fill grace sub-loop raised for %s: %s",
                                pos.symbol, exc)
                 guard_msg = None
-            if guard_msg:
+            # close_position signals failure by RETURN VALUE ("CLOSE FAILED ..."),
+            # not by raising — a failed breach-close must not read as closed.
+            if guard_msg and "CLOSE FAILED" not in guard_msg:
                 # Grace closed the position on breach — propagate its message.
                 return None, tp_id, guard_msg
+            if guard_msg:
+                logger.error("Grace breach-close FAILED for %s — escalating to "
+                             "flatten: %s", pos.symbol, guard_msg)
             if pos.sl_order_id:
                 # Grace got the exchange stop on — protected; clear the marker.
                 setattr(pos, "unprotected", False)
@@ -5059,18 +5135,29 @@ class LiveExecutor:
                   action="sl_tp_failed", result="FLATTEN",
                   data={"trade_id": trade_id, "symbol": pos.symbol,
                         "stop_loss": pos.stop_loss})
+            close_msg: Optional[str] = None
             try:
                 close_msg = await self.close_position(
                     trade_id or pos.trade_id, reason="sl_placement_failed")
-                return None, tp_id, (
-                    f"⚠️ ENTRY ABORTED: {pos.symbol} filled but the stop-loss could "
-                    f"not be placed — position CLOSED for safety.\n{close_msg}")
             except Exception as exc:
-                logger.error("Post-fill flatten FAILED for %s: %s", pos.symbol, exc)
+                logger.error("Post-fill flatten RAISED for %s: %s", pos.symbol, exc)
+                close_msg = f"CLOSE FAILED for {pos.trade_id}: {exc}"
+            if close_msg is None or "CLOSE FAILED" in close_msg:
+                # The safety close itself failed (returned failure or raised):
+                # the position is LIVE with no stop — never claim it was closed.
+                audit(trade_log,
+                      f"URGENT: safety flatten FAILED for {pos.symbol} — position "
+                      f"LIVE with NO stop-loss",
+                      action="sl_tp_failed", result="FLATTEN_FAILED",
+                      data={"trade_id": trade_id, "symbol": pos.symbol,
+                            "close_msg": close_msg})
                 return None, tp_id, (
                     f"🚨 URGENT: {pos.symbol} is LIVE with NO stop-loss and the "
-                    f"safety close FAILED ({exc}). Close this position MANUALLY "
-                    f"on the exchange NOW.")
+                    f"safety close FAILED. Close this position MANUALLY on the "
+                    f"exchange NOW.\n{close_msg or ''}")
+            return None, tp_id, (
+                f"⚠️ ENTRY ABORTED: {pos.symbol} filled but the stop-loss could "
+                f"not be placed — position CLOSED for safety.\n{close_msg}")
         return sl_id, tp_id, None
 
     async def _check_pending_limit(self, exchange: "ccxt.Exchange",
@@ -5245,7 +5332,7 @@ class LiveExecutor:
                 try:
                     await self.sync_positions_from_exchange()
                 except Exception as _sync_exc:
-                    logger.debug("Post-fill leverage sync failed: %s", _sync_exc)
+                    logger.warning("Post-fill leverage sync failed: %s", _sync_exc)
 
                 if sl_id is None and tp_id is None:
                     audit(trade_log,
@@ -5875,6 +5962,9 @@ class LiveExecutor:
                               action="cancel_pending", result="FILLED_DURING_CANCEL")
                         pos.status = "open"
                         pos.quantity = filled          # true up to actual fill
+                        if pos.entry_price > 0:        # keep margin math consistent
+                            pos.cost_usd = (pos.entry_price * filled
+                                            / (pos.leverage or 1))
                         # Stamp fill time + protect NOW: this transition previously
                         # placed NO exchange stop at all — the position sat naked
                         # until a later monitor tick. Best-effort placement here
@@ -7565,9 +7655,16 @@ class LiveExecutor:
                 f.flush()
                 os.fsync(f.fileno())
             os.replace(tmp, str(path))
-            # M-06 FIX: prune closed entries from in-memory dict
+            # M-06 FIX: prune closed entries from in-memory dict. "closing" MUST
+            # survive the prune: close_position saves right after setting that
+            # status, and evicting the in-flight record here meant a FAILED close
+            # (H-01 reverts to "open") operated on an untracked object — a live,
+            # possibly stop-less position invisible to check_positions and
+            # un-closeable via the bot. Successful closes still prune on their
+            # final save (status "closed" by then); mirrors the tracked-set
+            # definition used by adopt_exchange_positions.
             self._positions = {k: v for k, v in self._positions.items()
-                               if v.status in ("open", "pending_fill")}
+                               if v.status in ("open", "pending_fill", "closing")}
             # H-04 FIX: prune close_locks for trade_ids no longer in positions
             stale_lock_ids = [tid for tid in self._close_locks if tid not in self._positions]
             for tid in stale_lock_ids:
