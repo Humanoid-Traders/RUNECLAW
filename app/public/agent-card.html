@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>RUNECLAW — Agent Identity Card</title>
+<meta name="description" content="A portable, verifiable agent identity: an ERC-8004 identity card binding this agent's on-chain address to a cryptographically re-derivable track record and its custody posture.">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<meta name="theme-color" content="#0a0b10">
+<link rel="stylesheet" href="/styles.css?v=13">
+<style>
+  /* Page-local composition only — tokens/components come from styles.css */
+  .ac-wrap { max-width: 760px; margin: 0 auto; padding: var(--s5) var(--s4) var(--s6); }
+  .ac-hero h1 { font-family: var(--font-display); letter-spacing: .08em; font-size: clamp(26px, 4vw, 38px); margin-bottom: var(--s2); }
+  .lede { color: var(--text-2); max-width: 68ch; line-height: 1.6; margin-bottom: var(--s4); }
+  .lede b { color: var(--text-1); }
+  .panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: var(--s5); margin-bottom: var(--s4); }
+  .addr { font-family: var(--font-data); font-size: var(--fs-sm); color: var(--text-2); word-break: break-all; }
+  .chip { display: inline-flex; align-items: center; gap: 5px; font-size: var(--fs-xs); padding: 2px 10px; border-radius: 999px; font-family: var(--font-data); }
+  .chip.ok { background: rgba(47,191,113,.14); color: var(--up); }
+  .chip.warn { background: rgba(230,176,60,.14); color: var(--gold-bright); }
+  .kv { display: grid; grid-template-columns: max-content 1fr; gap: 8px var(--s4); font-size: var(--fs-sm); margin-top: var(--s3); }
+  .kv dt { color: var(--text-3); }
+  .kv dd { color: var(--text-2); font-family: var(--font-data); word-break: break-all; }
+  .empty { text-align: center; color: var(--text-3); padding: var(--s6) var(--s4); }
+  .topnav { display: flex; gap: var(--s3); align-items: center; margin-bottom: var(--s4); flex-wrap: wrap; }
+  .topnav a { color: var(--text-2); font-size: var(--fs-sm); }
+  .topnav a:hover { color: var(--text-1); }
+  .spacer { flex: 1; }
+  pre.human { white-space: pre-wrap; font-family: var(--font-data); font-size: var(--fs-sm); color: var(--text-2); line-height: 1.7; }
+</style>
+</head>
+<body>
+<div class="ac-wrap">
+  <nav class="topnav">
+    <a href="/">← RUNECLAW</a>
+    <span class="spacer"></span>
+    <a href="/proof">Proof of PnL</a>
+    <a href="/leaderboard">Leaderboard</a>
+    <a href="/letter">Agent Letter</a>
+  </nav>
+
+  <div class="ac-hero"><h1>Agent Identity Card</h1></div>
+  <p class="lede">A <b>portable, verifiable identity</b>: an ERC-8004 card binding this agent's
+  on-chain address to the commitment of a sealed Proof-of-PnL statement and its
+  custody posture. The card is content-hashed and Ed25519-signed — re-verified on
+  every read, and anyone can re-derive it. The on-chain anchor is reported
+  <b>honestly as UNVERIFIED</b> until a real transaction confirms it.</p>
+
+  <div class="panel" id="card"><div class="empty">Looking up the agent…</div></div>
+</div>
+
+<script>
+(function () {
+  var el = document.getElementById('card');
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+    return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]; }); }
+
+  var m = /^\/agent\/(0x[0-9a-fA-F]{40})$/.exec(location.pathname);
+  if (!m) {
+    el.innerHTML = '<div class="empty">No agent address in the URL — '
+      + 'use /agent/0x… with a full address.</div>';
+    return;
+  }
+
+  fetch('/api/public/agent/' + m[1].toLowerCase(), { headers: { Accept: 'application/json' } })
+    .then(function (r) { return r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)); })
+    .then(function (d) {
+      var card = d.card || {};
+      var idn = card.identity || {};
+      var anc = card.anchor || {};
+      var verified = d.verified
+        ? '<span class="chip ok">✓ card re-verified</span>'
+        : '<span class="chip warn">⚠ verification failed</span>';
+      var backed = card.status === 'backed'
+        ? '<span class="chip ok">backed by a sealed statement</span>'
+        : '<span class="chip warn">unbacked — no verifiable record bound</span>';
+      el.innerHTML =
+        '<div class="addr">' + esc(idn.agent_address) + '</div>'
+        + '<div style="margin:10px 0">' + verified + ' ' + backed + '</div>'
+        + '<pre class="human">' + esc(d.human) + '</pre>'
+        + '<dl class="kv">'
+        + '<dt>Card hash</dt><dd>' + esc(card.card_hash) + '</dd>'
+        + '<dt>Publication</dt><dd>' + esc((d.publication || {}).publish_hash) + '</dd>'
+        + '<dt>Trust tier</dt><dd>' + esc((d.publication || {}).trust_tier) + '</dd>'
+        + '<dt>Anchor</dt><dd>' + esc(anc.status) + ' — ' + esc(anc.note) + '</dd>'
+        + '</dl>'
+        + '<p class="lede" style="margin-top:var(--s4)">Verify the record yourself: '
+        + '<a href="/proof">re-derive the fills →</a></p>';
+    })
+    .catch(function () {
+      el.innerHTML = '<div class="empty">No published identity card for that '
+        + 'address — the directory only states what a sealed publication backs. '
+        + '<a href="/proof">See the live proof →</a></div>';
+    });
+})();
+</script>
+</body>
+</html>
