@@ -782,6 +782,30 @@ router.post('/flatten/ack', async (req, res) => {
   }
 });
 
+/**
+ * GET /api/bot/sync/leaderboard/pending
+ * DESIRED-STATE pull (not a queue — no ack needed, idempotent): every user who
+ * has opted in to the public leaderboard (anonymous handle set) AND has a
+ * linked bot account. The bot publishes each user's own sealed, size-agnostic
+ * statement under that handle and reconcile-removes handles that drop out of
+ * this set, so opt-out (handle cleared) takes effect on the next pull.
+ * Bot-secret authed.
+ */
+router.get('/leaderboard/pending', async (req, res) => {
+  try {
+    const [rows] = await pool.execute(
+      `SELECT id AS user_id, telegram_id, leaderboard_handle AS handle
+         FROM users
+        WHERE leaderboard_handle IS NOT NULL AND telegram_id IS NOT NULL
+        LIMIT 500`
+    );
+    res.json({ optins: rows });
+  } catch (err) {
+    console.error('Leaderboard pending fetch error:', err.message);
+    res.status(500).json({ error: 'Failed to fetch leaderboard opt-ins' });
+  }
+});
+
 // Read-side accessor for routes/guardian.js: in-memory first, DB on cold start.
 async function getLatestFlight() {
   if (latestFlight) return latestFlight;

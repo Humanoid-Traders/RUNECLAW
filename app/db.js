@@ -481,6 +481,18 @@ class MemoryDB {
       if (user) user.leaderboard_handle = params[0];  // params[0] may be null (opt-out)
       return [{ affectedRows: user ? 1 : 0 }, []];
     }
+    // Bot sync desired-state pull: opted-in AND bot-linked, aliased columns.
+    // Matched on both predicates (the route's SQL is multi-line, so exact
+    // 'FROM USERS WHERE …' adjacency can't be relied on). Must be matched
+    // BEFORE the generic handle handler below.
+    if (cmd.includes('LEADERBOARD_HANDLE IS NOT NULL')
+        && cmd.includes('TELEGRAM_ID IS NOT NULL')) {
+      return [this.users
+        .filter(u => u.leaderboard_handle != null && u.telegram_id != null)
+        .slice(0, 500)
+        .map(u => ({ user_id: u.id, telegram_id: u.telegram_id,
+                     handle: u.leaderboard_handle })), []];
+    }
     if (cmd.includes('FROM USERS WHERE LEADERBOARD_HANDLE IS NOT NULL')) {
       return [this.users.filter(u => u.leaderboard_handle != null), []];
     }
