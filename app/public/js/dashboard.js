@@ -3439,7 +3439,8 @@
                ['⚡ What-if $1k replay', "what if I'd taken every signal with $1k?"],
                ['🏛 RWA radar', 'rwa radar'],
                ['🪂 Airdrop radar', 'airdrop radar'],
-               ['🐸 Meme radar', 'meme radar']]
+               ['🐸 Meme radar', 'meme radar'],
+               ['🖼 NFT radar', 'nft radar']]
               .map(([l, q]) => `<button class="btn btn--sm" data-ask="${esc(q)}" type="button">${l}</button>`).join('')}
           </div>
         </section>
