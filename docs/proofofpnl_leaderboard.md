@@ -51,8 +51,20 @@ opt-out drops them (`remove`).
   handle → no registration); fail-open; never touches trading. Per-user opt-in
   publishing (each member seals their own fills) is a later slice — it needs the
   Node↔engine handle bridge and per-user fill-gathering, scoped separately.
-* **A3** — public `/leaderboard` page + Node relay, each row re-verifiable in the
-  visitor's own browser (mirrors the `/proof` serving chain).
+* **A3 ✅** — public `/leaderboard` page + Node relay (`app/routes/public_leaderboard.js`
+  → `app/public/leaderboard.html`), no auth, mirroring the `/proof` serving chain.
+  Renders the ranked, anonymous board (profit factor / round-trips / Sharpe), each
+  row showing its `publish_hash` and linking to `/proof` to re-derive. Surfaced in
+  the landing nav + footer (`nav.leaderboard`, all six languages). Empty-state:
+  "the first sealed record appears here once an agent opts in."
+
+## Remaining (later)
+
+* **Per-user opt-in publishing** — each member seals their own fills and registers
+  under their handle. Needs the Node↔engine handle bridge + per-user fill-gathering.
+* **Per-row deep re-verification** — include enough of the sealed bundle per row (or
+  a per-handle `/proof/:handle`) for the browser to re-derive each entry directly,
+  rather than linking to the operator's `/proof`.
 
 ## Tests
 
