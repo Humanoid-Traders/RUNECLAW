@@ -59,8 +59,14 @@ def _round_number_near(price: float, tolerance_pct: float = 0.3) -> Optional[flo
 
     # Determine the round number granularity based on price magnitude
     step: float
-    if price > 10000:
-        step = 100      # $105,000, $105,100
+    if price > 100000:
+        # QC-2: with a $100 step, every price above $100k failed the
+        # step/price >= 0.1% meaningfulness guard below — BTC at six
+        # figures had NO round-number level at all. $1000 is the step
+        # traders actually watch up here ($105,000, $106,000).
+        step = 1000
+    elif price > 10000:
+        step = 100      # $10,500, $10,600
     elif price > 1000:
         step = 50       # $4,150, $4,200
     elif price > 100:
