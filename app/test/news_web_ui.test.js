@@ -33,5 +33,5 @@ test('the News view is advisory and surfaces held-position alerts', () => {
   assert.match(dash, /fetchJSON\('\/api\/news'\)/);
   assert.match(dash, /data\.standdown/);
   assert.match(dash, /never moves or blocks a trade/);
-  assert.match(dash, /NEWS_RADAR_ENABLED=1/);   // off-state guidance
+  assert.match(dash, /NEWS_RADAR_ENABLED=0/);   // off-state guidance (on by default)
 });

@@ -44,6 +44,23 @@ class TestGlobalErrorHandler:
         assert "SECRET" not in sent                     # never leaks exc text
         assert "broke" in sent.lower() or "wrong" in sent.lower()
 
+    async def test_operator_diagnostic_shows_exception_type_not_message(self):
+        # For the operator (no allowlist configured in tests → allowlisted), the
+        # reply appends the exception CLASS so a systemic "everything breaks"
+        # failure is categorisable without server-log access — but never the
+        # message, which a forwarded screenshot could leak (F-15).
+        h = _handler()
+        ctx = MagicMock()
+        ctx.error = ConnectionError("cannot reach api.bitget.com KEY-abc123")
+        ctx.bot.send_message = AsyncMock()
+        with patch("bot.skills.telegram_handler.system_log"):
+            await h._on_error(_update(), ctx)
+        sent = ctx.bot.send_message.call_args.kwargs["text"]
+        assert "ConnectionError" in sent                 # type IS shown
+        assert "api.bitget.com" not in sent               # message is NOT
+        assert "abc123" not in sent                       # no secret-ish token
+        assert "operator diagnostic" in sent
+
     async def test_non_update_logs_but_does_not_reply(self):
         h = _handler()
         ctx = MagicMock()

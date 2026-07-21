@@ -3348,7 +3348,7 @@
       await load();
       if (!data) return null;
       if (!data.enabled) {
-        return `<p class="small muted">The news radar is off. An operator enables it with <code>NEWS_RADAR_ENABLED=1</code> — public crypto headlines (no API key), with high-impact alerts on positions you hold. <b>Advisory only</b> — news never moves or blocks a trade.</p>`;
+        return `<p class="small muted">The news radar is on by default (public crypto headlines, no API key) but an operator has turned it off here with <code>NEWS_RADAR_ENABLED=0</code>. When on, it gives high-impact alerts on positions you hold. <b>Advisory only</b> — news never moves or blocks a trade.</p>`;
       }
       const recs = data.standdown || [];
       if (!recs.length) return `<p class="small muted">No high-impact news on your open positions right now. ✓</p>`;

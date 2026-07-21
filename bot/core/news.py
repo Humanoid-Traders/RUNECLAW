@@ -18,7 +18,8 @@ money-path stays fail-open; see the leverage/volatility posture).
 
 Pure helpers (classify_impact, match_symbols, standdown_for_holdings) take
 primitives and are fully unit-tested with no network. The async fetch is gated
-behind NEWS_RADAR_ENABLED (default OFF) and is best-effort.
+behind NEWS_RADAR_ENABLED (default ON — public RSS, no API key; set =0 to
+disable) and is best-effort.
 """
 
 from __future__ import annotations
@@ -357,7 +358,7 @@ class NewsRadar:
 
     @staticmethod
     def enabled() -> bool:
-        return _env_bool("NEWS_RADAR_ENABLED", False)
+        return _env_bool("NEWS_RADAR_ENABLED", True)
 
     @staticmethod
     def feeds() -> list[str]:

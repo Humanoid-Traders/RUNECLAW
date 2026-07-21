@@ -1,13 +1,15 @@
 """NEWS-1: realtime news radar core (headline impact + relevance + stand-down).
 
 All pure logic — no network. The async fetch is gated (NEWS_RADAR_ENABLED,
-default OFF) and best-effort; only the parsing/scoring/recommendation logic is
-exercised here. Everything is ADVISORY: the stand-down is a recommendation,
-never an auto-action (§4 — heuristic flags, never verdicts; and the live
-money-path stays fail-open).
+default ON — public RSS, no key) and best-effort; only the parsing/scoring/
+recommendation logic is exercised here. Everything is ADVISORY: the stand-down
+is a recommendation, never an auto-action (§4 — heuristic flags, never verdicts;
+and the live money-path stays fail-open).
 """
 
 from __future__ import annotations
+
+import os
 
 from bot.core.news import (
     Impact, NewsItem, NewsRadar,
@@ -119,8 +121,15 @@ def test_radar_ingests_dedups_and_queries_by_symbol():
     assert len(radar.high_impact()) == 1
 
 
-def test_radar_fetch_is_disabled_by_default():
+def test_radar_is_on_by_default_and_operator_can_disable(monkeypatch):
+    # Advisory public-RSS radar defaults ON (no API key needed); an operator
+    # can turn it off with NEWS_RADAR_ENABLED=0.
+    monkeypatch.delenv("NEWS_RADAR_ENABLED", raising=False)
+    assert NewsRadar.enabled() is True
+    monkeypatch.setenv("NEWS_RADAR_ENABLED", "0")
     assert NewsRadar.enabled() is False
+    monkeypatch.setenv("NEWS_RADAR_ENABLED", "1")
+    assert NewsRadar.enabled() is True
 
 
 def test_radar_feeds_are_public_and_keyless():
