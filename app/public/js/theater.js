@@ -29,9 +29,17 @@
     const dp = n >= 1000 ? 1 : n >= 1 ? 3 : 6;
     return '$' + n.toLocaleString('en-US', { maximumFractionDigits: dp });
   }
-  function fmtPnl(v) {
+  // Public-surface rule (§4): NEVER a dollar amount on the landing page.
+  // The size-agnostic return percent is reconstructible from the SAME
+  // recorded fill (pnl / size_usd) that the /track page verifies.
+  function fmtRet(v) {
     const n = Number(v) || 0;
-    return (n < 0 ? '-$' : '+$') + Math.abs(n).toFixed(2);
+    return (n < 0 ? '−' : '+') + Math.abs(n).toFixed(2) + '%';
+  }
+  function retPct(trade) {
+    const size = Number(trade.size_usd) || 0;
+    const pnl = Number(trade.pnl) || 0;
+    return size > 0 ? (pnl / size) * 100 : null;
   }
 
   async function getJSON(url) {
@@ -131,8 +139,11 @@
   function animate(trade, parts) {
     const token = ++animToken;
     const pnl = Number(trade.pnl) || 0;
+    const pct = retPct(trade);
+    // No size on record -> no percent derivable -> outcome word, never dollars.
+    const finalTxt = pct != null ? fmtRet(pct) : (pnl >= 0 ? 'WIN' : 'LOSS');
     const DUR = 4200;
-    pnlEl.textContent = '+$0.00';
+    pnlEl.textContent = pct != null ? '+0.00%' : '';
     pnlEl.className = 'num';
 
     if (REDUCED || !parts.pathLen) {
@@ -143,9 +154,9 @@
         parts.exitMark.style.opacity = 1;
       }
       const el = parts.counterEl || pnlEl;
-      el.textContent = fmtPnl(pnl);
+      el.textContent = finalTxt;
       el.classList.add(pnl >= 0 ? 'up' : 'down');
-      if (el !== pnlEl) { pnlEl.textContent = fmtPnl(pnl); pnlEl.classList.add(pnl >= 0 ? 'up' : 'down'); }
+      if (el !== pnlEl) { pnlEl.textContent = finalTxt; pnlEl.classList.add(pnl >= 0 ? 'up' : 'down'); }
       return;
     }
 
@@ -164,10 +175,10 @@
       // The PnL counts only over the in-trade portion of the reveal.
       const tradeP = Math.max(0, Math.min(1,
         (ease - (parts.entryFrac || 0)) / (1 - (parts.entryFrac || 0) || 1)));
-      pnlEl.textContent = fmtPnl(pnl * tradeP);
+      if (pct != null) pnlEl.textContent = fmtRet(pct * tradeP);
       if (p >= 1) {
         parts.exitMark.style.opacity = 1;
-        pnlEl.textContent = fmtPnl(pnl);
+        pnlEl.textContent = finalTxt;
         pnlEl.classList.add(pnl >= 0 ? 'up' : 'down');
         return;
       }
@@ -195,7 +206,22 @@
     const parts = renderStage(trade, pts);
     section.classList.remove('hidden');
     section.hidden = false;
-    animate(trade, parts);
+    // Reveal when SEEN: the section sits below the fold, so animating on
+    // page load meant the 4.2s show finished before anyone scrolled to it.
+    const play = () => animate(trade, parts);
+    if ('IntersectionObserver' in window && parts.pathLen) {
+      // Hold the pre-reveal state (hidden path/marks) until it's visible.
+      parts.path.style.strokeDasharray = `${parts.pathLen}`;
+      parts.path.style.strokeDashoffset = `${parts.pathLen}`;
+      parts.entryMark.style.opacity = 0;
+      parts.exitMark.style.opacity = 0;
+      const io = new IntersectionObserver((entries) => {
+        if (entries.some(en => en.isIntersecting)) { io.disconnect(); play(); }
+      }, { threshold: 0.35 });
+      io.observe(section);
+    } else {
+      play();
+    }
     replayBtn.onclick = () => animate(trade, renderStage(trade, pts));
   }
 
