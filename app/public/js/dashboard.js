@@ -21,6 +21,7 @@
     { id: 'home',      label: 'Home',      icon: 'icon-home' },
     { id: 'chat',      label: 'AI Chat',   icon: 'icon-chat' },
     { id: 'signals',   label: 'Signals',   icon: 'icon-radar' },
+    { id: 'news',      label: 'News',      icon: 'icon-globe' },
     { id: 'trade',     label: 'Trade',     icon: 'icon-target' },
     { id: 'portfolio', label: 'Portfolio', icon: 'icon-chart' },
     { id: 'markets',   label: 'Markets',   icon: 'icon-globe' },
@@ -3324,6 +3325,54 @@
   }
 
   /* ═══════════════ LEADERBOARD ═══════════════ */
+  async function renderNews() {
+    container.innerHTML = viewHead('News radar',
+      'Breaking headlines + high-impact alerts on your positions — advisory only, never trades');
+    if (!LOGGED_IN) {
+      container.insertAdjacentHTML('beforeend',
+        `<section class="panel">${loginGate('Log in to see the news radar and alerts on your positions.')}</section>`);
+      return;
+    }
+    container.insertAdjacentHTML('beforeend', `
+      <div class="stack">
+        <section class="panel" id="p-newsdd"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-shield"></use></svg>On your positions</h2><div id="c-newsdd"><div class="skel"></div></div></section>
+        <section class="panel" id="p-newsfeed"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-globe"></use></svg>Latest headlines</h2><div id="c-newsfeed"><div class="skel"></div><div class="skel"></div></div></section>
+      </div>`);
+
+    let data = null;
+    const load = async () => { const r = await fetchJSON('/api/news'); data = r.ok ? r.data : null; return data; };
+    const icon = (imp) => imp === 'high' ? '🔴' : imp === 'medium' ? '🟠' : '⚪';
+    const ago = (s) => { s = +s || 0; return s < 90 ? Math.max(s, 1) + 's' : s < 5400 ? Math.floor(s / 60) + 'm' : s < 172800 ? Math.floor(s / 3600) + 'h' : Math.floor(s / 86400) + 'd'; };
+
+    renderPanel(C('newsdd'), async () => {
+      await load();
+      if (!data) return null;
+      if (!data.enabled) {
+        return `<p class="small muted">The news radar is off. An operator enables it with <code>NEWS_RADAR_ENABLED=1</code> — public crypto headlines (no API key), with high-impact alerts on positions you hold. <b>Advisory only</b> — news never moves or blocks a trade.</p>`;
+      }
+      const recs = data.standdown || [];
+      if (!recs.length) return `<p class="small muted">No high-impact news on your open positions right now. ✓</p>`;
+      return recs.slice(0, 6).map((r) => `
+        <div class="news-alert">
+          <div><span class="chip chip--down">🔴 ${esc(r.symbol)}</span> <b>${esc(r.headline)}</b></div>
+          ${(r.reasons || []).length ? `<div class="small muted">${esc((r.reasons || []).slice(0, 3).join(', '))} · ${ago(r.age_sec)} ago</div>` : ''}
+          <div class="small">${r.url ? `<a href="${esc(r.url)}" target="_blank" rel="noopener">Read →</a> · ` : ''}<i>Advisory — review and decide; nothing was traded.</i></div>
+        </div>`).join('');
+    }, { empty: { text: 'The news radar is unavailable right now.' } });
+
+    renderPanel(C('newsfeed'), async () => {
+      if (!data) await load();
+      if (!data || !data.enabled) return null;
+      const items = data.recent || [];
+      if (!items.length) return null;
+      return items.map((it) => `
+        <div class="news-item">
+          <div>${icon(it.impact)} <b>${esc(it.title)}</b></div>
+          <div class="small muted">${esc(it.source || '')}${(it.symbols || []).length ? ' · ' + esc((it.symbols || []).join('/')) : ''} · ${ago(it.age_sec)} ago${it.url ? ` · <a href="${esc(it.url)}" target="_blank" rel="noopener">open</a>` : ''}</div>
+        </div>`).join('');
+    }, { empty: { icon: 'icon-globe', text: 'No headlines yet — the radar fills on the next refresh.' } });
+  }
+
   async function renderLeaderboard() {
     container.innerHTML = viewHead('Leaderboard', 'Opt-in ranks by return % — anonymous handles, no dollar amounts');
     if (!LOGGED_IN) {
@@ -4348,7 +4397,7 @@
   /* ═══════════════ Boot ═══════════════ */
   const RENDER = { home: renderHome, chat: renderChat, hub: renderHub, markets: renderMarkets,
                    macro: renderMacro, guardian: renderGuardian,
-                   signals: renderSignals, deepscan: renderDeepScan,
+                   signals: renderSignals, deepscan: renderDeepScan, news: renderNews,
                    feed: renderFeed, trade: renderTrade, portfolio: renderPortfolio,
                    leaderboard: renderLeaderboard, lab: renderLab, engine: renderEngine,
                    account: renderAccount };

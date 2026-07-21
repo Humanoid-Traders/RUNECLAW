@@ -987,6 +987,63 @@ async def handle_sentry(request: web.Request) -> web.Response:
     return web.json_response(report)
 
 
+async def handle_news(request: web.Request) -> web.Response:
+    """GET /gateway/news?telegram_id=... — NEWS-1c web surface. Public-RSS
+    headline radar with high-impact flags on the caller's held positions.
+    READ-ONLY / advisory: nothing here moves, sizes, or blocks a trade."""
+    import time as _time
+
+    from bot.core.news import NewsRadar
+    engine = request.app["engine"]
+    tg_handler = request.app["tg_handler"]
+    tg_id = str(request.query.get("telegram_id") or "").strip()
+    err = _guard_user(tg_handler, tg_id)
+    if err is not None:
+        return err
+
+    enabled = NewsRadar.enabled()
+    radar = getattr(engine, "_news_radar", None)
+    if radar is None:
+        radar = NewsRadar()
+        try:
+            engine._news_radar = radar
+        except Exception:
+            pass
+
+    held: list = []
+    try:
+        pf = engine.user_portfolios.get(tg_id)
+        for t in pf.open_positions:
+            s = getattr(t, "asset", "") or getattr(t, "symbol", "")
+            if s:
+                held.append(s)
+    except Exception:
+        held = []
+
+    if enabled:
+        try:
+            await radar.refresh(
+                symbols=held or ["BTC/USDT", "ETH/USDT", "SOL/USDT", "XRP/USDT"])
+        except Exception as exc:
+            system_log.debug("news web refresh failed: %s", exc)
+
+    now = _time.time()
+
+    def _item(it) -> dict:
+        return {"title": it.title, "url": it.url, "source": it.source,
+                "impact": it.impact.value, "reasons": list(it.impact_reasons),
+                "symbols": list(it.symbols), "age_sec": int(it.age_sec(now))}
+
+    return web.json_response({
+        "enabled": enabled,
+        "read_only": True,
+        "recent": [_item(i) for i in radar.recent(12)],
+        "high_impact": [_item(i) for i in radar.high_impact(8)],
+        "standdown": radar.standdown(held, now) if held else [],
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    })
+
+
 def _proofofpnl_payload() -> dict:
     """Read the latest sealed Proof-of-PnL publication and re-verify it. Shared by
     the per-user and public handlers — the publication is public-safe by
@@ -1825,6 +1882,7 @@ def build_gateway(engine, tg_handler) -> web.Application:
     app.router.add_get("/networth", handle_networth)
     app.router.add_get("/holdings", handle_holdings)
     app.router.add_get("/sentry", handle_sentry)
+    app.router.add_get("/news", handle_news)
     app.router.add_get("/proofofpnl", handle_proofofpnl)
     app.router.add_get("/public/proofofpnl", handle_proofofpnl_public)
     app.router.add_get("/public/leaderboard", handle_leaderboard_public)
