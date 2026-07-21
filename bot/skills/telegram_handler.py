@@ -120,6 +120,7 @@ from telegram import (
     InlineKeyboardMarkup,
     Update,
 )
+from telegram.constants import ChatAction
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
@@ -6711,6 +6712,19 @@ class TelegramHandler:
     @guard("scan")
     async def _cmd_scan(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         user_id = self._get_tg_id(update)
+        # Immediate feedback: a full market scan sweeps ~200 pairs and can take
+        # several seconds. Without an ack /scan reads as total silence (audit
+        # TG-2) — show the typing indicator AND a lightweight status line, then
+        # the result card follows. Both best-effort so a send hiccup never
+        # blocks the actual scan.
+        try:
+            if update.effective_chat:
+                await update.effective_chat.send_chat_action(ChatAction.TYPING)
+        except Exception:
+            pass
+        await self._send(update,
+            "🔍 <b>Scanning the market…</b> sweeping ~200 pairs for setups — "
+            "the results card follows in a few seconds.")
         result = await self.registry.dispatch("scan_market", self.engine, user_id=user_id)
         # Visual grid card from the structured signals the skill stashed; falls
         # back to the text result on any failure.
