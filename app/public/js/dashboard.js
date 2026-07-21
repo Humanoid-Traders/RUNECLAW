@@ -25,6 +25,7 @@
     { id: 'trade',     label: 'Trade',     icon: 'icon-target' },
     { id: 'portfolio', label: 'Portfolio', icon: 'icon-chart' },
     { id: 'tax',       label: 'Tax',       icon: 'icon-check' },
+    { id: 'reputation', label: 'Reputation', icon: 'icon-shield' },
     { id: 'markets',   label: 'Markets',   icon: 'icon-globe' },
     { id: 'macro',     label: 'Macro',     icon: 'icon-shield' },
     { id: 'guardian',  label: 'Guardian',  icon: 'icon-check' },
@@ -3418,6 +3419,101 @@
   }
 
   /* ═══════════════ LEADERBOARD ═══════════════ */
+  // Outcome-Based Agent Reputation — a verifiable, confidence-adjusted score
+  // computed only from the user's realized closed trades. Advisory (a heuristic
+  // readout, never a verdict) and dollar-free (all ratios), so it reads honestly
+  // without a fabricated starting balance and is shareable without amounts.
+  async function renderReputation() {
+    container.innerHTML = viewHead('Reputation',
+      'Outcome-based agent score from your realized trades — advisory, not a verdict');
+    if (!LOGGED_IN) {
+      container.insertAdjacentHTML('beforeend',
+        `<section class="panel">${loginGate('Log in to see your agent\'s outcome-based reputation.')}</section>`);
+      return;
+    }
+    container.insertAdjacentHTML('beforeend', `
+      <div class="stack">
+        <section class="panel" id="p-repscore"><div id="c-repscore"><div class="skel"></div><div class="skel"></div></div></section>
+        <section class="panel"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-chart"></use></svg>How it's scored</h2><div id="c-repsub"><div class="skel"></div><div class="skel"></div></div></section>
+        <section class="panel"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-shield"></use></svg>Flags &amp; metrics</h2><div id="c-repflags"><div class="skel"></div></div></section>
+        <p class="small muted" id="repNote" style="max-width:82ch"></p>
+      </div>`);
+
+    const GRADE_COLOR = { A: 'var(--up)', B: 'var(--up)', C: 'var(--gold-bright)', D: 'var(--down)', E: 'var(--down)' };
+    const SEV = { good: '✅', info: 'ℹ️', warn: '⚠️', bad: '⛔' };
+    const bar = (label, v) => {
+      const val = v == null ? 0 : v;
+      const col = val >= 70 ? 'var(--up)' : val >= 45 ? 'var(--gold-bright)' : 'var(--down)';
+      return `<div style="margin:8px 0">
+          <div class="row" style="justify-content:space-between"><span class="small">${esc(label)}</span><span class="small num muted">${v == null ? '—' : Math.round(v)}</span></div>
+          <div style="height:8px;border-radius:6px;background:rgba(128,128,128,.18);overflow:hidden"><div style="height:100%;width:${clamp01(val)}%;background:${col}"></div></div>
+        </div>`;
+    };
+    function clamp01(v) { return Math.max(0, Math.min(100, v)); }
+
+    let data = null;
+    const r = await fetchJSON('/api/reputation');
+    data = r.ok ? r.data : null;
+
+    const scoreEl = C('repscore');
+    if (scoreEl) {
+      if (!data) { scoreEl.innerHTML = `<p class="small muted">Your reputation is unavailable right now.</p>`; }
+      else if (data.unrated) {
+        scoreEl.innerHTML = `<div class="row" style="align-items:center;gap:var(--s3)">
+            <div style="font-size:44px;font-weight:800;color:var(--text-3)">—</div>
+            <div><div style="font-size:var(--fs-lg)">Unrated</div><div class="small muted">Close a round-trip to start building a reputation. Scores need real, realized outcomes.</div></div>
+          </div>`;
+      } else {
+        const col = GRADE_COLOR[data.grade] || 'var(--text-1)';
+        scoreEl.innerHTML = `<div class="row" style="align-items:center;gap:var(--s3);flex-wrap:wrap">
+            <div style="text-align:center;min-width:120px">
+              <div style="font-size:52px;font-weight:800;line-height:1;color:${col}">${data.score}</div>
+              <div class="small muted">out of 100</div>
+            </div>
+            <div>
+              <div style="font-size:var(--fs-lg)">Grade <b style="color:${col}">${esc(data.grade)}</b></div>
+              <div class="small muted">Confidence ${data.sample.confidence}% · ${data.sample.trades} realized trade${data.sample.trades === 1 ? '' : 's'}</div>
+              <div class="small muted mt-1">Thin samples are pulled toward a neutral 50 — reputation is earned, not lucky.</div>
+            </div>
+          </div>`;
+      }
+    }
+
+    const subEl = C('repsub');
+    if (subEl) {
+      if (!data || data.unrated) { subEl.innerHTML = `<p class="small muted">Sub-scores appear once you have realized trades.</p>`; }
+      else {
+        const s = data.subscores;
+        subEl.innerHTML = bar('Performance (profit quality)', s.performance)
+          + bar('Risk discipline (drawdown control)', s.risk_discipline)
+          + bar('Cost efficiency (fee drag)', s.cost_efficiency)
+          + bar('Consistency (positive months)', s.consistency);
+      }
+    }
+
+    const flagsEl = C('repflags');
+    if (flagsEl) {
+      if (!data || data.unrated) { flagsEl.innerHTML = `<p class="small muted">No metrics yet.</p>`; }
+      else {
+        const m = data.metrics;
+        const flagRows = (data.flags || []).map(f => `<div class="small" style="margin:3px 0">${SEV[f.severity] || 'ℹ️'} ${esc(f.label)}</div>`).join('');
+        const pf = m.profit_factor == null ? '∞' : m.profit_factor;
+        flagsEl.innerHTML = `${flagRows}
+          <div class="tbl-wrap mt-3"><table class="tbl"><tbody>
+            <tr><td class="muted">Win rate</td><td class="r num">${m.win_rate == null ? '—' : m.win_rate + '%'}</td></tr>
+            <tr><td class="muted">Profit factor</td><td class="r num">${pf}</td></tr>
+            <tr><td class="muted">Expectancy (return / trade)</td><td class="r num ${pnlClass(m.expectancy_r)}">${signed(Math.round((m.expectancy_r || 0) * 1000) / 10)}%</td></tr>
+            <tr><td class="muted">Max drawdown</td><td class="r num">${m.max_drawdown_pct == null ? '—' : m.max_drawdown_pct + '%'}</td></tr>
+            <tr><td class="muted">Fee drag</td><td class="r num">${m.fee_drag_pct == null ? '—' : m.fee_drag_pct + '%'}</td></tr>
+            <tr><td class="muted">Positive months</td><td class="r num">${m.positive_months}/${m.total_months}</td></tr>
+          </tbody></table></div>`;
+      }
+    }
+
+    const note = document.getElementById('repNote');
+    if (note && data) note.textContent = data.note || '';
+  }
+
   // Tax & Compliance Agent — realized-gains report from the user's OWN closed
   // trades. Every RUNECLAW trade is a discrete round-trip, so each closed trade
   // is one self-contained disposal (realized gain/loss = booked pnl, hold =
@@ -4608,6 +4704,7 @@
                    macro: renderMacro, guardian: renderGuardian,
                    signals: renderSignals, deepscan: renderDeepScan, news: renderNews,
                    feed: renderFeed, trade: renderTrade, portfolio: renderPortfolio, tax: renderTax,
+                   reputation: renderReputation,
                    leaderboard: renderLeaderboard, lab: renderLab, engine: renderEngine,
                    account: renderAccount };
 
