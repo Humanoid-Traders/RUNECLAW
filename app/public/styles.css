@@ -83,7 +83,7 @@ code { font-family: var(--font-data); font-size: .9em; background: var(--surface
 :focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; border-radius: 3px; }
 
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+  *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
   html { scroll-behavior: auto; }
 }
 
@@ -336,8 +336,10 @@ code { font-family: var(--font-data); font-size: .9em; background: var(--surface
 @keyframes toast-in { from { transform: translateY(8px); opacity: 0; } }
 
 /* ---- Modal ---------------------------------------------------------------- */
-.modal { position: fixed; inset: 0; z-index: 110; background: rgba(5, 6, 10, .72); display: flex; align-items: center; justify-content: center; padding: var(--s4); }
-.modal-card { background: var(--surface-2); border: 1px solid var(--line-2); border-radius: var(--radius-lg); padding: var(--s6); width: min(440px, 100%); max-height: 90vh; overflow-y: auto; box-shadow: var(--shadow); }
+@keyframes rc-fade-in { from { opacity: 0; } }
+@keyframes rc-modal-in { from { opacity: 0; transform: translateY(10px) scale(.98); } }
+.modal { position: fixed; inset: 0; z-index: 110; background: rgba(5, 6, 10, .72); display: flex; align-items: center; justify-content: center; padding: var(--s4); animation: rc-fade-in .18s ease-out backwards; }
+.modal-card { background: var(--surface-2); border: 1px solid var(--line-2); border-radius: var(--radius-lg); padding: var(--s6); width: min(440px, 100%); max-height: 90vh; overflow-y: auto; box-shadow: var(--shadow); animation: rc-modal-in .22s cubic-bezier(.2, .7, .3, 1) backwards; }
 .modal-card h2 { font-size: var(--fs-md); margin-bottom: var(--s3); }
 .kv-row { display: flex; justify-content: space-between; gap: var(--s3); padding: 7px 0; border-bottom: 1px dashed var(--line); font-size: var(--fs-sm); }
 .kv-row:last-of-type { border-bottom: none; }
@@ -368,6 +370,9 @@ code { font-family: var(--font-data); font-size: .9em; background: var(--surface
   position: fixed; inset: 0; z-index: 100;
   display: flex; flex-direction: column;
   background: var(--surface); border: none;
+  /* Replays whenever .hidden (display:none) toggles off — the drawer rises
+     in instead of snapping into existence. */
+  animation: rc-modal-in .22s cubic-bezier(.2, .7, .3, 1) backwards;
 }
 @media (min-width: 640px) {
   .chat-drawer {
@@ -529,15 +534,18 @@ code { font-family: var(--font-data); font-size: .9em; background: var(--surface
 /* Panels & cards rise in on render — views re-render on navigation and on
    live pushes, so this re-fires and the UI feels like it's assembling itself. */
 @keyframes rc-rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
-.panel { animation: rc-rise .42s cubic-bezier(.2, .7, .3, 1) both; }
+.panel { animation: rc-rise .42s cubic-bezier(.2, .7, .3, 1) backwards; }
 .stack > .panel:nth-child(2) { animation-delay: .05s; }
 .stack > .panel:nth-child(3) { animation-delay: .10s; }
 .stack > .panel:nth-child(4) { animation-delay: .15s; }
 .stack > .panel:nth-child(5) { animation-delay: .20s; }
 .stack > .panel:nth-child(n + 6) { animation-delay: .24s; }
+/* Live-push soft refresh: the view updates in place — replaying the
+   entrance stagger on every SSE event reads as a glitch, not life. */
+.rc-soft .panel, .rc-soft .rc-rise { animation: none; }
 
 /* Utility rise for JS-injected blocks (deep-scan cards, list rows, chat). */
-.rc-rise { animation: rc-rise .4s cubic-bezier(.2, .7, .3, 1) both; }
+.rc-rise { animation: rc-rise .4s cubic-bezier(.2, .7, .3, 1) backwards; }
 
 /* Primary panels carry a slow flowing accent seam — the "engine is thinking"
    signature, drawn in the brand rune-blue. */
@@ -557,8 +565,8 @@ code { font-family: var(--font-data); font-size: .9em; background: var(--surface
   animation: rc-live-ring 2.4s ease-out infinite;
 }
 @keyframes rc-live-ring {
-  0% { box-shadow: 0 0 0 0 rgba(63, 182, 255, .45); }
-  70%, 100% { box-shadow: 0 0 0 8px rgba(63, 182, 255, 0); }
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--down) 45%, transparent); }
+  70%, 100% { box-shadow: 0 0 0 8px transparent; }
 }
 
 /* Confidence / progress bars: fill up from the left on mount, with a single
@@ -624,7 +632,8 @@ code { font-family: var(--font-data); font-size: .9em; background: var(--surface
 }
 
 /* Active nav item glows in the brand blue — the current view feels "energised". */
-.rail a.active .icon, .tabbar a.active .icon { filter: drop-shadow(0 0 6px var(--gold)); transition: filter .2s ease; }
+.rail a.active .icon, .tabbar a.active .icon,
+.rail a[aria-current="page"] .icon, .tabbar a[aria-current="page"] .icon { filter: drop-shadow(0 0 6px var(--gold)); transition: filter .2s ease; }
 /* Chips/badges gain a hairline lift on hover where they're interactive. */
 .chip[role="button"], .token-display { transition: transform .15s ease, box-shadow .2s ease, border-color .2s ease; }
 .token-display:hover { box-shadow: var(--glow); }
