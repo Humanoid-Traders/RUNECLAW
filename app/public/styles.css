@@ -466,6 +466,13 @@ code { font-family: var(--font-data); font-size: .9em; background: var(--surface
 .chk-hint { font-size: var(--fs-xs); color: var(--text-3); line-height: 1.45; }
 .chk-item .btn { align-self: flex-start; }
 .chk-done { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+/* A step that just flipped to Done gets one celebratory pop (onboarding). */
+.chk-item.chk-pop { animation: chk-pop .5s ease; }
+@keyframes chk-pop { 0% { transform: scale(1); } 35% { transform: scale(1.03); box-shadow: 0 0 0 2px var(--up-dim); } 100% { transform: scale(1); } }
+/* A deep-linked panel briefly flashes its border so the eye lands on it. */
+.panel.sec-flash { animation: sec-flash 1.4s ease; }
+@keyframes sec-flash { 0%, 100% { box-shadow: none; } 20% { box-shadow: 0 0 0 2px var(--gold); } }
+@media (prefers-reduced-motion: reduce) { .chk-item.chk-pop, .panel.sec-flash { animation: none; } }
 
 /* ---- Referral reward tier (Account · Invite friends) --------------------- */
 .ref-tier { border-top: 1px solid var(--line); padding-top: var(--s3); }

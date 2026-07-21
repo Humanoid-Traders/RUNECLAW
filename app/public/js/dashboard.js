@@ -125,6 +125,13 @@
   }
   function every(ms, fn) { viewTimers.push(setInterval(fn, ms)); }
   function showView(id, opts = {}) {
+    // Support "#view/section" deep links (e.g. #account/akeys): the view part
+    // routes normally; the section part scrolls the matching panel into view
+    // after render, so a checklist CTA lands on the RIGHT card, not the top of
+    // a long page.
+    const _slash = String(id).indexOf('/');
+    const section = _slash >= 0 ? id.slice(_slash + 1) : (opts.section || '');
+    if (_slash >= 0) id = id.slice(0, _slash);
     if (!VIEWS.some(v => v.id === id)) id = 'home';
     currentView = id;
     viewTimers.forEach(clearInterval);
@@ -144,6 +151,19 @@
     RENDER[id]();
     // Localize the freshly-rendered view (headers etc.) to the active language.
     if (window.RCI18N) RCI18N.apply(container);
+    // Deep-link section scroll: panels mount their skeleton first and fill
+    // async, so poll briefly for the target panel, then scroll + flash it.
+    if (section) {
+      let _tries = 0;
+      const _seek = () => {
+        const el = document.getElementById('p-' + section);
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          el.classList.remove('sec-flash'); void el.offsetWidth; el.classList.add('sec-flash');
+        } else if (_tries++ < 25) { setTimeout(_seek, 100); }
+      };
+      setTimeout(_seek, 60);
+    }
   }
 
   // Panels are declared as [id, title, icon, extraClass] and mounted together.
@@ -656,21 +676,29 @@
       const steps = [
         { done: verified, label: 'Verify your email',
           hint: 'Confirm your address to secure the account and enable recovery.',
-          cta: { label: 'Resend verification', href: '#account' } },
+          cta: { label: 'Resend verification', href: '#account/aprof' } },
         { done: traded, label: 'Place a paper trade',
           hint: 'Real 23-check risk gate, zero risk — watch the engine execute.',
           cta: { label: 'Open the trade ticket', href: '#trade' } },
         { done: connected, pending: credsPending, label: 'Connect an exchange',
           hint: 'Link Bitget, Bybit, BingX or Hyperliquid keys to prepare live trading.',
-          cta: { label: credsPending ? 'Finish connecting' : 'Connect exchange', href: '#account' } },
+          cta: { label: credsPending ? 'Finish connecting' : 'Connect exchange', href: '#account/akeys' } },
         { done: linked, label: 'Link Telegram',
           hint: 'Get trade alerts and chat with the agent from Telegram too.',
-          cta: { label: 'Link Telegram', href: '#account' } },
+          cta: { label: 'Link Telegram', href: '#account/atg' } },
         { done: liveReady, locked: !connected, label: 'Go live',
           hint: liveReady ? 'Live trading is enabled for your account.'
             : 'Needs connected keys, your live toggle, and operator approval.',
-          cta: { label: 'Review live controls', href: '#account' } },
+          cta: { label: 'Review live controls', href: '#account/actl' } },
       ];
+      // Completion moment: a step that flipped to Done since the last render
+      // (on this device) gets a brief pop, so progress is felt, not silent.
+      try {
+        const prevDone = new Set(JSON.parse(localStorage.getItem('rc_chk_done') || '[]'));
+        steps.forEach((s) => { s._justDone = s.done && !prevDone.has(s.label); });
+        localStorage.setItem('rc_chk_done',
+          JSON.stringify(steps.filter((s) => s.done).map((s) => s.label)));
+      } catch (_e) { /* private-mode / quota — pop is cosmetic, skip */ }
       const doneN = steps.filter((s) => s.done).length;
       const pct = Math.round(doneN / steps.length * 100);
       const banner = paused
@@ -691,7 +719,7 @@
           : '<span class="chip chip--gold">To do</span>';
         const cta = (!s.done && !s.locked)
           ? `<a class="btn btn--sm" href="${s.cta.href}">${esc(s.cta.label)}</a>` : '';
-        return `<li class="chk-item${s.done ? ' is-done' : ''}">`
+        return `<li class="chk-item${s.done ? ' is-done' : ''}${s._justDone ? ' chk-pop' : ''}">`
           + `<div class="chk-head"><span class="chk-label">${esc(s.label)}</span>${status}</div>`
           + `<div class="chk-hint">${esc(s.hint)}</div>${cta}</li>`;
       }).join('');
