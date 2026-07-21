@@ -9085,28 +9085,44 @@ class TelegramHandler:
               data={"retrip_warning": _retrip or None})
 
     async def _cmd_close_all(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-        """Admin only: /closeall — close all open positions on exchange."""
+        """Admin only: /closeall — flatten all open positions on EVERY account.
+
+        Two-step (TG-2b): this shows a confirm keyboard; the closeall_confirm
+        callback runs the actual flatten. /emergency_stop already confirmed;
+        /closeall used to flatten immediately, so a fat-finger market-closed
+        every operator and per-user position with no undo."""
         if not self._is_admin(update):
             await self._send(update, "🔒 Admin only.")
             return
         if not CONFIG.is_live() or not hasattr(self.engine, 'live_executor'):
             await self._send(update, "No live executor available.")
             return
+        kb = InlineKeyboardMarkup([[
+            InlineKeyboardButton("⛔ Confirm — flatten ALL", callback_data="closeall_confirm"),
+            InlineKeyboardButton("↩️ Cancel", callback_data="closeall_cancel"),
+        ]])
+        await self._send(update,
+            "⚠️ <b>Flatten ALL open positions on EVERY account?</b>\n"
+            "This market-closes every operator and per-user position immediately "
+            "— it cannot be undone.",
+            reply_markup=kb)
 
-        await self._send(update, "⏳ Closing all positions (every account)...")
+    async def _flatten_all_accounts(self, update: Update) -> None:
+        """The actual /closeall flatten, run only after the confirm button."""
+        await self._send(update, "⏳ Closing all positions (every account)...", edit=True)
         try:
             # Flatten EVERY account (operator + per-user), not just the operator.
             accounts = await self.engine.flatten_all_positions(reason="admin_closeall")
             if not accounts:
-                await self._send(update, "No live accounts to close.")
+                await self._send(update, "No live accounts to close.", edit=True)
                 return
             lines = ["⛔ <b>Close All Results:</b>"]
             for acct in accounts:
                 lines.append(f"\n<b>{acct['account']}:</b>")
                 lines.extend(f"• {m[:120]}" for m in acct["messages"][:10])
-            await self._send(update, "\n".join(lines))
+            await self._send(update, "\n".join(lines), edit=True)
         except Exception as exc:
-            await self._send(update, f"❌ Close all failed: {exc}")
+            await self._send(update, f"❌ Close all failed: {exc}", edit=True)
 
     @guard("halt")
     async def _cmd_emergency_stop(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -9302,6 +9318,7 @@ class TelegramHandler:
         _DESTRUCTIVE_CB_PERM = {
             "risk_safe_mode": "halt", "risk_pause": "halt",
             "risk_emergency_stop": "halt", "emergency_confirm": "halt",
+            "closeall_confirm": "halt",
         }
         _required_perm = _DESTRUCTIVE_CB_PERM.get(data)
         if _required_perm is None and data.startswith("mode_"):
@@ -9566,6 +9583,23 @@ class TelegramHandler:
         if data == "emergency_cancel":
             await self._send(update,
                 "\u21a9\ufe0f Emergency stop cancelled. Bot continues.",
+                edit=True)
+            return
+
+        if data == "closeall_confirm":
+            # TG-2b: the actual /closeall flatten runs ONLY after this confirm.
+            # Perm-gated above (halt) AND admin-gated when the command was issued.
+            if not self._is_admin(update):
+                await self._send(update, "\ud83d\udd12 Admin only.", edit=True)
+                return
+            await self._flatten_all_accounts(update)
+            audit(system_log, "closeall confirmed + executed",
+                  action="close_all", result="OK")
+            return
+
+        if data == "closeall_cancel":
+            await self._send(update,
+                "\u21a9\ufe0f Close-all cancelled. All positions untouched.",
                 edit=True)
             return
 
