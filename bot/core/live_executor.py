@@ -739,10 +739,16 @@ class LiveExecutor:
         # ── Set leverage (dynamic scaling via the shared, reduce-only helper) ──
         _target_leverage = self._compute_target_leverage(symbol)
 
+        # Did the exchange ACCEPT the target? A set_leverage call that returns
+        # without raising means Bitget applied the value — that is itself an
+        # authoritative confirmation, independent of whether the read-back API
+        # later echoes it in a parseable shape (see the fail-closed block).
+        _lev_set_ok = False
         try:
             await exchange.set_leverage(
                 _target_leverage, symbol,
                 params=self._venue.futures_params())
+            _lev_set_ok = True
         except Exception as exc:
             logger.warning("Leverage set failed for %s (may use exchange default): %s", symbol, exc)
             # Bitget isolated margin can reject a bare set-leverage (holdSide
@@ -756,6 +762,7 @@ class LiveExecutor:
                     await exchange.set_leverage(
                         _target_leverage, symbol,
                         params={"productType": "USDT-FUTURES", "holdSide": _side})
+                    _lev_set_ok = True
                 except Exception:
                     pass
 
@@ -843,26 +850,47 @@ class LiveExecutor:
         # sticky per-symbol default Bitget applies (20x on never-configured
         # symbols). LEVERAGE_FAIL_OPEN=1 restores the old proceed-with-warning
         # behavior as an explicit escape hatch for venue API weather.
+        #
+        # BUT: the read-back is a SECOND confirmation, not the only one. When a
+        # brand-new position is opening there is no position yet to read, and
+        # some Bitget symbols return a fetch_leverage shape the parser can't
+        # decode — so "unverified" was aborting EVERY trade on those symbols
+        # even though set_leverage had SUCCEEDED (live regression 2026-07-21:
+        # BTC/ETHFI blocked, "trades can not open"). A set_leverage call that
+        # returned without raising IS authoritative — the exchange accepted the
+        # value. The genuine danger (the 20x incident) is set FAILED *and*
+        # read-back failed; only THAT combination trades at the sticky default,
+        # and only THAT still fails closed.
         if not _lev_verified:
             fail_open = os.environ.get("LEVERAGE_FAIL_OPEN", "0").strip() in ("1", "true", "yes")
+            # A successful set_leverage is confirmation enough to proceed.
+            proceed = fail_open or _lev_set_ok
             if symbol not in self._lev_unverified_warned:
                 self._lev_unverified_warned.add(symbol)
+                if _lev_set_ok:
+                    _why = ("read-back unavailable but set_leverage succeeded "
+                            "— order proceeds on the applied value")
+                elif fail_open:
+                    _why = "order proceeds (LEVERAGE_FAIL_OPEN=1)"
+                else:
+                    _why = "ABORTING order (fail-closed standard)"
                 audit(trade_log,
                       f"Leverage UNVERIFIED for {symbol}: wanted "
-                      f"{_target_leverage}x but the exchange did not confirm — "
-                      + ("order proceeds (LEVERAGE_FAIL_OPEN=1)" if fail_open
-                         else "ABORTING order (fail-closed standard)"),
+                      f"{_target_leverage}x but the read-back did not confirm — "
+                      + _why,
                       action="leverage_unverified",
-                      result="WARNING" if fail_open else "ABORT",
-                      data={"symbol": symbol, "target": _target_leverage})
+                      result="WARNING" if proceed else "ABORT",
+                      data={"symbol": symbol, "target": _target_leverage,
+                            "set_ok": _lev_set_ok})
                 logger.warning(
-                    "Leverage UNVERIFIED for %s (wanted %dx) — exchange may "
-                    "apply its own per-symbol default", symbol, _target_leverage)
-            if not fail_open:
+                    "Leverage read-back UNVERIFIED for %s (wanted %dx, set_ok=%s)",
+                    symbol, _target_leverage, _lev_set_ok)
+            if not proceed:
                 raise RuntimeError(
                     f"Cannot confirm {_target_leverage}x leverage for {symbol} "
-                    "— aborting order rather than trading at the exchange's "
-                    "sticky default. Set LEVERAGE_FAIL_OPEN=1 to override.")
+                    "— set_leverage failed and the exchange did not echo it "
+                    "back, so the order would trade at the exchange's sticky "
+                    "default. Aborting. Set LEVERAGE_FAIL_OPEN=1 to override.")
 
         # Detect hold mode (one-way vs hedge) on first call
         if self._hedge_mode is None:

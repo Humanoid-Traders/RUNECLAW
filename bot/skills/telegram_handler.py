@@ -8042,47 +8042,66 @@ class TelegramHandler:
         _last_cat = None
 
         for i, idea in enumerate(pending, 1):
-            _cat = category_for_symbol(idea.asset)
-            if _cat != _last_cat:
-                await self._send(update, f"{category_icon(_cat)} <b>{_cat}</b>")
-                _last_cat = _cat
-            kb = InlineKeyboardMarkup([[
-                InlineKeyboardButton(t("btn_take_it", self._lang(update)), callback_data=f"confirm:{idea.id}:{uid}"),
-                InlineKeyboardButton(t("lbl_limit", self._lang(update)), callback_data=f"setlimit:{idea.id}:{uid}"),
-                InlineKeyboardButton(t("btn_skip", self._lang(update)), callback_data=f"reject:{idea.id}:{uid}"),
-            ]])
+            # A single geometry-incomplete idea must not blow up the whole
+            # command. The below-70% fallback surfaces lower-confidence ideas
+            # straight from the background loop, and some carry a None
+            # entry/SL/TP (a forming/watch setup) — `None > 0` and `${None:,.4f}`
+            # both raise, which used to abort /latest_signal mid-list after the
+            # first card rendered (live 2026-07-21: BTC shown, then "Something
+            # broke on my end"). Render each idea defensively and skip a bad one.
+            try:
+                _cat = category_for_symbol(idea.asset)
+                if _cat != _last_cat:
+                    await self._send(update, f"{category_icon(_cat)} <b>{_cat}</b>")
+                    _last_cat = _cat
+                kb = InlineKeyboardMarkup([[
+                    InlineKeyboardButton(t("btn_take_it", self._lang(update)), callback_data=f"confirm:{idea.id}:{uid}"),
+                    InlineKeyboardButton(t("lbl_limit", self._lang(update)), callback_data=f"setlimit:{idea.id}:{uid}"),
+                    InlineKeyboardButton(t("btn_skip", self._lang(update)), callback_data=f"reject:{idea.id}:{uid}"),
+                ]])
 
-            d_icon = "\U0001f7e2" if idea.direction.value == "LONG" else "\U0001f534"
-            entry, sl, tp = idea.entry_price, idea.stop_loss, idea.take_profit
-            sl_pct = abs(entry - sl) / entry * 100 if entry > 0 else 0
-            tp_pct = abs(tp - entry) / entry * 100 if entry > 0 else 0
-            rr = idea.risk_reward_ratio
-            pair = idea.asset.replace("/USDT", "")
-            _otype = getattr(idea, 'order_type', 'market').upper()
-            _otype_tag = f" {_otype}" if _otype == "LIMIT" else ""
-            _st = getattr(idea, 'strategy_type', '').upper()
-            _st_tag = f" [{_st}]" if _st else ""
+                _dir = getattr(idea.direction, "value", str(idea.direction or "")) or ""
+                d_icon = "\U0001f7e2" if _dir == "LONG" else "\U0001f534"
 
-            # Try to send signal card image if available
-            card_sent = False
-            if hasattr(self, '_signal_card_fn') and self._signal_card_fn:
-                try:
-                    chat_id = str(update.effective_chat.id) if update.effective_chat else ""
-                    if chat_id:
-                        await self._signal_card_fn(chat_id, idea, rank=i)
-                        card_sent = True
-                except Exception:
-                    pass
+                def _num(v):
+                    try:
+                        return float(v)
+                    except (TypeError, ValueError):
+                        return 0.0
+                entry, sl, tp = _num(idea.entry_price), _num(idea.stop_loss), _num(idea.take_profit)
+                sl_pct = abs(entry - sl) / entry * 100 if entry > 0 else 0
+                tp_pct = abs(tp - entry) / entry * 100 if entry > 0 else 0
+                rr = _num(idea.risk_reward_ratio)
+                pair = (idea.asset or "").replace("/USDT", "")
+                _otype = getattr(idea, 'order_type', 'market') or 'market'
+                _otype = str(_otype).upper()
+                _otype_tag = f" {_otype}" if _otype == "LIMIT" else ""
+                _st = str(getattr(idea, 'strategy_type', '') or '').upper()
+                _st_tag = f" [{_st}]" if _st else ""
 
-            if not card_sent:
-                # Text fallback
-                msg = (
-                    f"{d_icon} <b>#{i} {html.escape(pair)}</b> — {idea.direction.value}{_st_tag}{_otype_tag}\n"
-                    f"Entry: <code>${entry:,.4f}</code> | SL: <code>${sl:,.4f}</code> (-{sl_pct:.1f}%) | TP: <code>${tp:,.4f}</code> (+{tp_pct:.1f}%)\n"
-                    f"R:R 1:{rr:.1f} | Conf <b>{idea.confidence:.0%}</b>\n"
-                    f"<i>{html.escape(idea.reasoning[:150])}</i>"
-                )
-                await self._send(update, msg, reply_markup=kb)
+                # Try to send signal card image if available
+                card_sent = False
+                if hasattr(self, '_signal_card_fn') and self._signal_card_fn:
+                    try:
+                        chat_id = str(update.effective_chat.id) if update.effective_chat else ""
+                        if chat_id:
+                            await self._signal_card_fn(chat_id, idea, rank=i)
+                            card_sent = True
+                    except Exception:
+                        pass
+
+                if not card_sent:
+                    # Text fallback
+                    msg = (
+                        f"{d_icon} <b>#{i} {html.escape(pair)}</b> — {_dir}{_st_tag}{_otype_tag}\n"
+                        f"Entry: <code>${entry:,.4f}</code> | SL: <code>${sl:,.4f}</code> (-{sl_pct:.1f}%) | TP: <code>${tp:,.4f}</code> (+{tp_pct:.1f}%)\n"
+                        f"R:R 1:{rr:.1f} | Conf <b>{idea.confidence:.0%}</b>\n"
+                        f"<i>{html.escape(idea.reasoning[:150])}</i>"
+                    )
+                    await self._send(update, msg, reply_markup=kb)
+            except Exception as exc:
+                system_log.debug("latest_signal: skipped idea %s render: %s",
+                                 getattr(idea, "id", "?"), exc)
 
             # Rate limit: avoid flooding Telegram
             if i < len(pending):
