@@ -207,7 +207,7 @@ All findings from the RUNECLAW Deep Audit v3.0 have been addressed:
 |------|--------|
 | Input validation | `/approve` rejects non-numeric Telegram IDs; `/analyze` rejects non-alphanumeric symbols via regex whitelist |
 | Encapsulation | Risk engine uses `portfolio.get_position_value()` public API instead of accessing private `_last_prices` |
-| AGPL §13 compliance | `/start` and `/help` responses include source repository link |
+| Source availability (BUSL-1.1) | `/start` and `/help` responses include source repository link |
 | Financial disclaimer | `/start` and `/help` include "Not financial advice" notice |
 | Portfolio corruption | `load_state()` logs at CRITICAL level on corrupted state files instead of silent fallback |
 | Traceback redaction | MCP server redacts tracebacks before logging via `_redact_string()` |

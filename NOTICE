@@ -22,18 +22,15 @@ every change, establishing an immutable chain of provenance.
 LICENSE
 ================================================================================
 
-This program is free software: you can redistribute it and/or modify it under
-the terms of the GNU Affero General Public License as published by the Free
-Software Foundation, either version 3 of the License, or (at your option) any
-later version.
+This program is licensed under the Business Source License 1.1 (BUSL-1.1). You
+may copy, modify, create derivative works of, redistribute, and make
+non-production use of the Licensed Work, and you may make the production use
+permitted by the Additional Use Grant in the LICENSE file. The Licensed Work is
+provided "AS IS", without warranty of any kind. On the Change Date stated in the
+LICENSE (2030-07-21), each version converts to the GNU General Public License,
+version 2.0 or later.
 
-This program is distributed in the hope that it will be useful, but WITHOUT
-ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
-FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more
-details.
-
-You should have received a copy of the GNU Affero General Public License along
-with this program. If not, see <https://www.gnu.org/licenses/>.
+See the LICENSE file in the repository root for the full terms.
 
 ================================================================================
 WHAT THIS MEANS
@@ -41,15 +38,19 @@ WHAT THIS MEANS
 
 You are free to:
   - View, study, and learn from the source code
-  - Fork and modify the code for personal or internal use
-  - Distribute modified versions
+  - Fork and modify the code
+  - Run it for your own personal or internal-business purposes (including
+    trading your own or your organization's funds) and for research/evaluation
+  - Distribute modified versions under this same license
 
 Under these conditions:
-  - You MUST keep this notice and the AGPL-3.0 license intact
-  - You MUST disclose your source code if you distribute or run a modified
-    version as a network service (SaaS, API, web app, etc.)
-  - You MUST state your changes
-  - You MUST license derivative works under AGPL-3.0
+  - You MUST keep this notice and the Business Source License intact and
+    conspicuously displayed on every copy
+  - You MAY NOT provide the Licensed Work, or any derivative of it, to third
+    parties as a hosted, managed, or embedded commercial service, nor otherwise
+    use it to compete with RUNECLAW or Humanoid Traders, without a separate
+    commercial license
+  - On the Change Date (2030-07-21) each version converts to GPL v2.0-or-later
 
 Commercial licensing inquiries: contact Humanoid Traders via the project
 repository or Telegram community (https://t.me/+VRNgsmkR5pszZTdk).
@@ -66,4 +67,6 @@ This project uses the following open-source libraries (see bot/requirements.txt)
   - python-telegram-bot (LGPL-3.0) -- Telegram Bot API wrapper
   - python-dotenv (BSD-3-Clause) -- .env file loading
 
-All third-party licenses are compatible with AGPL-3.0 distribution.
+All third-party licenses are compatible with source-available distribution
+under the Business Source License 1.1 and with the GPL v2.0-or-later Change
+License.

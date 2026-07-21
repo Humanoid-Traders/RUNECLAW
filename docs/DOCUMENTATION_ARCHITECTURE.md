@@ -111,7 +111,7 @@ Bullet list of the 16 safety guarantees. Include the disclaimer about hackathon 
 Python 3.11+, Bitget via ccxt, OpenAI GPT-4o, NumPy, Pydantic v2, python-telegram-bot 20.x, Structured JSON logging, python-dotenv.
 
 ### 10. Links
-GitHub, GitBook, Telegram group, License (AGPL-3.0).
+GitHub, GitBook, Telegram group, License (BUSL-1.1).
 
 ## Key Diagrams
 - ASCII architecture diagram (box-and-arrow, fits terminal width)

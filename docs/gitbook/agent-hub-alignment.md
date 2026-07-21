@@ -59,7 +59,7 @@ RUNECLAW exposes 12 internal skills that map directly to MCP tools. See [MCP Int
 
 | Asset | Location |
 |---|---|
-| Source code | [GitHub](https://github.com/Humanoid-Traders/RUNECLAW) -- AGPL-3.0 license |
+| Source code | [GitHub](https://github.com/Humanoid-Traders/RUNECLAW) -- BUSL-1.1 (source-available) |
 | Documentation | [GitBook](https://humanoid-traders-1.gitbook.io/humanoid-traders-ai) |
 | Test suite | 289+ unit tests (`pytest tests/test_core.py -v`) |
 | Demo data | `demo/sample_output.json`, `demo/sample_risk_check.json`, `demo/sample_portfolio.json` |

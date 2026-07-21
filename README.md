@@ -16,7 +16,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/python-3.11+-blue?logo=python&logoColor=white" alt="Python 3.11+">
-  <img src="https://img.shields.io/badge/license-AGPL--3.0-blue" alt="License AGPL-3.0">
+  <img src="https://img.shields.io/badge/license-BUSL--1.1-blue" alt="License BUSL-1.1">
   <a href="https://github.com/Humanoid-Traders/RUNECLAW/actions/workflows/ci.yml"><img src="https://github.com/Humanoid-Traders/RUNECLAW/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
   <img src="https://img.shields.io/badge/tests-2644%20test%20functions%20%7C%20227%20files-brightgreen" alt="2644 Test Functions | 227 Files">
   <img src="https://img.shields.io/badge/security%20tests-29%20passing-blueviolet" alt="29 Security Tests">
@@ -697,7 +697,7 @@ RUNECLAW is designed with a **fail-closed** philosophy:
 | W6 | Warning | Walk-forward backtest cleans up temp directories after each fold |
 | Input | Hardening | `/approve` validates numeric Telegram IDs; `/analyze` rejects non-alphanumeric symbols |
 | Encapsulation | Hardening | Risk engine uses `portfolio.get_position_value()` public API instead of private `_last_prices` |
-| AGPL | Compliance | `/start` and `/help` include source repository link and financial disclaimer |
+| BUSL | Compliance | `/start` and `/help` include source repository link and financial disclaimer |
 | Corruption | Hardening | Portfolio logs CRITICAL alert on corrupted state files instead of silent fallback |
 
 **29 dedicated security tests** in `tests/test_security.py` covering: log redaction, MCP auth, runtime state, cache keys, cost reset, portfolio corruption, input validation, and injection prevention. Note: security audit was AI-assisted and internal; no independent third-party audit has been performed.
@@ -845,9 +845,9 @@ python -m bot.main --mode scan
 
 ## License
 
-**AGPL-3.0** -- GNU Affero General Public License v3.0. See [LICENSE](./LICENSE) and [NOTICE](./NOTICE) for details.
+**BUSL-1.1** -- Business Source License 1.1 (source-available). See [LICENSE](./LICENSE) and [NOTICE](./NOTICE) for details.
 
-You are free to view, study, fork, and modify this code. If you distribute it or run a modified version as a network service (SaaS, API, web app), you must release your source code under the same license. Commercial licensing inquiries: contact Humanoid Traders via the [Telegram community](https://t.me/+VRNgsmkR5pszZTdk).
+You are free to view, study, fork, and modify this code, and to run it for your own personal or internal-business purposes (including trading your own or your organization's funds) and for research and evaluation. You may **not** offer RUNECLAW, or a derivative of it, to third parties as a hosted, managed, or embedded commercial service, or otherwise use it to compete with RUNECLAW or Humanoid Traders, without a commercial license. On the Change Date (2030-07-21), each version converts to the GNU General Public License, version 2.0 or later. Commercial licensing inquiries: contact Humanoid Traders via the [Telegram community](https://t.me/+VRNgsmkR5pszZTdk).
 
 ---
 
