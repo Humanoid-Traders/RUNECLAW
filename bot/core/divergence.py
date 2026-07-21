@@ -112,12 +112,25 @@ def _check_divergence(
     price_mins, price_maxs = _find_local_extrema(price, order)
     ind_mins, ind_maxs = _find_local_extrema(ind, order)
 
+    # QC-3 recency gate: a divergence whose SECOND pivot sits deep in the
+    # window has already resolved — price moved on — yet it kept voting at
+    # full weight on every scan (and the per-type "best" pick often chose
+    # exactly these stale, well-formed pairs). Only pairs whose second pivot
+    # formed within the most recent quarter of the window (at least 2*order
+    # bars, so short windows aren't over-filtered) still describe the market.
+    max_pivot_age = max(2 * order, lookback // 4)
+
+    def _recent(p2_idx: int) -> bool:
+        return (len(price) - 1 - p2_idx) <= max_pivot_age
+
     # Regular Bullish: price lower low + indicator higher low
     if len(price_mins) >= 2:
         for i in range(len(price_mins) - 1):
             p1_idx, p2_idx = price_mins[i], price_mins[i + 1]
             bars = p2_idx - p1_idx
             if bars < min_bars_apart:
+                continue
+            if not _recent(p2_idx):
                 continue
 
             if price[p2_idx] < price[p1_idx]:  # price made lower low
@@ -148,6 +161,8 @@ def _check_divergence(
             bars = p2_idx - p1_idx
             if bars < min_bars_apart:
                 continue
+            if not _recent(p2_idx):
+                continue
 
             if price[p2_idx] > price[p1_idx]:  # price made higher high
                 i1_val = ind[p1_idx]
@@ -176,6 +191,8 @@ def _check_divergence(
             bars = p2_idx - p1_idx
             if bars < min_bars_apart:
                 continue
+            if not _recent(p2_idx):
+                continue
 
             if price[p2_idx] > price[p1_idx]:  # price made higher low
                 i1_val = ind[p1_idx]
@@ -203,6 +220,8 @@ def _check_divergence(
             p1_idx, p2_idx = price_maxs[i], price_maxs[i + 1]
             bars = p2_idx - p1_idx
             if bars < min_bars_apart:
+                continue
+            if not _recent(p2_idx):
                 continue
 
             if price[p2_idx] < price[p1_idx]:  # price made lower high

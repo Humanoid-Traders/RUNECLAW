@@ -524,6 +524,14 @@ def detect_rectangle(
         resistance = np.mean(high_vals)
         support = np.mean(low_vals)
         price = float(closes[-1])
+        # QC-3: fade logic is only valid INSIDE the range. A close beyond
+        # support/resistance is a confirmed BREAK — the old code kept voting
+        # the fade there, so a breakdown below support emitted a bullish
+        # vote (and a breakout above resistance a bearish one). A broken
+        # range is no longer a rectangle setup; continuation belongs to the
+        # breakout detectors, so the rectangle stands aside.
+        if not (support <= price <= resistance):
+            return None
         # Determine bias from where price sits in range
         mid = (resistance + support) / 2
         signal = "bullish" if price < mid else "bearish" if price > mid else "neutral"
@@ -748,7 +756,14 @@ def detect_elliott_impulse(
                     fib_detail += " | W5 truncated"
 
                 conf = min(0.85, max(0.50, conf))
-                current_wave = "5" if float(closes[-1]) > w4_end else "4"
+                # QC-3: all five pivots exist by construction here, so a
+                # close back BELOW the wave-4 low is an invalidated/finished
+                # count — the old code labeled it "wave 4" and handed a
+                # broken impulse a with-trend vote (which wave_action then
+                # boosted). No pattern is the honest answer.
+                if float(closes[-1]) <= w4_end:
+                    return None
+                current_wave = "5"
 
                 name = "Elliott 5-Wave Impulse"
                 if is_extended_w3:
@@ -836,12 +851,24 @@ def detect_elliott_impulse(
                 is_extended_w3 = w3_fib >= 1.5
                 if is_extended_w3:
                     conf += 0.05
+                # QC-3 symmetry: the bullish count earns a golden-ratio bonus;
+                # the bearish mirror never did, so downtrend impulses were
+                # systematically under-weighted against uptrend ones.
+                for ideal in (1.618, 2.618):
+                    if abs(w3_fib - ideal) < 0.15:
+                        conf += 0.03
+                        break
                 truncated = w5_end > w3_end
                 if truncated:
                     conf -= 0.05
                 conf = min(0.85, max(0.50, conf))
 
-                current_wave = "5" if float(closes[-1]) < w4_end else "4"
+                # QC-3: mirror of the bullish invalidation — a close back
+                # ABOVE the wave-4 high after a completed bearish count is a
+                # broken impulse, not "wave 4".
+                if float(closes[-1]) >= w4_end:
+                    return None
+                current_wave = "5"
                 name = "Elliott 5-Wave Impulse"
                 if is_extended_w3:
                     name = "Elliott Extended W3 Impulse"
@@ -867,15 +894,26 @@ def detect_elliott_impulse(
             # Partial bearish (waves 1-3)
             if w3_len > w1_len:
                 w3_fib = _fib_ratio(w1_len, w3_len)
+                # QC-3 symmetry: same W2-retracement bonus the bullish
+                # partial gets — the bearish partial was hardcoded to 0.50.
+                w2_retrace = _fib_ratio(w1_len, w2_end - w1_end)
+                conf = 0.50
+                fib_info = f"W3={w3_fib:.2f}x"
+                for ideal in (0.382, 0.5, 0.618):
+                    if abs(w2_retrace - ideal) < 0.08:
+                        conf += 0.05
+                        fib_info += f", W2={w2_retrace:.3f} (near {ideal})"
+                        break
                 return {
                     "name": "Elliott Impulse (Bearish)",
                     "signal": "bearish",
-                    "confidence": 0.50,
-                    "description": f"Bearish impulse forming: waves 1-3 visible | W3={w3_fib:.2f}x",
+                    "confidence": round(min(0.65, conf), 2),
+                    "description": f"Bearish impulse forming: waves 1-3 visible | {fib_info}",
                     "key_levels": {
                         "w1_start": w1_start, "w1_low": w1_end,
                         "w2_high": w2_end, "w3_low": w3_end,
                         "w3_fib": round(w3_fib, 3),
+                        "w2_retrace": round(w2_retrace, 3),
                     },
                 }
 
