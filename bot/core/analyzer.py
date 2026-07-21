@@ -59,7 +59,7 @@ from bot.core.multi_timeframe import MTFConfluence
 from bot.core.sentiment import SentimentEngine
 from bot.core.smart_money import SmartMoneyEngine
 from bot.core.strategy_modes import StrategySelector
-from bot.llm.provider import BYOK, LLMProvider, LLMTier, PROVIDER_CATALOG, create_llm_client, llm_complete, LLMConfig, resolve_tier_config
+from bot.llm.provider import BYOK, LLMProvider, LLMTier, PROVIDER_CATALOG, create_llm_client, llm_complete, LLMConfig, resolve_tier_config, model_supports_structured_output, model_thinking_always_on
 from bot.core.volume_profile import compute_volume_profile, poc_magnet_signal
 from bot.core.liquidity_sweep import detect_sweeps, sweep_to_confluence_votes
 from bot.core.supply_demand import detect_zones, zones_to_confluence
@@ -86,6 +86,26 @@ _ELLIOTT_KEYS = ("elliott_impulse", "elliott_corrective", "elliott_diagonal",
 # Bump when the signal pipeline changes in a way that affects comparability
 # of recorded decisions (voters, blending, SL/TP logic).
 _ANALYSIS_VERSION = "2026.07-audit25"
+
+
+# AI-2: the thesis contract enforced via structured outputs on models that
+# support output_config.format (Claude 5 family, Opus 4.6+). Only the three
+# keys _parse_llm_response actually consumes — a wider schema would just be
+# unread tokens. `direction` MUST admit null: the prompt's no-trade contract
+# is {"direction": null, ...}, and a LONG/SHORT-only enum would force the
+# model to fabricate a direction on every no-setup answer (the exact
+# forced-trade failure the schema exists to prevent).
+THESIS_JSON_SCHEMA: dict = {
+    "type": "object",
+    "properties": {
+        "direction": {"type": ["string", "null"],
+                      "enum": ["LONG", "SHORT", None]},
+        "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+        "reasoning": {"type": "string"},
+    },
+    "required": ["direction", "confidence", "reasoning"],
+    "additionalProperties": False,
+}
 
 
 def _is_gated_signal_type(signal_type: str, skip_config: str) -> bool:
@@ -3904,30 +3924,35 @@ class Analyzer:
                 # Enable adaptive thinking for Opus 4.8+ (thesis tier)
                 # Opus 4.8 ONLY supports adaptive thinking; manual budget_tokens
                 # returns 400.  Adaptive lets the model decide how much to think.
-                if use_full_model and "opus" in model.lower():
+                # (Fable/Mythos never reach here — thinking is always on for
+                # them and the parameter itself is rejected.)
+                if (use_full_model and "opus" in model.lower()
+                        and not model_thinking_always_on(model)):
                     create_kwargs["thinking"] = {"type": "adaptive"}
                     # Extended thinking requires default sampling — the API
                     # rejects an explicit non-default temperature with it.
                     create_kwargs.pop("temperature", None)
-                    # Structured output: guarantee valid JSON from the LLM
+
+                # AI-2 structured outputs: enforce the thesis JSON contract on
+                # every model that supports output_config.format (Claude 5
+                # family + Opus 4.6+), BOTH tiers — the scan tier parses the
+                # same three keys. Previously this was opus-thesis-only with a
+                # LONG/SHORT-forced enum, so Sonnet 5 / Fable 5 (the admin and
+                # ULTRA routes) ran unconstrained and Opus could never answer
+                # "no trade"; THESIS_JSON_SCHEMA fixes both.
+                if model_supports_structured_output(model):
                     create_kwargs["output_config"] = {
                         "format": {
                             "type": "json_schema",
-                            "schema": {
-                                "type": "object",
-                                "properties": {
-                                    "direction": {
-                                        "type": "string",
-                                        "enum": ["LONG", "SHORT"],
-                                    },
-                                    "confidence": {"type": "number"},
-                                    "reasoning": {"type": "string"},
-                                },
-                                "required": ["direction", "confidence", "reasoning"],
-                                "additionalProperties": False,
-                            },
+                            "schema": THESIS_JSON_SCHEMA,
                         }
                     }
+                # ULTRA (AI-1): Fable/Mythos reasoning depth rides in the same
+                # output_config dict — resolve_tier_config carries it on the
+                # admin thesis/learning routes.
+                _cfg_effort = getattr(active_cfg, "effort", "") if active_cfg else ""
+                if _cfg_effort and model_thinking_always_on(model):
+                    create_kwargs.setdefault("output_config", {})["effort"] = _cfg_effort
 
                 try:
                     response = await active_client.messages.create(**create_kwargs)
@@ -3935,6 +3960,9 @@ class Analyzer:
                     # Future-proof net: if a model we didn't anticipate rejects
                     # the temperature parameter, strip it and retry ONCE rather
                     # than failing every analysis until a code change ships.
+                    # Same net for output_config.format (AI-2): a structured-
+                    # output rejection degrades to a free-form call that the
+                    # tolerant parser handles — never a dead brain.
                     _msg = str(_temp_exc).lower()
                     if ("temperature" in create_kwargs and "temperature" in _msg
                             and ("deprecated" in _msg or "unsupported" in _msg
@@ -3945,8 +3973,26 @@ class Analyzer:
                               action="llm_temperature_retry", result="RETRY")
                         create_kwargs.pop("temperature", None)
                         response = await active_client.messages.create(**create_kwargs)
+                    elif ("format" in create_kwargs.get("output_config", {})
+                            and ("output_config" in _msg or "json_schema" in _msg
+                                 or "structured" in _msg)):
+                        audit(trade_log,
+                              f"Anthropic rejected structured output for {model} — "
+                              f"retrying without the schema",
+                              action="llm_schema_retry", result="RETRY")
+                        create_kwargs["output_config"].pop("format", None)
+                        if not create_kwargs["output_config"]:
+                            create_kwargs.pop("output_config")
+                        response = await active_client.messages.create(**create_kwargs)
                     else:
                         raise
+                # Fable/Mythos-class models can decline with stop_reason=
+                # "refusal" — no usable content. Raise into the except path so
+                # the provider fallback chain / rule engine answers instead of
+                # recording an empty response as a PARSE_FAIL.
+                if getattr(response, "stop_reason", "") == "refusal":
+                    raise RuntimeError(
+                        "LLM declined to answer (stop_reason=refusal)")
                 # Handle extended thinking response — extract text block (skip thinking blocks)
                 raw_text = ""
                 if response.content:
@@ -4178,7 +4224,11 @@ class Analyzer:
                 )
 
                 if sdk_type == "anthropic":
-                    raw_text = await llm_complete(fb_client, fb_config, sys_content, prompt)
+                    # AI-2: enforce the thesis contract on the fallback too
+                    # (claude-sonnet-5 supports output_config.format; the
+                    # schema is silently skipped for models that don't).
+                    raw_text = await llm_complete(fb_client, fb_config, sys_content, prompt,
+                                                  json_schema=THESIS_JSON_SCHEMA)
                     # llm_complete discards usage → estimate from char length so
                     # the dollar guard still sees (approximate) fallback spend.
                     _pt = self._estimate_tokens(sys_content + prompt)
@@ -4193,6 +4243,10 @@ class Analyzer:
                             ],
                             temperature=CONFIG.llm.temperature,
                             max_tokens=CONFIG.llm.max_tokens if use_full_model else 512,
+                            # AI-2: same json_object mode the primary
+                            # OpenAI-compatible path has enforced since audit
+                            # fix #7 — sys_content mentions "json" as required.
+                            response_format={"type": "json_object"},
                         ),
                         timeout=CONFIG.llm.timeout_seconds + 5,  # extra grace for fallback
                     )

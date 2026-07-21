@@ -761,6 +761,13 @@ _TEMPERATURE_DEPRECATED_RE = re.compile(r"^claude-[a-z]+-5\b|^claude-[a-z]+-5-")
 # would take the brain down exactly like the temperature deprecation did.
 _THINKING_ALWAYS_ON_RE = re.compile(r"^claude-(?:fable|mythos)-5(?:$|[.-])")
 
+# AI-2: models that accept schema-constrained JSON via output_config.format
+# (structured outputs) — the whole Claude 5 family plus Opus 4.6+. Older
+# models (claude-3-opus, Sonnet 4.5, Haiku …) reject the parameter with 400,
+# so callers must gate on this before attaching a schema.
+_STRUCTURED_OUTPUT_RE = re.compile(
+    r"^claude-[a-z]+-5(?:$|[.-])|^claude-opus-4-[6-9](?:$|[.-])")
+
 
 def model_accepts_temperature(model: str) -> bool:
     """False when the model rejects an explicit `temperature` (Claude 5
@@ -769,12 +776,25 @@ def model_accepts_temperature(model: str) -> bool:
     return not _TEMPERATURE_DEPRECATED_RE.match((model or "").strip().lower())
 
 
+def model_thinking_always_on(model: str) -> bool:
+    """True for the Fable/Mythos family: the `thinking` parameter is rejected
+    (always-on) and reasoning depth is steered via output_config.effort."""
+    return bool(_THINKING_ALWAYS_ON_RE.match((model or "").strip().lower()))
+
+
+def model_supports_structured_output(model: str) -> bool:
+    """True when the model accepts output_config.format json_schema
+    (Claude 5 family + Opus 4.6/4.7/4.8)."""
+    return bool(_STRUCTURED_OUTPUT_RE.match((model or "").strip().lower()))
+
+
 async def llm_complete(
     client,
     config: LLMConfig,
     system_prompt: str,
     user_prompt: str,
     history: list[dict] | None = None,
+    json_schema: dict | None = None,
 ) -> str:
     """
     Unified completion call — handles OpenAI-format and Anthropic-format.
@@ -788,6 +808,13 @@ async def llm_complete(
         user_prompt: Current user message
         history: Optional list of prior messages [{role, content}, ...]
                  for multi-turn conversation context.
+        json_schema: Optional JSON Schema for the response. On models with
+                 structured-output support (Claude 5 family, Opus 4.6+) it is
+                 enforced via output_config.format — the response is then
+                 guaranteed-valid JSON. On other Anthropic models it is
+                 ignored (they reject the parameter); on OpenAI-compatible
+                 providers it degrades to response_format json_object mode.
+                 Callers keep their tolerant parser as the fallback either way.
     """
     import asyncio
 
@@ -825,13 +852,46 @@ async def llm_complete(
                 # Enable adaptive thinking for Opus 4.8+ models
                 extra["thinking"] = {"type": "adaptive"}
 
-            response = await client.messages.create(
-                model=config.model,
-                max_tokens=config.max_tokens,
-                system=system_content,
-                messages=messages,
-                **extra,
-            )
+            # AI-2: schema-constrained JSON on models that support it. Rides
+            # in the SAME output_config dict as the Fable effort dial — merge,
+            # never overwrite. Unsupported models simply don't get the field;
+            # the caller's tolerant parser handles their free-form JSON.
+            if json_schema and _STRUCTURED_OUTPUT_RE.match(model_l):
+                extra.setdefault("output_config", {})["format"] = {
+                    "type": "json_schema",
+                    "schema": json_schema,
+                }
+
+            try:
+                response = await client.messages.create(
+                    model=config.model,
+                    max_tokens=config.max_tokens,
+                    system=system_content,
+                    messages=messages,
+                    **extra,
+                )
+            except Exception as _so_exc:
+                # Future-proof net (mirrors the analyzer's temperature retry):
+                # if a model unexpectedly rejects output_config.format, strip
+                # the schema and retry ONCE — a degraded free-form answer beats
+                # failing every call until a code change ships.
+                _so_msg = str(_so_exc).lower()
+                _had_format = "format" in extra.get("output_config", {})
+                if _had_format and ("output_config" in _so_msg
+                                    or "json_schema" in _so_msg
+                                    or "structured" in _so_msg):
+                    extra["output_config"].pop("format", None)
+                    if not extra["output_config"]:
+                        extra.pop("output_config")
+                    response = await client.messages.create(
+                        model=config.model,
+                        max_tokens=config.max_tokens,
+                        system=system_content,
+                        messages=messages,
+                        **extra,
+                    )
+                else:
+                    raise
             # Fable/Mythos-class models can end with stop_reason="refusal" —
             # no usable content. Raise so the caller's existing failure path
             # (rule-based fallback) runs instead of treating "" as an answer.
@@ -854,11 +914,19 @@ async def llm_complete(
             if history:
                 messages.extend(history)
             messages.append({"role": "user", "content": user_prompt})
+            _oai_kwargs: dict = {}
+            if json_schema:
+                # Best available approximation on OpenAI-compatible providers:
+                # json_object mode (the system prompt must mention "json",
+                # which every schema-passing caller's prompt does). The
+                # tolerant parser remains the validation layer.
+                _oai_kwargs["response_format"] = {"type": "json_object"}
             response = await client.chat.completions.create(
                 model=config.model,
                 temperature=config.temperature,
                 max_tokens=config.max_tokens,
                 messages=messages,
+                **_oai_kwargs,
             )
             # content can be None (content-filter finish, tool-call-only, or
             # empty completion); normalize to "" so callers that .strip() it

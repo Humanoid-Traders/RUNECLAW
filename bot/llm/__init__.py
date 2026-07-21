@@ -11,6 +11,8 @@ from bot.llm.provider import (
     PROVIDER_CATALOG,
     create_llm_client,
     llm_complete,
+    model_supports_structured_output,
+    model_thinking_always_on,
     resolve_tier_config,
 )
 
@@ -25,5 +27,7 @@ __all__ = [
     "PROVIDER_CATALOG",
     "create_llm_client",
     "llm_complete",
+    "model_supports_structured_output",
+    "model_thinking_always_on",
     "resolve_tier_config",
 ]
