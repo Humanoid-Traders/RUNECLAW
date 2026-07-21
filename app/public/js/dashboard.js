@@ -26,6 +26,7 @@
     { id: 'portfolio', label: 'Portfolio', icon: 'icon-chart' },
     { id: 'tax',       label: 'Tax',       icon: 'icon-check' },
     { id: 'reputation', label: 'Reputation', icon: 'icon-shield' },
+    { id: 'counterparty', label: 'Counterparty', icon: 'icon-shield' },
     { id: 'markets',   label: 'Markets',   icon: 'icon-globe' },
     { id: 'macro',     label: 'Macro',     icon: 'icon-shield' },
     { id: 'guardian',  label: 'Guardian',  icon: 'icon-check' },
@@ -3419,6 +3420,85 @@
   }
 
   /* ═══════════════ LEADERBOARD ═══════════════ */
+  // Solver & Counterparty Monitor — where the agent's real funds sit. Turns the
+  // per-venue / per-chain holdings into a concentration read (custodial vs
+  // self-custody, venue/chain HHI, largest counterparty, settlement issuer).
+  // Advisory (flags, never a verdict); private per-user surface so real totals
+  // show, consistent with the Holdings view.
+  async function renderCounterparty() {
+    container.innerHTML = viewHead('Counterparty',
+      'Where your real funds sit — custody & venue concentration. Advisory, not a verdict');
+    if (!LOGGED_IN) {
+      container.insertAdjacentHTML('beforeend',
+        `<section class="panel">${loginGate('Log in to see where your funds sit across custodians and chains.')}</section>`);
+      return;
+    }
+    container.insertAdjacentHTML('beforeend', `
+      <div class="stack">
+        <section class="panel" id="p-cphead"><div id="c-cphead"><div class="skel"></div><div class="skel"></div></div></section>
+        <section class="panel"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-shield"></use></svg>Flags</h2><div id="c-cpflags"><div class="skel"></div></div></section>
+        <section class="panel"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-chart"></use></svg>Where your funds sit</h2><div id="c-cpbuckets"><div class="skel"></div><div class="skel"></div></div></section>
+        <section class="panel"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-globe"></use></svg>Settlement issuer</h2><div id="c-cpissuers"><div class="skel"></div></div></section>
+        <p class="small muted" id="cpNote" style="max-width:82ch"></p>
+      </div>`);
+
+    const SEV = { good: '✅', info: 'ℹ️', warn: '⚠️', bad: '⛔' };
+    const LVL = { low: { t: 'Low', c: 'var(--up)' }, moderate: { t: 'Moderate', c: 'var(--gold-bright)' }, high: { t: 'High', c: 'var(--down)' }, none: { t: '—', c: 'var(--text-3)' } };
+    const kindChip = (k) => k === 'self_custody' ? '<span class="chip chip--ok">🔑 self-custody</span>' : '<span class="chip">🏦 custodial</span>';
+
+    const r = await fetchJSON('/api/counterparty');
+    const data = r.ok ? r.data : null;
+
+    const headEl = C('cphead');
+    if (headEl) {
+      if (!data) headEl.innerHTML = `<p class="small muted">The counterparty monitor is unavailable right now.</p>`;
+      else if (data.unrated) headEl.innerHTML = `<p class="small muted">No real balances to assess yet — connect a venue or link a wallet, then your custody and venue concentration show here.</p>`;
+      else {
+        const lvl = LVL[data.concentration] || LVL.none;
+        headEl.innerHTML = `<div class="row" style="align-items:center;gap:var(--s3);flex-wrap:wrap">
+            <div><div class="small muted">Concentration</div><div style="font-size:var(--fs-lg);color:${lvl.c}"><b>${lvl.t}</b></div></div>
+            <div><div class="small muted">Custodial vs self-custody</div><div><b>${data.custodial_pct}%</b> 🏦 · <b>${data.self_custody_pct}%</b> 🔑</div></div>
+            <div><div class="small muted">Largest counterparty</div><div>${data.largest ? `<b>${esc(data.largest.label)}</b> ${data.largest.pct}%` : '—'}</div></div>
+            <div><div class="small muted">Spread across</div><div class="num">${data.venue_count} venue${data.venue_count === 1 ? '' : 's'} · ${data.chain_count} chain${data.chain_count === 1 ? '' : 's'}</div></div>
+          </div>
+          <div class="small muted mt-2">Concentration index (HHI): <b class="num">${data.hhi}</b> / 10000 — lower is more diversified.${data.partial ? ' <span style="color:var(--gold-bright)">Partial: some venues unread.</span>' : ''}</div>`;
+      }
+    }
+
+    const flagsEl = C('cpflags');
+    if (flagsEl) {
+      if (!data || data.unrated) flagsEl.innerHTML = `<p class="small muted">No flags yet.</p>`;
+      else flagsEl.innerHTML = (data.flags || []).map(f => `<div class="small" style="margin:3px 0">${SEV[f.severity] || 'ℹ️'} ${esc(f.label)}</div>`).join('');
+    }
+
+    const bucketsEl = C('cpbuckets');
+    if (bucketsEl) {
+      const bk = (data && data.buckets) || [];
+      if (!bk.length) bucketsEl.innerHTML = `<p class="small muted">No funds to break down.</p>`;
+      else bucketsEl.innerHTML = `<div class="tbl-wrap"><table class="tbl">
+          <thead><tr><th>Counterparty</th><th>Type</th><th class="r">Value</th><th class="r">Share</th></tr></thead>
+          <tbody>${bk.map(b => `<tr>
+            <td><b>${esc(b.label)}</b></td>
+            <td>${kindChip(b.kind)}</td>
+            <td class="r num muted">${fmtMoney(b.usd, 0)}</td>
+            <td class="r num">${b.pct}%</td>
+          </tr>`).join('')}</tbody></table></div>`;
+    }
+
+    const issEl = C('cpissuers');
+    if (issEl) {
+      const iss = (data && data.issuers) || [];
+      if (!iss.length) issEl.innerHTML = `<p class="small muted">No custodial stablecoin balances to break down.</p>`;
+      else issEl.innerHTML = `<div class="tbl-wrap"><table class="tbl">
+          <thead><tr><th>Issuer</th><th class="r">Custodial value</th><th class="r">Share of custodial</th></tr></thead>
+          <tbody>${iss.map(i => `<tr><td><b>${esc(i.issuer)}</b></td><td class="r num muted">${fmtMoney(i.usd, 0)}</td><td class="r num">${i.pct_of_custodial}%</td></tr>`).join('')}</tbody></table></div>
+          <p class="small muted mt-2">Inferred from each venue's settlement coin. Wallet-held stablecoins are not yet issuer-split.</p>`;
+    }
+
+    const note = document.getElementById('cpNote');
+    if (note && data) note.textContent = data.note || '';
+  }
+
   // Outcome-Based Agent Reputation — a verifiable, confidence-adjusted score
   // computed only from the user's realized closed trades. Advisory (a heuristic
   // readout, never a verdict) and dollar-free (all ratios), so it reads honestly
@@ -4704,7 +4784,7 @@
                    macro: renderMacro, guardian: renderGuardian,
                    signals: renderSignals, deepscan: renderDeepScan, news: renderNews,
                    feed: renderFeed, trade: renderTrade, portfolio: renderPortfolio, tax: renderTax,
-                   reputation: renderReputation,
+                   reputation: renderReputation, counterparty: renderCounterparty,
                    leaderboard: renderLeaderboard, lab: renderLab, engine: renderEngine,
                    account: renderAccount };
 
