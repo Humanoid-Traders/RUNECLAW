@@ -815,6 +815,115 @@ async def handle_portfolio(request: web.Request) -> web.Response:
     })
 
 
+# ── Open positions + stop-loss PROTECTION TRUTH (read-only) ──────────────────
+
+def _protection_dists(entry: float, sl: float, tp: float) -> tuple[float, float]:
+    sl_d = abs(entry - sl) / entry * 100 if entry > 0 and sl > 0 else 0.0
+    tp_d = abs(tp - entry) / entry * 100 if entry > 0 and tp > 0 else 0.0
+    return round(sl_d, 2), round(tp_d, 2)
+
+
+def _live_position_row(pos) -> dict:
+    """Serialize a LIVE LivePosition with stop-loss protection truth.
+
+    The §4 truth field is ``pos.sl_order_id``: non-null ⇒ a stop order is tracked
+    on the exchange (protected); None with a stop price set ⇒ the position is
+    UNPROTECTED (real risk — the exact thing the operator fought to see). Mirrors
+    Telegram's ``sl_order: 'exchange' if pos.sl_order_id else 'manual'``.
+    """
+    entry = float(getattr(pos, "entry_price", 0) or 0)
+    sl = float(getattr(pos, "stop_loss", 0) or 0)
+    tp = float(getattr(pos, "take_profit", 0) or 0)
+    qty = float(getattr(pos, "quantity", 0) or 0)
+    cost = float(getattr(pos, "cost_usd", 0) or 0) or (entry * qty)
+    lev = float(getattr(pos, "leverage", 0) or 0) or 1.0
+    sl_protected = bool(getattr(pos, "sl_order_id", None))
+    tp_protected = bool(getattr(pos, "tp_order_id", None))
+    unprotected = (not sl_protected and sl > 0) or bool(getattr(pos, "unprotected", False))
+    sl_d, tp_d = _protection_dists(entry, sl, tp)
+    opened = getattr(pos, "opened_at", None)
+    return {
+        "symbol": getattr(pos, "symbol", ""),
+        "pair": str(getattr(pos, "symbol", "")).split("/")[0],
+        "direction": getattr(pos, "direction", ""),
+        "entry_price": round(entry, 6),
+        "stop_loss": round(sl, 6),
+        "take_profit": round(tp, 6),
+        "sl_dist_pct": sl_d,
+        "tp_dist_pct": tp_d,
+        "size_usd": round(cost, 2),
+        "leverage": round(lev, 2),
+        "quantity": qty,
+        "sl_order": "exchange" if sl_protected else "manual",
+        "tp_order": "exchange" if tp_protected else "manual",
+        "sl_protected": sl_protected,
+        "tp_protected": tp_protected,
+        "unprotected": unprotected,
+        "strategy_type": getattr(pos, "strategy_type", "") or "",
+        "opened_at": opened.isoformat() if opened else None,
+    }
+
+
+def _paper_position_row(t) -> dict:
+    """Serialize a PAPER TradeExecution. There is no exchange, so the stop is
+    bot-managed in-sim — truthfully 'bot-managed', NOT an 'unprotected' alarm
+    (that red state only means a live position missing its exchange stop)."""
+    row = _trade_row(t)
+    entry = float(getattr(t, "entry_price", 0) or 0)
+    sl = float(getattr(t, "stop_loss", 0) or 0)
+    tp = float(getattr(t, "take_profit", 0) or 0)
+    sl_d, tp_d = _protection_dists(entry, sl, tp)
+    row["pair"] = str(getattr(t, "asset", "")).split("/")[0]
+    row["sl_dist_pct"] = sl_d
+    row["tp_dist_pct"] = tp_d
+    row["sl_order"] = "manual"
+    row["tp_order"] = "manual"
+    row["sl_protected"] = False
+    row["tp_protected"] = False
+    row["unprotected"] = False
+    return row
+
+
+async def handle_positions(request: web.Request) -> web.Response:
+    """GET /gateway/positions?telegram_id=... — the caller's OPEN positions with
+    stop-loss PROTECTION TRUTH: is each stop actually live on the exchange, or
+    bot-managed? Read-only mirror of Telegram /open_positions — NOTHING here
+    places, moves, sizes, or closes an order.
+
+    Live users read from their own executor (protection truth = pos.sl_order_id);
+    paper/web-only users read the in-sim tracker (stops are bot-managed)."""
+    engine = request.app["engine"]
+    tg_handler = request.app["tg_handler"]
+    tg_id = str(request.query.get("telegram_id") or "").strip()
+    err = _guard_user(tg_handler, tg_id)
+    if err is not None:
+        return err
+    rows: list[dict] = []
+    live = False
+    try:
+        if CONFIG.is_live() and not _is_web_id(tg_id):
+            executor = engine._executor_for(tg_id)
+            live_positions = list(getattr(executor, "open_positions", []) or []) if executor else []
+            rows = [_live_position_row(p) for p in live_positions]
+            live = True
+        else:
+            tracker = engine.user_portfolios.get(tg_id)
+            rows = [_paper_position_row(t) for t in tracker.open_positions]
+    except Exception as exc:
+        audit(system_log, f"Web positions read failed for {tg_id}: {exc}",
+              action="web_positions", result="ERROR")
+        return web.json_response({"error": "positions_unavailable"}, status=503)
+    return web.json_response({
+        "live": live,
+        "read_only": True,
+        "positions": rows,
+        "count": len(rows),
+        "protected_count": sum(1 for r in rows if r.get("sl_protected")),
+        "unprotected_count": sum(1 for r in rows if r.get("unprotected")),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    })
+
+
 # ── Cross-venue net worth (read-only) ────────────────────────────────────────
 
 async def handle_networth(request: web.Request) -> web.Response:
@@ -1879,6 +1988,7 @@ def build_gateway(engine, tg_handler) -> web.Application:
     app.router.add_post("/chat/public", handle_public_chat)
     app.router.add_get("/chat/history", handle_chat_history)
     app.router.add_get("/portfolio", handle_portfolio)
+    app.router.add_get("/positions", handle_positions)
     app.router.add_get("/networth", handle_networth)
     app.router.add_get("/holdings", handle_holdings)
     app.router.add_get("/sentry", handle_sentry)

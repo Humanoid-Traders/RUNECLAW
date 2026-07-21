@@ -157,6 +157,7 @@ app.use('/api/holdings', require('./routes/holdings'));
 app.use('/api/idleyield', require('./routes/idleyield'));
 app.use('/api/authority', require('./routes/authority'));
 app.use('/api/sentry', require('./routes/sentry'));
+app.use('/api/positions', require('./routes/positions'));
 app.use('/api/news', require('./routes/news'));
 app.use('/api/proofofpnl', require('./routes/proofofpnl'));
 app.use('/api/share', require('./routes/share'));

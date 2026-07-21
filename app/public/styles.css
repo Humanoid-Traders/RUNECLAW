@@ -470,6 +470,12 @@ code { font-family: var(--font-data); font-size: .9em; background: var(--surface
 .news-alert, .news-item { padding: var(--s3) 0; border-bottom: 1px solid var(--line); display: flex; flex-direction: column; gap: 4px; }
 .news-alert:last-child, .news-item:last-child { border-bottom: none; }
 .news-alert { border-left: 2px solid var(--down); padding-left: var(--s3); }
+/* Open positions & stop-loss protection truth (web mirror of /open_positions). */
+.lpos-item { padding: var(--s3) 0; border-bottom: 1px solid var(--line); display: flex; flex-direction: column; gap: 4px; }
+.lpos-item:last-child { border-bottom: none; }
+.lpos-alert { padding: var(--s2) var(--s3); border-radius: var(--r2, 8px); margin-bottom: var(--s2); font-size: var(--fs-sm); background: var(--surface-2, rgba(127,127,127,.08)); }
+.lpos-alert--ok { background: color-mix(in srgb, var(--up) 12%, transparent); border-left: 3px solid var(--up); }
+.lpos-alert--bad { background: color-mix(in srgb, var(--down) 12%, transparent); border-left: 3px solid var(--down); }
 /* A step that just flipped to Done gets one celebratory pop (onboarding). */
 .chk-item.chk-pop { animation: chk-pop .5s ease; }
 @keyframes chk-pop { 0% { transform: scale(1); } 35% { transform: scale(1.03); box-shadow: 0 0 0 2px var(--up-dim); } 100% { transform: scale(1); } }

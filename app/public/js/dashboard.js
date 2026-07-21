@@ -2060,6 +2060,11 @@
       <div class="stack">
         <section class="panel panel--primary" id="p-pstats"><div id="c-pstats"><div class="skel"></div><div class="skel"></div></div></section>
         <section class="panel" id="p-curve"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-chart"></use></svg>Equity curve</h2><div id="c-curve"><div class="skel"></div></div></section>
+        <section class="panel" id="p-lpos">
+          <h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-shield"></use></svg>Open positions &amp; stop-loss
+            <span class="badge" style="margin-left:auto" title="Whether each stop-loss is actually live ON THE EXCHANGE (protected) or bot-managed — the same truth the Telegram bot shows. Read-only.">read-only</span></h2>
+          <div id="c-lpos"><div class="skel"></div><div class="skel"></div></div>
+        </section>
         <section class="panel" id="p-intel">
           <h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-sparkle"></use></svg>Trade intelligence
             <span class="badge" style="margin-left:auto" title="Every figure derived only from your recorded closed trades — the buy-and-hold benchmark is rebuilt from each trade's own entry/exit prices, nothing is estimated">derived</span></h2>
@@ -2163,6 +2168,44 @@
         + (ce ? `<p class="muted small" style="margin-top:var(--s2)">Capital basis changed ${ce} time${ce === 1 ? '' : 's'}
             (deposit, withdrawal, or paper→live switch) — the curve shows the current period only, so funding changes never draw as trading losses.</p>` : '');
     }, { empty: { icon: 'icon-chart', text: 'The equity curve draws once you have a few snapshots — trade and check back.' } });
+
+    // Open positions with STOP-LOSS PROTECTION TRUTH — the web mirror of the
+    // Telegram bot's /open_positions. For each position it shows whether the
+    // stop is actually live on the exchange (🛡️ protected), bot-managed (paper /
+    // in-sim), or ⚠️ UNPROTECTED (a live position missing its exchange stop —
+    // real risk). Read-only; nothing here places, moves, or closes an order.
+    renderPanel(C('lpos'), async () => {
+      const r = await fetchJSON('/api/positions', { timeoutMs: 15000 });
+      const d = r.ok ? r.data : null;
+      if (!d) return null;
+      const rows = d.positions || [];
+      if (!rows.length) return `<p class="small muted">No open positions right now. When the agent opens one, its stop-loss protection status shows here.</p>`;
+      const prot = d.protected_count || 0, unp = d.unprotected_count || 0;
+      let banner = '';
+      if (d.live && unp > 0) {
+        banner = `<div class="lpos-alert lpos-alert--bad">⚠️ <b>${unp} live position${unp === 1 ? '' : 's'} without an exchange stop.</b> The bot keeps watching to re-arm the stop, but until it's placed the exchange itself won't auto-close it. Review below.</div>`;
+      } else if (d.live) {
+        banner = `<div class="lpos-alert lpos-alert--ok">🛡️ All ${prot} live position${prot === 1 ? '' : 's'} have their stop-loss on the exchange.</div>`;
+      } else {
+        banner = `<div class="lpos-alert">Paper — stops are bot-managed in-sim (no exchange order). Go live to place real exchange stops.</div>`;
+      }
+      const body = rows.map((p) => {
+        const dist = (p.sl_dist_pct != null && p.sl_dist_pct > 0) ? ` <span class="muted small">(${p.sl_dist_pct}% away)</span>` : '';
+        let chip;
+        if (p.unprotected) chip = `<span class="chip chip--down">⚠️ unprotected</span>`;
+        else if (p.sl_order === 'exchange') chip = `<span class="chip chip--up">🛡️ on exchange</span>`;
+        else chip = `<span class="chip">🤖 bot-managed</span>`;
+        const lev = p.leverage ? ` · <span class="muted small">${p.leverage}×</span>` : '';
+        return `<div class="lpos-item">
+          <div class="row" style="justify-content:space-between;gap:var(--s2);flex-wrap:wrap">
+            <div><b>${esc(p.pair || String(p.symbol || '').split('/')[0])}</b> ${dirChip(p.direction)}${lev}</div>
+            ${chip}
+          </div>
+          <div class="small muted">Entry ${fmtPrice(p.entry_price)} · SL ${fmtPrice(p.stop_loss)}${dist} · TP ${fmtPrice(p.take_profit)} · ${fmtMoney(p.size_usd, 0)}</div>
+        </div>`;
+      }).join('');
+      return banner + body;
+    }, { empty: { icon: 'icon-shield', text: 'No open positions — stop-loss protection status appears here when the agent opens one.' } });
 
     // Trade intelligence — alpha vs holding, expectancy, payoff, drawdown,
     // streaks. All re-derived server-side from the recorded closed trades.
