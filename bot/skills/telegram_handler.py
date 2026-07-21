@@ -43,6 +43,26 @@ def _leveraged_pnl_usd(entry: float, last: float, direction: str,
     return raw * lev * cost_usd
 
 
+def _background_scan_is_fresh(
+    last_scan_time: float, interval: float, grace: float, now: float,
+) -> tuple[bool, int]:
+    """Decide whether the continuous background sweep is recent enough that an
+    interactive "Latest Signal" tap should serve its result instantly instead
+    of triggering a slow, throttle-exposed re-scan.
+
+    Fresh when a sweep has run (``last_scan_time > 0``), the grace is enabled
+    (``grace > 0``), and its age is within one scan interval plus the grace.
+    Returns ``(is_fresh, seconds_until_next_sweep)``. Pure — no I/O — so the
+    responsiveness gate is unit-testable without the engine or Telegram.
+    """
+    if grace <= 0 or last_scan_time <= 0:
+        return False, 0
+    age = now - last_scan_time
+    if age <= (interval + grace):
+        return True, max(0, int(interval - age))
+    return False, 0
+
+
 def _scan_timeout_hint(analyzer) -> str:
     """One diagnostic line for the interactive-scan timeout message.
 
@@ -7940,6 +7960,28 @@ class TelegramHandler:
                           f"{_display_min:.0%} high-confidence line):</i>")
 
         if not pending:
+            # Responsiveness gate: if the continuous background sweep ran
+            # recently, its emptiness IS the current answer — a fresh re-scan
+            # would just re-confirm "nothing" after another slow, throttle-
+            # exposed pass (the live "bot seems slow" symptom). Serve an instant
+            # honest status and only fall through to a live re-scan when the
+            # background data is genuinely stale (loop stalled/throttled).
+            _grace = int(getattr(CONFIG, "interactive_scan_fresh_grace_sec", 0) or 0)
+            _last = float(getattr(self.engine, "_last_scan_time", 0.0) or 0.0)
+            _interval = float(getattr(self.engine, "_current_scan_interval", 0.0)
+                              or CONFIG.scan_interval_seconds)
+            _fresh, _next_in = _background_scan_is_fresh(
+                _last, _interval, _grace, time.monotonic())
+            _age = (time.monotonic() - _last) if _last > 0 else 0
+            if _fresh:
+                await self._send(update,
+                    f"✅ <b>No setups above {_display_min:.0%} confidence "
+                    f"right now.</b>\n\n"
+                    f"\U0001f4e1 Full sweep ran {int(_age)}s ago — next in "
+                    f"~{_next_in}s. The agent watches ~200 pairs continuously; "
+                    f"a quiet tape means no high-conviction edge, not a stall.\n\n"
+                    f"Try <code>/fullscan</code> for a deep multi-symbol pass now.")
+                return
             await self._send(update,
                 "\U0001f50d <b>No signals queued — running a quick scan...</b>")
             try:

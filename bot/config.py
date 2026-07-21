@@ -2074,6 +2074,14 @@ class AppConfig:
     # Hard timeout (seconds) on an interactive force-scan so the Telegram handler
     # can never hang unbounded; on timeout we show whatever pending ideas exist.
     interactive_scan_timeout_sec: int = int(_env_float("INTERACTIVE_SCAN_TIMEOUT_SEC", 45))
+    # Responsiveness: when a "Latest Signal" tap finds nothing queued, DON'T
+    # re-scan if the continuous background sweep ran within (scan_interval +
+    # this grace) seconds — its emptiness IS the current answer, so re-scanning
+    # only re-confirms "nothing" after another slow, throttle-exposed pass.
+    # Serve an instant honest status instead; only fall back to a live re-scan
+    # when the background data is genuinely stale (loop stalled/throttled).
+    # 0 restores the always-rescan behavior.
+    interactive_scan_fresh_grace_sec: int = int(_env_float("INTERACTIVE_SCAN_FRESH_GRACE_SEC", 30))
     # All-markets slot allocation for the non-Crypto (TradFi) categories.
     # When full-coverage is ON (default), EVERY present TradFi perp (metals,
     # stocks, ETFs, commodities, pre-IPO) is guaranteed a scan slot — the whole
