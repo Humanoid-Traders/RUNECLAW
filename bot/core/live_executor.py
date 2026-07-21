@@ -272,6 +272,55 @@ def _user_state_path(base_file: str, state_dir: Optional[str], user_id) -> str:
     return os.path.join(d, name)
 
 
+def _parse_leverage_readback(payload: Any) -> Optional[int]:
+    """Extract the applied integer leverage from a ccxt ``fetch_leverage`` or
+    position payload, tolerant of the many shapes venues return.
+
+    ccxt's UNIFIED ``fetch_leverage`` exposes ``longLeverage`` /
+    ``shortLeverage`` / ``leverage``, but for some Bitget symbols those unified
+    fields come back ``None`` while the real value sits in the raw ``info``
+    payload as a STRING (``longLeverage``, ``crossMarginLeverage``, the
+    isolated per-side fields, …). Reading only the unified keys made
+    verification return ``None`` for such symbols, so the fail-closed leverage
+    guard aborted a perfectly valid order — the exchange HAD applied the target,
+    the bot just couldn't parse the confirmation (live incident: ETHFI
+    2026-07-21, "Cannot confirm 5x leverage").
+
+    This only makes the READ succeed where it spuriously failed. It never
+    relaxes the fail-closed standard: callers still require the parsed value to
+    EQUAL the target, so a genuinely wrong leverage aborts exactly as before.
+    Returns a positive int, or ``None`` when no leverage field is parseable.
+    """
+    if not isinstance(payload, dict):
+        return None
+
+    def _as_pos_int(v: Any) -> Optional[int]:
+        try:
+            iv = int(float(v))
+        except (TypeError, ValueError):
+            return None
+        return iv if iv > 0 else None
+
+    # 1) ccxt unified fields (fetch_leverage AND position dicts carry these).
+    for k in ("longLeverage", "leverage", "long", "shortLeverage", "short"):
+        iv = _as_pos_int(payload.get(k))
+        if iv is not None:
+            return iv
+    # 2) Raw venue payload — Bitget returns leverage here as strings, often when
+    #    the unified mapping is empty for a never-configured symbol.
+    info = payload.get("info")
+    if isinstance(info, dict):
+        for k in ("longLeverage", "shortLeverage", "leverage",
+                  "crossMarginLeverage", "crossedMarginLeverage",
+                  "fixedLongLeverage", "fixedShortLeverage",
+                  "isolatedLongLeverage", "isolatedShortLeverage",
+                  "marginLeverage"):
+            iv = _as_pos_int(info.get(k))
+            if iv is not None:
+                return iv
+    return None
+
+
 @dataclass
 class LiveOrder:
     """Record of a live order placed on the exchange."""
@@ -714,11 +763,7 @@ class LiveExecutor:
         _lev_verified = False
         try:
             lev_info = await exchange.fetch_leverage(symbol, params=self._venue.futures_params())
-            actual_lev = None
-            if isinstance(lev_info, dict):
-                actual_lev = lev_info.get("longLeverage") or lev_info.get("leverage") or lev_info.get("long")
-                if actual_lev is not None:
-                    actual_lev = int(float(actual_lev))
+            actual_lev = _parse_leverage_readback(lev_info)
             if actual_lev is not None:
                 _lev_verified = True
             if actual_lev is not None and actual_lev != _target_leverage:
@@ -738,11 +783,9 @@ class LiveExecutor:
                 # Re-verify after retry
                 try:
                     lev_info2 = await exchange.fetch_leverage(symbol, params=self._venue.futures_params())
-                    if isinstance(lev_info2, dict):
-                        actual_lev2 = lev_info2.get("longLeverage") or lev_info2.get("leverage") or lev_info2.get("long")
-                        if actual_lev2 is not None:
-                            actual_lev2 = int(float(actual_lev2))
-                        if actual_lev2 is not None and actual_lev2 != _target_leverage:
+                    actual_lev2 = _parse_leverage_readback(lev_info2)
+                    if actual_lev2 is not None:
+                        if actual_lev2 != _target_leverage:
                             logger.critical(
                                 "LEVERAGE STILL MISMATCHED for %s after retry: wanted %dx, exchange reports %dx — "
                                 "ABORTING order to prevent incorrect risk exposure",
@@ -758,6 +801,37 @@ class LiveExecutor:
             raise  # propagate leverage abort
         except Exception:
             logger.debug("Could not verify leverage for %s (fetch_leverage unavailable)", symbol)
+
+        # Second confirmation source (live incident: ETHFI 2026-07-21). Some
+        # Bitget symbols return a fetch_leverage payload the parser can't read
+        # (unified fields None, no info block), which tripped the fail-closed
+        # abort below even though set_leverage had applied the target. The
+        # applied leverage is also carried on the position/settings, so read it
+        # back via fetch_positions before failing closed — SAME equality
+        # standard: a value that doesn't match the target still aborts.
+        if not _lev_verified:
+            try:
+                _positions = await exchange.fetch_positions(
+                    [symbol], params=self._venue.futures_params())
+                for _p in (_positions or []):
+                    _pl = _parse_leverage_readback(_p)
+                    if _pl is None:
+                        continue
+                    _lev_verified = True
+                    if _pl != _target_leverage:
+                        logger.critical(
+                            "LEVERAGE MISMATCH (position read) for %s: wanted "
+                            "%dx, position reports %dx — ABORTING order",
+                            symbol, _target_leverage, _pl)
+                        raise RuntimeError(
+                            f"Cannot set leverage to {_target_leverage}x for "
+                            f"{symbol} (position at {_pl}x). Aborting order.")
+                    break
+            except RuntimeError:
+                raise  # propagate abort
+            except Exception:
+                logger.debug(
+                    "Position-based leverage verify unavailable for %s", symbol)
 
         # Unverifiable leverage is how the 20x drift stayed invisible: the
         # set call failed, the verify read failed, and the order proceeded
