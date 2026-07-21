@@ -93,7 +93,7 @@
 <script src="/js/i18n.js?v=1"></script>
 <script src="/js/icons.js?v=3"></script>
 <script src="/js/app.js?v=3"></script>
-<script src="/js/wallet_picker.js"></script>
+<script src="/js/wallet_picker.js" defer></script>
 <script src="/js/chat.js?v=20" defer></script>
 <!-- 3D AI Viking agent: import map + reactive viewer (defers; no-op if the model is absent). -->
 <script type="importmap">
@@ -102,7 +102,16 @@
   "three/addons/": "/vendor/three/examples/jsm/"
 }}
 </script>
-<script type="module" src="/js/mascot3d.js?v=3"></script>
+<script>
+  (function () {
+    try {
+      if (window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+      var load = function () { import('/js/mascot3d.js?v=3').catch(function () {}); };
+      if ('requestIdleCallback' in window) requestIdleCallback(load, { timeout: 2500 });
+      else setTimeout(load, 1200);
+    } catch (e) { }
+  })();
+</script>
 <script src="/vendor/lightweight-charts.standalone.production.js" defer></script>
 <script src="/js/dashboard.js?v=47" defer></script>
 <script>if('serviceWorker' in navigator){navigator.serviceWorker.register('/sw.js').catch(()=>{});}</script>
