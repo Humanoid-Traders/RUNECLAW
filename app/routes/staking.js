@@ -16,7 +16,7 @@ const { rateLimit, userKey } = require('../lib/rate_limit');
 const { resolveBotIdentity } = require('../lib/identity');
 const gateway = require('../lib/gateway');
 const { pool } = require('../db');
-const totp = require('../lib/totp');
+const { stepUpBlock } = require('../lib/stepup');
 
 const router = express.Router();
 router.use(authMiddleware);
@@ -54,20 +54,14 @@ router.post('/fixed', execLimit, async (req, res) => {
   }
   try {
     // 2FA gate: an enrolled account must present a fresh code for a money
-    // move — same verifier as login (lib/totp), fail-closed on bad codes.
+    // move — shared step-up helper (lib/stepup), fail-closed on bad codes.
     const [rows] = await pool.execute(
       'SELECT totp_enabled, totp_secret FROM users WHERE id = ?',
       [req.user.user_id]);
-    const u = rows[0];
-    if (u && u.totp_enabled) {
-      const code = String(b.totp_code || '').trim();
-      if (!code || !totp.verifyTotp(u.totp_secret, code)) {
-        return res.status(401).json({
-          error: 'two_factor_required',
-          detail: 'Enter your 6-digit authenticator code to lock funds.',
-        });
-      }
-    }
+    const u = rows[0] || {};
+    const blk = stepUpBlock(u.totp_enabled, u.totp_secret, b.totp_code,
+      'Enter your 6-digit authenticator code to lock funds.');
+    if (blk) return res.status(blk.status).json(blk.body);
     const ident = await resolveBotIdentity(req);
     const r = await gateway.postGateway('/staking/fixed', {
       telegram_id: ident.id,

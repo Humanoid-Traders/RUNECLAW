@@ -49,6 +49,26 @@
     }
   }
 
+  // ── postWithStepUp: 2FA step-up on money-moving actions ────────────────
+  // POST `url`; if the server demands a fresh authenticator code (HTTP 401
+  // { error:'two_factor_required' } — a live-money action on a 2FA-enrolled
+  // account), prompt once and retry with the code appended. A cancelled
+  // prompt surfaces the original 401 so the caller can show the message.
+  // Non-2FA accounts and paper actions never trigger the prompt (the server
+  // only returns that status when it genuinely needs the step-up).
+  async function postWithStepUp(url, body, opts = {}) {
+    let r = await fetchJSON(url, { method: 'POST', body, ...opts })
+      .catch(() => ({ ok: false, data: null }));
+    if (r && r.status === 401 && r.data && r.data.error === 'two_factor_required') {
+      const code = (window.prompt(
+        r.data.detail || 'Enter your 6-digit authenticator code:') || '').trim();
+      if (!code) return r;
+      r = await fetchJSON(url, { method: 'POST', body: { ...body, totp_code: code }, ...opts })
+        .catch(() => ({ ok: false, data: null }));
+    }
+    return r;
+  }
+
   // ── Formatters ──────────────────────────────────────────────────────────
   function esc(s) {
     return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -252,7 +272,7 @@
 
   window.RC = {
     TOKEN, LOGGED_IN, authHeaders, logout,
-    fetchJSON, esc, fmt, fmtMoney, fmtPrice, fmtK, signed, pnlClass, fmtAgo,
+    fetchJSON, postWithStepUp, esc, fmt, fmtMoney, fmtPrice, fmtK, signed, pnlClass, fmtAgo,
     dirChip, sanitizeBotHtml, toast, renderPanel, stateBlock, connectStream,
     modalA11y,
   };

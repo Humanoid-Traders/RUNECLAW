@@ -19,6 +19,8 @@ const { authMiddleware } = require('../auth');
 const { rateLimit, userKey } = require('../lib/rate_limit');
 const { resolveBotIdentity } = require('../lib/identity');
 const gateway = require('../lib/gateway');
+const { pool } = require('../db');
+const { stepUpBlock } = require('../lib/stepup');
 
 const router = express.Router();
 router.use(authMiddleware);
@@ -85,6 +87,21 @@ router.post('/confirm', tradeLimit, async (req, res) => {
     }
     const tradeId = String((req.body || {}).trade_id || '').trim();
     if (!TRADE_ID_RE.test(tradeId)) return res.status(400).json({ error: 'Invalid trade_id' });
+    // 2FA step-up: a confirm on a LIVE-capable account is a real-money move —
+    // require a fresh code when the account has 2FA enrolled, so a stolen web
+    // session can't place trades. Paper confirms (live_enabled=0) stay
+    // frictionless. The gateway still enforces paper-only for web-only accounts.
+    const [urows] = await pool.execute(
+      `SELECT u.totp_enabled, u.totp_secret, c.live_enabled
+         FROM users u LEFT JOIN user_controls c ON c.user_id = u.id
+        WHERE u.id = ?`, [req.user.user_id]);
+    const urow = urows[0] || {};
+    if (urow.live_enabled) {
+      const blk = stepUpBlock(urow.totp_enabled, urow.totp_secret,
+        (req.body || {}).totp_code,
+        'Enter your 6-digit authenticator code to confirm a live trade.');
+      if (blk) { secLog('WEB_TRADE_CONFIRM_2FA', req, `trade_id=${tradeId}`); return res.status(blk.status).json(blk.body); }
+    }
     const ident = await resolveBotIdentity(req);
     secLog('WEB_TRADE_CONFIRM', req, `trade_id=${tradeId}`);
     const r = await gateway.postGateway('/trade/confirm', {
