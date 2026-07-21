@@ -117,13 +117,17 @@
                          RCI18N.apply(document.getElementById('tabbarNav')); }
   }
   function every(ms, fn) { viewTimers.push(setInterval(fn, ms)); }
-  function showView(id) {
+  function showView(id, opts = {}) {
     if (!VIEWS.some(v => v.id === id)) id = 'home';
     currentView = id;
     viewTimers.forEach(clearInterval);
     viewTimers = [];
     renderNav(id);
-    window.scrollTo({ top: 0 });
+    // Soft refresh (live SSE nudges): update in place — no scroll-to-top jump
+    // and no replayed entrance stagger. Only real navigation gets the full
+    // "assembling itself" treatment.
+    container.classList.toggle('rc-soft', !!opts.soft);
+    if (!opts.soft) window.scrollTo({ top: 0 });
     // Pull the docked chat back out before the container is wiped; the chat
     // view re-docks it. Other views keep the floating FAB.
     if (window.RCChat) window.RCChat.unmountInline();
@@ -223,6 +227,8 @@
         list = host.firstElementChild;
       }
       list.insertAdjacentHTML('afterbegin', feedItemHtml(ev));
+      // A REAL live event should announce itself — rise in instead of popping.
+      if (list.firstElementChild) list.firstElementChild.classList.add('rc-rise');
       while (list.children.length > max) list.lastElementChild.remove();
       if (id === 'feedLive' && feedFilter !== 'all') applyFeedFilter(list);
     });
@@ -444,10 +450,16 @@
       const offline = pf.stale ? '<span class="chip chip--offline">bot offline — last known</span>'
         : pf.source === 'sync' && pf.mode === 'LIVE' ? '<span class="chip chip--live">LIVE ACCOUNT</span>' : '';
       const dailyPart = daily != null ? `<span class="${pnlClass(daily)}">${signed(daily)} today</span> · ` : '';
+      // Fresh-tick flash: when a live push re-renders this panel with a
+      // different equity, the number glows up/down for a beat (rc-flash-*).
+      const eqFlash = (window._rcLastEquity != null && pf.equity != null
+                       && pf.equity !== window._rcLastEquity)
+        ? (pf.equity > window._rcLastEquity ? ' rc-flash-up' : ' rc-flash-down') : '';
+      if (pf.equity != null) window._rcLastEquity = pf.equity;
       return `<div class="row" style="justify-content:space-between;align-items:flex-start">
         <div class="stat">
           <div class="k">My equity ${offline}</div>
-          <div class="v big">${fmtMoney(pf.equity)}</div>
+          <div class="v big${eqFlash}">${fmtMoney(pf.equity)}</div>
           <div class="d num">${dailyPart}<span class="${pnlClass(total)}">${total != null ? signed(total) + ' all-time' : ''}</span></div>
         </div>
         <div class="stat-row" style="flex:1;max-width:420px">
@@ -4209,10 +4221,10 @@
   // mounted on the current view).
   const agentReact = (clip) => { if (window.RCAgent3D) window.RCAgent3D.react(clip); };
   connectStream({
-    scan: () => { cache.scan = null; agentReact('analyze'); getScan().then(updateConnChip); if (currentView === 'engine' || currentView === 'deepscan') showView(currentView); },
-    portfolio: () => { cache.portfolio = null; if (currentView === 'home' || currentView === 'portfolio') showView(currentView); },
-    trade: () => { cache.portfolio = null; agentReact('execute'); toast('Trade update from the engine.'); if (currentView === 'home' || currentView === 'portfolio' || currentView === 'trade') showView(currentView); },
-    signals: () => { agentReact('alert'); if (currentView === 'signals') showView('signals'); },
+    scan: () => { cache.scan = null; agentReact('analyze'); getScan().then(updateConnChip); if (currentView === 'engine' || currentView === 'deepscan') showView(currentView, { soft: true }); },
+    portfolio: () => { cache.portfolio = null; if (currentView === 'home' || currentView === 'portfolio') showView(currentView, { soft: true }); },
+    trade: () => { cache.portfolio = null; agentReact('execute'); toast('Trade update from the engine.'); if (currentView === 'home' || currentView === 'portfolio' || currentView === 'trade') showView(currentView, { soft: true }); },
+    signals: () => { agentReact('alert'); if (currentView === 'signals') showView('signals', { soft: true }); },
     activity: onActivity,
   });
 

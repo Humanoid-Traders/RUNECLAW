@@ -155,10 +155,18 @@
   async function renderPanel(el, loader, opts = {}) {
     if (!el) return;
     const { timeoutMs = 8000, empty = {}, errorText = "Couldn't load this panel." } = opts;
-    el.innerHTML = '<div class="skel"></div><div class="skel"></div><div class="skel"></div>';
+    // Refresh-in-place: once a panel has shown REAL content, periodic
+    // re-renders (the every() timers, SSE nudges) keep it on screen while
+    // the loader runs — no skeleton flash every 15-30s, and a transient
+    // fetch failure keeps last-known data instead of blanking to an error.
+    const hasContent = el.dataset.rcLoaded === '1';
+    if (!hasContent) {
+      el.innerHTML = '<div class="skel"></div><div class="skel"></div><div class="skel"></div>';
+    }
     let timedOut = false;
     const timer = setTimeout(() => { timedOut = true; fail(); }, timeoutMs);
     function fail() {
+      if (hasContent) return;                 // stale beats blank
       el.innerHTML = `<div class="state-block">
         <svg class="icon"><use href="#icon-offline"></use></svg>
         <p>${esc(errorText)}</p>
@@ -170,11 +178,13 @@
     try {
       const html = await loader();
       clearTimeout(timer);
-      if (timedOut) return;
+      if (timedOut && hasContent) return;
       if (html == null || html === '') {
+        delete el.dataset.rcLoaded;
         el.innerHTML = stateBlock(empty);
       } else {
         el.innerHTML = html;
+        el.dataset.rcLoaded = '1';
       }
     } catch (e) {
       clearTimeout(timer);
