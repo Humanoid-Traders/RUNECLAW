@@ -87,7 +87,19 @@
     <a class="btn" href="/dashboard" data-i18n="hero.cta_dashboard">View the dashboard</a>
   </form>
   <p class="hero-note muted small" data-i18n="hero.free_note">Free · paper-trade in your browser instantly · no exchange keys needed.</p>
+  <!-- Objection-killers right where the decision is made. All literally true and
+       verifiable; no numbers, so nothing to keep fresh (and §4-safe). -->
+  <ul class="trust-badges" aria-label="Why you can trust it">
+    <li class="trust-badge">🔎 <span>Every fill <a href="/proof">verifiable</a></span></li>
+    <li class="trust-badge">🔒 <span>Non-custodial — you hold the keys</span></li>
+    <li class="trust-badge">🔑 <span>Withdrawal-disabled API keys</span></li>
+    <li class="trust-badge">🧾 <span>Source-available</span></li>
+  </ul>
 </header>
+
+<!-- Sticky mobile CTA: the primary action stays one tap away through the whole
+     long page on phones (where most visitors land). Hidden on desktop. -->
+<a class="mobile-cta" href="#auth-panel" data-i18n="hero.cta_create">Create free account</a>
 
 <!-- Living proof of "800+ symbols scanned": a slice of the real market feed
      (server-cached, percent moves only — no account data on this page). -->
@@ -527,7 +539,8 @@
       stat(s.max_drawdown_pct != null ? Number(s.max_drawdown_pct).toFixed(1) + '%' : null, 'max drawdown'),
     ].filter(Boolean);
     if (!rows.length) return;
-    host.innerHTML = rows.join('<span aria-hidden="true">·</span>')
+    host.innerHTML = '<span class="chip chip--up" style="align-self:center">✓ verified</span>'
+      + rows.join('<span aria-hidden="true">·</span>')
       + '<a class="small" href="/track">verify →</a>';
     host.hidden = false;
     host.style.display = 'flex';   // inline display would defeat [hidden]

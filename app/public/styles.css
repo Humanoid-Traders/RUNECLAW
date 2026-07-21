@@ -504,6 +504,21 @@ a.mc-chip:hover { border-color: var(--accent, var(--up)); }
 .hero-cta { display: flex; gap: var(--s3); flex-wrap: wrap; align-items: center; }
 .hero-email { flex: 1 1 200px; max-width: 260px; min-width: 180px; }
 .hero-note { margin-top: var(--s3); color: var(--text-3); }
+/* Objection-killer badges under the hero CTA (conversion trust row). */
+.trust-badges { list-style: none; margin: var(--s4) 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: var(--s2) var(--s4); }
+.trust-badge { display: inline-flex; align-items: center; gap: 7px; font-size: var(--fs-sm); color: var(--text-2); }
+.trust-badge a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
+/* Sticky mobile CTA — always-reachable primary action on phones. */
+.mobile-cta { display: none; }
+@media (max-width: 639px) {
+  .mobile-cta {
+    display: block; position: fixed; left: var(--s3); right: var(--s3);
+    bottom: calc(var(--tabbar-h, 0px) + var(--s3)); z-index: 90;
+    padding: 13px var(--s4); text-align: center; text-decoration: none;
+    font-weight: 600; color: #08110c; background: var(--up);
+    border-radius: 12px; box-shadow: 0 6px 20px rgba(0,0,0,.28);
+  }
+}
 
 /* The trading loop — a real sequence, so numbered steps carry meaning. */
 .loop-steps { list-style: none; display: flex; flex-wrap: wrap; align-items: stretch; gap: var(--s3); padding: 0; margin: 0; }
