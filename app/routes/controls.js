@@ -17,6 +17,7 @@ const { pool } = require('../db');
 const { authMiddleware } = require('../auth');
 const { rateLimit, userKey } = require('../lib/rate_limit');
 const { postGateway, relay, isConfigured } = require('../lib/gateway');
+const { stepUpBlock } = require('../lib/stepup');
 
 const router = express.Router();
 router.use(authMiddleware);
@@ -61,13 +62,21 @@ router.post('/', ctlLimit, async (req, res) => {
   try {
     const uid = req.user.user_id;
     const [u] = await pool.execute(
-      'SELECT telegram_linked, telegram_id FROM users WHERE id = ?', [uid]);
+      'SELECT telegram_linked, telegram_id, totp_enabled, totp_secret FROM users WHERE id = ?', [uid]);
     if (!u[0] || !u[0].telegram_linked || !u[0].telegram_id) {
       return res.status(409).json({ error: 'telegram_required', detail: 'Live trading and exchange keys require a linked Telegram account. Paper trading works without it.' });
     }
     const b = req.body || {};
     // Normalise: undefined/missing -> NULL (leave unchanged). Validate types.
     const live = (b.live_enabled === undefined || b.live_enabled === null) ? null : (b.live_enabled ? 1 : 0);
+    // 2FA step-up: ENABLING live trading is the money-unlock — require a fresh
+    // code when 2FA is enrolled. Disabling live, pausing, and lowering margin
+    // stay frictionless so de-risking is never gated (the /stop path never is).
+    if (live === 1) {
+      const blk = stepUpBlock(u[0].totp_enabled, u[0].totp_secret, b.totp_code,
+        'Enter your 6-digit authenticator code to enable live trading.');
+      if (blk) { secLog('controls_enable_2fa', req); return res.status(blk.status).json(blk.body); }
+    }
     const paused = (b.paused === undefined || b.paused === null) ? null : (b.paused ? 1 : 0);
     let margin = null;
     if (b.max_margin !== undefined && b.max_margin !== null && b.max_margin !== '') {

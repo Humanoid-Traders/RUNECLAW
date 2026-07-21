@@ -1962,7 +1962,7 @@
     document.addEventListener('keydown', onEsc, true);
     document.getElementById('tradeModalConfirm').onclick = async () => {
       msg.textContent = 'Executing…';
-      const r = await fetchJSON('/api/trade/confirm', { method: 'POST', body: { trade_id: pt.trade_id }, timeoutMs: 35000 }).catch(() => ({ ok: false, data: null }));
+      const r = await RC.postWithStepUp('/api/trade/confirm', { trade_id: pt.trade_id }, { timeoutMs: 35000 });
       if (!r.ok) {
         const reason = r.data?.error === 'live_not_enabled'
           ? `Live trading not enabled: ${r.data?.detail || 'your toggle + operator approval needed'}.`
@@ -3247,8 +3247,8 @@
         };
         const m = document.getElementById('ctlMargin').value.trim();
         if (m !== '') body.max_margin = Number(m);
-        const r = await fetchJSON('/api/controls', { method: 'POST', body }).catch(() => ({ ok: false }));
-        msg.textContent = r.ok ? 'Queued — the bot applies it within a minute.' : (r.data?.error || 'Failed.');
+        const r = await RC.postWithStepUp('/api/controls', body);
+        msg.textContent = r.ok ? 'Queued — the bot applies it within a minute.' : (r.data?.detail || r.data?.error || 'Failed.');
       }
       if (e.target.id === 'ctlStop') {
         if (!confirm('Emergency stop: disable live, pause, and close your open positions. Continue?')) return;

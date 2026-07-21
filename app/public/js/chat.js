@@ -7,7 +7,7 @@
  */
 (function () {
   'use strict';
-  const { LOGGED_IN, fetchJSON, esc, fmt, fmtMoney, signed, sanitizeBotHtml, toast, modalA11y } = window.RC;
+  const { LOGGED_IN, fetchJSON, postWithStepUp, esc, fmt, fmtMoney, signed, sanitizeBotHtml, toast, modalA11y } = window.RC;
 
   // Anonymous visitors (landing page, not signed in) get the SAME drawer wired
   // to the account-free public endpoint: general market/product Q&A only, no
@@ -113,8 +113,7 @@
     const [okBtn, noBtn] = div.querySelectorAll('button');
     okBtn.onclick = async () => {
       okBtn.disabled = noBtn.disabled = true;
-      const r = await fetchJSON('/api/trade/confirm', { method: 'POST', body: { trade_id: pt.trade_id }, timeoutMs: 35000 })
-        .catch(() => ({ ok: false, data: null }));
+      const r = await postWithStepUp('/api/trade/confirm', { trade_id: pt.trade_id }, { timeoutMs: 35000 });
       if (!r.ok) {
         const reason = r.data?.error === 'live_not_enabled'
           ? 'Live trading is not enabled for your account.'

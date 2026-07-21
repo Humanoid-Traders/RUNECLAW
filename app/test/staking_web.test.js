@@ -29,9 +29,12 @@ test('route is JWT-authed, rate-limited, validates before the proxy call', () =>
 });
 
 test('enrolled accounts must present a fresh TOTP code to lock funds', () => {
+  // SEC-1: the inline verifyTotp block was consolidated into the shared
+  // stepUpBlock helper (app/lib/stepup.js) — behaviour is identical (an
+  // enrolled account without a valid code gets a 401 two_factor_required).
   assert.match(route, /totp_enabled/);
-  assert.match(route, /verifyTotp\(u\.totp_secret, code\)/);
-  assert.match(route, /two_factor_required/);
+  assert.match(route, /stepUpBlock\(u\.totp_enabled, u\.totp_secret, b\.totp_code/);
+  assert.match(route, /lock funds/);
 });
 
 test('identity is resolved server-side, never from the request body', () => {
