@@ -172,6 +172,7 @@ app.use('/api/public/status', require('./routes/public_status'));
 app.use('/api/nft', require('./routes/nft'));
 app.use('/api/spot', require('./routes/spot'));
 app.use('/api/tax', require('./routes/tax'));
+app.use('/api/reputation', require('./routes/reputation'));
 
 // Single-host dev foot-gun: Express and the bot's gateway both default to
 // port 8080. Warn loudly if they would collide.
