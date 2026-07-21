@@ -26,6 +26,7 @@
 
   let open = false;
   let busy = false;
+  let pending = null;   // one-slot queue: a message sent while a turn is in flight
   let hydrated = false;
   let inline = false;   // docked in the page flow (no overlay, no focus trap)
   const a11y = modalA11y(drawer);
@@ -88,10 +89,26 @@
     }
   }
 
-  function appendMsg(role, html, cls) {
+  function fmtChatTime(iso) {
+    if (!iso) return '';
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return '';
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  }
+  function appendMsg(role, html, cls, ts) {
     const div = document.createElement('div');
     div.className = `chat-msg ${role}${cls ? ' ' + cls : ''}`;
     div.innerHTML = role === 'user' ? esc(html) : html;
+    // Restored history carries a timestamp from the gateway — show it as a
+    // muted time cue so a reloaded conversation isn't a wall of context-free
+    // bubbles. Live turns pass no ts (a model caption goes there instead).
+    const t = ts ? fmtChatTime(ts) : '';
+    if (t) {
+      const el = document.createElement('time');
+      el.className = 'chat-ts muted small';
+      el.textContent = t;
+      div.appendChild(el);
+    }
     body.appendChild(div);
     body.scrollTop = body.scrollHeight;
     return div;
@@ -206,8 +223,8 @@
     const r = await fetchJSON('/api/chat/history?limit=30').catch(() => null);
     if (r && r.ok && r.data?.messages?.length) {
       r.data.messages.forEach(m => {
-        if (m.role === 'user') appendMsg('user', m.content);
-        else appendMsg('bot', sanitizeBotHtml(m.content));
+        if (m.role === 'user') appendMsg('user', m.content, '', m.timestamp);
+        else appendMsg('bot', sanitizeBotHtml(m.content), '', m.timestamp);
       });
     } else if (!body.children.length) {
       // First conversation ever: the agent introduces itself properly.
@@ -288,12 +305,23 @@
       input.value = (base + text).slice(0, 2000);
     };
     recog.onend = () => { stopMic(); input.focus(); };
-    recog.onerror = () => stopMic();
+    recog.onerror = (ev) => {
+      // Silently swallowing this left permission-blocked users with a dead mic
+      // and no explanation. Branch on the error: explain the blocking ones,
+      // stay quiet for benign 'no-speech'/'aborted'.
+      const err = ev && ev.error;
+      if (err === 'not-allowed' || err === 'service-not-allowed') {
+        toast('Microphone blocked — enable mic access in your browser to dictate.');
+      } else if (err && err !== 'no-speech' && err !== 'aborted') {
+        toast('Voice input unavailable.');
+      }
+      stopMic();
+    };
     listening = true;
     micBtn.classList.add('mic--live');
     micBtn.setAttribute('aria-pressed', 'true');
     micBtn.textContent = '⏺';
-    try { recog.start(); } catch (e) { stopMic(); }
+    try { recog.start(); } catch (e) { stopMic(); toast('Voice input unavailable.'); }
   }
   if (micBtn && SR) {
     micBtn.hidden = false;
@@ -342,7 +370,7 @@
 
   // Append a bot error bubble with a one-tap Retry, and restore the user's
   // text to the composer so a failed turn never loses what they typed.
-  function appendFailure(html, text) {
+  function appendFailure(html, text, cooldownMs) {
     const div = appendMsg('bot', html + ' ');
     const btn = document.createElement('button');
     btn.type = 'button';
@@ -351,28 +379,85 @@
     btn.style.marginTop = '6px';
     btn.addEventListener('click', () => { div.remove(); send(text); });
     div.appendChild(btn);
+    // Rate-limit retries used to be instantly clickable and guaranteed to fail
+    // again. When a cooldown is given, disable + count it down so Retry only
+    // arms once it can actually succeed.
+    if (cooldownMs && cooldownMs > 0) {
+      let left = Math.ceil(cooldownMs / 1000);
+      btn.disabled = true;
+      btn.textContent = `Retry in ${left}s`;
+      const tick = setInterval(() => {
+        left -= 1;
+        if (left <= 0) { clearInterval(tick); btn.disabled = false; btn.textContent = 'Retry'; }
+        else btn.textContent = `Retry in ${left}s`;
+      }, 1000);
+    }
     if (!input.value.trim()) input.value = text;  // don't clobber new typing
     body.scrollTop = body.scrollHeight;
   }
 
+  // Progressive reveal: stream a plain-text answer in word batches for a
+  // "typing" feel. Anything with markup (code blocks, lists) or reduced-motion
+  // renders instantly so tags never tear mid-reveal. Streams into a child span
+  // so a later caption append (model name) is never clobbered.
+  function revealInto(div, html) {
+    const reduce = window.matchMedia
+      && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (reduce || /<[a-z!/]/i.test(html)) { div.innerHTML = html; body.scrollTop = body.scrollHeight; return; }
+    const tmp = document.createElement('div'); tmp.innerHTML = html;
+    const text = tmp.textContent || '';
+    const parts = text.split(/(\s+)/);
+    const span = document.createElement('span');
+    div.appendChild(span);
+    let i = 0;
+    const step = () => {
+      span.textContent += parts.slice(i, i + 3).join('');
+      i += 3;
+      body.scrollTop = body.scrollHeight;
+      if (i < parts.length) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  }
+
   async function send(retryText) {
-    if (busy) return;
     const isRetry = retryText != null;
     const text = isRetry ? retryText : input.value.trim();
     if (!text) return;
+    // A turn is already in flight: queue this one (one slot) instead of
+    // silently dropping it — chip clicks and post-mortem asks used to vanish.
+    // Echo the user's message now so the queue is visible; drain on finally.
+    if (busy) {
+      if (pending == null) {
+        pending = text;
+        if (!isRetry) { input.value = ''; appendMsg('user', text); }
+      } else {
+        toast('One message at a time — still finishing the last one.');
+      }
+      return;
+    }
     if (!isRetry) { input.value = ''; appendMsg('user', text); }
-    // Animated typing indicator (three-dot) instead of a static "Thinking…".
+    // Animated typing indicator (three-dot) instead of a static "Thinking…",
+    // with a Cancel affordance so a slow turn isn't a helpless wait.
     const typing = appendMsg('bot',
       '<span class="typing-dots" aria-label="Assistant is typing"><span></span><span></span><span></span></span>',
       'pending');
+    const ac = new AbortController();
+    let cancelled = false;
+    const cancelBtn = document.createElement('button');
+    cancelBtn.type = 'button';
+    cancelBtn.className = 'btn btn--sm chat-cancel';
+    cancelBtn.style.marginLeft = '8px';
+    cancelBtn.textContent = 'Cancel';
+    cancelBtn.addEventListener('click', () => { cancelled = true; ac.abort(); });
+    typing.appendChild(cancelBtn);
     hideChips();
     busy = true;
     sendBtn.disabled = true;
     if (window.RCAgent3D) window.RCAgent3D.setThinking(true);   // agent avatar: 'analyze'
     try {
-      const r = await fetchJSON(ENDPOINT, { method: 'POST', body: { text }, timeoutMs: 50000 });
+      const r = await fetchJSON(ENDPOINT, { method: 'POST', body: { text }, timeoutMs: 50000, signal: ac.signal });
       typing.remove();
-      if (r.status === 429) appendFailure('Rate limit hit — give it a few seconds.', text);
+      if (r.status === 429) appendFailure('Rate limit hit — give it a few seconds.', text, 5000);
       else if (r.status === 503) {
         appendMsg('bot', 'Chat isn\'t available on this deployment right now — please try again shortly.');
         // Operator hint (console only — never surfaced to visitors): the bot
@@ -391,7 +476,8 @@
         // Analysis / answer bubble, plus (when the skill surfaced a concrete
         // setup) a one-tap "Trade this" card underneath it.
         const safeHtml = sanitizeBotHtml(r.data.reply_html || '…');
-        const bubble = appendMsg('bot', safeHtml);
+        const bubble = appendMsg('bot', '');
+        revealInto(bubble, safeHtml);   // progressive "streaming" reveal
         speakReply(safeHtml);
         // Model transparency: show WHICH model answered (the visible face of
         // tier routing — and of a runeclaw promotion). LLM replies only;
@@ -407,11 +493,17 @@
       }
     } catch (e) {
       typing.remove();
-      appendFailure('Network error.', text);
+      // User pressed Cancel: no error bubble — just restore their text so the
+      // turn can be re-sent. Anything else is a genuine network failure.
+      if (cancelled) { if (!input.value.trim()) input.value = text; }
+      else appendFailure('Network error.', text);
     } finally {
       busy = false;
       sendBtn.disabled = false;
       if (window.RCAgent3D) window.RCAgent3D.setThinking(false);   // back to idle
+      // Drain the one-slot queue (a message sent mid-turn). Retry path: the
+      // user bubble was already echoed when queued, so no double bubble.
+      if (pending != null) { const t = pending; pending = null; send(t); }
     }
   }
 

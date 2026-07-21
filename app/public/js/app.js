@@ -28,9 +28,15 @@
   }
 
   // ── fetchJSON: timeout + auth + typed errors ───────────────────────────
-  async function fetchJSON(url, { method = 'GET', body, timeoutMs = 10000, auth = true } = {}) {
+  async function fetchJSON(url, { method = 'GET', body, timeoutMs = 10000, auth = true, signal } = {}) {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+    // Optional caller-supplied signal (e.g. a Cancel button): abort the request
+    // when it fires, on top of the timeout.
+    if (signal) {
+      if (signal.aborted) ctrl.abort();
+      else signal.addEventListener('abort', () => ctrl.abort(), { once: true });
+    }
     try {
       const r = await fetch(url, {
         method,
