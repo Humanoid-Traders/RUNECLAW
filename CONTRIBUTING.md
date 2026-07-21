@@ -34,4 +34,8 @@ Open a GitHub issue with a clear description, steps to reproduce, and expected v
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under the AGPL-3.0 license.
+By contributing, you agree that your contributions will be licensed under the
+Business Source License 1.1 (BUSL-1.1), the same license as the project, and
+that Humanoid Traders may relicense the Licensed Work (including your
+contributions) under the Change License or a commercial license as described in
+[LICENSE](./LICENSE).

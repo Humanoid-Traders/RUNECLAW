@@ -129,7 +129,7 @@ For Bitget AI Base Camp · Hackathon S1
 [Attach: QR code image]
 
 
-10/10 — OPEN SOURCE
+10/10 — SOURCE-AVAILABLE
 
 github.com/Humanoid-Traders/RUNECLAW
 pmvc58g2.mule.page
@@ -138,7 +138,7 @@ humanoid-traders-1.gitbook.io/humanoid-traders-ai
 75+ commits. 626 tests. 18 risk checks.
 8 AI learning modules. 5-agent swarm. 28 red team attacks blocked.
 
-AGPL-3.0. Fork it. Audit it. Break it.
+BUSL-1.1 (source-available). Fork it. Audit it. Break it.
 
 The safest trade is no trade.
 

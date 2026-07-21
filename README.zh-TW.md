@@ -16,7 +16,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/python-3.11+-blue?logo=python&logoColor=white" alt="Python 3.11+">
-  <img src="https://img.shields.io/badge/license-AGPL--3.0-blue" alt="License AGPL-3.0">
+  <img src="https://img.shields.io/badge/license-BUSL--1.1-blue" alt="License BUSL-1.1">
   <a href="https://github.com/Humanoid-Traders/RUNECLAW/actions/workflows/ci.yml"><img src="https://github.com/Humanoid-Traders/RUNECLAW/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
   <img src="https://img.shields.io/badge/tests-862%20test%20functions%20defined-brightgreen" alt="862 Test Functions Defined">
   <img src="https://img.shields.io/badge/security%20tests-29%20passing-blueviolet" alt="29 Security Tests">
@@ -655,7 +655,7 @@ RUNECLAW 以**失敗即關閉**的理念設計：
 | W6 | 警告 | 前推回測在每個折疊後清理暫存目錄 |
 | Input | 強化 | `/approve` 驗證數字 Telegram ID；`/analyze` 拒絕非英數字母標的 |
 | Encapsulation | 強化 | 風險引擎使用 `portfolio.get_position_value()` 公開 API，而非私有的 `_last_prices` |
-| AGPL | 合規 | `/start` 與 `/help` 含原始碼儲存庫連結與財務免責聲明 |
+| BUSL | 合規 | `/start` 與 `/help` 含原始碼儲存庫連結與財務免責聲明 |
 | Corruption | 強化 | 投組在狀態檔損毀時記錄 CRITICAL 警示，而非靜默後備 |
 
 `tests/test_security.py` 中有 **29 項專屬安全測試**，涵蓋：日誌遮蔽、MCP 驗證、執行期狀態、快取鍵、成本重設、投組損毀、輸入驗證與注入防範。注意：安全稽核為 AI 輔助且為內部進行；尚未執行任何獨立第三方稽核。
@@ -803,9 +803,9 @@ python -m bot.main --mode scan
 
 ## 授權
 
-**AGPL-3.0** —— GNU Affero General Public License v3.0。詳見 [LICENSE](./LICENSE) 與 [NOTICE](./NOTICE)。
+**BUSL-1.1** —— Business Source License 1.1（原始碼可取得）。詳見 [LICENSE](./LICENSE) 與 [NOTICE](./NOTICE)。
 
-你可以自由檢視、研究、fork 並修改本程式碼。若你散布它，或將修改版本作為網路服務（SaaS、API、網頁應用）運行，你必須以相同授權釋出你的原始碼。商業授權洽詢：透過 [Telegram 社群](https://t.me/+VRNgsmkR5pszZTdk)聯絡 Humanoid Traders。
+你可以自由檢視、研究、fork 並修改本程式碼，並可為自身個人或內部業務用途運行（包含交易你自己或組織的資金）以及研究與評估。未取得商業授權前，你**不得**將 RUNECLAW 或其衍生作品以託管、代管或嵌入式商業服務提供給第三方，亦不得用以與 RUNECLAW 或 Humanoid Traders 競爭。到達轉換日期（2030-07-21）時，各版本將轉為 GNU General Public License, version 2.0 或更新版本。商業授權洽詢：透過 [Telegram 社群](https://t.me/+VRNgsmkR5pszZTdk)聯絡 Humanoid Traders。
 
 ---
 

@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "description": "Simulation-first AI trading agent with 21 fail-closed risk checks, explainable trade theses, and full audit logging. Built for the Bitget ecosystem.",
   "author": "Humanoid Traders",
-  "license": "AGPL-3.0",
+  "license": "BUSL-1.1",
   "repository": "https://github.com/Humanoid-Traders/RUNECLAW",
   "documentation": "https://humanoid-traders-1.gitbook.io/humanoid-traders-ai",
   "mode": "simulation",
