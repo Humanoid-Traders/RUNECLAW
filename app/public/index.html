@@ -89,6 +89,12 @@
   <p class="hero-note muted small" data-i18n="hero.free_note">Free · paper-trade in your browser instantly · no exchange keys needed.</p>
 </header>
 
+<!-- Living proof of "800+ symbols scanned": a slice of the real market feed
+     (server-cached, percent moves only — no account data on this page). -->
+<div id="tickerStrip" class="muted small" hidden
+     style="gap:var(--s4);flex-wrap:wrap;justify-content:center;padding:10px var(--s4);border-top:1px solid var(--line);border-bottom:1px solid var(--line)"
+     aria-label="Live market snapshot"></div>
+
 <section class="section" aria-labelledby="ask-h">
   <div class="section-head">
     <h2 id="ask-h" data-i18n="sec.ask_h">Talk to it, right here</h2>
@@ -124,6 +130,23 @@
       <span>Return <b class="num" id="theaterPnl"></b></span>
     </div>
     <p class="muted small" style="margin-top:var(--s2)">From the same recorded history behind the <a href="/track">public track record</a>. Past results ≠ future results.</p>
+  </div>
+</section>
+
+<!-- The differentiator, teased where visitors actually are: every row is an
+     anonymous handle with a sealed, re-verifiable record — percent-based and
+     size-agnostic by construction, never a dollar figure. -->
+<section class="section hidden" id="boardTease" hidden aria-labelledby="board-h">
+  <div class="section-head">
+    <h2 id="board-h">A leaderboard you can't fake</h2>
+    <p>Anonymous handles, sealed statements, a publish hash anyone can re-verify — performance you can check, not screenshots.</p>
+  </div>
+  <div class="card">
+    <div class="tbl-wrap"><table class="tbl">
+      <thead><tr><th>#</th><th>Agent</th><th class="r">Profit factor</th><th class="r">Sharpe</th><th class="r">Round trips</th></tr></thead>
+      <tbody id="boardTeaseRows"></tbody>
+    </table></div>
+    <p class="muted small" style="margin-top:var(--s2)"><a href="/leaderboard">See the full verifiable board →</a> · Size-agnostic by design · Past results ≠ future results.</p>
   </div>
 </section>
 
@@ -406,6 +429,69 @@
   }, 30000);
 })();
 
+// Live market strip: the hero claims 800+ symbols scanned — show a slice of
+// the real feed. Server-cached endpoint, symbols/prices/percent moves only.
+(function () {
+  var host = document.getElementById('tickerStrip');
+  if (!host) return;
+  function fmtP(v) {
+    var n = Number(v);
+    if (!isFinite(n)) return '—';
+    var dp = n >= 1000 ? 0 : n >= 1 ? 2 : 4;
+    return '$' + n.toLocaleString('en-US', { maximumFractionDigits: dp });
+  }
+  function draw() {
+    fetch('/api/market/tickers').then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (d) {
+        var rows = ((d && d.data) || [])
+          .filter(function (t) { return Number(t.usdtVolume) > 0; })
+          .sort(function (a, b) { return Number(b.usdtVolume) - Number(a.usdtVolume); })
+          .slice(0, 10);
+        if (!rows.length) return;
+        host.innerHTML = rows.map(function (t) {
+          var chg = Number(t.change24h) * 100;
+          var cls = chg >= 0 ? 'up' : 'down';
+          var base = String(t.symbol || '').replace(/USDT$/i, '').replace(/[^A-Z0-9]/gi, '');
+          return '<span style="display:inline-flex;gap:6px;align-items:baseline"><b>' + base + '</b>'
+            + '<span class="num">' + fmtP(t.lastPr) + '</span>'
+            + '<span class="num ' + cls + '">' + (chg >= 0 ? '+' : '') + chg.toFixed(2) + '%</span></span>';
+        }).join('');
+        host.hidden = false;
+        host.style.display = 'flex';   // inline display would defeat [hidden]
+      }).catch(function () {});
+  }
+  draw();
+  setInterval(draw, 15000);
+})();
+
+// Leaderboard tease: top verified rows from the public board — handle,
+// profit factor, Sharpe, round trips. Size-agnostic by construction; the
+// section only appears when real published rows exist.
+(function () {
+  var section = document.getElementById('boardTease');
+  var body = document.getElementById('boardTeaseRows');
+  if (!section || !body) return;
+  var esc = (window.RC && RC.esc) || function (s) {
+    return String(s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  };
+  fetch('/api/public/leaderboard').then(function (r) { return r.ok ? r.json() : null; })
+    .then(function (d) {
+      var rows = ((d && d.rows) || []).slice(0, 5);
+      if (!rows.length) return;
+      body.innerHTML = rows.map(function (row, i) {
+        return '<tr><td class="num">' + (i + 1) + '</td>'
+          + '<td><b>' + esc(row.handle || 'anon') + '</b></td>'
+          + '<td class="num r">' + esc(String(row.profit_factor != null ? row.profit_factor : '—')) + '</td>'
+          + '<td class="num r">' + esc(String(row.sharpe != null ? row.sharpe : '—')) + '</td>'
+          + '<td class="num r">' + esc(String(row.round_trips != null ? row.round_trips : '—')) + '</td></tr>';
+      }).join('');
+      section.classList.remove('hidden');
+      section.hidden = false;
+    }).catch(function () {});
+})();
+
 // Honest hero: the eyebrow and a live proof strip come from the RECORDED
 // track record. Percent and counts only — never a dollar figure on this
 // public page (§4). If the engine is paper-trading, the hero says so.
@@ -452,6 +538,10 @@ if(REF){
   // Warm welcome for invited visitors (the #step-register markup is above this script).
   const _rs=document.getElementById('step-register');
   if(_rs){const _n=document.createElement('p');_n.className='muted small';_n.id='inviteNote';_n.style.marginBottom='var(--s2)';_n.textContent='🎁 A friend invited you — create your account to get started.';_rs.insertBefore(_n,_rs.firstChild);}
+  // UX-3: the recognition also belongs in the HERO — the register card sits
+  // several screens down, so invited visitors used to land on an unchanged page.
+  const _hero=document.querySelector('.hero');
+  if(_hero){const _b=document.createElement('div');_b.id='inviteHero';_b.className='muted small';_b.style.marginBottom='var(--s3)';_b.textContent='🎁 A friend invited you — your signup credits them.';const _h1=_hero.querySelector('h1');if(_h1)_hero.insertBefore(_b,_h1);}
   // Recognition upgrade: when the referrer chose a PUBLIC leaderboard handle,
   // name them by it (the only fact the invite endpoint ever reveals). An
   // invalid/expired code quietly keeps the generic note — never an error.
@@ -463,6 +553,8 @@ if(REF){
       if(d.handle){
         n.innerHTML='🎁 Invited by <b></b> — ranked on the <a href="/leaderboard">verifiable board</a>. Your signup credits them.';
         n.querySelector('b').textContent=d.handle;
+        const hb=document.getElementById('inviteHero');
+        if(hb){hb.innerHTML='🎁 Invited by <b></b> — ranked on the <a href="/leaderboard">verifiable board</a>.';hb.querySelector('b').textContent=d.handle;}
       }
     })
     .catch(function(){/* generic note stands */});
