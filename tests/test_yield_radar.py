@@ -246,3 +246,82 @@ def test_fixed_terms_ride_the_yield_row():
     assert r.fixed_terms[0]["days"] == 7
     assert YieldRow(coin="X", idle_amount=0, idle_usd=0,
                     stakeable_usd=0).fixed_terms == []
+
+
+# ── SPOT-2 finish: fixed-term LOCK execution (double-confirm money path) ─────
+
+CATALOG_FIXED_IDS = {
+    "code": "00000",
+    "data": [
+        {"coin": "USDT", "periodType": "flexible", "productId": "7001",
+         "apyList": [{"currentApy": "8.5"}]},
+        {"coin": "USDT", "periodType": "fixed", "productId": "8030",
+         "period": "30", "apyList": [{"currentApy": "10.0"}]},
+        {"coin": "USDT", "periodType": "fixed", "productId": "8090",
+         "period": "90", "apyList": [{"currentApy": "12.0"}]},
+        {"coin": "ETH", "periodType": "fixed", "productId": "8100",
+         "period": "30", "apyList": [{"currentApy": "3.0"}]},
+    ],
+}
+
+
+def _fixed_client(subscribe=OK, transfer=OK):
+    return FakeClient({
+        "/api/v2/earn/savings/product": CATALOG_FIXED_IDS,
+        "/api/v2/earn/savings/subscribe": subscribe,
+        "/api/v2/spot/account/assets": SPOT,
+        "/api/v2/spot/wallet/transfer": transfer,
+    })
+
+
+def test_stake_fixed_subscribes_fixed_period_and_reports_lock_end():
+    from bot.core.yield_radar import execute_stake_fixed, lock_end_date
+    c = _fixed_client()
+    res = execute_stake_fixed(c, "USDT", "8090", 90, futures_free_usdt=100.0)
+    assert res.ok, res.message
+    # Same recompute/clamp/top-up contract as the flexible path: 140 idle ->
+    # 98 stakeable after the 30% reserve, spot holds 40 -> 58 shortfall moves.
+    transfer = next(b for m, p, b in c.calls
+                    if p == "/api/v2/spot/wallet/transfer")
+    assert transfer["amount"] == "58.00"
+    sub = next(b for m, p, b in c.calls if p == "/api/v2/earn/savings/subscribe")
+    assert sub == {"productId": "8090", "periodType": "fixed", "amount": "98.00"}
+    # The result names the lock END date and says it is not redeemable.
+    assert "LOCKED until" in res.message and lock_end_date(90) in res.message
+    assert "not redeemable" in res.message.lower()
+
+
+def test_stake_fixed_refuses_when_product_no_longer_offered():
+    from bot.core.yield_radar import execute_stake_fixed
+    c = _fixed_client()
+    res = execute_stake_fixed(c, "USDT", "9999", 90, futures_free_usdt=100.0)
+    assert not res.ok and "no longer offered" in res.message
+    assert not any(m == "POST" for m, _p, _b in c.calls), \
+        "a refused fixed lock must not touch the account"
+
+
+def test_stake_fixed_refuses_stale_button_with_mismatched_days():
+    from bot.core.yield_radar import execute_stake_fixed
+    c = _fixed_client()
+    # productId exists but for a DIFFERENT term than the button claimed —
+    # the venue re-used the id or the catalog changed under the operator.
+    res = execute_stake_fixed(c, "USDT", "8090", 30, futures_free_usdt=100.0)
+    assert not res.ok
+    assert not any(m == "POST" for m, _p, _b in c.calls)
+
+
+def test_stake_fixed_is_stables_only():
+    from bot.core.yield_radar import execute_stake_fixed
+    c = _fixed_client()
+    res = execute_stake_fixed(c, "ETH", "8100", 30, futures_free_usdt=100.0)
+    assert not res.ok and "stables-only" in res.message
+    assert not any(m == "POST" for m, _p, _b in c.calls)
+
+
+def test_lock_end_date_is_exactly_days_ahead_utc():
+    from datetime import datetime, timedelta, timezone
+    from bot.core.yield_radar import lock_end_date
+    before = (datetime.now(timezone.utc) + timedelta(days=90)).date()
+    got = lock_end_date(90)
+    after = (datetime.now(timezone.utc) + timedelta(days=90)).date()
+    assert got in (before.isoformat(), after.isoformat())
