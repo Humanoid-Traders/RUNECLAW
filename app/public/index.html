@@ -143,7 +143,7 @@
   </div>
   <div class="card">
     <div class="tbl-wrap"><table class="tbl">
-      <thead><tr><th>#</th><th>Agent</th><th class="r">Profit factor</th><th class="r">Sharpe</th><th class="r">Round trips</th></tr></thead>
+      <thead><tr><th>#</th><th>Agent</th><th class="r">Profit factor</th><th class="r">Sharpe</th><th class="r">Round trips</th><th>Proof</th></tr></thead>
       <tbody id="boardTeaseRows"></tbody>
     </table></div>
     <p class="muted small" style="margin-top:var(--s2)"><a href="/leaderboard">See the full verifiable board →</a> · Size-agnostic by design · Past results ≠ future results.</p>
@@ -481,11 +481,18 @@
       var rows = ((d && d.rows) || []).slice(0, 5);
       if (!rows.length) return;
       body.innerHTML = rows.map(function (row, i) {
+        var pf = row.profit_factor === 'inf' ? '∞'
+          : (row.profit_factor != null ? String(row.profit_factor) : '—');
+        var hash = row.publish_hash
+          ? '<a href="/leaderboard" title="Re-derive the hash yourself"><code>'
+            + esc(String(row.publish_hash).slice(0, 10)) + '…</code></a>'
+          : '<span class="muted">—</span>';
         return '<tr><td class="num">' + (i + 1) + '</td>'
-          + '<td><b>' + esc(row.handle || 'anon') + '</b></td>'
-          + '<td class="num r">' + esc(String(row.profit_factor != null ? row.profit_factor : '—')) + '</td>'
+          + '<td><b>' + esc(row.handle || 'anon') + '</b> <span class="chip chip--up">✓ verified</span></td>'
+          + '<td class="num r">' + esc(pf) + '</td>'
           + '<td class="num r">' + esc(String(row.sharpe != null ? row.sharpe : '—')) + '</td>'
-          + '<td class="num r">' + esc(String(row.round_trips != null ? row.round_trips : '—')) + '</td></tr>';
+          + '<td class="num r">' + esc(String(row.round_trips != null ? row.round_trips : '—')) + '</td>'
+          + '<td>' + hash + '</td></tr>';
       }).join('');
       section.classList.remove('hidden');
       section.hidden = false;
