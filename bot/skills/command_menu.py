@@ -28,6 +28,7 @@ DEFAULT_MENU: List[Tuple[str, str]] = [
     ("open_positions", "📈 Your open positions"),
     ("orders", "🧾 Your open orders"),
     ("signals", "📡 Latest signals & why they fired"),
+    ("news", "📰 Breaking news + alerts on your positions"),
     ("risk", "🛡 Risk status & circuit breaker"),
     ("watch", "🔔 Alert me when a symbol sets up"),
     ("connect", "🔑 Link your exchange to trade live"),
