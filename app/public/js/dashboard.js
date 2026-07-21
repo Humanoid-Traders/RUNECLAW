@@ -115,6 +115,13 @@
     // applied once at load; nav is (re)built later on every view change).
     if (window.RCI18N) { RCI18N.apply(document.getElementById('railNav'));
                          RCI18N.apply(document.getElementById('tabbarNav')); }
+    // UX-4: the mobile tabbar scrolls horizontally behind a hidden scrollbar,
+    // so the active tab can sit off-screen (half the product looked missing on
+    // phones). Center it after paint — block:'nearest' avoids any vertical jump.
+    requestAnimationFrame(() => {
+      const cur = document.querySelector('#tabbarNav a[aria-current="page"]');
+      if (cur) cur.scrollIntoView({ inline: 'center', block: 'nearest' });
+    });
   }
   function every(ms, fn) { viewTimers.push(setInterval(fn, ms)); }
   function showView(id, opts = {}) {
@@ -148,6 +155,11 @@
       </section>`).join('');
   }
   const C = id => document.getElementById('c-' + id);
+
+  // UX-4: one-tap paper-trade — a signal's geometry stashed here by a "Trade"
+  // button, then applied when the Trade view mounts (survives the hash-nav
+  // re-render). Cleared on apply so a later manual visit starts blank.
+  let tradePrefill = null;
 
   function loginGate(text) {
     return stateBlock({ icon: 'icon-user', text, cta: { label: 'Log in or create an account', href: '/' } });
@@ -1445,11 +1457,17 @@
         const sigs = r.data?.signals || [];
         if (!sigs.length) return null;
         return `<div class="tbl-wrap"><table class="tbl tbl--collapse">
-          <thead><tr><th>Signal</th><th class="r">Conf.</th><th class="r">Entry</th><th class="r">Stop / Target</th><th class="r">R:R</th><th>Status</th><th class="r">Age</th></tr></thead>
+          <thead><tr><th>Signal</th><th class="r">Conf.</th><th class="r">Entry</th><th class="r">Stop / Target</th><th class="r">R:R</th><th>Status</th><th class="r">Age</th><th class="r"></th></tr></thead>
           <tbody>${sigs.map(s => {
             const status = s.pnl != null
               ? `<span class="chip ${Number(s.pnl) > 0 ? 'chip--up' : 'chip--down'}">${Number(s.pnl) > 0 ? '✓ WIN' : '✗ LOSS'}</span>`
               : `<span class="chip">${esc(s.status || 'NEW')}</span>`;
+            // UX-4: one-tap paper-trade — only for still-actionable signals
+            // (unresolved + full geometry). Resolved rows show nothing.
+            const canTrade = s.pnl == null && s.entry_price && s.stop_loss && s.take_profit;
+            const tradeBtn = canTrade
+              ? `<button class="btn btn--sm" data-ptrade='${esc(JSON.stringify({ d: s.direction, sy: s.symbol, e: s.entry_price, sl: s.stop_loss, tp: s.take_profit }))}'>Trade</button>`
+              : '';
             return `<tr>
               <td data-label="Signal">${dirChip(s.direction)} <b>${esc(s.symbol)}</b><div class="muted small">${esc(s.pattern || '')}</div></td>
               <td data-label="Conf." class="r num">${Math.round((s.confidence || 0) * 100)}%</td>
@@ -1458,6 +1476,7 @@
               <td data-label="R:R" class="r num">${fmt(s.rr, 1)}</td>
               <td data-label="Status">${status}</td>
               <td data-label="Age" class="r muted small">${fmtAgo(s.created_at)}</td>
+              <td data-label="" class="r">${tradeBtn}</td>
             </tr>`;
           }).join('')}</tbody></table></div>`;
       }, { empty: { icon: 'icon-radar', text: 'No signals yet. They stream in as the engine scans the market.' } });
@@ -1919,6 +1938,24 @@
       msg.textContent = '';
       openTradeModal(r.data.pending_trade, () => drawPositions());
     });
+
+    // UX-4: apply a one-tap-from-signal prefill, if one was stashed. Cleared
+    // immediately so a later manual visit to Trade starts blank.
+    if (tradePrefill) {
+      const p = tradePrefill; tradePrefill = null;
+      try {
+        if (p.d) $('tDir').value = (String(p.d).toUpperCase() === 'SHORT' ? 'SHORT' : 'LONG');
+        if (p.sy) $('tSym').value = String(p.sy).toUpperCase();
+        if (p.e != null) $('tEntry').value = p.e;
+        if (p.sl != null) $('tSl').value = p.sl;
+        if (p.tp != null) $('tTp').value = p.tp;
+        // Trigger the live risk/reward preview the form wires to input events.
+        $('tEntry').dispatchEvent(new Event('input', { bubbles: true }));
+        const tk = document.getElementById('p-ticket');
+        if (tk) tk.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        $('tMsg').innerHTML = '<span class="pos">Prefilled from the signal — review, then place your paper trade.</span>';
+      } catch (_) { /* prefill is best-effort; the form still works empty */ }
+    }
 
     async function drawPositions() {
       renderPanel(C('tpos'), async () => {
@@ -4301,6 +4338,15 @@
   document.body.addEventListener('click', (e) => {
     if (e.target.closest('#symModal .modal-card')) return;      // inside the modal
     if (e.target.closest('#symModal')) { closeSymModal(); return; } // backdrop
+    // UX-4: one-tap paper-trade — stash the signal geometry and jump to the
+    // Trade view, which applies it on mount. Delegated so it survives every
+    // signal-stream re-render.
+    const pbtn = e.target.closest('[data-ptrade]');
+    if (pbtn) {
+      try { tradePrefill = JSON.parse(pbtn.getAttribute('data-ptrade')); } catch (_) { tradePrefill = null; }
+      if (location.hash.slice(1) === 'trade') showView('trade'); else location.hash = '#trade';
+      return;
+    }
     const el = e.target.closest('[data-sym]');
     if (el && !e.target.closest('a, button')) openSymbol(el.getAttribute('data-sym'));
   });
