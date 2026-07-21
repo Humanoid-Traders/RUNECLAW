@@ -25,7 +25,7 @@
 <meta name="theme-color" content="#0a0b10">
 <link rel="preload" href="/fonts/cinzel-700.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/styles.css?v=14">
-<script src="/js/wallet_picker.js"></script>
+<script src="/js/wallet_picker.js" defer></script>
 <script type="importmap">
 { "imports": { "three": "/vendor/three/three.module.min.js", "three/addons/": "/vendor/three/examples/jsm/" } }
 </script>
@@ -1002,6 +1002,20 @@ function renderFooterSocials(links){
 if('serviceWorker' in navigator){navigator.serviceWorker.register('/sw.js').catch(()=>{});}
 </script>
 <script src="/js/ambient.js?v=1" defer></script>
-<script type="module" src="/js/mascot3d.js?v=3"></script>
+<!-- Perf + a11y: the 3D hero statically imports three.js (~150KB+). Load it via
+     a guarded dynamic import so (a) visitors who prefer reduced motion never
+     download it at all, and (b) it's deferred to idle so it never competes with
+     first paint / LCP. mascot3d self-mounts on import (autoMount at module end).
+     The importmap in <head> is already parsed by the time this runs. -->
+<script>
+  (function () {
+    try {
+      if (window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+      var load = function () { import('/js/mascot3d.js?v=3').catch(function () {}); };
+      if ('requestIdleCallback' in window) requestIdleCallback(load, { timeout: 2500 });
+      else setTimeout(load, 1200);
+    } catch (e) { /* no-JS-modules / old browser — hero just stays 2D */ }
+  })();
+</script>
 </body>
 </html>
