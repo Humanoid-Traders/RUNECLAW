@@ -766,6 +766,19 @@ class LiveExecutor:
                 except Exception:
                     pass
 
+        # Leverage posture (operator directive 2026-07-21, "I can't open trades"):
+        # the STOP-LOSS is the risk backstop, not the leverage-confirm abort.
+        # Default to fail-OPEN — proceed with a loud warning + audit when the
+        # exchange won't confirm the target, and best-effort re-set it to the
+        # standard. The abort machinery is now opt-IN via LEVERAGE_FAIL_CLOSED=1
+        # (or the legacy LEVERAGE_FAIL_OPEN=0) for anyone who wants the strict
+        # standard back. We still auto-correct a detected mismatch toward the
+        # target; we just don't block the trade when we can't verify or fix it.
+        _lev_fail_open = (
+            os.environ.get("LEVERAGE_FAIL_OPEN", "1").strip().lower() not in ("0", "false", "no")
+            and os.environ.get("LEVERAGE_FAIL_CLOSED", "0").strip().lower() not in ("1", "true", "yes")
+        )
+
         # C2-04 FIX: Verify leverage was actually applied — retry once if mismatch
         _lev_verified = False
         try:
@@ -795,11 +808,14 @@ class LiveExecutor:
                         if actual_lev2 != _target_leverage:
                             logger.critical(
                                 "LEVERAGE STILL MISMATCHED for %s after retry: wanted %dx, exchange reports %dx — "
-                                "ABORTING order to prevent incorrect risk exposure",
-                                symbol, _target_leverage, actual_lev2)
-                            raise RuntimeError(
-                                f"Cannot set leverage to {_target_leverage}x for {symbol} "
-                                f"(exchange stuck at {actual_lev2}x). Aborting order.")
+                                "%s (SL is the risk backstop)",
+                                symbol, _target_leverage, actual_lev2,
+                                "ABORTING (LEVERAGE_FAIL_CLOSED)" if not _lev_fail_open
+                                else "proceeding with warning")
+                            if not _lev_fail_open:
+                                raise RuntimeError(
+                                    f"Cannot set leverage to {_target_leverage}x for {symbol} "
+                                    f"(exchange stuck at {actual_lev2}x). Aborting order.")
                 except RuntimeError:
                     raise  # propagate abort
                 except Exception:
@@ -828,11 +844,14 @@ class LiveExecutor:
                     if _pl != _target_leverage:
                         logger.critical(
                             "LEVERAGE MISMATCH (position read) for %s: wanted "
-                            "%dx, position reports %dx — ABORTING order",
-                            symbol, _target_leverage, _pl)
-                        raise RuntimeError(
-                            f"Cannot set leverage to {_target_leverage}x for "
-                            f"{symbol} (position at {_pl}x). Aborting order.")
+                            "%dx, position reports %dx — %s",
+                            symbol, _target_leverage, _pl,
+                            "ABORTING (LEVERAGE_FAIL_CLOSED)" if not _lev_fail_open
+                            else "proceeding with warning (SL is the backstop)")
+                        if not _lev_fail_open:
+                            raise RuntimeError(
+                                f"Cannot set leverage to {_target_leverage}x for "
+                                f"{symbol} (position at {_pl}x). Aborting order.")
                     break
             except RuntimeError:
                 raise  # propagate abort
@@ -862,18 +881,20 @@ class LiveExecutor:
         # read-back failed; only THAT combination trades at the sticky default,
         # and only THAT still fails closed.
         if not _lev_verified:
-            fail_open = os.environ.get("LEVERAGE_FAIL_OPEN", "0").strip() in ("1", "true", "yes")
-            # A successful set_leverage is confirmation enough to proceed.
-            proceed = fail_open or _lev_set_ok
+            # Fail-OPEN by default (operator 2026-07-21): proceed with a warning
+            # so trades open; the SL is the risk backstop. A successful
+            # set_leverage is extra confirmation. Only the opt-in strict mode
+            # (LEVERAGE_FAIL_CLOSED=1) aborts when unverified.
+            proceed = _lev_fail_open or _lev_set_ok
             if symbol not in self._lev_unverified_warned:
                 self._lev_unverified_warned.add(symbol)
                 if _lev_set_ok:
                     _why = ("read-back unavailable but set_leverage succeeded "
                             "— order proceeds on the applied value")
-                elif fail_open:
-                    _why = "order proceeds (LEVERAGE_FAIL_OPEN=1)"
+                elif _lev_fail_open:
+                    _why = "order proceeds (fail-open default; SL is the backstop)"
                 else:
-                    _why = "ABORTING order (fail-closed standard)"
+                    _why = "ABORTING order (LEVERAGE_FAIL_CLOSED)"
                 audit(trade_log,
                       f"Leverage UNVERIFIED for {symbol}: wanted "
                       f"{_target_leverage}x but the read-back did not confirm — "
@@ -4584,13 +4605,31 @@ class LiveExecutor:
             try:
                 st = PartialTPState(**pos.partial_tp_state)
             except Exception:
-                # Schema drift — rebuild from the live position.
-                st = create_partial_tp_state(
-                    trade_id=pos.trade_id, direction=pos.direction,
-                    entry_price=pos.entry_price, stop_loss=pos.stop_loss,
-                    take_profit=pos.take_profit, quantity=pos.quantity,
-                    atr=getattr(pos, "atr_at_entry", 0.0) or pos.entry_price * 0.02,
-                )
+                # Schema drift — reconstruct from the PERSISTED dict, NOT the
+                # live position. Rebuilding via create_partial_tp_state with the
+                # live pos.stop_loss is unsafe once the stop has ratcheted to
+                # breakeven: initial_risk = |entry - stop| collapses toward 0,
+                # and check_partial_tp then reads a huge current_r (pnl / ~0)
+                # and instantly fires TP1+TP2, dumping ~80% of the runner. Keep
+                # only fields the current dataclass knows (drops extras from a
+                # newer schema); the entry-time initial_risk/original_sl survive.
+                _valid = {f.name for f in _dc.fields(PartialTPState)}
+                _kept = {k: v for k, v in (pos.partial_tp_state or {}).items()
+                         if k in _valid}
+                try:
+                    st = PartialTPState(**_kept)
+                except Exception:
+                    st = create_partial_tp_state(
+                        trade_id=pos.trade_id, direction=pos.direction,
+                        entry_price=pos.entry_price, stop_loss=pos.stop_loss,
+                        take_profit=pos.take_profit, quantity=pos.quantity,
+                        atr=getattr(pos, "atr_at_entry", 0.0) or pos.entry_price * 0.02,
+                    )
+                    # Preserve the entry-time 1R if the dict carried it, so a
+                    # ratcheted live stop can't collapse initial_risk to ~0.
+                    _ir = (pos.partial_tp_state or {}).get("initial_risk")
+                    if isinstance(_ir, (int, float)) and _ir > 0:
+                        st.initial_risk = float(_ir)
 
         def _would_tighten(new_sl: float) -> bool:
             """True iff new_sl tightens the stop (raise LONG / lower SHORT).
@@ -5195,11 +5234,18 @@ class LiveExecutor:
                     close_threshold = CONFIG.strategy_types.get_time_close_hours(pos_strategy)
                     warn_threshold = CONFIG.strategy_types.get_time_warn_hours(pos_strategy)
                     if hold_hours >= close_threshold:
-                        # Check if position is in profit
+                        # Check if position clears round-trip COSTS, not just
+                        # gross entry. A position up a sub-fee fraction was
+                        # treated as "in profit" and held indefinitely even
+                        # though it's a net loser after entry+exit taker fees
+                        # (audit exits, 2026-07-21). Require the mark to clear a
+                        # round-trip fee buffer before the time-stop spares it.
+                        _rt_fee = (CONFIG.risk.taker_fee_pct / 100.0) * 2.0  # in/out
+                        _buf = pos.entry_price * _rt_fee
                         if pos.direction == "LONG":
-                            in_profit = price > pos.entry_price
+                            in_profit = price > pos.entry_price + _buf
                         else:
-                            in_profit = price < pos.entry_price
+                            in_profit = price < pos.entry_price - _buf
                         if not in_profit:
                             # Time-stop: no profit after threshold → close
                             # :g keeps sub-hour thresholds honest — scalp's
