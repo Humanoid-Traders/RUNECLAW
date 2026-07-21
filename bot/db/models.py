@@ -313,6 +313,36 @@ def _decrypt_llm_key(stored: str) -> str:
         return stored
 
 
+def settings_user_id(identity) -> Optional[int]:
+    """Map a gateway/chat identity to the user_settings INTEGER key.
+
+    Telegram ids are positive numbers ("12345" -> 12345). Web-only identities
+    ("web:5") map to the NEGATIVE of the website user id (-5) — the two id
+    spaces can never collide because Telegram ids are always positive.
+    Returns None for anything else (no settings row is reachable)."""
+    s = str(identity or "").strip()
+    if s.isdigit():
+        return int(s)
+    if s.startswith("web:") and s[4:].isdigit():
+        return -int(s[4:])
+    return None
+
+
+def ensure_settings_parent(uid: int) -> None:
+    """Guarantee the users parent row exists for a settings write keyed by a
+    MAPPED identity (settings_user_id: telegram id, or negative web id) —
+    user_settings has a FK to users(id). The stub row carries a synthetic
+    unique email and an EMPTY password hash, so nobody can ever authenticate
+    against it; it exists only to satisfy the FK. (Rows created by real
+    website signups are untouched — INSERT OR IGNORE.)"""
+    with get_db() as db:
+        db.execute(
+            "INSERT OR IGNORE INTO users (id, email, password_hash) "
+            "VALUES (?, ?, '')",
+            (uid, f"identity:{uid}@bot.local"),
+        )
+
+
 def get_user_settings(user_id: int) -> UserSettings:
     with get_db() as db:
         row = db.execute(

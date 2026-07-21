@@ -600,9 +600,12 @@ class Analyzer:
         not applicable, the user has no key, the provider is unknown, or anything
         errors (fail-open)."""
         try:
-            from bot.db.models import get_user_settings
+            from bot.db.models import get_user_settings, settings_user_id
             from bot.llm.provider import LLMConfig, LLMProvider
-            settings = get_user_settings(int(user_id))
+            uid = settings_user_id(user_id)
+            if uid is None:
+                return None
+            settings = get_user_settings(uid)
             key = (settings.llm_api_key or "").strip()
             if not key:
                 return None

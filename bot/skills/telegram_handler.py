@@ -1146,9 +1146,25 @@ class TelegramHandler:
                 f"{_reply_lang_name}; keep ticker symbols (e.g. BTC), numeric "
                 f"values and code identifiers unchanged.")
 
-        # Build fallback chain: chat tier → fallback providers → primary
+        # Build fallback chain: own key → chat tier → fallback providers → primary
         import os
         configs_to_try = []
+
+        # 0. The caller's OWN connected LLM key (WEB-1 BYOK) — connecting a
+        # key on the website/bot visibly changes which model answers THEIR
+        # chat, on their quota. Their key serves only them (it rides this
+        # per-user resolution, never any shared routing table), and the
+        # admin-only guard on the OPERATOR's Anthropic key is untouched.
+        # Never for public (anonymous) chat: user_id is empty there.
+        if user_id and not public and getattr(
+                CONFIG.analyzer, "per_user_llm_enabled", False):
+            try:
+                from bot.core.analyzer import Analyzer as _Analyzer
+                _own_cfg = _Analyzer._resolve_user_llm_config(user_id)
+                if _own_cfg is not None:
+                    configs_to_try.append(("own_key", _own_cfg))
+            except Exception:
+                pass
 
         # 1. Primary chat tier config
         chat_cfg = resolve_tier_config(LLMTier.CHAT, active_cfg, is_admin=is_admin)

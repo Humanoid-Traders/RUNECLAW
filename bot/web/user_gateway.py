@@ -1532,6 +1532,192 @@ async def handle_policy_clear(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "removed": bool(removed)})
 
 
+# ── LLM connect (WEB-1: per-user BYOK key + admin ULTRA control) ─────────────
+#
+# The website is the primary surface (operator rule 2026-07-20), so the LLM
+# layer must be connectable from it: any user can plug in their OWN provider
+# key (Fernet-encrypted in the bot's user_settings store — the same rail
+# Telegram BYOK uses), and the ADMIN can flip ULTRA routing. The operator's
+# Anthropic key stays admin-only throughout — a user's own key serves only
+# their own chat/analysis and never enters any shared routing table.
+
+# Providers a user may connect from the web. Local/keyless providers (ollama,
+# the self-hosted runeclaw model, custom base URLs) are operator-infrastructure
+# concerns and stay off this surface.
+_WEB_LLM_PROVIDERS = ("openai", "anthropic", "gemini", "groq", "mistral",
+                      "deepseek", "together", "openrouter", "alibaba")
+_MAX_LLM_KEY_LEN = 512
+
+
+def _llm_provider_rows() -> list[dict]:
+    from bot.llm.provider import PROVIDER_CATALOG, LLMProvider
+    rows = []
+    for name in _WEB_LLM_PROVIDERS:
+        cat = PROVIDER_CATALOG.get(LLMProvider(name), {})
+        rows.append({
+            "id": name,
+            "default_model": cat.get("default_model", ""),
+            "free_tier": bool(cat.get("free_tier")),
+            "get_key_url": cat.get("get_key_url") or "",
+            "notes": cat.get("notes", ""),
+        })
+    return rows
+
+
+def _llm_fingerprint(key: str) -> str:
+    """Same safe-display format as LLMConfig.key_fingerprint — never the key."""
+    import hashlib
+    if not key:
+        return ""
+    return f"{key[:6]}...{hashlib.sha256(key.encode()).hexdigest()[:8]}"
+
+
+async def handle_llm_status(request: web.Request) -> web.Response:
+    """GET /gateway/llm?telegram_id=... — the caller's LLM connection status.
+    Never returns the key itself — only a fingerprint."""
+    tg_handler = request.app["tg_handler"]
+    tg_id = str(request.query.get("telegram_id") or "").strip()
+    err = _guard_user(tg_handler, tg_id)
+    if err is not None:
+        return err
+    from bot.db.models import get_user_settings, settings_user_id
+    connected, provider, fingerprint = False, "", ""
+    uid = settings_user_id(tg_id)
+    if uid is not None:
+        try:
+            s = get_user_settings(uid)
+            key = (s.llm_api_key or "").strip()
+            if key:
+                connected = True
+                provider = s.llm_provider
+                fingerprint = _llm_fingerprint(key)
+        except Exception as exc:
+            system_log.debug("LLM status read failed for %s: %s", tg_id, exc)
+    from bot.llm.provider import is_ultra_mode
+    resp = {
+        "connected": connected,
+        "provider": provider,
+        "fingerprint": fingerprint,
+        "per_user_enabled": bool(getattr(CONFIG.analyzer,
+                                         "per_user_llm_enabled", False)),
+        "providers": _llm_provider_rows(),
+        "is_admin": _is_admin_id(tg_handler, tg_id),
+    }
+    if resp["is_admin"]:
+        resp["ultra"] = is_ultra_mode()
+    return web.json_response(resp)
+
+
+async def handle_llm_set(request: web.Request) -> web.Response:
+    """POST /gateway/llm — connect the caller's OWN LLM key.
+    Body: {telegram_id, provider, api_key}. The key goes straight into the
+    bot's Fernet-encrypted user_settings store; it is never logged and never
+    echoed back (only a fingerprint)."""
+    tg_handler = request.app["tg_handler"]
+    body = await _json_body(request)
+    tg_id = str(body.get("telegram_id") or "").strip()
+    provider_str = str(body.get("provider") or "").strip().lower()
+    api_key = str(body.get("api_key") or "").strip()
+    err = _guard_user(tg_handler, tg_id)
+    if err is not None:
+        return err
+    if provider_str not in _WEB_LLM_PROVIDERS:
+        return web.json_response(
+            {"error": "bad_provider",
+             "detail": f"provider must be one of: {', '.join(_WEB_LLM_PROVIDERS)}"},
+            status=400)
+    if not api_key or len(api_key) > _MAX_LLM_KEY_LEN:
+        return web.json_response({"error": "bad_key",
+                                  "detail": "api_key required (<=512 chars)"},
+                                 status=400)
+    from bot.llm.provider import BYOKManager, LLMProvider
+    provider = LLMProvider(provider_str)
+    if not BYOKManager._validate_key_format(provider, api_key):
+        return web.json_response(
+            {"error": "bad_key_format",
+             "detail": f"That key doesn't look like a {provider_str} API key."},
+            status=400)
+    from bot.db.models import (ensure_settings_parent, get_user_settings,
+                               save_user_settings, settings_user_id)
+    uid = settings_user_id(tg_id)
+    if uid is None:
+        return web.json_response({"error": "bad_identity"}, status=400)
+    ensure_settings_parent(uid)
+    s = get_user_settings(uid)
+    s.llm_provider = provider_str
+    s.llm_api_key = api_key
+    save_user_settings(s)
+    fingerprint = _llm_fingerprint(api_key)
+    audit(system_log, f"Web LLM key connected: {tg_id} -> {provider_str}",
+          action="web_llm_connect", result="OK",
+          data={"user": tg_id, "provider": provider_str,
+                "fingerprint": fingerprint})
+    return web.json_response({"connected": True, "provider": provider_str,
+                              "fingerprint": fingerprint})
+
+
+async def handle_llm_clear(request: web.Request) -> web.Response:
+    """POST /gateway/llm/clear — disconnect the caller's own LLM key."""
+    tg_handler = request.app["tg_handler"]
+    body = await _json_body(request)
+    tg_id = str(body.get("telegram_id") or "").strip()
+    err = _guard_user(tg_handler, tg_id)
+    if err is not None:
+        return err
+    from bot.db.models import (ensure_settings_parent, get_user_settings,
+                               save_user_settings, settings_user_id)
+    uid = settings_user_id(tg_id)
+    if uid is None:
+        return web.json_response({"error": "bad_identity"}, status=400)
+    ensure_settings_parent(uid)
+    s = get_user_settings(uid)
+    s.llm_api_key = ""
+    save_user_settings(s)
+    audit(system_log, f"Web LLM key cleared: {tg_id}",
+          action="web_llm_connect", result="CLEARED", data={"user": tg_id})
+    return web.json_response({"connected": False})
+
+
+async def handle_llm_ultra(request: web.Request) -> web.Response:
+    """POST /gateway/llm/ultra — ADMIN-only ULTRA routing toggle (web mirror
+    of /ultra). Body: {telegram_id, enabled}. Refreshes the analyzer's cached
+    admin tier clients so the flip reaches the brain without a restart."""
+    engine = request.app["engine"]
+    tg_handler = request.app["tg_handler"]
+    body = await _json_body(request)
+    tg_id = str(body.get("telegram_id") or "").strip()
+    err = _guard_user(tg_handler, tg_id)
+    if err is not None:
+        return err
+    if not _is_admin_id(tg_handler, tg_id):
+        return web.json_response({"error": "admin_only"}, status=403)
+    from bot.llm.provider import (BYOK, LLMConfig, LLMProvider, is_ultra_mode,
+                                  set_ultra_mode)
+    env_config = LLMConfig(
+        provider=(LLMProvider(CONFIG.llm.provider)
+                  if CONFIG.llm.provider else LLMProvider.OPENAI),
+        api_key=CONFIG.llm.api_key,
+        model=CONFIG.llm.model,
+        base_url=CONFIG.llm.base_url,
+    )
+    ok, detail = set_ultra_mode(bool(body.get("enabled")),
+                                BYOK.get_active_config(env_config))
+    if ok:
+        analyzer = getattr(engine, "analyzer", None)
+        if analyzer is not None and hasattr(analyzer, "refresh_llm_client"):
+            try:
+                analyzer.refresh_llm_client()
+            except Exception as exc:
+                system_log.warning("ULTRA toggle: analyzer refresh failed: %s", exc)
+        audit(system_log,
+              f"ULTRA routing {'ON' if body.get('enabled') else 'OFF'} via web",
+              action="ultra", result="OK",
+              data={"user": tg_id, "state": bool(body.get("enabled"))})
+    return web.json_response({"ok": ok, "ultra": is_ultra_mode(),
+                              "detail": detail},
+                             status=200 if ok else 400)
+
+
 # ── App factory ──────────────────────────────────────────────────────────────
 
 def build_gateway(engine, tg_handler) -> web.Application:
@@ -1553,6 +1739,11 @@ def build_gateway(engine, tg_handler) -> web.Application:
     app.router.add_get("/share-card", handle_share_card)
     app.router.add_get("/public/agent/{address}", handle_agent_card_public)
     app.router.add_post("/idleyield", handle_idle_yield)
+    # LLM connect (WEB-1): per-user BYOK key + admin ULTRA toggle.
+    app.router.add_get("/llm", handle_llm_status)
+    app.router.add_post("/llm", handle_llm_set)
+    app.router.add_post("/llm/clear", handle_llm_clear)
+    app.router.add_post("/llm/ultra", handle_llm_ultra)
     # Authority Envelope authoring (per-user, self-serve; _guard_user-gated).
     app.router.add_post("/authority/preview", handle_authority_preview)
     app.router.add_post("/authority/apply", handle_authority_apply)
