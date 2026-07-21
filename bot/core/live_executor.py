@@ -2501,6 +2501,67 @@ class LiveExecutor:
                 return f"EXECUTION FAILED: exchange returned no price for {symbol}"
             current_price = float(_last_raw)
 
+            # ── QC-2 SAFEGUARD 0a: stale-ticker guard ──
+            # Thin TradFi perps have gone 40+ minutes without a tick (the
+            # position-monitor path already special-cases that) — but ENTERING
+            # on a stale price sizes and gates the trade against a market that
+            # may no longer exist. One refetch, then abort.
+            # ENTRY_TICKER_MAX_AGE_SEC (default 120; 0 disables).
+            _max_age = float(os.environ.get("ENTRY_TICKER_MAX_AGE_SEC", "120"))
+            _tk_ts = ticker.get("timestamp") if isinstance(ticker, dict) else None
+            if _max_age > 0 and _tk_ts:
+                try:
+                    _age = time.time() - float(_tk_ts) / 1000.0
+                except (TypeError, ValueError):
+                    _age = 0.0
+                if _age > _max_age:
+                    try:
+                        ticker = await active_exchange.fetch_ticker(symbol)
+                        _tk_ts2 = ticker.get("timestamp")
+                        if _tk_ts2:
+                            _age = time.time() - float(_tk_ts2) / 1000.0
+                        _last2 = ticker.get("last")
+                        if _last2 is not None:
+                            current_price = float(_last2)
+                    except Exception:
+                        pass
+                    if _age > _max_age:
+                        audit(trade_log,
+                              f"BLOCKED: {symbol} ticker is {_age:.0f}s old — "
+                              "not entering on a stale price",
+                              action="live_execute", result="BLOCKED_STALE_TICKER",
+                              data={"asset": symbol, "age_sec": round(_age, 1),
+                                    "max_age_sec": _max_age})
+                        return (f"EXECUTION BLOCKED: {symbol} last tick is "
+                                f"{_age:.0f}s old (max {_max_age:.0f}s) — the "
+                                "market may have moved; nothing was placed.")
+
+            # ── QC-2 SAFEGUARD 0b: spread gate ──
+            # The entire entry path keys off `last`; on a wide book `last`
+            # can sit far from where an order actually fills. When the venue
+            # reports bid/ask, refuse entries on spreads wider than
+            # ENTRY_MAX_SPREAD_PCT of mid (default 1.0; 0 disables).
+            _max_spread = float(os.environ.get("ENTRY_MAX_SPREAD_PCT", "1.0"))
+            if _max_spread > 0 and isinstance(ticker, dict):
+                try:
+                    _bid = float(ticker.get("bid") or 0)
+                    _ask = float(ticker.get("ask") or 0)
+                except (TypeError, ValueError):
+                    _bid = _ask = 0.0
+                if _ask > _bid > 0:
+                    _spread_pct = (_ask - _bid) / ((_ask + _bid) / 2.0) * 100.0
+                    if _spread_pct > _max_spread:
+                        audit(trade_log,
+                              f"BLOCKED: {symbol} spread {_spread_pct:.2f}% > "
+                              f"{_max_spread:.2f}% — book too wide to enter",
+                              action="live_execute", result="BLOCKED_WIDE_SPREAD",
+                              data={"asset": symbol, "bid": _bid, "ask": _ask,
+                                    "spread_pct": round(_spread_pct, 3)})
+                        return (f"EXECUTION BLOCKED: {symbol} bid/ask spread is "
+                                f"{_spread_pct:.2f}% (max {_max_spread:.2f}%) — "
+                                "entering into a book this wide gives away the "
+                                "edge; nothing was placed.")
+
             # ── SAFEGUARD 1: Pre-trade price validation ──
             # Block trades where the market has already moved past the SL level.
             # This prevents opening a position that will be instantly stopped out.
@@ -5615,6 +5676,16 @@ class LiveExecutor:
         """
         try:
             min_adx = CONFIG.limit_orders.drift_market_min_adx
+
+            # QC-2: hard chase bound — momentum or not, never market-chase a
+            # fill more than DRIFT_MARKET_MAX_CHASE_PCT beyond the planned
+            # limit (default 5%; 0 disables). Past that distance the SL/TP
+            # geometry that justified the trade no longer exists.
+            if pos.entry_price > 0:
+                _chase_pct = abs(cur_price - pos.entry_price) / pos.entry_price * 100
+                _max_chase = float(os.environ.get("DRIFT_MARKET_MAX_CHASE_PCT", "5.0"))
+                if _max_chase > 0 and _chase_pct > _max_chase:
+                    return False
 
             # Check direction alignment: only fallback if price moved
             # favorably (we're chasing a breakout, not averaging into a loser)
