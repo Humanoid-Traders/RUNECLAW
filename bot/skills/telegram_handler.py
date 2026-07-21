@@ -577,10 +577,43 @@ class TelegramHandler:
         try:
             chat = update.effective_chat if isinstance(update, Update) else None
             if chat is not None:
-                await context.bot.send_message(
-                    chat_id=chat.id,
-                    text=("⚠️ Something broke on my end — it's logged "
-                          "and I'm on it. Try that again in a moment."))
+                text = ("⚠️ Something broke on my end — it's logged "
+                        "and I'm on it. Try that again in a moment.")
+                # Operator diagnostic: when the failing chat is the configured
+                # operator, append a SHORT redacted description of the actual
+                # exception. Without server-log access this is often the only
+                # way to see WHAT broke — and a systemic "everything errors"
+                # failure (exchange auth, disk-full state writes, a bad deploy)
+                # is invisible from the generic line alone. Secrets are scrubbed
+                # via the same chokepoint the outbound send path uses (F-15);
+                # non-operators still get only the generic message.
+                _html = False
+                try:
+                    if exc is not None and isinstance(update, Update) and self._is_allowlisted(update):
+                        # Exception CLASS (module.Name) only — never the message.
+                        # The class alone categorises a systemic failure
+                        # (AuthenticationError → keys, OSError → disk, Connection/
+                        # TimeoutError → venue down, AttributeError/KeyError → a
+                        # bad deploy) and, unlike str(exc), cannot echo a secret a
+                        # forwarded screenshot would expose (F-15).
+                        _cls = type(exc)
+                        _mod = getattr(_cls, "__module__", "") or ""
+                        _name = f"{_mod}.{_cls.__name__}" if _mod and _mod != "builtins" else _cls.__name__
+                        _uid = f" · update {upd_id}" if upd_id is not None else ""
+                        text += (f"\n\n<code>{html.escape(_name[:120])}</code>{_uid}"
+                                 "\n<i>(operator diagnostic — type only; full "
+                                 "trace in the server log)</i>")
+                        _html = True
+                except Exception:
+                    pass
+                try:
+                    await context.bot.send_message(
+                        chat_id=chat.id, text=text,
+                        parse_mode="HTML" if _html else None)
+                except Exception:
+                    # HTML parse or any send hiccup: the operator must still get
+                    # something. Retry plain so a diagnostic is never swallowed.
+                    await context.bot.send_message(chat_id=chat.id, text=re.sub(r"<[^>]+>", "", text))
         except Exception:
             pass
 
