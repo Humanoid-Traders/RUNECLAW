@@ -3479,6 +3479,8 @@
             <div id="c-hubtoggles"><div class="skel"></div></div></section>
           <section class="panel" id="p-hubmcp"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-link"></use></svg>Agent API (MCP)</h2>
             <div id="c-hubmcp"><div class="skel"></div></div></section>
+          <section class="panel" id="p-hubllm"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-bolt"></use></svg>Your AI engine</h2>
+            <div id="c-hubllm"><div class="skel"></div></div></section>
         </div>
       </div>`);
 
@@ -3725,6 +3727,63 @@
         catch (e) { toast(cmd); }
       };
     }, 0);
+
+    // ── Your AI engine: connect your OWN LLM key (WEB-1) ──
+    // The key travels once to the bot's encrypted store — this page only
+    // ever sees the fingerprint back. Admins also get the ULTRA toggle.
+    async function drawHubLlm() {
+      await renderPanel(C('hubllm'), async () => {
+        const r = await fetchJSON('/api/llm', { timeoutMs: 12000 });
+        if (!r?.ok) return '<p class="muted small">LLM connect is unavailable right now (bot gateway offline?).</p>';
+        const d = r.data;
+        const provs = d.providers || [];
+        const opts = provs.map(p =>
+          `<option value="${esc(p.id)}" ${p.id === (d.provider || 'gemini') ? 'selected' : ''}>${esc(p.id)}${p.free_tier ? ' · free tier' : ''}</option>`).join('');
+        const status = d.connected
+          ? `<div class="kv-row"><span>Connected</span><b>🟢 ${esc(d.provider)} <span class="num small muted">${esc(d.fingerprint)}</span></b></div>
+             <p class="small muted mt-1">Your chat and analysis answers run on YOUR key first (your quota, your model choice).</p>`
+          : `<p class="small" style="color:var(--text-2)">Plug your own AI into your agent: bring an API key from any supported provider and your chat runs on it — your quota, your model. Stored encrypted by the bot; this site never keeps it.</p>`;
+        const enabledNote = d.per_user_enabled ? '' :
+          '<p class="small muted mt-1">⚠️ Per-user keys are saved but not active yet — the operator has not enabled PER_USER_LLM.</p>';
+        const ultra = d.is_admin ? `
+          <div class="kv-row mt-2"><span>ULTRA routing <span class="muted small">operator only</span></span>
+            <b><button class="btn btn--sm ${d.ultra ? 'btn--primary' : ''}" id="hubUltraBtn" type="button" aria-pressed="${!!d.ultra}">${d.ultra ? '🟣 ON — Fable 5 thesis/learning' : '⚪ OFF'}</button></b></div>
+          <p class="small muted">ULTRA sends admin thesis/learning to claude-fable-5 ($10/$50 per MTok). Non-admin users are never routed to the operator key.</p>` : '';
+        return `${status}
+          <form class="row mt-2" id="hubLlmForm" style="gap:var(--s2);flex-wrap:wrap">
+            <select class="input" id="hubLlmProv" aria-label="LLM provider" style="width:11rem">${opts}</select>
+            <input class="input" id="hubLlmKey" type="password" placeholder="API key" maxlength="512" autocomplete="off" style="flex:1;min-width:12rem" aria-label="LLM API key">
+            <button class="btn btn--primary btn--sm" type="submit">${d.connected ? '↻ Replace key' : '🔌 Connect'}</button>
+            ${d.connected ? '<button class="btn btn--sm" id="hubLlmClear" type="button">Disconnect</button>' : ''}
+          </form>
+          ${enabledNote}${ultra}`;
+      }, { empty: { text: 'LLM connect unavailable.' } });
+      const form = document.getElementById('hubLlmForm');
+      if (form) form.onsubmit = async (e) => {
+        e.preventDefault();
+        const provider = document.getElementById('hubLlmProv').value;
+        const key = document.getElementById('hubLlmKey').value.trim();
+        if (!key) { toast('Paste an API key first.'); return; }
+        const r = await fetchJSON('/api/llm', { method: 'POST', body: { provider, api_key: key }, timeoutMs: 15000 });
+        toast(r?.ok ? `Connected ${provider} — your agent answers on your key now.`
+                    : (r?.data?.detail || 'Could not connect that key.'));
+        drawHubLlm();
+      };
+      const clear = document.getElementById('hubLlmClear');
+      if (clear) clear.onclick = async () => {
+        const r = await fetchJSON('/api/llm/clear', { method: 'POST', body: {} });
+        toast(r?.ok ? 'Disconnected — back to the built-in routing.' : 'Could not disconnect.');
+        drawHubLlm();
+      };
+      const ub = document.getElementById('hubUltraBtn');
+      if (ub) ub.onclick = async () => {
+        const enable = ub.getAttribute('aria-pressed') !== 'true';
+        const r = await fetchJSON('/api/llm/ultra', { method: 'POST', body: { enabled: enable }, timeoutMs: 15000 });
+        toast(r?.ok ? (r.data?.detail || 'ULTRA updated.') : (r?.data?.detail || 'ULTRA toggle failed.'));
+        drawHubLlm();
+      };
+    }
+    drawHubLlm();
   }
 
   /* ═══════════════ MACRO AI ═══════════════ */
