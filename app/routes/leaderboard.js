@@ -58,7 +58,12 @@ router.get('/', async (req, res) => {
     }));
     const [me] = await pool.execute('SELECT leaderboard_handle FROM users WHERE id = ?', [req.user.user_id]);
     const handle = (me[0] && me[0].leaderboard_handle) || null;
-    res.json({ rows, opted_in: !!handle, handle });
+    // UX-6: the caller's REAL rank — even when they're outside the top MAX_ROWS
+    // window (the board itself is capped, so >50th place used to be invisible
+    // and unmotivating). Rank + total are position-only, no dollar figures.
+    const myIdx = scored.findIndex((r) => r.id === req.user.user_id);
+    const my_rank = myIdx >= 0 ? myIdx + 1 : null;
+    res.json({ rows, opted_in: !!handle, handle, my_rank, ranked_total: scored.length });
   } catch (err) {
     console.error('Leaderboard error:', err.message);
     res.status(500).json({ error: 'Failed to load leaderboard' });

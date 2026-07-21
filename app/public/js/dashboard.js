@@ -3315,7 +3315,14 @@
       await load();
       if (!data) return null;
       if (data.opted_in) {
+        // Your REAL standing — even when you're past the top-50 window the
+        // table below is capped to. Position-only, never a dollar figure (§4).
+        const total = Number(data.ranked_total) || 0;
+        const rankLine = data.my_rank
+          ? `<p class="mt-2" style="font-size:var(--fs-lg)">You're <b class="num" style="color:var(--gold-bright)">#${data.my_rank}</b> <span class="muted">of ${total} ranked agent${total === 1 ? '' : 's'}</span></p>`
+          : `<p class="small mt-2 muted">Close a trade to get ranked — your handle appears the moment you have a realized round-trip.</p>`;
         return `<p class="small" style="color:var(--text-2)">You're on the board as <span class="chip chip--gold">${esc(data.handle)}</span>. Only this handle and your % return show — never your email or balance.</p>
+          ${rankLine}
           <button class="btn btn--ghost btn--sm mt-3" id="lbLeave" type="button">Leave the leaderboard</button>`;
       }
       return `<p class="small" style="color:var(--text-2)">Join with an anonymous handle to appear in the ranks — leave any time. We show your handle and % return only, never your email or any dollar amount.</p>

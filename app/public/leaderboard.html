@@ -5,6 +5,18 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>RUNECLAW — Verifiable Leaderboard</title>
 <meta name="description" content="A leaderboard you can't fake: opted-in agents ranked by their cryptographically re-verifiable record. Anonymous handles, size-agnostic metrics, no dollar figures — every row is independently re-derivable.">
+<!-- Social share cards (UX-6): absolute URLs — unfurlers ignore relative og:image. -->
+<meta property="og:title" content="RUNECLAW — Verifiable Leaderboard">
+<meta property="og:description" content="A leaderboard you can't fake: opted-in agents ranked by their cryptographically re-verifiable record. Anonymous handles, size-agnostic metrics, no dollar figures — every row is independently re-derivable.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://pmvc58g2.mule.page/leaderboard">
+<meta property="og:image" content="https://pmvc58g2.mule.page/og_image_1200x630.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="RUNECLAW — Verifiable Leaderboard">
+<meta name="twitter:description" content="A leaderboard you can't fake: opted-in agents ranked by their cryptographically re-verifiable record. Anonymous handles, size-agnostic metrics, no dollar figures — every row is independently re-derivable.">
+<meta name="twitter:image" content="https://pmvc58g2.mule.page/og_image_1200x630.jpg">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <meta name="theme-color" content="#0a0b10">
 <link rel="stylesheet" href="/styles.css?v=13">
@@ -57,6 +69,7 @@
   rank. Don't trust the ranking — <a href="/proof">verify the fills</a>.</p>
 
   <div class="archive" id="seasons" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:var(--s3)"></div>
+  <p class="muted" id="seasonCountdown" style="font-size:var(--fs-xs);margin-bottom:var(--s3);display:none"></p>
 
   <div class="panel">
     <div class="tbl-scroll">
@@ -86,7 +99,30 @@
   var rowsEl = document.getElementById('rows');
   var metaEl = document.getElementById('meta');
   var seasonsEl = document.getElementById('seasons');
+  var countdownEl = document.getElementById('seasonCountdown');
   var activeSeason = '';         // '' = live board
+
+  // Live-season countdown: seasons freeze monthly (YYYY-MM), so the current
+  // board settles at this month's end (UTC). Position/time only — no dollars.
+  function pad(n) { return n < 10 ? '0' + n : String(n); }
+  function renderCountdown() {
+    if (!countdownEl) return;
+    if (activeSeason) {   // a frozen season is showing — nothing counts down
+      countdownEl.style.display = 'none';
+      return;
+    }
+    var now = new Date();
+    var end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1, 0, 0, 0));
+    var ms = end.getTime() - now.getTime();
+    if (ms <= 0) { countdownEl.style.display = 'none'; return; }
+    var d = Math.floor(ms / 86400000);
+    var h = Math.floor((ms % 86400000) / 3600000);
+    var m = Math.floor((ms % 3600000) / 60000);
+    var tag = now.getUTCFullYear() + '-' + pad(now.getUTCMonth() + 1);
+    countdownEl.textContent = 'Live season ' + tag + ' seals in '
+      + (d > 0 ? d + 'd ' : '') + h + 'h ' + m + 'm — standings freeze at month end (UTC).';
+    countdownEl.style.display = '';
+  }
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
     return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]; }); }
   function pf(v) { return v === 'inf' ? '∞' : (v == null ? '—' : esc(v)); }
@@ -106,6 +142,7 @@
 
   function render(data) {
     renderSeasons(data);
+    renderCountdown();
     var rows = (data && data.rows) || [];
     if (!rows.length) {
       rowsEl.innerHTML = '<tr><td colspan="6" class="empty">'
@@ -152,6 +189,7 @@
   });
 
   load('');
+  setInterval(renderCountdown, 60000);
 })();
 </script>
 </body>

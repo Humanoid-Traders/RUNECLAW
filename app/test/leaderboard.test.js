@@ -106,3 +106,26 @@ test('leaderboard requires auth', async () => {
   const r = await req('GET', '/api/leaderboard');
   assert.strictEqual(r.status, 401);
 });
+
+test('UX-6: my_rank/ranked_total report a real position, even past the top window', async () => {
+  // A ranked member sees their own rank and the total ranked count.
+  const a = await reg();
+  await req('POST', '/api/leaderboard/opt-in', { token: a.data.token, body: { handle: 'ranker' } });
+  await seedClosedTrade(a.data.user_id, 300);
+  let r = await req('GET', '/api/leaderboard', { token: a.data.token });
+  assert.strictEqual(typeof r.data.my_rank, 'number');
+  assert.ok(r.data.my_rank >= 1, 'a member with a closed trade has a numeric rank');
+  assert.ok(r.data.ranked_total >= 1);
+  assert.ok(r.data.ranked_total >= r.data.my_rank, 'total is never smaller than my own rank');
+  // Rank is position-only — no dollar figure rides along on the payload.
+  for (const k of ['net_pnl', 'my_pnl', 'equity', 'balance']) {
+    assert.ok(!(k in r.data), `payload must not expose ${k}`);
+  }
+
+  // Opted in but no closed trade yet → not ranked (null), not a fake 0.
+  const c = await reg();
+  await req('POST', '/api/leaderboard/opt-in', { token: c.data.token, body: { handle: 'newbie' } });
+  r = await req('GET', '/api/leaderboard', { token: c.data.token });
+  assert.strictEqual(r.data.opted_in, true);
+  assert.strictEqual(r.data.my_rank, null, 'no realized round-trip ⇒ unranked');
+});
