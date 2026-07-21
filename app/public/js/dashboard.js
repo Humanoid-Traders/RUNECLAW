@@ -24,6 +24,7 @@
     { id: 'news',      label: 'News',      icon: 'icon-globe' },
     { id: 'trade',     label: 'Trade',     icon: 'icon-target' },
     { id: 'portfolio', label: 'Portfolio', icon: 'icon-chart' },
+    { id: 'tax',       label: 'Tax',       icon: 'icon-check' },
     { id: 'markets',   label: 'Markets',   icon: 'icon-globe' },
     { id: 'macro',     label: 'Macro',     icon: 'icon-shield' },
     { id: 'guardian',  label: 'Guardian',  icon: 'icon-check' },
@@ -3417,6 +3418,122 @@
   }
 
   /* ═══════════════ LEADERBOARD ═══════════════ */
+  // Tax & Compliance Agent — realized-gains report from the user's OWN closed
+  // trades. Every RUNECLAW trade is a discrete round-trip, so each closed trade
+  // is one self-contained disposal (realized gain/loss = booked pnl, hold =
+  // opened→closed, short/long-term at 365d). This is a PRIVATE per-user surface,
+  // so real dollar figures belong here (the §4 no-dollars rule is about the
+  // public leaderboard/community surfaces, not a user's own tax document).
+  // Informational only — never tax advice.
+  async function renderTax() {
+    container.innerHTML = viewHead('Tax',
+      'Realized-gains report from your own closed trades — informational, not tax advice');
+    if (!LOGGED_IN) {
+      container.insertAdjacentHTML('beforeend',
+        `<section class="panel">${loginGate('Log in to build a realized-gains report from your trade history.')}</section>`);
+      return;
+    }
+    container.insertAdjacentHTML('beforeend', `
+      <div class="stack">
+        <section class="panel" id="p-taxctl"><div id="c-taxctl"><div class="skel"></div></div></section>
+        <section class="panel"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-chart"></use></svg>Realized gains</h2><div id="c-taxsum"><div class="skel"></div><div class="skel"></div></div></section>
+        <section class="panel"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-target"></use></svg>Disposals</h2><div id="c-taxrows"><div class="skel"></div><div class="skel"></div></div></section>
+        <p class="small muted" id="taxDisc" style="max-width:82ch"></p>
+      </div>`);
+
+    let data = null, curYear = 'all';
+    const money = (v) => fmtMoney(v);
+    const gl = (v) => { v = Math.round((+v || 0) * 100) / 100; return `<span class="num ${pnlClass(v)}">${v > 0 ? '+' : ''}${fmtMoney(v)}</span>`; };
+    const dt = (s) => (s ? esc(String(s).slice(0, 10)) : '—');
+    const shortSym = (s) => esc(String(s || '').replace(':USDT', '').replace('/USDT', ''));
+
+    const load = async () => {
+      const q = curYear === 'all' ? '' : ('?year=' + encodeURIComponent(curYear));
+      const r = await fetchJSON('/api/tax/report' + q);
+      data = r.ok ? r.data : null;
+      return data;
+    };
+
+    // Client-side CSV so the download carries the user's auth without a second
+    // authenticated request; mirrors the server's /api/tax/export.csv columns.
+    const CSV_COLS = ['Symbol', 'Direction', 'Date Acquired', 'Date Sold', 'Proceeds (USD)', 'Cost Basis (USD)', 'Fees (USD)', 'Gain/Loss (USD)', 'Holding Days', 'Term'];
+    function downloadCsv() {
+      const rows = (data && data.disposals) || [];
+      if (!rows.length) return;
+      const cell = (v) => { const s = v == null ? '' : String(v); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
+      const lines = [CSV_COLS.join(',')].concat(rows.map(d => [d.symbol, d.direction, d.acquired || '', d.disposed || '', d.proceeds, d.cost_basis, d.fees, d.gain_loss, d.holding_days == null ? '' : d.holding_days, d.term].map(cell).join(',')));
+      const blob = new Blob([lines.join('\n') + '\n'], { type: 'text/csv;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a'); a.href = url; a.download = `runeclaw-tax-${curYear}.csv`;
+      document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+    }
+
+    function paintCtl() {
+      const el = C('taxctl'); if (!el) return;
+      const years = (data && data.available_years) || [];
+      const has = data && data.disposals && data.disposals.length;
+      const chip = (y, label) => `<button class="btn btn--sm ${String(curYear) === String(y) ? 'btn--primary' : 'btn--ghost'}" data-taxyear="${esc(String(y))}" type="button">${esc(label)}</button>`;
+      el.innerHTML = `<div class="row" style="gap:var(--s2);flex-wrap:wrap;align-items:center">
+          <span class="small muted">Tax year</span>
+          ${chip('all', 'All')}
+          ${years.map(y => chip(y, String(y))).join('')}
+          <button class="btn btn--sm btn--ghost" id="taxCsv" type="button" style="margin-left:auto" ${has ? '' : 'disabled'}>⬇ Export CSV</button>
+        </div>`;
+    }
+
+    function paintSummary() {
+      const el = C('taxsum'); if (!el) return;
+      if (!data) { el.innerHTML = `<p class="small muted">Your tax report is unavailable right now.</p>`; return; }
+      const t = data.totals || {};
+      if (!t.disposals) { el.innerHTML = `<p class="small muted">No closed trades ${curYear === 'all' ? 'yet' : 'in ' + esc(curYear)} — realized-gain rows appear here once you close a round-trip.</p>`; return; }
+      el.innerHTML = `
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:var(--s2)">
+          <div><div class="small muted">Net realized</div><div style="font-size:var(--fs-lg)">${gl(t.net_gain_loss)}</div></div>
+          <div><div class="small muted">Short-term</div><div>${gl(t.short_term_gain_loss)}</div></div>
+          <div><div class="small muted">Long-term</div><div>${gl(t.long_term_gain_loss)}</div></div>
+          <div><div class="small muted">Fees</div><div class="num">${money(t.fees)}</div></div>
+          <div><div class="small muted">Proceeds</div><div class="num">${money(t.proceeds)}</div></div>
+          <div><div class="small muted">Disposals</div><div class="num">${t.disposals} <span class="muted small">(${t.gains}W/${t.losses}L)</span></div></div>
+        </div>
+        ${(data.years && data.years.length > 1 && curYear === 'all') ? `<div class="tbl-wrap mt-3"><table class="tbl"><thead><tr><th>Year</th><th class="r">Net</th><th class="r">Short</th><th class="r">Long</th><th class="r">Fees</th><th class="r">Disposals</th></tr></thead><tbody>${data.years.map(y => `<tr><td class="num">${y.year}</td><td class="r">${gl(y.net_gain_loss)}</td><td class="r">${gl(y.short_term_gain_loss)}</td><td class="r">${gl(y.long_term_gain_loss)}</td><td class="r num muted">${money(y.fees)}</td><td class="r num muted">${y.disposals}</td></tr>`).join('')}</tbody></table></div>` : ''}`;
+    }
+
+    function paintRows() {
+      const el = C('taxrows'); if (!el) return;
+      const rows = (data && data.disposals) || [];
+      if (!rows.length) { el.innerHTML = `<p class="small muted">No disposals to show for this period.</p>`; return; }
+      el.innerHTML = `<div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Symbol</th><th>Acquired</th><th>Sold</th><th class="r">Days</th><th>Term</th><th class="r">Proceeds</th><th class="r">Basis</th><th class="r">Fees</th><th class="r">Gain/Loss</th></tr></thead>
+        <tbody>${rows.slice(0, 500).map(d => `<tr>
+          <td><b>${shortSym(d.symbol)}</b> <span class="muted small">${esc(d.direction)}</span></td>
+          <td class="small muted">${dt(d.acquired)}</td>
+          <td class="small muted">${dt(d.disposed)}</td>
+          <td class="r num muted">${d.holding_days == null ? '—' : d.holding_days}</td>
+          <td><span class="chip">${d.term === 'long' ? 'Long' : d.term === 'short' ? 'Short' : '—'}</span></td>
+          <td class="r num muted">${money(d.proceeds)}</td>
+          <td class="r num muted">${money(d.cost_basis)}</td>
+          <td class="r num muted">${money(d.fees)}</td>
+          <td class="r">${gl(d.gain_loss)}</td>
+        </tr>`).join('')}</tbody></table></div>
+        ${rows.length > 500 ? `<p class="small muted mt-2">Showing the most recent 500 of ${rows.length} disposals — export CSV for the full set.</p>` : ''}`;
+    }
+
+    async function refresh() {
+      await load();
+      paintCtl(); paintSummary(); paintRows();
+      const disc = document.getElementById('taxDisc');
+      if (disc) disc.textContent = (data && data.disclaimer) || '';
+    }
+
+    container.addEventListener('click', (e) => {
+      const yb = e.target.closest && e.target.closest('[data-taxyear]');
+      if (yb) { curYear = yb.getAttribute('data-taxyear'); refresh(); return; }
+      if (e.target.closest && e.target.closest('#taxCsv')) downloadCsv();
+    });
+
+    await refresh();
+  }
+
   async function renderNews() {
     container.innerHTML = viewHead('News radar',
       'Breaking headlines + high-impact alerts on your positions — advisory only, never trades');
@@ -4490,7 +4607,7 @@
   const RENDER = { home: renderHome, chat: renderChat, hub: renderHub, markets: renderMarkets,
                    macro: renderMacro, guardian: renderGuardian,
                    signals: renderSignals, deepscan: renderDeepScan, news: renderNews,
-                   feed: renderFeed, trade: renderTrade, portfolio: renderPortfolio,
+                   feed: renderFeed, trade: renderTrade, portfolio: renderPortfolio, tax: renderTax,
                    leaderboard: renderLeaderboard, lab: renderLab, engine: renderEngine,
                    account: renderAccount };
 
