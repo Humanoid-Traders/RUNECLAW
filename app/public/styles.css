@@ -408,6 +408,7 @@ code { font-family: var(--font-data); font-size: .9em; background: var(--surface
 .chat-msg.bot code { color: var(--gold-bright); }
 .chat-msg.bot pre { font-family: var(--font-data); font-size: var(--fs-xs); overflow-x: auto; margin: 4px 0; }
 .chat-msg.pending { opacity: 1; }
+.chat-ts { display: block; margin-top: 3px; font-size: 10px; opacity: .5; }
 /* Each new bubble eases in — subtle, and disabled under reduced-motion (top). */
 .chat-msg { animation: chat-in .18s ease-out; }
 @keyframes chat-in { from { opacity: 0; transform: translateY(4px); } }
