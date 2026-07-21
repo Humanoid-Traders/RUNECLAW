@@ -6745,9 +6745,10 @@ class TelegramHandler:
         if not NewsRadar.enabled():
             await self._send(update,
                 "📰 <b>News radar is off.</b>\n"
-                "Set <code>NEWS_RADAR_ENABLED=1</code> to pull public crypto "
-                "headlines (CoinDesk / Cointelegraph / Decrypt RSS — no API key) "
-                "and get high-impact alerts on your open positions.\n\n"
+                "It's on by default (CoinDesk / Cointelegraph / Decrypt RSS — no "
+                "API key), but an operator has turned it off with "
+                "<code>NEWS_RADAR_ENABLED=0</code>. When on, it gives high-impact "
+                "alerts on your open positions.\n\n"
                 "<i>Advisory only — news never moves or blocks a trade.</i>")
             return
         radar = getattr(self, "_news_radar", None)
