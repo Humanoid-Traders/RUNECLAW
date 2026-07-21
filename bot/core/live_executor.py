@@ -3034,6 +3034,7 @@ class LiveExecutor:
                                       action="post_only_retry", result="WIDENING",
                                       data={"symbol": symbol, "rejected_price": limit_price})
                                 # Double the offset and retry
+                                _pre_retry_limit = limit_price
                                 wider_offset = 1.0 * atr_value if atr_value > 0 else current_price * 0.005
                                 if side == "buy":
                                     limit_price = round(current_price - wider_offset, 8)
@@ -3041,6 +3042,29 @@ class LiveExecutor:
                                     limit_price = round(current_price + wider_offset, 8)
                                 _prec_price = active_exchange.price_to_precision(symbol, limit_price)
                                 limit_price = float(_prec_price) if _prec_price is not None else limit_price
+                                # QC-1: the retry moves the entry up to 1 ATR —
+                                # shift SL/TP with it, or the position records
+                                # stops sized for the ORIGINAL entry (a buy
+                                # repriced 1 ATR lower gets a stop 1 ATR too
+                                # tight and a target 1 ATR too far).
+                                if _pre_retry_limit and limit_price:
+                                    _r_sl, _r_tp, _r_shifted, _ = recalc_sl_tp_for_shifted_entry(
+                                        entry_price=_pre_retry_limit,
+                                        stop_loss=idea.stop_loss,
+                                        take_profit=idea.take_profit,
+                                        limit_price=limit_price,
+                                        natural_sl=None,
+                                        side=side,
+                                    )
+                                    if _r_shifted:
+                                        audit(trade_log,
+                                              f"POST_ONLY reprice SL/TP shift: SL ${idea.stop_loss:,.4f} → ${_r_sl:,.4f}, "
+                                              f"TP ${idea.take_profit:,.4f} → ${_r_tp:,.4f}",
+                                              action="post_only_retry", result="SLTP_SHIFTED",
+                                              data={"old_limit": _pre_retry_limit,
+                                                    "new_limit": limit_price})
+                                        idea.stop_loss = _r_sl
+                                        idea.take_profit = _r_tp
                                 create_kwargs["price"] = limit_price
                                 # Generate new coid for retry (venue-legal)
                                 retry_coid = coid + "-r1"
@@ -5413,6 +5437,16 @@ class LiveExecutor:
                 )
 
             elif order_status in ("canceled", "cancelled", "rejected", "expired"):
+                # QC-1: a cancel (exchange-side, operator, or our own from a
+                # prior sweep) can land AFTER a partial fill — that filled
+                # portion is live exposure and must be adopted, not orphaned.
+                _c_filled = float(order.get("filled", 0) or 0)
+                if _c_filled > 0:
+                    _c_avg = float(order.get("average", 0) or 0)
+                    if not self._is_duplicate_fill(pos, _c_avg or pos.entry_price):
+                        return await self._adopt_partial_fill(
+                            exchange, trade_id, pos, _c_filled, _c_avg,
+                            order_status)
                 # Limit order cancelled/rejected — remove position
                 pos.status = "closed"
                 pos.closed_at = datetime.now(UTC)
@@ -5519,6 +5553,31 @@ class LiveExecutor:
                         logger.warning("Cancel NOT confirmed for %s order %s — leaving as pending_fill for retry",
                                        cancel_reason, pos.limit_order_id)
                         return None
+
+                    # QC-1: the cancel only removed the UNFILLED remainder —
+                    # anything that filled while the limit rested is live
+                    # margin on the exchange. Read the final fill and adopt
+                    # it; booking "closed, pnl 0" here orphaned it with no
+                    # stop-loss (ccxt reports partial fills as status "open",
+                    # so the fill branch above never caught them).
+                    _d_filled, _d_avg = 0.0, 0.0
+                    try:
+                        _final = await exchange.fetch_order(pos.limit_order_id, pos.symbol)
+                        _d_filled = float(_final.get("filled", 0) or 0)
+                        _d_avg = float(_final.get("average", 0) or 0)
+                    except Exception as _pf_exc:
+                        # Fall back to the sweep's earlier fetch — stale by
+                        # seconds at most, and strictly better than orphaning.
+                        _d_filled = float(order.get("filled", 0) or 0)
+                        _d_avg = float(order.get("average", 0) or 0)
+                        logger.warning("Post-cancel fill read failed for %s (%s) — "
+                                       "using pre-cancel snapshot filled=%.8f",
+                                       pos.symbol, _pf_exc, _d_filled)
+                    if _d_filled > 0 and not self._is_duplicate_fill(
+                            pos, _d_avg or pos.entry_price):
+                        return await self._adopt_partial_fill(
+                            exchange, trade_id, pos, _d_filled, _d_avg,
+                            cancel_reason)
 
                     pos.status = "closed"
                     pos.closed_at = datetime.now(UTC)
@@ -5630,6 +5689,64 @@ class LiveExecutor:
             logger.debug("Drift market fallback check failed for %s: %s", pos.symbol, exc)
             return False
 
+    async def _adopt_partial_fill(
+        self, exchange: "ccxt.Exchange", trade_id: str, pos: "LivePosition",
+        filled_qty: float, avg_price: float, context: str,
+    ) -> str:
+        """A cancelled/expired limit had already PARTIALLY filled: the filled
+        portion is live margin on the exchange. Adopt it as an open position
+        and protect it — booking the record "closed, pnl 0" (the pre-QC-1
+        behavior) orphaned that exposure with no stop-loss and no tracking.
+
+        Reachable from every cancel shape because ccxt maps Bitget's
+        partial-fill statuses to plain "open": the fill sweep's
+        "partially_filled" branch never sees them via fetch_order."""
+        fill_price = avg_price if avg_price > 0 else pos.entry_price
+        pos.entry_price = fill_price
+        pos.quantity = filled_qty
+        pos.status = "open"
+        setattr(pos, "filled_at", datetime.now(UTC))
+        pos.order_type = "limit"
+        pos.limit_order_id = None
+        raw_cost = fill_price * filled_qty
+        pos.cost_usd = raw_cost / pos.leverage if pos.leverage > 1 else raw_cost
+
+        if CONFIG.trailing.enabled and pos.atr_at_entry > 0:
+            initial_risk = (abs(fill_price - pos.stop_loss)
+                            if pos.stop_loss else pos.atr_at_entry)
+            pos.trailing_state = make_trailing_state(
+                entry_price=fill_price,
+                direction=pos.direction,
+                initial_risk=initial_risk,
+                atr_value=pos.atr_at_entry,
+            )
+
+        direction = Direction.LONG if pos.direction == "LONG" else Direction.SHORT
+        sl_id, tp_id = await self._place_sl_tp(
+            exchange, pos.symbol, direction,
+            filled_qty, pos.stop_loss, pos.take_profit)
+        # Same escalation ladder as every other fill path: protected, closed,
+        # or an URGENT manual-close message — never silently unprotected.
+        sl_id, tp_id, ladder_msg = await self._reattempt_post_fill_sl(
+            exchange, pos, direction, filled_qty, sl_id, tp_id, trade_id)
+        pos.sl_order_id = sl_id
+        pos.tp_order_id = tp_id
+        self._save_positions()
+
+        audit(trade_log,
+              f"Partial fill ADOPTED on {context}: {pos.symbol} {pos.direction} "
+              f"{filled_qty:g} @ ${fill_price:,.4f}",
+              action="partial_fill_adopted", result="OPEN",
+              data={"trade_id": trade_id, "context": context,
+                    "filled": filled_qty, "fill_price": fill_price})
+        if ladder_msg:
+            return ladder_msg
+        protection = self._fmt_fill_protection(
+            pos.stop_loss, pos.take_profit, sl_id, tp_id, pos.trailing_state)
+        return (f"LIMIT {context.upper()} — PARTIAL FILL ADOPTED as OPEN: "
+                f"{pos.direction} {pos.symbol}\n"
+                f"Fill: ${fill_price:,.4f} | Qty: {filled_qty:.6f}{protection}")
+
     async def _execute_drift_market_fallback(
         self, exchange: "ccxt.Exchange", trade_id: str,
         pos: "LivePosition", cur_price: float,
@@ -5656,10 +5773,25 @@ class LiveExecutor:
                                pos.symbol, cancel_exc)
                 return None
 
-            # 2. Place market order
+            # QC-1: how much of the limit already filled before the cancel?
+            # Marketing the FULL original size on top of a partial fill puts
+            # on up to 2x the risk-approved exposure — market only the
+            # remainder and blend the entries below.
+            pre_filled, pre_avg = 0.0, 0.0
+            try:
+                _final = await exchange.fetch_order(pos.limit_order_id, pos.symbol)
+                pre_filled = float(_final.get("filled", 0) or 0)
+                pre_avg = float(_final.get("average", 0) or 0)
+            except Exception as _pf_exc:
+                logger.warning("Market fallback: pre-fill read failed for %s: %s "
+                               "— assuming no partial fill", pos.symbol, _pf_exc)
+
+            # 2. Place market order for the UNFILLED remainder only
             side = "buy" if pos.direction == "LONG" else "sell"
-            qty = pos.quantity
+            qty = pos.quantity - pre_filled
             if qty <= 0:
+                # Fully filled during the cancel — the canceled-with-fill
+                # adoption path picks it up on the next sweep.
                 return None
 
             order = await exchange.create_order(
@@ -5668,6 +5800,14 @@ class LiveExecutor:
 
             fill_price = float(order.get("average", 0) or order.get("price", 0) or cur_price)
             filled_qty = float(order.get("filled", 0) or qty)
+            if pre_filled > 0:
+                # Blend the resting partial fill with the market fill so the
+                # tracked position matches the REAL exchange exposure and the
+                # SL/TP below are sized for all of it.
+                _blend_qty = pre_filled + filled_qty
+                fill_price = (((pre_avg or pos.entry_price) * pre_filled)
+                              + fill_price * filled_qty) / _blend_qty
+                filled_qty = _blend_qty
 
             # 3. Update position
             old_entry = pos.entry_price
