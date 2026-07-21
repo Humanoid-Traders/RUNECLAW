@@ -2741,26 +2741,94 @@
     if (me?.data?.plan === 'admin') {
       document.getElementById('p-aplan').insertAdjacentHTML('afterend', `
         <section class="panel" id="p-ayield"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-coin"></use></svg>Yield radar <span class="right muted small">operator report</span></h2><div id="c-ayield"><div class="skel"></div></div></section>`);
-      renderPanel(C('ayield'), async () => {
-        const r = await fetchJSON('/api/reports/yield', { timeoutMs: 12000 });
-        const y = r.data?.yield;
-        if (!y || !(y.rows || []).length) return null;
-        // SPOT-2: every lock term is shown with its duration — a lock is not
-        // revocable until the term ends, so term vs rate must be an explicit
-        // user choice, never a hidden "best fixed" number.
-        const termChips = (row) => (row.fixed_terms || []).slice(0, 6).map(t =>
-          `<span class="badge" title="Locked for ${esc(t.days)} days — funds are NOT redeemable until the term ends">🔒${esc(t.days)}d ${Number(t.apy).toFixed(2)}%</span>`
-        ).join(' ');
-        return `<p class="muted small">Idle assets vs Bitget Earn — flexible redeems instantly; 🔒 fixed terms LOCK funds until the term ends (not revocable). Staking stays behind the bot's confirm buttons.</p>
-          <div class="tbl-wrap"><table class="tbl">
-          <thead><tr><th>Coin</th><th class="r">Idle</th><th class="r">Stakeable</th><th class="r">Flex APY</th><th class="r">Est/yr</th></tr></thead>
-          <tbody>${y.rows.slice(0, 10).map(row => `<tr><td><b>${esc(row.coin)}</b>${row.alt_note ? ` <span class="muted small">${esc(row.alt_note)}</span>` : ''}${(row.fixed_terms || []).length ? `<br>${termChips(row)}` : ''}</td>
-            <td class="num r">$${Number(row.idle_usd || 0).toFixed(2)}</td>
-            <td class="num r">$${Number(row.stakeable_usd || 0).toFixed(2)}</td>
-            <td class="num r">${row.apy_flexible != null ? Number(row.apy_flexible).toFixed(2) + '%' : '—'}</td>
-            <td class="num r">$${Number(row.est_year_usd || 0).toFixed(2)}</td></tr>`).join('')}</tbody></table></div>
-          <p class="small muted mt-2">Total idle <b class="num">$${Number(y.total_idle_usd || 0).toFixed(2)}</b> · est. <b class="num">$${Number(y.total_est_year_usd || 0).toFixed(2)}/yr</b> at current flexible rates. Use /stake in Telegram to act — locked terms require an explicit double-confirm showing the lock end date.</p>`;
-      }, { empty: { icon: 'icon-coin', text: 'Yield data arrives with the bot\'s hourly report (needs operator Earn credentials).' } });
+      // WEB-2: operator lock flow lives here too — step 1 picks a term,
+      // step 2 is an inline FINAL CONFIRM that names the lock END date; the
+      // gateway re-enforces both the admin role and the echoed end date.
+      const ayLock = { sel: null };
+      async function drawAYield() {
+        await renderPanel(C('ayield'), async () => {
+          const [r, lockR] = await Promise.all([
+            fetchJSON('/api/reports/yield', { timeoutMs: 12000 }),
+            fetchJSON('/api/staking/fixed', { timeoutMs: 30000 }).catch(() => null),
+          ]);
+          const y = r.data?.yield;
+          if (!y || !(y.rows || []).length) return null;
+          const lock = (lockR?.ok && lockR.data?.available) ? lockR.data : null;
+          const lockRows = lock ? Object.fromEntries(lock.rows.map(rw => [rw.coin, rw])) : {};
+          // SPOT-2: every lock term is shown with its duration — a lock is not
+          // revocable until the term ends, so term vs rate must be an explicit
+          // user choice, never a hidden "best fixed" number. For the OPERATOR
+          // the chips become step-1 buttons of the double-confirm.
+          const termChips = (row) => {
+            const lr = lockRows[row.coin];
+            if (lr && (lr.terms || []).length) {
+              return lr.terms.map(t => `<button class="btn btn--sm" type="button"
+                data-lock="${esc(JSON.stringify({ coin: lr.coin, product_id: t.product_id, days: t.days, apy: t.apy, lock_end: t.lock_end, stakeable: lr.stakeable_usd }))}"
+                title="Locked until ${esc(t.lock_end)} — funds are NOT redeemable before then">🔒${esc(t.days)}d ${Number(t.apy).toFixed(2)}%</button>`).join(' ');
+            }
+            return (row.fixed_terms || []).slice(0, 6).map(t =>
+              `<span class="badge" title="Locked for ${esc(t.days)} days — funds are NOT redeemable until the term ends">🔒${esc(t.days)}d ${Number(t.apy).toFixed(2)}%</span>`
+            ).join(' ');
+          };
+          const sel = ayLock.sel;
+          const confirmBlock = sel ? `
+            <div class="mt-3" id="ayLockConfirm" style="border:1px solid var(--down);border-radius:var(--radius-sm);padding:var(--s3)">
+              <p><b>⚠️ FINAL CONFIRM — fixed-term lock</b></p>
+              <p class="small">Lock ≈<b class="num">$${Number(sel.stakeable).toFixed(2)}</b> <b>${esc(sel.coin)}</b> @ <b class="num">${Number(sel.apy).toFixed(2)}%</b> for <b>${esc(sel.days)} days</b>.</p>
+              <p class="small"><b>⛔ NOT redeemable until ${esc(sel.lock_end)} (UTC)</b> — the funds cannot be withdrawn, traded, or used as margin before that date. The exact amount is recomputed and reserve-clamped at execution.</p>
+              <div class="row" style="gap:var(--s2);flex-wrap:wrap">
+                <input class="input" id="ayLockTotp" inputmode="numeric" maxlength="8" placeholder="2FA code (if enrolled)" autocomplete="one-time-code" style="width:11rem">
+                <button class="btn btn--primary btn--sm" id="ayLockYes" type="button">🔒 YES — lock until ${esc(sel.lock_end)}</button>
+                <button class="btn btn--sm" id="ayLockNo" type="button">Cancel</button>
+              </div>
+            </div>` : '';
+          const actNote = lock
+            ? 'Pick a 🔒 term to lock (operator) — a FINAL confirm will name the exact lock end date.'
+            : 'Use /stake in Telegram to act — locked terms require an explicit double-confirm showing the lock end date.';
+          return `<p class="muted small">Idle assets vs Bitget Earn — flexible redeems instantly; 🔒 fixed terms LOCK funds until the term ends (not revocable).</p>
+            <div class="tbl-wrap"><table class="tbl">
+            <thead><tr><th>Coin</th><th class="r">Idle</th><th class="r">Stakeable</th><th class="r">Flex APY</th><th class="r">Est/yr</th></tr></thead>
+            <tbody>${y.rows.slice(0, 10).map(row => `<tr><td><b>${esc(row.coin)}</b>${row.alt_note ? ` <span class="muted small">${esc(row.alt_note)}</span>` : ''}${(row.fixed_terms || []).length || lockRows[row.coin] ? `<br>${termChips(row)}` : ''}</td>
+              <td class="num r">$${Number(row.idle_usd || 0).toFixed(2)}</td>
+              <td class="num r">$${Number(row.stakeable_usd || 0).toFixed(2)}</td>
+              <td class="num r">${row.apy_flexible != null ? Number(row.apy_flexible).toFixed(2) + '%' : '—'}</td>
+              <td class="num r">$${Number(row.est_year_usd || 0).toFixed(2)}</td></tr>`).join('')}</tbody></table></div>
+            ${confirmBlock}
+            <p class="small muted mt-2">Total idle <b class="num">$${Number(y.total_idle_usd || 0).toFixed(2)}</b> · est. <b class="num">$${Number(y.total_est_year_usd || 0).toFixed(2)}/yr</b> at current flexible rates. ${actNote}</p>`;
+        }, { empty: { icon: 'icon-coin', text: 'Yield data arrives with the bot\'s hourly report (needs operator Earn credentials).' } });
+
+        const host = C('ayield');
+        if (!host) return;
+        host.querySelectorAll('[data-lock]').forEach(b => {
+          b.onclick = () => {
+            try { ayLock.sel = JSON.parse(b.getAttribute('data-lock')); } catch (e) { return; }
+            drawAYield().then(() => {
+              const c = document.getElementById('ayLockConfirm');
+              if (c) c.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            });
+          };
+        });
+        const no = document.getElementById('ayLockNo');
+        if (no) no.onclick = () => { ayLock.sel = null; drawAYield(); };
+        const yes = document.getElementById('ayLockYes');
+        if (yes) yes.onclick = async () => {
+          const sel = ayLock.sel;
+          if (!sel) return;
+          yes.disabled = true;
+          const r = await fetchJSON('/api/staking/fixed', {
+            method: 'POST', timeoutMs: 50000,
+            body: { coin: sel.coin, product_id: sel.product_id, days: sel.days,
+                    confirm_lock_end: sel.lock_end,
+                    totp_code: (document.getElementById('ayLockTotp')?.value || '').trim() },
+          }).catch(() => null);
+          if (r?.status === 401) { toast('Enter your 2FA code to lock funds.'); yes.disabled = false; return; }
+          if (r?.status === 409) { toast('The lock end date changed (midnight rollover) — re-showing live terms.'); ayLock.sel = null; drawAYield(); return; }
+          toast(r?.ok ? ('✅ ' + (r.data?.detail || 'Locked.')) : ('🔴 ' + (r?.data?.detail || r?.data?.error || 'Lock failed — nothing moved.')));
+          ayLock.sel = null;
+          drawAYield();
+        };
+      }
+      drawAYield();
     }
 
     // Wallet link: attach a browser wallet to THIS account so the read-only

@@ -1718,6 +1718,98 @@ async def handle_llm_ultra(request: web.Request) -> web.Response:
                              status=200 if ok else 400)
 
 
+# ── Fixed-term staking (WEB-2: operator-only, double-confirm, lock END date) ─
+#
+# The website is the primary surface, so the /stake fixed flow ships here
+# too — under the SAME hard line as Telegram: locked staking is
+# OPERATOR-only behind an explicit double-confirm that shows the lock END
+# date. The second confirm is enforced SERVER-side: the execute request
+# must echo the exact lock end date the UI displayed; if the screen went
+# stale across midnight UTC the dates diverge and the request refuses.
+
+async def handle_staking_fixed_options(request: web.Request) -> web.Response:
+    """GET /gateway/staking/fixed?telegram_id= — live lock options (ADMIN)."""
+    import asyncio
+    tg_handler = request.app["tg_handler"]
+    tg_id = str(request.query.get("telegram_id") or "").strip()
+    err = _guard_user(tg_handler, tg_id)
+    if err is not None:
+        return err
+    if not _is_admin_id(tg_handler, tg_id):
+        return web.json_response({"error": "admin_only"}, status=403)
+    client = tg_handler._yield_client()
+    if client is None:
+        return web.json_response({"available": False,
+                                  "detail": "No operator Bitget keys configured."})
+    from bot.core.yield_radar import (MIN_IDLE_USD, STAKEABLE_COINS,
+                                      build_report, lock_end_date)
+    report = await asyncio.to_thread(
+        build_report, client, tg_handler._engine_free_usdt())
+    if report.error:
+        return web.json_response({"available": False, "detail": report.error})
+    rows = []
+    for r in report.rows:
+        if (r.coin not in STAKEABLE_COINS or not r.fixed_terms
+                or r.stakeable_usd < MIN_IDLE_USD):
+            continue
+        rows.append({
+            "coin": r.coin,
+            "stakeable_usd": round(r.stakeable_usd, 2),
+            "terms": [{"days": int(t["days"]), "apy": t["apy"],
+                       "product_id": str(t["product_id"]),
+                       "lock_end": lock_end_date(t["days"])}
+                      for t in r.fixed_terms[:6]],
+        })
+    return web.json_response({
+        "available": True, "rows": rows,
+        "note": ("Locked funds are NOT redeemable, tradeable, or usable as "
+                 "margin until the term ends. The margin reserve stays free."),
+    })
+
+
+async def handle_staking_fixed_execute(request: web.Request) -> web.Response:
+    """POST /gateway/staking/fixed — the SECOND confirm executes.
+    Body: {telegram_id, coin, product_id, days, confirm_lock_end}."""
+    import asyncio
+    tg_handler = request.app["tg_handler"]
+    body = await _json_body(request)
+    tg_id = str(body.get("telegram_id") or "").strip()
+    err = _guard_user(tg_handler, tg_id)
+    if err is not None:
+        return err
+    if not _is_admin_id(tg_handler, tg_id):
+        return web.json_response({"error": "admin_only"}, status=403)
+    coin = str(body.get("coin") or "").upper().strip()
+    product_id = str(body.get("product_id") or "").strip()
+    try:
+        days = int(body.get("days"))
+    except (TypeError, ValueError):
+        return web.json_response({"error": "bad_days"}, status=400)
+    if not coin or not product_id or days <= 0:
+        return web.json_response({"error": "bad_request"}, status=400)
+    from bot.core.yield_radar import execute_stake_fixed, lock_end_date
+    expected_end = lock_end_date(days)
+    if str(body.get("confirm_lock_end") or "").strip() != expected_end:
+        # The confirm MUST restate the lock end date the user saw. A stale
+        # screen (midnight rollover) re-shows rather than silently locking
+        # to a different date than the one confirmed.
+        return web.json_response(
+            {"error": "lock_end_mismatch", "expected_lock_end": expected_end},
+            status=409)
+    client = tg_handler._yield_client()
+    if client is None:
+        return web.json_response({"error": "no_operator_keys"}, status=503)
+    res = await asyncio.to_thread(
+        execute_stake_fixed, client, coin, product_id, days,
+        tg_handler._engine_free_usdt())
+    audit(system_log, f"Earn FIXED lock {coin} {days}d via web double-confirm",
+          action="earn_action_fixed", result="OK" if res.ok else "FAIL",
+          data={"user": tg_id, "coin": coin, "days": days,
+                "detail": res.message})
+    return web.json_response({"ok": res.ok, "detail": res.message},
+                             status=200 if res.ok else 400)
+
+
 # ── App factory ──────────────────────────────────────────────────────────────
 
 def build_gateway(engine, tg_handler) -> web.Application:
@@ -1739,6 +1831,9 @@ def build_gateway(engine, tg_handler) -> web.Application:
     app.router.add_get("/share-card", handle_share_card)
     app.router.add_get("/public/agent/{address}", handle_agent_card_public)
     app.router.add_post("/idleyield", handle_idle_yield)
+    # Fixed-term staking (WEB-2): operator-only, double-confirm w/ lock end.
+    app.router.add_get("/staking/fixed", handle_staking_fixed_options)
+    app.router.add_post("/staking/fixed", handle_staking_fixed_execute)
     # LLM connect (WEB-1): per-user BYOK key + admin ULTRA toggle.
     app.router.add_get("/llm", handle_llm_status)
     app.router.add_post("/llm", handle_llm_set)
