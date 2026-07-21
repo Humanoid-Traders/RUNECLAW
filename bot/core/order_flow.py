@@ -151,6 +151,22 @@ class OrderFlowConfig:
     # (dead) 0.03 scale so confluence is byte-identical until enabled.
     funding_vote_fixed_scale: bool = _env_bool("OF_FUNDING_VOTE_FIXED_SCALE", True)
 
+    # QC-6: the REST CVD-price divergence fallback compared raw WINDOW deltas
+    # (a magnitude test) instead of the cumulative-CVD series the WS path
+    # already uses correctly via _series_divergence. ON makes the REST fallback
+    # detect divergence on the true cumulative structure, matching the WS path.
+    # Live-only path (backtests use pre-recorded signals), so no benchmark
+    # impact either way; the flag exists for live A/B and instant rollback.
+    rest_cvd_series_divergence: bool = _env_bool("OF_REST_CVD_SERIES_DIVERGENCE", True)
+
+    # QC-6: the squeeze_building OI vote was a full-strength ±1 knife-edge
+    # exactly at the exchange baseline funding rate (0.01%), and voted a diluting
+    # 0.0 when funding was missing. ON grades the vote by DISTANCE from baseline
+    # and SKIPS entirely (rather than diluting) when direction is undeterminable.
+    # Default OFF: this changes vote magnitude, so it's A/B-gated per §4 and
+    # keeps recorded-order-flow backtests byte-identical until enabled.
+    squeeze_graduated_vote: bool = _env_bool("OF_SQUEEZE_GRADUATED_VOTE", False)
+
 
 # ── Output schema ──────────────────────────────────────────────────────────
 
@@ -535,8 +551,17 @@ class OrderFlowAnalyzer:
             last_price = float(trades[-1].get("price") or 0) if trades else 0.0
             if last_price > 0:
                 price_hist.append(last_price)
-            sig.cvd_price_divergence = self._detect_cvd_divergence(
-                list(hist), list(price_hist))
+            if self.config.rest_cvd_series_divergence:
+                # QC-6: detect on the CUMULATIVE CVD series (matches the WS
+                # path's _series_divergence), not raw window deltas. np.cumsum
+                # of the kept per-call deltas is the same cumulative structure
+                # whose last value is sig.cvd_cumulative_usd.
+                _cum_series = np.cumsum(list(hist)).tolist()
+                sig.cvd_price_divergence = self._series_divergence(
+                    _cum_series, list(price_hist))
+            else:
+                sig.cvd_price_divergence = self._detect_cvd_divergence(
+                    list(hist), list(price_hist))
 
         # WS tape CVD override (audit fix): when fresh trade-channel data
         # exists, the TRUE deduped cumulative delta replaces the REST
@@ -892,22 +917,35 @@ class OrderFlowAnalyzer:
 
         # OI-Price divergence: squeeze and demand detection
         if sig.oi_price_divergence != "none":
+            _oi_vote: Optional[float] = None
             if sig.oi_price_divergence == "genuine_demand":
                 # OI + price both rising — confirms the move
-                votes.append(1.0)
+                _oi_vote = 1.0
             elif sig.oi_price_divergence == "leverage_unwind":
                 # OI + price both falling — capitulation, contrarian bullish
-                votes.append(0.5)
+                _oi_vote = 0.5
             elif sig.oi_price_divergence == "squeeze_building":
-                # OI rising, price flat — direction depends on funding
-                # If funding is very positive, longs are crowded → lean bearish
-                # If funding is negative, shorts are crowded → lean bullish
+                # OI rising, price flat — direction depends on funding.
+                # Positive funding → longs crowded → lean bearish; negative →
+                # shorts crowded → lean bullish.
                 if sig.funding_rate is not None:
-                    votes.append(-1.0 if sig.funding_rate > 0.0001 else 1.0)
-                else:
-                    votes.append(0.0)  # can't determine direction without funding
-            weights.append(0.7 * conf)
-            labels.append("of_oi_price_div")
+                    if _env_bool("OF_SQUEEZE_GRADUATED_VOTE", False):
+                        # QC-6: grade by distance from the 0.01% baseline instead
+                        # of a full-strength ±1 knife-edge; proximity to baseline
+                        # yields a proportionally small vote.
+                        _scale = funding_extreme if funding_extreme and funding_extreme > 0 else 0.0005
+                        _oi_vote = float(np.clip(
+                            -(sig.funding_rate - 0.0001) / _scale, -1.0, 1.0))
+                    else:
+                        _oi_vote = -1.0 if sig.funding_rate > 0.0001 else 1.0
+                elif not _env_bool("OF_SQUEEZE_GRADUATED_VOTE", False):
+                    # Legacy: a diluting 0.0 (kept for byte-identity when OFF).
+                    _oi_vote = 0.0
+                # else: funding unknown + graduated ON → SKIP (don't dilute).
+            if _oi_vote is not None:
+                votes.append(_oi_vote)
+                weights.append(0.7 * conf)
+                labels.append("of_oi_price_div")
 
         return votes, weights, labels
 
