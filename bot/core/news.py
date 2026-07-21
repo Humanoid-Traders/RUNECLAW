@@ -195,6 +195,54 @@ def standdown_for_holdings(
     return recs
 
 
+_IMPACT_ICON = {Impact.HIGH: "🔴", Impact.MEDIUM: "🟠", Impact.LOW: "⚪"}
+
+
+def _fmt_age(sec: float) -> str:
+    sec = int(sec)
+    if sec < 90:
+        return f"{max(sec, 1)}s ago"
+    if sec < 5400:
+        return f"{sec // 60}m ago"
+    if sec < 172800:
+        return f"{sec // 3600}h ago"
+    return f"{sec // 86400}d ago"
+
+
+def _esc(s: str) -> str:
+    return (s or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def render_news_digest(recent, standdown_recs, now, limit=6) -> str:
+    """Pure Telegram-HTML digest: stand-down nudges for held positions first
+    (advisory), then the freshest headlines with their impact flag. No I/O."""
+    lines = ["📰 <b>News radar</b>"]
+
+    if standdown_recs:
+        lines.append("\n⚠️ <b>On your positions:</b>")
+        for r in standdown_recs[:5]:
+            why = ", ".join(r.get("reasons", [])[:3])
+            lines.append(
+                f"🔴 <b>{_esc(r['symbol'])}</b> — {_esc(r['headline'])[:120]}"
+                + (f"\n    <i>{_esc(why)}</i>" if why else "")
+                + f" · {_fmt_age(r.get('age_sec', 0))}")
+        lines.append("<i>Advisory only — review and decide; nothing was traded.</i>")
+
+    items = list(recent)[:limit]
+    if items:
+        lines.append("\n<b>Latest headlines:</b>")
+        for it in items:
+            icon = _IMPACT_ICON.get(it.impact, "⚪")
+            syms = (" · " + "/".join(it.symbols)) if it.symbols else ""
+            lines.append(
+                f"{icon} {_esc(it.title)[:130]}"
+                f"\n    <i>{_esc(it.source)}{syms} · {_fmt_age(it.age_sec(now))}</i>")
+    elif not standdown_recs:
+        lines.append("\nNo headlines yet — the radar fills on the next refresh.")
+
+    return "\n".join(lines)
+
+
 def parse_rss(xml_text: str, source: str, symbols: Iterable[str], now: float) -> list[NewsItem]:
     """Parse an RSS/Atom document into scored NewsItems. Tolerant of the two
     common shapes (RSS <item> and Atom <entry>); returns [] on any parse error

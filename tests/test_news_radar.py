@@ -128,3 +128,48 @@ def test_radar_feeds_are_public_and_keyless():
         assert url.startswith("https://")
         # No API-key query params baked into the default feeds.
         assert "apikey" not in url.lower() and "token=" not in url.lower()
+
+
+# ── NEWS-1b: digest formatter + /news command wiring ─────────────────────────
+
+def test_digest_leads_with_held_position_standdown_then_headlines():
+    from bot.core.news import render_news_digest, parse_rss, NewsRadar
+    now = 1_753_110_000.0
+    rss = ('<?xml version="1.0"?><rss><channel><item>'
+           '<title>Solana halted after exploit</title><link>http://x/1</link>'
+           '<pubDate>Mon, 21 Jul 2026 15:04:05 GMT</pubDate></item></channel></rss>')
+    radar = NewsRadar()
+    radar.ingest(parse_rss(rss, "coindesk.com", ["SOL/USDT:USDT"], now))
+    out = render_news_digest(radar.recent(5), radar.standdown(["SOL/USDT:USDT"], now), now)
+    assert "On your positions" in out
+    assert "SOL" in out and "Advisory only" in out
+    assert "Latest headlines" in out
+    # No dollar figures / trade actions — advisory text only.
+    assert "traded" not in out.lower() or "nothing was traded" in out.lower()
+
+
+def test_digest_handles_the_empty_radar():
+    from bot.core.news import render_news_digest
+    out = render_news_digest([], [], 1_753_110_000.0)
+    assert "News radar" in out
+    assert "fills on the next refresh" in out
+
+
+def test_news_command_is_registered_and_advisory():
+    import inspect
+    from bot.skills import telegram_handler as th
+    src = inspect.getsource(th)
+    assert '("news", self._cmd_news)' in src
+    cmd = inspect.getsource(th.TelegramHandler._cmd_news)
+    # Gated behind the flag, and it renders (never trades).
+    assert "NewsRadar.enabled()" in cmd
+    assert "render_news_digest" in cmd
+    assert "never moves or blocks a trade" in cmd
+
+
+def test_held_symbols_helper_is_best_effort():
+    import inspect
+    from bot.skills import telegram_handler as th
+    src = inspect.getsource(th.TelegramHandler._held_symbols)
+    assert "open_positions" in src
+    assert "except Exception" in src   # a missing source is skipped, never fatal

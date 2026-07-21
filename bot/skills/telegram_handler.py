@@ -316,6 +316,7 @@ class TelegramHandler:
             ("rejected", self._cmd_rejected), ("halt", self._cmd_halt),
             ("reset", self._cmd_reset), ("macro", self._cmd_macro),
             ("whynot", self._cmd_whynot),
+            ("news", self._cmd_news),
             ("alpha", self._cmd_alpha),
             ("gates", self._cmd_gates), ("readiness", self._cmd_readiness),
             ("backtest", self._cmd_backtest), ("walkforward", self._cmd_walkforward),
@@ -6708,6 +6709,65 @@ class TelegramHandler:
         text = body + self._footer()
         await self._send(update, text, reply_markup=_KB_DASH)
         self._last_pane[user_id] = pane
+
+    def _held_symbols(self) -> list:
+        """Base symbols the operator currently holds (paper + live), de-duped.
+        Best-effort — a source that isn't present is simply skipped."""
+        syms: list = []
+        seen: set = set()
+
+        def _add(s):
+            s = (s or "").strip()
+            if s and s not in seen:
+                seen.add(s)
+                syms.append(s)
+
+        try:
+            for p in getattr(getattr(self.engine, "portfolio", None), "open_positions", []) or []:
+                _add(getattr(p, "symbol", None) or getattr(p, "asset", None))
+        except Exception:
+            pass
+        try:
+            le = getattr(self.engine, "live_executor", None)
+            for p in (getattr(le, "open_positions", []) if le else []) or []:
+                _add(getattr(p, "symbol", None))
+        except Exception:
+            pass
+        return syms
+
+    @guard("status")
+    async def _cmd_news(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """NEWS-1b: /news — public-RSS headline radar with high-impact alerts on
+        the positions you hold. Advisory only; never moves or blocks a trade."""
+        import time as _t
+
+        from bot.core.news import NewsRadar, render_news_digest
+        if not NewsRadar.enabled():
+            await self._send(update,
+                "📰 <b>News radar is off.</b>\n"
+                "Set <code>NEWS_RADAR_ENABLED=1</code> to pull public crypto "
+                "headlines (CoinDesk / Cointelegraph / Decrypt RSS — no API key) "
+                "and get high-impact alerts on your open positions.\n\n"
+                "<i>Advisory only — news never moves or blocks a trade.</i>")
+            return
+        radar = getattr(self, "_news_radar", None)
+        if radar is None:
+            radar = NewsRadar()
+            self._news_radar = radar
+        try:
+            await update.effective_chat.send_chat_action(ChatAction.TYPING)
+        except Exception:
+            pass
+        held = self._held_symbols()
+        watch = held or ["BTC/USDT", "ETH/USDT", "SOL/USDT", "XRP/USDT"]
+        try:
+            await radar.refresh(symbols=watch)
+        except Exception as exc:
+            system_log.debug("news refresh failed: %s", exc)
+        now = _t.time()
+        text = render_news_digest(
+            radar.recent(8), radar.standdown(held, now) if held else [], now)
+        await self._send(update, text)
 
     @guard("scan")
     async def _cmd_scan(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
