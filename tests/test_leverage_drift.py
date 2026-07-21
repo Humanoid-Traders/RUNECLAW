@@ -84,7 +84,8 @@ async def test_unverifiable_leverage_is_warned_once(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_verified_match_stays_quiet(tmp_path):
+async def test_verified_match_stays_quiet(tmp_path, monkeypatch):
+    monkeypatch.delenv("LEVERAGE_FORCE_PER_SIDE", raising=False)
     ex = _executor(tmp_path)
     target = ex._compute_target_leverage("PENGU/USDT:USDT")
     set_lev = AsyncMock()
@@ -93,8 +94,25 @@ async def test_verified_match_stays_quiet(tmp_path):
     ex._get_exchange = AsyncMock(return_value=exchange)
 
     await ex._ensure_leverage("PENGU/USDT:USDT")
-    assert set_lev.await_count == 1          # no retries needed
+    # Bare set + both holdSides applied proactively so the target STICKS (a bare
+    # 200 doesn't guarantee per-side application). No mismatch retry, no warning.
+    assert set_lev.await_count == 3
+    sides = [c.kwargs.get("params", {}).get("holdSide") for c in set_lev.await_args_list]
+    assert sides[0] is None and set(sides[1:]) == {"long", "short"}
     assert ex._lev_unverified_warned == set()
+
+
+@pytest.mark.asyncio
+async def test_per_side_can_be_disabled(tmp_path, monkeypatch):
+    # Escape hatch: LEVERAGE_FORCE_PER_SIDE=0 restores the old set-once path.
+    monkeypatch.setenv("LEVERAGE_FORCE_PER_SIDE", "0")
+    ex = _executor(tmp_path)
+    target = ex._compute_target_leverage("PENGU/USDT:USDT")
+    set_lev = AsyncMock()
+    fetch_lev = AsyncMock(return_value={"longLeverage": str(target)})
+    ex._get_exchange = AsyncMock(return_value=_mock_exchange(set_lev, fetch_lev))
+    await ex._ensure_leverage("PENGU/USDT:USDT")
+    assert set_lev.await_count == 1
 
 
 @pytest.mark.asyncio

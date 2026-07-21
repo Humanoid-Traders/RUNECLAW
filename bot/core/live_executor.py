@@ -751,12 +751,17 @@ class LiveExecutor:
             _lev_set_ok = True
         except Exception as exc:
             logger.warning("Leverage set failed for %s (may use exchange default): %s", symbol, exc)
-            # Bitget isolated margin can reject a bare set-leverage (holdSide
-            # required). Retry per-side IMMEDIATELY — previously this retry
-            # only ran when the verification read below succeeded, so a
-            # symbol whose fetch_leverage also failed silently traded at
-            # Bitget's own 20x default for never-configured symbols (live
-            # incident: XPT/FIL opened 20x while every card said 10x).
+
+        # Make the target actually STICK. Bitget isolated margin holds leverage
+        # PER SIDE, and a bare set_leverage can return 200 WITHOUT applying the
+        # per-side value — that is how a live position opened at Bitget's sticky
+        # 20x default even though the bare set "succeeded" (2026-07-21, BTC 20x
+        # while the card said 5x). Always set both holdSides explicitly so the
+        # intended leverage is applied on every path Bitget accepts, not only
+        # when the bare call raised. Best-effort: a harmless no-op on venues /
+        # margin modes that don't take holdSide (exceptions swallowed). Set
+        # LEVERAGE_FORCE_PER_SIDE=0 to restore the old set-once behavior.
+        if os.environ.get("LEVERAGE_FORCE_PER_SIDE", "1").strip().lower() not in ("0", "false", "no"):
             for _side in ("long", "short"):
                 try:
                     await exchange.set_leverage(
