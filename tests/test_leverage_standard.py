@@ -77,8 +77,25 @@ def test_runtime_override_feeds_the_target_and_is_clamped(tmp_path):
 # ── 3. fail-closed on unconfirmed leverage ───────────────────────────────────
 
 @pytest.mark.asyncio
-async def test_unverified_leverage_aborts_the_order(tmp_path, monkeypatch):
+async def test_unverified_leverage_proceeds_by_default(tmp_path, monkeypatch):
+    # Operator directive 2026-07-21 ("I can't open trades"): default fail-OPEN
+    # so trades open; the STOP-LOSS is the risk backstop. Even when set fails
+    # AND the read-back fails, the order PROCEEDS with a warning (not aborts).
     monkeypatch.delenv("LEVERAGE_FAIL_OPEN", raising=False)
+    monkeypatch.delenv("LEVERAGE_FAIL_CLOSED", raising=False)
+    ex = _executor(tmp_path)
+    set_lev = AsyncMock(side_effect=Exception("40019 holdSide cannot be empty"))
+    fetch_lev = AsyncMock(side_effect=Exception("fetch_leverage unavailable"))
+    ex._get_exchange = AsyncMock(return_value=_mock_exchange(set_lev, fetch_lev))
+    await ex._ensure_leverage("BCH/USDT:USDT")   # no raise — proceeds
+    assert "BCH/USDT:USDT" in ex._lev_unverified_warned
+
+
+@pytest.mark.asyncio
+async def test_strict_mode_still_aborts_unverified_leverage(tmp_path, monkeypatch):
+    # The strict standard is opt-in: LEVERAGE_FAIL_CLOSED=1 restores the abort.
+    monkeypatch.delenv("LEVERAGE_FAIL_OPEN", raising=False)
+    monkeypatch.setenv("LEVERAGE_FAIL_CLOSED", "1")
     ex = _executor(tmp_path)
     set_lev = AsyncMock(side_effect=Exception("40019 holdSide cannot be empty"))
     fetch_lev = AsyncMock(side_effect=Exception("fetch_leverage unavailable"))
@@ -132,11 +149,12 @@ async def test_successful_set_opens_even_when_readback_unparseable(tmp_path, mon
 
 
 @pytest.mark.asyncio
-async def test_failed_set_and_unparseable_readback_still_aborts(tmp_path, monkeypatch):
-    """The genuine 20x danger is UNCHANGED: when set_leverage fails AND the
-    read-back can't confirm, the order would trade at the sticky default — that
-    still fails closed."""
+async def test_failed_set_and_unparseable_readback_aborts_in_strict_mode(tmp_path, monkeypatch):
+    """In opt-in strict mode, the genuine 20x danger still fails closed: set
+    fails AND read-back can't confirm → abort rather than trade at the sticky
+    default. (The default posture is fail-open — covered above.)"""
     monkeypatch.delenv("LEVERAGE_FAIL_OPEN", raising=False)
+    monkeypatch.setenv("LEVERAGE_FAIL_CLOSED", "1")
     ex = _executor(tmp_path)
     set_lev = AsyncMock(side_effect=Exception("40019 holdSide cannot be empty"))
     fetch_lev = AsyncMock(return_value={"leverage": None, "info": {}})

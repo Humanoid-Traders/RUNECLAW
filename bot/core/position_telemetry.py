@@ -29,6 +29,32 @@ def initial_risk(entry_price: float, stop_loss: float) -> float:
     return abs(entry_price - stop_loss)
 
 
+def r_denominator(pos) -> float:
+    """The 1R denominator for R-multiple math on a LIVE position.
+
+    Uses the risk taken AT ENTRY, not entry-minus-the-live-stop. Once a stop
+    ratchets to breakeven, ``entry - current_stop`` collapses toward zero and a
+    genuine winner reads as R≈0 — which makes time/hold exits force-close it
+    (audit exits, 2026-07-21). ``trailing_state["initial_risk"]`` is the value
+    frozen when the trail was armed; fall back to entry→current-stop only when
+    it is missing (never worse than the old behavior). Pure: reads attributes,
+    no I/O.
+    """
+    st = getattr(pos, "trailing_state", None) or {}
+    try:
+        ir = float(st.get("initial_risk", 0) or 0)
+    except (TypeError, ValueError):
+        ir = 0.0
+    if ir > 0:
+        return ir
+    try:
+        entry = float(getattr(pos, "entry_price", 0) or 0)
+        stop = float(getattr(pos, "stop_loss", 0) or 0)
+    except (TypeError, ValueError):
+        return 0.0
+    return abs(entry - stop)
+
+
 def profit_in_r(direction: str, entry_price: float, mark: float, init_risk: float) -> float:
     """Current favorable profit expressed in R-multiples (negative = underwater)."""
     if init_risk <= 0:

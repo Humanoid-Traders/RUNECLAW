@@ -98,9 +98,11 @@ async def test_verified_match_stays_quiet(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_verified_mismatch_still_aborts_after_retry(tmp_path):
-    """Existing C2-04 abort must survive the refactor: exchange stuck on
-    the wrong leverage after the per-side retry -> order aborted."""
+async def test_verified_mismatch_aborts_after_retry_in_strict_mode(tmp_path, monkeypatch):
+    """The C2-04 confirmed-mismatch abort is now opt-in (default fail-open, SL
+    is the backstop — operator 2026-07-21). Under LEVERAGE_FAIL_CLOSED=1, an
+    exchange stuck on the wrong leverage after the per-side retry still aborts."""
+    monkeypatch.setenv("LEVERAGE_FAIL_CLOSED", "1")
     ex = _executor(tmp_path)
     set_lev = AsyncMock()                    # succeeds but doesn't stick
     fetch_lev = AsyncMock(return_value={"longLeverage": "20"})
@@ -111,6 +113,20 @@ async def test_verified_mismatch_still_aborts_after_retry(tmp_path):
     assert target != 20                      # config default is not 20
     with pytest.raises(RuntimeError, match="Cannot set leverage"):
         await ex._ensure_leverage("XPT/USDT:USDT")
+
+
+@pytest.mark.asyncio
+async def test_verified_mismatch_proceeds_by_default(tmp_path, monkeypatch):
+    """Default posture: a confirmed 20x mismatch proceeds with a loud warning
+    rather than blocking the trade — the SL caps the downside."""
+    monkeypatch.delenv("LEVERAGE_FAIL_OPEN", raising=False)
+    monkeypatch.delenv("LEVERAGE_FAIL_CLOSED", raising=False)
+    ex = _executor(tmp_path)
+    set_lev = AsyncMock()
+    fetch_lev = AsyncMock(return_value={"longLeverage": "20"})
+    exchange = _mock_exchange(set_lev, fetch_lev)
+    ex._get_exchange = AsyncMock(return_value=exchange)
+    await ex._ensure_leverage("XPT/USDT:USDT")   # no raise — proceeds
 
 
 # ── post-fill true-up wiring ─────────────────────────────────────────

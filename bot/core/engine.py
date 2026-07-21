@@ -3756,23 +3756,25 @@ class RuneClawEngine:
         # Skip price drift check for manual trades — user specified exact entry
         is_manual = getattr(idea, 'source', '') == 'manual'
 
-        # Manual-ATR ordering fix: a manual /trade (telegram_handler) registers a
-        # pending idea but NEVER populates _pending_atr, so stored_atr is None
-        # here. The risk re-check below runs the volatility guard, which
-        # fail-closes on a missing ATR ("VOLATILITY: ATR data unavailable") and
-        # REJECTS the trade — BEFORE the synthetic-ATR fallback further down (at
-        # execution time) ever runs. Derive the synthetic ATR from the SL
-        # distance (the stop the user themselves set) HERE, so a manual trade
-        # with valid explicit levels passes the re-check instead of being
-        # rejected as "ATR data unavailable". Mirrors the executor-stage fallback
-        # (kept below as defense-in-depth; it's a no-op once this sets stored_atr).
-        if is_manual and (not stored_atr or stored_atr <= 0):
+        # Synthetic-ATR fallback (generalized 2026-07-21, live "can't open
+        # trades" incident). A pending idea sometimes reaches the re-check with
+        # stored_atr None — a manual /trade never populates _pending_atr, and a
+        # scan idea's cached ATR can expire between the card and the tap. The
+        # volatility guard then fail-closes ("VOLATILITY: ATR data unavailable")
+        # and REJECTS a trade that carries a perfectly good stop (GOOGL SHORT,
+        # 2026-07-21). Derive the ATR from the SL distance — the stop that is
+        # ALREADY the risk backstop — so the guard evaluates a real number
+        # instead of rejecting. The guard still runs: an insanely wide stop
+        # still trips the ATR% ceiling. Applies to any trade with valid levels,
+        # not just manual ones. (Mirrors the executor-stage fallback below.)
+        if (not stored_atr or stored_atr <= 0):
             _sl = getattr(idea, 'stop_loss', 0) or 0
             if idea.entry_price > 0 and _sl > 0:
                 stored_atr = abs(idea.entry_price - _sl)
                 audit(trade_log,
-                      f"Manual trade: synthetic ATR={stored_atr:.4f} from SL distance (pre-recheck)",
-                      action="manual_atr_synthetic", result="OK")
+                      f"Synthetic ATR={stored_atr:.4f} from SL distance (pre-recheck, "
+                      f"{'manual' if is_manual else 'signal'})",
+                      action="synthetic_atr_from_sl", result="OK")
 
         try:
             idea_category = _classify_symbol(idea.asset)
@@ -4658,11 +4660,15 @@ class RuneClawEngine:
                 hold_h = (datetime.now(UTC) - pos.opened_at).total_seconds() / 3600.0
                 candles_held = int(hold_h)  # 1H candles
                 if pos.direction == "LONG":
-                    risk = pos.entry_price - pos.stop_loss
                     pnl_raw = price - pos.entry_price
                 else:
-                    risk = pos.stop_loss - pos.entry_price
                     pnl_raw = pos.entry_price - price
+                # R-multiple denominator is the INITIAL risk taken at entry, not
+                # the live ratcheted stop: a winner whose stop has trailed to
+                # breakeven has entry-minus-stop ≈ 0, which read as R=0 and made
+                # the time/hold exits below force-close a real runner.
+                from bot.core.position_telemetry import r_denominator
+                risk = r_denominator(pos)
                 r_mult = pnl_raw / risk if risk > 0 else 0.0
 
                 sig = getattr(pos, "signal_type", "momentum_confluence")
