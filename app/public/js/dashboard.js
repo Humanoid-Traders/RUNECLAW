@@ -439,6 +439,7 @@
     container.insertAdjacentHTML('beforeend', `
       <div class="stack">
         <section class="panel panel--primary" id="p-hero"><div id="c-hero"><div class="skel"></div><div class="skel"></div></div></section>
+        ${LOGGED_IN ? `<section class="panel" id="p-cmd" style="padding-top:var(--s3);padding-bottom:var(--s3)"><div id="c-cmd"><div class="skel"></div></div></section>` : ''}
         <section class="panel" id="p-next"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-rocket"></use></svg>Getting started</h2><div id="c-next"><div class="skel"></div></div></section>
         ${LOGGED_IN ? `<section class="panel" id="p-agent"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-sparkle"></use></svg>Your agent
           <span class="right muted small">what it's doing for you</span></h2><div id="c-agent"><div class="skel"></div></div></section>` : ''}
@@ -504,6 +505,40 @@
     }, { empty: { text: 'No portfolio data yet.' } });
 
     if (LOGGED_IN) {
+      // Mission-control command bar: a one-glance status strip of the things
+      // that matter right now — mode, agent stance, open positions, ⚠️ how many
+      // are UNPROTECTED (no exchange stop), today's PnL, and whether trading is
+      // paused. Each chip deep-links to where you act on it. Reads live sources
+      // and auto-refreshes with the home view on portfolio/scan/trade SSE.
+      renderPanel(C('cmd'), async () => {
+        const [pf, posR, ctlR, scanR] = await Promise.all([
+          getPortfolio(),
+          fetchJSON('/api/positions', { timeoutMs: 12000 }).catch(() => null),
+          fetchJSON('/api/controls/status', { timeoutMs: 10000 }).catch(() => null),
+          getScan().catch(() => null),
+        ]);
+        const pos = posR && posR.ok ? posR.data : null;
+        const openN = (pos?.positions || pf?.open_positions || []).length;
+        const unp = pos?.unprotected_count || 0;
+        const mode = (pf?.mode) || (pos?.live ? 'LIVE' : 'PAPER');
+        const paused = !!ctlR?.data?.paused;
+        const stance = scanR?.circuit_breaker?.strategy_mode || null;
+        const daily = pf?.daily_pnl;
+        const chip = (href, k, v, cls) => {
+          const inner = `<span class="mc-k">${k}</span>${v}`;
+          return href ? `<a class="mc-chip${cls ? ' ' + cls : ''}" href="${href}">${inner}</a>`
+            : `<div class="mc-chip${cls ? ' ' + cls : ''}">${inner}</div>`;
+        };
+        const cells = [];
+        cells.push(chip('#portfolio', 'Mode', `<span class="chip ${mode === 'LIVE' ? 'chip--live' : ''}">${mode === 'LIVE' ? 'LIVE' : 'PAPER'}</span>`));
+        if (stance) cells.push(chip('#engine', 'Stance', `<b>${esc(String(stance))}</b>`));
+        cells.push(chip('#portfolio', 'Open', `<b>${openN}</b>`));
+        if (unp > 0) cells.push(chip('#portfolio', '⚠️ Unprotected', `<b>${unp}</b>`, 'mc-chip--alert'));
+        if (daily != null) cells.push(chip(null, 'Today', `<b class="num ${pnlClass(daily)}">${signed(daily)}</b>`));
+        if (paused) cells.push(chip('#account/actl', '', `<span class="chip chip--warn">Paused</span>`));
+        return `<div class="mc-bar">${cells.join('')}</div>`;
+      }, { empty: { text: '' } });
+
       // The Agent Letter — weekly fund-style letter from recorded data.
       const letterHtml = (letter) => {
         const secs = (letter.sections || []).map(s =>
@@ -651,10 +686,13 @@
 
     renderPanel(C('hpos'), async () => {
       if (!LOGGED_IN) return loginGate('Log in to see your open positions.');
-      const pf = await getPortfolio();
-      const open = pf?.open_positions || [];
-      if (!open.length) return null;
-      return posTable(open.slice(0, 6));
+      // Show positions WITH their stop-loss protection status (🛡️ on exchange /
+      // 🤖 bot-managed / ⚠️ unprotected) — the same safety truth as Portfolio,
+      // capped to the top few with a link to the full view.
+      const r = await fetchJSON('/api/positions', { timeoutMs: 15000 });
+      const d = r.ok ? r.data : null;
+      if (!d || !(d.positions || []).length) return null;
+      return slPositionsHtml(d, { limit: 5 });
     }, { empty: { icon: 'icon-target', text: 'No open positions. The Trade view has a full order ticket.', cta: { label: 'Open the trade ticket', href: '#trade' } } });
 
     renderPanel(C('next'), async () => {
@@ -756,6 +794,42 @@
           <td data-label="Stop / Target" class="r num muted">${fmtPrice(p.stop_loss)} / ${fmtPrice(p.take_profit)}</td>
           <td data-label="Size" class="r num">${fmtMoney(p.size_usd, 0)}</td>
         </tr>`).join('')}</tbody></table></div>`;
+  }
+
+  // Shared: open positions rendered with STOP-LOSS PROTECTION TRUTH (the /api/
+  // positions payload) — a protection banner (🛡️ all protected / ⚠️ N without an
+  // exchange stop / paper bot-managed) plus per-position rows with a per-stop
+  // chip. Used by BOTH the Home command center and the Portfolio view so the two
+  // read identically. Returns '' for an empty book. `opts.limit` caps rows and
+  // adds a "+N more →" link to the full Portfolio view.
+  function slPositionsHtml(d, opts) {
+    opts = opts || {};
+    const rows = (d && d.positions) || [];
+    if (!rows.length) return '';
+    const prot = d.protected_count || 0, unp = d.unprotected_count || 0;
+    let banner;
+    if (d.live && unp > 0) banner = `<div class="lpos-alert lpos-alert--bad">⚠️ <b>${unp} live position${unp === 1 ? '' : 's'} without an exchange stop.</b> The bot keeps re-arming the stop, but until it's placed the exchange itself won't auto-close it. Review below.</div>`;
+    else if (d.live) banner = `<div class="lpos-alert lpos-alert--ok">🛡️ All ${prot} live position${prot === 1 ? '' : 's'} have their stop-loss on the exchange.</div>`;
+    else banner = `<div class="lpos-alert">Paper — stops are bot-managed in-sim (no exchange order). Go live to place real exchange stops.</div>`;
+    const shown = opts.limit ? rows.slice(0, opts.limit) : rows;
+    const body = shown.map((p) => {
+      const dist = (p.sl_dist_pct != null && p.sl_dist_pct > 0) ? ` <span class="muted small">(${p.sl_dist_pct}% away)</span>` : '';
+      let chip;
+      if (p.unprotected) chip = `<span class="chip chip--down">⚠️ unprotected</span>`;
+      else if (p.sl_order === 'exchange') chip = `<span class="chip chip--up">🛡️ on exchange</span>`;
+      else chip = `<span class="chip">🤖 bot-managed</span>`;
+      const lev = p.leverage ? ` · <span class="muted small">${p.leverage}×</span>` : '';
+      return `<div class="lpos-item">
+        <div class="row" style="justify-content:space-between;gap:var(--s2);flex-wrap:wrap">
+          <div><b>${esc(p.pair || String(p.symbol || '').split('/')[0])}</b> ${dirChip(p.direction)}${lev}</div>
+          ${chip}
+        </div>
+        <div class="small muted">Entry ${fmtPrice(p.entry_price)} · SL ${fmtPrice(p.stop_loss)}${dist} · TP ${fmtPrice(p.take_profit)} · ${fmtMoney(p.size_usd, 0)}</div>
+      </div>`;
+    }).join('');
+    const more = (opts.limit && rows.length > opts.limit)
+      ? `<div class="small muted" style="padding-top:var(--s2)"><a href="#portfolio">+${rows.length - opts.limit} more →</a></div>` : '';
+    return banner + body + more;
   }
 
   /* ═══════════════ MARKETS ═══════════════ */
@@ -2178,33 +2252,8 @@
       const r = await fetchJSON('/api/positions', { timeoutMs: 15000 });
       const d = r.ok ? r.data : null;
       if (!d) return null;
-      const rows = d.positions || [];
-      if (!rows.length) return `<p class="small muted">No open positions right now. When the agent opens one, its stop-loss protection status shows here.</p>`;
-      const prot = d.protected_count || 0, unp = d.unprotected_count || 0;
-      let banner = '';
-      if (d.live && unp > 0) {
-        banner = `<div class="lpos-alert lpos-alert--bad">⚠️ <b>${unp} live position${unp === 1 ? '' : 's'} without an exchange stop.</b> The bot keeps watching to re-arm the stop, but until it's placed the exchange itself won't auto-close it. Review below.</div>`;
-      } else if (d.live) {
-        banner = `<div class="lpos-alert lpos-alert--ok">🛡️ All ${prot} live position${prot === 1 ? '' : 's'} have their stop-loss on the exchange.</div>`;
-      } else {
-        banner = `<div class="lpos-alert">Paper — stops are bot-managed in-sim (no exchange order). Go live to place real exchange stops.</div>`;
-      }
-      const body = rows.map((p) => {
-        const dist = (p.sl_dist_pct != null && p.sl_dist_pct > 0) ? ` <span class="muted small">(${p.sl_dist_pct}% away)</span>` : '';
-        let chip;
-        if (p.unprotected) chip = `<span class="chip chip--down">⚠️ unprotected</span>`;
-        else if (p.sl_order === 'exchange') chip = `<span class="chip chip--up">🛡️ on exchange</span>`;
-        else chip = `<span class="chip">🤖 bot-managed</span>`;
-        const lev = p.leverage ? ` · <span class="muted small">${p.leverage}×</span>` : '';
-        return `<div class="lpos-item">
-          <div class="row" style="justify-content:space-between;gap:var(--s2);flex-wrap:wrap">
-            <div><b>${esc(p.pair || String(p.symbol || '').split('/')[0])}</b> ${dirChip(p.direction)}${lev}</div>
-            ${chip}
-          </div>
-          <div class="small muted">Entry ${fmtPrice(p.entry_price)} · SL ${fmtPrice(p.stop_loss)}${dist} · TP ${fmtPrice(p.take_profit)} · ${fmtMoney(p.size_usd, 0)}</div>
-        </div>`;
-      }).join('');
-      return banner + body;
+      if (!(d.positions || []).length) return `<p class="small muted">No open positions right now. When the agent opens one, its stop-loss protection status shows here.</p>`;
+      return slPositionsHtml(d);
     }, { empty: { icon: 'icon-shield', text: 'No open positions — stop-loss protection status appears here when the agent opens one.' } });
 
     // Trade intelligence — alpha vs holding, expectancy, payoff, drawdown,

@@ -476,6 +476,12 @@ code { font-family: var(--font-data); font-size: .9em; background: var(--surface
 .lpos-alert { padding: var(--s2) var(--s3); border-radius: var(--r2, 8px); margin-bottom: var(--s2); font-size: var(--fs-sm); background: var(--surface-2, rgba(127,127,127,.08)); }
 .lpos-alert--ok { background: color-mix(in srgb, var(--up) 12%, transparent); border-left: 3px solid var(--up); }
 .lpos-alert--bad { background: color-mix(in srgb, var(--down) 12%, transparent); border-left: 3px solid var(--down); }
+/* Mission-control command bar — one-glance status chips on the Home view. */
+.mc-bar { display: flex; gap: var(--s2); flex-wrap: wrap; align-items: center; }
+.mc-chip { display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface-2, rgba(127,127,127,.06)); font-size: var(--fs-sm); text-decoration: none; color: var(--text); white-space: nowrap; }
+a.mc-chip:hover { border-color: var(--accent, var(--up)); }
+.mc-chip .mc-k { color: var(--text-2); font-size: var(--fs-xs, .72rem); text-transform: uppercase; letter-spacing: .04em; }
+.mc-chip--alert { border-color: var(--down); background: color-mix(in srgb, var(--down) 14%, transparent); }
 /* A step that just flipped to Done gets one celebratory pop (onboarding). */
 .chk-item.chk-pop { animation: chk-pop .5s ease; }
 @keyframes chk-pop { 0% { transform: scale(1); } 35% { transform: scale(1.03); box-shadow: 0 0 0 2px var(--up-dim); } 100% { transform: scale(1); } }
