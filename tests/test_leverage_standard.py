@@ -110,6 +110,41 @@ async def test_verified_target_still_opens_normally(tmp_path, monkeypatch):
     assert ex._lev_unverified_warned == set()
 
 
+@pytest.mark.asyncio
+async def test_successful_set_opens_even_when_readback_unparseable(tmp_path, monkeypatch):
+    """Live regression (2026-07-21, BTC/ETHFI "trades can not open").
+
+    A brand-new position has nothing to read leverage back FROM, and some
+    Bitget symbols return a fetch_leverage shape the parser can't decode — so
+    the fail-closed guard was aborting EVERY trade on those symbols even though
+    set_leverage had SUCCEEDED. A successful set is authoritative confirmation:
+    the order proceeds (with an audit warning), it does NOT abort.
+    """
+    monkeypatch.delenv("LEVERAGE_FAIL_OPEN", raising=False)
+    ex = _executor(tmp_path)
+    set_lev = AsyncMock()                                    # exchange ACCEPTS the target
+    fetch_lev = AsyncMock(return_value={"longLeverage": None,  # …but won't echo it back
+                                        "leverage": None, "info": {}})
+    ex._get_exchange = AsyncMock(return_value=_mock_exchange(set_lev, fetch_lev))
+    await ex._ensure_leverage("BTC/USDT:USDT")              # MUST NOT raise
+    set_lev.assert_awaited()                                 # the set was actually attempted
+    assert "BTC/USDT:USDT" in ex._lev_unverified_warned      # surfaced, not silent
+
+
+@pytest.mark.asyncio
+async def test_failed_set_and_unparseable_readback_still_aborts(tmp_path, monkeypatch):
+    """The genuine 20x danger is UNCHANGED: when set_leverage fails AND the
+    read-back can't confirm, the order would trade at the sticky default — that
+    still fails closed."""
+    monkeypatch.delenv("LEVERAGE_FAIL_OPEN", raising=False)
+    ex = _executor(tmp_path)
+    set_lev = AsyncMock(side_effect=Exception("40019 holdSide cannot be empty"))
+    fetch_lev = AsyncMock(return_value={"leverage": None, "info": {}})
+    ex._get_exchange = AsyncMock(return_value=_mock_exchange(set_lev, fetch_lev))
+    with pytest.raises(RuntimeError, match="Cannot confirm"):
+        await ex._ensure_leverage("BCH/USDT:USDT")
+
+
 # ── command registration ─────────────────────────────────────────────────────
 
 def test_leverage_command_registered():
