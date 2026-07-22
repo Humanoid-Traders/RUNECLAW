@@ -46,3 +46,23 @@ def test_admin_tier_uses_current_sonnet():
 
 def test_no_stale_sonnet_46_in_routing():
     assert "claude-sonnet-4-6" not in set(_all_routing_models())
+
+
+def test_free_tier_routes_only_to_free_providers():
+    # Free/default users (no BYOK key) must resolve to providers with a real free
+    # tier — never Alibaba's paid hackathon endpoint (which was the old SCAN/CHAT
+    # default and silently required $30 of credits). Gemini + Groq are free.
+    from bot.llm.provider import LLMProvider
+    free_ok = {LLMProvider.GEMINI, LLMProvider.GROQ, LLMProvider.OLLAMA,
+               LLMProvider.RUNECLAW, LLMProvider.TOGETHER, LLMProvider.OPENROUTER}
+    for tier, cfg in DEFAULT_TIER_ROUTING.items():
+        assert cfg["provider"] in free_ok, (
+            f"free-tier {tier} routes to non-free {cfg['provider']}")
+
+
+def test_no_deprecated_model_ids_in_routing():
+    # Groq retired llama-3.3/3.1-instant (June 2026) and Gemini 2.5 was superseded
+    # by the 3.x line — a deprecated id breaks live calls the moment it's retired.
+    models = " ".join(_all_routing_models())
+    for dead in ("llama-3.3-70b-versatile", "llama-3.1-8b-instant", "gemini-2.5"):
+        assert dead not in models, f"deprecated model id still routed: {dead}"
