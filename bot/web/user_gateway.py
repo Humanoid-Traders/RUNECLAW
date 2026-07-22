@@ -311,6 +311,18 @@ async def handle_chat(request: web.Request) -> web.Response:
                 resp["setup"] = setup
             return web.json_response(resp)
 
+    # News radar intercept — "news"/"headlines" as free text must hit the real
+    # RSS radar, not the tool-less chat LLM (which denies having a feed). Same
+    # shared detector + digest helper the Telegram surface uses, so both behave
+    # identically.
+    from bot.core.news import looks_like_news_request
+    if looks_like_news_request(text):
+        tg_handler.conversations.append(
+            tg_id, "assistant", "[news] radar digest",
+            metadata={"skill": "news", "surface": "web"})
+        return web.json_response(
+            {"reply_html": await tg_handler._news_digest_text(), "intent": "news"})
+
     # Fallback: LLM chat — same append-around-call pattern as _handle_message.
     from bot.nlp.sanitize import sanitize_chat_input
     tg_handler.conversations.append(tg_id, "user", text,

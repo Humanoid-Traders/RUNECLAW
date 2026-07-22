@@ -72,13 +72,20 @@ def test_flush_once_batches_and_posts(monkeypatch):
     assert [len(b) for b in sent] == [MAX_BATCH, 5]
 
 
-def test_flush_failure_drops_batch_without_raising(monkeypatch):
+def test_flush_failure_requeues_then_drops_without_raising(monkeypatch):
+    # A failed POST now RE-QUEUES for a bounded number of retries (so a
+    # transient web outage doesn't silently lose the feed), then drops — never
+    # a hot retry-loop, never raising.
+    from bot.core.agent_feed import MAX_RETRIES
     feed = AgentFeed()
     monkeypatch.setattr("bot.utils.website_sync.sync_agent_events",
                         lambda evs: False)
     feed.emit("alert", "website is down")
-    assert feed.flush_once() == 0              # failed POST reports 0
-    assert feed.pending() == 0                 # ...and does not retry-loop
+    for _ in range(MAX_RETRIES):
+        assert feed.flush_once() == 0          # failed POST reports 0
+        assert feed.pending() == 1             # ...and is re-queued for retry
+    assert feed.flush_once() == 0              # retry cap hit
+    assert feed.pending() == 0                 # ...then dropped, no loop
 
 
 def test_allowed_types_match_web_whitelist():

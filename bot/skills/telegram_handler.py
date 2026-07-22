@@ -1616,6 +1616,19 @@ class TelegramHandler:
                 "Which asset? Say something like <i>\"scan BTC\"</i> or <i>\"check ETH\"</i>")
             return
 
+        # ── News radar intercept ──────────────────────────────────
+        # "news" / "headlines" as free text must hit the real RSS radar, not the
+        # tool-less chat LLM (which denies having a feed). The intent router has
+        # no news rule, so without this the ask always fell through to chat.
+        from bot.core.news import looks_like_news_request
+        if looks_like_news_request(text):
+            try:
+                await update.effective_chat.send_chat_action(ChatAction.TYPING)
+            except Exception:
+                pass
+            await self._send(update, await self._news_digest_text())
+            return
+
         # ── Fallback: AI chat ─────────────────────────────────────
         # Store user message in conversation memory
         self.conversations.append(tg_id, "user", text,
@@ -6769,29 +6782,26 @@ class TelegramHandler:
         return syms
 
     @guard("status")
-    async def _cmd_news(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-        """NEWS-1b: /news — public-RSS headline radar with high-impact alerts on
-        the positions you hold. Advisory only; never moves or blocks a trade."""
+    async def _news_digest_text(self) -> str:
+        """Shared news-radar reply used by BOTH the /news command and the
+        free-text "news" intercept (web + Telegram): the off-state notice when
+        disabled, otherwise a freshly-refreshed headline digest with high-impact
+        alerts on held positions. Advisory only; never moves or blocks a trade."""
         import time as _t
 
         from bot.core.news import NewsRadar, render_news_digest
         if not NewsRadar.enabled():
-            await self._send(update,
+            return (
                 "📰 <b>News radar is off.</b>\n"
                 "It's on by default (CoinDesk / Cointelegraph / Decrypt RSS — no "
                 "API key), but an operator has turned it off with "
                 "<code>NEWS_RADAR_ENABLED=0</code>. When on, it gives high-impact "
                 "alerts on your open positions.\n\n"
                 "<i>Advisory only — news never moves or blocks a trade.</i>")
-            return
         radar = getattr(self, "_news_radar", None)
         if radar is None:
             radar = NewsRadar()
             self._news_radar = radar
-        try:
-            await update.effective_chat.send_chat_action(ChatAction.TYPING)
-        except Exception:
-            pass
         held = self._held_symbols()
         watch = held or ["BTC/USDT", "ETH/USDT", "SOL/USDT", "XRP/USDT"]
         try:
@@ -6799,9 +6809,17 @@ class TelegramHandler:
         except Exception as exc:
             system_log.debug("news refresh failed: %s", exc)
         now = _t.time()
-        text = render_news_digest(
+        return render_news_digest(
             radar.recent(8), radar.standdown(held, now) if held else [], now)
-        await self._send(update, text)
+
+    async def _cmd_news(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """NEWS-1b: /news — public-RSS headline radar with high-impact alerts on
+        the positions you hold. Advisory only; never moves or blocks a trade."""
+        try:
+            await update.effective_chat.send_chat_action(ChatAction.TYPING)
+        except Exception:
+            pass
+        await self._send(update, await self._news_digest_text())
 
     @guard("scan")
     async def _cmd_scan(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:

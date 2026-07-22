@@ -36,6 +36,7 @@ _SEVERITIES = frozenset({"info", "success", "warning", "critical"})
 MAX_QUEUE = 200          # drop-oldest bound; the feed is best-effort telemetry
 MAX_BATCH = 40           # events per POST to the website
 FLUSH_INTERVAL_S = 4.0   # feels live without hammering the web app
+MAX_RETRIES = 3          # re-queue a failed batch this many times before dropping
 TITLE_MAX = 200
 BODY_MAX = 500
 
@@ -109,15 +110,40 @@ class AgentFeed:
     def flush_once(self) -> int:
         """Drain up to one batch and POST it to the website.
 
-        Returns the number of events sent (0 on empty queue or failed POST —
-        failed batches are dropped, not retried; this is telemetry, and the
-        website keeps its own bounded history). Split out for tests.
+        Returns the number of events sent (0 on empty queue or failed POST). On
+        a failed POST the batch is RE-QUEUED for up to ``MAX_RETRIES`` attempts
+        (the flusher sleeps ``FLUSH_INTERVAL_S`` between tries, so this naturally
+        rate-limits) so a transient web outage doesn't silently lose the feed;
+        events past the retry cap are dropped (telemetry, not trades). The retry
+        bookkeeping (``_retries``) is internal and never sent on the wire. Split
+        out for tests.
         """
         batch = self._drain()
         if not batch:
             return 0
         from bot.utils.website_sync import sync_agent_events
-        return len(batch) if sync_agent_events(batch) else 0
+        wire = [{k: v for k, v in ev.items() if k != "_retries"} for ev in batch]
+        if sync_agent_events(wire):
+            return len(batch)
+        self._requeue(batch)
+        return 0
+
+    def _requeue(self, batch: list[dict]) -> None:
+        """Prepend a failed batch (in original order) for a bounded retry.
+        Events that have exhausted MAX_RETRIES are dropped. The maxlen bound
+        still caps memory: if the queue is saturated, appendleft drops the
+        newest queued events in favour of retrying these."""
+        keep: list[dict] = []
+        for ev in batch:
+            n = int(ev.get("_retries", 0)) + 1
+            if n <= MAX_RETRIES:
+                ev["_retries"] = n
+                keep.append(ev)
+        if not keep:
+            return
+        with self._lock:
+            for ev in reversed(keep):
+                self._queue.appendleft(ev)
 
 
 FEED = AgentFeed()
