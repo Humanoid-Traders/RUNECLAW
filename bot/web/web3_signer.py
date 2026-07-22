@@ -177,33 +177,43 @@ def evaluate_sign(*, is_admin: bool, network: str, envelope_enforcing: bool,
                         checklist=state, network=net)
 
 
-def build_and_sign(*, network: str, to: str, value_wei: int, nonce: int,
+def build_and_sign(*, network: str, to: Optional[str], value_wei: int, nonce: int,
                    gas: int = 21000, max_fee_wei: int = 2_000_000_000,
                    max_priority_wei: int = 1_000_000_000, data: str = "0x",
                    env: Optional[dict] = None) -> dict:
     """Build + sign an EIP-1559 testnet transaction. Returns
     ``{ok, raw, tx_hash, from, chain_id}`` on success, or ``{ok: False, error}``.
-    NEVER returns or logs the signing key. Refuses off-testnet chains and a
-    missing library/key — fail-closed."""
-    account = _signing_lib()
-    if account is None:
-        return {"ok": False, "error": "signing library not installed"}
+
+    When ``to`` is empty/None the ``to`` field is OMITTED — an EVM contract
+    CREATION — and ``data`` carries the init bytecode (that's how Contract Studio
+    deploys a drafted contract). NEVER returns or logs the signing key. Refuses
+    off-testnet chains and a missing library/key — fail-closed."""
+    # Refuse a non-testnet chain FIRST — before the library/key checks — so a
+    # mainnet request is rejected even when the signing library is absent
+    # (fail-closed: the testnet-only guarantee never depends on an optional dep).
     net = gate.resolve_network(network)
     if not net or not net.get("testnet"):
         return {"ok": False, "error": "signing is testnet-only"}
     chain_id = int(net["chain_id"])
     if chain_id not in _TESTNET_CHAIN_IDS:
         return {"ok": False, "error": "not a testnet chain"}
+    account = _signing_lib()
+    if account is None:
+        return {"ok": False, "error": "signing library not installed"}
     key = _resolve_key(env)
     if not key:
         return {"ok": False, "error": "no signing key configured"}
     try:
         tx = {
-            "to": to, "value": int(value_wei), "nonce": int(nonce),
+            "value": int(value_wei), "nonce": int(nonce),
             "gas": int(gas), "maxFeePerGas": int(max_fee_wei),
             "maxPriorityFeePerGas": int(max_priority_wei),
             "chainId": chain_id, "type": 2, "data": data or "0x",
         }
+        _to = str(to).strip() if to else ""
+        if _to:
+            tx["to"] = _to
+        # else: omit 'to' entirely → contract creation from the init bytecode.
         acct = account.from_key(key)
         signed = acct.sign_transaction(tx)
         # SDK attribute names differ across eth-account versions.
@@ -336,3 +346,63 @@ async def broadcast(raw_hex: str, rpc_url: str, chain_id: int) -> dict:
                 "detail": str(err)[:200] if err else None}
     except Exception:
         return {"ok": False, "error": "broadcast failed"}
+
+
+# ── Contract deployment (Contract Studio slice 5) ──────────────────────────
+# A deploy is a contract-CREATION tx: `to` omitted, `data` = init bytecode. Gas
+# for a deploy is far above a 21000 transfer and varies by contract, so it must
+# be ESTIMATED (never hardcoded). All testnet-only, key never touched here.
+
+_DEPLOY_GAS_FALLBACK = 1_500_000       # conservative when estimation is unavailable
+
+
+async def estimate_deploy_gas(*, network: str, from_address: str, bytecode: str,
+                              env: Optional[dict] = None) -> int:
+    """eth_estimateGas for a contract creation (``to`` omitted), plus a 25% buffer.
+    Returns a conservative fallback on any failure so a deploy is never under-
+    gassed into an out-of-gas revert. Read-only; never signs."""
+    rpc_url = rpc_url_for(network, env)
+    if not rpc_url:
+        return _DEPLOY_GAS_FALLBACK
+    data = bytecode if str(bytecode).startswith("0x") else "0x" + str(bytecode)
+    res = await _rpc_call(rpc_url, "eth_estimateGas",
+                          [{"from": from_address, "data": data}])
+    if res.get("ok"):
+        try:
+            est = int(str(res["result"]), 16)
+            if est > 0:
+                return int(est * 5 // 4)           # +25% headroom
+        except (TypeError, ValueError):
+            pass
+    return _DEPLOY_GAS_FALLBACK
+
+
+async def prepare_deploy(*, network: str, address: str, bytecode: str,
+                         env: Optional[dict] = None) -> dict:
+    """Nonce + EIP-1559 fees (via :func:`prepare_tx`) with a deploy-sized ``gas``
+    from :func:`estimate_deploy_gas`. Returns the prepare_tx shape with the gas
+    overridden, or its ``{ok: False, error}`` on any RPC failure. Never signs."""
+    base = await prepare_tx(network=network, address=address, env=env)
+    if not base.get("ok"):
+        return base
+    gas = await estimate_deploy_gas(network=network, from_address=address,
+                                    bytecode=bytecode, env=env)
+    out = dict(base)
+    out["gas"] = int(gas)
+    return out
+
+
+def create_contract_address(sender: str, nonce: int) -> str:
+    """The DETERMINISTIC address a CREATE tx will deploy to — a pure function of
+    ``(sender, nonce)`` — so the UI can show it immediately without waiting for
+    the receipt. Returns a checksummed 0x address, or "" if the helper libs are
+    absent. Never raises."""
+    try:
+        import rlp
+        from eth_utils import keccak, to_checksum_address
+        s = str(sender)
+        s = s[2:] if s.startswith("0x") else s
+        raw = keccak(rlp.encode([bytes.fromhex(s), int(nonce)]))[12:]
+        return to_checksum_address(raw)
+    except Exception:
+        return ""

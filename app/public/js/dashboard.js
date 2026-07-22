@@ -4196,6 +4196,7 @@
               <button class="btn btn--sm" id="cs-download" type="button">Download .sol</button>
             </span></h2>
           <div id="cs-compileout" style="margin-bottom:10px"></div>
+          <div id="cs-deploybar" hidden style="margin-bottom:10px"></div>
           <pre id="cs-code" style="overflow:auto;max-height:520px;white-space:pre-wrap;word-break:break-word"></pre></section>
       </div>`);
 
@@ -4234,6 +4235,58 @@
       setTimeout(() => URL.revokeObjectURL(url), 1000);
     });
 
+    // One-click TESTNET deploy of a compiled contract. Admin + signer + enforcing
+    // envelope are all re-checked server-side (a non-admin just gets a clear
+    // refusal); mainnet is hard-blocked. TESTNET-ONLY — real value is never at risk.
+    const TESTNETS = [
+      ['sepolia', 'Ethereum Sepolia'], ['base-sepolia', 'Base Sepolia'],
+      ['arbitrum-sepolia', 'Arbitrum Sepolia'], ['optimism-sepolia', 'Optimism Sepolia'],
+      ['polygon-amoy', 'Polygon Amoy'], ['avalanche-fuji', 'Avalanche Fuji'],
+      ['scroll-sepolia', 'Scroll Sepolia'], ['linea-sepolia', 'Linea Sepolia'],
+      ['blast-sepolia', 'Blast Sepolia'], ['bsc-testnet', 'BNB Testnet'],
+    ];
+    function showDeployBar(contract) {
+      const bar = document.getElementById('cs-deploybar');
+      if (!bar) return;
+      const opts = TESTNETS.map(([v, l]) => `<option value="${v}">${esc(l)}</option>`).join('');
+      bar.hidden = false;
+      bar.innerHTML = `<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+          <span class="chip" style="background:rgba(56,189,248,.12)">🐍 Deploy — <b>testnet only</b></span>
+          <select id="cs-net" class="input input--sm" aria-label="Testnet">${opts}</select>
+          <button class="btn btn--sm btn--primary" id="cs-deploy" type="button">Deploy to testnet</button>
+          <span id="cs-deploymsg" class="small muted"></span>
+        </div>
+        <div class="small muted" style="margin-top:4px">Admin + an enforcing Authority Envelope are required; mainnet is hard-blocked. A deploy spends only testnet gas.</div>`;
+      const dep = document.getElementById('cs-deploy');
+      const msg = document.getElementById('cs-deploymsg');
+      if (dep) dep.addEventListener('click', async () => {
+        const network = (document.getElementById('cs-net') || {}).value || 'sepolia';
+        dep.disabled = true; msg.textContent = 'Signing + broadcasting…';
+        try {
+          const r = await fetchJSON('/api/web3/deploy', {
+            method: 'POST',
+            body: { network, bytecode: contract.bytecode, contract_name: contract.name || '' },
+            timeoutMs: 32000,
+          });
+          if (r && r.deployed) {
+            const addr = esc(r.contract_address || '');
+            const url = r.explorer_address_url || r.explorer_tx_url || '';
+            msg.innerHTML = '<span style="color:#16a34a">✓ Deployed</span> '
+              + (addr ? '· <code>' + addr + '</code> ' : '')
+              + (url ? '· <a href="' + esc(url) + '" target="_blank" rel="noopener">explorer ↗</a>' : '');
+          } else {
+            const why = esc((r && (r.reason || r.error
+              || (r.reasons && r.reasons.join(', ')))) || 'deploy refused');
+            msg.innerHTML = '<span style="color:#dc2626">✗ ' + why + '</span>';
+          }
+        } catch (_) {
+          msg.innerHTML = '<span style="color:#dc2626">✗ Deploy unavailable (admin + testnet signer required).</span>';
+        } finally {
+          dep.disabled = false;
+        }
+      });
+    }
+
     // Compile-check: does the draft BUILD? Reports bytecode readiness + solc
     // diagnostics. Pure computation server-side — no signing, no value moves.
     // Compiling is NOT a safety guarantee; the audit disclaimer still applies.
@@ -4259,6 +4312,10 @@
             + (warns ? '· ' + warns + ' warning' + (warns === 1 ? '' : 's') : '')
             + '</span><div class="small muted" style="margin-top:4px">Compiling is not a '
             + 'safety guarantee — still get an audit before mainnet.</div>';
+          // Bytecode compiled → offer a testnet deploy (admin + signer gated
+          // server-side). Reveal the deploy bar bound to THIS contract.
+          const first = (d.contracts || []).find(c => c && c.bytecode) || null;
+          if (first) showDeployBar(first);
         } else {
           const diags = (d && d.diagnostics || []).filter(x => x.severity === 'error').slice(0, 8);
           const lines = diags.map(x => '<div class="small" style="color:#dc2626;white-space:pre-wrap">'

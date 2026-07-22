@@ -87,6 +87,40 @@ router.post('/sign', async (req, res) => {
 });
 
 /**
+ * POST /api/web3/deploy — Contract Studio slice 5 (admin-only, TESTNET-ONLY).
+ *
+ * One-click deploy of a compiled contract's init bytecode: a contract-CREATION
+ * sign+broadcast on a testnet. Same fail-closed spine as /sign — the gateway
+ * re-checks admin, runs the signing gate + Authority Envelope authorize() (as a
+ * 'deploy'), estimates deploy gas, signs the CREATE tx, broadcasts, and returns
+ * the deterministic contract address + explorer links. Mainnet is hard-blocked.
+ * The signing key never leaves the bot; the web layer forwards only the
+ * resolved identity, the target network, and the bytecode.
+ */
+router.post('/deploy', async (req, res) => {
+  try {
+    if (!gateway.isConfigured()) {
+      return res.status(503).json({ error: 'Web3 signing not configured' });
+    }
+    const b = req.body || {};
+    const bytecode = String(b.bytecode || '').trim();
+    if (!bytecode) return res.status(400).json({ error: 'bytecode required' });
+    if (bytecode.length > 100000) return res.status(400).json({ error: 'bytecode too large' });
+    const ident = await resolveBotIdentity(req);
+    const r = await gateway.postGateway('/contract/deploy', {
+      telegram_id: ident.id,
+      network: String(b.network || 'sepolia'),
+      bytecode,
+      contract_name: String(b.contract_name || '').slice(0, 64),
+    }, 30000);
+    return gateway.relay(res, r);
+  } catch (err) {
+    console.error('Web3 deploy proxy error:', err.message);
+    return res.status(502).json({ error: 'Web3 deploy unavailable' });
+  }
+});
+
+/**
  * GET /api/web3/sign/status — admin-only, read-only signer status for the web UI.
  *
  * Surfaces the signing flags, whether the eth-account library + key are present,

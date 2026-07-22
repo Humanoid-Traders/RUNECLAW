@@ -42,6 +42,11 @@ VALID_MODES = ("off", "shadow", "enforce")
 # transfer move value OUT of the account and are denied unless doubly opted in.
 _TRADE_KINDS = ("trade",)
 _EXFIL_KINDS = ("withdraw", "transfer")
+# A deploy creates a contract on-chain (Contract Studio testnet deploy). It moves
+# NO value to a counterparty — only gas — so there is nothing to allowlist; the
+# enforcing envelope's existence + kill-switch/expiry ARE the authority. Revoking
+# (or letting it expire) stops all deploys immediately.
+_DEPLOY_KINDS = ("deploy",)
 
 # Numeric ceilings, with the engine-cap key each clamps against (None → a NEW
 # restriction with no engine equivalent, so it only ever tightens). All are
@@ -285,6 +290,15 @@ def authorize(envelope: Optional[dict], action: dict, *,
                 reasons.append(f"{kind} requires a destination")
             elif dest not in allowlist:
                 reasons.append(f"{kind} destination {dest} is not on the withdraw allowlist")
+        result["decision"] = "allow" if not reasons else "deny"
+        return result
+
+    # 2b) Deploy: create a contract on-chain (testnet-only, hard-blocked off
+    #     mainnet upstream). No value leaves to a counterparty — only gas — so
+    #     there is nothing to allowlist. A healthy enforcing envelope authorizes
+    #     it; a revoked/expired one denies (those reasons are set in step 1).
+    if kind in _DEPLOY_KINDS:
+        result["checked"] += 1
         result["decision"] = "allow" if not reasons else "deny"
         return result
 

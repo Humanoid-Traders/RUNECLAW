@@ -86,6 +86,19 @@ def explorer_tx_url(network: str, tx_hash: str) -> str:
         return ""
     return f"{base.rstrip('/')}/tx/{h}"
 
+
+def explorer_address_url(network: str, address: str) -> str:
+    """Block-explorer URL for an ADDRESS (e.g. a freshly-deployed contract) on a
+    known network, or "" when unknown/malformed. Same 0x-hex validation as the tx
+    link so a bad value can never build a misleading URL."""
+    net = resolve_network(network)
+    base = (net or {}).get("explorer") if net else ""
+    a = str(address or "").strip()
+    if not base or not a.startswith("0x") or len(a) < 6:
+        return ""
+    return f"{base.rstrip('/')}/address/{a}"
+
+
 _CHECKS = (
     ("feature_enabled",
      "on-chain execution is not enabled by the operator yet (WEB3_LIVE_EXEC_ENABLED)"),
