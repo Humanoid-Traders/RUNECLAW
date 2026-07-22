@@ -43,6 +43,15 @@ test('the Membership plans answer the chat cap the meter surfaces', () => {
   assert.match(dash, /Unlimited AI chat/);
 });
 
+test('the last-question meter tells the user when the free allowance resets', () => {
+  // the wall reads as a wait, not a dead end — the meter humanises
+  // reset_in_seconds into a "resets in ~Xh" hint on the final free question.
+  assert.match(chat, /_q\.reset_in_seconds/);
+  assert.match(chat, /resets within the hour/);
+  assert.match(chat, /resets tomorrow/);
+  assert.match(chat, /Last free question today \(\$\{_reset\}\)/);
+});
+
 test('the meter is dormant when the cap is off (no quota field on the response)', () => {
   // when the free-chat cap is dormant (no funded Grok), the gateway omits quota;
   // guarding on `_q &&` means nothing renders — no false "0 left" on free chat.

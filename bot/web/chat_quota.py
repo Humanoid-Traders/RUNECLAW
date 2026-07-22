@@ -17,7 +17,7 @@ from __future__ import annotations
 import json
 import os
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -65,6 +65,18 @@ def _today() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
 
+def seconds_until_reset() -> int:
+    """Seconds until the free-question counter rolls over (next UTC midnight).
+
+    The count is per UTC day (see ``_today``), so the reset moment is always
+    00:00 UTC of the following day. Used to tell a capped user *when* their free
+    questions return, so the wall reads as a wait, not a dead end."""
+    now = datetime.now(timezone.utc)
+    tomorrow = (now + timedelta(days=1)).replace(
+        hour=0, minute=0, second=0, microsecond=0)
+    return max(0, int((tomorrow - now).total_seconds()))
+
+
 def _load() -> dict:
     try:
         if _STORE_PATH.exists():
@@ -101,12 +113,14 @@ def status(uid: str, tier: Optional[str] = None) -> dict:
     """Peek the caller's quota WITHOUT consuming. Returns
     ``{exempt, limit, used, remaining}``. Exempt users report a huge remaining."""
     if not quota_enabled() or is_quota_exempt(tier):
-        return {"exempt": True, "limit": None, "used": 0, "remaining": None}
+        return {"exempt": True, "limit": None, "used": 0, "remaining": None,
+                "reset_in_seconds": None}
     limit = free_daily_limit()
     with _LOCK:
         used = _entry_used(_load(), str(uid), _today())
     return {"exempt": False, "limit": limit, "used": used,
-            "remaining": max(0, limit - used)}
+            "remaining": max(0, limit - used),
+            "reset_in_seconds": seconds_until_reset()}
 
 
 def consume(uid: str, tier: Optional[str] = None) -> dict:
@@ -116,10 +130,10 @@ def consume(uid: str, tier: Optional[str] = None) -> dict:
     prompt instead of calling the LLM. Exempt callers are always allowed."""
     if not quota_enabled():                      # no funded budget → never limit
         return {"allowed": True, "exempt": True, "limit": None,
-                "used": 0, "remaining": None}
+                "used": 0, "remaining": None, "reset_in_seconds": None}
     if is_quota_exempt(tier):
         return {"allowed": True, "exempt": True, "limit": None,
-                "used": 0, "remaining": None}
+                "used": 0, "remaining": None, "reset_in_seconds": None}
     limit = free_daily_limit()
     day = _today()
     key = str(uid)
@@ -128,8 +142,10 @@ def consume(uid: str, tier: Optional[str] = None) -> dict:
         used = _entry_used(data, key, day)
         if used >= limit:
             return {"allowed": False, "exempt": False, "limit": limit,
-                    "used": used, "remaining": 0}
+                    "used": used, "remaining": 0,
+                    "reset_in_seconds": seconds_until_reset()}
         data[key] = {"day": day, "n": used + 1}
         _save(data)
         return {"allowed": True, "exempt": False, "limit": limit,
-                "used": used + 1, "remaining": max(0, limit - (used + 1))}
+                "used": used + 1, "remaining": max(0, limit - (used + 1)),
+                "reset_in_seconds": seconds_until_reset()}
