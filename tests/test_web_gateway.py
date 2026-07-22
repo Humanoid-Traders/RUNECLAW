@@ -706,6 +706,19 @@ async def test_public_chat_ignores_trade_text(monkeypatch):
     assert handler.llm_calls[0][3] is True  # public=True
 
 
+async def test_public_chat_forwards_lang_to_llm(monkeypatch):
+    # An anonymous visitor has no stored language, so the UI locale it sends is
+    # the only way the reply can match the page — the handler must forward it.
+    monkeypatch.setattr(ug, "_GATEWAY_SECRET", SECRET)
+    handler = FakeHandler(users={})
+    async with gateway_client(FakeEngine(), handler) as c:
+        r = await c.post("/chat/public",
+                         json={"text": "what is runeclaw?", "lang": "es"}, headers=HDRS)
+        assert r.status == 200
+    assert handler.llm_reply_langs[0] == "es"
+    assert handler.llm_calls[0][3] is True  # still public=True, no identity
+
+
 async def test_public_chat_validates_text(monkeypatch):
     monkeypatch.setattr(ug, "_GATEWAY_SECRET", SECRET)
     handler = FakeHandler(users={})
