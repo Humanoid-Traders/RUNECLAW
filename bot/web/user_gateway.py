@@ -566,6 +566,119 @@ async def handle_contract_compile(request: web.Request) -> web.Response:
     })
 
 
+async def handle_contract_deploy(request: web.Request) -> web.Response:
+    """Contract Studio slice 5 — admin-only, TESTNET-ONLY one-click deploy of a
+    compiled contract's init bytecode. This is a contract-CREATION sign+broadcast
+    (``to`` omitted, ``data`` = bytecode), run through the SAME fail-closed spine
+    as the value-transfer signer: triple-gated default-OFF (feature + signing +
+    key + eth-account library + an enforcing envelope), authorized through the
+    Authority Envelope as a ``deploy``, mainnet refused regardless of any flag.
+    NEVER returns or logs the signing key (F-15 on every error path)."""
+    import time as _time
+    tg_handler = request.app["tg_handler"]
+    body = await _json_body(request)
+    tg_id = str(body.get("telegram_id") or "").strip()
+    if not tg_id:
+        return web.json_response({"error": "telegram_id required"}, status=400)
+    if not _is_admin_id(tg_handler, tg_id):
+        return web.json_response({"error": "contract deploy is admin-only"}, status=403)
+
+    from bot.web import web3_signer as _signer
+    from bot.web import web3_exec_gate as _gate
+    network = str(body.get("network") or "sepolia")
+    bytecode = str(body.get("bytecode") or "").strip()
+    cname = str(body.get("contract_name") or "").strip()[:64]
+    # Init bytecode is a 0x hex blob — validate shape before touching the signer.
+    _bc = bytecode[2:] if bytecode.startswith("0x") else bytecode
+    if not _bc or len(_bc) % 2 != 0 or any(c not in "0123456789abcdefABCDEF" for c in _bc):
+        return web.json_response({"error": "valid 0x contract bytecode required"}, status=400)
+    if len(_bc) > 96000:                          # ~48KB — well past the 24KB EIP-170 limit
+        return web.json_response({"error": "bytecode too large"}, status=400)
+    bytecode = "0x" + _bc
+
+    try:
+        from bot.guardian.user_authority_store import get_user_authority_store
+        _store = get_user_authority_store()
+        enforcing = bool(_store.is_enforcing(tg_id))
+    except Exception:
+        _store, enforcing = None, False
+
+    # 1) Signing preconditions — testnet-only, own flag, key + library present.
+    decision = _signer.evaluate_sign(is_admin=True, network=network,
+                                     envelope_enforcing=enforcing)
+    if not decision.allowed:
+        return web.json_response({"error": "web3_sign_denied", "reason": decision.reason,
+                                  "checklist": decision.checklist}, status=403)
+
+    # 2) The Authority Envelope authorizes THIS deploy (a distinct 'deploy' kind).
+    try:
+        from bot.guardian.authority import authorize
+        env = _store.get(tg_id) if _store else None
+        result = authorize(env, {"kind": "deploy", "asset": "ETH", "notional_usd": None,
+                                 "dest": None, "network": network},
+                           now_ts=_time.time(), spent_today_usd=0.0)
+        if result.get("decision") != "allow":
+            return web.json_response({"error": "authority_denied",
+                                      "reasons": list(result.get("reasons") or ["not authorized"])},
+                                     status=403)
+        env_id = result.get("envelope_id")
+    except Exception:
+        return web.json_response({"error": "authority_check_failed"}, status=403)
+
+    # 3) Prepare (nonce + estimated deploy gas + fees), sign the CREATE tx, broadcast.
+    signer_addr = _signer.signer_address() or ""
+    prep = await _signer.prepare_deploy(network=network, address=signer_addr, bytecode=bytecode)
+    if not prep.get("ok"):
+        return web.json_response({"error": "prepare_failed", "reason": prep.get("error")},
+                                 status=400)
+    nonce = int(prep["nonce"])
+    signed = _signer.build_and_sign(
+        network=network, to=None, value_wei=0, nonce=nonce, data=bytecode,
+        gas=int(prep.get("gas") or _signer._DEPLOY_GAS_FALLBACK),
+        max_fee_wei=int(prep.get("max_fee_wei") or 2_000_000_000),
+        max_priority_wei=int(prep.get("max_priority_wei") or 1_000_000_000))
+    if not signed.get("ok"):
+        return web.json_response({"error": "sign_failed", "reason": signed.get("error")},
+                                 status=400)
+    net = decision.network or {}
+    bcast = await _signer.broadcast(signed["raw"], _signer.rpc_url_for(network),
+                                    net.get("chain_id"))
+    # The CREATE address is deterministic in (deployer, nonce) — show it now.
+    contract_addr = _signer.create_contract_address(signed.get("from") or signer_addr, nonce)
+    tx_hash = bcast.get("tx_hash") or signed.get("tx_hash")
+
+    # 4) Record to the Guardian review queue (fail-safe — never blocks the deploy).
+    try:
+        from bot.guardian.review_queue import get_review_queue
+        get_review_queue().record({"user_id": tg_id, "kind": "contract_deploy", "network": network,
+                                   "action": {"side": "deploy", "contract": cname or None,
+                                              "address": contract_addr or None, "tx_hash": tx_hash,
+                                              "broadcast": bool(bcast.get("ok"))},
+                                   "envelope_id": env_id, "ts": _time.time()})
+    except Exception:
+        pass
+
+    audit(system_log, f"Contract DEPLOY (admin) testnet {network}",
+          action="contract_deploy", result="OK" if bcast.get("ok") else "SIGNED",
+          data={"network": network, "broadcast": bool(bcast.get("ok"))})
+    return web.json_response({
+        "deployed": bool(bcast.get("ok")),
+        "signed": True,
+        "network": network,
+        "chain_id": net.get("chain_id"),
+        "testnet": True,
+        "from": signed.get("from"),
+        "contract_name": cname,
+        "contract_address": contract_addr,
+        "tx_hash": tx_hash,
+        "explorer_tx_url": _gate.explorer_tx_url(network, tx_hash or ""),
+        "explorer_address_url": _gate.explorer_address_url(network, contract_addr or ""),
+        "envelope": {"id": env_id},
+        "error": None if bcast.get("ok") else bcast.get("error"),
+        "intent": "contract_deploy",
+    })
+
+
 def _setup_from_new_idea(engine, ideas_before: set) -> dict | None:
     """A READ-ONLY setup hint for the web chat's one-tap "Trade this".
 
@@ -2554,6 +2667,7 @@ def build_gateway(engine, tg_handler) -> web.Application:
     app.router.add_post("/chat/public", handle_public_chat)
     app.router.add_post("/contract/studio", handle_contract_studio)
     app.router.add_post("/contract/compile", handle_contract_compile)
+    app.router.add_post("/contract/deploy", handle_contract_deploy)
     app.router.add_get("/chat/history", handle_chat_history)
     app.router.add_get("/portfolio", handle_portfolio)
     app.router.add_get("/positions", handle_positions)

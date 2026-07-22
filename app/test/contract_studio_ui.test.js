@@ -37,11 +37,15 @@ test('it renders the draft as text and shows flags + disclaimer', () => {
   assert.match(dash, /not<\/b> a safety guarantee/);
 });
 
-test('the studio view carries no money-path', () => {
+test('the studio view never signs client-side or handles a key', () => {
+  // The view drafts/compiles/deploys, but signing is ALWAYS server-side: the
+  // client posts to gated gateway endpoints and never touches a raw key or
+  // builds/broadcasts a tx itself. (Deploy is a testnet-only, admin-gated
+  // server call — see the deploy test below.)
   const fn = dash.slice(dash.indexOf('function renderContractStudio('));
   const body = fn.slice(0, fn.indexOf('async function renderLeaderboard('));
-  assert.ok(!/signTransaction|sendRawTransaction|private_key|broadcast|value_wei/.test(body),
-    'drafting only — no signing or value movement in the studio view');
+  assert.ok(!/signTransaction|sendRawTransaction|private_key|privateKey|WEB3_SIGNER/.test(body),
+    'no client-side signing or key handling in the studio view');
 });
 
 test('one-tap template chips pre-fill the spec', () => {
@@ -63,8 +67,8 @@ test('the draft panel lets you take the code out (copy + download .sol)', () => 
   assert.match(dash, /new Blob\(\[code\]/);
 });
 
-test('the draft panel can compile-check the draft (no money-path)', () => {
-  // Compile is a pure build check — bytecode readiness + solc errors, no deploy.
+test('the draft panel can compile-check the draft (pure build check)', () => {
+  // Compile is a pure build check — bytecode readiness + solc errors, no signing.
   assert.match(dash, /id="cs-compile"/);
   assert.match(dash, /fetchJSON\('\/api\/contract\/compile'/);
   assert.match(dash, /body: \{ solidity: code \}/);
@@ -72,10 +76,18 @@ test('the draft panel can compile-check the draft (no money-path)', () => {
   assert.match(dash, /✓ Compiles/);
   assert.match(dash, /Compiling is not a/);
   assert.match(dash, /safety guarantee — still get an audit before mainnet/);
-  const fn = dash.slice(dash.indexOf('function renderContractStudio('));
-  const body = fn.slice(0, fn.indexOf('async function renderLeaderboard('));
-  assert.ok(!/signTransaction|sendRawTransaction|broadcast|value_wei/.test(body),
-    'compile-check only — still no signing or value movement in the studio view');
+});
+
+test('a compiled contract can be deployed to a testnet (admin/testnet-gated)', () => {
+  // one-click deploy appears after a successful compile and posts the bytecode.
+  assert.match(dash, /function showDeployBar\(/);
+  assert.match(dash, /fetchJSON\('\/api\/web3\/deploy'/);
+  assert.match(dash, /bytecode: contract\.bytecode/);
+  // it is presented as TESTNET-ONLY with the mainnet hard-block called out.
+  assert.match(dash, /testnet only/i);
+  assert.match(dash, /mainnet is hard-blocked/i);
+  // deployed result surfaces the contract address + an explorer link.
+  assert.match(dash, /explorer_address_url/);
 });
 
 test('the dashboard.js cache-buster is bumped', () => {
