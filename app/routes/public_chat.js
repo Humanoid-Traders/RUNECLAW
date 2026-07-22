@@ -40,8 +40,13 @@ router.post('/', publicChatLimit, async (req, res) => {
     const text = typeof (req.body || {}).text === 'string' ? req.body.text.trim() : '';
     if (!text) return res.status(400).json({ error: 'text required' });
     if (text.length > MAX_TEXT_LEN) return res.status(400).json({ error: 'Message too long' });
-    // Only the text crosses to the bot — no identity, ever.
-    const r = await gateway.postGateway('/chat/public', { text }, CHAT_TIMEOUT_MS);
+    // An anonymous visitor has no stored profile, so the bot can only answer in
+    // their language if the site sends the current UI locale. Forward it (short,
+    // charset-restricted — the gateway caps to 12 chars too). Still no identity.
+    const rawLang = typeof (req.body || {}).lang === 'string' ? req.body.lang.trim() : '';
+    const lang = /^[a-zA-Z-]{2,12}$/.test(rawLang) ? rawLang : '';
+    const payload = lang ? { text, lang } : { text };
+    const r = await gateway.postGateway('/chat/public', payload, CHAT_TIMEOUT_MS);
     return gateway.relay(res, r);
   } catch (err) {
     console.error('Public chat proxy error:', err.message);

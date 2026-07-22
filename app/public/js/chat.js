@@ -540,7 +540,16 @@
     sendBtn.disabled = true;
     if (window.RCAgent3D) window.RCAgent3D.setThinking(true);   // agent avatar: 'analyze'
     try {
-      const r = await fetchJSON(ENDPOINT, { method: 'POST', body: (imgs.length ? { text, images: imgs } : { text }), timeoutMs: 50000, signal: ac.signal });
+      // Anonymous visitors have no stored profile, so the public path can only
+      // answer in the UI language if we send it — signed-in users get their
+      // saved language server-side. Forward the current site locale for public
+      // chat so a visitor who switched the UI to e.g. Spanish is answered in it.
+      const body = imgs.length ? { text, images: imgs } : { text };
+      if (PUBLIC) {
+        const lang = (window.RCI18N && window.RCI18N.getLang) ? window.RCI18N.getLang() : '';
+        if (lang && lang !== 'en') body.lang = lang;
+      }
+      const r = await fetchJSON(ENDPOINT, { method: 'POST', body, timeoutMs: 50000, signal: ac.signal });
       typing.remove();
       if (r.status === 429) appendFailure('Rate limit hit — give it a few seconds.', text, 5000);
       else if (r.status === 503) {
