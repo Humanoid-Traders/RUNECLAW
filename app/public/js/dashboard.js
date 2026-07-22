@@ -4188,7 +4188,13 @@
           <p class="small muted" style="margin-top:8px;font-style:italic">AI drafts code-level structure well but misses economic exploits — every draft is a starting point for review, not a finished contract.</p>
         </section>
         <section class="panel" id="cs-flagsp" hidden><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-shield"></use></svg>Security flags</h2><div id="cs-flags"></div></section>
-        <section class="panel" id="cs-codep" hidden><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-check"></use></svg>Draft</h2><pre id="cs-code" style="overflow:auto;max-height:520px;white-space:pre-wrap;word-break:break-word"></pre></section>
+        <section class="panel" id="cs-codep" hidden>
+          <h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-check"></use></svg>Draft
+            <span class="right" style="margin-left:auto;display:flex;gap:6px">
+              <button class="btn btn--sm" id="cs-copy" type="button">Copy</button>
+              <button class="btn btn--sm" id="cs-download" type="button">Download .sol</button>
+            </span></h2>
+          <pre id="cs-code" style="overflow:auto;max-height:520px;white-space:pre-wrap;word-break:break-word"></pre></section>
       </div>`);
 
     // Severity → colour, inline so we don't depend on a specific chip class.
@@ -4203,6 +4209,27 @@
       const ta = document.getElementById('cs-spec');
       ta.value = t.getAttribute('data-tpl') || '';
       ta.focus();
+    });
+
+    // Take the code out — a codegen tool has to let you keep the result.
+    const codeText = () => (document.getElementById('cs-code') || {}).textContent || '';
+    const copyBtn = document.getElementById('cs-copy');
+    if (copyBtn) copyBtn.addEventListener('click', async () => {
+      const code = codeText();
+      if (!code) return;
+      try { await navigator.clipboard.writeText(code); toast('Contract copied.'); }
+      catch (_) { toast('Copy failed — select the code and copy manually.'); }
+    });
+    const dlBtn = document.getElementById('cs-download');
+    if (dlBtn) dlBtn.addEventListener('click', () => {
+      const code = codeText();
+      if (!code) return;
+      const blob = new Blob([code], { type: 'text/plain' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = 'Contract.sol';
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
     });
 
     const btn = document.getElementById('cs-draft');

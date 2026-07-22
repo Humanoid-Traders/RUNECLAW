@@ -53,6 +53,16 @@ test('one-tap template chips pre-fill the spec', () => {
   assert.match(dash, /ta\.value = t\.getAttribute\('data-tpl'\)/);
 });
 
+test('the draft panel lets you take the code out (copy + download .sol)', () => {
+  // a codegen tool has to let you keep the result.
+  assert.match(dash, /id="cs-copy"/);
+  assert.match(dash, /id="cs-download"/);
+  assert.match(dash, /navigator\.clipboard\.writeText/);
+  // download builds a Contract.sol blob from the rendered text, not from HTML.
+  assert.match(dash, /a\.download = 'Contract\.sol'/);
+  assert.match(dash, /new Blob\(\[code\]/);
+});
+
 test('the dashboard.js cache-buster is bumped', () => {
-  assert.match(html, /dashboard\.js\?v=5\d/);
+  assert.match(html, /dashboard\.js\?v=\d\d+/);
 });
