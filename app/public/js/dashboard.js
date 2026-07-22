@@ -52,6 +52,7 @@
   // via a per-render AbortController (renderAbort) so the previous render's
   // delegated listeners are discarded before the next render re-adds its own.
   let renderAbort = null;
+  let _radar3d = null;   // live 3D radar handle — destroyed on view change (its rAF loop must stop)
   function onView(type, handler) {
     container.addEventListener(type, handler,
       renderAbort ? { signal: renderAbort.signal } : undefined);
@@ -154,6 +155,7 @@
     currentView = id;
     viewTimers.forEach(clearInterval);
     viewTimers = [];
+    if (_radar3d) { try { _radar3d.destroy(); } catch (_) {} _radar3d = null; }
     renderNav(id);
     // Soft refresh (live SSE nudges): update in place — no scroll-to-top jump
     // and no replayed entrance stagger. Only real navigation gets the full
@@ -904,6 +906,11 @@
           <span class="badge" style="margin-left:auto" title="Public data comparison — nothing here trades">read-only</span></h2>
           <div id="c-dex"><div class="skel"></div></div>
         </section>
+        <section class="panel" id="p-radar3d"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-radar"></use></svg>Sector sweep — live 3D radar
+          <span class="badge" style="margin-left:auto" title="Live tokens plotted by momentum &amp; volume on a tilted radar, swept in real time. Visualization only — it never trades.">read-only</span></h2>
+          <canvas id="radar3dCanvas" style="width:100%;height:264px;display:block"></canvas>
+          <p class="small muted" id="radar3dLegend" style="margin-top:var(--s2)">Each blip is a live token — angle by sector, distance by 24h volume, colour by direction. The beam lights them as it passes.</p>
+        </section>
         <section class="panel" id="p-rwa"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-coin"></use></svg>RWA &amp; on-chain radar
           <span class="badge" style="margin-left:auto" title="Market intelligence from live venue tickers — the radar never trades">read-only</span></h2>
           <div id="c-rwa"><div class="skel"></div><div class="skel"></div></div>
@@ -968,6 +975,43 @@
         </table></div>
         <p class="muted small" style="margin-top:var(--s2)">${esc(d.execution_note)}</p>`;
     }, { empty: { icon: 'icon-globe', text: 'The DEX comparison lights up when Hyperliquid public data is reachable.' } });
+
+    // Live 3D sector radar — plot the RWA-radar tokens as blips (angle by
+    // category, distance by 24h volume, colour by direction) and sweep them.
+    // Visualization only; degrades silently if the widget or data is absent.
+    (async () => {
+      try {
+        const canvas = document.getElementById('radar3dCanvas');
+        if (!canvas || !window.RC3DRadar) return;
+        if (_radar3d) { try { _radar3d.destroy(); } catch (_) {} }
+        _radar3d = window.RC3DRadar.mount(canvas, {});
+        const r = await fetchJSON('/api/market/rwa', { auth: false, timeoutMs: 12000 });
+        const cats = (r && r.ok && r.data && r.data.categories) || [];
+        const pts = [];
+        let maxVol = 1;
+        cats.forEach((c) => (c.tokens || []).forEach((t) => { maxVol = Math.max(maxVol, Number(t.volume_24h_usd) || 0); }));
+        cats.forEach((c, ci) => {
+          const base = cats.length ? ci / cats.length : 0;
+          (c.tokens || []).slice(0, 8).forEach((t, ti, arr) => {
+            const jitter = arr.length > 1 ? (ti / arr.length) * (1 / Math.max(1, cats.length)) : 0;
+            const vol = Number(t.volume_24h_usd) || 0;
+            const chg = Number(t.change_24h_pct) || 0;
+            pts.push({
+              label: t.base,
+              angle: (base + jitter) % 1,
+              radius: 0.28 + 0.66 * Math.sqrt(vol / maxVol),
+              intensity: Math.max(0.2, Math.min(1, Math.abs(chg) / 8)),
+              up: chg >= 0,
+            });
+          });
+        });
+        if (_radar3d) _radar3d.update(pts);
+        const legend = document.getElementById('radar3dLegend');
+        if (legend && pts.length) {
+          legend.textContent = `${pts.length} live tokens across ${cats.length} sectors · green = up, red = down over 24h · distance = 24h volume. Visualization only — it never trades.`;
+        }
+      } catch (_) { /* radar is decorative — never block the view */ }
+    })();
 
     // RWA & on-chain radar — live sector read from public venue tickers.
     renderPanel(C('rwa'), async () => {
