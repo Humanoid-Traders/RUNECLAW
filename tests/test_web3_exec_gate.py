@@ -1,9 +1,10 @@
 """WEB3-LIVE-EXEC slice 1 — the fail-closed gate + the preview-only invariant.
 
 The gate is the safety spine every on-chain slice runs through. This locks:
-default-OFF, admin-only, testnet-first, preview-only (a broadcast is refused),
-and envelope-enforcing — all fail-closed. Plus the hard invariant that the
-gateway handler NEVER signs or broadcasts a transaction in this slice.
+feature ON by default but testnet-only (explicit =0 hard-disables), admin-only,
+testnet-first (mainnet needs a separate allow-flag), preview-only (a broadcast is
+refused), and envelope-enforcing — all fail-closed. Plus the hard invariant that
+the gateway handler NEVER signs or broadcasts a transaction in this slice.
 """
 
 import inspect
@@ -24,10 +25,14 @@ def _ev(**kw):
     return gate.evaluate(**kw)
 
 
-def test_default_off_denies_everything():
-    d = gate.evaluate(is_admin=True, network="sepolia", envelope_enforcing=True, env={})
-    assert d.allowed is False
-    assert "not enabled" in d.reason.lower()
+def test_feature_default_on_but_hard_disable_wins():
+    # feature defaults ON now — testnet preview/exec works out of the box.
+    assert gate.evaluate(is_admin=True, network="sepolia",
+                         envelope_enforcing=True, env={}).allowed is True
+    # …but an explicit WEB3_LIVE_EXEC_ENABLED=0 still hard-disables everything.
+    d = gate.evaluate(is_admin=True, network="sepolia", envelope_enforcing=True,
+                      env={"WEB3_LIVE_EXEC_ENABLED": "0"})
+    assert d.allowed is False and "not enabled" in d.reason.lower()
 
 
 def test_admin_only():

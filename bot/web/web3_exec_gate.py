@@ -12,7 +12,8 @@ But the gate already enforces the full fail-closed precondition set so the
 authorization surface is proven before any real transaction is ever sent:
 
     1. feature_enabled     — operator master switch (env WEB3_LIVE_EXEC_ENABLED,
-                             default OFF). Nothing on-chain happens without it.
+                             default ON, testnet-only). Set =0 to hard-disable.
+                             Being ON opens nothing on mainnet (see check 3).
     2. is_admin            — admin-only for now. On-chain execution is not opened
                              to general users in this slice.
     3. network_ok          — the target network is known AND, unless the operator
@@ -37,6 +38,9 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 # Known EVM networks and whether each is a testnet. Live testing starts here.
+# Every testnet below is EIP-1559 (type-2) capable — the signer builds type-2
+# transactions and the prepare step falls back to gasPrice, so a chain that
+# doesn't surface a base fee still works. RPC per chain: WEB3_RPC_<NETWORK>.
 NETWORKS = {
     "sepolia": {"chain_id": 11155111, "testnet": True, "label": "Ethereum Sepolia",
                 "explorer": "https://sepolia.etherscan.io"},
@@ -46,6 +50,18 @@ NETWORKS = {
                          "explorer": "https://sepolia.arbiscan.io"},
     "optimism-sepolia": {"chain_id": 11155420, "testnet": True, "label": "Optimism Sepolia",
                          "explorer": "https://sepolia-optimism.etherscan.io"},
+    "polygon-amoy": {"chain_id": 80002, "testnet": True, "label": "Polygon Amoy",
+                     "explorer": "https://amoy.polygonscan.com"},
+    "avalanche-fuji": {"chain_id": 43113, "testnet": True, "label": "Avalanche Fuji",
+                       "explorer": "https://testnet.snowtrace.io"},
+    "scroll-sepolia": {"chain_id": 534351, "testnet": True, "label": "Scroll Sepolia",
+                       "explorer": "https://sepolia.scrollscan.com"},
+    "linea-sepolia": {"chain_id": 59141, "testnet": True, "label": "Linea Sepolia",
+                      "explorer": "https://sepolia.lineascan.build"},
+    "blast-sepolia": {"chain_id": 168587773, "testnet": True, "label": "Blast Sepolia",
+                      "explorer": "https://sepolia.blastscan.io"},
+    "bsc-testnet": {"chain_id": 97, "testnet": True, "label": "BNB Smart Chain Testnet",
+                    "explorer": "https://testnet.bscscan.com"},
     "ethereum": {"chain_id": 1, "testnet": False, "label": "Ethereum",
                  "explorer": "https://etherscan.io"},
     "base": {"chain_id": 8453, "testnet": False, "label": "Base",
@@ -95,13 +111,23 @@ class Web3ExecDecision:
 
 
 def feature_enabled(env: Optional[dict] = None) -> bool:
-    """Operator master switch. Default OFF. Truthy = 1/true/yes/on."""
-    raw = (env or os.environ).get("WEB3_LIVE_EXEC_ENABLED", "")
-    return str(raw).strip().lower() in ("1", "true", "yes", "on")
+    """Operator master switch for the on-chain feature. Default ON — the platform
+    ships with testnet execution active so live testnet testing works out of the
+    box. This is SAFE because it opens nothing on mainnet: the feature is
+    testnet-only unless WEB3_LIVE_EXEC_ALLOW_MAINNET is separately set (default
+    OFF), signing needs its own switch + operator key + eth-account, and every
+    action runs through an enforce-mode Authority Envelope. Explicit off wins:
+    set WEB3_LIVE_EXEC_ENABLED=0 to hard-disable."""
+    raw = str((env or os.environ).get("WEB3_LIVE_EXEC_ENABLED", "")).strip().lower()
+    if raw in ("0", "false", "no", "off"):
+        return False
+    return True
 
 
 def mainnet_allowed(env: Optional[dict] = None) -> bool:
-    """Separate, explicit opt-in to leave testnet. Default OFF — testnet-first."""
+    """Separate, explicit opt-in to leave testnet. Default OFF — testnet-first.
+    Turning the feature/signing switches ON never changes this: mainnet stays
+    refused unless this is deliberately set."""
     raw = (env or os.environ).get("WEB3_LIVE_EXEC_ALLOW_MAINNET", "")
     return str(raw).strip().lower() in ("1", "true", "yes", "on")
 
