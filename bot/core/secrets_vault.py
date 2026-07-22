@@ -61,8 +61,12 @@ _DEFAULT_MANAGED = (
     "WEB3_SIGNER_PRIVATE_KEY",
     # Website pairing secrets: losing either silently severs the web app from
     # the bot — chat/web-trade die (WEB_GATEWAY_SECRET) or dashboard sync is
-    # rejected (BOT_SYNC_SECRET) — while the bot itself keeps trading fine.
-    "WEB_GATEWAY_SECRET", "BOT_SYNC_SECRET",
+    # rejected (BOT_SYNC_SECRET) — while the bot itself keeps trading fine. The
+    # Node app self-heals these from the SAME vault (app/lib/secrets_vault.js),
+    # so a wiped .env brings the WEBSITE back too, not just the bot.
+    # WEB_CREDS_KEY encrypts per-user exchange keys on the web side — losing it
+    # makes every stored credential undecryptable; seed it so it survives too.
+    "WEB_GATEWAY_SECRET", "BOT_SYNC_SECRET", "WEB_CREDS_KEY",
 )
 
 
