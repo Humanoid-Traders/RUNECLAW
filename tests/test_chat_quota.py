@@ -106,6 +106,34 @@ def test_write_failure_never_raises(isolated_store, monkeypatch):
     assert "allowed" in r
 
 
+def test_seconds_until_reset_is_within_a_day():
+    # the reset is always the next UTC midnight → strictly positive, ≤ 24h.
+    s = chat_quota.seconds_until_reset()
+    assert isinstance(s, int)
+    assert 0 < s <= 86400
+
+
+def test_returns_carry_reset_hint_for_capped_free_users(isolated_store):
+    uid = "web:reset"
+    r = chat_quota.consume(uid, "basic")
+    # a live (non-exempt) return advertises when the counter rolls, so the UI can
+    # tell the user their free questions come back rather than just dead-ending.
+    assert isinstance(r.get("reset_in_seconds"), int) and r["reset_in_seconds"] > 0
+    s = chat_quota.status(uid, "basic")
+    assert isinstance(s.get("reset_in_seconds"), int) and s["reset_in_seconds"] > 0
+    # exempt callers carry no reset (they never hit a wall).
+    assert chat_quota.consume("web:reset2", "pro")["reset_in_seconds"] is None
+
+
+def test_refused_return_includes_reset_hint(isolated_store, monkeypatch):
+    monkeypatch.setenv("FREE_CHAT_DAILY_LIMIT", "1")
+    uid = "web:reset3"
+    chat_quota.consume(uid, "basic")
+    refused = chat_quota.consume(uid, "basic")
+    assert refused["allowed"] is False
+    assert isinstance(refused.get("reset_in_seconds"), int) and refused["reset_in_seconds"] > 0
+
+
 def test_handler_gates_free_chat_and_is_quota_aware():
     from bot.web import user_gateway
     src = inspect.getsource(user_gateway.handle_chat)

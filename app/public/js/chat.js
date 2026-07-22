@@ -584,9 +584,16 @@
           const meter = document.createElement('div');
           meter.className = 'muted small';
           meter.style.cssText = 'margin-top:4px;opacity:.75;font-size:11px';
+          // On the last free question, tell them when the counter rolls so the
+          // wall reads as a wait, not a dead end.
+          const _reset = (typeof _q.reset_in_seconds === 'number' && _q.reset_in_seconds > 0)
+            ? (_q.reset_in_seconds >= 7200
+                ? `resets in ~${Math.floor(_q.reset_in_seconds / 3600)}h`
+                : (_q.reset_in_seconds >= 3600 ? 'resets in ~1h' : 'resets within the hour'))
+            : 'resets tomorrow';
           meter.innerHTML = _q.remaining > 0
             ? `⚡ ${_q.remaining} of ${_q.limit} free questions left today`
-            : '⚡ Last free question today — <a href="/dashboard#account/aplan">upgrade for unlimited →</a>';
+            : `⚡ Last free question today (${_reset}) — <a href="/dashboard#account/aplan">upgrade for unlimited →</a>`;
           bubble.appendChild(meter);
         }
         if (r.data.setup) appendSetupAction(r.data.setup);

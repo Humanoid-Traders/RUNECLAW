@@ -381,12 +381,24 @@ async def handle_chat(request: web.Request) -> web.Response:
     _q = chat_quota.consume(tg_id, _tier)
     if not _q.get("allowed"):
         _lim = _q.get("limit") or chat_quota.free_daily_limit()
+        # Tell the capped user WHEN their free questions return, so the wall
+        # reads as a wait, not a dead end. Humanise the reset window.
+        _secs = _q.get("reset_in_seconds")
+        if isinstance(_secs, (int, float)) and _secs > 0:
+            _hrs = int(_secs) // 3600
+            if _hrs >= 2:
+                _reset = f"Your free questions reset in about {_hrs} hours"
+            elif _hrs == 1:
+                _reset = "Your free questions reset in about an hour"
+            else:
+                _reset = "Your free questions reset within the hour"
+        else:
+            _reset = "Your free questions reset tomorrow"
         return web.json_response({
             "reply_html": (
                 f"🚀 <b>You've used your {_lim} free questions for today.</b><br><br>"
                 "Upgrade to keep chatting with the agent — unlimited questions plus "
-                "priority models, live signals, and deeper research. Your free "
-                "questions reset tomorrow.<br><br>"
+                f"priority models, live signals, and deeper research. {_reset}.<br><br>"
                 "<a href=\"/dashboard#account\">See plans →</a>"),
             "intent": "quota_exceeded", "quota": _q}, status=200)
 
