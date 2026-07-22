@@ -719,6 +719,36 @@ async def test_public_chat_forwards_lang_to_llm(monkeypatch):
     assert handler.llm_calls[0][3] is True  # still public=True, no identity
 
 
+async def test_contract_studio_drafts_and_flags(monkeypatch):
+    # NL spec → the LLM is asked to DRAFT Solidity (generation prompt, not the raw
+    # spec), and the heuristic security-flag pass runs over the output. The reply
+    # always carries the audit disclaimer — a DRAFT with FLAGS, never a verdict.
+    monkeypatch.setattr(ug, "_GATEWAY_SECRET", SECRET)
+    handler = FakeHandler()
+    async with gateway_client(FakeEngine(), handler) as c:
+        r = await c.post("/contract/studio",
+                         json={"telegram_id": "web:1", "spec": "an ERC20 token"},
+                         headers=HDRS)
+        assert r.status == 200
+        data = await r.json()
+    assert data["intent"] == "contract_studio"
+    assert data["solidity"] == "llm answer"
+    assert isinstance(data["flags"], list)
+    assert isinstance(data["summary"], dict)
+    assert "audit" in data["disclaimer"].lower()
+    # the model got the generation prompt (asks for Solidity, embeds the spec,
+    # says DRAFT) — not the raw user text.
+    q = handler.llm_calls[0][0]
+    assert "Solidity" in q and "an ERC20 token" in q and "DRAFT" in q
+
+
+async def test_contract_studio_requires_a_spec(monkeypatch):
+    monkeypatch.setattr(ug, "_GATEWAY_SECRET", SECRET)
+    async with gateway_client(FakeEngine(), FakeHandler()) as c:
+        r = await c.post("/contract/studio", json={"telegram_id": "web:1"}, headers=HDRS)
+        assert r.status == 400
+
+
 async def test_public_chat_validates_text(monkeypatch):
     monkeypatch.setattr(ug, "_GATEWAY_SECRET", SECRET)
     handler = FakeHandler(users={})

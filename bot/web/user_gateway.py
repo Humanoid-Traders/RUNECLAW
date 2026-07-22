@@ -458,6 +458,72 @@ async def handle_public_chat(request: web.Request) -> web.Response:
     return web.json_response({"reply_html": answer, "intent": "chat"})
 
 
+async def handle_contract_studio(request: web.Request) -> web.Response:
+    """AI smart-contract drafting: an NL spec → a Solidity DRAFT + heuristic
+    security flags. Tier-routed LLM (admins/paid get the priority model); free
+    users spend from the same daily quota as chat. The output is a DRAFT with
+    FLAGS, NEVER an audit or a safety verdict — the disclaimer travels with every
+    response (§4). No money-path: this generates + reviews text only."""
+    tg_handler = request.app["tg_handler"]
+    body = await _json_body(request)
+    tg_id = str(body.get("telegram_id") or "").strip()
+    spec = str(body.get("spec") or body.get("text") or "").strip()
+    name = str(body.get("name") or "").strip()[:64]
+    lic = (str(body.get("license") or "MIT").strip()[:40] or "MIT")
+    pragma = (str(body.get("pragma") or "0.8.24").strip()[:16] or "0.8.24")
+
+    if not tg_id or not spec:
+        return web.json_response({"error": "telegram_id and spec required"}, status=400)
+    if len(spec) > _MAX_TEXT_LEN:
+        return web.json_response({"error": "spec too long"}, status=400)
+
+    err = _guard_user(tg_handler, tg_id, name=name)
+    if err is not None:
+        return err
+
+    _is_admin = _is_admin_id(tg_handler, tg_id)
+    try:
+        _tier = "admin" if _is_admin else tg_handler.users.get_tier(tg_id)
+    except Exception:
+        _tier = "admin" if _is_admin else "basic"
+    from bot.web import chat_quota
+    _q = chat_quota.consume(tg_id, _tier)
+    if not _q.get("allowed"):
+        _lim = _q.get("limit") or chat_quota.free_daily_limit()
+        return web.json_response({
+            "reply_html": (
+                f"🚀 <b>You've used your {_lim} free contract drafts for today.</b>"
+                "<br><br>Upgrade for unlimited Contract Studio drafts on the "
+                "priority model, plus the security-flag pass and testnet deploy."
+                "<br><br><a href=\"/dashboard#account/aplan\">See plans →</a>"),
+            "intent": "quota_exceeded", "quota": _q}, status=200)
+
+    from bot.core.contract_studio import (
+        build_generation_prompt, scan_security_flags, flags_summary,
+        AUDIT_DISCLAIMER)
+    from bot.nlp.sanitize import sanitize_chat_input
+    prompt = build_generation_prompt(sanitize_chat_input(spec), license=lic,
+                                     pragma=pragma)
+    answer, meta = await tg_handler._llm_chat(
+        prompt, user_id=tg_id, user_name=name, is_admin=_is_admin,
+        profile_note="", reply_lang="", return_meta=True)
+
+    # Heuristic security pass over the model's own output — flags to review,
+    # never a verdict. Serialised for the client.
+    import dataclasses
+    flags = scan_security_flags(answer or "")
+    return web.json_response({
+        "solidity": answer,
+        "flags": [dataclasses.asdict(f) for f in flags],
+        "summary": flags_summary(flags),
+        "disclaimer": AUDIT_DISCLAIMER,
+        "model": (meta or {}).get("model", ""),
+        "provider": (meta or {}).get("provider", ""),
+        "intent": "contract_studio",
+        "quota": _q,
+    })
+
+
 def _setup_from_new_idea(engine, ideas_before: set) -> dict | None:
     """A READ-ONLY setup hint for the web chat's one-tap "Trade this".
 
@@ -2444,6 +2510,7 @@ def build_gateway(engine, tg_handler) -> web.Application:
     app["proposers"] = {}
     app.router.add_post("/chat", handle_chat)
     app.router.add_post("/chat/public", handle_public_chat)
+    app.router.add_post("/contract/studio", handle_contract_studio)
     app.router.add_get("/chat/history", handle_chat_history)
     app.router.add_get("/portfolio", handle_portfolio)
     app.router.add_get("/positions", handle_positions)
