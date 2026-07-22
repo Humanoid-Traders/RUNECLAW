@@ -176,3 +176,82 @@ def test_signer_key_is_vaulted():
     # the signing key is encrypted at rest (managed by the secrets vault).
     from bot.core import secrets_vault
     assert "WEB3_SIGNER_PRIVATE_KEY" in secrets_vault._DEFAULT_MANAGED
+
+
+# ── signer status (key-free snapshot for the web UI) ───────────────────
+
+def test_signer_status_is_key_free_and_testnet_scoped():
+    st = signer.signer_status(_ON)
+    # never the private key — only presence booleans + the public address.
+    assert _TEST_KEY not in str(st)
+    assert st["signer_key_present"] is True
+    assert st["feature_enabled"] is True and st["signing_enabled"] is True
+    assert st["testnet_only"] is True
+    # every listed network is a testnet, with an rpc_configured flag.
+    assert st["testnets"] and all(t["chain_id"] and "rpc_configured" in t
+                                  for t in st["testnets"])
+    labels = {t["network"] for t in st["testnets"]}
+    assert "sepolia" in labels and "ethereum" not in labels   # no mainnet listed
+
+
+def test_signer_status_reports_rpc_readiness():
+    env = dict(_ON, WEB3_RPC_SEPOLIA="https://rpc.example/sepolia")
+    st = signer.signer_status(env)
+    by = {t["network"]: t for t in st["testnets"]}
+    assert by["sepolia"]["rpc_configured"] is True
+    assert by["base-sepolia"]["rpc_configured"] is False
+
+
+# ── prepare (nonce/gas auto-fetch) — testnet-only, never signs ─────────
+
+async def test_prepare_refuses_mainnet():
+    out = await signer.prepare_tx(network="ethereum", address=_TEST_ADDR, env=_ON)
+    assert out["ok"] is False and "testnet" in out["error"].lower()
+
+
+async def test_prepare_without_rpc_is_refused():
+    out = await signer.prepare_tx(network="sepolia", address=_TEST_ADDR, env=_ON)  # no RPC
+    assert out["ok"] is False and "rpc" in out["error"].lower()
+
+
+async def test_prepare_without_address_is_refused():
+    env = dict(_ON, WEB3_RPC_SEPOLIA="https://rpc.example/sepolia")
+    out = await signer.prepare_tx(network="sepolia", address="", env=env)
+    assert out["ok"] is False and "address" in out["error"].lower()
+
+
+async def test_prepare_composes_eip1559_fees(monkeypatch):
+    # stub the RPC round-trip so we can prove nonce + fee composition without a net.
+    async def fake_rpc(rpc_url, method, params):
+        return {
+            "eth_getTransactionCount": {"ok": True, "result": "0x5"},
+            "eth_maxPriorityFeePerGas": {"ok": True, "result": hex(1_500_000_000)},
+            "eth_getBlockByNumber": {"ok": True, "result": {"baseFeePerGas": hex(3_000_000_000)}},
+        }[method]
+    monkeypatch.setattr(signer, "_rpc_call", fake_rpc)
+    env = dict(_ON, WEB3_RPC_SEPOLIA="https://rpc.example/sepolia")
+    out = await signer.prepare_tx(network="sepolia", address=_TEST_ADDR, env=env)
+    assert out["ok"] is True
+    assert out["nonce"] == 5
+    assert out["base_fee_wei"] == 3_000_000_000
+    assert out["max_priority_wei"] == 1_500_000_000
+    # maxFee = 2×base + tip, and tip never exceeds maxFee.
+    assert out["max_fee_wei"] == 2 * 3_000_000_000 + 1_500_000_000
+    assert out["max_priority_wei"] <= out["max_fee_wei"]
+
+
+# ── the prepare + status gateway handlers (admin + gate, never the key) ─
+
+def test_prepare_and_status_handlers_are_admin_gated_and_keyless():
+    for fn in (user_gateway.handle_web3_prepare, user_gateway.handle_web3_sign_status):
+        src = inspect.getsource(fn)
+        assert "_is_admin_id" in src            # admin re-check server-side
+        assert "WEB3_SIGNER_PRIVATE_KEY" not in src and "private_key" not in src
+    # prepare runs the same fail-closed signing gate before touching any RPC.
+    assert "evaluate_sign(" in inspect.getsource(user_gateway.handle_web3_prepare)
+
+
+def test_prepare_and_status_routes_registered():
+    src = inspect.getsource(user_gateway.build_gateway)
+    assert 'add_get("/web3/sign/status", handle_web3_sign_status)' in src
+    assert 'add_post("/web3/sign/prepare", handle_web3_prepare)' in src

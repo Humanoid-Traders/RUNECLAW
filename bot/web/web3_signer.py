@@ -93,6 +93,29 @@ def signer_address(env: Optional[dict] = None) -> Optional[str]:
         return None                     # never surface the key on a parse error
 
 
+def signer_status(env: Optional[dict] = None) -> dict:
+    """A safe, key-free snapshot for the admin signer UI: the flags, whether the
+    library + key are present, the signer's public address, and — per testnet —
+    whether an RPC endpoint is configured. NEVER includes the private key."""
+    testnets = []
+    for name, n in gate.NETWORKS.items():
+        if not n.get("testnet"):
+            continue
+        testnets.append({
+            "network": name, "label": n.get("label"), "chain_id": n.get("chain_id"),
+            "rpc_configured": bool(rpc_url_for(name, env)),
+        })
+    return {
+        "feature_enabled": gate.feature_enabled(env),
+        "signing_enabled": signing_enabled(env),
+        "signer_library_installed": signer_available(),
+        "signer_key_present": signer_key_present(env),
+        "signer_address": signer_address(env),          # public address or None
+        "testnet_only": True,                            # hard invariant in this slice
+        "testnets": testnets,
+    }
+
+
 @dataclass(frozen=True)
 class SignDecision:
     allowed: bool
@@ -193,6 +216,88 @@ def rpc_url_for(network: str, env: Optional[dict] = None) -> str:
     import os
     key = "WEB3_RPC_" + str(network or "").strip().upper().replace("-", "_")
     return str((env or os.environ).get(key, "") or "").strip()
+
+
+async def _rpc_call(rpc_url: str, method: str, params: list) -> dict:
+    """One JSON-RPC round-trip. Returns ``{ok, result}`` or ``{ok: False, error}``.
+    Generic errors only — an RPC endpoint or response never carries key material,
+    but we keep the surface clean regardless (F-15)."""
+    if not rpc_url:
+        return {"ok": False, "error": "no testnet RPC configured"}
+    try:
+        import aiohttp
+        payload = {"jsonrpc": "2.0", "id": 1, "method": method, "params": params}
+        timeout = aiohttp.ClientTimeout(total=15)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.post(rpc_url, json=payload) as resp:
+                data = await resp.json()
+        if isinstance(data, dict) and "result" in data and data["result"] is not None:
+            return {"ok": True, "result": data["result"]}
+        return {"ok": False, "error": "rpc call returned no result"}
+    except Exception:
+        return {"ok": False, "error": "rpc call failed"}
+
+
+async def prepare_tx(*, network: str, address: str, env: Optional[dict] = None) -> dict:
+    """Auto-fetch the next nonce + EIP-1559 gas fees for ``address`` on a testnet,
+    so the signer form never needs a hand-computed nonce. TESTNET-ONLY, read-only
+    RPC (getTransactionCount + gasPrice/baseFee). Returns
+    ``{ok, nonce, max_fee_wei, max_priority_wei, base_fee_wei, gas}`` or
+    ``{ok: False, error}``. Never signs, never touches the key."""
+    net = gate.resolve_network(network)
+    if not net or not net.get("testnet"):
+        return {"ok": False, "error": "prepare is testnet-only"}
+    try:
+        if int(net["chain_id"]) not in _TESTNET_CHAIN_IDS:
+            return {"ok": False, "error": "not a testnet chain"}
+    except (TypeError, ValueError):
+        return {"ok": False, "error": "unknown chain"}
+    addr = str(address or "").strip()
+    if not addr:
+        return {"ok": False, "error": "no signer address — configure the signing key"}
+    rpc_url = rpc_url_for(network, env)
+    if not rpc_url:
+        return {"ok": False, "error": "no testnet RPC configured (WEB3_RPC_<NETWORK>)"}
+
+    # Pending nonce — includes any not-yet-mined sends so we never collide.
+    nres = await _rpc_call(rpc_url, "eth_getTransactionCount", [addr, "pending"])
+    if not nres.get("ok"):
+        return {"ok": False, "error": "could not read the account nonce"}
+    try:
+        nonce = int(str(nres["result"]), 16)
+    except (TypeError, ValueError):
+        return {"ok": False, "error": "malformed nonce from rpc"}
+
+    # EIP-1559 fees: base fee from the latest block + a priority tip. Fall back to
+    # legacy gasPrice when the endpoint doesn't surface a base fee.
+    priority = 1_000_000_000                       # 1 gwei default tip
+    pres = await _rpc_call(rpc_url, "eth_maxPriorityFeePerGas", [])
+    if pres.get("ok"):
+        try:
+            priority = int(str(pres["result"]), 16)
+        except (TypeError, ValueError):
+            pass
+    base_fee = 0
+    bres = await _rpc_call(rpc_url, "eth_getBlockByNumber", ["latest", False])
+    if bres.get("ok") and isinstance(bres["result"], dict):
+        try:
+            base_fee = int(str(bres["result"].get("baseFeePerGas") or "0x0"), 16)
+        except (TypeError, ValueError):
+            base_fee = 0
+    if base_fee <= 0:                              # pre-1559 endpoint — use gasPrice
+        gres = await _rpc_call(rpc_url, "eth_gasPrice", [])
+        if gres.get("ok"):
+            try:
+                base_fee = int(str(gres["result"]), 16)
+            except (TypeError, ValueError):
+                base_fee = 0
+    # maxFee = 2×base + tip (headroom for the next few blocks), tip capped ≤ maxFee.
+    max_fee = base_fee * 2 + priority
+    if max_fee <= 0:
+        max_fee = priority
+    priority = min(priority, max_fee)
+    return {"ok": True, "nonce": nonce, "gas": 21000, "base_fee_wei": base_fee,
+            "max_fee_wei": max_fee, "max_priority_wei": priority}
 
 
 async def broadcast(raw_hex: str, rpc_url: str, chain_id: int) -> dict:

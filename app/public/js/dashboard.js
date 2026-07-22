@@ -5204,6 +5204,7 @@
         <section class="panel" id="p-review" hidden><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-shield"></use></svg>Pre-trade review queue
           <span class="right muted small">admin · proposed on-chain actions</span></h2>
           <div id="c-review"><div class="skel"></div><div class="skel"></div></div></section>
+        <section class="panel" id="p-signer" hidden></section>
         <section class="panel" id="p-readiness"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-shield"></use></svg>Readiness score
           <span class="right muted small">how constrained the agent is right now</span></h2>
           <div id="c-readiness"><div class="skel"></div><div class="skel"></div></div></section>
@@ -5232,6 +5233,10 @@
             return reviewQueueCard(r.data);
           }, { empty: { icon: 'icon-shield', text: 'No proposed on-chain actions yet — they queue here for review before any signer could act.' } });
         }
+        // Admin-only testnet live signer console (WEB3-LIVE-EXEC slice 2). Drives
+        // the bot's triple-gated, testnet-only signer from the web/phone: status,
+        // nonce/gas prepare, and a guarded send. The bot re-checks every gate.
+        mountTestnetSigner(document.getElementById('p-signer'));
       }
     }).catch(() => {});
     renderPanel(C('readiness'), async () => {
@@ -5328,6 +5333,137 @@
         else toast('Clear failed.');
       }
     });
+  }
+
+  // ── Admin testnet live signer console (WEB3-LIVE-EXEC slice 2) ──────────
+  // Drives the bot's testnet-only signer from the web. Every real gate lives
+  // bot-side (triple default-OFF flags, admin re-check, testnet-only, enforcing
+  // envelope, authorize()); this panel only shows status and forwards the resolved
+  // transfer. No private key ever reaches the browser — the panel shows the
+  // PUBLIC signer address and presence booleans only.
+  function mountTestnetSigner(panel) {
+    if (!panel) return;
+    panel.hidden = false;
+    panel.innerHTML = `
+      <h2 class="panel-title">✍️ Testnet live signer
+        <span class="right muted small">admin · TESTNET-ONLY · triple default-OFF</span></h2>
+      <div id="sgn-status"><div class="skel"></div><div class="skel"></div></div>`;
+    const yn = (v) => v
+      ? '<span class="chip" style="border-color:var(--up,#31c48d);color:var(--up,#31c48d);font-size:10px;padding:1px 6px">on</span>'
+      : '<span class="chip" style="border-color:var(--down,#f05252);color:var(--down,#f05252);font-size:10px;padding:1px 6px">off</span>';
+    const weiFromEth = (eth) => {
+      // string ETH → integer wei, no float error (18 decimals, split on '.').
+      const s = String(eth || '').trim();
+      if (!s || !/^\d*\.?\d*$/.test(s)) return null;
+      const [whole, frac = ''] = s.split('.');
+      const fracPad = (frac + '0'.repeat(18)).slice(0, 18);
+      try { return (BigInt(whole || '0') * (10n ** 18n) + BigInt(fracPad || '0')).toString(); }
+      catch (_) { return null; }
+    };
+    const gwei = (wei) => (wei == null ? '—' : (Number(wei) / 1e9).toFixed(2) + ' gwei');
+
+    async function load() {
+      const box = panel.querySelector('#sgn-status');
+      const r = await fetchJSON('/api/web3/sign/status', { timeoutMs: 12000 }).catch(() => null);
+      if (!r || !r.ok || !r.data) {
+        box.innerHTML = `<div class="small muted">Signer status unavailable. It requires the bot gateway and admin access.</div>`;
+        return;
+      }
+      const d = r.data;
+      const nets = Array.isArray(d.testnets) ? d.testnets : [];
+      const opts = nets.map((n) => `<option value="${esc(n.network)}"${n.rpc_configured ? '' : ' data-norpc="1"'}>${esc(n.label)}${n.rpc_configured ? '' : ' — no RPC'}</option>`).join('');
+      const addr = d.signer_address ? esc(d.signer_address) : '<span class="muted">not configured</span>';
+      const ready = d.feature_enabled && d.signing_enabled && d.signer_library_installed
+        && d.signer_key_present && d.envelope_enforcing;
+      box.innerHTML = `
+        <div class="small" style="display:grid;grid-template-columns:1fr auto;gap:4px 12px;margin-bottom:10px">
+          <span class="muted">On-chain feature</span><span>${yn(d.feature_enabled)}</span>
+          <span class="muted">Signing switch</span><span>${yn(d.signing_enabled)}</span>
+          <span class="muted">Signer library</span><span>${yn(d.signer_library_installed)}</span>
+          <span class="muted">Signing key</span><span>${yn(d.signer_key_present)}</span>
+          <span class="muted">Envelope enforcing</span><span>${yn(d.envelope_enforcing)}</span>
+        </div>
+        <div class="small muted" style="margin-bottom:8px">Signer address <code style="word-break:break-all">${addr}</code></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
+          <label class="small muted">Network <select id="sgn-net" class="input" style="min-width:150px">${opts}</select></label>
+          <button class="btn" id="sgn-prepare">Prepare (nonce + gas)</button>
+          <span class="right small muted" id="sgn-msg" style="margin-left:auto"></span>
+        </div>
+        <div id="sgn-prep" class="small muted" style="margin-bottom:8px"></div>
+        <div style="display:grid;gap:8px;max-width:520px">
+          <label class="small muted">Destination (0x…, must be envelope-allowlisted)
+            <input id="sgn-to" class="input" placeholder="0x…" spellcheck="false" style="width:100%;box-sizing:border-box"></label>
+          <label class="small muted">Amount (test ETH)
+            <input id="sgn-amt" class="input" inputmode="decimal" placeholder="0.001" style="width:100%;box-sizing:border-box"></label>
+          <button class="btn btn--primary" id="sgn-send"${ready ? '' : ' disabled'}>Sign &amp; broadcast (testnet)</button>
+        </div>
+        <div id="sgn-out" style="margin-top:10px"></div>
+        <p class="small muted" style="margin-top:10px;font-style:italic">Testnet only — mainnet is refused here regardless of any flag. Every send runs the bot's Authority Envelope authorize() and is recorded to the Guardian review queue. The signing key never leaves the bot.</p>`;
+      if (!ready) panel.querySelector('#sgn-msg').textContent = 'Not armed — one or more gates are off.';
+    }
+
+    let prepared = null;   // { nonce, gas, max_fee_wei, max_priority_wei, network }
+    panel.addEventListener('change', (e) => {
+      if (e.target && e.target.id === 'sgn-net') {   // network changed → stale prepare
+        prepared = null;
+        const pe = panel.querySelector('#sgn-prep'); if (pe) pe.innerHTML = '';
+      }
+    });
+    panel.addEventListener('click', async (e) => {
+      const netEl = panel.querySelector('#sgn-net');
+      const network = netEl ? netEl.value : 'sepolia';
+      const msg = (t) => { const m = panel.querySelector('#sgn-msg'); if (m) m.textContent = t || ''; };
+
+      if (e.target.closest('#sgn-prepare')) {
+        msg('Fetching nonce + gas…');
+        const r = await fetchJSON('/api/web3/sign/prepare', { method: 'POST', body: { network }, timeoutMs: 16000 }).catch(() => null);
+        if (!r || !r.ok || !r.data || !r.data.ok) {
+          prepared = null;
+          panel.querySelector('#sgn-prep').innerHTML = `<span style="color:var(--down,#f05252)">${esc((r && r.data && (r.data.reason || r.data.error)) || 'Prepare failed — check the testnet RPC and gates.')}</span>`;
+          msg('');
+          return;
+        }
+        const d = r.data;
+        prepared = { network, nonce: d.nonce, gas: d.gas, max_fee_wei: d.max_fee_wei, max_priority_wei: d.max_priority_wei };
+        panel.querySelector('#sgn-prep').innerHTML =
+          `Prepared on <strong>${esc(d.network || network)}</strong>: nonce <strong>${d.nonce}</strong> · max fee <strong>${gwei(d.max_fee_wei)}</strong> · tip <strong>${gwei(d.max_priority_wei)}</strong> · gas ${d.gas}`;
+        msg('Ready — review the destination and amount, then sign.');
+        return;
+      }
+
+      if (e.target.closest('#sgn-send')) {
+        const to = String((panel.querySelector('#sgn-to') || {}).value || '').trim();
+        const amt = String((panel.querySelector('#sgn-amt') || {}).value || '').trim();
+        if (!/^0x[0-9a-fA-F]{40}$/.test(to)) { msg('Enter a valid 0x… destination.'); return; }
+        const valueWei = weiFromEth(amt);
+        if (valueWei == null) { msg('Enter a valid test-ETH amount.'); return; }
+        if (!prepared || prepared.network !== network) { msg('Run Prepare first (fetches the nonce).'); return; }
+        if (!confirm(`Sign & broadcast on ${network} (TESTNET):\n\n${amt} ETH → ${to}\nnonce ${prepared.nonce}\n\nThis sends a real testnet transaction.`)) return;
+        const btn = e.target.closest('#sgn-send'); btn.disabled = true; msg('Signing…');
+        const body = { network, to, value_wei: valueWei, nonce: prepared.nonce, gas: prepared.gas,
+                       max_fee_wei: prepared.max_fee_wei, max_priority_wei: prepared.max_priority_wei,
+                       amount_usd: null, asset: 'ETH' };
+        const r = await fetchJSON('/api/web3/sign', { method: 'POST', body, timeoutMs: 30000 }).catch(() => null);
+        btn.disabled = false;
+        const out = panel.querySelector('#sgn-out');
+        if (!r || !r.ok || !r.data) {
+          const reason = (r && r.data && (r.data.reason || (r.data.reasons || []).join('; ') || r.data.error)) || 'Sign failed.';
+          out.innerHTML = `<div class="small" style="color:var(--down,#f05252)">${esc(reason)}</div>`;
+          msg(''); return;
+        }
+        const d = r.data;
+        const hash = d.tx_hash ? esc(d.tx_hash) : '—';
+        out.innerHTML = `<div class="small" style="border:1px solid var(--up,#31c48d);border-radius:10px;padding:10px">
+          <div><strong>${d.broadcast ? 'Broadcast' : 'Signed'}</strong> on ${esc(d.network || network)} ${d.testnet ? '(testnet)' : ''}</div>
+          <div class="muted" style="margin-top:4px;word-break:break-all">tx ${hash}</div>
+          ${d.note ? `<div class="muted" style="margin-top:4px">${esc(d.note)}</div>` : ''}</div>`;
+        prepared = null;                      // consumed — force a fresh nonce next time
+        msg(d.broadcast ? 'Broadcast to testnet.' : 'Signed.');
+        toast(d.broadcast ? 'Testnet transaction broadcast.' : 'Transaction signed.');
+        return;
+      }
+    });
+    load();
   }
 
   /* ═══════════════ Boot ═══════════════ */

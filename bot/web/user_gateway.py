@@ -2304,8 +2304,17 @@ async def handle_web3_sign(request: web.Request) -> web.Response:
     except (TypeError, ValueError):
         return web.json_response({"error": "value_wei and nonce are required integers"},
                                  status=400)
+    # Prefer the prepared EIP-1559 fees (from /web3/sign/prepare) when present; the
+    # signer falls back to its safe defaults otherwise.
+    _sign_kw = {"gas": int(body.get("gas") or 21000)}
+    for _k, _bk in (("max_fee_wei", "max_fee_wei"), ("max_priority_wei", "max_priority_wei")):
+        try:
+            if body.get(_bk) is not None:
+                _sign_kw[_k] = int(body.get(_bk))
+        except (TypeError, ValueError):
+            pass
     signed = _signer.build_and_sign(network=network, to=dest, value_wei=value_wei,
-                                    nonce=nonce, gas=int(body.get("gas") or 21000))
+                                    nonce=nonce, **_sign_kw)
     if not signed.get("ok"):
         return web.json_response({"error": "sign_failed", "reason": signed.get("error")},
                                  status=400)
@@ -2343,6 +2352,73 @@ async def handle_web3_sign(request: web.Request) -> web.Response:
     })
 
 
+async def handle_web3_sign_status(request: web.Request) -> web.Response:
+    """WEB3-LIVE-EXEC slice 2 — admin-only, read-only signer STATUS for the web UI.
+    Returns the signing flags, whether the library + key are present, the signer's
+    PUBLIC address, and per-testnet RPC readiness. NEVER returns the signing key."""
+    tg_handler = request.app["tg_handler"]
+    tg_id = str(request.query.get("telegram_id") or "").strip()
+    if not tg_id:
+        return web.json_response({"error": "telegram_id required"}, status=400)
+    if not _is_admin_id(tg_handler, tg_id):
+        return web.json_response({"error": "web3 signing is admin-only"}, status=403)
+    from bot.web import web3_signer as _signer
+    try:
+        from bot.guardian.user_authority_store import get_user_authority_store
+        enforcing = bool(get_user_authority_store().is_enforcing(tg_id))
+    except Exception:
+        enforcing = False
+    status = _signer.signer_status()
+    status["envelope_enforcing"] = enforcing
+    return web.json_response(status)
+
+
+async def handle_web3_prepare(request: web.Request) -> web.Response:
+    """WEB3-LIVE-EXEC slice 2 — admin-only, TESTNET-ONLY tx PREPARE: auto-fetch the
+    next nonce + EIP-1559 gas fees for the signer address on a testnet, so the send
+    form never needs a hand-computed nonce. Read-only RPC; never signs, never
+    touches the key. Runs the same signing gate first (fail-closed)."""
+    import time as _time
+    tg_handler = request.app["tg_handler"]
+    body = await _json_body(request)
+    tg_id = str(body.get("telegram_id") or "").strip()
+    if not tg_id:
+        return web.json_response({"error": "telegram_id required"}, status=400)
+    if not _is_admin_id(tg_handler, tg_id):
+        return web.json_response({"error": "web3 signing is admin-only"}, status=403)
+
+    from bot.web import web3_signer as _signer
+    network = str(body.get("network") or "sepolia")
+    try:
+        from bot.guardian.user_authority_store import get_user_authority_store
+        enforcing = bool(get_user_authority_store().is_enforcing(tg_id))
+    except Exception:
+        enforcing = False
+    # Same fail-closed gate as the sign path — prepare is a step toward signing.
+    decision = _signer.evaluate_sign(is_admin=True, network=network,
+                                     envelope_enforcing=enforcing)
+    if not decision.allowed:
+        return web.json_response({"error": "web3_sign_denied", "reason": decision.reason,
+                                  "checklist": decision.checklist}, status=403)
+    addr = _signer.signer_address()
+    prep = await _signer.prepare_tx(network=network, address=addr or "")
+    if not prep.get("ok"):
+        return web.json_response({"error": "prepare_failed", "reason": prep.get("error")},
+                                 status=400)
+    net = decision.network or {}
+    audit(system_log, f"Web3 PREPARE (admin) testnet {network}", action="web3_prepare",
+          result="OK", data={"network": network, "nonce": prep.get("nonce")})
+    return web.json_response({
+        "ok": True, "network": net.get("label"), "chain_id": net.get("chain_id"),
+        "testnet": net.get("testnet"), "from": addr,
+        "nonce": prep.get("nonce"), "gas": prep.get("gas"),
+        "max_fee_wei": prep.get("max_fee_wei"),
+        "max_priority_wei": prep.get("max_priority_wei"),
+        "base_fee_wei": prep.get("base_fee_wei"),
+        "prepared_ts": _time.time(),
+    })
+
+
 def build_gateway(engine, tg_handler) -> web.Application:
     """Build the /gateway sub-app. Caller mounts it under the dashboard app."""
     app = web.Application(middlewares=[secret_middleware])
@@ -2370,8 +2446,11 @@ def build_gateway(engine, tg_handler) -> web.Application:
     # WEB3-LIVE-EXEC slice 1: admin-only, envelope-gated on-chain PREVIEW (no
     # signer, no broadcast — the safety spine for future live signing).
     app.router.add_post("/web3/execute", handle_web3_execute)
-    # WEB3-LIVE-EXEC slice 2: admin-only, TESTNET-ONLY live sign + broadcast.
+    # WEB3-LIVE-EXEC slice 2: admin-only, TESTNET-ONLY live sign + broadcast, plus
+    # the read-only signer status and the nonce/gas prepare step that drive the UI.
     app.router.add_post("/web3/sign", handle_web3_sign)
+    app.router.add_get("/web3/sign/status", handle_web3_sign_status)
+    app.router.add_post("/web3/sign/prepare", handle_web3_prepare)
     # Guardian pre-trade review queue: admin-only read + tighten-only mutation.
     app.router.add_get("/guardian/review", handle_guardian_review)
     app.router.add_post("/guardian/review/tighten", handle_guardian_review_tighten)
