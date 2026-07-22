@@ -27,6 +27,7 @@
     { id: 'tax',       label: 'Tax',       icon: 'icon-check' },
     { id: 'reputation', label: 'Reputation', icon: 'icon-shield' },
     { id: 'counterparty', label: 'Counterparty', icon: 'icon-shield' },
+    { id: 'worlds',    label: 'Worlds',    icon: 'icon-sparkle' },
     { id: 'markets',   label: 'Markets',   icon: 'icon-globe' },
     { id: 'macro',     label: 'Macro',     icon: 'icon-shield' },
     { id: 'guardian',  label: 'Guardian',  icon: 'icon-check' },
@@ -3420,6 +3421,100 @@
   }
 
   /* ═══════════════ LEADERBOARD ═══════════════ */
+  // Web3 Worlds — the user's on-chain identity (ENS name + avatar) and their
+  // NFTs split into metaverse "worlds" (LAND / names / wearables, each linking
+  // into the official world) vs the rest of their collectibles. Read-only: it
+  // mirrors what the linked wallet holds and links out; it never mints/moves.
+  async function renderWorlds() {
+    container.innerHTML = viewHead('Worlds',
+      'Your on-chain identity, NFTs & metaverse worlds — read-only, links out to the world');
+    if (!LOGGED_IN) {
+      container.insertAdjacentHTML('beforeend',
+        `<section class="panel">${loginGate('Log in and link a wallet to see your web3 identity and metaverse worlds.')}</section>`);
+      return;
+    }
+    container.insertAdjacentHTML('beforeend', `
+      <div class="stack">
+        <section class="panel" id="p-w3id"><div id="c-w3id"><div class="skel"></div></div></section>
+        <section class="panel"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-sparkle"></use></svg>Metaverse worlds</h2><div id="c-w3worlds"><div class="skel"></div><div class="skel"></div></div></section>
+        <section class="panel"><h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-globe"></use></svg>Your collectibles</h2><div id="c-w3gallery"><div class="skel"></div><div class="skel"></div></div></section>
+      </div>`);
+
+    const KIND_ICON = { land: '🗺️', name: '🏷️', wearable: '👕' };
+    const nftCard = (it) => {
+      const img = it.image_url
+        ? `<img src="${esc(it.image_url)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.style.display='none';this.parentElement.classList.add('nft-noimg')" style="width:100%;aspect-ratio:1;object-fit:cover;border-radius:var(--radius,10px);background:rgba(128,128,128,.12)">`
+        : `<div style="width:100%;aspect-ratio:1;border-radius:var(--radius,10px);background:rgba(128,128,128,.12);display:flex;align-items:center;justify-content:center;font-size:26px">🖼️</div>`;
+      const label = esc(it.name || it.collection || 'Untitled');
+      return `<div class="nft-card" style="min-width:0">${img}<div class="small" style="margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${label}">${label}</div></div>`;
+    };
+    const grid = (items) => `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:var(--s2)">${items.map(nftCard).join('')}</div>`;
+
+    // Identity.
+    (async () => {
+      const el = C('w3id'); if (!el) return;
+      const r = await fetchJSON('/api/web3/identity');
+      const d = r.ok ? r.data : null;
+      if (!d) { el.innerHTML = `<p class="small muted">Identity is unavailable right now.</p>`; return; }
+      if (!d.linked) {
+        el.innerHTML = `<div class="row" style="align-items:center;gap:var(--s2);flex-wrap:wrap">
+            <div style="font-size:34px">🪪</div>
+            <div><b>No wallet linked yet.</b><div class="small muted">Link a wallet in Portfolio to show your ENS name, avatar and NFTs here.</div></div>
+            <a class="btn btn--primary btn--sm" href="#portfolio" style="margin-left:auto">Link a wallet</a>
+          </div>`;
+        return;
+      }
+      const avatar = d.avatar
+        ? `<img src="${esc(d.avatar)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.replaceWith(document.createTextNode('🧑‍🚀'))" style="width:56px;height:56px;border-radius:50%;object-fit:cover;background:rgba(128,128,128,.15)">`
+        : `<div style="width:56px;height:56px;border-radius:50%;background:var(--gold-dim,rgba(200,160,60,.2));display:flex;align-items:center;justify-content:center;font-size:26px">🧑‍🚀</div>`;
+      const title = d.ens ? esc(d.ens) : esc(d.short || '');
+      const sub = d.ens ? esc(d.short || '') : (d.resolved ? 'No ENS name set' : 'ENS lookup unavailable');
+      el.innerHTML = `<div class="row" style="align-items:center;gap:var(--s3)">
+          ${avatar}
+          <div style="min-width:0"><div style="font-size:var(--fs-lg)"><b>${title}</b>${d.ens ? ' <span class="chip chip--gold">ENS</span>' : ''}</div>
+            <div class="small muted num">${sub}</div></div>
+          <a class="btn btn--ghost btn--sm" href="#portfolio" style="margin-left:auto">Wallet</a>
+        </div>`;
+    })();
+
+    // Collectibles → worlds + gallery.
+    (async () => {
+      const worldsEl = C('w3worlds'), galleryEl = C('w3gallery');
+      const r = await fetchJSON('/api/web3/collectibles');
+      const d = r.ok ? r.data : null;
+      if (!d) { if (worldsEl) worldsEl.innerHTML = `<p class="small muted">Collectibles are unavailable right now.</p>`; if (galleryEl) galleryEl.innerHTML = ''; return; }
+      if (!d.linked) {
+        if (worldsEl) worldsEl.innerHTML = `<p class="small muted">Link a wallet to see your metaverse worlds.</p>`;
+        if (galleryEl) galleryEl.innerHTML = `<p class="small muted">No wallet linked.</p>`;
+        return;
+      }
+      if (!d.available) {
+        const msg = d.reason === 'not_configured'
+          ? 'The NFT mirror needs an operator OpenSea key (OPENSEA_API_KEY). Once set, your worlds and collectibles appear here.'
+          : 'Couldn\'t read your NFTs right now — try again shortly.';
+        if (worldsEl) worldsEl.innerHTML = `<p class="small muted">${esc(msg)}</p>`;
+        if (galleryEl) galleryEl.innerHTML = '';
+        return;
+      }
+      // Worlds.
+      if (worldsEl) {
+        if (!d.world_count) {
+          worldsEl.innerHTML = `<p class="small muted">No metaverse LAND, names or wearables found in this wallet yet. Holdings from The Sandbox, Decentraland, Otherside, Voxels and Somnium Space show up here.</p>`;
+        } else {
+          worldsEl.innerHTML = `<div class="row" style="gap:var(--s2);flex-wrap:wrap;margin-bottom:var(--s2)">${d.summary.map(w => `
+              <a class="btn btn--ghost btn--sm" href="${esc(w.url)}" target="_blank" rel="noopener">${esc(w.world)} · ${w.count} ${w.count === 1 ? 'item' : 'items'} · Enter →</a>`).join('')}</div>
+            ${grid(d.worlds.map(it => ({ ...it, name: `${KIND_ICON[it.kind] || ''} ${it.name || it.kind_label}` })))}`;
+        }
+      }
+      // Gallery (non-world collectibles).
+      if (galleryEl) {
+        const other = d.other || [];
+        if (!other.length) galleryEl.innerHTML = `<p class="small muted">No other collectibles in this wallet.</p>`;
+        else galleryEl.innerHTML = grid(other) + (d.count > (d.worlds.length + other.length) ? `<p class="small muted mt-2">Showing the first ${d.worlds.length + other.length} items.</p>` : '');
+      }
+    })();
+  }
+
   // Solver & Counterparty Monitor — where the agent's real funds sit. Turns the
   // per-venue / per-chain holdings into a concentration read (custodial vs
   // self-custody, venue/chain HHI, largest counterparty, settlement issuer).
@@ -4784,7 +4879,7 @@
                    macro: renderMacro, guardian: renderGuardian,
                    signals: renderSignals, deepscan: renderDeepScan, news: renderNews,
                    feed: renderFeed, trade: renderTrade, portfolio: renderPortfolio, tax: renderTax,
-                   reputation: renderReputation, counterparty: renderCounterparty,
+                   reputation: renderReputation, counterparty: renderCounterparty, worlds: renderWorlds,
                    leaderboard: renderLeaderboard, lab: renderLab, engine: renderEngine,
                    account: renderAccount };
 
