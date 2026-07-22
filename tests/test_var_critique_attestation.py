@@ -6,12 +6,10 @@ Tests for three new RUNECLAW features:
 """
 
 import hashlib
-import math
 import os
 import tempfile
 
-import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 

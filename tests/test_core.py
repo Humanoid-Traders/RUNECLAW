@@ -2080,7 +2080,7 @@ class TestAuditV3Fixes:
 
     def test_loss_streak_persists_to_disk(self):
         """Consecutive losses should persist so a restart doesn't clear the streak."""
-        import tempfile, json
+        import tempfile
         with tempfile.NamedTemporaryFile(suffix=".json", delete=False, mode="w") as f:
             state_path = f.name
         try:
@@ -2268,7 +2268,7 @@ class TestFailClosedFaultInjection:
 
     def test_multiple_faults_all_reported(self):
         """Multiple faulted checks should all appear in checks_failed."""
-        from unittest.mock import patch, PropertyMock
+        from unittest.mock import patch
         portfolio = PortfolioTracker(initial_balance=10000.0)
         risk = RiskEngine(portfolio, state_file=_isolated_state_file())
         idea = self._make_idea()
@@ -2308,7 +2308,7 @@ class TestFailClosedFaultInjection:
 # ===========================================================================
 #  COST TRACKER TESTS
 # ===========================================================================
-from bot.core.cost import CostTracker, CostSummary, LLM_PRICING
+from bot.core.cost import CostTracker
 
 
 class TestCostTracker:
@@ -2640,10 +2640,9 @@ class TestTelegramAuth:
 
     def _make_handler(self):
         """Create handler with isolated temp user store."""
-        import tempfile, os
+        import tempfile
         from bot.skills.telegram_handler import TelegramHandler
         from bot.core.engine import RuneClawEngine
-        from unittest.mock import patch, MagicMock
 
         engine = RuneClawEngine()
         engine.risk._state_file = "/dev/null"
@@ -5089,7 +5088,6 @@ class TestSprint3Fixes:
     def test_c2_23_close_position_callback_outside_lock(self):
         """C2-23: _on_trade_close is called AFTER portfolio._lock is released."""
         from bot.risk.portfolio import PortfolioTracker
-        import threading
 
         lock_held_during_callback = []
 
@@ -5146,7 +5144,7 @@ class TestSprint3Fixes:
     def test_c2_26_skip_scan_when_confirming(self):
         """C2-26: _tick() skips scanning when _pending_ideas is non-empty."""
         from bot.core.engine import RuneClawEngine
-        from unittest.mock import AsyncMock, patch
+        from unittest.mock import AsyncMock
 
         engine = RuneClawEngine()
         engine._running = True
@@ -5323,8 +5321,6 @@ class TestSprint5Fixes:
 
     def test_c2_28_var_z_score_99(self):
         """C2-28: z-score for 99% confidence = 2.326, not ~0.007."""
-        from bot.risk.portfolio import PortfolioTracker
-        from bot.risk.risk_engine import RiskEngine
 
         port = _make_portfolio(balance=50000)
         risk = _make_risk(port)
@@ -5391,7 +5387,7 @@ class TestSprint6Fixes:
         and cause a phantom stop-out on a bar where the old stop wouldn't have triggered."""
         from bot.backtest.engine import BacktestEngine
         from bot.backtest.models import BacktestConfig
-        from datetime import datetime, timedelta
+        from datetime import datetime
 
         config = BacktestConfig(
             symbol="BTC/USDT", timeframe="1h",

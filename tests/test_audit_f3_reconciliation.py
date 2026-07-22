@@ -18,7 +18,6 @@ import re
 
 import pytest
 
-from bot.compat import UTC
 from bot.utils.models import TradeIdea, Direction
 from bot.config import CONFIG
 

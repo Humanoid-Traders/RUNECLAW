@@ -7,10 +7,9 @@ live gate's enforce precondition; A6 unmatched is honest.
 import tempfile
 import os
 
-import pytest
 
 from bot.guardian.authority_nl import compile_nl_envelope
-from bot.guardian.authority import compile_envelope, envelope_hash
+from bot.guardian.authority import compile_envelope
 from bot.guardian import user_authority_store as uas
 
 

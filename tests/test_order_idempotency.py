@@ -8,7 +8,6 @@ These cover the execution-layer reliability upgrade:
   - a confirmed-absent order re-raises (failure is never silently swallowed)
   - orphan detection flags exchange positions with no local record
 """
-import asyncio
 
 import pytest
 

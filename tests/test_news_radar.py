@@ -9,7 +9,6 @@ and the live money-path stays fail-open).
 
 from __future__ import annotations
 
-import os
 
 from bot.core.news import (
     Impact, NewsItem, NewsRadar,

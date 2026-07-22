@@ -5,7 +5,6 @@ Regression tests for the V6.1 LOW findings (docs/AUDIT_REPORT_V6.1.md):
   MCP-2 — runeclaw_backtest `bars` is clamped and `mode` is validated.
 """
 import numpy as np
-import pytest
 
 from bot.core.divergence import _check_divergence
 

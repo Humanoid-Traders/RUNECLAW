@@ -6,9 +6,7 @@ chain back as joined flight records. These tests pin the record shape, the
 DECISION↔OUTCOME join, tamper detection, and the fail-open contract (garbage in
 never raises).
 """
-import math
 
-import pytest
 
 from bot.guardian import flight_recorder as fr
 from bot.utils.audit_chain import AuditChain, DecisionRecord

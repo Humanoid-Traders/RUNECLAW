@@ -8,7 +8,6 @@ voter code. Unset → byte-identical scoring.
 import importlib.util
 import os
 
-import numpy as np
 
 from bot.core.analyzer import Analyzer
 from bot.core.ta_utils import Regime

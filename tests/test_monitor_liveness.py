@@ -13,7 +13,6 @@ import asyncio
 import time
 from types import SimpleNamespace
 
-import pytest
 
 from bot.core.engine import RuneClawEngine
 from bot.core.proactive_monitor import ProactiveMonitor

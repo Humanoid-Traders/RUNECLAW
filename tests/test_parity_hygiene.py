@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import json
 
-import pytest
 
 from bot.utils.close_reason import (NON_FILL_CLOSE_REASONS, is_filled_close,
                                     stop_exit_label)

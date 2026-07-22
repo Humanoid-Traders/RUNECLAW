@@ -10,7 +10,6 @@ P0-4  .env.example risk defaults must match the in-code RiskLimits defaults.
 P0-6  The engine main loop must back off on repeated tick failures.
 """
 
-import re
 import inspect
 
 import pytest

@@ -4,7 +4,6 @@ A linked (per-user) account may never deploy more total margin than
 PER_USER_MAX_FUNDS_USD, regardless of its balance. The operator executor
 is governed by the MICRO_* caps, not this."""
 
-import pytest
 
 from bot.core.live_executor import LiveExecutor
 

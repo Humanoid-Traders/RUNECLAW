@@ -7,7 +7,7 @@ Filling exactly at the stop understates loss tails and overstates win rate.
 A take-profit is a limit order and fills at its level even on a favorable gap.
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime
 
 import pytest
 

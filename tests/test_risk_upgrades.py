@@ -8,8 +8,6 @@ Tests for the 4 risk engine upgrades:
 
 import os
 import tempfile
-import pytest
-from datetime import UTC, datetime
 
 from bot.utils.models import Direction, TradeIdea
 from bot.risk.portfolio import PortfolioTracker

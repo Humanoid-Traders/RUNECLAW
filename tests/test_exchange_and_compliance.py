@@ -9,22 +9,18 @@ from __future__ import annotations
 
 import asyncio
 import tempfile
-import time
-from datetime import datetime, timedelta, timezone
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
-import pytest
 
 from bot.core.exchange_flow import ExchangeFlowProvider
 from bot.core.order_flow import OrderFlowSignal
 from bot.compliance.compliance_engine import (
-    AuthorizationDecision,
     ComplianceEngine,
     Permission,
     SubjectProfile,
     default_demo_profile,
 )
-from bot.utils.audit_chain import AuditChain, AuditEntry, DecisionRecord
+from bot.utils.audit_chain import AuditChain, DecisionRecord
 
 
 # ── helpers ──────────────────────────────────────────────────────────

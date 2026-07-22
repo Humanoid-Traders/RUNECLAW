@@ -16,7 +16,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from bot.compat import UTC
 from bot.utils.models import TradeIdea, Direction
-from datetime import datetime, timedelta
+from datetime import datetime
 
 
 def _run(coro):

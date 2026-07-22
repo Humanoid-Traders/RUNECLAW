@@ -14,8 +14,6 @@ credential pull all became venue-aware WITHOUT regressing Bitget:
 Deterministic — no network. ccxt is only constructed locally (no calls).
 """
 
-import base64
-import json
 
 import pytest
 from cryptography.fernet import Fernet

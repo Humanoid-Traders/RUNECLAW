@@ -5,7 +5,6 @@ someone manually re-runs /watch on.
 """
 import contextlib
 
-import pytest
 
 from bot.config import CONFIG
 from bot.core.proactive_monitor import ProactiveMonitor

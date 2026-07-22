@@ -14,7 +14,6 @@ import asyncio
 from datetime import datetime
 
 import numpy as np
-import pytest
 
 from bot.compat import UTC
 from bot.core.analyzer import Analyzer

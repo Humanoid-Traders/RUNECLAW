@@ -3,7 +3,6 @@ Regression test for LLM-2 (docs/AUDIT_REPORT_V6.1.md): a non-admin tier override
 whose provider has no discoverable key must fall back to the primary config, not
 return a keyless LLMConfig that silently runs the tier with no LLM.
 """
-import pytest
 
 from bot.llm.provider import LLMConfig, LLMProvider, LLMTier, resolve_tier_config
 
