@@ -4169,6 +4169,14 @@
       <div class="stack">
         <section class="panel">
           <h2 class="panel-title"><svg class="icon" aria-hidden="true"><use href="#icon-bolt"></use></svg>Describe your contract</h2>
+          <div class="row" id="cs-templates" style="gap:6px;flex-wrap:wrap;margin-bottom:8px">
+            <span class="small muted" style="align-self:center">Start from:</span>
+            <button class="btn btn--sm" data-tpl="an ERC-20 token called RUNE with 18 decimals, a fixed 1,000,000 supply minted to the deployer, and OpenZeppelin ERC20 + Ownable">ERC-20 token</button>
+            <button class="btn btn--sm" data-tpl="an ERC-721 NFT collection with a fixed max supply, a per-wallet mint limit, an owner-set mint price, and metadata baseURI — using OpenZeppelin ERC721 + Ownable">ERC-721 NFT</button>
+            <button class="btn btn--sm" data-tpl="a simple escrow that holds ETH from a buyer and releases it to a seller only when the buyer confirms delivery, with a timeout refund to the buyer">Escrow</button>
+            <button class="btn btn--sm" data-tpl="a 2-of-3 multisig wallet where any owner can propose an ETH transfer and it executes once two distinct owners have confirmed">Multisig</button>
+            <button class="btn btn--sm" data-tpl="a linear token vesting contract that releases an ERC-20 grant to a beneficiary over a cliff + duration, revocable by the owner">Vesting</button>
+          </div>
           <textarea id="cs-spec" class="input" rows="4" style="width:100%;box-sizing:border-box"
             placeholder="e.g. an ERC-20 token called RUNE with a 1,000,000 cap and an owner-only mint"></textarea>
           <div class="row" style="gap:8px;flex-wrap:wrap;margin-top:8px;align-items:center">
@@ -4186,6 +4194,16 @@
     // Severity → colour, inline so we don't depend on a specific chip class.
     const sevColor = { high: 'var(--down,#f05252)', medium: 'var(--warn,#f0a020)', low: 'var(--text-2)', info: 'var(--text-2)' };
     const sevChip = (s) => `<span class="chip" style="border-color:${sevColor[s] || 'var(--text-2)'};color:${sevColor[s] || 'var(--text-2)'};font-size:10px;padding:1px 6px">${esc(s)}</span>`;
+
+    // One-tap starters — pre-fill the spec so nobody faces a blank page.
+    const tpls = document.getElementById('cs-templates');
+    if (tpls) tpls.addEventListener('click', (e) => {
+      const t = e.target.closest('button[data-tpl]');
+      if (!t) return;
+      const ta = document.getElementById('cs-spec');
+      ta.value = t.getAttribute('data-tpl') || '';
+      ta.focus();
+    });
 
     const btn = document.getElementById('cs-draft');
     if (!btn) return;

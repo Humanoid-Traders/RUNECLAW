@@ -44,6 +44,15 @@ test('the studio view carries no money-path', () => {
     'drafting only — no signing or value movement in the studio view');
 });
 
+test('one-tap template chips pre-fill the spec', () => {
+  // starters lower the blank-page barrier; clicking a chip sets the textarea.
+  assert.match(dash, /id="cs-templates"/);
+  assert.match(dash, /data-tpl="an ERC-20 token/);
+  assert.match(dash, /data-tpl="an ERC-721 NFT/);
+  assert.match(dash, /button\[data-tpl\]/);
+  assert.match(dash, /ta\.value = t\.getAttribute\('data-tpl'\)/);
+});
+
 test('the dashboard.js cache-buster is bumped', () => {
   assert.match(html, /dashboard\.js\?v=5\d/);
 });
