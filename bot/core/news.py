@@ -51,6 +51,29 @@ def _env_int(key: str, default: int) -> int:
         return default
 
 
+_NEWS_LEAD_RE = re.compile(
+    r"^\s*(any |latest |crypto |market |the |show me |get )*"
+    r"(news|headlines?)\b", re.IGNORECASE)
+_NEWS_WORD_RE = re.compile(r"\b(news|headlines?)\b", re.IGNORECASE)
+
+
+def looks_like_news_request(text: str) -> bool:
+    """True when free-text chat is asking for the news radar (not the tool-less
+    chat LLM, which would deny having a feed). Deliberately conservative: it
+    matches a news-led phrase ("news", "any news", "latest headlines") or a
+    short message whose dominant word is news/headlines — so it never hijacks a
+    substantive analytical ask like "what's driving the news-cycle selloff on
+    ETH and where are the levels". Shared by the web gateway and Telegram so
+    both surfaces behave identically."""
+    t = (text or "").strip()
+    if not t:
+        return False
+    if not _NEWS_WORD_RE.search(t):
+        return False
+    # A news-led opener, or a short message dominated by the news keyword.
+    return bool(_NEWS_LEAD_RE.match(t)) or len(t.split()) <= 6
+
+
 # Public, key-free crypto RSS feeds (headlines + links only — never the body,
 # so no paywall is ever touched). Override with NEWS_FEEDS (comma-separated).
 _DEFAULT_FEEDS = (

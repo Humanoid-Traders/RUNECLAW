@@ -169,11 +169,15 @@ def test_news_command_is_registered_and_advisory():
     from bot.skills import telegram_handler as th
     src = inspect.getsource(th)
     assert '("news", self._cmd_news)' in src
+    # The radar gating + rendering now live in the shared _news_digest_text
+    # helper (reused by /news AND the free-text "news" intercept on both
+    # surfaces); _cmd_news delegates to it.
     cmd = inspect.getsource(th.TelegramHandler._cmd_news)
-    # Gated behind the flag, and it renders (never trades).
-    assert "NewsRadar.enabled()" in cmd
-    assert "render_news_digest" in cmd
-    assert "never moves or blocks a trade" in cmd
+    assert "_news_digest_text" in cmd
+    digest = inspect.getsource(th.TelegramHandler._news_digest_text)
+    assert "NewsRadar.enabled()" in digest
+    assert "render_news_digest" in digest
+    assert "never moves or blocks a trade" in digest
 
 
 def test_held_symbols_helper_is_best_effort():
