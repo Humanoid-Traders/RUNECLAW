@@ -107,6 +107,10 @@ class ProactiveMonitor:
         self._last_cb_state: bool = False          # last circuit breaker state
         self._last_state: str = ""                 # last engine FSM state
         self._alerted_signals: set = set()         # signal IDs already alerted
+        # News stand-down PUSH: each fresh high-impact headline on a held asset
+        # alerts EXACTLY once (the headline stays "fresh" for ~1h, so the generic
+        # 5-min dedup would re-fire ~12×; this set is the once-only guard).
+        self._news_alerted: set = set()
         # Early-warning state (Tier 1a hardening): track the highest drawdown
         # tier already alerted (re-arms only after recovery), WS/health/balance
         # and warning-rate breaker last-states so each transition alerts once.
@@ -264,6 +268,10 @@ class ProactiveMonitor:
         while self._running:
             self.last_loop_ts = time.monotonic()
             try:
+                # Keep the shared news radar fresh so the stand-down PUSH check
+                # (below, in _check_all) sees current headlines. Throttled + never
+                # raises; the only network I/O in the loop.
+                await self._refresh_news_radar()
                 alerts = self._check_all()
                 for alert in alerts:
                     if self._should_send(alert):
@@ -291,6 +299,7 @@ class ProactiveMonitor:
         alerts.extend(self._check_ws_health())
         alerts.extend(self._check_stale_balance())
         alerts.extend(self._check_macro_calendar_stale())
+        alerts.extend(self._check_news_standdown())
         alerts.extend(self._check_unprotected_positions())
         alerts.extend(self._check_slippage())
         alerts.extend(self._check_volume_spikes())
@@ -1318,6 +1327,99 @@ class ProactiveMonitor:
                 dedup_key="macro_calendar_stale"))
         except Exception as exc:
             system_log.debug("macro-calendar-stale check failed: %s", exc)
+        return alerts
+
+    def _held_base_assets(self) -> list[str]:
+        """Symbols currently held across all portfolios (shared + per-user), as the
+        analyzer sees them (e.g. 'BTC/USDT'). Reused by the news refresh + check."""
+        out: list[str] = []
+        try:
+            up = getattr(self.engine, "user_portfolios", None)
+            if up is not None and up.all_portfolios():
+                for uid in up.all_portfolios():
+                    for pos in (up.get(uid).open_positions or []):
+                        if getattr(pos, "asset", None):
+                            out.append(pos.asset)
+            else:
+                pf = getattr(self.engine, "portfolio", None)
+                for pos in (getattr(pf, "open_positions", []) or []):
+                    if getattr(pos, "asset", None):
+                        out.append(pos.asset)
+        except Exception:
+            pass
+        return out
+
+    async def _refresh_news_radar(self) -> None:
+        """Throttled, best-effort refresh of the shared news radar so the
+        stand-down PUSH check has current headlines. The radar self-throttles
+        (NEWS_REFRESH_MIN_SEC) and never raises; pulls only PUBLIC RSS (§4)."""
+        try:
+            from bot.core.news import NewsRadar
+            if not NewsRadar.enabled():
+                return
+            radar = getattr(self.engine, "_news_radar", None)
+            if radar is None:
+                radar = self.engine._news_radar = NewsRadar()
+            # Bias the symbol match toward what we hold; fall back to majors so
+            # the radar still populates when the book is flat.
+            held = self._held_base_assets() or ["BTC/USDT", "ETH/USDT", "SOL/USDT"]
+            await radar.refresh(symbols=held)
+        except Exception as exc:
+            system_log.debug("news refresh failed: %s", exc)
+
+    def _check_news_standdown(self) -> list[Alert]:
+        """Advisory PUSH: when a FRESH (≤1h) HIGH-impact headline names an asset
+        the book holds, nudge the operator to review it. Makes the existing
+        pull-only stand-down proactive. Each headline alerts EXACTLY once.
+
+        News stays ADVISORY — this NEVER blocks, sizes, or moves an order (that
+        remains the macro gate's job). Gate: NEWS_STANDDOWN_ALERTS (default ON)."""
+        alerts: list[Alert] = []
+        try:
+            from bot.core.news import NewsRadar
+            if not NewsRadar.enabled():
+                return alerts
+            if str(os.getenv("NEWS_STANDDOWN_ALERTS", "1")).strip().lower() in (
+                    "0", "false", "no", "off"):
+                return alerts
+            radar = getattr(self.engine, "_news_radar", None)
+            if radar is None:
+                return alerts
+            held = self._held_base_assets()
+            if not held:
+                return alerts
+            recs = radar.standdown(held, time.time())
+            for rec in recs[:5]:                     # cap per cycle — no burst spam
+                url = rec.get("url", "") or ""
+                sym = rec.get("symbol", "?")
+                key = f"{url}|{sym}"
+                if key in self._news_alerted:
+                    continue
+                self._news_alerted.add(key)
+                headline = _html.escape(rec.get("headline", "") or "")
+                src = _html.escape(rec.get("source", "") or "")
+                age_min = max(1, int(rec.get("age_sec", 0)) // 60)
+                link = f'\n\U0001f517 {_html.escape(url)}' if url else ""
+                alerts.append(Alert(
+                    alert_type="NEWS_STANDDOWN", severity="WARNING",
+                    title=f"High-impact news · {sym}",
+                    body=(
+                        f"\U0001f4f0 <b>NEWS ON A POSITION YOU HOLD</b> — {_html.escape(sym)}\n"
+                        "────────────────\n"
+                        f"<b>{headline}</b>\n"
+                        f"<i>{src} · {age_min}m ago</i>{link}\n"
+                        "────────────────\n"
+                        "\U0001f449 Review it — consider tightening the stop or "
+                        "trimming. <b>Advisory only</b>; nothing was changed or "
+                        "moved.\n"
+                        "\U0001f449 /news — full radar"),
+                    # Once-only via _news_alerted; dedup_key adds the 5-min floor.
+                    dedup_key=f"news_standdown_{key}"))
+            # Keep the once-only set bounded across a long-running process.
+            if len(self._news_alerted) > 500:
+                self._news_alerted = set(list(self._news_alerted)[-250:])
+        except Exception as exc:
+            system_log.debug("news-standdown check failed: %s", exc)
         return alerts
 
     def _check_volume_spikes(self) -> list[Alert]:
