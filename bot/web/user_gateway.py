@@ -2133,6 +2133,16 @@ async def handle_web3_execute(request: web.Request) -> web.Response:
     net = decision.network or {}
     audit(system_log, f"Web3 exec PREVIEW (admin) {action_in['side']} on {network}",
           action="web3_exec_preview", result="OK", data={"network": network})
+    # Guardian pre-trade review: record this proposed action so a human can
+    # review it (and TIGHTEN the envelope) before any future signer slice acts on
+    # it. Observe-only — recording never blocks or alters this preview.
+    try:
+        from bot.guardian.review_queue import get_review_queue
+        get_review_queue().record({"user_id": tg_id, "kind": "web3_transfer",
+                                    "network": network, "action": action_in,
+                                    "envelope_id": env_id, "ts": _time.time()})
+    except Exception:
+        pass
     return web.json_response({
         "dry_run": True,
         "broadcast": False,
@@ -2147,6 +2157,67 @@ async def handle_web3_execute(request: web.Request) -> web.Response:
                 "signing ships in a later, separately-gated, still admin-only, "
                 "still envelope-enforced slice.",
     })
+
+
+async def handle_guardian_review(request: web.Request) -> web.Response:
+    """Admin-only, READ-ONLY view of the pre-trade review queue: every proposed
+    high-risk action (currently the on-chain execution preview) recorded for a
+    human to review before any signer slice acts on it."""
+    tg_handler = request.app["tg_handler"]
+    tg_id = str(request.query.get("telegram_id") or "").strip()
+    if not tg_id:
+        return web.json_response({"error": "telegram_id required"}, status=400)
+    if not _is_admin_id(tg_handler, tg_id):
+        return web.json_response({"error": "review queue is admin-only"}, status=403)
+    try:
+        from bot.guardian.review_queue import get_review_queue
+        q = get_review_queue()
+        return web.json_response({"read_only": True, "pending": q.pending_count(),
+                                  "entries": q.list(limit=50)})
+    except Exception:
+        return web.json_response({"error": "review queue unavailable"}, status=502)
+
+
+async def handle_guardian_review_tighten(request: web.Request) -> web.Response:
+    """Admin-only: TIGHTEN a target user's Authority Envelope. The only mutation
+    this surface exposes — and it can only make the envelope MORE restrictive
+    (property-tested), never authorize or loosen. Marks the user's pending review
+    entries reviewed. No signer, no broadcast — this only narrows authority."""
+    tg_handler = request.app["tg_handler"]
+    body = await _json_body(request)
+    tg_id = str(body.get("telegram_id") or "").strip()          # the admin acting
+    if not tg_id:
+        return web.json_response({"error": "telegram_id required"}, status=400)
+    if not _is_admin_id(tg_handler, tg_id):
+        return web.json_response({"error": "tightening is admin-only"}, status=403)
+    target = str(body.get("target_user") or "").strip()
+    if not target:
+        return web.json_response({"error": "target_user required"}, status=400)
+    spec = body.get("tighten") if isinstance(body.get("tighten"), dict) else {}
+    try:
+        from bot.guardian.user_authority_store import get_user_authority_store
+        from bot.guardian.review_queue import tighten_envelope, get_review_queue
+        store = get_user_authority_store()
+        cur = store.get(target)
+        if not cur:
+            return web.json_response({"error": "no authority envelope bound for that user"},
+                                     status=404)
+        new_env = tighten_envelope(cur, spec)
+        store.bind(target, new_env)
+        reviewed = get_review_queue().mark_reviewed(target, note="envelope tightened")
+        audit(system_log, f"Guardian envelope TIGHTENED for {target} by admin {tg_id}",
+              action="guardian_tighten", result="OK",
+              data={"target": target, "envelope_id": new_env.get("envelope_id")})
+        return web.json_response({"ok": True, "envelope_id": new_env.get("envelope_id"),
+                                  "reviewed": reviewed,
+                                  "envelope": {"allowed_venues": new_env.get("allowed_venues"),
+                                               "max_notional_per_trade_usd": new_env.get("max_notional_per_trade_usd"),
+                                               "max_notional_daily_usd": new_env.get("max_notional_daily_usd"),
+                                               "withdraw_allowed": new_env.get("withdraw_allowed"),
+                                               "revoked": new_env.get("revoked")}})
+    except Exception:
+        # F-15: never leak an exception string (it can carry secrets) to the caller.
+        return web.json_response({"error": "tightening failed"}, status=400)
 
 
 def build_gateway(engine, tg_handler) -> web.Application:
@@ -2176,6 +2247,9 @@ def build_gateway(engine, tg_handler) -> web.Application:
     # WEB3-LIVE-EXEC slice 1: admin-only, envelope-gated on-chain PREVIEW (no
     # signer, no broadcast — the safety spine for future live signing).
     app.router.add_post("/web3/execute", handle_web3_execute)
+    # Guardian pre-trade review queue: admin-only read + tighten-only mutation.
+    app.router.add_get("/guardian/review", handle_guardian_review)
+    app.router.add_post("/guardian/review/tighten", handle_guardian_review_tighten)
     # LLM connect (WEB-1): per-user BYOK key + admin ULTRA toggle.
     app.router.add_get("/llm", handle_llm_status)
     app.router.add_post("/llm", handle_llm_set)

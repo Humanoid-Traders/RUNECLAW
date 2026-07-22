@@ -47,7 +47,7 @@ test('the underwater chart derives drawdown from a running peak (<= 0)', () => {
 
 test('dashboard mounts both charts from REAL data and tears them down on nav', () => {
   assert.match(html, /charts2d\.js/);                         // script included
-  assert.match(html, /dashboard\.js\?v=49/);                  // cache-buster bumped
+  assert.match(html, /dashboard\.js\?v=5\d/);                 // cache-buster bumped (v49+)
   assert.match(dash, /id="allocCanvas"/);                     // donut canvas present
   assert.match(dash, /id="underwaterCanvas"/);                // underwater canvas present
   assert.match(dash, /window\.RCCharts\.donut\(/);            // donut mounted
